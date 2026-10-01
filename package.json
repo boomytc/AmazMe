@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "test": "node --import tsx --test packages/ai/test/ai.test.ts"
+    "test": "node --import tsx --test packages/ai/test/ai.test.ts packages/agent/test/loop.test.ts packages/agent/test/harness.test.ts"
   },
   "devDependencies": {
     "@types/node": "22.19.19",

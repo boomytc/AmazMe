@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/ai" }
+    { "path": "packages/ai" },
+    { "path": "packages/agent" }
   ]
 }
