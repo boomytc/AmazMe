@@ -1,6 +1,7 @@
 import type { AssistantMessage, Context, Model, Models, ThinkingLevel } from "@amazme/ai";
 import { runAgentLoop, toProviderMessages } from "./loop.ts";
 import { toolDefinition } from "./schema.ts";
+import { startSpan, type TelemetryContext } from "@amazme/telemetry";
 import type {
   AgentEvent,
   AgentMessage,
@@ -16,6 +17,7 @@ import type {
 type Listener = (event: AgentEvent, signal: AbortSignal) => Promise<void> | void;
 
 export interface AgentOptions {
+  telemetryContext?: TelemetryContext;
   systemPrompt?: string;
   model: Model;
   models: Models;
@@ -83,11 +85,13 @@ export class Agent {
   prepareRequest: AgentOptions["prepareRequest"];
   finishTurn: AgentOptions["finishTurn"];
   private readonly models: Models;
+  private readonly telemetryContext: TelemetryContext;
 
   constructor(options: AgentOptions) {
     this.systemPrompt = options.systemPrompt ?? "";
     this.model = options.model;
     this.models = options.models;
+    this.telemetryContext = options.telemetryContext ?? options.models.telemetryContext;
     this.tools = options.tools ?? [];
     this.thinkingLevel = options.thinkingLevel ?? "off";
     this.messages = options.messages ?? [];
@@ -141,38 +145,47 @@ export class Agent {
       resolveRun = resolve;
     });
     try {
-      const produced = await runAgentLoop(
-        {
-          messages: this.messages,
-          model: this.model,
-          tools: this.tools,
-          thinkingLevel: this.thinkingLevel,
-          systemPrompt: this.systemPrompt,
-          toolExecution: this.toolExecution,
-          prompts,
-          signal,
-          hooks: {
-            prepareRequest: (request, requestSignal) => this.prepareRequest?.(request, requestSignal),
-            finishTurn: (turn, requestSignal) => this.finishTurn?.(turn, requestSignal),
-            takeSteering: () => this.steering.take(),
-            takeFollowUp: () => this.followUps.take(),
-            stream: (model, messages, tools, thinkingLevel, requestSignal) => {
-              const context: Context = {
-                systemPrompt: this.systemPrompt,
-                messages: toProviderMessages(messages),
-                tools: tools.map(toolDefinition),
-              };
-              const stream = this.models.streamSimple(model, context, { thinkingLevel, signal: requestSignal });
-              return stream;
+      return await startSpan(this.telemetryContext, {
+        name: "amazme.agent.run",
+        attributes: { provider: this.model.provider, model: this.model.id },
+      }, async (span) => {
+        const produced = await runAgentLoop(
+          {
+            messages: this.messages,
+            model: this.model,
+            tools: this.tools,
+            thinkingLevel: this.thinkingLevel,
+            systemPrompt: this.systemPrompt,
+            toolExecution: this.toolExecution,
+            prompts,
+            signal,
+            telemetryContext: span,
+            hooks: {
+              prepareRequest: (request, requestSignal) => this.prepareRequest?.(request, requestSignal),
+              finishTurn: (turn, requestSignal) => this.finishTurn?.(turn, requestSignal),
+              takeSteering: () => this.steering.take(),
+              takeFollowUp: () => this.followUps.take(),
+              stream: (model, messages, tools, thinkingLevel, requestSignal) => {
+                const context: Context = {
+                  systemPrompt: this.systemPrompt,
+                  messages: toProviderMessages(messages),
+                  tools: tools.map(toolDefinition),
+                };
+                const stream = this.models.streamSimple(model, context, { thinkingLevel, signal: requestSignal, telemetryContext: span });
+                return stream;
+              },
             },
           },
-        },
-        async (event) => {
-          this.absorb(event);
-          for (const listener of this.listeners) await listener(event, signal);
-        },
-      );
-      return produced;
+          async (event) => {
+            this.absorb(event);
+            for (const listener of this.listeners) await listener(event, signal);
+          },
+        );
+        if (produced.some((message) => message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted"))) {
+          span.setStatus({ status: "error" });
+        }
+        return produced;
+      });
     } finally {
       this.running = false;
       this.abortController = undefined;

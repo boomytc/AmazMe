@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Unified LLM API: providers, auth, message model, and stream events",
+  "dependencies": { "@amazme/telemetry": "0.1.0" },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

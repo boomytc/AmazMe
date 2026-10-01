@@ -9,6 +9,7 @@ import {
   type ToolResultMessage,
 } from "@amazme/ai";
 import { toolDefinition, validateArguments } from "./schema.ts";
+import { startSpan, type TelemetryContext } from "@amazme/telemetry";
 import type {
   AgentEvent,
   AgentMessage,
@@ -41,6 +42,7 @@ export interface LoopHooks {
 }
 
 export interface LoopInput {
+  telemetryContext?: TelemetryContext;
   messages: AgentMessage[];
   model: Model;
   tools: AgentTool[];
@@ -120,7 +122,7 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
         const executed =
           message.stopReason === "length"
             ? await failTruncated(calls, emit)
-            : await executeTools(calls, tools, input.toolExecution, signal, emit);
+            : await executeTools(calls, tools, input.toolExecution, signal, emit, input.telemetryContext);
         toolResults = executed.messages;
         moreTools = !executed.terminate;
         for (const result of toolResults) {
@@ -208,6 +210,7 @@ async function executeTools(
   mode: ToolExecutionMode,
   signal: AbortSignal,
   emit: Emit,
+  telemetryContext: TelemetryContext | undefined,
 ): Promise<{ messages: ToolResultMessage[]; terminate: boolean }> {
   const sequential = mode === "sequential" || calls.some((call) => tools.find((tool) => tool.name === call.name)?.executionMode === "sequential");
   const messages: ToolResultMessage[] = new Array(calls.length);
@@ -215,7 +218,13 @@ async function executeTools(
   const run = async (index: number) => {
     const call = calls[index];
     if (!call) return;
-    const outcome = await runOne(call, tools, signal, emit);
+    const outcome = await startSpan(telemetryContext, {
+      name: "amazme.tool.execute", attributes: { tool: call.name, toolCallId: call.id },
+    }, async (span) => {
+      const result = await runOne(call, tools, signal, emit, span);
+      if (result.message.isError || signal.aborted) span.setStatus({ status: "error" });
+      return result;
+    });
     messages[index] = outcome.message;
     flags[index] = outcome.terminate;
   };
@@ -232,6 +241,7 @@ async function runOne(
   tools: AgentTool[],
   signal: AbortSignal,
   emit: Emit,
+  telemetryContext: TelemetryContext,
 ): Promise<{ message: ToolResultMessage; terminate: boolean }> {
   await emit({ type: "tool_execution_start", toolCallId: call.id, toolName: call.name, args: call.arguments });
   const tool = tools.find((item) => item.name === call.name);
@@ -246,6 +256,7 @@ async function runOne(
       try {
         result = await tool.execute(call.arguments, {
           signal,
+          telemetryContext,
           onUpdate: (partial) => {
             void emit({ type: "tool_execution_update", toolCallId: call.id, partial });
           },

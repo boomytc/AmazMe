@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "packages/telemetry" },
     { "path": "packages/ai" },
     { "path": "packages/agent" },
     { "path": "packages/coding-agent" }

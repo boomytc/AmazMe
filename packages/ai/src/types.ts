@@ -107,6 +107,7 @@ export interface Model {
 }
 
 export interface StreamOptions {
+  telemetryContext?: import("@amazme/telemetry").TelemetryContext;
   signal?: AbortSignal;
   apiKey?: string;
   thinkingLevel?: ThinkingLevel;

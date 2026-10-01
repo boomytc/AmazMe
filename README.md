@@ -3,6 +3,7 @@
 一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。`AgentHarness` 是额外的精简持久化操作机，与 CLI 的内存循环分别运行；它没有采用 [`pi-durable`](https://github.com/earendil-works/pi/blob/ed8b3bcc194c8263ec8bec3f337053ae73866da1/packages/durable/README.md) 的任务调度和 Chord 文档架构。
 
 ```text
+@amazme/telemetry      被动诊断契约、空实现、进程内记录
 @amazme/ai             Provider、认证、统一消息、流事件
 @amazme/agent          内存里的 turn 循环，以及可崩溃恢复的 AgentHarness
 @amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI
@@ -45,6 +46,26 @@ import { createStorageConformance } from "@amazme/agent/testing";
 ```
 
 `/testing` 提供独立于测试框架的共享存储契约检查；该测试入口使用 Node 断言。
+
+## 诊断边界
+
+`@amazme/telemetry` 是没有运行时依赖的底层包，AI 和 Agent 只向下依赖它。`TelemetryContext.startSpan` 包住一次工作，`TelemetrySpan` 提供子 span、事件、属性与状态。父子关系通过参数显式传递，不使用 Node 的异步全局上下文。
+
+默认使用空实现。`InMemoryTelemetryContext` 在进程内记录，并通过 `getSpans()` 返回独立快照；生产监控适配器可以实现相同接口。适配器应同步调用业务回调一次，保留其返回值和拒绝原因，记录方法同步且不抛错；结束后的记录调用无效。未显式设置状态时，成功记为 `ok`，回调失败记为 `error`；显式状态以最后一次有效设置为准。`@amazme/telemetry/testing` 提供共享契约检查，仅测试入口依赖 Node。
+
+```typescript
+import { InMemoryTelemetryContext } from "@amazme/telemetry";
+import { createModels } from "@amazme/ai";
+
+const telemetryContext = new InMemoryTelemetryContext();
+const models = createModels({ telemetryContext });
+// 注册 Provider 后，Agent 和 AgentHarness 默认继承 models 的诊断上下文。
+// 也可以在 AgentOptions、HarnessOptions 或一次 StreamOptions 中单独覆盖。
+```
+
+内置记录包括 Agent run、Harness drive、模型请求和实际工具执行；恢复和重试等待记为事件。工具收到的 `ToolContext.telemetryContext` 和 Provider 收到的 `StreamOptions.telemetryContext` 可继续创建子 span。默认属性只包含模型、工具与操作标识、结束原因和 token 数，不自动收集提示词、密钥、工具参数、输出或异常文本。
+
+运行时通过被动 `startSpan` 边界调用适配器：即使适配器抛错、延迟或重复调用回调、返回错误结果，业务仍只执行一次，不等待导出结束。流式增量即时转发；内存实现会在发布请求终态前结束 span。诊断上下文不写入 transcript、存储或操作状态，重启恢复继续依赖原有持久化数据。内存实现不会自动清理记录，适合测试和单次运行检查；长时间运行应使用自行管理保留策略的适配器。
 
 ## 编码会话
 

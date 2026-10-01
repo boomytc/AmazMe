@@ -10,6 +10,7 @@ import type {
   StreamOptions,
 } from "./types.ts";
 import { normalizeContext } from "./transform.ts";
+import { NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext } from "@amazme/telemetry";
 
 export interface Provider {
   readonly id: string;
@@ -43,6 +44,7 @@ export class ModelsError extends Error {
 }
 
 export interface ModelsOptions {
+  telemetryContext?: TelemetryContext;
   store?: CredentialStore;
   env?: Record<string, string | undefined>;
 }
@@ -55,10 +57,12 @@ export class Models {
   private readonly providers = new Map<string, Provider>();
   readonly store: CredentialStore;
   readonly env: Record<string, string | undefined>;
+  readonly telemetryContext: TelemetryContext;
 
   constructor(options: ModelsOptions = {}) {
     this.store = options.store ?? new MemoryCredentialStore();
     this.env = options.env ?? (typeof process === "undefined" ? {} : process.env);
+    this.telemetryContext = options.telemetryContext ?? NOOP_TELEMETRY_CONTEXT;
   }
 
   setProvider(provider: Provider): void {
@@ -92,10 +96,27 @@ export class Models {
   streamSimple(model: Model, context: Context, options: StreamOptions = {}): AssistantEventStream {
     const transcript = normalizeContext(context);
     const stream = createAssistantEventStream();
-    void this.dispatch(model, transcript, options)
-      .then(async (opened) => {
-        for await (const event of opened) stream.push(event);
-      })
+    void startSpan(options.telemetryContext ?? this.telemetryContext, {
+      name: "amazme.ai.request",
+      attributes: { provider: model.provider, model: model.id, api: model.api },
+    }, async (span) => {
+      const opened = await this.dispatch(model, transcript, { ...options, telemetryContext: span });
+      let terminal: Extract<AssistantEvent, { type: "done" | "error" }> | undefined;
+      for await (const event of opened) {
+        if (event.type === "done" || event.type === "error") { terminal = event; break; }
+        stream.push(event);
+      }
+      const message = terminal ? (terminal.type === "done" ? terminal.message : terminal.error) : await opened.result();
+      span.setAttributes({
+        stopReason: message.stopReason,
+        inputTokens: message.usage.input, outputTokens: message.usage.output, totalTokens: message.usage.totalTokens,
+      });
+      if (message.stopReason === "error" || message.stopReason === "aborted") span.setStatus({ status: "error" });
+      return terminal ?? (message.stopReason === "error" || message.stopReason === "aborted"
+        ? { type: "error" as const, error: message }
+        : { type: "done" as const, reason: message.stopReason, message });
+    })
+      .then((event) => { stream.push(event); })
       .catch((error: unknown) => {
         const message = errorMessage(model, error, options.signal?.aborted === true);
         stream.push({ type: "error", error: message });

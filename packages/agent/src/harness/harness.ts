@@ -7,6 +7,7 @@ import {
   reduceFrames,
   type ThinkingLevel,
 } from "@amazme/ai";
+import { startSpan, type TelemetryContext, type TelemetrySpan } from "@amazme/telemetry";
 import { uuidv7 } from "../id.ts";
 import { toolDefinition, validateArguments } from "../schema.ts";
 import type { AgentMessage, AgentTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "../types.ts";
@@ -48,6 +49,7 @@ export interface LaneConfig {
 }
 
 export interface HarnessOptions {
+  telemetryContext?: TelemetryContext;
   models: Models;
   model: { provider: string; modelId: string };
   tools?: AgentTool[];
@@ -260,17 +262,28 @@ export class AgentLane {
   }
 
   drive(operationId: string, options: { waitForRetry?: boolean } = {}): Promise<Result<DriveOutcome>> {
-    return this.harness.claimDrive(this.name, operationId, () => this.driveBody(operationId, options));
+    return this.harness.claimDrive(this.name, operationId, () => startSpan(
+      this.harness.options.telemetryContext ?? this.harness.options.models.telemetryContext,
+      { name: "amazme.harness.drive", attributes: { lane: this.name, operationId } },
+      async (span) => {
+        const outcome = await this.driveBody(operationId, options, span);
+        if (!outcome.ok || (outcome.value.kind === "settled" && outcome.value.result.status !== "completed")) {
+          span.setStatus({ status: "error" });
+        }
+        return outcome;
+      },
+    ));
   }
 
-  private async driveBody(operationId: string, options: { waitForRetry?: boolean }): Promise<Result<DriveOutcome>> {
+  private async driveBody(operationId: string, options: { waitForRetry?: boolean }, span: TelemetrySpan): Promise<Result<DriveOutcome>> {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
     const signal = this.harness.laneSignal(this.name);
     for (let step = 0; step < 64; step++) {
-      const planned = await this.harness.storage.run((view, apply) => this.plan(view, apply, operationId));
+      const planned = await this.harness.storage.run((view, apply) => this.plan(view, apply, operationId, span));
       if (planned.type === "error") return { ok: false, error: planned.error };
       if (planned.type === "settled") return { ok: true, value: { kind: "settled", result: planned.result } };
       if (planned.type === "wait") {
+        span.addEvent("amazme.harness.retry_wait");
         if (options.waitForRetry) {
           await waitUntil(planned.notBefore, signal);
           continue;
@@ -280,18 +293,18 @@ export class AgentLane {
       if (planned.type === "continue") continue;
       if (this.harness.isAbandoned) return this.settledOrWait(operationId);
       if (planned.type === "assistant") {
-        const message = await this.streamAssistant(planned, signal);
+        const message = await this.streamAssistant(planned, signal, span);
         if (this.harness.isAbandoned) return this.settledOrWait(operationId);
         await this.harness.storage.run((view, apply) => this.settleAssistant(view, apply, planned, message));
         continue;
       }
       if (planned.type === "summary") {
-        const message = await this.streamSummary(planned, signal);
+        const message = await this.streamSummary(planned, signal, span);
         if (this.harness.isAbandoned) return this.settledOrWait(operationId);
         await this.harness.storage.run((view, apply) => this.settleSummary(view, apply, planned, message));
         continue;
       }
-      await this.runTools(operationId, signal);
+      await this.runTools(operationId, signal, span);
       if (this.harness.isAbandoned) return this.settledOrWait(operationId);
     }
     throw new Error("drive exceeded 64 durable steps");
@@ -463,7 +476,7 @@ export class AgentLane {
     return { ok: true, value: { operationId, kind: "navigation", startedAt } };
   }
 
-  private plan(view: StorageView, apply: Apply, operationId: string): Plan {
+  private plan(view: StorageView, apply: Apply, operationId: string, span: TelemetrySpan): Plan {
     const record = this.record(view);
     if (record.currentOperationId !== operationId) {
       const existing = view.get<OperationResult>(resultAddress(operationId));
@@ -526,6 +539,7 @@ export class AgentLane {
         return { type: "assistant", operationId, responseEntryId: state.responseEntryId, usageId: state.usageId };
       }
       this.recoverAssistant(view, apply, meta, state);
+      span.addEvent("amazme.harness.recovered", { effect: "assistant" });
       return { type: "continue" };
     }
     if (state.phase === "summary_deciding") {
@@ -544,6 +558,7 @@ export class AgentLane {
         return { type: "summary", operationId, responseEntryId: state.responseEntryId, usageId: state.usageId };
       }
       this.recoverSummary(view, apply, meta, state);
+      span.addEvent("amazme.harness.recovered", { effect: "summary" });
       return { type: "continue" };
     }
     if (state.phase === "tools") return { type: "tools", operationId };
@@ -560,12 +575,12 @@ export class AgentLane {
     };
   }
 
-  private async streamAssistant(planned: Extract<Plan, { type: "assistant" }>, signal: AbortSignal): Promise<AssistantMessage> {
+  private async streamAssistant(planned: Extract<Plan, { type: "assistant" }>, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage> {
     const context = await this.harness.storage.read((view) => this.providerContext(view));
     const config = await this.harness.storage.read((view) => this.config(view));
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
     if (!model) return missingModel(config);
-    const stream = this.harness.options.models.streamSimple(model, context, { signal, thinkingLevel: config.thinkingLevel });
+    const stream = this.harness.options.models.streamSimple(model, context, { signal, thinkingLevel: config.thinkingLevel, telemetryContext });
     let frames = Promise.resolve();
     for await (const event of stream) {
       const frame = frameFromEvent(event);
@@ -577,7 +592,7 @@ export class AgentLane {
     return stream.result();
   }
 
-  private async streamSummary(planned: Extract<Plan, { type: "summary" }>, signal: AbortSignal): Promise<AssistantMessage> {
+  private async streamSummary(planned: Extract<Plan, { type: "summary" }>, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage> {
     const base = await this.harness.storage.read((view) => this.providerContext(view));
     const config = await this.harness.storage.read((view) => this.config(view));
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
@@ -585,7 +600,7 @@ export class AgentLane {
     const stream = this.harness.options.models.streamSimple(
       model,
       { ...base, systemPrompt: "Summarize the conversation so a later turn can continue." },
-      { signal, thinkingLevel: "off" },
+      { signal, thinkingLevel: "off", telemetryContext },
     );
     let message: AssistantMessage | undefined;
     for await (const event of stream) {
@@ -820,14 +835,20 @@ export class AgentLane {
     this.harness.live.delete(planned.responseEntryId);
   }
 
-  private async runTools(operationId: string, signal: AbortSignal): Promise<void> {
+  private async runTools(operationId: string, signal: AbortSignal, telemetryContext: TelemetrySpan): Promise<void> {
     for (let step = 0; step < 32; step++) {
       if (this.harness.isAbandoned) return;
-      const action = await this.harness.storage.run((view, apply) => this.armTools(view, apply, operationId));
+      const action = await this.harness.storage.run((view, apply) => this.armTools(view, apply, operationId, telemetryContext));
       if (action.type === "done") return;
       const sequential = action.mode === "sequential";
       const execute = async (call: ArmedCall) => {
-        const result = await this.executeTool(call, signal);
+        const result = await startSpan(telemetryContext, {
+          name: "amazme.tool.execute", attributes: { tool: call.name, toolCallId: call.toolCallId },
+        }, async (span) => {
+          const result = await this.executeTool(call, signal, span);
+          if (result.isError || signal.aborted) span.setStatus({ status: "error" });
+          return result;
+        });
         if (this.harness.isAbandoned) return;
         await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, result));
       };
@@ -840,7 +861,7 @@ export class AgentLane {
     }
   }
 
-  private armTools(view: StorageView, apply: Apply, operationId: string): { type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] } {
+  private armTools(view: StorageView, apply: Apply, operationId: string, telemetryContext: TelemetrySpan): { type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] } {
     const state = view.get<OperationState>(stateAddress(operationId));
     if (!state || state.phase !== "tools") return { type: "done" };
     this.materializeTools(view, apply, operationId);
@@ -856,6 +877,7 @@ export class AgentLane {
       if (call.replay === "safe") {
         this.harness.live.add(call.resultEntryId);
         toRun.push(this.armed(view, operationId, refreshed.responseEntryId, call, assistant));
+        telemetryContext.addEvent("amazme.harness.recovered", { effect: "tool", replay: "safe" });
         if (sequential) break;
         continue;
       }
@@ -871,6 +893,7 @@ export class AgentLane {
     if (recoverable.some((call) => call.replay !== "safe")) {
       apply([{ type: "set", address: stateAddress(operationId), value: { ...refreshed, calls } }]);
       this.materializeTools(view, apply, operationId);
+      telemetryContext.addEvent("amazme.harness.recovered", { effect: "tool", replay: "never" });
       if (toRun.length > 0) return { type: "run", mode: sequential ? "sequential" : "parallel", calls: toRun };
       return { type: "done" };
     }
@@ -910,12 +933,13 @@ export class AgentLane {
     return { type: "run", mode: sequential ? "sequential" : "parallel", calls: toRun };
   }
 
-  private async executeTool(call: ArmedCall, signal: AbortSignal): Promise<ToolResult> {
+  private async executeTool(call: ArmedCall, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<ToolResult> {
     const tool = this.tool(call.name);
     if (!tool) return { content: [{ type: "text", text: `Unknown tool: ${call.name}` }], isError: true };
     try {
       return await tool.execute(call.args, {
         signal,
+        telemetryContext,
         onUpdate: (partial, options) => {
           if (!options?.checkpoint) return;
           void this.harness.storage.run((view, apply) => {

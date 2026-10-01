@@ -14,6 +14,5 @@
     "outDir": "dist",
     "composite": true
   },
-  "include": ["src"],
-  "references": [{ "path": "../ai" }, { "path": "../telemetry" }]
+  "include": ["src"]
 }

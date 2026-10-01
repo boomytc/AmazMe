@@ -29,6 +29,7 @@ export interface ToolResult {
 }
 
 export interface ToolContext {
+  telemetryContext?: import("@amazme/telemetry").TelemetryContext;
   signal: AbortSignal;
   onUpdate?: (partial: string, options?: { checkpoint?: boolean }) => void;
 }
