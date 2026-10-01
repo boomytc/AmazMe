@@ -11,7 +11,11 @@ export {
   type OperationResult,
   type Result,
 } from "./harness/harness.ts";
-export { JsonlStorage, list, MemoryStorage, StorageView, value, type Entry, type EntryPayload, type Write } from "./harness/storage.ts";
+export {
+  list, value, type Address, type Apply, type CommitResult, type Entry, type EntryPayload,
+  type ListItem, type Storage, type StorageView, type UsageRow, type Write,
+} from "./harness/storage.ts";
+export { MemoryStorage } from "./harness/storage/memory.ts";
 export { uuidv7 } from "./id.ts";
 export { runAgentLoop, toProviderMessages } from "./loop.ts";
 export { validateArguments } from "./schema.ts";

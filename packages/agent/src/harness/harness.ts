@@ -12,9 +12,10 @@ import { toolDefinition, validateArguments } from "../schema.ts";
 import type { AgentMessage, AgentTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "../types.ts";
 import {
   type Address,
+  type Apply,
   type Entry,
   list,
-  MemoryStorage,
+  type Storage,
   type StorageView,
   value,
   type Write,
@@ -149,8 +150,6 @@ interface InboxItem {
   kind: "steer" | "followUp" | "write";
 }
 
-type Apply = (writes: Write[]) => { seq: number };
-
 type Plan =
   | { type: "continue" }
   | { type: "settled"; result: OperationResult }
@@ -175,10 +174,10 @@ export class AgentHarness {
   private readonly laneAborts = new Map<string, AbortController>();
   /** Effects this process has armed. A restarted harness has an empty set, so the same leaf means recovery. */
   readonly live = new Set<string>();
-  readonly storage: MemoryStorage;
+  readonly storage: Storage;
   readonly options: HarnessOptions;
 
-  constructor(storage: MemoryStorage, options: HarnessOptions) {
+  constructor(storage: Storage, options: HarnessOptions) {
     this.storage = storage;
     this.options = options;
   }

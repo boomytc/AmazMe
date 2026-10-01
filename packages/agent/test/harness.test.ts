@@ -3,7 +3,8 @@ import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AgentHarness, type AgentTool, JsonlStorage, MemoryStorage, value } from "@amazme/agent";
+import { AgentHarness, type AgentTool, MemoryStorage, value } from "@amazme/agent";
+import { JsonlStorage } from "@amazme/agent/storage/jsonl/node";
 import {
   baseAssistant,
   createAssistantEventStream,

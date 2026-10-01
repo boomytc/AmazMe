@@ -44,7 +44,7 @@ export class ModelsError extends Error {
 
 export interface ModelsOptions {
   store?: CredentialStore;
-  env?: NodeJS.ProcessEnv;
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -54,11 +54,11 @@ export interface ModelsOptions {
 export class Models {
   private readonly providers = new Map<string, Provider>();
   readonly store: CredentialStore;
-  readonly env: NodeJS.ProcessEnv;
+  readonly env: Record<string, string | undefined>;
 
   constructor(options: ModelsOptions = {}) {
     this.store = options.store ?? new MemoryCredentialStore();
-    this.env = options.env ?? process.env;
+    this.env = options.env ?? (typeof process === "undefined" ? {} : process.env);
   }
 
   setProvider(provider: Provider): void {

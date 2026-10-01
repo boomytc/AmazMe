@@ -34,7 +34,17 @@
 - 多个工具可以乱序完成，entry 仍按源顺序挂到树上。
 - 结束时删掉操作自己的 value，留下不可变的 `pi.result`，其中保存所属 lane。结算后和重启后都只允许所属 lane 读取；早期结果缺少 lane 时拒绝返回，避免猜测归属。
 
-Memory 和 JSONL 走同一个存储接口。
+Harness 依赖结构化的 `Storage` / `StorageView` 接口，后端不需要继承 `MemoryStorage`。`run` 串行持有写入通道，每次 `apply` 单独原子提交；它不是跨多个 `apply` 的事务，回调失败也不会撤销此前已提交的数据。`apply` 仅在所属回调未结束时有效。
+
+核心入口和 `MemoryStorage` 不导入 Node 模块，ID 使用 Web Crypto；没有全局 `process` 时，模型认证使用传入的 `env` 或空环境。`JsonlStorage` 从根入口迁移到独立 Node 入口，原有文件格式和恢复语义保持一致：
+
+```typescript
+import { AgentHarness, MemoryStorage, type Storage } from "@amazme/agent";
+import { JsonlStorage } from "@amazme/agent/storage/jsonl/node";
+import { createStorageConformance } from "@amazme/agent/testing";
+```
+
+`/testing` 提供独立于测试框架的共享存储契约检查；该测试入口使用 Node 断言。
 
 ## 编码会话
 

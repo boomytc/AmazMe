@@ -3,7 +3,8 @@ import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { AgentHarness, type AgentTool, JsonlStorage, type OperationRequest, type Write, value } from "@amazme/agent";
+import { AgentHarness, type AgentTool, type OperationRequest, type Write, value } from "@amazme/agent";
+import { JsonlStorage } from "@amazme/agent/storage/jsonl/node";
 import { createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText } from "@amazme/ai";
 
 type Fault = "before" | "after" | "torn" | "legacy";

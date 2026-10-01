@@ -30,7 +30,7 @@ export async function resolveApiKey(input: {
   providerId: string;
   auth: ApiKeyAuth;
   store: CredentialStore;
-  env: NodeJS.ProcessEnv;
+  env: Record<string, string | undefined>;
   apiKey?: string;
 }): Promise<AuthResult | undefined> {
   if (input.apiKey !== undefined && input.apiKey !== "") {
