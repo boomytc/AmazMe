@@ -544,12 +544,7 @@ export class AgentLane {
       if (this.harness.live.has(state.responseEntryId)) {
         return { type: "summary", operationId, responseEntryId: state.responseEntryId, usageId: state.usageId };
       }
-      this.recoverAssistant(view, apply, meta, {
-        phase: "assistant_effect_pending",
-        scope: state.scope,
-        responseEntryId: state.responseEntryId,
-        usageId: state.usageId,
-      });
+      this.recoverSummary(view, apply, meta, state);
       return { type: "continue" };
     }
     if (state.phase === "tools") return { type: "tools", operationId };
@@ -557,8 +552,13 @@ export class AgentLane {
     if (target !== null && !view.entry(target)) {
       return { type: "settled", result: this.finish(view, apply, meta, "failed", "missing navigation target") };
     }
-    apply([{ type: "set", address: tipAddress(this.name), value: target }]);
-    return { type: "settled", result: this.finish(view, apply, meta, "completed") };
+    return {
+      type: "settled",
+      result: this.finish(view, apply, meta, "completed", undefined, {
+        writes: [{ type: "set", address: tipAddress(this.name), value: target }],
+        tipId: target,
+      }),
+    };
   }
 
   private async streamAssistant(planned: Extract<Plan, { type: "assistant" }>, signal: AbortSignal): Promise<AssistantMessage> {
@@ -609,6 +609,7 @@ export class AgentLane {
     apply: Apply,
     planned: Extract<Plan, { type: "assistant" }>,
     message: AssistantMessage,
+    alreadyWritten = false,
   ): void {
     const state = view.get<OperationState>(stateAddress(planned.operationId));
     const meta = view.get<OperationMeta>(metaAddress(planned.operationId));
@@ -616,18 +617,30 @@ export class AgentLane {
     const config = this.config(view);
     const calls = message.content.filter((block) => block.type === "toolCall");
     const cancel = state.scope.control.status === "cancel_requested" || message.stopReason === "aborted";
+    const settledMessage: AssistantMessage = cancel
+      ? { ...message, stopReason: "aborted", errorMessage: message.errorMessage ?? "cancelled" }
+      : message.overflow
+        ? { ...message, stopReason: "error", errorMessage: message.errorMessage ?? "context overflow" }
+        : message;
+    const writes = this.assistantWrites(view, planned, settledMessage, alreadyWritten);
+    const advance = (transition: Write[]) => {
+      apply([...writes, ...transition]);
+      this.harness.live.delete(planned.responseEntryId);
+    };
+    const end = (status: OperationResult["status"], error: string) => {
+      this.finish(view, apply, meta, status, error, { writes, tipId: planned.responseEntryId });
+      this.harness.live.delete(planned.responseEntryId);
+    };
     if (cancel) {
-      this.writeAssistant(view, apply, planned, { ...message, stopReason: "aborted", errorMessage: message.errorMessage ?? "cancelled" });
-      this.finish(view, apply, meta, "aborted", message.errorMessage ?? "cancelled");
+      end("aborted", message.errorMessage ?? "cancelled");
       return;
     }
     if (message.overflow) {
-      this.writeAssistant(view, apply, planned, { ...message, stopReason: "error", errorMessage: message.errorMessage ?? "context overflow" });
       if (state.scope.overflowUsed) {
-        this.finish(view, apply, meta, "failed", "context overflow repeated");
+        end("failed", "context overflow repeated");
         return;
       }
-      apply([{
+      advance([{
         type: "set",
         address: stateAddress(planned.operationId),
         value: {
@@ -640,8 +653,7 @@ export class AgentLane {
       return;
     }
     if (message.stopReason === "error" && message.retryable && state.scope.attempt + 1 < config.maxAttempts) {
-      this.writeAssistant(view, apply, planned, message);
-      apply([{
+      advance([{
         type: "set",
         address: stateAddress(planned.operationId),
         value: {
@@ -653,11 +665,9 @@ export class AgentLane {
       return;
     }
     if (message.stopReason === "error") {
-      this.writeAssistant(view, apply, planned, message);
-      this.finish(view, apply, meta, "failed", message.errorMessage ?? "model error");
+      end("failed", message.errorMessage ?? "model error");
       return;
     }
-    this.writeAssistant(view, apply, planned, message);
     if (calls.length > 0 && message.stopReason === "length") {
       const toolStates: ToolCallState[] = calls.map((call) => ({
         sourceIndex: message.content.indexOf(call),
@@ -667,13 +677,13 @@ export class AgentLane {
         status: "outcome_ready",
         terminate: false,
       }));
-      const writes: Write[] = [{
+      const transition: Write[] = [{
         type: "set",
         address: stateAddress(planned.operationId),
         value: { phase: "tools", scope: state.scope, responseEntryId: planned.responseEntryId, calls: toolStates },
       }];
       for (const call of toolStates) {
-        writes.push({
+        transition.push({
           type: "set",
           address: pendingAddress(call.resultEntryId),
           value: {
@@ -682,12 +692,12 @@ export class AgentLane {
           },
         });
       }
-      apply(writes);
+      advance(transition);
       this.materializeTools(view, apply, planned.operationId);
       return;
     }
     if (calls.length > 0) {
-      apply([{
+      advance([{
         type: "set",
         address: stateAddress(planned.operationId),
         value: {
@@ -705,14 +715,36 @@ export class AgentLane {
       }]);
       return;
     }
-    apply([{
+    advance([{
       type: "set",
       address: stateAddress(planned.operationId),
       value: { phase: "checkpoint", scope: state.scope, continuation: "may_finish" },
     }]);
   }
 
-  private recoverAssistant(view: StorageView, apply: Apply, meta: OperationMeta, state: Extract<OperationState, { phase: "assistant_effect_pending" }>): void {
+  private recoverAssistant(view: StorageView, apply: Apply, meta: OperationMeta, state: Extract<OperationState, { phase: "assistant_effect_pending" | "summary_effect_pending" }>): void {
+    // Older writers could commit the response before its phase transition. Only repair a verified settlement.
+    const existing = view.entry(state.responseEntryId);
+    const usage = view.usageRows().filter((row) => row.id === state.usageId);
+    if (existing || usage.length > 0) {
+      const row = usage[0];
+      if (!existing || existing.payload.type !== "message" || existing.payload.message.role !== "assistant"
+        || view.get(tipAddress(this.name)) !== existing.id || usage.length !== 1
+        || !row || row.operationId !== meta.operationId || row.seq !== existing.seq + 1
+        || row.input !== existing.payload.message.usage.input || row.output !== existing.payload.message.usage.output
+        || row.totalTokens !== existing.payload.message.usage.totalTokens) {
+        throw new Error(`inconsistent assistant settlement ${state.responseEntryId}`);
+      }
+      if (state.phase === "summary_effect_pending") {
+        if (existing.payload.message.stopReason !== "aborted") {
+          throw new Error(`inconsistent summary settlement ${state.responseEntryId}`);
+        }
+        this.finish(view, apply, meta, "aborted", existing.payload.message.errorMessage ?? "interrupted before settlement");
+        return;
+      }
+      this.settleAssistant(view, apply, { type: "assistant", operationId: meta.operationId, ...state }, existing.payload.message, true);
+      return;
+    }
     const frames = view.items(frameAddress(meta.operationId, state.responseEntryId)).map((item) => item.item as import("@amazme/ai").AssistantFrame);
     const reduced = reduceFrames(frames);
     const content = reduced.content.filter((block) => block.type !== "toolCall");
@@ -728,8 +760,32 @@ export class AgentLane {
       errorMessage: "interrupted before settlement",
       timestamp: Date.now(),
     };
-    this.writeAssistant(view, apply, { operationId: meta.operationId, responseEntryId: state.responseEntryId, usageId: state.usageId }, message);
-    this.finish(view, apply, meta, "aborted", "interrupted before settlement");
+    const writes = this.assistantWrites(view, { operationId: meta.operationId, ...state }, message, false);
+    this.finish(view, apply, meta, "aborted", "interrupted before settlement", { writes, tipId: state.responseEntryId });
+    this.harness.live.delete(state.responseEntryId);
+  }
+
+  private recoverSummary(view: StorageView, apply: Apply, meta: OperationMeta, state: Extract<OperationState, { phase: "summary_effect_pending" }>): void {
+    if (view.entry(state.responseEntryId)) {
+      this.recoverAssistant(view, apply, meta, state);
+      return;
+    }
+    const usage = view.usageRows().filter((row) => row.id === state.usageId);
+    if (usage.length > 0) {
+      const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
+      const entry = tip === null ? undefined : view.entry(tip);
+      const row = usage[0];
+      // A legacy summary used a fresh entry ID. Its adjacent usage row identifies the committed summary.
+      if (usage.length !== 1 || !row || row.operationId !== meta.operationId
+        || !entry || entry.payload.type !== "compaction" || row.seq !== entry.seq + 1
+        || state.boundary === "resume"
+        || (state.boundary === "navigation" && entry.parentId !== (state.targetId ?? null))) {
+        throw new Error(`inconsistent summary settlement ${state.responseEntryId}`);
+      }
+      this.finish(view, apply, meta, "completed");
+      return;
+    }
+    this.recoverAssistant(view, apply, meta, state);
   }
 
   private settleSummary(
@@ -743,6 +799,7 @@ export class AgentLane {
     if (!state || !meta || state.phase !== "summary_effect_pending" || state.responseEntryId !== planned.responseEntryId) return;
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       this.finish(view, apply, meta, message.stopReason === "aborted" ? "aborted" : "failed", message.errorMessage ?? "summary failed");
+      this.harness.live.delete(planned.responseEntryId);
       return;
     }
     const summary = messageText(message) || "summary";
@@ -757,10 +814,11 @@ export class AgentLane {
     if (state.boundary === "resume") {
       writes.push({ type: "set", address: stateAddress(planned.operationId), value: { phase: "assistant_ready", scope: state.scope } });
       apply(writes);
+      this.harness.live.delete(planned.responseEntryId);
       return;
     }
-    apply(writes);
-    this.finish(view, apply, meta, "completed");
+    this.finish(view, apply, meta, "completed", undefined, { writes, tipId: entryId });
+    this.harness.live.delete(planned.responseEntryId);
   }
 
   private async runTools(operationId: string, signal: AbortSignal): Promise<void> {
@@ -938,14 +996,16 @@ export class AgentLane {
     apply(writes);
   }
 
-  private writeAssistant(
+  private assistantWrites(
     view: StorageView,
-    apply: Apply,
     planned: { operationId: string; responseEntryId: string; usageId: string },
     message: AssistantMessage,
-  ): void {
+    alreadyWritten: boolean,
+  ): Write[] {
+    const clearFrames: Write = { type: "deleteList", address: frameAddress(planned.operationId, planned.responseEntryId) };
+    if (alreadyWritten) return [clearFrames];
     const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
-    apply([
+    return [
       {
         type: "entry",
         id: planned.responseEntryId,
@@ -962,13 +1022,19 @@ export class AgentLane {
         totalTokens: message.usage.totalTokens,
       },
       { type: "set", address: tipAddress(this.name), value: planned.responseEntryId },
-      { type: "deleteList", address: frameAddress(planned.operationId, planned.responseEntryId) },
-    ]);
-    this.harness.live.delete(planned.responseEntryId);
+      clearFrames,
+    ];
   }
 
-  private finish(view: StorageView, apply: Apply, meta: OperationMeta, status: OperationResult["status"], error?: string): OperationResult {
-    const tipId = view.get<string | null>(tipAddress(this.name)) ?? null;
+  private finish(
+    view: StorageView,
+    apply: Apply,
+    meta: OperationMeta,
+    status: OperationResult["status"],
+    error?: string,
+    settlement?: { writes: Write[]; tipId: string | null },
+  ): OperationResult {
+    const tipId = settlement ? settlement.tipId : (view.get<string | null>(tipAddress(this.name)) ?? null);
     const result: OperationResult = {
       operationId: meta.operationId,
       lane: meta.lane,
@@ -982,6 +1048,7 @@ export class AgentLane {
     };
     const record = this.record(view);
     apply([
+      ...(settlement?.writes ?? []),
       { type: "delete", address: metaAddress(meta.operationId) },
       { type: "delete", address: stateAddress(meta.operationId) },
       { type: "set", address: resultAddress(meta.operationId), value: result },

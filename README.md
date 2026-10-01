@@ -29,6 +29,7 @@
 一条 lane 同时最多一个操作。操作状态是一整份当前叶子，每次转移都整份替换。恢复时读这棵叶子，不回放日志。
 
 - 模型请求在 `assistant_effect_pending` 里预留 response id 和 usage id，然后才发送。中途崩溃就用已经写下的帧合成一条 `aborted` 响应，不再次发送。
+- 响应和摘要结算把 entry、usage、tip 与阶段转移或操作终态一起提交。旧版本留下的半结算数据，仅在条目、usage 和操作归属可核验时补齐状态，不重复写入或计费。
 - 工具先写 intent。`replay: "never"` 的工具不重跑，结果里带上最后一次 checkpoint。`replay: "safe"` 用存下来的参数再执行。
 - 多个工具可以乱序完成，entry 仍按源顺序挂到树上。
 - 结束时删掉操作自己的 value，留下不可变的 `pi.result`，其中保存所属 lane。结算后和重启后都只允许所属 lane 读取；早期结果缺少 lane 时拒绝返回，避免猜测归属。
