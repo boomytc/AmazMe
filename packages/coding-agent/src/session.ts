@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, truncateSync } from "node:fs";
 import { dirname } from "node:path";
 import { estimateTokens, messageText } from "@amazme/ai";
 import { type AgentMessage, uuidv7 } from "@amazme/agent";
@@ -67,7 +67,7 @@ export class SessionStore {
 
   static open(file: string): SessionStore {
     if (!existsSync(file)) throw new Error(`session not found: ${file}`);
-    const lines = readFileSync(file, "utf8").split("\n").filter((line) => line.trim().length > 0);
+    const lines = completeLines(repairTornTail(file, readFileSync(file, "utf8")));
     const header = JSON.parse(lines[0] ?? "") as SessionHeader;
     if (header.type !== "session" || header.version !== 3) throw new Error("unsupported session header");
     const store = new SessionStore(file, header);
@@ -97,8 +97,9 @@ export class SessionStore {
    */
   compact(summary: string, tailCount: number): SessionCompactionEntry {
     const path = this.branch();
-    const tail = path.slice(Math.max(0, path.length - tailCount));
-    const prefix = path.slice(0, path.length - tail.length);
+    const tail = closedTail(path, tailCount);
+    const firstKept = tail[0];
+    const prefix = firstKept ? path.slice(0, path.indexOf(firstKept)) : path;
     const parentId = prefix.length > 0 ? (prefix[prefix.length - 1]?.id ?? null) : null;
     const compaction: SessionCompactionEntry = {
       type: "compaction",
@@ -183,4 +184,71 @@ export class SessionStore {
     }
     if (entry.type === "select") this.tipId = entry.targetId;
   }
+}
+
+/** Keep a tool call and its results together when the requested tail would split them. */
+function closedTail(path: TreeEntry[], tailCount: number): SessionMessageEntry[] {
+  let origin = 0;
+  for (let index = path.length - 1; index >= 0; index--) {
+    if (path[index]?.type === "compaction") {
+      origin = index + 1;
+      break;
+    }
+  }
+  const messages = path.slice(origin).filter((entry): entry is SessionMessageEntry => entry.type === "message");
+  if (tailCount <= 0 || messages.length === 0) return [];
+  let start = Math.max(0, messages.length - tailCount);
+  let end = messages.length;
+  for (let guard = 0; guard < messages.length; guard++) {
+    let moved = false;
+    for (let keptIndex = start; keptIndex < end; keptIndex++) {
+      const entry = messages[keptIndex];
+      if (!entry || entry.message.role !== "toolResult") continue;
+      const owner = nearestToolCall(messages, keptIndex, entry.message.toolCallId);
+      if (owner >= 0 && owner < start) {
+        start = owner;
+        moved = true;
+      }
+    }
+    for (let index = start; index < end; index++) {
+      const entry = messages[index];
+      if (!entry || entry.message.role !== "assistant") continue;
+      const ids = entry.message.content.filter((block) => block.type === "toolCall").map((block) => block.id);
+      if (ids.length === 0) continue;
+      for (let follow = index + 1; follow < messages.length; follow++) {
+        const next = messages[follow];
+        if (!next || next.message.role !== "toolResult" || !ids.includes(next.message.toolCallId)) break;
+        if (follow >= end) {
+          end = follow + 1;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  return messages.slice(start, end);
+}
+
+/** The tool result belongs to the closest preceding call with that id. */
+function nearestToolCall(messages: SessionMessageEntry[], before: number, toolCallId: string): number {
+  for (let index = before - 1; index >= 0; index--) {
+    const message = messages[index]?.message;
+    if (message?.role !== "assistant") continue;
+    if (message.content.some((block) => block.type === "toolCall" && block.id === toolCallId)) return index;
+  }
+  return -1;
+}
+
+/** Keep only newline-terminated records, and cut a torn tail off the file before the next append. */
+function repairTornTail(file: string, text: string): string {
+  if (text.length === 0 || text.endsWith("\n")) return text;
+  const cut = text.lastIndexOf("\n");
+  const kept = cut === -1 ? "" : text.slice(0, cut + 1);
+  truncateSync(file, Buffer.byteLength(kept));
+  return kept;
+}
+
+function completeLines(text: string): string[] {
+  const kept = text.endsWith("\n") || text.length === 0 ? text : text.slice(0, text.lastIndexOf("\n") + 1);
+  return kept.split("\n").filter((line) => line.trim().length > 0);
 }
