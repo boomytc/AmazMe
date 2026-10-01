@@ -14,7 +14,7 @@
 
 `Models` 按 `model.provider` 把请求交给对应的 Provider。认证顺序是请求里的 key、已存储的凭证、环境变量，最后是 provider 声明的 ambient。存过凭证之后，后面的来源不再作为退路。
 
-消息只有 `system`、`user`、`assistant`、`toolResult`。`transformMessages` 负责换供应商：收短 tool call id，拿掉目标模型看不见的图片。`openai-completions` 是一条真实的线协议，测试用 faux provider。
+消息只有 `system`、`user`、`assistant`、`toolResult`。`transformMessages` 负责换供应商：收短 tool call id，拿掉目标模型看不见的图片。线协议放在 `api/`，供应商文件只登记目录、认证和地址。现在的线协议是 `openai-completions`，OpenAI 这家供应商指向它。测试用 faux provider。
 
 流式帧可以记下来。帧即使看起来完整，也只是恢复用的前缀，不是一次已经结算的响应。
 

@@ -10,7 +10,7 @@ import {
   MemoryCredentialStore,
   messageFromFrames,
   normalizeToolCallId,
-  openaiCompletionsProvider,
+  openaiProvider,
   reduceFrames,
   resolveApiKey,
   transformMessages,
@@ -123,7 +123,7 @@ test("models routes a request to the provider that owns the model and resolves i
   const models = createModels({ store, env: { OPENAI_API_KEY: "sk-test" } });
   const seen: string[] = [];
   models.setProvider(
-    openaiCompletionsProvider({
+    openaiProvider({
       fetch: async (_url, init) => {
         const headers = new Headers(init?.headers);
         seen.push(headers.get("authorization") ?? "");
@@ -153,7 +153,7 @@ test("openai completions reassembles streamed tool call arguments", async () => 
   const models = createModels({ env: { OPENAI_API_KEY: "sk" } });
   let sent = "";
   models.setProvider(
-    openaiCompletionsProvider({
+    openaiProvider({
       fetch: async (_url, init) => {
         sent = String(init?.body ?? "");
         return new Response(

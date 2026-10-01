@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Agent } from "@amazme/agent";
-import { createModels, fauxProvider, openaiCompletionsProvider } from "@amazme/ai";
+import { createModels, fauxProvider, openaiProvider } from "@amazme/ai";
 import { AgentSession } from "./agent-session.ts";
 import { SessionStore } from "./session.ts";
 import { createCodingTools } from "./tools.ts";
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const models = createModels();
-  if (args.provider === "openai") models.setProvider(openaiCompletionsProvider({ modelIds: [args.model] }));
+  if (args.provider === "openai") models.setProvider(openaiProvider({ modelIds: [args.model] }));
   else models.setProvider(fauxProvider({ respond: (_context, _options, _state, model) => ({
     role: "assistant",
     content: [{ type: "text", text: `faux:${args.prompt}` }],

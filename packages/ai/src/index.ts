@@ -10,8 +10,16 @@ export {
   type AssistantEventStream,
   type Provider,
 } from "./models.ts";
+export {
+  openaiCompletionsApi,
+  OPENAI_COMPLETIONS_API,
+  type OpenAICompletionsApi,
+  type OpenAICompletionsApiOptions,
+  type OpenAICompletionsRequest,
+} from "./api/openai-completions.ts";
 export { fauxAssistant, fauxProvider, fauxText, fauxToolCall, type FauxProviderOptions, type FauxResponder, type FauxState } from "./providers/faux.ts";
-export { openaiCompletionsProvider, type OpenAICompletionsOptions } from "./providers/openai-completions.ts";
+export { completionsProvider, type CompletionsProviderOptions } from "./providers/completions.ts";
+export { openaiProvider, type OpenAIProviderOptions } from "./providers/openai.ts";
 export {
   emptyUsage,
   estimateTokens,

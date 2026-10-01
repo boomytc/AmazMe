@@ -1,22 +1,23 @@
-import { baseAssistant, createAssistantEventStream, type Provider } from "../models.ts";
-import type {
-  AssistantMessage,
-  Context,
-  Message,
-  Model,
-  StreamOptions,
-  ToolCall,
-} from "../types.ts";
+import { baseAssistant, createAssistantEventStream, type AssistantEventStream } from "../models.ts";
+import type { AssistantMessage, Context, Message, Model, ToolCall } from "../types.ts";
 import { emptyUsage, messageText, transformMessages } from "../transform.ts";
 
-export interface OpenAICompletionsOptions {
-  api?: string;
-  providerId?: string;
-  name?: string;
-  baseUrl?: string;
-  modelIds?: string[];
+export const OPENAI_COMPLETIONS_API = "openai-completions";
+
+export interface OpenAICompletionsApiOptions {
   fetch?: typeof fetch;
-  env?: string;
+}
+
+export interface OpenAICompletionsRequest {
+  baseUrl: string;
+  apiKey: string;
+  signal?: AbortSignal;
+}
+
+/** Chat Completions wire. Providers supply the catalog, auth, and base URL. */
+export interface OpenAICompletionsApi {
+  readonly id: typeof OPENAI_COMPLETIONS_API;
+  stream(model: Model, context: Context, request: OpenAICompletionsRequest): AssistantEventStream;
 }
 
 interface ChatMessage {
@@ -26,35 +27,13 @@ interface ChatMessage {
   tool_call_id?: string;
 }
 
-/**
- * OpenAI Chat Completions wire protocol. Other vendors that speak this API
- * share the implementation and differ only by provider id, base URL, and catalog.
- */
-export function openaiCompletionsProvider(options: OpenAICompletionsOptions = {}): Provider {
-  const id = options.providerId ?? "openai";
-  const api = options.api ?? "openai-completions";
-  const baseUrl = options.baseUrl ?? "https://api.openai.com/v1";
-  const modelIds = options.modelIds ?? ["gpt-4o-mini"];
+export function openaiCompletionsApi(options: OpenAICompletionsApiOptions = {}): OpenAICompletionsApi {
   const fetchImpl = options.fetch ?? fetch;
-  const models: Model[] = modelIds.map((modelId) => ({
-    id: modelId,
-    name: modelId,
-    provider: id,
-    api,
-    input: ["text"],
-    contextWindow: 128_000,
-    maxTokens: 16_384,
-    cost: { input: 0.15, output: 0.6 },
-  }));
-
   return {
-    id,
-    name: options.name ?? "OpenAI",
-    auth: { env: options.env ?? "OPENAI_API_KEY" },
-    getModels: () => models,
-    streamSimple(model, context, streamOptions) {
+    id: OPENAI_COMPLETIONS_API,
+    stream(model, context, request) {
       const stream = createAssistantEventStream();
-      void readCompletions(fetchImpl, baseUrl, model, context, streamOptions)
+      void readCompletions(fetchImpl, model, context, request)
         .then((message) => {
           stream.push({ type: "start", partial: { ...message, content: [], stopReason: "pending" } });
           for (const block of message.content) {
@@ -68,7 +47,7 @@ export function openaiCompletionsProvider(options: OpenAICompletionsOptions = {}
           stream.push({ type: "done", reason: message.stopReason, message });
         })
         .catch((error: unknown) => {
-          const failed = baseAssistant(model, [{ type: "text", text: "" }], streamOptions.signal?.aborted ? "aborted" : "error");
+          const failed = baseAssistant(model, [{ type: "text", text: "" }], request.signal?.aborted ? "aborted" : "error");
           failed.errorMessage = error instanceof Error ? error.message : String(error);
           stream.push({ type: "error", error: failed });
         });
@@ -79,16 +58,15 @@ export function openaiCompletionsProvider(options: OpenAICompletionsOptions = {}
 
 async function readCompletions(
   fetchImpl: typeof fetch,
-  baseUrl: string,
   model: Model,
   context: Context,
-  options: StreamOptions & { apiKey: string },
+  request: OpenAICompletionsRequest,
 ): Promise<AssistantMessage> {
   const wire: Context = { ...context, messages: transformMessages(context.messages, model) };
-  const response = await fetchImpl(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+  const response = await fetchImpl(`${request.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${options.apiKey}`,
+      authorization: `Bearer ${request.apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -104,7 +82,7 @@ async function readCompletions(
           }
         : {}),
     }),
-    signal: options.signal,
+    signal: request.signal,
   });
   if (!response.ok) {
     const body = await response.text();
