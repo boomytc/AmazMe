@@ -1,6 +1,6 @@
 # AmazMe
 
-一个按 [Pi](https://github.com/earendil-works/pi) agent harness 的分层做成的 TypeScript monorepo。模型 I/O、agent 循环、持久化操作机、编码会话各管一层，依赖只向下。
+一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。`AgentHarness` 是额外的精简持久化操作机，与 CLI 的内存循环分别运行；它没有采用 [`pi-durable`](https://github.com/earendil-works/pi/blob/ed8b3bcc194c8263ec8bec3f337053ae73866da1/packages/durable/README.md) 的任务调度和 Chord 文档架构。
 
 ```text
 @amazme/ai             Provider、认证、统一消息、流事件
@@ -31,13 +31,13 @@
 - 模型请求在 `assistant_effect_pending` 里预留 response id 和 usage id，然后才发送。中途崩溃就用已经写下的帧合成一条 `aborted` 响应，不再次发送。
 - 工具先写 intent。`replay: "never"` 的工具不重跑，结果里带上最后一次 checkpoint。`replay: "safe"` 用存下来的参数再执行。
 - 多个工具可以乱序完成，entry 仍按源顺序挂到树上。
-- 结束时删掉操作自己的 value，留下不可变的 `pi.result`。
+- 结束时删掉操作自己的 value，留下不可变的 `pi.result`，其中保存所属 lane。结算后和重启后都只允许所属 lane 读取；早期结果缺少 lane 时拒绝返回，避免猜测归属。
 
 Memory 和 JSONL 走同一个存储接口。
 
 ## 编码会话
 
-会话文件是 version 3 的 JSONL 树。`select` 把 tip 挪到旧节点。Compaction 插入摘要，并把要保留的尾巴复制到摘要下面。旧 entry 还在文件里，之后的模型请求不再看见摘要之前的内容。
+会话文件是只追加的 JSONL 树，头部版本号是 3。它包含 `id`、`parentId`、`select`、`compaction`，文件格式与 Pi session 不兼容。`select` 把 tip 挪到旧节点。Compaction 插入摘要，把要保留的尾巴复制到摘要下面，并补上被切开的工具调用和工具结果。旧 entry 还在文件里，之后的模型请求不再看见摘要之前的内容。
 
 内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。
 
@@ -56,4 +56,4 @@ OpenAI：
 npx tsx packages/coding-agent/src/cli.ts --provider openai --model gpt-4o-mini "你好"
 ```
 
-这是同一套结构的独立实现，不是 Pi 仓库的拷贝。范围停在这三层：没有 TUI、没有四十多个供应商、没有 Chord，也没有 Pi 规范里全部 13 个操作叶子（deferred 和 summary 崩溃重试不在这里）。
+这是同一套分层的独立实现，不是 Pi 仓库的拷贝。对齐范围是传统 Agent 这一路：没有 TUI、没有四十多个供应商、没有 Chord。`AgentHarness` 不支持 deferred 和摘要崩溃重试。`convertToLlm`、`transformContext`、工具前后 hook 和 `continue()` 也不在这里。
