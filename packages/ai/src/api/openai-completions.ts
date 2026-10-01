@@ -33,64 +33,55 @@ export function openaiCompletionsApi(options: OpenAICompletionsApiOptions = {}):
     id: OPENAI_COMPLETIONS_API,
     stream(model, context, request) {
       const stream = createAssistantEventStream();
-      void readCompletions(fetchImpl, model, context, request)
-        .then((message) => {
-          stream.push({ type: "start", partial: { ...message, content: [], stopReason: "pending" } });
-          for (const block of message.content) {
-            if (block.type === "text" && block.text.length > 0) {
-              stream.push({ type: "text_delta", delta: block.text, partial: message });
-            } else if (block.type === "toolCall") {
-              const index = message.content.indexOf(block);
-              stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: message });
-            }
-          }
-          stream.push({ type: "done", reason: message.stopReason, message });
-        })
-        .catch((error: unknown) => {
-          const failed = baseAssistant(model, [{ type: "text", text: "" }], request.signal?.aborted ? "aborted" : "error");
-          failed.errorMessage = error instanceof Error ? error.message : String(error);
-          stream.push({ type: "error", error: failed });
-        });
+      void pump(fetchImpl, model, context, request, stream);
       return stream;
     },
   };
 }
 
-async function readCompletions(
+async function pump(
   fetchImpl: typeof fetch,
   model: Model,
   context: Context,
   request: OpenAICompletionsRequest,
-): Promise<AssistantMessage> {
-  const wire: Context = { ...context, messages: transformMessages(context.messages, model) };
-  const response = await fetchImpl(`${request.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${request.apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: model.id,
-      stream: true,
-      messages: toChatMessages(wire),
-      ...(context.tools && context.tools.length > 0
-        ? {
-            tools: context.tools.map((tool) => ({
-              type: "function",
-              function: { name: tool.name, description: tool.description, parameters: tool.parameters },
-            })),
-          }
-        : {}),
-    }),
-    signal: request.signal,
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    const failed = baseAssistant(model, [{ type: "text", text: "" }], "error");
-    failed.errorMessage = `OpenAI completions ${response.status}: ${body.slice(0, 400)}`;
-    return failed;
+  stream: AssistantEventStream,
+): Promise<void> {
+  try {
+    const wire: Context = { ...context, messages: transformMessages(context.messages, model) };
+    const response = await fetchImpl(`${request.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${request.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: model.id,
+        stream: true,
+        messages: toChatMessages(wire),
+        ...(context.tools && context.tools.length > 0
+          ? {
+              tools: context.tools.map((tool) => ({
+                type: "function",
+                function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+              })),
+            }
+          : {}),
+      }),
+      signal: request.signal,
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      const failed = baseAssistant(model, [{ type: "text", text: "" }], "error");
+      failed.errorMessage = `OpenAI completions ${response.status}: ${body.slice(0, 400)}`;
+      stream.push({ type: "error", error: failed });
+      return;
+    }
+    await emitSse(model, response, stream);
+  } catch (error) {
+    const failed = baseAssistant(model, [{ type: "text", text: "" }], request.signal?.aborted ? "aborted" : "error");
+    failed.errorMessage = error instanceof Error ? error.message : String(error);
+    stream.push({ type: "error", error: failed });
   }
-  return parseSse(model, response);
 }
 
 function toChatMessages(context: Context): ChatMessage[] {
@@ -129,14 +120,70 @@ function convertMessage(message: Message): ChatMessage {
   };
 }
 
-async function parseSse(model: Model, response: Response): Promise<AssistantMessage> {
+async function emitSse(model: Model, response: Response, stream: AssistantEventStream): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("OpenAI completions response has no body");
   const decoder = new TextDecoder();
   let buffer = "";
   let text = "";
-  const tools = new Map<number, { id: string; name: string; arguments: string }>();
-  let finish = "stop";
+  let finish = "";
+  let started = false;
+  let closed = false;
+  const calls = new Map<number, { id: string; name: string; arguments: string }>();
+  const partial = baseAssistant(model, [], "pending");
+
+  const snapshot = (stopReason: AssistantMessage["stopReason"]): AssistantMessage => {
+    const content: AssistantMessage["content"] = [];
+    if (text.length > 0) content.push({ type: "text", text });
+    for (const index of [...calls.keys()].sort((left, right) => left - right)) {
+      const call = calls.get(index);
+      if (!call) continue;
+      content.push({
+        type: "toolCall",
+        id: call.id || `call_${call.name || index}`,
+        name: call.name,
+        arguments: parseArgs(call.arguments),
+      });
+    }
+    return { ...partial, content: content.length > 0 ? content : [{ type: "text", text: "" }], stopReason, usage: emptyUsage() };
+  };
+  const contentIndex = (index: number): number => {
+    const earlier = [...calls.keys()].filter((key) => key < index).length;
+    return (text.length > 0 ? 1 : 0) + earlier;
+  };
+  const begin = () => {
+    if (started) return;
+    started = true;
+    stream.push({ type: "start", partial: snapshot("pending") });
+  };
+  const finishMessage = () => {
+    if (closed) return;
+    if (!finish) {
+      closed = true;
+      begin();
+      const failed = snapshot("error");
+      failed.errorMessage = "OpenAI completions stream ended without a finish reason";
+      stream.push({ type: "error", error: failed });
+      return;
+    }
+    closed = true;
+    begin();
+    const stopReason = finish === "length" ? "length" : calls.size > 0 || finish === "tool_calls" ? "toolUse" : "stop";
+    for (const index of [...calls.keys()].sort((left, right) => left - right)) {
+      const call = calls.get(index);
+      if (!call) continue;
+      const toolCall: ToolCall = {
+        type: "toolCall",
+        id: call.id || `call_${call.name || index}`,
+        name: call.name,
+        arguments: parseArgs(call.arguments),
+      };
+      stream.push({ type: "toolcall_end", contentIndex: contentIndex(index), toolCall, partial: snapshot(stopReason) });
+    }
+    const message = snapshot(stopReason);
+    stream.push({ type: "done", reason: stopReason, message });
+  };
+
   while (true) {
     const chunk = await reader.read();
     if (chunk.done) break;
@@ -147,7 +194,10 @@ async function parseSse(model: Model, response: Response): Promise<AssistantMess
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) continue;
       const data = trimmed.slice(5).trim();
-      if (data === "[DONE]") continue;
+      if (data === "[DONE]") {
+        finishMessage();
+        continue;
+      }
       const parsed = JSON.parse(data) as {
         choices?: Array<{
           finish_reason?: string | null;
@@ -159,32 +209,33 @@ async function parseSse(model: Model, response: Response): Promise<AssistantMess
       };
       const choice = parsed.choices?.[0];
       if (!choice) continue;
-      if (choice.finish_reason) finish = choice.finish_reason;
-      if (choice.delta?.content) text += choice.delta.content;
+      if (choice.delta?.content) {
+        begin();
+        text += choice.delta.content;
+        stream.push({ type: "text_delta", delta: choice.delta.content, partial: snapshot("pending") });
+      }
       for (const call of choice.delta?.tool_calls ?? []) {
-        const current = tools.get(call.index) ?? { id: "", name: "", arguments: "" };
+        begin();
+        const current = calls.get(call.index) ?? { id: "", name: "", arguments: "" };
+        const isNew = !calls.has(call.index);
         if (call.id) current.id = call.id;
         if (call.function?.name) current.name += call.function.name;
-        if (call.function?.arguments) current.arguments += call.function.arguments;
-        tools.set(call.index, current);
+        calls.set(call.index, current);
+        if (isNew) stream.push({ type: "toolcall_start", contentIndex: contentIndex(call.index), partial: snapshot("pending") });
+        if (call.function?.arguments) {
+          current.arguments += call.function.arguments;
+          stream.push({
+            type: "toolcall_delta",
+            contentIndex: contentIndex(call.index),
+            delta: call.function.arguments,
+            partial: snapshot("pending"),
+          });
+        }
       }
+      if (choice.finish_reason) finish = choice.finish_reason;
     }
   }
-  const content: AssistantMessage["content"] = [];
-  if (text.length > 0) content.push({ type: "text", text });
-  const calls: ToolCall[] = [...tools.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([, call]) => ({
-      type: "toolCall",
-      id: call.id || `call_${call.name}`,
-      name: call.name,
-      arguments: parseArgs(call.arguments),
-    }));
-  content.push(...calls);
-  const stopReason = calls.length > 0 || finish === "tool_calls" ? "toolUse" : finish === "length" ? "length" : "stop";
-  const message = baseAssistant(model, content.length > 0 ? content : [{ type: "text", text: "" }], stopReason);
-  message.usage = emptyUsage();
-  return message;
+  finishMessage();
 }
 
 function parseArgs(raw: string): unknown {

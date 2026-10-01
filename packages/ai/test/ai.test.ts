@@ -222,6 +222,94 @@ test("openai completions reassembles streamed tool call arguments", async () => 
   assert.equal(message.stopReason, "toolUse");
 });
 
+test("completions text arrives before the response ends, and a length stop stays length", async () => {
+  let enqueue: ((chunk: Uint8Array) => void) | undefined;
+  let close: (() => void) | undefined;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      enqueue = (chunk) => controller.enqueue(chunk);
+      close = () => controller.close();
+    },
+  });
+  const models = createModels({ env: { OPENAI_API_KEY: "sk" } });
+  models.setProvider(openaiProvider({ fetch: async () => new Response(body, { status: 200 }) }));
+  const model = models.getModel("openai", "gpt-4o-mini");
+  assert.ok(model);
+  const stream = models.streamSimple(model, { messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+  let sawText: (delta: string) => void = () => undefined;
+  const seenText = new Promise<string>((resolve) => {
+    sawText = resolve;
+  });
+  const types: string[] = [];
+  const finished = (async () => {
+    for await (const event of stream) {
+      types.push(event.type);
+      if (event.type === "text_delta") sawText(event.delta);
+    }
+  })();
+  const encoder = new TextEncoder();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("provider did not start reading")), 1000);
+    const poll = () => {
+      if (!enqueue) {
+        setTimeout(poll, 5);
+        return;
+      }
+      clearTimeout(timer);
+      resolve();
+    };
+    poll();
+  });
+  enqueue?.(encoder.encode('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'));
+  assert.equal(await seenText, "Hi");
+  assert.equal(types[0], "start");
+  enqueue?.(encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+  close?.();
+  await finished;
+  assert.equal((await stream.result()).stopReason, "stop");
+
+  models.setProvider(
+    openaiProvider({
+      fetch: async () =>
+        new Response(
+          [
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\\"path\\":\\"a\\"}"}}]}}]}',
+            "",
+            'data: {"choices":[{"finish_reason":"length"}]}',
+            "",
+            "data: [DONE]",
+            "",
+          ].join("\n"),
+          { status: 200 },
+        ),
+    }),
+  );
+  const truncated = await models.completeSimple(model, { messages: [{ role: "user", content: "cut", timestamp: 1 }] });
+  assert.equal(truncated.stopReason, "length");
+  assert.equal(truncated.content.some((block) => block.type === "toolCall"), true);
+});
+
+test("a completions stream that ends without a finish reason is an error", async () => {
+  const models = createModels({ env: { OPENAI_API_KEY: "sk" } });
+  models.setProvider(
+    openaiProvider({
+      fetch: async () =>
+        new Response(
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{}"}}]}}]}\n\n',
+          { status: 200 },
+        ),
+    }),
+  );
+  const model = models.getModel("openai", "gpt-4o-mini");
+  assert.ok(model);
+  const message = await models.completeSimple(model, {
+    messages: [{ role: "user", content: "go", timestamp: 1 }],
+    tools: [{ name: "read", description: "read", parameters: { type: "object" } }],
+  });
+  assert.equal(message.stopReason, "error");
+  assert.match(message.errorMessage ?? "", /finish reason/);
+});
+
 test("faux streams text deltas and records the transcript it was given", async () => {
   const provider = fauxProvider({
     respond: (_context, _options, _state, model) => fauxAssistant("abcdefghijk"),
