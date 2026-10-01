@@ -1,4 +1,5 @@
 import type {
+  AssistantEvent,
   AssistantMessage,
   JsonSchema,
   Message,
@@ -47,7 +48,7 @@ export type AgentEvent =
   | { type: "turn_start" }
   | { type: "turn_end"; message: AssistantMessage; toolResults: ToolResultMessage[] }
   | { type: "message_start"; message: AgentMessage }
-  | { type: "message_update"; message: AssistantMessage; delta: string }
+  | { type: "message_update"; message: AssistantMessage; assistantMessageEvent: AssistantEvent; delta: string }
   | { type: "message_end"; message: AgentMessage }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
   | { type: "tool_execution_update"; toolCallId: string; partial: string }

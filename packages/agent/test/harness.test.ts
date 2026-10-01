@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AgentHarness, type AgentTool, JsonlStorage, MemoryStorage } from "@amazme/agent";
+import { AgentHarness, type AgentTool, JsonlStorage, MemoryStorage, value } from "@amazme/agent";
 import {
   baseAssistant,
   createAssistantEventStream,
@@ -328,4 +328,196 @@ test("jsonl storage reloads a settled session", async () => {
   const info = await reloaded.inspect();
   assert.equal(info.phase, null);
   assert.ok(info.lastOperationId);
+});
+
+test("a second drive joins the in-flight operation instead of sending again", async () => {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = 0;
+  const provider = fauxProvider({
+    respond: async () => {
+      entered += 1;
+      await gate;
+      return fauxAssistant("once");
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const runtime = harness(new MemoryStorage(), models);
+  const lane = runtime.lane();
+  const admitted = await lane.accept({ kind: "prompt", text: "hi" });
+  assert.equal(admitted.ok, true);
+  const first = lane.drive(admitted.value.operationId);
+  const second = lane.drive(admitted.value.operationId);
+  await waitFor(async () => entered === 1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(entered, 1);
+  release();
+  const [left, right] = await Promise.all([first, second]);
+  assert.equal(left.ok && left.value.kind === "settled" ? left.value.result.status : "", "completed");
+  assert.equal(right.ok && right.value.kind === "settled" ? right.value.result.status : "", "completed");
+  assert.equal(entered, 1);
+});
+
+test("aborting one lane does not abort another lane", async () => {
+  const gates: Array<{ signal: AbortSignal; release: () => void }> = [];
+  const provider = fauxProvider({
+    respond: (_context, options) =>
+      new Promise((resolve) => {
+        const signal = options.signal ?? new AbortController().signal;
+        const finish = () => resolve(fauxAssistant(signal.aborted ? "aborted" : "done", { stopReason: signal.aborted ? "aborted" : "stop" }));
+        signal.addEventListener("abort", finish, { once: true });
+        gates.push({ signal, release: finish });
+      }),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const runtime = harness(new MemoryStorage(), models);
+  const laneA = runtime.lane("a");
+  const laneB = runtime.lane("b");
+  const admittedA = await laneA.accept({ kind: "prompt", text: "a" });
+  assert.equal(admittedA.ok, true);
+  const drivingA = laneA.drive(admittedA.value.operationId);
+  await waitFor(async () => gates.length === 1);
+  const admittedB = await laneB.accept({ kind: "prompt", text: "b" });
+  assert.equal(admittedB.ok, true);
+  const drivingB = laneB.drive(admittedB.value.operationId);
+  await waitFor(async () => gates.length === 2);
+  await laneA.requestAbort(admittedA.value.operationId);
+  await waitFor(async () => gates[0]?.signal.aborted === true);
+  assert.equal(gates[1]?.signal.aborted, false);
+  gates[1]?.release();
+  const settledA = await drivingA;
+  const settledB = await drivingB;
+  assert.equal(settledA.ok && settledA.value.kind === "settled" ? settledA.value.result.status : "", "aborted");
+  assert.equal(settledB.ok && settledB.value.kind === "settled" ? settledB.value.result.status : "", "completed");
+});
+
+test("a torn jsonl tail is cut off before the next write", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-torn-"));
+  const file = join(dir, "lane.jsonl");
+  const storage = new JsonlStorage(file);
+  await storage.commit([{ type: "set", address: value("keep"), value: 1 }]);
+  appendFileSync(file, "{\"writes\":[");
+  const reopened = new JsonlStorage(file);
+  assert.equal(await reopened.read((view) => view.get(value("keep"))), 1);
+  await reopened.commit([{ type: "set", address: value("keep"), value: 2 }]);
+  const again = new JsonlStorage(file);
+  assert.equal(await again.read((view) => view.get(value("keep"))), 2);
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (line.trim().length > 0) JSON.parse(line);
+  }
+});
+
+test("a drive on another lane does not join or block the lane that owns the operation", async () => {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = 0;
+  let hold = false;
+  const provider = fauxProvider({
+    respond: async () => {
+      entered += 1;
+      if (hold) await gate;
+      return fauxAssistant("once");
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const runtime = harness(new MemoryStorage(), models);
+  const owner = runtime.lane("owner");
+  const other = runtime.lane("other");
+  const admitted = await owner.accept({ kind: "prompt", text: "hi" });
+  assert.equal(admitted.ok, true);
+  const wrongFirst = other.drive(admitted.value.operationId);
+  const right = owner.drive(admitted.value.operationId);
+  const [foreign, owned] = await Promise.all([wrongFirst, right]);
+  assert.equal(foreign.ok, false);
+  assert.equal(foreign.ok ? "" : foreign.error.code, "operation_mismatch");
+  assert.equal(owned.ok && owned.value.kind === "settled" ? owned.value.result.status : "", "completed");
+  assert.equal(entered, 1);
+
+  hold = true;
+  const second = await owner.accept({ kind: "prompt", text: "again" });
+  assert.equal(second.ok, true);
+  const ownedDrive = owner.drive(second.value.operationId);
+  await waitFor(async () => entered === 2);
+  let foreignResult: Awaited<ReturnType<typeof other.drive>> | undefined;
+  void other.drive(second.value.operationId).then((result) => {
+    foreignResult = result;
+  });
+  await waitFor(async () => foreignResult !== undefined);
+  assert.equal(foreignResult && !foreignResult.ok ? foreignResult.error.code : "", "operation_mismatch");
+  release();
+  const ownedResult = await ownedDrive;
+  assert.equal(ownedResult.ok && ownedResult.value.kind === "settled" ? ownedResult.value.result.status : "", "completed");
+  assert.equal(entered, 2);
+});
+
+test("settled results remain lane-owned after later operations and reopening storage", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-result-owner-"));
+  const file = join(dir, "lane.jsonl");
+  const { provider, models } = scripted([fauxAssistant("answer")]);
+  const runtime = harness(new JsonlStorage(file), models);
+  const owner = runtime.lane("owner");
+  const other = runtime.lane("other");
+  const results = [await owner.prompt("hi")];
+
+  for (const request of [{ kind: "compaction" }, { kind: "navigation", targetId: null }] as const) {
+    const admission = await owner.accept(request);
+    assert.equal(admission.ok, true);
+    const outcome = await owner.drive(admission.value.operationId);
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.value.kind, "settled");
+    if (outcome.value.kind === "settled") results.push(outcome.value.result);
+  }
+
+  for (const result of results) {
+    assert.equal(result.lane, "owner");
+    const foreign = await other.drive(result.operationId);
+    assert.equal(foreign.ok, false);
+    assert.equal(foreign.ok ? "" : foreign.error.code, "operation_mismatch");
+    assert.deepEqual(await owner.drive(result.operationId), { ok: true, value: { kind: "settled", result } });
+  }
+  runtime.close();
+
+  const reloaded = harness(new JsonlStorage(file), models);
+  const callsBeforeRead = provider.state.callCount;
+  for (const result of results) {
+    const foreign = await reloaded.lane("other").drive(result.operationId);
+    assert.equal(foreign.ok, false);
+    assert.equal(foreign.ok ? "" : foreign.error.code, "operation_mismatch");
+    assert.deepEqual(await reloaded.lane("owner").drive(result.operationId), { ok: true, value: { kind: "settled", result } });
+  }
+  assert.equal(provider.state.callCount, callsBeforeRead);
+  reloaded.close();
+});
+
+test("legacy results without persisted lane ownership are rejected", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-unowned-result-"));
+  const file = join(dir, "lane.jsonl");
+  const { models } = scripted([fauxAssistant("answer")]);
+  await new JsonlStorage(file).commit([{
+    type: "set",
+    address: value("pi.result", "legacy"),
+    value: {
+      operationId: "legacy",
+      kind: "run",
+      status: "completed",
+      fromTipId: null,
+      tipId: null,
+      startedAt: 1,
+      endedAt: 2,
+    },
+  }]);
+  const runtime = harness(new JsonlStorage(file), models);
+  for (const name of ["main", "owner", "other"]) {
+    const outcome = await runtime.lane(name).drive("legacy");
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.ok ? "" : outcome.error.code, "operation_mismatch");
+  }
+  runtime.close();
 });

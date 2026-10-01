@@ -177,18 +177,27 @@ async function streamAssistant(
 ): Promise<AssistantMessage> {
   const stream = input.hooks.stream(model, messages, tools, thinkingLevel, signal);
   let latest: AssistantMessage | undefined;
+  let started = false;
   for await (const event of stream) {
-    if (event.type === "done") latest = event.message;
-    else if (event.type === "error") latest = event.error;
-    else if (event.type === "text_delta") {
-      latest = event.partial;
-      await emit({ type: "message_update", message: event.partial, delta: event.delta });
-    } else {
-      latest = event.partial;
+    if (event.type === "done") {
+      latest = event.message;
+      break;
     }
+    if (event.type === "error") {
+      latest = event.error;
+      break;
+    }
+    latest = event.partial;
+    if (event.type === "start" || !started) {
+      started = true;
+      await emit({ type: "message_start", message: event.partial });
+    }
+    if (event.type === "start") continue;
+    const delta = "delta" in event && typeof event.delta === "string" ? event.delta : "";
+    await emit({ type: "message_update", message: event.partial, assistantMessageEvent: event, delta });
   }
   const finalMessage = latest ?? (await stream.result());
-  await emit({ type: "message_start", message: finalMessage });
+  if (!started) await emit({ type: "message_start", message: finalMessage });
   await emit({ type: "message_end", message: finalMessage });
   return finalMessage;
 }

@@ -113,6 +113,23 @@ test("a truncated tool call is not executed", async () => {
   assert.equal(last && last.role === "assistant" && last.content[0]?.type === "text" ? last.content[0].text : "", "continued");
 });
 
+test("assistant updates start after message_start and include tool-call events", async () => {
+  const { agent } = agentWith((_context, _options, state) => {
+    if (state.callCount === 1) return fauxAssistant([fauxToolCall("echo", { text: "x" })]);
+    return fauxAssistant("done");
+  }, [echoTool()]);
+  const trace: string[] = [];
+  agent.subscribe((event) => {
+    if (event.type === "message_start" && event.message.role === "assistant") trace.push("start");
+    if (event.type === "message_update") trace.push(event.assistantMessageEvent.type);
+    if (event.type === "message_end" && event.message.role === "assistant") trace.push("end");
+  });
+  await agent.prompt("go");
+  assert.equal(trace[0], "start");
+  assert.ok(trace.indexOf("start") < trace.indexOf("toolcall_end"));
+  assert.ok(trace.indexOf("toolcall_end") < trace.indexOf("end"));
+});
+
 test("terminate skips the following model turn", async () => {
   const { agent, provider } = agentWith(
     () => fauxAssistant([fauxToolCall("echo", { text: "final" })]),

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, truncateSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentMessage } from "../types.ts";
 
@@ -205,9 +205,8 @@ export class JsonlStorage extends MemoryStorage {
     super();
     this.file = file;
     if (existsSync(file)) {
-      const text = readFileSync(file, "utf8");
-      for (const line of text.split("\n")) {
-        if (!line.trim()) continue;
+      const text = repairTornTail(file, readFileSync(file, "utf8"));
+      for (const line of completeLines(text)) {
         const record = JSON.parse(line) as { writes: Write[] };
         this.state = applyWrites(this.state, record.writes);
       }
@@ -218,4 +217,18 @@ export class JsonlStorage extends MemoryStorage {
     mkdirSync(dirname(this.file), { recursive: true });
     appendFileSync(this.file, `${JSON.stringify({ writes })}\n`);
   }
+}
+
+/** Keep only newline-terminated records, and cut a torn tail off the file before the next append. */
+function repairTornTail(file: string, text: string): string {
+  if (text.length === 0 || text.endsWith("\n")) return text;
+  const cut = text.lastIndexOf("\n");
+  const kept = cut === -1 ? "" : text.slice(0, cut + 1);
+  truncateSync(file, Buffer.byteLength(kept));
+  return kept;
+}
+
+function completeLines(text: string): string[] {
+  const kept = text.endsWith("\n") || text.length === 0 ? text : text.slice(0, text.lastIndexOf("\n") + 1);
+  return kept.split("\n").filter((line) => line.trim().length > 0);
 }

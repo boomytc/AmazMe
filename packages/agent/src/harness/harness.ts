@@ -61,6 +61,7 @@ export interface HarnessOptions {
 
 export interface OperationResult {
   operationId: string;
+  lane: string;
   kind: "run" | "compaction" | "navigation";
   status: "completed" | "failed" | "aborted";
   fromTipId: string | null;
@@ -170,6 +171,8 @@ export class AgentHarness {
   private closed = false;
   private abandoned = false;
   private abort = new AbortController();
+  private readonly drives = new Map<string, Promise<Result<DriveOutcome>>>();
+  private readonly laneAborts = new Map<string, AbortController>();
   /** Effects this process has armed. A restarted harness has an empty set, so the same leaf means recovery. */
   readonly live = new Set<string>();
   readonly storage: MemoryStorage;
@@ -206,11 +209,40 @@ export class AgentHarness {
     return this.abort.signal;
   }
 
-  replaceAbort(): AbortSignal {
-    const previous = this.abort;
-    this.abort = new AbortController();
+  laneSignal(name: string): AbortSignal {
+    return AbortSignal.any([this.abort.signal, this.laneController(name).signal]);
+  }
+
+  replaceLaneAbort(name: string): void {
+    const previous = this.laneController(name);
+    this.laneAborts.set(name, new AbortController());
     previous.abort();
-    return previous.signal;
+  }
+
+  /** One in-flight drive per lane and operation. A second caller on that lane waits instead of sending again. */
+  claimDrive(lane: string, operationId: string, start: () => Promise<Result<DriveOutcome>>): Promise<Result<DriveOutcome>> {
+    const key = `${lane}\0${operationId}`;
+    const existing = this.drives.get(key);
+    if (existing) return existing;
+    let settle: (value: Result<DriveOutcome>) => void = () => undefined;
+    let fail: (error: unknown) => void = () => undefined;
+    const run = new Promise<Result<DriveOutcome>>((resolve, reject) => {
+      settle = resolve;
+      fail = reject;
+    });
+    this.drives.set(key, run);
+    void start().then(settle, fail).finally(() => {
+      if (this.drives.get(key) === run) this.drives.delete(key);
+    });
+    return run;
+  }
+
+  private laneController(name: string): AbortController {
+    const existing = this.laneAborts.get(name);
+    if (existing) return existing;
+    const created = new AbortController();
+    this.laneAborts.set(name, created);
+    return created;
   }
 }
 
@@ -228,9 +260,13 @@ export class AgentLane {
     return this.harness.storage.run((view, apply) => this.acceptLocked(view, apply, request));
   }
 
-  async drive(operationId: string, options: { waitForRetry?: boolean } = {}): Promise<Result<DriveOutcome>> {
+  drive(operationId: string, options: { waitForRetry?: boolean } = {}): Promise<Result<DriveOutcome>> {
+    return this.harness.claimDrive(this.name, operationId, () => this.driveBody(operationId, options));
+  }
+
+  private async driveBody(operationId: string, options: { waitForRetry?: boolean }): Promise<Result<DriveOutcome>> {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
-    const signal = this.harness.signal();
+    const signal = this.harness.laneSignal(this.name);
     for (let step = 0; step < 64; step++) {
       const planned = await this.harness.storage.run((view, apply) => this.plan(view, apply, operationId));
       if (planned.type === "error") return { ok: false, error: planned.error };
@@ -305,7 +341,7 @@ export class AgentLane {
       apply(writes);
       return { ok: true as const, value: { operationId, newlyRequested: true } };
     });
-    if (result.ok && result.value.newlyRequested) this.harness.replaceAbort();
+    if (result.ok && result.value.newlyRequested) this.harness.replaceLaneAbort(this.name);
     return result;
   }
 
@@ -432,12 +468,14 @@ export class AgentLane {
     const record = this.record(view);
     if (record.currentOperationId !== operationId) {
       const existing = view.get<OperationResult>(resultAddress(operationId));
-      if (existing) return { type: "settled", result: existing };
+      if (existing?.lane === this.name) return { type: "settled", result: existing };
       return { type: "error", error: { code: "operation_mismatch", message: "operation is not current" } };
     }
     const state = view.get<OperationState>(stateAddress(operationId));
     const meta = view.get<OperationMeta>(metaAddress(operationId));
-    if (!state || !meta) return { type: "error", error: { code: "operation_mismatch", message: "operation is missing" } };
+    if (!state || !meta || meta.lane !== this.name) {
+      return { type: "error", error: { code: "operation_mismatch", message: "operation is missing or belongs to another lane" } };
+    }
     const cancel = state.scope.control.status === "cancel_requested";
     if (cancel && state.phase !== "assistant_effect_pending" && state.phase !== "summary_effect_pending" && state.phase !== "tools") {
       return { type: "settled", result: this.finish(view, apply, meta, "aborted", "cancelled") };
@@ -933,6 +971,7 @@ export class AgentLane {
     const tipId = view.get<string | null>(tipAddress(this.name)) ?? null;
     const result: OperationResult = {
       operationId: meta.operationId,
+      lane: meta.lane,
       kind: meta.intent.kind,
       status,
       fromTipId: meta.sourceTipId,
@@ -1098,6 +1137,7 @@ export class AgentLane {
   private async settledOrWait(operationId: string): Promise<Result<DriveOutcome>> {
     const result = await this.harness.storage.read((view) => view.get<OperationResult>(resultAddress(operationId)));
     if (!result) return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: Date.now() } };
+    if (result.lane !== this.name) return failure("operation_mismatch", "result does not belong to this lane");
     return { ok: true, value: { kind: "settled", result } };
   }
 }
