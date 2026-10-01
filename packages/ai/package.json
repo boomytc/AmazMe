@@ -1,0 +1,17 @@
+{
+  "name": "@amazme/ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Unified LLM API: providers, auth, message model, and stream events",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}
