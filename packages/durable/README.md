@@ -5,7 +5,8 @@
 ## 入口与使用
 
 ```typescript
-import { createModels, fauxProvider } from "@amazme/ai";
+import { createModels } from "@amazme/ai";
+import { fauxProvider } from "@amazme/ai/providers/faux";
 import { AgentHarness } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 

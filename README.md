@@ -14,9 +14,19 @@
 
 ## 模型边界
 
-`Models` 按 `model.provider` 把请求交给对应的 Provider。认证顺序是请求里的 key、已存储的凭证、环境变量，最后是 provider 声明的 ambient。存过凭证之后，后面的来源不再作为退路。
+`Models` 是模型查找和调用的能力接口，具体集合由 `createModels()` 返回，并用 `setProvider` 装配。认证顺序是请求里的 key、已存储的凭证、环境变量，最后是 provider 声明的 ambient。存过凭证之后，后面的来源不再作为退路。凭证存储和环境变量留在实现内部，不要求每个消费者自己持有。
 
-消息只有 `system`、`user`、`assistant`、`toolResult`。`transformMessages` 负责换供应商：收短 tool call id，拿掉目标模型看不见的图片。线协议放在 `api/`，供应商文件只登记目录、认证和地址。现在的线协议是 `openai-completions`，OpenAI 这家供应商指向它。测试用 faux provider。
+根入口只导出契约、工厂和纯辅助函数。线协议与供应商从子路径导入：
+
+```typescript
+import { createModels } from "@amazme/ai";
+import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
+import { completionsProvider } from "@amazme/ai/providers/completions";
+import { openaiProvider } from "@amazme/ai/providers/openai";
+import { fauxProvider } from "@amazme/ai/providers/faux";
+```
+
+消息只有 `system`、`user`、`assistant`、`toolResult`。`transformMessages` 负责换供应商：收短 tool call id，拿掉目标模型看不见的图片。线协议放在 `api/`，供应商文件只登记目录、认证和地址。现在的线协议是 `openai-completions`，OpenAI 这家供应商指向它。测试用 faux provider。`createProvider` 可以把目录、认证、地址和 headers 与一个协议实现，或按 `model.api` 分派的实现表组合起来。
 
 流式帧可以记下来。帧即使看起来完整，也只是恢复用的前缀，不是一次已经结算的响应。
 

@@ -8,7 +8,8 @@ import { AgentHarness, type Apply, type HarnessModels, type Storage, type Storag
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { createStorageConformance } from "@amazme/durable/testing";
-import { createModels, fauxProvider } from "@amazme/ai";
+import { createModels } from "@amazme/ai";
+import { fauxProvider } from "@amazme/ai/providers/faux";
 
 for (const backend of ["memory", "jsonl"] as const) {
   const cases = createStorageConformance(() => {
@@ -59,7 +60,8 @@ test("public core and memory entries run without Node, Agent or a global process
     globalThis.process = undefined;
     const { AgentHarness } = await import("@amazme/durable");
     const { MemoryStorage } = await import("@amazme/durable/storage/memory");
-    const { createModels, fauxProvider, uuidv7 } = await import("@amazme/ai");
+    const { createModels, uuidv7 } = await import("@amazme/ai");
+    const { fauxProvider } = await import("@amazme/ai/providers/faux");
     const { InMemoryTelemetryContext } = await import("@amazme/telemetry");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuidv7())) throw new Error("invalid UUID");
     const telemetryContext = new InMemoryTelemetryContext();

@@ -5,7 +5,8 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { AgentHarness, type HarnessTool, type OperationRequest, type Write, value } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
-import { createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText } from "@amazme/ai";
+import { createModels, messageText } from "@amazme/ai";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
 
 type Fault = "before" | "after" | "torn";
 type Message = ReturnType<typeof fauxAssistant>;

@@ -2,6 +2,11 @@ export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
 
+/** Chat APIs this package can type. Other API strings stay on the unified stream options. */
+export type KnownApi = "openai-completions" | "faux";
+
+export type Api = KnownApi | (string & {});
+
 export type JsonSchemaType = "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
 
 /**
@@ -104,15 +109,23 @@ export interface Context {
   tools?: ToolDefinition[];
 }
 
-export interface Model {
+export interface Model<TApi extends Api = Api> {
   id: string;
   name: string;
   provider: string;
-  api: string;
+  api: TApi;
   input: Array<"text" | "image">;
   contextWindow: number;
   maxTokens: number;
+  /** USD per 1,000,000 tokens. Absent knowledge stays unset; rates are not invented. */
   cost: { input: number; output: number };
+  /**
+   * When true, the model can think. `thinkingLevelMap` maps a level to the protocol parameter.
+   * `null` marks that level unsupported. A missing key uses the level name.
+   * Models that do not reason accept only "off" and do not send a thinking parameter.
+   */
+  reasoning?: boolean;
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
 }
 
 export interface StreamOptions {
@@ -125,6 +138,21 @@ export interface StreamOptions {
 export interface ProviderHeaders {
   [name: string]: string;
 }
+
+/** Protocol options for `api: "openai-completions"`. */
+export interface OpenAICompletionsOptions extends StreamOptions {
+  baseUrl?: string;
+  headers?: ProviderHeaders;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+}
+
+export interface ApiOptionsMap {
+  "openai-completions": OpenAICompletionsOptions;
+  faux: StreamOptions;
+}
+
+/** Known APIs use their own options. Any other API stays on the unified options. */
+export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMap ? ApiOptionsMap[TApi] : StreamOptions;
 
 export type AssistantEvent =
   | { type: "start"; partial: AssistantMessage }

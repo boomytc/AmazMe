@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Agent, type AgentTool } from "@amazme/agent";
-import { createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText } from "@amazme/ai";
+import { createModels, messageText } from "@amazme/ai";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
 
 function agentFor(tools: AgentTool[], calls: Array<{ name: string; args?: unknown; id?: string }>) {
   const provider = fauxProvider({

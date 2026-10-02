@@ -7,7 +7,8 @@ import { Agent, type AgentMessage, type AgentTool } from "@amazme/agent";
 import { AgentHarness } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
-import { baseAssistant, createAssistantEventStream, createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText, type FauxResponder } from "@amazme/ai";
+import { baseAssistant, createAssistantEventStream, createModels, messageText } from "@amazme/ai";
+import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
 import { InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext, type TelemetrySpan } from "@amazme/telemetry";
 
 function setup(telemetryContext?: TelemetryContext, respond: FauxResponder = (_context, _options, state) =>

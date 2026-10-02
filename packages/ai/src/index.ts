@@ -7,21 +7,17 @@ export {
   baseAssistant,
   createAssistantEventStream,
   createModels,
-  Models,
+  createProvider,
+  hasApi,
   ModelsError,
   type AssistantEventStream,
+  type CreateProviderOptions,
+  type Models,
+  type MutableModels,
   type Provider,
+  type ProviderStreams,
 } from "./models.ts";
-export {
-  openaiCompletionsApi,
-  OPENAI_COMPLETIONS_API,
-  type OpenAICompletionsApi,
-  type OpenAICompletionsApiOptions,
-  type OpenAICompletionsRequest,
-} from "./api/openai-completions.ts";
-export { fauxAssistant, fauxProvider, fauxText, fauxToolCall, type FauxProviderOptions, type FauxResponder, type FauxState } from "./providers/faux.ts";
-export { completionsProvider, type CompletionsProviderOptions } from "./providers/completions.ts";
-export { openaiProvider, type OpenAIProviderOptions } from "./providers/openai.ts";
+export { resolveThinkingLevel, supportedThinkingLevels, type ThinkingResolution } from "./thinking.ts";
 export {
   emptyUsage,
   estimateTokens,
@@ -45,7 +41,12 @@ export type {
   JsonSchema,
   JsonSchemaType,
   Message,
+  Api,
+  ApiOptionsMap,
+  ApiStreamOptions,
+  KnownApi,
   Model,
+  OpenAICompletionsOptions,
   ProviderHeaders,
   StopReason,
   StreamOptions,

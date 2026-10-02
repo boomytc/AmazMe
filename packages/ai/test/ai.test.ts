@@ -3,20 +3,18 @@ import test from "node:test";
 import {
   createAssistantEventStream,
   createModels,
-  fauxAssistant,
-  fauxProvider,
-  fauxToolCall,
   frameFromEvent,
   MemoryCredentialStore,
   messageFromFrames,
   normalizeToolCallId,
-  openaiProvider,
   reduceFrames,
   resolveApiKey,
   transformMessages,
   type AssistantEvent,
   type Model,
 } from "@amazme/ai";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { openaiProvider } from "@amazme/ai/providers/openai";
 
 const textModel: Model = {
   id: "m",

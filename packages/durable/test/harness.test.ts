@@ -10,13 +10,11 @@ import {
   baseAssistant,
   createAssistantEventStream,
   createModels,
-  fauxAssistant,
-  fauxProvider,
-  fauxToolCall,
   messageText,
   type Model,
   type Provider,
 } from "@amazme/ai";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
 
 function harnessText(message: HarnessMessage): string {
   return message.role === "custom" ? message.content : messageText(message);
@@ -162,6 +160,9 @@ test("a crashed assistant stream is settled from frames and is not sent again", 
     name: "gated",
     auth: { env: "GATED", ambient: "x" },
     getModels: () => [model],
+    stream(active, context, options) {
+      return this.streamSimple(active, context, options);
+    },
     streamSimple(active, _context, options) {
       calls += 1;
       const stream = createAssistantEventStream();
@@ -169,7 +170,7 @@ test("a crashed assistant stream is settled from frames and is not sent again", 
       void (async () => {
         stream.push({ type: "text_delta", delta: "partial-answer", partial: { ...message, stopReason: "pending" } });
         await gate;
-        if (options.signal?.aborted) {
+        if (options?.signal?.aborted) {
           const aborted = baseAssistant(active, [{ type: "text", text: "partial-answer" }], "aborted");
           stream.push({ type: "error", error: aborted });
           return;

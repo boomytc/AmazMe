@@ -12,6 +12,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
+    },
+    "./api/openai-completions": {
+      "types": "./dist/api/openai-completions.d.ts",
+      "default": "./src/api/openai-completions.ts"
+    },
+    "./providers/completions": {
+      "types": "./dist/providers/completions.d.ts",
+      "default": "./src/providers/completions.ts"
+    },
+    "./providers/openai": {
+      "types": "./dist/providers/openai.d.ts",
+      "default": "./src/providers/openai.ts"
+    },
+    "./providers/faux": {
+      "types": "./dist/providers/faux.d.ts",
+      "default": "./src/providers/faux.ts"
     }
   },
   "types": "./dist/index.d.ts",

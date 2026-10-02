@@ -1,23 +1,46 @@
 import { resolveApiKey, type ApiKeyAuth, MemoryCredentialStore } from "./auth.ts";
 import { EventStream } from "./event-stream.ts";
 import type {
+  Api,
+  ApiStreamOptions,
   AssistantEvent,
   AssistantMessage,
   AuthResult,
   Context,
   CredentialStore,
   Model,
+  OpenAICompletionsOptions,
+  ProviderHeaders,
   StreamOptions,
 } from "./types.ts";
 import { normalizeContext } from "./transform.ts";
 import { NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext } from "@amazme/telemetry";
 
-export interface Provider {
+export interface ProviderStreams<TApi extends Api = Api> {
+  stream<T extends TApi>(model: Model<T>, context: Context, options?: ApiStreamOptions<T>): AssistantEventStream;
+  streamSimple(model: Model<TApi>, context: Context, options?: StreamOptions): AssistantEventStream;
+}
+
+export interface Provider<TApi extends Api = Api> {
   readonly id: string;
   readonly name: string;
+  readonly baseUrl?: string;
+  readonly headers?: ProviderHeaders;
   readonly auth: ApiKeyAuth;
-  getModels(): readonly Model[];
-  streamSimple(model: Model, context: Context, options: StreamOptions & { apiKey: string }): AssistantEventStream;
+  getModels(): readonly Model<TApi>[];
+  stream<T extends TApi>(model: Model<T>, context: Context, options?: ApiStreamOptions<T>): AssistantEventStream;
+  streamSimple(model: Model<TApi>, context: Context, options?: StreamOptions): AssistantEventStream;
+}
+
+export interface CreateProviderOptions<TApi extends Api = Api> {
+  id: string;
+  name?: string;
+  baseUrl?: string;
+  headers?: ProviderHeaders;
+  auth: ApiKeyAuth;
+  models: readonly Model<TApi>[];
+  /** One protocol implementation for every model, or a table dispatched by `model.api`. */
+  api: ProviderStreams<TApi> | Partial<Record<TApi, ProviderStreams>>;
 }
 
 export type AssistantEventStream = EventStream<AssistantEvent, AssistantMessage>;
@@ -49,14 +72,31 @@ export interface ModelsOptions {
   env?: Record<string, string | undefined>;
 }
 
+/** Read and call surface. Credential storage and the environment stay inside the implementation. */
+export interface Models {
+  readonly telemetryContext: TelemetryContext;
+  getProvider(id: string): Provider | undefined;
+  getModel(providerId: string, modelId: string): Model | undefined;
+  listModels(): Model[];
+  getAuth(model: Model, apiKey?: string): Promise<AuthResult | undefined>;
+  stream<TApi extends Api>(model: Model<TApi>, context: Context, options?: ApiStreamOptions<TApi>): AssistantEventStream;
+  streamSimple(model: Model, context: Context, options?: StreamOptions): AssistantEventStream;
+  completeSimple(model: Model, context: Context, options?: StreamOptions): Promise<AssistantMessage>;
+}
+
+/** Management surface for assembling a collection. */
+export interface MutableModels extends Models {
+  setProvider(provider: Provider): void;
+}
+
 /**
  * A provider owns its catalog, its auth, and its stream.
  * The collection routes every call to the provider named by the model.
  */
-export class Models {
+class ModelRegistry implements MutableModels {
   private readonly providers = new Map<string, Provider>();
-  readonly store: CredentialStore;
-  readonly env: Record<string, string | undefined>;
+  private readonly store: CredentialStore;
+  private readonly env: Record<string, string | undefined>;
   readonly telemetryContext: TelemetryContext;
 
   constructor(options: ModelsOptions = {}) {
@@ -93,14 +133,27 @@ export class Models {
     });
   }
 
+  stream<TApi extends Api>(model: Model<TApi>, context: Context, options?: ApiStreamOptions<TApi>): AssistantEventStream {
+    return this.open(model, context, options, "stream");
+  }
+
   streamSimple(model: Model, context: Context, options: StreamOptions = {}): AssistantEventStream {
+    return this.open(model, context, options, "simple");
+  }
+
+  async completeSimple(model: Model, context: Context, options: StreamOptions = {}): Promise<AssistantMessage> {
+    return this.streamSimple(model, context, options).result();
+  }
+
+  private open(model: Model, context: Context, options: StreamOptions | undefined, kind: "stream" | "simple"): AssistantEventStream {
     const transcript = normalizeContext(context);
     const stream = createAssistantEventStream();
-    void startSpan(options.telemetryContext ?? this.telemetryContext, {
+    const request = options ?? {};
+    void startSpan(request.telemetryContext ?? this.telemetryContext, {
       name: "amazme.ai.request",
       attributes: { provider: model.provider, model: model.id, api: model.api },
     }, async (span) => {
-      const opened = await this.dispatch(model, transcript, { ...options, telemetryContext: span });
+      const opened = await this.dispatch(model, transcript, { ...request, telemetryContext: span }, kind);
       let terminal: Extract<AssistantEvent, { type: "done" | "error" }> | undefined;
       for await (const event of opened) {
         if (event.type === "done" || event.type === "error") { terminal = event; break; }
@@ -118,17 +171,13 @@ export class Models {
     })
       .then((event) => { stream.push(event); })
       .catch((error: unknown) => {
-        const message = errorMessage(model, error, options.signal?.aborted === true);
+        const message = errorMessage(model, error, request.signal?.aborted === true);
         stream.push({ type: "error", error: message });
       });
     return stream;
   }
 
-  async completeSimple(model: Model, context: Context, options: StreamOptions = {}): Promise<AssistantMessage> {
-    return this.streamSimple(model, context, options).result();
-  }
-
-  private async dispatch(model: Model, context: Context, options: StreamOptions): Promise<AssistantEventStream> {
+  private async dispatch(model: Model, context: Context, options: StreamOptions, kind: "stream" | "simple"): Promise<AssistantEventStream> {
     const provider = this.providers.get(model.provider);
     if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
     const known = provider.getModels().some((item) => item.id === model.id);
@@ -141,12 +190,79 @@ export class Models {
       ...(options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
     });
     if (!auth) throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
-    return provider.streamSimple(model, context, { ...options, apiKey: auth.apiKey });
+    const authed = { ...options, apiKey: auth.apiKey };
+    return kind === "simple" ? provider.streamSimple(model, context, authed) : provider.stream(model, context, authed);
   }
 }
 
-export function createModels(options?: ModelsOptions): Models {
-  return new Models(options);
+export function createModels(options?: ModelsOptions): MutableModels {
+  return new ModelRegistry(options);
+}
+
+function isStreams(value: unknown): value is ProviderStreams {
+  return !!value && typeof value === "object"
+    && typeof (value as ProviderStreams).stream === "function"
+    && typeof (value as ProviderStreams).streamSimple === "function";
+}
+
+/**
+ * Compose a catalog, auth, base URL, and headers with one protocol implementation
+ * or a table keyed by `model.api`. Invalid assembly throws. A call whose API is
+ * missing from the table becomes one error terminal.
+ */
+export function createProvider<TApi extends Api = Api>(input: CreateProviderOptions<TApi>): Provider<TApi> {
+  if (input.id.trim() === "") throw new ModelsError("provider", "Provider id is required");
+  const single = isStreams(input.api) ? input.api : undefined;
+  const byApi = single ? undefined : input.api as Partial<Record<string, ProviderStreams>>;
+  const implementations = single ? [single] : Object.values(byApi ?? {}).filter(isStreams);
+  if (implementations.length === 0) {
+    throw new ModelsError("provider", `Provider ${input.id}: api implementation is required`);
+  }
+  if (byApi) {
+    for (const model of input.models) {
+      if (!isStreams(byApi[model.api])) {
+        throw new ModelsError("provider", `Provider ${input.id} has no API implementation for "${model.api}"`);
+      }
+    }
+  }
+  const merge = <T extends StreamOptions | undefined>(options: T): T => {
+    const provided = (options ?? {}) as OpenAICompletionsOptions;
+    const headers = { ...(input.headers ?? {}), ...(provided.headers ?? {}) };
+    return {
+      ...provided,
+      ...(provided.baseUrl || input.baseUrl ? { baseUrl: provided.baseUrl || input.baseUrl } : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    } as T;
+  };
+  const missing = (model: Model): AssistantEventStream => {
+    const stream = createAssistantEventStream();
+    const message = errorMessage(model, new ModelsError("provider", `Provider ${input.id} has no API implementation for "${model.api}"`), false);
+    queueMicrotask(() => stream.push({ type: "error", error: message }));
+    return stream;
+  };
+  const implementationFor = (model: Model): ProviderStreams | undefined => single ?? (isStreams(byApi?.[model.api]) ? byApi?.[model.api] : undefined);
+  return {
+    id: input.id,
+    name: input.name ?? input.id,
+    ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+    ...(input.headers ? { headers: input.headers } : {}),
+    auth: input.auth,
+    getModels: () => input.models,
+    stream(model, context, options) {
+      const implementation = implementationFor(model);
+      if (!implementation) return missing(model);
+      return implementation.stream(model, context, merge(options));
+    },
+    streamSimple(model, context, options) {
+      const implementation = implementationFor(model);
+      if (!implementation) return missing(model);
+      return implementation.streamSimple(model, context, merge(options));
+    },
+  };
+}
+
+export function hasApi<TApi extends Api>(model: Model, api: TApi): model is Model<TApi> {
+  return model.api === api;
 }
 
 function errorMessage(model: Model, error: unknown, aborted: boolean): AssistantMessage {

@@ -2,7 +2,9 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Agent } from "@amazme/agent";
-import { createModels, fauxProvider, openaiProvider } from "@amazme/ai";
+import { createModels } from "@amazme/ai";
+import { fauxProvider } from "@amazme/ai/providers/faux";
+import { openaiProvider } from "@amazme/ai/providers/openai";
 import { AgentSession } from "./agent-session.ts";
 import { SessionStore } from "./session.ts";
 import { createCodingTools } from "./tools.ts";

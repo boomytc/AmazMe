@@ -1,4 +1,4 @@
-import { baseAssistant, createAssistantEventStream, type Provider } from "../models.ts";
+import { baseAssistant, createAssistantEventStream, createProvider, type Provider, type ProviderStreams } from "../models.ts";
 import type { AssistantMessage, Context, Model, StreamOptions, ToolCall } from "../types.ts";
 import { emptyUsage } from "../transform.ts";
 
@@ -75,24 +75,22 @@ export function fauxProvider(options: FauxProviderOptions = {}): Provider & { st
     maxTokens: 16_000,
     cost: { input: 0, output: 0 },
   };
-  return {
-    id,
-    name: "Faux",
-    auth: options.authEnv ? { env: options.authEnv } : { env: "FAUX_API_KEY", ambient: "faux" },
-    state,
-    getModels: () => [model],
+  const streams: ProviderStreams<"faux"> = {
+    stream(active, context, streamOptions) {
+      return streams.streamSimple(active, context, streamOptions);
+    },
     streamSimple(active, context, streamOptions) {
       const stream = createAssistantEventStream();
+      const recorded = { ...streamOptions, apiKey: streamOptions?.apiKey ?? "" };
       state.callCount += 1;
       state.contexts.push(context);
-      state.options.push(streamOptions);
-      const call = state.callCount;
+      state.options.push(recorded);
       void (async () => {
         try {
-          if (streamOptions.signal?.aborted) {
+          if (streamOptions?.signal?.aborted) {
             throw new Error("aborted");
           }
-          const produced = await respond(context, streamOptions, state, active);
+          const produced = await respond(context, recorded, state, active);
           const message: AssistantMessage = {
             ...produced,
             api: active.api,
@@ -102,16 +100,22 @@ export function fauxProvider(options: FauxProviderOptions = {}): Provider & { st
           };
           emitMessage(stream, message);
         } catch (error) {
-          const aborted = streamOptions.signal?.aborted === true;
+          const aborted = streamOptions?.signal?.aborted === true;
           const failed = baseAssistant(active, [{ type: "text", text: "" }], aborted ? "aborted" : "error");
           failed.errorMessage = error instanceof Error ? error.message : String(error);
           stream.push({ type: "error", error: failed });
         }
       })();
-      void call;
       return stream;
     },
   };
+  return Object.assign(createProvider({
+    id,
+    name: "Faux",
+    auth: options.authEnv ? { env: options.authEnv } : { env: "FAUX_API_KEY", ambient: "faux" },
+    models: [model],
+    api: streams,
+  }), { state });
 }
 
 function emitMessage(stream: ReturnType<typeof createAssistantEventStream>, message: AssistantMessage): void {

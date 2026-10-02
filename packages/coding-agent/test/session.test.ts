@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Agent } from "@amazme/agent";
-import { createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText } from "@amazme/ai";
+import { createModels, messageText } from "@amazme/ai";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
 import { AgentSession, createCodingTools, SessionStore } from "@amazme/coding-agent";
 
 test("the session tree can move the tip and compaction hides the prefix", () => {

@@ -1,23 +1,11 @@
-import { baseAssistant, createAssistantEventStream, type AssistantEventStream } from "../models.ts";
-import type { AssistantMessage, Context, Message, Model, ToolCall } from "../types.ts";
+import { baseAssistant, createAssistantEventStream, type AssistantEventStream, type ProviderStreams } from "../models.ts";
+import type { AssistantMessage, Context, Message, Model, OpenAICompletionsOptions, ToolCall } from "../types.ts";
 import { emptyUsage, messageText, transformMessages } from "../transform.ts";
 
 export const OPENAI_COMPLETIONS_API = "openai-completions";
 
 export interface OpenAICompletionsApiOptions {
   fetch?: typeof fetch;
-}
-
-export interface OpenAICompletionsRequest {
-  baseUrl: string;
-  apiKey: string;
-  signal?: AbortSignal;
-}
-
-/** Chat Completions wire. Providers supply the catalog, auth, and base URL. */
-export interface OpenAICompletionsApi {
-  readonly id: typeof OPENAI_COMPLETIONS_API;
-  stream(model: Model, context: Context, request: OpenAICompletionsRequest): AssistantEventStream;
 }
 
 interface ChatMessage {
@@ -27,30 +15,40 @@ interface ChatMessage {
   tool_call_id?: string;
 }
 
-export function openaiCompletionsApi(options: OpenAICompletionsApiOptions = {}): OpenAICompletionsApi {
-  const fetchImpl = options.fetch ?? fetch;
-  return {
-    id: OPENAI_COMPLETIONS_API,
+export function openaiCompletionsApi(options: OpenAICompletionsApiOptions = {}): ProviderStreams<"openai-completions"> {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const streams: ProviderStreams<"openai-completions"> = {
     stream(model, context, request) {
       const stream = createAssistantEventStream();
-      void pump(fetchImpl, model, context, request, stream);
+      void pump(fetchImpl, model, context, request ?? {}, stream);
       return stream;
     },
+    streamSimple(model, context, request) {
+      return streams.stream(model, context, request);
+    },
   };
+  return streams;
 }
 
 async function pump(
   fetchImpl: typeof fetch,
   model: Model,
   context: Context,
-  request: OpenAICompletionsRequest,
+  request: OpenAICompletionsOptions,
   stream: AssistantEventStream,
 ): Promise<void> {
   try {
+    if (!request.baseUrl || !request.apiKey) {
+      const failed = baseAssistant(model, [{ type: "text", text: "" }], "error");
+      failed.errorMessage = "OpenAI completions request requires baseUrl and apiKey";
+      stream.push({ type: "error", error: failed });
+      return;
+    }
     const wire: Context = { ...context, messages: transformMessages(context.messages, model) };
     const response = await fetchImpl(`${request.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
+        ...request.headers,
         authorization: `Bearer ${request.apiKey}`,
         "content-type": "application/json",
       },
