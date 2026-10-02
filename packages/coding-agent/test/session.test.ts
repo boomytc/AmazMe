@@ -132,8 +132,9 @@ test("agent session persists the loop and reloads the active branch", async () =
   assert.ok(model);
   const file = join(dir, "session.jsonl");
   const agent = new Agent({
-    models,
     model,
+    streamFn: models.streamSimple.bind(models),
+    telemetryContext: models.telemetryContext,
     systemPrompt: "coder",
     tools: createCodingTools(dir),
   });

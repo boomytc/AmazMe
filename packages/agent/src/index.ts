@@ -11,6 +11,7 @@ export type {
   PrepareRequestInput,
   PrepareRequestUpdate,
   QueueMode,
+  StreamFn,
   ReplayPolicy,
   ToolContext,
   ToolExecutionMode,

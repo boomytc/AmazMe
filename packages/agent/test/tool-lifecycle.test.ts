@@ -17,7 +17,7 @@ function agentFor(tools: AgentTool[], calls: Array<{ name: string; args?: unknow
   models.setProvider(provider);
   const model = models.getModel("faux", "faux-1");
   assert.ok(model);
-  const agent = new Agent({ models, model, systemPrompt: "test", tools });
+  const agent = new Agent({ streamFn: models.streamSimple.bind(models), model, systemPrompt: "test", tools });
   return { agent, model };
 }
 

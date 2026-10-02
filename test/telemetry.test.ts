@@ -21,7 +21,7 @@ function setup(telemetryContext?: TelemetryContext, respond: FauxResponder = (_c
 }
 
 for (const runtime of ["agent", "harness"] as const) {
-  test(`${runtime}: requests and tools share a parent, inheriting the Models context without collecting content`, async () => {
+  test(`${runtime}: model requests and tools stay children of the run span`, async () => {
     const context = new InMemoryTelemetryContext();
     const { models, provider, model } = setup(context);
     let runs = 0;
@@ -37,7 +37,12 @@ for (const runtime of ["agent", "harness"] as const) {
     }];
     let messages: AgentMessage[];
     if (runtime === "agent") {
-      messages = await new Agent({ models, model, tools }).prompt("private-prompt");
+      messages = await new Agent({
+        model,
+        tools,
+        streamFn: models.streamSimple.bind(models),
+        telemetryContext: context,
+      }).prompt("private-prompt");
     } else {
       const storage = new MemoryStorage();
       const harness = new AgentHarness(storage, { models, model: { provider: "faux", modelId: "faux-1" }, tools });
@@ -64,6 +69,19 @@ for (const runtime of ["agent", "harness"] as const) {
     assert.doesNotMatch(JSON.stringify(spans), /private-(prompt|args|answer|result|key)/);
   });
 }
+
+test("an Agent that omits telemetryContext does not record on the Models context", async () => {
+  const context = new InMemoryTelemetryContext();
+  const { models, provider, model } = setup(context, () => fauxAssistant("visible"));
+  const messages = await new Agent({
+    model,
+    streamFn: models.streamSimple.bind(models),
+  }).prompt("go");
+  const last = messages.at(-1);
+  assert.equal(last?.role === "assistant" && messageText(last), "visible");
+  assert.equal(provider.state.callCount, 1);
+  assert.equal(context.getSpans().length, 0);
+});
 
 test("AI forwards deltas while its span is open and settles before exposing the terminal result", async () => {
   const context = new InMemoryTelemetryContext();
@@ -96,7 +114,11 @@ for (const reason of ["error", "aborted"] as const) {
   test(`resolved ${reason} responses set both AI and Agent failure status without retaining errors`, async () => {
     const context = new InMemoryTelemetryContext();
     const { models, model } = setup(context, () => fauxAssistant("private-body", { stopReason: reason, errorMessage: "private-error" }));
-    const messages = await new Agent({ models, model }).prompt("go");
+    const messages = await new Agent({
+      model,
+      streamFn: models.streamSimple.bind(models),
+      telemetryContext: context,
+    }).prompt("go");
     const last = messages.at(-1);
     assert.equal(last?.role === "assistant" && last.stopReason, reason);
     assert.ok(context.getSpans().every((span) => span.status.status === "error"));
@@ -134,7 +156,12 @@ for (const runtime of ["agent", "harness"] as const) {
       throw new Error("private-tool-error");
     } }];
     if (runtime === "agent") {
-      await new Agent({ models, model, tools, telemetryContext: override }).prompt("go");
+      await new Agent({
+        model,
+        tools,
+        streamFn: models.streamSimple.bind(models),
+        telemetryContext: override,
+      }).prompt("go");
     } else {
       const harness = new AgentHarness(new MemoryStorage(), { models, model: { provider: "faux", modelId: "faux-1" }, tools, telemetryContext: override });
       assert.equal((await harness.lane().prompt("go")).status, "completed");
@@ -248,7 +275,12 @@ for (const [adapterName, telemetryContext] of [
         return { content: [{ type: "text", text: "result" }] };
       } }];
       if (runtime === "agent") {
-        const agent = new Agent({ models, model, tools });
+        const agent = new Agent({
+          model,
+          tools,
+          streamFn: models.streamSimple.bind(models),
+          telemetryContext: models.telemetryContext,
+        });
         const output = await agent.prompt("go");
         const last = output.at(-1)!;
         assert.equal(last.role === "assistant" && messageText(last), "private-answer");

@@ -46,7 +46,7 @@ function run(args: unknown, tools: AgentTool[]) {
   models.setProvider(provider);
   const model = models.getModel("faux", "faux-1");
   assert.ok(model);
-  return new Agent({ models, model, systemPrompt: "test", tools }).prompt("go");
+  return new Agent({ streamFn: models.streamSimple.bind(models), model, systemPrompt: "test", tools }).prompt("go");
 }
 
 test("agent rejects a nested string where a number is required and does not execute the tool", async () => {
@@ -88,7 +88,7 @@ test("agent still returns an error result for an unknown tool", async () => {
   models.setProvider(provider);
   const model = models.getModel("faux", "faux-1");
   assert.ok(model);
-  const produced = await new Agent({ models, model, systemPrompt: "test", tools: [] }).prompt("go");
+  const produced = await new Agent({ streamFn: models.streamSimple.bind(models), model, systemPrompt: "test", tools: [] }).prompt("go");
   const result = produced.find((message) => message.role === "toolResult");
   assert.equal(result?.role === "toolResult" && result.isError, true);
   assert.match(result?.role === "toolResult" ? messageText(result) : "", /Unknown tool: missing/);

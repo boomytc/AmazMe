@@ -34,7 +34,7 @@ Chat Completions 请求带 `stream_options.include_usage`。最终消息写入�
 
 ## 内存循环
 
-一次 turn 是一次模型响应加上它的工具结果。Steering 在当前 assistant 回合之后进入。Follow-up 要等到这次 run 本来会停的时候。`stopReason === "length"` 的 tool call 不执行。工具可以并行跑完，写回 transcript 时仍按 assistant 里的源顺序。
+一次 turn 是一次模型响应加上它的工具结果。Agent 不持有 Models。每次模型调用都走构造时传入的 `streamFn(model, context, options)`，它可以同步返回事件流，也可以异步取得事件流。`models.streamSimple.bind(models)` 满足这个形状。认证和 Provider 装配留在调用方。未传 `telemetryContext` 时使用空实现；要和某次 Models 共享诊断上下文，由调用方把那个上下文传进来。Steering 在当前 assistant 回合之后进入。Follow-up 要等到这次 run 本来会停的时候。`stopReason === "length"` 的 tool call 不执行。工具可以并行跑完，写回 transcript 时仍按 assistant 里的源顺序。
 
 ## 持久化运行时
 
@@ -75,8 +75,10 @@ import { createModels } from "@amazme/ai";
 
 const telemetryContext = new InMemoryTelemetryContext();
 const models = createModels({ telemetryContext });
-// 注册 Provider 后，Agent 和 AgentHarness 默认继承 models 的诊断上下文。
-// 也可以在 AgentOptions、HarnessOptions 或一次 StreamOptions 中单独覆盖。
+// Agent 只使用显式传入的 telemetryContext。要让模型请求挂在同一次记录下，调用方把上下文一并传入。
+// AgentHarness 未单独提供时，仍使用 models.telemetryContext。
+// 一次请求的 StreamOptions.telemetryContext 仍可覆盖 Models 的默认上下文。
+// const agent = new Agent({ model, streamFn: models.streamSimple.bind(models), telemetryContext });
 ```
 
 内置记录包括 Agent run、Harness drive、模型请求和实际工具执行；恢复和重试等待记为事件。工具收到的 `ToolContext.telemetryContext` 和 Provider 收到的 `StreamOptions.telemetryContext` 可继续创建子 span。默认属性只包含模型、工具与操作标识、结束原因和 token 数，不自动收集提示词、密钥、工具参数、输出或异常文本。

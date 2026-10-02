@@ -1,13 +1,29 @@
 import type {
   AssistantEvent,
+  AssistantEventStream,
   AssistantMessage,
+  Context,
   JsonSchema,
   Message,
   Model,
+  StreamOptions,
   TextContent,
   ThinkingLevel,
   ToolResultMessage,
 } from "@amazme/ai";
+
+/**
+ * One model call. `Models.streamSimple` matches this shape, so callers can pass
+ * `models.streamSimple.bind(models)`.
+ * A synchronous event stream or a promise of one are both valid.
+ * Request failures belong in the stream's terminal event. A throw or a rejected
+ * promise fails the turn and must still leave the agent idle.
+ */
+export type StreamFn = (
+  model: Model,
+  context: Context,
+  options?: StreamOptions,
+) => AssistantEventStream | Promise<AssistantEventStream>;
 
 export type QueueMode = "all" | "one-at-a-time";
 export type ToolExecutionMode = "parallel" | "sequential";

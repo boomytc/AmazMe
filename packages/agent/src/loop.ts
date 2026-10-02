@@ -1,5 +1,5 @@
 import {
-  type AssistantEvent,
+  type AssistantEventStream,
   type AssistantMessage,
   findToolCalls,
   type Message,
@@ -37,7 +37,7 @@ export interface LoopHooks {
     tools: AgentTool[],
     thinkingLevel: ThinkingLevel,
     signal: AbortSignal,
-  ) => AsyncIterable<AssistantEvent> & { result(): Promise<AssistantMessage> };
+  ) => AssistantEventStream | Promise<AssistantEventStream>;
 }
 
 export interface LoopInput {
@@ -176,7 +176,7 @@ async function streamAssistant(
   signal: AbortSignal,
   emit: Emit,
 ): Promise<AssistantMessage> {
-  const stream = input.hooks.stream(model, messages, tools, thinkingLevel, signal);
+  const stream = await input.hooks.stream(model, messages, tools, thinkingLevel, signal);
   let latest: AssistantMessage | undefined;
   let started = false;
   for await (const event of stream) {

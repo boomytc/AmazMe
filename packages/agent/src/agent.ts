@@ -1,6 +1,6 @@
-import { toolDefinition, type AssistantMessage, type Context, type Model, type Models, type ThinkingLevel } from "@amazme/ai";
+import { toolDefinition, type AssistantMessage, type Context, type Model, type ThinkingLevel } from "@amazme/ai";
 import { runAgentLoop, toProviderMessages } from "./loop.ts";
-import { startSpan, type TelemetryContext } from "@amazme/telemetry";
+import { NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext } from "@amazme/telemetry";
 import type {
   AgentEvent,
   AgentMessage,
@@ -10,6 +10,7 @@ import type {
   FinishTurnInput,
   PrepareRequestUpdate,
   QueueMode,
+  StreamFn,
   ToolExecutionMode,
 } from "./types.ts";
 
@@ -19,7 +20,7 @@ export interface AgentOptions {
   telemetryContext?: TelemetryContext;
   systemPrompt?: string;
   model: Model;
-  models: Models;
+  streamFn: StreamFn;
   tools?: AgentTool[];
   thinkingLevel?: ThinkingLevel;
   messages?: AgentMessage[];
@@ -64,8 +65,8 @@ class Queue {
 }
 
 /**
- * Process-local agent. The transcript lives in memory. `prepareRequest` may
- * replace it from a session branch before each provider call.
+ * Process-local agent. The transcript lives in memory. `streamFn` performs each
+ * model call. `prepareRequest` may replace the transcript before that call.
  */
 export class Agent {
   private readonly listeners = new Set<Listener>();
@@ -83,14 +84,14 @@ export class Agent {
   toolExecution: ToolExecutionMode;
   prepareRequest: AgentOptions["prepareRequest"];
   finishTurn: AgentOptions["finishTurn"];
-  private readonly models: Models;
+  private readonly streamFn: StreamFn;
   private readonly telemetryContext: TelemetryContext;
 
   constructor(options: AgentOptions) {
     this.systemPrompt = options.systemPrompt ?? "";
     this.model = options.model;
-    this.models = options.models;
-    this.telemetryContext = options.telemetryContext ?? options.models.telemetryContext;
+    this.streamFn = options.streamFn;
+    this.telemetryContext = options.telemetryContext ?? NOOP_TELEMETRY_CONTEXT;
     this.tools = options.tools ?? [];
     this.thinkingLevel = options.thinkingLevel ?? "off";
     this.messages = options.messages ?? [];
@@ -170,8 +171,7 @@ export class Agent {
                   messages: toProviderMessages(messages),
                   tools: tools.map(toolDefinition),
                 };
-                const stream = this.models.streamSimple(model, context, { thinkingLevel, signal: requestSignal, telemetryContext: span });
-                return stream;
+                return this.streamFn(model, context, { thinkingLevel, signal: requestSignal, telemetryContext: span });
               },
             },
           },

@@ -21,7 +21,7 @@ test("the public Agent entry runs without loading Durable", () => {
     const models = createModels();
     models.setProvider(fauxProvider());
     const model = models.getModel("faux", "faux-1");
-    const output = await new Agent({ models, model }).prompt("independent");
+    const output = await new Agent({ model, streamFn: models.streamSimple.bind(models) }).prompt("independent");
     const last = output.at(-1);
     if (last?.role !== "assistant" || last.stopReason !== "stop") throw new Error("Agent failed");
   `;

@@ -57,8 +57,9 @@ async function main(): Promise<void> {
   mkdirSync(dir, { recursive: true });
   const store = SessionStore.create(join(dir, `${Date.now()}.jsonl`), args.cwd);
   const agent = new Agent({
-    models,
     model,
+    streamFn: models.streamSimple.bind(models),
+    telemetryContext: models.telemetryContext,
     systemPrompt: "You are a coding agent. Use tools to inspect and change files in the workspace.",
     tools: createCodingTools(args.cwd),
   });

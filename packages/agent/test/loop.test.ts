@@ -26,7 +26,7 @@ function agentWith(respond: FauxResponder, tools: AgentTool[] = [], toolExecutio
   const model = models.getModel("faux", "faux-1");
   assert.ok(model);
   const agent = new Agent({
-    models,
+    streamFn: models.streamSimple.bind(models),
     model,
     systemPrompt: "test",
     tools,
@@ -148,7 +148,7 @@ test("prepareRequest observes the prompt that was just admitted", async () => {
   assert.ok(model);
   let saw = "";
   const agent = new Agent({
-    models,
+    streamFn: models.streamSimple.bind(models),
     model,
     prepareRequest: (input) => {
       const last = input.messages[input.messages.length - 1];
