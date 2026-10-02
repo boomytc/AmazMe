@@ -135,9 +135,9 @@ function emitMessage(stream: ReturnType<typeof createAssistantEventStream>, mess
       }
       if (!failed) stream.push({ type: "text_end", contentIndex, partial });
     } else if (block.type === "thinking") {
-      partial.content = [...partial.content, { type: "thinking", thinking: "" }];
+      partial.content = [...partial.content, { ...block, thinking: "" }];
       stream.push({ type: "thinking_start", contentIndex, partial });
-      partial.content = replaceBlock(partial.content, contentIndex, { type: "thinking", thinking: block.thinking });
+      partial.content = replaceBlock(partial.content, contentIndex, block);
       stream.push({ type: "thinking_delta", contentIndex, delta: block.thinking, partial });
       if (!failed) stream.push({ type: "thinking_end", contentIndex, partial });
     } else {

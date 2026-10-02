@@ -102,6 +102,38 @@ test("a stream has one consumer, and events after the terminal are dropped", asy
   assert.equal(await stream.result(), next.value?.type === "done" ? next.value.message : undefined);
 });
 
+test("dropping a late event does not inspect or clone its payload", async () => {
+  const stream = createAssistantEventStream();
+  stream.push({ type: "done", reason: "stop", message: fauxAssistant("done") });
+  const partial = fauxAssistant([fauxToolCall("work", { uncloneable: () => undefined })]);
+  assert.doesNotThrow(() => stream.push({ type: "toolcall_start", contentIndex: 0, partial }));
+  assert.equal((await stream.result()).stopReason, "stop");
+});
+
+test("faux thinking frames retain the field present on the final message", async () => {
+  const { events, message } = await collect(() => fauxAssistant([
+    { type: "thinking", thinking: "plan", thinkingField: "reasoning_content" },
+  ]));
+  const frames = events.map(frameFromEvent).filter(frame => frame !== undefined);
+  assert.deepEqual(reduceFrames(frames).content, message.content);
+});
+
+test("the shared checker rejects missing message start and changed terminal text", () => {
+  const partial = fauxAssistant("heard");
+  const blocks: AssistantEvent[] = [
+    { type: "text_start", contentIndex: 0, partial: fauxAssistant("") },
+    { type: "text_delta", contentIndex: 0, delta: "heard", partial },
+    { type: "text_end", contentIndex: 0, partial },
+    { type: "done", reason: "stop", message: partial },
+  ];
+  assert.ok(checkAssistantStream(blocks).some(problem => /start/.test(problem)));
+  const changed: AssistantEvent[] = [
+    { type: "start", partial: fauxAssistant("") }, ...blocks.slice(0, -1),
+    { type: "done", reason: "stop", message: fauxAssistant("different") },
+  ];
+  assert.ok(checkAssistantStream(changed).some(problem => /terminal content/.test(problem)));
+});
+
 test("the shared checker rejects a shifted index, a second terminal, and a toolcall_end on error", () => {
   const tool = fauxToolCall("read", {}, "call_1");
   const toolMessage = fauxAssistant([tool]);

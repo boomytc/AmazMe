@@ -15,9 +15,17 @@ export function checkAssistantStream(events: readonly AssistantEvent[]): string[
   if (terminals.length > 1) problems.push("stream has more than one terminal event");
   const terminalIndex = events.findIndex((event) => event.type === "done" || event.type === "error");
   if (terminalIndex >= 0 && terminalIndex !== events.length - 1) problems.push("terminal event is not last");
+  const messageStarts = events.filter(event => event.type === "start");
+  if (messageStarts.length > 1) problems.push("message started more than once");
+  if (messageStarts.length === 1 && events[0]?.type !== "start") problems.push("message start is not first");
+  if (events.some(event => blockEvent(event) !== undefined) && messageStarts.length !== 1) {
+    problems.push("content blocks require one message start");
+  }
 
   const started = new Map<number, BlockKind>();
   const ended = new Set<number>();
+  const completed = new Map<number, AssistantContent>();
+  const text = new Map<number, string>();
   const order: number[] = [];
   for (const event of events) {
     if (event.type === "start" || event.type === "done" || event.type === "error") continue;
@@ -43,6 +51,7 @@ export function checkAssistantStream(events: readonly AssistantEvent[]): string[
       else {
         started.set(block.index, block.kind);
         order.push(block.index);
+        if (block.kind !== "tool") text.set(block.index, "");
       }
       if (ended.has(block.index)) problems.push(`contentIndex ${block.index} started after it ended`);
     } else if (!known) {
@@ -52,7 +61,17 @@ export function checkAssistantStream(events: readonly AssistantEvent[]): string[
     } else if (ended.has(block.index)) {
       problems.push(`${event.type} after end at contentIndex ${block.index}`);
     }
-    if (block.phase === "end" && known === block.kind) ended.add(block.index);
+    if (event.type === "text_delta" || event.type === "thinking_delta") {
+      text.set(block.index, (text.get(block.index) ?? "") + event.delta);
+    }
+    if (partialBlock?.type === "text" || partialBlock?.type === "thinking") {
+      const received = partialBlock.type === "text" ? partialBlock.text : partialBlock.thinking;
+      if (received !== text.get(block.index)) problems.push(`${event.type} content does not match received deltas`);
+    }
+    if (block.phase === "end" && known === block.kind) {
+      ended.add(block.index);
+      if (partialBlock) completed.set(block.index, partialBlock);
+    }
   }
   order.forEach((index, position) => {
     if (index !== position) problems.push(`contentIndex ${index} is not the next block in first-seen order`);
@@ -67,6 +86,7 @@ export function checkAssistantStream(events: readonly AssistantEvent[]): string[
   }
   const success = terminal?.type === "done" && (terminal.reason === "stop" || terminal.reason === "length" || terminal.reason === "toolUse");
   if (success) {
+    if (messageStarts.length !== 1) problems.push("successful stream requires one message start");
     for (const index of started.keys()) {
       if (!ended.has(index)) problems.push(`successful stream left contentIndex ${index} open`);
     }
@@ -80,6 +100,8 @@ export function checkAssistantStream(events: readonly AssistantEvent[]): string[
       for (const [index, kind] of started) {
         if (contentKind(terminal.message.content[index]) !== kind) {
           problems.push(`terminal content ${index} is not ${kind}`);
+        } else if (ended.has(index) && !sameContent(completed.get(index), terminal.message.content[index])) {
+          problems.push(`terminal content ${index} does not match the completed block`);
         }
       }
     }
@@ -90,6 +112,14 @@ export function checkAssistantStream(events: readonly AssistantEvent[]): string[
     problems.push("error or aborted stream emitted toolcall_end");
   }
   return problems;
+}
+
+function sameContent(left: AssistantContent | undefined, right: AssistantContent | undefined): boolean {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return left === right;
+  }
 }
 
 function blockEvent(event: AssistantEvent): { index: number; kind: BlockKind; phase: BlockPhase } | undefined {

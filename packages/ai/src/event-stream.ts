@@ -23,8 +23,8 @@ export class EventStream<T, R> implements AsyncIterable<T> {
   }
 
   push(event: T): void {
-    const snapshot = structuredClone(event);
     if (this.finished) return;
+    const snapshot = structuredClone(event);
     if (this.isComplete(snapshot) && !this.settled) {
       this.settled = true;
       this.resolveDone(this.extract(snapshot));
