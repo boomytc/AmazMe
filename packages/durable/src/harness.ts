@@ -799,15 +799,20 @@ export class AgentLane {
       if (action.type === "done") return;
       const sequential = action.mode === "sequential";
       const execute = async (call: ArmedCall) => {
-        const result = await startSpan(telemetryContext, {
-          name: "amazme.tool.execute", attributes: { tool: call.name, toolCallId: call.toolCallId },
-        }, async (span) => {
-          const result = await this.executeTool(call, signal, span);
-          if (result.isError || signal.aborted) span.setStatus({ status: "error" });
-          return result;
-        });
-        if (this.harness.isAbandoned) return;
-        await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, result));
+        try {
+          const result = await startSpan(telemetryContext, {
+            name: "amazme.tool.execute", attributes: { tool: call.name, toolCallId: call.toolCallId },
+          }, async (span) => {
+            const result = await this.executeTool(call, signal, span);
+            if (result.isError || signal.aborted) span.setStatus({ status: "error" });
+            return result;
+          });
+          if (this.harness.isAbandoned) return;
+          await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, result));
+        } catch (error) {
+          this.harness.live.delete(call.resultEntryId);
+          throw error;
+        }
       };
       if (sequential) {
         const call = action.calls[0];
@@ -893,24 +898,32 @@ export class AgentLane {
   private async executeTool(call: ArmedCall, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<ToolResult> {
     const tool = this.tool(call.name);
     if (!tool) return { content: [{ type: "text", text: `Unknown tool: ${call.name}` }], isError: true };
+    const writes: Promise<void>[] = [];
+    let accepting = true;
+    const accept = (partial: string, options?: { checkpoint?: boolean }): void => {
+      if (!accepting || !options?.checkpoint) return;
+      const pending = Promise.resolve()
+        .then(() => this.harness.storage.run((view, apply) => {
+          const state = view.get<OperationState>(stateAddress(call.operationId));
+          if (state?.phase !== "tools") return;
+          const current = state.calls.find((item) => item.resultEntryId === call.resultEntryId);
+          if (current?.status !== "effect_pending") return;
+          apply([{ type: "set", address: toolOutputAddress(call.resultEntryId), value: partial }]);
+        }))
+        .then(() => undefined);
+      writes.push(pending);
+      void pending.catch(() => undefined);
+    };
+    let result: ToolResult;
     try {
-      return await tool.execute(call.args, {
-        signal,
-        telemetryContext,
-        onUpdate: (partial, options) => {
-          if (!options?.checkpoint) return;
-          void this.harness.storage.run((view, apply) => {
-            const state = view.get<OperationState>(stateAddress(call.operationId));
-            if (state?.phase !== "tools") return;
-            const current = state.calls.find((item) => item.resultEntryId === call.resultEntryId);
-            if (current?.status !== "effect_pending") return;
-            apply([{ type: "set", address: toolOutputAddress(call.resultEntryId), value: partial }]);
-          });
-        },
-      });
+      result = await tool.execute(call.args, { signal, telemetryContext, onUpdate: accept });
     } catch (error) {
-      return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+      result = { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+    } finally {
+      accepting = false;
     }
+    await Promise.all(writes);
+    return result;
   }
 
   private stageTool(view: StorageView, apply: Apply, operationId: string, call: ArmedCall, result: ToolResult): void {

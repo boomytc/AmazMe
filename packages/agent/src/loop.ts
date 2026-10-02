@@ -1,5 +1,4 @@
 import {
-  validateArguments,
   type AssistantEvent,
   type AssistantMessage,
   findToolCalls,
@@ -9,7 +8,8 @@ import {
   type SystemMessage,
   type ToolResultMessage,
 } from "@amazme/ai";
-import { startSpan, type TelemetryContext } from "@amazme/telemetry";
+import type { TelemetryContext } from "@amazme/telemetry";
+import { executeAgentTools } from "./tool-execution.ts";
 import type {
   AgentEvent,
   AgentMessage,
@@ -19,7 +19,6 @@ import type {
   PrepareRequestUpdate,
   ThinkingLevel,
   ToolExecutionMode,
-  ToolResult,
 } from "./types.ts";
 
 export type Emit = (event: AgentEvent) => Promise<void> | void;
@@ -122,7 +121,7 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
         const executed =
           message.stopReason === "length"
             ? await failTruncated(calls, emit)
-            : await executeTools(calls, tools, input.toolExecution, signal, emit, input.telemetryContext);
+            : await executeAgentTools(calls, tools, input.toolExecution, signal, emit, input.telemetryContext);
         toolResults = executed.messages;
         moreTools = !executed.terminate;
         for (const result of toolResults) {
@@ -202,83 +201,6 @@ async function streamAssistant(
   if (!started) await emit({ type: "message_start", message: finalMessage });
   await emit({ type: "message_end", message: finalMessage });
   return finalMessage;
-}
-
-async function executeTools(
-  calls: Array<{ id: string; name: string; arguments: unknown }>,
-  tools: AgentTool[],
-  mode: ToolExecutionMode,
-  signal: AbortSignal,
-  emit: Emit,
-  telemetryContext: TelemetryContext | undefined,
-): Promise<{ messages: ToolResultMessage[]; terminate: boolean }> {
-  const sequential = mode === "sequential" || calls.some((call) => tools.find((tool) => tool.name === call.name)?.executionMode === "sequential");
-  const messages: ToolResultMessage[] = new Array(calls.length);
-  const flags: boolean[] = new Array(calls.length).fill(false);
-  const run = async (index: number) => {
-    const call = calls[index];
-    if (!call) return;
-    const outcome = await startSpan(telemetryContext, {
-      name: "amazme.tool.execute", attributes: { tool: call.name, toolCallId: call.id },
-    }, async (span) => {
-      const result = await runOne(call, tools, signal, emit, span);
-      if (result.message.isError || signal.aborted) span.setStatus({ status: "error" });
-      return result;
-    });
-    messages[index] = outcome.message;
-    flags[index] = outcome.terminate;
-  };
-  if (sequential) {
-    for (let index = 0; index < calls.length; index++) await run(index);
-  } else {
-    await Promise.all(calls.map((_call, index) => run(index)));
-  }
-  return { messages, terminate: flags.length > 0 && flags.every(Boolean) };
-}
-
-async function runOne(
-  call: { id: string; name: string; arguments: unknown },
-  tools: AgentTool[],
-  signal: AbortSignal,
-  emit: Emit,
-  telemetryContext: TelemetryContext,
-): Promise<{ message: ToolResultMessage; terminate: boolean }> {
-  await emit({ type: "tool_execution_start", toolCallId: call.id, toolName: call.name, args: call.arguments });
-  const tool = tools.find((item) => item.name === call.name);
-  let result: ToolResult;
-  if (!tool) {
-    result = { content: [{ type: "text", text: `Unknown tool: ${call.name}` }], isError: true };
-  } else {
-    const invalid = validateArguments(tool.parameters, call.arguments);
-    if (invalid) {
-      result = { content: [{ type: "text", text: invalid }], isError: true };
-    } else {
-      try {
-        result = await tool.execute(call.arguments, {
-          signal,
-          telemetryContext,
-          onUpdate: (partial) => {
-            void emit({ type: "tool_execution_update", toolCallId: call.id, partial });
-          },
-        });
-      } catch (error) {
-        result = {
-          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-          isError: true,
-        };
-      }
-    }
-  }
-  const message: ToolResultMessage = {
-    role: "toolResult",
-    toolCallId: call.id,
-    toolName: call.name,
-    content: result.content,
-    isError: result.isError === true,
-    timestamp: Date.now(),
-  };
-  await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: message, isError: message.isError });
-  return { message, terminate: result.terminate === true };
 }
 
 async function failTruncated(
