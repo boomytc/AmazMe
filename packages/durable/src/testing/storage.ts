@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { list, value, type Apply, type Storage } from "../harness/storage.ts";
+import { list, value, type Apply, type Storage } from "../storage.ts";
 
 export interface StorageFixture {
   storage: Storage;

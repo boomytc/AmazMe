@@ -3,17 +3,16 @@ import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { AgentHarness, type AgentTool, type OperationRequest, type Write, value } from "@amazme/agent";
-import { JsonlStorage } from "@amazme/agent/storage/jsonl/node";
+import { AgentHarness, type HarnessTool, type OperationRequest, type Write, value } from "@amazme/durable";
+import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText } from "@amazme/ai";
 
-type Fault = "before" | "after" | "torn" | "legacy";
+type Fault = "before" | "after" | "torn";
 type Message = ReturnType<typeof fauxAssistant>;
 
 class FaultStorage extends JsonlStorage {
   fault?: { timing: Fault; matches: (writes: Write[]) => boolean };
   injected = false;
-  legacyWrites?: (writes: Write[]) => Write[];
 
   constructor(readonly logFile: string) {
     super(logFile);
@@ -29,12 +28,6 @@ class FaultStorage extends JsonlStorage {
     if (this.fault.timing === "torn") {
       const line = JSON.stringify({ writes });
       appendFileSync(this.logFile, line.slice(0, Math.floor(line.length / 2)));
-    }
-    if (this.fault.timing === "legacy") {
-      // Reproduce an older writer's content-only commit without its phase or terminal result.
-      const content = writes.filter((write) => write.type === "entry" || write.type === "usage"
-        || write.type === "deleteList" || (write.type === "set" && write.address.namespace === "pi.branch.tip"));
-      super.persist(this.legacyWrites?.(content) ?? content);
     }
     throw new Error("injected settlement crash");
   }
@@ -60,7 +53,7 @@ function fixture(t: TestContext, messages: Message[], compactAt?: number) {
   } });
   const models = createModels();
   models.setProvider(provider);
-  const work: AgentTool = {
+  const work: HarnessTool = {
     name: "work", description: "work", parameters: { type: "object" }, replay: "never",
     async execute() {
       runs += 1;
@@ -121,7 +114,7 @@ const cases: Array<{ name: string; messages: Message[]; phase: string | null; st
 ];
 
 for (const scenario of cases) {
-  for (const timing of ["before", "after", "torn", "legacy"] as const) {
+  for (const timing of ["before", "after", "torn"] as const) {
     test(`${scenario.name}: ${timing} settlement interruption survives JSONL reopen`, async (t) => {
       const f = fixture(t, scenario.messages);
       const admission = await f.first.lane().accept({ kind: "prompt", text: "go" });
@@ -134,7 +127,7 @@ for (const scenario of cases) {
       f.first.abandon();
       const callsAtCrash = f.provider.state.callCount;
       const reopened = f.reopen();
-      const persisted = timing === "after" || timing === "legacy";
+      const persisted = timing === "after";
       const snapshot = await reopened.lane().inspect();
       assert.equal(snapshot.phase, timing === "after" ? scenario.phase : "assistant_effect_pending");
       const saved = (await reopened.lane().entries()).filter((entry) => entry.payload.type === "message"
@@ -158,7 +151,7 @@ for (const scenario of cases) {
 }
 
 for (const boundary of ["finish", "navigation", "resume"] as const) {
-  for (const timing of ["before", "after", "torn", ...(boundary === "resume" ? [] : ["legacy"])] as Fault[]) {
+  for (const timing of ["before", "after", "torn"] as const) {
     test(`summary ${boundary}: ${timing} interruption preserves its settlement`, async (t) => {
       const f = fixture(t, [answer("seed"), answer("summary"), answer("continued")], boundary === "resume" ? 30 : undefined);
       await f.first.lane().prompt("seed");
@@ -169,15 +162,22 @@ for (const boundary of ["finish", "navigation", "resume"] as const) {
       const admission = await f.first.lane().accept(request);
       assert.ok(admission.ok);
       const admittedTip = (await f.first.lane().inspect()).tipId;
+      let responseEntryId: string | undefined;
+      f.onResponse(async () => {
+        responseEntryId = await f.first.storage.read(view => view.get<{ responseEntryId: string }>(value("pi.op.state", admission.value.operationId))?.responseEntryId);
+      });
       f.storage.fault = { timing, matches: (writes) => writes.some((write) => write.type === "entry" && write.payload.type === "compaction") };
       await assert.rejects(f.first.lane().drive(admission.value.operationId), /injected settlement crash/);
       f.first.abandon();
       const reopened = f.reopen();
-      const persisted = timing === "after" || timing === "legacy";
+      const persisted = timing === "after";
       assert.equal((await reopened.lane().inspect()).phase, timing === "after" ? (boundary === "resume" ? "assistant_ready" : null) : "summary_effect_pending");
       const summaries = (await reopened.lane().entries()).filter((entry) => entry.payload.type === "compaction");
       assert.equal(summaries.length, persisted ? 1 : 0);
-      if (persisted) assert.equal(summaries[0]?.parentId, boundary === "navigation" ? target : admittedTip);
+      if (persisted) {
+        assert.equal(summaries[0]?.id, responseEntryId);
+        assert.equal(summaries[0]?.parentId, boundary === "navigation" ? target : admittedTip);
+      }
       await assertSettled(reopened, admission.value.operationId, persisted ? "completed" : "aborted", f.file);
       assert.equal(f.provider.state.callCount, persisted && boundary === "resume" ? 3 : 2);
       const usage = await reopened.storage.read((view) => view.usageRows());
@@ -189,7 +189,7 @@ for (const boundary of ["finish", "navigation", "resume"] as const) {
 }
 
 for (const kind of ["assistant", "summary"] as const) {
-  for (const timing of ["after", "legacy"] as const) {
+  for (const timing of ["before", "after", "torn"] as const) {
     test(`${kind} recovery can crash again with ${timing} settlement without duplicates or resending`, async (t) => {
       const f = fixture(t, [answer("seed"), answer("answer")]);
       if (kind === "summary") await f.first.lane().prompt("seed");
@@ -250,22 +250,30 @@ for (const timing of ["before", "after", "torn"] as const) {
 }
 
 for (const kind of ["assistant", "summary"] as const) {
-  test(`legacy ${kind} settlement with foreign usage is rejected without guessing`, async (t) => {
-    const f = fixture(t, [answer("seed"), answer("answer")]);
-    if (kind === "summary") await f.first.lane().prompt("seed");
-    const admission = await f.first.lane().accept(kind === "summary" ? { kind: "compaction" } : { kind: "prompt", text: "go" });
-    assert.ok(admission.ok);
-    f.storage.legacyWrites = (writes) => writes.map((write) => write.type === "usage" ? { ...write, operationId: "foreign" } : write);
-    f.storage.fault = { timing: "legacy", matches: (writes) => writes.some((write) => write.type === "entry"
-      && (kind === "summary" ? write.payload.type === "compaction" : write.payload.type === "message" && write.payload.message.role === "assistant")) };
-    await assert.rejects(f.first.lane().drive(admission.value.operationId), /injected settlement crash/);
-    f.first.abandon();
-    const reopened = f.reopen();
-    const before = readFileSync(f.file, "utf8");
-    const calls = f.provider.state.callCount;
-    await assert.rejects(reopened.lane().drive(admission.value.operationId), new RegExp(`inconsistent ${kind} settlement`));
-    assert.equal(readFileSync(f.file, "utf8"), before);
-    assert.equal(f.provider.state.callCount, calls);
-    reopened.close();
-  });
+  for (const collision of ["entry", "usage"] as const) {
+    test(`${kind} pending response with an occupied ${collision} id is rejected without writes`, async (t) => {
+      const f = fixture(t, [answer("seed"), answer("answer")]);
+      if (kind === "summary") await f.first.lane().prompt("seed");
+      const admission = await f.first.lane().accept(kind === "summary" ? { kind: "compaction" } : { kind: "prompt", text: "go" });
+      assert.ok(admission.ok);
+      const id = admission.value.operationId;
+      f.storage.fault = { timing: "before", matches: writes => writes.some(write => write.type === "entry"
+        && (kind === "summary" ? write.payload.type === "compaction" : write.payload.type === "message" && write.payload.message.role === "assistant")) };
+      await assert.rejects(f.first.lane().drive(id), /injected settlement crash/);
+      f.first.abandon();
+      const reopened = f.reopen();
+      const state = await reopened.storage.read(view => view.get<{ responseEntryId: string; usageId: string }>(value("pi.op.state", id)));
+      assert.ok(state);
+      const tipId = (await reopened.lane().inspect()).tipId;
+      await reopened.storage.commit([collision === "entry"
+        ? { type: "entry", id: state.responseEntryId, parentId: tipId, timestamp: 1, payload: { type: "compaction", summary: "collision" } }
+        : { type: "usage", id: state.usageId, operationId: id, input: 1, output: 1, totalTokens: 2 }]);
+      const before = readFileSync(f.file, "utf8");
+      const calls = f.provider.state.callCount;
+      await assert.rejects(reopened.lane().drive(id), /inconsistent pending response/);
+      assert.equal(readFileSync(f.file, "utf8"), before);
+      assert.equal(f.provider.state.callCount, calls);
+      reopened.close();
+    });
+  }
 }

@@ -369,5 +369,3 @@ export function toProviderMessages(messages: AgentMessage[]): Message[] {
 export function streamOptions(thinkingLevel: ThinkingLevel, signal: AbortSignal): StreamOptions {
   return { thinkingLevel, signal };
 }
-
-export { toolDefinition };

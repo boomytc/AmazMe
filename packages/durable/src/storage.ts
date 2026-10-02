@@ -1,4 +1,4 @@
-import type { AgentMessage } from "../types.ts";
+import type { HarnessMessage } from "./types.ts";
 
 export interface Address {
   kind: "value" | "list";
@@ -14,7 +14,7 @@ export function list(namespace: string, key = ""): Address {
   return { kind: "list", namespace, key };
 }
 
-export type EntryPayload = { type: "message"; message: AgentMessage } | { type: "compaction"; summary: string };
+export type EntryPayload = { type: "message"; message: HarnessMessage } | { type: "compaction"; summary: string };
 
 export interface Entry {
   id: string;

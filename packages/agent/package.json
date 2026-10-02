@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Agent loop and durable operation harness",
+  "description": "In-memory agent loop and tool execution",
   "dependencies": {
     "@amazme/ai": "0.1.0",
     "@amazme/telemetry": "0.1.0"
@@ -12,14 +12,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
-    },
-    "./storage/jsonl/node": {
-      "types": "./dist/harness/storage/jsonl-node.d.ts",
-      "default": "./src/harness/storage/jsonl-node.ts"
-    },
-    "./testing": {
-      "types": "./dist/testing/storage.d.ts",
-      "default": "./src/testing/storage.ts"
     }
   },
   "scripts": {

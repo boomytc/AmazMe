@@ -4,6 +4,7 @@
     { "path": "packages/telemetry" },
     { "path": "packages/ai" },
     { "path": "packages/agent" },
+    { "path": "packages/durable" },
     { "path": "packages/coding-agent" }
   ]
 }

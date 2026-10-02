@@ -3,8 +3,9 @@ import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AgentHarness, type AgentTool, MemoryStorage, value } from "@amazme/agent";
-import { JsonlStorage } from "@amazme/agent/storage/jsonl/node";
+import { AgentHarness, type HarnessTool, type HarnessMessage, value } from "@amazme/durable";
+import { MemoryStorage } from "@amazme/durable/storage/memory";
+import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import {
   baseAssistant,
   createAssistantEventStream,
@@ -17,6 +18,10 @@ import {
   type Provider,
 } from "@amazme/ai";
 
+function harnessText(message: HarnessMessage): string {
+  return message.role === "custom" ? message.content : messageText(message);
+}
+
 function scripted(messages: ReturnType<typeof fauxAssistant>[]) {
   const provider = fauxProvider({
     respond: (_context, _options, state) => messages[Math.min(state.callCount - 1, messages.length - 1)] ?? fauxAssistant("empty"),
@@ -26,7 +31,7 @@ function scripted(messages: ReturnType<typeof fauxAssistant>[]) {
   return { provider, models };
 }
 
-function harness(storage: MemoryStorage, models: ReturnType<typeof createModels>, tools: AgentTool[] = [], extra: { maxTokens?: number } = {}) {
+function harness(storage: MemoryStorage, models: ReturnType<typeof createModels>, tools: HarnessTool[] = [], extra: { maxTokens?: number } = {}) {
   return new AgentHarness(storage, {
     models,
     model: { provider: "faux", modelId: "faux-1" },
@@ -46,7 +51,7 @@ async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
   throw new Error("timed out waiting for durable state");
 }
 
-function tool(name: string, execute: AgentTool["execute"], replay: "safe" | "never" = "never"): AgentTool {
+function tool(name: string, execute: HarnessTool["execute"], replay: "safe" | "never" = "never"): HarnessTool {
   return {
     name,
     description: name,
@@ -83,7 +88,7 @@ test("a prompt runs the model, then the tool, then the model again", async () =>
   assert.equal(result.status, "completed");
   assert.equal(provider.state.callCount, 2);
   assert.equal(runs, 1);
-  const texts = (await lane.entries()).map((entry) => (entry.payload.type === "message" ? messageText(entry.payload.message) : entry.payload.summary));
+  const texts = (await lane.entries()).map((entry) => (entry.payload.type === "message" ? harnessText(entry.payload.message) : entry.payload.summary));
   assert.deepEqual(texts, ["go", "", "echoed", "finished"]);
 });
 
@@ -93,7 +98,7 @@ test("parallel tool results materialize in source order", async () => {
     fauxAssistant([fauxToolCall("slow", {}, "call_slow"), fauxToolCall("fast", {}, "call_fast")]),
     fauxAssistant("done"),
   ]);
-  const make = (name: string, delay: number): AgentTool =>
+  const make = (name: string, delay: number): HarnessTool =>
     tool(name, async () => {
       await new Promise((resolve) => setTimeout(resolve, delay));
       finished.push(name);
@@ -104,7 +109,7 @@ test("parallel tool results materialize in source order", async () => {
   assert.deepEqual(finished, ["fast", "slow"]);
   const results = (await lane.entries()).filter((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
   assert.deepEqual(
-    results.map((entry) => (entry.payload.type === "message" ? messageText(entry.payload.message) : "")),
+    results.map((entry) => (entry.payload.type === "message" ? harnessText(entry.payload.message) : "")),
     ["slow", "fast"],
   );
 });
@@ -164,7 +169,7 @@ test("a crashed assistant stream is settled from frames and is not sent again", 
       void (async () => {
         stream.push({ type: "text_delta", delta: "partial-answer", partial: { ...message, stopReason: "pending" } });
         await gate;
-        if (options.signal.aborted) {
+        if (options.signal?.aborted) {
           const aborted = baseAssistant(active, [{ type: "text", text: "partial-answer" }], "aborted");
           stream.push({ type: "error", error: aborted });
           return;
@@ -193,7 +198,7 @@ test("a crashed assistant stream is settled from frames and is not sent again", 
   const assistant = (await second.lane().entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant");
   assert.ok(assistant && assistant.payload.type === "message" && assistant.payload.message.role === "assistant");
   assert.equal(assistant.payload.message.stopReason, "aborted");
-  assert.equal(messageText(assistant.payload.message), "partial-answer");
+  assert.equal(harnessText(assistant.payload.message), "partial-answer");
   const operationLeft = await storage.read((view) => view.values().some((item) => item.key.includes("pi.op.state")));
   assert.equal(operationLeft, false);
   const resultLeft = await storage.read((view) => view.values().some((item) => item.key.includes("pi.result")));
@@ -231,7 +236,7 @@ test("an interrupted unsafe tool is not repeated and keeps its checkpoint", asyn
   assert.equal(recovered.ok && recovered.value.kind === "settled" ? recovered.value.result.status : "", "completed");
   const toolEntry = (await second.lane().entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
   assert.ok(toolEntry && toolEntry.payload.type === "message");
-  assert.match(messageText(toolEntry.payload.message), /deleted 1/);
+  assert.match(harnessText(toolEntry.payload.message), /deleted 1/);
 });
 
 test("an interrupted safe tool runs again with the stored arguments", async () => {
@@ -264,7 +269,7 @@ test("an interrupted safe tool runs again with the stored arguments", async () =
   const toolEntry = (await harness(storage, models, [work]).lane().entries()).find(
     (entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult",
   );
-  assert.equal(toolEntry && toolEntry.payload.type === "message" ? messageText(toolEntry.payload.message) : "", "reread");
+  assert.equal(toolEntry && toolEntry.payload.type === "message" ? harnessText(toolEntry.payload.message) : "", "reread");
 });
 
 test("overflow compacts once and a second overflow fails the run", async () => {
@@ -285,7 +290,7 @@ test("threshold compaction replaces older context before the answer", async () =
   const seen: string[] = [];
   const provider = fauxProvider({
     respond: (context, _options, state) => {
-      seen.push(context.messages.map((message) => messageText(message)).join("|"));
+      seen.push(context.messages.map((message) => harnessText(message)).join("|"));
       return fauxAssistant(state.callCount === 1 ? "short" : "answer");
     },
   });
@@ -324,7 +329,7 @@ test("jsonl storage reloads a settled session", async () => {
   const first = harness(new JsonlStorage(file), models).lane();
   await first.prompt("save");
   const reloaded = harness(new JsonlStorage(file), models).lane();
-  const texts = (await reloaded.entries()).map((entry) => (entry.payload.type === "message" ? messageText(entry.payload.message) : ""));
+  const texts = (await reloaded.entries()).map((entry) => (entry.payload.type === "message" ? harnessText(entry.payload.message) : ""));
   assert.deepEqual(texts, ["save", "persisted"]);
   const info = await reloaded.inspect();
   assert.equal(info.phase, null);
@@ -497,15 +502,15 @@ test("settled results remain lane-owned after later operations and reopening sto
   reloaded.close();
 });
 
-test("legacy results without persisted lane ownership are rejected", async () => {
+test("results without persisted lane ownership are rejected", async () => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-unowned-result-"));
   const file = join(dir, "lane.jsonl");
   const { models } = scripted([fauxAssistant("answer")]);
   await new JsonlStorage(file).commit([{
     type: "set",
-    address: value("pi.result", "legacy"),
+    address: value("pi.result", "invalid-result"),
     value: {
-      operationId: "legacy",
+      operationId: "invalid-result",
       kind: "run",
       status: "completed",
       fromTipId: null,
@@ -516,7 +521,7 @@ test("legacy results without persisted lane ownership are rejected", async () =>
   }]);
   const runtime = harness(new JsonlStorage(file), models);
   for (const name of ["main", "owner", "other"]) {
-    const outcome = await runtime.lane(name).drive("legacy");
+    const outcome = await runtime.lane(name).drive("invalid-result");
     assert.equal(outcome.ok, false);
     assert.equal(outcome.ok ? "" : outcome.error.code, "operation_mismatch");
   }

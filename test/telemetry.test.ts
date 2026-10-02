@@ -3,8 +3,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Agent, AgentHarness, MemoryStorage, type AgentMessage, type AgentTool } from "@amazme/agent";
-import { JsonlStorage } from "@amazme/agent/storage/jsonl/node";
+import { Agent, type AgentMessage, type AgentTool } from "@amazme/agent";
+import { AgentHarness } from "@amazme/durable";
+import { MemoryStorage } from "@amazme/durable/storage/memory";
+import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { baseAssistant, createAssistantEventStream, createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText, type FauxResponder } from "@amazme/ai";
 import { InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext, type TelemetrySpan } from "@amazme/telemetry";
 

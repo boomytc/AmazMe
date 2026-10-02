@@ -6,12 +6,11 @@ import {
   estimateTokens,
   frameFromEvent,
   messageText,
-  type Models,
   reduceFrames,
   type ThinkingLevel,
 } from "@amazme/ai";
 import { startSpan, type TelemetryContext, type TelemetrySpan } from "@amazme/telemetry";
-import type { AgentMessage, AgentTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "../types.ts";
+import type { HarnessMessage, HarnessModels, HarnessTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "./types.ts";
 import {
   type Address,
   type Apply,
@@ -51,9 +50,9 @@ export interface LaneConfig {
 
 export interface HarnessOptions {
   telemetryContext?: TelemetryContext;
-  models: Models;
+  models: HarnessModels;
   model: { provider: string; modelId: string };
-  tools?: AgentTool[];
+  tools?: HarnessTool[];
   systemPrompt?: string;
   thinkingLevel?: ThinkingLevel;
   steeringMode?: QueueMode;
@@ -300,7 +299,7 @@ export class AgentLane {
         continue;
       }
       if (planned.type === "summary") {
-        const message = await this.streamSummary(planned, signal, span);
+        const message = await this.streamSummary(signal, span);
         if (this.harness.isAbandoned) return this.settledOrWait(operationId);
         await this.harness.storage.run((view, apply) => this.settleSummary(view, apply, planned, message));
         continue;
@@ -320,11 +319,11 @@ export class AgentLane {
     return outcome.value.result;
   }
 
-  async steer(message: AgentMessage | string): Promise<Result<{ entryId: string }>> {
+  async steer(message: HarnessMessage | string): Promise<Result<{ entryId: string }>> {
     return this.enqueue(typeof message === "string" ? user(message) : message, "steer");
   }
 
-  async followUp(message: AgentMessage | string): Promise<Result<{ entryId: string }>> {
+  async followUp(message: HarnessMessage | string): Promise<Result<{ entryId: string }>> {
     return this.enqueue(typeof message === "string" ? user(message) : message, "followUp");
   }
 
@@ -388,7 +387,7 @@ export class AgentLane {
     });
   }
 
-  private async enqueue(message: AgentMessage, kind: InboxItem["kind"]): Promise<Result<{ entryId: string }>> {
+  private async enqueue(message: HarnessMessage, kind: InboxItem["kind"]): Promise<Result<{ entryId: string }>> {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
     if (message.role !== "user" && message.role !== "custom") return failure("invalid_message", "queue accepts user messages");
     const entryId = uuidv7();
@@ -539,7 +538,7 @@ export class AgentLane {
       if (this.harness.live.has(state.responseEntryId)) {
         return { type: "assistant", operationId, responseEntryId: state.responseEntryId, usageId: state.usageId };
       }
-      this.recoverAssistant(view, apply, meta, state);
+      this.recoverResponse(view, apply, meta, state);
       span.addEvent("amazme.harness.recovered", { effect: "assistant" });
       return { type: "continue" };
     }
@@ -558,7 +557,7 @@ export class AgentLane {
       if (this.harness.live.has(state.responseEntryId)) {
         return { type: "summary", operationId, responseEntryId: state.responseEntryId, usageId: state.usageId };
       }
-      this.recoverSummary(view, apply, meta, state);
+      this.recoverResponse(view, apply, meta, state);
       span.addEvent("amazme.harness.recovered", { effect: "summary" });
       return { type: "continue" };
     }
@@ -593,7 +592,7 @@ export class AgentLane {
     return stream.result();
   }
 
-  private async streamSummary(planned: Extract<Plan, { type: "summary" }>, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage> {
+  private async streamSummary(signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage> {
     const base = await this.harness.storage.read((view) => this.providerContext(view));
     const config = await this.harness.storage.read((view) => this.config(view));
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
@@ -624,7 +623,6 @@ export class AgentLane {
     apply: Apply,
     planned: Extract<Plan, { type: "assistant" }>,
     message: AssistantMessage,
-    alreadyWritten = false,
   ): void {
     const state = view.get<OperationState>(stateAddress(planned.operationId));
     const meta = view.get<OperationMeta>(metaAddress(planned.operationId));
@@ -637,7 +635,7 @@ export class AgentLane {
       : message.overflow
         ? { ...message, stopReason: "error", errorMessage: message.errorMessage ?? "context overflow" }
         : message;
-    const writes = this.assistantWrites(view, planned, settledMessage, alreadyWritten);
+    const writes = this.assistantWrites(view, planned, settledMessage);
     const advance = (transition: Write[]) => {
       apply([...writes, ...transition]);
       this.harness.live.delete(planned.responseEntryId);
@@ -737,28 +735,9 @@ export class AgentLane {
     }]);
   }
 
-  private recoverAssistant(view: StorageView, apply: Apply, meta: OperationMeta, state: Extract<OperationState, { phase: "assistant_effect_pending" | "summary_effect_pending" }>): void {
-    // Older writers could commit the response before its phase transition. Only repair a verified settlement.
-    const existing = view.entry(state.responseEntryId);
-    const usage = view.usageRows().filter((row) => row.id === state.usageId);
-    if (existing || usage.length > 0) {
-      const row = usage[0];
-      if (!existing || existing.payload.type !== "message" || existing.payload.message.role !== "assistant"
-        || view.get(tipAddress(this.name)) !== existing.id || usage.length !== 1
-        || !row || row.operationId !== meta.operationId || row.seq !== existing.seq + 1
-        || row.input !== existing.payload.message.usage.input || row.output !== existing.payload.message.usage.output
-        || row.totalTokens !== existing.payload.message.usage.totalTokens) {
-        throw new Error(`inconsistent assistant settlement ${state.responseEntryId}`);
-      }
-      if (state.phase === "summary_effect_pending") {
-        if (existing.payload.message.stopReason !== "aborted") {
-          throw new Error(`inconsistent summary settlement ${state.responseEntryId}`);
-        }
-        this.finish(view, apply, meta, "aborted", existing.payload.message.errorMessage ?? "interrupted before settlement");
-        return;
-      }
-      this.settleAssistant(view, apply, { type: "assistant", operationId: meta.operationId, ...state }, existing.payload.message, true);
-      return;
+  private recoverResponse(view: StorageView, apply: Apply, meta: OperationMeta, state: Extract<OperationState, { phase: "assistant_effect_pending" | "summary_effect_pending" }>): void {
+    if (view.entry(state.responseEntryId) || view.usageRows().some(row => row.id === state.usageId)) {
+      throw new Error(`inconsistent pending response ${state.responseEntryId}`);
     }
     const frames = view.items(frameAddress(meta.operationId, state.responseEntryId)).map((item) => item.item as import("@amazme/ai").AssistantFrame);
     const reduced = reduceFrames(frames);
@@ -775,32 +754,9 @@ export class AgentLane {
       errorMessage: "interrupted before settlement",
       timestamp: Date.now(),
     };
-    const writes = this.assistantWrites(view, { operationId: meta.operationId, ...state }, message, false);
+    const writes = this.assistantWrites(view, { operationId: meta.operationId, ...state }, message);
     this.finish(view, apply, meta, "aborted", "interrupted before settlement", { writes, tipId: state.responseEntryId });
     this.harness.live.delete(state.responseEntryId);
-  }
-
-  private recoverSummary(view: StorageView, apply: Apply, meta: OperationMeta, state: Extract<OperationState, { phase: "summary_effect_pending" }>): void {
-    if (view.entry(state.responseEntryId)) {
-      this.recoverAssistant(view, apply, meta, state);
-      return;
-    }
-    const usage = view.usageRows().filter((row) => row.id === state.usageId);
-    if (usage.length > 0) {
-      const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
-      const entry = tip === null ? undefined : view.entry(tip);
-      const row = usage[0];
-      // A legacy summary used a fresh entry ID. Its adjacent usage row identifies the committed summary.
-      if (usage.length !== 1 || !row || row.operationId !== meta.operationId
-        || !entry || entry.payload.type !== "compaction" || row.seq !== entry.seq + 1
-        || state.boundary === "resume"
-        || (state.boundary === "navigation" && entry.parentId !== (state.targetId ?? null))) {
-        throw new Error(`inconsistent summary settlement ${state.responseEntryId}`);
-      }
-      this.finish(view, apply, meta, "completed");
-      return;
-    }
-    this.recoverAssistant(view, apply, meta, state);
   }
 
   private settleSummary(
@@ -820,7 +776,7 @@ export class AgentLane {
     const summary = messageText(message) || "summary";
     const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
     const parent = state.boundary === "navigation" ? (state.targetId ?? null) : tip;
-    const entryId = uuidv7();
+    const entryId = planned.responseEntryId;
     const writes: Write[] = [
       { type: "entry", id: entryId, parentId: parent, timestamp: Date.now(), payload: { type: "compaction", summary } },
       { type: "usage", id: state.usageId, operationId: planned.operationId, input: message.usage.input, output: message.usage.output, totalTokens: message.usage.totalTokens },
@@ -877,7 +833,7 @@ export class AgentLane {
     for (const call of recoverable) {
       if (call.replay === "safe") {
         this.harness.live.add(call.resultEntryId);
-        toRun.push(this.armed(view, operationId, refreshed.responseEntryId, call, assistant));
+        toRun.push(this.armed(view, operationId, call, assistant));
         telemetryContext.addEvent("amazme.harness.recovered", { effect: "tool", replay: "safe" });
         if (sequential) break;
         continue;
@@ -1024,10 +980,8 @@ export class AgentLane {
     view: StorageView,
     planned: { operationId: string; responseEntryId: string; usageId: string },
     message: AssistantMessage,
-    alreadyWritten: boolean,
   ): Write[] {
     const clearFrames: Write = { type: "deleteList", address: frameAddress(planned.operationId, planned.responseEntryId) };
-    if (alreadyWritten) return [clearFrames];
     const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
     return [
       {
@@ -1211,11 +1165,11 @@ export class AgentLane {
     return config;
   }
 
-  private tool(name: string): AgentTool | undefined {
+  private tool(name: string): HarnessTool | undefined {
     return (this.harness.options.tools ?? []).find((tool) => tool.name === name);
   }
 
-  private armed(view: StorageView, operationId: string, responseEntryId: string, call: ToolCallState, assistant: Entry | undefined): ArmedCall {
+  private armed(view: StorageView, operationId: string, call: ToolCallState, assistant: Entry | undefined): ArmedCall {
     const stored = view.get<unknown>(toolArgsAddress(operationId, call.resultEntryId));
     return {
       ...call,
@@ -1239,7 +1193,7 @@ interface ArmedCall extends ToolCallState {
   replay: ReplayPolicy;
 }
 
-function user(text: string): AgentMessage {
+function user(text: string): HarnessMessage {
   return { role: "user", content: text, timestamp: Date.now() };
 }
 

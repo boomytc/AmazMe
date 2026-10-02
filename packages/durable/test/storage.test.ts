@@ -4,9 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AgentHarness, MemoryStorage, type Apply, type Storage, type StorageView, type Write } from "@amazme/agent";
-import { JsonlStorage } from "@amazme/agent/storage/jsonl/node";
-import { createStorageConformance } from "@amazme/agent/testing";
+import { AgentHarness, type Apply, type HarnessModels, type Storage, type StorageView, type Write } from "@amazme/durable";
+import { MemoryStorage } from "@amazme/durable/storage/memory";
+import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
+import { createStorageConformance } from "@amazme/durable/testing";
 import { createModels, fauxProvider } from "@amazme/ai";
 
 for (const backend of ["memory", "jsonl"] as const) {
@@ -18,7 +19,7 @@ for (const backend of ["memory", "jsonl"] as const) {
   for (const case_ of cases) test(`${backend}: ${case_.name}`, case_.run);
 }
 
-test("Harness accepts a structural storage and view without inheriting reference classes", async () => {
+test("Harness accepts structural storage, view and model capabilities without reference classes", async () => {
   class Adapter implements Storage {
     private readonly backing = new MemoryStorage();
     run<T>(fn: (view: StorageView, apply: Apply) => T | Promise<T>): Promise<T> {
@@ -37,22 +38,28 @@ test("Harness accepts a structural storage and view without inheriting reference
   assert.equal(storage instanceof MemoryStorage, false);
   const models = createModels();
   models.setProvider(fauxProvider());
-  const harness = new AgentHarness(storage, { models, model: { provider: "faux", modelId: "faux-1" } });
+  const capabilities: HarnessModels = {
+    getModel: (provider, id) => models.getModel(provider, id),
+    streamSimple: (model, context, options) => models.streamSimple(model, context, options),
+  };
+  const harness = new AgentHarness(storage, { models: capabilities, model: { provider: "faux", modelId: "faux-1" } });
   assert.equal((await harness.lane().prompt("go")).status, "completed");
   harness.close();
 });
 
-test("core entry runs without Node imports or a global process", () => {
-  const entry = new URL("../src/index.ts", import.meta.url).href;
+test("public core and memory entries run without Node, Agent or a global process", () => {
   const script = `
     const { registerHooks, builtinModules } = await import("node:module");
     registerHooks({ resolve(specifier, context, next) {
       if (specifier.startsWith("node:") || builtinModules.includes(specifier)) throw new Error("Node import in core: " + specifier);
-      return next(specifier, context);
+      const resolved = next(specifier, context);
+      if (resolved.url.includes("/packages/agent/") || resolved.url.includes("/packages/coding-agent/")) throw new Error("Agent dependency in Durable: " + specifier);
+      return resolved;
     } });
     globalThis.process = undefined;
-    const { AgentHarness, MemoryStorage, uuidv7 } = await import(${JSON.stringify(entry)});
-    const { createModels, fauxProvider } = await import("@amazme/ai");
+    const { AgentHarness } = await import("@amazme/durable");
+    const { MemoryStorage } = await import("@amazme/durable/storage/memory");
+    const { createModels, fauxProvider, uuidv7 } = await import("@amazme/ai");
     const { InMemoryTelemetryContext } = await import("@amazme/telemetry");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuidv7())) throw new Error("invalid UUID");
     const telemetryContext = new InMemoryTelemetryContext();

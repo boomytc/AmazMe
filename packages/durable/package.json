@@ -1,0 +1,23 @@
+{
+  "name": "@amazme/durable",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "Portable durable lane runtime and storage contracts",
+  "dependencies": {
+    "@amazme/ai": "0.1.0",
+    "@amazme/telemetry": "0.1.0"
+  },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" },
+    "./storage/memory": { "types": "./dist/storage/memory.d.ts", "default": "./src/storage/memory.ts" },
+    "./storage/jsonl/node": { "types": "./dist/storage/jsonl-node.d.ts", "default": "./src/storage/jsonl-node.ts" },
+    "./testing": { "types": "./dist/testing/storage.d.ts", "default": "./src/testing/storage.ts" }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check": "tsc -b && tsc -p tsconfig.test.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  }
+}

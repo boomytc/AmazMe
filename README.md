@@ -1,11 +1,12 @@
 # AmazMe
 
-一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。`AgentHarness` 是额外的精简持久化操作机，与 CLI 的内存循环分别运行；它没有采用 [`pi-durable`](https://github.com/earendil-works/pi/blob/ed8b3bcc194c8263ec8bec3f337053ae73866da1/packages/durable/README.md) 的任务调度和 Chord 文档架构。
+一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时已按 [Pi `7fbbd5f` 的独立包边界](https://github.com/earendil-works/pi/blob/7fbbd5f4a1d982bb02d63472dde0774fa639f99b/packages/durable/package.json) 拆成 `@amazme/durable`，直接依赖 AI 和 Telemetry，与内存 Agent 分别运行。其 lane、恢复与存储设计保持原有范围，没有采用 Pi 的 Conversation / Task / Chord 架构。
 
 ```text
 @amazme/telemetry      被动诊断契约、空实现、进程内记录
 @amazme/ai             Provider、认证、统一消息、流事件
-@amazme/agent          内存里的 turn 循环，以及可崩溃恢复的 AgentHarness
+@amazme/agent          内存里的 turn 循环
+@amazme/durable        可崩溃恢复的 AgentHarness、存储契约与适配器
 @amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI
 ```
 
@@ -23,33 +24,36 @@
 
 一次 turn 是一次模型响应加上它的工具结果。Steering 在当前 assistant 回合之后进入。Follow-up 要等到这次 run 本来会停的时候。`stopReason === "length"` 的 tool call 不执行。工具可以并行跑完，写回 transcript 时仍按 assistant 里的源顺序。
 
-## 持久化 harness
+## 持久化运行时
+
+`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessTool`、`HarnessMessage` 属于 Durable 自己的契约，可由同一套工具和消息实现满足两个运行时各自的接口。更多使用方式见 [Durable README](packages/durable/README.md)。
 
 存储只有三类东西：只写一次的 entry 树、可替换的 value 和只追加的 list、只追加的 usage。一次 commit 要么全部可见，要么全部没有。
 
 一条 lane 同时最多一个操作。操作状态是一整份当前叶子，每次转移都整份替换。恢复时读这棵叶子，不回放日志。
 
 - 模型请求在 `assistant_effect_pending` 里预留 response id 和 usage id，然后才发送。中途崩溃就用已经写下的帧合成一条 `aborted` 响应，不再次发送。
-- 响应和摘要结算把 entry、usage、tip 与阶段转移或操作终态一起提交。旧版本留下的半结算数据，仅在条目、usage 和操作归属可核验时补齐状态，不重复写入或计费。
+- 响应和摘要结算把 entry、usage、tip 与阶段转移或操作终态一起提交。未结算状态的预留 entry / usage ID 必须尚未被占用；不一致的状态直接报错。
 - 工具先写 intent。`replay: "never"` 的工具不重跑，结果里带上最后一次 checkpoint。`replay: "safe"` 用存下来的参数再执行。
 - 多个工具可以乱序完成，entry 仍按源顺序挂到树上。
-- 结束时删掉操作自己的 value，留下不可变的 `pi.result`，其中保存所属 lane。结算后和重启后都只允许所属 lane 读取；早期结果缺少 lane 时拒绝返回，避免猜测归属。
+- 结束时删掉操作自己的 value，留下不可变的 `pi.result`，其中保存所属 lane。结算后和重启后都只允许所属 lane 读取，缺少归属的结果属于无效数据。
 
 Harness 依赖结构化的 `Storage` / `StorageView` 接口，后端不需要继承 `MemoryStorage`。`run` 串行持有写入通道，每次 `apply` 单独原子提交；它不是跨多个 `apply` 的事务，回调失败也不会撤销此前已提交的数据。`apply` 仅在所属回调未结束时有效。
 
-核心入口和 `MemoryStorage` 不导入 Node 模块，ID 使用 Web Crypto；没有全局 `process` 时，模型认证使用传入的 `env` 或空环境。`JsonlStorage` 从根入口迁移到独立 Node 入口，原有文件格式和恢复语义保持一致：
+核心入口和 `MemoryStorage` 不导入 Node 模块，ID 使用 Web Crypto；没有全局 `process` 时，模型认证使用传入的 `env` 或空环境。`JsonlStorage` 使用独立 Node 入口：
 
 ```typescript
-import { AgentHarness, MemoryStorage, type Storage } from "@amazme/agent";
-import { JsonlStorage } from "@amazme/agent/storage/jsonl/node";
-import { createStorageConformance } from "@amazme/agent/testing";
+import { AgentHarness, type Storage } from "@amazme/durable";
+import { MemoryStorage } from "@amazme/durable/storage/memory";
+import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
+import { createStorageConformance } from "@amazme/durable/testing";
 ```
 
-`/testing` 提供独立于测试框架的共享存储契约检查；该测试入口使用 Node 断言。
+`/testing` 提供独立于测试框架的共享存储契约检查；该测试入口使用 Node 断言。当前处于初始开发阶段，以现有包入口和存储契约为准，不保留旧入口别名或旧数据格式修补逻辑。
 
 ## 诊断边界
 
-`@amazme/telemetry` 是没有运行时依赖的底层包，AI 和 Agent 只向下依赖它。`TelemetryContext.startSpan` 包住一次工作，`TelemetrySpan` 提供子 span、事件、属性与状态。父子关系通过参数显式传递，不使用 Node 的异步全局上下文。
+`@amazme/telemetry` 是没有运行时依赖的底层包，AI、Agent 和 Durable 只向下依赖它。`TelemetryContext.startSpan` 包住一次工作，`TelemetrySpan` 提供子 span、事件、属性与状态。父子关系通过参数显式传递，不使用 Node 的异步全局上下文。
 
 默认使用空实现。`InMemoryTelemetryContext` 在进程内记录，并通过 `getSpans()` 返回独立快照；生产监控适配器可以实现相同接口。适配器应同步调用业务回调一次，保留其返回值和拒绝原因，记录方法同步且不抛错；结束后的记录调用无效。未显式设置状态时，成功记为 `ok`，回调失败记为 `error`；显式状态以最后一次有效设置为准。`@amazme/telemetry/testing` 提供共享契约检查，仅测试入口依赖 Node。
 
@@ -79,6 +83,7 @@ const models = createModels({ telemetryContext });
 npm install
 npm test
 npm run build
+npm run check:durable
 npx tsx packages/coding-agent/src/cli.ts "hello"
 ```
 

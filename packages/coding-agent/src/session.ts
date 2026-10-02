@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, truncateSync } from "node:fs";
 import { dirname } from "node:path";
-import { estimateTokens, messageText } from "@amazme/ai";
-import { type AgentMessage, uuidv7 } from "@amazme/agent";
+import { estimateTokens, messageText, uuidv7 } from "@amazme/ai";
+import type { AgentMessage } from "@amazme/agent";
 
 export interface SessionHeader {
   type: "session";
