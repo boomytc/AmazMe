@@ -1,4 +1,7 @@
 import {
+  uuidv7,
+  toolDefinition,
+  validateArguments,
   type AssistantMessage,
   estimateTokens,
   frameFromEvent,
@@ -8,8 +11,6 @@ import {
   type ThinkingLevel,
 } from "@amazme/ai";
 import { startSpan, type TelemetryContext, type TelemetrySpan } from "@amazme/telemetry";
-import { uuidv7 } from "../id.ts";
-import { toolDefinition, validateArguments } from "../schema.ts";
 import type { AgentMessage, AgentTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "../types.ts";
 import {
   type Address,

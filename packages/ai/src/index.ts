@@ -1,6 +1,8 @@
 export { MemoryCredentialStore, resolveApiKey, type ApiKeyAuth } from "./auth.ts";
 export { EventStream } from "./event-stream.ts";
 export { frameFromEvent, messageFromFrames, reduceFrames } from "./frames.ts";
+export { toolDefinition, validateArguments } from "./utils/tool-schema.ts";
+export { uuidv7 } from "./utils/uuid.ts";
 export {
   baseAssistant,
   createAssistantEventStream,

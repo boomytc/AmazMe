@@ -1,4 +1,4 @@
-/** Time-ordered id. The first 48 bits are Unix milliseconds. */
+/** Portable time-ordered id. The first 48 bits are Unix milliseconds. */
 export function uuidv7(now = Date.now()): string {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
   const ts = BigInt(now);

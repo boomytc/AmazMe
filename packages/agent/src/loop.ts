@@ -1,4 +1,6 @@
 import {
+  toolDefinition,
+  validateArguments,
   type AssistantEvent,
   type AssistantMessage,
   findToolCalls,
@@ -8,7 +10,6 @@ import {
   type SystemMessage,
   type ToolResultMessage,
 } from "@amazme/ai";
-import { toolDefinition, validateArguments } from "./schema.ts";
 import { startSpan, type TelemetryContext } from "@amazme/telemetry";
 import type {
   AgentEvent,

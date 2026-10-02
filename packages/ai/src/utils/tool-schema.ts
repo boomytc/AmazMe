@@ -1,4 +1,4 @@
-import type { JsonSchema } from "@amazme/ai";
+import type { JsonSchema } from "../types.ts";
 
 export function validateArguments(schema: JsonSchema, args: unknown): string | undefined {
   if (schema.type !== "object") return undefined;

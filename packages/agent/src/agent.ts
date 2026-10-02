@@ -1,6 +1,5 @@
-import type { AssistantMessage, Context, Model, Models, ThinkingLevel } from "@amazme/ai";
+import { toolDefinition, type AssistantMessage, type Context, type Model, type Models, type ThinkingLevel } from "@amazme/ai";
 import { runAgentLoop, toProviderMessages } from "./loop.ts";
-import { toolDefinition } from "./schema.ts";
 import { startSpan, type TelemetryContext } from "@amazme/telemetry";
 import type {
   AgentEvent,

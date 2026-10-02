@@ -16,9 +16,8 @@ export {
   type ListItem, type Storage, type StorageView, type UsageRow, type Write,
 } from "./harness/storage.ts";
 export { MemoryStorage } from "./harness/storage/memory.ts";
-export { uuidv7 } from "./id.ts";
+export { uuidv7, validateArguments } from "@amazme/ai";
 export { runAgentLoop, toProviderMessages } from "./loop.ts";
-export { validateArguments } from "./schema.ts";
 export type {
   AgentEvent,
   AgentMessage,
