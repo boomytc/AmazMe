@@ -825,7 +825,7 @@ export class AgentLane {
         const call = action.calls[0];
         if (call) await execute(call);
       } else {
-        await Promise.all(action.calls.map((call) => execute(call)));
+        await settleAll(action.calls.map((call) => execute(call)));
       }
     }
   }
@@ -840,10 +840,11 @@ export class AgentLane {
     const assistant = view.entry(refreshed.responseEntryId);
     const toRun: ArmedCall[] = [];
     let calls = refreshed.calls.map((call) => ({ ...call }));
+    const cancel = refreshed.scope.control.status === "cancel_requested";
     const sequential = config.toolExecution === "sequential" || calls.some((call) => this.tool(call.name)?.executionMode === "sequential");
     const recoverable = calls.filter((call) => call.status === "effect_pending" && !this.harness.live.has(call.resultEntryId));
     for (const call of recoverable) {
-      if (call.replay === "safe") {
+      if (call.replay === "safe" && !cancel) {
         this.harness.live.add(call.resultEntryId);
         toRun.push(this.armed(view, operationId, call, assistant));
         telemetryContext.addEvent("amazme.harness.recovered", { effect: "tool", replay: "safe" });
@@ -852,17 +853,18 @@ export class AgentLane {
       }
       calls = calls.map((item) => (item.resultEntryId === call.resultEntryId ? { ...item, status: "outcome_ready" as const, terminate: false } : item));
       const checkpoint = view.get<string>(toolOutputAddress(call.resultEntryId));
-      const text = checkpoint ? `interrupted before settlement\n${checkpoint}` : "interrupted before settlement";
+      const reason = cancel ? "cancelled" : "interrupted before settlement";
+      const text = checkpoint ? `${reason}\n${checkpoint}` : reason;
       apply([{
         type: "set",
         address: pendingAddress(call.resultEntryId),
         value: { type: "message", message: toolMessage(call, text, true, false) },
       }]);
     }
-    if (recoverable.some((call) => call.replay !== "safe")) {
+    if (recoverable.some((call) => call.replay !== "safe" || cancel)) {
       apply([{ type: "set", address: stateAddress(operationId), value: { ...refreshed, calls } }]);
       this.materializeTools(view, apply, operationId);
-      telemetryContext.addEvent("amazme.harness.recovered", { effect: "tool", replay: "never" });
+      telemetryContext.addEvent("amazme.harness.recovered", { effect: "tool", ...(cancel ? {} : { replay: "never" as const }) });
       if (toRun.length > 0) return { type: "run", mode: sequential ? "sequential" : "parallel", calls: toRun };
       return { type: "done" };
     }
@@ -870,7 +872,6 @@ export class AgentLane {
     const planned = calls.filter((call) => call.status === "planned");
     const batch = sequential ? planned.slice(0, 1) : planned;
     if (batch.length === 0) return { type: "done" };
-    const cancel = refreshed.scope.control.status === "cancel_requested";
     for (const call of batch) {
       const args = readArgs(assistant, call.sourceIndex);
       const tool = this.tool(call.name);
@@ -903,6 +904,7 @@ export class AgentLane {
   }
 
   private async executeTool(call: ArmedCall, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<ToolResult> {
+    if (signal.aborted) return { content: [{ type: "text", text: "cancelled" }], isError: true };
     const tool = this.tool(call.name);
     if (!tool) return { content: [{ type: "text", text: `Unknown tool: ${call.name}` }], isError: true };
     const writes: Promise<void>[] = [];
@@ -929,7 +931,7 @@ export class AgentLane {
     } finally {
       accepting = false;
     }
-    await Promise.all(writes);
+    await settleAll(writes);
     return result;
   }
 
@@ -979,6 +981,8 @@ export class AgentLane {
       if (!payload) break;
       writes.push({ type: "entry", id: call.resultEntryId, parentId: parent, timestamp: Date.now(), payload });
       writes.push({ type: "delete", address: pendingAddress(call.resultEntryId) });
+      writes.push({ type: "delete", address: toolOutputAddress(call.resultEntryId) });
+      writes.push({ type: "delete", address: toolArgsAddress(operationId, call.resultEntryId) });
       call.status = "completed";
       parent = call.resultEntryId;
     }
@@ -1282,6 +1286,13 @@ function missingModel(config: LaneConfig): AssistantMessage {
 
 function failure(code: HarnessFailure["code"], message: string): Result<never> {
   return { ok: false, error: { code, message } };
+}
+
+async function settleAll(tasks: Promise<void>[]): Promise<void> {
+  const settled = await Promise.allSettled(tasks);
+  for (const outcome of settled) {
+    if (outcome.status === "rejected") throw outcome.reason;
+  }
 }
 
 function waitUntil(notBefore: number, signal: AbortSignal): Promise<void> {

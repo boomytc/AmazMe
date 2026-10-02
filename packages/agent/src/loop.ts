@@ -133,7 +133,7 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
 
       const decision = await input.hooks.finishTurn?.({ message, toolResults, messages }, signal);
       await emit({ type: "turn_end", message, toolResults });
-      if (decision?.action === "end") {
+      if (signal.aborted || decision?.action === "end") {
         await emit({ type: "agent_end", messages: produced });
         return produced;
       }

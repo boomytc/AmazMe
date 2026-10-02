@@ -29,7 +29,7 @@ function createUpdateGate(publish: (partial: string) => Promise<void> | void): U
     },
     async finished(): Promise<void> {
       accepting = false;
-      await Promise.all(pending);
+      await settleAll(pending);
     },
   };
 }
@@ -57,8 +57,7 @@ async function runSequential(
   const messages: ToolResultMessage[] = [];
   const flags: boolean[] = [];
   for (const call of calls) {
-    if (signal.aborted) break;
-    const outcome = await tracked(call, telemetryContext, signal, (span) => settleCall(call, tools, signal, emit, span, false));
+    const outcome = await tracked(call, telemetryContext, signal, (span) => settleCall(call, tools, signal, emit, span));
     messages.push(outcome.message);
     flags.push(outcome.terminate);
   }
@@ -72,22 +71,9 @@ async function runParallel(
   emit: Emit,
   telemetryContext: TelemetryContext | undefined,
 ): Promise<{ messages: ToolResultMessage[]; terminate: boolean }> {
-  const batch: Array<{ call: Call; cancelled: boolean }> = [];
-  for (const call of calls) {
-    if (signal.aborted) break;
-    await emit({ type: "tool_execution_start", toolCallId: call.id, toolName: call.name, args: call.arguments });
-    const cancelled = signal.aborted;
-    batch.push({ call, cancelled });
-    if (cancelled) break;
-  }
-  const messages = new Array<ToolResultMessage>(batch.length);
-  const flags = new Array<boolean>(batch.length).fill(false);
-  await Promise.all(batch.map(async ({ call, cancelled }, index) => {
-    const outcome = await tracked(call, telemetryContext, signal, (span) => settleCall(call, tools, signal, emit, span, true, cancelled));
-    messages[index] = outcome.message;
-    flags[index] = outcome.terminate;
-  }));
-  return { messages, terminate: flags.length > 0 && flags.every(Boolean) };
+  const outcomes = await settleAll(calls.map((call) =>
+    tracked(call, telemetryContext, signal, (span) => settleCall(call, tools, signal, emit, span))));
+  return { messages: outcomes.map((outcome) => outcome.message), terminate: outcomes.length > 0 && outcomes.every((outcome) => outcome.terminate) };
 }
 
 function tracked(
@@ -112,18 +98,14 @@ async function settleCall(
   signal: AbortSignal,
   emit: Emit,
   span: TelemetryContext,
-  started: boolean,
-  cancelled = false,
 ): Promise<{ message: ToolResultMessage; terminate: boolean }> {
-  if (!started) {
-    await emit({ type: "tool_execution_start", toolCallId: call.id, toolName: call.name, args: call.arguments });
-    if (signal.aborted) return finish(call, errorResult("cancelled"), emit);
-  } else if (cancelled) {
-    return finish(call, errorResult("cancelled"), emit);
-  }
+  if (signal.aborted) return outcomeFor(call, errorResult("cancelled"));
+  await emit({ type: "tool_execution_start", toolCallId: call.id, toolName: call.name, args: call.arguments });
+  if (signal.aborted) return finish(call, errorResult("cancelled"), emit);
   const tool = tools.find((item) => item.name === call.name);
   const invalid = tool ? validateArguments(tool.parameters, call.arguments) : `Unknown tool: ${call.name}`;
   if (!tool || invalid) return finish(call, errorResult(invalid || "unavailable"), emit);
+  if (signal.aborted) return finish(call, errorResult("cancelled"), emit);
   const gate = createUpdateGate((partial) => emit({ type: "tool_execution_update", toolCallId: call.id, partial }));
   let result: ToolResult;
   try {
@@ -146,6 +128,13 @@ async function finish(
   result: ToolResult,
   emit: Emit,
 ): Promise<{ message: ToolResultMessage; terminate: boolean }> {
+  const outcome = outcomeFor(call, result);
+  const { message } = outcome;
+  await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: message, isError: message.isError });
+  return outcome;
+}
+
+function outcomeFor(call: Call, result: ToolResult): { message: ToolResultMessage; terminate: boolean } {
   const message: ToolResultMessage = {
     role: "toolResult",
     toolCallId: call.id,
@@ -154,8 +143,15 @@ async function finish(
     isError: result.isError === true,
     timestamp: Date.now(),
   };
-  await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: message, isError: message.isError });
   return { message, terminate: result.terminate === true };
+}
+
+async function settleAll<T>(tasks: Promise<T>[]): Promise<T[]> {
+  const settled = await Promise.allSettled(tasks);
+  return settled.map((outcome) => {
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value;
+  });
 }
 
 function errorResult(text: string): ToolResult {

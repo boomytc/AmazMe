@@ -69,9 +69,84 @@ test("aborting a sequential tool prevents the next tool from starting", async ()
   agent.subscribe((event) => {
     if (event.type === "tool_execution_start") events.push(event.toolName);
   });
-  await agent.prompt("go");
+  const produced = await agent.prompt("go");
   assert.deepEqual(started, ["first"]);
   assert.deepEqual(events, ["first"]);
+  const results = produced.filter((message) => message.role === "toolResult");
+  assert.deepEqual(results.map((result) => result.toolCallId), ["call_first", "call_second"]);
+  assert.equal(results[1]?.isError, true);
+});
+
+test("cancelling a later parallel start prevents all pending executions and pairs every call", async () => {
+  const executed: string[] = [];
+  const names = ["first", "second", "third"];
+  const { agent } = agentFor(names.map((name) => textTool(name, async () => {
+    executed.push(name);
+    return { content: [] };
+  })), names.map((name) => ({ name, id: `call_${name}` })));
+  agent.subscribe((event) => {
+    if (event.type === "tool_execution_start" && event.toolName === "second") agent.abort();
+  });
+  const produced = await agent.prompt("go");
+  assert.deepEqual(executed, []);
+  const results = produced.filter((message) => message.role === "toolResult");
+  assert.deepEqual(results.map((result) => result.toolCallId), names.map((name) => `call_${name}`));
+  assert.ok(results.every((result) => result.isError));
+});
+
+test("an update failure drains all accepted updates before the run becomes idle", async () => {
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  let secondStarted = false;
+  let settled = false;
+  const { agent } = agentFor([textTool("work", async (_args, context) => {
+    context.onUpdate?.("failed");
+    context.onUpdate?.("blocked");
+    return { content: [] };
+  })], [{ name: "work" }]);
+  agent.subscribe(async (event) => {
+    if (event.type !== "tool_execution_update") return;
+    if (event.partial === "failed") throw new Error("update failed");
+    secondStarted = true;
+    await blocked;
+  });
+  const pending = agent.prompt("go").then(() => { settled = true; return undefined; }, (error: unknown) => { settled = true; return error; });
+  try {
+    await waitFor(() => secondStarted);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+  } finally {
+    release();
+  }
+  assert.match(String(await pending), /update failed/);
+  await agent.waitForIdle();
+});
+
+test("a failed parallel tool subscriber waits for sibling tools before releasing the run", async () => {
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  let siblingStarted = false;
+  let settled = false;
+  let siblingSignal: AbortSignal | undefined;
+  const { agent } = agentFor([
+    textTool("failed", async (_args, context) => { context.onUpdate?.("partial"); return { content: [] }; }),
+    textTool("sibling", async (_args, context) => { siblingStarted = true; siblingSignal = context.signal; await blocked; return { content: [] }; }),
+  ], [{ name: "failed" }, { name: "sibling" }]);
+  agent.subscribe((event) => {
+    if (event.type === "tool_execution_update") throw new Error("update failed");
+  });
+  const pending = agent.prompt("go").then(() => { settled = true; return undefined; }, (error: unknown) => { settled = true; return error; });
+  try {
+    await waitFor(() => siblingStarted);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(siblingSignal?.aborted, true);
+    assert.equal(settled, false);
+    await assert.rejects(agent.prompt("overlap"), /already processing/);
+  } finally {
+    release();
+  }
+  assert.match(String(await pending), /update failed/);
+  await agent.waitForIdle();
 });
 
 test("an active tool receives the run abort signal and is not forced to stop", async () => {

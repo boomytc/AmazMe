@@ -93,3 +93,82 @@ test("a checkpoint accepted during the call is durable, and a late update cannot
   const late = await storage.read((view) => view.values().some((item) => item.value === "late"));
   assert.equal(late, false);
 });
+
+test("a parallel checkpoint failure does not release the drive while a sibling tool is active", async () => {
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  let siblingStarted = false;
+  let settled = false;
+  const models = createModels();
+  models.setProvider(fauxProvider({ respond: (_context, _options, state) => state.callCount === 1
+    ? fauxAssistant([fauxToolCall("failed", {}), fauxToolCall("sibling", {})]) : fauxAssistant("done") }));
+  const runtime = new AgentHarness(new CheckpointFaultStorage(), {
+    models, model: { provider: "faux", modelId: "faux-1" }, tools: [
+      { name: "failed", description: "failed", parameters: { type: "object" }, execute: async (_args, context) => {
+        context.onUpdate?.("partial", { checkpoint: true }); return { content: [] };
+      } },
+      { name: "sibling", description: "sibling", parameters: { type: "object" }, execute: async () => {
+        siblingStarted = true; await blocked; return { content: [] };
+      } },
+    ],
+  });
+  const lane = runtime.lane();
+  const admission = await lane.accept({ kind: "prompt", text: "go" });
+  assert.ok(admission.ok);
+  const pending = lane.drive(admission.value.operationId).then(() => { settled = true; return undefined; }, (error: unknown) => { settled = true; return error; });
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(siblingStarted, true);
+    assert.equal(settled, false);
+  } finally {
+    release();
+  }
+  assert.match(String(await pending), /checkpoint failed/);
+  const recovered = await lane.drive(admission.value.operationId);
+  assert.ok(recovered.ok && recovered.value.kind === "settled");
+  runtime.close();
+});
+
+test("a cancelled persisted safe tool is not replayed by a reopened harness", async () => {
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  let started = () => {};
+  const armed = new Promise<void>((resolve) => { started = resolve; });
+  let executions = 0;
+  const storage = new MemoryStorage();
+  const models = createModels();
+  const provider = fauxProvider({ respond: () => fauxAssistant([fauxToolCall("safe", {})]) });
+  models.setProvider(provider);
+  const options = {
+    models, model: { provider: "faux", modelId: "faux-1" }, tools: [{
+      name: "safe", description: "safe", parameters: { type: "object" as const }, replay: "safe" as const,
+      execute: async (_args: unknown, context: Parameters<HarnessTool["execute"]>[1]) => {
+        executions++; context.onUpdate?.("checkpoint", { checkpoint: true }); started(); await blocked; return { content: [] };
+      },
+    }],
+  };
+  const first = new AgentHarness(storage, options);
+  const lane = first.lane();
+  const admission = await lane.accept({ kind: "prompt", text: "go" });
+  assert.ok(admission.ok);
+  const pending = lane.drive(admission.value.operationId);
+  await armed;
+  await storage.whenIdle();
+  first.abandon();
+  await lane.requestAbort(admission.value.operationId);
+  release();
+  await pending;
+  const reopened = new AgentHarness(storage, options);
+  try {
+    const result = await reopened.lane().drive(admission.value.operationId);
+    assert.ok(result.ok && result.value.kind === "settled");
+    assert.equal(result.value.result.status, "aborted");
+    assert.equal(executions, 1);
+    assert.equal(provider.state.callCount, 1);
+    assert.equal(await storage.read((view) => view.values().some((item) =>
+      item.key.includes("pi.pending.tool_output") || item.key.includes("pi.op.tool_args"))), false);
+  } finally {
+    first.close();
+    reopened.close();
+  }
+});

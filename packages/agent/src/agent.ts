@@ -178,10 +178,15 @@ export class Agent {
             },
             async (event) => {
               this.absorb(event);
-              for (const listener of this.listeners) await listener(event, signal);
+              try {
+                for (const listener of this.listeners) await listener(event, signal);
+              } catch (error) {
+                controller.abort();
+                throw error;
+              }
             },
           );
-          if (produced.some((message) => message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted"))) {
+          if (signal.aborted || produced.some((message) => message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted"))) {
             span.setStatus({ status: "error" });
           }
           return produced;
