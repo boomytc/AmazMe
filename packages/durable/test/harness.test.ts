@@ -274,35 +274,62 @@ test("an interrupted safe tool runs again with the stored arguments", async () =
 });
 
 test("overflow compacts once and a second overflow fails the run", async () => {
-  const { provider, models } = scripted([
-    fauxAssistant("", { stopReason: "error", overflow: true, errorMessage: "context length" }),
-    fauxAssistant("summary"),
-    fauxAssistant("", { stopReason: "error", overflow: true, errorMessage: "context length" }),
-  ]);
-  const lane = harness(new MemoryStorage(), models, [], { maxTokens: 100_000 }).lane();
-  const result = await lane.prompt("too much");
+  const seen: string[] = [];
+  const provider = fauxProvider({
+    respond: (context, options, state) => {
+      seen.push(context.messages.map((message) => harnessText(message)).join("|"));
+      if (state.callCount === 1) return fauxAssistant("older answer");
+      if (state.callCount === 2) return fauxAssistant("", { stopReason: "error", overflow: true, errorMessage: "context length" });
+      if (state.callCount === 3) {
+        assert.equal(context.tools?.length ?? 0, 0);
+        assert.equal(options.thinkingLevel, "off");
+        assert.ok((options.maxTokens ?? 0) > 0);
+        return fauxAssistant("folded summary");
+      }
+      return fauxAssistant("", { stopReason: "error", overflow: true, errorMessage: "context length" });
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const storage = new MemoryStorage();
+  const lane = harness(storage, models, [], { maxTokens: 100_000 }).lane();
+  assert.equal((await lane.prompt("O".repeat(36_000))).status, "completed");
+  const result = await lane.prompt("CURRENT_INPUT");
   assert.equal(result.status, "failed");
   assert.match(result.error ?? "", /repeated/);
-  assert.equal(provider.state.callCount, 3);
+  assert.equal(provider.state.callCount, 4);
+  assert.match(seen[3] ?? "", /CURRENT_INPUT/);
+  assert.match(seen[3] ?? "", /folded summary/);
+  assert.equal((seen[3] ?? "").includes("O".repeat(36_000)), false);
+  assert.equal(await storage.read((view) => view.usageRows().length), provider.state.callCount);
   assert.equal((await lane.entries()).some((entry) => entry.payload.type === "compaction"), true);
 });
 
-test("threshold compaction replaces older context before the answer", async () => {
+test("threshold compaction keeps the current input and summarizes older context", async () => {
   const seen: string[] = [];
   const provider = fauxProvider({
-    respond: (context, _options, state) => {
+    respond: (context, options, state) => {
       seen.push(context.messages.map((message) => harnessText(message)).join("|"));
+      if (state.callCount === 2) {
+        assert.equal(options.thinkingLevel, "off");
+        assert.equal(context.tools?.length ?? 0, 0);
+        assert.ok((options.maxTokens ?? 0) > 0);
+        return fauxAssistant("folded");
+      }
       return fauxAssistant(state.callCount === 1 ? "short" : "answer");
     },
   });
   const models = createModels();
   models.setProvider(provider);
   const lane = harness(new MemoryStorage(), models, [], { maxTokens: 20 }).lane();
-  const result = await lane.prompt("x".repeat(200));
+  assert.equal((await lane.prompt("Y".repeat(200))).status, "completed");
+  const result = await lane.prompt("CURRENT_QUESTION");
   assert.equal(result.status, "completed");
-  assert.equal(provider.state.callCount, 2);
-  assert.equal(seen[1]?.includes("x".repeat(200)), false);
-  assert.match(seen[1] ?? "", /short/);
+  assert.equal(provider.state.callCount, 3);
+  assert.equal(seen[1]?.includes("Y".repeat(200)), true);
+  assert.equal(seen[2]?.includes("CURRENT_QUESTION"), true);
+  assert.equal(seen[2]?.includes("Y".repeat(200)), false);
+  assert.match(seen[2] ?? "", /folded/);
 });
 
 test("unsummarized navigation moves the tip without a model call", async () => {

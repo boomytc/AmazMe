@@ -19,3 +19,9 @@ export type {
   ToolContext, ToolExecutionMode, ToolResult,
 } from "./types.ts";
 export { durableTelemetrySchema } from "./telemetry.ts";
+export {
+  effectiveInputThreshold,
+  keepRecentBudget,
+  outputReserve,
+  summaryOutputLimit,
+} from "./compaction/policy.ts";

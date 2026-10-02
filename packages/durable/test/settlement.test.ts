@@ -107,8 +107,7 @@ const cases: Array<{ name: string; messages: Message[]; phase: string | null; st
   { name: "length", messages: [{ ...answer("length"), content: [{ type: "text", text: "length" }, fauxToolCall("work", {})], stopReason: "length" }], phase: "tools", status: "completed", calls: 2 },
   { name: "retry", messages: [answer("retry", { stopReason: "error", retryable: true, errorMessage: "retry" })], phase: "retry_wait", status: "completed", calls: 2 },
   { name: "retry exhausted", messages: [answer("first retry", { stopReason: "error", retryable: true }), answer("retry exhausted", { stopReason: "error", retryable: true, errorMessage: "still failing" })], phase: null, status: "failed", calls: 2 },
-  { name: "overflow", messages: [answer("overflow", { stopReason: "error", overflow: true })], phase: "summary_deciding", status: "completed", calls: 3 },
-  { name: "repeated overflow", messages: [answer("first overflow", { stopReason: "error", overflow: true }), answer("summary"), answer("repeated overflow", { stopReason: "error", overflow: true })], phase: null, status: "failed", calls: 3 },
+  { name: "overflow", messages: [answer("overflow", { stopReason: "error", overflow: true })], phase: null, status: "failed", calls: 1 },
   { name: "error", messages: [answer("error", { stopReason: "error", errorMessage: "failed" })], phase: null, status: "failed", calls: 1 },
   { name: "aborted", messages: [answer("aborted", { stopReason: "aborted" })], phase: null, status: "aborted", calls: 1 },
   { name: "cancelled", messages: [answer("cancelled")], phase: null, status: "aborted", calls: 1, cancel: true },
@@ -156,6 +155,7 @@ for (const boundary of ["finish", "navigation", "resume"] as const) {
     test(`summary ${boundary}: ${timing} interruption preserves its settlement`, async (t) => {
       const f = fixture(t, [answer("seed"), answer("summary"), answer("continued")], boundary === "resume" ? 30 : undefined);
       await f.first.lane().prompt("seed");
+      const seedTip = (await f.first.lane().inspect()).tipId;
       const target = (await f.first.lane().entries())[0]?.id ?? null;
       const request: OperationRequest = boundary === "finish" ? { kind: "compaction" }
         : boundary === "navigation" ? { kind: "navigation", targetId: target, summarize: true }
@@ -177,7 +177,17 @@ for (const boundary of ["finish", "navigation", "resume"] as const) {
       assert.equal(summaries.length, persisted ? 1 : 0);
       if (persisted) {
         assert.equal(summaries[0]?.id, responseEntryId);
-        assert.equal(summaries[0]?.parentId, boundary === "navigation" ? target : admittedTip);
+        assert.equal(summaries[0]?.parentId, boundary === "navigation" ? target : boundary === "resume" ? seedTip : admittedTip);
+        if (boundary === "resume") {
+          const chain = await reopened.lane().entries();
+          const tip = chain[chain.length - 1];
+          assert.equal(tip?.parentId, summaries[0]?.id);
+          assert.equal(tip?.payload.type, "message");
+          if (tip?.payload.type === "message" && tip.payload.message.role !== "custom") {
+            assert.match(messageText(tip.payload.message), /long input/);
+          }
+          assert.equal(await reopened.storage.read((view) => view.usageRows().length), 2);
+        }
       }
       await assertSettled(reopened, admission.value.operationId, persisted ? "completed" : "aborted", f.file);
       assert.equal(f.provider.state.callCount, persisted && boundary === "resume" ? 3 : 2);
@@ -216,6 +226,40 @@ for (const kind of ["assistant", "summary"] as const) {
   }
 }
 
+test("resume compaction with a copied tail can crash again during recovery without resending", async (t) => {
+  const f = fixture(t, [answer("seed"), answer("summary"), answer("continued")], 30);
+  await f.first.lane().prompt("seed");
+  const admission = await f.first.lane().accept({ kind: "prompt", text: "long input ".repeat(80) });
+  assert.ok(admission.ok);
+  f.storage.fault = {
+    timing: "before",
+    matches: (writes) => writes.some((write) => write.type === "entry" && write.payload.type === "compaction"),
+  };
+  await assert.rejects(f.first.lane().drive(admission.value.operationId), /injected settlement crash/);
+  f.first.abandon();
+  const calls = f.provider.state.callCount;
+  assert.equal(calls, 2);
+  const second = f.reopen(true);
+  assert.ok(second.storage instanceof FaultStorage);
+  second.storage.fault = {
+    timing: "before",
+    matches: (writes) => writes.some((write) => write.type === "entry"
+      && write.payload.type === "message" && write.payload.message.role === "assistant" && write.payload.message.stopReason === "aborted"),
+  };
+  await assert.rejects(second.lane().drive(admission.value.operationId), /injected settlement crash/);
+  second.abandon();
+  const third = f.reopen();
+  await assertSettled(third, admission.value.operationId, "aborted", f.file);
+  assert.equal(f.provider.state.callCount, calls);
+  const entries = await third.lane().entries();
+  assert.equal(entries.some((entry) => entry.payload.type === "compaction"), false);
+  assert.equal(new Set(entries.map((entry) => entry.id)).size, entries.length);
+  const usage = await third.storage.read((view) => view.usageRows());
+  assert.equal(usage.length, calls);
+  assert.equal(new Set(usage.map((row) => row.id)).size, usage.length);
+  third.close();
+});
+
 for (const stopReason of ["error", "aborted"] as const) {
   test(`summary ${stopReason} settles without retaining a live effect`, async (t) => {
     const f = fixture(t, [answer("seed"), answer("failed summary", { stopReason })]);
@@ -224,7 +268,8 @@ for (const stopReason of ["error", "aborted"] as const) {
     assert.ok(admission.ok);
     await assertSettled(f.first, admission.value.operationId, stopReason === "error" ? "failed" : "aborted", f.file);
     assert.equal(f.first.live.size, 0);
-    assert.equal(await f.first.storage.read((view) => view.usageRows().length), 1);
+    assert.equal((await f.first.lane().entries()).some((entry) => entry.payload.type === "compaction"), false);
+    assert.equal(await f.first.storage.read((view) => view.usageRows().length), 2);
     assert.equal(f.provider.state.callCount, 2);
     f.first.close();
   });

@@ -65,6 +65,7 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 - 工具先写 intent。`replay: "never"` 的工具不重跑，结果里带上最后一次 checkpoint。`replay: "safe"` 用存下来的参数再执行。
 - 多个工具可以乱序完成，entry 仍按源顺序挂到树上。
 - 结束时删掉操作自己的 value，留下不可变的 `pi.result`，其中保存所属 lane。结算后和重启后都只允许所属 lane 读取，缺少归属的结果属于无效数据。
+- `compaction.maxTokens` 只决定何时按输入量压缩。生成输出上限是另一项 `maxTokens`。开启后，阈值和上下文超限最多各走一次有界摘要：专用摘要请求、保留当前输入和完整工具组、一次 `apply` 发布摘要与复制尾段。关闭时超限直接失败。显式压缩仍可用。摘要失败、取消或进程中断都不重发。这不是全模型目录，也不是 Pi 的 Conversation / Task / Chord。
 
 Harness 依赖结构化的 `Storage` / `StorageView` 接口，后端不需要继承 `MemoryStorage`。`run` 串行持有写入通道，每次 `apply` 单独原子提交；它不是跨多个 `apply` 的事务，回调失败也不会撤销此前已提交的数据。`apply` 仅在所属回调未结束时有效。
 

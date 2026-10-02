@@ -3,13 +3,16 @@ import {
   toolDefinition,
   validateArguments,
   type AssistantMessage,
-  estimateTokens,
+  type Context,
   frameFromEvent,
-  messageText,
   reduceFrames,
+  resolveOutputBudget,
   type ThinkingLevel,
 } from "@amazme/ai";
 import { createTypedSpanStarter, type SchemaTelemetrySpan, type TelemetryContext } from "@amazme/telemetry";
+import { acceptedSummary, continuationContext, fitSummaryRequest, planCompaction, summaryRejection } from "./compaction/plan.ts";
+import { effectiveInputThreshold, keepRecentBudget } from "./compaction/policy.ts";
+import type { TranscriptEntry } from "./compaction/select.ts";
 import { durableTelemetrySchema } from "./telemetry.ts";
 import type { HarnessMessage, HarnessModels, HarnessTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "./types.ts";
 import {
@@ -46,7 +49,10 @@ export interface LaneConfig {
   steeringMode: QueueMode;
   followUpMode: QueueMode;
   toolExecution: ToolExecutionMode;
+  /** Input-token trigger for automatic compaction. Not the generation output cap. */
   compaction: { enabled: boolean; maxTokens: number };
+  /** Output-token cap forwarded to streamSimple. Omitted uses the model cap. */
+  maxTokens?: number;
   maxAttempts: number;
   systemPrompt: string;
 }
@@ -61,7 +67,10 @@ export interface HarnessOptions {
   steeringMode?: QueueMode;
   followUpMode?: QueueMode;
   toolExecution?: ToolExecutionMode;
+  /** Input-token trigger. Omitted stays disabled at 80_000. This is not `maxTokens`. */
   compaction?: { enabled: boolean; maxTokens: number };
+  /** Output-token cap for model turns. The summary request uses its own cap. */
+  maxTokens?: number;
   maxAttempts?: number;
 }
 
@@ -96,6 +105,7 @@ interface Scope {
   control: { status: "running" } | { status: "cancel_requested"; requestedAt: number };
   attempt: number;
   overflowUsed: boolean;
+  thresholdUsed: boolean;
 }
 
 interface ToolCallState {
@@ -133,6 +143,12 @@ type OperationState =
       targetId?: string | null;
       responseEntryId: string;
       usageId: string;
+      sourceTipId: string | null;
+      summarizedIds: string[];
+      keptIds: string[];
+      copyIds: string[];
+      summaryMaxTokens: number;
+      estimatedInput: number;
     }
   | { phase: "navigation_ready"; scope: Scope; targetId: string | null };
 
@@ -164,7 +180,7 @@ type Plan =
   | { type: "summary"; operationId: string; responseEntryId: string; usageId: string }
   | { type: "tools"; operationId: string };
 
-const running = (): Scope => ({ control: { status: "running" }, attempt: 0, overflowUsed: false });
+const running = (): Scope => ({ control: { status: "running" }, attempt: 0, overflowUsed: false, thresholdUsed: false });
 
 /**
  * Durable lane runtime. `accept` records an operation and does not call a model.
@@ -504,30 +520,16 @@ export class AgentLane {
     }
     if (state.phase === "retry_wait") {
       if (Date.now() < state.notBefore) return { type: "wait", notBefore: state.notBefore };
-      apply([{ type: "set", address: stateAddress(operationId), value: { phase: "assistant_ready", scope: state.scope } }]);
-      return { type: "continue" };
+      return this.beginModelRequest(view, apply, meta, state.scope);
     }
     if (state.phase === "checkpoint") {
       const includeFollow = state.continuation === "may_finish";
-      const config = this.config(view);
-      const estimate = estimateContext(view, view.get<string | null>(tipAddress(this.name)) ?? null, config.systemPrompt);
-      if (state.continuation === "need_assistant" && config.compaction.enabled && estimate > config.compaction.maxTokens) {
-        apply([{
-          type: "set",
-          address: stateAddress(operationId),
-          value: { phase: "summary_deciding", scope: state.scope, reason: "threshold", boundary: "resume" },
-        }]);
-        return { type: "continue" };
-      }
       const placed = this.placeInbox(view, apply, record, true, includeFollow);
-      if (placed.moved || state.continuation === "need_assistant") {
-        apply([
-          { type: "set", address: stateAddress(operationId), value: { phase: "assistant_ready", scope: state.scope } },
-          { type: "set", address: laneAddress(this.name), value: { ...placed.record, currentOperationId: operationId } },
-        ]);
-        return { type: "continue" };
+      if (!placed.moved && state.continuation !== "need_assistant") {
+        return { type: "settled", result: this.finish(view, apply, meta, "completed") };
       }
-      return { type: "settled", result: this.finish(view, apply, meta, "completed") };
+      apply([{ type: "set", address: laneAddress(this.name), value: { ...placed.record, currentOperationId: operationId } }]);
+      return this.beginModelRequest(view, apply, meta, state.scope);
     }
     if (state.phase === "assistant_ready") {
       const responseEntryId = uuidv7();
@@ -549,13 +551,39 @@ export class AgentLane {
       return { type: "continue" };
     }
     if (state.phase === "summary_deciding") {
+      const prepared = this.prepareCompaction(view, state);
+      if (!prepared.ok) {
+        if (prepared.code === "nothing_to_compact" && state.boundary === "resume" && state.reason === "threshold") {
+          const budget = this.requestBudget(view);
+          if (budget?.status === "ok") {
+            apply([{ type: "set", address: stateAddress(operationId), value: { phase: "assistant_ready", scope: state.scope } }]);
+            return { type: "continue" };
+          }
+        }
+        const message = state.reason === "overflow" && prepared.code === "nothing_to_compact"
+          ? "context overflow; nothing to compact"
+          : prepared.message;
+        return { type: "settled", result: this.finish(view, apply, meta, "failed", message) };
+      }
       const responseEntryId = uuidv7();
       const usageId = uuidv7();
+      const copyIds = prepared.plan.keptIds.map(() => uuidv7());
       this.harness.live.add(responseEntryId);
       apply([{
         type: "set",
         address: stateAddress(operationId),
-        value: { ...state, phase: "summary_effect_pending", responseEntryId, usageId },
+        value: {
+          ...state,
+          phase: "summary_effect_pending",
+          responseEntryId,
+          usageId,
+          sourceTipId: view.get<string | null>(tipAddress(this.name)) ?? null,
+          summarizedIds: prepared.plan.summarizedIds,
+          keptIds: prepared.plan.keptIds,
+          copyIds,
+          summaryMaxTokens: prepared.plan.maxTokens,
+          estimatedInput: prepared.plan.estimatedInput,
+        },
       }]);
       return { type: "summary", operationId, responseEntryId, usageId };
     }
@@ -586,7 +614,12 @@ export class AgentLane {
     const config = await this.harness.storage.read((view) => this.config(view));
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
     if (!model) return missingModel(config);
-    const stream = this.harness.options.models.streamSimple(model, context, { signal, thinkingLevel: config.thinkingLevel, telemetryContext });
+    const stream = this.harness.options.models.streamSimple(model, context, {
+      signal,
+      thinkingLevel: config.thinkingLevel,
+      telemetryContext,
+      ...(config.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
+    });
     let frames = Promise.resolve();
     for await (const event of stream) {
       const frame = frameFromEvent(event);
@@ -599,14 +632,24 @@ export class AgentLane {
   }
 
   private async streamSummary(signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage> {
-    const base = await this.harness.storage.read((view) => this.providerContext(view));
-    const config = await this.harness.storage.read((view) => this.config(view));
-    const model = this.harness.options.models.getModel(config.provider, config.modelId);
-    if (!model) return missingModel(config);
+    const prepared = await this.harness.storage.read((view) => {
+      const operationId = this.record(view).currentOperationId;
+      const state = operationId ? view.get<OperationState>(stateAddress(operationId)) : undefined;
+      const config = this.config(view);
+      if (!state || state.phase !== "summary_effect_pending") return { config, request: undefined };
+      return { config, request: this.summaryRequest(view, state) };
+    });
+    const model = this.harness.options.models.getModel(prepared.config.provider, prepared.config.modelId);
+    const request = prepared.request;
+    if (!model || !request || !request.ok) {
+      const failed = missingModel(prepared.config);
+      if (model) failed.errorMessage = request && !request.ok ? request.message : "summary plan is missing";
+      return failed;
+    }
     const stream = this.harness.options.models.streamSimple(
       model,
-      { ...base, systemPrompt: "Summarize the conversation so a later turn can continue." },
-      { signal, thinkingLevel: "off", telemetryContext },
+      request.context,
+      { signal, thinkingLevel: "off", maxTokens: request.maxTokens, telemetryContext },
     );
     let message: AssistantMessage | undefined;
     for await (const event of stream) {
@@ -655,6 +698,11 @@ export class AgentLane {
       return;
     }
     if (message.overflow) {
+      if (!config.compaction.enabled) {
+        const detail = message.errorMessage ?? "context overflow";
+        end("failed", `${detail}; compaction is disabled`);
+        return;
+      }
       if (state.scope.overflowUsed) {
         end("failed", "context overflow repeated");
         return;
@@ -745,6 +793,11 @@ export class AgentLane {
     if (view.entry(state.responseEntryId) || view.usageRows().some(row => row.id === state.usageId)) {
       throw new Error(`inconsistent pending response ${state.responseEntryId}`);
     }
+    if (state.phase === "summary_effect_pending") {
+      for (const id of state.copyIds) {
+        if (view.entry(id)) throw new Error(`inconsistent pending response ${id}`);
+      }
+    }
     const frames = view.items(frameAddress(meta.operationId, state.responseEntryId)).map((item) => item.item as import("@amazme/ai").AssistantFrame);
     const reduced = reduceFrames(frames);
     const content = reduced.content.filter((block) => block.type !== "toolCall");
@@ -774,27 +827,69 @@ export class AgentLane {
     const state = view.get<OperationState>(stateAddress(planned.operationId));
     const meta = view.get<OperationMeta>(metaAddress(planned.operationId));
     if (!state || !meta || state.phase !== "summary_effect_pending" || state.responseEntryId !== planned.responseEntryId) return;
-    if (message.stopReason === "error" || message.stopReason === "aborted") {
-      this.finish(view, apply, meta, message.stopReason === "aborted" ? "aborted" : "failed", message.errorMessage ?? "summary failed");
+    const cancel = state.scope.control.status === "cancel_requested" || message.stopReason === "aborted";
+    const summary = cancel ? undefined : acceptedSummary(message);
+    const usage = message.api === "missing" ? [] : [usageWrite(state.usageId, planned.operationId, message)];
+    const reject = (status: OperationResult["status"], error: string) => {
+      this.finish(view, apply, meta, status, error, usage.length > 0 ? { writes: usage, tipId: view.get<string | null>(tipAddress(this.name)) ?? null } : undefined);
       this.harness.live.delete(planned.responseEntryId);
+    };
+    if (cancel || !summary) {
+      const aborted = cancel || message.stopReason === "aborted";
+      reject(aborted ? "aborted" : "failed", aborted ? (message.errorMessage ?? "cancelled") : summaryRejection(message));
       return;
     }
-    const summary = messageText(message) || "summary";
-    const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
-    const parent = state.boundary === "navigation" ? (state.targetId ?? null) : tip;
     const entryId = planned.responseEntryId;
+    const timestamp = Date.now();
+    const parent = state.boundary === "navigation"
+      ? (state.targetId ?? null)
+      : (state.summarizedIds[state.summarizedIds.length - 1] ?? null);
+    let tipId = entryId;
     const writes: Write[] = [
-      { type: "entry", id: entryId, parentId: parent, timestamp: Date.now(), payload: { type: "compaction", summary } },
-      { type: "usage", id: state.usageId, operationId: planned.operationId, input: message.usage.input, output: message.usage.output, totalTokens: message.usage.totalTokens },
-      { type: "set", address: tipAddress(this.name), value: entryId },
+      { type: "entry", id: entryId, parentId: parent, timestamp, payload: { type: "compaction", summary } },
+      ...usage,
     ];
+    if (state.boundary !== "navigation") {
+      for (let index = 0; index < state.keptIds.length; index++) {
+        const sourceId = state.keptIds[index];
+        const copyId = state.copyIds[index];
+        const source = sourceId ? view.entry(sourceId) : undefined;
+        if (!source || !copyId) {
+          reject("failed", "compaction tail is missing");
+          return;
+        }
+        writes.push({
+          type: "entry",
+          id: copyId,
+          parentId: tipId,
+          timestamp: source.timestamp,
+          payload: structuredClone(source.payload),
+        });
+        tipId = copyId;
+      }
+    }
+    writes.push({ type: "set", address: tipAddress(this.name), value: tipId });
     if (state.boundary === "resume") {
+      const config = this.config(view);
+      const model = this.harness.options.models.getModel(config.provider, config.modelId);
+      const kept = state.keptIds.map((id) => view.entry(id)).filter((entry) => entry?.payload.type === "message").map((entry) => {
+        const payload = entry?.payload;
+        return payload?.type === "message" && payload.message.role !== "custom" ? payload.message : undefined;
+      }).filter((message): message is Exclude<HarnessMessage, { role: "custom" }> => message !== undefined);
+      const continued = model
+        ? resolveOutputBudget(model, continuationContext(config.systemPrompt, summary, kept, this.toolDefinitions()), config.maxTokens)
+        : undefined;
+      if (!continued || continued.status !== "ok") {
+        this.finish(view, apply, meta, "failed", continued?.message ?? "context budget cannot fit after compaction", { writes, tipId });
+        this.harness.live.delete(planned.responseEntryId);
+        return;
+      }
       writes.push({ type: "set", address: stateAddress(planned.operationId), value: { phase: "assistant_ready", scope: state.scope } });
       apply(writes);
       this.harness.live.delete(planned.responseEntryId);
       return;
     }
-    this.finish(view, apply, meta, "completed", undefined, { writes, tipId: entryId });
+    this.finish(view, apply, meta, "completed", undefined, { writes, tipId });
     this.harness.live.delete(planned.responseEntryId);
   }
 
@@ -1105,36 +1200,131 @@ export class AgentLane {
     return { record: next, tipId, moved: true };
   }
 
-  private providerContext(view: StorageView) {
+  private providerContext(view: StorageView): Context {
     const config = this.config(view);
+    return {
+      systemPrompt: config.systemPrompt,
+      messages: this.visibleEntries(view).map((entry) => entry.kind === "compaction"
+        ? { role: "user" as const, content: entry.summary, timestamp: entry.timestamp }
+        : entry.message),
+      tools: this.toolDefinitions(),
+    };
+  }
+
+  private visibleEntries(view: StorageView): TranscriptEntry[] {
     const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
     const chain = ancestors(view, tip);
     let start = 0;
     for (let index = chain.length - 1; index >= 0; index--) {
-      const entry = chain[index];
-      if (entry?.payload.type === "compaction") {
+      if (chain[index]?.payload.type === "compaction") {
         start = index;
         break;
       }
     }
-    const messages = [];
+    const entries: TranscriptEntry[] = [];
     for (const entry of chain.slice(start)) {
       if (entry.payload.type === "compaction") {
-        messages.push({ role: "user" as const, content: entry.payload.summary, timestamp: entry.timestamp });
+        entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "compaction", summary: entry.payload.summary });
         continue;
       }
       const message = entry.payload.message;
-      if (message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred")) {
+      if (message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred")) continue;
+      if (message.role === "custom") continue;
+      entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "message", message });
+    }
+    return entries;
+  }
+
+  private toolDefinitions() {
+    return (this.harness.options.tools ?? []).map(toolDefinition);
+  }
+
+  private requestBudget(view: StorageView) {
+    const config = this.config(view);
+    const model = this.harness.options.models.getModel(config.provider, config.modelId);
+    if (!model) return undefined;
+    return resolveOutputBudget(model, this.providerContext(view), config.maxTokens);
+  }
+
+  /** Place the next model call, or a compaction, after the messages for this request are already in the tree. */
+  private beginModelRequest(view: StorageView, apply: Apply, meta: OperationMeta, scope: Scope): Plan {
+    const decision = this.assess(view, scope);
+    if (decision.type === "fail") return { type: "settled", result: this.finish(view, apply, meta, "failed", decision.message) };
+    if (decision.type === "compact") {
+      const nextScope: Scope = {
+        ...scope,
+        thresholdUsed: decision.reason === "threshold" ? true : scope.thresholdUsed,
+        overflowUsed: decision.reason === "overflow" ? true : scope.overflowUsed,
+      };
+      apply([{
+        type: "set",
+        address: stateAddress(meta.operationId),
+        value: { phase: "summary_deciding", scope: nextScope, reason: decision.reason, boundary: "resume" },
+      }]);
+      return { type: "continue" };
+    }
+    apply([{ type: "set", address: stateAddress(meta.operationId), value: { phase: "assistant_ready", scope } }]);
+    return { type: "continue" };
+  }
+
+  private assess(view: StorageView, scope: Scope): { type: "send" } | { type: "compact"; reason: SummaryReason } | { type: "fail"; message: string } {
+    const config = this.config(view);
+    const model = this.harness.options.models.getModel(config.provider, config.modelId);
+    if (!model) return { type: "fail", message: `Unknown model ${config.provider}/${config.modelId}` };
+    if (config.compaction.enabled && (!Number.isSafeInteger(config.compaction.maxTokens) || config.compaction.maxTokens <= 0)) {
+      return { type: "fail", message: "compaction.maxTokens must be a positive integer" };
+    }
+    const budget = resolveOutputBudget(model, this.providerContext(view), config.maxTokens);
+    if (budget.status === "invalid_limit" || budget.status === "unserializable") {
+      return { type: "fail", message: budget.message ?? "Context budget is invalid" };
+    }
+    if (budget.status === "cannot_fit") {
+      if (!config.compaction.enabled) return { type: "fail", message: `${budget.message}; compaction is disabled` };
+      if (scope.overflowUsed) return { type: "fail", message: "context overflow repeated" };
+      return { type: "compact", reason: "overflow" };
+    }
+    const threshold = effectiveInputThreshold(model.contextWindow, config.compaction.maxTokens);
+    if (config.compaction.enabled && !scope.thresholdUsed && budget.estimatedInput > threshold) {
+      return { type: "compact", reason: "threshold" };
+    }
+    return { type: "send" };
+  }
+
+  private prepareCompaction(view: StorageView, state: Extract<OperationState, { phase: "summary_deciding" }>) {
+    const config = this.config(view);
+    const model = this.harness.options.models.getModel(config.provider, config.modelId);
+    if (!model) return { ok: false as const, code: "invalid" as const, message: `Unknown model ${config.provider}/${config.modelId}` };
+    if (config.compaction.enabled && (!Number.isSafeInteger(config.compaction.maxTokens) || config.compaction.maxTokens <= 0)) {
+      return { ok: false as const, code: "invalid" as const, message: "compaction.maxTokens must be a positive integer" };
+    }
+    const threshold = effectiveInputThreshold(model.contextWindow, config.compaction.maxTokens);
+    return planCompaction({
+      entries: this.visibleEntries(view),
+      systemPrompt: config.systemPrompt,
+      tools: this.toolDefinitions(),
+      model,
+      ...(config.maxTokens !== undefined ? { requestedOutput: config.maxTokens } : {}),
+      boundary: state.boundary,
+      keepTokens: keepRecentBudget(model.contextWindow, threshold),
+    });
+  }
+
+  private summaryRequest(view: StorageView, state: Extract<OperationState, { phase: "summary_effect_pending" }>) {
+    const config = this.config(view);
+    const model = this.harness.options.models.getModel(config.provider, config.modelId);
+    if (!model) return undefined;
+    const entries: TranscriptEntry[] = [];
+    for (const id of state.summarizedIds) {
+      const entry = view.entry(id);
+      if (!entry) return { ok: false as const, message: "summary plan is missing" };
+      if (entry.payload.type === "compaction") {
+        entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "compaction", summary: entry.payload.summary });
         continue;
       }
-      if (message.role === "custom") continue;
-      messages.push(message);
+      if (entry.payload.message.role === "custom") continue;
+      entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "message", message: entry.payload.message });
     }
-    return {
-      systemPrompt: config.systemPrompt,
-      messages,
-      tools: (this.harness.options.tools ?? []).map(toolDefinition),
-    };
+    return fitSummaryRequest(model, config.systemPrompt, entries, state.summaryMaxTokens);
   }
 
   private ensureConfig(view: StorageView, apply: Apply): void {
@@ -1148,6 +1338,7 @@ export class AgentLane {
         followUpMode: options.followUpMode ?? "one-at-a-time",
         toolExecution: options.toolExecution ?? "parallel",
         compaction: options.compaction ?? { enabled: false, maxTokens: 80_000 },
+        ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
         maxAttempts: options.maxAttempts ?? 2,
         systemPrompt: options.systemPrompt ?? "",
       };
@@ -1253,21 +1444,15 @@ function ancestors(view: StorageView, tip: string | null): Entry[] {
   return chain.reverse();
 }
 
-function estimateContext(view: StorageView, tip: string | null, systemPrompt: string): number {
-  const chain = ancestors(view, tip);
-  let start = 0;
-  for (let index = chain.length - 1; index >= 0; index--) {
-    if (chain[index]?.payload.type === "compaction") {
-      start = index;
-      break;
-    }
-  }
-  let total = estimateTokens(systemPrompt);
-  for (const entry of chain.slice(start)) {
-    if (entry.payload.type === "compaction") total += estimateTokens(entry.payload.summary);
-    else total += estimateTokens(messageText(entry.payload.message.role === "custom" ? { role: "user", content: entry.payload.message.content, timestamp: 0 } : entry.payload.message));
-  }
-  return total;
+function usageWrite(id: string, operationId: string, message: AssistantMessage): Write {
+  return {
+    type: "usage",
+    id,
+    operationId,
+    input: message.usage.input,
+    output: message.usage.output,
+    totalTokens: message.usage.totalTokens,
+  };
 }
 
 function missingModel(config: LaneConfig): AssistantMessage {
