@@ -2,8 +2,17 @@ export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
 
+export type JsonSchemaType = "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
+
+/**
+ * Tool-argument subset checked by validateArguments.
+ * An object may declare properties, required, and boolean additionalProperties.
+ * An array may declare items. Every other JSON Schema keyword is rejected.
+ * Omitted additionalProperties allows unknown fields. An array without items allows any element.
+ * Values are not coerced.
+ */
 export interface JsonSchema {
-  type?: string;
+  type: JsonSchemaType;
   description?: string;
   properties?: Record<string, JsonSchema>;
   required?: string[];

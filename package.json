@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "test": "node --import tsx --test packages/telemetry/test/telemetry.test.ts packages/ai/test/ai.test.ts packages/agent/test/loop.test.ts packages/durable/test/*.test.ts test/*.test.ts packages/coding-agent/test/session.test.ts",
+    "test": "node --import tsx --test packages/telemetry/test/*.test.ts packages/ai/test/*.test.ts packages/agent/test/*.test.ts packages/durable/test/*.test.ts test/*.test.ts packages/coding-agent/test/*.test.ts",
     "check:durable": "tsc -b && tsc -p packages/durable/tsconfig.test.json && tsc -p test/tsconfig.json"
   },
   "devDependencies": {

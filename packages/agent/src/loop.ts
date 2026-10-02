@@ -1,5 +1,4 @@
 import {
-  toolDefinition,
   validateArguments,
   type AssistantEvent,
   type AssistantMessage,

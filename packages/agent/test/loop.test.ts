@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Agent, type AgentTool, userMessage } from "@amazme/agent";
-import { createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText } from "@amazme/ai";
+import { createModels, fauxAssistant, fauxProvider, fauxToolCall, messageText, type FauxResponder } from "@amazme/ai";
 
 function echoTool(options: { terminate?: boolean; delayMs?: number; onRun?: (name: string) => void; name?: string } = {}): AgentTool {
   const name = options.name ?? "echo";
@@ -18,7 +18,7 @@ function echoTool(options: { terminate?: boolean; delayMs?: number; onRun?: (nam
   };
 }
 
-function agentWith(respond: Parameters<typeof fauxProvider>[0]["respond"], tools: AgentTool[] = [], toolExecution?: "parallel" | "sequential") {
+function agentWith(respond: FauxResponder, tools: AgentTool[] = [], toolExecution?: "parallel" | "sequential") {
   const provider = fauxProvider({ respond });
   const models = createModels();
   models.setProvider(provider);

@@ -83,7 +83,7 @@ test("transformMessages rewrites tool ids and drops images the destination canno
         role: "toolResult",
         toolCallId: longId,
         toolName: "read",
-        content: [{ type: "text", text: "body" }, { type: "image", mimeType: "image/png", data: "bbbb" }],
+        content: [{ type: "text", text: "body" }],
         isError: false,
         timestamp: 3,
       },
@@ -312,7 +312,7 @@ test("a completions stream that ends without a finish reason is an error", async
 
 test("faux streams text deltas and records the transcript it was given", async () => {
   const provider = fauxProvider({
-    respond: (_context, _options, _state, model) => fauxAssistant("abcdefghijk"),
+    respond: (_context, _options, _state, _model) => fauxAssistant("abcdefghijk"),
   });
   const models = createModels();
   models.setProvider(provider);

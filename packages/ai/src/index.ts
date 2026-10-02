@@ -43,6 +43,7 @@ export type {
   CredentialStore,
   ImageContent,
   JsonSchema,
+  JsonSchemaType,
   Message,
   Model,
   ProviderHeaders,
