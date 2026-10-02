@@ -7,7 +7,7 @@ const schemaTypes = new Set<JsonSchemaType>(["object", "array", "string", "numbe
 const objectKeys = new Set(["type", "description", "properties", "required", "additionalProperties"]);
 const arrayKeys = new Set(["type", "description", "items"]);
 const scalarKeys = new Set(["type", "description"]);
-const validators = new WeakMap<object, ReturnType<typeof Compile>>();
+const validators = new WeakMap<object, { definition: string; validator: ReturnType<typeof Compile> }>();
 
 export function validateArguments(schema: JsonSchema, args: unknown): string | undefined {
   const unsupported = unsupportedSchema(schema, "");
@@ -23,10 +23,12 @@ export function toolDefinition(tool: { name: string; description: string; parame
 }
 
 function validatorFor(schema: JsonSchema): ReturnType<typeof Compile> {
+  const definition = JSON.stringify(schema);
   const cached = validators.get(schema);
-  if (cached) return cached;
-  const compiled = Compile(schema as unknown as TSchema);
-  validators.set(schema, compiled);
+  if (cached?.definition === definition) return cached.validator;
+  // Compilation and error reporting must use the same snapshot, even if tools later change their schema.
+  const compiled = Compile(JSON.parse(definition) as TSchema);
+  validators.set(schema, { definition, validator: compiled });
   return compiled;
 }
 

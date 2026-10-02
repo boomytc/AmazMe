@@ -91,3 +91,20 @@ test("a schema outside the supported subset is rejected even when the value woul
   const schemaValued = { type: "object", additionalProperties: { type: "string" } } as unknown as JsonSchema;
   assert.match(validateArguments(schemaValued, { a: "x" }) ?? "", /additionalProperties must be a boolean/);
 });
+
+test("reusing a schema object after changing its constraints uses the current definition", () => {
+  const schema: JsonSchema = {
+    type: "object",
+    properties: { value: { type: "string" } },
+  };
+  assert.equal(validateArguments(schema, { value: "old" }), undefined);
+  const value = schema.properties?.value;
+  assert.ok(value);
+  value.type = "number";
+  assert.equal(validateArguments(schema, { value: 7 }), undefined);
+  assert.match(validateArguments(schema, { value: "old" }) ?? "", /value: must be number/);
+  schema.required = ["value"];
+  assert.match(validateArguments(schema, {}) ?? "", /value: required/);
+  schema.additionalProperties = false;
+  assert.match(validateArguments(schema, { value: 7, extra: true }) ?? "", /extra: additional property/);
+});
