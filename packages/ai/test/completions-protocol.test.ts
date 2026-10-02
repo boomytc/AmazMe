@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModels, createProvider, frameFromEvent, messageFromFrames, reduceFrames, type AssistantEvent, type AssistantMessage, type Context, type Model, type OpenAICompletionsOptions } from "@amazme/ai";
+import { createModels, createProvider, frameFromEvent, messageFromFrames, reduceFrames, type AssistantEvent, type AssistantMessage, type Context, type Model, type OpenAICompletionsOptions, type UserContent } from "@amazme/ai";
 import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
+import { completionsProvider } from "@amazme/ai/providers/completions";
+import { openaiProvider } from "@amazme/ai/providers/openai";
 import { checkAssistantStream } from "@amazme/ai/testing";
 
 const CONTEXT = { messages: [{ role: "user" as const, content: "hi", timestamp: 1 }] };
@@ -913,6 +915,201 @@ test("one chunk places text before thinking, and a length stop still ends that b
   assert.equal(withTool.message.content[0]?.type === "thinking" ? withTool.message.content[0].thinking : "", "why");
   assert.equal(withTool.message.content[1]?.type === "toolCall" ? withTool.message.content[1].name : "", "read");
   assert.deepEqual([...new Set(indexes(withTool.events, "toolcall_"))], [1]);
+});
+
+const PNG = "aaaa";
+const JPEG = "bbbb";
+
+function image(mimeType: string, data: string) {
+  return { type: "image" as const, mimeType, data };
+}
+
+function userParts(body: Record<string, unknown> | undefined): unknown {
+  const messages = body?.messages;
+  if (!Array.isArray(messages)) return undefined;
+  const user = messages.find((item) => isRecord(item) && item.role === "user");
+  return isRecord(user) ? user.content : undefined;
+}
+
+test("a vision model sends image data URLs in source order and leaves the message unchanged", async () => {
+  const vision = model({ id: "vision", input: ["text", "image"], contextWindow: 32_000, maxTokens: 1024 });
+  const stop = async () => sse([
+    data({ choices: [{ delta: { content: "seen" } }] }),
+    data({ choices: [{ finish_reason: "stop" }] }),
+    "data: [DONE]\n\n",
+  ]);
+  const block = image("image/png", PNG);
+  const source = {
+    role: "user" as const,
+    content: [{ type: "text" as const, text: "look" }, block, image("image/jpeg", JPEG), { type: "text" as const, text: "tail" }],
+    timestamp: 1,
+  };
+  const before = JSON.stringify(source);
+  Object.freeze(source);
+  Object.freeze(source.content);
+  Object.freeze(block);
+  const mixed = await run(stop, {}, vision, undefined, { messages: [source] });
+  assert.equal(mixed.message.stopReason, "stop");
+  assert.equal(mixed.calls, 1);
+  assert.deepEqual(userParts(mixed.bodies[0]), [
+    { type: "text", text: "look" },
+    { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } },
+    { type: "image_url", image_url: { url: `data:image/jpeg;base64,${JPEG}` } },
+    { type: "text", text: "tail" },
+  ]);
+  assert.equal(JSON.stringify(mixed.bodies[0]).includes("[image]"), false);
+  assert.equal(JSON.stringify(source), before);
+
+  const imageFirst = await run(stop, {}, vision, undefined, {
+    messages: [{ role: "user", content: [image("image/png", PNG), { type: "text", text: "after" }], timestamp: 1 }],
+  });
+  assert.deepEqual(userParts(imageFirst.bodies[0]), [
+    { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } },
+    { type: "text", text: "after" },
+  ]);
+
+  const only = await run(stop, {}, vision, undefined, {
+    messages: [{ role: "user", content: [image("image/png", PNG)], timestamp: 1 }],
+  });
+  assert.deepEqual(userParts(only.bodies[0]), [
+    { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } },
+  ]);
+
+  const plain = await run(stop, {}, vision, undefined, {
+    messages: [{ role: "user", content: "hello", timestamp: 1 }],
+  });
+  assert.equal(userParts(plain.bodies[0]), "hello");
+
+  const projected = await run(stop, {}, model(), undefined, {
+    messages: [{ role: "user", content: "[image]", timestamp: 1 }],
+  });
+  assert.equal(projected.calls, 1);
+  assert.equal(userParts(projected.bodies[0]), "[image]");
+});
+
+test("unsupported and malformed images fail before fetch and do not echo the input", async () => {
+  const secret = "secret prompt";
+  const refused = await run(async () => {
+    throw new Error("fetch should not run");
+  }, {}, model(), undefined, {
+    messages: [{ role: "user", content: [{ type: "text", text: secret }, image("image/png", PNG)], timestamp: 1 }],
+  });
+  assert.equal(refused.calls, 0);
+  assert.equal(refused.message.stopReason, "error");
+  assert.notEqual(refused.message.retryable, true);
+  assert.notEqual(refused.message.overflow, true);
+  assert.match(refused.message.errorMessage ?? "", /does not accept image input/);
+  assert.equal(refused.message.errorMessage?.includes(PNG), false);
+  assert.equal(refused.message.errorMessage?.includes(secret), false);
+
+  const vision = model({ id: "vision", input: ["text", "image"], contextWindow: 32_000, maxTokens: 1024 });
+  const malformed: Array<{ content: UserContent[]; pattern: RegExp }> = [
+    { content: [{ type: "image", mimeType: "", data: PNG }], pattern: /mime type/ },
+    { content: [image("image/png", "")], pattern: /base64 data/ },
+    { content: [image("image/png", "not valid!")], pattern: /base64 data/ },
+    { content: [image("not a mime", PNG)], pattern: /mime type/ },
+  ];
+  for (const { content, pattern } of malformed) {
+    const failed = await run(async () => {
+      throw new Error("fetch should not run");
+    }, {}, vision, undefined, { messages: [{ role: "user", content, timestamp: 1 }] });
+    assert.equal(failed.calls, 0, String(pattern));
+    assert.equal(failed.message.stopReason, "error");
+    assert.notEqual(failed.message.retryable, true);
+    assert.notEqual(failed.message.overflow, true);
+    assert.match(failed.message.errorMessage ?? "", pattern);
+    assert.doesNotMatch(failed.message.errorMessage ?? "", /does not accept image input/);
+    assert.equal(failed.message.errorMessage?.includes(PNG), false);
+    assert.equal(failed.message.errorMessage?.includes("not valid"), false);
+  }
+
+  const tight = await run(async () => {
+    throw new Error("fetch should not run");
+  }, {}, model({ input: ["text", "image"], contextWindow: 100, maxTokens: 16 }), undefined, {
+    messages: [{ role: "user", content: [image("image/png", PNG)], timestamp: 1 }],
+  });
+  assert.equal(tight.calls, 0);
+  assert.equal(tight.message.overflow, true);
+  assert.notEqual(tight.message.retryable, true);
+  assert.match(tight.message.errorMessage ?? "", /cannot fit/);
+  assert.equal(tight.message.errorMessage?.includes(PNG), false);
+});
+
+test("provider and models entries send a declared image and refuse an undeclared one", async () => {
+  const stop = async () => sse([
+    data({ choices: [{ finish_reason: "stop" }] }),
+    "data: [DONE]\n\n",
+  ]);
+  let providerCalls = 0;
+  const providerBodies: Array<Record<string, unknown>> = [];
+  const compat = createModels({ env: { COMPAT_KEY: "sk-test" } });
+  compat.setProvider(completionsProvider({
+    id: "compat",
+    name: "compat",
+    baseUrl: "https://example.test/v1",
+    env: "COMPAT_KEY",
+    fetch: async (_input, init) => {
+      providerCalls += 1;
+      if (init?.body) providerBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return stop();
+    },
+    modelIds: ["see", "blind"],
+    models: {
+      see: { contextWindow: 8000, maxTokens: 256, input: ["text", "image"] },
+      blind: { contextWindow: 8000, maxTokens: 256 },
+    },
+  }));
+  const seeing = compat.getModel("compat", "see");
+  const blind = compat.getModel("compat", "blind");
+  assert.ok(seeing && blind);
+  assert.deepEqual(blind.input, ["text"]);
+  const seen = await compat.stream(seeing, {
+    messages: [{ role: "user", content: [image("image/png", PNG)], timestamp: 1 }],
+  }).result();
+  assert.equal(seen.stopReason, "stop");
+  assert.deepEqual(userParts(providerBodies[0]), [
+    { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } },
+  ]);
+  const hidden = await compat.stream(blind, {
+    messages: [{ role: "user", content: [image("image/png", PNG)], timestamp: 1 }],
+  }).result();
+  assert.equal(hidden.stopReason, "error");
+  assert.match(hidden.errorMessage ?? "", /does not accept image input/);
+  assert.equal(providerCalls, 1);
+
+  let modelCalls = 0;
+  const modelBodies: Array<Record<string, unknown>> = [];
+  const models = createModels({ env: { OPENAI_API_KEY: "sk-test" } });
+  models.setProvider(openaiProvider({
+    modelIds: ["gpt-4o-mini", "vision-test"],
+    models: {
+      "vision-test": { contextWindow: 8000, maxTokens: 256, input: ["text", "image"] },
+    },
+    fetch: async (_input, init) => {
+      modelCalls += 1;
+      if (init?.body) modelBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return stop();
+    },
+  }));
+  const custom = models.getModel("openai", "vision-test");
+  const known = models.getModel("openai", "gpt-4o-mini");
+  assert.ok(custom && known);
+  assert.deepEqual(known.input, ["text"]);
+  const customResult = await models.stream(custom, {
+    messages: [{ role: "user", content: [{ type: "text", text: "look" }, image("image/png", PNG)], timestamp: 1 }],
+  }).result();
+  assert.equal(customResult.stopReason, "stop");
+  assert.deepEqual(userParts(modelBodies[0]), [
+    { type: "text", text: "look" },
+    { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } },
+  ]);
+  const knownResult = await models.stream(known, {
+    messages: [{ role: "user", content: [image("image/png", PNG)], timestamp: 1 }],
+  }).result();
+  assert.equal(knownResult.stopReason, "error");
+  assert.match(knownResult.errorMessage ?? "", /does not accept image input/);
+  assert.notEqual(knownResult.retryable, true);
+  assert.equal(modelCalls, 1);
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {

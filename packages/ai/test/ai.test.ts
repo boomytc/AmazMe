@@ -177,7 +177,7 @@ test("openai completions reassembles streamed tool call arguments", async () => 
     systemPrompt: "Be brief",
     messages: [
       { role: "system", content: "Be brief", timestamp: 1 },
-      { role: "user", content: [{ type: "text", text: "look" }, { type: "image", mimeType: "image/png", data: "aaaa" }], timestamp: 2 },
+      { role: "user", content: "look", timestamp: 2 },
       {
         role: "assistant",
         content: [
@@ -207,7 +207,6 @@ test("openai completions reassembles streamed tool call arguments", async () => 
     messages: Array<{ role: string; content: string | null; tool_calls?: Array<{ id: string }>; tool_call_id?: string }>;
   };
   assert.equal(body.messages.filter((item) => item.role === "system" && item.content === "Be brief").length, 1);
-  assert.equal(sent.includes("aaaa"), false);
   assert.equal(sent.includes(rawId), false);
   assert.match(sent, /hmm/);
   const assistant = body.messages.find((item) => item.role === "assistant");

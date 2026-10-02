@@ -13,9 +13,13 @@ export interface OpenAICompletionsApiOptions {
   outputTokenField?: CompletionsOutputTokenField;
 }
 
+type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 interface ChatMessage {
   role: string;
-  content: string | null;
+  content: string | null | ChatContentPart[];
   tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
   tool_call_id?: string;
   reasoning_content?: string;
@@ -72,6 +76,11 @@ async function pump(
         type: "error",
         error: terminalMessage(model, [], "error", "OpenAI completions outputTokenField must be max_completion_tokens or max_tokens"),
       });
+      return;
+    }
+    const imageProblem = userImageProblem(model, context.messages);
+    if (imageProblem) {
+      stream.push({ type: "error", error: terminalMessage(model, [], "error", imageProblem) });
       return;
     }
     const wire: Context = { ...context, messages: transformMessages(context.messages, model) };
@@ -162,7 +171,7 @@ function toChatMessages(context: Context): ChatMessage[] {
 
 function convertMessage(message: Message): ChatMessage {
   if (message.role === "system") return { role: "system", content: message.content };
-  if (message.role === "user") return { role: "user", content: messageText(message) };
+  if (message.role === "user") return { role: "user", content: userContent(message) };
   if (message.role === "toolResult") {
     return { role: "tool", content: messageText(message), tool_call_id: message.toolCallId };
   }
@@ -185,6 +194,32 @@ function convertMessage(message: Message): ChatMessage {
       : {}),
     ...reasoningFields(message),
   };
+}
+
+function userContent(message: Extract<Message, { role: "user" }>): string | ChatContentPart[] {
+  if (typeof message.content === "string") return message.content;
+  return message.content.map((block) => block.type === "text"
+    ? { type: "text" as const, text: block.text }
+    : { type: "image_url" as const, image_url: { url: `data:${block.mimeType};base64,${block.data}` } });
+}
+
+const IMAGE_MIME = /^[\w.+-]+\/[\w.+-]+$/;
+const IMAGE_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** Capability failures happen before a text downgrade. Format failures stay distinct. */
+function userImageProblem(model: Model, messages: readonly Message[]): string | undefined {
+  for (const message of messages) {
+    if (message.role !== "user" || typeof message.content === "string") continue;
+    for (const block of message.content) {
+      if (block.type !== "image") continue;
+      if (!model.input.includes("image")) return `Model ${model.id} does not accept image input`;
+      if (typeof block.mimeType !== "string" || !IMAGE_MIME.test(block.mimeType)) return "Image input requires a mime type";
+      if (typeof block.data !== "string" || block.data.length === 0 || !IMAGE_BASE64.test(block.data)) {
+        return "Image input requires base64 data";
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Replay each allowed field. A name outside the three fields is never a JSON key. */
