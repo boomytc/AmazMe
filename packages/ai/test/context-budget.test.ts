@@ -64,6 +64,18 @@ function outputField(body: Record<string, unknown>): { name: string; value: unkn
   return { name, value: body[name] };
 }
 
+test("the shared output budget includes tool results synthesized by request projection", () => {
+  const active = model({ contextWindow: 100, maxTokens: 32 });
+  const context: Context = { messages: [assistant([
+    { type: "toolCall", id: "call_1", name: "work", arguments: {} },
+  ])] };
+  const projected = { ...context, messages: transformMessages(context.messages, active) };
+  const budget = resolveOutputBudget(active, context, 32);
+  assert.equal(budget.estimatedInput, estimateRequestTokens(projected));
+  assert.equal(budget.outputCap, resolveOutputBudget(active, projected, 32).outputCap);
+  assert.equal(context.messages.length, 1);
+});
+
 test("the safety margin scales down for a small window", () => {
   assert.equal(contextSafetyMargin(1_000), 50);
   assert.equal(contextSafetyMargin(128_000), 4_096);

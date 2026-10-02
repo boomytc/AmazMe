@@ -1,4 +1,5 @@
 import type { Context, Message, Model, ToolDefinition } from "../types.ts";
+import { transformMessages } from "../transform.ts";
 
 /**
  * UTF-8 bytes per estimated token. This is an approximation, so callers keep a
@@ -64,6 +65,7 @@ export function estimateRequestTokens(context: Context): number {
   return tokens;
 }
 
+/** Resolve against the model request projection, including synthesized tool results. */
 export function resolveOutputBudget(model: Model, context: Context, requested: number | undefined): OutputBudget {
   const limitProblem = modelLimitProblem(model.contextWindow, model.maxTokens, `Model ${model.id}`);
   const requestedProblem = requested === undefined ? undefined : requestLimitProblem(requested);
@@ -80,7 +82,7 @@ export function resolveOutputBudget(model: Model, context: Context, requested: n
   }
   let estimatedInput: number;
   try {
-    estimatedInput = estimateRequestTokens(context);
+    estimatedInput = estimateRequestTokens({ ...context, messages: transformMessages(context.messages, model) });
   } catch (error) {
     return {
       estimatedInput: 0,
