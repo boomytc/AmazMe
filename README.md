@@ -40,7 +40,11 @@ import { fauxProvider } from "@amazme/ai/providers/faux";
 
 上下文超限先看错误 code/type（`context_length_exceeded`、`model_context_window_exceeded`），再匹配少量「最大上下文 / 最大输入」文案。不是所有 HTTP 400/413、所有 `length`，也不是 “too many tokens”。限流、配额、账单、认证和普通参数错误排除在外，超限也不会标成可原样重试。普通 `length` 仍是截断；输出为 0 且输入已占满窗口时，额外标上 `overflow`，交给 Durable 决定是否压缩。AI 只分类和限制这一次请求，不自动重发。
 
-Chat Completions 请求带 `stream_options.include_usage`。最终消息写入服务端的 input、output 和 total token；费用按模型 `cost` 上「每 1,000,000 token 的美元」计算，缺了费率就记 0，不查价格目录。`thinkingLevel` 先按模型能力映射，不支持的级别在发请求前以错误终态结束。映射出的参数写入 `reasoning_effort`；调用方若再传协议选项 `reasoningEffort`，以该选项为准。暂时的限流、网络故障，以及 408 / 500 / 502 / 503 / 504，把消息标成 `retryable`。配额、账单、认证和参数错误不标，501 和 505 也不标。AI 只分类，不自动重发。中途失败或取消会留下已经收到的文本和工具调用，并只发布一次终态。
+Chat Completions 请求带 `stream_options.include_usage`。最终消息写入服务端的 input、output 和 total token；费用按模型 `cost` 上「每 1,000,000 token 的美元」计算，缺了费率就记 0，不查价格目录。`thinkingLevel` 先按模型能力映射，不支持的级别在发请求前以错误终态结束。映射出的参数写入 `reasoning_effort`；调用方若再传协议选项 `reasoningEffort`，以该选项为准。暂时的限流、网络故障，以及 408 / 500 / 502 / 503 / 504，把消息标成 `retryable`。配额、账单、认证和参数错误不标，501 和 505 也不标。AI 只分类，不自动重发。中途失败或取消会留下已经收到的文本、思考和工具调用，并只发布一次终态。
+
+兼容端可能在 delta 里返回 `reasoning_content`、`reasoning` 或 `reasoning_text`。同一个 chunk 里多个字段同时有值时，只取按这个顺序的第一个非空字符串，不把它们拼在一起，也不读 `reasoning_details`。空字符串和其他类型被忽略。没有这些字段时不会编造思考文本；官方 OpenAI 不保证返回内部思考。思考块和文本、工具共用 `contentIndex`。连续且字段相同的增量留在同一个块里；字段变了，或中间插入了文本/工具，就是新块。块记下第一次出现的字段。错误、取消和帧恢复都保留已经收到的片段。帧上的 `thinkingField` 只可能是这三个名字。
+
+下一轮请求里，目标仍是 `openai-completions` 且块带有上述字段时，思考按该字段回放，不写进 assistant 的普通 `content`。同一个字段的多块用换行拼起来。字段名不在这三个之内时，不会变成 JSON 键。目标 api 不是 `openai-completions` 时，思考文本改写成普通回答；Anthropic 和 Google 目标仍保留思考块。源消息不被改写。本轮没有加密思考、外部签名，也没有完整的 `reasoning_details`。
 
 流内 `error` 也按错误内容分类，并保留之前的输出和 usage。错误事件形状、成功终态中不完整的工具参数、`content_filter` 和本地序列化失败均以不可重试错误结束。`length` 仍保留截断片段。Durable 将失败 assistant 保存在条目树中，在构建后续模型请求时跳过它们。
 

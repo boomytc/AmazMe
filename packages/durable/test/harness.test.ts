@@ -288,6 +288,76 @@ test("a crashed stream keeps text from frames, drops the tool call, and does not
   assert.equal(harnessText(assistant.payload.message), "after-tool");
 });
 
+test("a crashed stream keeps the thinking fragment and its completions field", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  const model: Model = {
+    id: "g",
+    name: "g",
+    provider: "gated",
+    api: "faux",
+    input: ["text"],
+    contextWindow: 1000,
+    maxTokens: 100,
+    cost: { input: 0, output: 0 },
+  };
+  const provider: Provider = {
+    id: "gated",
+    name: "gated",
+    auth: { env: "GATED", ambient: "x" },
+    getModels: () => [model],
+    stream(active, context, options) {
+      return this.streamSimple(active, context, options);
+    },
+    streamSimple(active, _context, options) {
+      calls += 1;
+      const stream = createAssistantEventStream();
+      const thought = { type: "thinking" as const, thinking: "because", thinkingField: "reasoning_content" as const };
+      const message = baseAssistant(active, [thought], "stop");
+      void (async () => {
+        stream.push({
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "because",
+          partial: { ...message, content: [thought], stopReason: "pending" },
+        });
+        await gate;
+        if (options?.signal?.aborted) {
+          stream.push({ type: "error", error: { ...message, stopReason: "aborted", errorMessage: "aborted" } });
+          return;
+        }
+        stream.push({ type: "done", reason: "stop", message });
+      })();
+      return stream;
+    },
+  };
+  const models = createModels();
+  models.setProvider(provider);
+  const storage = new MemoryStorage();
+  const first = new AgentHarness(storage, { models, model: { provider: "gated", modelId: "g" } });
+  const admitted = await first.lane().accept({ kind: "prompt", text: "hi" });
+  assert.equal(admitted.ok, true);
+  const driving = first.lane().drive(admitted.value.operationId);
+  await waitFor(async () => storage.read((view) => view.lists().some((list) => list.items.length >= 1)));
+  first.abandon();
+  const second = new AgentHarness(storage, { models, model: { provider: "gated", modelId: "g" } });
+  const recovered = await second.lane().drive(admitted.value.operationId);
+  release();
+  await driving;
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.ok && recovered.value.kind === "settled" ? recovered.value.result.status : "", "aborted");
+  assert.equal(calls, 1);
+  const assistant = (await second.lane().entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant");
+  assert.ok(assistant && assistant.payload.type === "message" && assistant.payload.message.role === "assistant");
+  const block = assistant.payload.message.content[0];
+  assert.equal(block?.type, "thinking");
+  assert.equal(block?.type === "thinking" ? block.thinking : "", "because");
+  assert.equal(block?.type === "thinking" ? block.thinkingField : "", "reasoning_content");
+});
+
 test("an interrupted unsafe tool is not repeated and keeps its checkpoint", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {

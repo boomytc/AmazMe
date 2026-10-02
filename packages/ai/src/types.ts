@@ -30,9 +30,21 @@ export interface TextContent {
   text: string;
 }
 
+/** Completions fields that may carry thinking. No other name is written back. */
+export type CompletionsThinkingField = "reasoning_content" | "reasoning" | "reasoning_text";
+
+export function isCompletionsThinkingField(value: unknown): value is CompletionsThinkingField {
+  return value === "reasoning_content" || value === "reasoning" || value === "reasoning_text";
+}
+
 export interface ThinkingContent {
   type: "thinking";
   thinking: string;
+  /**
+   * Field this fragment was received on. Replay writes only this name.
+   * Absent when the thinking did not come from a completions field.
+   */
+  thinkingField?: CompletionsThinkingField;
 }
 
 export interface ImageContent {
@@ -188,7 +200,7 @@ export type AssistantEvent =
  */
 export type AssistantFrame =
   | { type: "text_delta"; contentIndex: number; delta: string }
-  | { type: "thinking_delta"; contentIndex: number; delta: string }
+  | { type: "thinking_delta"; contentIndex: number; delta: string; thinkingField?: CompletionsThinkingField }
   | { type: "toolcall"; contentIndex: number; id: string; name: string; arguments: unknown }
   | { type: "stop"; stopReason: StopReason; errorMessage?: string };
 

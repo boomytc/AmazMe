@@ -1,4 +1,4 @@
-import type { AssistantContent, AssistantMessage, Message, Model, TextContent, ToolCall, ToolResultMessage, UserContent } from "./types.ts";
+import { isCompletionsThinkingField, type AssistantContent, type AssistantMessage, type Message, type Model, type TextContent, type ThinkingContent, type ToolCall, type ToolResultMessage, type UserContent } from "./types.ts";
 
 const USER_IMAGE = "(image omitted: model does not support images)";
 const TOOL_IMAGE = "(tool image omitted: model does not support images)";
@@ -36,15 +36,15 @@ function downgradeImages(content: UserContent[], placeholder: string): TextConte
 /**
  * Make one transcript acceptable to another provider.
  * Images disappear on text-only models. Tool ids are rewritten and the
- * matching tool results follow the new ids. Thinking blocks stay as text
- * when the destination has no native thinking channel (`api` other than
- * anthropic-messages / google-generative-ai).
+ * matching tool results follow the new ids. A completions thinking block
+ * keeps its field when the destination api is openai-completions. Every
+ * other destination receives that text as an ordinary assistant answer.
+ * Anthropic and Google destinations still keep thinking blocks.
  * Failed assistant prefixes are omitted and unanswered calls receive error
  * results in this request projection. The source transcript is not rewritten.
  */
 export function transformMessages(messages: Message[], model: Model): Message[] {
   const idMap = new Map<string, string>();
-  const keepThinking = model.api === "anthropic-messages" || model.api === "google-generative-ai";
   const vision = model.input.includes("image");
 
   const transformed = messages.map((message): Message => {
@@ -65,7 +65,7 @@ export function transformMessages(messages: Message[], model: Model): Message[] 
         content.push({ ...block, id });
         continue;
       }
-      if (block.type === "thinking" && !keepThinking) {
+      if (block.type === "thinking" && !keepThinkingBlock(block, model)) {
         content.push(text(block.thinking));
         continue;
       }
@@ -81,6 +81,13 @@ export function transformMessages(messages: Message[], model: Model): Message[] 
   });
   return reconcileToolResults(normalized);
 }
+
+function keepThinkingBlock(block: ThinkingContent, model: Model): boolean {
+  if (model.api === "anthropic-messages" || model.api === "google-generative-ai") return true;
+  return model.api === OPENAI_COMPLETIONS_API && isCompletionsThinkingField(block.thinkingField);
+}
+
+const OPENAI_COMPLETIONS_API = "openai-completions";
 
 function reconcileToolResults(messages: Message[]): Message[] {
   const projected: Message[] = [];

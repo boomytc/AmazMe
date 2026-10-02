@@ -1,6 +1,6 @@
 import { baseAssistant, createAssistantEventStream, type AssistantEventStream, type ProviderStreams } from "../models.ts";
 import { resolveThinkingLevel } from "../thinking.ts";
-import type { AssistantMessage, CompletionsOutputTokenField, Context, Message, Model, OpenAICompletionsOptions, ToolCall, Usage } from "../types.ts";
+import { isCompletionsThinkingField, type AssistantMessage, type CompletionsOutputTokenField, type CompletionsThinkingField, type Context, type Message, type Model, type OpenAICompletionsOptions, type ToolCall, type Usage } from "../types.ts";
 import { emptyUsage, messageText, transformMessages } from "../transform.ts";
 import { resolveOutputBudget } from "../utils/budget.ts";
 import { classifyTransportFailure, isFilledWindowLength, transportErrorDetail } from "../utils/overflow.ts";
@@ -18,6 +18,9 @@ interface ChatMessage {
   content: string | null;
   tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
   tool_call_id?: string;
+  reasoning_content?: string;
+  reasoning?: string;
+  reasoning_text?: string;
 }
 
 export function openaiCompletionsApi(options: OpenAICompletionsApiOptions = {}): ProviderStreams<"openai-completions"> {
@@ -180,7 +183,20 @@ function convertMessage(message: Message): ChatMessage {
           })),
         }
       : {}),
+    ...reasoningFields(message),
   };
+}
+
+/** Replay each allowed field. A name outside the three fields is never a JSON key. */
+function reasoningFields(message: Extract<Message, { role: "assistant" }>): Partial<Record<CompletionsThinkingField, string>> {
+  const fields: Partial<Record<CompletionsThinkingField, string>> = {};
+  for (const block of message.content) {
+    if (block.type !== "thinking" || block.thinking.length === 0) continue;
+    if (!isCompletionsThinkingField(block.thinkingField)) continue;
+    const previous = fields[block.thinkingField];
+    fields[block.thinkingField] = previous ? `${previous}\n${block.thinking}` : block.thinking;
+  }
+  return fields;
 }
 
 async function emitSse(model: Model, response: Response, stream: AssistantEventStream, signal: AbortSignal | undefined): Promise<void> {
@@ -201,9 +217,13 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
   const partial = baseAssistant(model, [], "pending");
 
   const snapshot = (stopReason: AssistantMessage["stopReason"]): AssistantMessage => {
-    const content = blocks.map((block) => block.kind === "text"
-      ? { type: "text" as const, text: block.text }
-      : toolCallOf(block));
+    const content = blocks.map((block) => {
+      if (block.kind === "text") return { type: "text" as const, text: block.text };
+      if (block.kind === "thinking") {
+        return { type: "thinking" as const, thinking: block.text, thinkingField: block.field };
+      }
+      return toolCallOf(block);
+    });
     return {
       ...partial,
       content: content.length > 0 ? content : [{ type: "text", text: "" }],
@@ -245,6 +265,8 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       block.ended = true;
       if (block.kind === "text") {
         stream.push({ type: "text_end", contentIndex: block.contentIndex, partial: snapshot(stopReason) });
+      } else if (block.kind === "thinking") {
+        stream.push({ type: "thinking_end", contentIndex: block.contentIndex, partial: snapshot(stopReason) });
       } else {
         stream.push({
           type: "toolcall_end",
@@ -304,6 +326,8 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     const choice = parsed.choices?.[0];
     if (!choice) return;
     if (choice.delta?.content) appendText(choice.delta.content);
+    const reasoning = choice.delta ? firstReasoning(choice.delta) : undefined;
+    if (reasoning) appendThinking(reasoning.field, reasoning.value);
     for (const call of choice.delta?.tool_calls ?? []) appendTool(call);
     if (choice.finish_reason) finish = choice.finish_reason;
   };
@@ -351,6 +375,21 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     stream.push({ type: "text_delta", contentIndex: block.contentIndex, delta, partial: snapshot("pending") });
   }
 
+  function appendThinking(field: CompletionsThinkingField, delta: string): void {
+    begin();
+    const last = blocks[blocks.length - 1];
+    if (last?.kind === "thinking" && !last.ended && last.field === field) {
+      last.text += delta;
+      stream.push({ type: "thinking_delta", contentIndex: last.contentIndex, delta, partial: snapshot("pending") });
+      return;
+    }
+    const block: ThinkingBlock = { kind: "thinking", contentIndex: blocks.length, text: "", field, ended: false };
+    blocks.push(block);
+    stream.push({ type: "thinking_start", contentIndex: block.contentIndex, partial: snapshot("pending") });
+    block.text = delta;
+    stream.push({ type: "thinking_delta", contentIndex: block.contentIndex, delta, partial: snapshot("pending") });
+  }
+
   function appendTool(call: { index: number; id?: string; function?: { name?: string; arguments?: string } }): void {
     begin();
     let block = toolsByServer.get(call.index);
@@ -390,6 +429,14 @@ interface TextBlock {
   ended: boolean;
 }
 
+interface ThinkingBlock {
+  kind: "thinking";
+  contentIndex: number;
+  text: string;
+  field: CompletionsThinkingField;
+  ended: boolean;
+}
+
 interface ToolBlock {
   kind: "tool";
   contentIndex: number;
@@ -400,7 +447,19 @@ interface ToolBlock {
   ended: boolean;
 }
 
-type StreamBlock = TextBlock | ToolBlock;
+type StreamBlock = TextBlock | ThinkingBlock | ToolBlock;
+
+const REASONING_FIELDS = ["reasoning_content", "reasoning", "reasoning_text"] as const;
+
+/** First non-empty string wins. Empty values, other types, and reasoning_details are ignored. */
+function firstReasoning(delta: object): { field: CompletionsThinkingField; value: string } | undefined {
+  const record = delta as Record<string, unknown>;
+  for (const field of REASONING_FIELDS) {
+    const value = record[field];
+    if (typeof value === "string" && value.length > 0) return { field, value };
+  }
+  return undefined;
+}
 
 function toolCallOf(block: ToolBlock): ToolCall {
   return {

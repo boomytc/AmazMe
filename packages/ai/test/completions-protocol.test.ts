@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModels, createProvider, frameFromEvent, messageFromFrames, reduceFrames, type AssistantEvent, type AssistantMessage, type Model, type OpenAICompletionsOptions } from "@amazme/ai";
+import { createModels, createProvider, frameFromEvent, messageFromFrames, reduceFrames, type AssistantEvent, type AssistantMessage, type Context, type Model, type OpenAICompletionsOptions } from "@amazme/ai";
 import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
 import { checkAssistantStream } from "@amazme/ai/testing";
 
@@ -47,6 +47,7 @@ async function run(
   options: OpenAICompletionsOptions = {},
   active: Model<"openai-completions"> = model(),
   onEvent?: (event: AssistantEvent) => void,
+  context: Context = CONTEXT,
 ): Promise<{ message: AssistantMessage; events: AssistantEvent[]; bodies: Array<Record<string, unknown>>; calls: number }> {
   const bodies: Array<Record<string, unknown>> = [];
   let calls = 0;
@@ -57,7 +58,7 @@ async function run(
       return fetchImpl(input, init);
     },
   });
-  const stream = api.stream(active, CONTEXT, { baseUrl: "https://example.test/v1", apiKey: "sk-test", ...options });
+  const stream = api.stream(active, context, { baseUrl: "https://example.test/v1", apiKey: "sk-test", ...options });
   const events: AssistantEvent[] = [];
   const finished = (async () => {
     for await (const event of stream) {
@@ -625,3 +626,295 @@ test("crlf framing, a split utf-8 character, an empty body, and a usage-only chu
   assert.equal(textOf(quiet.message), "");
   assert.equal(quiet.events.some((event) => event.type.startsWith("text_") || event.type.startsWith("toolcall_")), false);
 });
+
+test("reasoning fields keep the first non-empty string and ignore empty or illegal values", async () => {
+  const cases: Array<{ delta: Record<string, unknown>; thinking?: { text: string; field: string }; answer?: string }> = [
+    { delta: { reasoning_content: "from-content" }, thinking: { text: "from-content", field: "reasoning_content" } },
+    { delta: { reasoning: "from-reasoning" }, thinking: { text: "from-reasoning", field: "reasoning" } },
+    { delta: { reasoning_text: "from-text" }, thinking: { text: "from-text", field: "reasoning_text" } },
+    { delta: { reasoning_content: "first", reasoning: "first", reasoning_text: "second" }, thinking: { text: "first", field: "reasoning_content" } },
+    { delta: { reasoning_content: "", reasoning: "next", reasoning_text: "later" }, thinking: { text: "next", field: "reasoning" } },
+    { delta: { reasoning_content: " " }, thinking: { text: " ", field: "reasoning_content" } },
+    { delta: { reasoning_content: "", reasoning: "", reasoning_text: "", content: "Hi" } },
+    { delta: { reasoning_content: ["x"], reasoning: false, reasoning_text: 0, content: "Hi" } },
+    { delta: { reasoning_content: 1, reasoning: { nested: true }, reasoning_text: null, content: "Hi" } },
+    { delta: { reasoning_content: "real", reasoning_details: [{ type: "reasoning.text", text: "extra" }] }, thinking: { text: "real", field: "reasoning_content" } },
+    { delta: { reasoning_details: [{ type: "reasoning.text", text: "secret-thought" }] }, answer: "" },
+  ];
+  for (const item of cases) {
+    const { message, events } = await run(async () => sse([
+      data({ choices: [{ delta: item.delta }] }),
+      data({ choices: [{ finish_reason: "stop" }] }),
+      "data: [DONE]\n\n",
+    ]));
+    const label = JSON.stringify(item.delta);
+    assert.equal(message.stopReason, "stop", label);
+    const thoughts = message.content.filter((block) => block.type === "thinking");
+    if (item.thinking) {
+      assert.equal(thoughts.length, 1, label);
+      assert.equal(thoughts[0]?.type === "thinking" ? thoughts[0].thinking : "", item.thinking.text, label);
+      assert.equal(thoughts[0]?.type === "thinking" ? thoughts[0].thinkingField : "", item.thinking.field, label);
+      assert.equal(textOf(message), "", label);
+      assert.equal(events.filter((event) => event.type === "thinking_end").length, 1, label);
+      assert.equal(JSON.stringify(message).includes("extra"), false, label);
+      assert.equal(JSON.stringify(message).includes("second"), false, label);
+    } else {
+      assert.equal(thoughts.length, 0, label);
+      assert.equal(textOf(message), item.answer ?? "Hi", label);
+      assert.equal(events.some((event) => event.type === "thinking_start" || event.type === "thinking_delta" || event.type === "thinking_end"), false, label);
+    }
+  }
+});
+
+test("thinking keeps a stable index beside text and tools, including a field change", async () => {
+  let early: AssistantEvent | undefined;
+  const { message, events } = await run(async () => sse([
+    data({ choices: [{ delta: { reasoning_content: "hel" } }] }),
+    data({ choices: [{ delta: { reasoning_content: "lo", reasoning: "nope" } }] }),
+    data({ choices: [{ delta: { reasoning: "switched" } }] }),
+    data({ choices: [{ delta: { content: "say" } }] }),
+    data({ choices: [{ delta: { tool_calls: [{ index: 7, id: "call_1", function: { name: "read", arguments: "{}" } }] } }] }),
+    data({ choices: [{ delta: { reasoning_text: "tail" } }] }),
+    data({ choices: [{ finish_reason: "tool_calls" }] }),
+    "data: [DONE]\n\n",
+  ]), {}, model(), (event) => {
+    if (!early && event.type === "thinking_start") early = event;
+  });
+  assert.equal(message.stopReason, "toolUse");
+  assert.deepEqual(message.content.map((block) => block.type), ["thinking", "thinking", "text", "toolCall", "thinking"]);
+  assert.equal(message.content[0]?.type === "thinking" ? message.content[0].thinking : "", "hello");
+  assert.equal(message.content[0]?.type === "thinking" ? message.content[0].thinkingField : "", "reasoning_content");
+  assert.equal(message.content[1]?.type === "thinking" ? message.content[1].thinking : "", "switched");
+  assert.equal(message.content[1]?.type === "thinking" ? message.content[1].thinkingField : "", "reasoning");
+  assert.equal(message.content[2]?.type === "text" ? message.content[2].text : "", "say");
+  assert.equal(message.content[3]?.type === "toolCall" ? message.content[3].name : "", "read");
+  assert.equal(message.content[4]?.type === "thinking" ? message.content[4].thinking : "", "tail");
+  assert.equal(message.content[4]?.type === "thinking" ? message.content[4].thinkingField : "", "reasoning_text");
+  assert.equal(JSON.stringify(message).includes("nope"), false);
+  assert.deepEqual(
+    events.flatMap((event) => event.type === "thinking_delta" ? [[event.contentIndex, event.delta]] : []),
+    [[0, "hel"], [0, "lo"], [1, "switched"], [4, "tail"]],
+  );
+  assert.deepEqual([...new Set(indexes(events, "toolcall_"))], [3]);
+  assert.equal(events.filter((event) => event.type === "thinking_end").length, 3);
+  assert.equal(events.filter((event) => event.type === "text_end").length, 1);
+  assert.equal(events.filter((event) => event.type === "toolcall_end").length, 1);
+  const started = early?.type === "thinking_start" ? early.partial.content[early.contentIndex] : undefined;
+  assert.equal(started?.type === "thinking" ? started.thinking : "missing", "");
+  const frames = events.map((event) => frameFromEvent(event)).filter((frame) => frame !== undefined);
+  const contentFrames = frames.filter((frame) => frame.type !== "stop");
+  const reduced = reduceFrames([...contentFrames].reverse());
+  assert.equal(reduced.content[0]?.type === "thinking" ? reduced.content[0].thinkingField : "", "reasoning_content");
+  assert.equal(reduced.content[1]?.type === "thinking" ? reduced.content[1].thinking : "", "switched");
+  assert.equal(reduced.content[3]?.type, "toolCall");
+  assert.equal(reduced.content[4]?.type === "thinking" ? reduced.content[4].thinkingField : "", "reasoning_text");
+  const prefix = messageFromFrames({ api: "openai-completions", provider: "openai", id: "gpt-4o-mini" }, contentFrames);
+  assert.equal(prefix.stopReason, "aborted");
+  assert.equal(prefix.content[0]?.type === "thinking" ? prefix.content[0].thinking : "", "hello");
+  assert.equal(prefix.content[0]?.type === "thinking" ? prefix.content[0].thinkingField : "", "reasoning_content");
+});
+
+test("errors, reader failures, and cancellation keep received thinking without ending it", async (t) => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  t.after(() => process.off("unhandledRejection", onUnhandled));
+
+  const streamed = await run(async () => sse([
+    data({ choices: [{ delta: { reasoning_content: "kept" } }] }),
+    data({ error: { code: "context_length_exceeded", message: "maximum context length exceeded" } }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(streamed.message.stopReason, "error");
+  assert.equal(streamed.message.overflow, true);
+  assert.notEqual(streamed.message.retryable, true);
+  assert.equal(streamed.message.content[0]?.type === "thinking" ? streamed.message.content[0].thinking : "", "kept");
+  assert.equal(streamed.message.content[0]?.type === "thinking" ? streamed.message.content[0].thinkingField : "", "reasoning_content");
+  assert.equal(streamed.events.some((event) => event.type === "thinking_end" || event.type === "toolcall_end"), false);
+  const streamedFrames = streamed.events.map((event) => frameFromEvent(event)).filter((frame) => frame !== undefined);
+  const recovered = messageFromFrames(
+    { api: "openai-completions", provider: "openai", id: "gpt-4o-mini" },
+    streamedFrames.filter((frame) => frame.type !== "stop"),
+  );
+  assert.equal(recovered.stopReason, "aborted");
+  assert.equal(recovered.content[0]?.type === "thinking" ? recovered.content[0].thinkingField : "", "reasoning_content");
+
+  const encoder = new TextEncoder();
+  const reader = await run(async () => new Response(new ReadableStream({
+    async start(controller) {
+      controller.enqueue(encoder.encode(data({ choices: [{ delta: { reasoning: "partial" } }] })));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      controller.error(new Error("connection reset"));
+    },
+  }), { status: 200 }));
+  assert.equal(reader.message.stopReason, "error");
+  assert.equal(reader.message.retryable, true);
+  assert.equal(reader.message.content[0]?.type === "thinking" ? reader.message.content[0].thinking : "", "partial");
+  assert.equal(reader.message.content[0]?.type === "thinking" ? reader.message.content[0].thinkingField : "", "reasoning");
+  assert.equal(reader.message.errorMessage?.includes("partial"), false);
+  assert.equal(reader.events.some((event) => event.type === "thinking_end"), false);
+
+  const controller = new AbortController();
+  const cancelled = await run(
+    async (_input, init) => new Response(new ReadableStream({
+      start(streamController) {
+        streamController.enqueue(encoder.encode(data({ choices: [{ delta: { reasoning_text: "stop-me" } }] })));
+        const timer = setTimeout(() => streamController.error(new Error("still open")), 1500);
+        init?.signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
+      },
+    }), { status: 200 }),
+    { signal: controller.signal },
+    model(),
+    (event) => {
+      if (event.type === "thinking_delta") controller.abort();
+    },
+  );
+  assert.equal(cancelled.message.stopReason, "aborted");
+  assert.notEqual(cancelled.message.retryable, true);
+  assert.equal(cancelled.message.content[0]?.type === "thinking" ? cancelled.message.content[0].thinking : "", "stop-me");
+  assert.equal(cancelled.message.content[0]?.type === "thinking" ? cancelled.message.content[0].thinkingField : "", "reasoning_text");
+  assert.equal(cancelled.message.errorMessage?.includes("stop-me"), false);
+  assert.equal(cancelled.events.some((event) => event.type === "thinking_end"), false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(unhandled, []);
+});
+
+test("the next completions request replays thinking on its field and leaves the source message unchanged", async () => {
+  const first = await run(async () => sse([
+    data({ choices: [{ delta: { reasoning_content: "plan", reasoning: "plan" } }] }),
+    data({ choices: [{ delta: { content: "go" } }] }),
+    data({ choices: [{ finish_reason: "stop" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(first.message.content[0]?.type === "thinking" ? first.message.content[0].thinking : "", "plan");
+  assert.equal(textOf(first.message), "go");
+  assert.equal(JSON.stringify(first.bodies[0]).includes("reasoning"), false);
+  const before = JSON.stringify(first.message);
+  Object.freeze(first.message);
+  Object.freeze(first.message.content);
+  for (const block of first.message.content) Object.freeze(block);
+
+  const second = await run(
+    async () => sse([
+      data({ choices: [{ delta: { content: "next" } }] }),
+      data({ choices: [{ finish_reason: "stop" }] }),
+      "data: [DONE]\n\n",
+    ]),
+    {},
+    model(),
+    undefined,
+    { messages: [first.message, { role: "user", content: "continue", timestamp: 2 }] },
+  );
+  assert.equal(textOf(second.message), "next");
+  const replay = second.bodies[0]?.messages;
+  assert.ok(Array.isArray(replay));
+  const assistant = replay.find((item) => isRecord(item) && item.role === "assistant");
+  assert.ok(assistant && isRecord(assistant));
+  assert.equal(assistant.reasoning_content, "plan");
+  assert.equal(assistant.content, "go");
+  assert.equal("reasoning" in assistant, false);
+  assert.equal("reasoning_text" in assistant, false);
+  assert.equal(JSON.stringify(first.message), before);
+
+  const illegal = await run(
+    async () => sse([
+      data({ choices: [{ finish_reason: "stop" }] }),
+      "data: [DONE]\n\n",
+    ]),
+    {},
+    model(),
+    undefined,
+    { messages: [{
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "one", thinkingField: "reasoning_content" },
+        { type: "thinking", thinking: "two", thinkingField: "reasoning" },
+        { type: "thinking", thinking: "three", thinkingField: "reasoning_content" },
+        { type: "thinking", thinking: "hidden", thinkingField: "apiKey" as never },
+        { type: "text", text: "visible" },
+      ],
+      api: "openai-completions",
+      provider: "openai",
+      model: "gpt-4o-mini",
+      usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
+      stopReason: "stop",
+      timestamp: 1,
+    }, { role: "user", content: "continue", timestamp: 2 }] },
+  );
+  const history = illegal.bodies[0]?.messages;
+  assert.ok(Array.isArray(history));
+  const prior = history.find((item) => isRecord(item) && item.role === "assistant");
+  assert.ok(prior && isRecord(prior));
+  assert.equal(prior.reasoning_content, "one\nthree");
+  assert.equal(prior.reasoning, "two");
+  assert.equal(prior.content, "hiddenvisible");
+  assert.equal("apiKey" in prior, false);
+  assert.equal("reasoning_text" in prior, false);
+  assert.equal(JSON.stringify(illegal.bodies[0]).includes("reasoning_details"), false);
+
+  const only = await run(
+    async () => sse([
+      data({ choices: [{ finish_reason: "stop" }] }),
+      "data: [DONE]\n\n",
+    ]),
+    {},
+    model(),
+    undefined,
+    { messages: [{
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "only", thinkingField: "reasoning_text" }],
+      api: "openai-completions",
+      provider: "openai",
+      model: "gpt-4o-mini",
+      usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
+      stopReason: "stop",
+      timestamp: 1,
+    }, { role: "user", content: "continue", timestamp: 2 }] },
+  );
+  const alone = only.bodies[0]?.messages;
+  assert.ok(Array.isArray(alone));
+  const thought = alone.find((item) => isRecord(item) && item.role === "assistant");
+  assert.ok(thought && isRecord(thought));
+  assert.equal(thought.content, null);
+  assert.equal(thought.reasoning_text, "only");
+  assert.equal("reasoning_content" in thought, false);
+  assert.equal("reasoning" in thought, false);
+});
+
+test("one chunk places text before thinking, and a length stop still ends that block", async () => {
+  const mixed = await run(async () => sse([
+    data({ choices: [{ delta: { content: "say", reasoning_content: "think", reasoning: "nope" } }] }),
+    data({ choices: [{ finish_reason: "stop" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.deepEqual(mixed.message.content.map((block) => block.type), ["text", "thinking"]);
+  assert.equal(textOf(mixed.message), "say");
+  assert.equal(mixed.message.content[1]?.type === "thinking" ? mixed.message.content[1].thinking : "", "think");
+  assert.equal(mixed.message.content[1]?.type === "thinking" ? mixed.message.content[1].thinkingField : "", "reasoning_content");
+  assert.equal(JSON.stringify(mixed.message).includes("nope"), false);
+  assert.deepEqual(mixed.events.flatMap((event) => event.type === "text_delta" || event.type === "thinking_delta" ? [[event.contentIndex, event.delta]] : []), [[0, "say"], [1, "think"]]);
+
+  const length = await run(async () => sse([
+    data({ choices: [{ delta: { reasoning: "cut" } }] }),
+    data({ choices: [{ finish_reason: "length" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(length.message.stopReason, "length");
+  assert.equal(length.message.content[0]?.type === "thinking" ? length.message.content[0].thinking : "", "cut");
+  assert.equal(length.events.filter((event) => event.type === "thinking_end").length, 1);
+
+  const withTool = await run(async () => sse([
+    data({ choices: [{ delta: { reasoning_content: "why", tool_calls: [{ index: 3, id: "call_9", function: { name: "read", arguments: "{}" } }] } }] }),
+    data({ choices: [{ finish_reason: "tool_calls" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(withTool.message.stopReason, "toolUse");
+  assert.deepEqual(withTool.message.content.map((block) => block.type), ["thinking", "toolCall"]);
+  assert.equal(withTool.message.content[0]?.type === "thinking" ? withTool.message.content[0].thinking : "", "why");
+  assert.equal(withTool.message.content[1]?.type === "toolCall" ? withTool.message.content[1].name : "", "read");
+  assert.deepEqual([...new Set(indexes(withTool.events, "toolcall_"))], [1]);
+});
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}

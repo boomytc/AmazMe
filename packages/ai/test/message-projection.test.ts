@@ -39,6 +39,29 @@ test("an unanswered call receives an error result before a new turn or the end o
   }
 });
 
+test("completions thinking stays on its field, and another api receives it as answer text", () => {
+  const thought = { type: "thinking" as const, thinking: "plan", thinkingField: "reasoning_content" as const };
+  const assistant = baseAssistant(model, [thought, { type: "text", text: "go" }], "stop");
+  const before = JSON.stringify(assistant);
+  const same = transformMessages([assistant], model);
+  const kept = same[0];
+  assert.ok(kept?.role === "assistant");
+  assert.deepEqual(kept.content.filter((block) => block.type === "thinking"), [thought]);
+  assert.equal(kept.content.some((block) => block.type === "text" && block.text === "plan"), false);
+
+  const keptNative = transformMessages([baseAssistant(model, [{ type: "thinking", thinking: "hmm" }], "stop")], { ...model, api: "anthropic-messages" });
+  const native = keptNative[0];
+  assert.ok(native?.role === "assistant");
+  assert.equal(native.content[0]?.type === "thinking" ? native.content[0].thinking : "", "hmm");
+
+  const other = transformMessages([assistant], { ...model, api: "faux" });
+  const flat = other[0];
+  assert.ok(flat?.role === "assistant");
+  assert.equal(flat.content.some((block) => block.type === "thinking"), false);
+  assert.deepEqual(flat.content.filter((block) => block.type === "text").map((block) => block.text), ["plan", "go"]);
+  assert.equal(JSON.stringify(assistant), before);
+});
+
 test("system changes do not duplicate an existing result or split a tool response group", () => {
   const second = { ...call, id: "call_second" };
   const messages: Message[] = [

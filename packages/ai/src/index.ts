@@ -32,6 +32,7 @@ export {
   type Provider,
   type ProviderStreams,
 } from "./models.ts";
+export { isCompletionsThinkingField } from "./types.ts";
 export { resolveThinkingLevel, supportedThinkingLevels, type ThinkingResolution } from "./thinking.ts";
 export { aiTelemetrySchema } from "./telemetry.ts";
 export {
@@ -51,6 +52,7 @@ export type {
   AssistantMessage,
   AuthResult,
   CompletionsOutputTokenField,
+  CompletionsThinkingField,
   Context,
   Credential,
   CredentialStore,

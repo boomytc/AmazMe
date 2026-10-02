@@ -1,4 +1,4 @@
-import type { AssistantContent, AssistantEvent, AssistantFrame, AssistantMessage, StopReason, Usage } from "./types.ts";
+import { isCompletionsThinkingField, type AssistantContent, type AssistantEvent, type AssistantFrame, type AssistantMessage, type StopReason, type Usage } from "./types.ts";
 import { emptyUsage } from "./transform.ts";
 
 /** Compact recovery record. A complete-looking prefix is not a settled response. */
@@ -6,8 +6,18 @@ export function frameFromEvent(event: AssistantEvent): AssistantFrame | undefine
   switch (event.type) {
     case "text_delta":
       return { type: "text_delta", contentIndex: event.contentIndex, delta: event.delta };
-    case "thinking_delta":
-      return { type: "thinking_delta", contentIndex: event.contentIndex, delta: event.delta };
+    case "thinking_delta": {
+      const block = event.partial.content[event.contentIndex];
+      const thinkingField = block?.type === "thinking" && isCompletionsThinkingField(block.thinkingField)
+        ? block.thinkingField
+        : undefined;
+      return {
+        type: "thinking_delta",
+        contentIndex: event.contentIndex,
+        delta: event.delta,
+        ...(thinkingField ? { thinkingField } : {}),
+      };
+    }
     case "toolcall_end":
       return {
         type: "toolcall",
@@ -50,7 +60,14 @@ export function reduceFrames(frames: readonly AssistantFrame[]): {
     } else if (frame.type === "thinking_delta") {
       const current = slots.get(frame.contentIndex);
       const thinking = (current?.type === "thinking" ? current.thinking : "") + frame.delta;
-      slots.set(frame.contentIndex, { type: "thinking", thinking });
+      const thinkingField = current?.type === "thinking" && current.thinkingField
+        ? current.thinkingField
+        : frame.thinkingField;
+      slots.set(frame.contentIndex, {
+        type: "thinking",
+        thinking,
+        ...(thinkingField ? { thinkingField } : {}),
+      });
     } else if (frame.type === "toolcall") {
       slots.set(frame.contentIndex, {
         type: "toolCall",
