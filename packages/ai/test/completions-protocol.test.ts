@@ -1,0 +1,346 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createModels, createProvider, type AssistantEvent, type AssistantMessage, type Model, type OpenAICompletionsOptions } from "@amazme/ai";
+import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
+
+const CONTEXT = { messages: [{ role: "user" as const, content: "hi", timestamp: 1 }] };
+
+function model(extra: Partial<Model<"openai-completions">> = {}): Model<"openai-completions"> {
+  return {
+    id: "gpt-4o-mini",
+    name: "gpt-4o-mini",
+    provider: "openai",
+    api: "openai-completions",
+    input: ["text"],
+    contextWindow: 128_000,
+    maxTokens: 16_384,
+    cost: { input: 1_000_000, output: 2_000_000 },
+    ...extra,
+  };
+}
+
+function textOf(message: AssistantMessage): string {
+  return message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
+}
+
+function terminals(events: AssistantEvent[]): AssistantEvent[] {
+  return events.filter((event) => event.type === "done" || event.type === "error");
+}
+
+function sse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  }), { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+function jsonError(status: number, error: unknown): Response {
+  return new Response(JSON.stringify({ error }), { status, headers: { "content-type": "application/json" } });
+}
+
+async function run(
+  fetchImpl: typeof fetch,
+  options: OpenAICompletionsOptions = {},
+  active: Model<"openai-completions"> = model(),
+  onEvent?: (event: AssistantEvent) => void,
+): Promise<{ message: AssistantMessage; events: AssistantEvent[]; bodies: Array<Record<string, unknown>>; calls: number }> {
+  const bodies: Array<Record<string, unknown>> = [];
+  let calls = 0;
+  const api = openaiCompletionsApi({
+    fetch: async (input, init) => {
+      calls += 1;
+      if (init?.body) bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return fetchImpl(input, init);
+    },
+  });
+  const stream = api.stream(active, CONTEXT, { baseUrl: "https://example.test/v1", apiKey: "sk-test", ...options });
+  const events: AssistantEvent[] = [];
+  const finished = (async () => {
+    for await (const event of stream) {
+      events.push(event);
+      onEvent?.(event);
+    }
+  })();
+  const message = await Promise.race([
+    stream.result(),
+    new Promise<AssistantMessage>((_, reject) => setTimeout(() => reject(new Error("result hung")), 1000)),
+  ]);
+  await finished;
+  return { message, events, bodies, calls };
+}
+
+test("a usage-only chunk sets tokens and cost from the model rate", async () => {
+  const { message, events, bodies } = await run(async () => sse([
+    'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n',
+    'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+    'data: {"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}\n\n',
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(textOf(message), "Hi");
+  assert.equal(message.stopReason, "stop");
+  assert.deepEqual(message.usage, {
+    input: 12,
+    output: 5,
+    totalTokens: 17,
+    cost: { input: 12, output: 10, total: 22 },
+  });
+  assert.deepEqual(bodies[0]?.stream_options, { include_usage: true });
+  assert.equal(bodies[0]?.reasoning_effort, undefined);
+  assert.equal(terminals(events).length, 1);
+  assert.equal(terminals(events)[0]?.type, "done");
+});
+
+test("split frames and a trailing usage line without a newline still settle once", async () => {
+  const { message, events } = await run(async () => sse([
+    'data: {"choices":[{"delta":{"content":"Hi"}}]}\n',
+    "\n",
+    'data: {"choi',
+    'ces":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+    'data: {"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}',
+  ]));
+  assert.equal(textOf(message), "Hi");
+  assert.equal(message.stopReason, "stop");
+  assert.equal(message.usage.input, 12);
+  assert.equal(message.usage.output, 5);
+  assert.equal(message.usage.totalTokens, 17);
+  assert.equal(terminals(events).length, 1);
+});
+
+test("string token counts are not coerced, and a missing rate is not invented", async () => {
+  const unpriced = model();
+  delete (unpriced as { cost?: Model["cost"] }).cost;
+  const coerced = await run(async () => sse([
+    'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n',
+    'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+    'data: {"usage":{"prompt_tokens":"12","completion_tokens":"5","total_tokens":"17"}}\n\n',
+    "data: [DONE]\n\n",
+  ]));
+  assert.deepEqual(coerced.message.usage, { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } });
+  const priced = await run(async () => sse([
+    'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+    'data: {"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}\n\n',
+    "data: [DONE]\n\n",
+  ]), {}, unpriced);
+  assert.equal(priced.message.usage.input, 12);
+  assert.equal(priced.message.usage.output, 5);
+  assert.equal(priced.message.usage.totalTokens, 17);
+  assert.deepEqual(priced.message.usage.cost, { input: 0, output: 0, total: 0 });
+});
+
+test("an unsupported thinking level fails before the request is sent", async () => {
+  const { message, calls, events } = await run(
+    async () => new Response("unused", { status: 200 }),
+    { thinkingLevel: "low", reasoningEffort: "high" },
+  );
+  assert.equal(calls, 0);
+  assert.equal(message.stopReason, "error");
+  assert.match(message.errorMessage ?? "", /Thinking level "low" is not supported by gpt-4o-mini/);
+  assert.notEqual(message.retryable, true);
+  assert.equal(terminals(events).length, 1);
+});
+
+test("a supported thinking level is mapped, and reasoningEffort overrides it", async () => {
+  const reasoning = model({ reasoning: true, thinkingLevelMap: { low: "x-low", high: null } });
+  const mapped = await run(
+    async () => sse(['data: {"choices":[{"delta":{"content":"A"}}]}\n\n', 'data: {"choices":[{"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"]),
+    { thinkingLevel: "low" },
+    reasoning,
+  );
+  assert.equal(mapped.bodies[0]?.reasoning_effort, "x-low");
+  assert.equal(mapped.message.stopReason, "stop");
+
+  const off = await run(
+    async () => sse(['data: {"choices":[{"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"]),
+    { thinkingLevel: "off" },
+    reasoning,
+  );
+  assert.equal(off.bodies[0]?.reasoning_effort, undefined);
+  const mappedOff = await run(
+    async () => sse(['data: {"choices":[{"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"]),
+    { thinkingLevel: "off" },
+    model({ reasoning: true, thinkingLevelMap: { off: "none" } }),
+  );
+  assert.equal(mappedOff.bodies[0]?.reasoning_effort, "none");
+
+  const rejected = await run(async () => new Response("unused"), { thinkingLevel: "high" }, reasoning);
+  assert.equal(rejected.calls, 0);
+  assert.match(rejected.message.errorMessage ?? "", /not supported/);
+
+  const override = await run(
+    async () => sse(['data: {"choices":[{"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"]),
+    { thinkingLevel: "low", reasoningEffort: "high" },
+    reasoning,
+  );
+  assert.equal(override.bodies[0]?.reasoning_effort, "high");
+
+  const explicit = await run(
+    async () => sse(['data: {"choices":[{"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"]),
+    { reasoningEffort: "medium" },
+  );
+  assert.equal(explicit.calls, 1);
+  assert.equal(explicit.bodies[0]?.reasoning_effort, "medium");
+});
+
+test("Models forwards thinkingLevel and reasoningEffort onto the completions body", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const active = model({ id: "reasoner", reasoning: true, thinkingLevelMap: { low: "x-low" } });
+  const models = createModels({ env: { OPENAI_API_KEY: "sk-test" } });
+  models.setProvider(createProvider({
+    id: "openai",
+    baseUrl: "https://example.test/v1",
+    auth: { env: "OPENAI_API_KEY" },
+    models: [active],
+    api: openaiCompletionsApi({
+      fetch: async (_input, init) => {
+        seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return sse(['data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n', 'data: {"choices":[{"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"]);
+      },
+    }),
+  }));
+  const simple = await models.streamSimple(active, CONTEXT, { thinkingLevel: "low" }).result();
+  assert.equal(simple.stopReason, "stop");
+  assert.equal(seen[0]?.reasoning_effort, "x-low");
+  const direct = await models.stream(active, CONTEXT, { thinkingLevel: "low", reasoningEffort: "high" }).result();
+  assert.equal(direct.stopReason, "stop");
+  assert.equal(seen[1]?.reasoning_effort, "high");
+  assert.deepEqual(seen[1]?.stream_options, { include_usage: true });
+});
+
+test("http failures are classified without treating every 429 or 5xx as retryable", async () => {
+  const cases: Array<{ name: string; status: number; error: unknown; retryable: boolean; kind: string }> = [
+    { name: "rate limit", status: 429, error: { type: "rate_limit_error", code: "rate_limit_exceeded", message: "Rate limit reached" }, retryable: true, kind: "rate_limit" },
+    { name: "empty 429", status: 429, error: { message: "" }, retryable: true, kind: "rate_limit" },
+    { name: "quota", status: 429, error: { type: "insufficient_quota", code: "insufficient_quota", message: "You exceeded your current quota" }, retryable: false, kind: "quota" },
+    { name: "billing", status: 429, error: { code: "billing_hard_limit_reached", message: "billing hard limit" }, retryable: false, kind: "quota" },
+    { name: "payment", status: 402, error: { message: "payment required" }, retryable: false, kind: "quota" },
+    { name: "auth", status: 401, error: { type: "invalid_request_error", code: "invalid_api_key", message: "Incorrect API key" }, retryable: false, kind: "authentication" },
+    { name: "forbidden", status: 403, error: { message: "forbidden" }, retryable: false, kind: "authentication" },
+    { name: "bad request", status: 400, error: { type: "invalid_request_error", message: "rate limit field is invalid" }, retryable: false, kind: "invalid_request" },
+    { name: "not found", status: 404, error: { message: "missing model" }, retryable: false, kind: "invalid_request" },
+    { name: "unprocessable", status: 422, error: { message: "bad schema" }, retryable: false, kind: "invalid_request" },
+    { name: "timeout", status: 408, error: { message: "timeout" }, retryable: true, kind: "unavailable" },
+    { name: "internal", status: 500, error: { message: "internal" }, retryable: true, kind: "unavailable" },
+    { name: "bad gateway", status: 502, error: { message: "bad gateway" }, retryable: true, kind: "unavailable" },
+    { name: "overloaded", status: 503, error: { message: "overloaded" }, retryable: true, kind: "unavailable" },
+    { name: "gateway timeout", status: 504, error: { message: "gateway timeout" }, retryable: true, kind: "unavailable" },
+    { name: "quota on 500", status: 500, error: { code: "insufficient_quota", message: "quota" }, retryable: false, kind: "quota" },
+    { name: "not implemented", status: 501, error: { message: "not implemented" }, retryable: false, kind: "server" },
+    { name: "http version", status: 505, error: { message: "version" }, retryable: false, kind: "server" },
+  ];
+  for (const item of cases) {
+    const { message, calls, events } = await run(async () => jsonError(item.status, item.error));
+    assert.equal(calls, 1, item.name);
+    assert.equal(message.stopReason, "error", item.name);
+    assert.equal(message.retryable === true, item.retryable, item.name);
+    assert.match(message.errorMessage ?? "", new RegExp(`${item.status} ${item.kind}`), item.name);
+    assert.equal(textOf(message), "", item.name);
+    assert.equal(terminals(events).length, 1, item.name);
+  }
+});
+
+test("a network failure is retryable and keeps one terminal", async () => {
+  const { message, events } = await run(async () => {
+    throw new TypeError("fetch failed");
+  });
+  assert.equal(message.stopReason, "error");
+  assert.equal(message.retryable, true);
+  assert.match(message.errorMessage ?? "", /fetch failed/);
+  assert.equal(terminals(events).length, 1);
+});
+
+test("a stream that ends without a finish reason keeps the partial text and is not retryable", async () => {
+  const { message, events } = await run(async () => sse([
+    'data: {"choices":[{"delta":{"content":"Keep"}}]}\n\n',
+  ]));
+  assert.equal(message.stopReason, "error");
+  assert.equal(textOf(message), "Keep");
+  assert.match(message.errorMessage ?? "", /finish reason/);
+  assert.notEqual(message.retryable, true);
+  assert.equal(terminals(events).length, 1);
+});
+
+test("a reader failure keeps partial text and tool calls on one retryable terminal", async (t) => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  t.after(() => process.off("unhandledRejection", onUnhandled));
+  const encoder = new TextEncoder();
+  const { message, events } = await run(async () => new Response(new ReadableStream({
+    async start(controller) {
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'));
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\\"path\\":\\"a\\"}"}}]}}]}\n\n'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      controller.error(new Error("connection reset"));
+    },
+  }), { status: 200 }));
+  assert.equal(message.stopReason, "error");
+  assert.equal(message.retryable, true);
+  assert.equal(textOf(message), "Hello");
+  const call = message.content.find((block) => block.type === "toolCall");
+  assert.ok(call && call.type === "toolCall");
+  assert.equal(call.name, "read");
+  assert.deepEqual(call.arguments, { path: "a" });
+  assert.match(message.errorMessage ?? "", /connection reset/);
+  assert.equal(terminals(events).length, 1);
+  const terminal = terminals(events)[0];
+  assert.ok(terminal && terminal.type === "error");
+  assert.equal(terminal.error, message);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(unhandled, []);
+});
+
+test("malformed sse keeps partial text on one non-retryable terminal", async () => {
+  const { message, events } = await run(async () => sse([
+    'data: {"choices":[{"delta":{"content":"Pa"}}]}\n\n',
+    "data: {not-json}\n\n",
+    'data: {"choices":[{"delta":{"content":" later"}}]}\n\n',
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(textOf(message), "Pa");
+  assert.equal(message.stopReason, "error");
+  assert.notEqual(message.retryable, true);
+  assert.match(message.errorMessage ?? "", /malformed/);
+  assert.equal(terminals(events).length, 1);
+});
+
+test("cancelling during the stream settles the partial text and does not hang", async (t) => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  t.after(() => process.off("unhandledRejection", onUnhandled));
+  const controller = new AbortController();
+  const encoder = new TextEncoder();
+  const { message, events, calls } = await run(
+    async (_input, init) => new Response(new ReadableStream({
+      start(streamController) {
+        streamController.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"Partial"}}]}\n\n'));
+        const timer = setTimeout(() => streamController.error(new Error("still open")), 1500);
+        init?.signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
+      },
+    }), { status: 200 }),
+    { signal: controller.signal },
+    model(),
+    (event) => {
+      if (event.type === "text_delta") controller.abort();
+    },
+  );
+  assert.equal(calls, 1);
+  assert.equal(message.stopReason, "aborted");
+  assert.equal(textOf(message), "Partial");
+  assert.notEqual(message.retryable, true);
+  assert.equal(terminals(events).length, 1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(unhandled, []);
+});
+
+test("an already aborted signal does not send the request", async () => {
+  const { message, calls } = await run(async () => {
+    throw new Error("fetch should not run");
+  }, { signal: AbortSignal.abort() });
+  assert.equal(calls, 0);
+  assert.equal(message.stopReason, "aborted");
+  assert.notEqual(message.retryable, true);
+});
