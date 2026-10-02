@@ -12,7 +12,7 @@ export interface TailCut {
 
 export type SelectResult = { ok: true; cut: TailCut } | { ok: false; message: string };
 
-type GroupKind = "user" | "tools" | "other";
+type GroupKind = "user" | "tools" | "system" | "other";
 
 interface Group {
   kind: GroupKind;
@@ -84,7 +84,9 @@ function groupEntries(entries: readonly TranscriptEntry[]): Group[] {
         let next = index + 1;
         while (next < entries.length) {
           const candidate = entries[next];
-          if (!candidate || candidate.kind !== "message" || candidate.message.role !== "toolResult" || !ids.has(candidate.message.toolCallId)) break;
+          if (!candidate || candidate.kind !== "message") break;
+          const message = candidate.message;
+          if (message.role !== "system" && (message.role !== "toolResult" || !ids.has(message.toolCallId))) break;
           grouped.push(candidate);
           next += 1;
         }
@@ -93,7 +95,8 @@ function groupEntries(entries: readonly TranscriptEntry[]): Group[] {
         continue;
       }
     }
-    const kind: GroupKind = entry.kind === "message" && entry.message.role === "user" ? "user" : "other";
+    const kind: GroupKind = entry.kind === "message" && entry.message.role === "user" ? "user"
+      : entry.kind === "message" && entry.message.role === "system" ? "system" : "other";
     groups.push({ kind, entries: [entry], tokens: groupTokens([entry]) });
   }
   return groups;
@@ -101,11 +104,13 @@ function groupEntries(entries: readonly TranscriptEntry[]): Group[] {
 
 function mustKeepStart(groups: readonly Group[]): number {
   if (groups.length === 0) return 0;
-  const last = groups.length - 1;
+  let last = groups.length - 1;
+  // System updates do not answer the preceding user or end a tool-response group.
+  while (last >= 0 && groups[last]?.kind === "system") last -= 1;
   if (groups[last]?.kind === "tools") return last;
   if (groups[last]?.kind === "user") {
     let start = last;
-    while (start > 0 && groups[start - 1]?.kind === "user") start -= 1;
+    while (start > 0 && (groups[start - 1]?.kind === "user" || groups[start - 1]?.kind === "system")) start -= 1;
     return start;
   }
   return groups.length;

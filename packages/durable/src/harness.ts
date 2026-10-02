@@ -869,21 +869,20 @@ export class AgentLane {
       }
     }
     writes.push({ type: "set", address: tipAddress(this.name), value: tipId });
+    const config = this.config(view);
+    const model = this.harness.options.models.getModel(config.provider, config.modelId);
+    const kept = state.keptIds.map((id) => view.entry(id)).filter((entry) => entry?.payload.type === "message").map((entry) => {
+      const payload = entry?.payload;
+      return payload?.type === "message" && payload.message.role !== "custom" ? payload.message : undefined;
+    }).filter((message): message is Exclude<HarnessMessage, { role: "custom" }> => message !== undefined);
+    const continued = model
+      ? resolveOutputBudget(model, continuationContext(config.systemPrompt, summary, kept, this.toolDefinitions()), config.maxTokens)
+      : undefined;
+    if (!continued || continued.status !== "ok") {
+      reject("failed", continued?.message ?? "context budget cannot fit after compaction");
+      return;
+    }
     if (state.boundary === "resume") {
-      const config = this.config(view);
-      const model = this.harness.options.models.getModel(config.provider, config.modelId);
-      const kept = state.keptIds.map((id) => view.entry(id)).filter((entry) => entry?.payload.type === "message").map((entry) => {
-        const payload = entry?.payload;
-        return payload?.type === "message" && payload.message.role !== "custom" ? payload.message : undefined;
-      }).filter((message): message is Exclude<HarnessMessage, { role: "custom" }> => message !== undefined);
-      const continued = model
-        ? resolveOutputBudget(model, continuationContext(config.systemPrompt, summary, kept, this.toolDefinitions()), config.maxTokens)
-        : undefined;
-      if (!continued || continued.status !== "ok") {
-        this.finish(view, apply, meta, "failed", continued?.message ?? "context budget cannot fit after compaction", { writes, tipId });
-        this.harness.live.delete(planned.responseEntryId);
-        return;
-      }
       writes.push({ type: "set", address: stateAddress(planned.operationId), value: { phase: "assistant_ready", scope: state.scope } });
       apply(writes);
       this.harness.live.delete(planned.responseEntryId);

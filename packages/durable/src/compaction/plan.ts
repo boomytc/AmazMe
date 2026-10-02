@@ -38,7 +38,7 @@ export type PlanResult =
 
 /** Build the one summary request for a selected tail. Returns before any model call. */
 export function planCompaction(request: CompactionRequest): PlanResult {
-  if (request.boundary === "resume") {
+  if (request.boundary !== "navigation") {
     const selected = selectFittingTail(request);
     if (!selected.ok) return selected;
     return buildPlan(request, selected.cut);

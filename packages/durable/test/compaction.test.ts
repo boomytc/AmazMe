@@ -319,7 +319,7 @@ test("a huge old tool result is shortened in the summary request and kept intact
   }
 });
 
-test("a summary that still cannot continue fails without another summary call", async () => {
+test("an unusable summary fails without publishing it or moving the source tip", async () => {
   const session = wire({
     model: model({ contextWindow: 2_000, maxTokens: 200, input: ["text"] }),
     responses: [() => sse("short"), () => sse("S".repeat(20_000))],
@@ -333,11 +333,71 @@ test("a summary that still cannot continue fails without another summary call", 
     assert.equal(result.status, "failed");
     assert.match(result.error ?? "", /cannot fit/);
     assert.equal(session.calls(), 2);
-    assert.equal((await lane.entries()).filter((entry) => entry.payload.type === "compaction").length, 1);
+    const entries = await lane.entries();
+    assert.equal(entries.filter((entry) => entry.payload.type === "compaction").length, 0);
+    const current = entries.find((entry) => textOf(entry) === "CURRENT");
+    assert.equal(result.tipId, current?.id);
+    assert.equal((await lane.inspect()).tipId, current?.id);
+    assert.equal(await session.runtime.storage.read((view) => view.usageRows().length), 2);
   } finally {
     session.runtime.close();
   }
 });
+
+test("manual compaction rejects an oversized pending user before calling the summarizer", async () => {
+  const session = wire({
+    model: model({ contextWindow: 2_000, maxTokens: 200, input: ["text"] }),
+    responses: [() => sse("seeded"), () => sse("old goal")],
+    compaction: { enabled: false, maxTokens: 80_000 },
+  });
+  try {
+    const lane = session.runtime.lane();
+    assert.equal((await lane.prompt("seed goal")).status, "completed");
+    assert.equal((await lane.prompt("P".repeat(10_000))).status, "failed");
+    const before = await lane.entries();
+    const tip = (await lane.inspect()).tipId;
+    const admitted = await lane.accept({ kind: "compaction" });
+    assert.ok(admitted.ok);
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.ok(outcome.ok && outcome.value.kind === "settled");
+    assert.equal(outcome.value.result.status, "failed");
+    assert.match(outcome.value.result.error ?? "", /cannot fit/);
+    assert.equal(session.calls(), 1);
+    assert.deepEqual(await lane.entries(), before);
+    assert.equal((await lane.inspect()).tipId, tip);
+  } finally {
+    session.runtime.close();
+  }
+});
+
+for (const boundary of ["finish", "navigation"] as const) {
+  test(`${boundary} rejects an oversized summary while retaining the source branch and usage`, async () => {
+    const session = wire({
+      model: model({ contextWindow: 2_000, maxTokens: 200, input: ["text"] }),
+      responses: [() => sse("seeded"), () => sse("S".repeat(20_000))],
+      compaction: { enabled: false, maxTokens: 80_000 },
+    });
+    try {
+      const lane = session.runtime.lane();
+      assert.equal((await lane.prompt("seed goal")).status, "completed");
+      const before = await lane.entries();
+      const tip = (await lane.inspect()).tipId;
+      const admitted = await lane.accept(boundary === "finish" ? { kind: "compaction" }
+        : { kind: "navigation", targetId: null, summarize: true });
+      assert.ok(admitted.ok);
+      const outcome = await lane.drive(admitted.value.operationId);
+      assert.ok(outcome.ok && outcome.value.kind === "settled");
+      assert.equal(outcome.value.result.status, "failed");
+      assert.match(outcome.value.result.error ?? "", /cannot fit/);
+      assert.equal(session.calls(), 2);
+      assert.deepEqual(await lane.entries(), before);
+      assert.equal((await lane.inspect()).tipId, tip);
+      assert.equal(await session.runtime.storage.read(view => view.usageRows().length), 2);
+    } finally {
+      session.runtime.close();
+    }
+  });
+}
 
 test("manual compaction merges an older summary and a second compact with nothing new fails", async () => {
   const seen: string[] = [];
@@ -455,7 +515,7 @@ test("manual compaction does not truncate one oversized pending user", async () 
     if (!admitted.ok) return;
     const outcome = await lane.drive(admitted.value.operationId);
     assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "failed");
-    assert.match(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.error ?? "" : "", /nothing to compact/);
+    assert.match(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.error ?? "" : "", /cannot fit/);
     assert.equal(calls, 0);
     const entries = await lane.entries();
     assert.equal(entries.some((entry) => entry.payload.type === "compaction"), false);
