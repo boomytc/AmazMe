@@ -16,7 +16,7 @@ export const agentTelemetrySchema = defineTelemetrySchema({
         model: { type: "string", required: true, description: "Active model id", cardinality: "high" },
       },
       endAttributes: {},
-      status: { default: "ok", errorWhen: "An assistant message ends with error or aborted." },
+      status: { default: "ok", errorWhen: "The run throws, is cancelled, or an assistant message ends with error or aborted." },
     },
     "amazme.tool.execute": {
       description: "One tool execution started by the in-memory agent.",

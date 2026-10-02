@@ -83,6 +83,29 @@ test("an Agent that omits telemetryContext does not record on the Models context
   assert.equal(context.getSpans().length, 0);
 });
 
+test("cancelling at tool start settles an error run span even when its assistant succeeded", async () => {
+  const context = new InMemoryTelemetryContext();
+  const { models, provider, model } = setup(context);
+  let executions = 0;
+  const agent = new Agent({
+    model, streamFn: models.streamSimple.bind(models), telemetryContext: context,
+    tools: [{ name: "echo", description: "echo", parameters: { type: "object" }, execute: async () => {
+      executions++; return { content: [] };
+    } }],
+  });
+  agent.subscribe((event) => { if (event.type === "tool_execution_start") agent.abort(); });
+  const messages = await agent.prompt("go");
+  assert.equal(executions, 0);
+  assert.equal(provider.state.callCount, 1);
+  assert.equal(messages.find((message) => message.role === "assistant")?.stopReason, "toolUse");
+  assert.equal(messages.at(-1)?.role, "toolResult");
+  const spans = context.getSpans();
+  assert.equal(spans.find((span) => span.name === "amazme.agent.run")?.status.status, "error");
+  assert.equal(spans.find((span) => span.name === "amazme.tool.execute")?.status.status, "error");
+  assert.equal(spans.find((span) => span.name === "amazme.ai.request")?.status.status, "ok");
+  assert.ok(spans.every((span) => span.settled));
+});
+
 test("agent and durable schemas cannot share one starter while both define tool execution", () => {
   // @ts-expect-error amazme.tool.execute is declared by both runtimes
   createTypedSpanStarter(NOOP_TELEMETRY_CONTEXT, [agentTelemetrySchema, durableTelemetrySchema]);

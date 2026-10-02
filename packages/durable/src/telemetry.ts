@@ -22,7 +22,7 @@ export const durableTelemetrySchema = defineTelemetrySchema({
           attributes: {},
         },
         "amazme.harness.recovered": {
-          description: "A persisted effect was recovered instead of being sent or run again.",
+          description: "A persisted effect was recovered; safe tools may replay unless cancellation was requested.",
           attributes: {
             effect: {
               type: "string",
