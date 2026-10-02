@@ -1,6 +1,7 @@
 import { toolDefinition, type AssistantMessage, type Context, type Model, type ThinkingLevel } from "@amazme/ai";
 import { runAgentLoop, toProviderMessages } from "./loop.ts";
-import { NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext } from "@amazme/telemetry";
+import { createTypedSpanStarter, NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@amazme/telemetry";
+import { agentTelemetrySchema } from "./telemetry.ts";
 import type {
   AgentEvent,
   AgentMessage,
@@ -145,46 +146,46 @@ export class Agent {
       resolveRun = resolve;
     });
     try {
-      return await startSpan(this.telemetryContext, {
-        name: "amazme.agent.run",
-        attributes: { provider: this.model.provider, model: this.model.id },
-      }, async (span) => {
-        const produced = await runAgentLoop(
-          {
-            messages: this.messages,
-            model: this.model,
-            tools: this.tools,
-            thinkingLevel: this.thinkingLevel,
-            systemPrompt: this.systemPrompt,
-            toolExecution: this.toolExecution,
-            prompts,
-            signal,
-            telemetryContext: span,
-            hooks: {
-              prepareRequest: (request, requestSignal) => this.prepareRequest?.(request, requestSignal),
-              finishTurn: (turn, requestSignal) => this.finishTurn?.(turn, requestSignal),
-              takeSteering: () => this.steering.take(),
-              takeFollowUp: () => this.followUps.take(),
-              stream: (model, messages, tools, thinkingLevel, requestSignal) => {
-                const context: Context = {
-                  systemPrompt: this.systemPrompt,
-                  messages: toProviderMessages(messages),
-                  tools: tools.map(toolDefinition),
-                };
-                return this.streamFn(model, context, { thinkingLevel, signal: requestSignal, telemetryContext: span });
+      return await createTypedSpanStarter(this.telemetryContext, [agentTelemetrySchema])(
+        "amazme.agent.run",
+        { provider: this.model.provider, model: this.model.id },
+        async (span) => {
+          const produced = await runAgentLoop(
+            {
+              messages: this.messages,
+              model: this.model,
+              tools: this.tools,
+              thinkingLevel: this.thinkingLevel,
+              systemPrompt: this.systemPrompt,
+              toolExecution: this.toolExecution,
+              prompts,
+              signal,
+              telemetryContext: span,
+              hooks: {
+                prepareRequest: (request, requestSignal) => this.prepareRequest?.(request, requestSignal),
+                finishTurn: (turn, requestSignal) => this.finishTurn?.(turn, requestSignal),
+                takeSteering: () => this.steering.take(),
+                takeFollowUp: () => this.followUps.take(),
+                stream: (model, messages, tools, thinkingLevel, requestSignal) => {
+                  const context: Context = {
+                    systemPrompt: this.systemPrompt,
+                    messages: toProviderMessages(messages),
+                    tools: tools.map(toolDefinition),
+                  };
+                  return this.streamFn(model, context, { thinkingLevel, signal: requestSignal, telemetryContext: span });
+                },
               },
             },
-          },
-          async (event) => {
-            this.absorb(event);
-            for (const listener of this.listeners) await listener(event, signal);
-          },
-        );
-        if (produced.some((message) => message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted"))) {
-          span.setStatus({ status: "error" });
-        }
-        return produced;
-      });
+            async (event) => {
+              this.absorb(event);
+              for (const listener of this.listeners) await listener(event, signal);
+            },
+          );
+          if (produced.some((message) => message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted"))) {
+            span.setStatus({ status: "error" });
+          }
+          return produced;
+        });
     } finally {
       this.running = false;
       this.abortController = undefined;

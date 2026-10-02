@@ -14,7 +14,8 @@ import type {
   StreamOptions,
 } from "./types.ts";
 import { normalizeContext } from "./transform.ts";
-import { NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext } from "@amazme/telemetry";
+import { createTypedSpanStarter, NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@amazme/telemetry";
+import { aiTelemetrySchema } from "./telemetry.ts";
 
 export interface ProviderStreams<TApi extends Api = Api> {
   stream<T extends TApi>(model: Model<T>, context: Context, options?: ApiStreamOptions<T>): AssistantEventStream;
@@ -149,26 +150,26 @@ class ModelRegistry implements MutableModels {
     const transcript = normalizeContext(context);
     const stream = createAssistantEventStream();
     const request = options ?? {};
-    void startSpan(request.telemetryContext ?? this.telemetryContext, {
-      name: "amazme.ai.request",
-      attributes: { provider: model.provider, model: model.id, api: model.api },
-    }, async (span) => {
-      const opened = await this.dispatch(model, transcript, { ...request, telemetryContext: span }, kind);
-      let terminal: Extract<AssistantEvent, { type: "done" | "error" }> | undefined;
-      for await (const event of opened) {
-        if (event.type === "done" || event.type === "error") { terminal = event; break; }
-        stream.push(event);
-      }
-      const message = terminal ? (terminal.type === "done" ? terminal.message : terminal.error) : await opened.result();
-      span.setAttributes({
-        stopReason: message.stopReason,
-        inputTokens: message.usage.input, outputTokens: message.usage.output, totalTokens: message.usage.totalTokens,
-      });
-      if (message.stopReason === "error" || message.stopReason === "aborted") span.setStatus({ status: "error" });
-      return terminal ?? (message.stopReason === "error" || message.stopReason === "aborted"
-        ? { type: "error" as const, error: message }
-        : { type: "done" as const, reason: message.stopReason, message });
-    })
+    void createTypedSpanStarter(request.telemetryContext ?? this.telemetryContext, [aiTelemetrySchema])(
+      "amazme.ai.request",
+      { provider: model.provider, model: model.id, api: model.api },
+      async (span) => {
+        const opened = await this.dispatch(model, transcript, { ...request, telemetryContext: span }, kind);
+        let terminal: Extract<AssistantEvent, { type: "done" | "error" }> | undefined;
+        for await (const event of opened) {
+          if (event.type === "done" || event.type === "error") { terminal = event; break; }
+          stream.push(event);
+        }
+        const message = terminal ? (terminal.type === "done" ? terminal.message : terminal.error) : await opened.result();
+        span.setAttributes({
+          stopReason: message.stopReason,
+          inputTokens: message.usage.input, outputTokens: message.usage.output, totalTokens: message.usage.totalTokens,
+        });
+        if (message.stopReason === "error" || message.stopReason === "aborted") span.setStatus({ status: "error" });
+        return terminal ?? (message.stopReason === "error" || message.stopReason === "aborted"
+          ? { type: "error" as const, error: message }
+          : { type: "done" as const, reason: message.stopReason, message });
+      })
       .then((event) => { stream.push(event); })
       .catch((error: unknown) => {
         const message = errorMessage(model, error, request.signal?.aborted === true);

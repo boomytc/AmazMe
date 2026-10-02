@@ -1,5 +1,6 @@
 import { validateArguments, type ToolResultMessage } from "@amazme/ai";
-import { startSpan, type TelemetryContext } from "@amazme/telemetry";
+import { createTypedSpanStarter, type TelemetryContext } from "@amazme/telemetry";
+import { agentTelemetrySchema } from "./telemetry.ts";
 import type { AgentEvent, AgentTool, ToolResult, ToolExecutionMode } from "./types.ts";
 
 type Emit = (event: AgentEvent) => Promise<void> | void;
@@ -95,14 +96,14 @@ function tracked(
   signal: AbortSignal,
   run: (span: TelemetryContext) => Promise<{ message: ToolResultMessage; terminate: boolean }>,
 ): Promise<{ message: ToolResultMessage; terminate: boolean }> {
-  return startSpan(telemetryContext, {
-    name: "amazme.tool.execute",
-    attributes: { tool: call.name, toolCallId: call.id },
-  }, async (span) => {
-    const outcome = await run(span);
-    if (outcome.message.isError || signal.aborted) span.setStatus({ status: "error" });
-    return outcome;
-  });
+  return createTypedSpanStarter(telemetryContext, [agentTelemetrySchema])(
+    "amazme.tool.execute",
+    { tool: call.name, toolCallId: call.id },
+    async (span) => {
+      const outcome = await run(span);
+      if (outcome.message.isError || signal.aborted) span.setStatus({ status: "error" });
+      return outcome;
+    });
 }
 
 async function settleCall(

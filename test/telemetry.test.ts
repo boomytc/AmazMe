@@ -3,13 +3,13 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Agent, type AgentMessage, type AgentTool } from "@amazme/agent";
-import { AgentHarness } from "@amazme/durable";
+import { Agent, agentTelemetrySchema, type AgentMessage, type AgentTool } from "@amazme/agent";
+import { AgentHarness, durableTelemetrySchema } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { baseAssistant, createAssistantEventStream, createModels, messageText } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
-import { InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext, type TelemetrySpan } from "@amazme/telemetry";
+import { createTypedSpanStarter, InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT, startSpan, type TelemetryContext, type TelemetrySpan } from "@amazme/telemetry";
 
 function setup(telemetryContext?: TelemetryContext, respond: FauxResponder = (_context, _options, state) =>
   state.callCount === 1 ? fauxAssistant([fauxToolCall("echo", { secret: "private-args" })]) : fauxAssistant("private-answer")) {
@@ -81,6 +81,11 @@ test("an Agent that omits telemetryContext does not record on the Models context
   assert.equal(last?.role === "assistant" && messageText(last), "visible");
   assert.equal(provider.state.callCount, 1);
   assert.equal(context.getSpans().length, 0);
+});
+
+test("agent and durable schemas cannot share one starter while both define tool execution", () => {
+  // @ts-expect-error amazme.tool.execute is declared by both runtimes
+  createTypedSpanStarter(NOOP_TELEMETRY_CONTEXT, [agentTelemetrySchema, durableTelemetrySchema]);
 });
 
 test("AI forwards deltas while its span is open and settles before exposing the terminal result", async () => {

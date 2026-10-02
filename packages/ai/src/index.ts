@@ -18,6 +18,7 @@ export {
   type ProviderStreams,
 } from "./models.ts";
 export { resolveThinkingLevel, supportedThinkingLevels, type ThinkingResolution } from "./thinking.ts";
+export { aiTelemetrySchema } from "./telemetry.ts";
 export {
   emptyUsage,
   estimateTokens,

@@ -9,7 +9,8 @@ import {
   reduceFrames,
   type ThinkingLevel,
 } from "@amazme/ai";
-import { startSpan, type TelemetryContext, type TelemetrySpan } from "@amazme/telemetry";
+import { createTypedSpanStarter, type SchemaTelemetrySpan, type TelemetryContext } from "@amazme/telemetry";
+import { durableTelemetrySchema } from "./telemetry.ts";
 import type { HarnessMessage, HarnessModels, HarnessTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "./types.ts";
 import {
   type Address,
@@ -21,6 +22,8 @@ import {
   value,
   type Write,
 } from "./storage.ts";
+
+type DriveSpan = SchemaTelemetrySpan<typeof durableTelemetrySchema, "amazme.harness.drive">;
 
 export interface HarnessFailure {
   code:
@@ -262,9 +265,12 @@ export class AgentLane {
   }
 
   drive(operationId: string, options: { waitForRetry?: boolean } = {}): Promise<Result<DriveOutcome>> {
-    return this.harness.claimDrive(this.name, operationId, () => startSpan(
+    return this.harness.claimDrive(this.name, operationId, () => createTypedSpanStarter(
       this.harness.options.telemetryContext ?? this.harness.options.models.telemetryContext,
-      { name: "amazme.harness.drive", attributes: { lane: this.name, operationId } },
+      [durableTelemetrySchema],
+    )(
+      "amazme.harness.drive",
+      { lane: this.name, operationId },
       async (span) => {
         const outcome = await this.driveBody(operationId, options, span);
         if (!outcome.ok || (outcome.value.kind === "settled" && outcome.value.result.status !== "completed")) {
@@ -275,7 +281,7 @@ export class AgentLane {
     ));
   }
 
-  private async driveBody(operationId: string, options: { waitForRetry?: boolean }, span: TelemetrySpan): Promise<Result<DriveOutcome>> {
+  private async driveBody(operationId: string, options: { waitForRetry?: boolean }, span: DriveSpan): Promise<Result<DriveOutcome>> {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
     const signal = this.harness.laneSignal(this.name);
     for (let step = 0; step < 64; step++) {
@@ -476,7 +482,7 @@ export class AgentLane {
     return { ok: true, value: { operationId, kind: "navigation", startedAt } };
   }
 
-  private plan(view: StorageView, apply: Apply, operationId: string, span: TelemetrySpan): Plan {
+  private plan(view: StorageView, apply: Apply, operationId: string, span: DriveSpan): Plan {
     const record = this.record(view);
     if (record.currentOperationId !== operationId) {
       const existing = view.get<OperationResult>(resultAddress(operationId));
@@ -792,7 +798,7 @@ export class AgentLane {
     this.harness.live.delete(planned.responseEntryId);
   }
 
-  private async runTools(operationId: string, signal: AbortSignal, telemetryContext: TelemetrySpan): Promise<void> {
+  private async runTools(operationId: string, signal: AbortSignal, telemetryContext: DriveSpan): Promise<void> {
     for (let step = 0; step < 32; step++) {
       if (this.harness.isAbandoned) return;
       const action = await this.harness.storage.run((view, apply) => this.armTools(view, apply, operationId, telemetryContext));
@@ -800,13 +806,14 @@ export class AgentLane {
       const sequential = action.mode === "sequential";
       const execute = async (call: ArmedCall) => {
         try {
-          const result = await startSpan(telemetryContext, {
-            name: "amazme.tool.execute", attributes: { tool: call.name, toolCallId: call.toolCallId },
-          }, async (span) => {
-            const result = await this.executeTool(call, signal, span);
-            if (result.isError || signal.aborted) span.setStatus({ status: "error" });
-            return result;
-          });
+          const result = await createTypedSpanStarter(telemetryContext, [durableTelemetrySchema])(
+            "amazme.tool.execute",
+            { tool: call.name, toolCallId: call.toolCallId },
+            async (span) => {
+              const result = await this.executeTool(call, signal, span);
+              if (result.isError || signal.aborted) span.setStatus({ status: "error" });
+              return result;
+            });
           if (this.harness.isAbandoned) return;
           await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, result));
         } catch (error) {
@@ -823,7 +830,7 @@ export class AgentLane {
     }
   }
 
-  private armTools(view: StorageView, apply: Apply, operationId: string, telemetryContext: TelemetrySpan): { type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] } {
+  private armTools(view: StorageView, apply: Apply, operationId: string, telemetryContext: DriveSpan): { type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] } {
     const state = view.get<OperationState>(stateAddress(operationId));
     if (!state || state.phase !== "tools") return { type: "done" };
     this.materializeTools(view, apply, operationId);

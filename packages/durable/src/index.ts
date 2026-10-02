@@ -18,3 +18,4 @@ export type {
   CustomMessage, HarnessMessage, HarnessModels, HarnessTool, QueueMode, ReplayPolicy,
   ToolContext, ToolExecutionMode, ToolResult,
 } from "./types.ts";
+export { durableTelemetrySchema } from "./telemetry.ts";

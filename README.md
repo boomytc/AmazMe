@@ -67,6 +67,8 @@ import { createStorageConformance } from "@amazme/durable/testing";
 
 `@amazme/telemetry` 是没有运行时依赖的底层包，AI、Agent 和 Durable 只向下依赖它。`TelemetryContext.startSpan` 包住一次工作，`TelemetrySpan` 提供子 span、事件、属性与状态。父子关系通过参数显式传递，不使用 Node 的异步全局上下文。
 
+每个上层包用 `defineTelemetrySchema` 声明自己的 span：名称、说明、允许的父关系、开始/结束/事件属性、必需与可选、值类型、枚举，以及 sensitive 和 cardinality。TypeScript 类型从这份 schema 推导。`createTypedSpanStarter` 把显式的 `TelemetryContext` 和一份或多份 schema 绑在一起；重名的 span 不能放进同一次绑定。它只做类型推导，不读取 schema，也不在运行时校验。调用仍经过被动的 `startSpan`，不直接信任适配器。AI 记录模型请求，Agent 记录内存回合和工具执行，Durable 记录 drive、重试等待、恢复和自己的工具执行。诊断词汇不下放成 Telemetry 对上层包的依赖。
+
 默认使用空实现。`InMemoryTelemetryContext` 在进程内记录，并通过 `getSpans()` 返回独立快照；生产监控适配器可以实现相同接口。适配器应同步调用业务回调一次，保留其返回值和拒绝原因，记录方法同步且不抛错；结束后的记录调用无效。未显式设置状态时，成功记为 `ok`，回调失败记为 `error`；显式状态以最后一次有效设置为准。`@amazme/telemetry/testing` 提供共享契约检查，仅测试入口依赖 Node。
 
 ```typescript
@@ -97,6 +99,7 @@ const models = createModels({ telemetryContext });
 npm install
 npm test
 npm run build
+npm run check:core
 npm run check:durable
 npx tsx packages/coding-agent/src/cli.ts "hello"
 ```

@@ -1,4 +1,5 @@
 export { Agent, assistantText, userMessage, type AgentOptions } from "./agent.ts";
+export { agentTelemetrySchema } from "./telemetry.ts";
 export { runAgentLoop, toProviderMessages } from "./loop.ts";
 export type {
   AgentEvent,
