@@ -71,9 +71,36 @@ test("one provider routes each model.api to its protocol implementation", async 
   const specific = await models.stream(beta, { messages: [] }).result();
   assert.equal(specific.content[0]?.type === "text" ? specific.content[0].text : "", "right");
   assert.deepEqual(seen, ["left:alpha", "right:beta"]);
-  assert.equal((left.options[0] as { baseUrl?: string }).baseUrl, "https://example.test/v1");
-  assert.equal((left.options[0] as { headers?: Record<string, string> }).headers?.["x-tenant"], "acme");
+  assert.equal(left.options[0]?.baseUrl, "https://example.test/v1");
+  assert.equal(left.options[0]?.headers?.["x-tenant"], "acme");
   assert.equal(left.options[0]?.apiKey, "ambient-key");
+});
+
+test("custom protocols receive typed defaults and per-request transport overrides", async () => {
+  const api = scripted("custom", []);
+  const provider = createProvider({
+    id: "mixed",
+    baseUrl: "https://default.test/v1",
+    headers: { "x-tenant": "default", "x-shared": "shared" },
+    auth: { env: "MIXED_KEY", ambient: "k" },
+    models: [sample("custom-api")],
+    api,
+  });
+  const models = createModels({ env: {} });
+  models.setProvider(provider);
+  const request: ApiStreamOptions<"custom-api"> = {
+    baseUrl: "https://override.test/v2",
+    headers: { "x-tenant": "override", "x-request": "request" },
+  };
+  await models.stream(sample("custom-api"), { messages: [] }, request).result();
+  assert.equal(api.options[0]?.baseUrl, request.baseUrl);
+  assert.deepEqual(api.options[0]?.headers, {
+    "x-tenant": "override", "x-shared": "shared", "x-request": "request",
+  });
+  await models.streamSimple(sample("custom-api"), { messages: [] }, request).result();
+  assert.deepEqual(api.options[1]?.headers, api.options[0]?.headers);
+  assert.equal(api.options[1]?.baseUrl, request.baseUrl);
+  assert.deepEqual(provider.headers, { "x-tenant": "default", "x-shared": "shared" });
 });
 
 test("a single protocol implementation serves every catalog model", async () => {

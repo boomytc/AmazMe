@@ -9,7 +9,6 @@ import type {
   Context,
   CredentialStore,
   Model,
-  OpenAICompletionsOptions,
   ProviderHeaders,
   StreamOptions,
 } from "./types.ts";
@@ -226,14 +225,13 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
       }
     }
   }
-  const merge = <T extends StreamOptions | undefined>(options: T): T => {
-    const provided = (options ?? {}) as OpenAICompletionsOptions;
+  const merge = (provided: StreamOptions = {}): StreamOptions => {
     const headers = { ...(input.headers ?? {}), ...(provided.headers ?? {}) };
     return {
       ...provided,
       ...(provided.baseUrl || input.baseUrl ? { baseUrl: provided.baseUrl || input.baseUrl } : {}),
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
-    } as T;
+    };
   };
   const missing = (model: Model): AssistantEventStream => {
     const stream = createAssistantEventStream();
@@ -252,7 +250,7 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
     stream(model, context, options) {
       const implementation = implementationFor(model);
       if (!implementation) return missing(model);
-      return implementation.stream(model, context, merge(options));
+      return implementation.stream<Api>(model, context, merge(options));
     },
     streamSimple(model, context, options) {
       const implementation = implementationFor(model);

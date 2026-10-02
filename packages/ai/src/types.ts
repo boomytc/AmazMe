@@ -133,6 +133,9 @@ export interface StreamOptions {
   signal?: AbortSignal;
   apiKey?: string;
   thinkingLevel?: ThinkingLevel;
+  /** Provider defaults can be overridden for one request, regardless of its protocol. */
+  baseUrl?: string;
+  headers?: ProviderHeaders;
 }
 
 export interface ProviderHeaders {
@@ -141,8 +144,6 @@ export interface ProviderHeaders {
 
 /** Protocol options for `api: "openai-completions"`. */
 export interface OpenAICompletionsOptions extends StreamOptions {
-  baseUrl?: string;
-  headers?: ProviderHeaders;
   reasoningEffort?: "minimal" | "low" | "medium" | "high";
 }
 

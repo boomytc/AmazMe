@@ -13,6 +13,7 @@ export {
   type AssistantEventStream,
   type CreateProviderOptions,
   type Models,
+  type ModelsOptions,
   type MutableModels,
   type Provider,
   type ProviderStreams,
