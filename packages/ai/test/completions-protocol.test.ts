@@ -58,6 +58,19 @@ test("generated ids distinguish same-name tools when the endpoint omits ids", as
   assert.equal(new Set(calls.map(call => call.id)).size, 2);
 });
 
+test("image format validation rejects non-image MIME types and incomplete base64", async () => {
+  for (const image of [
+    { type: "image" as const, mimeType: "text/plain", data: "YWJj" },
+    { type: "image" as const, mimeType: "image/png", data: "A" },
+    { type: "image" as const, mimeType: "image/png", data: "YWJj=" },
+  ]) {
+    const result = await run(async () => sse([]), {}, model({ input: ["text", "image"] }), undefined,
+      { messages: [{ role: "user", content: [image], timestamp: 1 }] });
+    assert.equal(result.message.stopReason, "error");
+    assert.equal(result.calls, 0);
+  }
+});
+
 test("ambiguous tool ids fail before any successful tool end", async () => {
   for (const secondId of [undefined, "call_1"]) {
     const { message, events } = await run(async () => sse([

@@ -203,8 +203,8 @@ function userContent(message: Extract<Message, { role: "user" }>): string | Chat
     : { type: "image_url" as const, image_url: { url: `data:${block.mimeType};base64,${block.data}` } });
 }
 
-const IMAGE_MIME = /^[\w.+-]+\/[\w.+-]+$/;
-const IMAGE_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+const IMAGE_MIME = /^image\/[\w.+-]+$/;
+const IMAGE_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?$/;
 
 /** Capability failures happen before a text downgrade. Format failures stay distinct. */
 function userImageProblem(model: Model, messages: readonly Message[]): string | undefined {

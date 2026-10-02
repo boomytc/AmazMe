@@ -20,7 +20,7 @@ import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
 
-const secret = "IMGSECRETDATA";
+const secret = "SU1HU0VDUkVUREFUQQ==";
 
 function textOf(entry: Entry): string {
   if (entry.payload.type === "compaction") return entry.payload.summary;

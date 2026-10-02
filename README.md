@@ -38,7 +38,7 @@ import { fauxProvider } from "@amazme/ai/providers/faux";
 
 `gpt-4o-mini` 保留已核对的 128,000 上下文、16,384 输出上限和费率，`input` 只有文本。其他型号必须在 `models` 或 provider 上显式给出 `contextWindow` 和 `maxTokens`，不会继承这份窗口或输出上限，也不猜测价格。未声明 `input` 时只有文本，不会默认打开 vision。通用 `completionsProvider` 未配置 `cost` 时费率为 0。
 
-用户字符串仍按文本发送。`UserContent` 数组保持原顺序：文本块是 `{ type: "text" }`，图片块是 `{ type: "image_url", image_url: { url: "data:<mimeType>;base64,<data>" } }`。模型声明了 `image` 时不再把图片换成 `[image]`。未声明图片能力的原始图片请求在降级成占位文本之前失败，不调用 fetch。调用方若已经把内容投影成纯文本，则按文本发送。能力错误和缺少 mime type / base64 data 的格式错误是两种不可重试的结果，错误文本不包含图片数据或提示词。这里不读文件、不解码、不上传、不抓远程图片，也没有图片生成、音频、视频或工具图片结果。`transformMessages` 仍会为文本模型准备占位文本；那是显式投影，不是原始图片请求。图片仍按固定 1,200 token 计入预算。摘要里只保留附件标记。
+用户字符串仍按文本发送。`UserContent` 数组保持原顺序：文本块是 `{ type: "text" }`，图片块是 `{ type: "image_url", image_url: { url: "data:<mimeType>;base64,<data>" } }`。模型声明了 `image` 时不再把图片换成 `[image]`。未声明图片能力的原始图片请求在降级成占位文本之前失败，不调用 fetch。调用方若已经把内容投影成纯文本，则按文本发送。能力错误和图片格式错误是两种不可重试的结果；格式检查要求 `image/*` MIME、非空 base64 数据及合法长度和 padding，错误文本不包含图片数据或提示词。这里不读文件、不解码、不上传、不抓远程图片，也没有图片生成、音频、视频或工具图片结果。`transformMessages` 仍会为文本模型准备占位文本；那是显式投影，不是原始图片请求。图片仍按固定 1,200 token 计入预算。摘要里只保留附件标记。
 
 上下文超限先看错误 code/type（`context_length_exceeded`、`model_context_window_exceeded`），再匹配少量「最大上下文 / 最大输入」文案。不是所有 HTTP 400/413、所有 `length`，也不是 “too many tokens”。限流、配额、账单、认证和普通参数错误排除在外，超限也不会标成可原样重试。普通 `length` 仍是截断；输出为 0 且输入已占满窗口时，额外标上 `overflow`，交给 Durable 决定是否压缩。AI 只分类和限制这一次请求，不自动重发。
 
