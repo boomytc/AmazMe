@@ -38,6 +38,7 @@ async function pump(
   request: OpenAICompletionsOptions,
   stream: AssistantEventStream,
 ): Promise<void> {
+  let requestPrepared = false;
   try {
     if (request.signal?.aborted) {
       stream.push({ type: "error", error: terminalMessage(model, [], "aborted", "aborted") });
@@ -57,7 +58,8 @@ async function pump(
     // An explicit protocol option wins over the mapped unified level. Neither is sent when absent.
     const effort = request.reasoningEffort ?? resolution.parameter;
     const wire: Context = { ...context, messages: transformMessages(context.messages, model) };
-    const response = await fetchImpl(`${request.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    const url = `${request.baseUrl.replace(/\/$/, "")}/chat/completions`;
+    const init: RequestInit = {
       method: "POST",
       headers: {
         ...request.headers,
@@ -80,7 +82,9 @@ async function pump(
           : {}),
       }),
       signal: request.signal,
-    });
+    };
+    requestPrepared = true;
+    const response = await fetchImpl(url, init);
     if (!response.ok) {
       let body = "";
       try {
@@ -88,7 +92,7 @@ async function pump(
       } catch (error) {
         if (isAbort(error, request.signal)) throw error;
       }
-      const classification = classifyHttpFailure(response.status, body);
+      const classification = classifyFailure(response.status, body);
       const failed = terminalMessage(
         model,
         [],
@@ -107,7 +111,7 @@ async function pump(
       [],
       aborted ? "aborted" : "error",
       error instanceof Error ? error.message : String(error),
-      !aborted,
+      requestPrepared && !aborted,
     );
     stream.push({ type: "error", error: failed });
   }
@@ -197,16 +201,26 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
   const finishMessage = () => {
     if (closed) return;
     if (!finish) {
-      closed = true;
-      begin();
-      const failed = snapshot("error");
-      failed.errorMessage = "OpenAI completions stream ended without a finish reason";
-      stream.push({ type: "error", error: failed });
+      fail("error", "OpenAI completions stream ended without a finish reason", false);
       return;
+    }
+    if (finish === "content_filter") {
+      fail("error", "OpenAI completions stream ended with content_filter", false);
+      return;
+    }
+    const stopReason = finish === "length" ? "length" : calls.size > 0 || finish === "tool_calls" ? "toolUse" : "stop";
+    if (stopReason === "toolUse") {
+      for (const call of calls.values()) {
+        try {
+          if (call.arguments) JSON.parse(call.arguments);
+        } catch {
+          fail("error", `OpenAI completions stream: malformed tool arguments for ${call.name}`, false);
+          return;
+        }
+      }
     }
     closed = true;
     begin();
-    const stopReason = finish === "length" ? "length" : calls.size > 0 || finish === "tool_calls" ? "toolUse" : "stop";
     for (const index of [...calls.keys()].sort((left, right) => left - right)) {
       const call = calls.get(index);
       if (!call) continue;
@@ -238,13 +252,23 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       finishMessage();
       return;
     }
-    let parsed: CompletionChunk;
+    let decoded: unknown;
     try {
-      parsed = JSON.parse(data) as CompletionChunk;
+      decoded = JSON.parse(data) as unknown;
     } catch {
       fail("error", "OpenAI completions stream: malformed event", false);
       return;
     }
+    if (isRecord(decoded) && "error" in decoded && isRecord(decoded.error)) {
+      const classification = classifyFailure(undefined, data);
+      fail("error", `OpenAI completions stream ${classification.kind}: ${errorFields(data).message ?? data}`, classification.retryable);
+      return;
+    }
+    if (!isCompletionChunk(decoded)) {
+      fail("error", "OpenAI completions stream: malformed event", false);
+      return;
+    }
+    const parsed = decoded;
     const reported = usageFromChunk(model, parsed.usage);
     if (reported) usage = reported;
     const choice = parsed.choices?.[0];
@@ -324,6 +348,37 @@ interface CompletionChunk {
   usage?: unknown;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Check only the fields consumed below; additional server metadata remains opaque. */
+function isCompletionChunk(value: unknown): value is CompletionChunk {
+  if (!isRecord(value) || "error" in value) return false;
+  if (value.choices === undefined) return true;
+  if (!Array.isArray(value.choices)) return false;
+  return value.choices.every((choice: unknown) => {
+    if (!isRecord(choice)) return false;
+    const finish = choice.finish_reason;
+    if (finish !== undefined && finish !== null
+      && (typeof finish !== "string" || !["stop", "length", "tool_calls", "content_filter"].includes(finish))) return false;
+    if (choice.delta === undefined) return true;
+    if (!isRecord(choice.delta)) return false;
+    const { content, tool_calls: calls } = choice.delta;
+    if (content !== undefined && content !== null && typeof content !== "string") return false;
+    if (calls === undefined) return true;
+    if (!Array.isArray(calls)) return false;
+    return calls.every((call: unknown) => {
+      if (!isRecord(call) || typeof call.index !== "number" || !Number.isSafeInteger(call.index) || call.index < 0) return false;
+      if (call.id !== undefined && typeof call.id !== "string") return false;
+      if (call.function === undefined) return true;
+      if (!isRecord(call.function)) return false;
+      return (call.function.name === undefined || typeof call.function.name === "string")
+        && (call.function.arguments === undefined || typeof call.function.arguments === "string");
+    });
+  });
+}
+
 type FailureKind = "quota" | "authentication" | "invalid_request" | "rate_limit" | "unavailable" | "server";
 
 const QUOTA = /insufficient_quota|quota_exceeded|exceeded your current quota|billing|out of credits|credit balance/i;
@@ -336,7 +391,7 @@ const RETRYABLE_STATUS = new Set([408, 500, 502, 503, 504]);
  * A bare 429 is a temporary rate limit. Only 408 and the transient 5xx set are retried; 501 and 505 are not.
  * This classification does not resend the request.
  */
-function classifyHttpFailure(status: number, body: string): { kind: FailureKind; retryable: boolean } {
+function classifyFailure(status: number | undefined, body: string): { kind: FailureKind; retryable: boolean } {
   const fields = errorFields(body);
   const haystack = `${fields.type ?? ""}\n${fields.code ?? ""}\n${fields.message ?? ""}`;
   if (status === 402 || QUOTA.test(haystack)) return { kind: "quota", retryable: false };
@@ -344,7 +399,8 @@ function classifyHttpFailure(status: number, body: string): { kind: FailureKind;
   if (status === 400 || status === 404 || status === 422) return { kind: "invalid_request", retryable: false };
   if (fields.type === "invalid_request_error" && status !== 429) return { kind: "invalid_request", retryable: false };
   if (status === 429 || RATE.test(haystack)) return { kind: "rate_limit", retryable: true };
-  if (RETRYABLE_STATUS.has(status)) return { kind: "unavailable", retryable: true };
+  if (status === undefined && (fields.type === "server_error" || fields.type === "overloaded_error")) return { kind: "unavailable", retryable: true };
+  if (status !== undefined && RETRYABLE_STATUS.has(status)) return { kind: "unavailable", retryable: true };
   return { kind: "server", retryable: false };
 }
 

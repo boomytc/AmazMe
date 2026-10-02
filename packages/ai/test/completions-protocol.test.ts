@@ -306,6 +306,104 @@ test("malformed sse keeps partial text on one non-retryable terminal", async () 
   assert.equal(terminals(events).length, 1);
 });
 
+test("streamed error envelopes override a finish reason and retain partial output and usage", async () => {
+  for (const [error, retryable] of [
+    [{ type: "rate_limit_error", message: "Rate limit reached" }, true],
+    [{ type: "server_error", message: "temporary failure" }, true],
+    [{ code: "insufficient_quota", message: "quota exhausted" }, false],
+    [{ code: "invalid_api_key", message: "bad key" }, false],
+    [{ type: "invalid_request_error", message: "bad request" }, false],
+  ] as const) {
+    const { message, events, calls } = await run(async () => sse([
+      'data: {"choices":[{"delta":{"content":"Keep"}}]}\n\n',
+      'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+      'data: {"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}\n\n',
+      `data: ${JSON.stringify({ error })}\n\n`,
+      "data: [DONE]\n\n",
+    ]));
+    assert.equal(calls, 1);
+    assert.equal(message.stopReason, "error");
+    assert.equal(message.retryable === true, retryable);
+    assert.equal(textOf(message), "Keep");
+    assert.equal(message.usage.totalTokens, 17);
+    assert.match(message.errorMessage ?? "", new RegExp(error.message));
+    assert.deepEqual(terminals(events).map((event) => event.type), ["error"]);
+  }
+});
+
+test("valid JSON with malformed completion fields is a non-retryable protocol error", async () => {
+  for (const event of [null, [], { choices: {} }, { choices: [null] },
+    { choices: [{ delta: { content: 42 } }] },
+    { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: {} } }] } }] },
+    { choices: [{ finish_reason: "unexpected" }] },
+  ]) {
+    const { message, events } = await run(async () => sse([
+      'data: {"choices":[{"delta":{"content":"Keep"}}]}\n\n',
+      `data: ${JSON.stringify(event)}\n\n`,
+      'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ]));
+    assert.equal(message.stopReason, "error", JSON.stringify(event));
+    assert.notEqual(message.retryable, true);
+    assert.equal(textOf(message), "Keep");
+    assert.match(message.errorMessage ?? "", /malformed/);
+    assert.deepEqual(terminals(events).map((event) => event.type), ["error"]);
+  }
+});
+
+test("invalid final tool arguments cannot become a successful tool call", async () => {
+  const call = { index: 0, id: "call_1", function: { name: "work", arguments: '{"value":' } };
+  const { message, events } = await run(async () => sse([
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] } }] })}\n\n`,
+    'data: {"choices":[{"finish_reason":"tool_calls"}]}\n\n',
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(message.stopReason, "error");
+  assert.notEqual(message.retryable, true);
+  assert.match(message.errorMessage ?? "", /tool arguments/);
+  assert.equal(message.content[0]?.type, "toolCall");
+  assert.equal(events.some((event) => event.type === "toolcall_end"), false);
+  assert.deepEqual(terminals(events).map((event) => event.type), ["error"]);
+
+  const truncated = await run(async () => sse([
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] } }] })}\n\n`,
+    'data: {"choices":[{"finish_reason":"length"}]}\n\n',
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(truncated.message.stopReason, "length");
+  assert.equal(truncated.message.content[0]?.type, "toolCall");
+});
+
+test("a content-filter finish is a non-retryable error retaining received output", async () => {
+  const { message, events } = await run(async () => sse([
+    'data: {"choices":[{"delta":{"content":"Keep"}}]}\n\n',
+    'data: {"choices":[{"finish_reason":"content_filter"}]}\n\n',
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(message.stopReason, "error");
+  assert.notEqual(message.retryable, true);
+  assert.equal(textOf(message), "Keep");
+  assert.match(message.errorMessage ?? "", /content_filter/);
+  assert.deepEqual(terminals(events).map((event) => event.type), ["error"]);
+});
+
+test("local request serialization errors do not send or retry the request", async () => {
+  let calls = 0;
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  const api = openaiCompletionsApi({ fetch: async () => { calls++; return sse([]); } });
+  const stream = api.stream(model(), { messages: [{
+    role: "assistant", content: [{ type: "toolCall", id: "call_1", name: "work", arguments: circular }],
+    api: "openai-completions", provider: "openai", model: "gpt-4o-mini", timestamp: 1,
+    stopReason: "toolUse", usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
+  }] }, { baseUrl: "https://example.test/v1", apiKey: "k" });
+  const message = await stream.result();
+  assert.equal(calls, 0);
+  assert.equal(message.stopReason, "error");
+  assert.notEqual(message.retryable, true);
+  assert.match(message.errorMessage ?? "", /circular/i);
+});
+
 test("cancelling during the stream settles the partial text and does not hang", async (t) => {
   const unhandled: unknown[] = [];
   const onUnhandled = (reason: unknown) => unhandled.push(reason);

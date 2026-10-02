@@ -120,3 +120,75 @@ for (const item of cases) {
     }
   });
 }
+
+test("a streamed rate-limit failure stays in the tree but its tool calls never enter a retry request", async () => {
+  const bodies: Array<{ messages: Array<{ role: string; content: unknown; tool_calls?: unknown }> }> = [];
+  let executions = 0;
+  const models = createModels({ env: {} });
+  models.setProvider(createProvider({
+    id: "wire", baseUrl: "https://example.test/v1", auth: { env: "WIRE_KEY", ambient: "k" }, models: [model],
+    api: openaiCompletionsApi({ fetch: async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as typeof bodies[number]);
+      if (bodies.length > 1) return sse("ok");
+      return new Response([
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "partial", tool_calls: [
+          { index: 0, id: "call_1", function: { name: "work", arguments: "{}" } },
+        ] } }] })}\n\n`,
+        `data: ${JSON.stringify({ error: { type: "rate_limit_error", message: "Rate limit reached" } })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join(""));
+    } }),
+  }));
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models, model: { provider: "wire", modelId: model.id }, maxAttempts: 2,
+    tools: [{ name: "work", description: "work", parameters: { type: "object" }, execute: async () => {
+      executions++; return { content: [] };
+    } }],
+  });
+  try {
+    const result = await runtime.lane().prompt("go");
+    assert.equal(result.status, "completed");
+    assert.equal(bodies.length, 2);
+    assert.equal(executions, 0);
+    assert.deepEqual(bodies[1]?.messages, bodies[0]?.messages);
+    const assistants = await runtime.storage.read((view) => view.entries().flatMap((entry) =>
+      entry.payload.type === "message" && entry.payload.message.role === "assistant" ? [entry.payload.message] : []));
+    assert.deepEqual(assistants.map((message) => message.stopReason), ["error", "stop"]);
+    assert.equal(assistants[0]?.content.some((block) => block.type === "toolCall"), true);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("malformed final tool arguments fail without executing or retrying", async () => {
+  let calls = 0;
+  let executions = 0;
+  const models = createModels({ env: {} });
+  models.setProvider(createProvider({
+    id: "wire", baseUrl: "https://example.test/v1", auth: { env: "WIRE_KEY", ambient: "k" }, models: [model],
+    api: openaiCompletionsApi({ fetch: async () => {
+      calls++;
+      return new Response([
+        `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [
+          { index: 0, id: "call_1", function: { name: "work", arguments: '{"value":' } },
+        ] } }] })}\n\n`,
+        'data: {"choices":[{"finish_reason":"tool_calls"}]}\n\n',
+        "data: [DONE]\n\n",
+      ].join(""));
+    } }),
+  }));
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models, model: { provider: "wire", modelId: model.id }, maxAttempts: 2,
+    tools: [{ name: "work", description: "work", parameters: { type: "object" }, execute: async () => {
+      executions++; return { content: [] };
+    } }],
+  });
+  try {
+    const result = await runtime.lane().prompt("go");
+    assert.equal(result.status, "failed");
+    assert.equal(calls, 1);
+    assert.equal(executions, 0);
+  } finally {
+    runtime.close();
+  }
+});
