@@ -36,6 +36,8 @@ Chat Completions 请求带 `stream_options.include_usage`。最终消息写入�
 
 流内 `error` 也按错误内容分类，并保留之前的输出和 usage。错误事件形状、成功终态中不完整的工具参数、`content_filter` 和本地序列化失败均以不可重试错误结束。`length` 仍保留截断片段。Durable 将失败 assistant 保存在条目树中，在构建后续模型请求时跳过它们。
 
+AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`deferred` assistant，并为已完成 assistant 中未记录结果的工具调用补错误结果。系统消息排在同组工具结果之后，已有结果不会重复补。原始消息保留，普通 Agent 在订阅者失败后的 Completions 请求也不会发送未配对调用。
+
 流式帧可以记下来。帧即使看起来完整，也只是恢复用的前缀，不是一次已经结算的响应。
 
 ## 内存循环

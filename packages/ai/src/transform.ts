@@ -1,4 +1,4 @@
-import type { AssistantContent, AssistantMessage, Message, Model, TextContent, ToolResultMessage, UserContent } from "./types.ts";
+import type { AssistantContent, AssistantMessage, Message, Model, TextContent, ToolCall, ToolResultMessage, UserContent } from "./types.ts";
 
 const USER_IMAGE = "(image omitted: model does not support images)";
 const TOOL_IMAGE = "(tool image omitted: model does not support images)";
@@ -39,6 +39,8 @@ function downgradeImages(content: UserContent[], placeholder: string): TextConte
  * matching tool results follow the new ids. Thinking blocks stay as text
  * when the destination has no native thinking channel (`api` other than
  * anthropic-messages / google-generative-ai).
+ * Failed assistant prefixes are omitted and unanswered calls receive error
+ * results in this request projection. The source transcript is not rewritten.
  */
 export function transformMessages(messages: Message[], model: Model): Message[] {
   const idMap = new Map<string, string>();
@@ -72,11 +74,50 @@ export function transformMessages(messages: Message[], model: Model): Message[] 
     return { ...message, content };
   });
 
-  return transformed.map((message) => {
+  const normalized = transformed.map((message) => {
     if (message.role !== "toolResult") return message;
     const id = idMap.get(message.toolCallId) ?? normalizeToolCallId(message.toolCallId);
     return { ...message, toolCallId: id };
   });
+  return reconcileToolResults(normalized);
+}
+
+function reconcileToolResults(messages: Message[]): Message[] {
+  const projected: Message[] = [];
+  let pending: ToolCall[] = [];
+  const answered = new Set<string>();
+  const heldSystems: Message[] = [];
+  const closeTurn = () => {
+    for (const call of pending) {
+      if (!answered.has(call.id)) projected.push({
+        role: "toolResult", toolCallId: call.id, toolName: call.name,
+        content: [{ type: "text", text: "No tool result was recorded" }],
+        isError: true, timestamp: Date.now(),
+      });
+    }
+    pending = [];
+    answered.clear();
+    projected.push(...heldSystems);
+    heldSystems.length = 0;
+  };
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      closeTurn();
+      if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred") continue;
+      pending = findToolCalls(message);
+    } else if (message.role === "user") {
+      closeTurn();
+    } else if (message.role === "system" && pending.length > 0) {
+      // Keep system updates after all real and synthesized results in this group.
+      heldSystems.push(message);
+      continue;
+    } else if (message.role === "toolResult") {
+      answered.add(message.toolCallId);
+    }
+    projected.push(message);
+  }
+  closeTurn();
+  return projected;
 }
 
 export function findToolCalls(message: AssistantMessage): Array<Extract<AssistantMessage["content"][number], { type: "toolCall" }>> {
