@@ -5,70 +5,69 @@ import { emptyUsage } from "./transform.ts";
 export function frameFromEvent(event: AssistantEvent): AssistantFrame | undefined {
   switch (event.type) {
     case "text_delta":
-      return { type: "text_delta", delta: event.delta };
+      return { type: "text_delta", contentIndex: event.contentIndex, delta: event.delta };
     case "thinking_delta":
-      return { type: "thinking_delta", delta: event.delta };
+      return { type: "thinking_delta", contentIndex: event.contentIndex, delta: event.delta };
     case "toolcall_end":
       return {
         type: "toolcall",
+        contentIndex: event.contentIndex,
         id: event.toolCall.id,
         name: event.toolCall.name,
         arguments: event.toolCall.arguments,
       };
     case "done":
-      return { type: "stop", stopReason: event.reason, errorMessage: event.message.errorMessage };
+      return {
+        type: "stop",
+        stopReason: event.reason,
+        ...(event.message.errorMessage ? { errorMessage: event.message.errorMessage } : {}),
+      };
     case "error":
-      return { type: "stop", stopReason: "error", errorMessage: event.error.errorMessage };
+      return {
+        type: "stop",
+        stopReason: event.error.stopReason === "aborted" ? "aborted" : "error",
+        ...(event.error.errorMessage ? { errorMessage: event.error.errorMessage } : {}),
+      };
     default:
       return undefined;
   }
 }
 
+/** Assemble by contentIndex. The order of end events does not reorder blocks. */
 export function reduceFrames(frames: readonly AssistantFrame[]): {
   content: AssistantContent[];
   stopReason?: StopReason;
   errorMessage?: string;
 } {
-  let text = "";
-  let thinking = "";
-  const content: AssistantContent[] = [];
+  const slots = new Map<number, AssistantContent>();
   let stopReason: StopReason | undefined;
   let errorMessage: string | undefined;
-  const flushText = () => {
-    if (text.length > 0) {
-      content.push({ type: "text", text });
-      text = "";
-    }
-  };
-  const flushThinking = () => {
-    if (thinking.length > 0) {
-      content.push({ type: "thinking", thinking });
-      thinking = "";
-    }
-  };
   for (const frame of frames) {
     if (frame.type === "text_delta") {
-      flushThinking();
-      text += frame.delta ?? "";
+      const current = slots.get(frame.contentIndex);
+      const text = (current?.type === "text" ? current.text : "") + frame.delta;
+      slots.set(frame.contentIndex, { type: "text", text });
     } else if (frame.type === "thinking_delta") {
-      flushText();
-      thinking += frame.delta ?? "";
+      const current = slots.get(frame.contentIndex);
+      const thinking = (current?.type === "thinking" ? current.thinking : "") + frame.delta;
+      slots.set(frame.contentIndex, { type: "thinking", thinking });
     } else if (frame.type === "toolcall") {
-      flushText();
-      flushThinking();
-      content.push({
+      slots.set(frame.contentIndex, {
         type: "toolCall",
-        id: frame.id ?? "call",
-        name: frame.name ?? "unknown",
-        arguments: frame.arguments ?? {},
+        id: frame.id,
+        name: frame.name,
+        arguments: frame.arguments,
       });
-    } else if (frame.type === "stop") {
+    } else {
       stopReason = frame.stopReason;
       errorMessage = frame.errorMessage;
     }
   }
-  flushText();
-  flushThinking();
+  const content: AssistantContent[] = [];
+  for (const index of [...slots.keys()].sort((left, right) => left - right)) {
+    const block = slots.get(index);
+    if (block) content.push(block);
+  }
   return { content, stopReason, errorMessage };
 }
 

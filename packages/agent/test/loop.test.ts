@@ -125,10 +125,33 @@ test("assistant updates start after message_start and include tool-call events",
     if (event.type === "message_update") trace.push(event.assistantMessageEvent.type);
     if (event.type === "message_end" && event.message.role === "assistant") trace.push("end");
   });
+  const indexes: number[] = [];
+  agent.subscribe((event) => {
+    if (event.type !== "message_update") return;
+    const streamed = event.assistantMessageEvent;
+    if (streamed.type === "toolcall_start" || streamed.type === "toolcall_delta" || streamed.type === "toolcall_end") {
+      indexes.push(streamed.contentIndex);
+    }
+  });
   await agent.prompt("go");
   assert.equal(trace[0], "start");
   assert.ok(trace.indexOf("start") < trace.indexOf("toolcall_end"));
   assert.ok(trace.indexOf("toolcall_end") < trace.indexOf("end"));
+  assert.deepEqual([...new Set(indexes)], [0]);
+});
+
+test("an error assistant that already contains a tool call is not executed", async () => {
+  let runs = 0;
+  const { agent, provider } = agentWith(
+    () => fauxAssistant([fauxToolCall("echo", { text: "x" })], { stopReason: "error", errorMessage: "nope" }),
+    [echoTool({ onRun: () => { runs += 1; } })],
+  );
+  const produced = await agent.prompt("go");
+  assert.equal(runs, 0);
+  assert.equal(provider.state.callCount, 1);
+  const assistant = produced.find((message) => message.role === "assistant");
+  assert.equal(assistant?.role === "assistant" ? assistant.stopReason : "", "error");
+  assert.equal(assistant?.role === "assistant" ? assistant.content.some((block) => block.type === "toolCall") : false, true);
 });
 
 test("terminate skips the following model turn", async () => {

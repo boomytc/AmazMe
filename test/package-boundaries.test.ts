@@ -35,8 +35,8 @@ test("the AI root entry does not load a protocol and runs without process or Nod
     const { registerHooks } = await import("node:module");
     registerHooks({ resolve(specifier, context, next) {
       const parent = context.parentURL ?? "";
-      const fromCore = parent.includes("/packages/ai/src/") && !parent.includes("/packages/ai/src/api/") && !parent.includes("/packages/ai/src/providers/");
-      if (fromCore && (specifier.startsWith("node:") || specifier.includes("/api/") || specifier.includes("/providers/"))) {
+      const fromCore = parent.includes("/packages/ai/src/") && !parent.includes("/packages/ai/src/api/") && !parent.includes("/packages/ai/src/providers/") && !parent.includes("/packages/ai/src/testing/");
+      if (fromCore && (specifier.startsWith("node:") || specifier.includes("/api/") || specifier.includes("/providers/") || specifier.includes("/testing"))) {
         throw new Error("core loaded " + specifier);
       }
       return next(specifier, context);

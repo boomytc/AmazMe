@@ -120,7 +120,7 @@ test("AI forwards deltas while its span is open and settles before exposing the 
     const stream = createAssistantEventStream();
     const message = baseAssistant(active, [{ type: "text", text: "streamed" }], "stop");
     message.usage = { input: 2, output: 3, totalTokens: 5, cost: { input: 0, output: 0, total: 0 } };
-    stream.push({ type: "text_delta", delta: "streamed", partial: { ...message, stopReason: "pending" } });
+    stream.push({ type: "text_delta", contentIndex: 0, delta: "streamed", partial: { ...message, stopReason: "pending" } });
     void gate.then(() => { stream.push({ type: "done", reason: "stop", message }); });
     return stream;
   } });
@@ -339,7 +339,7 @@ test("joined Harness drives share one span and recover JSONL frames without rese
     calls++;
     const stream = createAssistantEventStream();
     const message = baseAssistant(active, [{ type: "text", text: "interrupted" }], "stop");
-    stream.push({ type: "text_delta", delta: "interrupted", partial: { ...message, stopReason: "pending" } });
+    stream.push({ type: "text_delta", contentIndex: 0, delta: "interrupted", partial: { ...message, stopReason: "pending" } });
     void gate.then(() => { stream.push({ type: "done", reason: "stop", message }); });
     return stream;
   } });

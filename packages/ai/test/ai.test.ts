@@ -103,9 +103,9 @@ test("transformMessages rewrites tool ids and drops images the destination canno
 
 test("frames rebuild text without treating a stop frame as settlement", () => {
   const events: AssistantEvent[] = [
-    { type: "text_delta", delta: "hello ", partial: fauxAssistant("hello ") },
-    { type: "text_delta", delta: "world", partial: fauxAssistant("hello world") },
-    { type: "toolcall_end", contentIndex: 1, toolCall: fauxToolCall("read", { path: "a" }, "call_1"), partial: fauxAssistant("hello world") },
+    { type: "text_delta", contentIndex: 0, delta: "hello ", partial: fauxAssistant("hello ") },
+    { type: "text_delta", contentIndex: 0, delta: "world", partial: fauxAssistant("hello world") },
+    { type: "toolcall_end", contentIndex: 1, toolCall: fauxToolCall("read", { path: "a" }, "call_1"), partial: fauxAssistant([{ type: "text", text: "hello world" }, fauxToolCall("read", { path: "a" }, "call_1")]) },
     { type: "done", reason: "stop", message: fauxAssistant("hello world") },
   ];
   const frames = events.map((event) => frameFromEvent(event)).filter((frame) => frame !== undefined);

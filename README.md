@@ -46,7 +46,11 @@ Chat Completions 请求带 `stream_options.include_usage`。最终消息写入�
 
 AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`deferred` assistant，并为已完成 assistant 中未记录结果的工具调用补错误结果。系统消息排在同组工具结果之后，已有结果不会重复补。原始消息保留，普通 Agent 在订阅者失败后的 Completions 请求也不会发送未配对调用。
 
-流式帧可以记下来。帧即使看起来完整，也只是恢复用的前缀，不是一次已经结算的响应。
+文本、思考和工具调用在第一次出现时得到稳定的 `contentIndex`，之后按这个顺序保留。服务端的 tool index 只用来认出同一次调用，不会在文本到达后把工具挪到后面，也不会按 index 重排已经出现的块。成功的流里，每个已开始的块有且只有一次结束事件。`error` 和 `aborted` 可以留下未完成的块，不会补一次成功的 `toolcall_end`。一条流只有一个消费者，也只有一个 `done` 或 `error`；已经发出的 partial 不会被后面的增量改掉。
+
+同一套生命周期和身份检查在 `@amazme/ai/testing` 的 `checkAssistantStream`。AI 根入口不加载它，协议专有的请求字段也不放进这套检查。
+
+流式帧带上 `contentIndex`。文本、思考和已经结束的工具调用按这个序号还原，不按结束事件的到达顺序重排。未结束的工具调用没有帧。帧即使看起来完整，也只是恢复用的前缀，不是一次已经结算的响应。Durable 崩溃恢复仍写成 `aborted`，去掉工具调用，不执行它们，也不重发请求。
 
 ## 内存循环
 

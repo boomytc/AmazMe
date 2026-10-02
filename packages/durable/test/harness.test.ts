@@ -168,7 +168,7 @@ test("a crashed assistant stream is settled from frames and is not sent again", 
       const stream = createAssistantEventStream();
       const message = baseAssistant(active, [{ type: "text", text: "partial-answer" }], "stop");
       void (async () => {
-        stream.push({ type: "text_delta", delta: "partial-answer", partial: { ...message, stopReason: "pending" } });
+        stream.push({ type: "text_delta", contentIndex: 0, delta: "partial-answer", partial: { ...message, stopReason: "pending" } });
         await gate;
         if (options?.signal?.aborted) {
           const aborted = baseAssistant(active, [{ type: "text", text: "partial-answer" }], "aborted");
@@ -204,6 +204,88 @@ test("a crashed assistant stream is settled from frames and is not sent again", 
   assert.equal(operationLeft, false);
   const resultLeft = await storage.read((view) => view.values().some((item) => item.key.includes("pi.result")));
   assert.equal(resultLeft, true);
+});
+
+test("a crashed stream keeps text from frames, drops the tool call, and does not execute it", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  let runs = 0;
+  const model: Model = {
+    id: "g",
+    name: "g",
+    provider: "gated",
+    api: "faux",
+    input: ["text"],
+    contextWindow: 1000,
+    maxTokens: 100,
+    cost: { input: 0, output: 0 },
+  };
+  const provider: Provider = {
+    id: "gated",
+    name: "gated",
+    auth: { env: "GATED", ambient: "x" },
+    getModels: () => [model],
+    stream(active, context, options) {
+      return this.streamSimple(active, context, options);
+    },
+    streamSimple(active, _context, options) {
+      calls += 1;
+      const stream = createAssistantEventStream();
+      const tool = { type: "toolCall" as const, id: "call_wipe", name: "wipe", arguments: { path: "secret" } };
+      const message = baseAssistant(active, [tool, { type: "text", text: "after-tool" }], "toolUse");
+      void (async () => {
+        stream.push({ type: "toolcall_start", contentIndex: 0, partial: { ...message, content: [{ ...tool, arguments: {} }], stopReason: "pending" } });
+        stream.push({ type: "text_delta", contentIndex: 1, delta: "after-tool", partial: { ...message, stopReason: "pending" } });
+        stream.push({ type: "toolcall_end", contentIndex: 0, toolCall: tool, partial: { ...message, stopReason: "pending" } });
+        await gate;
+        if (options?.signal?.aborted) {
+          stream.push({ type: "error", error: { ...message, stopReason: "aborted", errorMessage: "aborted" } });
+          return;
+        }
+        stream.push({ type: "done", reason: "toolUse", message });
+      })();
+      return stream;
+    },
+  };
+  const models = createModels();
+  models.setProvider(provider);
+  const storage = new MemoryStorage();
+  const first = new AgentHarness(storage, {
+    models,
+    model: { provider: "gated", modelId: "g" },
+    tools: [tool("wipe", async () => {
+      runs += 1;
+      return { content: [{ type: "text", text: "wiped" }] };
+    })],
+  });
+  const admitted = await first.lane().accept({ kind: "prompt", text: "hi" });
+  assert.equal(admitted.ok, true);
+  const driving = first.lane().drive(admitted.value.operationId);
+  await waitFor(async () => storage.read((view) => view.lists().some((list) => list.items.length >= 2)));
+  first.abandon();
+  const second = new AgentHarness(storage, {
+    models,
+    model: { provider: "gated", modelId: "g" },
+    tools: [tool("wipe", async () => {
+      runs += 1;
+      return { content: [{ type: "text", text: "wiped" }] };
+    })],
+  });
+  const recovered = await second.lane().drive(admitted.value.operationId);
+  release();
+  await driving;
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.ok && recovered.value.kind === "settled" ? recovered.value.result.status : "", "aborted");
+  assert.equal(calls, 1);
+  assert.equal(runs, 0);
+  const assistant = (await second.lane().entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant");
+  assert.ok(assistant && assistant.payload.type === "message" && assistant.payload.message.role === "assistant");
+  assert.equal(assistant.payload.message.stopReason, "aborted");
+  assert.equal(assistant.payload.message.content.some((block) => block.type === "toolCall"), false);
+  assert.equal(harnessText(assistant.payload.message), "after-tool");
 });
 
 test("an interrupted unsafe tool is not repeated and keeps its checkpoint", async () => {

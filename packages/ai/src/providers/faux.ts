@@ -119,56 +119,48 @@ export function fauxProvider(options: FauxProviderOptions = {}): Provider & { st
 }
 
 function emitMessage(stream: ReturnType<typeof createAssistantEventStream>, message: AssistantMessage): void {
-  const partial = { ...message, content: [] as AssistantMessage["content"], stopReason: "pending" as const };
+  const failed = message.stopReason === "error" || message.stopReason === "aborted";
+  const partial: AssistantMessage = { ...message, content: [], stopReason: "pending" };
   stream.push({ type: "start", partial: { ...partial, content: [] } });
-  for (const block of message.content) {
+  message.content.forEach((block, contentIndex) => {
     if (block.type === "text") {
-      stream.push({ type: "text_start", partial });
-      const size = 8;
-      for (let i = 0; i < block.text.length; i += size) {
-        const delta = block.text.slice(i, i + size);
-        partial.content = mergeText(partial.content, delta);
-        stream.push({ type: "text_delta", delta, partial: clonePartial(partial) });
+      partial.content = [...partial.content, { type: "text", text: "" }];
+      stream.push({ type: "text_start", contentIndex, partial });
+      let text = "";
+      for (let offset = 0; offset < block.text.length; offset += 8) {
+        const delta = block.text.slice(offset, offset + 8);
+        text += delta;
+        partial.content = replaceBlock(partial.content, contentIndex, { type: "text", text });
+        stream.push({ type: "text_delta", contentIndex, delta, partial });
       }
-      stream.push({ type: "text_end", partial: clonePartial(partial) });
+      if (!failed) stream.push({ type: "text_end", contentIndex, partial });
     } else if (block.type === "thinking") {
-      stream.push({ type: "thinking_start", partial });
-      partial.content = [...partial.content, block];
-      stream.push({ type: "thinking_delta", delta: block.thinking, partial: clonePartial(partial) });
-      stream.push({ type: "thinking_end", partial: clonePartial(partial) });
+      partial.content = [...partial.content, { type: "thinking", thinking: "" }];
+      stream.push({ type: "thinking_start", contentIndex, partial });
+      partial.content = replaceBlock(partial.content, contentIndex, { type: "thinking", thinking: block.thinking });
+      stream.push({ type: "thinking_delta", contentIndex, delta: block.thinking, partial });
+      if (!failed) stream.push({ type: "thinking_end", contentIndex, partial });
     } else {
-      const index = partial.content.length;
-      partial.content = [...partial.content, { ...block, arguments: {} }];
-      stream.push({ type: "toolcall_start", contentIndex: index, partial: clonePartial(partial) });
-      const encoded = JSON.stringify(block.arguments ?? {});
-      partial.content = partial.content.map((item, itemIndex) =>
-        itemIndex === index && item.type === "toolCall" ? { ...block } : item,
-      );
+      partial.content = [...partial.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
+      stream.push({ type: "toolcall_start", contentIndex, partial });
+      partial.content = replaceBlock(partial.content, contentIndex, block);
       stream.push({
         type: "toolcall_delta",
-        contentIndex: index,
-        delta: encoded,
-        partial: clonePartial(partial),
+        contentIndex,
+        delta: JSON.stringify(block.arguments ?? {}),
+        partial,
       });
-      stream.push({
-        type: "toolcall_end",
-        contentIndex: index,
-        toolCall: block,
-        partial: clonePartial(partial),
-      });
+      if (!failed) stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial });
     }
-  }
-  stream.push({ type: "done", reason: message.stopReason, message });
+  });
+  if (failed) stream.push({ type: "error", error: message });
+  else stream.push({ type: "done", reason: message.stopReason, message });
 }
 
-function mergeText(content: AssistantMessage["content"], delta: string): AssistantMessage["content"] {
-  const next = [...content];
-  const last = next[next.length - 1];
-  if (last?.type === "text") next[next.length - 1] = { type: "text", text: last.text + delta };
-  else next.push({ type: "text", text: delta });
-  return next;
-}
-
-function clonePartial(message: AssistantMessage): AssistantMessage {
-  return { ...message, content: message.content.map((block) => ({ ...block })) };
+function replaceBlock(
+  content: AssistantMessage["content"],
+  contentIndex: number,
+  block: AssistantMessage["content"][number],
+): AssistantMessage["content"] {
+  return content.map((item, index) => (index === contentIndex ? block : item));
 }

@@ -55,7 +55,7 @@ const storage = new JsonlStorage("./state/lane.jsonl");
 
 一条 lane 同时最多一个操作。完整操作状态保存在叶子中，恢复时读取它。响应、usage、tip 与阶段转移或操作终态在一次 `apply` 中提交。模型响应和摘要使用发送前预留的 entry ID。
 
-- 未结算的模型流用已存帧生成 `aborted` 响应，不重发请求。
+- 未结算的模型流用已存帧生成 `aborted` 响应，不重发请求。帧按内容块序号还原文本、思考和已结束的工具调用；恢复时仍去掉工具调用，未结束的工具调用没有帧，所以都不会执行。
 - `replay: "never"` 的未结算工具不重跑，结果保留最后一次 checkpoint。
 - `replay: "safe"` 的工具使用持久化参数重跑。
 - 并行工具完成后，entry 按 assistant 中的源顺序写入。

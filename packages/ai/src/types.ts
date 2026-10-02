@@ -170,27 +170,27 @@ export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMa
 
 export type AssistantEvent =
   | { type: "start"; partial: AssistantMessage }
-  | { type: "text_start"; partial: AssistantMessage }
-  | { type: "text_delta"; delta: string; partial: AssistantMessage }
-  | { type: "text_end"; partial: AssistantMessage }
-  | { type: "thinking_start"; partial: AssistantMessage }
-  | { type: "thinking_delta"; delta: string; partial: AssistantMessage }
-  | { type: "thinking_end"; partial: AssistantMessage }
+  | { type: "text_start"; contentIndex: number; partial: AssistantMessage }
+  | { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
+  | { type: "text_end"; contentIndex: number; partial: AssistantMessage }
+  | { type: "thinking_start"; contentIndex: number; partial: AssistantMessage }
+  | { type: "thinking_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
+  | { type: "thinking_end"; contentIndex: number; partial: AssistantMessage }
   | { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
   | { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
   | { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
   | { type: "done"; reason: StopReason; message: AssistantMessage }
   | { type: "error"; error: AssistantMessage };
 
-export interface AssistantFrame {
-  type: "text_delta" | "thinking_delta" | "toolcall" | "stop";
-  delta?: string;
-  id?: string;
-  name?: string;
-  arguments?: unknown;
-  stopReason?: StopReason;
-  errorMessage?: string;
-}
+/**
+ * Recovery record for one stream. `contentIndex` is assigned when the block first
+ * appears and is not a server tool index. A stop frame does not settle the response.
+ */
+export type AssistantFrame =
+  | { type: "text_delta"; contentIndex: number; delta: string }
+  | { type: "thinking_delta"; contentIndex: number; delta: string }
+  | { type: "toolcall"; contentIndex: number; id: string; name: string; arguments: unknown }
+  | { type: "stop"; stopReason: StopReason; errorMessage?: string };
 
 export interface AuthResult {
   apiKey: string;

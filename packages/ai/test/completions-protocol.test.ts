@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModels, createProvider, type AssistantEvent, type AssistantMessage, type Model, type OpenAICompletionsOptions } from "@amazme/ai";
+import { createModels, createProvider, frameFromEvent, messageFromFrames, reduceFrames, type AssistantEvent, type AssistantMessage, type Model, type OpenAICompletionsOptions } from "@amazme/ai";
 import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
+import { checkAssistantStream } from "@amazme/ai/testing";
 
 const CONTEXT = { messages: [{ role: "user" as const, content: "hi", timestamp: 1 }] };
 
@@ -69,6 +70,13 @@ async function run(
     new Promise<AssistantMessage>((_, reject) => setTimeout(() => reject(new Error("result hung")), 1000)),
   ]);
   await finished;
+  assert.deepEqual(checkAssistantStream(events), []);
+  const terminal = events.at(-1);
+  if (terminal?.type === "done") assert.equal(terminal.message, message);
+  if (terminal?.type === "error") assert.equal(terminal.error, message);
+  if (message.stopReason === "error" || message.stopReason === "aborted") {
+    assert.equal(events.some((event) => event.type === "toolcall_end"), false);
+  }
   return { message, events, bodies, calls };
 }
 
@@ -364,6 +372,14 @@ test("invalid final tool arguments cannot become a successful tool call", async 
   assert.equal(message.content[0]?.type, "toolCall");
   assert.equal(events.some((event) => event.type === "toolcall_end"), false);
   assert.deepEqual(terminals(events).map((event) => event.type), ["error"]);
+  const frames = events.map((event) => frameFromEvent(event)).filter((frame) => frame !== undefined);
+  assert.equal(frames.some((frame) => frame.type === "toolcall"), false);
+  const recovered = messageFromFrames(
+    { api: "openai-completions", provider: "openai", id: "gpt-4o-mini" },
+    frames.filter((frame) => frame.type !== "stop"),
+  );
+  assert.equal(recovered.stopReason, "aborted");
+  assert.equal(recovered.content.some((block) => block.type === "toolCall"), false);
 
   const truncated = await run(async () => sse([
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] } }] })}\n\n`,
@@ -441,4 +457,171 @@ test("an already aborted signal does not send the request", async () => {
   assert.equal(calls, 0);
   assert.equal(message.stopReason, "aborted");
   assert.notEqual(message.retryable, true);
+});
+
+function data(value: unknown): string {
+  return `data: ${JSON.stringify(value)}\n\n`;
+}
+
+function indexes(events: AssistantEvent[], kind: "text_" | "toolcall_"): number[] {
+  return events.flatMap((event) => {
+    if (!event.type.startsWith(kind)) return [];
+    switch (event.type) {
+      case "text_start":
+      case "text_delta":
+      case "text_end":
+      case "toolcall_start":
+      case "toolcall_delta":
+      case "toolcall_end":
+        return [event.contentIndex];
+      default:
+        return [];
+    }
+  });
+}
+
+function streamedToolName(event: AssistantEvent): string | undefined {
+  if (event.type !== "toolcall_start" && event.type !== "toolcall_delta" && event.type !== "toolcall_end") return undefined;
+  const block = event.partial.content[event.contentIndex];
+  return block?.type === "toolCall" ? block.name : undefined;
+}
+
+test("a tool that appears before text keeps one content index and frames restore that order", async () => {
+  const { message, events } = await run(async () => sse([
+    data({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_a", function: { name: "read", arguments: "{\"path\":\"a\"}" } }] } }] }),
+    data({ choices: [{ delta: { content: "after" } }] }),
+    data({ choices: [{ finish_reason: "tool_calls" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(message.stopReason, "toolUse");
+  assert.equal(message.content[0]?.type === "toolCall" ? message.content[0].name : "", "read");
+  assert.deepEqual(message.content[0]?.type === "toolCall" ? message.content[0].arguments : undefined, { path: "a" });
+  assert.equal(message.content[1]?.type === "text" ? message.content[1].text : "", "after");
+  assert.deepEqual([...new Set(indexes(events, "toolcall_"))], [0]);
+  assert.deepEqual([...new Set(indexes(events, "text_"))], [1]);
+  const frames = events.map((event) => frameFromEvent(event)).filter((frame) => frame !== undefined);
+  const reduced = reduceFrames(frames);
+  assert.equal(reduced.content[0]?.type, "toolCall");
+  assert.equal(reduced.content[1]?.type === "text" ? reduced.content[1].text : "", "after");
+  const prefix = messageFromFrames(
+    { api: "openai-completions", provider: "openai", id: "gpt-4o-mini" },
+    frames.filter((frame) => frame.type !== "stop"),
+  );
+  assert.equal(prefix.stopReason, "aborted");
+  assert.equal(prefix.content[0]?.type, "toolCall");
+});
+
+test("server tool index 1 appearing before index 0 does not become the content index", async () => {
+  let early: AssistantEvent | undefined;
+  const { message, events } = await run(async () => sse([
+    data({ choices: [{ delta: { tool_calls: [{ index: 1, id: "call_b", function: { name: "beta", arguments: "{" } }] } }] }),
+    data({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_a", function: { name: "alpha", arguments: "{" } }] } }] }),
+    data({ choices: [{ delta: { tool_calls: [{ index: 1, function: { arguments: "\"n\":1}" } }] } }] }),
+    data({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "\"n\":2}" } }] } }] }),
+    data({ choices: [{ finish_reason: "tool_calls" }] }),
+    "data: [DONE]\n\n",
+  ]), {}, model(), (event) => {
+    if (!early && event.type === "toolcall_delta") early = event;
+  });
+  assert.equal(message.content[0]?.type === "toolCall" ? message.content[0].name : "", "beta");
+  assert.deepEqual(message.content[0]?.type === "toolCall" ? message.content[0].arguments : undefined, { n: 1 });
+  assert.equal(message.content[1]?.type === "toolCall" ? message.content[1].name : "", "alpha");
+  assert.deepEqual(message.content[1]?.type === "toolCall" ? message.content[1].arguments : undefined, { n: 2 });
+  const beta = events.filter((event) => streamedToolName(event) === "beta");
+  const alpha = events.filter((event) => streamedToolName(event) === "alpha");
+  assert.deepEqual([...new Set(indexes(beta, "toolcall_"))], [0]);
+  assert.deepEqual([...new Set(indexes(alpha, "toolcall_"))], [1]);
+  assert.equal(early?.type, "toolcall_delta");
+  const earlyArgs = early?.type === "toolcall_delta" ? early.partial.content[early.contentIndex] : undefined;
+  assert.deepEqual(earlyArgs?.type === "toolCall" ? earlyArgs.arguments : undefined, { _raw: "{" });
+  const finalBeta = message.content[0];
+  if (finalBeta?.type === "toolCall" && finalBeta.arguments && typeof finalBeta.arguments === "object") {
+    (finalBeta.arguments as { n: number }).n = 9;
+  }
+  assert.deepEqual(earlyArgs?.type === "toolCall" ? earlyArgs.arguments : undefined, { _raw: "{" });
+});
+
+test("text and tool calls keep separate blocks when they alternate", async () => {
+  const { message, events } = await run(async () => sse([
+    data({ choices: [{ delta: { content: "A" } }] }),
+    data({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "read", arguments: "{}" } }] } }] }),
+    data({ choices: [{ delta: { content: "B" } }] }),
+    data({ choices: [{ finish_reason: "tool_calls" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.deepEqual(message.content.map((block) => block.type), ["text", "toolCall", "text"]);
+  assert.equal(message.content[0]?.type === "text" ? message.content[0].text : "", "A");
+  assert.equal(message.content[2]?.type === "text" ? message.content[2].text : "", "B");
+  const textStarts = events.filter((event) => event.type === "text_start").map((event) => event.contentIndex);
+  assert.deepEqual(textStarts, [0, 2]);
+  assert.equal(events.filter((event) => event.type === "text_end").length, 2);
+  assert.equal(events.filter((event) => event.type === "toolcall_end").map((event) => event.contentIndex)[0], 1);
+});
+
+test("crlf framing, a split utf-8 character, an empty body, and a usage-only chunk settle once", async () => {
+  const crlf = await run(async () => sse([
+    "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\r\n\r\n",
+    "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\r\n\r\n",
+    "data: [DONE]\r\n\r\n",
+  ]));
+  assert.equal(textOf(crlf.message), "Hi");
+  assert.equal(crlf.message.stopReason, "stop");
+
+  const encoded = new TextEncoder().encode(
+    'data: {"choices":[{"delta":{"content":"你"}}]}\n\ndata: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+  );
+  const marker = new TextEncoder().encode("你");
+  const at = encoded.indexOf(marker[0] ?? 0);
+  assert.ok(at > 0);
+  const utf8 = await run(async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoded.slice(0, at + 1));
+      controller.enqueue(encoded.slice(at + 1));
+      controller.close();
+    },
+  }), { status: 200, headers: { "content-type": "text/event-stream" } }));
+  assert.equal(textOf(utf8.message), "你");
+  assert.deepEqual([...new Set(indexes(utf8.events, "text_"))], [0]);
+
+  const empty = await run(async () => sse([]));
+  assert.equal(empty.message.stopReason, "error");
+  assert.match(empty.message.errorMessage ?? "", /finish reason/);
+  assert.equal(empty.events.some((event) => event.type === "toolcall_end"), false);
+
+  const usageOnly = await run(async () => sse([
+    'data: {"usage":{"prompt_tokens":4,"completion_tokens":0,"total_tokens":4}}\n\n',
+  ]));
+  assert.equal(usageOnly.message.stopReason, "error");
+  assert.equal(usageOnly.message.usage.input, 4);
+  assert.equal(usageOnly.message.usage.totalTokens, 4);
+  assert.equal(usageOnly.events.some((event) => event.type.startsWith("text_")), false);
+
+  const usageThenText = await run(async () => sse([
+    'data: {"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}\n\n',
+    data({ choices: [{ delta: { content: "Hi" } }] }),
+    data({ choices: [{ finish_reason: "stop" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(textOf(usageThenText.message), "Hi");
+  assert.equal(usageThenText.message.usage.input, 4);
+  assert.equal(usageThenText.message.usage.output, 1);
+
+  const continued = await run(async () => sse([
+    data({ choices: [{ delta: { content: "Hel" } }] }),
+    data({ choices: [{ delta: { content: "lo" } }] }),
+    data({ choices: [{ finish_reason: "stop" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(textOf(continued.message), "Hello");
+  assert.deepEqual(indexes(continued.events.filter((event) => event.type === "text_start"), "text_"), [0]);
+  assert.equal(continued.events.filter((event) => event.type === "text_delta").length, 2);
+  assert.equal(continued.events.filter((event) => event.type === "text_end").length, 1);
+
+  const quiet = await run(async () => sse([
+    data({ choices: [{ finish_reason: "stop" }] }),
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(quiet.message.stopReason, "stop");
+  assert.equal(textOf(quiet.message), "");
+  assert.equal(quiet.events.some((event) => event.type.startsWith("text_") || event.type.startsWith("toolcall_")), false);
 });

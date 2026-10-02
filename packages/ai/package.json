@@ -28,6 +28,10 @@
     "./providers/faux": {
       "types": "./dist/providers/faux.d.ts",
       "default": "./src/providers/faux.ts"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./src/testing/index.ts"
     }
   },
   "types": "./dist/index.d.ts",

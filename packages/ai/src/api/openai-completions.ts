@@ -191,37 +191,25 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
   }
   const decoder = new TextDecoder();
   let buffer = "";
-  let text = "";
   let finish = "";
   let started = false;
   let closed = false;
   let usage = emptyUsage();
-  const calls = new Map<number, { id: string; name: string; arguments: string }>();
+  // Server tool index only finds the same call. contentIndex is the block's place at first appearance.
+  const blocks: StreamBlock[] = [];
+  const toolsByServer = new Map<number, ToolBlock>();
   const partial = baseAssistant(model, [], "pending");
 
   const snapshot = (stopReason: AssistantMessage["stopReason"]): AssistantMessage => {
-    const content: AssistantMessage["content"] = [];
-    if (text.length > 0) content.push({ type: "text", text });
-    for (const index of [...calls.keys()].sort((left, right) => left - right)) {
-      const call = calls.get(index);
-      if (!call) continue;
-      content.push({
-        type: "toolCall",
-        id: call.id || `call_${call.name || index}`,
-        name: call.name,
-        arguments: parseArgs(call.arguments),
-      });
-    }
+    const content = blocks.map((block) => block.kind === "text"
+      ? { type: "text" as const, text: block.text }
+      : toolCallOf(block));
     return {
       ...partial,
       content: content.length > 0 ? content : [{ type: "text", text: "" }],
       stopReason,
       usage: { input: usage.input, output: usage.output, totalTokens: usage.totalTokens, cost: { ...usage.cost } },
     };
-  };
-  const contentIndex = (index: number): number => {
-    const earlier = [...calls.keys()].filter((key) => key < index).length;
-    return (text.length > 0 ? 1 : 0) + earlier;
   };
   const begin = () => {
     if (started) return;
@@ -238,29 +226,33 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       fail("error", "OpenAI completions stream ended with content_filter", false);
       return;
     }
-    const stopReason = finish === "length" ? "length" : calls.size > 0 || finish === "tool_calls" ? "toolUse" : "stop";
+    const stopReason = finish === "length" ? "length" : toolsByServer.size > 0 || finish === "tool_calls" ? "toolUse" : "stop";
     if (stopReason === "toolUse") {
-      for (const call of calls.values()) {
+      for (const block of blocks) {
+        if (block.kind !== "tool" || !block.arguments) continue;
         try {
-          if (call.arguments) JSON.parse(call.arguments);
+          JSON.parse(block.arguments);
         } catch {
-          fail("error", `OpenAI completions stream: malformed tool arguments for ${call.name}`, false);
+          fail("error", `OpenAI completions stream: malformed tool arguments for ${block.name}`, false);
           return;
         }
       }
     }
     closed = true;
     begin();
-    for (const index of [...calls.keys()].sort((left, right) => left - right)) {
-      const call = calls.get(index);
-      if (!call) continue;
-      const toolCall: ToolCall = {
-        type: "toolCall",
-        id: call.id || `call_${call.name || index}`,
-        name: call.name,
-        arguments: parseArgs(call.arguments),
-      };
-      stream.push({ type: "toolcall_end", contentIndex: contentIndex(index), toolCall, partial: snapshot(stopReason) });
+    for (const block of blocks) {
+      if (block.ended) continue;
+      block.ended = true;
+      if (block.kind === "text") {
+        stream.push({ type: "text_end", contentIndex: block.contentIndex, partial: snapshot(stopReason) });
+      } else {
+        stream.push({
+          type: "toolcall_end",
+          contentIndex: block.contentIndex,
+          toolCall: toolCallOf(block),
+          partial: snapshot(stopReason),
+        });
+      }
     }
     const message = snapshot(stopReason);
     if (isFilledWindowLength(message, model.contextWindow)) message.overflow = true;
@@ -311,29 +303,8 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     if (reported) usage = reported;
     const choice = parsed.choices?.[0];
     if (!choice) return;
-    if (choice.delta?.content) {
-      begin();
-      text += choice.delta.content;
-      stream.push({ type: "text_delta", delta: choice.delta.content, partial: snapshot("pending") });
-    }
-    for (const call of choice.delta?.tool_calls ?? []) {
-      begin();
-      const current = calls.get(call.index) ?? { id: "", name: "", arguments: "" };
-      const isNew = !calls.has(call.index);
-      if (call.id) current.id = call.id;
-      if (call.function?.name) current.name += call.function.name;
-      calls.set(call.index, current);
-      if (isNew) stream.push({ type: "toolcall_start", contentIndex: contentIndex(call.index), partial: snapshot("pending") });
-      if (call.function?.arguments) {
-        current.arguments += call.function.arguments;
-        stream.push({
-          type: "toolcall_delta",
-          contentIndex: contentIndex(call.index),
-          delta: call.function.arguments,
-          partial: snapshot("pending"),
-        });
-      }
-    }
+    if (choice.delta?.content) appendText(choice.delta.content);
+    for (const call of choice.delta?.tool_calls ?? []) appendTool(call);
     if (choice.finish_reason) finish = choice.finish_reason;
   };
 
@@ -364,6 +335,80 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
   } finally {
     void reader.cancel().catch(() => undefined);
   }
+
+  function appendText(delta: string): void {
+    begin();
+    const last = blocks[blocks.length - 1];
+    if (last?.kind === "text" && !last.ended) {
+      last.text += delta;
+      stream.push({ type: "text_delta", contentIndex: last.contentIndex, delta, partial: snapshot("pending") });
+      return;
+    }
+    const block: TextBlock = { kind: "text", contentIndex: blocks.length, text: "", ended: false };
+    blocks.push(block);
+    stream.push({ type: "text_start", contentIndex: block.contentIndex, partial: snapshot("pending") });
+    block.text = delta;
+    stream.push({ type: "text_delta", contentIndex: block.contentIndex, delta, partial: snapshot("pending") });
+  }
+
+  function appendTool(call: { index: number; id?: string; function?: { name?: string; arguments?: string } }): void {
+    begin();
+    let block = toolsByServer.get(call.index);
+    if (!block) {
+      block = {
+        kind: "tool",
+        contentIndex: blocks.length,
+        serverIndex: call.index,
+        id: call.id ?? "",
+        name: call.function?.name ?? "",
+        arguments: "",
+        ended: false,
+      };
+      blocks.push(block);
+      toolsByServer.set(call.index, block);
+      stream.push({ type: "toolcall_start", contentIndex: block.contentIndex, partial: snapshot("pending") });
+    } else {
+      if (call.id) block.id = call.id;
+      if (call.function?.name) block.name += call.function.name;
+    }
+    if (call.function?.arguments) {
+      block.arguments += call.function.arguments;
+      stream.push({
+        type: "toolcall_delta",
+        contentIndex: block.contentIndex,
+        delta: call.function.arguments,
+        partial: snapshot("pending"),
+      });
+    }
+  }
+}
+
+interface TextBlock {
+  kind: "text";
+  contentIndex: number;
+  text: string;
+  ended: boolean;
+}
+
+interface ToolBlock {
+  kind: "tool";
+  contentIndex: number;
+  serverIndex: number;
+  id: string;
+  name: string;
+  arguments: string;
+  ended: boolean;
+}
+
+type StreamBlock = TextBlock | ToolBlock;
+
+function toolCallOf(block: ToolBlock): ToolCall {
+  return {
+    type: "toolCall",
+    id: block.id || `call_${block.name || block.serverIndex}`,
+    name: block.name,
+    arguments: parseArgs(block.arguments),
+  };
 }
 
 function parseArgs(raw: string): unknown {
