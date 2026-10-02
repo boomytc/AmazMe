@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createModels, createProvider, messageText, type Model } from "@amazme/ai";
 import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
+import { completionsProvider } from "@amazme/ai/providers/completions";
 import {
   AgentHarness,
   effectiveInputThreshold,
@@ -387,6 +388,123 @@ test("manual compaction merges an older summary and a second compact with nothin
     assert.match(empty.ok && empty.value.kind === "settled" ? empty.value.result.error ?? "" : "", /nothing to compact/);
     assert.equal((await lane.entries()).filter((entry) => entry.payload.type === "compaction").length, 2);
     assert.equal(provider.state.callCount, 4);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("manual compaction of a failed short turn leaves the user verbatim", async () => {
+  const provider = fauxProvider({
+    respond: () => fauxAssistant("nope", { stopReason: "error", errorMessage: "model error" }),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    compaction: { enabled: false, maxTokens: 80_000 },
+  });
+  try {
+    const lane = runtime.lane();
+    assert.equal((await lane.prompt("short goal")).status, "failed");
+    const admitted = await lane.accept({ kind: "compaction" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "failed");
+    assert.match(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.error ?? "" : "", /nothing to compact/);
+    const entries = await lane.entries();
+    assert.equal(entries.some((entry) => entry.payload.type === "compaction"), false);
+    const pending = entries.find((entry) => entry.payload.type === "message" && entry.payload.message.role === "user");
+    assert.equal(pending?.payload.type === "message" && pending.payload.message.role === "user" ? pending.payload.message.content : "", "short goal");
+    assert.equal(provider.state.callCount, 1);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("manual compaction does not truncate one oversized pending user", async () => {
+  const pending = "P".repeat(2_000);
+  let calls = 0;
+  const models = createModels({ env: { COMPAT_KEY: "sk-test" } });
+  models.setProvider(completionsProvider({
+    id: "compat",
+    name: "compat",
+    baseUrl: "https://example.test/v1",
+    env: "COMPAT_KEY",
+    fetch: async () => {
+      calls += 1;
+      throw new Error("fetch should not run");
+    },
+    modelIds: ["small"],
+    models: { small: { contextWindow: 200, maxTokens: 32, input: ["text"] } },
+  }));
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "compat", modelId: "small" },
+    compaction: { enabled: false, maxTokens: 80_000 },
+  });
+  try {
+    const lane = runtime.lane();
+    const prompt = await lane.prompt(pending);
+    assert.equal(prompt.status, "failed");
+    assert.match(prompt.error ?? "", /cannot fit/);
+    assert.equal(calls, 0);
+    const admitted = await lane.accept({ kind: "compaction" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "failed");
+    assert.match(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.error ?? "" : "", /nothing to compact/);
+    assert.equal(calls, 0);
+    const entries = await lane.entries();
+    assert.equal(entries.some((entry) => entry.payload.type === "compaction"), false);
+    const stored = entries.find((entry) => entry.payload.type === "message" && entry.payload.message.role === "user");
+    assert.equal(stored?.payload.type === "message" && stored.payload.message.role === "user" ? stored.payload.message.content : "", pending);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("manual compaction keeps a later unanswered user and summarizes the earlier turn", async () => {
+  const seen: string[] = [];
+  const provider = fauxProvider({
+    respond: (context, _options, state) => {
+      seen.push(context.messages.map((message) => messageText(message)).join("\n"));
+      if (state.callCount === 2) return fauxAssistant("nope", { stopReason: "error", errorMessage: "model error" });
+      if (state.callCount === 3) return fauxAssistant("folded the seed");
+      return fauxAssistant("answered");
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    compaction: { enabled: false, maxTokens: 80_000 },
+  });
+  try {
+    const lane = runtime.lane();
+    assert.equal((await lane.prompt("seed goal")).status, "completed");
+    assert.equal((await lane.prompt("PENDING_EXACT")).status, "failed");
+    const admitted = await lane.accept({ kind: "compaction" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "completed");
+    assert.match(seen[2] ?? "", /seed goal/);
+    assert.equal((seen[2] ?? "").includes("PENDING_EXACT"), false);
+    const entries = await lane.entries();
+    const summary = entries.find((entry) => entry.payload.type === "compaction");
+    assert.equal(summary?.payload.type === "compaction" ? summary.payload.summary : "", "folded the seed");
+    const tip = entries.at(-1);
+    assert.equal(tip?.id, (await lane.inspect()).tipId);
+    assert.equal(tip?.parentId, summary?.id ?? null);
+    assert.equal(tip ? textOf(tip) : "", "PENDING_EXACT");
+    const stored = await runtime.storage.read((view) => view.entries());
+    const original = stored.filter((entry) => entry.id !== tip?.id && textOf(entry) === "PENDING_EXACT");
+    assert.equal(original.length, 1);
+    assert.equal(provider.state.callCount, 3);
   } finally {
     runtime.close();
   }

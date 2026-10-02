@@ -31,6 +31,8 @@ export function transcriptMessage(entry: TranscriptEntry): Message {
  * Tool-call groups stay whole. The unanswered trailing user messages, and a trailing tool group, stay even when they exceed the tail budget.
  * An earlier user message does not pin the history after it. A previous summary is summarized again instead of being kept beside the new one.
  * Navigation summarizes the whole visible branch and keeps no tail.
+ * A finish compaction may still summarize a transcript that fits in the tail budget, but the required suffix stays verbatim.
+ * When that suffix is the whole transcript, there is nothing to compact.
  */
 export function selectTail(
   entries: readonly TranscriptEntry[],
@@ -58,9 +60,7 @@ export function selectTail(
     const group = groups[index];
     if (group?.entries.some((entry) => entry.kind === "compaction")) cut = index + 1;
   }
-  if (fittedCut === 0 && boundary === "finish" && entries.some((entry) => entry.kind === "message")) {
-    return { ok: true, cut: { summarized: [...entries], kept: [] } };
-  }
+  if (boundary === "finish" && fittedCut === 0 && requiredAt > 0) cut = requiredAt;
   const summarized = groups.slice(0, cut).flatMap((group) => group.entries);
   const kept = groups.slice(cut).flatMap((group) => group.entries);
   if (!summarized.some((entry) => entry.kind === "message")) return nothing();
