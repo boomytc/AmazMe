@@ -18,6 +18,8 @@ import {
   type StreamOptions,
 } from "@amazme/ai";
 import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
+import { completionsProvider } from "@amazme/ai/providers/completions";
+import { openaiProvider } from "@amazme/ai/providers/openai";
 
 const sample = (api: string, id = "m"): Model => ({
   id,
@@ -250,4 +252,32 @@ test("known APIs keep their own stream option types", () => {
   take<ApiStreamOptions<"faux">>({ reasoningEffort: "low" });
   // @ts-expect-error an unknown API stays on the unified stream options
   take<ApiStreamOptions<"custom-api">>({ reasoningEffort: "high" });
+});
+
+test("a completions catalog without configured rates does not invent a price", async () => {
+  const provider = completionsProvider({
+    id: "custom", name: "Custom", baseUrl: "https://example.test/v1", env: "CUSTOM_KEY", modelIds: ["unpriced"],
+    fetch: async () => new Response([
+      'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+      'data: {"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}\n\n',
+      "data: [DONE]\n\n",
+    ].join("")),
+  });
+  const models = createModels({ env: { CUSTOM_KEY: "k" } });
+  models.setProvider(provider);
+  const active = models.getModel("custom", "unpriced");
+  assert.ok(active);
+  assert.deepEqual(active.cost, { input: 0, output: 0 });
+  const message = await models.completeSimple(active, { messages: [] });
+  assert.equal(message.usage.totalTokens, 17);
+  assert.deepEqual(message.usage.cost, { input: 0, output: 0, total: 0 });
+
+  const priced = completionsProvider({
+    id: "configured", name: "Configured", baseUrl: "https://example.test/v1", env: "CONFIGURED_KEY",
+    modelIds: ["priced"], cost: { input: 2, output: 3 },
+  });
+  assert.deepEqual(priced.getModels()[0]?.cost, { input: 2, output: 3 });
+  const openai = openaiProvider({ modelIds: ["gpt-4o-mini", "unpriced"] });
+  assert.deepEqual(openai.getModels()[0]?.cost, { input: 0.15, output: 0.6 });
+  assert.deepEqual(openai.getModels()[1]?.cost, { input: 0, output: 0 });
 });

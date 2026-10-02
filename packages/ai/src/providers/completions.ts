@@ -28,7 +28,7 @@ export function completionsProvider(options: CompletionsProviderOptions): Provid
     input: ["text"],
     contextWindow: options.contextWindow ?? 128_000,
     maxTokens: options.maxTokens ?? 16_384,
-    cost: options.cost ?? { input: 0.15, output: 0.6 },
+    cost: options.cost ?? { input: 0, output: 0 },
   }));
   return createProvider({
     id: options.id,
