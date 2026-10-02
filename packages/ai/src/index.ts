@@ -2,6 +2,20 @@ export { MemoryCredentialStore, resolveApiKey, type ApiKeyAuth } from "./auth.ts
 export { EventStream } from "./event-stream.ts";
 export { frameFromEvent, messageFromFrames, reduceFrames } from "./frames.ts";
 export { toolDefinition, validateArguments } from "./utils/tool-schema.ts";
+export {
+  contextSafetyMargin,
+  estimateRequestTokens,
+  IMAGE_TOKEN_COST,
+  MESSAGE_OVERHEAD_TOKENS,
+  resolveOutputBudget,
+  type OutputBudget,
+} from "./utils/budget.ts";
+export {
+  classifyTransportFailure,
+  isFilledWindowLength,
+  type TransportClassification,
+  type TransportKind,
+} from "./utils/overflow.ts";
 export { uuidv7 } from "./utils/uuid.ts";
 export {
   baseAssistant,
@@ -36,6 +50,7 @@ export type {
   AssistantFrame,
   AssistantMessage,
   AuthResult,
+  CompletionsOutputTokenField,
   Context,
   Credential,
   CredentialStore,

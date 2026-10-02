@@ -257,6 +257,7 @@ test("known APIs keep their own stream option types", () => {
 test("a completions catalog without configured rates does not invent a price", async () => {
   const provider = completionsProvider({
     id: "custom", name: "Custom", baseUrl: "https://example.test/v1", env: "CUSTOM_KEY", modelIds: ["unpriced"],
+    contextWindow: 8_000, maxTokens: 1_000,
     fetch: async () => new Response([
       'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
       'data: {"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}\n\n',
@@ -274,10 +275,27 @@ test("a completions catalog without configured rates does not invent a price", a
 
   const priced = completionsProvider({
     id: "configured", name: "Configured", baseUrl: "https://example.test/v1", env: "CONFIGURED_KEY",
-    modelIds: ["priced"], cost: { input: 2, output: 3 },
+    modelIds: ["priced"], contextWindow: 8_000, maxTokens: 1_000, cost: { input: 2, output: 3 },
   });
   assert.deepEqual(priced.getModels()[0]?.cost, { input: 2, output: 3 });
-  const openai = openaiProvider({ modelIds: ["gpt-4o-mini", "unpriced"] });
+  const openai = openaiProvider({
+    modelIds: ["gpt-4o-mini", "unpriced"],
+    models: { unpriced: { contextWindow: 8_000, maxTokens: 1_000 } },
+  });
   assert.deepEqual(openai.getModels()[0]?.cost, { input: 0.15, output: 0.6 });
+  assert.equal(openai.getModels()[0]?.contextWindow, 128_000);
   assert.deepEqual(openai.getModels()[1]?.cost, { input: 0, output: 0 });
+  assert.equal(openai.getModels()[1]?.contextWindow, 8_000);
+  assert.deepEqual(openai.getModels()[1]?.input, ["text"]);
+});
+
+test("an unknown model id does not inherit a verified window or output cap", () => {
+  assert.throws(() => openaiProvider({ modelIds: ["gpt-4.1"] }), /contextWindow/);
+  assert.throws(() => completionsProvider({
+    id: "custom", name: "Custom", baseUrl: "https://example.test/v1", env: "CUSTOM_KEY", modelIds: ["x"],
+  }), /contextWindow/);
+  assert.throws(() => completionsProvider({
+    id: "custom", name: "Custom", baseUrl: "https://example.test/v1", env: "CUSTOM_KEY",
+    modelIds: ["x"], contextWindow: 0, maxTokens: 10,
+  }), /positive integer/);
 });

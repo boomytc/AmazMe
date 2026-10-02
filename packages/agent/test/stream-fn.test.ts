@@ -155,6 +155,22 @@ test("a rejected stream function rejects the turn and still accepts another prom
   await assert.rejects(agent.prompt("go"), /stream rejected/);
 });
 
+test("Agent maxTokens reaches the injected stream function", async () => {
+  const seen: Array<number | undefined> = [];
+  const agent = new Agent({
+    model: handModel("hand"),
+    maxTokens: 40,
+    streamFn(_model, _context, options) {
+      seen.push(options?.maxTokens);
+      return finish(handModel("hand"), "capped");
+    },
+  });
+  assert.equal(answer(await agent.prompt("go")), "capped");
+  agent.maxTokens = undefined;
+  assert.equal(answer(await agent.prompt("again")), "capped");
+  assert.deepEqual(seen, [40, undefined]);
+});
+
 test("AgentOptions requires streamFn and does not accept a models collection", () => {
   const model = handModel("typed");
   // @ts-expect-error streamFn is required

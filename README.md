@@ -28,9 +28,17 @@ import { fauxProvider } from "@amazme/ai/providers/faux";
 
 消息只有 `system`、`user`、`assistant`、`toolResult`。`transformMessages` 负责换供应商：收短 tool call id，拿掉目标模型看不见的图片。线协议放在 `api/`，供应商文件只登记目录、认证和地址。现在的线协议是 `openai-completions`，OpenAI 这家供应商指向它。测试用 faux provider。`createProvider` 可以把目录、认证、地址和 headers 与一个协议实现，或按 `model.api` 分派的实现表组合起来。
 
-`StreamOptions` 中的 `baseUrl` 和 `headers` 是各协议共用的请求配置。请求地址覆盖 Provider 默认地址，headers 按字段覆盖并保留其余默认字段。协议专用选项仍由 `ApiStreamOptions` 区分。
+`StreamOptions` 中的 `baseUrl` 和 `headers` 是各协议共用的请求配置。请求地址覆盖 Provider 默认地址，headers 按字段覆盖并保留其余默认字段。协议专用选项仍由 `ApiStreamOptions` 区分。`signal`、`apiKey`、`telemetryContext` 不会写入 JSON 请求体。
 
-通用 `completionsProvider` 未配置 `cost` 时费率为 0。OpenAI 目录只为已配置的模型保留对应费率，调用方添加的其他模型不会继承该费率。
+`StreamOptions.maxTokens` 是这一次生成的输出 token 上限，包含协议会计入的思考 token，不再另加一份思考预算。它会传到 `stream`、`streamSimple`、Provider 和 Models。Agent 上的可选 `maxTokens` 只转发给注入的 `streamFn`，Agent 仍然不持有 Models，也没有通用的请求改写 hook。省略时使用模型声明的输出上限；显式值仍受该上限和剩余上下文约束。放不下时不会发送 0、负数或 NaN，也不会删消息来凑预算，而是以不可重试的 `overflow` 终态结束。参数非法和上下文放不下是两种结果。
+
+输入预算在请求投影之后估算，所以失败 assistant 和补出来的工具结果不会把预算算偏。估算覆盖系统提示词、系统消息、用户文本、assistant 文本、实际会发送的思考、工具名和参数、工具结果、工具名/描述/schema，以及每条消息的固定开销。图片按固定 1,200 token 计，不按 base64 长度。字符按 UTF-8 字节近似（约 4 字节一个 token），只是近似值。安全余量是 `min(4096, max(32, floor(contextWindow / 20)))`，小窗口不会被固定 4,096 占满。同一 `systemPrompt` 和内容相同的首条 system 消息只计一次。不沿用上一条 usage。schema 按当前对象计算。循环引用或无法序列化的参数在发请求前失败。
+
+官方 OpenAI 只发送 `max_completion_tokens`。兼容端用 `completionsProvider({ outputTokenField: "max_tokens" })`，这也是该 provider 的默认字段。同一次请求只出现其中一个字段，不按模型名增加分支。
+
+`gpt-4o-mini` 保留已核对的 128,000 上下文、16,384 输出上限和费率。其他型号必须在 `models` 或 provider 上显式给出 `contextWindow` 和 `maxTokens`，不会继承这份窗口或输出上限，也不猜测价格。未声明 `input` 时只有文本。通用 `completionsProvider` 未配置 `cost` 时费率为 0。
+
+上下文超限先看错误 code/type（`context_length_exceeded`、`model_context_window_exceeded`），再匹配少量「最大上下文 / 最大输入」文案。不是所有 HTTP 400/413、所有 `length`，也不是 “too many tokens”。限流、配额、账单、认证和普通参数错误排除在外，超限也不会标成可原样重试。普通 `length` 仍是截断；输出为 0 且输入已占满窗口时，额外标上 `overflow`，交给 Durable 决定是否压缩。AI 只分类和限制这一次请求，不自动重发。
 
 Chat Completions 请求带 `stream_options.include_usage`。最终消息写入服务端的 input、output 和 total token；费用按模型 `cost` 上「每 1,000,000 token 的美元」计算，缺了费率就记 0，不查价格目录。`thinkingLevel` 先按模型能力映射，不支持的级别在发请求前以错误终态结束。映射出的参数写入 `reasoning_effort`；调用方若再传协议选项 `reasoningEffort`，以该选项为准。暂时的限流、网络故障，以及 408 / 500 / 502 / 503 / 504，把消息标成 `retryable`。配额、账单、认证和参数错误不标，501 和 505 也不标。AI 只分类，不自动重发。中途失败或取消会留下已经收到的文本和工具调用，并只发布一次终态。
 

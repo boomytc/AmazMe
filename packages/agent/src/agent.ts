@@ -24,6 +24,8 @@ export interface AgentOptions {
   streamFn: StreamFn;
   tools?: AgentTool[];
   thinkingLevel?: ThinkingLevel;
+  /** Output-token cap forwarded to `streamFn`. The agent does not apply a model catalog. */
+  maxTokens?: number;
   messages?: AgentMessage[];
   steeringMode?: QueueMode;
   followUpMode?: QueueMode;
@@ -80,6 +82,7 @@ export class Agent {
   systemPrompt: string;
   model: Model;
   thinkingLevel: ThinkingLevel;
+  maxTokens?: number;
   tools: AgentTool[];
   messages: AgentMessage[];
   toolExecution: ToolExecutionMode;
@@ -95,6 +98,7 @@ export class Agent {
     this.telemetryContext = options.telemetryContext ?? NOOP_TELEMETRY_CONTEXT;
     this.tools = options.tools ?? [];
     this.thinkingLevel = options.thinkingLevel ?? "off";
+    if (options.maxTokens !== undefined) this.maxTokens = options.maxTokens;
     this.messages = options.messages ?? [];
     this.toolExecution = options.toolExecution ?? "parallel";
     this.prepareRequest = options.prepareRequest;
@@ -172,7 +176,12 @@ export class Agent {
                     messages: toProviderMessages(messages),
                     tools: tools.map(toolDefinition),
                   };
-                  return this.streamFn(model, context, { thinkingLevel, signal: requestSignal, telemetryContext: span });
+                  return this.streamFn(model, context, {
+                    thinkingLevel,
+                    signal: requestSignal,
+                    telemetryContext: span,
+                    ...(this.maxTokens !== undefined ? { maxTokens: this.maxTokens } : {}),
+                  });
                 },
               },
             },

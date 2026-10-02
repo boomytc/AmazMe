@@ -128,11 +128,19 @@ export interface Model<TApi extends Api = Api> {
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
 }
 
+export type CompletionsOutputTokenField = "max_completion_tokens" | "max_tokens";
+
 export interface StreamOptions {
   telemetryContext?: import("@amazme/telemetry").TelemetryContext;
   signal?: AbortSignal;
   apiKey?: string;
   thinkingLevel?: ThinkingLevel;
+  /**
+   * Output-token cap for this generation, including protocol-counted thinking tokens.
+   * Omitted means the model-declared cap. The final request is still limited by that cap
+   * and by the remaining context. This is not an input-compaction threshold.
+   */
+  maxTokens?: number;
   /** Provider defaults can be overridden for one request, regardless of its protocol. */
   baseUrl?: string;
   headers?: ProviderHeaders;
@@ -145,6 +153,11 @@ export interface ProviderHeaders {
 /** Protocol options for `api: "openai-completions"`. */
 export interface OpenAICompletionsOptions extends StreamOptions {
   reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  /**
+   * The one body field that carries the output cap.
+   * Official OpenAI uses `max_completion_tokens`. A compatible endpoint may set `max_tokens`.
+   */
+  outputTokenField?: CompletionsOutputTokenField;
 }
 
 export interface ApiOptionsMap {

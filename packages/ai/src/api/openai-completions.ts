@@ -1,12 +1,16 @@
 import { baseAssistant, createAssistantEventStream, type AssistantEventStream, type ProviderStreams } from "../models.ts";
 import { resolveThinkingLevel } from "../thinking.ts";
-import type { AssistantMessage, Context, Message, Model, OpenAICompletionsOptions, ToolCall, Usage } from "../types.ts";
+import type { AssistantMessage, CompletionsOutputTokenField, Context, Message, Model, OpenAICompletionsOptions, ToolCall, Usage } from "../types.ts";
 import { emptyUsage, messageText, transformMessages } from "../transform.ts";
+import { resolveOutputBudget } from "../utils/budget.ts";
+import { classifyTransportFailure, isFilledWindowLength, transportErrorDetail } from "../utils/overflow.ts";
 
 export const OPENAI_COMPLETIONS_API = "openai-completions";
 
 export interface OpenAICompletionsApiOptions {
   fetch?: typeof fetch;
+  /** Used when a request does not set `outputTokenField`. Official calls pass `max_completion_tokens`. */
+  outputTokenField?: CompletionsOutputTokenField;
 }
 
 interface ChatMessage {
@@ -18,10 +22,11 @@ interface ChatMessage {
 
 export function openaiCompletionsApi(options: OpenAICompletionsApiOptions = {}): ProviderStreams<"openai-completions"> {
   const fetchImpl = options.fetch ?? globalThis.fetch;
+  const outputTokenField = options.outputTokenField ?? "max_completion_tokens";
   const streams: ProviderStreams<"openai-completions"> = {
     stream(model, context, request) {
       const stream = createAssistantEventStream();
-      void pump(fetchImpl, model, context, request ?? {}, stream);
+      void pump(fetchImpl, model, context, request ?? {}, stream, outputTokenField);
       return stream;
     },
     streamSimple(model, context, request) {
@@ -37,6 +42,7 @@ async function pump(
   context: Context,
   request: OpenAICompletionsOptions,
   stream: AssistantEventStream,
+  outputTokenField: CompletionsOutputTokenField,
 ): Promise<void> {
   let requestPrepared = false;
   try {
@@ -57,7 +63,44 @@ async function pump(
     }
     // An explicit protocol option wins over the mapped unified level. Neither is sent when absent.
     const effort = request.reasoningEffort ?? resolution.parameter;
+    const field = request.outputTokenField ?? outputTokenField;
+    if (field !== "max_completion_tokens" && field !== "max_tokens") {
+      stream.push({
+        type: "error",
+        error: terminalMessage(model, [], "error", "OpenAI completions outputTokenField must be max_completion_tokens or max_tokens"),
+      });
+      return;
+    }
     const wire: Context = { ...context, messages: transformMessages(context.messages, model) };
+    const budget = resolveOutputBudget(model, wire, request.maxTokens);
+    if (budget.status !== "ok" || budget.outputCap === undefined) {
+      stream.push({
+        type: "error",
+        error: terminalMessage(
+          model,
+          [],
+          "error",
+          budget.message ?? "Context budget rejected the request",
+          false,
+          budget.status === "cannot_fit",
+        ),
+      });
+      return;
+    }
+    const payload: Record<string, unknown> = {
+      model: model.id,
+      stream: true,
+      stream_options: { include_usage: true },
+      messages: toChatMessages(wire),
+      [field]: budget.outputCap,
+    };
+    if (effort) payload.reasoning_effort = effort;
+    if (wire.tools && wire.tools.length > 0) {
+      payload.tools = wire.tools.map((tool) => ({
+        type: "function",
+        function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+      }));
+    }
     const url = `${request.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const init: RequestInit = {
       method: "POST",
@@ -66,21 +109,7 @@ async function pump(
         authorization: `Bearer ${request.apiKey}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        model: model.id,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...(effort ? { reasoning_effort: effort } : {}),
-        messages: toChatMessages(wire),
-        ...(context.tools && context.tools.length > 0
-          ? {
-              tools: context.tools.map((tool) => ({
-                type: "function",
-                function: { name: tool.name, description: tool.description, parameters: tool.parameters },
-              })),
-            }
-          : {}),
-      }),
+      body: JSON.stringify(payload),
       signal: request.signal,
     };
     requestPrepared = true;
@@ -92,13 +121,14 @@ async function pump(
       } catch (error) {
         if (isAbort(error, request.signal)) throw error;
       }
-      const classification = classifyFailure(response.status, body);
+      const classification = classifyTransportFailure(response.status, body);
       const failed = terminalMessage(
         model,
         [],
         "error",
         `OpenAI completions ${response.status} ${classification.kind}: ${body.slice(0, 400)}`,
         classification.retryable,
+        classification.overflow,
       );
       stream.push({ type: "error", error: failed });
       return;
@@ -232,15 +262,18 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       };
       stream.push({ type: "toolcall_end", contentIndex: contentIndex(index), toolCall, partial: snapshot(stopReason) });
     }
-    stream.push({ type: "done", reason: stopReason, message: snapshot(stopReason) });
+    const message = snapshot(stopReason);
+    if (isFilledWindowLength(message, model.contextWindow)) message.overflow = true;
+    stream.push({ type: "done", reason: stopReason, message });
   };
-  const fail = (stopReason: "error" | "aborted", errorMessage: string, retryable: boolean) => {
+  const fail = (stopReason: "error" | "aborted", errorMessage: string, retryable: boolean, overflow = false) => {
     if (closed) return;
     closed = true;
     begin();
     const failed = snapshot(stopReason);
     failed.errorMessage = errorMessage;
     if (retryable) failed.retryable = true;
+    if (overflow) failed.overflow = true;
     stream.push({ type: "error", error: failed });
   };
   const consumeLine = (line: string) => {
@@ -260,8 +293,13 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       return;
     }
     if (isRecord(decoded) && "error" in decoded && isRecord(decoded.error)) {
-      const classification = classifyFailure(undefined, data);
-      fail("error", `OpenAI completions stream ${classification.kind}: ${errorFields(data).message ?? data}`, classification.retryable);
+      const classification = classifyTransportFailure(undefined, data);
+      fail(
+        "error",
+        `OpenAI completions stream ${classification.kind}: ${transportErrorDetail(data)}`,
+        classification.retryable,
+        classification.overflow,
+      );
       return;
     }
     if (!isCompletionChunk(decoded)) {
@@ -379,46 +417,6 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
   });
 }
 
-type FailureKind = "quota" | "authentication" | "invalid_request" | "rate_limit" | "unavailable" | "server";
-
-const QUOTA = /insufficient_quota|quota_exceeded|exceeded your current quota|billing|out of credits|credit balance/i;
-const AUTH = /invalid_api_key|authentication_error|permission_error|access_denied/i;
-const RATE = /rate_limit|too many requests/i;
-const RETRYABLE_STATUS = new Set([408, 500, 502, 503, 504]);
-
-/**
- * Quota and billing lose to nothing: a 429 or 5xx that says the account is exhausted is not retried.
- * A bare 429 is a temporary rate limit. Only 408 and the transient 5xx set are retried; 501 and 505 are not.
- * This classification does not resend the request.
- */
-function classifyFailure(status: number | undefined, body: string): { kind: FailureKind; retryable: boolean } {
-  const fields = errorFields(body);
-  const haystack = `${fields.type ?? ""}\n${fields.code ?? ""}\n${fields.message ?? ""}`;
-  if (status === 402 || QUOTA.test(haystack)) return { kind: "quota", retryable: false };
-  if (status === 401 || status === 403 || AUTH.test(haystack)) return { kind: "authentication", retryable: false };
-  if (status === 400 || status === 404 || status === 422) return { kind: "invalid_request", retryable: false };
-  if (fields.type === "invalid_request_error" && status !== 429) return { kind: "invalid_request", retryable: false };
-  if (status === 429 || RATE.test(haystack)) return { kind: "rate_limit", retryable: true };
-  if (status === undefined && (fields.type === "server_error" || fields.type === "overloaded_error")) return { kind: "unavailable", retryable: true };
-  if (status !== undefined && RETRYABLE_STATUS.has(status)) return { kind: "unavailable", retryable: true };
-  return { kind: "server", retryable: false };
-}
-
-function errorFields(body: string): { type?: string; code?: string; message?: string } {
-  try {
-    const parsed = JSON.parse(body) as { error?: { type?: unknown; code?: unknown; message?: unknown } };
-    const error = parsed.error;
-    if (!error || typeof error !== "object") return { message: body };
-    return {
-      ...(typeof error.type === "string" ? { type: error.type } : {}),
-      ...(typeof error.code === "string" ? { code: error.code } : {}),
-      ...(typeof error.message === "string" ? { message: error.message } : { message: body }),
-    };
-  } catch {
-    return { message: body };
-  }
-}
-
 /** `model.cost` is USD per 1,000,000 tokens. Non-finite or absent rates contribute 0; no catalog price is invented. */
 function usageFromChunk(model: Model, raw: unknown): Usage | undefined {
   if (!raw || typeof raw !== "object") return undefined;
@@ -451,10 +449,12 @@ function terminalMessage(
   stopReason: AssistantMessage["stopReason"],
   errorMessage: string,
   retryable = false,
+  overflow = false,
 ): AssistantMessage {
   const message = baseAssistant(model, content.length > 0 ? content : [{ type: "text", text: "" }], stopReason);
   message.errorMessage = errorMessage;
   if (retryable) message.retryable = true;
+  if (overflow) message.overflow = true;
   return message;
 }
 
