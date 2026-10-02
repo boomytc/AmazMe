@@ -283,8 +283,16 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     }
     const stopReason = finish === "length" ? "length" : toolsByServer.size > 0 || finish === "tool_calls" ? "toolUse" : "stop";
     if (stopReason === "toolUse") {
+      const ids = new Set<string>();
       for (const block of blocks) {
-        if (block.kind !== "tool" || !block.arguments) continue;
+        if (block.kind !== "tool") continue;
+        const id = toolCallOf(block).id;
+        if (ids.has(id)) {
+          fail("error", "OpenAI completions stream: duplicate tool call id", false);
+          return;
+        }
+        ids.add(id);
+        if (!block.arguments) continue;
         try {
           JSON.parse(block.arguments);
         } catch {
@@ -499,7 +507,7 @@ function firstReasoning(delta: object): { field: CompletionsThinkingField; value
 function toolCallOf(block: ToolBlock): ToolCall {
   return {
     type: "toolCall",
-    id: block.id || `call_${block.name || block.serverIndex}`,
+    id: block.id || `call_${block.serverIndex}`,
     name: block.name,
     arguments: parseArgs(block.arguments),
   };

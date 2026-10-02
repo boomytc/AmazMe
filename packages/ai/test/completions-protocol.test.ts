@@ -44,6 +44,36 @@ function jsonError(status: number, error: unknown): Response {
   return new Response(JSON.stringify({ error }), { status, headers: { "content-type": "application/json" } });
 }
 
+test("generated ids distinguish same-name tools when the endpoint omits ids", async () => {
+  const { message } = await run(async () => sse([
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [
+      { index: 0, function: { name: "work", arguments: "{}" } },
+      { index: 1, function: { name: "work", arguments: "{}" } },
+    ] } }] })}\n\n`,
+    'data: {"choices":[{"finish_reason":"tool_calls"}]}\n\n',
+    'data: [DONE]\n\n',
+  ]));
+  const calls = message.content.filter(block => block.type === "toolCall");
+  assert.equal(calls.length, 2);
+  assert.equal(new Set(calls.map(call => call.id)).size, 2);
+});
+
+test("ambiguous tool ids fail before any successful tool end", async () => {
+  for (const secondId of [undefined, "call_1"]) {
+    const { message, events } = await run(async () => sse([
+      `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [
+        { index: 0, id: "call_1", function: { name: "first", arguments: "{}" } },
+        { index: 1, id: secondId, function: { name: "second", arguments: "{}" } },
+      ] } }] })}\n\n`,
+      'data: {"choices":[{"finish_reason":"tool_calls"}]}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+    assert.equal(message.stopReason, "error");
+    assert.equal(message.retryable, undefined);
+    assert.equal(events.some(event => event.type === "toolcall_end"), false);
+  }
+});
+
 async function run(
   fetchImpl: typeof fetch,
   options: OpenAICompletionsOptions = {},
