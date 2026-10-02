@@ -315,15 +315,23 @@ export class AgentLane {
       if (planned.type === "continue") continue;
       if (this.harness.isAbandoned) return this.settledOrWait(operationId);
       if (planned.type === "assistant") {
-        const message = await this.streamAssistant(planned, signal, span);
-        if (this.harness.isAbandoned) return this.settledOrWait(operationId);
-        await this.harness.storage.run((view, apply) => this.settleAssistant(view, apply, planned, message));
+        try {
+          const message = await this.streamAssistant(planned, signal, span);
+          if (this.harness.isAbandoned) return this.settledOrWait(operationId);
+          await this.harness.storage.run((view, apply) => this.settleAssistant(view, apply, planned, message));
+        } finally {
+          this.harness.live.delete(planned.responseEntryId);
+        }
         continue;
       }
       if (planned.type === "summary") {
-        const message = await this.streamSummary(signal, span);
-        if (this.harness.isAbandoned) return this.settledOrWait(operationId);
-        await this.harness.storage.run((view, apply) => this.settleSummary(view, apply, planned, message));
+        try {
+          const message = await this.streamSummary(signal, span);
+          if (this.harness.isAbandoned) return this.settledOrWait(operationId);
+          await this.harness.storage.run((view, apply) => this.settleSummary(view, apply, planned, message));
+        } finally {
+          this.harness.live.delete(planned.responseEntryId);
+        }
         continue;
       }
       await this.runTools(operationId, signal, span);
@@ -534,12 +542,12 @@ export class AgentLane {
     if (state.phase === "assistant_ready") {
       const responseEntryId = uuidv7();
       const usageId = uuidv7();
-      this.harness.live.add(responseEntryId);
       apply([{
         type: "set",
         address: stateAddress(operationId),
         value: { phase: "assistant_effect_pending", scope: state.scope, responseEntryId, usageId },
       }]);
+      this.harness.live.add(responseEntryId);
       return { type: "assistant", operationId, responseEntryId, usageId };
     }
     if (state.phase === "assistant_effect_pending") {
@@ -568,7 +576,6 @@ export class AgentLane {
       const responseEntryId = uuidv7();
       const usageId = uuidv7();
       const copyIds = prepared.plan.keptIds.map(() => uuidv7());
-      this.harness.live.add(responseEntryId);
       apply([{
         type: "set",
         address: stateAddress(operationId),
@@ -585,6 +592,7 @@ export class AgentLane {
           estimatedInput: prepared.plan.estimatedInput,
         },
       }]);
+      this.harness.live.add(responseEntryId);
       return { type: "summary", operationId, responseEntryId, usageId };
     }
     if (state.phase === "summary_effect_pending") {
@@ -621,13 +629,20 @@ export class AgentLane {
       ...(config.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
     });
     let frames = Promise.resolve();
-    for await (const event of stream) {
-      const frame = frameFromEvent(event);
-      if (!frame) continue;
-      const queued = this.appendFrame(planned, frame);
-      frames = frames.then(() => queued);
+    let frameFailure: { error: unknown } | undefined;
+    try {
+      for await (const event of stream) {
+        const frame = frameFromEvent(event);
+        if (!frame) continue;
+        const queued = this.appendFrame(planned, frame).catch((error: unknown) => {
+          frameFailure ??= { error };
+        });
+        frames = frames.then(() => queued);
+      }
+    } finally {
+      await frames;
     }
-    await frames;
+    if (frameFailure) throw frameFailure.error;
     return stream.result();
   }
 
