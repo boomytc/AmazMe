@@ -14,11 +14,14 @@ import type {
   AgentEvent,
   AgentMessage,
   AgentTool,
+  AfterToolCall,
+  BeforeToolCall,
   FinishTurnDecision,
   FinishTurnInput,
   PrepareRequestUpdate,
   ThinkingLevel,
   ToolExecutionMode,
+  TransformContext,
 } from "./types.ts";
 
 export type Emit = (event: AgentEvent) => Promise<void> | void;
@@ -29,6 +32,9 @@ export interface LoopHooks {
     signal: AbortSignal,
   ) => Promise<PrepareRequestUpdate | undefined> | PrepareRequestUpdate | undefined;
   finishTurn?: (input: FinishTurnInput, signal: AbortSignal) => Promise<FinishTurnDecision | undefined> | FinishTurnDecision | undefined;
+  beforeToolCall?: BeforeToolCall;
+  afterToolCall?: AfterToolCall;
+  transformContext?: TransformContext;
   takeSteering: () => AgentMessage[];
   takeFollowUp: () => AgentMessage[];
   stream: (
@@ -55,6 +61,8 @@ export interface LoopInput {
 
 /**
  * In-memory turn loop. Agent messages stay intact until the stream call.
+ * `prepareRequest` may replace that transcript. `transformContext` replaces
+ * only the messages for the current model call.
  * Steering enters after the assistant turn. Follow-up enters only when the
  * loop would otherwise stop. A length stop never executes tool calls.
  */
@@ -104,7 +112,8 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
       if (prepared?.model) model = prepared.model;
       if (prepared?.thinkingLevel) thinkingLevel = prepared.thinkingLevel;
 
-      const message = await streamAssistant(input, model, messages, tools, thinkingLevel, signal, emit);
+      const requestMessages = await requestContext(input.hooks.transformContext, messages, signal);
+      const message = await streamAssistant(input, model, requestMessages, tools, thinkingLevel, signal, emit);
       messages = append(messages, produced, message);
 
       if (message.stopReason === "error" || message.stopReason === "aborted") {
@@ -121,7 +130,10 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
         const executed =
           message.stopReason === "length"
             ? await failTruncated(calls, emit)
-            : await executeAgentTools(calls, tools, input.toolExecution, signal, emit, input.telemetryContext);
+            : await executeAgentTools(calls, tools, input.toolExecution, signal, emit, input.telemetryContext, {
+                beforeToolCall: input.hooks.beforeToolCall,
+                afterToolCall: input.hooks.afterToolCall,
+              });
         toolResults = executed.messages;
         moreTools = !executed.terminate;
         for (const result of toolResults) {
@@ -160,6 +172,16 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
 
   await emit({ type: "agent_end", messages: produced });
   return produced;
+}
+
+async function requestContext(
+  transform: TransformContext | undefined,
+  messages: AgentMessage[],
+  signal: AbortSignal,
+): Promise<AgentMessage[]> {
+  if (!transform) return messages;
+  const transformed = await transform(messages.slice(), signal);
+  return Array.isArray(transformed) ? transformed : messages;
 }
 
 function append(messages: AgentMessage[], produced: AgentMessage[], message: AgentMessage): AgentMessage[] {
