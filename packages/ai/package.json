@@ -29,6 +29,18 @@
       "types": "./dist/providers/faux.d.ts",
       "default": "./src/providers/faux.ts"
     },
+    "./api/*": {
+      "types": "./dist/api/*.d.ts",
+      "default": "./src/api/*.ts"
+    },
+    "./providers/*": {
+      "types": "./dist/providers/*.d.ts",
+      "default": "./src/providers/*.ts"
+    },
+    "./auth/oauth/flows": {
+      "types": "./dist/auth/oauth/flows.d.ts",
+      "default": "./src/auth/oauth/flows.ts"
+    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./src/testing/index.ts"
