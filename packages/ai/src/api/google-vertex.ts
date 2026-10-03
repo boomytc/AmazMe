@@ -3,7 +3,7 @@ import type { Context, GoogleVertexOptions, Model } from "../types.ts";
 import { classifyTransportFailure } from "../utils/overflow.ts";
 import { createAccumulator, isAbort } from "./events.ts";
 import { resolveAdcAccessToken } from "./google-adc.ts";
-import { applyGoogleChunk, googleBody, googleStop } from "./google-shared.ts";
+import { applyGoogleChunk, finishGoogle, googleBody } from "./google-shared.ts";
 import { isRecord, postJson, prepareChat, readSse, terminal } from "./prepare.ts";
 
 export const GOOGLE_VERTEX_API = "google-vertex";
@@ -71,7 +71,7 @@ async function pump(
       acc.fail("error", `Google Vertex ${response.status} ${classification.kind}: ${body.slice(0, 400)}`, classification.retryable, classification.overflow);
       return;
     }
-    const finish = { reason: "" };
+    const finish = { reason: "", tools: 0 };
     await readSse(response, request.signal, ({ data }) => {
       if (acc.closed) return;
       let decoded: unknown;
@@ -85,11 +85,7 @@ async function pump(
       applyGoogleChunk(model, acc, decoded, finish);
     });
     if (acc.closed) return;
-    if (!finish.reason) {
-      acc.fail("error", "Google Vertex stream ended without a finish reason");
-      return;
-    }
-    acc.finish(googleStop(finish.reason));
+    finishGoogle(acc, finish.reason, "Google Vertex");
   } catch (error) {
     const aborted = isAbort(error, request.signal);
     acc.fail(aborted ? "aborted" : "error", error instanceof Error ? error.message : String(error), sent && !aborted);

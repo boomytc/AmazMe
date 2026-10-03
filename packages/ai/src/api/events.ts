@@ -32,7 +32,7 @@ export interface AssistantAccumulator {
   readonly closed: boolean;
   text(delta: string): void;
   thinking(delta: string): void;
-  tool(key: string, id: string | undefined, name: string | undefined, argumentDelta: string): void;
+  tool(key: string, id: string | undefined, name: string | undefined, argumentDelta: string, replace?: boolean): void;
   usage(next: Usage): void;
   finish(stopReason: StopReason): void;
   fail(stopReason: "error" | "aborted", message: string, retryable?: boolean, overflow?: boolean): void;
@@ -109,7 +109,7 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
       block.text = delta;
       stream.push({ type: "thinking_delta", contentIndex: block.contentIndex, delta, partial: snapshot("pending") });
     },
-    tool(key, id, name, argumentDelta) {
+    tool(key, id, name, argumentDelta, replace = false) {
       if (closed) return;
       begin();
       let block = tools.get(key);
@@ -125,6 +125,11 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
         blocks.push(block);
         tools.set(key, block);
         stream.push({ type: "toolcall_start", contentIndex: block.contentIndex, partial: snapshot("pending") });
+      } else if (replace) {
+        if (id) block.id = id;
+        if (name) block.name = name;
+        if (argumentDelta) block.arguments = argumentDelta;
+        return;
       } else {
         if (id) block.id = id;
         if (name) block.name += name;

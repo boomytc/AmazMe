@@ -27,7 +27,7 @@ export function googleBody(model: Model, context: Context, outputCap: number, ef
   return payload;
 }
 
-export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decoded: Record<string, unknown>, finish: { reason: string }): void {
+export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decoded: Record<string, unknown>, finish: { reason: string; tools: number }): void {
   const usage = isRecord(decoded.usageMetadata) ? decoded.usageMetadata : undefined;
   if (usage) {
     const reported = usageFromCounts(
@@ -44,21 +44,37 @@ export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decode
   if (typeof candidate.finishReason === "string") finish.reason = candidate.finishReason;
   const content = isRecord(candidate.content) ? candidate.content : undefined;
   const parts = content && Array.isArray(content.parts) ? content.parts : [];
-  parts.forEach((part, index) => {
-    if (!isRecord(part)) return;
+  for (const part of parts) {
+    if (!isRecord(part)) continue;
     if (part.thought === true && typeof part.text === "string") acc.thinking(part.text);
     else if (typeof part.text === "string") acc.text(part.text);
     if (isRecord(part.functionCall)) {
       const name = typeof part.functionCall.name === "string" ? part.functionCall.name : "tool";
-      const args = part.functionCall.args ?? {};
-      acc.tool(`tool_${index}_${name}`, typeof part.functionCall.id === "string" ? part.functionCall.id : undefined, name, JSON.stringify(args));
+      const id = typeof part.functionCall.id === "string" && part.functionCall.id.length > 0 ? part.functionCall.id : undefined;
+      const key = id ?? `tool_${finish.tools++}_${name}`;
+      acc.tool(key, id, name, JSON.stringify(part.functionCall.args ?? {}));
     }
-  });
+  }
 }
 
-export function googleStop(reason: string): "stop" | "length" | "toolUse" {
+/** https://ai.google.dev/api/generate-content#FinishReason */
+export function googleStop(reason: string): "stop" | "length" | "error" {
+  if (reason === "STOP") return "stop";
   if (reason === "MAX_TOKENS") return "length";
-  return "stop";
+  return "error";
+}
+
+export function finishGoogle(acc: AssistantAccumulator, reason: string, label: string): void {
+  if (!reason) {
+    acc.fail("error", `${label} stream ended without a finish reason`);
+    return;
+  }
+  const mapped = googleStop(reason);
+  if (mapped === "error") {
+    acc.fail("error", `${label} stream: ${reason}`);
+    return;
+  }
+  acc.finish(mapped);
 }
 
 function systemText(context: Context): string {

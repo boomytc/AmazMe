@@ -1,15 +1,23 @@
 import { createAssistantEventStream, type ProviderStreams } from "../models.ts";
-import type { BedrockOptions, Context, Model } from "../types.ts";
+import type { BedrockOptions, Context, Message, Model } from "../types.ts";
 import { classifyTransportFailure } from "../utils/overflow.ts";
+import { payloadText, readAwsEventStream } from "./aws-event-stream.ts";
 import { bearerFromEnv, resolveAwsChain } from "./aws-chain.ts";
 import { signAwsRequest } from "./aws-sigv4.ts";
 import { createAccumulator, isAbort, usageFromCounts } from "./events.ts";
-import { isRecord, prepareChat, readSse, terminal } from "./prepare.ts";
+import { isRecord, prepareChat, terminal } from "./prepare.ts";
 
 export const BEDROCK_CONVERSE_STREAM_API = "bedrock-converse-stream";
+const BEDROCK_ACCEPT = "application/vnd.amazon.eventstream";
+const RETRYABLE_BEDROCK_EXCEPTIONS = new Set([
+  "internalServerException",
+  "serviceUnavailableException",
+  "throttlingException",
+  "modelStreamErrorException",
+]);
 
 /**
- * Converse stream as JSON SSE, authenticated before the request is sent.
+ * ConverseStream returns AWS event stream frames, not JSON SSE.
  * A bearer token is sent as Bearer. Otherwise the AWS chain is resolved and the
  * same request is signed with Signature V4. Resolution failure does not send it.
  */
@@ -45,17 +53,21 @@ async function pump(
     }
     const root = (request.baseUrl ?? "").replace(/\/$/, "");
     const url = new URL(`${root}/model/${encodeURIComponent(model.id)}/converse-stream`);
-    const payload = JSON.stringify({
-      messages: prepared.prepared.context.messages.filter((message) => message.role !== "system").map(bedrockMessage),
-      inferenceConfig: { maxTokens: prepared.prepared.outputCap },
-      ...(prepared.prepared.context.tools && prepared.prepared.context.tools.length > 0
-        ? { toolConfig: { tools: prepared.prepared.context.tools.map((tool) => ({ toolSpec: { name: tool.name, description: tool.description, inputSchema: { json: tool.parameters } } })) } }
-        : {}),
-    });
+    const built = bedrockPayload(prepared.prepared.context, prepared.prepared.outputCap);
+    if (!built.ok) {
+      stream.push({ type: "error", error: terminal(model, "error", built.message) });
+      return;
+    }
+    const payload = JSON.stringify(built.body);
     const bearer = request.apiKey || bearerFromEnv(request.env ?? {});
     let headers: Record<string, string>;
     if (bearer) {
-      headers = { ...request.headers, authorization: `Bearer ${bearer}`, "content-type": "application/json" };
+      headers = {
+        ...request.headers,
+        authorization: `Bearer ${bearer}`,
+        accept: BEDROCK_ACCEPT,
+        "content-type": "application/json",
+      };
     } else {
       const credentials = await resolveAwsChain({ env: request.env ?? {}, fetch: fetchImpl, ...(request.signal ? { signal: request.signal } : {}) });
       if (!credentials) {
@@ -69,7 +81,7 @@ async function pump(
         region: bedrockRegion(url, request.region, credentials.region),
         service: "bedrock",
         credentials,
-        headers: { ...request.headers, "content-type": "application/json" },
+        headers: { ...request.headers, accept: BEDROCK_ACCEPT, "content-type": "application/json" },
       });
       headers = signed.headers;
     }
@@ -82,24 +94,44 @@ async function pump(
       return;
     }
     let stop = "";
-    await readSse(response, request.signal, ({ data }) => {
-      if (acc.closed || data === "[DONE]") return;
+    await readAwsEventStream(response, request.signal, (event) => {
+      if (acc.closed) return;
+      const messageType = event.headers[":message-type"] ?? "event";
+      if (messageType === "exception" || messageType === "error") {
+        const name = event.headers[":exception-type"] || event.headers[":error-code"] || messageType;
+        const retryable = RETRYABLE_BEDROCK_EXCEPTIONS.has(name) || event.headers[":error-code"] === "429";
+        acc.fail("error", `Bedrock converse stream: ${name}: ${payloadText(event.payload).slice(0, 300)}`, retryable);
+        return;
+      }
       let decoded: unknown;
       try {
-        decoded = JSON.parse(data) as unknown;
+        decoded = JSON.parse(new TextDecoder().decode(event.payload)) as unknown;
       } catch {
         acc.fail("error", "Bedrock converse stream: malformed event");
         return;
       }
-      if (!isRecord(decoded)) return;
-      applyBedrockEvent(model, acc, decoded, (reason) => { stop = reason; });
+      if (!isRecord(decoded)) {
+        acc.fail("error", "Bedrock converse stream: malformed event");
+        return;
+      }
+      const eventType = event.headers[":event-type"];
+      if (!eventType) {
+        acc.fail("error", "Bedrock converse stream: missing event type");
+        return;
+      }
+      applyBedrockEvent(model, acc, { [eventType]: decoded }, (reason) => { stop = reason; });
     });
     if (acc.closed) return;
     if (!stop) {
       acc.fail("error", "Bedrock converse stream ended without a stop reason");
       return;
     }
-    acc.finish(stop === "max_tokens" || stop === "length" ? "length" : stop === "tool_use" || stop === "toolUse" ? "toolUse" : "stop");
+    const mapped = bedrockStop(stop);
+    if (mapped === "error") {
+      acc.fail("error", `Bedrock converse stream: ${stop}`);
+      return;
+    }
+    acc.finish(mapped);
   } catch (error) {
     const aborted = isAbort(error, request.signal);
     acc.fail(aborted ? "aborted" : "error", error instanceof Error ? error.message : String(error), sent && !aborted);
@@ -118,19 +150,25 @@ function applyBedrockEvent(
     const reported = usageFromCounts(model, numberOf(usage.inputTokens), numberOf(usage.outputTokens), numberOf(usage.totalTokens));
     if (reported) acc.usage(reported);
   }
-  const index = typeof decoded.contentBlockIndex === "number" ? decoded.contentBlockIndex : 0;
   const start = isRecord(decoded.contentBlockStart) ? decoded.contentBlockStart : undefined;
+  const deltaWrap = isRecord(decoded.contentBlockDelta) ? decoded.contentBlockDelta : undefined;
+  const index = numberOf(deltaWrap?.contentBlockIndex) ?? numberOf(start?.contentBlockIndex) ?? numberOf(decoded.contentBlockIndex) ?? 0;
   const startBody = start && isRecord(start.start) ? start.start : undefined;
   const toolStart = startBody && isRecord(startBody.toolUse) ? startBody.toolUse : undefined;
   if (toolStart) {
     acc.tool(`tool_${index}`, typeof toolStart.toolUseId === "string" ? toolStart.toolUseId : undefined, typeof toolStart.name === "string" ? toolStart.name : undefined, "");
   }
-  const deltaWrap = isRecord(decoded.contentBlockDelta) ? decoded.contentBlockDelta : undefined;
   const delta = deltaWrap && isRecord(deltaWrap.delta) ? deltaWrap.delta : undefined;
   if (delta) {
     if (typeof delta.text === "string") acc.text(delta.text);
     const reasoning = isRecord(delta.reasoningContent) ? delta.reasoningContent : undefined;
-    if (reasoning && typeof reasoning.text === "string") acc.thinking(reasoning.text);
+    const reasoningText = reasoning && isRecord(reasoning.reasoningText) ? reasoning.reasoningText : undefined;
+    const thought = reasoning && typeof reasoning.text === "string"
+      ? reasoning.text
+      : reasoningText && typeof reasoningText.text === "string"
+        ? reasoningText.text
+        : undefined;
+    if (thought) acc.thinking(thought);
     const toolDelta = isRecord(delta.toolUse) ? delta.toolUse : undefined;
     if (toolDelta && typeof toolDelta.input === "string") acc.tool(`tool_${index}`, undefined, undefined, toolDelta.input);
   }
@@ -143,10 +181,57 @@ function applyBedrockEvent(
   if (reason) setStop(reason);
 }
 
-function bedrockMessage(message: Context["messages"][number]): unknown {
+function bedrockPayload(context: Context, outputCap: number): { ok: true; body: Record<string, unknown> } | { ok: false; message: string } {
+  const messages: Array<{ role: "user" | "assistant"; content: unknown[] }> = [];
+  for (const message of context.messages) {
+    if (message.role === "system") continue;
+    const next = bedrockMessage(message);
+    if (!next.ok) return next;
+    const last = messages[messages.length - 1];
+    if (last && last.role === next.message.role) last.content.push(...next.message.content);
+    else messages.push(next.message);
+  }
+  const system = systemText(context);
+  return {
+    ok: true,
+    body: {
+      messages,
+      inferenceConfig: { maxTokens: outputCap },
+      ...(system ? { system: [{ text: system }] } : {}),
+      ...(context.tools && context.tools.length > 0
+        ? { toolConfig: { tools: context.tools.map((tool) => ({ toolSpec: { name: tool.name, description: tool.description, inputSchema: { json: tool.parameters } } })) } }
+        : {}),
+    },
+  };
+}
+
+function systemText(context: Context): string {
+  const prompt = context.systemPrompt ?? "";
+  const parts: string[] = [];
+  const leading = context.messages[0];
+  if (prompt && !(leading?.role === "system" && leading.content === prompt)) parts.push(prompt);
+  for (const message of context.messages) {
+    if (message.role === "system") parts.push(message.content);
+  }
+  return parts.join("\n");
+}
+
+function bedrockMessage(message: Message):
+  | { ok: true; message: { role: "user" | "assistant"; content: unknown[] } }
+  | { ok: false; message: string } {
   if (message.role === "user") {
-    const text = typeof message.content === "string" ? message.content : message.content.map((block) => block.type === "text" ? block.text : "").join("");
-    return { role: "user", content: [{ text }] };
+    if (typeof message.content === "string") return { ok: true, message: { role: "user", content: [{ text: message.content }] } };
+    const content: unknown[] = [];
+    for (const block of message.content) {
+      if (block.type === "text") {
+        content.push({ text: block.text });
+        continue;
+      }
+      const format = bedrockImageFormat(block.mimeType);
+      if (!format) return { ok: false, message: "Bedrock converse does not accept this image format" };
+      content.push({ image: { format, source: { bytes: block.data } } });
+    }
+    return { ok: true, message: { role: "user", content } };
   }
   if (message.role === "assistant") {
     const content: unknown[] = [];
@@ -155,16 +240,52 @@ function bedrockMessage(message: Context["messages"][number]): unknown {
       else if (block.type === "thinking") content.push({ reasoningContent: { reasoningText: { text: block.thinking } } });
       else content.push({ toolUse: { toolUseId: block.id, name: block.name, input: block.arguments ?? {} } });
     }
-    return { role: "assistant", content };
+    return { ok: true, message: { role: "assistant", content } };
   }
   if (message.role === "toolResult") {
-    return { role: "user", content: [{ toolResult: { toolUseId: message.toolCallId, content: [{ text: message.content.map((block) => block.text).join("") }] } }] };
+    return {
+      ok: true,
+      message: {
+        role: "user",
+        content: [{
+          toolResult: {
+            toolUseId: message.toolCallId,
+            content: [{ text: message.content.map((block) => block.text).join("") }],
+            ...(message.isError ? { status: "error" } : {}),
+          },
+        }],
+      },
+    };
   }
-  return { role: "user", content: [{ text: message.content }] };
+  return { ok: true, message: { role: "user", content: [{ text: message.content }] } };
+}
+
+function bedrockImageFormat(mimeType: string): "png" | "jpeg" | "gif" | "webp" | undefined {
+  switch (mimeType.toLowerCase()) {
+    case "image/png":
+      return "png";
+    case "image/jpeg":
+    case "image/jpg":
+      return "jpeg";
+    case "image/gif":
+      return "gif";
+    case "image/webp":
+      return "webp";
+    default:
+      return undefined;
+  }
 }
 
 function numberOf(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_MessageStopEvent.html */
+function bedrockStop(reason: string): "stop" | "length" | "toolUse" | "error" {
+  if (reason === "end_turn" || reason === "stop_sequence") return "stop";
+  if (reason === "max_tokens" || reason === "length" || reason === "model_context_window_exceeded") return "length";
+  if (reason === "tool_use" || reason === "toolUse") return "toolUse";
+  return "error";
 }
 
 function bedrockRegion(url: URL, requested: string | undefined, fromChain: string): string {
