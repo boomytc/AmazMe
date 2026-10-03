@@ -7,6 +7,7 @@ import { fauxProvider } from "@amazme/ai/providers/faux";
 import { openaiProvider } from "@amazme/ai/providers/openai";
 import { AgentSession } from "./agent-session.ts";
 import { SessionStore } from "./session.ts";
+import { appendSkillText } from "./skills.ts";
 import { createCodingTools } from "./tools.ts";
 
 interface Args {
@@ -60,7 +61,10 @@ async function main(): Promise<void> {
     model,
     streamFn: models.streamSimple.bind(models),
     telemetryContext: models.telemetryContext,
-    systemPrompt: "You are a coding agent. Use tools to inspect and change files in the workspace.",
+    systemPrompt: appendSkillText(
+      "You are a coding agent. Use tools to inspect and change files in the workspace.",
+      join(args.cwd, "skills"),
+    ),
     tools: createCodingTools(args.cwd),
   });
   const session = new AgentSession(store, agent);
