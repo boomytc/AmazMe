@@ -139,7 +139,15 @@ export async function consumeResponses(
       const reported = responsesUsage(model, responseRecord.usage);
       if (reported) acc.usage(reported);
       const status = stringField(responseRecord, "status");
+      const details = isRecord(responseRecord.incomplete_details) ? responseRecord.incomplete_details : undefined;
+      const why = details ? stringField(details, "reason") : undefined;
+      // https://platform.openai.com/docs/api-reference/responses/object — incomplete_details.reason
       const incomplete = type === "response.incomplete" || status === "incomplete";
+      if (incomplete && why && why !== "max_output_tokens") {
+        sawTerminal = true;
+        acc.fail("error", `OpenAI responses stream: ${why}`);
+        return;
+      }
       sawTerminal = true;
       acc.finish(incomplete ? "length" : "stop");
     }

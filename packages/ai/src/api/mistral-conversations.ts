@@ -110,7 +110,12 @@ async function pump(
       acc.fail("error", "Mistral conversations stream ended without a finish reason");
       return;
     }
-    acc.finish(stop === "length" || stop === "model_length" ? "length" : stop === "tool_calls" ? "toolUse" : "stop");
+    const mapped = mistralStop(stop);
+    if (mapped === "error") {
+      acc.fail("error", `Mistral conversations stream: ${stop}`);
+      return;
+    }
+    acc.finish(mapped);
   } catch (error) {
     const aborted = isAbort(error, request.signal);
     acc.fail(aborted ? "aborted" : "error", error instanceof Error ? error.message : String(error), sent && !aborted);
@@ -138,7 +143,11 @@ function applyContent(acc: ReturnType<typeof createAccumulator>, content: unknow
 
 function toMessages(context: Context): unknown[] {
   const messages: unknown[] = [];
-  if (context.systemPrompt) messages.push({ role: "system", content: context.systemPrompt });
+  const prompt = context.systemPrompt ?? "";
+  const leading = context.messages[0];
+  if (prompt && !(leading?.role === "system" && leading.content === prompt)) {
+    messages.push({ role: "system", content: prompt });
+  }
   for (const message of context.messages) messages.push(convert(message));
   return messages;
 }
@@ -146,7 +155,13 @@ function toMessages(context: Context): unknown[] {
 function convert(message: Message): unknown {
   if (message.role === "system") return { role: "system", content: message.content };
   if (message.role === "user") {
-    return { role: "user", content: typeof message.content === "string" ? message.content : message.content.map((block) => block.type === "text" ? block.text : "").join("") };
+    if (typeof message.content === "string") return { role: "user", content: message.content };
+    return {
+      role: "user",
+      content: message.content.map((block) => block.type === "text"
+        ? { type: "text", text: block.text }
+        : { type: "image_url", image_url: `data:${block.mimeType};base64,${block.data}` }),
+    };
   }
   if (message.role === "toolResult") return { role: "tool", tool_call_id: message.toolCallId, content: messageText(message) };
   return {
@@ -158,6 +173,13 @@ function convert(message: Message): unknown {
       function: { name: block.name, arguments: JSON.stringify(block.arguments ?? {}) },
     } : undefined),
   };
+}
+
+function mistralStop(reason: string): "stop" | "length" | "toolUse" | "error" {
+  if (reason === "stop") return "stop";
+  if (reason === "length" || reason === "model_length") return "length";
+  if (reason === "tool_calls") return "toolUse";
+  return "error";
 }
 
 function numberOf(value: unknown): number | undefined {

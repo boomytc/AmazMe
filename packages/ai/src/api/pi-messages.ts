@@ -92,7 +92,7 @@ async function pump(
         const call = decoded.toolCall as Partial<ToolCall>;
         const key = `tool_${typeof decoded.contentIndex === "number" ? decoded.contentIndex : 0}`;
         const args = call.arguments === undefined ? "" : typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments);
-        acc.tool(key, typeof call.id === "string" ? call.id : undefined, typeof call.name === "string" ? call.name : undefined, args);
+        acc.tool(key, typeof call.id === "string" ? call.id : undefined, typeof call.name === "string" ? call.name : undefined, args, true);
       }
       if (decoded.type === "done") {
         const usage = isRecord(decoded.usage) ? decoded.usage : undefined;

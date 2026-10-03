@@ -50,6 +50,12 @@ async function pump(
     }
     if (key && !hasAuthorization(headers)) headers["x-api-key"] = key;
     const system = systemText(prepared.prepared.context);
+    // Extended thinking counts toward max_tokens. budget_tokens must be at least 1024 and strictly below that cap.
+    // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
+    if (prepared.prepared.effort && prepared.prepared.outputCap <= 1024) {
+      stream.push({ type: "error", error: terminal(model, "error", "Anthropic thinking budget does not fit the output cap") });
+      return;
+    }
     const payload: Record<string, unknown> = {
       model: model.id,
       max_tokens: prepared.prepared.outputCap,
@@ -57,7 +63,7 @@ async function pump(
       messages: toAnthropicMessages(prepared.prepared.context),
     };
     if (system) payload.system = system;
-    if (prepared.prepared.effort) payload.thinking = { type: "enabled", budget_tokens: Math.min(prepared.prepared.outputCap, 1024) };
+    if (prepared.prepared.effort) payload.thinking = { type: "enabled", budget_tokens: Math.min(1024, prepared.prepared.outputCap - 1) };
     if (prepared.prepared.context.tools && prepared.prepared.context.tools.length > 0) {
       payload.tools = prepared.prepared.context.tools.map((tool) => ({
         name: tool.name,
@@ -80,7 +86,13 @@ async function pump(
       return;
     }
     let stop = "";
+    let inputTokens: number | undefined;
+    let outputTokens: number | undefined;
     const toolKeys = new Map<number, string>();
+    const reportUsage = () => {
+      const reported = usageFromCounts(model, inputTokens, outputTokens, undefined);
+      if (reported) acc.usage(reported);
+    };
     await readSse(response, request.signal, ({ data }) => {
       if (acc.closed) return;
       let decoded: unknown;
@@ -113,12 +125,18 @@ async function pump(
       if (decoded.type === "message_delta" && isRecord(decoded.delta)) {
         if (typeof decoded.delta.stop_reason === "string") stop = decoded.delta.stop_reason;
         const usage = isRecord(decoded.usage) ? decoded.usage : undefined;
-        const reported = usageFromCounts(model, undefined, numberOf(usage?.output_tokens), undefined);
-        if (reported) acc.usage(reported);
+        const output = numberOf(usage?.output_tokens);
+        if (output !== undefined) {
+          outputTokens = output;
+          reportUsage();
+        }
       }
       if (decoded.type === "message_start" && isRecord(decoded.message) && isRecord(decoded.message.usage)) {
-        const reported = usageFromCounts(model, numberOf(decoded.message.usage.input_tokens), numberOf(decoded.message.usage.output_tokens), undefined);
-        if (reported) acc.usage(reported);
+        const input = numberOf(decoded.message.usage.input_tokens);
+        const output = numberOf(decoded.message.usage.output_tokens);
+        if (input !== undefined) inputTokens = input;
+        if (output !== undefined) outputTokens = output;
+        if (input !== undefined || output !== undefined) reportUsage();
       }
       if (decoded.type === "error") {
         acc.fail("error", `Anthropic messages stream: ${JSON.stringify(decoded.error ?? decoded).slice(0, 400)}`);
@@ -129,11 +147,24 @@ async function pump(
       acc.fail("error", "Anthropic messages stream ended without a stop reason");
       return;
     }
-    acc.finish(stop === "max_tokens" ? "length" : stop === "tool_use" ? "toolUse" : "stop");
+    const mapped = anthropicStop(stop);
+    if (mapped === "error") {
+      acc.fail("error", `Anthropic messages stream: ${stop}`);
+      return;
+    }
+    acc.finish(mapped);
   } catch (error) {
     const aborted = isAbort(error, request.signal);
     acc.fail(aborted ? "aborted" : "error", error instanceof Error ? error.message : String(error), sent && !aborted);
   }
+}
+
+/** https://docs.anthropic.com/en/api/messages — stop_reason */
+function anthropicStop(reason: string): "stop" | "length" | "toolUse" | "error" {
+  if (reason === "end_turn" || reason === "stop_sequence" || reason === "pause_turn") return "stop";
+  if (reason === "max_tokens") return "length";
+  if (reason === "tool_use") return "toolUse";
+  return "error";
 }
 
 async function anthropicKey(request: import("../types.ts").StreamOptions): Promise<string | undefined> {

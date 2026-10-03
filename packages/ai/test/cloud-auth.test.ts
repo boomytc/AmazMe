@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createModels, MemoryCredentialStore, type Credential } from "@amazme/ai";
+import { encodeBedrockEvents } from "@amazme/ai/api/aws-event-stream";
 import { signAwsRequest } from "@amazme/ai/api/aws-sigv4";
 import { amazonBedrockProvider } from "@amazme/ai/providers/amazon-bedrock";
 import { googleVertexProvider } from "@amazme/ai/providers/google-vertex";
@@ -48,9 +49,15 @@ test("signature version 4 matches the published IAM example", () => {
 });
 
 test("bedrock signs environment keys and does not store them", async () => {
-  const calls: Array<{ url: string; authorization: string; body: string }> = [];
+  const calls: Array<{ url: string; authorization: string; accept: string; body: string }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
-    calls.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization") ?? "", body: String(init?.body ?? "") });
+    const headers = new Headers(init?.headers);
+    calls.push({
+      url: String(input),
+      authorization: headers.get("authorization") ?? "",
+      accept: headers.get("accept") ?? "",
+      body: String(init?.body ?? ""),
+    });
     return bedrockSse();
   };
   const store = new MemoryCredentialStore();
@@ -66,6 +73,7 @@ test("bedrock signs environment keys and does not store them", async () => {
   assert.equal(message.stopReason, "stop");
   assert.equal(calls.length, 1);
   assert.match(calls[0]?.url ?? "", /\/model\/amazon\.nova-2-lite-v1%3A0\/converse-stream$/);
+  assert.equal(calls[0]?.accept, "application/vnd.amazon.eventstream");
   assert.match(calls[0]?.authorization ?? "", /^AWS4-HMAC-SHA256 Credential=test-access-key\/\d{8}\/us-east-1\/bedrock\/aws4_request,/);
   assert.equal(calls[0]?.authorization.includes("test-secret-key"), false);
   assert.equal(calls[0]?.body.includes("test-secret-key"), false);
@@ -499,12 +507,11 @@ test("a failed vertex refresh does not call the model stream", async () => {
 });
 
 function bedrockSse(): Response {
-  return new Response([
-    'data: {"contentBlockDelta":{"delta":{"text":"Hi"}}}',
-    "",
-    'data: {"messageStop":{"stopReason":"end_turn"}}',
-    "",
-  ].join("\n"), { status: 200, headers: { "content-type": "text/event-stream" } });
+  const body = encodeBedrockEvents([
+    { type: "contentBlockDelta", body: { contentBlockIndex: 0, delta: { text: "Hi" } } },
+    { type: "messageStop", body: { stopReason: "end_turn" } },
+  ]);
+  return new Response(body, { status: 200, headers: { "content-type": "application/vnd.amazon.eventstream" } });
 }
 
 function vertexSse(): Response {
