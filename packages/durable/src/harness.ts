@@ -929,42 +929,56 @@ export class AgentLane {
   private async runTools(operationId: string, signal: AbortSignal, telemetryContext: DriveSpan): Promise<void> {
     for (let step = 0; step < 32; step++) {
       if (this.harness.isAbandoned) return;
-      const action = await this.harness.storage.run((view, apply) => this.armTools(view, apply, operationId, telemetryContext, signal));
+      const action = await this.harness.storage.run((view, apply) => this.armTools(view, apply, operationId, telemetryContext));
       if (action.type === "done") return;
-      const sequential = action.mode === "sequential";
-      const execute = async (call: ArmedCall) => {
-        try {
-          const result = await createTypedSpanStarter(telemetryContext, [durableTelemetrySchema])(
-            "amazme.tool.execute",
-            { tool: call.name, toolCallId: call.toolCallId },
-            async (span) => {
-              const result = await this.executeTool(call, signal, span);
-              if (result.isError || signal.aborted) span.setStatus({ status: "error" });
-              return result;
-            });
-          if (this.harness.isAbandoned) return;
-          const update = await walkAfter(this.hookList(), {
-            toolCallId: call.toolCallId,
-            toolName: call.name,
-            args: call.args,
-            result,
-          }, signal);
-          await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, applyAfter(result, update)));
-        } catch (error) {
-          this.harness.live.delete(call.resultEntryId);
-          throw error;
-        }
-      };
-      if (sequential) {
-        const call = action.calls[0];
-        if (call) await execute(call);
-      } else {
-        await settleAll(action.calls.map((call) => execute(call)));
-      }
+      const armed = action.type === "run"
+        ? action
+        : await this.commitDecidedTools(operationId, action.mode, await this.decideToolCalls(action.batch, signal), signal);
+      if (armed.type === "done") return;
+      await this.executeArmed(operationId, armed.mode, armed.calls, signal, telemetryContext);
     }
   }
 
-  private async armTools(view: StorageView, apply: Apply, operationId: string, telemetryContext: DriveSpan, signal: AbortSignal): Promise<{ type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] }> {
+  /** `beforeToolCall` waits outside the storage chain so cancel can abort this lane. */
+  private async decideToolCalls(batch: readonly ToolDecision[], signal: AbortSignal): Promise<ToolDecision[]> {
+    const decided: ToolDecision[] = [];
+    for (const item of batch) {
+      if (item.outcome !== undefined || !item.tool) {
+        decided.push(item);
+        continue;
+      }
+      if (signal.aborted) {
+        decided.push({ ...item, outcome: "cancelled" });
+        continue;
+      }
+      const decision = await walkBefore(this.hookList(), {
+        toolCallId: item.call.toolCallId,
+        toolName: item.call.name,
+        args: item.args,
+      }, signal);
+      if (decision?.action === "block") {
+        decided.push({ ...item, outcome: decision.reason });
+        continue;
+      }
+      if (signal.aborted) {
+        decided.push({ ...item, outcome: "cancelled" });
+        continue;
+      }
+      decided.push(item);
+    }
+    return decided;
+  }
+
+  private commitDecidedTools(
+    operationId: string,
+    mode: ToolExecutionMode,
+    decided: readonly ToolDecision[],
+    signal: AbortSignal,
+  ): Promise<{ type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] }> {
+    return this.harness.storage.run((view, apply) => this.commitToolDecisions(view, apply, operationId, mode, decided, signal));
+  }
+
+  private armTools(view: StorageView, apply: Apply, operationId: string, telemetryContext: DriveSpan): ToolPrep {
     const state = view.get<OperationState>(stateAddress(operationId));
     if (!state || state.phase !== "tools") return { type: "done" };
     this.materializeTools(view, apply, operationId);
@@ -1006,10 +1020,8 @@ export class AgentLane {
     const planned = calls.filter((call) => call.status === "planned");
     const batch = sequential ? planned.slice(0, 1) : planned;
     if (batch.length === 0) return { type: "done" };
-    const decided: Array<
-      | { call: ToolCallState; args: unknown; outcome: string }
-      | { call: ToolCallState; args: unknown; tool: HarnessTool }
-    > = [];
+    const decided: ToolDecision[] = [];
+    let needsHook = false;
     for (const call of batch) {
       const args = readArgs(assistant, call.sourceIndex);
       const tool = this.tool(call.name);
@@ -1018,46 +1030,114 @@ export class AgentLane {
         decided.push({ call, args, outcome: cancel ? "cancelled" : invalid || "unavailable" });
         continue;
       }
-      const decision = await walkBefore(this.hookList(), {
-        toolCallId: call.toolCallId,
-        toolName: call.name,
-        args,
-      }, signal);
-      if (decision?.action === "block") {
-        decided.push({ call, args, outcome: decision.reason });
-        continue;
-      }
+      needsHook = true;
       decided.push({ call, args, tool });
     }
+    if (needsHook) {
+      return { type: "decide", mode: sequential ? "sequential" : "parallel", batch: decided };
+    }
     for (const item of decided) {
-      if ("outcome" in item) {
+      const outcome = item.outcome ?? "unavailable";
+      calls = calls.map((entry) => entry.resultEntryId === item.call.resultEntryId ? { ...entry, status: "outcome_ready" as const, terminate: false } : entry);
+      apply([{
+        type: "set",
+        address: pendingAddress(item.call.resultEntryId),
+        value: { type: "message", message: toolMessage(item.call, outcome, true, false) },
+      }]);
+    }
+    apply([{ type: "set", address: stateAddress(operationId), value: { ...refreshed, calls } }]);
+    this.materializeTools(view, apply, operationId);
+    return { type: "done" };
+  }
+
+  private async executeArmed(
+    operationId: string,
+    mode: ToolExecutionMode,
+    calls: readonly ArmedCall[],
+    signal: AbortSignal,
+    telemetryContext: DriveSpan,
+  ): Promise<void> {
+    const execute = async (call: ArmedCall) => {
+      try {
+        const outcome = await createTypedSpanStarter(telemetryContext, [durableTelemetrySchema])(
+          "amazme.tool.execute",
+          { tool: call.name, toolCallId: call.toolCallId },
+          async (span) => {
+            const outcome = await this.executeTool(call, signal, span);
+            if (outcome.result.isError || signal.aborted) span.setStatus({ status: "error" });
+            return outcome;
+          });
+        if (this.harness.isAbandoned) return;
+        let result = outcome.result;
+        if (outcome.executed) {
+          const update = await walkAfter(this.hookList(), {
+            toolCallId: call.toolCallId,
+            toolName: call.name,
+            args: call.args,
+            result,
+          }, signal);
+          result = applyAfter(result, update);
+        }
+        await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, result));
+      } finally {
+        this.harness.live.delete(call.resultEntryId);
+      }
+    };
+    if (mode === "sequential") {
+      const call = calls[0];
+      if (call) await execute(call);
+      return;
+    }
+    await settleAll(calls.map((call) => execute(call)));
+  }
+
+  private commitToolDecisions(
+    view: StorageView,
+    apply: Apply,
+    operationId: string,
+    mode: ToolExecutionMode,
+    decided: readonly ToolDecision[],
+    signal: AbortSignal,
+  ): { type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] } {
+    const state = view.get<OperationState>(stateAddress(operationId));
+    if (!state || state.phase !== "tools") return { type: "done" };
+    const cancel = state.scope.control.status === "cancel_requested" || signal.aborted;
+    let calls = state.calls.map((call) => ({ ...call }));
+    const toRun: ArmedCall[] = [];
+    for (const item of decided) {
+      const current = calls.find((entry) => entry.resultEntryId === item.call.resultEntryId);
+      if (!current || current.status !== "planned") continue;
+      const outcome = item.outcome !== undefined ? item.outcome : (cancel ? "cancelled" : undefined);
+      if (outcome !== undefined) {
         calls = calls.map((entry) => entry.resultEntryId === item.call.resultEntryId ? { ...entry, status: "outcome_ready" as const, terminate: false } : entry);
         apply([{
           type: "set",
           address: pendingAddress(item.call.resultEntryId),
-          value: { type: "message", message: toolMessage(item.call, item.outcome, true, false) },
+          value: { type: "message", message: toolMessage(item.call, outcome, true, false) },
         }]);
         continue;
       }
+      const tool = item.tool;
+      if (!tool) continue;
       calls = calls.map((entry) =>
         entry.resultEntryId === item.call.resultEntryId
-          ? { ...entry, status: "effect_pending" as const, replay: item.tool.replay ?? "never" }
+          ? { ...entry, status: "effect_pending" as const, replay: tool.replay ?? "never" }
           : entry,
       );
       apply([{ type: "set", address: toolArgsAddress(operationId, item.call.resultEntryId), value: item.args }]);
       this.harness.live.add(item.call.resultEntryId);
-      toRun.push({ ...item.call, operationId, args: item.args, replay: item.tool.replay ?? "never" });
+      toRun.push({ ...item.call, operationId, args: item.args, replay: tool.replay ?? "never" });
     }
-    apply([{ type: "set", address: stateAddress(operationId), value: { ...refreshed, calls } }]);
+    apply([{ type: "set", address: stateAddress(operationId), value: { ...state, calls } }]);
     this.materializeTools(view, apply, operationId);
     if (toRun.length === 0) return { type: "done" };
-    return { type: "run", mode: sequential ? "sequential" : "parallel", calls: toRun };
+    return { type: "run", mode, calls: toRun };
   }
 
-  private async executeTool(call: ArmedCall, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<ToolResult> {
-    if (signal.aborted) return { content: [{ type: "text", text: "cancelled" }], isError: true };
+  private async executeTool(call: ArmedCall, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<{ result: ToolResult; executed: boolean }> {
+    if (signal.aborted) return { result: { content: [{ type: "text", text: "cancelled" }], isError: true }, executed: false };
     const tool = this.tool(call.name);
-    if (!tool) return { content: [{ type: "text", text: `Unknown tool: ${call.name}` }], isError: true };
+    if (!tool) return { result: { content: [{ type: "text", text: `Unknown tool: ${call.name}` }], isError: true }, executed: false };
     const writes: Promise<void>[] = [];
     let accepting = true;
     const accept = (partial: string, options?: { checkpoint?: boolean }): void => {
@@ -1075,15 +1155,17 @@ export class AgentLane {
       void pending.catch(() => undefined);
     };
     let result: ToolResult;
+    let executed = false;
     try {
       result = await tool.execute(call.args, { signal, telemetryContext, onUpdate: accept });
+      executed = true;
     } catch (error) {
       result = { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
     } finally {
       accepting = false;
     }
     await settleAll(writes);
-    return result;
+    return { result, executed };
   }
 
   private stageTool(view: StorageView, apply: Apply, operationId: string, call: ArmedCall, result: ToolResult): void {
@@ -1546,6 +1628,18 @@ interface ArmedCall extends ToolCallState {
   operationId: string;
   args: unknown;
   replay: ReplayPolicy;
+}
+
+type ToolPrep =
+  | { type: "done" }
+  | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] }
+  | { type: "decide"; mode: ToolExecutionMode; batch: ToolDecision[] };
+
+interface ToolDecision {
+  call: ToolCallState;
+  args: unknown;
+  outcome?: string;
+  tool?: HarnessTool;
 }
 
 function user(text: string): HarnessMessage {
