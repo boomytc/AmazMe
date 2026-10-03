@@ -64,7 +64,7 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 
 ## 持久化运行时
 
-`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 在武装工具前调用 `walkBefore`，在工具返回后、写入结果前调用 `walkAfter`，并只在助手请求和摘要请求调用 `streamSimple` 之前用 `walkTransform` 替换这一次的 messages。变换结果不写回条目。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`drive` 才调用 `walkYield`：非空白字符串追加成一条 user 消息，并和随后的阶段在同一次 apply 里提交，然后再请求一次；空结果则完成。钩子抛错发生在任何写入之前，不留下 live id，也不重发已经结算的 `streamSimple`。工具轮、terminate、摘要和 navigation 不调用它。`HarnessTool`、`ToolResult`、`HarnessMessage` 仍属于 Durable 自己的契约，不与 Agent 的同名类型合并。更多使用方式见 [Durable README](packages/durable/README.md)。
+`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 在存储事务外、武装工具前调用 `walkBefore`；这段等待中的取消不执行，也不进入 `walkAfter`。`walkAfter` 只在 `execute` 正常返回之后、写入结果之前；`execute` 抛错时不调用它，错误文本仍作为工具结果提交。`walkTransform` 只在助手请求和摘要请求调用 `streamSimple` 之前替换这一次的 messages。变换结果不写回条目。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`drive` 才调用 `walkYield`：非空白字符串追加成一条 user 消息，并和随后的阶段在同一次 apply 里提交，然后再请求一次；空结果则完成。`onYield` 抛错发生在写入之前，不留下 live id，也不重发已经结算的 `streamSimple`。工具轮、terminate、摘要和 navigation 不调用它。`HarnessTool`、`ToolResult`、`HarnessMessage` 仍属于 Durable 自己的契约，不与 Agent 的同名类型合并。更多使用方式见 [Durable README](packages/durable/README.md)。
 
 存储只有三类东西：只写一次的 entry 树、可替换的 value 和只追加的 list、只追加的 usage。一次 commit 要么全部可见，要么全部没有。
 
