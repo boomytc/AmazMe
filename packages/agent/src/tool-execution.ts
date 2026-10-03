@@ -186,7 +186,7 @@ async function settleAll<T>(tasks: Promise<T>[]): Promise<T[]> {
   });
 }
 
-function applyAfter(result: ToolResult, update: AfterToolCallUpdate | undefined): ToolResult {
+export function applyAfter(result: ToolResult, update: AfterToolCallUpdate | undefined): ToolResult {
   if (!update) return result;
   const next: ToolResult = { content: update.content ?? result.content };
   const isError = update.isError !== undefined ? update.isError : result.isError;
