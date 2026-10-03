@@ -3,7 +3,7 @@ import test from "node:test";
 import type { AgentHook } from "@amazme/agent";
 import { createModels, messageText, type Message } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
-import { AgentHarness, type AgentLane, type Entry, type HarnessTool } from "@amazme/durable";
+import { AgentHarness, type AgentLane, type Entry, type HarnessTool, type Write } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
 function modelsFor(respond: FauxResponder) {
@@ -325,6 +325,69 @@ test("summary and navigation do not call onYield", async () => {
     assert.equal(watched, 0);
     assert.equal(provider.state.callCount, 2);
     assert.equal((await lane.entries()).some((entry) => entryText(entry) === "again"), false);
+  } finally {
+    runtime.close();
+  }
+});
+
+class YieldBoundaryStorage extends MemoryStorage {
+  private crashAfterCommit = false;
+
+  constructor() {
+    super();
+    this.subscribe(() => {
+      if (!this.crashAfterCommit) return;
+      this.crashAfterCommit = false;
+      throw new Error("yield boundary crash");
+    });
+  }
+
+  protected override persist(writes: Write[]): void {
+    const yielded = writes.some((write) => write.type === "entry"
+      && write.payload.type === "message"
+      && write.payload.message.role === "user"
+      && write.payload.message.content === "again");
+    if (yielded) this.crashAfterCommit = true;
+    super.persist(writes);
+  }
+}
+
+test("a crash after the yielded user message still requests the model with that text", async () => {
+  let yields = 0;
+  let callCountAtLaterYield = -1;
+  const storage = new YieldBoundaryStorage();
+  const { provider, models } = modelsFor((_context, _options, state) => fauxAssistant(state.callCount === 1 ? "answer-1" : "answer-2"));
+  const runtime = new AgentHarness(storage, {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    hooks: [{
+      onYield: () => {
+        yields += 1;
+        if (yields === 1) return "again";
+        callCountAtLaterYield = provider.state.callCount;
+        return undefined;
+      },
+    }],
+  });
+  try {
+    const lane = runtime.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    await assert.rejects(lane.drive(admitted.value.operationId), /yield boundary crash/);
+    const state = await checkpoint(storage, admitted.value.operationId);
+    assert.equal(state?.phase, "assistant_ready");
+    assert.equal(provider.state.callCount, 1);
+    assert.equal((await lane.entries()).filter((entry) => entryText(entry) === "again").length, 1);
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "completed");
+    assert.equal(provider.state.callCount, 2);
+    assert.equal(provider.state.contexts.length, 2);
+    assert.equal(userTexts(provider.state.contexts[1]?.messages ?? []).includes("again"), true);
+    assert.equal(userTexts(provider.state.contexts[0]?.messages ?? []).includes("again"), false);
+    assert.equal(callCountAtLaterYield, 2);
+    assert.equal(yields, 2);
+    assert.equal((await lane.entries()).filter((entry) => entryText(entry) === "again").length, 1);
   } finally {
     runtime.close();
   }

@@ -1237,17 +1237,21 @@ export class AgentLane {
     const yielded = typeof text === "string" && text.trim() !== "" ? text : undefined;
     if (yielded === undefined) return { type: "settled", result: this.finish(view, apply, meta, "completed") };
     const entryId = uuidv7();
-    apply([
-      {
-        type: "entry",
-        id: entryId,
-        parentId: placed.tipId,
-        timestamp: Date.now(),
-        payload: { type: "message", message: user(yielded) },
-      },
-      { type: "set", address: tipAddress(this.name), value: entryId },
-    ]);
-    return this.beginModelRequest(view, apply, meta, state.scope);
+    const message = user(yielded);
+    return this.beginModelRequest(view, apply, meta, state.scope, {
+      tipId: entryId,
+      message,
+      writes: [
+        {
+          type: "entry",
+          id: entryId,
+          parentId: placed.tipId,
+          timestamp: message.timestamp,
+          payload: { type: "message", message },
+        },
+        { type: "set", address: tipAddress(this.name), value: entryId },
+      ],
+    });
   }
 
   /** True when the settled tip is an assistant message that did not call tools. Terminate leaves a tool result. */
@@ -1303,13 +1307,15 @@ export class AgentLane {
     return { record: next, tipId, moved: true };
   }
 
-  private providerContext(view: StorageView): Context {
+  private providerContext(view: StorageView, pending?: HarnessMessage): Context {
     const config = this.config(view);
+    const messages = this.visibleEntries(view).map((entry) => entry.kind === "compaction"
+      ? { role: "user" as const, content: entry.summary, timestamp: entry.timestamp }
+      : entry.message);
+    if (pending && pending.role !== "custom") messages.push(pending);
     return {
       systemPrompt: config.systemPrompt,
-      messages: this.visibleEntries(view).map((entry) => entry.kind === "compaction"
-        ? { role: "user" as const, content: entry.summary, timestamp: entry.timestamp }
-        : entry.message),
+      messages,
       tools: this.toolDefinitions(),
     };
   }
@@ -1349,35 +1355,62 @@ export class AgentLane {
     return resolveOutputBudget(model, this.providerContext(view), config.maxTokens);
   }
 
-  /** Place the next model call, or a compaction, after the messages for this request are already in the tree. */
-  private beginModelRequest(view: StorageView, apply: Apply, meta: OperationMeta, scope: Scope): Plan {
-    const decision = this.assess(view, scope);
-    if (decision.type === "fail") return { type: "settled", result: this.finish(view, apply, meta, "failed", decision.message) };
-    if (decision.type === "compact") {
-      const nextScope: Scope = {
-        ...scope,
-        thresholdUsed: decision.reason === "threshold" ? true : scope.thresholdUsed,
-        overflowUsed: decision.reason === "overflow" ? true : scope.overflowUsed,
+  /**
+   * Place the next model call, or a compaction.
+   * `carried` is the yielded user entry. It is judged with the following phase and committed in that same apply.
+   */
+  private beginModelRequest(
+    view: StorageView,
+    apply: Apply,
+    meta: OperationMeta,
+    scope: Scope,
+    carried?: { writes: Write[]; tipId: string; message: HarnessMessage },
+  ): Plan {
+    const decision = this.assess(view, scope, carried?.message);
+    const prefix = carried?.writes ?? [];
+    if (decision.type === "fail") {
+      return {
+        type: "settled",
+        result: this.finish(
+          view,
+          apply,
+          meta,
+          "failed",
+          decision.message,
+          carried ? { writes: prefix, tipId: carried.tipId } : undefined,
+        ),
       };
-      apply([{
-        type: "set",
-        address: stateAddress(meta.operationId),
-        value: { phase: "summary_deciding", scope: nextScope, reason: decision.reason, boundary: "resume" },
-      }]);
-      return { type: "continue" };
     }
-    apply([{ type: "set", address: stateAddress(meta.operationId), value: { phase: "assistant_ready", scope } }]);
+    const nextScope: Scope = decision.type === "compact"
+      ? {
+          ...scope,
+          thresholdUsed: decision.reason === "threshold" ? true : scope.thresholdUsed,
+          overflowUsed: decision.reason === "overflow" ? true : scope.overflowUsed,
+        }
+      : scope;
+    const phase: Write = decision.type === "compact"
+      ? {
+          type: "set",
+          address: stateAddress(meta.operationId),
+          value: { phase: "summary_deciding", scope: nextScope, reason: decision.reason, boundary: "resume" },
+        }
+      : { type: "set", address: stateAddress(meta.operationId), value: { phase: "assistant_ready", scope } };
+    apply([...prefix, phase]);
     return { type: "continue" };
   }
 
-  private assess(view: StorageView, scope: Scope): { type: "send" } | { type: "compact"; reason: SummaryReason } | { type: "fail"; message: string } {
+  private assess(
+    view: StorageView,
+    scope: Scope,
+    pending?: HarnessMessage,
+  ): { type: "send" } | { type: "compact"; reason: SummaryReason } | { type: "fail"; message: string } {
     const config = this.config(view);
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
     if (!model) return { type: "fail", message: `Unknown model ${config.provider}/${config.modelId}` };
     if (config.compaction.enabled && (!Number.isSafeInteger(config.compaction.maxTokens) || config.compaction.maxTokens <= 0)) {
       return { type: "fail", message: "compaction.maxTokens must be a positive integer" };
     }
-    const budget = resolveOutputBudget(model, this.providerContext(view), config.maxTokens);
+    const budget = resolveOutputBudget(model, this.providerContext(view, pending), config.maxTokens);
     if (budget.status === "invalid_limit" || budget.status === "unserializable") {
       return { type: "fail", message: budget.message ?? "Context budget is invalid" };
     }
