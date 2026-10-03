@@ -2,10 +2,11 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Agent } from "@amazme/agent";
-import { createModels } from "@amazme/ai";
+import { createModels, type LoginInteraction } from "@amazme/ai";
 import { fauxProvider } from "@amazme/ai/providers/faux";
-import { openaiProvider } from "@amazme/ai/providers/openai";
+import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { AgentSession } from "./agent-session.ts";
+import { FileCredentialStore, installationDeviceId } from "./credentials.ts";
 import { SessionStore } from "./session.ts";
 import { appendSkillText } from "./skills.ts";
 import { createCodingTools } from "./tools.ts";
@@ -26,7 +27,8 @@ function parseArgs(argv: string[]): Args {
     else if (token === "--model") args.model = argv[++index] ?? args.model;
     else if (token === "--cwd") args.cwd = resolve(argv[++index] ?? args.cwd);
     else if (token === "--help") {
-      console.log("amazme [--provider faux|openai] [--model id] [--cwd dir] <prompt>");
+      console.log("amazme [--provider id] [--model id] [--cwd dir] <prompt>");
+      console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
       process.exit(0);
     } else rest.push(token ?? "");
   }
@@ -34,24 +36,66 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
+async function runLogin(argv: string[]): Promise<void> {
+  let providerId = "";
+  let method: LoginInteraction["method"];
+  let callbackPort: number | undefined;
+  for (let index = 0; index < argv.length; index++) {
+    const token = argv[index];
+    if (token === "--provider") providerId = argv[++index] ?? "";
+    else if (token === "--method") {
+      const value = argv[++index];
+      if (value === "pkce" || value === "device_code") method = value;
+    } else if (token === "--callback-port") callbackPort = Number(argv[++index]);
+    else if (token === "--help") {
+      console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
+      process.exit(0);
+    }
+  }
+  const provider = builtinProviders().find((item) => item.id === providerId);
+  if (!provider?.auth.oauth) {
+    console.error(providerId ? `${providerId} has no login` : "login requires --provider");
+    process.exit(1);
+  }
+  const result = await provider.auth.oauth.login({
+    ...(method ? { method } : {}),
+    ...(callbackPort !== undefined && Number.isInteger(callbackPort) ? { callbackPort } : {}),
+    deviceId: installationDeviceId(),
+    onHandback(handback) {
+      console.log(JSON.stringify(handback));
+    },
+  });
+  await new FileCredentialStore().set(provider.id, result.credential);
+  console.log(JSON.stringify({ stored: true, provider: provider.id, type: result.credential.type }));
+}
+
 async function main(): Promise<void> {
+  if (process.argv[2] === "login") {
+    await runLogin(process.argv.slice(3));
+    return;
+  }
   const args = parseArgs(process.argv.slice(2));
   if (!args.prompt) {
     console.error("missing prompt");
     process.exit(1);
   }
-  const models = createModels();
-  if (args.provider === "openai") models.setProvider(openaiProvider({ modelIds: [args.model] }));
-  else models.setProvider(fauxProvider({ respond: (_context, _options, _state, model) => ({
-    role: "assistant",
-    content: [{ type: "text", text: `faux:${args.prompt}` }],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
-    stopReason: "stop",
-    timestamp: Date.now(),
-  }) }));
+  const models = createModels({ store: new FileCredentialStore() });
+  if (args.provider === "faux") {
+    models.setProvider(fauxProvider({ respond: (_context, _options, _state, model) => ({
+      role: "assistant",
+      content: [{ type: "text", text: `faux:${args.prompt}` }],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    }) }));
+  } else {
+    const provider = builtinProviders().find((item) => item.id === args.provider);
+    if (!provider) throw new Error(`unknown provider ${args.provider}`);
+    models.setProvider(provider);
+  }
   const model = models.getModel(args.provider, args.model);
   if (!model) throw new Error(`unknown model ${args.provider}/${args.model}`);
   const dir = join(args.cwd, ".amazme", "sessions");

@@ -1,4 +1,17 @@
-export { MemoryCredentialStore, resolveApiKey, type ApiKeyAuth } from "./auth.ts";
+export {
+  AuthRefreshError,
+  MemoryCredentialStore,
+  OAUTH_REFRESH_SKEW_MS,
+  providerAuth,
+  resolveApiKey,
+  resolveModelAuth,
+  type ApiKeyAuth,
+  type LoginInteraction,
+  type LoginResult,
+  type OAuthAuth,
+  type OAuthLoginHandback,
+  type ProviderAuth,
+} from "./auth.ts";
 export { EventStream } from "./event-stream.ts";
 export { frameFromEvent, messageFromFrames, reduceFrames } from "./frames.ts";
 export { toolDefinition, validateArguments } from "./utils/tool-schema.ts";
@@ -46,6 +59,7 @@ export {
 } from "./transform.ts";
 export type {
   ApiKeyCredential,
+  OAuthCredential,
   AssistantContent,
   AssistantEvent,
   AssistantFrame,
