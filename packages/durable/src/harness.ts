@@ -1,3 +1,4 @@
+import { applyAfter, walkAfter, walkBefore, walkTransform, type AgentHook, type AgentMessage } from "@amazme/agent";
 import {
   uuidv7,
   toolDefinition,
@@ -62,6 +63,8 @@ export interface HarnessOptions {
   models: HarnessModels;
   model: { provider: string; modelId: string };
   tools?: HarnessTool[];
+  /** Ordered hooks. The drive calls the existing agent walks. */
+  hooks?: readonly AgentHook[];
   systemPrompt?: string;
   thinkingLevel?: ThinkingLevel;
   steeringMode?: QueueMode;
@@ -622,7 +625,9 @@ export class AgentLane {
     const config = await this.harness.storage.read((view) => this.config(view));
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
     if (!model) return missingModel(config);
-    const stream = this.harness.options.models.streamSimple(model, context, {
+    const replaced = await walkTransform(this.hookList(), context.messages as AgentMessage[], signal);
+    const request = replaced ? { ...context, messages: replaced as typeof context.messages } : context;
+    const stream = this.harness.options.models.streamSimple(model, request, {
       signal,
       thinkingLevel: config.thinkingLevel,
       telemetryContext,
@@ -661,9 +666,13 @@ export class AgentLane {
       if (model) failed.errorMessage = request && !request.ok ? request.message : "summary plan is missing";
       return failed;
     }
+    const replaced = await walkTransform(this.hookList(), request.context.messages as AgentMessage[], signal);
+    const summaryContext = replaced
+      ? { ...request.context, messages: replaced as typeof request.context.messages }
+      : request.context;
     const stream = this.harness.options.models.streamSimple(
       model,
-      request.context,
+      summaryContext,
       { signal, thinkingLevel: "off", maxTokens: request.maxTokens, telemetryContext },
     );
     let message: AssistantMessage | undefined;
@@ -910,7 +919,7 @@ export class AgentLane {
   private async runTools(operationId: string, signal: AbortSignal, telemetryContext: DriveSpan): Promise<void> {
     for (let step = 0; step < 32; step++) {
       if (this.harness.isAbandoned) return;
-      const action = await this.harness.storage.run((view, apply) => this.armTools(view, apply, operationId, telemetryContext));
+      const action = await this.harness.storage.run((view, apply) => this.armTools(view, apply, operationId, telemetryContext, signal));
       if (action.type === "done") return;
       const sequential = action.mode === "sequential";
       const execute = async (call: ArmedCall) => {
@@ -924,7 +933,13 @@ export class AgentLane {
               return result;
             });
           if (this.harness.isAbandoned) return;
-          await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, result));
+          const update = await walkAfter(this.hookList(), {
+            toolCallId: call.toolCallId,
+            toolName: call.name,
+            args: call.args,
+            result,
+          }, signal);
+          await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, applyAfter(result, update)));
         } catch (error) {
           this.harness.live.delete(call.resultEntryId);
           throw error;
@@ -939,7 +954,7 @@ export class AgentLane {
     }
   }
 
-  private armTools(view: StorageView, apply: Apply, operationId: string, telemetryContext: DriveSpan): { type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] } {
+  private async armTools(view: StorageView, apply: Apply, operationId: string, telemetryContext: DriveSpan, signal: AbortSignal): Promise<{ type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] }> {
     const state = view.get<OperationState>(stateAddress(operationId));
     if (!state || state.phase !== "tools") return { type: "done" };
     this.materializeTools(view, apply, operationId);
@@ -981,30 +996,47 @@ export class AgentLane {
     const planned = calls.filter((call) => call.status === "planned");
     const batch = sequential ? planned.slice(0, 1) : planned;
     if (batch.length === 0) return { type: "done" };
+    const decided: Array<
+      | { call: ToolCallState; args: unknown; outcome: string }
+      | { call: ToolCallState; args: unknown; tool: HarnessTool }
+    > = [];
     for (const call of batch) {
       const args = readArgs(assistant, call.sourceIndex);
       const tool = this.tool(call.name);
       const invalid = tool ? validateArguments(tool.parameters, args) : `Unknown tool: ${call.name}`;
       if (cancel || !tool || invalid) {
-        calls = calls.map((item) => (item.resultEntryId === call.resultEntryId ? { ...item, status: "outcome_ready" as const, terminate: false } : item));
+        decided.push({ call, args, outcome: cancel ? "cancelled" : invalid || "unavailable" });
+        continue;
+      }
+      const decision = await walkBefore(this.hookList(), {
+        toolCallId: call.toolCallId,
+        toolName: call.name,
+        args,
+      }, signal);
+      if (decision?.action === "block") {
+        decided.push({ call, args, outcome: decision.reason });
+        continue;
+      }
+      decided.push({ call, args, tool });
+    }
+    for (const item of decided) {
+      if ("outcome" in item) {
+        calls = calls.map((entry) => entry.resultEntryId === item.call.resultEntryId ? { ...entry, status: "outcome_ready" as const, terminate: false } : entry);
         apply([{
           type: "set",
-          address: pendingAddress(call.resultEntryId),
-          value: {
-            type: "message",
-            message: toolMessage(call, cancel ? "cancelled" : invalid || "unavailable", true, false),
-          },
+          address: pendingAddress(item.call.resultEntryId),
+          value: { type: "message", message: toolMessage(item.call, item.outcome, true, false) },
         }]);
         continue;
       }
-      calls = calls.map((item) =>
-        item.resultEntryId === call.resultEntryId
-          ? { ...item, status: "effect_pending" as const, replay: tool.replay ?? "never" }
-          : item,
+      calls = calls.map((entry) =>
+        entry.resultEntryId === item.call.resultEntryId
+          ? { ...entry, status: "effect_pending" as const, replay: item.tool.replay ?? "never" }
+          : entry,
       );
-      apply([{ type: "set", address: toolArgsAddress(operationId, call.resultEntryId), value: args }]);
-      this.harness.live.add(call.resultEntryId);
-      toRun.push({ ...call, operationId, args, replay: tool.replay ?? "never" });
+      apply([{ type: "set", address: toolArgsAddress(operationId, item.call.resultEntryId), value: item.args }]);
+      this.harness.live.add(item.call.resultEntryId);
+      toRun.push({ ...item.call, operationId, args: item.args, replay: item.tool.replay ?? "never" });
     }
     apply([{ type: "set", address: stateAddress(operationId), value: { ...refreshed, calls } }]);
     this.materializeTools(view, apply, operationId);
@@ -1396,6 +1428,10 @@ export class AgentLane {
 
   private tool(name: string): HarnessTool | undefined {
     return (this.harness.options.tools ?? []).find((tool) => tool.name === name);
+  }
+
+  private hookList(): readonly AgentHook[] {
+    return this.harness.options.hooks ?? [];
   }
 
   private armed(view: StorageView, operationId: string, call: ToolCallState, assistant: Entry | undefined): ArmedCall {

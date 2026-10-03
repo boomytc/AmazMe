@@ -1,6 +1,6 @@
 # @amazme/durable
 
-独立于内存 Agent 的持久化 lane 运行时，直接依赖 `@amazme/ai` 和 `@amazme/telemetry`。包边界参考 [Pi `7fbbd5f`](https://github.com/earendil-works/pi/blob/7fbbd5f4a1d982bb02d63472dde0774fa639f99b/packages/durable/package.json)，运行语义保持本仓库现有设计。
+持久化 lane 运行时。依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 的 `walkBefore`、`walkAfter`、`walkTransform`。`@amazme/agent` 不依赖本包。运行语义保持本仓库现有设计，不另建 hook 类型或第二套遍历。
 
 ## 入口与使用
 
@@ -36,7 +36,7 @@ try {
 | `@amazme/durable/storage/jsonl/node` | Node 文件系统 JSONL 适配器 |
 | `@amazme/durable/testing` | 独立于测试框架的共享存储契约检查，仅此测试入口使用 Node 断言 |
 
-核心入口和内存后端可在没有 Node 模块、全局 `process`、Agent 包或业务客户端的环境中使用。需要持久化文件时显式导入 Node 适配器：
+核心入口和内存后端可在没有 Node 模块、全局 `process` 或业务客户端的环境中使用。入口会加载 `@amazme/agent` 的 hook 遍历。需要持久化文件时显式导入 Node 适配器：
 
 ```typescript
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
@@ -47,7 +47,7 @@ const storage = new JsonlStorage("./state/lane.jsonl");
 
 `HarnessModels` 只要求 `getModel`、`streamSimple` 和可选的 `telemetryContext`，无需继承 `Models` 或提供认证存储、目录修改等额外能力。`createModels()` 返回的对象直接满足接口。
 
-`HarnessTool`、`ToolContext`、`ToolResult`、`HarnessMessage` 由 Durable 自己定义。工具和消息按结构满足各运行时自己的契约；Durable 的源码与声明不依赖 Agent。工具重放策略保存在操作状态中。
+`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 调用已导出的三次遍历：`walkBefore` 在 `armTools` 里、`live.add` 和 `effect_pending` 之前；`walkAfter` 在 `execute` 返回之后、`stageTool` 之前；`walkTransform` 只在 `streamAssistant` 和 `streamSummary` 调用 `streamSimple` 之前替换该次请求的 messages，不写回条目。`HarnessTool`、`ToolContext`、`ToolResult`、`HarnessMessage` 仍由 Durable 自己定义，不与 Agent 的同名类型合并。工具重放策略保存在操作状态中。
 
 `Storage` / `StorageView` 是结构化接口。后端可以自行实现，无需继承 `MemoryStorage`。`run` 串行持有写入通道；其中每次 `apply` 分别原子提交，不跨多个 `apply` 回滚。借出的 view 数据应只读，写入时将 payload 的所有权交给存储。`apply` 在所属回调结束后失效。
 
