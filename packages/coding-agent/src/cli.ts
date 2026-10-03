@@ -10,6 +10,7 @@ import { FileCredentialStore, installationDeviceId } from "./credentials.ts";
 import { SessionStore } from "./session.ts";
 import { appendSkillText } from "./skills.ts";
 import { createCodingTools } from "./tools.ts";
+import { runCodingFullscreen, shouldOpenFullscreen } from "./tui/run.ts";
 
 interface Args {
   prompt: string;
@@ -27,7 +28,7 @@ function parseArgs(argv: string[]): Args {
     else if (token === "--model") args.model = argv[++index] ?? args.model;
     else if (token === "--cwd") args.cwd = resolve(argv[++index] ?? args.cwd);
     else if (token === "--help") {
-      console.log("amazme [--provider id] [--model id] [--cwd dir] <prompt>");
+      console.log("amazme [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
       process.exit(0);
     } else rest.push(token ?? "");
@@ -75,6 +76,10 @@ async function main(): Promise<void> {
     return;
   }
   const args = parseArgs(process.argv.slice(2));
+  if (shouldOpenFullscreen(args.prompt, process.stdout.isTTY === true)) {
+    await runCodingFullscreen({ provider: args.provider, model: args.model, cwd: args.cwd });
+    return;
+  }
   if (!args.prompt) {
     console.error("missing prompt");
     process.exit(1);
