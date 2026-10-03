@@ -1,11 +1,12 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Credential, CredentialStore } from "@amazme/ai";
 
 /** Credentials live outside the repo. The file is the caller's CredentialStore, not a second auth implementation. */
 export class FileCredentialStore implements CredentialStore {
-  private readonly chains = new Map<string, Promise<unknown>>();
+  /** One chain for the whole file. Provider chains would let one write clobber another. */
+  private tail: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly file = process.env.AMAZME_CREDENTIALS ?? join(homedir(), ".amazme", "credentials.json")) {}
 
@@ -14,7 +15,7 @@ export class FileCredentialStore implements CredentialStore {
   }
 
   set(providerId: string, credential: Credential): Promise<void> {
-    return this.enqueue(providerId, async () => {
+    return this.enqueue(async () => {
       const all = this.read();
       all[providerId] = credential;
       this.write(all);
@@ -22,7 +23,7 @@ export class FileCredentialStore implements CredentialStore {
   }
 
   delete(providerId: string): Promise<void> {
-    return this.enqueue(providerId, async () => {
+    return this.enqueue(async () => {
       const all = this.read();
       delete all[providerId];
       this.write(all);
@@ -33,7 +34,7 @@ export class FileCredentialStore implements CredentialStore {
     providerId: string,
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,
   ): Promise<Credential | undefined> {
-    return this.enqueue(providerId, async () => {
+    return this.enqueue(async () => {
       const all = this.read();
       const current = all[providerId];
       const next = await fn(current);
@@ -45,11 +46,9 @@ export class FileCredentialStore implements CredentialStore {
     });
   }
 
-  private enqueue<T>(providerId: string, task: () => Promise<T>): Promise<T> {
-    const previous = this.chains.get(providerId) ?? Promise.resolve();
-    const run = previous.then(task, task);
-    const tail = run.then(() => undefined, () => undefined);
-    this.chains.set(providerId, tail);
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(task, task);
+    this.tail = run.then(() => undefined, () => undefined);
     return run;
   }
 
@@ -64,8 +63,11 @@ export class FileCredentialStore implements CredentialStore {
   }
 
   private write(values: Record<string, Credential>): void {
-    mkdirSync(dirname(this.file), { recursive: true });
-    writeFileSync(this.file, JSON.stringify(values));
+    const directory = dirname(this.file);
+    mkdirSync(directory, { recursive: true });
+    const temporary = join(directory, `.${basename(this.file)}.${process.pid}.tmp`);
+    writeFileSync(temporary, JSON.stringify(values));
+    renameSync(temporary, this.file);
   }
 }
 
