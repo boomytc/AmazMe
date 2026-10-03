@@ -1,4 +1,4 @@
-import { applyAfter, walkAfter, walkBefore, walkTransform, type AgentHook, type AgentMessage } from "@amazme/agent";
+import { applyAfter, walkAfter, walkBefore, walkTransform, walkYield, type AgentHook, type AgentMessage } from "@amazme/agent";
 import {
   uuidv7,
   toolDefinition,
@@ -181,7 +181,8 @@ type Plan =
   | { type: "error"; error: HarnessFailure }
   | { type: "assistant"; operationId: string; responseEntryId: string; usageId: string }
   | { type: "summary"; operationId: string; responseEntryId: string; usageId: string }
-  | { type: "tools"; operationId: string };
+  | { type: "tools"; operationId: string }
+  | { type: "yield" };
 
 const running = (): Scope => ({ control: { status: "running" }, attempt: 0, overflowUsed: false, thresholdUsed: false });
 
@@ -317,6 +318,14 @@ export class AgentLane {
       }
       if (planned.type === "continue") continue;
       if (this.harness.isAbandoned) return this.settledOrWait(operationId);
+      if (planned.type === "yield") {
+        const text = await walkYield(this.hookList(), signal);
+        if (this.harness.isAbandoned) return this.settledOrWait(operationId);
+        const applied = await this.harness.storage.run((view, apply) => this.applyYield(view, apply, operationId, text));
+        if (applied.type === "error") return { ok: false, error: applied.error };
+        if (applied.type === "settled") return { ok: true, value: { kind: "settled", result: applied.result } };
+        continue;
+      }
       if (planned.type === "assistant") {
         try {
           const message = await this.streamAssistant(planned, signal, span);
@@ -537,6 +546,7 @@ export class AgentLane {
       const includeFollow = state.continuation === "may_finish";
       const placed = this.placeInbox(view, apply, record, true, includeFollow);
       if (!placed.moved && state.continuation !== "need_assistant") {
+        if (this.modelStoppedWithoutTools(view)) return { type: "yield" };
         return { type: "settled", result: this.finish(view, apply, meta, "completed") };
       }
       apply([{ type: "set", address: laneAddress(this.name), value: { ...placed.record, currentOperationId: operationId } }]);
@@ -1204,6 +1214,57 @@ export class AgentLane {
     return result;
   }
 
+  /**
+   * Writes the yielded user message, or finishes when there is nothing to append.
+   * `walkYield` has already returned; a throw from that hook never reaches this method.
+   */
+  private applyYield(view: StorageView, apply: Apply, operationId: string, text: string | undefined): Plan {
+    const record = this.record(view);
+    const state = view.get<OperationState>(stateAddress(operationId));
+    const meta = view.get<OperationMeta>(metaAddress(operationId));
+    if (!state || !meta || record.currentOperationId !== operationId || state.phase !== "checkpoint") {
+      return { type: "continue" };
+    }
+    const placed = this.placeInbox(view, apply, record, true, state.continuation === "may_finish");
+    if (placed.moved) {
+      apply([{ type: "set", address: laneAddress(this.name), value: { ...placed.record, currentOperationId: operationId } }]);
+      return this.beginModelRequest(view, apply, meta, state.scope);
+    }
+    if (state.continuation !== "may_finish" || !this.modelStoppedWithoutTools(view)) {
+      if (state.continuation === "need_assistant") return this.beginModelRequest(view, apply, meta, state.scope);
+      return { type: "settled", result: this.finish(view, apply, meta, "completed") };
+    }
+    const yielded = typeof text === "string" && text.trim() !== "" ? text : undefined;
+    if (yielded === undefined) return { type: "settled", result: this.finish(view, apply, meta, "completed") };
+    const entryId = uuidv7();
+    const message = user(yielded);
+    return this.beginModelRequest(view, apply, meta, state.scope, {
+      tipId: entryId,
+      message,
+      writes: [
+        {
+          type: "entry",
+          id: entryId,
+          parentId: placed.tipId,
+          timestamp: message.timestamp,
+          payload: { type: "message", message },
+        },
+        { type: "set", address: tipAddress(this.name), value: entryId },
+      ],
+    });
+  }
+
+  /** True when the settled tip is an assistant message that did not call tools. Terminate leaves a tool result. */
+  private modelStoppedWithoutTools(view: StorageView): boolean {
+    const tipId = view.get<string | null>(tipAddress(this.name)) ?? null;
+    if (!tipId) return false;
+    const entry = view.entry(tipId);
+    if (!entry || entry.payload.type !== "message") return false;
+    const message = entry.payload.message;
+    if (message.role !== "assistant") return false;
+    return !message.content.some((block) => block.type === "toolCall");
+  }
+
   private placeInbox(
     view: StorageView,
     apply: Apply,
@@ -1246,13 +1307,15 @@ export class AgentLane {
     return { record: next, tipId, moved: true };
   }
 
-  private providerContext(view: StorageView): Context {
+  private providerContext(view: StorageView, pending?: HarnessMessage): Context {
     const config = this.config(view);
+    const messages = this.visibleEntries(view).map((entry) => entry.kind === "compaction"
+      ? { role: "user" as const, content: entry.summary, timestamp: entry.timestamp }
+      : entry.message);
+    if (pending && pending.role !== "custom") messages.push(pending);
     return {
       systemPrompt: config.systemPrompt,
-      messages: this.visibleEntries(view).map((entry) => entry.kind === "compaction"
-        ? { role: "user" as const, content: entry.summary, timestamp: entry.timestamp }
-        : entry.message),
+      messages,
       tools: this.toolDefinitions(),
     };
   }
@@ -1292,35 +1355,62 @@ export class AgentLane {
     return resolveOutputBudget(model, this.providerContext(view), config.maxTokens);
   }
 
-  /** Place the next model call, or a compaction, after the messages for this request are already in the tree. */
-  private beginModelRequest(view: StorageView, apply: Apply, meta: OperationMeta, scope: Scope): Plan {
-    const decision = this.assess(view, scope);
-    if (decision.type === "fail") return { type: "settled", result: this.finish(view, apply, meta, "failed", decision.message) };
-    if (decision.type === "compact") {
-      const nextScope: Scope = {
-        ...scope,
-        thresholdUsed: decision.reason === "threshold" ? true : scope.thresholdUsed,
-        overflowUsed: decision.reason === "overflow" ? true : scope.overflowUsed,
+  /**
+   * Place the next model call, or a compaction.
+   * `carried` is the yielded user entry. It is judged with the following phase and committed in that same apply.
+   */
+  private beginModelRequest(
+    view: StorageView,
+    apply: Apply,
+    meta: OperationMeta,
+    scope: Scope,
+    carried?: { writes: Write[]; tipId: string; message: HarnessMessage },
+  ): Plan {
+    const decision = this.assess(view, scope, carried?.message);
+    const prefix = carried?.writes ?? [];
+    if (decision.type === "fail") {
+      return {
+        type: "settled",
+        result: this.finish(
+          view,
+          apply,
+          meta,
+          "failed",
+          decision.message,
+          carried ? { writes: prefix, tipId: carried.tipId } : undefined,
+        ),
       };
-      apply([{
-        type: "set",
-        address: stateAddress(meta.operationId),
-        value: { phase: "summary_deciding", scope: nextScope, reason: decision.reason, boundary: "resume" },
-      }]);
-      return { type: "continue" };
     }
-    apply([{ type: "set", address: stateAddress(meta.operationId), value: { phase: "assistant_ready", scope } }]);
+    const nextScope: Scope = decision.type === "compact"
+      ? {
+          ...scope,
+          thresholdUsed: decision.reason === "threshold" ? true : scope.thresholdUsed,
+          overflowUsed: decision.reason === "overflow" ? true : scope.overflowUsed,
+        }
+      : scope;
+    const phase: Write = decision.type === "compact"
+      ? {
+          type: "set",
+          address: stateAddress(meta.operationId),
+          value: { phase: "summary_deciding", scope: nextScope, reason: decision.reason, boundary: "resume" },
+        }
+      : { type: "set", address: stateAddress(meta.operationId), value: { phase: "assistant_ready", scope } };
+    apply([...prefix, phase]);
     return { type: "continue" };
   }
 
-  private assess(view: StorageView, scope: Scope): { type: "send" } | { type: "compact"; reason: SummaryReason } | { type: "fail"; message: string } {
+  private assess(
+    view: StorageView,
+    scope: Scope,
+    pending?: HarnessMessage,
+  ): { type: "send" } | { type: "compact"; reason: SummaryReason } | { type: "fail"; message: string } {
     const config = this.config(view);
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
     if (!model) return { type: "fail", message: `Unknown model ${config.provider}/${config.modelId}` };
     if (config.compaction.enabled && (!Number.isSafeInteger(config.compaction.maxTokens) || config.compaction.maxTokens <= 0)) {
       return { type: "fail", message: "compaction.maxTokens must be a positive integer" };
     }
-    const budget = resolveOutputBudget(model, this.providerContext(view), config.maxTokens);
+    const budget = resolveOutputBudget(model, this.providerContext(view, pending), config.maxTokens);
     if (budget.status === "invalid_limit" || budget.status === "unserializable") {
       return { type: "fail", message: budget.message ?? "Context budget is invalid" };
     }

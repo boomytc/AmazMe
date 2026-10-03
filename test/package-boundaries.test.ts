@@ -16,7 +16,9 @@ test("durable depends on the agent walks and agent does not depend on durable", 
   assert.equal(typeof agent.walkBefore, "function");
   assert.equal(typeof agent.walkAfter, "function");
   assert.equal(typeof agent.walkTransform, "function");
+  assert.equal(typeof agent.walkYield, "function");
   assert.equal("foldHooks" in agent, false);
+  assert.equal("finishTurn" in agent, false);
 });
 
 test("the public Agent entry runs without loading Durable", () => {
