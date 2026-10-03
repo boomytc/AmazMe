@@ -21,8 +21,6 @@ import type {
   BeforeToolCall,
   BeforeToolCallDecision,
   BeforeToolCallInput,
-  FinishTurnDecision,
-  FinishTurnInput,
   PrepareRequestUpdate,
   ThinkingLevel,
   ToolExecutionMode,
@@ -37,7 +35,6 @@ export interface LoopHooks {
     input: { messages: AgentMessage[]; model: Model; thinkingLevel: ThinkingLevel },
     signal: AbortSignal,
   ) => Promise<PrepareRequestUpdate | undefined> | PrepareRequestUpdate | undefined;
-  finishTurn?: (input: FinishTurnInput, signal: AbortSignal) => Promise<FinishTurnDecision | undefined> | FinishTurnDecision | undefined;
   /** Ordered hooks folded into the single before, after, and transform callbacks. */
   hooks: readonly AgentHook[];
   takeSteering: () => AgentMessage[];
@@ -70,7 +67,9 @@ export interface LoopInput {
  * folded into one `transformContext`, which replaces only the messages for
  * the current model call.
  * Steering enters after the assistant turn. Follow-up enters only when the
- * loop would otherwise stop. A length stop never executes tool calls.
+ * loop would otherwise stop. When the model has finished with no tool calls
+ * and both queues are empty, `walkYield` may append one user message and ask
+ * once more. `undefined` stops. A length stop never executes tool calls.
  */
 export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentMessage[]> {
   const produced: AgentMessage[] = [];
@@ -96,10 +95,10 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
   }
 
   let queued = input.hooks.takeSteering();
-  let explicitContinue = false;
 
   while (true) {
     let moreTools = true;
+    let yieldStop = false;
     while (moreTools || queued.length > 0) {
       for (const message of queued) {
         messages = append(messages, produced, message);
@@ -124,7 +123,6 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
       messages = append(messages, produced, message);
 
       if (message.stopReason === "error" || message.stopReason === "aborted") {
-        await input.hooks.finishTurn?.({ message, toolResults: [], messages }, signal);
         await emit({ type: "turn_end", message, toolResults: [] });
         await emit({ type: "agent_end", messages: produced });
         return produced;
@@ -133,6 +131,7 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
       const calls = findToolCalls(message);
       let toolResults: ToolResultMessage[] = [];
       moreTools = false;
+      yieldStop = calls.length === 0;
       if (calls.length > 0) {
         const executed =
           message.stopReason === "length"
@@ -150,29 +149,34 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
         }
       }
 
-      const decision = await input.hooks.finishTurn?.({ message, toolResults, messages }, signal);
       await emit({ type: "turn_end", message, toolResults });
-      if (signal.aborted || decision?.action === "end") {
+      if (signal.aborted) {
         await emit({ type: "agent_end", messages: produced });
         return produced;
       }
-      explicitContinue = decision?.action === "continue";
       queued = input.hooks.takeSteering();
-      if (moreTools || queued.length > 0) explicitContinue = false;
-      if (moreTools || queued.length > 0) await emit({ type: "turn_start" });
+      if (moreTools || queued.length > 0) {
+        yieldStop = false;
+        await emit({ type: "turn_start" });
+      }
     }
 
     const followUp = input.hooks.takeFollowUp();
     if (followUp.length > 0) {
-      explicitContinue = false;
       queued = followUp;
       await emit({ type: "turn_start" });
       continue;
     }
-    if (explicitContinue) {
-      explicitContinue = false;
-      await emit({ type: "turn_start" });
-      continue;
+    if (yieldStop) {
+      const text = await walkYield(input.hooks.hooks, signal);
+      if (text !== undefined) {
+        const yielded: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
+        messages = append(messages, produced, yielded);
+        await emit({ type: "message_start", message: yielded });
+        await emit({ type: "message_end", message: yielded });
+        await emit({ type: "turn_start" });
+        continue;
+      }
     }
     break;
   }
@@ -241,6 +245,16 @@ export async function walkTransform(
     replaced = true;
   }
   return replaced ? current : undefined;
+}
+
+/** The first non-whitespace string wins. Later `onYield` hooks are not called. */
+export async function walkYield(hooks: readonly AgentHook[], signal: AbortSignal): Promise<string | undefined> {
+  for (const hook of hooks) {
+    if (!hook.onYield) continue;
+    const text = await hook.onYield(signal);
+    if (typeof text === "string" && text.trim() !== "") return text;
+  }
+  return undefined;
 }
 
 function toAfterUpdate(result: ToolResult): AfterToolCallUpdate {

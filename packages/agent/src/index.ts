@@ -1,7 +1,7 @@
 export { Agent, assistantText, userMessage, type AgentOptions } from "./agent.ts";
 export { agentTelemetrySchema } from "./telemetry.ts";
 export { applyAfter } from "./tool-execution.ts";
-export { runAgentLoop, toProviderMessages, walkAfter, walkBefore, walkTransform } from "./loop.ts";
+export { runAgentLoop, toProviderMessages, walkAfter, walkBefore, walkTransform, walkYield } from "./loop.ts";
 export type {
   AfterToolCall,
   AfterToolCallInput,
@@ -15,8 +15,6 @@ export type {
   BeforeToolCallDecision,
   BeforeToolCallInput,
   CustomMessage,
-  FinishTurnDecision,
-  FinishTurnInput,
   PrepareRequestInput,
   PrepareRequestUpdate,
   QueueMode,
