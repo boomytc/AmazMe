@@ -1,4 +1,4 @@
-import { resolveApiKey, type ApiKeyAuth, MemoryCredentialStore } from "./auth.ts";
+import { AuthRefreshError, MemoryCredentialStore, providerAuth, resolveModelAuth, type ApiKeyAuth, type ProviderAuth } from "./auth.ts";
 import { EventStream } from "./event-stream.ts";
 import type {
   Api,
@@ -26,7 +26,7 @@ export interface Provider<TApi extends Api = Api> {
   readonly name: string;
   readonly baseUrl?: string;
   readonly headers?: ProviderHeaders;
-  readonly auth: ApiKeyAuth;
+  readonly auth: ProviderAuth;
   getModels(): readonly Model<TApi>[];
   stream<T extends TApi>(model: Model<T>, context: Context, options?: ApiStreamOptions<T>): AssistantEventStream;
   streamSimple(model: Model<TApi>, context: Context, options?: StreamOptions): AssistantEventStream;
@@ -37,7 +37,7 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
   name?: string;
   baseUrl?: string;
   headers?: ProviderHeaders;
-  auth: ApiKeyAuth;
+  auth: ApiKeyAuth | ProviderAuth;
   models: readonly Model<TApi>[];
   /** One protocol implementation for every model, or a table dispatched by `model.api`. */
   api: ProviderStreams<TApi> | Partial<Record<TApi, ProviderStreams>>;
@@ -124,11 +124,12 @@ class ModelRegistry implements MutableModels {
   async getAuth(model: Model, apiKey?: string): Promise<AuthResult | undefined> {
     const provider = this.providers.get(model.provider);
     if (!provider) return undefined;
-    return resolveApiKey({
+    return resolveModelAuth({
       providerId: provider.id,
       auth: provider.auth,
       store: this.store,
       env: this.env,
+      refresh: false,
       ...(apiKey !== undefined ? { apiKey } : {}),
     });
   }
@@ -182,15 +183,31 @@ class ModelRegistry implements MutableModels {
     if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
     const known = provider.getModels().some((item) => item.id === model.id);
     if (!known) throw new ModelsError("model", `Unknown model: ${model.provider}/${model.id}`);
-    const auth = await resolveApiKey({
-      providerId: provider.id,
-      auth: provider.auth,
-      store: this.store,
-      env: this.env,
-      ...(options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
-    });
+    let auth;
+    try {
+      auth = await resolveModelAuth({
+        providerId: provider.id,
+        auth: provider.auth,
+        store: this.store,
+        env: this.env,
+        refresh: true,
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
+      });
+    } catch (error) {
+      if (error instanceof AuthRefreshError) throw new ModelsError("auth", error.message);
+      throw error;
+    }
     if (!auth) throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
-    const authed = { ...options, apiKey: auth.apiKey };
+    const headers = { ...(auth.headers ?? {}), ...(options.headers ?? {}) };
+    const env = { ...(auth.env ?? {}), ...(options.env ?? {}) };
+    const authed = {
+      ...options,
+      ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+      ...(options.baseUrl || auth.baseUrl ? { baseUrl: options.baseUrl || auth.baseUrl } : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+    };
     return kind === "simple" ? provider.streamSimple(model, context, authed) : provider.stream(model, context, authed);
   }
 }
@@ -225,11 +242,13 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
       }
     }
   }
-  const merge = (provided: StreamOptions = {}): StreamOptions => {
+  const auth = providerAuth(input.auth);
+  const merge = (model: Model, provided: StreamOptions = {}): StreamOptions => {
     const headers = { ...(input.headers ?? {}), ...(provided.headers ?? {}) };
+    const baseUrl = provided.baseUrl ?? model.baseUrl ?? input.baseUrl;
     return {
       ...provided,
-      ...(provided.baseUrl || input.baseUrl ? { baseUrl: provided.baseUrl || input.baseUrl } : {}),
+      ...(baseUrl ? { baseUrl } : {}),
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
   };
@@ -245,17 +264,17 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
     name: input.name ?? input.id,
     ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
     ...(input.headers ? { headers: input.headers } : {}),
-    auth: input.auth,
+    auth,
     getModels: () => input.models,
     stream(model, context, options) {
       const implementation = implementationFor(model);
       if (!implementation) return missing(model);
-      return implementation.stream<Api>(model, context, merge(options));
+      return implementation.stream<Api>(model, context, merge(model, options));
     },
     streamSimple(model, context, options) {
       const implementation = implementationFor(model);
       if (!implementation) return missing(model);
-      return implementation.streamSimple(model, context, merge(options));
+      return implementation.streamSimple(model, context, merge(model, options));
     },
   };
 }

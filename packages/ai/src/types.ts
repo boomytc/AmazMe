@@ -2,8 +2,22 @@ export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
 
-/** Chat APIs this package can type. Other API strings stay on the unified stream options. */
-export type KnownApi = "openai-completions" | "faux";
+/**
+ * Chat APIs this package can type. Other API strings stay on the unified stream options.
+ * `azure-openai-responses` is Pi's distinct catalog id; its module shares the responses parser.
+ */
+export type KnownApi =
+  | "openai-completions"
+  | "openai-responses"
+  | "azure-openai-responses"
+  | "openai-codex-responses"
+  | "anthropic-messages"
+  | "google-generative-ai"
+  | "google-vertex"
+  | "bedrock-converse-stream"
+  | "mistral-conversations"
+  | "pi-messages"
+  | "faux";
 
 export type Api = KnownApi | (string & {});
 
@@ -131,6 +145,8 @@ export interface Model<TApi extends Api = Api> {
   maxTokens: number;
   /** USD per 1,000,000 tokens. Absent knowledge stays unset; rates are not invented. */
   cost: { input: number; output: number };
+  /** Per-model endpoint. A request `baseUrl` still overrides it, then the provider default. */
+  baseUrl?: string;
   /**
    * When true, the model can think. `thinkingLevelMap` maps a level to the protocol parameter.
    * `null` marks that level unsupported. A missing key uses the level name.
@@ -156,6 +172,10 @@ export interface StreamOptions {
   /** Provider defaults can be overridden for one request, regardless of its protocol. */
   baseUrl?: string;
   headers?: ProviderHeaders;
+  /** Non-secret provider config resolved beside the key: project, location, profile, gateway ids. */
+  env?: Record<string, string | undefined>;
+  /** Optional conversation id. OpenCode copies it onto `x-opencode-session` beside the request. */
+  sessionId?: string;
 }
 
 export interface ProviderHeaders {
@@ -172,8 +192,44 @@ export interface OpenAICompletionsOptions extends StreamOptions {
   outputTokenField?: CompletionsOutputTokenField;
 }
 
+export interface OpenAIResponsesOptions extends StreamOptions {
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+}
+
+export interface AzureOpenAIResponsesOptions extends OpenAIResponsesOptions {
+  azureApiVersion?: string;
+  azureResourceName?: string;
+  azureBaseUrl?: string;
+  azureDeploymentName?: string;
+}
+
+export type OpenAICodexResponsesOptions = OpenAIResponsesOptions;
+export type AnthropicMessagesOptions = StreamOptions;
+export type GoogleGenerativeAIOptions = StreamOptions;
+
+export interface GoogleVertexOptions extends StreamOptions {
+  project?: string;
+  location?: string;
+}
+
+export interface BedrockOptions extends StreamOptions {
+  region?: string;
+}
+
+export type MistralOptions = StreamOptions;
+export type PiMessagesOptions = StreamOptions;
+
 export interface ApiOptionsMap {
   "openai-completions": OpenAICompletionsOptions;
+  "openai-responses": OpenAIResponsesOptions;
+  "azure-openai-responses": AzureOpenAIResponsesOptions;
+  "openai-codex-responses": OpenAICodexResponsesOptions;
+  "anthropic-messages": AnthropicMessagesOptions;
+  "google-generative-ai": GoogleGenerativeAIOptions;
+  "google-vertex": GoogleVertexOptions;
+  "bedrock-converse-stream": BedrockOptions;
+  "mistral-conversations": MistralOptions;
+  "pi-messages": PiMessagesOptions;
   faux: StreamOptions;
 }
 
@@ -205,19 +261,43 @@ export type AssistantFrame =
   | { type: "stop"; stopReason: StopReason; errorMessage?: string };
 
 export interface AuthResult {
-  apiKey: string;
-  source: "request" | "store" | "env" | "ambient";
+  apiKey?: string;
+  source: "request" | "store" | "env" | "ambient" | "oauth";
+  headers?: ProviderHeaders;
+  baseUrl?: string;
+  env?: Record<string, string>;
 }
 
 export interface ApiKeyCredential {
   type: "api_key";
-  key: string;
+  /** Absent when the credential only carries non-secret env such as an AWS profile or a project id. */
+  key?: string;
+  env?: Record<string, string>;
 }
 
-export type Credential = ApiKeyCredential;
+/** OAuth token. `refresh` may be empty when the provider issues a non-expiring key (OpenRouter). */
+export interface OAuthCredential {
+  type: "oauth";
+  refresh: string;
+  access: string;
+  /** Epoch milliseconds. Refresh runs before a request when this is within 60 seconds. */
+  expires: number;
+  accountId?: string;
+  clientId?: string;
+}
+
+export type Credential = ApiKeyCredential | OAuthCredential;
 
 export interface CredentialStore {
   get(providerId: string): Promise<Credential | undefined>;
   set(providerId: string, credential: Credential): Promise<void>;
   delete(providerId: string): Promise<void>;
+  /**
+   * Serialized read-modify-write for one provider. Return undefined to leave the entry unchanged.
+   * A rejection writes nothing, including when a refresh fails halfway.
+   */
+  modify(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+  ): Promise<Credential | undefined>;
 }
