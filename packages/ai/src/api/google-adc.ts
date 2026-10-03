@@ -7,7 +7,8 @@ const EXPIRY_SKEW_MS = 60_000;
 
 /**
  * Read an ADC file at request time and return an access token that is still valid.
- * Authorized-user files are refreshed. Service-account files are exchanged for a token.
+ * An authorized-user file reuses its access token while that token is outside the expiry skew.
+ * Otherwise it is refreshed. Service-account files are exchanged for a token.
  * A bare access token is used only when its expiry is still in the future.
  * The file body, private key, and refresh token are not returned and must not be stored.
  */
@@ -22,11 +23,17 @@ export async function resolveAdcAccessToken(input: {
   const now = input.now ?? Date.now();
   const type = text(parsed.type);
   if (type === "authorized_user" || (!type && text(parsed.refresh_token) && text(parsed.client_id) && text(parsed.client_secret))) {
+    const current = usableAccessToken(parsed, now);
+    if (current) return current;
     return refreshAuthorizedUser(parsed, input.fetch, input.signal);
   }
   if (type === "service_account" || (!type && text(parsed.private_key) && text(parsed.client_email))) {
     return exchangeServiceAccount(parsed, input.fetch, input.signal, now);
   }
+  return usableAccessToken(parsed, now);
+}
+
+function usableAccessToken(parsed: Record<string, unknown>, now: number): string | undefined {
   const token = text(parsed.access_token) || text(parsed.token);
   const expiry = expiryMs(parsed);
   if (token && expiry !== undefined && expiry - now > EXPIRY_SKEW_MS) return token;
