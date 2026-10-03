@@ -91,14 +91,6 @@ export interface PrepareRequestUpdate {
   thinkingLevel?: ThinkingLevel;
 }
 
-export interface FinishTurnInput {
-  message: AssistantMessage;
-  toolResults: ToolResultMessage[];
-  messages: AgentMessage[];
-}
-
-export type FinishTurnDecision = { action: "end" } | { action: "continue" };
-
 export interface BeforeToolCallInput {
   toolCallId: string;
   toolName: string;
@@ -149,6 +141,13 @@ export interface AgentHook {
   beforeToolCall?: BeforeToolCall;
   afterToolCall?: AfterToolCall;
   transformContext?: TransformContext;
+  /**
+   * Called only after the model has finished, this turn made no tool calls,
+   * and both steer and follow-up are empty.
+   * A string containing non-whitespace is appended as one user message and the model is asked once more.
+   * `undefined` stops. The first such string wins; later hooks are not called.
+   */
+  onYield?: (signal: AbortSignal) => Promise<string | undefined> | string | undefined;
 }
 
 export type { AssistantMessage, Model, TextContent, ThinkingLevel, ToolResultMessage };

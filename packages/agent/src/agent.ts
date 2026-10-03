@@ -8,8 +8,6 @@ import type {
   AgentMessage,
   AgentState,
   AgentTool,
-  FinishTurnDecision,
-  FinishTurnInput,
   PrepareRequestUpdate,
   QueueMode,
   StreamFn,
@@ -35,11 +33,7 @@ export interface AgentOptions {
     input: { messages: AgentMessage[]; model: Model; thinkingLevel: ThinkingLevel },
     signal: AbortSignal,
   ) => Promise<PrepareRequestUpdate | undefined> | PrepareRequestUpdate | undefined;
-  finishTurn?: (
-    input: FinishTurnInput,
-    signal: AbortSignal,
-  ) => Promise<FinishTurnDecision | undefined> | FinishTurnDecision | undefined;
-  /** Ordered hooks. The loop folds this list into one before, one after, and one transform. */
+  /** Ordered hooks. The loop folds this list into one before, one after, and one transform. `onYield` runs only at an empty stop. */
   hooks?: AgentHook[];
 }
 
@@ -74,7 +68,8 @@ class Queue {
  * Process-local agent. The transcript lives in memory. `streamFn` performs each
  * model call. `prepareRequest` may replace the transcript before that call.
  * `hooks` then run in order. Each `transformContext` sees the previous hook's
- * messages and changes only that model call.
+ * messages and changes only that model call. `onYield` runs only when the model
+ * has finished with no tool calls and both queues are empty.
  */
 export class Agent {
   private readonly listeners = new Set<Listener>();
@@ -92,7 +87,6 @@ export class Agent {
   messages: AgentMessage[];
   toolExecution: ToolExecutionMode;
   prepareRequest: AgentOptions["prepareRequest"];
-  finishTurn: AgentOptions["finishTurn"];
   hooks: AgentHook[];
   private readonly streamFn: StreamFn;
   private readonly telemetryContext: TelemetryContext;
@@ -108,7 +102,6 @@ export class Agent {
     this.messages = options.messages ?? [];
     this.toolExecution = options.toolExecution ?? "parallel";
     this.prepareRequest = options.prepareRequest;
-    this.finishTurn = options.finishTurn;
     this.hooks = options.hooks ?? [];
     this.steering = new Queue(options.steeringMode ?? "one-at-a-time");
     this.followUps = new Queue(options.followUpMode ?? "one-at-a-time");
@@ -175,7 +168,6 @@ export class Agent {
               telemetryContext: span,
               hooks: {
                 prepareRequest: (request, requestSignal) => this.prepareRequest?.(request, requestSignal),
-                finishTurn: (turn, requestSignal) => this.finishTurn?.(turn, requestSignal),
                 get hooks() {
                   return agent.hooks;
                 },
