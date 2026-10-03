@@ -6,6 +6,7 @@
   "sideEffects": false,
   "description": "Portable durable lane runtime and storage contracts",
   "dependencies": {
+    "@amazme/agent": "0.1.0",
     "@amazme/ai": "0.1.0",
     "@amazme/telemetry": "0.1.0"
   },

@@ -48,13 +48,13 @@ test("Harness accepts structural storage, view and model capabilities without re
   harness.close();
 });
 
-test("public core and memory entries run without Node, Agent or a global process", () => {
+test("public core and memory entries run without Node, coding-agent, or a global process", () => {
   const script = `
     const { registerHooks, builtinModules } = await import("node:module");
     registerHooks({ resolve(specifier, context, next) {
       if (specifier.startsWith("node:") || builtinModules.includes(specifier)) throw new Error("Node import in core: " + specifier);
       const resolved = next(specifier, context);
-      if (resolved.url.includes("/packages/agent/") || resolved.url.includes("/packages/coding-agent/")) throw new Error("Agent dependency in Durable: " + specifier);
+      if (resolved.url.includes("/packages/coding-agent/")) throw new Error("coding-agent dependency in Durable: " + specifier);
       return resolved;
     } });
     globalThis.process = undefined;
