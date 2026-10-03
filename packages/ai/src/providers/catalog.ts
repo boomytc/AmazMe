@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { KnownApi, Model, ThinkingLevel } from "../types.ts";
-import catalog from "./data/catalog.json";
 
 interface CatalogModel {
   id: string;
@@ -15,7 +17,18 @@ interface CatalogModel {
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
 }
 
-const data = catalog as Record<string, CatalogModel[]>;
+// module Node16 cannot emit a JSON import attribute, and Node rejects a bare JSON import.
+// The composite project still emits catalog.json beside this compiled module.
+function loadCatalog(): Record<string, CatalogModel[]> {
+  const path = join(dirname(fileURLToPath(import.meta.url)), "data", "catalog.json");
+  const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Chat catalog must be a JSON object");
+  }
+  return parsed as Record<string, CatalogModel[]>;
+}
+
+const data = loadCatalog();
 
 /** Chat models for one preset. Image models and classifiers are not in this catalog. */
 export function catalogModels(providerId: string): Model<KnownApi>[] {
