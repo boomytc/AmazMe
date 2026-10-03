@@ -9,18 +9,24 @@ import {
   type ToolResultMessage,
 } from "@amazme/ai";
 import type { TelemetryContext } from "@amazme/telemetry";
-import { executeAgentTools } from "./tool-execution.ts";
+import { applyAfter, executeAgentTools } from "./tool-execution.ts";
 import type {
+  AfterToolCall,
+  AfterToolCallInput,
+  AfterToolCallUpdate,
   AgentEvent,
+  AgentHook,
   AgentMessage,
   AgentTool,
-  AfterToolCall,
   BeforeToolCall,
+  BeforeToolCallDecision,
+  BeforeToolCallInput,
   FinishTurnDecision,
   FinishTurnInput,
   PrepareRequestUpdate,
   ThinkingLevel,
   ToolExecutionMode,
+  ToolResult,
   TransformContext,
 } from "./types.ts";
 
@@ -32,9 +38,8 @@ export interface LoopHooks {
     signal: AbortSignal,
   ) => Promise<PrepareRequestUpdate | undefined> | PrepareRequestUpdate | undefined;
   finishTurn?: (input: FinishTurnInput, signal: AbortSignal) => Promise<FinishTurnDecision | undefined> | FinishTurnDecision | undefined;
-  beforeToolCall?: BeforeToolCall;
-  afterToolCall?: AfterToolCall;
-  transformContext?: TransformContext;
+  /** Ordered hooks folded into the single before, after, and transform callbacks. */
+  hooks: readonly AgentHook[];
   takeSteering: () => AgentMessage[];
   takeFollowUp: () => AgentMessage[];
   stream: (
@@ -61,8 +66,9 @@ export interface LoopInput {
 
 /**
  * In-memory turn loop. Agent messages stay intact until the stream call.
- * `prepareRequest` may replace that transcript. `transformContext` replaces
- * only the messages for the current model call.
+ * `prepareRequest` may replace that transcript. The ordered `hooks` list is
+ * folded into one `transformContext`, which replaces only the messages for
+ * the current model call.
  * Steering enters after the assistant turn. Follow-up enters only when the
  * loop would otherwise stop. A length stop never executes tool calls.
  */
@@ -73,6 +79,7 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
   let thinkingLevel = input.thinkingLevel;
   let tools = input.tools;
   const signal = input.signal;
+  const slot = foldHooks(input.hooks);
 
   await emit({ type: "agent_start" });
   const initial = adoptDeclared(messages, tools, input.systemPrompt, produced);
@@ -112,7 +119,7 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
       if (prepared?.model) model = prepared.model;
       if (prepared?.thinkingLevel) thinkingLevel = prepared.thinkingLevel;
 
-      const requestMessages = await requestContext(input.hooks.transformContext, messages, signal);
+      const requestMessages = await requestContext(slot.transformContext, messages, signal);
       const message = await streamAssistant(input, model, requestMessages, tools, thinkingLevel, signal, emit);
       messages = append(messages, produced, message);
 
@@ -131,8 +138,8 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
           message.stopReason === "length"
             ? await failTruncated(calls, emit)
             : await executeAgentTools(calls, tools, input.toolExecution, signal, emit, input.telemetryContext, {
-                beforeToolCall: input.hooks.beforeToolCall,
-                afterToolCall: input.hooks.afterToolCall,
+                beforeToolCall: slot.beforeToolCall,
+                afterToolCall: slot.afterToolCall,
               });
         toolResults = executed.messages;
         moreTools = !executed.terminate;
@@ -172,6 +179,75 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
 
   await emit({ type: "agent_end", messages: produced });
   return produced;
+}
+
+interface HookSlot {
+  beforeToolCall: BeforeToolCall;
+  afterToolCall: AfterToolCall;
+  transformContext: TransformContext;
+}
+
+/** Fold the ordered list into the one before, after, and transform callback this loop already calls. */
+function foldHooks(source: LoopHooks): HookSlot {
+  return {
+    beforeToolCall: (call, requestSignal) => walkBefore(source.hooks, call, requestSignal),
+    afterToolCall: (call, requestSignal) => walkAfter(source.hooks, call, requestSignal),
+    transformContext: (messages, requestSignal) => walkTransform(source.hooks, messages, requestSignal),
+  };
+}
+
+async function walkBefore(
+  hooks: readonly AgentHook[],
+  call: BeforeToolCallInput,
+  signal: AbortSignal,
+): Promise<BeforeToolCallDecision | undefined> {
+  for (const hook of hooks) {
+    if (!hook.beforeToolCall) continue;
+    const decision = await hook.beforeToolCall(call, signal);
+    if (decision?.action === "block") return decision;
+  }
+  return undefined;
+}
+
+async function walkAfter(
+  hooks: readonly AgentHook[],
+  call: AfterToolCallInput,
+  signal: AbortSignal,
+): Promise<AfterToolCallUpdate | undefined> {
+  let result = call.result;
+  let changed = false;
+  for (const hook of hooks) {
+    if (!hook.afterToolCall) continue;
+    const update = await hook.afterToolCall({ ...call, result }, signal);
+    if (!update) continue;
+    result = applyAfter(result, update);
+    changed = true;
+  }
+  return changed ? toAfterUpdate(result) : undefined;
+}
+
+async function walkTransform(
+  hooks: readonly AgentHook[],
+  messages: AgentMessage[],
+  signal: AbortSignal,
+): Promise<AgentMessage[] | undefined> {
+  let current = messages;
+  let replaced = false;
+  for (const hook of hooks) {
+    if (!hook.transformContext) continue;
+    const next = await hook.transformContext(current.slice(), signal);
+    if (!Array.isArray(next)) continue;
+    current = next;
+    replaced = true;
+  }
+  return replaced ? current : undefined;
+}
+
+function toAfterUpdate(result: ToolResult): AfterToolCallUpdate {
+  const update: AfterToolCallUpdate = { content: result.content };
+  if (result.isError !== undefined) update.isError = result.isError;
+  if (result.terminate !== undefined) update.terminate = result.terminate;
+  return update;
 }
 
 async function requestContext(

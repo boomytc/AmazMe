@@ -144,4 +144,11 @@ export type TransformContext = (
   signal: AbortSignal,
 ) => Promise<AgentMessage[] | undefined> | AgentMessage[] | undefined;
 
+/** One ordered hook. Each callback is optional and runs in list order. */
+export interface AgentHook {
+  beforeToolCall?: BeforeToolCall;
+  afterToolCall?: AfterToolCall;
+  transformContext?: TransformContext;
+}
+
 export type { AssistantMessage, Model, TextContent, ThinkingLevel, ToolResultMessage };

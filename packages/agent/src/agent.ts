@@ -3,19 +3,17 @@ import { runAgentLoop, toProviderMessages } from "./loop.ts";
 import { createTypedSpanStarter, NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@amazme/telemetry";
 import { agentTelemetrySchema } from "./telemetry.ts";
 import type {
-  AfterToolCall,
   AgentEvent,
+  AgentHook,
   AgentMessage,
   AgentState,
   AgentTool,
-  BeforeToolCall,
   FinishTurnDecision,
   FinishTurnInput,
   PrepareRequestUpdate,
   QueueMode,
   StreamFn,
   ToolExecutionMode,
-  TransformContext,
 } from "./types.ts";
 
 type Listener = (event: AgentEvent, signal: AbortSignal) => Promise<void> | void;
@@ -41,9 +39,8 @@ export interface AgentOptions {
     input: FinishTurnInput,
     signal: AbortSignal,
   ) => Promise<FinishTurnDecision | undefined> | FinishTurnDecision | undefined;
-  beforeToolCall?: BeforeToolCall;
-  afterToolCall?: AfterToolCall;
-  transformContext?: TransformContext;
+  /** Ordered hooks. The loop folds this list into one before, one after, and one transform. */
+  hooks?: AgentHook[];
 }
 
 class Queue {
@@ -76,7 +73,8 @@ class Queue {
 /**
  * Process-local agent. The transcript lives in memory. `streamFn` performs each
  * model call. `prepareRequest` may replace the transcript before that call.
- * `transformContext` runs after it and changes only that call's messages.
+ * `hooks` then run in order. Each `transformContext` sees the previous hook's
+ * messages and changes only that model call.
  */
 export class Agent {
   private readonly listeners = new Set<Listener>();
@@ -95,9 +93,7 @@ export class Agent {
   toolExecution: ToolExecutionMode;
   prepareRequest: AgentOptions["prepareRequest"];
   finishTurn: AgentOptions["finishTurn"];
-  beforeToolCall: AgentOptions["beforeToolCall"];
-  afterToolCall: AgentOptions["afterToolCall"];
-  transformContext: AgentOptions["transformContext"];
+  hooks: AgentHook[];
   private readonly streamFn: StreamFn;
   private readonly telemetryContext: TelemetryContext;
 
@@ -113,9 +109,7 @@ export class Agent {
     this.toolExecution = options.toolExecution ?? "parallel";
     this.prepareRequest = options.prepareRequest;
     this.finishTurn = options.finishTurn;
-    this.beforeToolCall = options.beforeToolCall;
-    this.afterToolCall = options.afterToolCall;
-    this.transformContext = options.transformContext;
+    this.hooks = options.hooks ?? [];
     this.steering = new Queue(options.steeringMode ?? "one-at-a-time");
     this.followUps = new Queue(options.followUpMode ?? "one-at-a-time");
   }
@@ -167,6 +161,7 @@ export class Agent {
         "amazme.agent.run",
         { provider: this.model.provider, model: this.model.id },
         async (span) => {
+          const agent = this;
           const produced = await runAgentLoop(
             {
               messages: this.messages,
@@ -181,9 +176,9 @@ export class Agent {
               hooks: {
                 prepareRequest: (request, requestSignal) => this.prepareRequest?.(request, requestSignal),
                 finishTurn: (turn, requestSignal) => this.finishTurn?.(turn, requestSignal),
-                beforeToolCall: (call, requestSignal) => this.beforeToolCall?.(call, requestSignal),
-                afterToolCall: (call, requestSignal) => this.afterToolCall?.(call, requestSignal),
-                transformContext: (messages, requestSignal) => this.transformContext?.(messages, requestSignal),
+                get hooks() {
+                  return agent.hooks;
+                },
                 takeSteering: () => this.steering.take(),
                 takeFollowUp: () => this.followUps.take(),
                 stream: (model, messages, tools, thinkingLevel, requestSignal) => {

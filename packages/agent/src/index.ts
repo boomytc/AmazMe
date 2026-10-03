@@ -6,6 +6,7 @@ export type {
   AfterToolCallInput,
   AfterToolCallUpdate,
   AgentEvent,
+  AgentHook,
   AgentMessage,
   AgentState,
   AgentTool,
