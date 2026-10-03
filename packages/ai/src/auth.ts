@@ -150,7 +150,8 @@ export async function resolveApiKey(input: {
 
 export async function resolveModelAuth(input: {
   providerId: string;
-  auth: ProviderAuth;
+  /** Flat `{ env, ambient }` still works. Presets that also log in pass `{ apiKey, oauth }`. */
+  auth: ApiKeyAuth | ProviderAuth;
   store: CredentialStore;
   env: Record<string, string | undefined>;
   apiKey?: string;
@@ -158,14 +159,15 @@ export async function resolveModelAuth(input: {
   /** Stream requests refresh. Status reads do not. */
   refresh?: boolean;
 }): Promise<AuthResult | undefined> {
+  const auth = providerAuth(input.auth);
   if (input.apiKey !== undefined && input.apiKey !== "") {
     return { apiKey: input.apiKey, source: "request" };
   }
   const stored = await input.store.get(input.providerId);
   if (stored?.type === "oauth") {
-    if (!input.auth.oauth) return undefined;
-    const credential = input.refresh === false ? stored : await refreshOAuth(input, stored);
-    const derived = await input.auth.oauth.toAuth(credential);
+    if (!auth.oauth) return undefined;
+    const credential = input.refresh === false ? stored : await refreshOAuth({ ...input, auth }, stored);
+    const derived = await auth.oauth.toAuth(credential);
     return {
       ...(derived.apiKey ? { apiKey: derived.apiKey } : {}),
       ...(derived.headers ? { headers: derived.headers } : {}),
@@ -175,12 +177,12 @@ export async function resolveModelAuth(input: {
     };
   }
   if (stored?.type === "api_key") {
-    if (input.auth.apiKey?.resolve) return input.auth.apiKey.resolve({ credential: stored, env: input.env });
+    if (auth.apiKey?.resolve) return auth.apiKey.resolve({ credential: stored, env: input.env });
     if (stored.key) return { apiKey: stored.key, source: "store", ...(stored.env ? { env: stored.env } : {}) };
     return undefined;
   }
-  if (input.auth.apiKey?.resolve) return input.auth.apiKey.resolve({ env: input.env });
-  const apiKey = input.auth.apiKey;
+  if (auth.apiKey?.resolve) return auth.apiKey.resolve({ env: input.env });
+  const apiKey = auth.apiKey;
   if (!apiKey) return undefined;
   const fromEnv = input.env[apiKey.env];
   if (fromEnv) return { apiKey: fromEnv, source: "env" };
