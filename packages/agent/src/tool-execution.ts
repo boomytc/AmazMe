@@ -1,10 +1,23 @@
 import { validateArguments, type ToolResultMessage } from "@amazme/ai";
 import { createTypedSpanStarter, type TelemetryContext } from "@amazme/telemetry";
 import { agentTelemetrySchema } from "./telemetry.ts";
-import type { AgentEvent, AgentTool, ToolResult, ToolExecutionMode } from "./types.ts";
+import type {
+  AfterToolCall,
+  AfterToolCallUpdate,
+  AgentEvent,
+  AgentTool,
+  BeforeToolCall,
+  ToolExecutionMode,
+  ToolResult,
+} from "./types.ts";
 
 type Emit = (event: AgentEvent) => Promise<void> | void;
 type Call = { id: string; name: string; arguments: unknown };
+
+interface ToolCallCallbacks {
+  beforeToolCall?: BeforeToolCall;
+  afterToolCall?: AfterToolCall;
+}
 
 interface UpdateGate {
   accept(partial: string): void;
@@ -41,10 +54,11 @@ export async function executeAgentTools(
   signal: AbortSignal,
   emit: Emit,
   telemetryContext: TelemetryContext | undefined,
+  callbacks: ToolCallCallbacks,
 ): Promise<{ messages: ToolResultMessage[]; terminate: boolean }> {
   const sequential = mode === "sequential" || calls.some((call) => tools.find((tool) => tool.name === call.name)?.executionMode === "sequential");
-  if (sequential) return runSequential(calls, tools, signal, emit, telemetryContext);
-  return runParallel(calls, tools, signal, emit, telemetryContext);
+  if (sequential) return runSequential(calls, tools, signal, emit, telemetryContext, callbacks);
+  return runParallel(calls, tools, signal, emit, telemetryContext, callbacks);
 }
 
 async function runSequential(
@@ -53,11 +67,12 @@ async function runSequential(
   signal: AbortSignal,
   emit: Emit,
   telemetryContext: TelemetryContext | undefined,
+  callbacks: ToolCallCallbacks,
 ): Promise<{ messages: ToolResultMessage[]; terminate: boolean }> {
   const messages: ToolResultMessage[] = [];
   const flags: boolean[] = [];
   for (const call of calls) {
-    const outcome = await tracked(call, telemetryContext, signal, (span) => settleCall(call, tools, signal, emit, span));
+    const outcome = await tracked(call, telemetryContext, signal, (span) => settleCall(call, tools, signal, emit, span, callbacks));
     messages.push(outcome.message);
     flags.push(outcome.terminate);
   }
@@ -70,9 +85,10 @@ async function runParallel(
   signal: AbortSignal,
   emit: Emit,
   telemetryContext: TelemetryContext | undefined,
+  callbacks: ToolCallCallbacks,
 ): Promise<{ messages: ToolResultMessage[]; terminate: boolean }> {
   const outcomes = await settleAll(calls.map((call) =>
-    tracked(call, telemetryContext, signal, (span) => settleCall(call, tools, signal, emit, span))));
+    tracked(call, telemetryContext, signal, (span) => settleCall(call, tools, signal, emit, span, callbacks))));
   return { messages: outcomes.map((outcome) => outcome.message), terminate: outcomes.length > 0 && outcomes.every((outcome) => outcome.terminate) };
 }
 
@@ -98,6 +114,7 @@ async function settleCall(
   signal: AbortSignal,
   emit: Emit,
   span: TelemetryContext,
+  callbacks: ToolCallCallbacks,
 ): Promise<{ message: ToolResultMessage; terminate: boolean }> {
   if (signal.aborted) return outcomeFor(call, errorResult("cancelled"));
   await emit({ type: "tool_execution_start", toolCallId: call.id, toolName: call.name, args: call.arguments });
@@ -106,20 +123,35 @@ async function settleCall(
   const invalid = tool ? validateArguments(tool.parameters, call.arguments) : `Unknown tool: ${call.name}`;
   if (!tool || invalid) return finish(call, errorResult(invalid || "unavailable"), emit);
   if (signal.aborted) return finish(call, errorResult("cancelled"), emit);
+  const decision = await callbacks.beforeToolCall?.(
+    { toolCallId: call.id, toolName: call.name, args: call.arguments },
+    signal,
+  );
+  if (decision?.action === "block") return finish(call, errorResult(decision.reason), emit);
+  if (signal.aborted) return finish(call, errorResult("cancelled"), emit);
   const gate = createUpdateGate((partial) => emit({ type: "tool_execution_update", toolCallId: call.id, partial }));
   let result: ToolResult;
+  let executed = false;
   try {
     result = await tool.execute(call.arguments, {
       signal,
       telemetryContext: span,
       onUpdate: (partial) => gate.accept(partial),
     });
+    executed = true;
   } catch (error) {
     result = errorResult(error instanceof Error ? error.message : String(error));
   } finally {
     gate.close();
   }
   await gate.finished();
+  if (executed) {
+    const update = await callbacks.afterToolCall?.(
+      { toolCallId: call.id, toolName: call.name, args: call.arguments, result },
+      signal,
+    );
+    result = applyAfter(result, update);
+  }
   return finish(call, result, emit);
 }
 
@@ -152,6 +184,16 @@ async function settleAll<T>(tasks: Promise<T>[]): Promise<T[]> {
     if (outcome.status === "rejected") throw outcome.reason;
     return outcome.value;
   });
+}
+
+function applyAfter(result: ToolResult, update: AfterToolCallUpdate | undefined): ToolResult {
+  if (!update) return result;
+  const next: ToolResult = { content: update.content ?? result.content };
+  const isError = update.isError !== undefined ? update.isError : result.isError;
+  const terminate = update.terminate !== undefined ? update.terminate : result.terminate;
+  if (isError !== undefined) next.isError = isError;
+  if (terminate !== undefined) next.terminate = terminate;
+  return next;
 }
 
 function errorResult(text: string): ToolResult {
