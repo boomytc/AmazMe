@@ -107,3 +107,99 @@ test("a failed refresh does not call stream and does not write a half credential
   );
   assert.deepEqual(await store.get("xai"), original);
 });
+
+test("overlapping requests refresh one expired credential once", async () => {
+  const store = new MemoryCredentialStore();
+  const original = { type: "oauth" as const, refresh: "recorded-refresh", access: "recorded-access", expires: 1 };
+  await store.set("xai", original);
+  let tokenCalls = 0;
+  let modelCalls = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("https://auth.x.ai/oauth2/token")) {
+      tokenCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.match(String(init?.body ?? ""), /refresh_token=recorded-refresh/);
+      return Response.json({ access_token: "fresh-access", refresh_token: "fresh-refresh", expires_in: 3600 });
+    }
+    modelCalls += 1;
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer fresh-access");
+    assert.equal(String(init?.body ?? "").includes("recorded-refresh"), false);
+    return responsesSse();
+  };
+  const models = createModels({ store });
+  models.setProvider(xaiProvider({ fetch: fetchImpl }));
+  const model = models.getModel("xai", models.getProvider("xai")?.getModels()[0]?.id ?? "");
+  assert.ok(model);
+  const context = { messages: [{ role: "user" as const, content: "hi", timestamp: 1 }] };
+  const [first, second] = await Promise.all([
+    models.completeSimple(model, context),
+    models.completeSimple(model, context),
+  ]);
+  assert.equal(first.stopReason, "stop");
+  assert.equal(second.stopReason, "stop");
+  assert.equal(tokenCalls, 1);
+  assert.equal(modelCalls, 2);
+  const saved = await store.get("xai");
+  if (!saved || saved.type !== "oauth") assert.fail("expected the refreshed oauth credential");
+  assert.equal(saved.access, "fresh-access");
+  assert.equal(saved.refresh, "fresh-refresh");
+  assert.equal(saved.expires > Date.now(), true);
+});
+
+test("aborting a refresh does not call the model or replace the credential", async () => {
+  const store = new MemoryCredentialStore();
+  const original = { type: "oauth" as const, refresh: "recorded-refresh", access: "recorded-access", expires: 1 };
+  await store.set("xai", original);
+  const controller = new AbortController();
+  let modelCalls = 0;
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.startsWith("https://auth.x.ai/oauth2/token")) {
+      controller.abort();
+      throw new DOMException("The operation was aborted", "AbortError");
+    }
+    modelCalls += 1;
+    return responsesSse();
+  };
+  const models = createModels({ store });
+  models.setProvider(xaiProvider({ fetch: fetchImpl }));
+  const model = models.getModel("xai", models.getProvider("xai")?.getModels()[0]?.id ?? "");
+  assert.ok(model);
+  const message = await models.completeSimple(
+    model,
+    { messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+    { signal: controller.signal },
+  );
+  assert.equal(message.stopReason, "aborted");
+  assert.equal(modelCalls, 0);
+  assert.equal(message.errorMessage?.includes("recorded-refresh"), false);
+  assert.deepEqual(await store.get("xai"), original);
+});
+
+test("cancelling an xAI device login does not return a credential", async () => {
+  const controller = new AbortController();
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/device/code")) {
+      return Response.json({
+        device_code: "secret-device-code",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://auth.x.ai/device",
+        interval: 0,
+        expires_in: 30,
+      });
+    }
+    controller.abort();
+    return Response.json({ error: "authorization_pending" });
+  };
+  await assert.rejects(
+    xaiOAuth(fetchImpl).login({ signal: controller.signal }),
+    (error: unknown) => error instanceof Error && error.message === "Login cancelled",
+  );
+});
+
+function responsesSse(): Response {
+  const event = { type: "response.completed", response: { status: "completed", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } };
+  return new Response(`data: ${JSON.stringify(event)}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
