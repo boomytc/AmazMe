@@ -1,7 +1,10 @@
 import { OPENAI_COMPLETIONS_API, openaiCompletionsApi } from "../api/openai-completions.ts";
+import { openAIResponsesApi } from "../api/openai-responses.ts";
+import { chatgptOAuth } from "../auth/oauth/flows.ts";
 import { createProvider, ModelsError, type Provider } from "../models.ts";
 import type { Model, ThinkingLevel } from "../types.ts";
 import { modelLimitProblem } from "../utils/budget.ts";
+import { catalogModels } from "./catalog.ts";
 
 export interface OpenAIModelSpec {
   contextWindow: number;
@@ -29,25 +32,45 @@ const VERIFIED: Record<string, { contextWindow: number; maxTokens: number; input
   },
 };
 
-/** OpenAI's catalog and auth. The request format is `api/openai-completions`, and the output cap is `max_completion_tokens`. */
-export function openaiProvider(options: OpenAIProviderOptions = {}): Provider<"openai-completions"> {
-  const listed = options.modelIds ?? Object.keys(options.models ?? {});
-  const ids = listed.length > 0 ? listed : ["gpt-4o-mini"];
-  const models: Model<"openai-completions">[] = ids.map((id) => catalogModel(id, options.models?.[id]));
+/**
+ * OpenAI preset.
+ * `gpt-4o-mini` stays on `openai-completions` with text-only input so the verified completions
+ * fixtures keep their wire. The rest of the chat catalog uses `openai-responses`.
+ * Passing `modelIds` or `models` keeps the completions-only constructor those fixtures call.
+ */
+export function openaiProvider(options: OpenAIProviderOptions = {}): Provider {
+  const fetch = options.fetch ? { fetch: options.fetch } : {};
+  const explicit = options.modelIds !== undefined || options.models !== undefined;
+  if (explicit) {
+    const listed = options.modelIds ?? Object.keys(options.models ?? {});
+    const ids = listed.length > 0 ? listed : ["gpt-4o-mini"];
+    return createProvider({
+      id: "openai",
+      name: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      auth: { env: "OPENAI_API_KEY" },
+      models: ids.map((id) => completionsModel(id, options.models?.[id])),
+      api: openaiCompletionsApi({ ...fetch, outputTokenField: "max_completion_tokens" }),
+    });
+  }
+  const responses = catalogModels("openai").filter((model) => model.id !== "gpt-4o-mini");
   return createProvider({
     id: "openai",
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
-    auth: { env: "OPENAI_API_KEY" },
-    models,
-    api: openaiCompletionsApi({
-      ...(options.fetch ? { fetch: options.fetch } : {}),
-      outputTokenField: "max_completion_tokens",
-    }),
+    auth: {
+      apiKey: { env: "OPENAI_API_KEY", name: "OpenAI API key" },
+      oauth: chatgptOAuth(options.fetch),
+    },
+    models: [completionsModel("gpt-4o-mini"), ...responses],
+    api: {
+      "openai-completions": openaiCompletionsApi({ ...fetch, outputTokenField: "max_completion_tokens" }),
+      "openai-responses": openAIResponsesApi(fetch),
+    },
   });
 }
 
-function catalogModel(id: string, spec: OpenAIModelSpec | undefined): Model<"openai-completions"> {
+function completionsModel(id: string, spec?: OpenAIModelSpec): Model<"openai-completions"> {
   const verified = VERIFIED[id];
   if (!spec && !verified) {
     throw new ModelsError(
