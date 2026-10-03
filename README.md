@@ -10,7 +10,7 @@
 @amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI
 ```
 
-今天的 `amazme` 命令走内存循环加会话树，和 Pi CLI 一样。`AgentHarness` 是另一条运行时：`accept` 只落盘，`drive` 才推进；进程挂了以后，下一次 `drive` 从完整的操作状态接着做。
+今天的 `amazme` 命令走内存循环加会话树。有一次性 prompt 时跑完这一次并退出；没有 prompt 且标准输出是终端时，同一条循环画成全屏。`AgentHarness` 是另一条运行时：`accept` 只落盘，`drive` 才推进；进程挂了以后，下一次 `drive` 从完整的操作状态接着做。
 
 ## 模型边界
 
@@ -26,11 +26,11 @@ import { openaiProvider } from "@amazme/ai/providers/openai";
 import { fauxProvider } from "@amazme/ai/providers/faux";
 ```
 
-消息只有 `system`、`user`、`assistant`、`toolResult`。`transformMessages` 负责换供应商：收短 tool call id，拿掉目标模型看不见的图片。线协议放在 `api/`，供应商文件只登记目录、认证和地址。现在的线协议是 `openai-completions`，OpenAI 这家供应商指向它。测试用 faux provider。`createProvider` 可以把目录、认证、地址和 headers 与一个协议实现，或按 `model.api` 分派的实现表组合起来。
+消息只有 `system`、`user`、`assistant`、`toolResult`。`transformMessages` 负责换供应商：收短 tool call id，拿掉目标模型看不见的图片。线协议放在 `api/`，供应商文件登记目录、认证和地址。可标明的 api 有 `openai-completions`、`openai-responses`、`azure-openai-responses`、`openai-codex-responses`、`anthropic-messages`、`google-generative-ai`、`google-vertex`、`bedrock-converse-stream`、`mistral-conversations`、`pi-messages` 和 `faux`。`builtinProviders()` 返回 40 个预设供应商。预设仍走 `createProvider`，按 `model.api` 分派；该供应商的表里没有这个 api 时不发请求，以错误终态结束。`gpt-4o-mini` 仍是 `openai-completions`，OpenAI 目录里的其他型号可以是 `openai-responses`。测试用 faux provider。登录只交给带 OAuth 的供应商：CLI 打印 `auth_url` 或 `device_code`，再把凭证写入仓库外的 `~/.amazme/credentials.json`（可用 `AMAZME_CREDENTIALS` 改路径）。Bedrock 发请求前用凭证链签名，Vertex 发请求前读取并刷新 ADC。链或 ADC 解析失败就不发模型请求；私钥、refresh token 和凭证文件正文不写入 CredentialStore。下面关于输出上限、图片 data URL、超限分类和思考回放的约定只描述 Chat Completions，其他协议不自动套用。
 
 `StreamOptions` 中的 `baseUrl` 和 `headers` 是各协议共用的请求配置。请求地址覆盖 Provider 默认地址，headers 按字段覆盖并保留其余默认字段。协议专用选项仍由 `ApiStreamOptions` 区分。`signal`、`apiKey`、`telemetryContext` 不会写入 JSON 请求体。
 
-`StreamOptions.maxTokens` 是这一次生成的输出 token 上限，包含协议会计入的思考 token，不再另加一份思考预算。它会传到 `stream`、`streamSimple`、Provider 和 Models。Agent 上的可选 `maxTokens` 只转发给注入的 `streamFn`，Agent 仍然不持有 Models，也没有通用的请求改写 hook。省略时使用模型声明的输出上限；显式值仍受该上限和剩余上下文约束。放不下时不会发送 0、负数或 NaN，也不会删消息来凑预算，而是以不可重试的 `overflow` 终态结束。参数非法和上下文放不下是两种结果。
+`StreamOptions.maxTokens` 是这一次生成的输出 token 上限，包含协议会计入的思考 token，不再另加一份思考预算。它会传到 `stream`、`streamSimple`、Provider 和 Models。Agent 上的可选 `maxTokens` 只转发给注入的 `streamFn`，Agent 仍然不持有 Models。一次模型请求的消息替换由有序的 `transformContext` 完成，见下面的内存循环。省略时使用模型声明的输出上限；显式值仍受该上限和剩余上下文约束。放不下时不会发送 0、负数或 NaN，也不会删消息来凑预算，而是以不可重试的 `overflow` 终态结束。参数非法和上下文放不下是两种结果。
 
 输入预算在请求投影之后估算，所以失败 assistant 和补出来的工具结果不会把预算算偏。共享的 `resolveOutputBudget` 对原始或已投影消息执行同一预算投影，Durable 与协议使用相同输入估算。估算覆盖系统提示词、系统消息、用户文本、assistant 文本、实际会发送的思考、工具名和参数、工具结果、工具名/描述/schema，以及每条消息的固定开销。图片按固定 1,200 token 计，不按 base64 长度。字符按 UTF-8 字节近似（约 4 字节一个 token），只是近似值。安全余量是 `min(4096, max(32, floor(contextWindow / 20)))`，小窗口不会被固定 4,096 占满。同一 `systemPrompt` 和内容相同的首条 system 消息只计一次。不沿用上一条 usage。schema 按当前对象计算。循环引用或无法序列化的参数在发请求前失败。
 
@@ -60,7 +60,7 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 
 ## 内存循环
 
-一次 turn 是一次模型响应加上它的工具结果。Agent 不持有 Models。每次模型调用都走构造时传入的 `streamFn(model, context, options)`，它可以同步返回事件流，也可以异步取得事件流。`models.streamSimple.bind(models)` 满足这个形状。认证和 Provider 装配留在调用方。未传 `telemetryContext` 时使用空实现；要和某次 Models 共享诊断上下文，由调用方把那个上下文传进来。Steering 在当前 assistant 回合之后进入。Follow-up 要等到这次 run 本来会停的时候。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`walkYield` 可以追加一条普通 user 消息并再请求一次模型；没有可追加的文本就停止。排队中的 steer 或 follow-up 先走，这个钩子不插入。工具轮和 terminate 不调用它。`stopReason === "length"` 的 tool call 不执行。工具可以并行跑完，写回 transcript 时仍按 assistant 里的源顺序。
+一次 turn 是一次模型响应加上它的工具结果。Agent 不持有 Models。每次模型调用都走构造时传入的 `streamFn(model, context, options)`，它可以同步返回事件流，也可以异步取得事件流。`models.streamSimple.bind(models)` 满足这个形状。`hooks` 按顺序折进原有循环：`beforeToolCall` 可以拦截执行，`afterToolCall` 只改已经执行的结果的 `content`、`isError` 和 `terminate`，`transformContext` 只替换这一次模型请求的消息，不写回 transcript，也不另开一条循环。认证和 Provider 装配留在调用方。未传 `telemetryContext` 时使用空实现；要和某次 Models 共享诊断上下文，由调用方把那个上下文传进来。Steering 在当前 assistant 回合之后进入。Follow-up 要等到这次 run 本来会停的时候。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`walkYield` 可以追加一条普通 user 消息并再请求一次模型；没有可追加的文本就停止。排队中的 steer 或 follow-up 先走，这个钩子不插入。工具轮和 terminate 不调用它。`stopReason === "length"` 的 tool call 不执行。工具可以并行跑完，写回 transcript 时仍按 assistant 里的源顺序。
 
 ## 持久化运行时
 
@@ -120,6 +120,10 @@ const models = createModels({ telemetryContext });
 
 内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。
 
+CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后，`execute` 调用 `client.callTool`。本包不打开传输，CLI 也不会自己拉起 MCP 客户端。没有客户端或列表为空时，工具数组不变。
+
+没有一次性 prompt 且标准输出是终端时进入全屏。滚动区只画已经发出的 `AgentEvent`，提交仍走 `session.prompt`，工具确认只接 `beforeToolCall`。
+
 ## 命令
 
 ```bash
@@ -135,6 +139,9 @@ OpenAI：
 
 ```bash
 npx tsx packages/coding-agent/src/cli.ts --provider openai --model gpt-4o-mini "你好"
+npx tsx packages/coding-agent/src/cli.ts login --provider openai --method device_code
 ```
 
-这是同一套分层的独立实现，不是 Pi 仓库的拷贝。对齐范围是传统 Agent 这一路：没有 TUI、没有四十多个供应商、没有 Chord。`AgentHarness` 不支持 deferred 和摘要崩溃重试。`convertToLlm`、`transformContext`、工具前后 hook 和 `continue()` 也不在这里。
+不带 prompt、且标准输出是终端时，`amazme` 进入全屏，而不是报 missing prompt。
+
+这是同一套分层的独立实现，不是 Pi 仓库的拷贝。编码命令有全屏视图和 40 个预设供应商；登录、技能段落和 MCP 工具追加都在这一层。对齐仍不包含 Pi 的 Conversation / Task / Chord，也没有 `convertToLlm` 或 `continue()`。`AgentHarness` 不支持 deferred 和摘要崩溃重试。工具前后回调和 `transformContext` 是上面的有序 hooks，不是另一条循环。
