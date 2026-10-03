@@ -9,5 +9,5 @@
     "rootDir": "."
   },
   "include": ["src", "test"],
-  "references": [{ "path": "../ai" }, { "path": "../telemetry" }]
+  "references": [{ "path": "../agent" }, { "path": "../ai" }, { "path": "../telemetry" }]
 }

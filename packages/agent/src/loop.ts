@@ -196,7 +196,7 @@ function foldHooks(source: LoopHooks): HookSlot {
   };
 }
 
-async function walkBefore(
+export async function walkBefore(
   hooks: readonly AgentHook[],
   call: BeforeToolCallInput,
   signal: AbortSignal,
@@ -209,7 +209,7 @@ async function walkBefore(
   return undefined;
 }
 
-async function walkAfter(
+export async function walkAfter(
   hooks: readonly AgentHook[],
   call: AfterToolCallInput,
   signal: AbortSignal,
@@ -226,7 +226,7 @@ async function walkAfter(
   return changed ? toAfterUpdate(result) : undefined;
 }
 
-async function walkTransform(
+export async function walkTransform(
   hooks: readonly AgentHook[],
   messages: AgentMessage[],
   signal: AbortSignal,

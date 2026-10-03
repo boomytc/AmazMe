@@ -15,5 +15,5 @@
     "composite": true
   },
   "include": ["src"],
-  "references": [{ "path": "../ai" }, { "path": "../telemetry" }]
+  "references": [{ "path": "../agent" }, { "path": "../ai" }, { "path": "../telemetry" }]
 }
