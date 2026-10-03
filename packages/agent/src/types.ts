@@ -99,4 +99,49 @@ export interface FinishTurnInput {
 
 export type FinishTurnDecision = { action: "end" } | { action: "continue" };
 
+export interface BeforeToolCallInput {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+}
+
+/** Returning this skips `execute`. The tool result is an error that includes `reason`. */
+export interface BeforeToolCallDecision {
+  action: "block";
+  reason: string;
+}
+
+export type BeforeToolCall = (
+  input: BeforeToolCallInput,
+  signal: AbortSignal,
+) => Promise<BeforeToolCallDecision | undefined> | BeforeToolCallDecision | undefined;
+
+export interface AfterToolCallInput {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  result: ToolResult;
+}
+
+/** Replacement fields for a result that already returned from `execute`. */
+export interface AfterToolCallUpdate {
+  content?: TextContent[];
+  isError?: boolean;
+  terminate?: boolean;
+}
+
+export type AfterToolCall = (
+  input: AfterToolCallInput,
+  signal: AbortSignal,
+) => Promise<AfterToolCallUpdate | undefined> | AfterToolCallUpdate | undefined;
+
+/**
+ * Replaces the messages for one model call.
+ * The returned array is not written to the agent transcript.
+ */
+export type TransformContext = (
+  messages: AgentMessage[],
+  signal: AbortSignal,
+) => Promise<AgentMessage[] | undefined> | AgentMessage[] | undefined;
+
 export type { AssistantMessage, Model, TextContent, ThinkingLevel, ToolResultMessage };
