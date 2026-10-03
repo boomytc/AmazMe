@@ -70,6 +70,48 @@ test("beforeToolCall block skips execute and records the reason", async () => {
   assert.equal(last && last.role === "assistant" && last.content[0]?.type === "text" ? last.content[0].text : "", "not allowed");
 });
 
+test("abort during beforeToolCall skips execute and after", async () => {
+  let runs = 0;
+  let afters = 0;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let markStarted = () => {};
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const { agent, provider } = agentWith(
+    () => fauxAssistant([fauxToolCall("echo", { text: "hi" })]),
+    [echoTool(() => { runs += 1; })],
+    {
+      hooks: [{
+        beforeToolCall: async () => {
+          markStarted();
+          await gate;
+          return undefined;
+        },
+        afterToolCall: () => {
+          afters += 1;
+          return undefined;
+        },
+      }],
+    },
+  );
+  const pending = agent.prompt("go");
+  try {
+    await started;
+    agent.abort();
+    release();
+    const produced = await pending;
+    assert.equal(runs, 0);
+    assert.equal(afters, 0);
+    assert.equal(provider.state.callCount, 1);
+    const result = produced.find((message) => message.role === "toolResult");
+    assert.equal(result?.role === "toolResult" && result.isError, true);
+    assert.match(result?.role === "toolResult" ? messageText(result) : "", /cancelled/);
+  } finally {
+    release();
+    await pending.catch(() => undefined);
+  }
+});
+
 test("afterToolCall replaces the executed result", async () => {
   let runs = 0;
   const { agent, provider } = agentWith(

@@ -293,6 +293,166 @@ test("before throws before the write and the next drive does not call streamSimp
   }
 });
 
+test("requestAbort during beforeToolCall resolves before the hook returns and does not execute", async () => {
+  let executions = 0;
+  let afters = 0;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let markStarted = () => {};
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const { models } = modelsFor(() => fauxAssistant([fauxToolCall("echo", { text: "hi" })]));
+  const tool: HarnessTool = {
+    ...echo,
+    execute: async () => {
+      executions += 1;
+      return { content: [{ type: "text", text: "ran" }] };
+    },
+  };
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    tools: [tool],
+    hooks: [{
+      beforeToolCall: async () => {
+        markStarted();
+        await gate;
+        return undefined;
+      },
+      afterToolCall: () => {
+        afters += 1;
+        return undefined;
+      },
+    }],
+  });
+  const lane = runtime.lane();
+  let pending: Promise<unknown> | undefined;
+  try {
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const drive = lane.drive(admitted.value.operationId);
+    pending = drive;
+    await started;
+    const aborting = lane.requestAbort(admitted.value.operationId);
+    const winner = await Promise.race([
+      aborting.then((result) => result.ok ? "abort" as const : "rejected" as const),
+      new Promise<"stuck">((resolve) => setTimeout(() => resolve("stuck"), 300)),
+    ]);
+    assert.equal(winner, "abort");
+    release();
+    const outcome = await drive;
+    assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "aborted");
+    assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.error : "", "cancelled");
+    assert.equal(executions, 0);
+    assert.equal(afters, 0);
+    const stored = (await lane.entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
+    assert.ok(stored?.payload.type === "message" && stored.payload.message.role === "toolResult");
+    assert.equal(stored.payload.message.isError, true);
+    assert.equal(messageText(stored.payload.message), "cancelled");
+    assert.equal(runtime.live.size, 0);
+  } finally {
+    release();
+    await pending?.catch(() => undefined);
+    runtime.close();
+  }
+});
+
+test("a block returned after cancel keeps the block reason and does not execute", async () => {
+  let executions = 0;
+  let afters = 0;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let markStarted = () => {};
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const { models } = modelsFor(() => fauxAssistant([fauxToolCall("echo", { text: "hi" })]));
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    tools: [{
+      ...echo,
+      execute: async () => {
+        executions += 1;
+        return { content: [{ type: "text", text: "ran" }] };
+      },
+    }],
+    hooks: [{
+      beforeToolCall: async () => {
+        markStarted();
+        await gate;
+        return { action: "block", reason: "not allowed" };
+      },
+      afterToolCall: () => {
+        afters += 1;
+        return undefined;
+      },
+    }],
+  });
+  const lane = runtime.lane();
+  let pending: Promise<unknown> | undefined;
+  try {
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const drive = lane.drive(admitted.value.operationId);
+    pending = drive;
+    await started;
+    const aborting = lane.requestAbort(admitted.value.operationId);
+    const winner = await Promise.race([
+      aborting.then((result) => result.ok ? "abort" as const : "rejected" as const),
+      new Promise<"stuck">((resolve) => setTimeout(() => resolve("stuck"), 300)),
+    ]);
+    assert.equal(winner, "abort");
+    release();
+    const outcome = await drive;
+    assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "aborted");
+    assert.equal(executions, 0);
+    assert.equal(afters, 0);
+    const stored = (await lane.entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
+    assert.ok(stored?.payload.type === "message" && stored.payload.message.role === "toolResult");
+    assert.equal(messageText(stored.payload.message), "not allowed");
+  } finally {
+    release();
+    await pending?.catch(() => undefined);
+    runtime.close();
+  }
+});
+
+test("a thrown tool is stored without afterToolCall", async () => {
+  let afters = 0;
+  const { provider, models } = modelsFor((_context, _options, state) => state.callCount === 1
+    ? fauxAssistant([fauxToolCall("echo", { text: "hi" })])
+    : fauxAssistant("stopped"));
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    tools: [{
+      ...echo,
+      execute: async () => {
+        throw new Error("tool boom");
+      },
+    }],
+    hooks: [{
+      afterToolCall: () => {
+        afters += 1;
+        return undefined;
+      },
+    }],
+  });
+  try {
+    const result = await runtime.lane().prompt("go");
+    assert.equal(result.status, "completed");
+    assert.equal(afters, 0);
+    assert.equal(provider.state.callCount, 2);
+    const stored = (await runtime.lane().entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
+    assert.ok(stored?.payload.type === "message" && stored.payload.message.role === "toolResult");
+    assert.equal(stored.payload.message.isError, true);
+    assert.equal(messageText(stored.payload.message), "tool boom");
+    assert.equal(runtime.live.size, 0);
+  } finally {
+    runtime.close();
+  }
+});
+
 test("after throws, drops the live id, and recovery does not call streamSimple", async () => {
   let executions = 0;
   const storage = new RecoveryWatch();
