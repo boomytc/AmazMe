@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createVerify } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -213,7 +213,11 @@ test("bedrock signs container credentials and does not store them", async () => 
   assert.equal(calls[0]?.url, "https://container.test/creds");
   assert.match(calls[1]?.url ?? "", /converse-stream$/);
   assert.match(calls[1]?.authorization ?? "", /Credential=container-access-key\//);
+  assert.match(calls[1]?.authorization ?? "", /SignedHeaders=[^,]*x-amz-security-token/);
   assert.equal(calls[1]?.token, "container-session-token");
+  assert.equal(calls[1]?.authorization.includes("container-session-token"), false);
+  assert.equal(calls[1]?.authorization.includes("container-secret-key"), false);
+  assert.equal(calls[1]?.body.includes("container-session-token"), false);
   assert.equal(calls[1]?.body.includes("container-secret-key"), false);
   assert.equal(await store.get("amazon-bedrock"), undefined);
 });
@@ -322,6 +326,58 @@ test("bedrock assume-role uses the assumed credentials and drops them after the 
   assert.equal(new Headers({ authorization: authorizations[1] ?? "" }).get("authorization")?.includes("assumed-secret-key"), false);
   assert.equal(bodies[1]?.includes("source-secret-key"), false);
   assert.equal(bodies[1]?.includes("assumed-secret-key"), false);
+  assert.deepEqual(await store.get("amazon-bedrock"), stored);
+});
+
+test("an expired container credential does not call the model", async () => {
+  const soon = new Date(Date.now() + 30_000).toISOString();
+  const later = new Date(Date.now() + 120_000).toISOString();
+  for (const expiration of ["2000-01-01T00:00:00.000Z", "not-a-date", soon]) {
+    const outcome = await containerExchange(expiration);
+    assert.equal(outcome.stopReason, "error", expiration);
+    assert.deepEqual(outcome.urls, ["https://container.test/creds"], expiration);
+    assert.match(outcome.errorMessage, /could not be resolved/);
+    assert.equal(outcome.errorMessage.includes("container-secret-key"), false, expiration);
+    assert.equal(outcome.errorMessage.includes("container-session-token"), false, expiration);
+  }
+  const fresh = await containerExchange(later);
+  assert.equal(fresh.stopReason, "stop");
+  assert.match(fresh.urls[1] ?? "", /converse-stream$/);
+});
+
+test("an expired assume-role credential does not call the model", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-aws-"));
+  const credentials = join(dir, "credentials");
+  writeFileSync(credentials, [
+    "[dev]",
+    "role_arn = arn:aws:iam::123456789012:role/amazme",
+    "source_profile = source",
+    "[source]",
+    "aws_access_key_id = source-access-key",
+    "aws_secret_access_key = source-secret-key",
+    "",
+  ].join("\n"));
+  const urls: string[] = [];
+  const fetchImpl: typeof fetch = async (input) => {
+    urls.push(String(input));
+    return new Response("<AssumeRoleResponse><AssumeRoleResult><Credentials><AccessKeyId>assumed-access-key</AccessKeyId><SecretAccessKey>assumed-secret-key</SecretAccessKey><SessionToken>assumed-session-token</SessionToken><Expiration>2000-01-01T00:00:00.000Z</Expiration></Credentials></AssumeRoleResult></AssumeRoleResponse>");
+  };
+  const store = new MemoryCredentialStore();
+  const stored: Credential = { type: "api_key", env: { AWS_PROFILE: "dev", AWS_SHARED_CREDENTIALS_FILE: credentials, AWS_CONFIG_FILE: join(dir, "no-config"), AWS_REGION: "us-east-1" } };
+  await store.set("amazon-bedrock", stored);
+  const provider = amazonBedrockProvider({ fetch: fetchImpl });
+  const model = provider.getModels()[0];
+  assert.ok(model);
+  const models = createModels({ store, env: {} });
+  models.setProvider(provider);
+  const message = await models.completeSimple(model, CONTEXT);
+  assert.equal(message.stopReason, "error");
+  assert.match(message.errorMessage ?? "", /could not be resolved/);
+  assert.match(urls[0] ?? "", /^https:\/\/sts\.us-east-1\.amazonaws\.com\//);
+  assert.equal(urls.length, 1);
+  assert.equal(message.errorMessage?.includes("assumed-secret-key"), false);
+  assert.equal(message.errorMessage?.includes("source-secret-key"), false);
+  assert.equal(message.errorMessage?.includes("assumed-session-token"), false);
   assert.deepEqual(await store.get("amazon-bedrock"), stored);
 });
 
@@ -505,6 +561,162 @@ test("a failed vertex refresh does not call the model stream", async () => {
   assert.equal(message.errorMessage?.includes("test-refresh"), false);
   assert.deepEqual(await store.get("google-vertex"), stored);
 });
+
+test("a still-valid authorized-user token is sent without another refresh", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  const file = join(dir, "adc.json");
+  writeFileSync(file, JSON.stringify({
+    type: "authorized_user",
+    client_id: "test-client",
+    client_secret: "test-client-secret",
+    refresh_token: "test-refresh",
+    access_token: "still-valid",
+    expiry: new Date(Date.now() + 10 * 60_000).toISOString(),
+  }));
+  const calls: string[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push(String(input));
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer still-valid");
+    assert.equal(String(init?.body ?? "").includes("test-refresh"), false);
+    assert.equal(String(init?.body ?? "").includes("test-client-secret"), false);
+    return vertexSse();
+  };
+  const provider = googleVertexProvider({ fetch: fetchImpl });
+  const model = provider.getModels()[0];
+  assert.ok(model);
+  const models = createModels({
+    env: { GOOGLE_CLOUD_PROJECT: "proj", GOOGLE_CLOUD_LOCATION: "us-central1", GOOGLE_APPLICATION_CREDENTIALS: file },
+  });
+  models.setProvider(provider);
+  const message = await models.completeSimple(model, CONTEXT);
+  assert.equal(message.stopReason, "stop");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0] ?? "", /streamGenerateContent/);
+});
+
+test("a failed refresh does not send an authorized-user token that is inside the expiry skew", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  const file = join(dir, "adc.json");
+  const body = JSON.stringify({
+    type: "authorized_user",
+    client_id: "test-client",
+    client_secret: "test-client-secret",
+    refresh_token: "test-refresh",
+    access_token: "about-to-expire",
+    expiry: new Date(Date.now() + 30_000).toISOString(),
+  });
+  writeFileSync(file, body);
+  const urls: string[] = [];
+  const fetchImpl: typeof fetch = async (input) => {
+    urls.push(String(input));
+    return new Response("no", { status: 400 });
+  };
+  const provider = googleVertexProvider({ fetch: fetchImpl });
+  const model = provider.getModels()[0];
+  assert.ok(model);
+  const models = createModels({
+    env: { GOOGLE_CLOUD_PROJECT: "proj", GOOGLE_CLOUD_LOCATION: "us-central1", GOOGLE_APPLICATION_CREDENTIALS: file },
+  });
+  models.setProvider(provider);
+  const message = await models.completeSimple(model, CONTEXT);
+  assert.equal(message.stopReason, "error");
+  assert.match(message.errorMessage ?? "", /could not be resolved/);
+  assert.deepEqual(urls, ["https://oauth2.googleapis.com/token"]);
+  assert.equal(message.errorMessage?.includes("about-to-expire"), false);
+  assert.equal(message.errorMessage?.includes("test-refresh"), false);
+  assert.equal(message.errorMessage?.includes("test-client-secret"), false);
+  assert.equal(readFileSync(file, "utf8"), body);
+});
+
+test("an authorized-user token inside the expiry skew is refreshed before the model request", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  const file = join(dir, "adc.json");
+  writeFileSync(file, JSON.stringify({
+    type: "authorized_user",
+    client_id: "test-client",
+    client_secret: "test-client-secret",
+    refresh_token: "test-refresh",
+    access_token: "about-to-expire",
+    expiry: new Date(Date.now() + 30_000).toISOString(),
+  }));
+  const calls: Array<{ url: string; authorization: string; body: string }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    const body = String(init?.body ?? "");
+    calls.push({ url, authorization: new Headers(init?.headers).get("authorization") ?? "", body });
+    if (url.startsWith("https://oauth2.googleapis.com/token")) return Response.json({ access_token: "fresh-token", expires_in: 3600 });
+    return vertexSse();
+  };
+  const provider = googleVertexProvider({ fetch: fetchImpl });
+  const model = provider.getModels()[0];
+  assert.ok(model);
+  const models = createModels({
+    env: { GOOGLE_CLOUD_PROJECT: "proj", GOOGLE_CLOUD_LOCATION: "us-central1", GOOGLE_APPLICATION_CREDENTIALS: file },
+  });
+  models.setProvider(provider);
+  const message = await models.completeSimple(model, CONTEXT);
+  assert.equal(message.stopReason, "stop");
+  assert.match(calls[0]?.url ?? "", /^https:\/\/oauth2\.googleapis\.com\/token/);
+  assert.equal(calls[1]?.authorization, "Bearer fresh-token");
+  assert.equal(calls[1]?.body.includes("test-refresh"), false);
+  assert.equal(calls[1]?.body.includes("about-to-expire"), false);
+});
+
+test("a bare access token that is still valid calls the model and not the token endpoint", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  const file = join(dir, "adc.json");
+  writeFileSync(file, JSON.stringify({
+    access_token: "bare-token",
+    expiry: new Date(Date.now() + 10 * 60_000).toISOString(),
+  }));
+  const calls: Array<{ url: string; authorization: string }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization") ?? "" });
+    return vertexSse();
+  };
+  const provider = googleVertexProvider({ fetch: fetchImpl });
+  const model = provider.getModels()[0];
+  assert.ok(model);
+  const models = createModels({
+    env: { GOOGLE_CLOUD_PROJECT: "proj", GOOGLE_CLOUD_LOCATION: "us-central1", GOOGLE_APPLICATION_CREDENTIALS: file },
+  });
+  models.setProvider(provider);
+  const message = await models.completeSimple(model, CONTEXT);
+  assert.equal(message.stopReason, "stop");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]?.url ?? "", /streamGenerateContent/);
+  assert.equal(calls[0]?.authorization, "Bearer bare-token");
+});
+
+async function containerExchange(expiration: string): Promise<{ stopReason: string; urls: string[]; errorMessage: string }> {
+  const urls: string[] = [];
+  const fetchImpl: typeof fetch = async (input) => {
+    urls.push(String(input));
+    if (String(input) === "https://container.test/creds") {
+      return Response.json({
+        AccessKeyId: "container-access-key",
+        SecretAccessKey: "container-secret-key",
+        Token: "container-session-token",
+        Expiration: expiration,
+      });
+    }
+    return bedrockSse();
+  };
+  const provider = amazonBedrockProvider({ fetch: fetchImpl });
+  const model = provider.getModels()[0];
+  assert.ok(model);
+  const models = createModels({
+    env: {
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: "https://container.test/creds",
+      AWS_SHARED_CREDENTIALS_FILE: join(tmpdir(), "amazme-aws-no-credentials"),
+      AWS_CONFIG_FILE: join(tmpdir(), "amazme-aws-no-config"),
+      AWS_REGION: "us-east-1",
+    },
+  });
+  models.setProvider(provider);
+  const message = await models.completeSimple(model, CONTEXT);
+  return { stopReason: message.stopReason, urls, errorMessage: message.errorMessage ?? "" };
+}
 
 function bedrockSse(): Response {
   const body = encodeBedrockEvents([

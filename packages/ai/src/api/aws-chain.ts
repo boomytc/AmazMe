@@ -172,7 +172,7 @@ async function assumeRole(
   });
   const response = await input.fetch(url, { method: "POST", headers: signed.headers, body: signed.body, signal: input.signal });
   if (!response.ok) return undefined;
-  return credentialsFromSts(await response.text());
+  return credentialsFromSts(await response.text(), input.now?.getTime() ?? Date.now());
 }
 
 async function webIdentityCredentials(
@@ -204,7 +204,7 @@ async function webIdentityCredentials(
     signal: input.signal,
   });
   if (!response.ok) return undefined;
-  const credentials = credentialsFromSts(await response.text());
+  const credentials = credentialsFromSts(await response.text(), Date.now());
   return credentials ? { ...credentials, region } : undefined;
 }
 
@@ -234,16 +234,23 @@ async function containerCredentials(
   const accessKeyId = text(record.AccessKeyId);
   const secretAccessKey = text(record.SecretAccessKey);
   const sessionToken = text(record.Token);
-  if (!accessKeyId || !secretAccessKey) return undefined;
+  if (!accessKeyId || !secretAccessKey || !usableUntil(text(record.Expiration), Date.now())) return undefined;
   return { accessKeyId, secretAccessKey, ...(sessionToken ? { sessionToken } : {}), region };
 }
 
-function credentialsFromSts(xml: string): AwsSigningCredentials | undefined {
+function credentialsFromSts(xml: string, now: number): AwsSigningCredentials | undefined {
   const accessKeyId = xmlTag(xml, "AccessKeyId");
   const secretAccessKey = xmlTag(xml, "SecretAccessKey");
   const sessionToken = xmlTag(xml, "SessionToken");
-  if (!accessKeyId || !secretAccessKey || !sessionToken) return undefined;
+  if (!accessKeyId || !secretAccessKey || !sessionToken || !usableUntil(xmlTag(xml, "Expiration"), now)) return undefined;
   return { accessKeyId, secretAccessKey, sessionToken };
+}
+
+/** A missing expiry is still usable. A past or unreadable expiry is not. */
+function usableUntil(expiration: string | undefined, now: number): boolean {
+  if (expiration === undefined) return true;
+  const expiry = Date.parse(expiration);
+  return Number.isFinite(expiry) && expiry - now > 60_000;
 }
 
 function xmlTag(xml: string, tag: string): string | undefined {
