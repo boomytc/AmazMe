@@ -170,7 +170,9 @@ test("the first blocking before stops later befores, execute, and after", async 
   let secondBefore = 0;
   let afterCalls = 0;
   const { agent } = agentWith(
-    () => fauxAssistant([fauxToolCall("echo", { text: "hi" })]),
+    (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("echo", { text: "hi" })])
+      : fauxAssistant("stopped"),
     [echoTool(() => { runs += 1; })],
     {
       hooks: [
