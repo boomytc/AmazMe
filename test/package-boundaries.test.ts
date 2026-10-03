@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import * as agent from "@amazme/agent";
 import { AgentHarness, type HarnessMessage, type HarnessTool } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { createModels } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+
+test("durable depends on the agent walks and agent does not depend on durable", () => {
+  const agentPkg = JSON.parse(readFileSync(new URL("../packages/agent/package.json", import.meta.url), "utf8")) as { dependencies?: Record<string, string> };
+  const durablePkg = JSON.parse(readFileSync(new URL("../packages/durable/package.json", import.meta.url), "utf8")) as { dependencies?: Record<string, string> };
+  assert.equal(durablePkg.dependencies?.["@amazme/agent"], "0.1.0");
+  assert.equal(agentPkg.dependencies?.["@amazme/durable"], undefined);
+  assert.equal(typeof agent.walkBefore, "function");
+  assert.equal(typeof agent.walkAfter, "function");
+  assert.equal(typeof agent.walkTransform, "function");
+  assert.equal("foldHooks" in agent, false);
+});
 
 test("the public Agent entry runs without loading Durable", () => {
   const script = `

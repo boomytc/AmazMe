@@ -1,6 +1,6 @@
 # AmazMe
 
-一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时已按 [Pi `7fbbd5f` 的独立包边界](https://github.com/earendil-works/pi/blob/7fbbd5f4a1d982bb02d63472dde0774fa639f99b/packages/durable/package.json) 拆成 `@amazme/durable`，直接依赖 AI 和 Telemetry，与内存 Agent 分别运行。其 lane、恢复与存储设计保持原有范围，没有采用 Pi 的 Conversation / Task / Chord 架构。
+一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时 `@amazme/durable` 依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 已有的 `walkBefore`、`walkAfter`、`walkTransform`。`@amazme/agent` 不依赖 `@amazme/durable`。lane、恢复与存储设计保持原有范围，没有第二套 hook 遍历，也没有采用 Pi 的 Conversation / Task / Chord 架构。
 
 ```text
 @amazme/telemetry      被动诊断契约、空实现、进程内记录
@@ -64,7 +64,7 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 
 ## 持久化运行时
 
-`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessTool`、`HarnessMessage` 属于 Durable 自己的契约，可由同一套工具和消息实现满足两个运行时各自的接口。更多使用方式见 [Durable README](packages/durable/README.md)。
+`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 在武装工具前调用 `walkBefore`，在工具返回后、写入结果前调用 `walkAfter`，并只在助手请求和摘要请求调用 `streamSimple` 之前用 `walkTransform` 替换这一次的 messages。变换结果不写回条目。`HarnessTool`、`ToolResult`、`HarnessMessage` 仍属于 Durable 自己的契约，不与 Agent 的同名类型合并。更多使用方式见 [Durable README](packages/durable/README.md)。
 
 存储只有三类东西：只写一次的 entry 树、可替换的 value 和只追加的 list、只追加的 usage。一次 commit 要么全部可见，要么全部没有。
 
