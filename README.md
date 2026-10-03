@@ -1,6 +1,6 @@
 # AmazMe
 
-一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时 `@amazme/durable` 依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 已有的 `walkBefore`、`walkAfter`、`walkTransform`。`@amazme/agent` 不依赖 `@amazme/durable`。lane、恢复与存储设计保持原有范围，没有第二套 hook 遍历，也没有采用 Pi 的 Conversation / Task / Chord 架构。
+一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时 `@amazme/durable` 依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 已有的 `walkBefore`、`walkAfter`、`walkTransform`、`walkYield`。`@amazme/agent` 不依赖 `@amazme/durable`。lane、恢复与存储设计保持原有范围，没有第二套 hook 遍历，也没有采用 Pi 的 Conversation / Task / Chord 架构。
 
 ```text
 @amazme/telemetry      被动诊断契约、空实现、进程内记录
@@ -60,11 +60,11 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 
 ## 内存循环
 
-一次 turn 是一次模型响应加上它的工具结果。Agent 不持有 Models。每次模型调用都走构造时传入的 `streamFn(model, context, options)`，它可以同步返回事件流，也可以异步取得事件流。`models.streamSimple.bind(models)` 满足这个形状。认证和 Provider 装配留在调用方。未传 `telemetryContext` 时使用空实现；要和某次 Models 共享诊断上下文，由调用方把那个上下文传进来。Steering 在当前 assistant 回合之后进入。Follow-up 要等到这次 run 本来会停的时候。`stopReason === "length"` 的 tool call 不执行。工具可以并行跑完，写回 transcript 时仍按 assistant 里的源顺序。
+一次 turn 是一次模型响应加上它的工具结果。Agent 不持有 Models。每次模型调用都走构造时传入的 `streamFn(model, context, options)`，它可以同步返回事件流，也可以异步取得事件流。`models.streamSimple.bind(models)` 满足这个形状。认证和 Provider 装配留在调用方。未传 `telemetryContext` 时使用空实现；要和某次 Models 共享诊断上下文，由调用方把那个上下文传进来。Steering 在当前 assistant 回合之后进入。Follow-up 要等到这次 run 本来会停的时候。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`walkYield` 可以追加一条普通 user 消息并再请求一次模型；没有可追加的文本就停止。排队中的 steer 或 follow-up 先走，这个钩子不插入。工具轮和 terminate 不调用它。`stopReason === "length"` 的 tool call 不执行。工具可以并行跑完，写回 transcript 时仍按 assistant 里的源顺序。
 
 ## 持久化运行时
 
-`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 在武装工具前调用 `walkBefore`，在工具返回后、写入结果前调用 `walkAfter`，并只在助手请求和摘要请求调用 `streamSimple` 之前用 `walkTransform` 替换这一次的 messages。变换结果不写回条目。`HarnessTool`、`ToolResult`、`HarnessMessage` 仍属于 Durable 自己的契约，不与 Agent 的同名类型合并。更多使用方式见 [Durable README](packages/durable/README.md)。
+`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 在武装工具前调用 `walkBefore`，在工具返回后、写入结果前调用 `walkAfter`，并只在助手请求和摘要请求调用 `streamSimple` 之前用 `walkTransform` 替换这一次的 messages。变换结果不写回条目。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`drive` 才调用 `walkYield`：非空白字符串追加成一条 user 消息并再请求一次，空结果则完成。钩子抛错发生在任何写入之前，不留下 live id，也不重发已经结算的 `streamSimple`。工具轮、terminate、摘要和 navigation 不调用它。`HarnessTool`、`ToolResult`、`HarnessMessage` 仍属于 Durable 自己的契约，不与 Agent 的同名类型合并。更多使用方式见 [Durable README](packages/durable/README.md)。
 
 存储只有三类东西：只写一次的 entry 树、可替换的 value 和只追加的 list、只追加的 usage。一次 commit 要么全部可见，要么全部没有。
 

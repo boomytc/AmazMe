@@ -1,4 +1,4 @@
-import { applyAfter, walkAfter, walkBefore, walkTransform, type AgentHook, type AgentMessage } from "@amazme/agent";
+import { applyAfter, walkAfter, walkBefore, walkTransform, walkYield, type AgentHook, type AgentMessage } from "@amazme/agent";
 import {
   uuidv7,
   toolDefinition,
@@ -181,7 +181,8 @@ type Plan =
   | { type: "error"; error: HarnessFailure }
   | { type: "assistant"; operationId: string; responseEntryId: string; usageId: string }
   | { type: "summary"; operationId: string; responseEntryId: string; usageId: string }
-  | { type: "tools"; operationId: string };
+  | { type: "tools"; operationId: string }
+  | { type: "yield" };
 
 const running = (): Scope => ({ control: { status: "running" }, attempt: 0, overflowUsed: false, thresholdUsed: false });
 
@@ -317,6 +318,14 @@ export class AgentLane {
       }
       if (planned.type === "continue") continue;
       if (this.harness.isAbandoned) return this.settledOrWait(operationId);
+      if (planned.type === "yield") {
+        const text = await walkYield(this.hookList(), signal);
+        if (this.harness.isAbandoned) return this.settledOrWait(operationId);
+        const applied = await this.harness.storage.run((view, apply) => this.applyYield(view, apply, operationId, text));
+        if (applied.type === "error") return { ok: false, error: applied.error };
+        if (applied.type === "settled") return { ok: true, value: { kind: "settled", result: applied.result } };
+        continue;
+      }
       if (planned.type === "assistant") {
         try {
           const message = await this.streamAssistant(planned, signal, span);
@@ -537,6 +546,7 @@ export class AgentLane {
       const includeFollow = state.continuation === "may_finish";
       const placed = this.placeInbox(view, apply, record, true, includeFollow);
       if (!placed.moved && state.continuation !== "need_assistant") {
+        if (this.modelStoppedWithoutTools(view)) return { type: "yield" };
         return { type: "settled", result: this.finish(view, apply, meta, "completed") };
       }
       apply([{ type: "set", address: laneAddress(this.name), value: { ...placed.record, currentOperationId: operationId } }]);
@@ -1202,6 +1212,53 @@ export class AgentLane {
       },
     ]);
     return result;
+  }
+
+  /**
+   * Writes the yielded user message, or finishes when there is nothing to append.
+   * `walkYield` has already returned; a throw from that hook never reaches this method.
+   */
+  private applyYield(view: StorageView, apply: Apply, operationId: string, text: string | undefined): Plan {
+    const record = this.record(view);
+    const state = view.get<OperationState>(stateAddress(operationId));
+    const meta = view.get<OperationMeta>(metaAddress(operationId));
+    if (!state || !meta || record.currentOperationId !== operationId || state.phase !== "checkpoint") {
+      return { type: "continue" };
+    }
+    const placed = this.placeInbox(view, apply, record, true, state.continuation === "may_finish");
+    if (placed.moved) {
+      apply([{ type: "set", address: laneAddress(this.name), value: { ...placed.record, currentOperationId: operationId } }]);
+      return this.beginModelRequest(view, apply, meta, state.scope);
+    }
+    if (state.continuation !== "may_finish" || !this.modelStoppedWithoutTools(view)) {
+      if (state.continuation === "need_assistant") return this.beginModelRequest(view, apply, meta, state.scope);
+      return { type: "settled", result: this.finish(view, apply, meta, "completed") };
+    }
+    const yielded = typeof text === "string" && text.trim() !== "" ? text : undefined;
+    if (yielded === undefined) return { type: "settled", result: this.finish(view, apply, meta, "completed") };
+    const entryId = uuidv7();
+    apply([
+      {
+        type: "entry",
+        id: entryId,
+        parentId: placed.tipId,
+        timestamp: Date.now(),
+        payload: { type: "message", message: user(yielded) },
+      },
+      { type: "set", address: tipAddress(this.name), value: entryId },
+    ]);
+    return this.beginModelRequest(view, apply, meta, state.scope);
+  }
+
+  /** True when the settled tip is an assistant message that did not call tools. Terminate leaves a tool result. */
+  private modelStoppedWithoutTools(view: StorageView): boolean {
+    const tipId = view.get<string | null>(tipAddress(this.name)) ?? null;
+    if (!tipId) return false;
+    const entry = view.entry(tipId);
+    if (!entry || entry.payload.type !== "message") return false;
+    const message = entry.payload.message;
+    if (message.role !== "assistant") return false;
+    return !message.content.some((block) => block.type === "toolCall");
   }
 
   private placeInbox(
