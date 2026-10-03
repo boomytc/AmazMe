@@ -1,15 +1,17 @@
 import { createAssistantEventStream, type ProviderStreams } from "../models.ts";
 import type { BedrockOptions, Context, Model } from "../types.ts";
 import { classifyTransportFailure } from "../utils/overflow.ts";
+import { bearerFromEnv, resolveAwsChain } from "./aws-chain.ts";
+import { signAwsRequest } from "./aws-sigv4.ts";
 import { createAccumulator, isAbort, usageFromCounts } from "./events.ts";
-import { isRecord, postJson, prepareChat, readSse, terminal } from "./prepare.ts";
+import { isRecord, prepareChat, readSse, terminal } from "./prepare.ts";
 
 export const BEDROCK_CONVERSE_STREAM_API = "bedrock-converse-stream";
 
 /**
- * Converse-stream events as JSON SSE.
- * Pi signs the binary event stream with the AWS SDK. This cut does not embed that SDK:
- * a bearer token is sent when one is resolved, and recorded tests speak the decoded event objects.
+ * Converse stream as JSON SSE, authenticated before the request is sent.
+ * A bearer token is sent as Bearer. Otherwise the AWS chain is resolved and the
+ * same request is signed with Signature V4. Resolution failure does not send it.
  */
 export function bedrockConverseStreamApi(options: { fetch?: typeof fetch } = {}): ProviderStreams<"bedrock-converse-stream"> {
   const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -41,29 +43,38 @@ async function pump(
       stream.push({ type: "error", error: prepared.message });
       return;
     }
-    if (!request.apiKey) {
-      stream.push({
-        type: "error",
-        error: terminal(model, "error", "Bedrock converse request requires a bearer token. Profile and credential-chain configuration is detected without copying secrets, and this cut does not sign with the AWS SDK."),
-      });
-      return;
-    }
     const root = (request.baseUrl ?? "").replace(/\/$/, "");
-    const url = `${root}/model/${encodeURIComponent(model.id)}/converse-stream`;
-    const headers = {
-      ...request.headers,
-      authorization: `Bearer ${request.apiKey}`,
-      "content-type": "application/json",
-    };
-    const payload = {
+    const url = new URL(`${root}/model/${encodeURIComponent(model.id)}/converse-stream`);
+    const payload = JSON.stringify({
       messages: prepared.prepared.context.messages.filter((message) => message.role !== "system").map(bedrockMessage),
       inferenceConfig: { maxTokens: prepared.prepared.outputCap },
       ...(prepared.prepared.context.tools && prepared.prepared.context.tools.length > 0
         ? { toolConfig: { tools: prepared.prepared.context.tools.map((tool) => ({ toolSpec: { name: tool.name, description: tool.description, inputSchema: { json: tool.parameters } } })) } }
         : {}),
-    };
+    });
+    const bearer = request.apiKey || bearerFromEnv(request.env ?? {});
+    let headers: Record<string, string>;
+    if (bearer) {
+      headers = { ...request.headers, authorization: `Bearer ${bearer}`, "content-type": "application/json" };
+    } else {
+      const credentials = await resolveAwsChain({ env: request.env ?? {}, fetch: fetchImpl, ...(request.signal ? { signal: request.signal } : {}) });
+      if (!credentials) {
+        stream.push({ type: "error", error: terminal(model, "error", "Bedrock credentials could not be resolved") });
+        return;
+      }
+      const signed = signAwsRequest({
+        method: "POST",
+        url,
+        body: payload,
+        region: bedrockRegion(url, request.region, credentials.region),
+        service: "bedrock",
+        credentials,
+        headers: { ...request.headers, "content-type": "application/json" },
+      });
+      headers = signed.headers;
+    }
     sent = true;
-    const response = await postJson(fetchImpl, url, headers, payload, request.signal);
+    const response = await fetchImpl(url, { method: "POST", headers, body: payload, signal: request.signal });
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       const classification = classifyTransportFailure(response.status, body);
@@ -154,4 +165,9 @@ function bedrockMessage(message: Context["messages"][number]): unknown {
 
 function numberOf(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function bedrockRegion(url: URL, requested: string | undefined, fromChain: string): string {
+  const host = /^bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com$/i.exec(url.hostname);
+  return host?.[1] ?? requested ?? fromChain;
 }

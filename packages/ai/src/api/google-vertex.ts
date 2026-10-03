@@ -1,8 +1,8 @@
-import { readFile } from "node:fs/promises";
 import { createAssistantEventStream, type ProviderStreams } from "../models.ts";
 import type { Context, GoogleVertexOptions, Model } from "../types.ts";
 import { classifyTransportFailure } from "../utils/overflow.ts";
 import { createAccumulator, isAbort } from "./events.ts";
+import { resolveAdcAccessToken } from "./google-adc.ts";
 import { applyGoogleChunk, googleBody, googleStop } from "./google-shared.ts";
 import { isRecord, postJson, prepareChat, readSse, terminal } from "./prepare.ts";
 
@@ -48,9 +48,10 @@ async function pump(
     const headers: Record<string, string> = { ...request.headers, "content-type": "application/json" };
     if (request.apiKey) headers["x-goog-api-key"] = request.apiKey;
     else {
-      const bearer = await adcBearer(request.env?.GOOGLE_APPLICATION_CREDENTIALS);
+      const path = request.env?.GOOGLE_APPLICATION_CREDENTIALS;
+      const bearer = path ? await resolveAdcAccessToken({ path, fetch: fetchImpl, ...(request.signal ? { signal: request.signal } : {}) }) : undefined;
       if (!bearer) {
-        stream.push({ type: "error", error: terminal(model, "error", "Google Vertex request requires an API key or ADC") });
+        stream.push({ type: "error", error: terminal(model, "error", "Google Vertex credentials could not be resolved") });
         return;
       }
       headers.authorization = `Bearer ${bearer}`;
@@ -95,15 +96,3 @@ async function pump(
   }
 }
 
-/** Read a bearer from an ADC file at request time. The file contents are not stored. */
-async function adcBearer(path: string | undefined): Promise<string | undefined> {
-  if (!path) return undefined;
-  try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
-    if (typeof parsed.access_token === "string" && parsed.access_token.length > 0) return parsed.access_token;
-    if (typeof parsed.token === "string" && parsed.token.length > 0) return parsed.token;
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
