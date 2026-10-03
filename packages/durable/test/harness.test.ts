@@ -158,7 +158,7 @@ test("a crashed assistant stream is settled from frames and is not sent again", 
   const provider: Provider = {
     id: "gated",
     name: "gated",
-    auth: { env: "GATED", ambient: "x" },
+    auth: { apiKey: { env: "GATED", ambient: "x" } },
     getModels: () => [model],
     stream(active, context, options) {
       return this.streamSimple(active, context, options);
@@ -226,7 +226,7 @@ test("a crashed stream keeps text from frames, drops the tool call, and does not
   const provider: Provider = {
     id: "gated",
     name: "gated",
-    auth: { env: "GATED", ambient: "x" },
+    auth: { apiKey: { env: "GATED", ambient: "x" } },
     getModels: () => [model],
     stream(active, context, options) {
       return this.streamSimple(active, context, options);
@@ -307,7 +307,7 @@ test("a crashed stream keeps the thinking fragment and its completions field", a
   const provider: Provider = {
     id: "gated",
     name: "gated",
-    auth: { env: "GATED", ambient: "x" },
+    auth: { apiKey: { env: "GATED", ambient: "x" } },
     getModels: () => [model],
     stream(active, context, options) {
       return this.streamSimple(active, context, options);
