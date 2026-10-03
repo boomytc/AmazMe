@@ -1,13 +1,14 @@
-import { access } from "node:fs/promises";
 import type { ApiKeyAuth } from "../auth.ts";
+import { awsRequestEnv } from "../api/aws-chain.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { AuthResult } from "../types.ts";
 import { catalogModels } from "./catalog.ts";
 import { wires } from "./wires.ts";
 
 /**
- * Detect a bearer token or an existing AWS chain. Secrets stay in the environment.
- * The request path sends only a bearer; this cut does not sign with the AWS SDK.
+ * Bearer token, or a profile / credential-chain pointer.
+ * Signing happens on the request. Secrets from credential files are not copied here,
+ * and nothing this resolver returns is written to the credential store.
  */
 function bedrockAuth(): ApiKeyAuth {
   return {
@@ -15,28 +16,15 @@ function bedrockAuth(): ApiKeyAuth {
     name: "AWS credentials or bearer token",
     async resolve({ credential, env }): Promise<AuthResult | undefined> {
       if (credential?.key) return { apiKey: credential.key, source: "store", ...(credential.env ? { env: credential.env } : {}) };
-      const bearer = env.AWS_BEARER_TOKEN_BEDROCK;
-      if (bearer) return { apiKey: bearer, source: "env" };
-      const profile = credential?.env?.AWS_PROFILE ?? env.AWS_PROFILE;
-      if (profile) return { source: credential?.env?.AWS_PROFILE ? "store" : "env", env: { AWS_PROFILE: profile } };
-      if (env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY) return { source: "env" };
-      if (env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI || env.AWS_CONTAINER_CREDENTIALS_FULL_URI || env.AWS_WEB_IDENTITY_TOKEN_FILE) {
-        return { source: "env" };
-      }
-      if (await fileExists(env.AWS_SHARED_CREDENTIALS_FILE) || await fileExists(env.AWS_CONFIG_FILE)) return { source: "env" };
-      return undefined;
+      const selected: Record<string, string | undefined> = credential?.env ? { ...env, ...credential.env } : { ...env };
+      const profileLocked = Boolean(credential?.env?.AWS_PROFILE || credential?.env?.AWS_SHARED_CREDENTIALS_FILE || credential?.env?.AWS_CONFIG_FILE);
+      if (profileLocked) delete selected.AWS_BEARER_TOKEN_BEDROCK;
+      const requestEnv = await awsRequestEnv(selected, profileLocked ? "profile" : "chain");
+      if (!requestEnv) return undefined;
+      if (requestEnv.AWS_BEARER_TOKEN_BEDROCK) return { apiKey: requestEnv.AWS_BEARER_TOKEN_BEDROCK, source: credential ? "store" : "env" };
+      return { source: credential ? "store" : "env", env: requestEnv };
     },
   };
-}
-
-async function fileExists(path: string | undefined): Promise<boolean> {
-  if (!path) return false;
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function amazonBedrockProvider(options: { fetch?: typeof fetch } = {}): Provider {

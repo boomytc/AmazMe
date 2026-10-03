@@ -172,7 +172,10 @@ export interface StreamOptions {
   /** Provider defaults can be overridden for one request, regardless of its protocol. */
   baseUrl?: string;
   headers?: ProviderHeaders;
-  /** Non-secret provider config resolved beside the key: project, location, profile, gateway ids. */
+  /**
+   * Provider config resolved beside the key: project, location, profile, gateway ids.
+   * A Bedrock request may also carry the signing keys for that one call. Those keys are not stored.
+   */
   env?: Record<string, string | undefined>;
   /** Optional conversation id. OpenCode copies it onto `x-opencode-session` beside the request. */
   sessionId?: string;

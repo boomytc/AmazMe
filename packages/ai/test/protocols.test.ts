@@ -144,7 +144,7 @@ test("google generative and vertex map recorded text, thinking, and tool calls",
   assert.equal(generative.headers.get("x-goog-api-key"), "recorded-key");
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
   const file = join(dir, "adc.json");
-  writeFileSync(file, JSON.stringify({ access_token: "adc-token" }));
+  writeFileSync(file, JSON.stringify({ access_token: "adc-token", expiry: "2099-01-01T00:00:00.000Z" }));
   const vertex = await assertRecorded(
     "vertex",
     (fetchImpl) => googleVertexApi({ fetch: fetchImpl }),
