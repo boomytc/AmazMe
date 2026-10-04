@@ -4,6 +4,7 @@
 
 ```text
 @amazme/telemetry      被动诊断契约、空实现、进程内记录
+@amazme/protocol       跨进程路由信封、严格 JSON、CBOR 与分帧，只依赖 TypeBox
 @amazme/mcp            独立的 MCP 客户端，不依赖其余各包
 @amazme/ai             Provider、认证、统一消息、流事件
 @amazme/agent          内存里的 turn 循环

@@ -53,6 +53,37 @@ test("the MCP package depends on none of the other AmazMe packages", () => {
   assert.equal(child.status, 0, child.stderr);
 });
 
+test("the protocol depends only on TypeBox and its root entry runs without Node modules, process, or AmazMe packages", () => {
+  const protocolPkg = JSON.parse(readFileSync(new URL("../packages/protocol/package.json", import.meta.url), "utf8")) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  assert.deepEqual(protocolPkg.dependencies, { typebox: "1.3.27" });
+  assert.equal(protocolPkg.devDependencies, undefined);
+  const script = `
+    const { registerHooks, builtinModules } = await import("node:module");
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier.startsWith("node:") || builtinModules.includes(specifier)) throw new Error("Node import in protocol: " + specifier);
+      const resolved = next(specifier, context);
+      if (/\\/packages\\/(?!protocol\\/)[^/]+\\//.test(resolved.url)) throw new Error("protocol loaded " + specifier);
+      return resolved;
+    } });
+    globalThis.process = undefined;
+    const protocol = await import("@amazme/protocol");
+    const message = { type: "request", id: "r1", route: { serverId: "s" }, call: { opaque: [1, "x"] } };
+    const frame = protocol.encodeClientMessage(message);
+    const decoder = new protocol.ClientMessageDecoder();
+    const decoded = [...decoder.push(frame.subarray(0, 3)), ...decoder.push(frame.subarray(3))];
+    if (JSON.stringify(decoded) !== JSON.stringify([message])) throw new Error("round trip failed");
+    for (const name of ["LaneSnapshot", "OperationState", "prompt", "value", "list", "AgentHarness"]) {
+      if (name in protocol) throw new Error("protocol exports business value " + name);
+    }
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 10_000 });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+});
+
 test("the public Agent entry runs without loading Durable", () => {
   const script = `
     const { registerHooks } = await import("node:module");
