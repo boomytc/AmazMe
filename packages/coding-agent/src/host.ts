@@ -5,6 +5,8 @@ import { Server } from "@amazme/server";
 import { listenUnix, type UnixListener } from "@amazme/server/unix";
 import { openJsonlRuntime } from "@amazme/runtime-service/jsonl";
 import { createManagementService, openOwnedRuntimes } from "@amazme/runtime-service/server";
+import { connectWorkspaceMcp } from "./mcp-config.ts";
+import { appendMcpTools } from "./mcp.ts";
 import { appendSkillText } from "./skills.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
@@ -64,16 +66,31 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
     openRuntime: openOwnedRuntimes({
       lanes: [HOST_LANE],
       onError: report,
-      open(runtimeId) {
-        if (runtimeId !== HOST_RUNTIME_ID) return Promise.resolve(null);
+      async open(runtimeId) {
+        if (runtimeId !== HOST_RUNTIME_ID) return null;
         const file = runtimeFile(cwd);
         mkdirSync(join(cwd, ".amazme", "runtime"), { recursive: true });
-        return openJsonlRuntime(file, {
-          models: options.models,
-          model: { provider, modelId },
-          systemPrompt: appendSkillText(SYSTEM_PROMPT, join(cwd, "skills")),
-          tools: createCodingTools(cwd),
-        });
+        const coding = createCodingTools(cwd);
+        const mcp = await connectWorkspaceMcp(cwd);
+        try {
+          const tools = await appendMcpTools(coding, mcp.servers);
+          const resources = await openJsonlRuntime(file, {
+            models: options.models,
+            model: { provider, modelId },
+            systemPrompt: appendSkillText(SYSTEM_PROMPT, join(cwd, "skills")),
+            tools,
+          });
+          return {
+            harness: resources.harness,
+            closeStorage: () => resources.closeStorage(),
+            release: () => resources.release(),
+            remove: () => resources.remove(),
+            closeResources: () => mcp.close(),
+          };
+        } catch (error) {
+          await mcp.close();
+          throw error;
+        }
       },
     }),
   });

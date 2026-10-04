@@ -13,7 +13,7 @@ import {
   type Model,
   type Provider,
 } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
 import { AgentHarness, type HarnessTool, type LaneSnapshot, type Storage, type Write } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
@@ -88,7 +88,7 @@ test("snapshot projects the persisted reply prefix from one view and settles wit
     const empty = await lane.snapshot();
     assert.deepEqual(empty, {
       version: 0, lane: "main", tipId: null, phase: null, operationId: null, lastOperationId: null,
-      status: null, entries: [], pendingResponse: null,
+      status: null, entries: [], pendingResponse: null, tools: [],
     });
     assert.equal(await storage.read((view) => view.values().length), 0, "a query does not initialize the lane");
 
@@ -320,6 +320,64 @@ test("returned snapshots and results are detached from storage", async () => {
     result.value.status = "failed";
     result.value.tipId = "mutated";
     assert.deepEqual(await lane.result(admitted.value.operationId), { ok: true, value: settled });
+  } finally {
+    harness.close();
+  }
+});
+
+test("snapshot reports the open tool batch and history pages the ancestor chain", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("hold", {})])
+      : fauxAssistant("after"),
+  }));
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    tools: [{
+      name: "hold",
+      description: "hold",
+      parameters: { type: "object" },
+      async execute() {
+        await gate;
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  try {
+    const lane = harness.lane();
+    const first = await lane.accept({ kind: "prompt", text: "one" });
+    assert.ok(first.ok);
+    const driving = lane.drive(first.value.operationId);
+    await until(async () => (await lane.snapshot()).tools.some((tool) => tool.status === "running"));
+    const running = await lane.snapshot();
+    assert.equal(running.phase, "tools");
+    assert.deepEqual(running.tools.map((tool) => ({ name: tool.name, status: tool.status })), [{ name: "hold", status: "running" }]);
+    release();
+    const settled = await driving;
+    assert.ok(settled.ok && settled.value.kind === "settled");
+    assert.deepEqual((await lane.snapshot()).tools, []);
+
+    const second = await lane.accept({ kind: "prompt", text: "two" });
+    assert.ok(second.ok);
+    const again = await lane.drive(second.value.operationId);
+    assert.ok(again.ok);
+    const chain = await lane.snapshot();
+    const newest = await lane.history(null, 1);
+    assert.ok(newest.ok);
+    assert.equal(newest.value.entries.length, 1);
+    assert.equal(newest.value.entries[0]?.id, chain.entries.at(-1)?.id);
+    assert.equal(newest.value.older, chain.entries.length - 1);
+    const rest = await lane.history(newest.value.entries[0]!.id, 100);
+    assert.ok(rest.ok);
+    assert.equal(rest.value.older, 0);
+    assert.deepEqual(rest.value.entries.map((entry) => entry.id), chain.entries.slice(0, -1).map((entry) => entry.id));
+    const missing = await lane.history("missing", 1);
+    assert.equal(missing.ok, false);
+    if (!missing.ok) assert.equal(missing.error.code, "unknown_target");
   } finally {
     harness.close();
   }

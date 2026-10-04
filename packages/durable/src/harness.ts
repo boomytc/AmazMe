@@ -126,11 +126,20 @@ export interface PendingResponse {
   errorMessage: string | null;
 }
 
+/** A tool call of the current operation. Settled calls stay in `entries`; this list is only the open batch. */
+export interface ToolActivity {
+  toolCallId: string;
+  name: string;
+  /** `running` is `effect_pending`. `outcome_ready` and `completed` are `settled`. */
+  status: "planned" | "running" | "settled";
+}
+
 /** One consistent read of a lane. Every field is a detached copy taken at `version`. */
 export interface LaneSnapshot extends LaneStatus {
   version: number;
   entries: Entry[];
   pendingResponse: PendingResponse | null;
+  tools: ToolActivity[];
 }
 
 export type OperationRequest =
@@ -586,7 +595,35 @@ export class AgentLane {
           errorMessage: reduced.errorMessage ?? null,
         };
       }
-      return structuredClone({ version: view.version(), ...status, entries: ancestors(view, status.tipId), pendingResponse });
+      return structuredClone({
+        version: view.version(),
+        ...status,
+        entries: ancestors(view, status.tipId),
+        pendingResponse,
+        tools: toolActivity(state),
+      });
+    });
+  }
+
+  /**
+   * Ancestors strictly before `before`, newest page last, at most `limit` entries.
+   * `before: null` is the newest page. `older` is how many ancestors remain before the page.
+   * It does not drive or recover.
+   */
+  history(before: string | null, limit: number): Promise<Result<{ entries: Entry[]; older: number }>> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      return Promise.resolve(failure("invalid_message", "history limit must be an integer from 1 to 100"));
+    }
+    return admitted(this.harness).read((view) => {
+      const chain = ancestors(view, view.get<string | null>(tipAddress(this.name)) ?? null);
+      let end = chain.length;
+      if (before !== null) {
+        const index = chain.findIndex((entry) => entry.id === before);
+        if (index < 0) return failure("unknown_target", "the entry is not on this lane");
+        end = index;
+      }
+      const start = Math.max(0, end - limit);
+      return { ok: true, value: { entries: structuredClone(chain.slice(start, end)), older: start } };
     });
   }
 
@@ -1878,6 +1915,15 @@ function readArgs(entry: Entry | undefined, sourceIndex: number): unknown {
   if (!entry || entry.payload.type !== "message" || entry.payload.message.role !== "assistant") return {};
   const block = entry.payload.message.content[sourceIndex];
   return block?.type === "toolCall" ? block.arguments : {};
+}
+
+function toolActivity(state: OperationState | undefined): ToolActivity[] {
+  if (!state || state.phase !== "tools") return [];
+  return state.calls.map((call) => ({
+    toolCallId: call.toolCallId,
+    name: call.name,
+    status: call.status === "planned" ? "planned" : call.status === "effect_pending" ? "running" : "settled",
+  }));
 }
 
 function ancestors(view: StorageView, tip: string | null): Entry[] {

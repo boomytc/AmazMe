@@ -17,6 +17,7 @@
   "include": ["src"],
   "references": [
     { "path": "../ai" },
+    { "path": "../client" },
     { "path": "../agent" },
     { "path": "../mcp" },
     { "path": "../server" },

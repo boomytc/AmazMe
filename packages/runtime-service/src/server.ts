@@ -9,7 +9,7 @@ import type {
   OperationResult,
   Result,
 } from "@amazme/durable";
-import type { JsonObject, JsonValue } from "@amazme/protocol";
+import type { JsonObject, JsonValue, ProtocolLimits } from "@amazme/protocol";
 import {
   ServiceError,
   type AttachmentLease,
@@ -25,15 +25,17 @@ import {
   parseManagementCall,
   parseRuntimeCall,
   type DriveOutcomeDto,
+  type EntryDto,
   type LaneSnapshotDto,
   type LaneUpdateDto,
   type OperationAdmissionDto,
   type OperationResultDto,
   type RuntimeCall,
 } from "./contracts.ts";
+import { fitHistory, fitWindow, responseFits } from "./window.ts";
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
-type StatusDto = Omit<LaneSnapshotDto, "version" | "entries" | "pendingResponse">;
+type StatusDto = Omit<LaneSnapshotDto, "version" | "entries" | "pendingResponse" | "tools">;
 const phases: Same<LanePhase, (typeof LANE_PHASES)[number]> = true;
 const results: Same<OperationResult, OperationResultDto> = true;
 const admissions: Same<OperationAdmission, OperationAdmissionDto> = true;
@@ -52,6 +54,8 @@ export interface OwnedRuntimeResources {
   closeStorage(): Promise<void>;
   release(): Promise<void>;
   remove(): Promise<void>;
+  /** Runs after storage has closed. Used to drop host resources such as MCP clients. A failure can be retried. */
+  closeResources?: () => Promise<void>;
 }
 
 export interface OwnedRuntimeOptions {
@@ -95,12 +99,21 @@ export function openOwnedRuntimes(options: OwnedRuntimeOptions): (runtimeId: str
     try {
       return new OwnedRuntime(resources, options, windowMs);
     } catch (error) {
+      const failures: unknown[] = [error];
+      if (resources.closeResources) {
+        try {
+          await resources.closeResources();
+        } catch (cause) {
+          failures.push(cause);
+        }
+      }
       try {
         await resources.release();
       } catch (cause) {
-        throw new AggregateError([error, cause], "opening the runtime failed and releasing ownership failed");
+        failures.push(cause);
       }
-      throw error;
+      if (failures.length === 1) throw failures[0];
+      throw new AggregateError(failures, "opening the runtime failed and releasing ownership failed");
     }
   };
 }
@@ -123,6 +136,7 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
   private aborting = false;
   private closing: Promise<void> | undefined;
   private storageClosed = false;
+  private resourcesClosed = false;
   private released = false;
   private removed = false;
   private releaseOnce: Promise<void> | undefined;
@@ -236,7 +250,9 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
       case "drive":
         return wire(structuredClone(unwrap(await this.awaitDrive(lane, call.operationId, call.waitForRetry ?? false, context.signal))));
       case "snapshot":
-        return wire(await lane.snapshot());
+        return this.fullSnapshot(await lane.snapshot(), context.limits);
+      case "history":
+        return this.historyPage(lane, call.before, call.limit, context.limits);
       case "result":
         return wire({ result: unwrap(await lane.result(call.operationId)) });
       case "steer":
@@ -269,6 +285,14 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
       try {
         await this.resources.closeStorage();
         this.storageClosed = true;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (this.storageClosed && !this.resourcesClosed && this.resources.closeResources) {
+      try {
+        await this.resources.closeResources();
+        this.resourcesClosed = true;
       } catch (error) {
         errors.push(error);
       }
@@ -316,9 +340,22 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
     void run.then(() => undefined, (error: unknown) => this.report(error));
   }
 
+  private fullSnapshot(snapshot: LaneSnapshot, limits: ProtocolLimits): JsonValue {
+    const wired = wire(snapshot);
+    if (!responseFits(limits, wired)) throw new ServiceError("snapshot_unavailable", "the lane snapshot does not fit in one frame");
+    return wired;
+  }
+
+  private async historyPage(lane: AgentLane, before: string | null, limit: number, limits: ProtocolLimits): Promise<JsonValue> {
+    const page = unwrap(await lane.history(before, limit));
+    const fitted = fitHistory(wire(page.entries) as EntryDto[], page.older, limits);
+    if (!fitted) throw new ServiceError("snapshot_unavailable", "the history page does not fit in one frame");
+    return wire(fitted);
+  }
+
   private async subscribe(lane: AgentLane, subscriptionId: string, context: RuntimeCallContext): Promise<JsonValue> {
     const sink = context.openSubscription(subscriptionId);
-    const publisher = new SnapshotPublisher(lane, this.harness, sink, this.gate, this.windowMs, (error) => this.report(error));
+    const publisher = new SnapshotPublisher(lane, this.harness, sink, this.gate, this.windowMs, context.limits, (error) => this.report(error));
     this.publishers.add(publisher);
     void publisher.done.then(() => this.publishers.delete(publisher));
     try {
@@ -363,10 +400,10 @@ interface Ended {
 }
 
 /**
- * Turns storage invalidations into complete snapshots for one sink. The storage listener only marks the
+ * Turns storage invalidations into bounded windows for one sink. The storage listener only marks the
  * subscription dirty. The first mark opens a fixed window; when it ends, one read consumes the mark and the
- * result is sent. Marks that arrive during the read or the send open the next window. At most the snapshot in
- * flight exists; nothing else is queued, so a slow peer only lowers the rate. When the service side ends the
+ * result is sent. Marks that arrive during the read or the send open the next window. At most one frame is
+ * in flight; nothing else is queued, so a slow peer only lowers the rate. When the service side ends the
  * subscription it sends an `ended` notice instead of falling silent.
  */
 class SnapshotPublisher {
@@ -375,6 +412,7 @@ class SnapshotPublisher {
   private readonly sink: SubscriptionSink;
   private readonly gate: ConnectionGate;
   private readonly windowMs: number;
+  private readonly limits: ProtocolLimits;
   private readonly report: (error: unknown) => void;
   private readonly unsubscribe: () => void;
   private readonly stopped: Promise<"stopped">;
@@ -391,11 +429,12 @@ class SnapshotPublisher {
   private rejectInitial: ((error: unknown) => void) | undefined;
   private version = -1;
 
-  constructor(lane: AgentLane, harness: AgentHarness, sink: SubscriptionSink, gate: ConnectionGate, windowMs: number, report: (error: unknown) => void) {
+  constructor(lane: AgentLane, harness: AgentHarness, sink: SubscriptionSink, gate: ConnectionGate, windowMs: number, limits: ProtocolLimits, report: (error: unknown) => void) {
     this.lane = lane;
     this.sink = sink;
     this.gate = gate;
     this.windowMs = windowMs;
+    this.limits = limits;
     this.report = report;
     this.done = new Promise((resolve) => { this.finish = resolve; });
     this.stopped = new Promise((resolve) => { this.stop = resolve; });
@@ -417,8 +456,12 @@ class SnapshotPublisher {
         try {
           const snapshot = await reading;
           if (this.closed) return;
+          const initial = fitWindow(wire(snapshot) as LaneSnapshotDto, this.limits, { kind: "response" });
+          if (!initial) {
+            reject(new ServiceError("snapshot_unavailable", "the lane snapshot could not be sent"));
+            return;
+          }
           this.version = snapshot.version;
-          const initial = wire(snapshot);
           this.started = true;
           this.rejectInitial = undefined;
           resolve(initial);
@@ -509,9 +552,14 @@ class SnapshotPublisher {
         return;
       }
       if (this.closed || snapshot.version <= this.version) return;
+      const advance = fitWindow(wire(snapshot) as LaneSnapshotDto, this.limits, { kind: "update", subscriptionId: this.sink.id });
+      if (!advance) {
+        void this.close({ code: "snapshot_unavailable", message: "the lane snapshot could not be sent" }).catch(this.report);
+        return;
+      }
       let sent: boolean | "stopped";
       try {
-        const update: LaneUpdateDto = { kind: "snapshot", snapshot: wire(snapshot) as LaneSnapshotDto };
+        const update: LaneUpdateDto = { kind: "advance", advance };
         sent = await Promise.race([this.sink.send(update), this.stopped]);
       } catch (error) {
         this.report(error);

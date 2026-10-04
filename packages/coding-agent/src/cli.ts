@@ -31,6 +31,8 @@ function parseArgs(argv: string[]): Args {
       console.log("amazme [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
       console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
+      console.log("amazme attach --socket path");
+      console.log("amazme bridge --socket path [--port n]");
       process.exit(0);
     } else rest.push(token ?? "");
   }
@@ -96,6 +98,7 @@ async function runServe(argv: string[]): Promise<void> {
     else if (token === "--cwd") cwd = resolve(argv[++index] ?? cwd);
     else if (token === "--help") {
       console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
+      console.log("MCP servers are read from <cwd>/.amazme/mcp.json when that file exists.");
       process.exit(0);
     } else if (token) {
       throw new Error(`unknown argument ${token}`);
@@ -121,6 +124,52 @@ async function runServe(argv: string[]): Promise<void> {
   await new Promise<void>(() => undefined);
 }
 
+async function runAttach(argv: string[]): Promise<void> {
+  let socket = "";
+  for (let index = 0; index < argv.length; index++) {
+    const token = argv[index];
+    if (token === "--socket") socket = argv[++index] ?? "";
+    else if (token === "--help") {
+      console.log("amazme attach --socket path");
+      process.exit(0);
+    } else if (token) throw new Error(`unknown argument ${token}`);
+  }
+  if (!socket) throw new Error("attach requires --socket");
+  const { runAttachedControl } = await import("./attach.ts");
+  await runAttachedControl(socket);
+}
+
+async function runBridge(argv: string[]): Promise<void> {
+  let socket = "";
+  let port = 8787;
+  for (let index = 0; index < argv.length; index++) {
+    const token = argv[index];
+    if (token === "--socket") socket = argv[++index] ?? "";
+    else if (token === "--port") port = Number(argv[++index]);
+    else if (token === "--help") {
+      console.log("amazme bridge --socket path [--port n]");
+      process.exit(0);
+    } else if (token) throw new Error(`unknown argument ${token}`);
+  }
+  if (!socket) throw new Error("bridge requires --socket");
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("bridge requires a port from 0 to 65535");
+  const { startCodingBridge } = await import("./bridge.ts");
+  const bridge = await startCodingBridge({ socket, port });
+  process.stdout.write(`${JSON.stringify({ url: bridge.url })}\n`);
+  let closed = false;
+  const shutdown = () => {
+    if (closed) return;
+    closed = true;
+    void bridge.close().then(() => process.exit(0), (error: unknown) => {
+      console.error(error instanceof Error ? error.message : error);
+      process.exit(1);
+    });
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  await new Promise<void>(() => undefined);
+}
+
 async function main(): Promise<void> {
   if (process.argv[2] === "login") {
     await runLogin(process.argv.slice(3));
@@ -128,6 +177,14 @@ async function main(): Promise<void> {
   }
   if (process.argv[2] === "serve") {
     await runServe(process.argv.slice(3));
+    return;
+  }
+  if (process.argv[2] === "attach") {
+    await runAttach(process.argv.slice(3));
+    return;
+  }
+  if (process.argv[2] === "bridge") {
+    await runBridge(process.argv.slice(3));
     return;
   }
   const args = parseArgs(process.argv.slice(2));

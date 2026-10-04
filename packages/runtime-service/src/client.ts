@@ -10,12 +10,16 @@ import {
   LaneNameSchema,
   OperationAdmissionSchema,
   parse,
+  HistoryPageSchema,
   parseLaneSnapshot,
   parseLaneUpdate,
+  parseLaneWindow,
   ResultReplySchema,
   type DriveOutcomeDto,
+  type HistoryPageDto,
   type LaneSnapshotDto,
   type LaneUpdateDto,
+  type LaneWindowDto,
   type OperationAdmissionDto,
   type OperationRequest,
   type OperationResultDto,
@@ -67,11 +71,23 @@ export class RuntimeClient {
 /** How a lane subscription ended: locally, by the route or connection, or by the service (`ended`). */
 export type LaneSubscriptionEnd = SubscriptionEnd | { reason: "ended"; code: string; message: string };
 
+/** How much of the lane the latest window left out of its frame. */
+export interface LaneCoverage {
+  /** Ancestors older than `current().entries`, still readable with `history`. */
+  omitted: number;
+  /** Ancestors that cannot fit in one frame even alone. */
+  skipped: number;
+  /** The unsettled reply was left out of this frame. */
+  pendingOmitted: boolean;
+}
+
 export interface LaneSubscription {
-  /** The snapshot the subscription started from. */
+  /** The snapshot the subscription started from. Entries may be a suffix; see `coverage`. */
   readonly initial: LaneSnapshotDto;
   /** The newest snapshot installed: the initial one, then each newer update. */
   current(): LaneSnapshotDto;
+  /** Coverage of `current()`. The initial window's coverage is available before the first update. */
+  coverage(): LaneCoverage;
   close(): Promise<void>;
   /**
    * Resolves once and never rejects. An update that fails the contract ends it with code `invalid_update`;
@@ -106,6 +122,11 @@ export class RemoteLane {
     return this.own(parseLaneSnapshot(await this.call({ method: "snapshot", lane: this.name }, options)));
   }
 
+  /** Ancestors strictly before `before`. `before: null` is the newest page, at most `limit` entries. */
+  async history(before: string | null, limit: number, options?: RequestOptions): Promise<HistoryPageDto> {
+    return parse(HistoryPageSchema, await this.call({ method: "history", lane: this.name, before, limit }, options), "history page");
+  }
+
   async result(operationId: string, options?: RequestOptions): Promise<OperationResultDto | null> {
     const result = parse(ResultReplySchema, await this.call({ method: "result", lane: this.name, operationId }, options), "result reply").result;
     return result ? this.ownResult(result, operationId) : null;
@@ -133,6 +154,7 @@ export class RemoteLane {
   async subscribe(onSnapshot: (snapshot: LaneSnapshotDto) => void, options: RequestOptions = {}): Promise<LaneSubscription> {
     const route = this.route();
     let current: LaneSnapshotDto | undefined;
+    let coverage: LaneCoverage = { omitted: 0, skipped: 0, pendingOmitted: false };
     let version = -1;
     let subscription: Subscription | undefined;
     let settle!: (end: LaneSubscriptionEnd) => void;
@@ -141,12 +163,19 @@ export class RemoteLane {
       settle(value);
       void subscription?.close();
     };
+    const install = (window: LaneWindowDto): LaneSnapshotDto | undefined => {
+      this.ownWindow(window);
+      if (window.version <= version) return undefined;
+      version = window.version;
+      coverage = { omitted: window.omitted, skipped: window.skipped, pendingOmitted: window.pendingOmitted };
+      current = projectWindow(window);
+      return current;
+    };
     const onUpdate = (raw: JsonValue) => {
       if (!current || !subscription) return;
       let update: LaneUpdateDto;
       try {
         update = parseLaneUpdate(raw);
-        if (update.kind === "snapshot") this.own(update.snapshot);
       } catch (error) {
         end({ reason: "ended", code: "invalid_update", message: error instanceof Error ? error.message : String(error) });
         return;
@@ -155,10 +184,12 @@ export class RemoteLane {
         end({ reason: "ended", code: update.code, message: update.message });
         return;
       }
-      if (update.snapshot.version <= version) return;
-      version = update.snapshot.version;
-      current = update.snapshot;
-      onSnapshot(update.snapshot);
+      try {
+        const installed = install(update.advance);
+        if (installed) onSnapshot(installed);
+      } catch (error) {
+        end({ reason: "ended", code: "invalid_update", message: error instanceof Error ? error.message : String(error) });
+      }
     };
     subscription = await this.client.subscribe(
       route,
@@ -168,17 +199,17 @@ export class RemoteLane {
     );
     let initial: LaneSnapshotDto;
     try {
-      initial = this.own(parseLaneSnapshot(subscription.initial));
+      const installed = install(parseLaneWindow(subscription.initial));
+      if (!installed) throw new ContractError("the initial window has no version");
+      initial = installed;
     } catch (error) {
       await subscription.close();
       throw error;
     }
-    current = initial;
-    version = initial.version;
     const opened = subscription;
     void opened.ended.then(settle);
     opened.start();
-    return { initial, current: () => current!, close: () => opened.close(), ended };
+    return { initial, current: () => current!, coverage: () => ({ ...coverage }), close: () => opened.close(), ended };
   }
 
   private call(call: RuntimeCall, options?: RequestOptions): Promise<JsonValue | undefined> {
@@ -196,6 +227,10 @@ export class RemoteLane {
     return snapshot;
   }
 
+  private ownWindow(window: LaneWindowDto): void {
+    if (window.lane !== this.name) throw new ContractError(`snapshot is for lane ${window.lane}, not ${this.name}`);
+  }
+
   private ownResult(result: OperationResultDto, operationId: string): OperationResultDto {
     if (result.lane !== this.name) throw new ContractError(`result is for lane ${result.lane}, not ${this.name}`);
     this.ownOperation(result.operationId, operationId);
@@ -205,4 +240,19 @@ export class RemoteLane {
   private ownOperation(actual: string, expected: string): void {
     if (actual !== expected) throw new ContractError(`reply is for operation ${actual}, not ${expected}`);
   }
+}
+
+function projectWindow(window: LaneWindowDto): LaneSnapshotDto {
+  return {
+    version: window.version,
+    lane: window.lane,
+    tipId: window.tipId,
+    phase: window.phase,
+    operationId: window.operationId,
+    lastOperationId: window.lastOperationId,
+    status: window.status,
+    entries: window.entries,
+    pendingResponse: window.pendingResponse,
+    tools: window.tools,
+  };
 }

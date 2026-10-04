@@ -33,6 +33,12 @@ export type OperationRequest = Static<typeof OperationRequestSchema>;
 const AcceptCall = Strict({ method: Type.Literal("accept"), lane: LaneNameSchema, request: OperationRequestSchema });
 const DriveCall = Strict({ method: Type.Literal("drive"), lane: LaneNameSchema, operationId: OperationReferenceSchema, waitForRetry: Type.Optional(Type.Boolean()) });
 const SnapshotCall = Strict({ method: Type.Literal("snapshot"), lane: LaneNameSchema });
+const HistoryCall = Strict({
+  method: Type.Literal("history"),
+  lane: LaneNameSchema,
+  before: Nullable(EntryIdSchema),
+  limit: Type.Integer({ minimum: 1, maximum: 100 }),
+});
 const ResultCall = Strict({ method: Type.Literal("result"), lane: LaneNameSchema, operationId: OperationReferenceSchema });
 const SteerCall = Strict({ method: Type.Literal("steer"), lane: LaneNameSchema, text: Text });
 const FollowUpCall = Strict({ method: Type.Literal("followUp"), lane: LaneNameSchema, text: Text });
@@ -41,7 +47,7 @@ const SubscribeCall = Strict({ method: Type.Literal("subscribe"), lane: LaneName
 const UnsubscribeCall = Strict({ method: Type.Literal("unsubscribe"), subscriptionId: SubscriptionIdSchema });
 /** Calls on a runtime route. Lane calls name their lane; unsubscribe names its route-local subscription. */
 export const RuntimeCallSchema = Type.Union([
-  AcceptCall, DriveCall, SnapshotCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall, SubscribeCall, UnsubscribeCall,
+  AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall, SubscribeCall, UnsubscribeCall,
 ]);
 export type RuntimeCall = Static<typeof RuntimeCallSchema>;
 
@@ -89,7 +95,14 @@ const PendingResponseSchema = Strict({
 });
 export type PendingResponseDto = Static<typeof PendingResponseSchema>;
 
-export const LaneSnapshotSchema = Strict({
+const ToolActivitySchema = Strict({
+  toolCallId: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  status: Type.Union([Type.Literal("planned"), Type.Literal("running"), Type.Literal("settled")]),
+});
+export type ToolActivityDto = Static<typeof ToolActivitySchema>;
+
+const LaneViewFields = {
   version: Type.Integer({ minimum: 0 }),
   lane: StoredIdSchema,
   tipId: Nullable(EntryIdSchema),
@@ -109,15 +122,40 @@ export const LaneSnapshotSchema = Strict({
   status: Nullable(Type.Union([Type.Literal("open"), Type.Literal("aborting")])),
   entries: Type.Array(EntrySchema),
   pendingResponse: Nullable(PendingResponseSchema),
-});
+  tools: Type.Array(ToolActivitySchema),
+};
+
+/** The full ancestor chain when it fits in one frame. `tools` is only the open batch. */
+export const LaneSnapshotSchema = Strict(LaneViewFields);
 export type LaneSnapshotDto = Static<typeof LaneSnapshotSchema>;
 
 /**
- * Subscription updates: a complete newer snapshot, or the service ending the subscription on its side
+ * One observation frame. `entries` is a suffix of the ancestor chain.
+ * `omitted` entries are older and still readable with `history`.
+ * `skipped` entries cannot fit in a frame even alone.
+ * `pendingOmitted` means the unsettled reply was left out of this frame.
+ */
+export const LaneWindowSchema = Strict({
+  ...LaneViewFields,
+  omitted: Type.Integer({ minimum: 0 }),
+  skipped: Type.Integer({ minimum: 0 }),
+  pendingOmitted: Type.Boolean(),
+});
+export type LaneWindowDto = Static<typeof LaneWindowSchema>;
+
+export const HistoryPageSchema = Strict({
+  entries: Type.Array(EntrySchema),
+  older: Type.Integer({ minimum: 0 }),
+  skipped: Type.Integer({ minimum: 0 }),
+});
+export type HistoryPageDto = Static<typeof HistoryPageSchema>;
+
+/**
+ * Subscription updates: a bounded window, or the service ending the subscription
  * (`runtime_closed`, `snapshot_failed`, `snapshot_unavailable`). After `ended` nothing else arrives.
  */
 export const LaneUpdateSchema = Type.Union([
-  Strict({ kind: Type.Literal("snapshot"), snapshot: LaneSnapshotSchema }),
+  Strict({ kind: Type.Literal("advance"), advance: LaneWindowSchema }),
   Strict({ kind: Type.Literal("ended"), code: Type.String({ minLength: 1 }), message: Type.String() }),
 ]);
 export type LaneUpdateDto = Static<typeof LaneUpdateSchema>;
@@ -182,6 +220,7 @@ export const RUNTIME_ERROR_CODES = [
   "invalid_subscription",
   "connection_closed",
   "call_settled",
+  "snapshot_unavailable",
   "internal",
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
@@ -202,4 +241,5 @@ export function parse<T extends TSchema>(schema: T, value: unknown, label: strin
 export const parseRuntimeCall = (value: JsonValue): RuntimeCall => parse(RuntimeCallSchema, value, "runtime call");
 export const parseManagementCall = (value: JsonValue): ManagementCall => parse(ManagementCallSchema, value, "management call");
 export const parseLaneSnapshot = (value: unknown): LaneSnapshotDto => parse(LaneSnapshotSchema, value, "lane snapshot");
+export const parseLaneWindow = (value: unknown): LaneWindowDto => parse(LaneWindowSchema, value, "lane window");
 export const parseLaneUpdate = (value: unknown): LaneUpdateDto => parse(LaneUpdateSchema, value, "lane update");

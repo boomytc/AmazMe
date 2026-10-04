@@ -3,7 +3,7 @@ import test from "node:test";
 import { ClientError, RemoteError } from "@amazme/client";
 import { value, type StorageView } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
-import { encodeClientMessage, ProtocolError, type JsonValue } from "@amazme/protocol";
+import { encodeClientMessage, resolveLimits, type JsonValue } from "@amazme/protocol";
 import { ServiceError, type RuntimeCallContext, type SubscriptionSink } from "@amazme/server";
 import { ContractError, parseLaneSnapshot, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { NotAttachedError, RuntimeClient } from "@amazme/runtime-service/client";
@@ -361,6 +361,7 @@ test("the host is already closed during synchronous subscription cleanup callbac
     const context: RuntimeCallContext = {
       connectionId: "reentrant",
       route,
+      limits: resolveLimits(),
       signal: new AbortController().signal,
       openSubscription() { throw new Error("unused"); },
       subscription() { return undefined; },
@@ -525,16 +526,46 @@ test("a stalled connection does not block another connection's snapshot", async 
   }
 });
 
-test("a snapshot too large to send ends the subscription with a notice instead of going silent", async () => {
+test("a snapshot too large for one frame stays subscribed and snapshot() fails closed", async () => {
   const env = world({ limits: { maxFrameBytes: 8 * 1024 } });
   try {
     const { remote } = await env.connect();
     await remote.attach("main");
     const subscription = await remote.lane("main").subscribe(() => undefined);
     await env.runtime().harness.lane("main").accept({ kind: "prompt", text: "s".repeat(10 * 1024) });
-    assert.deepEqual(await subscription.ended, { reason: "ended", code: "snapshot_unavailable", message: "the lane snapshot could not be sent" });
-    assert.ok(env.errors.length > 0 && env.errors.every((error) => error instanceof ProtocolError && error.code === "limit_exceeded"));
-    env.errors.length = 0;
+    await until(() => subscription.coverage().skipped === 1, "the oversized entry to be skipped");
+    assert.equal(subscription.current().entries.length, 0);
+    assert.equal(subscription.current().operationId !== null, true);
+    assert.equal(env.server.connectionCount, 1);
+    await assert.rejects(() => remote.lane("main").snapshot(), code("snapshot_unavailable"));
+    assert.equal(env.server.connectionCount, 1, "the failed full read leaves the connection up");
+    const ended = await Promise.race([
+      subscription.ended.then(() => "ended"),
+      tick(30).then(() => "open"),
+    ]);
+    assert.equal(ended, "open");
+    assert.equal(env.errors.length, 0);
+  } finally {
+    await env.close();
+  }
+});
+
+test("history pages ancestors and an unknown entry is unknown_target", async () => {
+  const env = world();
+  try {
+    const { remote } = await env.connect();
+    await remote.attach("main");
+    const lane = remote.lane("main");
+    await lane.accept({ kind: "prompt", text: "hi", operationId: "op" });
+    const snap = await lane.snapshot();
+    assert.equal(snap.entries.length, 1);
+    assert.deepEqual(snap.tools, []);
+    const newest = await lane.history(null, 10);
+    assert.equal(newest.entries.length, 1);
+    assert.equal(newest.older, 0);
+    assert.equal(newest.skipped, 0);
+    assert.deepEqual(await lane.history(snap.entries[0]!.id, 10), { entries: [], older: 0, skipped: 0 });
+    await assert.rejects(() => lane.history("missing", 1), code("unknown_target"));
   } finally {
     await env.close();
   }
@@ -578,13 +609,16 @@ test("an update that breaks the contract ends the subscription with invalid_upda
         if (call.method === "unsubscribe") context.subscription(call.subscriptionId)?.close();
         if (call.method !== "subscribe") return null;
         sinks.push(context.openSubscription(call.subscriptionId));
-        return { version: 1, lane: "main", tipId: null, phase: null, operationId: null, lastOperationId: null, status: null, entries: [], pendingResponse: null };
+        return {
+          version: 1, lane: "main", tipId: null, phase: null, operationId: null, lastOperationId: null, status: null,
+          entries: [], pendingResponse: null, tools: [], omitted: 0, skipped: 0, pendingOmitted: false,
+        };
       },
     });
     const { remote } = await env.connect();
     await remote.attach("fake");
     const subscription = await remote.lane("main").subscribe(() => undefined);
-    await sinks[0]!.send({ kind: "snapshot", snapshot: { version: 2, lane: "other" } });
+    await sinks[0]!.send({ kind: "advance", advance: { version: 2, lane: "other" } });
     const ended = await subscription.ended;
     assert.equal(ended.reason === "ended" && ended.code, "invalid_update");
     await until(() => sinks[0]!.closed, "the client to unsubscribe");

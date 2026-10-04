@@ -38,7 +38,7 @@ const result = await lane.result(operationId);
 
 ## 契约
 
-lane 调用都显式带 `lane`：`accept`、`drive`、`snapshot`、`result`、`steer`、`followUp`、`requestAbort`、`subscribe`；`unsubscribe` 按当前路由的 `subscriptionId` 退订。server route 上的管理调用是 `attach { runtimeId }`、`detach` 和 `remove { runtimeId }`。attach 的结果是 `{ attached: true }`，detach 和 remove 的结果是 `null`。路由身份由 server 的 `attachment` 信封发布。lane 是服务载荷，不是协议路由，`lanes` 可以限制可用 lane。lane 名和 `accept` 提供的新 operation ID 有固定的字符集和长度；`drive`、`result`、`requestAbort` 引用已存 ID，只要求非空且不含存储的保留分隔符 NUL。回复中的 ID 按 Durable 存储的原样返回，只要求非空。存储地址和命名空间由服务端构造。
+lane 调用都显式带 `lane`：`accept`、`drive`、`snapshot`、`history`、`result`、`steer`、`followUp`、`requestAbort`、`subscribe`；`unsubscribe` 按当前路由的 `subscriptionId` 退订。server route 上的管理调用是 `attach { runtimeId }`、`detach` 和 `remove { runtimeId }`。attach 的结果是 `{ attached: true }`，detach 和 remove 的结果是 `null`。路由身份由 server 的 `attachment` 信封发布。lane 是服务载荷，不是协议路由，`lanes` 可以限制可用 lane。lane 名和 `accept` 提供的新 operation ID 有固定的字符集和长度；`drive`、`result`、`requestAbort` 引用已存 ID，只要求非空且不含存储的保留分隔符 NUL。回复中的 ID 按 Durable 存储的原样返回，只要求非空。存储地址和命名空间由服务端构造。
 
 服务端用 schema 校验全部请求，非法调用回复 `invalid_call`。没有接上 `removeRuntime` 时，`remove` 也是 `invalid_call`。客户端校验它实际消费的每个回复。消息与内容块只校验 `role` / `type`，其余字段保持不透明。DTO 不包含内部 namespace、私有 `OperationState`、执行函数或实例代际。`phase` 只是阶段名，与 Durable 的 `LanePhase` 在编译期核对一致。Durable 的失败码原样作为服务错误码。文件锁被占用时打开失败的码是 `storage_busy`。
 
@@ -50,13 +50,15 @@ lane 调用都显式带 `lane`：`accept`、`drive`、`snapshot`、`result`、`s
 
 ## 观察
 
-订阅返回完整快照，之后的每次更新也是完整快照，没有增量、Delta 或断线回放。服务端先注册 Storage 监听，再读取初始快照，因此两者之间的写入不会遗漏。初始快照作为订阅调用的结果返回；server 在传输接受这条响应之后才激活订阅并交付更新，客户端也先安装初始快照，再按序处理期间到达的更新。
+`snapshot()` 返回完整祖先链和当前 `tools`。这一帧放不下时，调用失败，码是 `snapshot_unavailable`，连接保持。`history(before, limit)` 按页读取更早的祖先：`before` 是客户端已有的最旧条目，`null` 表示从最新的一条往前。回复是 `{ entries, older, skipped }`。单条放不进一帧的条目计入 `skipped`，不把连接关掉。
 
-Storage 监听器只置 dirty 并安排一次固定窗口（`publishWindowMs`，默认 16 ms）。窗口结束时读取前先消费 dirty，然后读一次快照、发送一次；读取或发送期间的新通知保留下来，结束后开启下一个窗口。这不是会被持续写入无限推迟的尾随 debounce：持续生成期间，更新按窗口加一次收发的节奏到达。同一条连接上的订阅轮流读取和发送，一次只有一份快照在途。每个订阅最多只有一份正在处理的快照加一个 dirty 标记；慢客户端只会降低更新频率。
+订阅返回的是有界窗口，不是整份祖先链。服务端先注册 Storage 监听，再读取初始快照，因此两者之间的写入不会遗漏。初始窗口作为订阅调用的结果返回；server 在传输接受这条响应之后才激活订阅并交付更新。客户端先安装初始窗口，再按序处理期间到达的更新。窗口里的 `entries` 是放得进这一帧的最新后缀。`omitted` 是更早、仍可用 `history` 读取的条数。`skipped` 是单条就放不进一帧的条数。`pendingOmitted` 表示未结算回复被留在帧外。状态、阶段和 `tools` 每次都在窗口里。
 
-更新是 `{ kind: "snapshot", snapshot }` 或 `{ kind: "ended", code, message }`。服务端自己结束订阅时一定先发 `ended` 再关闭：`runtime_closed`（runtime 开始关闭）、`snapshot_failed`（读取失败）、`snapshot_unavailable`（快照无法编码）。客户端的 `ended` 只 resolve 一次。快照超过 `maxFrameBytes` 时订阅无法继续，这是当前完整快照设计的已知上限。
+Storage 监听器只置 dirty 并安排一次固定窗口（`publishWindowMs`，默认 16 ms）。窗口结束时读取前先消费 dirty，然后读一次快照、裁成一帧、发送一次；读取或发送期间的新通知保留下来，结束后开启下一个窗口。这不是会被持续写入无限推迟的尾随 debounce：持续生成期间，更新按窗口加一次收发的节奏到达。同一条连接上的订阅轮流读取和发送，一次只有一份快照在途。每个订阅最多只有一份正在处理的快照加一个 dirty 标记；慢客户端只会降低更新频率。
 
-版本是存储总 seq，其他 lane 的写入也会推进它。去重按订阅进行。重连后需要重新订阅并取得完整快照。退订、detach 或断线后不再交付。
+更新是 `{ kind: "advance", advance }` 或 `{ kind: "ended", code, message }`。服务端自己结束订阅时一定先发 `ended` 再关闭：`runtime_closed`（runtime 开始关闭）、`snapshot_failed`（读取失败）、`snapshot_unavailable`（连窗口头部都放不进一帧）。客户端的 `ended` 只 resolve 一次。一条过大的 transcript 不会再因为整份快照超限而结束订阅。
+
+版本是存储总 seq，其他 lane 的写入也会推进它。去重按订阅进行。重连后需要重新订阅。退订、detach 或断线后不再交付。
 
 ## 停机与所有权
 
@@ -74,4 +76,4 @@ Storage 监听器只置 dirty 并安排一次固定窗口（`publishWindowMs`，
 
 ## 范围
 
-只覆盖无界面的控制、观察和这一进程内的 runtime 所有权。没有业务客户端、TUI / WebUI、服务目录、插件、增量日志、请求超时、自动重试或模型请求自动重发。JSONL 锁只覆盖本机本地文件系统，规则与 `@amazme/durable` 的 `openJsonlOwner` 相同。
+只覆盖无界面的控制、观察和这一进程内的 runtime 所有权。本包不含页面。本机控制端和 `127.0.0.1` 桥在 `@amazme/coding-agent`。没有服务目录、插件、逐 token 事件流、请求超时、自动重试或模型请求自动重发。JSONL 锁只覆盖本机本地文件系统，规则与 `@amazme/durable` 的 `openJsonlOwner` 相同。
