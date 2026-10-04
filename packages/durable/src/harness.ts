@@ -242,6 +242,7 @@ export class AgentHarness {
   private readonly drives = new Map<string, Promise<Result<DriveOutcome>>>();
   /** Storage work admitted outside a drive: accept, queue, abort, and reads. */
   private readonly side = new Set<Promise<unknown>>();
+  private readonly idleListeners = new Set<() => void>();
   private readonly laneAborts = new Map<string, AbortController>();
   /** Effects this process has armed. A restarted harness has an empty set, so the same leaf means recovery. */
   readonly live = new Set<string>();
@@ -286,12 +287,42 @@ export class AgentHarness {
     return this.shutdown("drain");
   }
 
+  /**
+   * True when no drive and no admitted storage work is in flight.
+   * A settled retry wait is idle: the operation remains persisted, and nothing here drives it again.
+   */
+  idle(): boolean {
+    return this.drives.size === 0 && this.side.size === 0;
+  }
+
+  /**
+   * Fires when a drive or admitted storage work starts or finishes.
+   * It does not report the state at registration. The return value unsubscribes.
+   * A listener error is ignored so it cannot break drive tracking.
+   */
+  watchIdle(listener: () => void): () => void {
+    this.idleListeners.add(listener);
+    return () => { this.idleListeners.delete(listener); };
+  }
+
+  private notifyIdle(): void {
+    for (const listener of [...this.idleListeners]) {
+      try {
+        listener();
+      } catch {
+        // The listener cannot interrupt settlement or the caller that admitted the work.
+      }
+    }
+  }
+
   /** Remember work that must finish before `close` or `drain` resolves. */
   private observe<T>(work: Promise<T>): Promise<T> {
     this.side.add(work);
+    this.notifyIdle();
     // The derived promise must not surface a second rejection of `work`.
     void work.finally(() => {
       this.side.delete(work);
+      this.notifyIdle();
     }).catch(() => undefined);
     return work;
   }
@@ -349,9 +380,28 @@ export class AgentHarness {
       fail = reject;
     });
     this.drives.set(key, run);
-    void start().then(settle, fail).finally(() => {
+    this.notifyIdle();
+    let started: Promise<Result<DriveOutcome>>;
+    try {
+      started = start();
+    } catch (error) {
       if (this.drives.get(key) === run) this.drives.delete(key);
-    });
+      this.notifyIdle();
+      fail(error);
+      return run;
+    }
+    void started.then(
+      (value) => {
+        if (this.drives.get(key) === run) this.drives.delete(key);
+        this.notifyIdle();
+        settle(value);
+      },
+      (error: unknown) => {
+        if (this.drives.get(key) === run) this.drives.delete(key);
+        this.notifyIdle();
+        fail(error);
+      },
+    );
     return run;
   }
 
