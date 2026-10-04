@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@amazme/agent";
+import { prepareWorkspace, runBash, runFileOp } from "./sandbox/run.ts";
+
+export const codingSystemPrompt = "You are a coding agent. Use tools to inspect and change files in the workspace. File and shell tools can only access the workspace, cannot access .amazme, and have no network.";
 
 const objectSchema = {
   type: "object",
@@ -43,11 +44,12 @@ export function createReadTool(root: string): AgentTool {
       },
       required: ["path"],
     },
-    async execute(args) {
+    async execute(args, context) {
       const { path: file, offset, limit } = args as { path: string; offset?: number; limit?: number };
       const full = inside(root, file);
-      const text = readFileSync(full, "utf8");
-      const lines = text.split("\n");
+      const outcome = await runFileOp(prepareWorkspace(root), "read", { path: full }, context.signal);
+      if (!outcome.ok) return { content: [{ type: "text", text: outcome.text }], isError: true };
+      const lines = outcome.text.split("\n");
       const start = Math.max(0, (offset ?? 1) - 1);
       const slice = lines.slice(start, limit === undefined ? undefined : start + limit);
       return { content: [{ type: "text", text: slice.join("\n") }] };
@@ -61,12 +63,12 @@ export function createWriteTool(root: string, enqueue: Enqueue = createQueue()):
     description: "Create or replace a UTF-8 text file",
     replay: "never",
     parameters: { ...objectSchema, properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
-    execute(args) {
+    execute(args, context) {
       const { path: file, content } = args as { path: string; content: string };
       return enqueue(async () => {
         const full = inside(root, file);
-        mkdirSync(dirname(full), { recursive: true });
-        writeFileSync(full, content);
+        const outcome = await runFileOp(prepareWorkspace(root), "write", { path: full, content }, context.signal);
+        if (!outcome.ok) return { content: [{ type: "text", text: outcome.text }], isError: true };
         return { content: [{ type: "text", text: `wrote ${file}` }] };
       });
     },
@@ -83,26 +85,20 @@ export function createEditTool(root: string, enqueue: Enqueue = createQueue()): 
       properties: { path: { type: "string" }, old: { type: "string" }, replacement: { type: "string" } },
       required: ["path", "old", "replacement"],
     },
-    execute(args) {
+    execute(args, context) {
       const { path: file, old, replacement } = args as { path: string; old: string; replacement: string };
       return enqueue(async () => {
         const full = inside(root, file);
-        const text = readFileSync(full, "utf8");
-        const count = text.split(old).length - 1;
-        if (count !== 1) return { content: [{ type: "text", text: `expected 1 match, found ${count}` }], isError: true };
-        writeFileSync(full, text.replace(old, replacement));
+        const outcome = await runFileOp(prepareWorkspace(root), "edit", { path: full, old, replacement }, context.signal);
+        if (!outcome.ok) return { content: [{ type: "text", text: outcome.text }], isError: true };
         return { content: [{ type: "text", text: `edited ${file}` }] };
       });
     },
   };
 }
 
-const OUTPUT_TAIL_BYTES = 32 * 1024;
-
-function rememberTail(current: string, chunk: Buffer): { text: string; truncated: boolean } {
-  const next = Buffer.concat([Buffer.from(current), chunk]);
-  if (next.length <= OUTPUT_TAIL_BYTES) return { text: next.toString("utf8"), truncated: false };
-  return { text: next.subarray(next.length - OUTPUT_TAIL_BYTES).toString("utf8"), truncated: true };
+function failureText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function createBashTool(root: string): AgentTool {
@@ -111,55 +107,25 @@ export function createBashTool(root: string): AgentTool {
     description: "Run a shell command in the workspace",
     replay: "never",
     parameters: { ...objectSchema, properties: { command: { type: "string" } }, required: ["command"] },
-    execute(args, context) {
+    async execute(args, context) {
       const { command } = args as { command: string };
-      return new Promise((resolveRun) => {
-        const child = spawn(command, { cwd: root, shell: true, stdio: ["ignore", "pipe", "pipe"] });
-        let stdout = "";
-        let stderr = "";
-        let stdoutTruncated = false;
-        let stderrTruncated = false;
-        let settled = false;
-        const timer = setTimeout(() => child.kill("SIGTERM"), 15_000);
-        const onAbort = () => child.kill("SIGTERM");
-        const finish = (text: string, isError: boolean) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          context.signal.removeEventListener("abort", onAbort);
-          resolveRun({ content: [{ type: "text", text }], isError });
-        };
-        child.on("error", (error) => {
-          finish(error.message, true);
-        });
-        if (context.signal.aborted) onAbort();
-        else context.signal.addEventListener("abort", onAbort);
-        child.stdout?.on("data", (chunk: Buffer) => {
-          const kept = rememberTail(stdout, chunk);
-          stdout = kept.text;
-          stdoutTruncated = stdoutTruncated || kept.truncated;
-          context.onUpdate?.(stdout);
-        });
-        child.stderr?.on("data", (chunk: Buffer) => {
-          const kept = rememberTail(stderr, chunk);
-          stderr = kept.text;
-          stderrTruncated = stderrTruncated || kept.truncated;
-        });
-        child.on("close", (code) => {
-          const notice = [
-            stdoutTruncated ? "stdout truncated to the last 32 KiB" : "",
-            stderrTruncated ? "stderr truncated to the last 32 KiB" : "",
-          ].filter((part) => part.length > 0);
-          const text = [stdout, stderr, ...notice].filter((part) => part.length > 0).join("\n");
-          finish(text || `exit ${code ?? 0}`, code !== 0);
-        });
-      });
+      try {
+        const result = await runBash(prepareWorkspace(root), command, context.signal, (text) => context.onUpdate?.(text));
+        const notice = [
+          result.stdoutTruncated ? "stdout truncated to the last 32 KiB" : "",
+          result.stderrTruncated ? "stderr truncated to the last 32 KiB" : "",
+        ].filter((part) => part.length > 0);
+        const text = [result.stdout, result.stderr, ...notice].filter((part) => part.length > 0).join("\n");
+        return { content: [{ type: "text", text: text || `exit ${result.code ?? 0}` }], isError: result.code !== 0 };
+      } catch (error) {
+        return { content: [{ type: "text", text: failureText(error) }], isError: true };
+      }
     },
   };
 }
 
 export function createCodingTools(root: string): AgentTool[] {
-  statSync(root);
+  prepareWorkspace(root);
   const enqueue = createQueue();
   return [createReadTool(root), createWriteTool(root, enqueue), createEditTool(root, enqueue), createBashTool(root)];
 }

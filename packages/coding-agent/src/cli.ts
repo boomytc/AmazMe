@@ -9,7 +9,7 @@ import { AgentSession } from "./agent-session.ts";
 import { FileCredentialStore, installationDeviceId } from "./credentials.ts";
 import { SessionStore } from "./session.ts";
 import { appendSkillText } from "./skills.ts";
-import { createCodingTools } from "./tools.ts";
+import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 import { runCodingFullscreen, shouldOpenFullscreen } from "./tui/run.ts";
 
 interface Args {
@@ -162,7 +162,7 @@ async function main(): Promise<void> {
     streamFn: models.streamSimple.bind(models),
     telemetryContext: models.telemetryContext,
     systemPrompt: appendSkillText(
-      "You are a coding agent. Use tools to inspect and change files in the workspace.",
+      codingSystemPrompt,
       join(args.cwd, "skills"),
     ),
     tools: createCodingTools(args.cwd),
