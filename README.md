@@ -17,7 +17,7 @@
 
 `@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 没有实现。现代 HTTP 按 `tools/list` 中合法的 `x-mcp-header` 标注生成 `Mcp-Param-*`，非法标注工具被过滤，错误参数在发送前失败。OAuth 发现、PKCE、刷新和 step-up 在独立的 `@amazme/mcp/oauth` 入口里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。`@amazme/coding-agent` 把已经连上的客户端适配成 Agent 工具：名字是 `mcp_<serverId>__<toolName>`，冲突或超长就报错，不截断；取消、进度、文本和图片结果交给工具执行。协议包本身不依赖 Agent。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。
 
-今天的 `amazme` 命令走内存循环加会话树。有一次性 prompt 时跑完这一次并退出；没有 prompt 且标准输出是终端时，同一条循环画成全屏。`AgentHarness` 是另一条运行时：`accept` 只落盘，`drive` 才推进；进程挂了以后，下一次 `drive` 从完整的操作状态接着做。
+今天的 `amazme` 单次 prompt 和全屏仍走内存循环加会话树。有一次性 prompt 时跑完这一次并退出；没有 prompt 且标准输出是终端时，同一条循环画成全屏。`amazme serve` 是另一条前台 Unix 宿主：它监听 socket，打开并持有一份 JSONL runtime，`accept` 只落盘，`drive` 才推进。进程挂了以后，下一次显式 `drive` 从完整的操作状态接着做，不会自动重发模型请求。
 
 ## 模型边界
 
@@ -166,5 +166,13 @@ npx tsx packages/coding-agent/src/cli.ts login --provider openai --method device
 ```
 
 不带 prompt、且标准输出是终端时，`amazme` 进入全屏，而不是报 missing prompt。
+
+前台宿主：
+
+```bash
+npx tsx packages/coding-agent/src/cli.ts serve --socket /tmp/amazme.sock --cwd .
+```
+
+它只承认 runtime `workspace` 和 lane `main`。JSONL 在 `<cwd>/.amazme/runtime/workspace.jsonl`，和会话树分开。客户端不能传路径或构造参数。已有 lane 的模型、系统提示词和技能文本只在第一次写入；重开改 `--model` 不会覆盖。工具每次用当前进程的 `read` / `write` / `edit` / `bash`。`read` 可以重放，另外三个崩溃后不重放。第一次 `SIGINT` 或 `SIGTERM` 排空后退出，不删除文件；排空过程中的第二次信号改为中止。
 
 这是同一套分层的独立实现，不是 Pi 仓库的拷贝。编码命令有全屏视图和 40 个预设供应商；登录、技能段落和 MCP 工具追加都在这一层。对齐仍不包含 Pi 的 Conversation / Task / Chord，也没有 `convertToLlm` 或 `continue()`。`AgentHarness` 不支持 deferred 和摘要崩溃重试。工具前后回调和 `transformContext` 是上面的有序 hooks，不是另一条循环。

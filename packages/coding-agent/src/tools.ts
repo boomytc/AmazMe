@@ -15,15 +15,18 @@ function inside(root: string, target: string): string {
   return full;
 }
 
-let mutation: Promise<unknown> = Promise.resolve();
+type Enqueue = <T>(work: () => Promise<T>) => Promise<T>;
 
-function enqueue<T>(work: () => Promise<T>): Promise<T> {
-  const run = mutation.then(work, work);
-  mutation = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
+function createQueue(): Enqueue {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (work) => {
+    const run = tail.then(work, work);
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 }
 
 export function createReadTool(root: string): AgentTool {
@@ -52,7 +55,7 @@ export function createReadTool(root: string): AgentTool {
   };
 }
 
-export function createWriteTool(root: string): AgentTool {
+export function createWriteTool(root: string, enqueue: Enqueue = createQueue()): AgentTool {
   return {
     name: "write",
     description: "Create or replace a UTF-8 text file",
@@ -70,7 +73,7 @@ export function createWriteTool(root: string): AgentTool {
   };
 }
 
-export function createEditTool(root: string): AgentTool {
+export function createEditTool(root: string, enqueue: Enqueue = createQueue()): AgentTool {
   return {
     name: "edit",
     description: "Replace one exact occurrence in a file",
@@ -94,6 +97,14 @@ export function createEditTool(root: string): AgentTool {
   };
 }
 
+const OUTPUT_TAIL_BYTES = 32 * 1024;
+
+function rememberTail(current: string, chunk: Buffer): { text: string; truncated: boolean } {
+  const next = Buffer.concat([Buffer.from(current), chunk]);
+  if (next.length <= OUTPUT_TAIL_BYTES) return { text: next.toString("utf8"), truncated: false };
+  return { text: next.subarray(next.length - OUTPUT_TAIL_BYTES).toString("utf8"), truncated: true };
+}
+
 export function createBashTool(root: string): AgentTool {
   return {
     name: "bash",
@@ -106,22 +117,41 @@ export function createBashTool(root: string): AgentTool {
         const child = spawn(command, { cwd: root, shell: true, stdio: ["ignore", "pipe", "pipe"] });
         let stdout = "";
         let stderr = "";
-        child.stdout.on("data", (chunk: Buffer) => {
-          stdout += chunk.toString();
+        let stdoutTruncated = false;
+        let stderrTruncated = false;
+        let settled = false;
+        const timer = setTimeout(() => child.kill("SIGTERM"), 15_000);
+        const onAbort = () => child.kill("SIGTERM");
+        const finish = (text: string, isError: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          context.signal.removeEventListener("abort", onAbort);
+          resolveRun({ content: [{ type: "text", text }], isError });
+        };
+        child.on("error", (error) => {
+          finish(error.message, true);
+        });
+        if (context.signal.aborted) onAbort();
+        else context.signal.addEventListener("abort", onAbort);
+        child.stdout?.on("data", (chunk: Buffer) => {
+          const kept = rememberTail(stdout, chunk);
+          stdout = kept.text;
+          stdoutTruncated = stdoutTruncated || kept.truncated;
           context.onUpdate?.(stdout);
         });
-        child.stderr.on("data", (chunk: Buffer) => {
-          stderr += chunk.toString();
+        child.stderr?.on("data", (chunk: Buffer) => {
+          const kept = rememberTail(stderr, chunk);
+          stderr = kept.text;
+          stderrTruncated = stderrTruncated || kept.truncated;
         });
-        const timer = setTimeout(() => child.kill("SIGTERM"), 15_000);
-        context.signal.addEventListener("abort", () => child.kill("SIGTERM"), { once: true });
         child.on("close", (code) => {
-          clearTimeout(timer);
-          const text = [stdout, stderr].filter((part) => part.length > 0).join("\n");
-          resolveRun({
-            content: [{ type: "text", text: text || `exit ${code ?? 0}` }],
-            isError: code !== 0,
-          });
+          const notice = [
+            stdoutTruncated ? "stdout truncated to the last 32 KiB" : "",
+            stderrTruncated ? "stderr truncated to the last 32 KiB" : "",
+          ].filter((part) => part.length > 0);
+          const text = [stdout, stderr, ...notice].filter((part) => part.length > 0).join("\n");
+          finish(text || `exit ${code ?? 0}`, code !== 0);
         });
       });
     },
@@ -130,5 +160,6 @@ export function createBashTool(root: string): AgentTool {
 
 export function createCodingTools(root: string): AgentTool[] {
   statSync(root);
-  return [createReadTool(root), createWriteTool(root), createEditTool(root), createBashTool(root)];
+  const enqueue = createQueue();
+  return [createReadTool(root), createWriteTool(root, enqueue), createEditTool(root, enqueue), createBashTool(root)];
 }
