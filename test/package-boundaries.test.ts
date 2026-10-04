@@ -118,6 +118,34 @@ test("client and server cores depend only on the protocol and run without Node m
   assert.equal(child.status, 0, child.stderr);
 });
 
+test("runtime-service contracts and client entries load neither Durable nor the server, and the generic cores do not import it", () => {
+  for (const name of ["protocol", "client", "server"]) {
+    const pkg = JSON.parse(readFileSync(new URL(`../packages/${name}/package.json`, import.meta.url), "utf8")) as { dependencies?: Record<string, string> };
+    assert.equal(pkg.dependencies?.["@amazme/runtime-service"], undefined, name);
+  }
+  const script = (entry: string, allowed: string) => `
+    const { registerHooks, builtinModules } = await import("node:module");
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier.startsWith("node:") || builtinModules.includes(specifier)) throw new Error("Node import: " + specifier);
+      const resolved = next(specifier, context);
+      if (/\\/packages\\/(?!(${allowed})\\/)[^/]+\\//.test(resolved.url)) throw new Error("${entry} loaded " + specifier);
+      if (resolved.url.includes("/packages/runtime-service/src/server")) throw new Error("${entry} loaded the server binding");
+      return resolved;
+    } });
+    globalThis.process = undefined;
+    const loaded = await import("${entry}");
+    if (Object.keys(loaded).length === 0) throw new Error("empty entry");
+  `;
+  for (const [entry, allowed] of [
+    ["@amazme/runtime-service", "protocol|runtime-service"],
+    ["@amazme/runtime-service/client", "protocol|client|runtime-service"],
+  ] as const) {
+    const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script(entry, allowed)], { encoding: "utf8", timeout: 10_000 });
+    assert.ifError(child.error);
+    assert.equal(child.status, 0, child.stderr);
+  }
+});
+
 test("the public Agent entry runs without loading Durable", () => {
   const script = `
     const { registerHooks } = await import("node:module");

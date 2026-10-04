@@ -11,6 +11,7 @@
 @amazme/ai             Provider、认证、统一消息、流事件
 @amazme/agent          内存里的 turn 循环
 @amazme/durable        可崩溃恢复的 AgentHarness、存储契约与适配器
+@amazme/runtime-service  Durable lane 控制与完整快照订阅的服务契约、服务端绑定和类型化客户端
 @amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI、MCP 工具适配
 ```
 

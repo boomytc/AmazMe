@@ -1,0 +1,184 @@
+import type { Client, RequestOptions, Subscription, SubscriptionEnd } from "@amazme/client";
+import type { JsonValue, RuntimeRoute } from "@amazme/protocol";
+import {
+  AbortReplySchema,
+  AttachReplySchema,
+  ContractError,
+  DriveOutcomeSchema,
+  EmptyReplySchema,
+  EnqueuedReplySchema,
+  LaneNameSchema,
+  OperationAdmissionSchema,
+  parse,
+  parseLaneSnapshot,
+  parseLaneUpdate,
+  ResultReplySchema,
+  type DriveOutcomeDto,
+  type LaneSnapshotDto,
+  type LaneUpdateDto,
+  type OperationAdmissionDto,
+  type OperationRequest,
+  type OperationResultDto,
+  type RuntimeCall,
+} from "./contracts.ts";
+
+/** No runtime is attached to the client's current connection. */
+export class NotAttachedError extends Error {
+  constructor() {
+    super("no runtime is attached to the current connection");
+    this.name = "NotAttachedError";
+  }
+}
+
+/**
+ * Typed calls over a connected `Client`. Every reply is checked against the contract. Calls use the attachment
+ * the server published for the current connection; after a reconnect, attach again.
+ */
+export class RuntimeClient {
+  readonly client: Client;
+
+  constructor(client: Client) {
+    this.client = client;
+  }
+
+  /** Asks the server to attach `runtimeId` and returns the route the server published for it. */
+  async attach(runtimeId: string, options?: RequestOptions): Promise<RuntimeRoute> {
+    parse(AttachReplySchema, await this.client.request(this.client.serverRoute(), { method: "attach", runtimeId }, options), "attach reply");
+    const route = this.client.attachment;
+    if (!route || route.runtimeId !== runtimeId) throw new ContractError("the server did not publish the attachment");
+    return route;
+  }
+
+  async detach(options?: RequestOptions): Promise<void> {
+    parse(EmptyReplySchema, await this.client.request(this.client.serverRoute(), { method: "detach" }, options), "detach reply");
+  }
+
+  lane(name: string): RemoteLane {
+    parse(LaneNameSchema, name, "lane name");
+    return new RemoteLane(this.client, name);
+  }
+}
+
+/** How a lane subscription ended: locally, by the route or connection, or by the service (`ended`). */
+export type LaneSubscriptionEnd = SubscriptionEnd | { reason: "ended"; code: string; message: string };
+
+export interface LaneSubscription {
+  /** The snapshot the subscription started from. */
+  readonly initial: LaneSnapshotDto;
+  /** The newest snapshot installed: the initial one, then each newer update. */
+  current(): LaneSnapshotDto;
+  close(): Promise<void>;
+  /**
+   * Resolves once and never rejects. An update that fails the contract ends it with code `invalid_update`;
+   * the service ending it reports the service's code, such as `runtime_closed`.
+   */
+  readonly ended: Promise<LaneSubscriptionEnd>;
+}
+
+export class RemoteLane {
+  readonly name: string;
+  private readonly client: Client;
+
+  constructor(client: Client, name: string) {
+    this.client = client;
+    this.name = name;
+  }
+
+  async accept(request: OperationRequest, options?: RequestOptions): Promise<OperationAdmissionDto> {
+    return parse(OperationAdmissionSchema, await this.call({ method: "accept", lane: this.name, request }, options), "admission");
+  }
+
+  /** Waits for the runtime's drive. Aborting stops this wait only; the operation keeps running. */
+  async drive(operationId: string, options: RequestOptions & { waitForRetry?: boolean } = {}): Promise<DriveOutcomeDto> {
+    const call: RuntimeCall = { method: "drive", lane: this.name, operationId, ...(options.waitForRetry !== undefined ? { waitForRetry: options.waitForRetry } : {}) };
+    return parse(DriveOutcomeSchema, await this.call(call, options), "drive outcome");
+  }
+
+  async snapshot(options?: RequestOptions): Promise<LaneSnapshotDto> {
+    return this.own(parseLaneSnapshot(await this.call({ method: "snapshot", lane: this.name }, options)));
+  }
+
+  async result(operationId: string, options?: RequestOptions): Promise<OperationResultDto | null> {
+    return parse(ResultReplySchema, await this.call({ method: "result", lane: this.name, operationId }, options), "result reply").result;
+  }
+
+  async steer(text: string, options?: RequestOptions): Promise<{ entryId: string }> {
+    return parse(EnqueuedReplySchema, await this.call({ method: "steer", lane: this.name, text }, options), "steer reply");
+  }
+
+  async followUp(text: string, options?: RequestOptions): Promise<{ entryId: string }> {
+    return parse(EnqueuedReplySchema, await this.call({ method: "followUp", lane: this.name, text }, options), "follow-up reply");
+  }
+
+  /** The explicit, persisted business cancellation of an operation. */
+  async requestAbort(operationId: string, options?: RequestOptions): Promise<{ operationId: string; newlyRequested: boolean }> {
+    return parse(AbortReplySchema, await this.call({ method: "requestAbort", lane: this.name, operationId }, options), "abort reply");
+  }
+
+  /**
+   * Subscribes to complete snapshots. The initial snapshot is installed before any update is handled;
+   * `onSnapshot` then receives each update whose version is newer than the installed one.
+   */
+  async subscribe(onSnapshot: (snapshot: LaneSnapshotDto) => void, options: RequestOptions = {}): Promise<LaneSubscription> {
+    const route = this.route();
+    let current: LaneSnapshotDto | undefined;
+    let subscription: Subscription | undefined;
+    let settle!: (end: LaneSubscriptionEnd) => void;
+    const ended = new Promise<LaneSubscriptionEnd>((resolve) => { settle = resolve; });
+    const end = (value: LaneSubscriptionEnd) => {
+      settle(value);
+      void subscription?.close();
+    };
+    const onUpdate = (raw: JsonValue) => {
+      if (!current || !subscription) return;
+      let update: LaneUpdateDto;
+      try {
+        update = parseLaneUpdate(raw);
+        if (update.kind === "snapshot") this.own(update.snapshot);
+      } catch (error) {
+        end({ reason: "ended", code: "invalid_update", message: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+      if (update.kind === "ended") {
+        end({ reason: "ended", code: update.code, message: update.message });
+        return;
+      }
+      if (update.snapshot.version <= current.version) return;
+      current = update.snapshot;
+      onSnapshot(update.snapshot);
+    };
+    subscription = await this.client.subscribe(
+      route,
+      (subscriptionId) => ({ method: "subscribe", lane: this.name, subscriptionId }),
+      onUpdate,
+      { ...(options.signal ? { signal: options.signal } : {}), unsubscribe: (subscriptionId) => ({ method: "unsubscribe", subscriptionId }) },
+    );
+    let initial: LaneSnapshotDto;
+    try {
+      initial = this.own(parseLaneSnapshot(subscription.initial));
+    } catch (error) {
+      await subscription.close();
+      throw error;
+    }
+    current = initial;
+    const opened = subscription;
+    void opened.ended.then(settle);
+    opened.start();
+    return { initial, current: () => current!, close: () => opened.close(), ended };
+  }
+
+  private call(call: RuntimeCall, options?: RequestOptions): Promise<JsonValue | undefined> {
+    return this.client.request(this.route(), call, options);
+  }
+
+  private route(): RuntimeRoute {
+    const route = this.client.attachment;
+    if (!route) throw new NotAttachedError();
+    return route;
+  }
+
+  private own(snapshot: LaneSnapshotDto): LaneSnapshotDto {
+    if (snapshot.lane !== this.name) throw new ContractError(`snapshot is for lane ${snapshot.lane}, not ${this.name}`);
+    return snapshot;
+  }
+}
