@@ -9,6 +9,7 @@
     { "path": "packages/ai" },
     { "path": "packages/agent" },
     { "path": "packages/durable" },
+    { "path": "packages/runtime-service" },
     { "path": "packages/coding-agent" }
   ]
 }
