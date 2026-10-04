@@ -162,3 +162,23 @@ test("the shared checker rejects a shifted index, a second terminal, and a toolc
   assert.equal(restored.content[0]?.type === "toolCall" ? restored.content[0].name : "", "read");
   assert.equal(restored.content[1]?.type === "text" ? restored.content[1].text : "", "after");
 });
+
+test("the shared checker rejects a signature omitted from the terminal or tool partial", async () => {
+  const { events } = await collect(() => fauxAssistant([
+    { type: "text", text: "answer", textSignature: "signed-text" },
+    { type: "thinking", thinking: "plan", thinkingSignature: "signed-thought" },
+    { ...fauxToolCall("read", {}, "call1"), thoughtSignature: "signed-tool" },
+  ]));
+  assert.deepEqual(checkAssistantStream(events), []);
+  const changed = structuredClone(events);
+  const terminal = changed.at(-1);
+  assert.ok(terminal?.type === "done");
+  const text = terminal.message.content[0]; assert.ok(text?.type === "text"); delete text.textSignature;
+  assert.ok(checkAssistantStream(changed).some(problem => /terminal content/.test(problem)));
+  const tools = structuredClone(events);
+  const ended = tools.find(e => e.type === "toolcall_end"); assert.ok(ended?.type === "toolcall_end");
+  const partial = ended.partial.content[ended.contentIndex]; assert.ok(partial?.type === "toolCall");
+  const missing = { ...partial }; delete missing.thoughtSignature;
+  ended.partial.content[ended.contentIndex] = missing;
+  assert.ok(checkAssistantStream(tools).some(problem => /partial tool call/.test(problem)));
+});

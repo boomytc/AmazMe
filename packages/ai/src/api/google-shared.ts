@@ -1,16 +1,17 @@
 import type { AssistantAccumulator } from "./events.ts";
 import { usageFromCounts } from "./events.ts";
 import { isRecord } from "./prepare.ts";
-import type { Context, Message, Model } from "../types.ts";
+import type { Context, Message, Model, ThinkingLevel } from "../types.ts";
 import { messageText } from "../transform.ts";
 
-export function googleBody(model: Model, context: Context, outputCap: number, effort: string | undefined): Record<string, unknown> {
+export function googleBody(model: Model, context: Context, outputCap: number, effort: string | undefined, requested?: ThinkingLevel): Record<string, unknown> {
   const system = systemText(context);
+  const thinkingConfig = googleThinkingConfig(model, effort, requested);
   const payload: Record<string, unknown> = {
     contents: toContents(context),
     generationConfig: {
       maxOutputTokens: outputCap,
-      ...(effort ? { thinkingConfig: { thinkingLevel: effort } } : {}),
+      ...(thinkingConfig ? { thinkingConfig } : {}),
     },
   };
   if (system) payload.systemInstruction = { parts: [{ text: system }] };
@@ -23,7 +24,6 @@ export function googleBody(model: Model, context: Context, outputCap: number, ef
       })),
     }];
   }
-  void model;
   return payload;
 }
 
@@ -33,7 +33,7 @@ export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decode
     const reported = usageFromCounts(
       model,
       numberOf(usage.promptTokenCount),
-      numberOf(usage.candidatesTokenCount),
+      (numberOf(usage.candidatesTokenCount) ?? 0) + (numberOf(usage.thoughtsTokenCount) ?? 0),
       numberOf(usage.totalTokenCount),
     );
     if (reported) acc.usage(reported);
@@ -44,15 +44,16 @@ export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decode
   if (typeof candidate.finishReason === "string") finish.reason = candidate.finishReason;
   const content = isRecord(candidate.content) ? candidate.content : undefined;
   const parts = content && Array.isArray(content.parts) ? content.parts : [];
-  for (const part of parts) {
+  for (const [partIndex, part] of parts.entries()) {
     if (!isRecord(part)) continue;
-    if (part.thought === true && typeof part.text === "string") acc.thinking(part.text);
-    else if (typeof part.text === "string") acc.text(part.text);
+    const signature = typeof part.thoughtSignature === "string" ? part.thoughtSignature : undefined;
+    if (part.thought === true && typeof part.text === "string") acc.thinking(part.text, { ...(signature !== undefined ? { signature } : {}), ...(partIndex > 0 ? { newBlock: true } : {}) });
+    else if (typeof part.text === "string") acc.text(part.text, { ...(signature !== undefined ? { signature } : {}), ...(partIndex > 0 ? { newBlock: true } : {}) });
     if (isRecord(part.functionCall)) {
       const name = typeof part.functionCall.name === "string" ? part.functionCall.name : "tool";
       const id = typeof part.functionCall.id === "string" && part.functionCall.id.length > 0 ? part.functionCall.id : undefined;
       const key = id ?? `tool_${finish.tools++}_${name}`;
-      acc.tool(key, id, name, JSON.stringify(part.functionCall.args ?? {}));
+      acc.tool(key, id, name, JSON.stringify(part.functionCall.args ?? {}), false, signature);
     }
   }
 }
@@ -108,19 +109,39 @@ function convert(message: Message): unknown {
   if (message.role === "toolResult") {
     return {
       role: "user",
-      parts: [{ functionResponse: { name: message.toolName, response: { result: messageText(message) } } }],
+      parts: [{ functionResponse: { id: message.toolCallId, name: message.toolName, response: { result: messageText(message) } } }],
     };
   }
   if (message.role !== "assistant") return { role: "user", parts: [{ text: message.content }] };
   const parts: unknown[] = [];
   for (const block of message.content) {
-    if (block.type === "text") parts.push({ text: block.text });
-    else if (block.type === "thinking") parts.push({ text: block.thinking, thought: true });
-    else parts.push({ functionCall: { name: block.name, args: block.arguments ?? {} } });
+    if (block.type === "text") parts.push({ text: block.text, ...(block.textSignature !== undefined ? { thoughtSignature: block.textSignature } : {}) });
+    else if (block.type === "thinking") parts.push({ text: block.thinking, thought: true, ...(block.thinkingSignature !== undefined ? { thoughtSignature: block.thinkingSignature } : {}) });
+    else parts.push({ functionCall: { id: block.id, name: block.name, args: block.arguments ?? {} }, ...(block.thoughtSignature !== undefined ? { thoughtSignature: block.thoughtSignature } : {}) });
   }
   return { role: "model", parts };
 }
 
 function numberOf(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** Gemini 2.5 uses a token budget; Gemini 3 uses its declared discrete levels. */
+function googleThinkingConfig(model: Model, effort: string | undefined, requested: ThinkingLevel | undefined): Record<string, unknown> | undefined {
+  if (requested === undefined && effort === undefined) return undefined;
+  if (!model.reasoning) return undefined;
+  const discrete = /gemini-3(?:\.\d+)?-(?:pro|flash)/i.test(model.id) || /^gemini-flash(?:-lite)?-latest$/i.test(model.id) || /gemma-?4/i.test(model.id);
+  if (requested === "off") {
+    if (discrete || /gemini-2\.5-pro/i.test(model.id)) throw new Error(`Google model ${model.id} cannot disable thinking`);
+    return { thinkingBudget: 0 };
+  }
+  if (!effort) return undefined;
+  const level = effort.toLowerCase();
+  if (!["minimal", "low", "medium", "high"].includes(level)) throw new Error(`Unsupported Google thinking level ${effort}`);
+  if (discrete) return { thinkingLevel: level.toUpperCase(), includeThoughts: true };
+  const pro = /gemini-2\.5-pro/i.test(model.id);
+  const lite = /gemini-2\.5-flash-lite/i.test(model.id);
+  const budgets: Record<string, number> = { minimal: lite ? 512 : 128, low: 2048, medium: 8192, high: pro ? 32768 : 24576 };
+  // The budget guides reasoning; maxOutputTokens remains the independent hard output limit.
+  return { thinkingBudget: budgets[level], includeThoughts: true };
 }

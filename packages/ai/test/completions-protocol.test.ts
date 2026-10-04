@@ -432,8 +432,10 @@ test("invalid final tool arguments cannot become a successful tool call", async 
     'data: {"choices":[{"finish_reason":"length"}]}\n\n',
     "data: [DONE]\n\n",
   ]));
-  assert.equal(truncated.message.stopReason, "length");
+  assert.equal(truncated.message.stopReason, "error");
   assert.equal(truncated.message.content[0]?.type, "toolCall");
+  assert.equal(truncated.events.some(event => event.type === "toolcall_end"), false);
+  assert.deepEqual(checkAssistantStream(truncated.events), []);
 });
 
 test("a content-filter finish is a non-retryable error retaining received output", async () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssistantEvent, AssistantMessage, Context, Model } from "@amazme/ai";
-import { encodeAwsEvent, encodeBedrockEvents, encodeBedrockException, nextAwsEvent } from "@amazme/ai/api/aws-event-stream";
+import { encodeAwsEvent, encodeBedrockEvents, encodeBedrockException, nextAwsEvent, readAwsEventStream } from "@amazme/ai/api/aws-event-stream";
 import { bedrockConverseStreamApi } from "@amazme/ai/api/bedrock-converse-stream";
 import { checkAssistantStream } from "@amazme/ai/testing";
 
@@ -68,6 +68,39 @@ const END_TURN = encodeBedrockEvents([
   { type: "contentBlockDelta", body: { contentBlockIndex: 0, delta: { text: "Hi" } } },
   { type: "messageStop", body: { stopReason: "end_turn" } },
 ]);
+
+test("event stream cancels a pending body read when its signal is aborted", async () => {
+  let closeBody: () => void = () => undefined;
+  let cancelled = false;
+  const response = new Response(new ReadableStream<Uint8Array>({
+    start(controller) { closeBody = () => controller.close(); },
+    cancel() { cancelled = true; },
+  }));
+  const controller = new AbortController();
+  const pending = readAwsEventStream(response, controller.signal, () => undefined)
+    .then(() => undefined, (error: unknown) => error);
+  controller.abort();
+  const timeout = Symbol("timeout");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const result = await Promise.race([pending, new Promise<symbol>((resolve) => {
+    timer = setTimeout(() => resolve(timeout), 100);
+  })]);
+  clearTimeout(timer);
+  if (result === timeout) closeBody();
+  assert.notEqual(result, timeout, "abort must settle without waiting for another server chunk");
+  assert.ok(result instanceof DOMException && result.name === "AbortError");
+  assert.equal(cancelled, true);
+});
+
+test("event stream stops delivering buffered frames after a callback aborts", async () => {
+  const controller = new AbortController();
+  let events = 0;
+  await assert.rejects(readAwsEventStream(new Response(END_TURN), controller.signal, () => {
+    events += 1;
+    controller.abort();
+  }), (error: unknown) => error instanceof DOMException && error.name === "AbortError");
+  assert.equal(events, 1);
+});
 
 test("event stream frames use the IEEE CRC and reject a damaged frame", () => {
   assert.equal(crc32Ieee(new TextEncoder().encode("123456789")), 0xcbf43926);

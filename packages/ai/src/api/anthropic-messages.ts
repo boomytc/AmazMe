@@ -1,3 +1,4 @@
+import { claudeThinkingFields } from "./claude-thinking.ts";
 import { readFile } from "node:fs/promises";
 import { createAssistantEventStream, type ProviderStreams } from "../models.ts";
 import type { Context, Message, Model } from "../types.ts";
@@ -50,12 +51,7 @@ async function pump(
     }
     if (key && !hasAuthorization(headers)) headers["x-api-key"] = key;
     const system = systemText(prepared.prepared.context);
-    // Extended thinking counts toward max_tokens. budget_tokens must be at least 1024 and strictly below that cap.
-    // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
-    if (prepared.prepared.effort && prepared.prepared.outputCap <= 1024) {
-      stream.push({ type: "error", error: terminal(model, "error", "Anthropic thinking budget does not fit the output cap") });
-      return;
-    }
+    const thinking = claudeThinkingFields(model, prepared.prepared.outputCap, prepared.prepared.effort, request.thinkingLevel);
     const payload: Record<string, unknown> = {
       model: model.id,
       max_tokens: prepared.prepared.outputCap,
@@ -63,7 +59,7 @@ async function pump(
       messages: toAnthropicMessages(prepared.prepared.context),
     };
     if (system) payload.system = system;
-    if (prepared.prepared.effort) payload.thinking = { type: "enabled", budget_tokens: Math.min(1024, prepared.prepared.outputCap - 1) };
+    if (thinking) Object.assign(payload, thinking);
     if (prepared.prepared.context.tools && prepared.prepared.context.tools.length > 0) {
       payload.tools = prepared.prepared.context.tools.map((tool) => ({
         name: tool.name,
@@ -106,6 +102,9 @@ async function pump(
       if (decoded.type === "content_block_start" && isRecord(decoded.content_block)) {
         const index = typeof decoded.index === "number" ? decoded.index : toolKeys.size;
         const block = decoded.content_block;
+        if (block.type === "text" && typeof block.text === "string") acc.text(block.text, { key: `block_${index}` });
+        if (block.type === "thinking") acc.thinking(typeof block.thinking === "string" ? block.thinking : "", { key: `block_${index}`, signature: typeof block.signature === "string" ? block.signature : "" });
+        if (block.type === "redacted_thinking" && typeof block.data === "string") acc.thinking("", { key: `block_${index}`, signature: block.data, redacted: true });
         if (block.type === "tool_use") {
           const key = `tool_${index}`;
           toolKeys.set(index, key);
@@ -114,8 +113,9 @@ async function pump(
       }
       if (decoded.type === "content_block_delta" && isRecord(decoded.delta)) {
         const delta = decoded.delta;
-        if (delta.type === "text_delta" && typeof delta.text === "string") acc.text(delta.text);
-        if (delta.type === "thinking_delta" && typeof delta.thinking === "string") acc.thinking(delta.thinking);
+        if (delta.type === "text_delta" && typeof delta.text === "string") acc.text(delta.text, { key: `block_${typeof decoded.index === "number" ? decoded.index : 0}` });
+        if (delta.type === "thinking_delta" && typeof delta.thinking === "string") acc.thinking(delta.thinking, { key: `block_${typeof decoded.index === "number" ? decoded.index : 0}` });
+        if (delta.type === "signature_delta" && typeof delta.signature === "string") acc.thinking("", { key: `block_${typeof decoded.index === "number" ? decoded.index : 0}`, signature: delta.signature, appendSignature: true });
         if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
           const index = typeof decoded.index === "number" ? decoded.index : 0;
           const key = toolKeys.get(index) ?? `tool_${index}`;
@@ -152,7 +152,7 @@ async function pump(
       acc.fail("error", `Anthropic messages stream: ${stop}`);
       return;
     }
-    acc.finish(mapped);
+    acc.finish(mapped, stop === "model_context_window_exceeded");
   } catch (error) {
     const aborted = isAbort(error, request.signal);
     acc.fail(aborted ? "aborted" : "error", error instanceof Error ? error.message : String(error), sent && !aborted);
@@ -162,7 +162,7 @@ async function pump(
 /** https://docs.anthropic.com/en/api/messages — stop_reason */
 function anthropicStop(reason: string): "stop" | "length" | "toolUse" | "error" {
   if (reason === "end_turn" || reason === "stop_sequence" || reason === "pause_turn") return "stop";
-  if (reason === "max_tokens") return "length";
+  if (reason === "max_tokens" || reason === "model_context_window_exceeded") return "length";
   if (reason === "tool_use") return "toolUse";
   return "error";
 }
@@ -219,7 +219,11 @@ function convert(message: Message): unknown {
   const content: unknown[] = [];
   for (const block of message.content) {
     if (block.type === "text") content.push({ type: "text", text: block.text });
-    else if (block.type === "thinking") content.push({ type: "thinking", thinking: block.thinking });
+    else if (block.type === "thinking") {
+      if (block.redacted && block.thinkingSignature) content.push({ type: "redacted_thinking", data: block.thinkingSignature });
+      else if (block.thinkingSignature) content.push({ type: "thinking", thinking: block.thinking, signature: block.thinkingSignature });
+      else if (block.thinking) content.push({ type: "text", text: block.thinking });
+    }
     else content.push({ type: "tool_use", id: block.id, name: block.name, input: block.arguments ?? {} });
   }
   return { role: "assistant", content };

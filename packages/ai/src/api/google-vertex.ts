@@ -38,6 +38,7 @@ async function pump(
       stream.push({ type: "error", error: prepared.message });
       return;
     }
+    const payload = googleBody(model, prepared.prepared.context, prepared.prepared.outputCap, prepared.prepared.effort, request.thinkingLevel);
     const project = request.project || request.env?.GOOGLE_CLOUD_PROJECT || request.env?.GCLOUD_PROJECT;
     const location = request.location || request.env?.GOOGLE_CLOUD_LOCATION || "us-central1";
     const host = (request.baseUrl || `https://${location}-aiplatform.googleapis.com`).replace("{location}", location).replace(/\/$/, "");
@@ -62,7 +63,7 @@ async function pump(
       fetchImpl,
       url,
       headers,
-      googleBody(model, prepared.prepared.context, prepared.prepared.outputCap, prepared.prepared.effort),
+      payload,
       request.signal,
     );
     if (!response.ok) {

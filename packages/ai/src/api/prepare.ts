@@ -75,6 +75,8 @@ export async function readSse(
   let buffer = "";
   let eventName: string | undefined;
   let dataLines: string[] = [];
+  const onAbort = () => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   const flush = () => {
     if (dataLines.length === 0 && !eventName) return;
     const data = dataLines.join("\n");
@@ -84,6 +86,7 @@ export async function readSse(
     if (data.length > 0) onEvent({ ...(event ? { event } : {}), data });
   };
   const consume = (line: string) => {
+    if (signal?.aborted) throw abortError();
     if (line.startsWith("event:")) {
       eventName = line.slice(6).trim();
       return;
@@ -98,6 +101,7 @@ export async function readSse(
     while (true) {
       if (signal?.aborted) throw abortError();
       const chunk = await reader.read();
+      if (signal?.aborted) throw abortError();
       if (chunk.done) break;
       buffer += decoder.decode(chunk.value, { stream: true });
       const lines = buffer.split("\n");
@@ -108,6 +112,7 @@ export async function readSse(
     if (buffer.length > 0) consume(buffer);
     flush();
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     void reader.cancel().catch(() => undefined);
   }
 }

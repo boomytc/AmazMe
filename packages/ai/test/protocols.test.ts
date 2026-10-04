@@ -100,7 +100,7 @@ test("openai-responses maps recorded text, thinking, and tool calls", async () =
   assert.equal(JSON.parse(seen.body).max_output_tokens, 1000);
 });
 
-test("azure-openai-responses uses the shared responses parser and its own deployment URL", async () => {
+test("azure-openai-responses uses the shared responses parser and its v1 deployment field", async () => {
   const seen = await assertRecorded(
     "azure",
     (fetchImpl) => azureOpenAIResponsesApi({ fetch: fetchImpl }),
@@ -108,7 +108,9 @@ test("azure-openai-responses uses the shared responses parser and its own deploy
     RESPONSES,
     { baseUrl: undefined, env: { AZURE_OPENAI_RESOURCE_NAME: "east", AZURE_OPENAI_DEPLOYMENT_NAME: "deployment-a" } },
   );
-  assert.match(seen.url, /^https:\/\/east\.openai\.azure\.com\/openai\/deployments\/deployment-a\/responses\?api-version=/);
+  assert.equal(seen.url, "https://east.openai.azure.com/openai/v1/responses");
+  assert.equal(JSON.parse(seen.body).model, "deployment-a");
+  assert.equal(seen.headers.get("api-key"), "recorded-key");
 });
 
 test("openai-codex-responses posts to the chatgpt backend", async () => {
@@ -220,7 +222,7 @@ test("anthropic refuses a thinking budget that cannot fit under max_tokens", asy
   const payload = JSON.parse(sent.body) as { max_tokens: number; thinking: { type: string; budget_tokens: number } };
   assert.equal(payload.max_tokens, 2000);
   assert.equal(payload.thinking.type, "enabled");
-  assert.equal(payload.thinking.budget_tokens, 1024);
+  assert.equal(payload.thinking.budget_tokens, 1999);
   assert.ok(payload.thinking.budget_tokens < payload.max_tokens);
 });
 

@@ -47,12 +47,13 @@ async function pump(
       "x-goog-api-key": request.apiKey,
       "content-type": "application/json",
     };
+    const payload = googleBody(model, prepared.prepared.context, prepared.prepared.outputCap, prepared.prepared.effort, request.thinkingLevel);
     sent = true;
     const response = await postJson(
       fetchImpl,
       url,
       headers,
-      googleBody(model, prepared.prepared.context, prepared.prepared.outputCap, prepared.prepared.effort),
+      payload,
       request.signal,
     );
     if (!response.ok) {

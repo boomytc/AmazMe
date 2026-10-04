@@ -92,13 +92,17 @@ export async function readAwsEventStream(
   const reader = response.body?.getReader();
   if (!reader) throw new Error("response has no body");
   let buffer: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  const onAbort = () => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
     while (true) {
       if (signal?.aborted) throw abortError();
       const chunk = await reader.read();
+      if (signal?.aborted) throw abortError();
       if (chunk.done) break;
       buffer = concat([buffer, chunk.value]);
       while (true) {
+        if (signal?.aborted) throw abortError();
         const next = nextAwsEvent(buffer);
         if ("need" in next) break;
         if ("error" in next) throw new Error(next.error);
@@ -108,6 +112,7 @@ export async function readAwsEventStream(
     }
     if (buffer.length > 0) throw new Error("truncated event stream");
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     void reader.cancel().catch(() => undefined);
   }
 }

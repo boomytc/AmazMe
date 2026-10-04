@@ -2,6 +2,7 @@ import { createAssistantEventStream, type ProviderStreams } from "../models.ts";
 import type { BedrockOptions, Context, Message, Model } from "../types.ts";
 import { classifyTransportFailure } from "../utils/overflow.ts";
 import { payloadText, readAwsEventStream } from "./aws-event-stream.ts";
+import { claudeThinkingFields } from "./claude-thinking.ts";
 import { bearerFromEnv, resolveAwsChain } from "./aws-chain.ts";
 import { signAwsRequest } from "./aws-sigv4.ts";
 import { createAccumulator, isAbort, usageFromCounts } from "./events.ts";
@@ -53,11 +54,13 @@ async function pump(
     }
     const root = (request.baseUrl ?? "").replace(/\/$/, "");
     const url = new URL(`${root}/model/${encodeURIComponent(model.id)}/converse-stream`);
+    const thinking = bedrockThinkingFields(model, prepared.prepared.outputCap, prepared.prepared.effort, request.thinkingLevel);
     const built = bedrockPayload(prepared.prepared.context, prepared.prepared.outputCap);
     if (!built.ok) {
       stream.push({ type: "error", error: terminal(model, "error", built.message) });
       return;
     }
+    if (thinking) built.body.additionalModelRequestFields = thinking;
     const payload = JSON.stringify(built.body);
     const bearer = request.apiKey || bearerFromEnv(request.env ?? {});
     let headers: Record<string, string>;
@@ -131,7 +134,7 @@ async function pump(
       acc.fail("error", `Bedrock converse stream: ${stop}`);
       return;
     }
-    acc.finish(mapped);
+    acc.finish(mapped, stop === "model_context_window_exceeded");
   } catch (error) {
     const aborted = isAbort(error, request.signal);
     acc.fail(aborted ? "aborted" : "error", error instanceof Error ? error.message : String(error), sent && !aborted);
@@ -160,7 +163,7 @@ function applyBedrockEvent(
   }
   const delta = deltaWrap && isRecord(deltaWrap.delta) ? deltaWrap.delta : undefined;
   if (delta) {
-    if (typeof delta.text === "string") acc.text(delta.text);
+    if (typeof delta.text === "string") acc.text(delta.text, { key: `block_${index}` });
     const reasoning = isRecord(delta.reasoningContent) ? delta.reasoningContent : undefined;
     const reasoningText = reasoning && isRecord(reasoning.reasoningText) ? reasoning.reasoningText : undefined;
     const thought = reasoning && typeof reasoning.text === "string"
@@ -168,7 +171,9 @@ function applyBedrockEvent(
       : reasoningText && typeof reasoningText.text === "string"
         ? reasoningText.text
         : undefined;
-    if (thought) acc.thinking(thought);
+    const signature = reasoning && typeof reasoning.signature === "string" ? reasoning.signature : reasoningText && typeof reasoningText.signature === "string" ? reasoningText.signature : undefined;
+    if (thought || signature !== undefined) acc.thinking(thought ?? "", { key: `block_${index}`, ...(signature !== undefined ? { signature, appendSignature: true } : {}) });
+    if (reasoning && typeof reasoning.redactedContent === "string") acc.thinking("", { key: `block_${index}`, signature: reasoning.redactedContent, appendSignature: true, redacted: true });
     const toolDelta = isRecord(delta.toolUse) ? delta.toolUse : undefined;
     if (toolDelta && typeof toolDelta.input === "string") acc.tool(`tool_${index}`, undefined, undefined, toolDelta.input);
   }
@@ -237,7 +242,11 @@ function bedrockMessage(message: Message):
     const content: unknown[] = [];
     for (const block of message.content) {
       if (block.type === "text") content.push({ text: block.text });
-      else if (block.type === "thinking") content.push({ reasoningContent: { reasoningText: { text: block.thinking } } });
+      else if (block.type === "thinking") {
+        if (block.redacted && block.thinkingSignature) content.push({ reasoningContent: { redactedContent: block.thinkingSignature } });
+        else if (block.thinkingSignature) content.push({ reasoningContent: { reasoningText: { text: block.thinking, signature: block.thinkingSignature } } });
+        else if (block.thinking) content.push({ text: block.thinking });
+      }
       else content.push({ toolUse: { toolUseId: block.id, name: block.name, input: block.arguments ?? {} } });
     }
     return { ok: true, message: { role: "assistant", content } };
@@ -291,4 +300,20 @@ function bedrockStop(reason: string): "stop" | "length" | "toolUse" | "error" {
 function bedrockRegion(url: URL, requested: string | undefined, fromChain: string): string {
   const host = /^bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com$/i.exec(url.hostname);
   return host?.[1] ?? requested ?? fromChain;
+}
+
+/** Bedrock requires model-specific fields; a reasoning flag alone cannot select a wire. */
+function bedrockThinkingFields(model: Model, outputCap: number, effort: string | undefined, requested: BedrockOptions["thinkingLevel"]): Record<string, unknown> | undefined {
+  if (requested === undefined && effort === undefined) return undefined;
+  if (!model.reasoning) return undefined;
+  const id = model.id.toLowerCase();
+  if (id.includes("anthropic.claude")) return claudeThinkingFields(model, outputCap, effort, requested);
+  if (id.includes("amazon.nova-2-lite")) {
+    if (requested === "off") return { reasoningConfig: { type: "disabled" } };
+    const level = effort?.toLowerCase();
+    if (level === "high") throw new Error("Nova high thinking does not support a bounded output cap");
+    if (level !== "low" && level !== "medium") throw new Error(`Unsupported Nova thinking level ${effort}`);
+    return { reasoningConfig: { type: "enabled", maxReasoningEffort: level } };
+  }
+  throw new Error(`Bedrock thinking control is not implemented for ${model.id}`);
 }

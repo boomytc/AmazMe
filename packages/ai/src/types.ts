@@ -42,6 +42,8 @@ export interface JsonSchema {
 export interface TextContent {
   type: "text";
   text: string;
+  /** Opaque native replay metadata, valid only for the originating model. */
+  textSignature?: string;
 }
 
 /** Completions fields that may carry thinking. No other name is written back. */
@@ -59,6 +61,9 @@ export interface ThinkingContent {
    * Absent when the thinking did not come from a completions field.
    */
   thinkingField?: CompletionsThinkingField;
+  /** Opaque native thinking signature or redacted payload. */
+  thinkingSignature?: string;
+  redacted?: boolean;
 }
 
 export interface ImageContent {
@@ -72,6 +77,8 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: unknown;
+  /** Google thought signature belonging to this function-call part. */
+  thoughtSignature?: string;
 }
 
 export type UserContent = TextContent | ImageContent;
@@ -258,9 +265,9 @@ export type AssistantEvent =
  * appears and is not a server tool index. A stop frame does not settle the response.
  */
 export type AssistantFrame =
-  | { type: "text_delta"; contentIndex: number; delta: string }
-  | { type: "thinking_delta"; contentIndex: number; delta: string; thinkingField?: CompletionsThinkingField }
-  | { type: "toolcall"; contentIndex: number; id: string; name: string; arguments: unknown }
+  | { type: "text_delta"; contentIndex: number; delta: string; textSignature?: string }
+  | { type: "thinking_delta"; contentIndex: number; delta: string; thinkingField?: CompletionsThinkingField; thinkingSignature?: string; redacted?: boolean }
+  | { type: "toolcall"; contentIndex: number; id: string; name: string; arguments: unknown; thoughtSignature?: string }
   | { type: "stop"; stopReason: StopReason; errorMessage?: string };
 
 export interface AuthResult {

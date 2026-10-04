@@ -38,6 +38,7 @@ export async function pumpResponses(
   stream: AssistantEventStream,
   urlFor: (model: Model, request: OpenAIResponsesOptions) => string,
   headersFor?: (request: OpenAIResponsesOptions) => Record<string, string>,
+  modelFor?: (model: Model, request: OpenAIResponsesOptions) => string,
 ): Promise<void> {
   const acc = createAccumulator(stream, model);
   let sent = false;
@@ -53,7 +54,7 @@ export async function pumpResponses(
     }
     const effort = request.reasoningEffort ?? prepared.prepared.effort;
     const payload: Record<string, unknown> = {
-      model: model.id,
+      model: modelFor ? modelFor(model, request) : model.id,
       input: toResponsesInput(prepared.prepared.context),
       stream: true,
       store: false,
@@ -69,13 +70,13 @@ export async function pumpResponses(
       }));
     }
     const headers = {
-      ...(headersFor ? headersFor(request) : {}),
+      ...(headersFor ? headersFor(request) : { authorization: `Bearer ${request.apiKey}` }),
       ...request.headers,
-      authorization: `Bearer ${request.apiKey}`,
       "content-type": "application/json",
     };
+    const url = urlFor(model, request);
     sent = true;
-    const response = await postJson(fetchImpl, urlFor(model, request), headers, payload, request.signal);
+    const response = await postJson(fetchImpl, url, headers, payload, request.signal);
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       const classification = classifyTransportFailure(response.status, body);
