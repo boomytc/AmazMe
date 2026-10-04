@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AgentHarness, type Apply, type HarnessModels, type Storage, type StorageView, type Write } from "@amazme/durable";
+import { AgentHarness, list, value, type Apply, type HarnessModels, type Storage, type StorageView, type Write } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { createStorageConformance } from "@amazme/durable/testing";
@@ -20,12 +20,25 @@ for (const backend of ["memory", "jsonl"] as const) {
   for (const case_ of cases) test(`${backend}: ${case_.name}`, case_.run);
 }
 
+test("JSONL reopen replays the storage version, including writes from other lanes and a torn tail", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-version-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "storage.jsonl");
+  const first = new JsonlStorage(file);
+  await first.commit([{ type: "set", address: value("lane.a"), value: 1 }, { type: "append", address: list("lane.b"), item: 1 }]);
+  await assert.rejects(first.commit([{ type: "set", address: value("lane.a"), value: 2 }, { type: "set", address: value(""), value: 0 }]));
+  const committed = await first.commit([{ type: "deleteList", address: list("lane.b") }, { type: "delete", address: value("lane.a") }]);
+  assert.equal(committed.seq, 4);
+  appendFileSync(file, "{\"writes\":[{\"type\":\"set\"");
+  assert.equal(await new JsonlStorage(file).read((view) => view.version()), 4);
+});
+
 test("Harness accepts structural storage, view and model capabilities without reference classes", async () => {
   class Adapter implements Storage {
     private readonly backing = new MemoryStorage();
     run<T>(fn: (view: StorageView, apply: Apply) => T | Promise<T>): Promise<T> {
       return this.backing.run((view, apply) => fn({
-        entry: (id) => view.entry(id), entries: () => view.entries(), get: (address) => view.get(address),
+        version: () => view.version(), entry: (id) => view.entry(id), entries: () => view.entries(), get: (address) => view.get(address),
         items: (address) => view.items(address), usageRows: () => view.usageRows(),
         values: () => view.values(), lists: () => view.lists(),
       }, apply));

@@ -52,6 +52,12 @@ export interface CommitResult {
 
 /** Borrowed reads: callers must not mutate or retain mutable payloads as writable state. */
 export interface StorageView {
+  /**
+   * The storage-wide seq of the last write this view observes. Every write type advances it; a rejected
+   * batch does not. Writes of other lanes advance it too, it may skip numbers between two reads,
+   * and it is not a durability promise.
+   */
+  version(): number;
   entry(id: string): Entry | undefined;
   entries(): Entry[];
   get<T>(address: Address): T | undefined;
