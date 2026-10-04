@@ -11,6 +11,7 @@
     { "path": "packages/durable" },
     { "path": "packages/runtime-service" },
     { "path": "packages/tui" },
+    { "path": "packages/web" },
     { "path": "packages/coding-agent" }
   ]
 }
