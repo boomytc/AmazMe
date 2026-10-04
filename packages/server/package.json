@@ -10,7 +10,8 @@
   },
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" },
-    "./testing": { "types": "./dist/testing/index.d.ts", "default": "./src/testing/index.ts" }
+    "./testing": { "types": "./dist/testing/index.d.ts", "default": "./src/testing/index.ts" },
+    "./unix": { "types": "./dist/unix.d.ts", "default": "./src/unix.ts" }
   },
   "scripts": {
     "build": "tsc -b",
