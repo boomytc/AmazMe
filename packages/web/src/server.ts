@@ -351,14 +351,19 @@ const PAGE = `<!doctype html>
   main { display: grid; grid-template-columns: 220px 1fr; height: 100%; }
   aside { padding: 20px 16px; border-right: 1px solid #2e3448; background: #161922; }
   aside h1, #status { font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em; color: #8b93a7; margin: 0 0 12px; }
-  ul { list-style: none; padding: 0; margin: 0; }
-  li { margin: 2px 0; }
+  aside ul, #tools { list-style: none; padding: 0; margin: 0; }
+  aside li { margin: 2px 0; }
   aside button, #abort, form button { font: inherit; border: 0; background: transparent; color: inherit; text-align: left; padding: 6px 8px; border-radius: 8px; }
   aside button[aria-current="true"] { background: #2a3148; color: #c4b5fd; }
   section { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   #transcript { flex: 1; overflow: auto; padding: 28px 8vw 16px; }
   article { max-width: 720px; margin: 0 auto 18px; }
   article p { margin: 4px 0 0; white-space: pre-wrap; }
+  article header { font-size: 12px; }
+  article h3 { color: #c4b5fd; font-size: 16px; font-weight: 650; margin: 8px 0 0; }
+  article ul { list-style: none; margin: 4px 0 0; padding: 0; }
+  article .marker { color: #c4b5fd; margin-right: 0.45em; }
+  article code { color: #8b93a7; }
   article.user { border: 1px solid #6b5b4a; border-radius: 12px; padding: 10px 12px; }
   article.user header { color: #e6c8a0; }
   article.assistant header { color: #c4b5fd; }
@@ -366,7 +371,6 @@ const PAGE = `<!doctype html>
   article.tool .status { color: #8b93a7; font-size: 12px; }
   pre, code { font-family: ui-monospace, monospace; }
   pre { background: #12141c; border: 1px solid #3d4a68; border-radius: 8px; padding: 8px; }
-  article header { font-size: 12px; color: #a5b4fc; }
   #dock { max-width: 760px; width: calc(100% - 48px); margin: 0 auto 20px; }
   #menu { margin: 0 0 8px; background: #12141c; border: 1px solid #3d4a68; border-radius: 12px; overflow: hidden; }
   #menu:empty { display: none; }
@@ -441,6 +445,7 @@ const PAGE = `<!doctype html>
         flushList();
         const title = document.createElement("h3");
         title.textContent = heading[2];
+        title.style.color = "#c4b5fd";
         nodes.push(title);
         continue;
       }
@@ -448,7 +453,11 @@ const PAGE = `<!doctype html>
       if (bullet) {
         if (!list) { list = document.createElement("ul"); }
         const item = document.createElement("li");
-        item.textContent = bullet[1].replace(/\`([^\`]*)\`/g, "$1");
+        const marker = document.createElement("span");
+        marker.className = "marker";
+        marker.textContent = "•";
+        marker.style.color = "#c4b5fd";
+        item.append(marker, " " + bullet[1].replace(/\`([^\`]*)\`/g, "$1"));
         list.append(item);
         continue;
       }
@@ -464,6 +473,7 @@ const PAGE = `<!doctype html>
           if (index % 2 === 1) {
             const mark = document.createElement("code");
             mark.textContent = bit;
+            mark.style.color = "#8b93a7";
             paragraph.append(mark);
           } else paragraph.append(bit);
         });
