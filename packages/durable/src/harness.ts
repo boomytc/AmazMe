@@ -11,6 +11,7 @@ import {
   frameFromEvent,
   reduceFrames,
   resolveOutputBudget,
+  supportedThinkingLevels,
   type ThinkingLevel,
 } from "@amazme/ai";
 import { createTypedSpanStarter, type SchemaTelemetrySpan, type TelemetryContext } from "@amazme/telemetry";
@@ -75,6 +76,15 @@ export interface LaneConfig {
   /** Maximum tool-result characters placed in the next model request. The log keeps the original. */
   toolResultLimit: number;
   systemPrompt: string;
+}
+
+/** The model choice a client can read or replace. The system prompt stays on the lane. */
+export interface LaneSettings {
+  provider: string;
+  modelId: string;
+  thinkingLevel: ThinkingLevel;
+  /** Levels the current model accepts. Unsupported levels are rejected, not clamped. */
+  thinkingLevels: ThinkingLevel[];
 }
 
 export interface HarnessOptions {
@@ -575,8 +585,43 @@ export class AgentLane {
   }
 
   /**
+   * Read or replace this lane's provider, model, and thinking level.
+   * A read is allowed while an operation is open. A write is not.
+   * The system prompt is left as stored. A write also becomes the default for lanes created later.
+   * A lane that already has its own config keeps that config.
+   */
+  configure(patch: { provider?: string; modelId?: string; thinkingLevel?: ThinkingLevel } = {}): Promise<Result<LaneSettings>> {
+    if (this.harness.isClosed) return Promise.resolve(failure("closed", "harness is closed"));
+    return admitted(this.harness).run((view, apply) => {
+      this.ensureConfig(view, apply);
+      const config = this.config(view);
+      const hasProvider = patch.provider !== undefined;
+      const hasModel = patch.modelId !== undefined;
+      if (hasProvider !== hasModel) return failure("invalid_message", "provider and model are set together");
+      const writing = hasProvider || patch.thinkingLevel !== undefined;
+      if (writing && this.record(view).currentOperationId) return failure("lane_busy", "lane already has an operation");
+      const provider = patch.provider ?? config.provider;
+      const modelId = patch.modelId ?? config.modelId;
+      const model = this.harness.options.models.getModel(provider, modelId);
+      if (!model) return failure("invalid_message", `unknown model ${provider}/${modelId}`);
+      const thinkingLevels = supportedThinkingLevels(model);
+      const thinkingLevel = patch.thinkingLevel ?? config.thinkingLevel;
+      if (!thinkingLevels.includes(thinkingLevel)) {
+        return failure("invalid_message", `thinking level ${thinkingLevel} is not supported; available: ${thinkingLevels.join(", ")}`);
+      }
+      if (writing) {
+        apply([{ type: "set", address: configAddress(this.name), value: { ...config, provider, modelId, thinkingLevel } }]);
+        this.harness.options.model = { provider, modelId };
+        this.harness.options.thinkingLevel = thinkingLevel;
+      }
+      return { ok: true as const, value: { provider, modelId, thinkingLevel, thinkingLevels } };
+    });
+  }
+
+  /**
    * Open another conversation at `entryId` in this log. The source tip and its admitted wait stay put.
    * Later entries on either conversation do not move the other tip.
+   * An existing target conversation is refused. The child copies this lane's stored config.
    */
   fork(name: string, entryId: string | null): Promise<Result<{ lane: string }>> {
     if (this.harness.isClosed) return Promise.resolve(failure("closed", "harness is closed"));
@@ -585,10 +630,12 @@ export class AgentLane {
     }
     return admitted(this.harness).run((view, apply) => {
       this.ensureConfig(view, apply);
+      if (view.get(laneAddress(name))) return failure("invalid_message", "conversation already exists");
       const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
       if (entryId !== null && !ancestors(view, tip).some((entry) => entry.id === entryId)) {
         return failure("unknown_target", "fork point is not in this conversation");
       }
+      apply([{ type: "set", address: configAddress(name), value: this.config(view) }]);
       this.ensureLane(view, apply, name);
       apply([{ type: "set", address: tipAddress(name), value: entryId }]);
       return { ok: true as const, value: { lane: name } };

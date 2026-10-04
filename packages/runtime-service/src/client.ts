@@ -8,7 +8,9 @@ import {
   DriveOutcomeSchema,
   EmptyReplySchema,
   EnqueuedReplySchema,
+  ForkReplySchema,
   LaneNameSchema,
+  LaneSettingsSchema,
   OperationAdmissionSchema,
   parse,
   HistoryPageSchema,
@@ -17,7 +19,9 @@ import {
   parseLaneWindow,
   ResultReplySchema,
   type DriveOutcomeDto,
+  type ForkReplyDto,
   type HistoryPageDto,
+  type LaneSettingsDto,
   type LaneSnapshotDto,
   type LaneUpdateDto,
   type LaneWindowDto,
@@ -146,6 +150,23 @@ export class RemoteLane {
 
   async followUp(text: string, options?: RequestOptions): Promise<{ entryId: string }> {
     return parse(EnqueuedReplySchema, await this.call({ method: "followUp", lane: this.name, text }, options), "follow-up reply");
+  }
+
+  /** Read this lane's model settings, or replace them when the lane is idle. */
+  async configure(patch: { provider?: string; modelId?: string; thinkingLevel?: LaneSettingsDto["thinkingLevel"] } = {}, options?: RequestOptions): Promise<LaneSettingsDto> {
+    const call: RuntimeCall = {
+      method: "configure",
+      lane: this.name,
+      ...(patch.provider !== undefined ? { provider: patch.provider } : {}),
+      ...(patch.modelId !== undefined ? { modelId: patch.modelId } : {}),
+      ...(patch.thinkingLevel !== undefined ? { thinkingLevel: patch.thinkingLevel } : {}),
+    };
+    return parse(LaneSettingsSchema, await this.call(call, options), "lane settings");
+  }
+
+  /** Open another conversation at this lane's entry. An existing target is refused by the host. */
+  async fork(name: string, entryId: string | null, options?: RequestOptions): Promise<ForkReplyDto> {
+    return parse(ForkReplySchema, await this.call({ method: "fork", lane: this.name, name, entryId }, options), "fork reply");
   }
 
   /** The explicit, persisted business cancellation of an operation. */

@@ -45,10 +45,31 @@ const FollowUpCall = Strict({ method: Type.Literal("followUp"), lane: LaneNameSc
 const RequestAbortCall = Strict({ method: Type.Literal("requestAbort"), lane: LaneNameSchema, operationId: OperationReferenceSchema });
 const SubscribeCall = Strict({ method: Type.Literal("subscribe"), lane: LaneNameSchema, subscriptionId: SubscriptionIdSchema });
 const UnsubscribeCall = Strict({ method: Type.Literal("unsubscribe"), subscriptionId: SubscriptionIdSchema });
+const ThinkingLevelSchema = Type.Union([
+  Type.Literal("off"),
+  Type.Literal("minimal"),
+  Type.Literal("low"),
+  Type.Literal("medium"),
+  Type.Literal("high"),
+]);
+const ConfigureCall = Strict({
+  method: Type.Literal("configure"),
+  lane: LaneNameSchema,
+  provider: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+  thinkingLevel: Type.Optional(ThinkingLevelSchema),
+});
+const ForkCall = Strict({
+  method: Type.Literal("fork"),
+  lane: LaneNameSchema,
+  name: LaneNameSchema,
+  entryId: Nullable(EntryIdSchema),
+});
 const ConversationsCall = Strict({ method: Type.Literal("conversations") });
 /** Calls on a runtime route. Lane calls name their lane; unsubscribe and conversations do not. */
 export const RuntimeCallSchema = Type.Union([
-  AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
+  AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall,
+  ConfigureCall, ForkCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
 ]);
 export type RuntimeCall = Static<typeof RuntimeCallSchema>;
 
@@ -241,6 +262,17 @@ export function parse<T extends TSchema>(schema: T, value: unknown, label: strin
 
 export const ConversationsReplySchema = Strict({ lanes: Type.Array(LaneNameSchema) });
 export type ConversationsReply = Static<typeof ConversationsReplySchema>;
+
+export const LaneSettingsSchema = Strict({
+  provider: Type.String({ minLength: 1 }),
+  modelId: Type.String({ minLength: 1 }),
+  thinkingLevel: ThinkingLevelSchema,
+  thinkingLevels: Type.Array(ThinkingLevelSchema),
+});
+export type LaneSettingsDto = Static<typeof LaneSettingsSchema>;
+
+export const ForkReplySchema = Strict({ lane: LaneNameSchema });
+export type ForkReplyDto = Static<typeof ForkReplySchema>;
 
 export const parseRuntimeCall = (value: JsonValue): RuntimeCall => parse(RuntimeCallSchema, value, "runtime call");
 export const parseManagementCall = (value: JsonValue): ManagementCall => parse(ManagementCallSchema, value, "management call");

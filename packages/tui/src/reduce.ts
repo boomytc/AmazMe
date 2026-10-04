@@ -1,3 +1,4 @@
+import { parseSlash, type SlashAction } from "./commands.ts";
 import type { Key } from "./keys.ts";
 
 export interface TuiEntry {
@@ -31,9 +32,7 @@ export interface TuiState extends TuiWindow {
 export type TuiEffect =
   | { type: "submit"; text: string }
   | { type: "abort" }
-  | { type: "new-session" }
-  | { type: "resume"; name: string }
-  | { type: "compact" };
+  | { type: "slash"; command: SlashAction };
 
 export function emptyTui(active = "main"): TuiState {
   return {
@@ -101,14 +100,10 @@ function submit(state: TuiState): { state: TuiState; effect: TuiEffect | null } 
   const text = state.input.trim();
   const cleared = { ...state, input: "", notice: null };
   if (!text) return { state: cleared, effect: null };
-  if (text === "/new") return { state: cleared, effect: { type: "new-session" } };
-  if (text === "/compact") return { state: cleared, effect: { type: "compact" } };
-  if (text.startsWith("/resume ")) {
-    const name = text.slice("/resume ".length).trim();
-    if (!name) return { state: { ...cleared, notice: "用法：/resume 名称" }, effect: null };
-    return { state: cleared, effect: { type: "resume", name } };
-  }
-  return { state: cleared, effect: { type: "submit", text } };
+  const command = parseSlash(text);
+  if (command.type === "prompt") return { state: cleared, effect: { type: "submit", text: command.text } };
+  if (command.type === "notice") return { state: { ...cleared, notice: command.text }, effect: null };
+  return { state: cleared, effect: { type: "slash", command } };
 }
 
 function move(state: TuiState, key: Key): TuiState {

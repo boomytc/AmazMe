@@ -3,6 +3,7 @@ import type {
   AgentLane,
   DriveOutcome,
   LanePhase,
+  LaneSettings,
   LaneSnapshot,
   LaneStatus,
   OperationAdmission,
@@ -26,6 +27,7 @@ import {
   parseRuntimeCall,
   type DriveOutcomeDto,
   type EntryDto,
+  type LaneSettingsDto,
   type LaneSnapshotDto,
   type LaneUpdateDto,
   type OperationAdmissionDto,
@@ -37,11 +39,12 @@ import { fitHistory, fitWindow, responseFits } from "./window.ts";
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 type StatusDto = Omit<LaneSnapshotDto, "version" | "entries" | "pendingResponse" | "tools">;
 const phases: Same<LanePhase, (typeof LANE_PHASES)[number]> = true;
+const settingsMatch: Same<LaneSettings, LaneSettingsDto> = true;
 const results: Same<OperationResult, OperationResultDto> = true;
 const admissions: Same<OperationAdmission, OperationAdmissionDto> = true;
 const outcomes: Same<DriveOutcome, DriveOutcomeDto> = true;
 const statuses: Same<LaneStatus, StatusDto> = true;
-void [phases, results, admissions, outcomes, statuses];
+void [phases, settingsMatch, results, admissions, outcomes, statuses];
 
 /**
  * What one host open acquired. The server handle does not expose `harness` or `storage`.
@@ -264,6 +267,14 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
         return wire(unwrap(await lane.followUp(call.text)));
       case "requestAbort":
         return wire(unwrap(await lane.requestAbort(call.operationId)));
+      case "configure":
+        return wire(unwrap(await lane.configure({
+          ...(call.provider !== undefined ? { provider: call.provider } : {}),
+          ...(call.modelId !== undefined ? { modelId: call.modelId } : {}),
+          ...(call.thinkingLevel !== undefined ? { thinkingLevel: call.thinkingLevel } : {}),
+        })));
+      case "fork":
+        return wire(unwrap(await lane.fork(call.name, call.entryId)));
       case "subscribe":
         return this.subscribe(lane, call.subscriptionId, context);
     }

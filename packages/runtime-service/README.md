@@ -9,7 +9,7 @@
 | `@amazme/runtime-service/server` | `openOwnedRuntimes()`：宿主打开并持有 runtime；`createManagementService()`：attach / detach / remove | Durable、server；不加载 Node |
 | `@amazme/runtime-service/jsonl` | `openJsonlRuntime()`：用排他文件锁打开一份 JSONL | server 类型、Durable 的 Node JSONL 入口 |
 
-`RuntimeClient.conversations()` 返回这份 runtime 里已经写下的 lane 名。它不创建 lane，也不读取别的文件。
+`RuntimeClient.conversations()` 返回这份 runtime 里已经写下的 lane 名。它不创建 lane，也不读取别的文件。`RemoteLane.configure()` 读取或更换该 lane 的模型和思考级别。`RemoteLane.fork()` 在这份日志里打开另一段对话。
 
 ```typescript
 import { Server } from "@amazme/server";

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Credential } from "@amazme/ai";
 import { FileCredentialStore } from "../src/credentials.ts";
+import { logoutProvider } from "../src/login.ts";
 
 function storeInTemp(): { store: FileCredentialStore; file: string; directory: string } {
   const directory = mkdtempSync(join(tmpdir(), "amazme-credentials-"));
@@ -97,6 +98,13 @@ test("new credentials and private directories are owner-only without chmodding t
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(statSync(directory).mode & 0o777, 0o700);
   assert.equal(statSync(parent).mode & 0o777, parentMode);
+});
+
+test("logout removes the stored provider credential", async () => {
+  const { store, directory } = storeInTemp();
+  await store.set("openai", { type: "api_key", key: "secret" });
+  assert.equal(await logoutProvider("openai", join(directory, "credentials.json")), "已移除 openai");
+  assert.equal(await store.get("openai"), undefined);
 });
 
 test("a failed atomic rename removes its secret temporary file", async () => {

@@ -6,7 +6,8 @@ import { createModels, type LoginInteraction } from "@amazme/ai";
 import { fauxProvider } from "@amazme/ai/providers/faux";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { AgentSession } from "./agent-session.ts";
-import { FileCredentialStore, installationDeviceId } from "./credentials.ts";
+import { FileCredentialStore } from "./credentials.ts";
+import { loginProvider } from "./login.ts";
 import { SessionStore } from "./session.ts";
 import { appendSkillText } from "./skills.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
@@ -56,21 +57,23 @@ async function runLogin(argv: string[]): Promise<void> {
       process.exit(0);
     }
   }
-  const provider = builtinProviders().find((item) => item.id === providerId);
-  if (!provider?.auth.oauth) {
-    console.error(providerId ? `${providerId} has no login` : "login requires --provider");
+  if (!providerId) {
+    console.error("login requires --provider");
     process.exit(1);
   }
-  const result = await provider.auth.oauth.login({
-    ...(method ? { method } : {}),
-    ...(callbackPort !== undefined && Number.isInteger(callbackPort) ? { callbackPort } : {}),
-    deviceId: installationDeviceId(),
-    onHandback(handback) {
-      console.log(JSON.stringify(handback));
-    },
-  });
-  await new FileCredentialStore().set(provider.id, result.credential);
-  console.log(JSON.stringify({ stored: true, provider: provider.id, type: result.credential.type }));
+  try {
+    const report = await loginProvider(providerId, {
+      ...(method ? { method } : {}),
+      ...(callbackPort !== undefined && Number.isInteger(callbackPort) ? { callbackPort } : {}),
+      onHandback(handback) {
+        console.log(JSON.stringify(handback));
+      },
+    });
+    console.log(JSON.stringify({ stored: true, provider: report.provider, type: report.credentialType }));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
 }
 
 function loadModels(providerId: string) {

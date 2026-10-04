@@ -5,6 +5,7 @@ export {
   type HarnessFailure,
   type HarnessOptions,
   type LaneConfig,
+  type LaneSettings,
   type LanePhase,
   type LaneSnapshot,
   type LaneStatus,
