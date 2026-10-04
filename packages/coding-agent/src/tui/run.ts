@@ -9,7 +9,8 @@ import { FileCredentialStore } from "../credentials.ts";
 import { SessionStore } from "../session.ts";
 import { appendSkillText } from "../skills.ts";
 import { codingSystemPrompt, createCodingTools } from "../tools.ts";
-import { presentFullscreen } from "./screen.ts";
+import { presentFullscreen, presentHost, type HostAttach } from "@amazme/tui";
+import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../host.ts";
 
 export interface FullscreenOptions {
   provider: string;
@@ -19,22 +20,40 @@ export interface FullscreenOptions {
   credentialsFile?: string;
 }
 
-/** Fullscreen is the view. The model call stays inside the existing agent loop. */
+/** Fullscreen opens when the CLI has no prompt and stdout is a terminal. */
 export function shouldOpenFullscreen(prompt: string, stdoutIsTTY: boolean): boolean {
   return prompt.length === 0 && stdoutIsTTY;
 }
 
+/** Start the host, then hand the socket to `@amazme/tui`. This process owns the host; the view does not. */
 export async function runCodingFullscreen(options: FullscreenOptions): Promise<void> {
-  const { runHostFullscreen } = await import("./host-fullscreen.ts");
-  await runHostFullscreen(options);
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+    throw new Error("fullscreen requires a terminal");
+  }
+  const models = openModels(options);
+  const socket = join(options.cwd, ".amazme", "runtime", "host.sock");
+  mkdirSync(join(options.cwd, ".amazme", "runtime"), { recursive: true });
+  const host = await startCodingHost({
+    cwd: options.cwd,
+    socket,
+    provider: options.provider,
+    model: options.model,
+    models,
+  });
+  const attach: HostAttach = { socket, serverId: HOST_SERVER_ID, runtimeId: HOST_RUNTIME_ID, lane: HOST_LANE };
+  try {
+    await presentHost(attach);
+  } finally {
+    await host.close();
+  }
 }
 
-/** Same session the fullscreen command uses: one agent, the current JSONL tree. */
+/** Legacy in-memory session. The fullscreen command no longer uses it. */
 export function createFullscreenSession(options: FullscreenOptions): AgentSession {
   return openSession(options);
 }
 
-function openSession(options: FullscreenOptions): AgentSession {
+function openModels(options: FullscreenOptions) {
   const models = createModels({ store: new FileCredentialStore(options.credentialsFile) });
   if (options.provider === "faux") {
     models.setProvider(fauxProvider({
@@ -54,6 +73,14 @@ function openSession(options: FullscreenOptions): AgentSession {
     if (!provider) throw new Error(`unknown provider ${options.provider}`);
     models.setProvider(provider);
   }
+  if (!models.getModel(options.provider, options.model)) {
+    throw new Error(`unknown model ${options.provider}/${options.model}`);
+  }
+  return models;
+}
+
+function openSession(options: FullscreenOptions): AgentSession {
+  const models = openModels(options);
   const model = models.getModel(options.provider, options.model);
   if (!model) throw new Error(`unknown model ${options.provider}/${options.model}`);
   const dir = join(options.cwd, ".amazme", "sessions");

@@ -9,10 +9,9 @@ import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { LaneControl } from "../src/control.ts";
-import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../src/host.ts";
-import { decodeKeys } from "../src/tui/keys.ts";
-import { readHostFrame } from "../src/tui/host-fullscreen.ts";
-import { emptyTui, reduceTui, renderTui, type TuiWindow } from "../src/tui/reduce.ts";
+import { startCodingHost } from "../src/host.ts";
+import { decodeKeys, emptyTui, readHostFrame, reduceTui, renderTui, type TuiWindow } from "@amazme/tui";
+import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID } from "../src/host.ts";
 
 function window(partial: Partial<TuiWindow> = {}): TuiWindow {
   return {
@@ -114,8 +113,9 @@ test("two reads of the host frame show the same assistant text", { timeout: 20_0
   await control.submit("hello");
   await control.close();
   await client.dispose();
-  const first = await readHostFrame(socket);
-  const second = await readHostFrame(socket);
+  const attach = { socket, serverId: HOST_SERVER_ID, runtimeId: HOST_RUNTIME_ID, lane: HOST_LANE };
+  const first = await readHostFrame(attach);
+  const second = await readHostFrame(attach);
   assert.equal(first, second);
   assert.match(first, /hello/);
   assert.match(first, /ok/);

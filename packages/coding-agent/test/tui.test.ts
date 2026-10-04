@@ -8,11 +8,8 @@ import { Agent, type AgentEvent, type AgentHook, type AgentTool } from "@amazme/
 import { createModels, messageText, type AssistantMessage, type ToolResultMessage } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
 import { AgentSession, SessionStore } from "@amazme/coding-agent";
-import { FullscreenController, type FullscreenSession } from "../src/tui/controller.ts";
-import { paintAnsi, renderFrame, statusText } from "../src/tui/frame.ts";
-import { decodeKeys } from "../src/tui/keys.ts";
+import { FullscreenController, type FullscreenSession, paintAnsi, renderFrame, statusText, decodeKeys, Transcript } from "@amazme/tui";
 import { createFullscreenSession, shouldOpenFullscreen } from "../src/tui/run.ts";
-import { Transcript } from "../src/tui/transcript.ts";
 
 const usage = { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } };
 
@@ -431,13 +428,14 @@ test("the fullscreen view does not call the model itself", () => {
   const root = fileURLToPath(new URL("../src", import.meta.url));
   const source = walk(root).filter((file) => file.endsWith(".ts")).map((file) => readFileSync(file, "utf8")).join("\n");
   assert.equal(source.includes("@amazme/durable"), false);
-  const view = ["transcript.ts", "keys.ts", "frame.ts", "controller.ts", "screen.ts"]
-    .map((file) => readFileSync(new URL(`../src/tui/${file}`, import.meta.url), "utf8"))
-    .join("\n");
+  const viewRoot = fileURLToPath(new URL("../../tui/src", import.meta.url));
+  const view = walk(viewRoot).filter((file) => file.endsWith(".ts")).map((file) => readFileSync(file, "utf8")).join("\n");
+  assert.equal(view.includes("@amazme/durable"), false);
+  assert.equal(view.includes("@amazme/coding-agent"), false);
   assert.equal(view.includes("streamFn"), false);
   assert.equal(view.includes("createModels"), false);
   assert.equal(view.includes("fauxProvider"), false);
-  const controller = readFileSync(new URL("../src/tui/controller.ts", import.meta.url), "utf8");
+  const controller = readFileSync(new URL("../../tui/src/controller.ts", import.meta.url), "utf8");
   assert.match(controller, /prompt\.length >= 2/);
   assert.match(controller, /这一轮还在跑/);
 });

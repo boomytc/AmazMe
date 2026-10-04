@@ -1,53 +1,26 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import type { ReadStream, WriteStream } from "node:tty";
 import { StringDecoder } from "node:string_decoder";
-import { createModels, type Context } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/providers/faux";
-import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
-import { RuntimeClient } from "@amazme/runtime-service/client";
-import { FileCredentialStore } from "../credentials.ts";
-import { LaneControl, type ControlView } from "../control.ts";
-import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../host.ts";
+import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { KeyDecoder } from "./keys.ts";
-import { emptyTui, reduceTui, renderTui, type TuiEffect, type TuiEntry, type TuiState, type TuiWindow } from "./reduce.ts";
-import type { FullscreenOptions } from "./run.ts";
+import { emptyTui, reduceTui, renderTui, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
 
-/**
- * Foreground fullscreen. The view only attaches to the host socket.
- * The host process owns the session log, tools, and model calls.
- */
-export async function runHostFullscreen(options: FullscreenOptions): Promise<void> {
-  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
-    throw new Error("fullscreen requires a terminal");
-  }
-  const models = openModels(options);
-  const socket = join(options.cwd, ".amazme", "runtime", "host.sock");
-  mkdirSync(join(options.cwd, ".amazme", "runtime"), { recursive: true });
-  const host = await startCodingHost({
-    cwd: options.cwd,
-    socket,
-    provider: options.provider,
-    model: options.model,
-    models,
-  });
-  try {
-    await presentHost(socket);
-  } finally {
-    await host.close();
-  }
+export interface HostAttach {
+  socket: string;
+  serverId: string;
+  runtimeId: string;
+  lane: string;
 }
 
-/** One rendered frame from the host. The caller owns the socket and the runtime. */
-export async function readHostFrame(socket: string, lane = HOST_LANE): Promise<string> {
-  const client = new Client({ serverId: HOST_SERVER_ID, transport: createUnixTransport({ path: socket }) });
+/** Read one rendered frame. The host keeps the runtime. */
+export async function readHostFrame(attach: HostAttach, lane = attach.lane): Promise<string> {
+  const client = new Client({ serverId: attach.serverId, transport: createUnixTransport({ path: attach.socket }) });
   await client.connect();
   try {
     const remote = new RuntimeClient(client);
-    await remote.attach(HOST_RUNTIME_ID);
+    await remote.attach(attach.runtimeId);
     const snapshot = await remote.lane(lane).snapshot();
     return renderTui({ ...emptyTui(lane), ...windowFrom(snapshot, [lane], lane) });
   } finally {
@@ -55,28 +28,29 @@ export async function readHostFrame(socket: string, lane = HOST_LANE): Promise<s
   }
 }
 
+/** Raw-mode screen. Ctrl+D on an empty idle prompt leaves. */
 export async function presentHost(
-  socket: string,
+  attach: HostAttach,
   stdin: ReadStream = process.stdin,
   stdout: WriteStream = process.stdout,
 ): Promise<void> {
   if (typeof stdin.setRawMode !== "function" || stdin.isTTY !== true || stdout.isTTY !== true) {
     throw new Error("fullscreen requires a terminal");
   }
-  const client = new Client({ serverId: HOST_SERVER_ID, transport: createUnixTransport({ path: socket }) });
+  const client = new Client({ serverId: attach.serverId, transport: createUnixTransport({ path: attach.socket }) });
   await client.connect();
   const remote = new RuntimeClient(client);
-  await remote.attach(HOST_RUNTIME_ID);
-  const sessions = [HOST_LANE];
-  let active = HOST_LANE;
+  await remote.attach(attach.runtimeId);
+  const sessions = [attach.lane];
+  let active = attach.lane;
   let state = emptyTui(active);
   let paint = (): void => undefined;
-  let control = new LaneControl(remote.lane(active), (view) => {
-    state = reduceTui(state, { type: "window", window: windowFromView(view, sessions, active) }).state;
+  let lane = new AttachedLane(remote.lane(active), () => {
+    state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active) }).state;
     paint();
   });
-  await control.open();
-  state = reduceTui(state, { type: "window", window: windowFromView(control.view(), sessions, active) }).state;
+  await lane.open();
+  state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active) }).state;
   stdin.setRawMode(true);
   stdin.resume();
   stdout.write("\x1b[?1049h\x1b[?25h");
@@ -107,30 +81,30 @@ export async function presentHost(
       state = reduced.state;
       paint();
       if (reduced.effect) {
-        void applyEffect(reduced.effect).catch((error: unknown) => {
+        void apply(reduced.effect).catch((error: unknown) => {
           state = { ...state, notice: error instanceof Error ? error.message : String(error) };
           paint();
         });
       }
     }
   };
-  const applyEffect = async (effect: TuiEffect): Promise<void> => {
-    if (effect.type === "submit") await control.submit(effect.text);
-    else if (effect.type === "abort") await control.abort();
+  const apply = async (effect: TuiEffect): Promise<void> => {
+    if (effect.type === "submit") await lane.submit(effect.text);
+    else if (effect.type === "abort") await lane.abort();
     else if (effect.type === "compact") {
       const admitted = await remote.lane(active).accept({ kind: "compaction" });
       await remote.lane(active).drive(admitted.operationId, { waitForRetry: true });
     } else if (effect.type === "new-session" || effect.type === "resume") {
       const name = effect.type === "new-session" ? `s${sessions.length + 1}` : effect.name;
       if (!sessions.includes(name)) sessions.push(name);
-      await control.close();
+      await lane.close();
       active = name;
-      control = new LaneControl(remote.lane(active), (view) => {
-        state = reduceTui(state, { type: "window", window: windowFromView(view, sessions, active) }).state;
+      lane = new AttachedLane(remote.lane(active), () => {
+        state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active) }).state;
         paint();
       });
-      await control.open();
-      state = reduceTui(state, { type: "window", window: windowFromView(control.view(), sessions, active) }).state;
+      await lane.open();
+      state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active) }).state;
       paint();
     }
   };
@@ -140,12 +114,68 @@ export async function presentHost(
     finish = resolve;
     stdin.on("end", restore);
   });
-  await control.close();
+  await lane.close();
   await client.dispose();
 }
 
-function windowFromView(view: ControlView, sessions: string[], active: string): TuiWindow {
-  return windowFrom(view.snapshot, sessions, active);
+class AttachedLane {
+  private subscription: { current(): LaneSnapshotDto; close(): Promise<void> } | undefined;
+  private generation = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly lane: RemoteLane, private readonly onView: () => void) {}
+
+  snapshot(): LaneSnapshotDto {
+    return this.subscription?.current() ?? emptySnapshot(this.lane.name);
+  }
+
+  async open(): Promise<void> {
+    this.subscription = await this.lane.subscribe(() => {
+      this.generation += 1;
+      this.onView();
+      const waiting = this.waiters.splice(0);
+      for (const wake of waiting) wake();
+    });
+    this.onView();
+  }
+
+  async close(): Promise<void> {
+    await this.subscription?.close();
+  }
+
+  async submit(text: string): Promise<void> {
+    const body = text.trim();
+    if (!body) return;
+    const operationId = this.snapshot().operationId;
+    if (operationId) {
+      await this.lane.followUp(body);
+      return;
+    }
+    const admitted = await this.lane.accept({ kind: "prompt", text: body });
+    const started = this.snapshot().version;
+    const outcome = await this.lane.drive(admitted.operationId, { waitForRetry: false });
+    if (outcome.kind === "settled") await this.untilLeft(admitted.operationId, started);
+  }
+
+  async abort(): Promise<void> {
+    const operationId = this.snapshot().operationId;
+    if (operationId) await this.lane.requestAbort(operationId);
+  }
+
+  private async untilLeft(operationId: string, started: number): Promise<void> {
+    while (true) {
+      const snap = this.snapshot();
+      if (snap.version > started && snap.operationId !== operationId) return;
+      const seen = this.generation;
+      await new Promise<void>((resolve) => {
+        if (this.generation !== seen || (this.snapshot().version > started && this.snapshot().operationId !== operationId)) {
+          resolve();
+          return;
+        }
+        this.waiters.push(resolve);
+      });
+    }
+  }
 }
 
 function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active: string): TuiWindow {
@@ -190,38 +220,17 @@ function messageText(message: { role: string; content?: unknown }): string {
   }).join("");
 }
 
-function openModels(options: FullscreenOptions) {
-  const models = createModels({ store: new FileCredentialStore(options.credentialsFile) });
-  if (options.provider === "faux") {
-    models.setProvider(fauxProvider({
-      respond: (context, _streamOptions, _state, model) => ({
-        role: "assistant",
-        content: [{ type: "text", text: `faux:${lastUserText(context)}` }],
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
-        stopReason: "stop",
-        timestamp: Date.now(),
-      }),
-    }));
-  } else {
-    const provider = builtinProviders().find((item) => item.id === options.provider);
-    if (!provider) throw new Error(`unknown provider ${options.provider}`);
-    models.setProvider(provider);
-  }
-  if (!models.getModel(options.provider, options.model)) {
-    throw new Error(`unknown model ${options.provider}/${options.model}`);
-  }
-  return models;
+function emptySnapshot(lane: string): LaneSnapshotDto {
+  return {
+    version: 0,
+    lane,
+    tipId: null,
+    phase: null,
+    operationId: null,
+    lastOperationId: null,
+    status: null,
+    entries: [],
+    pendingResponse: null,
+    tools: [],
+  };
 }
-
-function lastUserText(context: Context): string {
-  for (let index = context.messages.length - 1; index >= 0; index -= 1) {
-    const message = context.messages[index];
-    if (message && message.role === "user" && typeof message.content === "string") return message.content;
-  }
-  return "";
-}
-
-export type { TuiState };

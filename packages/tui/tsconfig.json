@@ -3,6 +3,8 @@
     "target": "ES2022",
     "module": "Node16",
     "moduleResolution": "Node16",
+    "lib": ["ES2022"],
+    "types": ["node"],
     "strict": true,
     "declaration": true,
     "sourceMap": true,
@@ -16,12 +18,9 @@
   },
   "include": ["src"],
   "references": [
+    { "path": "../agent" },
     { "path": "../ai" },
     { "path": "../client" },
-    { "path": "../agent" },
-    { "path": "../mcp" },
-    { "path": "../server" },
-    { "path": "../runtime-service" },
-    { "path": "../tui" }
+    { "path": "../runtime-service" }
   ]
 }
