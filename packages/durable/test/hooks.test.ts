@@ -161,7 +161,7 @@ test("after passes content, isError, and terminate in order", async () => {
     },
     {
       afterToolCall: ({ result }) => {
-        seen = result.content[0]?.text ?? "";
+        seen = result.content[0]?.type === "text" ? result.content[0].text : "";
         seenError = result.isError === true;
         seenTerminate = result.terminate;
         return {

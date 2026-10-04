@@ -192,7 +192,15 @@ function convertMessage(message: Message): unknown[] {
     }];
   }
   if (message.role === "toolResult") {
-    return [{ type: "function_call_output", call_id: message.toolCallId, output: messageText(message) }];
+    return [{
+      type: "function_call_output",
+      call_id: message.toolCallId,
+      output: message.content.some((block) => block.type === "image")
+        ? message.content.map((block) => block.type === "text"
+          ? { type: "input_text", text: block.text }
+          : { type: "input_image", image_url: `data:${block.mimeType};base64,${block.data}` })
+        : messageText(message),
+    }];
   }
   const parts: unknown[] = [];
   const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("");

@@ -173,7 +173,7 @@ function convertMessage(message: Message): ChatMessage {
   if (message.role === "system") return { role: "system", content: message.content };
   if (message.role === "user") return { role: "user", content: userContent(message) };
   if (message.role === "toolResult") {
-    return { role: "tool", content: messageText(message), tool_call_id: message.toolCallId };
+    return { role: "tool", content: toolResultContent(message), tool_call_id: message.toolCallId };
   }
   const text = message.content
     .filter((block) => block.type === "text")
@@ -203,21 +203,43 @@ function userContent(message: Extract<Message, { role: "user" }>): string | Chat
     : { type: "image_url" as const, image_url: { url: `data:${block.mimeType};base64,${block.data}` } });
 }
 
+function toolResultContent(message: Extract<Message, { role: "toolResult" }>): string | ChatContentPart[] {
+  if (!message.content.some((block) => block.type === "image")) return messageText(message);
+  return message.content.map((block) => block.type === "text"
+    ? { type: "text" as const, text: block.text }
+    : { type: "image_url" as const, image_url: { url: `data:${block.mimeType};base64,${block.data}` } });
+}
+
 const IMAGE_MIME = /^image\/[\w.+-]+$/;
 const IMAGE_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?$/;
 
 /** Capability failures happen before a text downgrade. Format failures stay distinct. */
 function userImageProblem(model: Model, messages: readonly Message[]): string | undefined {
   for (const message of messages) {
-    if (message.role !== "user" || typeof message.content === "string") continue;
+    if (message.role === "user") {
+      if (typeof message.content === "string") continue;
+      for (const block of message.content) {
+        if (block.type !== "image") continue;
+        const problem = imageBlockProblem(model, block, true);
+        if (problem) return problem;
+      }
+      continue;
+    }
+    if (message.role !== "toolResult" || !model.input.includes("image")) continue;
     for (const block of message.content) {
       if (block.type !== "image") continue;
-      if (!model.input.includes("image")) return `Model ${model.id} does not accept image input`;
-      if (typeof block.mimeType !== "string" || !IMAGE_MIME.test(block.mimeType)) return "Image input requires a mime type";
-      if (typeof block.data !== "string" || block.data.length === 0 || !IMAGE_BASE64.test(block.data)) {
-        return "Image input requires base64 data";
-      }
+      const problem = imageBlockProblem(model, block, false);
+      if (problem) return problem;
     }
+  }
+  return undefined;
+}
+
+function imageBlockProblem(model: Model, block: { mimeType: string; data: string }, rejectTextModel: boolean): string | undefined {
+  if (rejectTextModel && !model.input.includes("image")) return `Model ${model.id} does not accept image input`;
+  if (typeof block.mimeType !== "string" || !IMAGE_MIME.test(block.mimeType)) return "Image input requires a mime type";
+  if (typeof block.data !== "string" || block.data.length === 0 || !IMAGE_BASE64.test(block.data)) {
+    return "Image input requires base64 data";
   }
   return undefined;
 }

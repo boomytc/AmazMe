@@ -142,6 +142,31 @@ test("schema, tool arguments, tool results, unicode, and images increase the est
   assert.ok(unicode > ascii);
   assert.equal(withImage - estimateRequestTokens({ messages: [user([{ type: "text", text: "look" }])] }), IMAGE_TOKEN_COST);
   assert.equal(withImage, shortImage);
+  const toolText = estimateRequestTokens({
+    messages: [{ role: "toolResult", toolCallId: "call", toolName: "shot", content: [{ type: "text", text: "look" }], isError: false, timestamp: 1 }],
+  });
+  const toolImage = estimateRequestTokens({
+    messages: [{
+      role: "toolResult",
+      toolCallId: "call",
+      toolName: "shot",
+      content: [{ type: "text", text: "look" }, { type: "image", mimeType: "image/png", data: image }],
+      isError: false,
+      timestamp: 1,
+    }],
+  });
+  const shortToolImage = estimateRequestTokens({
+    messages: [{
+      role: "toolResult",
+      toolCallId: "call",
+      toolName: "shot",
+      content: [{ type: "text", text: "look" }, { type: "image", mimeType: "image/png", data: "AA" }],
+      isError: false,
+      timestamp: 1,
+    }],
+  });
+  assert.equal(toolImage - toolText, IMAGE_TOKEN_COST);
+  assert.equal(toolImage, shortToolImage);
 });
 
 test("a repeated system prompt is counted once, and previous usage is ignored", () => {

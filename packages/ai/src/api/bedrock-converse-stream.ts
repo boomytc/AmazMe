@@ -252,6 +252,20 @@ function bedrockMessage(message: Message):
     return { ok: true, message: { role: "assistant", content } };
   }
   if (message.role === "toolResult") {
+    const content: unknown[] = [];
+    if (message.content.some((block) => block.type === "image")) {
+      for (const block of message.content) {
+        if (block.type === "text") {
+          content.push({ text: block.text });
+          continue;
+        }
+        const format = bedrockImageFormat(block.mimeType);
+        if (!format) return { ok: false, message: "Bedrock converse does not accept this image format" };
+        content.push({ image: { format, source: { bytes: block.data } } });
+      }
+    } else {
+      content.push({ text: message.content.map((block) => block.type === "text" ? block.text : "").join("") });
+    }
     return {
       ok: true,
       message: {
@@ -259,7 +273,7 @@ function bedrockMessage(message: Message):
         content: [{
           toolResult: {
             toolUseId: message.toolCallId,
-            content: [{ text: message.content.map((block) => block.text).join("") }],
+            content,
             ...(message.isError ? { status: "error" } : {}),
           },
         }],

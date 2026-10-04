@@ -288,4 +288,40 @@ test("bedrock sends one system block, images, and coalesced tool results", async
   assert.equal(results[0]?.toolResult?.status, undefined);
   assert.equal(results[1]?.toolResult?.toolUseId, "call_b");
   assert.equal(results[1]?.toolResult?.status, "error");
+  const shot = await run(END_TURN, {
+    messages: [{
+      role: "toolResult",
+      toolCallId: "call_img",
+      toolName: "shot",
+      isError: false,
+      timestamp: 1,
+      content: [
+        { type: "text", text: "cap" },
+        { type: "image", mimeType: "image/png", data: "QUJD" },
+        { type: "text", text: "tail" },
+      ],
+    }],
+  });
+  const shotBody = JSON.parse(shot.sent) as {
+    messages: Array<{ content: Array<{ toolResult?: { content: Array<{ text?: string; image?: { format: string; source: { bytes: string } } }> } }> }>;
+  };
+  assert.deepEqual(shotBody.messages[0]?.content[0]?.toolResult?.content, [
+    { text: "cap" },
+    { image: { format: "png", source: { bytes: "QUJD" } } },
+    { text: "tail" },
+  ]);
+  const rejectedTool = await run(END_TURN, {
+    messages: [{
+      role: "toolResult",
+      toolCallId: "call_img",
+      toolName: "shot",
+      isError: false,
+      timestamp: 1,
+      content: [{ type: "image", mimeType: "image/tiff", data: "QUJD" }],
+    }],
+  });
+  assert.equal(rejectedTool.calls, 0);
+  assert.equal(rejectedTool.message.stopReason, "error");
+  assert.equal((rejectedTool.message.errorMessage ?? "").includes("QUJD"), false);
+  assert.match(rejectedTool.message.errorMessage ?? "", /image format/);
 });

@@ -76,7 +76,7 @@ const storage = new JsonlStorage("./state/lane.jsonl");
 
 选择使用当前模型看得见的上下文：从最近一次 compaction 开始，跳过 `error`、`aborted`、`deferred` assistant。工具调用和配套结果整组移动。末尾还没回答的用户消息保留原文。更早的轮次可以进入摘要，一条很早的用户消息不会把它后面的历史全部钉住。已有摘要会写进下一次摘要，而不是在新摘要旁边再叠一条前缀。没有旧内容时结果是 `nothing to compact`。当前输入、系统提示词和工具定义已经放不下时直接失败，不截断当前输入，也不删掉工具定义。
 
-摘要不用普通请求的 messages 和 tools。系统提示词是摘要指令，旧会话串成一条 user 消息，原来的系统指令只作为待摘要文本。角色标成 User、Assistant、ToolCall、ToolResult。图片只留下 `[Image attachment]`，不写入图片数据，也不表示模型看见了图片。旧内容放不下时先缩短旧工具输出，再缩短其他旧文本，保留首尾和 `[truncated]`，不改原始条目。缩到无法构成请求就失败，原分支保持。只调用一次摘要，不重试，也不做多级摘要。
+摘要不用普通请求的 messages 和 tools。系统提示词是摘要指令，旧会话串成一条 user 消息，原来的系统指令只作为待摘要文本。角色标成 User、Assistant、ToolCall、ToolResult。用户消息和工具结果里的图片只留下 `[Image attachment]`，不写入图片数据，也不表示模型看见了图片。旧内容放不下时先缩短旧工具输出，再缩短其他旧文本，保留首尾和 `[truncated]`，不改原始条目。缩到无法构成请求就失败，原分支保持。只调用一次摘要，不重试，也不做多级摘要。
 
 可以发布的摘要必须是成功结束的非空文本。`error`、`aborted`、`toolUse`、空文本和 `length` 截断都不发布，也不用固定字符串代替。
 

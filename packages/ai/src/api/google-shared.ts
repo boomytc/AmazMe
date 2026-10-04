@@ -107,9 +107,22 @@ function convert(message: Message): unknown {
     };
   }
   if (message.role === "toolResult") {
+    const images = message.content.flatMap((block) => block.type === "image"
+      ? [{ inlineData: { mimeType: block.mimeType, data: block.data } }]
+      : []);
+    const text = images.length > 0
+      ? message.content.filter((block) => block.type === "text").map((block) => block.text).join("")
+      : messageText(message);
     return {
       role: "user",
-      parts: [{ functionResponse: { id: message.toolCallId, name: message.toolName, response: { result: messageText(message) } } }],
+      parts: [{
+        functionResponse: {
+          id: message.toolCallId,
+          name: message.toolName,
+          response: { result: text },
+          ...(images.length > 0 ? { parts: images } : {}),
+        },
+      }],
     };
   }
   if (message.role !== "assistant") return { role: "user", parts: [{ text: message.content }] };

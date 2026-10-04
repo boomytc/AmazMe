@@ -176,31 +176,31 @@ test("an in-memory MCP tool is called through the same before and after hooks", 
     },
   };
   const coding = createCodingTools(dir);
-  const tools = appendMcpTools(coding, client);
+  const tools = await appendMcpTools(coding, { serverId: "box", client });
   assert.equal(tools.length, 5);
   assert.equal(tools[0], coding[0]);
   assert.equal(tools[1], coding[1]);
   assert.equal(tools[2], coding[2]);
   assert.equal(tools[3], coding[3]);
-  assert.equal(tools[4]?.name, "ping");
+  assert.equal(tools[4]?.name, "mcp_box__ping");
   const respond: FauxResponder = (_context, _options, state) =>
-    state.callCount === 1 ? fauxAssistant([fauxToolCall("ping", { value: 1 })]) : fauxAssistant("done");
+    state.callCount === 1 ? fauxAssistant([fauxToolCall("mcp_box__ping", { value: 1 })]) : fauxAssistant("done");
   const hooks: AgentHook[] = [
     {
       beforeToolCall(input) {
         trace.push(`before:${input.toolName}`);
       },
       afterToolCall(input) {
-        trace.push(`after:${input.toolName}:${input.result.content[0]?.text ?? ""}`);
+        trace.push(`after:${input.toolName}:${input.result.content[0]?.type === "text" ? input.result.content[0].text : ""}`);
       },
     },
   ];
   const { provider, produced } = await firstRequest(today, tools, hooks, respond);
   assert.deepEqual(
     provider.state.contexts[0]?.tools?.map((tool) => tool.name),
-    ["read", "write", "edit", "bash", "ping"],
+    ["read", "write", "edit", "bash", "mcp_box__ping"],
   );
-  assert.deepEqual(trace, ["before:ping", "call:ping:{\"value\":1}", "after:ping:pong"]);
+  assert.deepEqual(trace, ["before:mcp_box__ping", "call:ping:{\"value\":1}", "after:mcp_box__ping:pong"]);
   const result = produced.find((message) => message.role === "toolResult");
   assert.equal(result && result.role === "toolResult" ? messageText(result) : "", "pong");
 });
@@ -215,9 +215,9 @@ test("beforeToolCall block skips the MCP client", async () => {
       return Promise.resolve({ content: [{ type: "text", text: "pong" }] });
     },
   };
-  const tools = appendMcpTools(createCodingTools(dir), client);
+  const tools = await appendMcpTools(createCodingTools(dir), { serverId: "box", client });
   const respond: FauxResponder = (_context, _options, state) =>
-    state.callCount === 1 ? fauxAssistant([fauxToolCall("ping", {})]) : fauxAssistant("stopped");
+    state.callCount === 1 ? fauxAssistant([fauxToolCall("mcp_box__ping", {})]) : fauxAssistant("stopped");
   const hooks: AgentHook[] = [
     {
       beforeToolCall() {
@@ -252,13 +252,13 @@ test("no MCP client leaves the original four tools", async () => {
     listTools: () => [],
     callTool: () => Promise.resolve({ content: [{ type: "text", text: "" }] }),
   };
-  assert.equal(appendMcpTools(coding), coding);
-  assert.equal(appendMcpTools(coding, empty), coding);
+  assert.equal(await appendMcpTools(coding), coding);
+  assert.equal(await appendMcpTools(coding, { serverId: "box", client: empty }), coding);
   assert.deepEqual(
     coding.map((tool) => tool.name),
     ["read", "write", "edit", "bash"],
   );
-  const { provider } = await firstRequest(today, appendMcpTools(coding));
+  const { provider } = await firstRequest(today, await appendMcpTools(coding));
   assert.deepEqual(
     provider.state.contexts[0]?.tools?.map((tool) => tool.name),
     ["read", "write", "edit", "bash"],

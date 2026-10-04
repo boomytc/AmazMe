@@ -56,8 +56,13 @@ function partsFor(entry: TranscriptEntry): Part[] {
   if (message.role === "system") return [{ bucket: "text", text: `[System]\n${message.content}` }];
   if (message.role === "user") return userParts(message.content);
   if (message.role === "toolResult") {
-    const text = message.content.map((block) => block.text).join("\n");
-    return [{ bucket: "tool", text: `[ToolResult id=${message.toolCallId} name=${message.toolName}]\n${text}` }];
+    const header = `[ToolResult id=${message.toolCallId} name=${message.toolName}]`;
+    const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    const parts: Part[] = [{ bucket: "tool", text: `${header}\n${text}` }];
+    for (const block of message.content) {
+      if (block.type === "image") parts.push({ bucket: "fixed", text: `${header}\n${IMAGE_MARKER}` });
+    }
+    return parts;
   }
   const parts: Part[] = [];
   for (const block of message.content) {

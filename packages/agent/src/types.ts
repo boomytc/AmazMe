@@ -9,6 +9,7 @@ import type {
   StreamOptions,
   TextContent,
   ThinkingLevel,
+  ToolResultContent,
   ToolResultMessage,
 } from "@amazme/ai";
 
@@ -39,7 +40,7 @@ export interface CustomMessage {
 export type AgentMessage = Message | CustomMessage;
 
 export interface ToolResult {
-  content: TextContent[];
+  content: ToolResultContent[];
   isError?: boolean;
   terminate?: boolean;
 }
@@ -117,7 +118,7 @@ export interface AfterToolCallInput {
 
 /** Replacement fields for a result that already returned from `execute`. */
 export interface AfterToolCallUpdate {
-  content?: TextContent[];
+  content?: ToolResultContent[];
   isError?: boolean;
   terminate?: boolean;
 }
@@ -150,4 +151,4 @@ export interface AgentHook {
   onYield?: (signal: AbortSignal) => Promise<string | undefined> | string | undefined;
 }
 
-export type { AssistantMessage, Model, TextContent, ThinkingLevel, ToolResultMessage };
+export type { AssistantMessage, Model, TextContent, ThinkingLevel, ToolResultContent, ToolResultMessage };

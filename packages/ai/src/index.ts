@@ -86,6 +86,7 @@ export type {
   SystemMessage,
   TextContent,
   ThinkingContent,
+  ToolResultContent,
   ThinkingLevel,
   ToolCall,
   ToolDefinition,

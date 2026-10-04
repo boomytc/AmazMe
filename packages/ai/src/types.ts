@@ -82,6 +82,7 @@ export interface ToolCall {
 }
 
 export type UserContent = TextContent | ImageContent;
+export type ToolResultContent = TextContent | ImageContent;
 export type AssistantContent = TextContent | ThinkingContent | ToolCall;
 
 export interface Usage {
@@ -123,7 +124,7 @@ export interface ToolResultMessage {
   role: "toolResult";
   toolCallId: string;
   toolName: string;
-  content: TextContent[];
+  content: ToolResultContent[];
   isError: boolean;
   timestamp: number;
 }

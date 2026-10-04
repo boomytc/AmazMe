@@ -163,7 +163,17 @@ function convert(message: Message): unknown {
         : { type: "image_url", image_url: `data:${block.mimeType};base64,${block.data}` }),
     };
   }
-  if (message.role === "toolResult") return { role: "tool", tool_call_id: message.toolCallId, content: messageText(message) };
+  if (message.role === "toolResult") {
+    return {
+      role: "tool",
+      tool_call_id: message.toolCallId,
+      content: message.content.some((block) => block.type === "image")
+        ? message.content.map((block) => block.type === "text"
+          ? { type: "text", text: block.text }
+          : { type: "image_url", image_url: `data:${block.mimeType};base64,${block.data}` })
+        : messageText(message),
+    };
+  }
   return {
     role: "assistant",
     content: message.content.filter((block) => block.type === "text").map((block) => block.type === "text" ? block.text : "").join(""),

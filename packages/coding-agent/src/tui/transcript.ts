@@ -141,7 +141,7 @@ function userText(message: AgentMessage): string {
 }
 
 function resultText(result: ToolResultMessage): string {
-  return result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+  return result.content.map((block) => (block.type === "text" ? block.text : "[image]")).join("");
 }
 
 function nameOf(entry: ScrollEntry): string {
