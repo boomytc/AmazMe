@@ -1,25 +1,28 @@
 // Portions adapted from Pi packages/protocol/src/cbor/, Copyright (c) 2025 Mario Zechner, MIT License. See NOTICE.
-import { ProtocolError, type ProtocolLimits } from "./errors.ts";
-import type { JsonObject, JsonValue } from "./json.ts";
+import { ProtocolError, resolveLimits, type ProtocolLimits } from "./errors.ts";
+import { assertJsonValue, type JsonObject, type JsonValue } from "./json.ts";
 
 const UINT32_BASE = 0x1_0000_0000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /**
- * Encodes validated strict JSON as one definite-length RFC 8949 item: null, booleans, safe integers,
+ * Validates and encodes strict JSON as one definite-length RFC 8949 item: null, booleans, safe integers,
  * float64, text strings, arrays, and text-keyed maps. The output never exceeds `maxFrameBytes`.
  */
 export function encodeCbor(value: JsonValue, limits: ProtocolLimits): Uint8Array {
-  const writer = new Writer(limits.maxFrameBytes);
+  const resolved = resolveLimits(limits);
+  assertJsonValue(value, resolved);
+  const writer = new Writer(resolved.maxFrameBytes);
   writeValue(writer, value);
   return writer.finish();
 }
 
 /** Decodes exactly one item of the same subset. Tags, byte strings, indefinite lengths and other simple values fail. */
 export function decodeCbor(bytes: Uint8Array, limits: ProtocolLimits): JsonValue {
-  if (bytes.byteLength > limits.maxFrameBytes) throw limit(`CBOR payload exceeds ${limits.maxFrameBytes} bytes`);
-  const reader = new Reader(bytes, limits);
+  const resolved = resolveLimits(limits);
+  if (bytes.byteLength > resolved.maxFrameBytes) throw limit(`CBOR payload exceeds ${resolved.maxFrameBytes} bytes`);
+  const reader = new Reader(bytes, resolved);
   const value = reader.item(0);
   if (!reader.done()) throw invalid("CBOR payload has trailing bytes");
   return value;
@@ -70,6 +73,23 @@ class Writer {
     this.offset += value.byteLength;
   }
 
+  text(value: string): void {
+    // Count first, stopping at the remaining frame budget before allocating the UTF-8 buffer.
+    const available = this.max - this.offset - 1;
+    let length = 0;
+    for (let index = 0; index < value.length; index++) {
+      const code = value.charCodeAt(index);
+      if (code < 0x80) length += 1;
+      else if (code < 0x800) length += 2;
+      else if (code >= 0xd800 && code <= 0xdbff) { length += 4; index += 1; }
+      else length += 3;
+      if (length > available) throw limit(`CBOR payload exceeds ${this.max} bytes`);
+    }
+    this.head(3, length);
+    this.reserve(length);
+    this.bytes(encoder.encode(value));
+  }
+
   finish(): Uint8Array {
     return this.buffer.slice(0, this.offset);
   }
@@ -100,7 +120,7 @@ function writeValue(writer: Writer, value: JsonValue): void {
     }
     return;
   }
-  if (typeof value === "string") return writeText(writer, value);
+  if (typeof value === "string") return writer.text(value);
   if (Array.isArray(value)) {
     writer.head(4, value.length);
     for (const item of value) writeValue(writer, item);
@@ -109,15 +129,9 @@ function writeValue(writer: Writer, value: JsonValue): void {
   const keys = Object.keys(value);
   writer.head(5, keys.length);
   for (const key of keys) {
-    writeText(writer, key);
+    writer.text(key);
     writeValue(writer, (value as JsonObject)[key]!);
   }
-}
-
-function writeText(writer: Writer, value: string): void {
-  const bytes = encoder.encode(value);
-  writer.head(3, bytes.byteLength);
-  writer.bytes(bytes);
 }
 
 class Reader {

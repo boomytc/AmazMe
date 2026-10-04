@@ -9,7 +9,8 @@
     "typebox": "1.3.27"
   },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" }
+    ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" },
+    "./writer": { "types": "./dist/writer.d.ts", "default": "./src/writer.ts" }
   },
   "scripts": {
     "build": "tsc -b",

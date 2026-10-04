@@ -9,6 +9,8 @@ const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null
 /** Lane names are service data: the runtime decides which lanes exist; the protocol never sees them. */
 export const LaneNameSchema = Type.String({ minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$" });
 export const OperationIdSchema = Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" });
+/** References can name operations admitted in process; only the storage separator is reserved. */
+const OperationReferenceSchema = Type.String({ minLength: 1, pattern: "^[^\\u0000]+$" });
 const SubscriptionIdSchema = Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" });
 const RuntimeIdSchema = SubscriptionIdSchema;
 const EntryIdSchema = Type.String({ minLength: 1 });
@@ -29,15 +31,15 @@ export const OperationRequestSchema = Type.Union([PromptRequestSchema, Compactio
 export type OperationRequest = Static<typeof OperationRequestSchema>;
 
 const AcceptCall = Strict({ method: Type.Literal("accept"), lane: LaneNameSchema, request: OperationRequestSchema });
-const DriveCall = Strict({ method: Type.Literal("drive"), lane: LaneNameSchema, operationId: OperationIdSchema, waitForRetry: Type.Optional(Type.Boolean()) });
+const DriveCall = Strict({ method: Type.Literal("drive"), lane: LaneNameSchema, operationId: OperationReferenceSchema, waitForRetry: Type.Optional(Type.Boolean()) });
 const SnapshotCall = Strict({ method: Type.Literal("snapshot"), lane: LaneNameSchema });
-const ResultCall = Strict({ method: Type.Literal("result"), lane: LaneNameSchema, operationId: OperationIdSchema });
+const ResultCall = Strict({ method: Type.Literal("result"), lane: LaneNameSchema, operationId: OperationReferenceSchema });
 const SteerCall = Strict({ method: Type.Literal("steer"), lane: LaneNameSchema, text: Text });
 const FollowUpCall = Strict({ method: Type.Literal("followUp"), lane: LaneNameSchema, text: Text });
-const RequestAbortCall = Strict({ method: Type.Literal("requestAbort"), lane: LaneNameSchema, operationId: OperationIdSchema });
+const RequestAbortCall = Strict({ method: Type.Literal("requestAbort"), lane: LaneNameSchema, operationId: OperationReferenceSchema });
 const SubscribeCall = Strict({ method: Type.Literal("subscribe"), lane: LaneNameSchema, subscriptionId: SubscriptionIdSchema });
 const UnsubscribeCall = Strict({ method: Type.Literal("unsubscribe"), subscriptionId: SubscriptionIdSchema });
-/** Calls on a runtime route. Each names its lane explicitly. */
+/** Calls on a runtime route. Lane calls name their lane; unsubscribe names its route-local subscription. */
 export const RuntimeCallSchema = Type.Union([
   AcceptCall, DriveCall, SnapshotCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall, SubscribeCall, UnsubscribeCall,
 ]);

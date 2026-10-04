@@ -288,6 +288,51 @@ test("two connections reuse request IDs and attachments without affecting each o
   await server.close();
 });
 
+test("attachment invalidation precedes subscription abort callbacks", async () => {
+  let attempted = false;
+  let reopened: SubscriptionSink | undefined;
+  let reopenError: unknown;
+  let settle!: (result: JsonValue) => void;
+  const server = new Server({
+    serverId: "srv",
+    service: {
+      call: (raw, context) => {
+        if (raw === "attach") context.attach("rt");
+        else context.detach();
+        return null;
+      },
+    },
+  });
+  server.registerRuntime("rt", {
+    call: (_raw, context) => {
+      const sink = context.openSubscription("old");
+      sink.signal.addEventListener("abort", () => {
+        attempted = true;
+        try {
+          reopened = context.openSubscription("escaped");
+        } catch (error) {
+          reopenError = error;
+        }
+      }, { once: true });
+      return new Promise<JsonValue>((resolve) => { settle = resolve; });
+    },
+  });
+  const connector = memoryConnector((connection) => server.accept(connection));
+  const peer = new Client({ serverId: "srv", transport: connector.transport });
+  await peer.connect();
+  await peer.request(peer.serverRoute(), "attach");
+  const waiting = peer.request(peer.attachment!, null);
+  await until(() => settle !== undefined, "the runtime call to open a sink");
+  await peer.request(peer.serverRoute(), "detach");
+  assert.equal(attempted, true);
+  assert.equal(reopened, undefined, "the old route cannot leave a new sink after detach");
+  assert.ok(reopenError instanceof ServiceError && reopenError.code === "stale_attachment");
+  settle(null);
+  await waiting;
+  await peer.dispose();
+  await server.close();
+});
+
 test("a duplicate active request ID closes the connection and aborts its calls", async () => {
   const { server, signals, gate } = fixture();
   const peer = rawPeer(server);
@@ -445,6 +490,33 @@ test("sends keep order under backpressure and a stalled peer overflows the bound
   await server.close();
 });
 
+test("a sink becomes ready only after its opening response is accepted, and closes pending readiness", async () => {
+  const { client, server, connector, sinks } = fixture();
+  const peer = client();
+  await peer.connect();
+  const outbound = connector.links[0]!.server;
+  outbound.pause();
+  const first = peer.subscribe(peer.serverRoute(), (subscriptionId) => ({ op: "subscribe", subscriptionId }), () => undefined);
+  await until(() => sinks.length === 1, "the first sink to open");
+  let ready = false;
+  void sinks[0]!.ready.then((accepted) => { ready = accepted; });
+  await tick();
+  assert.equal(ready, false, "a response queued behind backpressure has not made the sink ready");
+  outbound.resume();
+  const opened = await first;
+  assert.equal(await sinks[0]!.ready, true);
+  opened.start();
+
+  outbound.pause();
+  const second = peer.subscribe(peer.serverRoute(), (subscriptionId) => ({ op: "subscribe", subscriptionId }), () => undefined);
+  const rejected = assert.rejects(second, code("disconnected"));
+  await until(() => sinks.length === 2, "the second sink to open");
+  await peer.disconnect();
+  assert.equal(await sinks[1]!.ready, false, "disconnect releases readiness without waiting for a paused send");
+  await rejected;
+  await server.close();
+});
+
 test("fragmented, coalesced and delayed byte streams carry the same conversation", async () => {
   const { client, server, sinks } = fixture({}, {
     clientToServer: { split: chunksOf(1) },
@@ -554,6 +626,120 @@ test("closing is repeatable, waits for admitted calls, and observer failures do 
   await peer.dispose();
 });
 
+test("closing is published before abort and transport callbacks can reenter the server", async () => {
+  const replies: ServerMessage[] = [];
+  const nested: Promise<void>[] = [];
+  const observedClosed: boolean[] = [];
+  let registerError: unknown;
+  const rejectedConnection = {
+    send: async (chunk: Uint8Array) => {
+      replies.push(...new ServerMessageDecoder().push(chunk));
+    },
+    close: () => undefined,
+  };
+  const reenter = () => {
+    observedClosed.push(server.closed);
+    nested.push(server.close());
+    server.accept(rejectedConnection);
+  };
+  const server = new Server({
+    serverId: "srv",
+    service: {
+      call: (_call, context) => new Promise<JsonValue>((resolve) => {
+        context.signal.addEventListener("abort", () => {
+          reenter();
+          try {
+            server.registerRuntime("late", { call: () => null });
+          } catch (error) {
+            registerError = error;
+          }
+          resolve(null);
+        }, { once: true });
+      }),
+    },
+  });
+  const handlers = server.accept({ send: async () => undefined, close: reenter });
+  handlers.onData(encodeClientMessage({ type: "hello", version: 1 }));
+  handlers.onData(encodeClientMessage({ type: "request", id: "waiting", route: { serverId: "srv" }, call: null }));
+
+  const closing = server.close();
+  assert.equal(server.closed, true);
+  assert.equal(server.connectionCount, 0, "close stops routing synchronously");
+  await closing;
+  assert.deepEqual(observedClosed, [true, true]);
+  assert.ok(nested.every((promise) => promise === closing), "reentrant close returns the published promise");
+  assert.equal(server.connectionCount, 0);
+  assert.ok(registerError instanceof Error && /closed/.test(registerError.message));
+  assert.deepEqual(replies.map((message) => message.type === "hello_error" && message.error.code), ["server_closing", "server_closing"]);
+});
+
+test("close prevents requests in the remaining chunk and immediately supplied bytes from being admitted", async () => {
+  const calls: JsonValue[] = [];
+  const server = new Server({
+    serverId: "srv",
+    service: {
+      call: (call) => {
+        calls.push(call);
+        if (call === "close") void server.close();
+        return null;
+      },
+    },
+  });
+  const handlers = server.accept({ send: async () => undefined, close: () => undefined });
+  handlers.onData(encodeClientMessage({ type: "hello", version: 1 }));
+  const frame = (id: string, call: string) => encodeClientMessage({ type: "request", id, route: { serverId: "srv" }, call });
+  const first = frame("r1", "close");
+  const second = frame("r2", "same chunk");
+  const combined = new Uint8Array(first.byteLength + second.byteLength);
+  combined.set(first);
+  combined.set(second, first.byteLength);
+  handlers.onData(combined);
+  handlers.onData(frame("r3", "next bytes"));
+  await server.close();
+  assert.deepEqual(calls, ["close"]);
+});
+
+test("failure diagnostics cannot reenter a connection before it becomes terminal", async () => {
+  const calls: JsonValue[] = [];
+  let handlers!: ReturnType<Server["accept"]>;
+  let reports = 0;
+  const request = (id: string, call: string) => encodeClientMessage({ type: "request", id, route: { serverId: "srv" }, call });
+  const server = new Server({
+    serverId: "srv",
+    maxQueuedBytes: 256,
+    service: { call: (call) => { calls.push(call); return "x".repeat(180); } },
+    onError: () => {
+      reports += 1;
+      handlers.onData(request("late", "diagnostic reentry"));
+    },
+  });
+  handlers = server.accept({ send: () => new Promise(() => undefined), close: () => undefined });
+  handlers.onData(encodeClientMessage({ type: "hello", version: 1 }));
+  handlers.onData(request("r1", "one"));
+  handlers.onData(request("r2", "two"));
+  await until(() => reports > 0, "the queue overflow diagnostic");
+  assert.deepEqual(calls, ["one", "two"]);
+  assert.equal(server.connectionCount, 0);
+  await server.close();
+
+  let protocolHandlers!: ReturnType<Server["accept"]>;
+  let protocolReports = 0;
+  const protocolServer = new Server({
+    serverId: "srv",
+    limits: { maxFrameBytes: 64 },
+    service: { call: () => null },
+    onError: () => {
+      protocolReports += 1;
+      if (protocolReports < 3) protocolHandlers.onData(new Uint8Array([0, 0, 0, 255]));
+    },
+  });
+  protocolHandlers = protocolServer.accept({ send: async () => undefined, close: () => undefined });
+  protocolHandlers.onData(new Uint8Array([0, 0, 0, 255]));
+  assert.equal(protocolReports, 1, "even an unencodable hello_error is terminal before its diagnostic callback");
+  assert.equal(protocolServer.connectionCount, 0);
+  await protocolServer.close();
+});
+
 test("events from a replaced transport cannot change the new connection", async () => {
   const { server, transport } = fixture();
   const captured: ByteTransportHandlers[] = [];
@@ -626,6 +812,27 @@ test("updates fired without awaiting are bounded per connection and overflow clo
   assert.ok(errors.some((error) => /update bytes are waiting/.test(error.message)));
   connector.links[0]!.server.resume();
   await until(() => peer.state === "disconnected");
+  await peer.dispose();
+  await server.close();
+});
+
+test("updates sent before the opening response is accepted count against the byte bound", async () => {
+  const { client, server, connector, sinks, errors } = fixture({ maxQueuedBytes: 2048 });
+  const peer = client();
+  await peer.connect();
+  const outbound = connector.links[0]!.server;
+  outbound.pause();
+  const opening = peer.subscribe(peer.serverRoute(), (subscriptionId) => ({ op: "subscribe", subscriptionId }), () => undefined);
+  const rejected = assert.rejects(opening);
+  await until(() => sinks.length === 1, "the sink to open before its response was accepted");
+  const sends = Array.from({ length: 50 }, () => sinks[0]!.send("early".repeat(20)));
+  const results = await Promise.all(sends);
+  assert.equal(await sinks[0]!.ready, false);
+  assert.equal(server.connectionCount, 0);
+  assert.ok(results.every((sent) => !sent), "no early update escaped the initial response ordering");
+  assert.ok(errors.some((error) => /update bytes are waiting/.test(error.message)));
+  outbound.resume();
+  await rejected;
   await peer.dispose();
   await server.close();
 });

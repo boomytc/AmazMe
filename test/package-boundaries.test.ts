@@ -70,12 +70,14 @@ test("the protocol depends only on TypeBox and its root entry runs without Node 
     } });
     globalThis.process = undefined;
     const protocol = await import("@amazme/protocol");
+    const { FrameWriter } = await import("@amazme/protocol/writer");
+    if (typeof FrameWriter !== "function") throw new Error("protocol writer entry missing");
     const message = { type: "request", id: "r1", route: { serverId: "s" }, call: { opaque: [1, "x"] } };
     const frame = protocol.encodeClientMessage(message);
     const decoder = new protocol.ClientMessageDecoder();
     const decoded = [...decoder.push(frame.subarray(0, 3)), ...decoder.push(frame.subarray(3))];
     if (JSON.stringify(decoded) !== JSON.stringify([message])) throw new Error("round trip failed");
-    for (const name of ["LaneSnapshot", "OperationState", "prompt", "value", "list", "AgentHarness"]) {
+    for (const name of ["LaneSnapshot", "OperationState", "prompt", "value", "list", "AgentHarness", "FrameWriter"]) {
       if (name in protocol) throw new Error("protocol exports business value " + name);
     }
   `;

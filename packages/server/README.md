@@ -35,7 +35,7 @@ attach / detach 的业务调用由宿主的 `ServerService` 实现。它通过 `
 
 处理函数收到不透明的 `call` 和 `CallContext`。抛出 `ServiceError` 会以它的 code 回复；其他异常回复 `internal`，细节只交给 `onError`。`cancel` 会中止匹配的同一 route 请求的 `context.signal`，断线和 `server.close()` 同样中止它；这只是 RPC 调用上下文，业务是否停止由服务自己决定。中止后的调用仍会回复，客户端忽略迟到的响应。重复的活动 request ID 视为协议错误并关闭连接。
 
-`context.openSubscription(id)` 在调用的 route 下打开一个 `SubscriptionSink`。它在这次调用的成功响应排入发送队列之后才开始交付，调用失败则关闭；`send(update)` 在传输接受后 resolve `true`，已关闭则为 `false`；更新不是严格 JSON 或超过帧上限时 reject，什么也不发送，sink 保持打开，服务可以改发更小的通知或自行关闭。一条连接的更新一次只排一个进入发送队列，等待 `send` 就是背压；还在等待轮次的更新同样计入 `maxQueuedBytes`，不 await 地连续发送超过上限会关闭该连接。订阅的退订语义由服务自己定义，通常用 `context.subscription(id)?.close()`。
+`context.openSubscription(id)` 在调用的 route 下打开一个 `SubscriptionSink`。它在这次调用的成功响应被传输接受之后才开始交付，`ready` 此时 resolve `true`；调用失败或 sink 先关闭时为 `false`。服务可以用 `ready` 协调同一连接的初始响应背压，但调用本体须先返回初始结果。`send(update)` 在传输接受后 resolve `true`，已关闭则为 `false`；更新不是严格 JSON 或超过帧上限时 reject，什么也不发送，sink 保持打开，服务可以改发更小的通知或自行关闭。一条连接的更新一次只排一个进入发送队列，等待 `send` 就是背压；还在等待轮次的更新同样计入 `maxQueuedBytes`，不 await 地连续发送超过上限会关闭该连接。订阅的退订语义由服务自己定义，通常用 `context.subscription(id)?.close()`。
 
 ## 上限
 
@@ -56,8 +56,8 @@ attach / detach 的业务调用由宿主的 `ServerService` 实现。它通过 `
 
 - 调用方显式提供物理路径，逻辑 `serverId` 与路径无关。
 - 不存在的父目录按 0700 创建；调用方已有的目录不会被 chmod。socket 文件为 0600。
-- 路径已存在且不是 socket、已有进程在该 socket 上监听，或默认情况下路径上存在任何 socket，都会明确失败；不会无条件 unlink 已有路径。只有显式传入 `replaceStale: true`，且间隔多次的连接探测全部被拒、检查期间路径也未被替换时，才移除残留 socket。被拒的探测并不能证明无人监听：macOS 上积压队列已满的在线服务同样拒绝连接，所以这是调用方明确选择的行为。
-- socket 先绑定在同目录下一个 0700 私有临时目录里，在那里 chmod 0600，再硬链接到目标路径，最后删除临时目录。硬链接不会覆盖已有文件；chmod 之前没有其他人能连上；libuv 关闭时按名字 unlink 的只是临时目录里那个已删除的名字。临时路径比目标目录长约 22 个字符，选路径时要留出 socket 路径长度上限的余量。发布完成之前到达的连接会被直接关闭，不交给 server。
+- 路径上已有文件或 socket 都会明确失败。连接探测被拒不能证明 socket 已失效，因此监听器不会探测或自动删除已有 socket；调用方应先确认原实例已结束并释放其路径。
+- socket 先绑定在同目录下一个 0700 私有临时目录里，在那里 chmod 0600，再硬链接到目标路径。私有目录保留一份 `owned` 硬链接直到关闭清理结束，防止 inode 被回收重用；归属检查无需文件创建时间。硬链接不会覆盖已有文件；chmod 之前没有其他人能连上；libuv 关闭时按名字 unlink 的只是私有绑定名。临时路径比目标目录长约 22 个字符，选路径时要留出 socket 路径长度上限的余量。发布完成之前到达的连接会被直接关闭，不交给 server。成功关闭或绑定失败会删除私有目录。
 - `close()` 可重复调用：停止接收，销毁仍打开的连接（server 会收到 `onClose`），然后只在路径仍是本实例那个 socket 时才删除它。路径已被替换时保留替换后的文件或 socket。
 - 每条连接的写入保序并遵守 `drain`，未写出的字节受 `maxQueuedBytes`（默认 32 MiB）约束；服务端主动关闭时先写完已接受的字节再结束，超过 `closeTimeoutMs` 则销毁。对端关闭、错误、半帧 EOF 和监听失败都会释放资源。
 - Windows 上调用会直接报告不支持。没有 TCP、WebSocket 或服务发现。

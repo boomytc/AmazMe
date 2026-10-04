@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createVerify } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -61,9 +61,10 @@ test("signature version 4 double-encodes the actual escaped Bedrock model path",
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261004/us-east-1/bedrock/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=ae8e7168363d68901c22e46142ee8793b1da6e63864c6af734557250f50c4e75");
 });
 
-test("Vertex rejects an explicit invalid or dying exchanged token lifetime before the model request", async () => {
+test("Vertex rejects an explicit invalid or dying exchanged token lifetime before the model request", async (t) => {
   for (const expiresIn of [0, -1, "3600", null, 30]) {
     const directory = mkdtempSync(join(tmpdir(), "amazme-adc-lifetime-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
     const file = join(directory, "adc.json");
     writeFileSync(file, JSON.stringify({ type: "authorized_user", client_id: "client", client_secret: "secret", refresh_token: "refresh" }));
     const urls: string[] = [];
@@ -115,8 +116,9 @@ test("bedrock signs environment keys and does not store them", async () => {
   assert.equal(await store.get("amazon-bedrock"), undefined);
 });
 
-test("bedrock signs a profile file and leaves only the pointer in the store", async () => {
+test("bedrock signs a profile file and leaves only the pointer in the store", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-aws-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const credentials = join(dir, "credentials");
   const config = join(dir, "config");
   writeFileSync(credentials, "[dev]\naws_access_key_id = file-access-key\naws_secret_access_key = file-secret-key\n");
@@ -146,8 +148,9 @@ test("bedrock signs a profile file and leaves only the pointer in the store", as
   assert.deepEqual(await store.get("amazon-bedrock"), stored);
 });
 
-test("a missing bedrock profile does not call the model stream", async () => {
+test("a missing bedrock profile does not call the model stream", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-aws-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const credentials = join(dir, "credentials");
   writeFileSync(credentials, "[default]\n");
   let calls = 0;
@@ -171,8 +174,9 @@ test("a missing bedrock profile does not call the model stream", async () => {
   assert.equal(await store.get("amazon-bedrock"), undefined);
 });
 
-test("bedrock environment keys still sign when the named profile is missing", async () => {
+test("bedrock environment keys still sign when the named profile is missing", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-aws-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const calls: string[] = [];
   const fetchImpl: typeof fetch = async (_input, init) => {
     calls.push(new Headers(init?.headers).get("authorization") ?? "");
@@ -257,8 +261,9 @@ test("bedrock signs container credentials and does not store them", async () => 
   assert.equal(await store.get("amazon-bedrock"), undefined);
 });
 
-test("bedrock web identity credentials sign the model request and stay out of the store", async () => {
+test("bedrock web identity credentials sign the model request and stay out of the store", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-aws-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const tokenFile = join(dir, "token");
   writeFileSync(tokenFile, "web-identity-token");
   const calls: Array<{ url: string; authorization: string; body: string }> = [];
@@ -319,8 +324,9 @@ test("a failed container credential exchange does not call the model stream", as
   assert.equal(message.errorMessage?.includes("container.test"), false);
 });
 
-test("bedrock assume-role uses the assumed credentials and drops them after the request", async () => {
+test("bedrock assume-role uses the assumed credentials and drops them after the request", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-aws-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const credentials = join(dir, "credentials");
   writeFileSync(credentials, [
     "[dev]",
@@ -380,8 +386,9 @@ test("an expired container credential does not call the model", async () => {
   assert.match(fresh.urls[1] ?? "", /converse-stream$/);
 });
 
-test("an expired assume-role credential does not call the model", async () => {
+test("an expired assume-role credential does not call the model", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-aws-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const credentials = join(dir, "credentials");
   writeFileSync(credentials, [
     "[dev]",
@@ -416,8 +423,9 @@ test("an expired assume-role credential does not call the model", async () => {
   assert.deepEqual(await store.get("amazon-bedrock"), stored);
 });
 
-test("vertex refreshes an authorized-user ADC and does not store the refresh token", async () => {
+test("vertex refreshes an authorized-user ADC and does not store the refresh token", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({
     type: "authorized_user",
@@ -455,10 +463,11 @@ test("vertex refreshes an authorized-user ADC and does not store the refresh tok
   assert.deepEqual(await store.get("google-vertex"), stored);
 });
 
-test("vertex exchanges a service-account JWT and does not store the private key", async () => {
+test("vertex exchanges a service-account JWT and does not store the private key", async (t) => {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({
     type: "service_account",
@@ -519,8 +528,9 @@ test("a vertex API key does not read ADC", async () => {
   assert.match(calls[0]?.url ?? "", /streamGenerateContent/);
 });
 
-test("an access token without an expiry does not call the model stream", async () => {
+test("an access token without an expiry does not call the model stream", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({ access_token: "maybe-stale" }));
   let calls = 0;
@@ -541,8 +551,9 @@ test("an access token without an expiry does not call the model stream", async (
   assert.equal(calls, 0);
 });
 
-test("an expired vertex token with no refresh does not call the model stream", async () => {
+test("an expired vertex token with no refresh does not call the model stream", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({ access_token: "stale-token", expiry: "2000-01-01T00:00:00.000Z" }));
   let calls = 0;
@@ -564,8 +575,9 @@ test("an expired vertex token with no refresh does not call the model stream", a
   assert.equal(message.errorMessage?.includes("stale-token"), false);
 });
 
-test("a failed vertex refresh does not call the model stream", async () => {
+test("a failed vertex refresh does not call the model stream", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({
     type: "authorized_user",
@@ -597,8 +609,9 @@ test("a failed vertex refresh does not call the model stream", async () => {
   assert.deepEqual(await store.get("google-vertex"), stored);
 });
 
-test("a still-valid authorized-user token is sent without another refresh", async () => {
+test("a still-valid authorized-user token is sent without another refresh", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({
     type: "authorized_user",
@@ -629,8 +642,9 @@ test("a still-valid authorized-user token is sent without another refresh", asyn
   assert.match(calls[0] ?? "", /streamGenerateContent/);
 });
 
-test("a failed refresh does not send an authorized-user token that is inside the expiry skew", async () => {
+test("a failed refresh does not send an authorized-user token that is inside the expiry skew", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   const body = JSON.stringify({
     type: "authorized_user",
@@ -663,8 +677,9 @@ test("a failed refresh does not send an authorized-user token that is inside the
   assert.equal(readFileSync(file, "utf8"), body);
 });
 
-test("an authorized-user token inside the expiry skew is refreshed before the model request", async () => {
+test("an authorized-user token inside the expiry skew is refreshed before the model request", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({
     type: "authorized_user",
@@ -697,8 +712,9 @@ test("an authorized-user token inside the expiry skew is refreshed before the mo
   assert.equal(calls[1]?.body.includes("about-to-expire"), false);
 });
 
-test("a bare access token that is still valid calls the model and not the token endpoint", async () => {
+test("a bare access token that is still valid calls the model and not the token endpoint", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({
     access_token: "bare-token",

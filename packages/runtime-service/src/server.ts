@@ -116,10 +116,10 @@ export class RuntimeHost implements RuntimeService {
    * harness yourself. Repeated calls share one promise.
    */
   close(): Promise<void> {
-    this.closing ??= (async () => {
+    this.closing ??= Promise.resolve().then(async () => {
       const ended = { code: "runtime_closed", message: "the runtime host is closed" };
       await Promise.allSettled([...this.publishers].map((publisher) => publisher.close(ended)));
-    })();
+    });
     return this.closing;
   }
 
@@ -214,6 +214,8 @@ class SnapshotPublisher {
   private closed = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private running: Promise<void> | undefined;
+  private initialRead: Promise<LaneSnapshot> | undefined;
+  private rejectInitial: ((error: unknown) => void) | undefined;
   private version = -1;
 
   constructor(lane: AgentLane, harness: AgentHarness, sink: SubscriptionSink, gate: ConnectionGate, windowMs: number, report: (error: unknown) => void) {
@@ -229,13 +231,33 @@ class SnapshotPublisher {
   }
 
   /** Reads the initial snapshot after the listener is registered, so no write between them is missed. */
-  async start(): Promise<JsonValue> {
-    const snapshot = await this.lane.snapshot();
-    this.version = snapshot.version;
-    const initial = wire(snapshot);
-    this.started = true;
-    this.schedule();
-    return initial;
+  start(): Promise<JsonValue> {
+    return new Promise((resolve, reject) => {
+      this.rejectInitial = reject;
+      void this.gate.run(this.sink.connectionId, async () => {
+        if (this.closed) return;
+        this.dirty = false;
+        const reading = this.lane.snapshot();
+        this.initialRead = reading;
+        try {
+          const snapshot = await reading;
+          if (this.closed) return;
+          this.version = snapshot.version;
+          const initial = wire(snapshot);
+          this.started = true;
+          this.rejectInitial = undefined;
+          resolve(initial);
+        } catch (error) {
+          reject(error);
+          return;
+        } finally {
+          this.initialRead = undefined;
+        }
+        // Return the call's result before waiting for its response: that response releases this turn.
+        const ready = await Promise.race([this.sink.ready, this.stopped]);
+        if (ready === true) this.schedule();
+      }).catch(reject);
+    });
   }
 
   /**
@@ -245,6 +267,8 @@ class SnapshotPublisher {
   close(ended?: Ended): Promise<void> {
     if (this.closed) return this.done;
     this.closed = true;
+    this.rejectInitial?.(new ServiceError(ended?.code ?? "cancelled", ended?.message ?? "the snapshot subscription closed before initialization"));
+    this.rejectInitial = undefined;
     this.stop("stopped");
     clearTimeout(this.timer);
     this.timer = undefined;
@@ -255,7 +279,7 @@ class SnapshotPublisher {
     } else {
       this.sink.close();
     }
-    void Promise.resolve(this.running).then(() => this.finish());
+    void Promise.allSettled([this.initialRead, this.running]).then(() => this.finish());
     return this.done;
   }
 

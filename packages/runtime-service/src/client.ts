@@ -91,7 +91,10 @@ export class RemoteLane {
   /** Waits for the runtime's drive. Aborting stops this wait only; the operation keeps running. */
   async drive(operationId: string, options: RequestOptions & { waitForRetry?: boolean } = {}): Promise<DriveOutcomeDto> {
     const call: RuntimeCall = { method: "drive", lane: this.name, operationId, ...(options.waitForRetry !== undefined ? { waitForRetry: options.waitForRetry } : {}) };
-    return parse(DriveOutcomeSchema, await this.call(call, options), "drive outcome");
+    const outcome = parse(DriveOutcomeSchema, await this.call(call, options), "drive outcome");
+    if (outcome.kind === "settled") this.ownResult(outcome.result, operationId);
+    else this.ownOperation(outcome.operationId, operationId);
+    return outcome;
   }
 
   async snapshot(options?: RequestOptions): Promise<LaneSnapshotDto> {
@@ -99,7 +102,8 @@ export class RemoteLane {
   }
 
   async result(operationId: string, options?: RequestOptions): Promise<OperationResultDto | null> {
-    return parse(ResultReplySchema, await this.call({ method: "result", lane: this.name, operationId }, options), "result reply").result;
+    const result = parse(ResultReplySchema, await this.call({ method: "result", lane: this.name, operationId }, options), "result reply").result;
+    return result ? this.ownResult(result, operationId) : null;
   }
 
   async steer(text: string, options?: RequestOptions): Promise<{ entryId: string }> {
@@ -112,7 +116,9 @@ export class RemoteLane {
 
   /** The explicit, persisted business cancellation of an operation. */
   async requestAbort(operationId: string, options?: RequestOptions): Promise<{ operationId: string; newlyRequested: boolean }> {
-    return parse(AbortReplySchema, await this.call({ method: "requestAbort", lane: this.name, operationId }, options), "abort reply");
+    const reply = parse(AbortReplySchema, await this.call({ method: "requestAbort", lane: this.name, operationId }, options), "abort reply");
+    this.ownOperation(reply.operationId, operationId);
+    return reply;
   }
 
   /**
@@ -122,6 +128,7 @@ export class RemoteLane {
   async subscribe(onSnapshot: (snapshot: LaneSnapshotDto) => void, options: RequestOptions = {}): Promise<LaneSubscription> {
     const route = this.route();
     let current: LaneSnapshotDto | undefined;
+    let version = -1;
     let subscription: Subscription | undefined;
     let settle!: (end: LaneSubscriptionEnd) => void;
     const ended = new Promise<LaneSubscriptionEnd>((resolve) => { settle = resolve; });
@@ -143,7 +150,8 @@ export class RemoteLane {
         end({ reason: "ended", code: update.code, message: update.message });
         return;
       }
-      if (update.snapshot.version <= current.version) return;
+      if (update.snapshot.version <= version) return;
+      version = update.snapshot.version;
       current = update.snapshot;
       onSnapshot(update.snapshot);
     };
@@ -161,6 +169,7 @@ export class RemoteLane {
       throw error;
     }
     current = initial;
+    version = initial.version;
     const opened = subscription;
     void opened.ended.then(settle);
     opened.start();
@@ -180,5 +189,15 @@ export class RemoteLane {
   private own(snapshot: LaneSnapshotDto): LaneSnapshotDto {
     if (snapshot.lane !== this.name) throw new ContractError(`snapshot is for lane ${snapshot.lane}, not ${this.name}`);
     return snapshot;
+  }
+
+  private ownResult(result: OperationResultDto, operationId: string): OperationResultDto {
+    if (result.lane !== this.name) throw new ContractError(`result is for lane ${result.lane}, not ${this.name}`);
+    this.ownOperation(result.operationId, operationId);
+    return result;
+  }
+
+  private ownOperation(actual: string, expected: string): void {
+    if (actual !== expected) throw new ContractError(`reply is for operation ${actual}, not ${expected}`);
   }
 }

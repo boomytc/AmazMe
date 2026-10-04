@@ -1,4 +1,5 @@
 import {
+  assertJsonValue,
   encodeClientMessage,
   isRuntimeRoute,
   PROTOCOL_VERSION,
@@ -17,7 +18,7 @@ import {
 } from "@amazme/protocol";
 import { ClientError, RemoteError, toError } from "./errors.ts";
 import type { ByteTransport, ByteTransportFactory, ByteTransportHandlers } from "./transport.ts";
-import { FrameWriter } from "./writer.ts";
+import { FrameWriter } from "@amazme/protocol/writer";
 
 export interface ClientOptions {
   /** The logical server identity the handshake must report. Unrelated to the physical address. */
@@ -28,7 +29,7 @@ export interface ClientOptions {
   maxPendingRequests?: number;
   /** Open subscriptions on one connection. Default 32. */
   maxSubscriptions?: number;
-  /** Updates held per subscription before `start()`. Going over fails the connection. Default 64. */
+  /** Updates held before `start()` or during reentrant callbacks. Going over fails the connection. Default 64. */
   maxBufferedUpdates?: number;
   /** Encoded bytes waiting for the transport. Going over fails the connection. Default two frames. */
   maxQueuedBytes?: number;
@@ -79,11 +80,13 @@ interface Sub {
   readonly onUpdate: (update: JsonValue) => void;
   readonly buffer: JsonValue[];
   started: boolean;
+  delivering: boolean;
   end?: SubscriptionEnd;
   finish(end: SubscriptionEnd): void;
 }
 
 interface Live {
+  readonly id: number;
   state: "connecting" | "connected" | "closed";
   readonly decoder: ServerMessageDecoder;
   readonly pending: Map<string, Pending>;
@@ -95,6 +98,7 @@ interface Live {
   attachment: RuntimeRoute | null;
   requests: number;
   subscriptionsOpened: number;
+  earlyData: boolean;
 }
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
@@ -114,6 +118,7 @@ export class Client {
   private readonly stateListeners = new Set<(state: ConnectionState, error?: Error) => void>();
   private readonly attachmentListeners = new Set<(attachment: RuntimeRoute | null) => void>();
   private live: Live | undefined;
+  private connectionsOpened = 0;
   private disposed = false;
 
   constructor(options: ClientOptions) {
@@ -137,7 +142,8 @@ export class Client {
 
   /** The runtime route the server attached to the current connection, or `null`. */
   get attachment(): RuntimeRoute | null {
-    return this.live?.attachment ?? null;
+    const attachment = this.live?.attachment;
+    return attachment ? { ...attachment } : null;
   }
 
   serverRoute(): ServerRoute {
@@ -161,6 +167,7 @@ export class Client {
     let handshake!: Live["handshake"];
     const hello = new Promise<ServerHello>((resolve, reject) => { handshake = { resolve, reject }; });
     const live: Live = {
+      id: ++this.connectionsOpened,
       state: "connecting",
       decoder: new ServerMessageDecoder(this.limits),
       pending: new Map(),
@@ -169,13 +176,14 @@ export class Client {
       attachment: null,
       requests: 0,
       subscriptionsOpened: 0,
+      earlyData: false,
     };
     this.live = live;
     live.timer = setTimeout(
       () => this.fail(live, new ClientError("handshake_timeout", "server hello did not arrive in time")),
       this.options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS,
     );
-    this.emitState("connecting");
+    this.emitState(live, "connecting");
     void this.open(live);
     return hello;
   }
@@ -216,6 +224,7 @@ export class Client {
     } catch (error) {
       return Promise.reject(error);
     }
+    route = { ...route };
     return new Promise<JsonValue | undefined>((resolve, reject) => {
       const onAbort = () => {
         if (pending.settled) return;
@@ -257,10 +266,12 @@ export class Client {
     if (live.subscriptions.size >= this.maxSubscriptions) {
       throw new ClientError("too_many_subscriptions", `more than ${this.maxSubscriptions} subscriptions`);
     }
+    assertJsonValue(route, this.limits);
+    route = { ...route };
     const id = `s${++live.subscriptionsOpened}`;
     let finish!: (end: SubscriptionEnd) => void;
     const ended = new Promise<SubscriptionEnd>((resolve) => { finish = resolve; });
-    const sub: Sub = { id, route, onUpdate, buffer: [], started: false, finish: (end) => finish(end) };
+    const sub: Sub = { id, route, onUpdate, buffer: [], started: false, delivering: false, finish: (end) => finish(end) };
     live.subscriptions.set(id, sub);
     const unsubscribe = options.unsubscribe;
     const sendUnsubscribe = async (): Promise<void> => {
@@ -286,16 +297,13 @@ export class Client {
     let closing: Promise<void> | undefined;
     return {
       id,
-      route,
+      get route() { return { ...route }; },
       initial,
       ended,
       start: () => {
         if (sub.started || sub.end) return;
         sub.started = true;
-        for (const update of sub.buffer.splice(0)) {
-          if (sub.end) return;
-          this.deliver(sub, update);
-        }
+        this.drain(sub);
       },
       close: () => {
         closing ??= (async () => {
@@ -323,9 +331,13 @@ export class Client {
       return;
     }
     live.transport = transport;
-    const send = (chunk: Uint8Array) => transport.send(chunk).catch((cause: unknown) => {
-      throw new ClientError("transport_error", `transport failed to send: ${toError(cause).message}`, { cause });
-    });
+    const send = async (chunk: Uint8Array) => {
+      try {
+        await transport.send(chunk);
+      } catch (cause) {
+        throw new ClientError("transport_error", `transport failed to send: ${toError(cause).message}`, { cause });
+      }
+    };
     live.writer = new FrameWriter(send, this.maxQueued, (error) => this.fail(live, error));
     this.write(live, { type: "hello", version: PROTOCOL_VERSION });
   }
@@ -334,6 +346,7 @@ export class Client {
     return {
       onData: (chunk) => {
         if (this.live !== live) return;
+        if (!live.writer && chunk.byteLength > 0) live.earlyData = true;
         let messages: ServerMessage[];
         try {
           messages = live.decoder.push(chunk);
@@ -379,13 +392,17 @@ export class Client {
         this.fail(live, new ClientError("protocol_error", `expected server hello, received ${message.type}`));
         return;
       }
+      if (live.earlyData) {
+        this.fail(live, new ClientError("protocol_error", "server hello arrived before the client hello could be sent"));
+        return;
+      }
       if (message.serverId !== this.options.serverId) {
         this.fail(live, new ClientError("server_mismatch", `connected to server ${message.serverId}, expected ${this.options.serverId}`));
         return;
       }
       live.state = "connected";
       clearTimeout(live.timer);
-      this.emitState("connected");
+      this.emitState(live, "connected");
       if (this.live === live) live.handshake.resolve(message);
       return;
     }
@@ -406,15 +423,12 @@ export class Client {
     if (message.type === "service_update") {
       const sub = live.subscriptions.get(message.subscriptionId);
       if (!sub) return;
-      if (sub.started) {
-        this.deliver(sub, message.update);
-        return;
-      }
       if (sub.buffer.length >= this.maxBuffered) {
         this.fail(live, new ClientError("subscription_overflow", `subscription ${sub.id} held more than ${this.maxBuffered} updates`));
         return;
       }
       sub.buffer.push(message.update);
+      if (sub.started) this.drain(sub);
       return;
     }
     if (message.attachment && message.attachment.serverId !== this.options.serverId) {
@@ -431,8 +445,9 @@ export class Client {
       if (isRuntimeRoute(sub.route) && !sameRoute(sub.route, attachment)) this.endSubscription(live, sub, { reason: "detached" });
     }
     for (const listener of [...this.attachmentListeners]) {
+      if (live.id !== this.connectionsOpened || live.attachment !== attachment) return;
       try {
-        listener(attachment);
+        listener(attachment ? { ...attachment } : null);
       } catch (error) {
         this.reportListenerError(error);
       }
@@ -452,7 +467,7 @@ export class Client {
     live.writer?.fail(error);
     if (live.transport) this.closeTransport(live.transport);
     if (wasConnected) this.setAttachment(live, null);
-    this.emitState("disconnected", error);
+    this.emitState(live, "disconnected", error);
   }
 
   private closeTransport(transport: ByteTransport): void {
@@ -471,11 +486,20 @@ export class Client {
     sub.finish(end);
   }
 
-  private deliver(sub: Sub, update: JsonValue): void {
+  private drain(sub: Sub): void {
+    if (sub.delivering) return;
+    sub.delivering = true;
     try {
-      sub.onUpdate(update);
-    } catch (error) {
-      this.reportListenerError(error);
+      while (!sub.end && sub.buffer.length > 0) {
+        const update = sub.buffer.shift()!;
+        try {
+          sub.onUpdate(update);
+        } catch (error) {
+          this.reportListenerError(error);
+        }
+      }
+    } finally {
+      sub.delivering = false;
     }
   }
 
@@ -499,12 +523,16 @@ export class Client {
 
   private writeFrame(live: Live, frame: Uint8Array): void {
     const writer = live.writer;
-    if (!writer) return;
+    if (!writer) {
+      this.fail(live, new ClientError("protocol_error", "client transport is not initialized"));
+      return;
+    }
     void writer.write(frame, () => new ClientError("send_overflow", `more than ${this.maxQueued} bytes are waiting to be sent`)).catch(() => undefined);
   }
 
-  private emitState(state: ConnectionState, error?: Error): void {
+  private emitState(live: Live, state: ConnectionState, error?: Error): void {
     for (const listener of [...this.stateListeners]) {
+      if (live.id !== this.connectionsOpened || this.state !== state) return;
       try {
         listener(state, error);
       } catch (listenerError) {

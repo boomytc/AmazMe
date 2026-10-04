@@ -28,7 +28,7 @@ import type {
   ServerService,
   SubscriptionSink,
 } from "./types.ts";
-import { FrameWriter } from "./writer.ts";
+import { FrameWriter } from "@amazme/protocol/writer";
 
 export interface ServerOptions {
   /** Logical identity reported in the handshake. Unrelated to any listening address. */
@@ -70,7 +70,6 @@ interface Conn {
   readonly writer: FrameWriter;
   readonly active: Map<string, Active>;
   readonly sinks: Map<string, Sink>;
-  readonly tasks: Set<Promise<void>>;
   state: "awaiting_hello" | "ready" | "closed";
   attachment: RuntimeRoute | null;
   timer?: ReturnType<typeof setTimeout>;
@@ -95,7 +94,6 @@ export class Server {
   private readonly runtimes = new Map<string, { readonly service: RuntimeService }>();
   private readonly connections = new Set<Conn>();
   private readonly tasks = new Set<Promise<void>>();
-  private sequence = 0;
   private closing: Promise<void> | undefined;
 
   constructor(options: ServerOptions) {
@@ -140,13 +138,12 @@ export class Server {
 
   accept(transport: ByteConnection): ByteConnectionHandlers {
     const conn: Conn = {
-      id: `c${++this.sequence}`,
+      id: globalThis.crypto.randomUUID(),
       transport,
       decoder: new ClientMessageDecoder(this.limits),
       writer: new FrameWriter((chunk) => transport.send(chunk), this.maxQueued, (error) => this.drop(conn, error)),
       active: new Map(),
       sinks: new Map(),
-      tasks: new Set(),
       state: "awaiting_hello",
       attachment: null,
       updates: Promise.resolve(),
@@ -183,10 +180,12 @@ export class Server {
    * Repeated calls return the same promise. Registered runtimes are not closed.
    */
   close(): Promise<void> {
-    this.closing ??= (async () => {
+    if (!this.closing) {
+      this.closing = Promise.resolve().then(async () => {
+        while (this.tasks.size > 0) await Promise.allSettled([...this.tasks]);
+      });
       for (const conn of [...this.connections]) this.drop(conn);
-      while (this.tasks.size > 0) await Promise.allSettled([...this.tasks]);
-    })();
+    }
     return this.closing;
   }
 
@@ -281,16 +280,24 @@ export class Server {
         return;
       }
       let succeeded = response.ok;
-      if (!this.write(conn, response, true)) {
+      const sent = this.write(conn, response, true);
+      if (!sent) {
         succeeded = false;
         if (response.ok) this.respond(conn, request.id, errorBody("internal", "the result could not be encoded"));
+      }
+      if (succeeded && sent) {
+        try {
+          await sent;
+        } catch {
+          succeeded = false;
+        }
       }
       for (const sink of opened.sinks) {
         if (succeeded) sink.activate();
         else sink.close();
       }
     })();
-    this.track(conn, task);
+    this.track(task);
   }
 
   private context(conn: Conn, route: Route, signal: AbortSignal, opened: Opened): CallContext | ServerCallContext {
@@ -351,11 +358,11 @@ export class Server {
   }
 
   private setAttachment(conn: Conn, attachment: RuntimeRoute | null): void {
+    conn.attachment = attachment;
     for (const sink of [...conn.sinks.values()]) {
       if (isRuntimeRoute(sink.route) && !sameRoute(sink.route, attachment)) sink.close();
     }
-    conn.attachment = attachment;
-    this.write(conn, { type: "attachment", attachment });
+    this.write(conn, { type: "attachment", attachment: conn.attachment });
   }
 
   /**
@@ -363,8 +370,8 @@ export class Server {
    * their turn are bounded by `maxQueuedBytes` too; going over closes the connection.
    */
   private sendUpdate(conn: Conn, sink: Sink, update: JsonValue): Promise<boolean> {
+    if (sink.closed || conn.state === "closed") return Promise.resolve(false);
     const frame = encodeServerMessage({ type: "service_update", subscriptionId: sink.id, update }, this.limits);
-    if (conn.state === "closed") return Promise.resolve(false);
     if (conn.updateBytes + frame.byteLength > this.maxQueued) {
       this.drop(conn, new Error(`more than ${this.maxQueued} update bytes are waiting to be sent`));
       return Promise.resolve(false);
@@ -372,7 +379,7 @@ export class Server {
     conn.updateBytes += frame.byteLength;
     const turn = conn.updates.then(async () => {
       try {
-        if (sink.closed || conn.state === "closed") return false;
+        if (!(await sink.ready) || sink.closed || conn.state === "closed") return false;
         await conn.writer.write(frame, () => overflow(this.maxQueued));
         return true;
       } catch {
@@ -386,26 +393,28 @@ export class Server {
   }
 
   private respond(conn: Conn, id: string, error: ErrorBody): boolean {
-    return this.write(conn, { type: "response", id, ok: false, error });
+    return this.write(conn, { type: "response", id, ok: false, error }) !== null;
   }
 
-  private write(conn: Conn, message: ServerMessage, quiet = false): boolean {
-    if (conn.state === "closed") return false;
+  private write(conn: Conn, message: ServerMessage, quiet = false): Promise<void> | null {
+    if (conn.state === "closed") return null;
     let frame: Uint8Array;
     try {
       frame = encodeServerMessage(message, this.limits);
     } catch (error) {
       if (!quiet) this.drop(conn, toError(error));
       else this.report(error);
-      return false;
+      return null;
     }
-    void conn.writer.write(frame, () => overflow(this.maxQueued)).catch(() => undefined);
-    return true;
+    const sent = conn.writer.write(frame, () => overflow(this.maxQueued));
+    void sent.catch(() => undefined);
+    return sent;
   }
 
   /** Queues a final `hello_error`, stops the connection and closes the transport once it was sent or timed out. */
   private fatal(conn: Conn, error: ErrorBody): void {
     if (conn.state === "closed") return;
+    this.stop(conn);
     let frame: Uint8Array | undefined;
     try {
       frame = encodeServerMessage({ type: "hello_error", error }, this.limits);
@@ -413,7 +422,6 @@ export class Server {
       this.report(encodeError);
     }
     const sent = frame ? conn.writer.write(frame, () => overflow(this.maxQueued)) : Promise.resolve();
-    this.stop(conn);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, FINAL_FRAME_TIMEOUT_MS);
@@ -430,8 +438,8 @@ export class Server {
 
   private drop(conn: Conn, error?: Error): void {
     if (conn.state === "closed") return;
-    if (error) this.report(error);
     this.stop(conn);
+    if (error) this.report(error);
     conn.writer.fail(error ?? new Error("connection closed"));
     this.closeTransport(conn);
   }
@@ -455,12 +463,10 @@ export class Server {
     }
   }
 
-  private track(conn: Conn, task: Promise<void>): void {
+  private track(task: Promise<void>): void {
     const tracked = task.catch((error: unknown) => this.report(error));
-    conn.tasks.add(tracked);
     this.tasks.add(tracked);
     void tracked.finally(() => {
-      conn.tasks.delete(tracked);
       this.tasks.delete(tracked);
     });
   }
@@ -492,7 +498,7 @@ class Sink implements SubscriptionSink {
   readonly connectionId: string;
   private readonly port: SinkPort;
   private readonly controller = new AbortController();
-  private readonly ready: Promise<boolean>;
+  readonly ready: Promise<boolean>;
   private settleReady!: (active: boolean) => void;
   private state: "pending" | "active" | "closed" = "pending";
 
@@ -513,7 +519,7 @@ class Sink implements SubscriptionSink {
   }
 
   async send(update: JsonValue): Promise<boolean> {
-    if (!(await this.ready) || this.closed) return false;
+    if (this.closed) return false;
     return this.port.send(update);
   }
 

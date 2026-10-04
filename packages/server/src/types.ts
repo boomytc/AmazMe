@@ -18,12 +18,14 @@ export interface ByteConnectionHandlers {
 
 /**
  * Delivers `service_update` envelopes for one subscription ID of one connection. Updates wait until the
- * response of the call that opened the sink was queued, and stop when the sink, its route or the connection closes.
+ * response of the call that opened the sink was accepted by the transport, and stop when the sink, its route or the connection closes.
  */
 export interface SubscriptionSink {
   readonly id: string;
   readonly route: Route;
   readonly connectionId: string;
+  /** Resolves `true` when the opening call's successful response was accepted by the transport, or `false` if the sink closes first. */
+  readonly ready: Promise<boolean>;
   /** Aborts when the sink closes for any reason. */
   readonly signal: AbortSignal;
   readonly closed: boolean;
