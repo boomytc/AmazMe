@@ -29,6 +29,7 @@ test("the page lists sessions and a submit returns the prompt and assistant text
   const second = await fetch(page.url);
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
+  assert.equal((await fetch(`${page.url}favicon.ico`)).status, 204);
   const html = await second.text();
   assert.match(html, /id="sessions"/);
   assert.match(html, /id="transcript"/);

@@ -136,6 +136,10 @@ async function handle(request: IncomingMessage, response: ServerResponse, action
     return;
   }
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (request.method === "GET" && url.pathname === "/favicon.ico") {
+    response.writeHead(204).end();
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/") {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(PAGE);
     return;
