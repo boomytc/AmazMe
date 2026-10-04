@@ -8,7 +8,7 @@ import { AgentSession } from "../agent-session.ts";
 import { FileCredentialStore } from "../credentials.ts";
 import { SessionStore } from "../session.ts";
 import { appendSkillText } from "../skills.ts";
-import { createCodingTools } from "../tools.ts";
+import { codingSystemPrompt, createCodingTools } from "../tools.ts";
 import { presentFullscreen } from "./screen.ts";
 
 export interface FullscreenOptions {
@@ -68,7 +68,7 @@ function openSession(options: FullscreenOptions): AgentSession {
     streamFn: models.streamSimple.bind(models),
     telemetryContext: models.telemetryContext,
     systemPrompt: appendSkillText(
-      "You are a coding agent. Use tools to inspect and change files in the workspace.",
+      codingSystemPrompt,
       join(options.cwd, "skills"),
     ),
     tools: createCodingTools(options.cwd),

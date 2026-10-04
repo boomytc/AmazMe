@@ -6,7 +6,7 @@ import { listenUnix, type UnixListener } from "@amazme/server/unix";
 import { openJsonlRuntime } from "@amazme/runtime-service/jsonl";
 import { createManagementService, openOwnedRuntimes } from "@amazme/runtime-service/server";
 import { appendSkillText } from "./skills.ts";
-import { createCodingTools } from "./tools.ts";
+import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
 interface HostModels {
   getModel(providerId: string, modelId: string): Model | undefined;
@@ -17,7 +17,7 @@ export const HOST_SERVER_ID = "amazme";
 export const HOST_RUNTIME_ID = "workspace";
 export const HOST_LANE = "main";
 
-const SYSTEM_PROMPT = "You are a coding agent. Use tools to inspect and change files in the workspace.";
+const SYSTEM_PROMPT = codingSystemPrompt;
 
 export function runtimeFile(cwd: string): string {
   return join(resolve(cwd), ".amazme", "runtime", "workspace.jsonl");
