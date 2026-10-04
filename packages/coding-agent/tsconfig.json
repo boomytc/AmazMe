@@ -15,5 +15,11 @@
     "composite": true
   },
   "include": ["src"],
-  "references": [{ "path": "../ai" }, { "path": "../agent" }, { "path": "../mcp" }]
+  "references": [
+    { "path": "../ai" },
+    { "path": "../agent" },
+    { "path": "../mcp" },
+    { "path": "../server" },
+    { "path": "../runtime-service" }
+  ]
 }

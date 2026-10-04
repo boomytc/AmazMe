@@ -30,6 +30,7 @@ function parseArgs(argv: string[]): Args {
     else if (token === "--help") {
       console.log("amazme [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
+      console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
       process.exit(0);
     } else rest.push(token ?? "");
   }
@@ -70,9 +71,63 @@ async function runLogin(argv: string[]): Promise<void> {
   console.log(JSON.stringify({ stored: true, provider: provider.id, type: result.credential.type }));
 }
 
+function loadModels(providerId: string) {
+  const models = createModels({ store: new FileCredentialStore() });
+  if (providerId === "faux") {
+    models.setProvider(fauxProvider());
+  } else {
+    const provider = builtinProviders().find((item) => item.id === providerId);
+    if (!provider) throw new Error(`unknown provider ${providerId}`);
+    models.setProvider(provider);
+  }
+  return models;
+}
+
+async function runServe(argv: string[]): Promise<void> {
+  let socket = "";
+  let provider = "faux";
+  let model = "faux-1";
+  let cwd = process.cwd();
+  for (let index = 0; index < argv.length; index++) {
+    const token = argv[index];
+    if (token === "--socket") socket = argv[++index] ?? "";
+    else if (token === "--provider") provider = argv[++index] ?? provider;
+    else if (token === "--model") model = argv[++index] ?? model;
+    else if (token === "--cwd") cwd = resolve(argv[++index] ?? cwd);
+    else if (token === "--help") {
+      console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
+      process.exit(0);
+    } else if (token) {
+      throw new Error(`unknown argument ${token}`);
+    }
+  }
+  if (!socket) throw new Error("serve requires --socket");
+  const { startCodingHost } = await import("./host.ts");
+  const host = await startCodingHost({ cwd, socket, provider, model, models: loadModels(provider) });
+  process.stdout.write(`${JSON.stringify({ socket: host.socket, serverId: host.serverId, runtimeId: host.runtimeId, lane: host.lane })}\n`);
+  let stopping = false;
+  const shutdown = () => {
+    const mode = stopping ? "abort" : "drain";
+    stopping = true;
+    void host.close(mode).then(() => {
+      process.exit(0);
+    }, (error: unknown) => {
+      console.error(error instanceof Error ? error.message : error);
+      process.exit(1);
+    });
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  await new Promise<void>(() => undefined);
+}
+
 async function main(): Promise<void> {
   if (process.argv[2] === "login") {
     await runLogin(process.argv.slice(3));
+    return;
+  }
+  if (process.argv[2] === "serve") {
+    await runServe(process.argv.slice(3));
     return;
   }
   const args = parseArgs(process.argv.slice(2));
@@ -84,7 +139,7 @@ async function main(): Promise<void> {
     console.error("missing prompt");
     process.exit(1);
   }
-  const models = createModels({ store: new FileCredentialStore() });
+  const models = loadModels(args.provider);
   if (args.provider === "faux") {
     models.setProvider(fauxProvider({ respond: (_context, _options, _state, model) => ({
       role: "assistant",
@@ -96,10 +151,6 @@ async function main(): Promise<void> {
       stopReason: "stop",
       timestamp: Date.now(),
     }) }));
-  } else {
-    const provider = builtinProviders().find((item) => item.id === args.provider);
-    if (!provider) throw new Error(`unknown provider ${args.provider}`);
-    models.setProvider(provider);
   }
   const model = models.getModel(args.provider, args.model);
   if (!model) throw new Error(`unknown model ${args.provider}/${args.model}`);
