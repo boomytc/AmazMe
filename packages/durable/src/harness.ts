@@ -273,7 +273,8 @@ export class AgentHarness {
   /**
    * Stops admission and aborts the harness signal. Does not persist `requestAbort` and does not close storage.
    * Resolves when admitted drives, side operations, and the storage queue behind them have finished.
-   * A tool that ignores the signal keeps this promise pending. Repeated calls share one promise.
+   * A tool that ignores the signal keeps this promise pending. Concurrent calls share one promise;
+   * a rejected storage barrier may be retried without reopening admission.
    */
   close(): Promise<void> {
     return this.shutdown("abort");
@@ -328,9 +329,17 @@ export class AgentHarness {
   }
 
   private shutdown(mode: "drain" | "abort"): Promise<void> {
-    if (mode === "abort") this.abort.abort();
     this.closed = true;
-    return this.quiet ??= this.waitUntilQuiet();
+    if (mode === "abort") this.abort.abort();
+    if (!this.quiet) {
+      let quiet!: Promise<void>;
+      quiet = this.waitUntilQuiet().catch((error: unknown) => {
+        if (this.quiet === quiet) this.quiet = undefined;
+        throw error;
+      });
+      this.quiet = quiet;
+    }
+    return this.quiet;
   }
 
   private async waitUntilQuiet(): Promise<void> {

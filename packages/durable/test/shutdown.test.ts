@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentHarness, type Apply, type HarnessTool, type StorageView, type Write } from "@amazme/durable";
+import { AgentHarness, type Apply, type HarnessTool, type Result, type StorageView, type Write } from "@amazme/durable";
 import { waitUntil } from "../src/harness.ts";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { createModels, messageText } from "@amazme/ai";
@@ -186,6 +186,73 @@ test("a later close aborts a drain that is still waiting", async () => {
   assert.equal(aborted, true);
   assert.equal((await lane.inspect()).status, "open");
   assert.equal(calls(), 1);
+});
+
+test("close stops admission before synchronous harness and lane abort listeners run", async () => {
+  const { runtime, calls } = runtimeFor();
+  const lane = runtime.lane();
+  const accepted = await lane.accept({ kind: "prompt", text: "before close" });
+  assert.ok(accepted.ok);
+  const before = await lane.snapshot();
+  const closedDuringAbort: boolean[] = [];
+  const attempts: Array<Promise<Result<unknown>>> = [];
+  for (const [name, signal] of [["harness", runtime.signal()], ["lane", runtime.laneSignal("main")]] as const) {
+    signal.addEventListener("abort", () => {
+      closedDuringAbort.push(runtime.isClosed);
+      const other = runtime.lane(name);
+      attempts.push(
+        other.accept({ kind: "prompt", text: "during abort" }),
+        other.steer("during abort"),
+        other.followUp("during abort"),
+        other.drive("new drive"),
+        lane.requestAbort(accepted.value.operationId),
+      );
+    }, { once: true });
+  }
+  await runtime.close();
+  const results = await Promise.all(attempts);
+  assert.deepEqual(closedDuringAbort, [true, true]);
+  assert.equal(results.length, 10);
+  for (const result of results) {
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, "closed");
+  }
+  assert.deepEqual(await lane.snapshot(), before, "abort listeners cannot change persisted business state");
+  assert.equal(calls(), 0);
+});
+
+test("a rejected storage barrier can be retried while concurrent shutdown callers share each attempt", async () => {
+  const failure = new Error("temporary storage barrier failure");
+  let rejectFirst!: (error: Error) => void;
+  const first = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+  class RetryIdleStorage extends MemoryStorage {
+    idleCalls = 0;
+
+    override whenIdle(): Promise<void> {
+      this.idleCalls += 1;
+      return this.idleCalls === 1 ? first : super.whenIdle();
+    }
+  }
+  const storage = new RetryIdleStorage();
+  const { runtime } = runtimeFor(undefined, storage);
+  const draining = runtime.drain();
+  assert.equal(runtime.drain(), draining);
+  assert.equal(runtime.close(), draining, "abort upgrades the pending drain without replacing its barrier");
+  assert.equal(storage.idleCalls, 1);
+  const rejected = assert.rejects(draining, (error: unknown) => error === failure);
+  rejectFirst(failure);
+  await rejected;
+  assert.equal(runtime.isClosed, true);
+
+  const retry = runtime.drain();
+  assert.notEqual(retry, draining);
+  assert.equal(runtime.close(), retry);
+  await retry;
+  assert.equal(storage.idleCalls, 2);
+  assert.equal(runtime.drain(), retry, "a successful shutdown remains complete");
+  const refused = await runtime.lane().accept({ kind: "prompt", text: "after retry" });
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.equal(refused.error.code, "closed");
 });
 
 test("queued storage work admitted before drain is applied, and a later accept is refused", async () => {

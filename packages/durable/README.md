@@ -29,7 +29,7 @@ try {
 
 `accept` 持久化操作与消息，`drive` 推进模型调用、工具、摘要与结算。`prompt` 合并这两个步骤。
 
-`drain()` 停止新的 accept、drive、steer、follow-up 和 requestAbort，并等待已经准入的 drive、经 lane 准入且还在排队的存储操作，然后等待此时的存储队列。直接调用传入的 Storage 不计入这次等待。它不中止正在运行的模型或工具，也不写入 `requestAbort`。`close()` 在此之上中止 harness 信号。已经取出的模型结果和工具结果仍会结算；尚未发出的模型调用不会开始。不响应信号的工具会让 `close()` 一直等待，存储不会因此提前关闭。不要在存储回调里等待 `close` 或 `drain`，否则会和正在执行的回调互相等待。重复调用共享同一次等待。两者都不关闭 Storage，也不隐式重发模型请求。`retry_wait` 里持久化的 `notBefore` 仍是结算时写入的时间；没有正在执行的 drive 时，它不算作运行中的工作。`idle()` 为真表示没有进行中的 drive，也没有经 lane 准入的存储操作。`watchIdle` 在这些工作开始或结束时通知，注册当下的状态不会补发。直接调用传入的 Storage 不改变 `idle()`。
+`drain()` 停止新的 accept、drive、steer、follow-up 和 requestAbort，并等待已经准入的 drive、经 lane 准入且还在排队的存储操作，然后等待此时的存储队列。直接调用传入的 Storage 不计入这次等待。它不中止正在运行的模型或工具，也不写入 `requestAbort`。`close()` 在此之上中止 harness 信号。已经取出的模型结果和工具结果仍会结算；尚未发出的模型调用不会开始。不响应信号的工具会让 `close()` 一直等待，存储不会因此提前关闭。不要在存储回调里等待 `close` 或 `drain`，否则会和正在执行的回调互相等待。并发调用共享同一次等待；存储排空失败后可以重新等待，准入仍保持关闭，成功后的等待继续复用。两者都不关闭 Storage，也不隐式重发模型请求。`retry_wait` 里持久化的 `notBefore` 仍是结算时写入的时间；没有正在执行的 drive 时，它不算作运行中的工作。`idle()` 为真表示没有进行中的 drive，也没有经 lane 准入的存储操作。`watchIdle` 在这些工作开始或结束时通知，注册当下的状态不会补发。直接调用传入的 Storage 不改变 `idle()`。
 
 | 入口 | 内容 |
 | --- | --- |
