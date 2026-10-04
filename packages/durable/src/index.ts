@@ -4,6 +4,7 @@ export {
   type DriveOutcome,
   type HarnessFailure,
   type HarnessOptions,
+  type LaneCatalog,
   type LaneConfig,
   type LaneSettings,
   type LanePhase,

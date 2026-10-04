@@ -65,6 +65,8 @@ export async function presentHost(
   const sessions = [attach.lane];
   let active = attach.lane;
   let state = emptyTui(active);
+  let modelRows: Array<{ provider: string; modelId: string }> = [];
+  let thinkingRows: string[] = [];
   let paint = (): void => undefined;
   let lane = new AttachedLane(remote.lane(active), () => {
     state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
@@ -82,7 +84,16 @@ export async function presentHost(
   const rememberSettings = async (): Promise<void> => {
     try {
       const settings = await remote.lane(active).configure();
-      state = { ...state, provider: settings.provider, modelId: settings.modelId, thinking: settings.thinkingLevel };
+      const listed = await remote.lane(active).catalog();
+      state = {
+        ...state,
+        provider: settings.provider,
+        modelId: settings.modelId,
+        thinking: settings.thinkingLevel,
+        directory: listed.directory,
+      };
+      modelRows = listed.models;
+      thinkingRows = listed.thinkingLevels;
     } catch {
       // The footer keeps the last settings this lane could report.
     }
@@ -185,6 +196,31 @@ export async function presentHost(
     });
   };
   const applyPick = async (effect: Extract<TuiEffect, { type: "pick" }>): Promise<void> => {
+    if (effect.kind === "model") {
+      const split = effect.id.indexOf("\t");
+      const provider = split >= 0 ? effect.id.slice(0, split) : "";
+      const modelId = split >= 0 ? effect.id.slice(split + 1) : "";
+      if (!provider || !modelId) return;
+      await remote.lane(active).configure({ provider, modelId });
+      await rememberSettings();
+      state = { ...state, notice: `模型 ${provider}/${modelId}`, picker: null };
+      paint();
+      return;
+    }
+    if (effect.kind === "thinking") {
+      if (effect.id !== "off" && effect.id !== "minimal" && effect.id !== "low" && effect.id !== "medium" && effect.id !== "high") return;
+      await remote.lane(active).configure({ thinkingLevel: effect.id });
+      await rememberSettings();
+      state = { ...state, notice: `思考 ${effect.id}`, picker: null };
+      paint();
+      return;
+    }
+    if (effect.kind === "resume") {
+      await actions.open(effect.id);
+      state = { ...state, notice: `会话 ${effect.id}`, picker: null };
+      paint();
+      return;
+    }
     if (effect.kind === "logout-provider") {
       const message = account ? await account.logout(effect.id) : "当前客户端不能退出登录";
       state = { ...state, notice: message, picker: null };
@@ -261,6 +297,7 @@ export async function presentHost(
     }
   };
   let choices: ProviderChoice[] = [];
+  const pickerBase = { hint: "↑↓ navigate    enter select    escape cancel", query: "", index: 0, subject: undefined };
   const choiceRows = (mode: "login" | "logout"): PickerRow[] => choices
     .filter((choice) => mode === "logout" ? choice.stored : choice.oauth || choice.apiKey)
     .map((choice) => ({
@@ -279,6 +316,43 @@ export async function presentHost(
     else if (effect.type === "pick") await applyPick(effect);
     else if ((effect.command.type === "login" || effect.command.type === "logout") && !effect.command.provider) {
       await openAccountPicker(effect.command.type);
+    } else if (effect.command.type === "model" && !effect.command.provider) {
+      showPicker({
+        ...pickerBase,
+        title: "Select model:",
+        kind: "model",
+        rows: modelRows.map((model) => ({
+          id: `${model.provider}\t${model.modelId}`,
+          label: `${model.provider}/${model.modelId}`,
+          detail: model.provider === state.provider && model.modelId === state.modelId ? "current" : "",
+          tone: model.provider === state.provider && model.modelId === state.modelId ? "ok" : "muted",
+        })),
+      });
+    } else if (effect.command.type === "thinking" && !effect.command.level) {
+      showPicker({
+        ...pickerBase,
+        title: "Select thinking level:",
+        kind: "thinking",
+        rows: thinkingRows.map((level) => ({
+          id: level,
+          label: level,
+          detail: level === state.thinking ? "current" : "",
+          tone: level === state.thinking ? "ok" : "muted",
+        })),
+      });
+    } else if (effect.command.type === "resume" && !effect.command.name) {
+      const names = await actions.list();
+      showPicker({
+        ...pickerBase,
+        title: "Select session:",
+        kind: "resume",
+        rows: names.map((name) => ({
+          id: name,
+          label: name,
+          detail: name === state.active ? "current" : "",
+          tone: name === state.active ? "ok" : "muted",
+        })),
+      });
     } else {
       const outcome = await executeSlash(effect.command, actions);
       await rememberSettings();
@@ -400,7 +474,9 @@ function entryView(entry: EntryDto): TuiEntry {
   const role = message.role === "user" || message.role === "assistant" || message.role === "toolResult"
     ? (message.role === "toolResult" ? "tool" : message.role)
     : "other";
-  return { id: entry.id, role, text: messageText(message) };
+  const named = message as { role: string; toolName?: string };
+  const title = named.role === "toolResult" && typeof named.toolName === "string" ? named.toolName : undefined;
+  return { id: entry.id, role, text: messageText(message), ...(title ? { title } : {}) };
 }
 
 function pendingText(snapshot: LaneSnapshotDto): string {
@@ -412,7 +488,7 @@ function pendingText(snapshot: LaneSnapshotDto): string {
   }).join("");
 }
 
-function messageText(message: { role: string; content?: unknown }): string {
+function messageText(message: { role: string; content?: unknown; toolName?: string }): string {
   const content = message.content;
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";

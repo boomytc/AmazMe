@@ -8,6 +8,7 @@ import {
   DriveOutcomeSchema,
   EmptyReplySchema,
   EnqueuedReplySchema,
+  CatalogReplySchema,
   ForkReplySchema,
   LaneNameSchema,
   LaneSettingsSchema,
@@ -18,6 +19,7 @@ import {
   parseLaneUpdate,
   parseLaneWindow,
   ResultReplySchema,
+  type CatalogReplyDto,
   type DriveOutcomeDto,
   type ForkReplyDto,
   type HistoryPageDto,
@@ -150,6 +152,11 @@ export class RemoteLane {
 
   async followUp(text: string, options?: RequestOptions): Promise<{ entryId: string }> {
     return parse(EnqueuedReplySchema, await this.call({ method: "followUp", lane: this.name, text }, options), "follow-up reply");
+  }
+
+  /** Registered models, this lane's thinking levels, and the workspace label. */
+  async catalog(options?: RequestOptions): Promise<CatalogReplyDto> {
+    return parse(CatalogReplySchema, await this.call({ method: "catalog", lane: this.name }, options), "lane catalog");
   }
 
   /** Read this lane's model settings, or replace them when the lane is idle. */

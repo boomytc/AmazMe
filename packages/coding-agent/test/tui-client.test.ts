@@ -34,7 +34,8 @@ test("streaming text and tool status appear before the turn settles", () => {
   assert.equal(state.pendingText, "hel");
   assert.equal(state.tools[0]?.status, "running");
   assert.match(renderTui(state), /hel/);
-  assert.match(renderTui(state), /read running/);
+  assert.match(renderTui(state), /read/);
+  assert.match(renderTui(state), /running/);
   state = reduceTui(state, {
     type: "window",
     window: window({
@@ -44,7 +45,7 @@ test("streaming text and tool status appear before the turn settles", () => {
     }),
   }).state;
   assert.equal(state.pendingText, "hello");
-  assert.match(renderTui(state), /read settled/);
+  assert.match(renderTui(state), /settled/);
   state = reduceTui(state, {
     type: "window",
     window: window({
@@ -148,6 +149,65 @@ test("abort, scroll, prompt focus, and slash commands", () => {
   });
   assert.equal(secret.includes("sk-secret"), false);
 });
+
+test("a frame separates the user, markdown, and a live tool, and a picker commits model, thinking, and resume", () => {
+  const assistant = "# Title\n- item\nuse `code`\n```\nconst value = 1;\n```";
+  const state = {
+    ...emptyTui(),
+    directory: "~/workspace/AmazMe",
+    provider: "faux",
+    modelId: "faux-1",
+    thinking: "off",
+    entries: [
+      { id: "u", role: "user" as const, text: "hello" },
+      { id: "a", role: "assistant" as const, text: assistant },
+      { id: "t", role: "tool" as const, title: "read", text: "file body" },
+    ],
+    tools: [{ name: "bash", status: "running" as const }],
+  };
+  const first = renderTui(state, 80, 40);
+  const second = renderTui(state, 80, 40);
+  assert.equal(first, second);
+  assert.match(first, /┌ 你/);
+  assert.match(first, /Title/);
+  assert.equal(first.includes("# Title"), false);
+  assert.match(first, /• item/);
+  assert.match(first, /code/);
+  assert.equal(first.includes("```"), false);
+  assert.match(first, /const value = 1;/);
+  assert.match(first, /bash/);
+  assert.match(first, /running/);
+  assert.match(first, /read/);
+  assert.match(first, /file body/);
+  assert.match(first, /~/);
+  assert.match(first, /─/);
+  const model = commitPicker("model", [
+    { id: "faux\tfaux-1", label: "faux/faux-1", detail: "", tone: "muted" },
+    { id: "other\tother-1", label: "other/other-1", detail: "", tone: "muted" },
+  ], "other");
+  assert.deepEqual(model, { type: "pick", kind: "model", id: "other\tother-1" });
+  const thinking = commitPicker("thinking", [
+    { id: "off", label: "off", detail: "", tone: "muted" },
+    { id: "high", label: "high", detail: "", tone: "muted" },
+  ], "high");
+  assert.deepEqual(thinking, { type: "pick", kind: "thinking", id: "high" });
+  const resume = commitPicker("resume", [
+    { id: "main", label: "main", detail: "", tone: "muted" },
+    { id: "notes", label: "notes", detail: "", tone: "muted" },
+  ], "note");
+  assert.deepEqual(resume, { type: "pick", kind: "resume", id: "notes" });
+});
+
+function commitPicker(kind: "model" | "thinking" | "resume", rows: Array<{ id: string; label: string; detail: string; tone: "ok" | "muted" }>, query: string) {
+  let state = {
+    ...emptyTui(),
+    picker: { title: kind, hint: "navigate", query: "", index: 0, kind, rows },
+  };
+  for (const value of Array.from(query)) {
+    state = reduceTui(state, { type: "key", key: { type: "char", value } }).state;
+  }
+  return reduceTui(state, { type: "key", key: { type: "enter" } }).effect;
+}
 
 test("two reads of the host frame show the same assistant text", { timeout: 20_000 }, async (t) => {
   const cwd = mkdtempSync(join(tmpdir(), "amz-tui-frame-"));

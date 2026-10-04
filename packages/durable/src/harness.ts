@@ -78,6 +78,12 @@ export interface LaneConfig {
   systemPrompt: string;
 }
 
+export interface LaneCatalog {
+  directory: string;
+  models: Array<{ provider: string; modelId: string }>;
+  thinkingLevels: ThinkingLevel[];
+}
+
 /** The model choice a client can read or replace. The system prompt stays on the lane. */
 export interface LaneSettings {
   provider: string;
@@ -110,6 +116,8 @@ export interface HarnessOptions {
   retry?: RetryWait;
   /** Tool-result clip for the next model request. Omitted uses 8_000 characters. */
   toolResultLimit?: number;
+  /** Workspace shown on the client status line. Not a sandbox root by itself. */
+  workspace?: string;
   /**
    * Test seam for the model deadline. Production uses {@link armRequestDeadline}.
    * The returned signal must abort when `parent` aborts.
@@ -615,6 +623,25 @@ export class AgentLane {
         this.harness.options.thinkingLevel = thinkingLevel;
       }
       return { ok: true as const, value: { provider, modelId, thinkingLevel, thinkingLevels } };
+    });
+  }
+
+  /** Models the host registered, this lane's thinking levels, and the workspace label. */
+  catalog(): Promise<Result<LaneCatalog>> {
+    if (this.harness.isClosed) return Promise.resolve(failure("closed", "harness is closed"));
+    return admitted(this.harness).run((view, apply) => {
+      this.ensureConfig(view, apply);
+      const config = this.config(view);
+      const model = this.harness.options.models.getModel(config.provider, config.modelId);
+      const listed = this.harness.options.models.listModels?.() ?? [];
+      return {
+        ok: true as const,
+        value: {
+          directory: this.harness.options.workspace ?? "",
+          models: listed.map((item) => ({ provider: item.provider, modelId: item.id })),
+          thinkingLevels: model ? supportedThinkingLevels(model) : ["off"],
+        },
+      };
     });
   }
 

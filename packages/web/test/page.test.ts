@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Script, createContext } from "node:vm";
 import test from "node:test";
 import { baseAssistant, createAssistantEventStream, createModels, type Model, type Provider } from "@amazme/ai";
 import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
@@ -37,6 +38,41 @@ test("the page lists sessions and a submit returns the prompt and assistant text
   assert.match(html, /中止/);
   assert.match(html, /id="status"/);
   assert.match(html, /id="menu"/);
+  assert.match(html, /const paint =/);
+  assert.match(html, /function chooserRows/);
+  const painted = paintPage(html, {
+    sessions: ["main", "notes"],
+    active: "main",
+    directory: "~/workspace/AmazMe",
+    provider: "faux",
+    modelId: "faux-1",
+    thinking: "off",
+    thinkingLevels: ["off", "high"],
+    models: [{ provider: "faux", modelId: "faux-1" }, { provider: "other", modelId: "other-1" }],
+    busy: false,
+    notice: null,
+    pendingText: "# Live\n- now\n`tick`",
+    tools: [{ name: "bash", status: "running" }],
+    entries: [
+      { id: "u", role: "user", text: "hello" },
+      { id: "a", role: "assistant", text: "# Title\n- item\nuse `code`\n```\nconst value = 1;\n```" },
+      { id: "t", role: "toolResult", title: "read", text: "file body" },
+    ],
+  });
+  assert.equal(painted.user, true);
+  assert.equal(painted.heading, "Title");
+  assert.equal(painted.bullet, "item");
+  assert.equal(painted.code, "code");
+  assert.equal(painted.fence.includes("```"), false);
+  assert.match(painted.fence, /const value = 1;/);
+  assert.equal(painted.toolTitle, "read");
+  assert.equal(painted.toolBody, "file body");
+  assert.equal(painted.liveTool, "bash");
+  assert.equal(painted.liveStatus, "running");
+  assert.match(painted.status, /~\/workspace\/AmazMe/);
+  assert.equal(painted.modelSubmit, "/model other/other-1");
+  assert.equal(painted.thinkingSubmit, "/thinking high");
+  assert.equal(painted.resumeSubmit, "/resume notes");
   const acted = await fetch(`${page.url}act`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -161,6 +197,104 @@ test("slash commands change the lane instead of prompting the model", { timeout:
   const rewound = await act(page.url, "/rewind");
   assert.equal(rewound.entries.some((entry) => entry.text === "hello"), false);
 });
+
+function paintPage(html: string, view: Record<string, unknown>): {
+  user: boolean; heading: string; bullet: string; code: string; fence: string;
+  toolTitle: string; toolBody: string; liveTool: string; liveStatus: string; status: string;
+  modelSubmit: string; thinkingSubmit: string; resumeSubmit: string;
+} {
+  const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] ?? "";
+  const document = fakeDocument(html);
+  const context = createContext({
+    document,
+    EventSource: class { constructor() {} },
+    fetch: () => Promise.resolve({ json: () => Promise.resolve(view) }),
+    console,
+  });
+  new Script(script).runInContext(context);
+  const text = document.querySelector("#text");
+  text.value = "/model";
+  const paint = (context as { paint: (value: Record<string, unknown>) => void }).paint;
+  const chooserRows = (context as { chooserRows: (value: Record<string, unknown>, input: string) => Array<{ submit: string }> }).chooserRows;
+  paint(view);
+  const transcript = document.querySelector("#transcript");
+  const articles = transcript?.querySelectorAll("article") ?? [];
+  const tools = articles.filter((node) => node.className === "tool");
+  const result = tools[0];
+  const live = tools.at(-1);
+  return {
+    user: articles.some((node) => node.className === "user"),
+    heading: transcript?.querySelector("h3")?.textContent ?? "",
+    bullet: transcript?.querySelector("li")?.textContent ?? "",
+    code: transcript?.querySelector("code")?.textContent ?? "",
+    fence: transcript?.querySelector("pre")?.textContent ?? "",
+    toolTitle: result?.querySelector("header")?.textContent ?? "",
+    toolBody: result?.children.find((node) => node.tag === "p" && node.className !== "status")?.textContent ?? "",
+    liveTool: live?.querySelector("header")?.textContent ?? "",
+    liveStatus: live?.querySelector(".status")?.textContent ?? "",
+    status: document.querySelector("#status")?.textContent ?? "",
+    modelSubmit: chooserRows(view, "/model").find((row) => row.submit.includes("other"))?.submit ?? "",
+    thinkingSubmit: chooserRows(view, "/thinking").find((row) => row.submit.endsWith("high"))?.submit ?? "",
+    resumeSubmit: chooserRows(view, "/resume").find((row) => row.submit.endsWith("notes"))?.submit ?? "",
+  };
+}
+
+class FakeNode {
+  tag: string;
+  className = "";
+  textContent = "";
+  children: FakeNode[] = [];
+  parent: FakeNode | null = null;
+  attrs: Record<string, string> = {};
+  value = "";
+  listeners: Record<string, Array<(event: { key?: string; preventDefault: () => void; shiftKey?: boolean }) => void>> = {};
+  constructor(tag: string) { this.tag = tag; }
+  setAttribute(name: string, value: string): void { this.attrs[name] = value; }
+  append(...nodes: Array<FakeNode | string>): void {
+    for (const node of nodes) {
+      const child = typeof node === "string" ? Object.assign(new FakeNode("#text"), { textContent: node }) : node;
+      child.parent = this;
+      this.children.push(child);
+    }
+  }
+  replaceChildren(...nodes: FakeNode[]): void {
+    this.children = [];
+    this.append(...nodes);
+  }
+  addEventListener(type: string, listener: (event: { key?: string; preventDefault: () => void }) => void): void {
+    this.listeners[type] = [...(this.listeners[type] ?? []), listener];
+  }
+  querySelector(selector: string): FakeNode | undefined { return this.querySelectorAll(selector)[0]; }
+  querySelectorAll(selector: string): FakeNode[] {
+    const all = [this, ...this.children.flatMap((child) => child.querySelectorAll("*"))];
+    return all.filter((node) => node.matches(selector));
+  }
+  matches(selector: string): boolean {
+    if (selector === "*") return this.tag !== "#text";
+    if (selector.startsWith("#")) return this.attrs.id === selector.slice(1);
+    if (selector.startsWith(".")) return this.className.split(" ").includes(selector.slice(1)) || this.attrs.class === selector.slice(1);
+    if (selector.includes(".")) {
+      const [tag, className] = selector.split(".");
+      return this.tag === tag && (this.className === className || this.attrs.class === className);
+    }
+    return this.tag === selector;
+  }
+}
+
+function fakeDocument(html: string): { getElementById(id: string): FakeNode | undefined; querySelector(selector: string): FakeNode | undefined; createElement(tag: string): FakeNode } {
+  const root = new FakeNode("main");
+  for (const id of ["sessions", "transcript", "tools", "notice", "menu", "status", "text", "form", "abort"]) {
+    const node = new FakeNode(id === "form" ? "form" : "div");
+    node.attrs.id = id;
+    root.append(node);
+  }
+  void html;
+  return {
+    getElementById: (id) => root.querySelector("#" + id),
+    querySelector: (selector) => root.querySelector(selector),
+    createElement: (tag) => new FakeNode(tag),
+  };
+}
 
 async function act(url: string, text: string): Promise<{ active: string; notice: string | null; entries: Array<{ role: string; text: string }> }> {
   const response = await fetch(`${url}act`, {

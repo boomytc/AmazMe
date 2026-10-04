@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, join, resolve, sep } from "node:path";
 import type { AssistantEventStream, Context, Model, StreamOptions } from "@amazme/ai";
 import { Server } from "@amazme/server";
 import { listenUnix, type UnixListener } from "@amazme/server/unix";
@@ -78,6 +79,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
             models: options.models,
             model: { provider, modelId },
             systemPrompt: appendSkillText(SYSTEM_PROMPT, join(cwd, "skills")),
+            workspace: shortWorkspace(cwd),
             tools,
           });
           return {
@@ -114,4 +116,11 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
       return closing;
     },
   };
+}
+
+function shortWorkspace(cwd: string): string {
+  const home = homedir();
+  if (cwd === home) return "~";
+  if (cwd.startsWith(home + sep)) return `~${cwd.slice(home.length)}`;
+  return basename(cwd);
 }
