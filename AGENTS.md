@@ -20,7 +20,18 @@
 - 类型错误来自过时依赖时，升级依赖，不要为了消错误删功能或降级实现。
 - 删除看起来是有意留下的功能或代码之前，先问用户。
 - 用户没要求时，不保留旧入口、旧数据格式或兼容别名。
-- 用户要求替换核心对象时，改现有实现和它的调用方，不留下并行的第二套。对齐 Pi 的 Conversation、Task、Document 时，读 Pi 仓库的 `packages/durable/docs/spec.md`，并改 `durable`、`runtime-service` 和 `coding-agent`。
+- 外部行为和参照设计以读到的源码为准，不凭记忆补。
+
+## Harness
+
+目标是优秀、可扩展、能长期继续长的 harness。今天的 `AgentHarness`、`AgentLane`、四个编码工具和 Seatbelt 是当前实现，不是设计上限。
+
+写新的对象或执行路径之前，先读这两处已经存在的设计：
+
+- Pi 的 `packages/durable/docs/spec.md`：Conversation、Task、Document。工具调用走同一条管线。codemode 在 QuickJS 里跑模型写的脚本，嵌套工具调用回到这条管线，模型只收到脚本的输出和返回值。`store` / `load` 写在会话分支上。
+- DeepSeek Harness 的 `packages/core` 和 `packages/ptc-runtime`：Agent 句柄和循环驱动分开。工具执行只有 `ctx.tools` 这一条受守卫的管线。PTC 的服务定义是跑一段程序并交回打印内容和返回值；Seatbelt、bwrap、Landlock 是沙箱 provider。插件依赖服务定义，不依赖某个具体 provider。
+
+新能力接在这些对象和管线上。换掉一层时不重写其余部分。替换现有实现和它的调用方，不并列留下第二套核心对象。
 
 ## 当前分层
 
