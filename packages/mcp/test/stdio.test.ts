@@ -109,3 +109,46 @@ test("stdio kills a server that ignores shutdown, including its children", { tim
   }
   assert.equal(alive, false);
 });
+
+test("stdio drops the whole oversized line across chunks before reading the next message", { timeout: 5_000 }, async () => {
+  const transport = new StdioTransport({
+    command: process.execPath,
+    args: ["-e", "process.stdout.write('x'.repeat(128)); setTimeout(() => process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'tail'})+'\\n'), 30); setTimeout(() => process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'next'})+'\\n'), 60)"],
+    maxMessageBytes: 64,
+  });
+  const methods: string[] = [];
+  transport.onMessage((message) => { if ("method" in message) methods.push(message.method); });
+  const errors: Error[] = [];
+  transport.onError((error) => errors.push(error));
+  const done = new Promise<void>((resolve) => transport.onClose(resolve));
+  await transport.start();
+  await done;
+  assert.deepEqual(methods, ["next"]);
+  assert.equal(errors.length, 1);
+  await transport.close();
+});
+
+test("stdio close kills descendants even after the parent has exited", { timeout: 5_000, skip: process.platform === "win32" }, async () => {
+  const descendantCode = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)";
+  const parentCode = `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',${JSON.stringify(descendantCode)}],{stdio:['ignore',1,2]}); console.error('descendant '+child.pid); setTimeout(()=>process.exit(0),80)`;
+  const transport = new StdioTransport({ command: process.execPath, args: ["-e", parentCode], closeTimeoutMs: 30 });
+  await transport.start();
+  let descendant: number | undefined;
+  for (let n = 0; n < 100 && !descendant; n++) {
+    descendant = Number(/descendant (\d+)/.exec(transport.stderr)?.[1]) || undefined;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(descendant);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await transport.close();
+    let alive = true;
+    for (let n = 0; n < 100 && alive; n++) {
+      try { process.kill(descendant, 0); } catch { alive = false; }
+      if (alive) await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(alive, false);
+  } finally {
+    try { process.kill(descendant, "SIGKILL"); } catch { /* Already gone. */ }
+  }
+});

@@ -24,19 +24,19 @@ export type Api = KnownApi | (string & {});
 export type JsonSchemaType = "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
 
 /**
- * Tool-argument subset checked by validateArguments.
- * An object may declare properties, required, and boolean additionalProperties.
- * An array may declare items. Every other JSON Schema keyword is rejected.
- * Omitted additionalProperties allows unknown fields. An array without items allows any element.
- * Values are not coerced.
+ * JSON Schema tool arguments checked by validateArguments. Standard constraints,
+ * local references and x-* annotations are supported; unknown keywords and
+ * malformed schemas fail closed. External references are never fetched.
+ * Values are not coerced or filled with defaults.
  */
 export interface JsonSchema {
-  type: JsonSchemaType;
+  [keyword: string]: unknown;
+  type?: JsonSchemaType | JsonSchemaType[];
   description?: string;
-  properties?: Record<string, JsonSchema>;
+  properties?: Record<string, JsonSchema | boolean>;
   required?: string[];
-  items?: JsonSchema;
-  additionalProperties?: boolean;
+  items?: JsonSchema | boolean;
+  additionalProperties?: boolean | JsonSchema;
 }
 
 export interface TextContent {

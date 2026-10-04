@@ -29,17 +29,24 @@ test("the MCP package depends on none of the other AmazMe packages", () => {
   assert.equal(mcpPkg.dependencies, undefined);
   assert.equal(mcpPkg.devDependencies, undefined);
   const script = `
+    let loadingCore = true;
     const { registerHooks } = await import("node:module");
     registerHooks({ resolve(specifier, context, next) {
       const resolved = next(specifier, context);
       if (/\\/packages\\/(ai|agent|durable|coding-agent)\\//.test(resolved.url)) {
         throw new Error("MCP loaded " + specifier);
       }
+      if (loadingCore && resolved.url.includes("/packages/mcp/src/oauth/")) {
+        throw new Error("MCP core loaded OAuth: " + specifier);
+      }
       return resolved;
     } });
     const { McpClient } = await import("@amazme/mcp");
     const { createInMemoryTransportPair } = await import("@amazme/mcp/testing");
     if (typeof McpClient !== "function" || typeof createInMemoryTransportPair !== "function") throw new Error("MCP entry missing");
+    loadingCore = false;
+    const { McpOAuthProvider } = await import("@amazme/mcp/oauth");
+    if (typeof McpOAuthProvider !== "function") throw new Error("MCP OAuth entry missing");
   `;
   const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 10_000 });
   assert.ifError(child.error);

@@ -9,8 +9,6 @@ import {
   type AuthorizationServerMetadata,
   authorizeMcp,
   discoverAuthorizationServerMetadata,
-  type McpFetch,
-  McpClient,
   McpOAuthAuthorizationRequiredError,
   McpOAuthProvider,
   MemoryOAuthStateStore,
@@ -19,14 +17,19 @@ import {
   type OAuthClientInformationMixed,
   type OAuthClientMetadata,
   type OAuthClientProvider,
+  type OAuthAuthorizationState,
   type OAuthDiscoveryState,
   OAuthError,
+  exchangeAuthorizationCode,
+  refreshAuthorization,
+  registerClient,
+  startAuthorization,
+  parseWwwAuthenticate,
   OAuthInsecureEndpointError,
   OAuthIssuerMismatchError,
   type OAuthTokens,
-  StreamableHttpTransport,
-  type UnauthorizedContext,
-} from "@amazme/mcp";
+} from "@amazme/mcp/oauth";
+import { type McpFetch, McpClient, StreamableHttpTransport, type UnauthorizedContext } from "@amazme/mcp";
 
 class TestOAuthProvider implements OAuthClientProvider {
   readonly redirectUrl: string;
@@ -36,6 +39,8 @@ class TestOAuthProvider implements OAuthClientProvider {
   verifier: string | undefined;
   discovery: OAuthDiscoveryState | undefined;
   authorizationUrl: URL | undefined;
+  authorization: OAuthAuthorizationState | undefined;
+  requestedScopes: string | undefined;
   clientMetadataDocument?(metadata: AuthorizationServerMetadata | undefined): { url: string; redirectUrl: string } | undefined;
 
   constructor(redirectUrl: string, metadata: Partial<OAuthClientMetadata> = {}) {
@@ -86,7 +91,11 @@ class TestOAuthProvider implements OAuthClientProvider {
   invalidateCredentials(kind: "all" | "client" | "tokens" | "verifier" | "discovery"): void {
     if (kind === "all" || kind === "client") this.client = undefined;
     if (kind === "all" || kind === "tokens") this.tokenSet = undefined;
-    if (kind === "all" || kind === "verifier") this.verifier = undefined;
+    if (kind === "all" || kind === "verifier") {
+      this.verifier = undefined;
+      this.authorization = undefined;
+    }
+    if (kind === "all") this.requestedScopes = undefined;
     if (kind === "all" || kind === "discovery") this.discovery = undefined;
   }
 
@@ -96,6 +105,20 @@ class TestOAuthProvider implements OAuthClientProvider {
 
   discoveryState(): OAuthDiscoveryState | undefined {
     return this.discovery;
+  }
+
+  saveAuthorizationState(authorization: OAuthAuthorizationState): void {
+    this.authorization = structuredClone(authorization);
+    this.verifier = authorization.codeVerifier;
+    this.requestedScopes = authorization.scope;
+  }
+
+  authorizationState(): OAuthAuthorizationState | undefined {
+    return structuredClone(this.authorization);
+  }
+
+  requestedScope(): string | undefined {
+    return this.requestedScopes;
   }
 }
 
@@ -168,6 +191,7 @@ function authorizationMetadata(issuer: string, extras: Partial<AuthorizationServ
     authorization_endpoint: `${issuer}/authorize`,
     token_endpoint: `${issuer}/token`,
     response_types_supported: ["code"],
+    code_challenge_methods_supported: ["S256"],
     ...extras,
   };
 }
@@ -325,8 +349,8 @@ test("authorizes through HTTP, registers a native client, and refreshes a stale 
     const callbackResult = callback.waitForCallback("expected-state");
     const authorizationResponse = await fetch(authorizationUrl, { redirect: "manual" });
     await fetch(authorizationResponse.headers.get("location") ?? "");
-    const { code } = await callbackResult;
-    assert.equal(await authorizeMcp(provider, { serverUrl: mcpUrl, authorizationCode: code, fetch }), "AUTHORIZED");
+    const { code, state, iss } = await callbackResult;
+    assert.equal(await authorizeMcp(provider, { serverUrl: mcpUrl, authorizationCode: code, state, iss, fetch }), "AUTHORIZED");
 
     const client = new McpClient({ name: "oauth-test", version: "1.0.0" });
     await client.connect(new StreamableHttpTransport({
@@ -595,7 +619,7 @@ test("keeps a configured client id but does not send the old grant to a new issu
   assert.equal(await provider.tokens(), undefined);
 });
 
-test("treats one trailing slash as the same issuer and still refreshes", { timeout: 5_000 }, async () => {
+test("treats a trailing slash change as another issuer without refreshing the old grant", { timeout: 5_000 }, async () => {
   const paths: string[] = [];
   const fetchImpl = strictFetch(async (input, init) => {
     const url = asUrl(input);
@@ -618,22 +642,18 @@ test("treats one trailing slash as the same issuer and still refreshes", { timeo
     clientMetadata: { client_name: "test" },
     clientId: "pinned",
     store,
-    onRedirect: () => {
-      throw new Error("refresh should not redirect");
-    },
+    onRedirect: () => undefined,
   });
   await provider.saveTokens({ access_token: "old", refresh_token: "keep-me", token_type: "Bearer", expires_in: 30, scope: "read" });
   await provider.saveDiscoveryState({
     authorizationServerUrl: "https://idp.example/",
     authorizationServerMetadata: authorizationMetadata("https://idp.example/"),
   });
-  assert.equal(await authorizeMcp(provider, { serverUrl, fetch: fetchImpl }), "AUTHORIZED");
+  assert.equal(await authorizeMcp(provider, { serverUrl, fetch: fetchImpl }), "REDIRECT");
   assert.equal(paths.includes("/register"), false);
+  assert.equal(paths.includes("/token"), false);
   const state = await store.load();
-  assert.equal(state?.tokens?.access_token, "renewed");
-  assert.equal(state?.tokens?.refresh_token, "keep-me");
-  assert.equal(state?.tokens?.scope, "read");
-  assert.equal(state?.tokens?.expires_in, undefined);
+  assert.equal(state?.tokens, undefined);
   assert.equal(state?.tokensExpireAt, undefined);
 });
 
@@ -685,6 +705,7 @@ test("rejects authorization metadata whose issuer does not match discovery", { t
           authorization_endpoint: "https://idp.example/authorize",
           token_endpoint: "https://idp.example/token",
           response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
         });
       }),
     }),
@@ -780,6 +801,7 @@ test("uses a configured authorization server metadata document as given", { time
         authorization_endpoint: "https://mcp.example/idp/authorize",
         token_endpoint: "https://mcp.example/idp/token",
         response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
       });
     }
     return new Response("missing", { status: 404 });
@@ -830,7 +852,8 @@ test("exchanges a code only when iss names the authorization server", { timeout:
         authorization_response_iss_parameter_supported: issParameterSupported,
       },
     };
-    return authorizeMcp(provider, { serverUrl: `${issuer}/mcp`, authorizationCode: code, iss, fetch: fetchImpl });
+    provider.saveAuthorizationState({ serverUrl: `${issuer}/mcp`, discovery: { ...provider.discovery, authorizationServerMetadata: provider.discovery.authorizationServerMetadata! }, clientInformation: provider.client, redirectUrl: provider.redirectUrl, codeVerifier: provider.verifier, state: "expected-state" });
+    return authorizeMcp(provider, { serverUrl: `${issuer}/mcp`, authorizationCode: code, state: "expected-state", iss, fetch: fetchImpl });
   };
   await assert.rejects(exchange("other", "https://attacker.example", false), (error: unknown) => error instanceof OAuthIssuerMismatchError);
   await assert.rejects(exchange("missing", undefined, true), (error: unknown) => error instanceof OAuthIssuerMismatchError);
@@ -1044,4 +1067,462 @@ test("callback pages stay on the loopback listener", { timeout: 10_000 }, async 
   } finally {
     await rendered.close();
   }
+});
+
+
+test("does not send an old grant to a newly advertised issuer without metadata", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  provider.client = { client_id: "old-client", client_secret: "old-secret" };
+  provider.tokenSet = { access_token: "old-access", refresh_token: "old-refresh", token_type: "Bearer" };
+  provider.discovery = { authorizationServerUrl: "https://old.example", authorizationServerMetadata: authorizationMetadata("https://old.example") };
+  const posts: { url: string; body: string }[] = [];
+  await assert.rejects(authorizeMcp(provider, {
+    serverUrl: "https://mcp.example/mcp",
+    fetch: strictFetch(async (input, init) => {
+      const url = asUrl(input);
+      if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
+        return jsonResponse({ resource: "https://mcp.example/mcp", authorization_servers: ["https://new.example"] });
+      }
+      if (init?.method === "POST") {
+        posts.push({ url: url.href, body: String(init.body) });
+        return jsonResponse({ client_id: "new-client" });
+      }
+      return new Response(null, { status: 404 });
+    }),
+  }), /PKCE S256/);
+  assert.equal(posts.some((post) => post.url.endsWith("/token")), false);
+  assert.equal(JSON.stringify(posts).includes("old-secret"), false);
+  assert.equal(provider.tokenSet, undefined);
+});
+
+test("metadata override compares its issuer to the stored grant before refreshing", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  provider.client = { client_id: "old-client", client_secret: "old-secret" };
+  provider.tokenSet = { access_token: "old-access", refresh_token: "old-refresh", token_type: "Bearer" };
+  provider.discovery = { authorizationServerUrl: "https://old.example", authorizationServerMetadata: authorizationMetadata("https://old.example") };
+  const posts: string[] = [];
+  assert.equal(await authorizeMcp(provider, {
+    serverUrl: "https://mcp.example/mcp",
+    authorizationServerMetadataUrl: new URL("https://mcp.example/configured-metadata"),
+    fetch: strictFetch(async (input, init) => {
+      const url = asUrl(input);
+      if (url.pathname === "/configured-metadata") return jsonResponse(authorizationMetadata("https://new.example", { registration_endpoint: "https://new.example/register" }));
+      if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) return new Response(null, { status: 404 });
+      posts.push(String(init?.body));
+      if (url.pathname === "/register") return jsonResponse({ client_id: "new-client" });
+      throw new Error("old refresh grant must not be sent");
+    }),
+  }), "REDIRECT");
+  assert.equal(JSON.stringify(posts).includes("old-secret"), false);
+  assert.equal(provider.discovery?.authorizationServerMetadata?.issuer, "https://new.example");
+  assert.equal(provider.authorizationUrl?.searchParams.get("client_id"), "new-client");
+});
+
+test("configured client secrets cannot cross an authorization-server issuer", async () => {
+  const provider = new McpOAuthProvider({
+    serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/callback",
+    clientMetadata: {}, clientId: "static-client", clientSecret: "static-secret", onRedirect: () => undefined,
+  });
+  await provider.saveDiscoveryState({ authorizationServerUrl: "https://old.example", authorizationServerMetadata: authorizationMetadata("https://old.example") });
+  await provider.saveTokens({ access_token: "access", refresh_token: "refresh", token_type: "Bearer" });
+  let posts = 0;
+  await assert.rejects(authorizeMcp(provider, {
+    serverUrl: "https://mcp.example/mcp",
+    fetch: strictFetch(async (input, init) => {
+      if (init?.method === "POST") posts += 1;
+      if (asUrl(input).pathname.startsWith("/.well-known/oauth-protected-resource")) {
+        return jsonResponse({ resource: "https://mcp.example/mcp", authorization_servers: ["https://new.example"] });
+      }
+      return jsonResponse(authorizationMetadata("https://new.example"));
+    }),
+  }), /client secret belongs to another/);
+  assert.equal(posts, 0);
+});
+
+test("access-token headers omit expired grants and reject another MCP server URL", async () => {
+  const provider = new McpOAuthProvider({ serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/callback", clientMetadata: {}, onRedirect: () => undefined });
+  await provider.saveTokens({ access_token: "expired", refresh_token: "keep-refresh", token_type: "Bearer", expires_in: 0 });
+  const auth = adaptOAuthProvider(provider);
+  assert.equal(await auth.token(new URL("https://mcp.example/mcp")), undefined);
+  assert.equal((await provider.tokens())?.refresh_token, "keep-refresh");
+  await assert.rejects(auth.token(new URL("https://other.example/mcp")), /another MCP server URL/);
+  let fetched = false;
+  await assert.rejects(authorizeMcp(provider, { serverUrl: "https://other.example/mcp", fetch: async () => { fetched = true; return jsonResponse({}); } }), /another MCP server URL/);
+  assert.equal(fetched, false);
+});
+
+test("OAuth state writes recover after store failure and serialize across providers", async () => {
+  let value: import("@amazme/mcp/oauth").McpOAuthState | undefined;
+  let fail = true;
+  const store = {
+    load: async () => structuredClone(value),
+    save: async (next: import("@amazme/mcp/oauth").McpOAuthState) => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      if (fail) { fail = false; throw new Error("disk unavailable"); }
+      value = structuredClone(next);
+    },
+  };
+  const options = { serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/callback", clientMetadata: {}, onRedirect: () => undefined, store };
+  const first = new McpOAuthProvider(options);
+  const second = new McpOAuthProvider(options);
+  await assert.rejects(first.saveTokens({ access_token: "lost", token_type: "Bearer" }), /disk unavailable/);
+  await Promise.all([
+    first.saveTokens({ access_token: "kept", token_type: "Bearer" }),
+    second.saveClientInformation({ client_id: "client" }),
+  ]);
+  assert.equal((await first.tokens())?.access_token, "kept");
+  assert.equal((await second.clientInformation())?.client_id, "client");
+  const tokens = await first.tokens();
+  tokens!.access_token = "mutated";
+  assert.equal((await first.tokens())?.access_token, "kept");
+});
+
+test("authorization redemption uses its PKCE issuer, redirect and scope snapshot", async () => {
+  let redirected: URL | undefined;
+  const provider = new McpOAuthProvider({
+    serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/fallback", clientMetadata: {},
+    clientMetadataDocument: () => ({ url: "https://client.example/metadata", redirectUrl: "http://127.0.0.1/pinned" }),
+    onRedirect: (url) => { redirected = url; },
+  });
+  const posted: URLSearchParams[] = [];
+  const fetchImpl = strictFetch(async (input, init) => {
+    const url = asUrl(input);
+    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) return jsonResponse({ resource: "https://mcp.example/mcp", authorization_servers: ["https://idp.example"] });
+    if (url.pathname.startsWith("/.well-known")) return jsonResponse(authorizationMetadata("https://idp.example"));
+    assert.equal(url.href, "https://idp.example/token");
+    posted.push(new URLSearchParams(formBody(init?.body)));
+    return jsonResponse({ access_token: "new", token_type: "Bearer" });
+  });
+  assert.equal(await authorizeMcp(provider, { serverUrl: "https://mcp.example/mcp", scope: "requested:scope", fetch: fetchImpl }), "REDIRECT");
+  assert.ok(redirected);
+  await provider.saveDiscoveryState({ authorizationServerUrl: "https://other.example", authorizationServerMetadata: authorizationMetadata("https://other.example") });
+  await assert.rejects(authorizeMcp(provider, { serverUrl: "https://mcp.example/mcp", authorizationCode: "code", state: "wrong", fetch: fetchImpl }), /callback state/);
+  const state = redirected.searchParams.get("state")!;
+  assert.equal(await authorizeMcp(provider, { serverUrl: "https://mcp.example/mcp", authorizationCode: "code", state, iss: "https://idp.example", fetch: fetchImpl }), "AUTHORIZED");
+  assert.equal(posted[0]?.get("redirect_uri"), "http://127.0.0.1/pinned");
+  assert.equal(posted[0]?.get("client_id"), "https://client.example/metadata");
+  assert.equal((await provider.tokens())?.scope, "requested:scope");
+  assert.equal(await provider.authorizationState(), undefined);
+  await assert.rejects(provider.codeVerifier(), /No OAuth PKCE/);
+});
+
+test("OAuth abort stops injected discovery and does not persist late authorization", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  const controller = new AbortController();
+  let release: ((response: Response) => void) | undefined;
+  const operation = authorizeMcp(provider, {
+    serverUrl: "https://mcp.example/mcp", signal: controller.signal,
+    fetch: async (_input, init) => {
+      assert.equal(init?.signal, controller.signal);
+      return new Promise<Response>((resolve) => { release = resolve; });
+    },
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  controller.abort(new Error("stop-discovery"));
+  await assert.rejects(operation, /stop-discovery/);
+  release?.(jsonResponse({ resource: "https://mcp.example/mcp", authorization_servers: ["https://idp.example"] }));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(provider.discovery, undefined);
+  assert.equal(provider.client, undefined);
+  assert.equal(provider.authorizationUrl, undefined);
+});
+
+test("cancelling one OAuth refresh waiter keeps siblings and cancellation of all aborts refresh", async () => {
+  for (const cancelAll of [false, true]) {
+    const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+    provider.client = { client_id: "client" };
+    provider.tokenSet = { access_token: "old", refresh_token: "refresh", token_type: "Bearer" };
+    let tokenSignal: AbortSignal | undefined;
+    let release!: (response: Response) => void;
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const fetchImpl = strictFetch(async (input, init) => {
+      const url = asUrl(input);
+      if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) return new Response(null, { status: 404 });
+      if (url.pathname.startsWith("/.well-known")) return jsonResponse(authorizationMetadata("https://mcp.example"));
+      tokenSignal = init?.signal ?? undefined;
+      const response = new Promise<Response>((resolve) => { release = resolve; });
+      started();
+      return response;
+    });
+    const first = new AbortController();
+    const second = new AbortController();
+    const context = { response: new Response(null, { status: 401 }), serverUrl: new URL("https://mcp.example/mcp"), fetch: fetchImpl, token: "old" };
+    const firstPending = challenge(adaptOAuthProvider(provider), { ...context, signal: first.signal });
+    const secondPending = challenge(adaptOAuthProvider(provider), { ...context, signal: second.signal });
+    firstPending.catch(() => undefined);
+    secondPending.catch(() => undefined);
+    await ready;
+    first.abort(new Error("first-stopped"));
+    await assert.rejects(firstPending, /first-stopped/);
+    assert.equal(tokenSignal?.aborted, false);
+    if (cancelAll) {
+      second.abort(new Error("second-stopped"));
+      await assert.rejects(secondPending, /second-stopped/);
+      assert.equal(tokenSignal?.aborted, true);
+      release(jsonResponse({ access_token: "late", token_type: "Bearer" }));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(provider.tokenSet?.access_token, "old");
+    } else {
+      release(jsonResponse({ access_token: "fresh", token_type: "Bearer" }));
+      await secondPending;
+      assert.equal(provider.tokenSet?.access_token, "fresh");
+    }
+  }
+});
+
+test("OAuth token basic auth encodes credentials and errors never include echoed secrets", async () => {
+  const metadata = authorizationMetadata("https://idp.example", { token_endpoint_auth_methods_supported: ["client_secret_basic"] });
+  const credentials = { client_id: "client: a", client_secret: "secret:+ b" };
+  const seen: string[] = [];
+  const fetchImpl = strictFetch(async (_input, init) => {
+    assert.equal(init?.redirect, "error");
+    seen.push(new Headers(init?.headers).get("authorization") ?? "");
+    const params = formBody(init?.body);
+    assert.equal(params.get("client_secret"), null);
+    return jsonResponse({ error: "invalid_scope", error_description: `${credentials.client_secret} ${params.get("code")} ${params.get("code_verifier")} ${new Headers(init?.headers).get("authorization")}`, access_token: "half-token" }, 400);
+  });
+  await assert.rejects(exchangeAuthorizationCode("https://idp.example", {
+    metadata, clientInformation: credentials, code: "secret-code", codeVerifier: "secret-verifier", redirectUrl: "http://127.0.0.1/callback", fetch: fetchImpl,
+  }), (error: unknown) => error instanceof OAuthError && !error.message.includes("secret") && !error.message.includes("Basic") && error.code === "invalid_scope");
+  assert.equal(Buffer.from(seen[0]!.slice(6), "base64").toString(), "client%3A+a:secret%3A%2B+b");
+  await assert.rejects(refreshAuthorization("https://idp.example", {
+    metadata, clientInformation: credentials, refreshToken: "private-refresh", fetch: async () => new Response("private-refresh secret:+ b", { status: 500 }),
+  }), (error: unknown) => error instanceof OAuthError && !error.message.includes("private-refresh"));
+  await assert.rejects(registerClient("https://idp.example", {
+    metadata: { ...metadata, registration_endpoint: "https://idp.example/register" }, clientMetadata: { redirect_uris: ["http://127.0.0.1/callback"] },
+    fetch: async () => new Response("server-private-token", { status: 500 }),
+  }), (error: unknown) => error instanceof Error && !error.message.includes("server-private-token"));
+});
+
+test("authorization rejects missing PKCE support and insecure non-HTTP loopback endpoints", async () => {
+  const common = { clientInformation: { client_id: "client" }, redirectUrl: "http://127.0.0.1/callback" };
+  await assert.rejects(startAuthorization("https://idp.example", { ...common, metadata: { ...authorizationMetadata("https://idp.example"), code_challenge_methods_supported: undefined } }), /PKCE S256/);
+  await assert.rejects(startAuthorization("https://idp.example", { ...common, metadata: authorizationMetadata("https://idp.example", { authorization_endpoint: "http://evil.example/authorize" }) }), OAuthInsecureEndpointError);
+  await assert.rejects(refreshAuthorization("http://127.0.0.1", { clientInformation: { client_id: "client" }, refreshToken: "private", metadata: authorizationMetadata("http://127.0.0.1", { token_endpoint: "ftp://127.0.0.1/token" }) }), OAuthInsecureEndpointError);
+});
+
+test("callback waits cancel and validate issuer before displaying OAuth errors", { timeout: 5_000 }, async () => {
+  const pages: OAuthCallbackPage[] = [];
+  const server = await OAuthCallbackServer.listen({ renderPage: (page) => { pages.push(page); return "safe"; } });
+  try {
+    const controller = new AbortController();
+    const cancelled = server.waitForCallback("cancelled", { signal: controller.signal });
+    controller.abort(new Error("cancel-callback"));
+    await assert.rejects(cancelled, /cancel-callback/);
+    assert.equal((await fetch(`${server.redirectUrl}?code=late&state=cancelled`)).status, 400);
+    const mixedUp = server.waitForCallback("mixed", { issuer: "https://idp.example", requireIss: true });
+    mixedUp.catch(() => undefined);
+    const response = await fetch(`${server.redirectUrl}?state=mixed&error=access_denied&error_description=attacker-text&iss=https://other.example`);
+    assert.equal(response.status, 400);
+    await assert.rejects(mixedUp, OAuthIssuerMismatchError);
+    assert.equal(JSON.stringify(pages).includes("attacker-text"), false);
+  } finally {
+    await server.close();
+  }
+  await assert.rejects(server.waitForCallback("after-close"), /closed/);
+  await server.close();
+});
+
+
+test("Bearer challenges parse across multiple schemes without reading quoted realm parameters", () => {
+  const parsed = parseWwwAuthenticate(String.raw`Basic realm="scope=fake", Bearer realm="a, scope=wrong", error="insufficient_scope", scope="read write", error_description="say \"no\", retry", resource_metadata="https://mcp.example/metadata"`);
+  assert.equal(parsed.scope, "read write");
+  assert.equal(parsed.error, "insufficient_scope");
+  assert.equal(parsed.resourceMetadataUrl?.href, "https://mcp.example/metadata");
+  assert.equal(parsed.errorDescription, 'say "no", retry');
+});
+
+test("rejected authorization codes are not retried or stripped of their original OAuth error", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  provider.client = { client_id: "client" };
+  provider.verifier = "verifier";
+  provider.discovery = { authorizationServerUrl: "https://idp.example", authorizationServerMetadata: authorizationMetadata("https://idp.example") };
+  provider.saveAuthorizationState({ serverUrl: "https://mcp.example/mcp", discovery: { ...provider.discovery, authorizationServerMetadata: provider.discovery.authorizationServerMetadata! }, clientInformation: provider.client, redirectUrl: provider.redirectUrl, codeVerifier: provider.verifier, state: "expected-state" });
+  let posts = 0;
+  await assert.rejects(authorizeMcp(provider, {
+    serverUrl: "https://mcp.example/mcp", authorizationCode: "single-use-code", state: "expected-state",
+    fetch: async () => { posts += 1; return jsonResponse({ error: "invalid_client" }, 400); },
+  }), (error: unknown) => error instanceof OAuthError && error.code === "invalid_client");
+  assert.equal(posts, 1);
+});
+
+test("configured secret issuer binding survives grant invalidation", async () => {
+  const provider = new McpOAuthProvider({ serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/callback", clientMetadata: {}, clientId: "client", clientSecret: "private", onRedirect: () => undefined });
+  await provider.saveDiscoveryState({ authorizationServerUrl: "https://old.example", authorizationServerMetadata: authorizationMetadata("https://old.example") });
+  await provider.invalidateCredentials("all");
+  await assert.rejects(provider.assertClientIssuer("https://new.example"), /client secret belongs to another/);
+});
+
+
+test("OAuth credential POST redirects are refused without forwarding secrets", { timeout: 5_000 }, async () => {
+  let received = 0;
+  const target = await listen(async (request, response) => { received += 1; await readBody(request); sendJson(response, { access_token: "leaked", token_type: "Bearer" }); });
+  const source = await listen(async (request, response) => { await readBody(request); response.writeHead(307, { location: `${target.origin}/steal` }).end(); });
+  await assert.rejects(refreshAuthorization(source.origin, { clientInformation: { client_id: "client", client_secret: "private-secret" }, refreshToken: "private-refresh" }));
+  assert.equal(received, 0);
+});
+
+test("OAuth token parsing rejects invalid header tokens, token kinds and expiry types", async () => {
+  const provider = new McpOAuthProvider({ serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/callback", clientMetadata: {}, onRedirect: () => undefined });
+  await assert.rejects(provider.saveTokens({ access_token: "private\r\ntoken", token_type: "Bearer" }), (error: unknown) => error instanceof Error && !error.message.includes("private"));
+  await assert.rejects(provider.saveTokens({ access_token: "opaque", token_type: "DPoP" }), /Unsupported OAuth token_type/);
+  await assert.rejects(refreshAuthorization("https://idp.example", { clientInformation: { client_id: "client" }, refreshToken: "refresh", fetch: async () => jsonResponse({ access_token: "valid", token_type: "Bearer", expires_in: true }) }), /Invalid expires_in/);
+  await assert.rejects(provider.saveTokens({ access_token: "opaque", token_type: "Bearer", expires_in: -1 }), /Invalid expires_in/);
+  assert.equal(await provider.tokens(), undefined);
+});
+
+
+test("providers sharing one OAuth store share rotating refresh-token coordination", async () => {
+  const store = new MemoryOAuthStateStore();
+  const options = { serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/callback", clientMetadata: {}, clientId: "client", store, onRedirect: () => undefined };
+  const first = new McpOAuthProvider(options);
+  const second = new McpOAuthProvider(options);
+  await first.saveTokens({ access_token: "old", refresh_token: "rotate-once", token_type: "Bearer" });
+  let refreshes = 0;
+  const fetchImpl = strictFetch(async (input, init) => {
+    const url = asUrl(input);
+    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) return new Response(null, { status: 404 });
+    if (url.pathname.startsWith("/.well-known")) return jsonResponse(authorizationMetadata("https://mcp.example"));
+    refreshes += 1;
+    assert.equal(formBody(init?.body).get("refresh_token"), "rotate-once");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return jsonResponse({ access_token: "fresh", refresh_token: "rotated", token_type: "Bearer" });
+  });
+  const context = { response: new Response(null, { status: 401 }), serverUrl: new URL(options.serverUrl), fetch: fetchImpl, token: "old" };
+  await Promise.all([challenge(adaptOAuthProvider(first), context), challenge(adaptOAuthProvider(second), context)]);
+  assert.equal(refreshes, 1);
+  assert.equal((await second.tokens())?.refresh_token, "rotated");
+});
+
+test("step-up preserves previously requested scopes even when the grant narrowed them", async () => {
+  let authorizationUrl: URL | undefined;
+  const provider = new McpOAuthProvider({ serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/callback", clientMetadata: {}, clientId: "client", onRedirect: (url) => { authorizationUrl = url; } });
+  await provider.saveAuthorizationState({ serverUrl: "https://mcp.example/mcp", discovery: { authorizationServerUrl: "https://mcp.example", authorizationServerMetadata: authorizationMetadata("https://mcp.example") }, clientInformation: { client_id: "client" }, redirectUrl: "http://127.0.0.1/callback", codeVerifier: "verifier", state: "scope-state", scope: "read old-requested" });
+  await provider.saveTokens({ access_token: "grant", token_type: "Bearer", scope: "read" });
+  const fetchImpl = strictFetch(async (input) => {
+    if (asUrl(input).pathname.startsWith("/.well-known/oauth-protected-resource")) return new Response(null, { status: 404 });
+    return jsonResponse(authorizationMetadata("https://mcp.example"));
+  });
+  await assert.rejects(challenge(adaptOAuthProvider(provider), { response: new Response(null, { status: 403, headers: { "www-authenticate": 'Bearer error="insufficient_scope", scope="write"' } }), serverUrl: new URL("https://mcp.example/mcp"), fetch: fetchImpl, token: "grant" }), McpOAuthAuthorizationRequiredError);
+  assert.equal(authorizationUrl?.searchParams.get("scope"), "read old-requested write");
+});
+
+
+test("a concurrent scope challenge waits for refresh then starts a scope upgrade", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  provider.client = { client_id: "client" };
+  provider.tokenSet = { access_token: "old", refresh_token: "rotate", token_type: "Bearer", scope: "read" };
+  let release!: (response: Response) => void;
+  let started!: () => void;
+  const refreshing = new Promise<void>((resolve) => { started = resolve; });
+  let tokenPosts = 0;
+  const fetchImpl = strictFetch(async (input) => {
+    const url = asUrl(input);
+    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) return new Response(null, { status: 404 });
+    if (url.pathname.startsWith("/.well-known")) return jsonResponse(authorizationMetadata("https://mcp.example"));
+    tokenPosts += 1;
+    const response = new Promise<Response>((resolve) => { release = resolve; });
+    started();
+    return response;
+  });
+  const auth = adaptOAuthProvider(provider);
+  const context = { response: new Response(null, { status: 401 }), serverUrl: new URL("https://mcp.example/mcp"), fetch: fetchImpl, token: "old" };
+  const refresh = challenge(auth, context);
+  await refreshing;
+  const upgrade = challenge(auth, { ...context, response: new Response(null, { status: 403, headers: { "www-authenticate": 'Bearer error="insufficient_scope", scope="write"' } }) });
+  upgrade.catch(() => undefined);
+  release(jsonResponse({ access_token: "fresh", refresh_token: "rotated", token_type: "Bearer", scope: "read" }));
+  await refresh;
+  await assert.rejects(upgrade, McpOAuthAuthorizationRequiredError);
+  assert.equal(tokenPosts, 1);
+  assert.equal(provider.authorizationUrl?.searchParams.get("scope"), "read write");
+});
+
+test("different concurrent scope challenges accumulate both required scope sets", async () => {
+  const provider = new McpOAuthProvider({ serverUrl: "https://mcp.example/mcp", redirectUrl: "http://127.0.0.1/callback", clientMetadata: {}, clientId: "client", onRedirect: () => undefined });
+  await provider.saveTokens({ access_token: "grant", token_type: "Bearer", scope: "read" });
+  const fetchImpl = strictFetch(async (input) => {
+    if (asUrl(input).pathname.startsWith("/.well-known/oauth-protected-resource")) return new Response(null, { status: 404 });
+    return jsonResponse(authorizationMetadata("https://mcp.example"));
+  });
+  const auth = adaptOAuthProvider(provider);
+  const context = { serverUrl: new URL("https://mcp.example/mcp"), fetch: fetchImpl, token: "grant" };
+  const outcomes = await Promise.allSettled(["write", "admin"].map((scope) => challenge(auth, { ...context, response: new Response(null, { status: 403, headers: { "www-authenticate": `Bearer error="insufficient_scope", scope="${scope}"` } }) })));
+  for (const outcome of outcomes) assert.equal(outcome.status, "rejected");
+  assert.equal((await provider.authorizationState())?.scope, "read write admin");
+});
+
+
+test("code redemption requires the exact pending authorization record", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  provider.client = { client_id: "client" };
+  provider.verifier = "old-verifier";
+  provider.discovery = { authorizationServerUrl: "https://idp.example", authorizationServerMetadata: authorizationMetadata("https://idp.example") };
+  let fetched = false;
+  await assert.rejects(authorizeMcp(provider, { serverUrl: "https://mcp.example/mcp", authorizationCode: "code", fetch: async () => { fetched = true; return jsonResponse({ access_token: "token", token_type: "Bearer" }); } }), /No complete pending OAuth authorization/);
+  assert.equal(fetched, false);
+});
+
+
+test("empty OAuth state cannot start or redeem an authorization", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  provider.client = { client_id: "client" };
+  provider.state = () => "";
+  const fetchImpl = strictFetch(async (input) => {
+    if (asUrl(input).pathname.startsWith("/.well-known/oauth-protected-resource")) return new Response(null, { status: 404 });
+    return jsonResponse(authorizationMetadata("https://mcp.example"));
+  });
+  await assert.rejects(authorizeMcp(provider, { serverUrl: "https://mcp.example/mcp", fetch: fetchImpl }), /OAuth state must not be empty/);
+  assert.equal(provider.authorizationUrl, undefined);
+  provider.authorization = { serverUrl: "https://mcp.example/mcp", discovery: { authorizationServerUrl: "https://mcp.example", authorizationServerMetadata: authorizationMetadata("https://mcp.example") }, clientInformation: { client_id: "client" }, redirectUrl: provider.redirectUrl, codeVerifier: "verifier", state: "" };
+  let redeemed = false;
+  await assert.rejects(authorizeMcp(provider, { serverUrl: "https://mcp.example/mcp", authorizationCode: "code", state: "", fetch: async () => { redeemed = true; return jsonResponse({ access_token: "token", token_type: "Bearer" }); } }), /No complete pending OAuth authorization/);
+  assert.equal(redeemed, false);
+});
+
+
+test("different resource-metadata challenges are discovered after an in-flight refresh", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  provider.client = { client_id: "old-client" };
+  provider.tokenSet = { access_token: "old", refresh_token: "refresh", token_type: "Bearer" };
+  let release!: (response: Response) => void;
+  let started!: () => void;
+  const refreshing = new Promise<void>((resolve) => { started = resolve; });
+  const documents: string[] = [];
+  let tokenPosts = 0;
+  const fetchImpl = strictFetch(async (input) => {
+    const url = asUrl(input);
+    if (url.pathname.startsWith("/metadata-")) {
+      documents.push(url.pathname);
+      return jsonResponse({ resource: "https://mcp.example/mcp", authorization_servers: [url.pathname === "/metadata-a" ? "https://old.example" : "https://new.example"] });
+    }
+    if (url.pathname.startsWith("/.well-known")) return jsonResponse(authorizationMetadata(url.origin, { registration_endpoint: `${url.origin}/register` }));
+    if (url.pathname === "/register") return jsonResponse({ client_id: "new-client" });
+    tokenPosts += 1;
+    const response = new Promise<Response>((resolve) => { release = resolve; });
+    started();
+    return response;
+  });
+  const auth = adaptOAuthProvider(provider);
+  const context = { serverUrl: new URL("https://mcp.example/mcp"), fetch: fetchImpl, token: "old" };
+  const response = (document: string) => new Response(null, { status: 401, headers: { "www-authenticate": `Bearer resource_metadata="https://mcp.example/${document}"` } });
+  const first = challenge(auth, { ...context, response: response("metadata-a") });
+  await refreshing;
+  const second = challenge(auth, { ...context, response: response("metadata-b") });
+  second.catch(() => undefined);
+  release(jsonResponse({ access_token: "fresh", refresh_token: "rotated", token_type: "Bearer" }));
+  await first;
+  await assert.rejects(second, McpOAuthAuthorizationRequiredError);
+  assert.deepEqual(documents, ["/metadata-a", "/metadata-b"]);
+  assert.equal(tokenPosts, 1);
+  assert.equal(provider.authorizationUrl?.origin, "https://new.example");
+});
+
+test("pending authorization snapshots are bound to their MCP resource even for custom providers", async () => {
+  const provider = new TestOAuthProvider("http://127.0.0.1/callback");
+  provider.authorization = { serverUrl: "https://mcp.example/original", discovery: { authorizationServerUrl: "https://idp.example", authorizationServerMetadata: authorizationMetadata("https://idp.example") }, clientInformation: { client_id: "client" }, redirectUrl: provider.redirectUrl, codeVerifier: "verifier", state: "state" };
+  let fetched = false;
+  await assert.rejects(authorizeMcp(provider, { serverUrl: "https://mcp.example/another", authorizationCode: "code", state: "state", fetch: async () => { fetched = true; return jsonResponse({ access_token: "token", token_type: "Bearer" }); } }), /another MCP server URL/);
+  assert.equal(fetched, false);
 });

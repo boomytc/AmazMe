@@ -586,7 +586,7 @@ test("aborting one modern HTTP call does not cancel the others or send notificat
   await client.close();
 });
 
-test("a JSON array body delivers each message", { timeout: 5_000 }, async () => {
+test("modern HTTP rejects a JSON array response body", { timeout: 5_000 }, async () => {
   const { url } = await listen(async (request, response, recorded) => {
     const message = await recordPost(request, recorded);
     if (message?.method === "server/discover") {
@@ -598,7 +598,7 @@ test("a JSON array body delivers each message", { timeout: 5_000 }, async () => 
   });
   const client = new McpClient({ name: "http-test", version: "1.0.0" });
   await client.connect(new StreamableHttpTransport({ url, openGetStream: false }));
-  assert.deepEqual(await client.listTools(), [{ name: "echo", inputSchema: { type: "object" } }]);
+  await assert.rejects(client.listTools(), /single JSON-RPC response/);
   await client.close();
 });
 
@@ -690,6 +690,28 @@ test("403 without insufficient_scope does not refresh", { timeout: 5_000 }, asyn
   assert.equal(refreshes, 0);
 });
 
+for (const [label, challenge, expectedRefreshes] of [
+  ["a non-Bearer insufficient_scope challenge", 'Basic error="insufficient_scope"', 0],
+  ["a quoted description containing a fake error parameter", 'Bearer error="invalid_token", error_description="example error=insufficient_scope"', 0],
+  ["a genuine Bearer error after a quoted comma", 'Basic realm="fake, error=insufficient_scope", Bearer realm="service, region", error="insufficient_scope", scope="read write"', 1],
+] as const) {
+  test(`HTTP 403 distinguishes ${label}`, async () => {
+    let refreshes = 0;
+    const transport = new StreamableHttpTransport({
+      url: "https://example.test/mcp",
+      fetch: async () => new Response("denied", { status: 403, headers: { "www-authenticate": challenge } }),
+      authProvider: {
+        token: async () => "token",
+        onUnauthorized: async () => { refreshes += 1; },
+      },
+    });
+    await transport.start();
+    await assert.rejects(transport.send({ jsonrpc: "2.0", id: 1, method: "tools/call" }), McpHttpError);
+    assert.equal(refreshes, expectedRefreshes);
+    await transport.close();
+  });
+}
+
 test("concurrent 401s share one refresh", { timeout: 5_000 }, async () => {
   let refreshes = 0;
   let active = 0;
@@ -728,6 +750,139 @@ test("concurrent 401s share one refresh", { timeout: 5_000 }, async () => {
   assert.deepEqual(second, { content: [{ type: "text", text: "ok" }] });
   assert.equal(refreshes, 1);
   assert.equal(maxActive, 1);
+  await client.close();
+});
+
+for (const missingToken of [undefined, ""]) {
+  test(`HTTP 401 refreshes a token that expired to ${missingToken === undefined ? "undefined" : "an empty value"}`, async () => {
+    let firstRead = true;
+    let refreshed = false;
+    let refreshes = 0;
+    const authorizations: Array<string | null> = [];
+    const client = new McpClient({ name: "test", version: "1" });
+    await client.connect(new StreamableHttpTransport({
+      url: "https://example.test/mcp",
+      fetch: async (_url, init) => {
+        const authorization = new Headers(init?.headers).get("authorization");
+        authorizations.push(authorization);
+        if (authorization !== "Bearer fresh") return new Response(null, { status: 401 });
+        const request = JSON.parse(String(init?.body)) as { id: number };
+        return new Response(JSON.stringify(discoverBody(request.id)), { headers: { "content-type": "application/json" } });
+      },
+      authProvider: {
+        token: async () => {
+          if (firstRead) { firstRead = false; return "old"; }
+          return refreshed ? "fresh" : missingToken;
+        },
+        onUnauthorized: async () => { refreshes += 1; refreshed = true; },
+      },
+    }));
+    assert.equal(refreshes, 1);
+    assert.deepEqual(authorizations, ["Bearer old", "Bearer fresh"]);
+    await client.close();
+  });
+}
+
+for (const firstStatus of [401, 403]) {
+  test(`HTTP keeps ${firstStatus === 401 ? "refresh and step-up" : "different scope step-ups"} in distinct serialized auth groups`, async () => {
+    const authorized = new Set<string>();
+    let release = (): void => undefined;
+    const firstGate = new Promise<void>((resolve) => { release = resolve; });
+    let started = (): void => undefined;
+    const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+    let secondChallenged = (): void => undefined;
+    const secondSeen = new Promise<void>((resolve) => { secondChallenged = resolve; });
+    let active = 0;
+    let maxActive = 0;
+    const challenges: Array<{ status: number; scope: string | undefined }> = [];
+    const client = new McpClient({ name: "test", version: "1" });
+    await client.connect(new StreamableHttpTransport({
+      url: "https://example.test/mcp",
+      fetch: async (_url, init) => {
+        const request = JSON.parse(String(init?.body)) as { id: number; method: string; params?: { name: string } };
+        if (request.method === "server/discover") return new Response(JSON.stringify(discoverBody(request.id)), { headers: { "content-type": "application/json" } });
+        const name = request.params!.name;
+        if (authorized.has(name)) return new Response(JSON.stringify(toolResult(request.id, name)), { headers: { "content-type": "application/json" } });
+        if (name === "second") secondChallenged();
+        const status = name === "first" ? firstStatus : 403;
+        return new Response(null, { status, headers: {
+          "www-authenticate": status === 401 ? 'Bearer error="invalid_token"' : `Bearer error="insufficient_scope", scope="${name === "first" ? "read" : "write"}"`,
+          "x-call": name,
+        } });
+      },
+      authProvider: {
+        token: async () => "base",
+        onUnauthorized: async ({ response }) => {
+          const name = response.headers.get("x-call")!;
+          challenges.push({ status: response.status, scope: /scope="(read|write)"/.exec(response.headers.get("www-authenticate") ?? "")?.[1] });
+          maxActive = Math.max(maxActive, ++active);
+          if (name === "first") { started(); await firstGate; }
+          authorized.add(name);
+          active -= 1;
+        },
+      },
+    }));
+    const first = client.callTool("first");
+    await firstStarted;
+    const second = client.callTool("second");
+    await secondSeen;
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    const results = await Promise.all([first, second]);
+    assert.deepEqual(results, [
+      { content: [{ type: "text", text: "first" }] },
+      { content: [{ type: "text", text: "second" }] },
+    ]);
+    assert.deepEqual(challenges, [
+      { status: firstStatus, scope: firstStatus === 401 ? undefined : "read" },
+      { status: 403, scope: "write" },
+    ]);
+    assert.equal(maxActive, 1);
+    await client.close();
+  });
+}
+
+test("a rejected auth group does not suppress a different pending challenge", async () => {
+  let release = (): void => undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let started = (): void => undefined;
+  const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+  let secondChallenged = (): void => undefined;
+  const secondSeen = new Promise<void>((resolve) => { secondChallenged = resolve; });
+  let writeGranted = false;
+  const scopes: string[] = [];
+  const client = new McpClient({ name: "test", version: "1" });
+  await client.connect(new StreamableHttpTransport({
+    url: "https://example.test/mcp",
+    fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body)) as { id: number; method: string; params?: { name: string } };
+      if (request.method === "server/discover") return new Response(JSON.stringify(discoverBody(request.id)), { headers: { "content-type": "application/json" } });
+      const name = request.params!.name;
+      if (name === "write" && writeGranted) return new Response(JSON.stringify(toolResult(request.id)), { headers: { "content-type": "application/json" } });
+      if (name === "write") secondChallenged();
+      return new Response(null, { status: 403, headers: { "www-authenticate": `Bearer error="insufficient_scope", scope="${name}"` } });
+    },
+    authProvider: {
+      token: async () => "base",
+      onUnauthorized: async ({ response }) => {
+        const scope = /scope="(read|write)"/.exec(response.headers.get("www-authenticate") ?? "")![1]!;
+        scopes.push(scope);
+        if (scope === "read") { started(); await gate; throw new Error("redirect required for read"); }
+        writeGranted = true;
+      },
+    },
+  }));
+  const first = client.callTool("read").then(() => undefined, (error: unknown) => error);
+  await firstStarted;
+  const second = client.callTool("write");
+  await secondSeen;
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  const rejected = await first;
+  assert.ok(rejected instanceof Error);
+  assert.match(rejected.message, /redirect required for read/);
+  assert.deepEqual(await second, { content: [{ type: "text", text: "ok" }] });
+  assert.deepEqual(scopes, ["read", "write"]);
   await client.close();
 });
 
@@ -804,3 +959,273 @@ test("an established legacy session returns session expired on HTTP 404", { time
   });
   await client.close();
 });
+
+test("cancelling a resumed response stream closes its GET", { timeout: 5_000 }, async () => {
+  let resumed = false;
+  let resumeClosed = false;
+  const { url } = await listen(async (request, response, recorded) => {
+    if (request.method === "GET") {
+      resumed = true;
+      response.on("close", () => { resumeClosed = true; });
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(": waiting\n\n");
+      return;
+    }
+    const message = await recordPost(request, recorded);
+    if (message?.method === "initialize") {
+      json(response, initializeBody(message.id));
+    } else if (message?.method === "tools/call") {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end("id: resume-here\ndata: \n\n");
+    } else response.writeHead(202).end();
+  });
+  const client = new McpClient({ name: "test", version: "1", protocolVersion: "2025-11-25" });
+  await client.connect(new StreamableHttpTransport({ url, openGetStream: false, reconnect: { initialDelayMs: 1 } }));
+  const controller = new AbortController();
+  const call = client.callTool("wait", {}, { signal: controller.signal });
+  for (let n = 0; n < 100 && !resumed; n++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(resumed, true);
+  controller.abort();
+  await assert.rejects(call, McpAbortError);
+  for (let n = 0; n < 100 && !resumeClosed; n++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(resumeClosed, true);
+  await client.close();
+});
+
+test("JSON response ids are scoped to the originating POST", { timeout: 5_000 }, async () => {
+  let heldResponse: ServerResponse | undefined;
+  let heldId: unknown;
+  const { url } = await listen(async (request, response, recorded) => {
+    const message = await recordPost(request, recorded);
+    if (message?.method === "server/discover") {
+      json(response, discoverBody(message.id));
+    } else if ((message?.params as { name?: string })?.name === "held") {
+      heldResponse = response;
+      heldId = message?.id;
+    } else json(response, toolResult(heldId, "wrong-request"));
+  });
+  const client = new McpClient({ name: "test", version: "1", requestTimeoutMs: 200 });
+  await client.connect(new StreamableHttpTransport({ url }));
+  const held = client.callTool("held");
+  for (let n = 0; n < 100 && !heldResponse; n++) await new Promise((resolve) => setTimeout(resolve, 5));
+  await assert.rejects(client.callTool("wrong"), /response.*id|request.*id/i);
+  assert.ok(heldResponse);
+  json(heldResponse, toolResult(heldId, "own-response"));
+  assert.deepEqual(await held, { content: [{ type: "text", text: "own-response" }] });
+  await client.close();
+});
+
+test("oversized JSON bodies are rejected before dispatch", { timeout: 5_000 }, async () => {
+  const { url } = await listen(async (request, response, recorded) => {
+    const message = await recordPost(request, recorded);
+    json(response, message?.method === "server/discover" ? discoverBody(message.id) : toolResult(message?.id, "x".repeat(2_048)));
+  });
+  const client = new McpClient({ name: "test", version: "1" });
+  await client.connect(new StreamableHttpTransport({ url, maxMessageBytes: 1_024 }));
+  await assert.rejects(client.callTool("large"), /exceeds 1024 bytes/);
+  await client.close();
+});
+
+test("SSE final response releases a stream the server leaves open", { timeout: 5_000 }, async () => {
+  let responseClosed = false;
+  const { url } = await listen(async (request, response, recorded) => {
+    const message = await recordPost(request, recorded);
+    if (message?.method === "server/discover") json(response, discoverBody(message.id));
+    else {
+      response.on("close", () => { responseClosed = true; });
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(`data: ${JSON.stringify(toolResult(message?.id))}\n\n`);
+    }
+  });
+  const client = new McpClient({ name: "test", version: "1" });
+  await client.connect(new StreamableHttpTransport({ url }));
+  assert.deepEqual(await client.callTool("echo"), { content: [{ type: "text", text: "ok" }] });
+  for (let n = 0; n < 100 && !responseClosed; n++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(responseClosed, true);
+  await client.close();
+});
+
+test("closing the transport cancels an injected SSE reader even when fetch ignores abort", async () => {
+  let cancelled = false;
+  const transport = new StreamableHttpTransport({
+    url: "https://example.test/mcp",
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      cancel() { cancelled = true; },
+    }), { headers: { "content-type": "text/event-stream" } }),
+  });
+  transport.setEra("modern");
+  await transport.start();
+  await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/call" });
+  await transport.close();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(cancelled, true);
+});
+
+test("modern tool headers mirror nested primitive values and reject malformed tool schemas", { timeout: 5_000 }, async () => {
+  const { url, requests } = await listen(async (request, response, recorded) => {
+    const message = await recordPost(request, recorded);
+    if (message?.method === "server/discover") json(response, discoverBody(message.id));
+    else if (message?.method === "tools/list") json(response, { jsonrpc: "2.0", id: message.id, result: { tools: [
+      { name: "ok", inputSchema: { type: "object", properties: {
+        nested: { type: "object", properties: { region: { type: "string", "x-mcp-header": "Region" } } },
+        count: { type: "integer", "x-mcp-header": "Count" },
+        enabled: { type: "boolean", "x-mcp-header": "Enabled" },
+      } } },
+      { name: "bad", inputSchema: { type: "object", properties: { value: { type: "number", "x-mcp-header": "Value" } } } },
+    ] } });
+    else json(response, toolResult(message?.id));
+  });
+  const client = new McpClient({ name: "test", version: "1" });
+  const warnings: Error[] = [];
+  client.onError((error) => warnings.push(error));
+  await client.connect(new StreamableHttpTransport({ url }));
+  assert.deepEqual((await client.listTools()).map((tool) => tool.name), ["ok"]);
+  assert.equal(warnings.length, 1);
+  await client.callTool("ok", { nested: { region: "Hello, 世界" }, count: -7, enabled: false });
+  await client.callTool("ok", { nested: { region: null }, enabled: null });
+  const posts = requests.filter((request) => request.message?.method === "tools/call");
+  assert.equal(header(posts[0]!.headers, "mcp-param-region"), "=?base64?SGVsbG8sIOS4lueVjA==?=");
+  assert.equal(header(posts[0]!.headers, "mcp-param-count"), "-7");
+  assert.equal(header(posts[0]!.headers, "mcp-param-enabled"), "false");
+  assert.equal(header(posts[1]!.headers, "mcp-param-region"), undefined);
+  await assert.rejects(client.callTool("ok", { count: Number.MAX_SAFE_INTEGER + 1 }), /expected integer/);
+  assert.equal(requests.filter((request) => request.message?.method === "tools/call").length, 2);
+  await client.close();
+});
+
+test("idless modern HTTP errors stay on the modern path", { timeout: 5_000 }, async () => {
+  const { url, requests } = await listen(async (request, response, recorded) => {
+    await recordPost(request, recorded);
+    json(response, { jsonrpc: "2.0", error: { code: -32020, message: "Header mismatch" } }, 400);
+  });
+  const client = new McpClient({ name: "test", version: "1" });
+  await assert.rejects(client.connect(new StreamableHttpTransport({ url })), (error: unknown) => error instanceof McpError && error.code === -32020);
+  assert.equal(requests.some((request) => request.message?.method === "initialize"), false);
+});
+
+test("cancelling one shared auth waiter preserves its sibling and the last waiter aborts refresh", { timeout: 5_000 }, async () => {
+  let token: string | undefined;
+  let refreshes = 0;
+  let refreshSignal: AbortSignal | undefined;
+  let release = (): void => undefined;
+  const { url } = await listen(async (request, response, recorded) => {
+    const message = await recordPost(request, recorded);
+    if (message?.method === "server/discover") json(response, discoverBody(message.id));
+    else if (header(request.headers, "authorization") !== "Bearer fresh") response.writeHead(401).end();
+    else json(response, toolResult(message?.id));
+  });
+  const client = new McpClient({ name: "test", version: "1" });
+  await client.connect(new StreamableHttpTransport({ url, authProvider: {
+    token: async () => token,
+    onUnauthorized: async ({ signal }) => {
+      refreshes += 1;
+      refreshSignal = signal;
+      await new Promise<void>((resolve) => { release = resolve; signal?.addEventListener("abort", () => resolve(), { once: true }); });
+      if (!signal?.aborted) token = "fresh";
+    },
+  } }));
+  const controller = new AbortController();
+  const cancelled = client.callTool("one", {}, { signal: controller.signal });
+  const sibling = client.callTool("two");
+  for (let n = 0; n < 100 && !refreshSignal; n++) await new Promise((resolve) => setTimeout(resolve, 5));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  controller.abort();
+  await assert.rejects(cancelled, McpAbortError);
+  assert.equal(refreshSignal?.aborted, false);
+  release();
+  assert.deepEqual(await sibling, { content: [{ type: "text", text: "ok" }] });
+  assert.equal(refreshes, 1);
+  token = undefined;
+  refreshSignal = undefined;
+  const lastController = new AbortController();
+  const last = client.callTool("last", {}, { signal: lastController.signal });
+  for (let n = 0; n < 100 && !refreshSignal; n++) await new Promise((resolve) => setTimeout(resolve, 5));
+  lastController.abort();
+  await assert.rejects(last, McpAbortError);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((refreshSignal as AbortSignal | undefined)?.aborted, true);
+  await client.close();
+});
+
+test("HTTP errors truncate and cancel their body instead of buffering the complete stream", async () => {
+  let cancelled = false;
+  const transport = new StreamableHttpTransport({ url: "https://example.test/mcp", fetch: async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode("x".repeat(9_000))); },
+    cancel() { cancelled = true; },
+  }), { status: 500 }) });
+  transport.setEra("modern");
+  await transport.start();
+  await assert.rejects(transport.send({ jsonrpc: "2.0", id: 1, method: "tools/call" }), (error: unknown) => {
+    assert.ok(error instanceof McpHttpError);
+    assert.equal(error.body.length, 8_192);
+    return true;
+  });
+  assert.equal(cancelled, true);
+  await transport.close();
+});
+
+test("SSE accepts CR-only separators and CRLF split between chunks", async () => {
+  const client = new McpClient({ name: "test", version: "1", requestTimeoutMs: 100 });
+  await client.connect(new StreamableHttpTransport({ url: "https://example.test/mcp", fetch: async (_url, init) => {
+    const message = JSON.parse(String(init?.body)) as { method: string; id: number };
+    if (message.method === "server/discover") return new Response(JSON.stringify(discoverBody(message.id)), { headers: { "content-type": "application/json" } });
+    return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+      for (const chunk of [": keepalive\r", `\ndata: ${JSON.stringify(toolResult(message.id))}\r`, "\r"]) controller.enqueue(new TextEncoder().encode(chunk));
+    } }), { headers: { "content-type": "text/event-stream" } });
+  } }));
+  assert.deepEqual(await client.callTool("echo"), { content: [{ type: "text", text: "ok" }] });
+  await client.close();
+});
+
+test("SSE discards an unterminated final event", async () => {
+  const client = new McpClient({ name: "test", version: "1" });
+  await client.connect(new StreamableHttpTransport({ url: "https://example.test/mcp", fetch: async (_url, init) => {
+    const message = JSON.parse(String(init?.body)) as { method: string; id: number };
+    if (message.method === "server/discover") return new Response(JSON.stringify(discoverBody(message.id)), { headers: { "content-type": "application/json" } });
+    return new Response(`data: ${JSON.stringify(toolResult(message.id))}\n`, { headers: { "content-type": "text/event-stream" } });
+  } }));
+  await assert.rejects(client.callTool("echo"), /stream ended without a response/);
+  await client.close();
+});
+
+for (const modern of [true, false]) {
+  test(`${modern ? "modern" : "legacy"} HTTP handles progress notification ownership across two response streams`, async () => {
+    const streams = new Map<string, { id: number; controller: ReadableStreamDefaultController<Uint8Array> }>();
+    const encoder = new TextEncoder();
+    const client = new McpClient({ name: "test", version: "1", ...(modern ? {} : { protocolVersion: "2025-11-25" }) });
+    await client.connect(new StreamableHttpTransport({ url: "https://example.test/mcp", openGetStream: false, fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body)) as { id: number; method: string; params?: { name?: string } };
+      if (request.method === "server/discover") return new Response(JSON.stringify(discoverBody(request.id)), { headers: { "content-type": "application/json" } });
+      if (request.method === "initialize") return new Response(JSON.stringify(initializeBody(request.id)), { headers: { "content-type": "application/json" } });
+      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+        streams.set(request.params!.name!, { id: request.id, controller });
+      } }), { headers: { "content-type": "text/event-stream" } });
+    } }));
+    const updatesA: string[] = [];
+    const updatesB: string[] = [];
+    const outcomeA = client.callTool("a", {}, { onProgress: (update) => updatesA.push(update.message ?? "") }).then(
+      (result) => ({ result, error: undefined }),
+      (error: unknown) => ({ result: undefined, error }),
+    );
+    const outcomeB = client.callTool("b", {}, { onProgress: (update) => updatesB.push(update.message ?? "") });
+    await new Promise((resolve) => setImmediate(resolve));
+    const a = streams.get("a");
+    const b = streams.get("b");
+    assert.ok(a && b);
+    const frame = (message: unknown) => encoder.encode(`data: ${JSON.stringify(message)}\n\n`);
+    a.controller.enqueue(frame({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: b.id, progress: 42, message: "wrong-stream" } }));
+    a.controller.enqueue(frame(toolResult(a.id, "a")));
+    b.controller.enqueue(frame({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: b.id, progress: 43, message: "own-stream" } }));
+    b.controller.enqueue(frame(toolResult(b.id, "b")));
+    const resolvedA = await outcomeA;
+    if (modern) {
+      assert.ok(resolvedA.error instanceof McpError);
+      assert.match(resolvedA.error.message, /progress token.*originating request/i);
+    } else assert.deepEqual(resolvedA.result, { content: [{ type: "text", text: "a" }] });
+    assert.deepEqual(await outcomeB, { content: [{ type: "text", text: "b" }] });
+    assert.deepEqual(updatesA, []);
+    assert.deepEqual(updatesB, modern ? ["own-stream"] : ["wrong-stream", "own-stream"]);
+    await client.close();
+  });
+}

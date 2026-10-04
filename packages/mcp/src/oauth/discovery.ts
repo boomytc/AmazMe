@@ -5,12 +5,12 @@
  */
 
 import type { McpFetch } from "../auth-provider.ts";
+export { parseWwwAuthenticate } from "../auth-challenge.ts";
 import { LATEST_PROTOCOL_VERSION } from "../protocol/types.ts";
 import { OAuthIssuerMismatchError } from "./errors.ts";
-import { callFetch } from "./http.ts";
+import { abortable, callFetch, checkAbort } from "./http.ts";
 import {
   type AuthorizationServerMetadata,
-  type OAuthChallenge,
   type OAuthProtectedResourceMetadata,
   type OAuthServerInfo,
   parseAuthorizationServerMetadata,
@@ -31,42 +31,16 @@ function pathSuffix(pathname: string): string {
   return pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 }
 
-function field(header: string, name: string): string | undefined {
-  const match = header.match(new RegExp(String.raw`(?:^|[,\s])${name}=(?:"([^"]*)"|([^\s,]+))`, "i"));
-  // An empty value (`scope=""`) carries no information, so it counts as absent.
-  return match?.[1] || match?.[2] || undefined;
-}
-
-export function parseWwwAuthenticate(header: string | null): OAuthChallenge {
-  if (!header) return {};
-  const scheme = header.trimStart().split(/\s+/, 1)[0]?.toLowerCase();
-  if (scheme !== "bearer" && scheme !== "dpop") return {};
-  const resourceMetadata = field(header, "resource_metadata");
-  let resourceMetadataUrl: URL | undefined;
-  if (resourceMetadata) {
-    try {
-      resourceMetadataUrl = new URL(resourceMetadata);
-    } catch {
-      resourceMetadataUrl = undefined;
-    }
-  }
-  return {
-    resourceMetadataUrl,
-    scope: field(header, "scope"),
-    error: field(header, "error"),
-    errorDescription: field(header, "error_description"),
-  };
-}
-
-async function fetchMetadata(url: URL, fetchImpl: McpFetch, protocolVersion: string): Promise<Response> {
+async function fetchMetadata(url: URL, fetchImpl: McpFetch, protocolVersion: string, signal?: AbortSignal): Promise<Response> {
   return callFetch(fetchImpl, url, {
     headers: { Accept: "application/json", "MCP-Protocol-Version": protocolVersion },
+    signal,
   });
 }
 
 export async function discoverProtectedResourceMetadata(
   serverUrl: string | URL,
-  options: { resourceMetadataUrl?: string | URL; protocolVersion?: string; fetch?: McpFetch } = {},
+  options: { resourceMetadataUrl?: string | URL; protocolVersion?: string; fetch?: McpFetch; signal?: AbortSignal } = {},
 ): Promise<OAuthProtectedResourceMetadata> {
   const server = new URL(serverUrl);
   const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -77,16 +51,17 @@ export async function discoverProtectedResourceMetadata(
       : new URL(`/.well-known/oauth-protected-resource${pathSuffix(server.pathname)}`, server.origin),
     fetchImpl,
     version,
+    options.signal,
   );
   if (!options.resourceMetadataUrl && server.pathname !== "/" && isDiscoveryMiss(response.status)) {
     discard(response);
-    response = await fetchMetadata(new URL("/.well-known/oauth-protected-resource", server.origin), fetchImpl, version);
+    response = await fetchMetadata(new URL("/.well-known/oauth-protected-resource", server.origin), fetchImpl, version, options.signal);
   }
   if (!response.ok) {
     discard(response);
     throw new Error(`HTTP ${response.status} loading OAuth protected resource metadata`);
   }
-  return parseProtectedResourceMetadata(await response.json());
+  return parseProtectedResourceMetadata(await abortable(response.json(), options.signal));
 }
 
 export function buildAuthorizationServerDiscoveryUrls(
@@ -102,25 +77,24 @@ export function buildAuthorizationServerDiscoveryUrls(
   return urls;
 }
 
-/** Compare issuer strings after removing one trailing slash added by URL parsing. */
+/** Issuer identifiers use exact comparison (RFC 8414 section 3.3). */
 export function sameIssuer(left: string, right: string): boolean {
-  const trim = (value: string) => (value.endsWith("/") ? value.slice(0, -1) : value);
-  return trim(left) === trim(right);
+  return left === right;
 }
 
 export async function discoverAuthorizationServerMetadata(
   authorizationServerUrl: string | URL,
-  options: { fetch?: McpFetch; protocolVersion?: string; skipIssuerValidation?: boolean } = {},
+  options: { fetch?: McpFetch; protocolVersion?: string; skipIssuerValidation?: boolean; signal?: AbortSignal } = {},
 ): Promise<AuthorizationServerMetadata | undefined> {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   for (const { url } of buildAuthorizationServerDiscoveryUrls(authorizationServerUrl)) {
-    const response = await fetchMetadata(url, fetchImpl, options.protocolVersion ?? LATEST_PROTOCOL_VERSION);
+    const response = await fetchMetadata(url, fetchImpl, options.protocolVersion ?? LATEST_PROTOCOL_VERSION, options.signal);
     if (!response.ok) {
       discard(response);
       if (isDiscoveryMiss(response.status)) continue;
       throw new Error(`HTTP ${response.status} loading authorization server metadata from ${url}`);
     }
-    const metadata = parseAuthorizationServerMetadata(await response.json());
+    const metadata = parseAuthorizationServerMetadata(await abortable(response.json(), options.signal));
     if (!options.skipIssuerValidation) {
       const expected = String(authorizationServerUrl);
       if (!sameIssuer(metadata.issuer, expected)) throw new OAuthIssuerMismatchError(expected, metadata.issuer);
@@ -138,6 +112,7 @@ export async function discoverOAuthServerInfo(
     authorizationServerMetadataUrl?: URL;
     fetch?: McpFetch;
     skipIssuerValidation?: boolean;
+    signal?: AbortSignal;
   } = {},
 ): Promise<OAuthServerInfo> {
   let resourceMetadata: OAuthProtectedResourceMetadata | undefined;
@@ -145,26 +120,29 @@ export async function discoverOAuthServerInfo(
     resourceMetadata = await discoverProtectedResourceMetadata(serverUrl, {
       resourceMetadataUrl: options.resourceMetadataUrl,
       fetch: options.fetch,
+      signal: options.signal,
     });
   } catch (error) {
+    checkAbort(options.signal);
     if (error instanceof TypeError) throw error;
   }
   if (options.authorizationServerMetadataUrl) {
     const url = options.authorizationServerMetadataUrl;
-    const response = await fetchMetadata(url, options.fetch ?? globalThis.fetch, LATEST_PROTOCOL_VERSION);
+    const response = await fetchMetadata(url, options.fetch ?? globalThis.fetch, LATEST_PROTOCOL_VERSION, options.signal);
     if (!response.ok) {
       discard(response);
       throw new Error(`HTTP ${response.status} loading authorization server metadata from ${url}`);
     }
-    const metadata = parseAuthorizationServerMetadata(await response.json());
+    const metadata = parseAuthorizationServerMetadata(await abortable(response.json(), options.signal));
     return { authorizationServerUrl: metadata.issuer, authorizationServerMetadata: metadata, resourceMetadata };
   }
-  const authorizationServerUrl = resourceMetadata?.authorization_servers?.[0] ?? String(new URL("/", serverUrl));
+  const authorizationServerUrl = resourceMetadata?.authorization_servers?.[0] ?? new URL(serverUrl).origin;
   return {
     authorizationServerUrl,
     authorizationServerMetadata: await discoverAuthorizationServerMetadata(authorizationServerUrl, {
       fetch: options.fetch,
       skipIssuerValidation: options.skipIssuerValidation,
+      signal: options.signal,
     }),
     resourceMetadata,
   };
@@ -177,7 +155,7 @@ export function resourceUrlFromServerUrl(value: string | URL): URL {
 }
 
 export function selectResource(serverUrl: string | URL, metadata?: OAuthProtectedResourceMetadata): string | undefined {
-  if (!metadata) return undefined;
+  if (!metadata) return resourceUrlFromServerUrl(serverUrl).href;
   const requested = resourceUrlFromServerUrl(serverUrl);
   const configured = new URL(metadata.resource);
   if (requested.origin !== configured.origin) {

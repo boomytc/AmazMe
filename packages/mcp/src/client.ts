@@ -1,4 +1,4 @@
-import type { CallToolResult } from "./protocol/content.ts";
+import { type CallToolResult, isContentBlock, isResourceContents } from "./protocol/content.ts";
 import {
   isJsonRpcId,
   isJsonRpcNotification,
@@ -21,6 +21,7 @@ import {
   toError,
 } from "./protocol/jsonrpc.ts";
 import { McpHttpError } from "./transports/http-errors.ts";
+import { extractToolHeaderMappings } from "./protocol/tool-headers.ts";
 import {
   type ClientCapabilities,
   type DiscoverResult,
@@ -183,11 +184,7 @@ function toResourceTemplate(item: Record<string, unknown>): ResourceTemplate {
 function validateReadResourceResult(value: unknown): ReadResourceResult {
   if (!isObject(value) || !Array.isArray(value.contents)) throw invalid("Invalid MCP resources/read result");
   for (const contents of value.contents) {
-    if (
-      !isObject(contents) ||
-      typeof contents.uri !== "string" ||
-      (typeof contents.text !== "string" && typeof contents.blob !== "string")
-    ) {
+    if (!isResourceContents(contents)) {
       throw invalid("Invalid contents in MCP resources/read result");
     }
   }
@@ -195,7 +192,12 @@ function validateReadResourceResult(value: unknown): ReadResourceResult {
 }
 
 function validateCallToolResult(value: unknown): CallToolResult {
-  if (!isObject(value) || (value.content !== undefined && !Array.isArray(value.content))) {
+  if (
+    !isObject(value) ||
+    (value.content !== undefined && (!Array.isArray(value.content) || !value.content.every(isContentBlock))) ||
+    (value.isError !== undefined && typeof value.isError !== "boolean") ||
+    (value._meta !== undefined && !isObject(value._meta))
+  ) {
     throw invalid("Invalid MCP tools/call result");
   }
   if (value.structuredContent !== undefined && !isJsonValue(value.structuredContent)) {
@@ -221,12 +223,14 @@ export class McpClient {
   private protocolVersionValue: string | undefined;
   private pending = new Map<JsonRpcId, PendingRequest>();
   private progressRequests = new Map<JsonRpcId, JsonRpcId>();
+  private rejectedToolNames = new Set<string>();
   private incoming = new Map<JsonRpcId, AbortController>();
   private requestHandlers = new Map<string, RequestHandler>();
   private notificationListeners = new Map<string, Set<NotificationListener>>();
   private errorListeners = new Set<ErrorListener>();
   private closeListeners = new Set<CloseListener>();
   private disposers: Array<() => void> = [];
+  private closePromise: Promise<void> | undefined;
 
   constructor(options: McpClientOptions) {
     if (options.name.trim() === "" || options.version.trim() === "") {
@@ -278,6 +282,7 @@ export class McpClient {
     try {
       await transport.start();
       await this.negotiate();
+      this.requireTransport(true);
       this.state = "connected";
       return this.connection();
     } catch (error) {
@@ -326,7 +331,24 @@ export class McpClient {
   }
 
   async listTools(options: McpRequestOptions = {}): Promise<Tool[]> {
-    return (await this.listAll("tools/list", "tools", isTool, options)) as unknown as Tool[];
+    let tools = (await this.listAll("tools/list", "tools", isTool, options)) as unknown as Tool[];
+    const rejected = new Set<string>();
+    if (this.era === "modern" && this.transport?.probe === "http") {
+      tools = tools.filter((tool) => {
+        try {
+          extractToolHeaderMappings(tool.inputSchema);
+          return true;
+        } catch (error) {
+          rejected.add(tool.name);
+          this.emitError(new Error(`Rejected MCP tool ${tool.name}: ${toError(error).message}`));
+          return false;
+        }
+      });
+      tools = tools.filter((tool) => !rejected.has(tool.name));
+    }
+    this.transport?.setToolSchemas?.(tools);
+    this.rejectedToolNames = rejected;
+    return tools;
   }
 
   async listResources(options: McpRequestOptions = {}): Promise<Resource[]> {
@@ -349,12 +371,15 @@ export class McpClient {
     );
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     const transport = this.transport;
     this.transport = undefined;
+    // Publish the promise before invoking observers, which may call close again.
+    this.closePromise = Promise.resolve().then(() => transport?.close());
     this.disposeTransportListeners();
     this.markClosed(new McpConnectionClosedError());
-    await transport?.close();
+    return this.closePromise;
   }
 
   private connection(): McpConnection {
@@ -495,6 +520,9 @@ export class McpClient {
     allowConnecting: boolean,
   ): Promise<unknown> {
     const transport = this.requireTransport(allowConnecting);
+    if (method === "tools/call" && typeof params?.name === "string" && this.rejectedToolNames.has(params.name)) {
+      throw new McpError(JSON_RPC_ERROR_CODES.invalidParams, `MCP tool ${params.name} was rejected because its x-mcp-header schema is invalid`);
+    }
     if (options.signal?.aborted) throw new McpAbortError();
     const id = this.nextRequestId++;
     const progressToken = options.onProgress ? id : undefined;
@@ -557,11 +585,16 @@ export class McpClient {
   }
 
   private handleMessage(message: JsonRpcMessage): void {
+    if (this.state === "closed") return;
     if (isJsonRpcResponse(message)) {
       this.handleResponse(message);
       return;
     }
     if (isJsonRpcRequest(message)) {
+      if (this.era === "modern") {
+        this.emitError(invalid("Modern MCP servers cannot send requests"));
+        return;
+      }
       void this.handleRequest(message);
       return;
     }
@@ -575,6 +608,9 @@ export class McpClient {
   private handleResponse(message: JsonRpcResponse): void {
     const entry = this.pending.get(message.id);
     if (!entry) {
+      // Locally issued IDs are monotonic integers. A response to settled or cancelled
+      // work is stale, and can arrive normally when cancellation races the server.
+      if (typeof message.id === "number" && Number.isInteger(message.id) && message.id >= 1 && message.id < this.nextRequestId) return;
       this.emitError(new Error(`Received response for unknown MCP request ${String(message.id)}`));
       return;
     }
@@ -593,6 +629,10 @@ export class McpClient {
   private async handleRequest(message: JsonRpcRequest): Promise<void> {
     const transport = this.transport;
     if (!transport) return;
+    if (this.incoming.has(message.id)) {
+      this.emitError(invalid(`Received duplicate active MCP request id ${String(message.id)}`));
+      return;
+    }
     const handler = this.requestHandlers.get(message.method);
     if (!handler) {
       await transport
@@ -608,8 +648,10 @@ export class McpClient {
     this.incoming.set(message.id, controller);
     try {
       const result = await handler(message.params, { signal: controller.signal });
+      if (controller.signal.aborted || this.state === "closed") return;
       await transport.send({ jsonrpc: "2.0", id: message.id, result: result ?? {} });
     } catch (error) {
+      if (controller.signal.aborted || this.state === "closed") return;
       const responseError = error instanceof McpError
         ? { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
         : { code: JSON_RPC_ERROR_CODES.internalError, message: toError(error).message };
@@ -632,11 +674,17 @@ export class McpClient {
   }
 
   private handleProgress(params: unknown): void {
-    if (!isObject(params) || !isJsonRpcId(params.progressToken) || typeof params.progress !== "number") return;
+    if (
+      !isObject(params) || !isJsonRpcId(params.progressToken) ||
+      typeof params.progress !== "number" || !Number.isFinite(params.progress) ||
+      (params.total !== undefined && (typeof params.total !== "number" || !Number.isFinite(params.total))) ||
+      (params.message !== undefined && typeof params.message !== "string")
+    ) return;
     const requestId = this.progressRequests.get(params.progressToken);
     const entry = requestId === undefined ? undefined : this.pending.get(requestId);
     if (requestId === undefined || !entry) return;
     this.armTimeout(requestId, entry);
+    if (!this.pending.has(requestId)) return;
     try {
       entry.onProgress?.(params as unknown as ProgressNotification);
     } catch (error) {
@@ -698,6 +746,7 @@ export class McpClient {
   }
 
   private handleTransportClose(): void {
+    this.disposeTransportListeners();
     this.markClosed(new McpConnectionClosedError());
   }
 
@@ -719,7 +768,13 @@ export class McpClient {
 
   private emitError(error: unknown): void {
     const normalized = toError(error);
-    for (const listener of this.errorListeners) listener(normalized);
+    for (const listener of this.errorListeners) {
+      try {
+        listener(normalized);
+      } catch {
+        // Error observers cannot interrupt protocol handling or resource cleanup.
+      }
+    }
   }
 
   private disposeTransportListeners(): void {

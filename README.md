@@ -4,18 +4,20 @@
 
 ```text
 @amazme/telemetry      被动诊断契约、空实现、进程内记录
-@amazme/mcp            独立的 MCP 客户端，不依赖上面其余各层
+@amazme/mcp            独立的 MCP 客户端，不依赖其余各包
 @amazme/ai             Provider、认证、统一消息、流事件
 @amazme/agent          内存里的 turn 循环
 @amazme/durable        可崩溃恢复的 AgentHarness、存储契约与适配器
 @amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI、MCP 工具适配
 ```
 
-`@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 和 `x-mcp-header` 没有实现。OAuth 发现、PKCE、刷新和 step-up 在这个包里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。`@amazme/coding-agent` 把已经连上的客户端适配成 Agent 工具：名字是 `mcp_<serverId>__<toolName>`，冲突或超长就报错，不截断；取消、进度、文本和图片结果交给工具执行。协议包本身不依赖 Agent。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。
+`@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 没有实现。现代 HTTP 按 `tools/list` 中合法的 `x-mcp-header` 标注生成 `Mcp-Param-*`，非法标注工具被过滤，错误参数在发送前失败。OAuth 发现、PKCE、刷新和 step-up 在独立的 `@amazme/mcp/oauth` 入口里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。`@amazme/coding-agent` 把已经连上的客户端适配成 Agent 工具：名字是 `mcp_<serverId>__<toolName>`，冲突或超长就报错，不截断；取消、进度、文本和图片结果交给工具执行。协议包本身不依赖 Agent。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。
 
 今天的 `amazme` 命令走内存循环加会话树。有一次性 prompt 时跑完这一次并退出；没有 prompt 且标准输出是终端时，同一条循环画成全屏。`AgentHarness` 是另一条运行时：`accept` 只落盘，`drive` 才推进；进程挂了以后，下一次 `drive` 从完整的操作状态接着做。
 
 ## 模型边界
+
+工具参数使用 JSON Schema 2020-12，可声明 enum、数值和字符串限制、组合条件、数组约束、对象依赖和本地引用，并保留 `x-*` 注解。校验不强制转换值、不填默认值。结构不合法、未知关键字、未知 format、未知 dialect 和悬空引用都会失败；外部引用不解析。Google 的工具定义使用 `parametersJsonSchema` 字段。
 
 `Models` 是模型查找和调用的能力接口，具体集合由 `createModels()` 返回，并用 `setProvider` 装配。认证顺序是请求里的 key、已存储的凭证、环境变量，最后是 provider 声明的 ambient。存过凭证之后，后面的来源不再作为退路。凭证存储和环境变量留在实现内部，不要求每个消费者自己持有。
 
@@ -47,7 +49,7 @@ Azure Responses 的默认地址是资源下的 `/openai/v1/responses`，deployme
 
 `gpt-4o-mini` 保留已核对的 128,000 上下文、16,384 输出上限和费率，`input` 只有文本。其他型号必须在 `models` 或 provider 上显式给出 `contextWindow` 和 `maxTokens`，不会继承这份窗口或输出上限，也不猜测价格。未声明 `input` 时只有文本，不会默认打开 vision。通用 `completionsProvider` 未配置 `cost` 时费率为 0。
 
-用户字符串仍按文本发送。`UserContent` 数组保持原顺序：文本块是 `{ type: "text" }`，图片块是 `{ type: "image_url", image_url: { url: "data:<mimeType>;base64,<data>" } }`。模型声明了 `image` 时不再把图片换成 `[image]`。未声明图片能力的原始图片请求在降级成占位文本之前失败，不调用 fetch。调用方若已经把内容投影成纯文本，则按文本发送。能力错误和图片格式错误是两种不可重试的结果；格式检查要求 `image/*` MIME、非空 base64 数据及合法长度和 padding，错误文本不包含图片数据或提示词。这里不读文件、不解码、不上传、不抓远程图片，也没有图片生成、音频或视频。工具结果可以带图片，序列化时使用和用户图片相同的图片块。未声明图片能力的模型会把工具图片换成占位文本，仍发送请求；格式不合法的工具图片在声明了图片能力时于 fetch 前失败，错误文本不包含图片数据。`transformMessages` 仍会为文本模型准备占位文本；那是显式投影，不是原始图片请求。图片仍按固定 1,200 token 计入预算。摘要里只保留附件标记，工具结果中的图片也是如此。
+用户字符串仍按文本发送。`UserContent` 数组保持原顺序：文本块是 `{ type: "text" }`，图片块是 `{ type: "image_url", image_url: { url: "data:<mimeType>;base64,<data>" } }`。模型声明了 `image` 时不再把图片换成 `[image]`。未声明图片能力的原始图片请求在降级成占位文本之前失败，不调用 fetch。调用方若已经把内容投影成纯文本，则按文本发送。能力错误和图片格式错误是两种不可重试的结果；格式检查要求 `image/*` MIME、非空 base64 数据及合法长度和 padding，错误文本不包含图片数据或提示词。这里不读文件、不解码、不上传、不抓远程图片，也没有图片生成、音频或视频。工具结果可以带图片，按目标协议序列化。Chat Completions 的工具角色只发送文本，在同一批次全部工具结果之后追加携带图片的用户消息。Google 把并行函数结果合成一个回合；Gemini 3 及之后的型号使用嵌套图片结果，旧型号和未识别的别名把图片放在随后用户消息中。未声明图片能力的模型会把工具图片换成占位文本，仍发送请求；格式不合法的工具图片在声明了图片能力时于 fetch 前失败，错误文本不包含图片数据。`transformMessages` 仍会为文本模型准备占位文本；那是显式投影，不是原始图片请求。图片仍按固定 1,200 token 计入预算。摘要里只保留附件标记，工具结果中的图片也是如此。
 
 上下文超限先看错误 code/type（`context_length_exceeded`、`model_context_window_exceeded`），再匹配少量「最大上下文 / 最大输入」文案。不是所有 HTTP 400/413、所有 `length`，也不是 “too many tokens”。限流、配额、账单、认证和普通参数错误排除在外，超限也不会标成可原样重试。普通 `length` 仍是截断；输出为 0 且输入已占满窗口时，额外标上 `overflow`，交给 Durable 决定是否压缩。AI 只分类和限制这一次请求，不自动重发。
 

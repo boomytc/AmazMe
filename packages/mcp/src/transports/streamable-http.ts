@@ -1,5 +1,6 @@
 import { setTimeout as nodeSetTimeout } from "node:timers";
 import type { AuthProvider, McpFetch, UnauthorizedContext } from "../auth-provider.ts";
+import { authorizationChallengeKey, parseWwwAuthenticate } from "../auth-challenge.ts";
 import {
   isJsonRpcRequest,
   isJsonRpcResponse,
@@ -13,7 +14,8 @@ import {
   parseJsonRpcMessage,
   toError,
 } from "../protocol/jsonrpc.ts";
-import type { ProtocolEra } from "../protocol/types.ts";
+import type { ProtocolEra, Tool } from "../protocol/types.ts";
+import { extractToolHeaderMappings, type ToolHeaderMapping } from "../protocol/tool-headers.ts";
 import { McpAuthRequiredError, McpHttpError, McpSessionExpiredError } from "./http-errors.ts";
 import { DEFAULT_MAX_MESSAGE_BYTES, type McpTransport, TransportEvents } from "./transport.ts";
 
@@ -62,6 +64,14 @@ interface StreamCursor {
   received: boolean;
 }
 
+interface RefreshGroup {
+  key: string;
+  controller: AbortController;
+  promise: Promise<void>;
+  waiters: number;
+  settled: boolean;
+}
+
 function contentType(response: Response): string | undefined {
   return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
 }
@@ -70,7 +80,12 @@ function contentType(response: Response): string | undefined {
 function needsAuthorization(response: Response): boolean {
   if (response.status === 401) return true;
   if (response.status !== 403) return false;
-  return /(?:^|[\s,])error="?insufficient_scope"?/i.test(response.headers.get("www-authenticate") ?? "");
+  return parseWwwAuthenticate(response.headers.get("www-authenticate")).error === "insufficient_scope";
+}
+
+function authorizationKey(response: Response): string {
+  const challenge = parseWwwAuthenticate(response.headers.get("www-authenticate"));
+  return authorizationChallengeKey(response.status, challenge);
 }
 
 function isTransientStatus(status: number): boolean {
@@ -79,6 +94,50 @@ function isTransientStatus(status: number): boolean {
 
 function discard(response: Response): Promise<void> {
   return response.body?.cancel().catch(() => undefined) ?? Promise.resolve();
+}
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new DOMException("The request was aborted", "AbortError");
+}
+
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortError(signal));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+async function readBody(response: Response, limit: number, signal: AbortSignal, truncate = false): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  const onAbort = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    signal.throwIfAborted();
+    while (true) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      const remaining = limit - bytes;
+      if (value.byteLength > remaining) {
+        if (!truncate) throw new Error(`MCP HTTP message exceeds ${limit} bytes`);
+        chunks.push(value.subarray(0, remaining));
+        break;
+      }
+      chunks.push(value);
+      bytes += value.byteLength;
+      if (truncate && bytes === limit) break;
+    }
+    return new TextDecoder().decode(Buffer.concat(chunks));
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 function describeHttpFailure(status: number, body: string): string {
@@ -90,7 +149,6 @@ function describeHttpFailure(status: number, body: string): string {
 /**
  * Header values are visible ASCII, space, and tab. Anything else, leading or trailing
  * whitespace, or a value that already looks like the Base64 sentinel is encoded.
- * `Mcp-Param-*` / `x-mcp-header` is not applied: this transport does not see input schemas.
  */
 function encodeHeaderValue(value: string): string {
   const sentinel = value.startsWith("=?base64?") && value.endsWith("?=");
@@ -127,6 +185,8 @@ async function consumeSse(
   onEvent: (event: SseEvent) => void,
   onId: (id: string) => void,
   onRetry: (delayMs: number) => void,
+  signal: AbortSignal,
+  shouldStop: () => boolean,
 ): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -135,6 +195,9 @@ async function consumeSse(
   let eventId: string | undefined;
   let dataLines: string[] = [];
   let dataBytes = 0;
+  let skipLf = false;
+  const onAbort = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", onAbort, { once: true });
 
   const dispatch = () => {
     if (dataLines.length === 0) {
@@ -169,26 +232,42 @@ async function consumeSse(
     else if (field === "id" && !value.includes("\0")) {
       eventId = value;
       onId(value);
-    } else if (field === "retry" && /^\d+$/.test(value)) onRetry(Number(value));
+    } else if (field === "retry" && /^\d+$/.test(value) && Number.isFinite(Number(value))) onRetry(Number(value));
+  };
+
+  const processBufferedLines = () => {
+    while (buffered.length > 0) {
+      if (skipLf) {
+        if (buffered.startsWith("\n")) buffered = buffered.slice(1);
+        skipLf = false;
+      }
+      const newline = buffered.search(/[\r\n]/);
+      if (newline < 0) break;
+      const line = buffered.slice(0, newline);
+      skipLf = buffered[newline] === "\r";
+      buffered = buffered.slice(newline + 1);
+      processLine(line);
+      if (shouldStop()) return;
+    }
   };
 
   try {
+    signal.throwIfAborted();
     while (true) {
       const { done, value } = await reader.read();
+      signal.throwIfAborted();
       if (done) break;
       buffered += decoder.decode(value, { stream: true });
-      let newline = buffered.indexOf("\n");
-      while (newline >= 0) {
-        processLine(buffered.slice(0, newline));
-        buffered = buffered.slice(newline + 1);
-        newline = buffered.indexOf("\n");
-      }
+      processBufferedLines();
+      if (shouldStop()) return;
       if (Buffer.byteLength(buffered) > maxEventBytes) throw new Error(`MCP SSE event exceeds ${maxEventBytes} bytes`);
     }
     buffered += decoder.decode();
-    if (buffered) processLine(buffered);
-    dispatch();
+    processBufferedLines();
+    // SSE dispatch requires a blank line; EOF discards an incomplete event.
   } finally {
+    signal.removeEventListener("abort", onAbort);
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
@@ -206,7 +285,9 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
   private sessionIdValue: string | undefined;
   private protocolVersion: string | undefined;
   private getStreamStarted = false;
-  private refreshInFlight: Promise<void> | undefined;
+  private refreshInFlight: RefreshGroup | undefined;
+  private toolHeaders = new Map<string, ToolHeaderMapping[]>();
+  private closePromise: Promise<void> | undefined;
 
   constructor(options: StreamableHttpTransportOptions) {
     super();
@@ -237,6 +318,14 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
     if (era === "legacy") this.protocolVersion = undefined;
   }
 
+  setToolSchemas(tools: readonly Tool[]): void {
+    const mappings = new Map<string, ToolHeaderMapping[]>();
+    if (this.era === "modern") {
+      for (const tool of tools) mappings.set(tool.name, extractToolHeaderMappings(tool.inputSchema));
+    }
+    this.toolHeaders = mappings;
+  }
+
   abortRequest(id: JsonRpcId): void {
     this.requests.get(id)?.abort();
   }
@@ -258,24 +347,28 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
         },
         message,
       );
-      streaming = await this.handlePost(response, message);
+      streaming = await this.handlePost(response, message, signal);
     } finally {
       if (request && !streaming) this.requests.delete(request.id);
     }
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
     this.closeController.abort();
-    await this.deleteSession();
-    this.emitClose();
+    this.closePromise = this.deleteSession().finally(() => this.emitClose());
+    return this.closePromise;
   }
 
   /** Returns true when the response body is still streaming after this method returns. */
-  private async handlePost(response: Response, message: JsonRpcMessage): Promise<boolean> {
+  private async handlePost(response: Response, message: JsonRpcMessage, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) {
+      await discard(response);
+      signal.throwIfAborted();
+    }
     if (!response.ok) {
-      await this.failHttp(response);
+      await this.failHttp(response, signal, isJsonRpcRequest(message) ? message.id : undefined);
       return false;
     }
     this.captureSession(response);
@@ -286,17 +379,21 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
       return false;
     }
     if (response.status === 202 || response.status === 204) {
+      await discard(response);
       throw new McpHttpError(response.status, `MCP server accepted request ${request.method} without a response`);
     }
     const type = contentType(response);
     if (type === "application/json") {
-      const body: unknown = await response.json();
-      for (const item of Array.isArray(body) ? body : [body]) this.emitMessage(parseJsonRpcMessage(item));
+      const body: unknown = JSON.parse(await readBody(response, this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES, signal));
+      if (this.era === "modern" && Array.isArray(body)) throw new Error("MCP HTTP response must be a single JSON-RPC response");
+      const messages = (Array.isArray(body) ? body : [body]).map(parseJsonRpcMessage);
+      for (const parsed of messages) this.validateResponseMessage(parsed, request.id, true);
+      for (const parsed of messages) this.emitMessage(parsed);
       return false;
     }
     if (type === "text/event-stream" && response.body) {
       const body = response.body;
-      void this.consumeResponseStream(body, request.id).finally(() => this.requests.delete(request.id));
+      void this.consumeResponseStream(body, request).finally(() => this.requests.delete(request.id));
       return true;
     }
     await discard(response);
@@ -308,12 +405,17 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
    * HTTP 400 with any other body is the legacy `initialize` signal.
    * HTTP 404 or 405 without that error is deprecated HTTP+SSE, which this client does not speak.
    */
-  private async failHttp(response: Response): Promise<void> {
-    const body = (await response.text().catch(() => "")).slice(0, MAX_ERROR_BODY_BYTES);
+  private async failHttp(response: Response, signal = this.closeController.signal, requestId?: JsonRpcId): Promise<void> {
+    const body = await readBody(response, MAX_ERROR_BODY_BYTES, signal, true);
     if (needsAuthorization(response)) throw new McpAuthRequiredError(response, body);
     if (response.status === 404 && this.sessionIdValue) throw new McpSessionExpiredError(body);
-    const parsed = parseJsonBody(body);
+    const raw = parseJsonBody(body);
+    // HTTP failures may omit id when rejection occurs before the RPC body was accepted.
+    const parsed = requestId !== undefined && isObject(raw) && raw.jsonrpc === "2.0" && isObject(raw.error) && raw.id === undefined
+      ? { ...raw, id: requestId }
+      : raw;
     if (isRecognizedModernError(parsed)) {
+      if (requestId !== undefined) this.validateResponseMessage(parsed, requestId, true);
       this.emitMessage(parsed);
       return;
     }
@@ -326,6 +428,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
       );
     }
     if (isJsonRpcResponse(parsed) && "error" in parsed) {
+      if (requestId !== undefined) this.validateResponseMessage(parsed, requestId, true);
       this.emitMessage(parsed);
       return;
     }
@@ -338,48 +441,90 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
     message?: JsonRpcMessage,
   ): Promise<Response> {
     const onUnauthorized = this.options.authProvider?.onUnauthorized;
+    const signal = init.signal ?? this.closeController.signal;
     for (let attempt = 0; ; attempt++) {
-      const prepared = await this.headers(init.headers, message);
-      const response = await this.fetchImpl(this.url, {
+      const prepared = await this.headers(init.headers, message, signal);
+      signal.throwIfAborted();
+      const fetchPromise = this.fetchImpl(this.url, {
         method,
         headers: prepared.headers,
         body: init.body,
-        signal: init.signal ?? this.closeController.signal,
+        signal,
       });
+      void fetchPromise.then((response) => { if (signal.aborted) void discard(response); }, () => undefined);
+      const response = await abortable(fetchPromise, signal);
       if (attempt > 0 || !onUnauthorized || !needsAuthorization(response)) return response;
       const context: UnauthorizedContext = {
         response,
         serverUrl: this.url,
         fetch: this.fetchImpl,
+        signal,
         ...(prepared.token ? { token: prepared.token } : {}),
       };
       try {
-        await this.refreshOnce(context);
+        const currentToken = await abortable(this.options.authProvider!.token(this.url), signal);
+        if (response.status !== 401 || !currentToken || currentToken === prepared.token) await this.refreshOnce(context, signal);
       } finally {
         await discard(response);
       }
     }
   }
 
-  private refreshOnce(context: UnauthorizedContext): Promise<void> {
+  private async refreshOnce(context: UnauthorizedContext, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const key = authorizationKey(context.response);
+    while (this.refreshInFlight && this.refreshInFlight.key !== key) {
+      const previous = this.refreshInFlight;
+      try {
+        await abortable(previous.promise, AbortSignal.any([signal, previous.controller.signal]));
+      } catch {
+        // A different challenge needs its own attempt, even if the previous one requires a redirect.
+        signal.throwIfAborted();
+      }
+    }
     if (!this.refreshInFlight) {
       const provider = this.options.authProvider;
       const refresh = provider?.onUnauthorized;
       if (!provider || !refresh) return Promise.resolve();
-      this.refreshInFlight = Promise.resolve(refresh.call(provider, context)).finally(() => {
-        this.refreshInFlight = undefined;
+      const group: RefreshGroup = {
+        key,
+        controller: new AbortController(),
+        promise: Promise.resolve(),
+        waiters: 0,
+        settled: false,
+      };
+      this.refreshInFlight = group;
+      group.promise = Promise.resolve().then(() => refresh.call(provider, { ...context, signal: group.controller.signal })).finally(() => {
+        group.settled = true;
+        if (this.refreshInFlight === group) this.refreshInFlight = undefined;
       });
     }
-    return this.refreshInFlight;
+    const group = this.refreshInFlight;
+    group.waiters += 1;
+    try {
+      await abortable(group.promise, signal);
+    } finally {
+      group.waiters -= 1;
+      if (group.waiters === 0 && !group.settled) {
+        if (this.refreshInFlight === group) this.refreshInFlight = undefined;
+        group.controller.abort();
+      }
+    }
   }
 
-  private async headers(extra: Record<string, string> = {}, message?: JsonRpcMessage): Promise<{ headers: Headers; token?: string }> {
+  private async headers(
+    extra: Record<string, string> = {},
+    message?: JsonRpcMessage,
+    signal = this.closeController.signal,
+  ): Promise<{ headers: Headers; token?: string }> {
+    signal.throwIfAborted();
     const headers = new Headers(this.options.headers);
     for (const [name, value] of Object.entries(extra)) headers.set(name, value);
     if (this.era === "legacy" && this.sessionIdValue) headers.set("Mcp-Session-Id", this.sessionIdValue);
     if (this.protocolVersion) headers.set("MCP-Protocol-Version", this.protocolVersion);
     if (message) this.applyModernHeaders(headers, message);
-    const token = await this.options.authProvider?.token();
+    const token = this.options.authProvider ? await abortable(this.options.authProvider.token(this.url), signal) : undefined;
+    signal.throwIfAborted();
     if (token) headers.set("Authorization", `Bearer ${token}`);
     return { headers, ...(token ? { token } : {}) };
   }
@@ -390,6 +535,17 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
     if (!isJsonRpcRequest(message)) return;
     const name = requestName(message);
     if (name !== undefined) headers.set("Mcp-Name", encodeHeaderValue(name));
+    if (message.method !== "tools/call" || name === undefined || !isObject(message.params)) return;
+    for (const mapping of this.toolHeaders.get(name) ?? []) {
+      let value: unknown = message.params.arguments;
+      for (const key of mapping.path) {
+        value = isObject(value) && Object.hasOwn(value, key) ? value[key] : undefined;
+      }
+      if (value === undefined || value === null) continue;
+      const valid = mapping.type === "integer" ? typeof value === "number" && Number.isSafeInteger(value) : typeof value === mapping.type;
+      if (!valid) throw new Error(`Invalid MCP tool header argument at ${mapping.path.join(".")}: expected ${mapping.type}`);
+      headers.set(`Mcp-Param-${mapping.name}`, encodeHeaderValue(String(value)));
+    }
   }
 
   private captureSession(response: Response): void {
@@ -398,19 +554,26 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
     if (sessionId) this.sessionIdValue = sessionId;
   }
 
-  private async consumeResponseStream(body: ReadableStream<Uint8Array>, requestId: JsonRpcId): Promise<void> {
+  private async consumeResponseStream(body: ReadableStream<Uint8Array>, request: JsonRpcRequest): Promise<void> {
+    const requestId = request.id;
+    const progressToken = isObject(request.params) && isObject(request.params._meta) ? request.params._meta.progressToken : undefined;
     const cursor: StreamCursor = { lastEventId: undefined, retryMs: undefined, received: false };
     let answered = false;
+    const controller = this.requests.get(requestId);
+    const signal = controller ? AbortSignal.any([controller.signal, this.closeController.signal]) : this.closeController.signal;
     const onMessage = (message: JsonRpcMessage) => {
       if (isJsonRpcResponse(message) && message.id === requestId) answered = true;
     };
     let stream: ReadableStream<Uint8Array> | undefined = body;
     let failure: unknown;
     for (let attempt = 0; ; ) {
-      if (this.requests.get(requestId)?.signal.aborted || this.closed) return;
+      if (signal.aborted) {
+        if (stream) await stream.cancel().catch(() => undefined);
+        return;
+      }
       if (stream) {
         try {
-          await this.readSse(stream, cursor, onMessage);
+          await this.readSse(stream, cursor, signal, onMessage, requestId, () => answered, progressToken);
           failure = undefined;
         } catch (error) {
           failure = error;
@@ -421,9 +584,9 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
       if (!canResume || (failure !== undefined && !this.isRetryable(failure)) || attempt >= this.maxRetries()) break;
       if (cursor.received) attempt = 0;
       cursor.received = false;
-      if (!(await this.sleep(this.reconnectDelay(attempt++, cursor.retryMs)))) return;
+      if (!(await this.sleep(this.reconnectDelay(attempt++, cursor.retryMs), signal))) return;
       try {
-        stream = await this.openSseStream(cursor.lastEventId);
+        stream = await this.openSseStream(cursor.lastEventId, signal);
       } catch (error) {
         failure = error;
         if (!this.isRetryable(error)) break;
@@ -452,7 +615,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
         const stream = await this.openSseStream(cursor.lastEventId);
         if (!stream) return;
         const openedAt = Date.now();
-        await this.readSse(stream, cursor);
+        await this.readSse(stream, cursor, this.closeController.signal);
         if (cursor.received || Date.now() - openedAt > this.maxDelay()) attempt = 0;
       } catch (error) {
         if (this.closed) return;
@@ -471,19 +634,20 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
   }
 
   /** Opens a GET SSE stream. `undefined` means the server answered 405. */
-  private async openSseStream(lastEventId: string | undefined): Promise<ReadableStream<Uint8Array> | undefined> {
+  private async openSseStream(lastEventId: string | undefined, signal = this.closeController.signal): Promise<ReadableStream<Uint8Array> | undefined> {
     const response = await this.authorizedFetch("GET", {
       headers: {
         accept: "text/event-stream",
         ...(lastEventId === undefined ? {} : { "last-event-id": lastEventId }),
       },
+      signal,
     });
     if (response.status === 405) {
       await discard(response);
       return undefined;
     }
     if (!response.ok) {
-      await this.failHttp(response);
+      await this.failHttp(response, signal);
       return undefined;
     }
     this.captureSession(response);
@@ -495,27 +659,52 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
     return response.body;
   }
 
-  private async readSse(stream: ReadableStream<Uint8Array>, cursor: StreamCursor, onMessage?: (message: JsonRpcMessage) => void): Promise<void> {
+  private validateResponseMessage(message: JsonRpcMessage, requestId: JsonRpcId, final = false, progressToken?: unknown): void {
+    if (isJsonRpcResponse(message)) {
+      if (message.id !== requestId) throw new Error(`MCP HTTP response id does not match request id ${requestId}`);
+    } else if (final || (this.era === "modern" && isJsonRpcRequest(message))) {
+      throw new Error("MCP HTTP response is not a response to the originating request");
+    } else if (this.era === "modern" && "method" in message && message.method === "notifications/progress") {
+      if (progressToken === undefined || !isObject(message.params) || message.params.progressToken !== progressToken) {
+        throw new Error("MCP HTTP progress token does not match the originating request");
+      }
+    }
+  }
+
+  private async readSse(
+    stream: ReadableStream<Uint8Array>,
+    cursor: StreamCursor,
+    signal: AbortSignal,
+    onMessage?: (message: JsonRpcMessage) => void,
+    requestId?: JsonRpcId,
+    shouldStop: () => boolean = () => false,
+    progressToken?: unknown,
+  ): Promise<void> {
     await consumeSse(
       stream,
       this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES,
       (event) => {
         cursor.received = true;
         if (!event.data.trim() || (event.event !== undefined && event.event !== "message")) return;
+        let message: JsonRpcMessage;
         try {
-          const message = parseJsonRpcMessage(JSON.parse(event.data));
-          onMessage?.(message);
-          this.emitMessage(message);
+          message = parseJsonRpcMessage(JSON.parse(event.data));
         } catch (error) {
           this.emitError(error);
+          return;
         }
+        if (requestId !== undefined) this.validateResponseMessage(message, requestId, false, progressToken);
+        onMessage?.(message);
+        this.emitMessage(message);
       },
       (id) => {
-        cursor.lastEventId = id;
+        cursor.lastEventId = id || undefined;
       },
       (delayMs) => {
         cursor.retryMs = delayMs;
       },
+      signal,
+      shouldStop,
     );
   }
 
@@ -527,7 +716,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
   }
 
   private reconnectDelay(attempt: number, serverDelayMs: number | undefined): number {
-    if (serverDelayMs !== undefined) return serverDelayMs;
+    if (serverDelayMs !== undefined) return Math.min(serverDelayMs, this.maxDelay());
     const initial = this.options.reconnect?.initialDelayMs ?? DEFAULT_RECONNECT_INITIAL_DELAY_MS;
     return Math.min(initial * 2 ** attempt, this.maxDelay());
   }
@@ -540,8 +729,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
     return this.options.reconnect?.maxRetries ?? DEFAULT_RECONNECT_MAX_RETRIES;
   }
 
-  private sleep(ms: number): Promise<boolean> {
-    const signal = this.closeController.signal;
+  private sleep(ms: number, signal = this.closeController.signal): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
     return new Promise((resolve) => {
       let timer: ReturnType<typeof nodeSetTimeout> | undefined;
@@ -564,8 +752,8 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
     const timeout = nodeSetTimeout(() => controller.abort(), 1_000);
     timeout.unref();
     try {
-      const { headers } = await this.headers();
-      await this.fetchImpl(this.url, { method: "DELETE", headers, signal: controller.signal }).then(discard).catch(() => undefined);
+      const { headers } = await this.headers({}, undefined, controller.signal);
+      await abortable(this.fetchImpl(this.url, { method: "DELETE", headers, signal: controller.signal }), controller.signal).then(discard).catch(() => undefined);
     } catch {
       // The server can expire the session on its own.
     } finally {

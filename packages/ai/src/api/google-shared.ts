@@ -8,7 +8,7 @@ export function googleBody(model: Model, context: Context, outputCap: number, ef
   const system = systemText(context);
   const thinkingConfig = googleThinkingConfig(model, effort, requested);
   const payload: Record<string, unknown> = {
-    contents: toContents(context),
+    contents: toContents(context, model),
     generationConfig: {
       maxOutputTokens: outputCap,
       ...(thinkingConfig ? { thinkingConfig } : {}),
@@ -20,7 +20,7 @@ export function googleBody(model: Model, context: Context, outputCap: number, ef
       functionDeclarations: context.tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
-        parameters: tool.parameters,
+        parametersJsonSchema: tool.parameters,
       })),
     }];
   }
@@ -87,16 +87,44 @@ function systemText(context: Context): string {
   return parts.join("\n");
 }
 
-function toContents(context: Context): unknown[] {
+interface GoogleContent {
+  role: string;
+  parts: unknown[];
+}
+
+function toContents(context: Context, model: Model): unknown[] {
   const contents: unknown[] = [];
+  // Vision input alone does not imply support for nested function-response media.
+  const version = /^gemini(?:-live)?-(\d+)(?:[.-]|$)/i.exec(model.id);
+  const multimodalResponse = version !== null && Number(version[1]) >= 3;
+  const responses: unknown[] = [];
+  const attachments: unknown[] = [];
+  const flush = () => {
+    if (responses.length > 0) contents.push({ role: "user", parts: [...responses] });
+    if (attachments.length > 0) contents.push({ role: "user", parts: [...attachments] });
+    responses.length = 0;
+    attachments.length = 0;
+  };
   for (const message of context.messages) {
+    if (message.role !== "toolResult") flush();
     if (message.role === "system") continue;
-    contents.push(convert(message));
+    const converted = convert(message, multimodalResponse);
+    if (message.role !== "toolResult") {
+      contents.push(converted);
+      continue;
+    }
+    responses.push(...converted.parts);
+    if (multimodalResponse || !message.content.some((block) => block.type === "image")) continue;
+    attachments.push({ text: `Images from tool ${message.toolName} (call ${message.toolCallId}):` });
+    for (const block of message.content) {
+      if (block.type === "image") attachments.push({ inlineData: { mimeType: block.mimeType, data: block.data } });
+    }
   }
+  flush();
   return contents;
 }
 
-function convert(message: Message): unknown {
+function convert(message: Message, multimodalResponse: boolean): GoogleContent {
   if (message.role === "user") {
     if (typeof message.content === "string") return { role: "user", parts: [{ text: message.content }] };
     return {
@@ -119,8 +147,8 @@ function convert(message: Message): unknown {
         functionResponse: {
           id: message.toolCallId,
           name: message.toolName,
-          response: { result: text },
-          ...(images.length > 0 ? { parts: images } : {}),
+          response: { result: text || (images.length > 0 ? "(see attached image)" : "") },
+          ...(images.length > 0 && multimodalResponse ? { parts: images } : {}),
         },
       }],
     };

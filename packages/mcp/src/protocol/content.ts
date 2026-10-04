@@ -1,3 +1,5 @@
+import { isObject } from "./jsonrpc.ts";
+
 export interface ContentAnnotations {
   audience?: Array<"user" | "assistant">;
   priority?: number;
@@ -67,6 +69,48 @@ export interface CallToolResult {
   structuredContent?: unknown;
   isError?: boolean;
   _meta?: Record<string, unknown>;
+}
+
+function optionalString(value: Record<string, unknown>, key: string): boolean {
+  return value[key] === undefined || typeof value[key] === "string";
+}
+
+function validContentMetadata(value: Record<string, unknown>): boolean {
+  if (value._meta !== undefined && !isObject(value._meta)) return false;
+  if (value.annotations === undefined) return true;
+  const annotations = value.annotations;
+  return isObject(annotations) &&
+    (annotations.audience === undefined || (Array.isArray(annotations.audience) && annotations.audience.every((role) => role === "user" || role === "assistant"))) &&
+    (annotations.priority === undefined || (typeof annotations.priority === "number" && Number.isFinite(annotations.priority) && annotations.priority >= 0 && annotations.priority <= 1)) &&
+    optionalString(annotations, "lastModified");
+}
+
+/** Validate decoded resource payloads before they are projected into model messages. */
+export function isResourceContents(value: unknown): value is TextResourceContents | BlobResourceContents {
+  return isObject(value) && typeof value.uri === "string" && optionalString(value, "mimeType") &&
+    optionalString(value, "text") && optionalString(value, "blob") &&
+    (typeof value.text === "string" || typeof value.blob === "string") &&
+    (value._meta === undefined || isObject(value._meta));
+}
+
+/** The wire can contain arbitrary JSON; the public content types require these fields. */
+export function isContentBlock(value: unknown): value is ContentBlock {
+  if (!isObject(value) || !validContentMetadata(value)) return false;
+  switch (value.type) {
+    case "text":
+      return typeof value.text === "string";
+    case "image":
+    case "audio":
+      return typeof value.data === "string" && typeof value.mimeType === "string";
+    case "resource_link":
+      return typeof value.uri === "string" && typeof value.name === "string" &&
+        ["title", "description", "mimeType"].every((key) => optionalString(value, key)) &&
+        (value.size === undefined || (typeof value.size === "number" && Number.isFinite(value.size) && value.size >= 0));
+    case "resource":
+      return isResourceContents(value.resource);
+    default:
+      return false;
+  }
 }
 
 /** Text and base64 images a model request can carry. This package does not import a model SDK. */

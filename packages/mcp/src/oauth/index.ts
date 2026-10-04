@@ -3,6 +3,7 @@ export {
   type OAuthCallbackPage,
   OAuthCallbackServer,
   type OAuthCallbackServerOptions,
+  type OAuthCallbackWaitOptions,
 } from "./callback.ts";
 export {
   buildAuthorizationServerDiscoveryUrls,
@@ -22,6 +23,7 @@ export {
 } from "./errors.ts";
 export {
   type AddClientAuthentication,
+  type OAuthAuthorizationState,
   adaptOAuthProvider,
   authorizeMcp,
   exchangeAuthorizationCode,
