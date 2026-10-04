@@ -1,4 +1,4 @@
-import { parseSlash, type SlashAction } from "./commands.ts";
+import { parseSlash, slashMatches, type SlashAction } from "./commands.ts";
 import type { Key } from "./keys.ts";
 
 export interface TuiEntry {
@@ -27,6 +27,10 @@ export interface TuiState extends TuiWindow {
   turnIndex: number;
   input: string;
   notice: string | null;
+  menuIndex: number;
+  provider: string;
+  modelId: string;
+  thinking: string;
 }
 
 export type TuiEffect =
@@ -47,6 +51,10 @@ export function emptyTui(active = "main"): TuiState {
     turnIndex: 0,
     input: "",
     notice: null,
+    menuIndex: 0,
+    provider: "",
+    modelId: "",
+    thinking: "",
   };
 }
 
@@ -55,18 +63,20 @@ export function reduceTui(state: TuiState, action: { type: "window"; window: Tui
   return applyKey(state, action.key);
 }
 
-export function renderTui(state: TuiState): string {
-  const lines = state.entries.map((entry, index) => {
-    const mark = index === state.entryIndex && state.focus === "scroll" ? ">" : " ";
-    return `${mark}${entry.role} ${entry.text}`;
-  });
-  if (state.pendingText.length > 0) lines.push(` assistant ${state.pendingText}`);
-  for (const tool of state.tools) lines.push(` tool ${tool.name} ${tool.status}`);
-  lines.push(`focus ${state.focus}`);
-  lines.push(`session ${state.active}`);
-  lines.push(`> ${state.input}`);
-  if (state.notice) lines.push(state.notice);
-  return lines.join("\n");
+/** Conversation, slash menu, status, and composer. The composer stays on the last row. */
+export function renderTui(state: TuiState, columns = 100, rows = 32): string {
+  const width = Math.max(20, columns);
+  const height = Math.max(8, rows);
+  const prompt = fit(`› ${state.input}`, width);
+  const status = fit(statusLine(state), width);
+  const menu = menuLines(state, width);
+  const notice = state.notice ? state.notice.split("\n").slice(0, 8).map((line) => fit(line, width)) : [];
+  const transcript = transcriptLines(state).flatMap((line) => wrap(line, width));
+  const chrome = [...menu, ...notice, status, prompt];
+  const room = Math.max(1, height - chrome.length);
+  const visible = transcript.slice(-room);
+  while (visible.length < room) visible.unshift("");
+  return [...visible, ...chrome].join("\n");
 }
 
 function applyWindow(state: TuiState, window: TuiWindow): TuiState {
@@ -81,19 +91,44 @@ function applyKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffe
     return { state: { ...state, focus: state.focus === "prompt" ? "scroll" : "prompt", notice: null }, effect: null };
   }
   if (state.focus === "scroll") return { state: move(state, key), effect: null };
-  if (key.type === "char") return { state: { ...state, input: state.input + key.value, notice: null }, effect: null };
+  const matches = slashMatches(state.input);
+  if (matches.length > 0 && (key.type === "up" || key.type === "down")) {
+    const delta = key.type === "up" ? -1 : 1;
+    const menuIndex = (state.menuIndex + delta + matches.length) % matches.length;
+    return { state: { ...state, menuIndex }, effect: null };
+  }
+  if (key.type === "tab") {
+    const picked = matches[clamp(state.menuIndex, matches.length)];
+    if (!picked) return { state, effect: null };
+    const suffix = picked.takesArgs === "required" ? " " : "";
+    return { state: { ...state, input: `/${picked.name}${suffix}`, menuIndex: 0, notice: null }, effect: null };
+  }
+  if (key.type === "char") return { state: { ...state, input: state.input + key.value, menuIndex: 0, notice: null }, effect: null };
   if (key.type === "backspace") {
     const chars = Array.from(state.input);
     chars.pop();
-    return { state: { ...state, input: chars.join("") }, effect: null };
+    return { state: { ...state, input: chars.join(""), menuIndex: 0 }, effect: null };
   }
-  if (key.type === "enter") return submit(state);
+  if (key.type === "enter") return acceptOrSubmit(state);
   if (key.type === "ctrl-c") {
     if (state.busy) return { state: { ...state, notice: null }, effect: { type: "abort" } };
     if (state.input.length > 0) return { state: { ...state, input: "" }, effect: null };
     return { state, effect: null };
   }
   return { state, effect: null };
+}
+
+function acceptOrSubmit(state: TuiState): { state: TuiState; effect: TuiEffect | null } {
+  const matches = slashMatches(state.input);
+  const picked = matches[clamp(state.menuIndex, matches.length)];
+  const token = state.input.trim();
+  if (picked && token.startsWith("/") && !/\s/.test(token.slice(1)) && token.slice(1).toLowerCase() !== picked.name) {
+    if (picked.takesArgs === "required") {
+      return { state: { ...state, input: `/${picked.name} `, menuIndex: 0 }, effect: null };
+    }
+    return submit({ ...state, input: `/${picked.name}` });
+  }
+  return submit(state);
 }
 
 function submit(state: TuiState): { state: TuiState; effect: TuiEffect | null } {
@@ -125,6 +160,81 @@ function move(state: TuiState, key: Key): TuiState {
 function turnStarts(entries: readonly TuiEntry[]): number[] {
   const starts = entries.flatMap((entry, index) => entry.role === "user" ? [index] : []);
   return starts.length > 0 ? starts : [0];
+}
+
+function statusLine(state: TuiState): string {
+  const model = state.provider && state.modelId ? `${state.provider}/${state.modelId}` : "";
+  const parts = [state.active, model, state.thinking, state.busy ? "忙" : "空闲"].filter((part) => part.length > 0);
+  if (state.focus === "scroll") parts.push("滚动");
+  return parts.join("  ");
+}
+
+function transcriptLines(state: TuiState): string[] {
+  const lines: string[] = [];
+  for (const [index, entry] of state.entries.entries()) {
+    const mark = state.focus === "scroll" && index === state.entryIndex ? "> " : "";
+    lines.push(`${mark}${label(entry.role)}`);
+    lines.push(entry.text.length > 0 ? entry.text : " ");
+    lines.push("");
+  }
+  if (state.pendingText.length > 0) {
+    lines.push("AmazMe");
+    lines.push(state.pendingText);
+    lines.push("");
+  }
+  for (const tool of state.tools) lines.push(`${tool.name} ${tool.status}`);
+  return lines;
+}
+
+function label(role: TuiEntry["role"]): string {
+  if (role === "user") return "你";
+  if (role === "assistant") return "AmazMe";
+  if (role === "tool") return "工具";
+  return "记录";
+}
+
+function menuLines(state: TuiState, width: number): string[] {
+  const matches = slashMatches(state.input);
+  if (matches.length === 0) return [];
+  const limit = 8;
+  const selected = clamp(state.menuIndex, matches.length);
+  const start = Math.max(0, Math.min(selected - 1, matches.length - limit));
+  return matches.slice(start, start + limit).map((item, offset) => {
+    const index = start + offset;
+    const mark = index === selected ? ">" : " ";
+    const hint = item.hint.length > 0 ? ` ${item.hint}` : "";
+    return fit(`${mark} /${item.name}${hint}  ${item.description}`, width);
+  });
+}
+
+function fit(line: string, width: number): string {
+  let used = 0;
+  let out = "";
+  for (const char of Array.from(line)) {
+    const size = char.charCodeAt(0) > 255 ? 2 : 1;
+    if (used + size > width) return `${out}…`;
+    out += char;
+    used += size;
+  }
+  return out;
+}
+
+function wrap(line: string, width: number): string[] {
+  const rows: string[] = [];
+  let row = "";
+  let used = 0;
+  for (const char of Array.from(line)) {
+    const size = char.charCodeAt(0) > 255 ? 2 : 1;
+    if (used > 0 && used + size > width) {
+      rows.push(row);
+      row = "";
+      used = 0;
+    }
+    row += char;
+    used += size;
+  }
+  rows.push(row);
+  return rows.length > 0 ? rows : [""];
 }
 
 function clamp(index: number, length: number): number {

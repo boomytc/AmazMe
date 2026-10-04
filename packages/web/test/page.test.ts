@@ -34,7 +34,9 @@ test("the page lists sessions and a submit returns the prompt and assistant text
   assert.match(html, /id="sessions"/);
   assert.match(html, /id="transcript"/);
   assert.match(html, /id="tools"/);
-  assert.match(html, /Abort/);
+  assert.match(html, /中止/);
+  assert.match(html, /id="status"/);
+  assert.match(html, /id="menu"/);
   const acted = await fetch(`${page.url}act`, {
     method: "POST",
     headers: { "content-type": "application/json" },
