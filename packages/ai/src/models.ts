@@ -198,6 +198,7 @@ class ModelRegistry implements MutableModels {
       if (error instanceof AuthRefreshError) throw new ModelsError("auth", error.message);
       throw error;
     }
+    options.signal?.throwIfAborted();
     if (!auth) throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
     const headers = { ...(auth.headers ?? {}), ...(options.headers ?? {}) };
     const env = { ...(auth.env ?? {}), ...(options.env ?? {}) };

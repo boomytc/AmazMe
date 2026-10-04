@@ -1,14 +1,18 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { Credential, CredentialStore } from "@amazme/ai";
+
+/** Stores for the same file share a process-local read-modify-write queue. */
+const fileChains = new Map<string, Promise<unknown>>();
 
 /** Credentials live outside the repo. The file is the caller's CredentialStore, not a second auth implementation. */
 export class FileCredentialStore implements CredentialStore {
-  /** One chain for the whole file. Provider chains would let one write clobber another. */
-  private tail: Promise<unknown> = Promise.resolve();
+  private readonly file: string;
 
-  constructor(private readonly file = process.env.AMAZME_CREDENTIALS ?? join(homedir(), ".amazme", "credentials.json")) {}
+  constructor(file = process.env.AMAZME_CREDENTIALS ?? join(homedir(), ".amazme", "credentials.json")) {
+    this.file = resolve(file);
+  }
 
   async get(providerId: string): Promise<Credential | undefined> {
     return this.read()[providerId];
@@ -47,8 +51,13 @@ export class FileCredentialStore implements CredentialStore {
   }
 
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.tail.then(task, task);
-    this.tail = run.then(() => undefined, () => undefined);
+    const previous = fileChains.get(this.file) ?? Promise.resolve();
+    const run = previous.then(task, task);
+    const tail = run.then(() => undefined, () => undefined);
+    fileChains.set(this.file, tail);
+    void tail.then(() => {
+      if (fileChains.get(this.file) === tail) fileChains.delete(this.file);
+    });
     return run;
   }
 
@@ -64,10 +73,14 @@ export class FileCredentialStore implements CredentialStore {
 
   private write(values: Record<string, Credential>): void {
     const directory = dirname(this.file);
-    mkdirSync(directory, { recursive: true });
-    const temporary = join(directory, `.${basename(this.file)}.${process.pid}.tmp`);
-    writeFileSync(temporary, JSON.stringify(values));
-    renameSync(temporary, this.file);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const temporary = join(directory, `.${basename(this.file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+    try {
+      writeFileSync(temporary, JSON.stringify(values), { mode: 0o600, flag: "wx" });
+      renameSync(temporary, this.file);
+    } finally {
+      rmSync(temporary, { force: true });
+    }
   }
 }
 

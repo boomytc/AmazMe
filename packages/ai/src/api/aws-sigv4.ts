@@ -84,16 +84,15 @@ function amzTimestamp(now: Date): string {
 
 function canonicalUri(pathname: string): string {
   const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  if (path === "/") return "/";
-  return path.split("/").map((segment, index) => (index === 0 ? "" : encodeRfc3986(decodeSegment(segment)))).join("/");
-}
-
-function decodeSegment(segment: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
+  const segments: string[] = [];
+  for (const segment of path.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
   }
+  const normalized = `/${segments.join("/")}${segments.length > 0 && path.endsWith("/") ? "/" : ""}`;
+  // Non-S3 SigV4 signs the escaped request path after another URI encoding pass.
+  return encodeRfc3986(normalized).replace(/%2F/g, "/");
 }
 
 function canonicalQuery(params: URLSearchParams): string {

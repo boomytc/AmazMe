@@ -23,7 +23,7 @@ async function exchangeForm(
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
   const response = await postForm(fetchImpl, url, fields, signal);
-  const body = await readJson(response);
+  const body = await readJson(response, signal);
   if (!response.ok) throw new Error(`OAuth token request failed (${response.status})`);
   return body;
 }
@@ -137,7 +137,7 @@ async function codexDevice(interaction: LoginInteraction, fetchImpl: typeof fetc
     body: JSON.stringify({ client_id: "app_EMoamEEZ73f0CkXaXp7hrann" }),
     signal,
   });
-  const device = await readJson(started);
+  const device = await readJson(started, signal);
   if (!started.ok) throw new Error(`OpenAI Codex device code request failed (${started.status})`);
   const userCode = required(device, "user_code");
   const deviceAuthId = required(device, "device_auth_id");
@@ -161,14 +161,14 @@ async function codexDevice(interaction: LoginInteraction, fetchImpl: typeof fetc
         signal,
       });
       if (response.ok) {
-        const body = await readJson(response);
+        const body = await readJson(response, signal);
         if (typeof body.authorization_code === "string" && typeof body.code_verifier === "string") {
           return { status: "complete", value: { code: body.authorization_code, verifier: body.code_verifier } };
         }
         return { status: "failed", message: "Invalid OpenAI Codex device auth token response" };
       }
       if (response.status === 403 || response.status === 404) return { status: "pending" };
-      const body = await readJson(response);
+      const body = await readJson(response, signal);
       const error = typeof body.error === "string" ? body.error : "";
       if (error === "deviceauth_authorization_pending") return { status: "pending" };
       if (error === "slow_down") return { status: "slow_down" };
@@ -308,7 +308,7 @@ export function xaiOAuth(fetchImpl: typeof fetch = globalThis.fetch): OAuthAuth 
         client_id: clientId,
         scope: "openid profile email offline_access grok-cli:access api:access",
       }, signal);
-      const body = await readJson(response);
+      const body = await readJson(response, signal);
       if (!response.ok) throw new Error(`xAI device authorization failed (${response.status})`);
       const verification = httpsUrl(body.verification_uri);
       if (!verification) throw new Error("xAI verification URI must be https");
@@ -332,7 +332,7 @@ export function xaiOAuth(fetchImpl: typeof fetch = globalThis.fetch): OAuthAuth 
             client_id: clientId,
             device_code: deviceCode,
           }, signal);
-          const parsed = await readJson(next);
+          const parsed = await readJson(next, signal);
           if (next.ok && typeof parsed.access_token === "string") return { status: "complete", value: parsed };
           const error = typeof parsed.error === "string" ? parsed.error : "";
           if (error === "authorization_pending") return { status: "pending" };
@@ -374,7 +374,7 @@ export function githubCopilotOAuth(fetchImpl: typeof fetch = globalThis.fetch): 
         client_id: clientId,
         scope: "read:user",
       }, signal, headers);
-      const body = await readJson(response);
+      const body = await readJson(response, signal);
       if (!response.ok) throw new Error(`GitHub device authorization failed (${response.status})`);
       const verification = typeof body.verification_uri === "string" ? body.verification_uri : undefined;
       if (!verification || !verification.startsWith("https://")) throw new Error("Untrusted verification_uri in device code response");
@@ -399,7 +399,7 @@ export function githubCopilotOAuth(fetchImpl: typeof fetch = globalThis.fetch): 
             device_code: deviceCode,
             grant_type: "urn:ietf:params:oauth:grant-type:device_code",
           }, signal, headers);
-          const parsed = await readJson(next);
+          const parsed = await readJson(next, signal);
           if (typeof parsed.access_token === "string") return { status: "complete", value: parsed.access_token };
           const error = typeof parsed.error === "string" ? parsed.error : "";
           if (error === "authorization_pending") return { status: "pending" };
@@ -430,7 +430,7 @@ async function copilotCredential(fetchImpl: typeof fetch, githubAccess: string, 
     },
     signal,
   });
-  const body = await readJson(response);
+  const body = await readJson(response, signal);
   if (!response.ok || typeof body.token !== "string") throw new Error(`GitHub Copilot token request failed (${response.status})`);
   const expiresAt = typeof body.expires_at === "number" ? (body.expires_at < 1e12 ? body.expires_at * 1000 : body.expires_at) : expiresIn(3600);
   return credential(body.token, githubAccess, expiresAt);
@@ -445,7 +445,7 @@ export function kimiOAuth(fetchImpl: typeof fetch = globalThis.fetch): OAuthAuth
     async login(interaction) {
       const signal = signalOf(interaction);
       const response = await postForm(fetchImpl, `${host}/api/oauth/device_authorization`, { client_id: clientId }, signal);
-      const body = await readJson(response);
+      const body = await readJson(response, signal);
       if (!response.ok) throw new Error(`Kimi device authorization failed (${response.status})`);
       const verification = httpsUrl(body.verification_uri_complete) ?? httpsUrl(body.verification_uri);
       if (!verification) throw new Error("Kimi verification URI must be https");
@@ -473,7 +473,7 @@ export function kimiOAuth(fetchImpl: typeof fetch = globalThis.fetch): OAuthAuth
         grant_type: "refresh_token",
         refresh_token: current.refresh,
       }, signal);
-      const body = await readJson(response);
+      const body = await readJson(response, signal);
       if (!response.ok) throw new Error(`Kimi token refresh failed (${response.status})`);
       return pair(body);
     },
@@ -489,7 +489,7 @@ async function kimiPoll(fetchImpl: typeof fetch, host: string, clientId: string,
     grant_type: "urn:ietf:params:oauth:grant-type:device_code",
     device_code: deviceCode,
   }, signal);
-  const body = await readJson(response);
+  const body = await readJson(response, signal);
   if (response.ok && typeof body.access_token === "string") return { status: "complete" as const, value: pair(body) };
   const error = typeof body.error === "string" ? body.error : "";
   if (error === "authorization_pending") return { status: "pending" as const };
@@ -505,7 +505,7 @@ export function metaOAuth(fetchImpl: typeof fetch = globalThis.fetch): OAuthAuth
     async login(interaction) {
       const signal = signalOf(interaction);
       const response = await postForm(fetchImpl, "https://auth.meta.com/oidc/device/authorization/", { client_id: clientId }, signal);
-      const body = await readJson(response);
+      const body = await readJson(response, signal);
       if (!response.ok) throw new Error(`Meta device authorization failed (${response.status})`);
       const verification = httpsUrl(body.verification_uri);
       if (!verification) throw new Error("Meta verification URI must be https");
@@ -529,7 +529,7 @@ export function metaOAuth(fetchImpl: typeof fetch = globalThis.fetch): OAuthAuth
             device_code: deviceCode,
             client_id: clientId,
           }, signal);
-          const parsed = await readJson(next);
+          const parsed = await readJson(next, signal);
           if (typeof parsed.access_token === "string") return { status: "complete", value: parsed.access_token };
           const error = typeof parsed.error === "string" ? parsed.error : "";
           if (error === "authorization_pending") return { status: "pending" };
@@ -554,7 +554,7 @@ async function mintMeta(fetchImpl: typeof fetch, identity: string, signal: Abort
     body: "{}",
     signal,
   });
-  const body = await readJson(response);
+  const body = await readJson(response, signal);
   if (response.status === 401 || response.status === 403) throw new Error(`Meta session expired (${response.status})`);
   if (!response.ok || typeof body.api_key !== "string") throw new Error(`Meta API key mint failed (${response.status})`);
   return credential(body.api_key, identity, Date.now() + 24 * 60 * 60 * 1000);
@@ -589,7 +589,7 @@ export function openRouterOAuth(fetchImpl: typeof fetch = globalThis.fetch): OAu
           body: JSON.stringify({ code, code_verifier: verifier, code_challenge_method: "S256" }),
           signal,
         });
-        const body = await readJson(response);
+        const body = await readJson(response, signal);
         if (!response.ok || typeof body.key !== "string" || body.key.length === 0) throw new Error("OpenRouter OAuth response carries no key");
         return { ...shown, credential: credential(body.key, "", Number.MAX_SAFE_INTEGER) };
       } finally {
@@ -631,7 +631,7 @@ export function radiusOAuth(gateway = "https://radius.pi.dev", fetchImpl: typeof
 async function radiusDevice(interaction: LoginInteraction, root: string, fetchImpl: typeof fetch): Promise<LoginResult> {
   const signal = signalOf(interaction);
   const response = await postForm(fetchImpl, `${root}/v1/oauth/device`, { client_id: "pi-gateway", scope: "gateway offline_access" }, signal);
-  const body = await readJson(response);
+  const body = await readJson(response, signal);
   if (!response.ok) throw new Error(`Radius device authorization failed (${response.status})`);
   const verification = httpsUrl(body.verification_uri);
   if (!verification || typeof body.device_code !== "string" || typeof body.user_code !== "string") {
@@ -655,7 +655,7 @@ async function radiusDevice(interaction: LoginInteraction, root: string, fetchIm
         client_id: "pi-gateway",
         device_code: body.device_code as string,
       }, signal);
-      const parsed = await readJson(next);
+      const parsed = await readJson(next, signal);
       if (next.ok && typeof parsed.access_token === "string") return { status: "complete", value: parsed };
       const error = typeof parsed.error === "string" ? parsed.error : "";
       if (error === "authorization_pending") return { status: "pending" };
@@ -670,7 +670,7 @@ async function radiusDevice(interaction: LoginInteraction, root: string, fetchIm
 async function radiusPkce(interaction: LoginInteraction, root: string, fetchImpl: typeof fetch): Promise<LoginResult> {
   const signal = signalOf(interaction);
   const discoveryResponse = await fetchImpl(`${root}/v1/oauth`, { signal, headers: { accept: "application/json" } });
-  const discovery = await readJson(discoveryResponse);
+  const discovery = await readJson(discoveryResponse, signal);
   if (!discoveryResponse.ok) throw new Error(`Radius OAuth discovery failed (${discoveryResponse.status})`);
   const authorization = typeof discovery.authorization_endpoint === "string"
     ? discovery.authorization_endpoint

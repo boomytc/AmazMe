@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
-import { AuthRefreshError, MemoryCredentialStore, createModels, resolveModelAuth } from "@amazme/ai";
+import { AuthRefreshError, MemoryCredentialStore, createModels, resolveModelAuth, type OAuthCredential } from "@amazme/ai";
 import { anthropicOAuth, xaiOAuth } from "@amazme/ai/auth/oauth/flows";
 import { xaiProvider } from "@amazme/ai/providers/xai";
 
@@ -197,6 +197,124 @@ test("cancelling an xAI device login does not return a credential", async () => 
     xaiOAuth(fetchImpl).login({ signal: controller.signal }),
     (error: unknown) => error instanceof Error && error.message === "Login cancelled",
   );
+});
+
+test("cancelling a successful device poll still rejects the login", async () => {
+  const controller = new AbortController();
+  const fetchImpl: typeof fetch = async (input) => {
+    if (String(input).endsWith("/device/code")) return Response.json({
+      device_code: "device", user_code: "ABCD", verification_uri: "https://auth.x.ai/device", expires_in: 30,
+    });
+    controller.abort();
+    return Response.json({ access_token: "cancelled-access", refresh_token: "cancelled-refresh", expires_in: 3600 });
+  };
+  await assert.rejects(xaiOAuth(fetchImpl).login({ signal: controller.signal }), /Login cancelled/);
+});
+
+test("an aborted device poll fetch reports login cancellation", async () => {
+  const controller = new AbortController();
+  const fetchImpl: typeof fetch = async (input) => {
+    if (String(input).endsWith("/device/code")) return Response.json({
+      device_code: "device", user_code: "ABCD", verification_uri: "https://auth.x.ai/device", expires_in: 30,
+    });
+    controller.abort();
+    throw new DOMException("The operation was aborted", "AbortError");
+  };
+  await assert.rejects(xaiOAuth(fetchImpl).login({ signal: controller.signal }), /Login cancelled/);
+});
+
+test("a cancelled successful refresh neither saves a token nor calls the model", async () => {
+  const store = new MemoryCredentialStore();
+  const original = { type: "oauth" as const, access: "old-access", refresh: "old-refresh", expires: 1 };
+  await store.set("xai", original);
+  const controller = new AbortController();
+  let modelCalls = 0;
+  const fetchImpl: typeof fetch = async (input) => {
+    if (String(input).startsWith("https://auth.x.ai/")) {
+      controller.abort();
+      return Response.json({ access_token: "cancelled-access", refresh_token: "cancelled-refresh", expires_in: 3600 });
+    }
+    modelCalls += 1;
+    return responsesSse();
+  };
+  const models = createModels({ store, env: {} });
+  const provider = xaiProvider({ fetch: fetchImpl });
+  models.setProvider(provider);
+  const model = provider.getModels()[0];
+  assert.ok(model);
+  const result = await models.completeSimple(model, { messages: [] }, { signal: controller.signal });
+  assert.equal(result.stopReason, "aborted");
+  assert.equal(modelCalls, 0);
+  assert.deepEqual(await store.get("xai"), original);
+});
+
+test("an explicit invalid OAuth token lifetime is not replaced with a valid default", async () => {
+  for (const expiresIn of [0, -1, "3600", null]) {
+    const store = new MemoryCredentialStore();
+    const original = { type: "oauth" as const, access: "old-access", refresh: "old-refresh", expires: 1 };
+    await store.set("xai", original);
+    let modelCalls = 0;
+    const fetchImpl: typeof fetch = async (input) => {
+      if (String(input).startsWith("https://auth.x.ai/")) return Response.json({
+        access_token: "invalid-lifetime-access", refresh_token: "new-refresh", expires_in: expiresIn,
+      });
+      modelCalls += 1;
+      return responsesSse();
+    };
+    const models = createModels({ store, env: {} });
+    const provider = xaiProvider({ fetch: fetchImpl });
+    models.setProvider(provider);
+    const model = provider.getModels()[0];
+    assert.ok(model);
+    const result = await models.completeSimple(model, { messages: [] });
+    assert.equal(result.stopReason, "error", String(expiresIn));
+    assert.equal(modelCalls, 0);
+    assert.deepEqual(await store.get("xai"), original);
+  }
+});
+
+test("refresh output must have a usable finite expiry before it is saved", async () => {
+  for (const expires of [1, Number.NaN, Number.POSITIVE_INFINITY, Date.now() + 30_000]) {
+    const store = new MemoryCredentialStore();
+    const original = { type: "oauth" as const, access: "old-access", refresh: "old-refresh", expires: 1 };
+    await store.set("example", original);
+    await assert.rejects(resolveModelAuth({
+      providerId: "example", store, env: {}, auth: { oauth: {
+        ...xaiOAuth(), refresh: async (current) => ({ ...current, access: "invalid-access", expires }),
+      } },
+    }), AuthRefreshError);
+    assert.deepEqual(await store.get("example"), original);
+  }
+});
+
+test("a cancelled request waiting for another refresh does not receive its credential", async () => {
+  const store = new MemoryCredentialStore();
+  await store.set("example", { type: "oauth", access: "old-access", refresh: "old-refresh", expires: 1 });
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => { entered = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let refreshes = 0;
+  const auth = { oauth: {
+    ...xaiOAuth(), async refresh(current: OAuthCredential) {
+      refreshes += 1;
+      entered();
+      await gate;
+      return { ...current, access: "fresh-access", expires: Date.now() + 3600_000 };
+    },
+  } };
+  const first = resolveModelAuth({ providerId: "example", store, env: {}, auth });
+  await ready;
+  const controller = new AbortController();
+  const second = resolveModelAuth({ providerId: "example", store, env: {}, auth, signal: controller.signal });
+  const cancelled = assert.rejects(second, /aborted/);
+  // Let the second get() settle and wait on the store's pending refresh.
+  await Promise.resolve();
+  controller.abort();
+  release();
+  assert.equal((await first)?.apiKey, "fresh-access");
+  await cancelled;
+  assert.equal(refreshes, 1);
 });
 
 function responsesSse(): Response {

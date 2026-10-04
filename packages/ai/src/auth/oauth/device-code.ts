@@ -23,7 +23,14 @@ export async function pollDeviceCode<T>(options: {
   }
   while (Date.now() < deadline) {
     if (options.signal.aborted) throw new Error(CANCEL_MESSAGE);
-    const result = await options.poll();
+    let result: DevicePollResult<T>;
+    try {
+      result = await options.poll();
+    } catch (error) {
+      if (options.signal.aborted) throw new Error(CANCEL_MESSAGE);
+      throw error;
+    }
+    if (options.signal.aborted) throw new Error(CANCEL_MESSAGE);
     if (result.status === "complete") {
       if (result.value === undefined || result.value === null) throw new Error("Device flow returned no value");
       return result.value as NonNullable<T>;

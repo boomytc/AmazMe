@@ -48,6 +48,41 @@ test("signature version 4 matches the published IAM example", () => {
   );
 });
 
+test("signature version 4 double-encodes the actual escaped Bedrock model path", () => {
+  // Smithy SignatureV4Base.getCanonicalPath uses /model/amazon.nova-2-lite-v1%253A0/converse-stream.
+  const signed = signAwsRequest({
+    method: "POST",
+    url: new URL("https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-2-lite-v1%3A0/converse-stream"),
+    body: "{}", region: "us-east-1", service: "bedrock",
+    credentials: { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "example-secret" },
+    headers: { "content-type": "application/json" }, now: new Date("2026-10-04T00:00:00Z"),
+  });
+  assert.equal(signed.headers.authorization,
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261004/us-east-1/bedrock/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=ae8e7168363d68901c22e46142ee8793b1da6e63864c6af734557250f50c4e75");
+});
+
+test("Vertex rejects an explicit invalid or dying exchanged token lifetime before the model request", async () => {
+  for (const expiresIn of [0, -1, "3600", null, 30]) {
+    const directory = mkdtempSync(join(tmpdir(), "amazme-adc-lifetime-"));
+    const file = join(directory, "adc.json");
+    writeFileSync(file, JSON.stringify({ type: "authorized_user", client_id: "client", client_secret: "secret", refresh_token: "refresh" }));
+    const urls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      urls.push(String(input));
+      if (String(input).startsWith("https://oauth2.googleapis.com/token")) return Response.json({ access_token: "invalid-access", expires_in: expiresIn });
+      return vertexSse();
+    };
+    const models = createModels({ env: { GOOGLE_CLOUD_PROJECT: "proj", GOOGLE_CLOUD_LOCATION: "us-central1", GOOGLE_APPLICATION_CREDENTIALS: file } });
+    const provider = googleVertexProvider({ fetch: fetchImpl });
+    models.setProvider(provider);
+    const model = provider.getModels()[0];
+    assert.ok(model);
+    const result = await models.completeSimple(model, CONTEXT);
+    assert.equal(result.stopReason, "error", String(expiresIn));
+    assert.deepEqual(urls, ["https://oauth2.googleapis.com/token"]);
+  }
+});
+
 test("bedrock signs environment keys and does not store them", async () => {
   const calls: Array<{ url: string; authorization: string; accept: string; body: string }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {

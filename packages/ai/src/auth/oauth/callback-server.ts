@@ -29,10 +29,12 @@ export async function startCallbackServer(options: {
   waitPromise.catch(() => undefined);
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const onAbort = () => finish({ error: new Error("Login cancelled") });
   const finish = (result: { url: URL } | { error: Error }) => {
     if (settled) return;
     settled = true;
     if (timer) clearTimeout(timer);
+    options.signal?.removeEventListener("abort", onAbort);
     if ("error" in result) rejectWait(result.error);
     else resolveWait(result.url);
   };
@@ -67,21 +69,28 @@ export async function startCallbackServer(options: {
     send(response, 200, "signed in");
     finish({ url });
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port, options.host ?? "127.0.0.1", () => {
-      server.off("error", reject);
-      resolve();
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(options.port, options.host ?? "127.0.0.1", () => {
+        server.off("error", reject);
+        resolve();
+      });
     });
-  });
+    if (options.signal?.aborted) throw new Error("Login cancelled");
+  } catch (error) {
+    finish({ error: error instanceof Error ? error : new Error(String(error)) });
+    server.close();
+    throw error;
+  }
   const address = server.address();
   if (!address || typeof address === "string") {
     server.close();
+    finish({ error: new Error("OAuth callback server did not bind") });
     throw new Error("OAuth callback server did not bind");
   }
-  const onAbort = () => finish({ error: new Error("Login cancelled") });
-  options.signal?.addEventListener("abort", onAbort, { once: true });
-  if (options.timeoutMs !== undefined) {
+  if (!settled && options.timeoutMs !== undefined) {
     timer = setTimeout(() => finish({ error: new Error("OAuth sign-in timed out") }), options.timeoutMs);
   }
   const redirectHost = options.redirectHost ?? options.host ?? "127.0.0.1";
