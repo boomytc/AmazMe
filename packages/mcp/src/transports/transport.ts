@@ -1,5 +1,5 @@
 import { type JsonRpcId, type JsonRpcMessage, toError } from "../protocol/jsonrpc.ts";
-import type { ProtocolEra } from "../protocol/types.ts";
+import type { ProtocolEra, Tool } from "../protocol/types.ts";
 
 export const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 
@@ -21,6 +21,8 @@ export interface McpTransport {
   onClose(listener: McpTransportCloseListener): () => void;
   setProtocolVersion?(version: string): void;
   setEra?(era: ProtocolEra): void;
+  /** Replace tools/list definitions used to mirror annotated arguments into HTTP headers. */
+  setToolSchemas?(tools: readonly Tool[]): void;
   /** Stop one in-flight request. Streamable HTTP closes that response stream. */
   abortRequest?(id: JsonRpcId): void;
 }
@@ -48,17 +50,35 @@ export abstract class TransportEvents {
   }
 
   protected emitMessage(message: JsonRpcMessage): void {
-    for (const listener of this.messageListeners) listener(message);
+    for (const listener of this.messageListeners) {
+      try {
+        listener(message);
+      } catch (error) {
+        this.emitError(error);
+      }
+    }
   }
 
   protected emitError(error: unknown): void {
     const normalized = toError(error);
-    for (const listener of this.errorListeners) listener(normalized);
+    for (const listener of this.errorListeners) {
+      try {
+        listener(normalized);
+      } catch {
+        // A diagnostic observer cannot stop delivery or transport cleanup.
+      }
+    }
   }
 
   protected emitClose(): void {
     if (this.closeEmitted) return;
     this.closeEmitted = true;
-    for (const listener of this.closeListeners) listener();
+    for (const listener of this.closeListeners) {
+      try {
+        listener();
+      } catch (error) {
+        this.emitError(error);
+      }
+    }
   }
 }

@@ -165,7 +165,25 @@ function toChatMessages(context: Context): ChatMessage[] {
   const leading = context.messages[0];
   const alreadyThere = leading?.role === "system" && leading.content === prompt;
   if (prompt && !alreadyThere) messages.push({ role: "system", content: prompt });
-  for (const message of context.messages) messages.push(convertMessage(message));
+  const attachments: ChatContentPart[] = [];
+  const flushAttachments = () => {
+    if (attachments.length === 0) return;
+    messages.push({ role: "user", content: [...attachments] });
+    attachments.length = 0;
+  };
+  for (const message of context.messages) {
+    // All results in a tool-call group must precede the image-bearing user message.
+    if (message.role !== "toolResult") flushAttachments();
+    messages.push(convertMessage(message));
+    if (message.role !== "toolResult" || !message.content.some((block) => block.type === "image")) continue;
+    attachments.push({ type: "text", text: `Images from tool ${message.toolName} (call ${message.toolCallId}):` });
+    for (const block of message.content) {
+      if (block.type === "image") attachments.push({
+        type: "image_url", image_url: { url: `data:${block.mimeType};base64,${block.data}` },
+      });
+    }
+  }
+  flushAttachments();
   return messages;
 }
 
@@ -203,11 +221,10 @@ function userContent(message: Extract<Message, { role: "user" }>): string | Chat
     : { type: "image_url" as const, image_url: { url: `data:${block.mimeType};base64,${block.data}` } });
 }
 
-function toolResultContent(message: Extract<Message, { role: "toolResult" }>): string | ChatContentPart[] {
+function toolResultContent(message: Extract<Message, { role: "toolResult" }>): string {
   if (!message.content.some((block) => block.type === "image")) return messageText(message);
-  return message.content.map((block) => block.type === "text"
-    ? { type: "text" as const, text: block.text }
-    : { type: "image_url" as const, image_url: { url: `data:${block.mimeType};base64,${block.data}` } });
+  const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
+  return text || "(see attached image)";
 }
 
 const IMAGE_MIME = /^image\/[\w.+-]+$/;

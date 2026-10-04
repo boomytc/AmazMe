@@ -128,12 +128,18 @@ function safeUrl(value: unknown, name: string): string {
   // URL parsing throws a TypeError, which discovery reserves for network failures.
   if (!URL.canParse(text)) throw new Error(`Invalid ${name}`);
   const url = new URL(text);
-  if (["javascript:", "data:", "vbscript:"].includes(url.protocol)) throw new Error(`Invalid ${name}`);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash) throw new Error(`Invalid ${name}`);
   return text;
 }
 
 function optionalUrl(value: unknown, name: string): string | undefined {
   return absent(value) ? undefined : safeUrl(value, name);
+}
+
+function issuerUrl(value: unknown, name: string): string {
+  const issuer = safeUrl(value, name);
+  if (new URL(issuer).search) throw new Error(`Invalid ${name}`);
+  return issuer;
 }
 
 export function parseProtectedResourceMetadata(value: unknown): OAuthProtectedResourceMetadata {
@@ -142,7 +148,7 @@ export function parseProtectedResourceMetadata(value: unknown): OAuthProtectedRe
     ...input,
     resource: safeUrl(input.resource, "OAuth protected resource metadata resource"),
     authorization_servers: optionalStrings(input.authorization_servers, "authorization_servers")?.map((url) =>
-      safeUrl(url, "authorization server URL"),
+      issuerUrl(url, "authorization server URL"),
     ),
     scopes_supported: optionalStrings(input.scopes_supported, "scopes_supported"),
   });
@@ -154,7 +160,7 @@ export function parseAuthorizationServerMetadata(value: unknown): AuthorizationS
   if (!responseTypes) throw new Error("Invalid response_types_supported");
   return compact({
     ...input,
-    issuer: safeUrl(input.issuer, "authorization server issuer"),
+    issuer: issuerUrl(input.issuer, "authorization server issuer"),
     authorization_endpoint: safeUrl(input.authorization_endpoint, "authorization endpoint"),
     token_endpoint: safeUrl(input.token_endpoint, "token endpoint"),
     registration_endpoint: optionalUrl(input.registration_endpoint, "registration endpoint"),
@@ -182,12 +188,19 @@ export function parseAuthorizationServerMetadata(value: unknown): AuthorizationS
 
 export function parseOAuthTokens(value: unknown): OAuthTokens {
   const input = object(value, "OAuth token response");
+  if (!absent(input.expires_in) && typeof input.expires_in !== "number" && typeof input.expires_in !== "string") {
+    throw new Error("Invalid expires_in");
+  }
   // Number(null) is 0, which would mark the token as expired at once.
   const expires = absent(input.expires_in) ? undefined : Number(input.expires_in);
-  if (expires !== undefined && !Number.isFinite(expires)) throw new Error("Invalid expires_in");
+  if (expires !== undefined && (!Number.isFinite(expires) || expires < 0)) throw new Error("Invalid expires_in");
+  const tokenType = requiredString(input.token_type, "token_type");
+  if (tokenType.toLowerCase() !== "bearer") throw new Error("Unsupported OAuth token_type");
+  const accessToken = requiredString(input.access_token, "access_token");
+  if (!/^[A-Za-z0-9\-._~+/]+=*$/.test(accessToken)) throw new Error("Invalid OAuth bearer access_token");
   return compact({
-    access_token: requiredString(input.access_token, "access_token"),
-    token_type: requiredString(input.token_type, "token_type"),
+    access_token: accessToken,
+    token_type: tokenType,
     expires_in: expires,
     scope: optionalString(input.scope, "scope"),
     refresh_token: optionalString(input.refresh_token, "refresh_token"),

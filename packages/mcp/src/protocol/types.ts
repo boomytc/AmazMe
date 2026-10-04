@@ -30,6 +30,7 @@ export interface Root {
 }
 
 export interface ClientCapabilities {
+  extensions?: Record<string, Record<string, unknown>>;
   experimental?: Record<string, unknown>;
   roots?: { listChanged?: boolean };
   sampling?: Record<string, unknown>;
@@ -37,6 +38,7 @@ export interface ClientCapabilities {
 }
 
 export interface ServerCapabilities {
+  extensions?: Record<string, Record<string, unknown>>;
   experimental?: Record<string, unknown>;
   logging?: Record<string, unknown>;
   prompts?: { listChanged?: boolean };

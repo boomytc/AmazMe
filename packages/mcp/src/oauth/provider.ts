@@ -3,13 +3,14 @@
  * Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see LICENSES/.
  */
 
-import type { OAuthClientMetadataDocument, OAuthClientProvider } from "./flow.ts";
-import type {
-  AuthorizationServerMetadata,
-  OAuthClientInformationMixed,
-  OAuthClientMetadata,
-  OAuthDiscoveryState,
-  OAuthTokens,
+import type { OAuthAuthorizationState, OAuthClientMetadataDocument, OAuthClientProvider } from "./flow.ts";
+import {
+  type AuthorizationServerMetadata,
+  type OAuthClientInformationMixed,
+  type OAuthClientMetadata,
+  type OAuthDiscoveryState,
+  type OAuthTokens,
+  parseOAuthTokens,
 } from "./types.ts";
 
 export interface McpOAuthState {
@@ -21,12 +22,19 @@ export interface McpOAuthState {
   codeVerifier?: string;
   oauthState?: string;
   discovery?: OAuthDiscoveryState;
+  authorization?: OAuthAuthorizationState;
+  /** Retained when grants are invalidated: configured secrets are bound to their original issuer. */
+  configuredClientIssuer?: string;
+  requestedScope?: string;
 }
 
 export interface McpOAuthStateStore {
   load(): McpOAuthState | undefined | Promise<McpOAuthState | undefined>;
   save(state: McpOAuthState): void | Promise<void>;
 }
+
+const storeWrites = new WeakMap<McpOAuthStateStore, Promise<void>>();
+const storeCoordination = new WeakMap<McpOAuthStateStore, Map<string, object>>();
 
 export interface McpOAuthProviderOptions {
   serverUrl: string | URL;
@@ -67,7 +75,6 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private configuredClient: OAuthClientInformationMixed | undefined;
   private store: McpOAuthStateStore;
   private onRedirect: (url: URL) => void | Promise<void>;
-  private writes: Promise<void> = Promise.resolve();
 
   constructor(options: McpOAuthProviderOptions) {
     this.serverUrl = String(new URL(options.serverUrl));
@@ -89,27 +96,73 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async state(): Promise<string> {
-    const existing = (await this.load()).oauthState;
-    if (existing) return existing;
     const state = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
     await this.update((value) => ({ ...value, oauthState: state }));
     return state;
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    return this.configuredClient ?? (await this.load()).clientInformation;
+    return structuredClone(this.configuredClient ?? (await this.load()).clientInformation);
   }
 
   async saveClientInformation(information: OAuthClientInformationMixed): Promise<void> {
     if (this.configuredClient) return;
-    await this.update((value) => ({ ...value, clientInformation: information }));
+    const snapshot = structuredClone(information);
+    await this.update((value) => ({ ...value, clientInformation: snapshot }));
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
     return (await this.load()).tokens;
   }
 
+  assertServerUrl(serverUrl: string | URL): void {
+    if (String(new URL(serverUrl)) !== this.serverUrl) throw new Error("OAuth provider belongs to another MCP server URL");
+  }
+
+  async accessToken(): Promise<string | undefined> {
+    const state = await this.load();
+    if (state.tokensExpireAt !== undefined && state.tokensExpireAt <= Date.now()) return undefined;
+    return state.tokens?.access_token;
+  }
+
+  coordinationKey(): object {
+    let servers = storeCoordination.get(this.store);
+    if (!servers) { servers = new Map(); storeCoordination.set(this.store, servers); }
+    let key = servers.get(this.serverUrl);
+    if (!key) { key = {}; servers.set(this.serverUrl, key); }
+    return key;
+  }
+
+  async requestedScope(): Promise<string | undefined> {
+    return (await this.load()).requestedScope;
+  }
+
+  async assertClientIssuer(issuer: string): Promise<void> {
+    if (!this.configuredClient?.client_secret) return;
+    const state = await this.load();
+    const previous = state.configuredClientIssuer ?? state.discovery?.authorizationServerMetadata?.issuer ?? state.discovery?.authorizationServerUrl;
+    if (previous !== undefined && previous !== issuer) {
+      throw new Error("Configured OAuth client secret belongs to another authorization server issuer");
+    }
+  }
+
+  async saveAuthorizationState(authorization: OAuthAuthorizationState): Promise<void> {
+    const snapshot = structuredClone(authorization);
+    await this.update((value) => ({
+      ...value,
+      authorization: snapshot,
+      codeVerifier: snapshot.codeVerifier,
+      oauthState: snapshot.state,
+      requestedScope: snapshot.scope,
+    }));
+  }
+
+  async authorizationState(): Promise<OAuthAuthorizationState | undefined> {
+    return (await this.load()).authorization;
+  }
+
   async saveTokens(tokens: OAuthTokens): Promise<void> {
+    tokens = parseOAuthTokens(tokens);
     const expiresAt = tokens.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000;
     await this.update((value) => {
       const next: McpOAuthState = { ...value, tokens };
@@ -141,7 +194,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
         delete next.tokens;
         delete next.tokensExpireAt;
       }
-      if (kind === "all" || kind === "verifier") delete next.codeVerifier;
+      if (kind === "all") delete next.requestedScope;
+      if (kind === "all" || kind === "verifier") {
+        delete next.codeVerifier;
+        delete next.oauthState;
+        delete next.authorization;
+      }
       if (kind === "all" || kind === "discovery") delete next.discovery;
       if (kind === "all") delete next.oauthState;
       return next;
@@ -149,7 +207,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveDiscoveryState(discovery: OAuthDiscoveryState): Promise<void> {
-    await this.update((value) => ({ ...value, discovery }));
+    const snapshot = structuredClone(discovery);
+    await this.update((value) => ({
+      ...value,
+      discovery: snapshot,
+      ...(this.configuredClient?.client_secret
+        ? { configuredClientIssuer: value.configuredClientIssuer ?? snapshot.authorizationServerMetadata?.issuer ?? snapshot.authorizationServerUrl }
+        : {}),
+    }));
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
@@ -157,19 +222,20 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   private async load(): Promise<McpOAuthState> {
-    await this.writes;
+    await storeWrites.get(this.store);
     return this.own(await this.store.load());
   }
 
   private async update(update: (state: McpOAuthState) => McpOAuthState): Promise<void> {
-    this.writes = this.writes.then(async () => {
+    const operation = (storeWrites.get(this.store) ?? Promise.resolve()).then(async () => {
       await this.store.save(update(this.own(await this.store.load())));
     });
-    await this.writes;
+    storeWrites.set(this.store, operation.catch(() => undefined));
+    await operation;
   }
 
   /** Stored state for another server URL is ignored, so credentials never leak across MCP servers. */
   private own(state: McpOAuthState | undefined): McpOAuthState {
-    return state?.serverUrl === this.serverUrl ? state : { serverUrl: this.serverUrl };
+    return state?.serverUrl === this.serverUrl ? structuredClone(state) : { serverUrl: this.serverUrl };
   }
 }

@@ -17,6 +17,52 @@ import {
 import { createInMemoryTransportPair, type InMemoryTransport } from "@amazme/mcp/testing";
 import { appendMcpTools, createCodingTools, mcpServer, type McpClient as ListedClient } from "@amazme/coding-agent";
 
+test("MCP tool names and schema are captured together and standard constraints work through Agent", async () => {
+  const listing = {
+    name: "query", description: "query",
+    inputSchema: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object" as const,
+      $defs: { mode: { type: "string", enum: ["fast", "slow"] } },
+      properties: {
+        mode: { $ref: "#/$defs/mode" },
+        n: { type: "integer" as const, minimum: 1, "x-mcp-header": "N" },
+      },
+      required: ["mode", "n"], additionalProperties: false,
+    },
+  };
+  const calls: Array<{ name: string; args: unknown }> = [];
+  const client: ListedClient = {
+    listTools: () => [listing],
+    async callTool(name, args) { calls.push({ name, args }); return { content: [{ type: "text", text: "ok" }] }; },
+  };
+  const tools = await appendMcpTools([], { serverId: "docs", client });
+  const originalSchema = structuredClone(listing.inputSchema);
+  listing.name = "mutated";
+  listing.inputSchema.properties.n.minimum = 100;
+  assert.deepEqual(tools[0]?.parameters, originalSchema);
+  for (const [args, valid] of [
+    [{ mode: "fast", n: 2 }, true],
+    [{ mode: "other", n: 2 }, false],
+    [{ mode: "fast", n: "2" }, false],
+    [{ mode: "fast", n: 0 }, false],
+  ] as const) {
+    const models = createModels();
+    models.setProvider(fauxProvider({
+      respond: ((...params: Parameters<FauxResponder>) => params[2].callCount === 1
+        ? fauxAssistant([fauxToolCall("mcp_docs__query", args)]) : fauxAssistant("done")) satisfies FauxResponder,
+    }));
+    const model = models.getModel("faux", "faux-1");
+    assert.ok(model);
+    const before = calls.length;
+    const messages = await new Agent({ model, streamFn: models.streamSimple.bind(models), tools }).prompt("query");
+    const result = messages.find((message) => message.role === "toolResult");
+    assert.equal(result?.role === "toolResult" && result.isError, !valid);
+    assert.equal(calls.length, before + (valid ? 1 : 0));
+  }
+  assert.deepEqual(calls, [{ name: "query", args: { mode: "fast", n: 2 } }]);
+});
+
 function listed(name: string): ListedClient {
   return {
     listTools: () => [{ name, description: name, inputSchema: { type: "object" } }],

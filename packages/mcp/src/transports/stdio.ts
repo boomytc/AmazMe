@@ -35,6 +35,18 @@ function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
+function hasLiveProcessTree(child: ChildProcess): boolean {
+  if (USE_PROCESS_GROUPS && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return child.exitCode === null && child.signalCode === null;
+}
+
 function installExitHook(): void {
   if (exitHookInstalled) return;
   exitHookInstalled = true;
@@ -71,7 +83,8 @@ export class StdioTransport extends TransportEvents implements McpTransport {
   private stderrBuffer = Buffer.alloc(0);
   private started = false;
   private closed = false;
-  private exited = false;
+  private closePromise: Promise<void> | undefined;
+  private discardingLine = false;
 
   constructor(options: StdioTransportOptions) {
     super();
@@ -103,7 +116,6 @@ export class StdioTransport extends TransportEvents implements McpTransport {
     if (USE_PROCESS_GROUPS && pid !== undefined) {
       installExitHook();
       liveProcessGroups.add(pid);
-      child.once("exit", () => liveProcessGroups.delete(pid));
     }
     child.stdout?.on("data", (chunk: Buffer | string) => this.handleStdout(chunk));
     child.stdout?.on("error", (error) => this.emitError(error));
@@ -113,13 +125,13 @@ export class StdioTransport extends TransportEvents implements McpTransport {
     child.stderr?.on("data", (chunk: Buffer | string) => this.handleStderr(chunk));
     child.stderr?.on("error", (error) => this.emitError(error));
     child.on("close", () => {
-      this.exited = true;
-      this.child = undefined;
-      if (this.stdoutBuffer.toString("utf8").trim()) {
+      if (!this.closed && !this.discardingLine && this.stdoutBuffer.toString("utf8").trim()) {
         this.emitError(new Error("MCP stdio server closed with an incomplete JSON-RPC message"));
       }
       this.stdoutBuffer = Buffer.alloc(0);
       this.emitClose();
+      // A wrapper can exit while detached descendants still own the process group.
+      void this.close();
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -149,32 +161,38 @@ export class StdioTransport extends TransportEvents implements McpTransport {
     });
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
+    this.closePromise = this.shutdown();
+    return this.closePromise;
+  }
+
+  private async shutdown(): Promise<void> {
     const child = this.child;
-    if (!child || this.exited) {
+    if (!child) {
       this.emitClose();
       return;
     }
-    if (child.exitCode !== null || child.signalCode !== null) {
-      child.stdin?.end();
+    if (!hasLiveProcessTree(child)) {
+      if (child.pid !== undefined) liveProcessGroups.delete(child.pid);
+      this.child = undefined;
+      this.emitClose();
       return;
     }
     const closeTimeoutMs = this.options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
     await new Promise<void>((resolve) => {
-      if (this.exited) {
-        resolve();
-        return;
-      }
       const timers: ReturnType<typeof setTimeout>[] = [];
       const finish = () => {
         for (const timer of timers) clearTimeout(timer);
+        if (child.pid !== undefined) liveProcessGroups.delete(child.pid);
+        this.child = undefined;
+        this.emitClose();
         resolve();
       };
       child.once("close", () => {
         killProcessTree(child, "SIGTERM");
-        finish();
+        if (!hasLiveProcessTree(child)) finish();
       });
       const grace = Math.min(STDIN_CLOSE_GRACE_MS, closeTimeoutMs);
       timers.push(setTimeout(() => killProcessTree(child, "SIGTERM"), grace));
@@ -187,6 +205,7 @@ export class StdioTransport extends TransportEvents implements McpTransport {
   }
 
   private handleStdout(chunk: Buffer | string): void {
+    if (this.closed) return;
     this.stdoutBuffer = Buffer.concat([this.stdoutBuffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
     const maxMessageBytes = this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES;
     while (true) {
@@ -194,12 +213,18 @@ export class StdioTransport extends TransportEvents implements McpTransport {
       if (newline < 0) {
         if (this.stdoutBuffer.length > maxMessageBytes) {
           this.stdoutBuffer = Buffer.alloc(0);
-          this.emitError(new Error(`MCP stdio message exceeds ${maxMessageBytes} bytes`));
+          const firstOverflow = !this.discardingLine;
+          this.discardingLine = true;
+          if (firstOverflow) this.emitError(new Error(`MCP stdio message exceeds ${maxMessageBytes} bytes`));
         }
         return;
       }
       const line = this.stdoutBuffer.subarray(0, newline);
       this.stdoutBuffer = this.stdoutBuffer.subarray(newline + 1);
+      if (this.discardingLine) {
+        this.discardingLine = false;
+        continue;
+      }
       if (line.length > maxMessageBytes) {
         this.emitError(new Error(`MCP stdio message exceeds ${maxMessageBytes} bytes`));
         continue;

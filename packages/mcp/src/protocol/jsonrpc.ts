@@ -125,18 +125,20 @@ export function isModernProtocolError(error: unknown): error is McpError {
 }
 
 export function isJsonRpcRequest(message: unknown): message is JsonRpcRequest {
-  return isObject(message) && message.jsonrpc === "2.0" && isJsonRpcId(message.id) && typeof message.method === "string";
+  return isObject(message) && message.jsonrpc === "2.0" && isJsonRpcId(message.id) && typeof message.method === "string" &&
+    !("result" in message) && !("error" in message);
 }
 
 export function isJsonRpcNotification(message: unknown): message is JsonRpcNotification {
-  return isObject(message) && message.jsonrpc === "2.0" && !("id" in message) && typeof message.method === "string";
+  return isObject(message) && message.jsonrpc === "2.0" && !("id" in message) && typeof message.method === "string" &&
+    !("result" in message) && !("error" in message);
 }
 
 export function isJsonRpcResponse(message: unknown): message is JsonRpcResponse {
-  if (!isObject(message) || message.jsonrpc !== "2.0" || !isJsonRpcId(message.id)) return false;
+  if (!isObject(message) || message.jsonrpc !== "2.0" || !isJsonRpcId(message.id) || "method" in message) return false;
   if ("result" in message) return !("error" in message);
   if (!("error" in message) || !isObject(message.error)) return false;
-  return typeof message.error.code === "number" && typeof message.error.message === "string";
+  return Number.isInteger(message.error.code) && typeof message.error.message === "string";
 }
 
 export function parseJsonRpcMessage(value: unknown): JsonRpcMessage {

@@ -138,13 +138,14 @@ function argumentsOf(args: unknown): Record<string, unknown> | undefined {
 }
 
 function mcpAgentTool(client: McpClient, listed: McpToolListing, exposed: string): AgentTool {
+  const originalName = listed.name;
   return {
     name: exposed,
     description: listed.description,
-    parameters: listed.inputSchema,
+    parameters: structuredClone(listed.inputSchema),
     replay: "never",
     execute(args, context) {
-      return callListed(client, listed.name, args, context);
+      return callListed(client, originalName, args, context);
     },
   };
 }

@@ -7,6 +7,8 @@ export interface UnauthorizedContext {
   fetch: McpFetch;
   /** Access token the rejected request carried. A newer token means another request already refreshed it. */
   token?: string;
+  /** Cancellation of this authorization attempt, including transport closure. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -15,6 +17,6 @@ export interface UnauthorizedContext {
  * They are not methods on the interface itself.
  */
 export interface AuthProvider {
-  token(): Promise<string | undefined>;
+  token(serverUrl?: URL): Promise<string | undefined>;
   onUnauthorized?(context: UnauthorizedContext): Promise<void>;
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Context, Model } from "@amazme/ai";
+import type { Context, JsonSchema, Model } from "@amazme/ai";
+import { fauxAssistant, fauxToolCall } from "@amazme/ai/providers/faux";
 import { anthropicMessagesApi } from "@amazme/ai/api/anthropic-messages";
 import { googleGenerativeAIApi } from "@amazme/ai/api/google-generative-ai";
 import { mistralConversationsApi } from "@amazme/ai/api/mistral-conversations";
@@ -83,7 +84,7 @@ const MISTRAL_STOP = [
   { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
 ];
 
-test("vision providers send a tool image with the same part shape as a user image", async () => {
+test("vision providers project tool images onto their protocol's supported content roles", async () => {
   const source = context();
   const before = JSON.stringify(source);
   const completions = await capture(
@@ -93,10 +94,11 @@ test("vision providers send a tool image with the same part shape as a user imag
   );
   const completionsMessages = (completions.body as { messages: Array<{ role: string; content: unknown }> }).messages;
   const completionsTool = completionsMessages.find((message) => message.role === "tool");
-  assert.deepEqual(completionsTool?.content, [
-    { type: "text", text: "cap" },
+  assert.equal(completionsTool?.content, "cap");
+  assert.deepEqual(completionsMessages.at(-1), { role: "user", content: [
+    { type: "text", text: "Images from tool shot (call call_1):" },
     { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } },
-  ]);
+  ] });
 
   const responses = await capture(
     (fetchImpl) => openAIResponsesApi({ fetch: fetchImpl }).stream(model("openai-responses", true), source, request),
@@ -121,7 +123,7 @@ test("vision providers send a tool image with the same part shape as a user imag
   ]);
 
   const google = await capture(
-    (fetchImpl) => googleGenerativeAIApi({ fetch: fetchImpl }).stream(model("google-generative-ai", true), source, request),
+    (fetchImpl) => googleGenerativeAIApi({ fetch: fetchImpl }).stream({ ...model("google-generative-ai", true), id: "gemini-3-flash" }, source, request),
     GOOGLE_STOP,
   );
   const contents = (google.body as { contents: Array<{ parts: Array<{ functionResponse?: { response: { result: string }; parts?: unknown[] } }> }> }).contents;
@@ -182,4 +184,86 @@ test("a text model sends the tool-image placeholder and a bad tool image is not 
   assert.equal(rejected.stopReason, "error");
   assert.equal((rejected.errorMessage ?? "").includes("not valid!"), false);
   assert.match(rejected.errorMessage ?? "", /base64 data/);
+});
+
+test("completions attaches tool images after every real and synthesized result in the batch", async () => {
+  const source = context();
+  const result = source.messages[1];
+  assert.ok(result?.role === "toolResult");
+  result.content = [{ type: "image", mimeType: "image/png", data: PNG }];
+  source.messages.splice(1, 0, fauxAssistant([
+    fauxToolCall("shot", {}, "call_1"),
+    fauxToolCall("missing", {}, "call_2"),
+  ]));
+  source.messages.push({ role: "user", content: "next", timestamp: 3 });
+  const before = JSON.stringify(source);
+  const captured = await capture(
+    (fetchImpl) => openaiCompletionsApi({ fetch: fetchImpl }).stream(model("openai-completions", true), source, request),
+    COMPLETIONS_STOP,
+    true,
+  );
+  const messages = (captured.body as { messages: Array<{ role: string; content: unknown; tool_call_id?: string }> }).messages;
+  assert.deepEqual(messages.map((message) => message.role), ["user", "assistant", "tool", "tool", "user", "user"]);
+  assert.equal(messages[2]?.content, "(see attached image)");
+  assert.equal(messages[2]?.tool_call_id, "call_1");
+  assert.equal(messages[3]?.tool_call_id, "call_2");
+  assert.equal(messages[3]?.content, "No tool result was recorded");
+  assert.deepEqual(messages[4]?.content, [
+    { type: "text", text: "Images from tool shot (call call_1):" },
+    { type: "image_url", image_url: { url: `data:image/png;base64,${PNG}` } },
+  ]);
+  assert.equal(messages[5]?.content, "next");
+  assert.equal(JSON.stringify(source), before);
+});
+
+test("Google groups parallel function results and attaches images outside responses on older and aliased models", async () => {
+  for (const id of ["gemini-2.5-pro", "custom-vision-alias", "gemini-3-flash"]) {
+    const source = context();
+    const result = source.messages[1];
+    assert.ok(result?.role === "toolResult");
+    source.messages.splice(1, 0, fauxAssistant([
+      fauxToolCall("shot", {}, "call_1"), fauxToolCall("missing", {}, "call_2"),
+    ]));
+    const before = JSON.stringify(source);
+    const captured = await capture(
+      (fetchImpl) => googleGenerativeAIApi({ fetch: fetchImpl }).stream({ ...model("google-generative-ai", true), id }, source, request),
+      GOOGLE_STOP,
+    );
+    type Part = { functionResponse?: { id: string; parts?: unknown[] }; inlineData?: unknown };
+    const contents = (captured.body as { contents: Array<{ role: string; parts: Part[] }> }).contents;
+    const responses = contents[2];
+    assert.equal(responses?.role, "user");
+    assert.deepEqual(responses?.parts.map((part) => part.functionResponse?.id), ["call_1", "call_2"]);
+    if (id.startsWith("gemini-3")) {
+      assert.equal(contents.length, 3);
+      assert.deepEqual(responses?.parts[0]?.functionResponse?.parts, [{ inlineData: { mimeType: "image/png", data: PNG } }]);
+    } else {
+      assert.equal(contents.length, 4);
+      assert.equal(responses?.parts[0]?.functionResponse?.parts, undefined);
+      assert.deepEqual(contents[3]?.parts, [
+        { text: "Images from tool shot (call call_1):" },
+        { inlineData: { mimeType: "image/png", data: PNG } },
+      ]);
+    }
+    assert.equal(JSON.stringify(source), before);
+  }
+});
+
+test("Google sends extended MCP JSON Schema through parametersJsonSchema", async () => {
+  const schema: JsonSchema = {
+    type: "object" as const,
+    $defs: { kind: { type: "string", enum: ["a", "b"] } },
+    properties: { kind: { $ref: "#/$defs/kind" }, n: { type: "integer", minimum: 1, "x-mcp-header": "N" } },
+  };
+  const source: Context = { ...context(), tools: [{ name: "query", description: "query", parameters: schema }] };
+  const before = JSON.stringify(source);
+  const captured = await capture(
+    (fetchImpl) => googleGenerativeAIApi({ fetch: fetchImpl }).stream(model("google-generative-ai", true), source, request),
+    GOOGLE_STOP,
+  );
+  const tools = (captured.body as { tools: Array<{ functionDeclarations: Array<Record<string, unknown>> }> }).tools;
+  const declaration = tools[0]?.functionDeclarations[0];
+  assert.equal(declaration?.parameters, undefined);
+  assert.deepEqual(declaration?.parametersJsonSchema, schema);
+  assert.equal(JSON.stringify(source), before);
 });
