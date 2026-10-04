@@ -514,12 +514,7 @@ class Sink implements SubscriptionSink {
 
   async send(update: JsonValue): Promise<boolean> {
     if (!(await this.ready) || this.closed) return false;
-    try {
-      return await this.port.send(update);
-    } catch (error) {
-      this.close();
-      throw error;
-    }
+    return this.port.send(update);
   }
 
   activate(): void {

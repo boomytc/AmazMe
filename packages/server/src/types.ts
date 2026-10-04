@@ -31,7 +31,8 @@ export interface SubscriptionSink {
    * Resolves `true` once the transport accepted the update and `false` if the sink closed first.
    * Updates of one connection are sent one at a time, so awaiting this is backpressure. Updates waiting
    * for their turn count against `maxQueuedBytes`; going over closes the connection.
-   * Rejects only when the update is not strict JSON or exceeds the frame limit; the sink is then closed.
+   * Rejects only when the update is not strict JSON or exceeds the frame limit. Nothing is sent and the sink
+   * stays open, so the service can still send a smaller notice or close it.
    */
   send(update: JsonValue): Promise<boolean>;
   close(): void;

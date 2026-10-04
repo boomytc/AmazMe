@@ -35,7 +35,7 @@ attach / detach 的业务调用由宿主的 `ServerService` 实现。它通过 `
 
 处理函数收到不透明的 `call` 和 `CallContext`。抛出 `ServiceError` 会以它的 code 回复；其他异常回复 `internal`，细节只交给 `onError`。`cancel` 会中止匹配的同一 route 请求的 `context.signal`，断线和 `server.close()` 同样中止它；这只是 RPC 调用上下文，业务是否停止由服务自己决定。中止后的调用仍会回复，客户端忽略迟到的响应。重复的活动 request ID 视为协议错误并关闭连接。
 
-`context.openSubscription(id)` 在调用的 route 下打开一个 `SubscriptionSink`。它在这次调用的成功响应排入发送队列之后才开始交付，调用失败则关闭；`send(update)` 在传输接受后 resolve `true`，已关闭则为 `false`。一条连接的更新一次只排一个进入发送队列，等待 `send` 就是背压；还在等待轮次的更新同样计入 `maxQueuedBytes`，不 await 地连续发送超过上限会关闭该连接。订阅的退订语义由服务自己定义，通常用 `context.subscription(id)?.close()`。
+`context.openSubscription(id)` 在调用的 route 下打开一个 `SubscriptionSink`。它在这次调用的成功响应排入发送队列之后才开始交付，调用失败则关闭；`send(update)` 在传输接受后 resolve `true`，已关闭则为 `false`；更新不是严格 JSON 或超过帧上限时 reject，什么也不发送，sink 保持打开，服务可以改发更小的通知或自行关闭。一条连接的更新一次只排一个进入发送队列，等待 `send` 就是背压；还在等待轮次的更新同样计入 `maxQueuedBytes`，不 await 地连续发送超过上限会关闭该连接。订阅的退订语义由服务自己定义，通常用 `context.subscription(id)?.close()`。
 
 ## 上限
 
