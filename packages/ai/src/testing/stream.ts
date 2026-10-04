@@ -144,8 +144,8 @@ function contentKind(block: AssistantContent | undefined): BlockKind | undefined
   return undefined;
 }
 
-function sameJson(block: { id: string; name: string; arguments: unknown } | undefined, toolCall: { id: string; name: string; arguments: unknown }): boolean {
-  if (!block || block.id !== toolCall.id || block.name !== toolCall.name) return false;
+function sameJson(block: { id: string; name: string; arguments: unknown; thoughtSignature?: string } | undefined, toolCall: { id: string; name: string; arguments: unknown; thoughtSignature?: string }): boolean {
+  if (!block || block.id !== toolCall.id || block.name !== toolCall.name || block.thoughtSignature !== toolCall.thoughtSignature) return false;
   try {
     return JSON.stringify(block.arguments) === JSON.stringify(toolCall.arguments);
   } catch {

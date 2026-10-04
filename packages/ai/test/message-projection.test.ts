@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseAssistant, transformMessages, type Message, type Model } from "@amazme/ai";
+import { baseAssistant, normalizeToolCallId, transformMessages, type Message, type Model } from "@amazme/ai";
 
 const model: Model = {
   id: "m", name: "m", api: "openai-completions", provider: "test", input: ["text"],
@@ -78,4 +78,33 @@ test("system changes do not duplicate an existing result or split a tool respons
   assert.deepEqual(results.map((result) => result.isError), [false, true]);
   assert.deepEqual(results[0]?.content, [{ type: "text", text: "actual" }]);
   assert.equal(results[1]?.toolCallId, second.id);
+});
+
+test("reused tool ids keep the mapping of their own assistant turn", () => {
+  const id = `native.call:${"a".repeat(90)}`;
+  for (const api of ["google-generative-ai", "google-vertex"] as const) {
+    const destination: Model = { ...model, api };
+    for (const nativeFirst of [false, true]) {
+      const sources = nativeFirst ? [destination, model] : [model, destination];
+      const messages: Message[] = sources.flatMap((source, index): Message[] => [
+        baseAssistant(source, [{ ...call, id }], "toolUse"),
+        { role: "toolResult", toolCallId: id, toolName: call.name,
+          content: [{ type: "text", text: `actual ${index}` }], isError: false, timestamp: index + 1 },
+      ]);
+      const before = JSON.stringify(messages);
+      const projected = transformMessages(messages, destination);
+      assert.deepEqual(projected.map((message) => message.role), ["assistant", "toolResult", "assistant", "toolResult"]);
+      for (const [index, source] of sources.entries()) {
+        const assistant = projected[index * 2];
+        const result = projected[index * 2 + 1];
+        assert.ok(assistant?.role === "assistant" && assistant.content[0]?.type === "toolCall");
+        assert.ok(result?.role === "toolResult");
+        const expected = source.api === api ? id : normalizeToolCallId(id);
+        assert.equal(assistant.content[0].id, expected);
+        assert.equal(result.toolCallId, expected);
+        assert.equal(result.isError, false);
+      }
+      assert.equal(JSON.stringify(messages), before);
+    }
+  }
 });

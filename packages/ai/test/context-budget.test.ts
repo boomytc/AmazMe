@@ -401,3 +401,19 @@ test("projection drops a failed assistant from the estimate and leaves the sourc
   assert.equal(body.includes("SECRET_TOOL"), false);
   assert.deepEqual(source, snapshot);
 });
+
+test("projected native signatures contribute to the budget only for the originating model", () => {
+  const active: Model = { ...model(), api: "google-generative-ai", id: "gemini-3-flash-preview" };
+  const source: Context = { messages: [{
+    ...assistant([
+      { type: "text", text: "answer", textSignature: "s".repeat(400) },
+      { type: "thinking", thinking: "plan", thinkingSignature: "s".repeat(400) },
+      { type: "toolCall", id: "call", name: "read", arguments: {}, thoughtSignature: "s".repeat(400) },
+    ]), api: active.api, provider: active.provider, model: active.id,
+  }, { role: "toolResult", toolCallId: "call", toolName: "read", content: [{ type: "text", text: "ok" }], isError: false, timestamp: 2 }] };
+  const snapshot = structuredClone(source);
+  const same = resolveOutputBudget(active, source, 100);
+  const other = resolveOutputBudget({ ...active, id: "another" }, source, 100);
+  assert.equal(same.estimatedInput - other.estimatedInput, 300);
+  assert.deepEqual(source, snapshot);
+});

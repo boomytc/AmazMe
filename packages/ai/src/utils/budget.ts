@@ -143,9 +143,9 @@ function messageTokens(message: Message): number {
   }
   let tokens = 0;
   for (const block of message.content) {
-    if (block.type === "text") tokens += textTokens(block.text);
-    else if (block.type === "thinking") tokens += textTokens(block.thinking);
-    else tokens += textTokens(block.name) + textTokens(stringifyForBudget(block.arguments));
+    if (block.type === "text") tokens += textTokens(block.text) + textTokens(block.textSignature ?? "");
+    else if (block.type === "thinking") tokens += textTokens(block.thinking) + textTokens(block.thinkingSignature ?? "");
+    else tokens += textTokens(block.name) + textTokens(stringifyForBudget(block.arguments)) + textTokens(block.thoughtSignature ?? "");
   }
   return tokens;
 }

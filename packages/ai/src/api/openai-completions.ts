@@ -282,7 +282,7 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       return;
     }
     const stopReason = finish === "length" ? "length" : toolsByServer.size > 0 || finish === "tool_calls" ? "toolUse" : "stop";
-    if (stopReason === "toolUse") {
+    if (toolsByServer.size > 0) {
       const ids = new Set<string>();
       for (const block of blocks) {
         if (block.kind !== "tool") continue;

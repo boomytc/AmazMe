@@ -35,11 +35,14 @@ function downgradeImages(content: UserContent[], placeholder: string): TextConte
 
 /**
  * Make one transcript acceptable to another provider.
- * Images disappear on text-only models. Tool ids are rewritten and the
- * matching tool results follow the new ids. A completions thinking block
+ * Images disappear on text-only models. Tool ids are normalized except for
+ * same-origin Google calls, whose native ids must be returned exactly. Tool
+ * results follow the mapped ids. A completions thinking block
  * keeps its field when the destination api is openai-completions. Every
  * other destination receives that text as an ordinary assistant answer.
- * Anthropic and Google destinations still keep thinking blocks.
+ * Native signatures are replayed only to the same provider/api/model. Foreign
+ * signed thinking becomes text; redacted payloads are omitted from that projection.
+ * Unsigned Anthropic and Google thinking follows the existing block policy.
  * Failed assistant prefixes are omitted and unanswered calls receive error
  * results in this request projection. The source transcript is not rewritten.
  */
@@ -53,37 +56,43 @@ export function transformMessages(messages: Message[], model: Model): Message[] 
       return { ...message, content: downgradeImages(message.content, USER_IMAGE) };
     }
     if (message.role === "toolResult") {
-      if (vision) return message;
-      return { ...message, content: downgradeImages(message.content, TOOL_IMAGE) };
+      const toolCallId = idMap.get(message.toolCallId) ?? normalizeToolCallId(message.toolCallId);
+      return { ...message, toolCallId, ...(vision ? {} : { content: downgradeImages(message.content, TOOL_IMAGE) }) };
     }
     if (message.role !== "assistant") return message;
+    idMap.clear();
+    const sameOrigin = message.api === model.api && message.provider === model.provider && message.model === model.id;
     const content: AssistantContent[] = [];
     for (const block of message.content) {
       if (block.type === "toolCall") {
-        const id = normalizeToolCallId(block.id);
+        const preserveNativeId = sameOrigin && (model.api === "google-generative-ai" || model.api === "google-vertex");
+        const id = preserveNativeId ? block.id : normalizeToolCallId(block.id);
         idMap.set(block.id, id);
-        content.push({ ...block, id });
+        const { thoughtSignature, ...call } = block;
+        content.push({ ...call, id, ...(sameOrigin && thoughtSignature !== undefined ? { thoughtSignature } : {}) });
         continue;
       }
-      if (block.type === "thinking" && !keepThinkingBlock(block, model)) {
+      if (block.type === "thinking" && block.redacted && !sameOrigin) continue;
+      if (block.type === "thinking" && !keepThinkingBlock(block, model, sameOrigin)) {
         content.push(text(block.thinking));
         continue;
       }
-      content.push(block);
+      if (!sameOrigin && block.type === "text") {
+        const { textSignature, ...plain } = block;
+        content.push(plain);
+      } else if (!sameOrigin && block.type === "thinking") {
+        const { thinkingSignature, redacted, ...plain } = block;
+        content.push(plain);
+      } else content.push(block);
     }
     return { ...message, content };
   });
 
-  const normalized = transformed.map((message) => {
-    if (message.role !== "toolResult") return message;
-    const id = idMap.get(message.toolCallId) ?? normalizeToolCallId(message.toolCallId);
-    return { ...message, toolCallId: id };
-  });
-  return reconcileToolResults(normalized);
+  return reconcileToolResults(transformed);
 }
 
-function keepThinkingBlock(block: ThinkingContent, model: Model): boolean {
-  if (model.api === "anthropic-messages" || model.api === "google-generative-ai") return true;
+function keepThinkingBlock(block: ThinkingContent, model: Model, sameOrigin: boolean): boolean {
+  if (["anthropic-messages", "google-generative-ai", "google-vertex", "bedrock-converse-stream"].includes(model.api)) return sameOrigin || block.thinkingSignature === undefined;
   return model.api === OPENAI_COMPLETIONS_API && isCompletionsThinkingField(block.thinkingField);
 }
 

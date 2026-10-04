@@ -79,3 +79,25 @@ test("anthropic messages still parses an SSE body delivered a few bytes at a tim
   assert.equal(message.usage.input, 3);
   assert.equal(message.usage.output, 4);
 });
+
+test("readSse cancels a pending body read when its signal is aborted", async () => {
+  let closeBody: () => void = () => undefined;
+  let cancelled = false;
+  const response = new Response(new ReadableStream<Uint8Array>({
+    start(controller) { closeBody = () => controller.close(); },
+    cancel() { cancelled = true; },
+  }));
+  const controller = new AbortController();
+  const pending = collect(response, controller.signal).then(() => undefined, (error: unknown) => error);
+  controller.abort();
+  const timeout = Symbol("timeout");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const result = await Promise.race([pending, new Promise<symbol>(resolve => {
+    timer = setTimeout(() => resolve(timeout), 100);
+  })]);
+  clearTimeout(timer);
+  if (result === timeout) closeBody();
+  assert.notEqual(result, timeout, "abort must settle without waiting for another server chunk");
+  assert.ok(result instanceof DOMException && result.name === "AbortError");
+  assert.equal(cancelled, true);
+});

@@ -124,13 +124,13 @@ function emitMessage(stream: ReturnType<typeof createAssistantEventStream>, mess
   stream.push({ type: "start", partial: { ...partial, content: [] } });
   message.content.forEach((block, contentIndex) => {
     if (block.type === "text") {
-      partial.content = [...partial.content, { type: "text", text: "" }];
+      partial.content = [...partial.content, { ...block, text: "" }];
       stream.push({ type: "text_start", contentIndex, partial });
       let text = "";
       for (let offset = 0; offset < block.text.length; offset += 8) {
         const delta = block.text.slice(offset, offset + 8);
         text += delta;
-        partial.content = replaceBlock(partial.content, contentIndex, { type: "text", text });
+        partial.content = replaceBlock(partial.content, contentIndex, { ...block, text });
         stream.push({ type: "text_delta", contentIndex, delta, partial });
       }
       if (!failed) stream.push({ type: "text_end", contentIndex, partial });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModels } from "@amazme/ai";
+import { createModels, resolveThinkingLevel, supportedThinkingLevels } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { cloudflareAIGatewayProvider } from "@amazme/ai/providers/cloudflare-ai-gateway";
 import { githubCopilotProvider } from "@amazme/ai/providers/github-copilot";
@@ -59,6 +59,17 @@ test("builtin chat presets share one provider factory and the existing protocol 
   assert.equal(openai.getModels().some((model) => model.id !== "gpt-4o-mini" && model.api === "openai-responses"), true);
   const empty = createModels();
   assert.equal(empty.listModels().length, 0);
+});
+
+test("Google 2.5 Pro metadata excludes off for both native protocols", () => {
+  const providers = builtinProviders();
+  for (const id of ["google", "google-vertex"]) {
+    const active = providers.find((provider) => provider.id === id)?.getModels().find((model) => model.id === "gemini-2.5-pro");
+    assert.ok(active, id);
+    assert.equal(active.thinkingLevelMap?.off, null);
+    assert.equal(supportedThinkingLevels(active).includes("off"), false);
+    assert.deepEqual(resolveThinkingLevel(active, "off"), { ok: false, level: "off" });
+  }
 });
 
 function completionsSse(): Response {

@@ -30,7 +30,10 @@ export function codexUrl(model: Model, request: OpenAICodexResponsesOptions): st
 }
 
 function codexHeaders(request: OpenAICodexResponsesOptions): Record<string, string> {
-  const headers: Record<string, string> = { "OpenAI-Beta": "responses=experimental" };
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${request.apiKey}`,
+    "OpenAI-Beta": "responses=experimental",
+  };
   const account = request.env?.CHATGPT_ACCOUNT_ID;
   if (account) headers["chatgpt-account-id"] = account;
   return headers;

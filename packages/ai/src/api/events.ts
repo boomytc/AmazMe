@@ -1,17 +1,23 @@
 import { baseAssistant, type AssistantEventStream } from "../models.ts";
 import type { AssistantMessage, Model, StopReason, ToolCall, Usage } from "../types.ts";
+import { isFilledWindowLength } from "../utils/overflow.ts";
 import { emptyUsage } from "../transform.ts";
 
 interface TextBlock {
   kind: "text";
   contentIndex: number;
   text: string;
+  key?: string;
+  signature?: string;
 }
 
 interface ThinkingBlock {
   kind: "thinking";
   contentIndex: number;
   text: string;
+  key?: string;
+  signature?: string;
+  redacted?: boolean;
 }
 
 interface ToolBlock {
@@ -22,33 +28,43 @@ interface ToolBlock {
   name: string;
   arguments: string;
   parsed?: unknown;
+  thoughtSignature?: string;
 }
 
 type Block = TextBlock | ThinkingBlock | ToolBlock;
+
+export interface NativeBlockOptions {
+  key?: string;
+  signature?: string;
+  appendSignature?: boolean;
+  redacted?: boolean;
+  newBlock?: boolean;
+}
 
 /** One assistant stream. Text, thinking, and tool calls share first-seen contentIndex. */
 export interface AssistantAccumulator {
   readonly stream: AssistantEventStream;
   readonly closed: boolean;
-  text(delta: string): void;
-  thinking(delta: string): void;
-  tool(key: string, id: string | undefined, name: string | undefined, argumentDelta: string, replace?: boolean): void;
+  text(delta: string, options?: NativeBlockOptions): void;
+  thinking(delta: string, options?: NativeBlockOptions): void;
+  tool(key: string, id: string | undefined, name: string | undefined, argumentDelta: string, replace?: boolean, thoughtSignature?: string): void;
   usage(next: Usage): void;
-  finish(stopReason: StopReason): void;
+  finish(stopReason: StopReason, overflow?: boolean): void;
   fail(stopReason: "error" | "aborted", message: string, retryable?: boolean, overflow?: boolean): void;
 }
 
 export function createAccumulator(stream: AssistantEventStream, model: Model): AssistantAccumulator {
   const blocks: Block[] = [];
   const tools = new Map<string, ToolBlock>();
+  const nativeBlocks = new Map<string, TextBlock | ThinkingBlock>();
   let usage = emptyUsage();
   let started = false;
   let closed = false;
 
   const snapshot = (stopReason: StopReason): AssistantMessage => {
     const content = blocks.map((block) => {
-      if (block.kind === "text") return { type: "text" as const, text: block.text };
-      if (block.kind === "thinking") return { type: "thinking" as const, thinking: block.text };
+      if (block.kind === "text") return { type: "text" as const, text: block.text, ...(block.signature !== undefined ? { textSignature: block.signature } : {}) };
+      if (block.kind === "thinking") return { type: "thinking" as const, thinking: block.text, ...(block.signature !== undefined ? { thinkingSignature: block.signature } : {}), ...(block.redacted ? { redacted: true } : {}) };
       return toolCallOf(block);
     });
     return {
@@ -74,42 +90,47 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
     }
   };
 
+  const appendNative = (kind: "text" | "thinking", delta: string, options: NativeBlockOptions) => {
+    if (closed || (!delta && options.signature === undefined && !options.redacted)) return;
+    begin();
+    const key = options.key === undefined ? undefined : `${kind}:${options.key}`;
+    const last = blocks[blocks.length - 1];
+    const nativeLast = last?.kind === "text" || last?.kind === "thinking" ? last : undefined;
+    let block = key ? nativeBlocks.get(key) : !options.newBlock && nativeLast?.kind === kind && !(nativeLast.signature !== undefined && delta) ? nativeLast : undefined;
+    if (!block) {
+      block = kind === "text"
+        ? { kind: "text", contentIndex: blocks.length, text: "", ...(key ? { key } : {}) }
+        : { kind: "thinking", contentIndex: blocks.length, text: "", ...(key ? { key } : {}) };
+      blocks.push(block);
+      if (key) nativeBlocks.set(key, block);
+      stream.push(kind === "text"
+        ? { type: "text_start", contentIndex: block.contentIndex, partial: snapshot("pending") }
+        : { type: "thinking_start", contentIndex: block.contentIndex, partial: snapshot("pending") });
+    }
+    if (options.signature !== undefined) {
+      block.signature = options.appendSignature
+        ? options.redacted ? btoa(atob(block.signature ?? "") + atob(options.signature)) : (block.signature ?? "") + options.signature
+        : options.signature;
+    }
+    if (block.kind === "thinking" && options.redacted) block.redacted = true;
+    block.text += delta;
+    stream.push(kind === "text"
+      ? { type: "text_delta", contentIndex: block.contentIndex, delta, partial: snapshot("pending") }
+      : { type: "thinking_delta", contentIndex: block.contentIndex, delta, partial: snapshot("pending") });
+  };
+
   return {
     stream,
     get closed() {
       return closed;
     },
-    text(delta) {
-      if (closed || !delta) return;
-      begin();
-      const last = blocks[blocks.length - 1];
-      if (last?.kind === "text") {
-        last.text += delta;
-        stream.push({ type: "text_delta", contentIndex: last.contentIndex, delta, partial: snapshot("pending") });
-        return;
-      }
-      const block: TextBlock = { kind: "text", contentIndex: blocks.length, text: "" };
-      blocks.push(block);
-      stream.push({ type: "text_start", contentIndex: block.contentIndex, partial: snapshot("pending") });
-      block.text = delta;
-      stream.push({ type: "text_delta", contentIndex: block.contentIndex, delta, partial: snapshot("pending") });
+    text(delta, options = {}) {
+      appendNative("text", delta, options);
     },
-    thinking(delta) {
-      if (closed || !delta) return;
-      begin();
-      const last = blocks[blocks.length - 1];
-      if (last?.kind === "thinking") {
-        last.text += delta;
-        stream.push({ type: "thinking_delta", contentIndex: last.contentIndex, delta, partial: snapshot("pending") });
-        return;
-      }
-      const block: ThinkingBlock = { kind: "thinking", contentIndex: blocks.length, text: "" };
-      blocks.push(block);
-      stream.push({ type: "thinking_start", contentIndex: block.contentIndex, partial: snapshot("pending") });
-      block.text = delta;
-      stream.push({ type: "thinking_delta", contentIndex: block.contentIndex, delta, partial: snapshot("pending") });
+    thinking(delta, options = {}) {
+      appendNative("thinking", delta, options);
     },
-    tool(key, id, name, argumentDelta, replace = false) {
+    tool(key, id, name, argumentDelta, replace = false, thoughtSignature) {
       if (closed) return;
       begin();
       let block = tools.get(key);
@@ -126,6 +147,7 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
         tools.set(key, block);
         stream.push({ type: "toolcall_start", contentIndex: block.contentIndex, partial: snapshot("pending") });
       } else if (replace) {
+        if (thoughtSignature !== undefined) block.thoughtSignature = thoughtSignature;
         if (id) block.id = id;
         if (name) block.name = name;
         if (argumentDelta) block.arguments = argumentDelta;
@@ -134,6 +156,7 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
         if (id) block.id = id;
         if (name) block.name += name;
       }
+      if (thoughtSignature !== undefined) block.thoughtSignature = thoughtSignature;
       if (argumentDelta) {
         block.arguments += argumentDelta;
         stream.push({
@@ -147,20 +170,21 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
     usage(next) {
       usage = next;
     },
-    finish(stopReason) {
+    finish(stopReason, overflow = false) {
       if (closed) return;
       const reason: StopReason = stopReason === "length"
         ? "length"
         : tools.size > 0 || stopReason === "toolUse"
           ? "toolUse"
           : stopReason;
-      if (reason === "toolUse") {
+      overflow ||= isFilledWindowLength(snapshot(reason), model.contextWindow);
+      if (tools.size > 0) {
         const ids = new Set<string>();
         for (const block of blocks) {
           if (block.kind !== "tool") continue;
           if (!block.id) block.id = `call_${block.contentIndex}`;
           if (ids.has(block.id)) {
-            this.fail("error", "duplicate tool call id");
+            this.fail("error", "duplicate tool call id", false, overflow);
             return;
           }
           ids.add(block.id);
@@ -171,20 +195,22 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
           try {
             block.parsed = JSON.parse(block.arguments) as unknown;
           } catch {
-            this.fail("error", `malformed tool arguments for ${block.name || block.id}`);
+            this.fail("error", `malformed tool arguments for ${block.name || block.id}`, false, overflow);
             return;
           }
         }
       }
-      closed = true;
       begin();
+      closed = true;
       endOpen(reason);
-      stream.push({ type: "done", reason, message: snapshot(reason) });
+      const message = snapshot(reason);
+      if (overflow) message.overflow = true;
+      stream.push({ type: "done", reason, message });
     },
     fail(stopReason, message, retryable = false, overflow = false) {
       if (closed) return;
-      closed = true;
       begin();
+      closed = true;
       const failed = snapshot(stopReason);
       failed.errorMessage = message;
       if (retryable) failed.retryable = true;
@@ -199,8 +225,14 @@ function toolCallOf(block: ToolBlock): ToolCall {
     type: "toolCall",
     id: block.id || `call_${block.contentIndex}`,
     name: block.name,
-    arguments: block.parsed ?? {},
+    arguments: block.parsed ?? parsedArguments(block.arguments),
+    ...(block.thoughtSignature !== undefined ? { thoughtSignature: block.thoughtSignature } : {}),
   };
+}
+
+function parsedArguments(value: string): unknown {
+  if (!value) return {};
+  try { return JSON.parse(value) as unknown; } catch { return {}; }
 }
 
 export function usageFromCounts(model: Model, input: number | undefined, output: number | undefined, total: number | undefined): Usage | undefined {
