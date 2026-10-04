@@ -100,7 +100,7 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 
 Harness 依赖结构化的 `Storage` / `StorageView` 接口，后端不需要继承 `MemoryStorage`。`run` 串行持有写入通道，每次 `apply` 单独原子提交；它不是跨多个 `apply` 的事务，回调失败也不会撤销此前已提交的数据。`apply` 仅在所属回调未结束时有效。
 
-核心入口和 `MemoryStorage` 不导入 Node 模块，ID 使用 Web Crypto；没有全局 `process` 时，模型认证使用传入的 `env` 或空环境。`JsonlStorage` 使用独立 Node 入口：
+核心入口和 `MemoryStorage` 不导入 Node 模块，ID 使用 Web Crypto；没有全局 `process` 时，模型认证使用传入的 `env` 或空环境。JSONL 使用独立 Node 入口。`openJsonlOwner` 在重放文件之前取得本机排他写入权；`new JsonlStorage` 不取锁。
 
 ```typescript
 import { AgentHarness, type Storage } from "@amazme/durable";

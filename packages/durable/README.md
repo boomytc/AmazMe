@@ -35,14 +35,21 @@ try {
 | --- | --- |
 | `@amazme/durable` | Harness、lane、操作与消息类型、只读快照与结果 DTO、Storage 契约、`value` / `list` 地址辅助函数 |
 | `@amazme/durable/storage/memory` | 可移植的内存参考实现 |
-| `@amazme/durable/storage/jsonl/node` | Node 文件系统 JSONL 适配器 |
+| `@amazme/durable/storage/jsonl/node` | Node 文件系统 JSONL。`openJsonlOwner` 取得排他写入权；`new JsonlStorage` 不取锁 |
 | `@amazme/durable/testing` | 独立于测试框架的共享存储契约检查，仅此测试入口使用 Node 断言 |
 
 核心入口和内存后端可在没有 Node 模块、全局 `process` 或业务客户端的环境中使用。入口会加载 `@amazme/agent` 的 hook 遍历。需要持久化文件时显式导入 Node 适配器：
 
 ```typescript
-import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
-const storage = new JsonlStorage("./state/lane.jsonl");
+import { value } from "@amazme/durable";
+import { openJsonlOwner } from "@amazme/durable/storage/jsonl/node";
+
+const owner = openJsonlOwner("./state/lane.jsonl");
+try {
+  await owner.storage.commit([{ type: "set", address: value("lane"), value: 1 }]);
+} finally {
+  await owner.release();
+}
 ```
 
 ## 依赖与能力契约
@@ -110,4 +117,6 @@ npm test
 
 `check:durable` 检查全部包源码、Durable 测试和跨运行时集成测试的类型。包内 `npm run check` 检查 Durable 源码与测试；跨运行时的诊断和依赖边界测试位于根目录 `test/`。
 
-本次对齐覆盖独立运行时、能力接口、平台适配器入口与契约检查。保留 lane 设计；没有引入 Pi 的 Conversation / Task / Chord、deferred、模型请求重发或摘要崩溃重试。JSONL 适配器延续单写入者设计；原子性指一条完整记录的提交与恢复，不提供多进程协调或断电后的 fsync 保证。
+本次对齐覆盖独立运行时、能力接口、平台适配器入口与契约检查。保留 lane 设计；没有引入 Pi 的 Conversation / Task / Chord、deferred、模型请求重发或摘要崩溃重试。
+
+`new JsonlStorage(file)` 在构造时重放并截断撕裂尾行，不取锁，只适合单进程。跨进程写入用 `openJsonlOwner(file)`：先取得路径锁和 inode 锁，再创建或重放文件。符号链接和相对路径落到同一路径锁；硬链接靠设备号和 inode 互斥。两把锁都在系统临时目录 `amazme-jsonl-locks/<uid>/{path,inode}` 下，删除数据文件或数据目录不会带走它们。释放时核对所有者令牌，旧实例不能解开新实例的锁。活着的进程不会因为锁时间旧而被抢占。`kill(pid, 0)` 没有返回 ESRCH 时不回收，pid 被无关进程复用时也一样。空目录、坏记录或主机名对不上时返回 `StorageBusyError`（`storage_busy`），不覆盖。`close()` 停止新的存储回调并等待已经准入的队列，不删除、不解锁。`deleteData()` 只在路径上的 inode 仍是打开时的那一个时删除文件，失败则保持锁。`release()` 先等待存储停止，再解开两把锁；失败可以重试，成功后再调用不会动新的锁。不要在存储回调里等待这三步，否则会和正在执行的回调互相等待。不返回的回调会让它们一直等，不能靠超时提前关文件或放锁。范围只限本机本地文件系统。临时目录被清掉时活锁会失效。锁目录在 `mkdir` 之后、写入所有者之前崩溃时，空目录无法确认归属，会一直返回 `storage_busy`。JSONL 仍不在每次写入后 fsync。
