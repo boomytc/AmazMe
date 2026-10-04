@@ -30,3 +30,16 @@ export {
   outputReserve,
   summaryOutputLimit,
 } from "./compaction/policy.ts";
+export {
+  armRequestDeadline,
+  classifyDeadline,
+  resolveRequestPolicy,
+  retryDelayMs,
+  storedRequestPolicy,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  DEFAULT_RETRY_WAIT,
+  type DeadlineAction,
+  type DeadlineFacts,
+  type RequestDeadline,
+  type RetryWait,
+} from "./request-policy.ts";

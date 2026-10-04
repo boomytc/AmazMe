@@ -17,6 +17,15 @@ import { createTypedSpanStarter, type SchemaTelemetrySpan, type TelemetryContext
 import { acceptedSummary, continuationContext, fitSummaryRequest, planCompaction, summaryRejection } from "./compaction/plan.ts";
 import { effectiveInputThreshold, keepRecentBudget } from "./compaction/policy.ts";
 import type { TranscriptEntry } from "./compaction/select.ts";
+import {
+  armRequestDeadline,
+  classifyDeadline,
+  resolveRequestPolicy,
+  retryDelayMs,
+  storedRequestPolicy,
+  type RequestDeadline,
+  type RetryWait,
+} from "./request-policy.ts";
 import { durableTelemetrySchema } from "./telemetry.ts";
 import type { HarnessMessage, HarnessModels, HarnessTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "./types.ts";
 import {
@@ -58,6 +67,10 @@ export interface LaneConfig {
   /** Output-token cap forwarded to streamSimple. Omitted uses the model cap. */
   maxTokens?: number;
   maxAttempts: number;
+  /** Model-request deadline. Distinct from any tool execution limit. */
+  requestTimeoutMs: number;
+  /** Stored retry wait. The settled `notBefore` is `now + retryDelayMs(retry, attempt)`. */
+  retry: RetryWait;
   systemPrompt: string;
 }
 
@@ -78,6 +91,15 @@ export interface HarnessOptions {
   /** Output-token cap for model turns. The summary request uses its own cap. */
   maxTokens?: number;
   maxAttempts?: number;
+  /** Deadline for one model request. Omitted uses 60 seconds. Not a tool limit. */
+  requestTimeoutMs?: number;
+  /** Retry wait stored on the lane. Omitted uses a 1 second base capped at 60 seconds. */
+  retry?: RetryWait;
+  /**
+   * Test seam for the model deadline. Production uses {@link armRequestDeadline}.
+   * The returned signal must abort when `parent` aborts.
+   */
+  armDeadline?: (timeoutMs: number, parent: AbortSignal) => RequestDeadline;
 }
 
 export interface OperationResult {
@@ -497,9 +519,9 @@ export class AgentLane {
       }
       if (planned.type === "assistant") {
         try {
-          const message = await this.streamAssistant(planned, signal, span);
-          if (this.harness.isAbandoned || !message) return this.settledOrWait(operationId);
-          await admitted(this.harness).run((view, apply) => this.settleAssistant(view, apply, planned, message));
+          const streamed = await this.streamAssistant(planned, signal, span);
+          if (this.harness.isAbandoned || !streamed) return this.settledOrWait(operationId);
+          await admitted(this.harness).run((view, apply) => this.settleAssistant(view, apply, planned, streamed.message, streamed.timedOut));
         } finally {
           this.harness.live.delete(planned.responseEntryId);
         }
@@ -860,37 +882,51 @@ export class AgentLane {
     };
   }
 
-  private async streamAssistant(planned: Extract<Plan, { type: "assistant" }>, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage | undefined> {
+  private async streamAssistant(planned: Extract<Plan, { type: "assistant" }>, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<{ message: AssistantMessage; timedOut: boolean } | undefined> {
     const context = await admitted(this.harness).read((view) => this.providerContext(view));
     const config = await admitted(this.harness).read((view) => this.config(view));
     if (this.harness.isAbandoned) return undefined;
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
-    if (!model) return missingModel(config);
+    if (!model) return { message: missingModel(config), timedOut: false };
     const replaced = await walkTransform(this.hookList(), context.messages as AgentMessage[], signal);
     if (this.harness.isAbandoned || signal.aborted) return undefined;
     const request = replaced ? { ...context, messages: toProviderMessages(replaced) } : context;
-    const stream = this.harness.options.models.streamSimple(model, request, {
-      signal,
-      thinkingLevel: config.thinkingLevel,
-      telemetryContext,
-      ...(config.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
-    });
+    const deadline = this.deadline(config.requestTimeoutMs, signal);
     let frames = Promise.resolve();
     let frameFailure: { error: unknown } | undefined;
+    let contentFrames = 0;
+    let result: Promise<AssistantMessage> | undefined;
     try {
+      const stream = this.harness.options.models.streamSimple(model, request, {
+        signal: deadline.signal,
+        thinkingLevel: config.thinkingLevel,
+        telemetryContext,
+        ...(config.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
+      });
+      result = stream.result();
       for await (const event of stream) {
         const frame = frameFromEvent(event);
         if (!frame) continue;
+        if (frame.type !== "stop") contentFrames += 1;
         const queued = this.appendFrame(planned, frame).catch((error: unknown) => {
           frameFailure ??= { error };
         });
         frames = frames.then(() => queued);
       }
+    } catch (error) {
+      await frames;
+      if (frameFailure) throw frameFailure.error;
+      if (deadline.timedOut() && contentFrames === 0) {
+        return { message: timeoutMessage(model, "retryable_timeout", []), timedOut: true };
+      }
+      throw error;
     } finally {
+      deadline.dispose();
       await frames;
     }
     if (frameFailure) throw frameFailure.error;
-    return stream.result();
+    if (!result) throw new Error("model stream did not start");
+    return { message: await result, timedOut: deadline.timedOut() };
   }
 
   private async streamSummary(signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage | undefined> {
@@ -914,17 +950,26 @@ export class AgentLane {
     const summaryContext = replaced
       ? { ...request.context, messages: toProviderMessages(replaced) }
       : request.context;
+    const deadline = this.deadline(prepared.config.requestTimeoutMs, signal);
     const stream = this.harness.options.models.streamSimple(
       model,
       summaryContext,
-      { signal, thinkingLevel: "off", maxTokens: request.maxTokens, telemetryContext },
+      { signal: deadline.signal, thinkingLevel: "off", maxTokens: request.maxTokens, telemetryContext },
     );
     let message: AssistantMessage | undefined;
-    for await (const event of stream) {
-      if (event.type === "done") message = event.message;
-      if (event.type === "error") message = event.error;
+    try {
+      for await (const event of stream) {
+        if (event.type === "done") message = event.message;
+        if (event.type === "error") message = event.error;
+      }
+      message ??= await stream.result();
+    } finally {
+      deadline.dispose();
     }
-    return message ?? stream.result();
+    if (message && deadline.timedOut()) {
+      return { ...message, stopReason: "aborted", retryable: false, errorMessage: message.errorMessage ?? "model request timed out" };
+    }
+    return message;
   }
 
   private appendFrame(planned: { operationId: string; responseEntryId: string }, frame: import("@amazme/ai").AssistantFrame): Promise<void> {
@@ -940,13 +985,21 @@ export class AgentLane {
     view: StorageView,
     apply: Apply,
     planned: Extract<Plan, { type: "assistant" }>,
-    message: AssistantMessage,
+    incoming: AssistantMessage,
+    timedOut: boolean,
   ): void {
     if (this.harness.isAbandoned) return;
     const state = view.get<OperationState>(stateAddress(planned.operationId));
     const meta = view.get<OperationMeta>(metaAddress(planned.operationId));
     if (!state || !meta || state.phase !== "assistant_effect_pending" || state.responseEntryId !== planned.responseEntryId) return;
     const config = this.config(view);
+    const frames = view.items(frameAddress(planned.operationId, planned.responseEntryId)).map((item) => item.item as AssistantFrame);
+    const action = classifyDeadline({
+      timedOut,
+      cancelRequested: state.scope.control.status === "cancel_requested",
+      contentFrames: frames.filter((frame) => frame.type !== "stop").length,
+    });
+    const message = applyDeadline(incoming, action, frames);
     const calls = message.content.filter((block) => block.type === "toolCall");
     const cancel = state.scope.control.status === "cancel_requested" || message.stopReason === "aborted";
     const settledMessage: AssistantMessage = cancel
@@ -996,7 +1049,7 @@ export class AgentLane {
         value: {
           phase: "retry_wait",
           scope: { ...state.scope, attempt: state.scope.attempt + 1 },
-          notBefore: Date.now() + 10,
+          notBefore: Date.now() + retryDelayMs(config.retry, state.scope.attempt + 1),
         },
       }]);
       return;
@@ -1812,6 +1865,7 @@ export class AgentLane {
         compaction: options.compaction ?? { enabled: false, maxTokens: 80_000 },
         ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
         maxAttempts: options.maxAttempts ?? 2,
+        ...resolveRequestPolicy(options),
         systemPrompt: options.systemPrompt ?? "",
       };
       apply([{ type: "set", address: configAddress(this.name), value: config }]);
@@ -1849,7 +1903,13 @@ export class AgentLane {
   private config(view: StorageView): LaneConfig {
     const config = view.get<LaneConfig>(configAddress(this.name));
     if (!config) throw new Error("lane config is missing");
-    return config;
+    const policy = storedRequestPolicy(config);
+    return { ...config, ...policy };
+  }
+
+  private deadline(timeoutMs: number, parent: AbortSignal): RequestDeadline {
+    const arm = this.harness.options.armDeadline ?? armRequestDeadline;
+    return arm(timeoutMs, parent);
   }
 
   private tool(name: string): HarnessTool | undefined {
@@ -1950,6 +2010,43 @@ function usageWrite(id: string, operationId: string, message: AssistantMessage):
     output: message.usage.output,
     totalTokens: message.usage.totalTokens,
   };
+}
+
+function applyDeadline(message: AssistantMessage, action: ReturnType<typeof classifyDeadline>, frames: readonly AssistantFrame[]): AssistantMessage {
+  if (action.kind === "unchanged") return message;
+  if (action.kind === "retryable_timeout") {
+    return {
+      ...message,
+      content: [{ type: "text", text: "" }],
+      stopReason: "error",
+      retryable: true,
+      overflow: false,
+      errorMessage: "model request timed out",
+    };
+  }
+  const content = reduceFrames(frames).content.filter((block) => block.type !== "toolCall");
+  return {
+    ...message,
+    content: content.length > 0 ? content : [{ type: "text", text: "" }],
+    stopReason: "aborted",
+    retryable: false,
+    overflow: false,
+    errorMessage: "model request timed out after output started",
+  };
+}
+
+function timeoutMessage(model: { api: string; provider: string; id: string }, action: "retryable_timeout", content: AssistantMessage["content"]): AssistantMessage {
+  return applyDeadline({
+    role: "assistant",
+    content,
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
+    stopReason: "error",
+    errorMessage: "model request failed",
+    timestamp: Date.now(),
+  }, { kind: action }, []);
 }
 
 function missingModel(config: LaneConfig): AssistantMessage {
