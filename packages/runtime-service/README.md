@@ -9,11 +9,18 @@
 | `@amazme/runtime-service/server` | `RuntimeHost`：绑定一个 `AgentHarness`；`createManagementService()`：attach / detach | Durable、server |
 
 ```typescript
-// 服务端进程
+// 服务端进程。当前 host 仍由调用方拥有 harness；交给 server 的 handle 在关闭时不能关掉这份 harness。
 const harness = new AgentHarness(storage, { models, model });
 const host = new RuntimeHost({ harness, lanes: ["main"] });
-const server = new Server({ serverId: "srv-1", service: createManagementService() });
-server.registerRuntime("main", host);
+const server = new Server({
+  serverId: "srv-1",
+  service: createManagementService(),
+  openRuntime: (runtimeId) => Promise.resolve(runtimeId === "main" ? {
+    acquire: () => ({ service: host, release: () => undefined }),
+    close: () => Promise.resolve(),
+    idle: () => false,
+  } : null),
+});
 
 // 客户端进程
 const remote = new RuntimeClient(client);
@@ -49,9 +56,9 @@ Storage 监听器只置 dirty 并安排一次固定窗口（`publishWindowMs`，
 
 ## 停机与所有权
 
-调用方始终拥有 `AgentHarness` 和 `Storage`。建议的停机顺序：
+调用方始终拥有 `AgentHarness` 和 `Storage`。上面的 handle 把 `close` 留成空操作，因此 server 的关闭不会碰到 harness。建议的停机顺序：
 
-1. `await server.close()`：停止接收连接，中止已准入调用的等待并等它们结束；
+1. `await server.close()`：停止接收连接，中止已准入调用的等待并等它们结束，并关闭它打开的 handle；
 2. `await host.close()`：之后的调用回复 `runtime_closed`，每个已初始化的订阅收到 `runtime_closed` 通知后关闭，尚未完成的订阅调用回复 `runtime_closed`；它等待进行中的初始和更新快照读取，不等停止读取的对端；
 3. `await host.drivesSettled()`：等待本 host 启动或加入的 drive 结束，或者由宿主决定提前 `harness.abandon()`；
 4. 由宿主调用 `harness.close()`。

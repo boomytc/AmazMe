@@ -11,7 +11,7 @@ import { Client, type ByteTransportFactory } from "@amazme/client";
 import { AgentHarness, type Storage } from "@amazme/durable";
 import type { ProtocolLimits } from "@amazme/protocol";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
-import { Server } from "@amazme/server";
+import { Server, type RuntimeHandle, type RuntimeService } from "@amazme/server";
 import { memoryConnector, type MemoryLink } from "@amazme/server/testing";
 import type { LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient } from "@amazme/runtime-service/client";
@@ -102,10 +102,12 @@ export function world(options: {
   limits?: Partial<ProtocolLimits>;
 } = {}) {
   const errors: Error[] = [];
+  const services = new Map<string, RuntimeService>();
   const server = new Server({
     serverId: "srv",
     service: createManagementService(),
     onError: (error) => errors.push(error),
+    openRuntime: (runtimeId) => Promise.resolve(services.has(runtimeId) ? borrowedRuntime(services.get(runtimeId)!) : null),
     ...(options.limits ? { limits: options.limits } : {}),
   });
   const runtimes = new Map<string, RuntimeFixture>();
@@ -119,7 +121,7 @@ export function world(options: {
       onError: (error) => errors.push(error),
       ...(options.lanes ? { lanes: options.lanes } : {}),
     });
-    server.registerRuntime(id, host);
+    services.set(id, host);
     runtimes.set(id, { storage, harness, host, streams });
   }
   const connector = memoryConnector((connection) => server.accept(connection));
@@ -140,11 +142,21 @@ export function world(options: {
       await fixture.host.close();
       for (const stream of fixture.streams) finish(stream, "teardown");
       await fixture.host.drivesSettled();
-      fixture.harness.close();
+      await fixture.harness.close();
     }
     const thrown = links.flatMap((link) => [...link.client.handlerErrors, ...link.server.handlerErrors]);
     if (thrown.length > 0) throw new AggregateError(thrown, "transport handlers threw");
     if (errors.length > 0) throw new AggregateError(errors, "unexpected server or runtime errors");
   };
-  return { server, runtime, connect, links, errors, close };
+  const allow = (id: string, service: RuntimeService) => { services.set(id, service); };
+  return { server, runtime, connect, links, errors, close, allow };
+}
+
+/** A borrowed service. Closing the server does not close the harness the caller still owns. */
+export function borrowedRuntime(service: RuntimeService): RuntimeHandle {
+  return {
+    acquire: () => ({ service, release: () => undefined }),
+    close: () => Promise.resolve(),
+    idle: () => false,
+  };
 }

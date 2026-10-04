@@ -329,7 +329,7 @@ class SnapshotPublisher {
 }
 
 export interface ManagementServiceOptions {
-  /** Runtimes clients may attach. Omitted allows every registered runtime. */
+  /** Runtimes clients may attach. Omitted asks `openRuntime` about every id. */
   runtimes?: readonly string[];
 }
 
@@ -337,7 +337,7 @@ export interface ManagementServiceOptions {
 export function createManagementService(options: ManagementServiceOptions = {}): ServerService {
   const allowed = options.runtimes ? new Set(options.runtimes) : undefined;
   return {
-    call(raw, context) {
+    async call(raw, context) {
       let call;
       try {
         call = parseManagementCall(raw);
@@ -345,11 +345,11 @@ export function createManagementService(options: ManagementServiceOptions = {}):
         throw new ServiceError("invalid_call", error instanceof ContractError ? error.message : "invalid management call");
       }
       if (call.method === "detach") {
-        context.detach();
+        await context.detach();
         return null;
       }
       if (allowed && !allowed.has(call.runtimeId)) throw new ServiceError("unknown_runtime", `runtime ${call.runtimeId} is not offered`);
-      context.attach(call.runtimeId);
+      await context.attach(call.runtimeId);
       return { attached: true };
     },
   };

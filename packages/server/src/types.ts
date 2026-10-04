@@ -58,18 +58,54 @@ export interface RuntimeCallContext extends CallContext {
   readonly route: RuntimeRoute;
 }
 
+/**
+ * One connection's right to call a runtime. `release` is idempotent and is invoked by the server only after
+ * every call admitted on this lease has finished. It does not cancel that work.
+ */
+export interface AttachmentLease {
+  readonly service: RuntimeService;
+  release(): void | Promise<void>;
+}
+
+/**
+ * An opened runtime owned by the server's lifecycle. The server acquires one lease per attachment.
+ * `close` stops host work and closes storage. It does not delete data.
+ * When `release` or `remove` is present, `close` keeps exclusive ownership: after it succeeds the server
+ * calls `remove` to delete data, or `release` to drop ownership without deleting. When both are absent,
+ * `close` is the whole shutdown.
+ */
+export interface RuntimeHandle {
+  /** Grants one attachment. It either returns a lease or leaves no extra hold. */
+  acquire(): AttachmentLease;
+  /**
+   * Drain waits for admitted host work. Abort asks the host to stop.
+   * Repeated calls share one operation; a later abort upgrades a drain. A later drain does not undo an abort.
+   * Must be idempotent: a failed shutdown can be called again.
+   */
+  close(mode: "drain" | "abort"): Promise<void>;
+  /** True when the host has no producer or storage work. A persisted retry wait is not producer work. Attachments are counted by the server. */
+  idle(): boolean;
+  /** Fires when `idle()` may have changed. It is not required to fire for the state at registration. The return value unsubscribes. */
+  watchIdle?(listener: () => void): () => void;
+  /** Releases exclusive ownership without deleting data. Idempotent. */
+  release?(): Promise<void>;
+  /** Deletes host data and then releases exclusive ownership. Idempotent. Must not drop ownership before the delete finishes. */
+  remove?(): Promise<void>;
+}
+
 /** Controlled routing capability for server-route calls. Business results should not carry the route. */
 export interface ServerCallContext extends CallContext {
   readonly route: ServerRoute;
   readonly attachment: RuntimeRoute | null;
   /**
-   * Installs a fresh attachment of a registered runtime on this connection and queues the `attachment`
-   * envelope before this call's response. Attaching the current runtime again keeps its attachment.
-   * Only valid while the call runs; afterwards it throws `call_settled`.
+   * Attaches this connection to a runtime the host's `openRuntime` allows. Queues the `attachment` envelope
+   * before this call's response. Attaching the current runtime again keeps its attachment and does not take
+   * another lease. A failed open leaves the previous attachment in place. Only valid while the call runs;
+   * afterwards it throws `call_settled`.
    */
-  attach(runtimeId: string): RuntimeRoute;
-  /** Clears the attachment, closes its subscriptions and queues `attachment: null`. Only valid while the call runs. */
-  detach(): void;
+  attach(runtimeId: string): Promise<RuntimeRoute>;
+  /** Clears the attachment, closes its subscriptions and queues `attachment: null`. The lease is released after this call's response. */
+  detach(): Promise<void>;
 }
 
 export type MaybePromise<T> = T | Promise<T>;

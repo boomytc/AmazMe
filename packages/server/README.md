@@ -6,30 +6,37 @@
 import { Server, ServiceError, type ServerService } from "@amazme/server";
 
 const service: ServerService = {
-  call(call, context) {
+  async call(call, context) {
     if (isAttach(call)) {
-      context.attach(call.runtimeId); // 受控能力；结果里不返回路由
+      await context.attach(call.runtimeId); // 受控能力；结果里不返回路由
       return { attached: true };
     }
     throw new ServiceError("unknown_call", "unsupported call");
   },
 };
-const server = new Server({ serverId: "srv-1", service });
-const unregister = server.registerRuntime("main", runtimeService);
+const server = new Server({
+  serverId: "srv-1",
+  service,
+  openRuntime: (runtimeId, signal) => openHostRuntime(runtimeId, signal),
+});
 const handlers = server.accept(byteConnection);
 ```
 
 ## 所有权
 
-- 宿主拥有 `Server`、服务实现和注册的 runtime。`server.close()` 只停止接收并释放连接：中止已准入调用的 signal、关闭订阅，并等待这些调用结束；不会关闭或调用 runtime 背后的任何资源。调用的处理函数需要响应 signal，否则 `close()` 会一直等待它。
+同一个 runtime id 只有一套生命周期。并发打开合并为一次 `openRuntime`；它只收到 runtime id 和打开信号，调用方不能传入路径、模块或构造参数。返回的 handle 归这套生命周期。工厂抛错时必须自行清掉还没交还的资源；返回 handle 之后由服务端关闭，再释放所有权或删除数据。
+
+- `server.close("drain")` 停止接收、撤销路由并等待已准入调用和 handle 结束。`close("abort")` 额外要求 handle 停止；进行中的 drain 会被后到的 abort 升级。两者共享同一次关闭。某个 handle 失败不会跳过其他 handle，失败会拒绝这次关闭，不会报成成功。不响应 abort 的 handle 会让关闭一直等待，所有权也不释放。`close` 不删除数据。
+- `removeRuntime` 禁止新的 attachment、撤销现有路由、排空并关闭 handle，然后在关闭成功时调用 `handle.remove()`（若存在）。重复调用共享进行中的那次；失败可以再试。已经开始 `release()` 的闲置回收不能再改成删除，这次移除会失败。
+- 没有任何 attachment、准入调用，且 `handle.idle()` 为真时，服务端关闭并 `release()`，不删数据。之后的 attach 会重新打开，旧 attachment 失效。`idle()` 为假时，最后一个客户端离开也不关闭 runtime。
 - 传输拥有监听器。每个被接受的 `ByteConnection` 从 `accept()` 起归服务端，直到服务端调用它的 `close()`；`send` 必须保序，它的 Promise 就是背压。传输把收到的字节、对端关闭和错误交给返回的处理函数。
-- 连接拥有它的 request ID、订阅和 attachment。两个连接的同号 ID 互不影响。
+- 连接拥有它的 request ID、订阅和当前这一份 attachment。两个连接的同号 ID 互不影响，租约也互不影响。
 
 ## 路由与准入
 
-握手前只接受 `hello`；版本不同回复 `unsupported_version`，其他首条消息回复 `protocol_error`，然后关闭。请求准入时检查完整 route：`serverId` 不符为 `wrong_server`；runtime route 必须等于本连接当前的 attachment，runtime 不同或尚未 attach 为 `not_attached`，attachment ID 不同为 `stale_attachment`。服务端只路由到 `registerRuntime` 显式注册的 runtime，客户端字符串不能指定其他目标。
+握手前只接受 `hello`；版本不同回复 `unsupported_version`，其他首条消息回复 `protocol_error`，然后关闭。请求准入时检查完整 route：`serverId` 不符为 `wrong_server`；runtime route 必须等于本连接当前的 attachment，runtime 不同或尚未 attach 为 `not_attached`，attachment ID 不同为 `stale_attachment`。runtime id 只交给宿主的 `openRuntime`；客户端字符串不能变成路径或构造参数。
 
-attach / detach 的业务调用由宿主的 `ServerService` 实现。它通过 `ServerCallContext.attach(runtimeId)` / `detach()` 这项受控能力让路由器安装或移除 attachment：attachment ID 由服务端生成，路由器在这次调用的响应之前按序发布 `attachment` 信封，业务结果不需要也不应携带路由。重复 attach 同一个 runtime 保留原 attachment；切换、detach、注销 runtime 或断线后，旧 attachment 失效，其下的订阅关闭。连接关闭之后，已准入的 attach 无法再安装路由（`connection_closed`）；调用已经返回后再用这项能力或 `openSubscription` 会抛出 `call_settled`，保证信封总在响应之前。
+attach / detach 由宿主的 `ServerService` 通过 `attach(runtimeId)` / `detach()` 完成。attachment ID 由服务端生成。同一连接重复 attach 当前 runtime 保留原 attachment，不再 `acquire`。切换失败时原来的 attachment 还在。detach 先排队 `attachment: null`，再送出本次响应，等这条 attachment 上已准入的调用结束后才 `release` 租约。路由变更和准入检查按连接串行，调用本体不占这把锁。断线、退订和 RPC cancel 只中止这次调用的 `context.signal`，不会变成 runtime 的关闭或删除。连接关闭之后，已准入的 attach 无法再安装路由（`connection_closed`）；调用已经返回后再用这项能力或 `openSubscription` 会抛出 `call_settled`。
 
 ## 调用、取消与订阅
 
@@ -48,7 +55,7 @@ attach / detach 的业务调用由宿主的 `ServerService` 实现。它通过 `
 | `maxQueuedBytes` | 两帧（每连接） | 关闭该连接，不丢弃响应 |
 | `handshakeTimeoutMs` | 10,000 | `handshake_timeout` 并关闭 |
 
-`server.close()` 可重复调用并返回同一个 Promise；`onError` 自身的异常被忽略。
+`server.close()` 在同一次关闭上可重复调用并返回同一个 Promise；`onError` 自身的异常被忽略。
 
 ## Unix socket
 

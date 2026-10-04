@@ -20,9 +20,11 @@ import {
 } from "@amazme/protocol";
 import { ServiceError, toError } from "./errors.ts";
 import type {
+  AttachmentLease,
   ByteConnection,
   ByteConnectionHandlers,
   CallContext,
+  RuntimeHandle,
   RuntimeService,
   ServerCallContext,
   ServerService,
@@ -47,6 +49,15 @@ export interface ServerOptions {
   handshakeTimeoutMs?: number;
   /** Diagnostics for internal service errors and dropped connections. Its own errors are ignored. */
   onError?: (error: Error) => void;
+  /**
+   * Opens one host-allowed runtime. Return null when the id is not offered.
+   * The server merges concurrent opens of the same id and calls this once.
+   * `signal` aborts when every waiter has left, or when the runtime is removed or the server is closing.
+   * It is not the signal of one RPC. A client cannot supply a path, module, or constructor options.
+   * A throw must leave no acquired resource. A returned handle belongs to the server, which closes it and
+   * then releases or deletes it; the factory does not free that handle itself.
+   */
+  openRuntime(runtimeId: string, signal: AbortSignal): Promise<RuntimeHandle | null>;
 }
 
 const CODE = /^[a-z][a-z0-9_.-]*$/;
@@ -61,6 +72,34 @@ interface Active {
 interface Opened {
   readonly sinks: Sink[];
   settled: boolean;
+  /** Runs after this call's response has been handed to the transport. */
+  readonly after: Array<() => Promise<void>>;
+}
+
+interface LeaseState {
+  readonly slot: RuntimeSlot;
+  readonly lease: AttachmentLease;
+  readonly admitted: Set<Promise<void>>;
+  released: boolean;
+  settling?: Promise<void>;
+}
+
+interface RuntimeSlot {
+  readonly runtimeId: string;
+  readonly controller: AbortController;
+  state: "opening" | "open" | "removing";
+  handle?: RuntimeHandle;
+  ready?: Promise<RuntimeHandle>;
+  interests: number;
+  readonly leases: Set<LeaseState>;
+  unwatch?: () => void;
+  removal?: Promise<void>;
+  closeOnce?: Promise<void>;
+  /** Explicit removal. An idle reclaim must not clear it. */
+  deleteData: boolean;
+  dataDeleted: boolean;
+  /** Set for the ownership step that is already in progress. A release cannot be upgraded into a delete. */
+  dropping?: "release" | "remove";
 }
 
 interface Conn {
@@ -72,15 +111,22 @@ interface Conn {
   readonly sinks: Map<string, Sink>;
   state: "awaiting_hello" | "ready" | "closed";
   attachment: RuntimeRoute | null;
+  lease: LeaseState | null;
+  /**
+   * Serializes route changes and admission. The running job is not in `gate`. Business calls start only
+   * after the running admission releases it, so a call can itself attach or detach.
+   */
+  gate: Array<() => void>;
+  gating: boolean;
   timer?: ReturnType<typeof setTimeout>;
   updates: Promise<unknown>;
   updateBytes: number;
 }
 
 /**
- * Routes protocol envelopes of accepted connections to the server service and to explicitly registered
- * runtimes. It interprets no business payload. Closing the server releases connections only; the host keeps
- * owning its runtimes and whatever they wrap.
+ * Routes protocol envelopes to the server service and to runtimes opened through `openRuntime`.
+ * It interprets no business payload. One lifecycle owns every runtime id: concurrent opens join,
+ * and removal or close is the only way that instance is dropped.
  */
 export class Server {
   readonly serverId: string;
@@ -91,10 +137,11 @@ export class Server {
   private readonly maxSubscriptions: number;
   private readonly maxQueued: number;
   private readonly handshakeTimeoutMs: number;
-  private readonly runtimes = new Map<string, { readonly service: RuntimeService }>();
+  private readonly slots = new Map<string, RuntimeSlot>();
   private readonly connections = new Set<Conn>();
   private readonly tasks = new Set<Promise<void>>();
   private closing: Promise<void> | undefined;
+  private abortClose = false;
 
   constructor(options: ServerOptions) {
     this.options = options;
@@ -118,22 +165,14 @@ export class Server {
   }
 
   /**
-   * Makes a runtime routable under `runtimeId`. The returned function unregisters it and detaches every
-   * connection attached to it; calls already admitted keep running.
+   * Forbids new attachments, revokes current ones, waits until their admitted calls finish, then closes
+   * the handle and, if the handle offers it, deletes host data. Repeated calls share one operation.
+   * A missing runtime resolves. Failure rejects and can be retried; it is not reported as success.
    */
-  registerRuntime(runtimeId: string, service: RuntimeService): () => void {
-    if (this.closing) throw new Error("server is closed");
-    encodeServerMessage({ type: "attachment", attachment: { serverId: this.serverId, runtimeId, attachmentId: "probe" } }, this.limits);
-    if (this.runtimes.has(runtimeId)) throw new Error(`runtime ${runtimeId} is already registered`);
-    const registration = { service };
-    this.runtimes.set(runtimeId, registration);
-    return () => {
-      if (this.runtimes.get(runtimeId) !== registration) return;
-      this.runtimes.delete(runtimeId);
-      for (const conn of this.connections) {
-        if (conn.attachment?.runtimeId === runtimeId) this.setAttachment(conn, null);
-      }
-    };
+  removeRuntime(runtimeId: string): Promise<void> {
+    const slot = this.slots.get(runtimeId);
+    if (!slot) return this.closing ?? Promise.resolve();
+    return this.removeSlot(slot, true);
   }
 
   accept(transport: ByteConnection): ByteConnectionHandlers {
@@ -146,6 +185,9 @@ export class Server {
       sinks: new Map(),
       state: "awaiting_hello",
       attachment: null,
+      lease: null,
+      gate: [],
+      gating: false,
       updates: Promise.resolve(),
       updateBytes: 0,
     };
@@ -176,15 +218,23 @@ export class Server {
   }
 
   /**
-   * Stops accepting, closes every connection, aborts their calls and waits until those calls settled.
-   * Repeated calls return the same promise. Registered runtimes are not closed.
+   * Stops accepting, aborts call signals, and closes every opened runtime.
+   * `drain` waits for host work. `abort` asks each handle to stop; a later abort upgrades an in-flight drain.
+   * Repeated calls share this promise. One handle failing does not skip the others.
    */
-  close(): Promise<void> {
+  close(mode: "drain" | "abort" = "drain"): Promise<void> {
+    if (mode === "abort") this.abortClose = true;
     if (!this.closing) {
-      this.closing = Promise.resolve().then(async () => {
-        while (this.tasks.size > 0) await Promise.allSettled([...this.tasks]);
+      let finish!: (error?: unknown) => void;
+      this.closing = new Promise<void>((resolve, reject) => {
+        finish = (error) => error === undefined ? resolve() : reject(error);
       });
       for (const conn of [...this.connections]) this.drop(conn);
+      void this.shutdown().then(() => finish(), (error: unknown) => finish(error));
+    } else if (mode === "abort") {
+      for (const slot of this.slots.values()) {
+        if (slot.handle) void this.closeHandle(slot, "abort").catch((error: unknown) => this.report(error));
+      }
     }
     return this.closing;
   }
@@ -245,30 +295,41 @@ export class Server {
       this.respond(conn, request.id, errorBody("wrong_server", `request is for server ${route.serverId}`));
       return;
     }
-    let invoke: (context: CallContext) => ReturnType<ServerService["call"]>;
-    if (isRuntimeRoute(route)) {
-      const attached = conn.attachment;
-      const runtime = this.runtimes.get(route.runtimeId);
-      if (!attached || attached.runtimeId !== route.runtimeId || !runtime) {
-        this.respond(conn, request.id, errorBody("not_attached", `runtime ${route.runtimeId} is not attached to this connection`));
-        return;
-      }
-      if (attached.attachmentId !== route.attachmentId) {
-        this.respond(conn, request.id, errorBody("stale_attachment", "the attachment was replaced or released"));
-        return;
-      }
-      invoke = (context) => runtime.service.call(request.call, context as Parameters<RuntimeService["call"]>[1]);
-    } else {
-      invoke = (context) => this.options.service.call(request.call, context as ServerCallContext);
-    }
     const controller = new AbortController();
     conn.active.set(request.id, { controller, route });
-    const opened: Opened = { sinks: [], settled: false };
-    const context = this.context(conn, route, controller.signal, opened);
+    const opened: Opened = { sinks: [], settled: false, after: [] };
+    // Admission is synchronous when the gate is free, so a call that closes the server still stops
+    // later messages in the same chunk. The gate is released before the call, which may attach.
+    this.enterGate(conn, () => {
+      let ready: ((context: CallContext) => ReturnType<ServerService["call"]>) | null;
+      try {
+        ready = this.prepare(conn, request, controller);
+      } catch (error) {
+        this.releaseGate(conn);
+        this.finishCall(conn, request, controller, opened, Promise.reject(error));
+        return;
+      }
+      this.releaseGate(conn);
+      if (!ready) return;
+      // Register the call before invoking it. close() from that call must see the task, and the
+      // invocation itself stays synchronous so it still runs inside this chunk.
+      const outcome = deferred<JsonValue | undefined>();
+      this.finishCall(conn, request, controller, opened, outcome.promise);
+      try {
+        outcome.resolve(ready(this.context(conn, route, controller.signal, opened)));
+      } catch (error) {
+        outcome.reject(error);
+      }
+    });
+  }
+
+  /** Tracks the call before awaiting it, so close sees work that a synchronous call has already started. */
+  private finishCall(conn: Conn, request: RequestEnvelope, controller: AbortController, opened: Opened, pending: ReturnType<ServerService["call"]>): void {
+    const outcome = Promise.resolve(pending);
     const task = (async () => {
       let response: ResponseEnvelope;
       try {
-        const result = await invoke(context);
+        const result = await outcome;
         response = result === undefined ? { type: "response", id: request.id, ok: true } : { type: "response", id: request.id, ok: true, result };
       } catch (error) {
         response = { type: "response", id: request.id, ok: false, error: this.errorFor(error, controller.signal) };
@@ -277,27 +338,73 @@ export class Server {
       if (conn.active.get(request.id)?.controller === controller) conn.active.delete(request.id);
       if (conn.state === "closed") {
         for (const sink of opened.sinks) sink.close();
-        return;
-      }
-      let succeeded = response.ok;
-      const sent = this.write(conn, response, true);
-      if (!sent) {
-        succeeded = false;
-        if (response.ok) this.respond(conn, request.id, errorBody("internal", "the result could not be encoded"));
-      }
-      if (succeeded && sent) {
-        try {
-          await sent;
-        } catch {
+      } else {
+        let succeeded = response.ok;
+        const sent = this.write(conn, response, true);
+        if (!sent) {
           succeeded = false;
+          if (response.ok) this.respond(conn, request.id, errorBody("internal", "the result could not be encoded"));
+        }
+        if (succeeded && sent) {
+          try {
+            await sent;
+          } catch {
+            succeeded = false;
+          }
+        }
+        for (const sink of opened.sinks) {
+          if (succeeded) sink.activate();
+          else sink.close();
         }
       }
-      for (const sink of opened.sinks) {
-        if (succeeded) sink.activate();
-        else sink.close();
+      for (const follow of opened.after) {
+        try {
+          await follow();
+        } catch (error) {
+          this.report(error);
+        }
       }
     })();
     this.track(task);
+  }
+
+  /** Route check under the connection gate. The returned call runs after the gate is released. */
+  private prepare(
+    conn: Conn,
+    request: RequestEnvelope,
+    controller: AbortController,
+  ): ((context: CallContext) => ReturnType<ServerService["call"]>) | null {
+    if (conn.state === "closed" || conn.active.get(request.id)?.controller !== controller) {
+      conn.active.delete(request.id);
+      return null;
+    }
+    const route = request.route;
+    if (isRuntimeRoute(route)) {
+      const attached = conn.attachment;
+      const lease = conn.lease;
+      if (!attached || attached.runtimeId !== route.runtimeId || !lease || lease.slot.state === "removing") {
+        conn.active.delete(request.id);
+        this.respond(conn, request.id, errorBody("not_attached", `runtime ${route.runtimeId} is not attached to this connection`));
+        return null;
+      }
+      if (attached.attachmentId !== route.attachmentId) {
+        conn.active.delete(request.id);
+        this.respond(conn, request.id, errorBody("stale_attachment", "the attachment was replaced or released"));
+        return null;
+      }
+      let finish!: () => void;
+      const admitted = new Promise<void>((resolve) => { finish = resolve; });
+      lease.admitted.add(admitted);
+      return async (context) => {
+        try {
+          return await lease.lease.service.call(request.call, context as Parameters<RuntimeService["call"]>[1]);
+        } finally {
+          lease.admitted.delete(admitted);
+          finish();
+        }
+      };
+    }
+    return (context) => this.options.service.call(request.call, context as ServerCallContext);
   }
 
   private context(conn: Conn, route: Route, signal: AbortSignal, opened: Opened): CallContext | ServerCallContext {
@@ -339,30 +446,334 @@ export class Server {
       get attachment() {
         return conn.attachment ? { ...conn.attachment } : null;
       },
-      attach(runtimeId: string): RuntimeRoute {
+      attach(runtimeId: string): Promise<RuntimeRoute> {
         if (opened.settled) throw new ServiceError("call_settled", "attachment changes only while their call runs");
         if (conn.state === "closed" || server.closing) throw new ServiceError("connection_closed", "the connection is closed");
-        if (!server.runtimes.has(runtimeId)) throw new ServiceError("unknown_runtime", `runtime ${runtimeId} is not registered`);
-        if (conn.attachment?.runtimeId !== runtimeId) {
-          server.setAttachment(conn, { serverId: server.serverId, runtimeId, attachmentId: globalThis.crypto.randomUUID() });
-        }
-        const attached = conn.attachment;
-        if (closed(conn) || !attached) throw new ServiceError("connection_closed", "the connection closed while attaching");
-        return { ...attached };
+        return server.changeAttachment(conn, runtimeId, signal, opened);
       },
-      detach(): void {
+      detach(): Promise<void> {
         if (opened.settled) throw new ServiceError("call_settled", "attachment changes only while their call runs");
-        if (conn.state !== "closed" && conn.attachment) server.setAttachment(conn, null);
+        if (conn.state === "closed" || !conn.attachment) return Promise.resolve();
+        return server.exclusive(conn, () => {
+          if (conn.state === "closed" || !conn.attachment) return;
+          const previous = conn.lease;
+          server.publishAttachment(conn, null, null);
+          if (previous) opened.after.push(() => server.settleLease(previous));
+        });
       },
     } satisfies ServerCallContext;
   }
 
-  private setAttachment(conn: Conn, attachment: RuntimeRoute | null): void {
+  /** Runs `fn` immediately when the gate is free, otherwise after the current job. Holds the gate until `fn` settles. */
+  private exclusive<T>(conn: Conn, fn: () => T | Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const start = () => {
+        let finished: Promise<T>;
+        try {
+          finished = Promise.resolve(fn());
+        } catch (error) {
+          finished = Promise.reject(error);
+        }
+        void finished.then(resolve, reject).finally(() => this.releaseGate(conn));
+      };
+      this.enterGate(conn, start);
+    });
+  }
+
+  private enterGate(conn: Conn, start: () => void): void {
+    if (conn.gating) conn.gate.push(start);
+    else {
+      conn.gating = true;
+      start();
+    }
+  }
+
+  private releaseGate(conn: Conn): void {
+    const next = conn.gate.shift();
+    if (next) next();
+    else conn.gating = false;
+  }
+
+  private async changeAttachment(conn: Conn, runtimeId: string, signal: AbortSignal, opened: Opened): Promise<RuntimeRoute> {
+    return this.exclusive(conn, async () => {
+      if (opened.settled) throw new ServiceError("call_settled", "attachment changes only while their call runs");
+      if (closed(conn) || this.closing) throw new ServiceError("connection_closed", "the connection is closed");
+      if (conn.attachment?.runtimeId === runtimeId && conn.lease && conn.lease.slot.state === "open") return { ...conn.attachment };
+      const previous = conn.lease;
+      try {
+        const handle = await this.joinOpen(runtimeId, signal);
+        if (closed(conn) || this.closing) throw new ServiceError("connection_closed", "the connection closed while attaching");
+        if (signal.aborted) throw aborted();
+        const slot = this.slots.get(runtimeId);
+        if (!slot || slot.handle !== handle || !isOpen(slot)) throw new ServiceError("runtime_busy", `runtime ${runtimeId} is closing`);
+        let acquired: AttachmentLease;
+        try {
+          acquired = handle.acquire();
+        } catch (error) {
+          if (error instanceof ServiceError) throw error;
+          throw new ServiceError("internal", "the runtime did not grant a lease");
+        }
+        if (closed(conn) || this.closing || signal.aborted || !isOpen(slot) || slot.handle !== handle) {
+          await this.settleAcquired(slot, acquired);
+          if (signal.aborted && !closed(conn) && !this.closing) throw aborted();
+          if (slot.state === "removing") throw new ServiceError("runtime_busy", `runtime ${runtimeId} is closing`);
+          throw new ServiceError("connection_closed", "the connection closed while attaching");
+        }
+        const next: LeaseState = { slot, lease: acquired, admitted: new Set(), released: false };
+        const route: RuntimeRoute = { serverId: this.serverId, runtimeId, attachmentId: globalThis.crypto.randomUUID() };
+        this.publishAttachment(conn, route, next);
+        if (closed(conn) || conn.lease !== next) {
+          if (conn.lease === next) {
+            conn.attachment = null;
+            conn.lease = null;
+          }
+          opened.after.push(() => this.settleLease(next));
+          if (previous && previous !== next) opened.after.push(() => this.settleLease(previous));
+          throw new ServiceError("connection_closed", "the connection closed while attaching");
+        }
+        if (previous && previous !== next) opened.after.push(() => this.settleLease(previous));
+        return { ...route };
+      } finally {
+        const openedSlot = this.slots.get(runtimeId);
+        if (openedSlot && conn.lease?.slot !== openedSlot) this.reclaimIfIdle(openedSlot);
+      }
+    });
+  }
+
+  private async settleAcquired(slot: RuntimeSlot, acquired: AttachmentLease): Promise<void> {
+    const orphan: LeaseState = { slot, lease: acquired, admitted: new Set(), released: false };
+    slot.leases.add(orphan);
+    await this.settleLease(orphan);
+  }
+
+  private publishAttachment(conn: Conn, attachment: RuntimeRoute | null, lease: LeaseState | null): void {
     conn.attachment = attachment;
+    conn.lease = lease;
+    if (lease) lease.slot.leases.add(lease);
     for (const sink of [...conn.sinks.values()]) {
       if (isRuntimeRoute(sink.route) && !sameRoute(sink.route, attachment)) sink.close();
     }
-    this.write(conn, { type: "attachment", attachment: conn.attachment });
+    if (conn.state !== "closed") this.write(conn, { type: "attachment", attachment });
+  }
+
+  private async joinOpen(runtimeId: string, signal: AbortSignal): Promise<RuntimeHandle> {
+    this.validateRuntimeId(runtimeId);
+    if (this.closing) throw new ServiceError("connection_closed", "the connection is closed");
+    const slot = this.slotFor(runtimeId);
+    if (slot.state === "open" && slot.handle) return slot.handle;
+    slot.interests += 1;
+    let opened = false;
+    try {
+      const handle = await unlessAborted(slot.ready!, signal);
+      opened = true;
+      if (slot.state === "open" && slot.handle === handle) return handle;
+      throw new ServiceError(slot.state === "removing" ? "runtime_busy" : "unknown_runtime", `runtime ${runtimeId} is not available`);
+    } finally {
+      slot.interests -= 1;
+      if (!opened && slot.interests === 0 && slot.state === "opening") slot.controller.abort();
+    }
+  }
+
+  private validateRuntimeId(runtimeId: string): void {
+    try {
+      encodeServerMessage({ type: "attachment", attachment: { serverId: this.serverId, runtimeId, attachmentId: "probe" } }, this.limits);
+    } catch (error) {
+      throw new ServiceError("unknown_runtime", error instanceof Error ? error.message : "invalid runtime");
+    }
+  }
+
+  private slotFor(runtimeId: string): RuntimeSlot {
+    const existing = this.slots.get(runtimeId);
+    if (existing) {
+      if (existing.state === "removing") throw new ServiceError("runtime_busy", `runtime ${runtimeId} is closing`);
+      return existing;
+    }
+    const slot: RuntimeSlot = {
+      runtimeId,
+      controller: new AbortController(),
+      state: "opening",
+      interests: 0,
+      leases: new Set(),
+      deleteData: false,
+      dataDeleted: false,
+    };
+    this.slots.set(runtimeId, slot);
+    slot.ready = this.runOpen(slot);
+    return slot;
+  }
+
+  private async runOpen(slot: RuntimeSlot): Promise<RuntimeHandle> {
+    let handle: RuntimeHandle | null;
+    try {
+      handle = await this.options.openRuntime(slot.runtimeId, slot.controller.signal);
+    } catch (error) {
+      this.dropOpening(slot);
+      throw error;
+    }
+    if (handle === null) {
+      this.dropOpening(slot);
+      throw new ServiceError("unknown_runtime", `runtime ${slot.runtimeId} is not available`);
+    }
+    // A signal abort only discards the handle when nobody is still waiting. A waiter that arrived after
+    // the previous last waiter left still receives this handle.
+    if (slot.state !== "opening" || slot.interests === 0 || this.closing) {
+      slot.handle = handle;
+      if (!slot.removal) void this.removeSlot(slot, false).catch((error: unknown) => this.report(error));
+      throw new ServiceError(slot.state === "removing" || this.closing ? "runtime_busy" : "connection_closed", `runtime ${slot.runtimeId} open was discarded`);
+    }
+    slot.handle = handle;
+    slot.state = "open";
+    slot.unwatch = handle.watchIdle?.(() => this.reclaimIfIdle(slot));
+    return handle;
+  }
+
+  /** Forget a failed open so a later request can try again. A removal in progress keeps the slot. */
+  private dropOpening(slot: RuntimeSlot): void {
+    if (this.slots.get(slot.runtimeId) !== slot || slot.state !== "opening") return;
+    this.slots.delete(slot.runtimeId);
+  }
+
+  private closeMode(): "drain" | "abort" {
+    return this.abortClose ? "abort" : "drain";
+  }
+
+  private settleLease(lease: LeaseState): Promise<void> {
+    if (lease.settling) return lease.settling;
+    lease.settling = (async () => {
+      try {
+        while (lease.admitted.size > 0) await Promise.allSettled([...lease.admitted]);
+        if (!lease.released) {
+          await lease.lease.release();
+          lease.released = true;
+        }
+        lease.slot.leases.delete(lease);
+        this.reclaimIfIdle(lease.slot);
+      } catch (error) {
+        lease.settling = undefined;
+        throw error;
+      }
+    })();
+    return lease.settling;
+  }
+
+  private reclaimIfIdle(slot: RuntimeSlot): void {
+    if (slot.state !== "open" || slot.leases.size > 0 || slot.interests > 0 || !slot.handle?.idle()) return;
+    void this.removeSlot(slot, false).catch((error: unknown) => this.report(error));
+  }
+
+  private removeSlot(slot: RuntimeSlot, deleteData: boolean): Promise<void> {
+    if (slot.removal) {
+      // A release already in progress has dropped the write right. Do not mark the slot for deletion
+      // or report that this call removed the data.
+      if (deleteData && slot.dropping === "release") {
+        return Promise.reject(new Error(`runtime ${slot.runtimeId} is releasing ownership without deleting data`));
+      }
+      if (deleteData) slot.deleteData = true;
+      return slot.removal;
+    }
+    if (deleteData) slot.deleteData = true;
+    slot.state = "removing";
+    slot.controller.abort();
+    for (const conn of [...this.connections]) {
+      if (conn.lease?.slot !== slot) continue;
+      void this.exclusive(conn, () => {
+        if (conn.lease?.slot !== slot) return;
+        const previous = conn.lease;
+        this.publishAttachment(conn, null, null);
+        if (previous) void this.settleLease(previous).catch((error: unknown) => this.report(error));
+      });
+    }
+    slot.removal = this.finishRemoval(slot).catch((error: unknown) => {
+      slot.removal = undefined;
+      throw error;
+    });
+    return slot.removal;
+  }
+
+  private async finishRemoval(slot: RuntimeSlot): Promise<void> {
+    let readyError: unknown;
+    const opened = await slot.ready?.then(
+      (handle) => handle,
+      (error: unknown) => {
+        readyError = error;
+        return undefined;
+      },
+    );
+    const errors: unknown[] = [];
+    if (opened && !slot.handle) slot.handle = opened;
+    if (opened && slot.handle && opened !== slot.handle) {
+      try {
+        await opened.close(this.closeMode());
+        await opened.release?.();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (readyError && !slot.handle && !(readyError instanceof ServiceError && readyError.code === "unknown_runtime")) errors.push(readyError);
+    const releases = await Promise.allSettled([...slot.leases].map((lease) => this.settleLease(lease)));
+    for (const result of releases) {
+      if (result.status === "rejected") errors.push(result.reason);
+    }
+    let closed = !slot.handle;
+    if (slot.handle) {
+      try {
+        await this.closeHandle(slot, this.closeMode());
+        closed = true;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (closed && slot.handle && (slot.handle.release || slot.handle.remove)) {
+      try {
+        await this.dropOwnership(slot);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      slot.unwatch?.();
+    } catch (error) {
+      errors.push(error);
+    }
+    slot.unwatch = undefined;
+    const same = this.slots.get(slot.runtimeId) === slot;
+    // A handle whose close failed must stay owned so a retry can close it. Without a handle there is nothing to retry.
+    if (same && (errors.length === 0 || !slot.handle)) this.slots.delete(slot.runtimeId);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, `runtime ${slot.runtimeId} cleanup failed`);
+  }
+
+  /** Close has succeeded. Delete data or release the write right, and do not start until `deleteData` is read. */
+  private async dropOwnership(slot: RuntimeSlot): Promise<void> {
+    const handle = slot.handle;
+    if (!handle) return;
+    if (slot.deleteData && handle.remove) {
+      slot.dropping = "remove";
+      await handle.remove();
+      slot.dataDeleted = true;
+      return;
+    }
+    if (handle.release) {
+      slot.dropping = "release";
+      await handle.release();
+    }
+  }
+
+  private closeHandle(slot: RuntimeSlot, mode: "drain" | "abort"): Promise<void> {
+    if (!slot.handle) return Promise.resolve();
+    const closing = slot.handle.close(mode);
+    const previous = slot.closeOnce;
+    slot.closeOnce = previous ? Promise.all([previous.catch(() => undefined), closing]).then(() => undefined) : closing;
+    return closing;
+  }
+
+  private async shutdown(): Promise<void> {
+    const removals = [...this.slots.values()].map((slot) => this.removeSlot(slot, false));
+    while (this.tasks.size > 0) await Promise.allSettled([...this.tasks]);
+    const settled = await Promise.allSettled(removals);
+    const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "server close failed");
   }
 
   /**
@@ -452,7 +863,10 @@ export class Server {
     const reason = new DOMException("connection closed", "AbortError");
     for (const active of conn.active.values()) active.controller.abort(reason);
     for (const sink of [...conn.sinks.values()]) sink.close();
+    const lease = conn.lease;
     conn.attachment = null;
+    conn.lease = null;
+    if (lease) void this.settleLease(lease).catch((error: unknown) => this.report(error));
   }
 
   private closeTransport(conn: Conn): void {
@@ -542,6 +956,10 @@ function closed(conn: Conn): boolean {
   return conn.state === "closed";
 }
 
+function isOpen(slot: RuntimeSlot): boolean {
+  return slot.state === "open";
+}
+
 function overflow(max: number): Error {
   return new Error(`more than ${max} bytes are waiting to be sent`);
 }
@@ -549,4 +967,40 @@ function overflow(max: number): Error {
 function positive(name: string, value: number): number {
   if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive integer`);
   return value;
+}
+
+function aborted(): DOMException {
+  return new DOMException("aborted", "AbortError");
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Rejects when `signal` aborts without aborting `work`. Settles once and always removes the listener. */
+function unlessAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(aborted());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(aborted());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }

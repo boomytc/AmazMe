@@ -9,7 +9,7 @@ import { memoryConnector } from "@amazme/server/testing";
 import { ContractError, parseLaneSnapshot, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { NotAttachedError, RuntimeClient } from "@amazme/runtime-service/client";
 import { createManagementService } from "@amazme/runtime-service/server";
-import { finish, pendingText, textDelta, texts, tick, until, world } from "./support.ts";
+import { borrowedRuntime, finish, pendingText, textDelta, texts, tick, until, world } from "./support.ts";
 
 const code = (expected: string) => (error: unknown) => error instanceof RemoteError && error.code === expected;
 
@@ -497,8 +497,11 @@ test("large initial subscriptions on a slow connection also take turns", async (
 
 test("a shared host keeps connections of separate server instances independent", async () => {
   const env = world();
-  const secondServer = new Server({ serverId: "srv", service: createManagementService() });
-  secondServer.registerRuntime("main", env.runtime().host);
+  const secondServer = new Server({
+    serverId: "srv",
+    service: createManagementService(),
+    openRuntime: (runtimeId) => Promise.resolve(runtimeId === "main" ? borrowedRuntime(env.runtime().host) : null),
+  });
   const connector = memoryConnector((connection) => secondServer.accept(connection));
   const secondClient = new Client({ serverId: "srv", transport: (handlers) => connector.transport(handlers) });
   try {
@@ -571,7 +574,7 @@ test("an update that breaks the contract ends the subscription with invalid_upda
   const env = world();
   try {
     const sinks: SubscriptionSink[] = [];
-    env.server.registerRuntime("fake", {
+    env.allow("fake", {
       async call(raw, context) {
         const call = raw as { method: string; subscriptionId: string };
         if (call.method === "unsubscribe") context.subscription(call.subscriptionId)?.close();
@@ -619,7 +622,7 @@ test("operation replies must belong to the requested lane and operation", async 
   const env = world();
   try {
     let reply: JsonValue = null;
-    env.server.registerRuntime("fake", { call() { return reply; } });
+    env.allow("fake", { call() { return reply; } });
     const { remote } = await env.connect();
     await remote.attach("fake");
     const lane = remote.lane("main");
