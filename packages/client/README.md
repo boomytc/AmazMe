@@ -35,6 +35,18 @@ request 与 subscription 的 ID 由每条连接各自编号。`request(route, ca
 
 断线、`disconnect()` 或 `dispose()` 时，未完成的请求在本地确定拒绝，订阅结束，attachment 清空，传输关闭。已经被服务端接受的工作可能仍会在远端完成。客户端从不自动重连，也不重发请求：需要时再次 `connect()`、重新 attach，并只显式重复已知安全的操作。`disconnect()` 可重复调用；`dispose()` 之后不能再连接。
 
+## Unix socket
+
+`@amazme/client/unix` 是只在 Node 中使用的独立子入口，根入口不会加载它：
+
+```typescript
+import { createUnixTransport } from "@amazme/client/unix";
+
+const client = new Client({ serverId: "srv-1", transport: createUnixTransport({ path: "/run/user/1000/amazme/rt.sock" }) });
+```
+
+调用方显式提供物理路径；`serverId` 与路径无关，连上后仍由握手核对。它和其他传输走同一套协议与客户端，不另造业务协议。写入按调用顺序进行，等 Node 接受数据、需要时再等 `drain` 才算发送完成；尚未写出的字节受 `maxQueuedBytes`（默认 32 MiB）约束，超出时 `send` 被拒绝，客户端以 `transport_error` 关闭连接。对端关闭、出错或停在半帧都会确定结束连接并释放 socket；连接超时默认 10 秒。Windows 上调用会直接报告不支持。
+
 ## 上限
 
 | 选项 | 默认值 | 超限时 |

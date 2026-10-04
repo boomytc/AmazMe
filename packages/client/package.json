@@ -9,7 +9,8 @@
     "@amazme/protocol": "0.1.0"
   },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" }
+    ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" },
+    "./unix": { "types": "./dist/unix.d.ts", "default": "./src/unix.ts" }
   },
   "scripts": {
     "build": "tsc -b",

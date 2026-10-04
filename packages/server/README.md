@@ -50,6 +50,20 @@ attach / detach 的业务调用由宿主的 `ServerService` 实现。它通过 `
 
 `server.close()` 可重复调用并返回同一个 Promise；`onError` 自身的异常被忽略。
 
+## Unix socket
+
+`@amazme/server/unix` 是只在 Node 中使用的独立子入口：`listenUnix(server, { path })` 返回 `UnixListener`。它把每个接受的 socket 交给同一个 `server.accept()`，使用同样的协议、编码和分帧。
+
+- 调用方显式提供物理路径，逻辑 `serverId` 与路径无关。
+- 不存在的父目录按 0700 创建；调用方已有的目录不会被 chmod。socket 文件为 0600。
+- 路径已存在且不是 socket、已有进程在该 socket 上监听，或默认情况下路径上存在任何 socket，都会明确失败；不会无条件 unlink 已有路径。只有显式传入 `replaceStale: true`，且间隔多次的连接探测全部被拒、检查期间路径也未被替换时，才移除残留 socket。被拒的探测并不能证明无人监听：macOS 上积压队列已满的在线服务同样拒绝连接，所以这是调用方明确选择的行为。
+- socket 先绑定在同目录下一个 0700 私有临时目录里，在那里 chmod 0600，再硬链接到目标路径，最后删除临时目录。硬链接不会覆盖已有文件；chmod 之前没有其他人能连上；libuv 关闭时按名字 unlink 的只是临时目录里那个已删除的名字。临时路径比目标目录长约 22 个字符，选路径时要留出 socket 路径长度上限的余量。发布完成之前到达的连接会被直接关闭，不交给 server。
+- `close()` 可重复调用：停止接收，销毁仍打开的连接（server 会收到 `onClose`），然后只在路径仍是本实例那个 socket 时才删除它。路径已被替换时保留替换后的文件或 socket。
+- 每条连接的写入保序并遵守 `drain`，未写出的字节受 `maxQueuedBytes`（默认 32 MiB）约束；服务端主动关闭时先写完已接受的字节再结束，超过 `closeTimeoutMs` 则销毁。对端关闭、错误、半帧 EOF 和监听失败都会释放资源。
+- Windows 上调用会直接报告不支持。没有 TCP、WebSocket 或服务发现。
+
+测试需要本地监听 Unix socket 的权限；受限沙箱中的 `EPERM` 属于环境限制，应在允许监听的环境中重跑。
+
 ## 测试工具
 
 `@amazme/server/testing` 提供内存字节连接：`memoryConnector(accept, options)` 返回可直接作为客户端 `transport` 的工厂。每个方向可以设置 `split`（如 `chunksOf(1)`）、`coalesce`、`delayMs` 和 `highWaterMark`：缓冲低于水位时 `send` 立即 resolve，所以多帧可以合并成一块投递；高于水位或 `pause()` 期间，`send` 要等字节真正送达，用来模拟对端停止读取。`destroy(error)` 模拟传输故障，`close()` 有序关闭；处理函数抛出的异常记录在 `handlerErrors`。所有字节都经过真实的编码与分帧。
