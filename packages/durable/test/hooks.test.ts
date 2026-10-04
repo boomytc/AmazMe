@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentHook, AgentMessage } from "@amazme/agent";
 import { createModels, messageText, type Message } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
 import { AgentHarness, type Entry, type HarnessTool, type Storage, type Write } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
+import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 
 interface StoredCall {
   status: string;
@@ -233,6 +237,75 @@ test("transform changes only the messages passed to streamSimple", async () => {
   }
 });
 
+for (const request of ["assistant", "summary"] as const) {
+  test(`custom messages returned by transform stay out of the ${request} model request`, async () => {
+    let inject = request === "assistant";
+    const { provider, models } = modelsFor((context) => (context.systemPrompt ?? "").includes("summarize")
+      ? fauxAssistant("summary-kept")
+      : fauxAssistant("assistant-kept"));
+    const runtime = new AgentHarness(new MemoryStorage(), {
+      models,
+      model: { provider: "faux", modelId: "faux-1" },
+      hooks: [{ transformContext: (messages) => inject ? [...messages, {
+        role: "custom", name: "metadata", content: "custom-for-hook", timestamp: 1,
+      }] : undefined }],
+    });
+    try {
+      const lane = runtime.lane();
+      assert.equal((await lane.prompt("seed goal")).status, "completed");
+      if (request === "summary") {
+        inject = true;
+        const admitted = await lane.accept({ kind: "compaction" });
+        assert.ok(admitted.ok);
+        const outcome = await lane.drive(admitted.value.operationId);
+        assert.ok(outcome.ok && outcome.value.kind === "settled");
+        assert.equal(outcome.value.result.status, "completed");
+      }
+      const context = provider.state.contexts.at(-1);
+      assert.ok(context);
+      assert.equal(context.messages.some((message) => (message as { role: string }).role === "custom"), false);
+      const entries = await lane.entries();
+      assert.equal(entries.some((entry) => entryText(entry) === "custom-for-hook"), false);
+      assert.equal(entries.some((entry) => entryText(entry) === "seed goal"), true);
+      assert.equal(entries.some((entry) => entryText(entry) === "assistant-kept"), true);
+    } finally {
+      runtime.close();
+    }
+  });
+}
+
+for (const returned of ["snapshot", "undefined"] as const) {
+  test(`in-place transform returning ${returned} preserves the live and reopened source transcript`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "amazme-transform-"));
+    const file = join(directory, "lane.jsonl");
+    const { provider, models } = modelsFor(() => fauxAssistant("answer"));
+    const runtime = new AgentHarness(new JsonlStorage(file), {
+      models,
+      model: { provider: "faux", modelId: "faux-1" },
+      hooks: [{ transformContext: (messages) => {
+        const prompt = messages.find((message) => message.role === "user");
+        if (prompt?.role === "user") prompt.content = "request-only";
+        return returned === "snapshot" ? messages : undefined;
+      } }],
+    });
+    let reopened: AgentHarness | undefined;
+    try {
+      assert.equal((await runtime.lane().prompt("original")).status, "completed");
+      const expected = returned === "snapshot" ? "request-only" : "original";
+      assert.equal(provider.state.contexts[0]?.messages.some((message) => message.role === "user" && message.content === expected), true);
+      const source = await runtime.lane().entries();
+      assert.equal(source.some((entry) => entryText(entry) === "original"), true);
+      assert.equal(source.some((entry) => entryText(entry) === "request-only"), false);
+      reopened = new AgentHarness(new JsonlStorage(file), { models, model: { provider: "faux", modelId: "faux-1" } });
+      assert.deepEqual(await reopened.lane().entries(), source);
+    } finally {
+      runtime.close();
+      reopened?.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
 test("before throws before the write and the next drive does not call streamSimple", async () => {
   let befores = 0;
   let executions = 0;
@@ -356,6 +429,151 @@ test("requestAbort during beforeToolCall resolves before the hook returns and do
     runtime.close();
   }
 });
+
+for (const boundary of ["before-hook", "storage-queue"] as const) {
+  test(`abandon while waiting at ${boundary} leaves the tool planned and unexecuted`, async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started = () => {};
+    const waiting = new Promise<void>((resolve) => { started = resolve; });
+    let executions = 0;
+    const storage = new MemoryStorage();
+    const { provider, models } = modelsFor((_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("echo", { text: "hi" })]) : fauxAssistant("done"));
+    const options = {
+      models, model: { provider: "faux", modelId: "faux-1" }, tools: [{
+        ...echo,
+        execute: async () => { executions += 1; return { content: [{ type: "text" as const, text: "executed" }] }; },
+      }],
+    };
+    const runtime = new AgentHarness(storage, {
+      ...options,
+      hooks: [{ beforeToolCall: async () => {
+        if (boundary === "before-hook") {
+          started();
+          await gate;
+        } else {
+          void storage.run(async () => { started(); await gate; });
+        }
+        return undefined;
+      } }],
+    });
+    const lane = runtime.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.ok(admitted.ok);
+    const pending = lane.drive(admitted.value.operationId);
+    let reopened: AgentHarness | undefined;
+    try {
+      await waiting;
+      runtime.abandon();
+      release();
+      await pending;
+      assert.equal(executions, 0);
+      assert.equal(provider.state.callCount, 1);
+      assert.equal(runtime.live.size, 0);
+      const state = await operationState(storage, admitted.value.operationId);
+      assert.equal(state?.phase, "tools");
+      assert.equal(state?.calls?.[0]?.status, "planned");
+      assert.equal(await storage.read((view) => view.values().some((item) => item.key.includes("pi.op.tool_args"))), false);
+      reopened = new AgentHarness(storage, options);
+      const result = await reopened.lane().drive(admitted.value.operationId);
+      assert.ok(result.ok && result.value.kind === "settled");
+      assert.equal(result.value.result.status, "completed");
+      assert.equal(executions, 1);
+      assert.equal(provider.state.callCount, 2);
+    } finally {
+      release();
+      await pending.catch(() => undefined);
+      runtime.close();
+      reopened?.close();
+    }
+  });
+}
+
+for (const boundary of ["after-hook", "storage-queue"] as const) {
+  test(`abandon while waiting at ${boundary} does not settle the executed tool`, async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started = () => {};
+    const waiting = new Promise<void>((resolve) => { started = resolve; });
+    const storage = new MemoryStorage();
+    const { provider, models } = modelsFor((_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("echo", { text: "hi" })]) : fauxAssistant("done"));
+    const runtime = new AgentHarness(storage, {
+      models, model: { provider: "faux", modelId: "faux-1" }, tools: [echo],
+      hooks: [{ afterToolCall: async () => {
+        if (boundary === "after-hook") { started(); await gate; }
+        else void storage.run(async () => { started(); await gate; });
+        return { content: [{ type: "text", text: "replaced" }] };
+      } }],
+    });
+    const lane = runtime.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.ok(admitted.ok);
+    const pending = lane.drive(admitted.value.operationId);
+    try {
+      await waiting;
+      runtime.abandon();
+      release();
+      await pending;
+      assert.equal(provider.state.callCount, 1);
+      assert.equal(runtime.live.size, 0);
+      const state = await operationState(storage, admitted.value.operationId);
+      assert.equal(state?.calls?.[0]?.status, "effect_pending");
+      assert.equal((await lane.entries()).some((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult"), false);
+    } finally {
+      release();
+      await pending.catch(() => undefined);
+      runtime.close();
+    }
+  });
+}
+
+for (const request of ["assistant", "summary"] as const) {
+  test(`abandon while the ${request} transform waits does not send the model request`, async () => {
+    let watch = request === "assistant";
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started = () => {};
+    const waiting = new Promise<void>((resolve) => { started = resolve; });
+    const storage = new MemoryStorage();
+    const { provider, models } = modelsFor(() => fauxAssistant("seeded"));
+    const runtime = new AgentHarness(storage, {
+      models, model: { provider: "faux", modelId: "faux-1" },
+      hooks: [{ transformContext: async (messages) => {
+        if (watch) { started(); await gate; }
+        return messages;
+      } }],
+    });
+    const lane = runtime.lane();
+    if (request === "summary") assert.equal((await lane.prompt("seed")).status, "completed");
+    watch = true;
+    const admitted = await lane.accept(request === "assistant" ? { kind: "prompt", text: "go" } : { kind: "compaction" });
+    assert.ok(admitted.ok);
+    const pending = lane.drive(admitted.value.operationId);
+    let reopened: AgentHarness | undefined;
+    try {
+      await waiting;
+      const before = await lane.entries();
+      runtime.abandon();
+      release();
+      await pending;
+      assert.equal(provider.state.callCount, request === "assistant" ? 0 : 1);
+      assert.equal(runtime.live.size, 0);
+      assert.deepEqual(await lane.entries(), before);
+      reopened = new AgentHarness(storage, { models, model: { provider: "faux", modelId: "faux-1" } });
+      const recovered = await reopened.lane().drive(admitted.value.operationId);
+      assert.ok(recovered.ok && recovered.value.kind === "settled");
+      assert.equal(recovered.value.result.status, "aborted");
+      assert.equal(provider.state.callCount, request === "assistant" ? 0 : 1);
+    } finally {
+      release();
+      await pending.catch(() => undefined);
+      runtime.close();
+      reopened?.close();
+    }
+  });
+}
 
 test("a block returned after cancel keeps the block reason and does not execute", async () => {
   let executions = 0;

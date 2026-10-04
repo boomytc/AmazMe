@@ -288,6 +288,86 @@ test("onYield throws before the write and the next drive does not call streamSim
   }
 });
 
+for (const cancel of ["requestAbort", "close"] as const) {
+  for (const text of ["again", undefined]) {
+    test(`${cancel} while onYield waits does not publish ${text === undefined ? "a later hook result" : "the yielded input"}`, async () => {
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let started = () => {};
+      const waiting = new Promise<void>((resolve) => { started = resolve; });
+      let laterHooks = 0;
+      const { provider, models } = modelsFor(() => fauxAssistant("answer"));
+      const runtime = new AgentHarness(new MemoryStorage(), {
+        models,
+        model: { provider: "faux", modelId: "faux-1" },
+        hooks: [{ onYield: async () => { started(); await gate; return text; } }, {
+          onYield: () => { laterHooks += 1; return "later"; },
+        }],
+      });
+      const lane = runtime.lane();
+      const admitted = await lane.accept({ kind: "prompt", text: "go" });
+      assert.ok(admitted.ok);
+      const pending = lane.drive(admitted.value.operationId);
+      try {
+        await waiting;
+        const before = await lane.inspect();
+        if (cancel === "requestAbort") assert.ok((await lane.requestAbort(admitted.value.operationId)).ok);
+        else runtime.close();
+        release();
+        const outcome = await pending;
+        assert.ok(outcome.ok && outcome.value.kind === "settled");
+        assert.equal(outcome.value.result.status, "aborted");
+        assert.equal(provider.state.callCount, 1);
+        assert.equal(laterHooks, 0);
+        assert.equal((await lane.inspect()).tipId, before.tipId);
+        const users = (await lane.entries()).filter((entry) => entry.payload.type === "message" && entry.payload.message.role === "user");
+        assert.deepEqual(users.map(entryText), ["go"]);
+        assert.equal(runtime.live.size, 0);
+      } finally {
+        release();
+        await pending.catch(() => undefined);
+        runtime.close();
+      }
+    });
+  }
+}
+
+test("abandon while the yielded input waits for storage does not publish or advance it", async () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let started = () => {};
+  const waiting = new Promise<void>((resolve) => { started = resolve; });
+  const storage = new MemoryStorage();
+  const { provider, models } = modelsFor(() => fauxAssistant("answer"));
+  let before: Entry[] = [];
+  const runtime = new AgentHarness(storage, {
+    models, model: { provider: "faux", modelId: "faux-1" },
+    hooks: [{ onYield: () => {
+      void storage.run(async (view) => { before = structuredClone(view.entries()); started(); await gate; });
+      return "again";
+    } }],
+  });
+  const lane = runtime.lane();
+  const admitted = await lane.accept({ kind: "prompt", text: "go" });
+  assert.ok(admitted.ok);
+  const pending = lane.drive(admitted.value.operationId);
+  try {
+    await waiting;
+    await new Promise((resolve) => setImmediate(resolve));
+    runtime.abandon();
+    release();
+    await pending;
+    assert.deepEqual(await lane.entries(), before);
+    assert.equal(provider.state.callCount, 1);
+    assert.equal((await lane.inspect()).phase, "checkpoint");
+    assert.equal(runtime.live.size, 0);
+  } finally {
+    release();
+    await pending.catch(() => undefined);
+    runtime.close();
+  }
+});
+
 test("summary and navigation do not call onYield", async () => {
   let watch = false;
   let watched = 0;

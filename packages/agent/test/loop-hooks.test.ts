@@ -183,6 +183,55 @@ test("transformContext reaches the model request and stays out of the transcript
   assert.equal(agent.messages.some((message) => message.role === "toolResult"), true);
 });
 
+test("transform receives isolated user blocks and nested historical tool arguments", async () => {
+  const user: AgentMessage = { role: "user", content: [{ type: "text", text: "original block" }], timestamp: 1 };
+  const args = { text: "original", nested: { flags: ["original"] } };
+  const assistant = fauxAssistant([fauxToolCall("echo", args, "historical-call")]);
+  const { agent, provider } = agentWith(() => fauxAssistant("done"), [], {
+    messages: [user, assistant],
+    hooks: [{ transformContext: (messages) => {
+      const prompt = messages.find((message) => message.role === "user");
+      if (prompt?.role === "user" && Array.isArray(prompt.content) && prompt.content[0]?.type === "text") {
+        prompt.content[0].text = "request block";
+      }
+      const prior = messages.find((message) => message.role === "assistant");
+      const call = prior?.role === "assistant" ? prior.content.find((block) => block.type === "toolCall") : undefined;
+      if (call?.type === "toolCall") (call.arguments as typeof args).nested.flags.push("request");
+      return messages;
+    } }],
+  });
+  await agent.prompt("go");
+  const request = provider.state.contexts[0];
+  assert.ok(request);
+  assert.equal(request.messages.some((message) => message.role === "user" && Array.isArray(message.content)
+    && message.content[0]?.type === "text" && message.content[0].text === "request block"), true);
+  const projected = request.messages.find((message) => message.role === "assistant");
+  const call = projected?.role === "assistant" ? projected.content.find((block) => block.type === "toolCall") : undefined;
+  assert.deepEqual(call?.type === "toolCall" ? (call.arguments as typeof args).nested.flags : [], ["original", "request"]);
+  assert.deepEqual(user.content, [{ type: "text", text: "original block" }]);
+  assert.deepEqual(args.nested.flags, ["original"]);
+  assert.equal(agent.messages[0], user);
+  assert.equal(agent.messages[1], assistant);
+});
+
+test("undefined transform discards in-place changes to the preceding returned projection", async () => {
+  const { agent, provider } = agentWith(() => fauxAssistant("done"), [], {
+    hooks: [{ transformContext: (messages) => [...messages, { role: "user", content: "kept", timestamp: 1 }] }, {
+      transformContext: (messages) => {
+        const projected = messages.find((message) => message.role === "user" && message.content === "kept");
+        if (projected?.role === "user") projected.content = "discarded";
+        return undefined;
+      },
+    }],
+  });
+  await agent.prompt("go");
+  const context = provider.state.contexts[0];
+  assert.ok(context);
+  assert.equal(context.messages.some((message) => message.role === "user" && message.content === "kept"), true);
+  assert.equal(context.messages.some((message) => message.role === "user" && message.content === "discarded"), false);
+  assert.equal(agent.messages.some((message) => userText(message) === "kept" || userText(message) === "discarded"), false);
+});
+
 test("prepareRequest message mutations stay in the agent transcript", async () => {
   const seen: string[] = [];
   const { agent } = agentWith(

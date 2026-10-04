@@ -14,6 +14,134 @@ class CheckpointFaultStorage extends MemoryStorage {
   }
 }
 
+class ArmingFaultStorage extends MemoryStorage {
+  private injected = false;
+  private failAfterCommit = false;
+
+  constructor(private readonly timing: "before" | "after") {
+    super();
+    this.subscribe(() => {
+      if (!this.failAfterCommit) return;
+      this.failAfterCommit = false;
+      throw new Error("tool arming failed after commit");
+    });
+  }
+
+  protected override persist(writes: readonly Write[]): void {
+    const arming = writes.some((write) => {
+      if (write.type !== "set" || write.address.namespace !== "pi.op.state") return false;
+      const state = write.value as { phase?: string; calls?: Array<{ status?: string }> };
+      return state.phase === "tools" && state.calls?.some((call) => call.status === "effect_pending");
+    });
+    if (!this.injected && arming) {
+      this.injected = true;
+      if (this.timing === "before") throw new Error("tool arming failed before commit");
+      this.failAfterCommit = true;
+    }
+    super.persist(writes);
+  }
+}
+
+class ToolPublicationStorage extends MemoryStorage {
+  publications = 0;
+  decided = false;
+
+  protected override persist(writes: readonly Write[]): void {
+    this.publications += 1;
+    this.decided = writes.some((write) => write.type === "set" && (write.address.namespace === "pi.op.tool_args"
+      || (write.value as { message?: { role?: string } } | undefined)?.message?.role === "toolResult"));
+    super.persist(writes);
+  }
+}
+
+for (const batch of ["allowed", "blocked-first", "unavailable"] as const) {
+  test(`abandon synchronously from a ${batch} tool decision commit freezes subsequent publications`, async () => {
+    let executions = 0;
+    let frozenAt: number | undefined;
+    const storage = new ToolPublicationStorage();
+    const models = createModels();
+    const provider = fauxProvider({ respond: (_context, _options, state) => state.callCount === 1 ? fauxAssistant(
+      batch === "unavailable" ? [fauxToolCall("missing-first", {}), fauxToolCall("missing-second", {})]
+        : [...(batch === "blocked-first" ? [fauxToolCall("work", {}, "blocked")] : []), fauxToolCall("work", {}, "allowed")],
+    ) : fauxAssistant("done") });
+    models.setProvider(provider);
+    const options = {
+      models, model: { provider: "faux", modelId: "faux-1" }, tools: [{
+        name: "work", description: "work", parameters: { type: "object" as const }, replay: "safe" as const,
+        execute: async () => { executions += 1; return { content: [] }; },
+      }],
+    };
+    const runtime = new AgentHarness(storage, {
+      ...options,
+      hooks: [{ beforeToolCall: ({ toolCallId }) => toolCallId === "blocked" ? { action: "block", reason: "blocked" } : undefined }],
+    });
+    storage.subscribe(() => {
+      if (!storage.decided || frozenAt !== undefined) return;
+      frozenAt = storage.publications;
+      runtime.abandon();
+    });
+    let reopened: AgentHarness | undefined;
+    try {
+      const lane = runtime.lane();
+      const admitted = await lane.accept({ kind: "prompt", text: "go" });
+      assert.ok(admitted.ok);
+      await lane.drive(admitted.value.operationId);
+      assert.ok(frozenAt !== undefined);
+      assert.equal(storage.publications, frozenAt);
+      assert.equal(executions, 0);
+      assert.equal(runtime.live.size, 0);
+      assert.equal((await lane.entries()).some((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult"), false);
+      reopened = new AgentHarness(storage, options);
+      const recovered = await reopened.lane().drive(admitted.value.operationId);
+      assert.ok(recovered.ok && recovered.value.kind === "settled");
+      assert.equal(recovered.value.result.status, "completed");
+      assert.equal(executions, batch === "unavailable" ? 0 : 1);
+      assert.equal(provider.state.callCount, 2);
+    } finally {
+      runtime.close();
+      reopened?.close();
+    }
+  });
+}
+
+for (const timing of ["before", "after"] as const) {
+  for (const replay of ["safe", "never"] as const) {
+    test(`${replay} tool arming failure ${timing} commit recovers on the same harness without stale live ids`, async () => {
+      let runs = 0;
+      const provider = fauxProvider({ respond: (_context, _options, state) => state.callCount === 1
+        ? fauxAssistant([fauxToolCall("work", {})]) : fauxAssistant("after") });
+      const models = createModels();
+      models.setProvider(provider);
+      const runtime = new AgentHarness(new ArmingFaultStorage(timing), {
+        models, model: { provider: "faux", modelId: "faux-1" }, tools: [{
+          name: "work", description: "work", parameters: { type: "object" }, replay,
+          execute: async () => { runs += 1; return { content: [{ type: "text", text: "done" }] }; },
+        }],
+      });
+      try {
+        const lane = runtime.lane();
+        const admitted = await lane.accept({ kind: "prompt", text: "go" });
+        assert.ok(admitted.ok);
+        await assert.rejects(lane.drive(admitted.value.operationId), /tool arming failed/);
+        assert.equal(provider.state.callCount, 1);
+        assert.equal(runs, 0);
+        assert.equal(runtime.live.size, 0);
+        const recovered = await lane.drive(admitted.value.operationId);
+        assert.ok(recovered.ok && recovered.value.kind === "settled");
+        assert.equal(recovered.value.result.status, "completed");
+        assert.equal(runs, timing === "before" || replay === "safe" ? 1 : 0);
+        assert.equal(provider.state.callCount, 2);
+        assert.equal(runtime.live.size, 0);
+        const result = (await lane.entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
+        assert.ok(result?.payload.type === "message" && result.payload.message.role === "toolResult");
+        assert.equal(messageText(result.payload.message), timing === "after" && replay === "never" ? "interrupted before settlement" : "done");
+      } finally {
+        runtime.close();
+      }
+    });
+  }
+}
+
 function harness(storage: MemoryStorage, execute: HarnessTool["execute"]) {
   const provider = fauxProvider({
     respond: (_context, _options, state) => {
@@ -170,5 +298,27 @@ test("a cancelled persisted safe tool is not replayed by a reopened harness", as
   } finally {
     first.close();
     reopened.close();
+  }
+});
+
+test("abandon from a parallel tool stops unstarted sibling effects", async () => {
+  const executed: string[] = [];
+  const models = createModels();
+  models.setProvider(fauxProvider({ respond: () => fauxAssistant([
+    fauxToolCall("first", {}), fauxToolCall("second", {}),
+  ]) }));
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models, model: { provider: "faux", modelId: "faux-1" }, tools: ["first", "second"].map((name) => ({
+      name, description: name, parameters: { type: "object" as const },
+      execute: async () => { executed.push(name); if (name === "first") runtime.abandon(); return { content: [] }; },
+    })),
+  });
+  try {
+    await runtime.lane().prompt("go").catch(() => undefined);
+    assert.deepEqual(executed, ["first"]);
+    assert.equal(runtime.live.size, 0);
+    assert.equal((await runtime.lane().entries()).some((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult"), false);
+  } finally {
+    runtime.close();
   }
 });
