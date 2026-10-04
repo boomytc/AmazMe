@@ -328,29 +328,29 @@ const PAGE = `<!doctype html>
 <title>AmazMe</title>
 <style>
   html, body { height: 100%; margin: 0; }
-  body { font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; color: #1c1915; background: #f6f4ef; }
+  body { font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; color: #d7dbe7; background: #1b1e27; }
   main { display: grid; grid-template-columns: 220px 1fr; height: 100%; }
-  aside { padding: 20px 16px; border-right: 1px solid #e4dfd4; background: #fbfaf6; }
-  aside h1, #status { font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em; color: #6d675e; margin: 0 0 12px; }
+  aside { padding: 20px 16px; border-right: 1px solid #2e3448; background: #161922; }
+  aside h1, #status { font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em; color: #8b93a7; margin: 0 0 12px; }
   ul { list-style: none; padding: 0; margin: 0; }
   li { margin: 2px 0; }
   aside button, #abort, form button { font: inherit; border: 0; background: transparent; color: inherit; text-align: left; padding: 6px 8px; border-radius: 8px; }
-  aside button[aria-current="true"] { background: #efeadd; }
+  aside button[aria-current="true"] { background: #2a3148; color: #c4b5fd; }
   section { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   #transcript { flex: 1; overflow: auto; padding: 28px 8vw 16px; }
   article { max-width: 720px; margin: 0 auto 18px; }
   article p { margin: 4px 0 0; white-space: pre-wrap; }
-  article header { font-size: 12px; color: #6d675e; }
+  article header { font-size: 12px; color: #a5b4fc; }
   #dock { max-width: 760px; width: calc(100% - 48px); margin: 0 auto 20px; }
-  #menu { margin: 0 0 8px; background: white; border: 1px solid #e4dfd4; border-radius: 12px; overflow: hidden; }
+  #menu { margin: 0 0 8px; background: #12141c; border: 1px solid #3d4a68; border-radius: 12px; overflow: hidden; }
   #menu:empty { display: none; }
-  #menu button { display: block; width: 100%; padding: 8px 12px; }
-  #menu button[aria-selected="true"] { background: #efeadd; }
-  #notice { min-height: 0; margin: 0 0 8px; color: #6d675e; white-space: pre-wrap; }
-  #tools { margin: 0 0 8px; color: #6d675e; font-size: 13px; }
-  form { display: flex; gap: 8px; align-items: center; background: white; border: 1px solid #e4dfd4; border-radius: 14px; padding: 8px; }
-  input { flex: 1; font: inherit; border: 0; outline: none; padding: 6px 8px; background: transparent; }
-  #abort, form button { background: #1c1915; color: #f6f4ef; }
+  #menu button { display: block; width: 100%; padding: 8px 12px; background: transparent; color: #8b93a7; }
+  #menu button[aria-selected="true"] { background: #2a3148; color: #c4b5fd; }
+  #notice { min-height: 0; margin: 0 0 8px; color: #8b93a7; white-space: pre-wrap; }
+  #tools { margin: 0 0 8px; color: #8b93a7; font-size: 13px; }
+  form { display: flex; gap: 8px; align-items: center; background: #12141c; border: 1px solid #3d4a68; border-radius: 14px; padding: 8px; }
+  input { flex: 1; font: inherit; border: 0; outline: none; padding: 6px 8px; background: transparent; color: #d7dbe7; }
+  #abort, form button { background: #c4b5fd; color: #161922; }
 </style>
 <main>
   <aside>

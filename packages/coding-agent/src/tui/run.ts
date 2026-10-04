@@ -10,7 +10,7 @@ import { SessionStore } from "../session.ts";
 import { appendSkillText } from "../skills.ts";
 import { codingSystemPrompt, createCodingTools } from "../tools.ts";
 import { presentFullscreen, presentHost, type HostAttach } from "@amazme/tui";
-import { formatHandback, loginProvider, logoutProvider } from "../login.ts";
+import { formatHandback, loginCatalog, loginProvider, logoutProvider, saveApiKey } from "../login.ts";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../host.ts";
 
 export interface FullscreenOptions {
@@ -49,6 +49,8 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
         onHandback(value) { handback(formatHandback(value)); },
       }).then((report) => report.message),
       logout: (provider) => logoutProvider(provider, options.credentialsFile),
+      catalog: () => loginCatalog(options.credentialsFile),
+      saveApiKey: (providerId, key) => saveApiKey(providerId, key, options.credentialsFile),
     });
   } finally {
     await host.close();
@@ -62,6 +64,7 @@ export function createFullscreenSession(options: FullscreenOptions): AgentSessio
 
 function openModels(options: FullscreenOptions) {
   const models = createModels({ store: new FileCredentialStore(options.credentialsFile) });
+  for (const provider of builtinProviders()) models.setProvider(provider);
   if (options.provider === "faux") {
     models.setProvider(fauxProvider({
       respond: (context, _streamOptions, _state, model) => ({
@@ -75,10 +78,8 @@ function openModels(options: FullscreenOptions) {
         timestamp: Date.now(),
       }),
     }));
-  } else {
-    const provider = builtinProviders().find((item) => item.id === options.provider);
-    if (!provider) throw new Error(`unknown provider ${options.provider}`);
-    models.setProvider(provider);
+  } else if (!models.getProvider(options.provider)) {
+    throw new Error(`unknown provider ${options.provider}`);
   }
   if (!models.getModel(options.provider, options.model)) {
     throw new Error(`unknown model ${options.provider}/${options.model}`);

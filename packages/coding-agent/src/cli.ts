@@ -78,13 +78,9 @@ async function runLogin(argv: string[]): Promise<void> {
 
 function loadModels(providerId: string) {
   const models = createModels({ store: new FileCredentialStore() });
-  if (providerId === "faux") {
-    models.setProvider(fauxProvider());
-  } else {
-    const provider = builtinProviders().find((item) => item.id === providerId);
-    if (!provider) throw new Error(`unknown provider ${providerId}`);
-    models.setProvider(provider);
-  }
+  for (const provider of builtinProviders()) models.setProvider(provider);
+  if (providerId === "faux") models.setProvider(fauxProvider());
+  else if (!models.getProvider(providerId)) throw new Error(`unknown provider ${providerId}`);
   return models;
 }
 

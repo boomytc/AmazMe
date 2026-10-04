@@ -28,6 +28,43 @@ export async function loginProvider(providerId: string, options: {
   return { provider: provider.id, credentialType: result.credential.type, message: `已保存 ${provider.id}` };
 }
 
+export interface ProviderCatalogEntry {
+  id: string;
+  name: string;
+  stored: boolean;
+  storedType: "oauth" | "api_key" | null;
+  oauth: boolean;
+  apiKey: boolean;
+}
+
+/** Builtin providers the fullscreen login list can show. Faux is not a login target. */
+export async function loginCatalog(credentialsFile?: string): Promise<ProviderCatalogEntry[]> {
+  const store = new FileCredentialStore(credentialsFile);
+  const rows: ProviderCatalogEntry[] = [];
+  for (const provider of builtinProviders()) {
+    if (!provider.auth.oauth && !provider.auth.apiKey) continue;
+    const credential = await store.get(provider.id);
+    const storedType = credential?.type === "oauth" || credential?.type === "api_key" ? credential.type : null;
+    rows.push({
+      id: provider.id,
+      name: provider.name,
+      stored: storedType !== null,
+      storedType,
+      oauth: provider.auth.oauth !== undefined,
+      apiKey: provider.auth.apiKey !== undefined,
+    });
+  }
+  return rows.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export async function saveApiKey(providerId: string, key: string, credentialsFile?: string): Promise<string> {
+  const provider = builtinProviders().find((item) => item.id === providerId);
+  if (!provider?.auth.apiKey) throw new Error(`${providerId} has no API key login`);
+  if (key.length === 0) throw new Error("API key is empty");
+  await new FileCredentialStore(credentialsFile).set(provider.id, { type: "api_key", key });
+  return `已保存 ${provider.id}`;
+}
+
 export async function logoutProvider(providerId: string, credentialsFile?: string): Promise<string> {
   if (!providerId) throw new Error("logout requires a provider");
   await new FileCredentialStore(credentialsFile).delete(providerId);

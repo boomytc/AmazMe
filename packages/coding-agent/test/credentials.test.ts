@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Credential } from "@amazme/ai";
 import { FileCredentialStore } from "../src/credentials.ts";
-import { logoutProvider } from "../src/login.ts";
+import { loginCatalog, logoutProvider, saveApiKey } from "../src/login.ts";
 
 function storeInTemp(): { store: FileCredentialStore; file: string; directory: string } {
   const directory = mkdtempSync(join(tmpdir(), "amazme-credentials-"));
@@ -98,6 +98,20 @@ test("new credentials and private directories are owner-only without chmodding t
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(statSync(directory).mode & 0o777, 0o700);
   assert.equal(statSync(parent).mode & 0o777, parentMode);
+});
+
+test("the login catalog marks a stored API key", async () => {
+  const { store, file } = storeInTemp();
+  assert.equal(await saveApiKey("anthropic", "sk-test", file), "已保存 anthropic");
+  assert.equal((await store.get("anthropic"))?.type, "api_key");
+  const rows = await loginCatalog(file);
+  const anthropic = rows.find((row) => row.id === "anthropic");
+  const openai = rows.find((row) => row.id === "openai");
+  assert.equal(anthropic?.stored, true);
+  assert.equal(anthropic?.storedType, "api_key");
+  assert.equal(anthropic?.oauth, true);
+  assert.equal(openai?.stored, false);
+  assert.ok(rows.length > 8);
 });
 
 test("logout removes the stored provider credential", async () => {

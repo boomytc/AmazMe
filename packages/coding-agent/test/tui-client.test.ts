@@ -118,7 +118,35 @@ test("abort, scroll, prompt focus, and slash commands", () => {
   const screen = renderTui({ ...typing, provider: "faux", modelId: "faux-1", thinking: "off" }, 80, 24);
   assert.match(screen, /\/help/);
   assert.match(screen, /faux\/faux-1/);
-  assert.match(screen, /› \//);
+  assert.match(screen, /›/);
+  assert.match(screen, /\/help/);
+  const picker = {
+    title: "Select provider to configure:",
+    hint: "↑↓ navigate    enter select    escape cancel",
+    query: "",
+    index: 0,
+    kind: "login-provider" as const,
+    rows: [
+      { id: "anthropic", label: "Anthropic", detail: "• not configured", tone: "muted" as const },
+      { id: "openai", label: "OpenAI", detail: "✓ stored", tone: "ok" as const },
+    ],
+  };
+  const listed = renderTui({ ...emptyTui(), picker }, 80, 30);
+  assert.match(listed, /Select provider to configure:/);
+  assert.match(listed, /not configured/);
+  assert.match(listed, /✓ stored/);
+  assert.match(listed, /\x1b\[38;5;147m/);
+  let filtered = { state: { ...emptyTui(), picker } };
+  for (const value of ["o", "p", "e", "n"]) {
+    filtered = reduceTui(filtered.state, { type: "key", key: { type: "char", value } });
+  }
+  const chosen = reduceTui(filtered.state, { type: "key", key: { type: "enter" } });
+  assert.deepEqual(chosen.effect, { type: "pick", kind: "login-provider", id: "openai" });
+  const secret = renderTui({
+    ...emptyTui(),
+    picker: { ...picker, kind: "api-key", query: "sk-secret", rows: [], subject: "anthropic", secret: true },
+  });
+  assert.equal(secret.includes("sk-secret"), false);
 });
 
 test("two reads of the host frame show the same assistant text", { timeout: 20_000 }, async (t) => {
