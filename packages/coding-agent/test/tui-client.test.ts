@@ -1,0 +1,138 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { createModels } from "@amazme/ai";
+import { fauxProvider } from "@amazme/ai/providers/faux";
+import { Client } from "@amazme/client";
+import { createUnixTransport } from "@amazme/client/unix";
+import { RuntimeClient } from "@amazme/runtime-service/client";
+import { LaneControl } from "../src/control.ts";
+import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../src/host.ts";
+import { decodeKeys } from "../src/tui/keys.ts";
+import { readHostFrame } from "../src/tui/host-fullscreen.ts";
+import { emptyTui, reduceTui, renderTui, type TuiWindow } from "../src/tui/reduce.ts";
+
+function window(partial: Partial<TuiWindow> = {}): TuiWindow {
+  return {
+    entries: [],
+    pendingText: "",
+    tools: [],
+    busy: false,
+    sessions: ["main"],
+    active: "main",
+    ...partial,
+  };
+}
+
+test("streaming text and tool status appear before the turn settles", () => {
+  let state = emptyTui();
+  state = reduceTui(state, {
+    type: "window",
+    window: window({ pendingText: "hel", busy: true, tools: [{ name: "read", status: "running" }] }),
+  }).state;
+  assert.equal(state.pendingText, "hel");
+  assert.equal(state.tools[0]?.status, "running");
+  assert.match(renderTui(state), /hel/);
+  assert.match(renderTui(state), /read running/);
+  state = reduceTui(state, {
+    type: "window",
+    window: window({
+      pendingText: "hello",
+      busy: true,
+      tools: [{ name: "read", status: "settled" }],
+    }),
+  }).state;
+  assert.equal(state.pendingText, "hello");
+  assert.match(renderTui(state), /read settled/);
+  state = reduceTui(state, {
+    type: "window",
+    window: window({
+      pendingText: "",
+      busy: false,
+      entries: [
+        { id: "u", role: "user", text: "hi" },
+        { id: "a", role: "assistant", text: "hello" },
+      ],
+    }),
+  }).state;
+  assert.equal(state.pendingText, "");
+  assert.match(renderTui(state), /assistant hello/);
+});
+
+test("abort, scroll, prompt focus, and slash commands", () => {
+  const entries = [
+    { id: "u1", role: "user" as const, text: "one" },
+    { id: "a1", role: "assistant" as const, text: "a" },
+    { id: "u2", role: "user" as const, text: "two" },
+    { id: "a2", role: "assistant" as const, text: "b" },
+  ];
+  let state = reduceTui(emptyTui(), { type: "window", window: window({ entries, busy: true }) }).state;
+  const abort = reduceTui(state, { type: "key", key: { type: "ctrl-c" } });
+  assert.deepEqual(abort.effect, { type: "abort" });
+  state = reduceTui(abort.state, { type: "key", key: { type: "escape" } }).state;
+  assert.equal(state.focus, "scroll");
+  state = reduceTui(state, { type: "key", key: { type: "down" } }).state;
+  assert.equal(state.entryIndex, 1);
+  state = reduceTui(state, { type: "key", key: { type: "up" } }).state;
+  assert.equal(state.entryIndex, 0);
+  state = reduceTui(state, { type: "key", key: { type: "page-down" } }).state;
+  assert.equal(state.turnIndex, 1);
+  assert.equal(state.entryIndex, 2);
+  state = reduceTui(state, { type: "key", key: { type: "page-up" } }).state;
+  assert.equal(state.turnIndex, 0);
+  assert.equal(state.entryIndex, 0);
+  state = reduceTui(state, { type: "key", key: { type: "char", value: "i" } }).state;
+  assert.equal(state.focus, "prompt");
+  state = reduceTui(state, { type: "key", key: { type: "char", value: "/" } }).state;
+  state = reduceTui(state, { type: "key", key: { type: "char", value: "n" } }).state;
+  state = reduceTui(state, { type: "key", key: { type: "char", value: "e" } }).state;
+  state = reduceTui(state, { type: "key", key: { type: "char", value: "w" } }).state;
+  const created = reduceTui(state, { type: "key", key: { type: "enter" } });
+  assert.deepEqual(created.effect, { type: "new-session" });
+  const resume = typeLine(created.state, "/resume main");
+  assert.deepEqual(resume.effect, { type: "resume", name: "main" });
+  const compact = typeLine(resume.state, "/compact");
+  assert.deepEqual(compact.effect, { type: "compact" });
+});
+
+test("two reads of the host frame show the same assistant text", { timeout: 20_000 }, async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), "amz-tui-frame-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const socket = join(cwd, "host.sock");
+  const models = createModels();
+  models.setProvider(fauxProvider());
+  const host = await startCodingHost({ cwd, socket, provider: "faux", model: "faux-1", models });
+  t.after(() => host.close());
+  const client = new Client({ serverId: HOST_SERVER_ID, transport: createUnixTransport({ path: socket }) });
+  await client.connect();
+  const remote = new RuntimeClient(client);
+  await remote.attach(HOST_RUNTIME_ID);
+  const control = new LaneControl(remote.lane(HOST_LANE), () => undefined);
+  await control.open();
+  await control.submit("hello");
+  await control.close();
+  await client.dispose();
+  const first = await readHostFrame(socket);
+  const second = await readHostFrame(socket);
+  assert.equal(first, second);
+  assert.match(first, /hello/);
+  assert.match(first, /ok/);
+});
+
+test("arrow keys decode as entry movement", () => {
+  assert.deepEqual(decodeKeys("\u001b[A\u001b[B").keys, [{ type: "up" }, { type: "down" }]);
+});
+
+function typeLine(start: ReturnType<typeof emptyTui>, text: string) {
+  let state = start;
+  let effect = null as ReturnType<typeof reduceTui>["effect"];
+  for (const value of Array.from(text)) {
+    const next = reduceTui(state, { type: "key", key: { type: "char", value } });
+    state = next.state;
+    effect = next.effect;
+  }
+  const entered = reduceTui(state, { type: "key", key: { type: "enter" } });
+  return entered.effect ? entered : { state, effect };
+}
