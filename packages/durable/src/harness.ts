@@ -3,8 +3,11 @@ import {
   uuidv7,
   toolDefinition,
   validateArguments,
+  type AssistantContent,
+  type AssistantFrame,
   type AssistantMessage,
   type Context,
+  type StopReason,
   frameFromEvent,
   reduceFrames,
   resolveOutputBudget,
@@ -97,6 +100,37 @@ export interface OperationAdmission {
   operationId: string;
   kind: "run" | "compaction" | "navigation";
   startedAt: number;
+}
+
+export type LanePhase = OperationState["phase"];
+
+export interface LaneStatus {
+  lane: string;
+  tipId: string | null;
+  phase: LanePhase | null;
+  operationId: string | null;
+  lastOperationId: string | null;
+  status: "open" | "aborting" | null;
+}
+
+/**
+ * The persisted prefix of the main assistant response that is reserved but not settled.
+ * `stopReason` and `errorMessage` come from an observed stop frame and are `null` without one;
+ * a stop frame is not a settlement. Tool calls appear only after their arguments ended.
+ */
+export interface PendingResponse {
+  operationId: string;
+  responseEntryId: string;
+  content: AssistantContent[];
+  stopReason: StopReason | null;
+  errorMessage: string | null;
+}
+
+/** One consistent read of a lane. Every field is a detached copy taken at `version`. */
+export interface LaneSnapshot extends LaneStatus {
+  version: number;
+  entries: Entry[];
+  pendingResponse: PendingResponse | null;
 }
 
 export type OperationRequest =
@@ -400,27 +434,8 @@ export class AgentLane {
     return result;
   }
 
-  async inspect(): Promise<{
-    lane: string;
-    tipId: string | null;
-    phase: OperationState["phase"] | null;
-    operationId: string | null;
-    lastOperationId: string | null;
-    status: "open" | "aborting" | null;
-  }> {
-    return this.harness.storage.read((view) => {
-      const record = view.get<LaneRecord>(laneAddress(this.name));
-      const operationId = record?.currentOperationId ?? null;
-      const state = operationId ? view.get<OperationState>(stateAddress(operationId)) : undefined;
-      return {
-        lane: this.name,
-        tipId: view.get<string | null>(tipAddress(this.name)) ?? null,
-        phase: state?.phase ?? null,
-        operationId,
-        lastOperationId: record?.lastOperationId ?? null,
-        status: state ? (state.scope.control.status === "cancel_requested" ? "aborting" : "open") : null,
-      };
-    });
+  async inspect(): Promise<LaneStatus> {
+    return this.harness.storage.read((view) => this.status(view).status);
   }
 
   async entries(): Promise<Entry[]> {
@@ -428,6 +443,57 @@ export class AgentLane {
       const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
       return ancestors(view, tip);
     });
+  }
+
+  /** Read-only: does not initialize the lane, drive, or recover, and never synthesizes a settled message. */
+  async snapshot(): Promise<LaneSnapshot> {
+    return this.harness.storage.read((view) => {
+      const { status, state } = this.status(view);
+      let pendingResponse: PendingResponse | null = null;
+      if (status.operationId && state?.phase === "assistant_effect_pending") {
+        const frames = view.items(frameAddress(status.operationId, state.responseEntryId)).map((item) => item.item as AssistantFrame);
+        const reduced = reduceFrames(frames);
+        pendingResponse = {
+          operationId: status.operationId,
+          responseEntryId: state.responseEntryId,
+          content: reduced.content,
+          stopReason: reduced.stopReason ?? null,
+          errorMessage: reduced.errorMessage ?? null,
+        };
+      }
+      return structuredClone({ version: view.version(), ...status, entries: ancestors(view, status.tipId), pendingResponse });
+    });
+  }
+
+  /** The settled result of an operation of this lane, or `null` before settlement. Never drives. */
+  async result(operationId: string): Promise<Result<OperationResult | null>> {
+    return this.harness.storage.read((view): Result<OperationResult | null> => {
+      const result = view.get<OperationResult>(resultAddress(operationId));
+      if (result) {
+        if (result.lane !== this.name) return failure("operation_mismatch", "result does not belong to this lane");
+        return { ok: true, value: structuredClone(result) };
+      }
+      const meta = view.get<OperationMeta>(metaAddress(operationId));
+      if (meta && meta.lane !== this.name) return failure("operation_mismatch", "operation belongs to another lane");
+      return { ok: true, value: null };
+    });
+  }
+
+  private status(view: StorageView): { status: LaneStatus; state: OperationState | undefined } {
+    const record = view.get<LaneRecord>(laneAddress(this.name));
+    const operationId = record?.currentOperationId ?? null;
+    const state = operationId ? view.get<OperationState>(stateAddress(operationId)) : undefined;
+    return {
+      state,
+      status: {
+        lane: this.name,
+        tipId: view.get<string | null>(tipAddress(this.name)) ?? null,
+        phase: state?.phase ?? null,
+        operationId,
+        lastOperationId: record?.lastOperationId ?? null,
+        status: state ? (state.scope.control.status === "cancel_requested" ? "aborting" : "open") : null,
+      },
+    };
   }
 
   private async enqueue(message: HarnessMessage, kind: InboxItem["kind"]): Promise<Result<{ entryId: string }>> {

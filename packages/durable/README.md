@@ -31,7 +31,7 @@ try {
 
 | 入口 | 内容 |
 | --- | --- |
-| `@amazme/durable` | Harness、lane、操作与消息类型、Storage 契约、`value` / `list` 地址辅助函数 |
+| `@amazme/durable` | Harness、lane、操作与消息类型、只读快照与结果 DTO、Storage 契约、`value` / `list` 地址辅助函数 |
 | `@amazme/durable/storage/memory` | 可移植的内存参考实现 |
 | `@amazme/durable/storage/jsonl/node` | Node 文件系统 JSONL 适配器 |
 | `@amazme/durable/testing` | 独立于测试框架的共享存储契约检查，仅此测试入口使用 Node 断言 |
@@ -52,6 +52,16 @@ const storage = new JsonlStorage("./state/lane.jsonl");
 `Storage` / `StorageView` 是结构化接口。后端可以自行实现，无需继承 `MemoryStorage`。`run` 串行持有写入通道；其中每次 `apply` 分别原子提交，不跨多个 `apply` 回滚。借出的 view 数据应只读，写入时将 payload 的所有权交给存储。`apply` 在所属回调结束后失效。
 
 每个 transform hook 使用独立消息快照，只有返回数组生效，custom 消息在 AI 请求前过滤。`onYield` 等待期间到达的 inbox 优先处理，取消后不追加返回文本。`abandon()` 与 signal 取消分别检查：before / after / transform / yield 等待返回后、工具启动前及排队的存储回调入口都停止推进；保留已经提交的数据供新 harness 恢复。工具武装提交成功返回后才登记 live，提交失败不会留下导致同一 harness 卡住的运行标记。
+
+## 只读观察
+
+`StorageView.version()` 返回该视图看到的存储总 seq。entry、usage、set、delete、append、deleteList 每一种写入都会推进它，被拒绝的整批不推进；`commit` 返回的 `seq` 与随后读到的版本一致。版本属于整个 Storage，其他 lane 的写入也会推进它，一次发布可能跳过多个号，不代表事件条数。JSONL 重开时由同一个 reducer 重放得到相同版本，不另外存版本，也不增加 fsync 或断电承诺。自定义后端需要实现这个方法，`@amazme/durable/testing` 的契约检查包含对应用例。
+
+`AgentLane.snapshot()` 在一次同步 `storage.read` 中返回 `LaneSnapshot`：`version`、`inspect()` 的全部状态字段、当前 tip 的祖先 entries，以及 `pendingResponse`。所有字段都是深拷贝，修改返回值不会影响存储或之后的快照；同一版本下投影相同，不含查询时间。查询不初始化 lane、不推进 `drive`、不触发恢复，也不调用模型或工具。
+
+`pendingResponse` 只投影主 assistant 已持久化的回复前缀：阶段为 `assistant_effect_pending` 时，用 `reduceFrames` 合并已存帧，得到 `operationId`、`responseEntryId`、`content`、`stopReason` 与 `errorMessage`。没有 stop 帧时后两者为 `null`。stop 帧不是结算，不会补造 `aborted`、usage 或时间戳，也不会包装成 `AssistantMessage`。工具调用只在 `toolcall_end` 之后进入帧，参数完整，但未结算前不执行。摘要流不写帧，所以摘要期间为 `null`。结算在同一次 apply 中写入 entry 并删除帧，之后回复只出现在 entries 里。`pendingResponse` 存在只说明持久化状态里有预留的未结算回复，不代表某个进程此刻一定还在生成；崩溃后需要显式 `drive` 才会按既有策略恢复。
+
+`AgentLane.result(operationId)` 只读取已经持久化的 `OperationResult` 并返回深拷贝。尚未结算或未知的操作返回 `{ ok: true, value: null }`；结果或进行中的操作属于其他 lane 时返回 `operation_mismatch`。它不调用 `drive`，也不生成 retry 或 `notBefore`。`inspect()` 和 `entries()` 保持原来的轻量读取，不复制整份 transcript。
 
 ## 原子结算与恢复
 

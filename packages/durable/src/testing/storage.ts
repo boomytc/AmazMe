@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { list, value, type Apply, type Storage } from "../storage.ts";
+import { list, value, type Apply, type Storage, type Write } from "../storage.ts";
 
 export interface StorageFixture {
   storage: Storage;
@@ -138,6 +138,37 @@ export function createStorageConformance(factory: () => StorageFixture | Promise
         });
         await late;
         assert.equal(await storage.read((view) => view.get(value("test.escaped"))), undefined);
+      },
+    },
+    {
+      name: "version advances with every write type, matches the commit seq and ignores reads and rejected batches",
+      async run(storage) {
+        assert.equal(await storage.read((view) => view.version()), 0);
+        const writes: Write[] = [
+          { type: "entry", id: "entry", parentId: null, timestamp: 1, payload: { type: "compaction", summary: "summary" } },
+          { type: "usage", id: "usage", operationId: "operation", input: 1, output: 1, totalTokens: 2 },
+          { type: "set", address: value("test.value"), value: 1 },
+          { type: "delete", address: value("test.value") },
+          { type: "append", address: list("test.list"), item: 1 },
+          { type: "deleteList", address: list("test.list") },
+        ];
+        let previous = 0;
+        for (const write of writes) {
+          const committed = await storage.commit([write]);
+          const version = await storage.read((view) => view.version());
+          assert.equal(version, committed.seq, write.type);
+          assert.ok(version > previous, write.type);
+          previous = version;
+        }
+        await assert.rejects(storage.commit([{ type: "set", address: value("test.partial"), value: true }, writes[0]!]), /duplicate entry/);
+        await storage.read(() => undefined);
+        assert.equal(await storage.read((view) => view.version()), previous);
+        await storage.run((view, apply) => {
+          assert.equal(view.version(), previous);
+          const result = apply([{ type: "set", address: value("test.inside"), value: true }]);
+          assert.equal(view.version(), result.seq);
+          assert.ok(result.seq > previous);
+        });
       },
     },
     {

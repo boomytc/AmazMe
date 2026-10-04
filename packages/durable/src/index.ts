@@ -5,9 +5,13 @@ export {
   type HarnessFailure,
   type HarnessOptions,
   type LaneConfig,
+  type LanePhase,
+  type LaneSnapshot,
+  type LaneStatus,
   type OperationAdmission,
   type OperationRequest,
   type OperationResult,
+  type PendingResponse,
   type Result,
 } from "./harness.ts";
 export {

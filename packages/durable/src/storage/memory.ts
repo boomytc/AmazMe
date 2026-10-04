@@ -48,6 +48,7 @@ class MemoryView implements StorageView {
   private readonly current: { state: State };
   constructor(current: { state: State }) { this.current = current; }
 
+  version(): number { return this.current.state.seq; }
   entry(id: string): Entry | undefined { return this.current.state.entries.get(id); }
   entries(): Entry[] { return [...this.current.state.entries.values()].sort((a, b) => a.seq - b.seq); }
   get<T>(address: Address): T | undefined { return this.current.state.values.get(addressKey(address)) as T | undefined; }
