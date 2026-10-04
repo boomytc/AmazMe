@@ -119,6 +119,10 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
       if (prepared?.thinkingLevel) thinkingLevel = prepared.thinkingLevel;
 
       const requestMessages = await requestContext(slot.transformContext, messages, signal);
+      if (signal.aborted) {
+        await emit({ type: "agent_end", messages: produced });
+        return produced;
+      }
       const message = await streamAssistant(input, model, requestMessages, tools, thinkingLevel, signal, emit);
       messages = append(messages, produced, message);
 
@@ -169,6 +173,13 @@ export async function runAgentLoop(input: LoopInput, emit: Emit): Promise<AgentM
     }
     if (yieldStop) {
       const text = await walkYield(input.hooks.hooks, signal);
+      if (signal.aborted) break;
+      queued = input.hooks.takeSteering();
+      if (queued.length === 0) queued = input.hooks.takeFollowUp();
+      if (queued.length > 0) {
+        await emit({ type: "turn_start" });
+        continue;
+      }
       if (text !== undefined) {
         const yielded: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
         messages = append(messages, produced, yielded);
@@ -239,7 +250,7 @@ export async function walkTransform(
   let replaced = false;
   for (const hook of hooks) {
     if (!hook.transformContext) continue;
-    const next = await hook.transformContext(current.slice(), signal);
+    const next = await hook.transformContext(structuredClone(current), signal);
     if (!Array.isArray(next)) continue;
     current = next;
     replaced = true;
@@ -250,8 +261,10 @@ export async function walkTransform(
 /** The first non-whitespace string wins. Later `onYield` hooks are not called. */
 export async function walkYield(hooks: readonly AgentHook[], signal: AbortSignal): Promise<string | undefined> {
   for (const hook of hooks) {
+    if (signal.aborted) return undefined;
     if (!hook.onYield) continue;
     const text = await hook.onYield(signal);
+    if (signal.aborted) return undefined;
     if (typeof text === "string" && text.trim() !== "") return text;
   }
   return undefined;

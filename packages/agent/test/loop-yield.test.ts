@@ -247,6 +247,80 @@ test("onYield throw appends nothing and does not request the model again", async
   assert.equal(agent.messages.filter((message) => message.role === "user").length, 1);
 });
 
+for (const text of ["again", undefined]) {
+  test(`abort while onYield waits discards ${text === undefined ? "an empty result" : "the returned text"}`, async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started = () => {};
+    const waiting = new Promise<void>((resolve) => { started = resolve; });
+    let laterHooks = 0;
+    const { agent, provider } = agentWith(() => fauxAssistant("answer"), [], {
+      hooks: [{ onYield: async () => { started(); await gate; return text; } }, {
+        onYield: () => { laterHooks += 1; return "later"; },
+      }],
+    });
+    const pending = agent.prompt("go");
+    try {
+      await waiting;
+      agent.abort();
+      release();
+      await pending;
+      assert.equal(provider.state.callCount, 1);
+      assert.deepEqual(userTexts(agent.messages), ["go"]);
+      assert.equal(laterHooks, 0);
+    } finally {
+      release();
+      await pending.catch(() => undefined);
+    }
+  });
+
+  for (const kind of ["steer", "followUp"] as const) {
+    test(`${kind} arriving during onYield takes precedence over ${text === undefined ? "an empty result" : "returned text"}`, async () => {
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let started = () => {};
+      const waiting = new Promise<void>((resolve) => { started = resolve; });
+      let yields = 0;
+      const { agent, provider } = agentWith(() => fauxAssistant("answer"), [], {
+        hooks: [{ onYield: async () => {
+          if (++yields !== 1) return undefined;
+          started();
+          await gate;
+          return text;
+        } }],
+      });
+      const pending = agent.prompt("go");
+      try {
+        await waiting;
+        agent[kind]("queued");
+        release();
+        await pending;
+        assert.equal(provider.state.callCount, 2);
+        assert.deepEqual(userTexts(provider.state.contexts[1]?.messages ?? []), ["go", "queued"]);
+        assert.deepEqual(userTexts(agent.messages), ["go", "queued"]);
+      } finally {
+        release();
+        await pending.catch(() => undefined);
+      }
+    });
+  }
+}
+
+test("abort from a yielded message event keeps the accepted message without another request", async () => {
+  const { agent, provider } = agentWith(() => fauxAssistant("answer"), [], {
+    hooks: [{ onYield: () => "again" }],
+  });
+  let ended = 0;
+  agent.subscribe((event) => {
+    if (event.type === "message_start" && userText(event.message) === "again") agent.abort();
+    if (event.type === "message_end" && userText(event.message) === "again") ended += 1;
+  });
+  await agent.prompt("go");
+  assert.equal(provider.state.callCount, 1);
+  assert.equal(ended, 1);
+  assert.deepEqual(userTexts(agent.messages), ["go", "again"]);
+});
+
 test("Agent does not accept finishTurn", () => {
   const { agent } = agentWith(() => fauxAssistant("ok"));
   assert.equal(Object.hasOwn(agent, "finishTurn"), false);
