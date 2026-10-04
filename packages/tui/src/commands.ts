@@ -25,8 +25,8 @@ export const SLASH_LIST: readonly SlashListing[] = [
   { name: "session", hint: "", description: "显示模型和思考级别", takesArgs: "none" },
   { name: "model", hint: "提供方/模型", description: "切换模型；不带参数则显示", takesArgs: "optional" },
   { name: "thinking", hint: "级别", description: "设置思考级别；不带参数则显示", takesArgs: "optional" },
-  { name: "login", hint: "提供方", description: "保存 OAuth 凭证", takesArgs: "required" },
-  { name: "logout", hint: "提供方", description: "删除凭证", takesArgs: "required" },
+  { name: "login", hint: "提供方", description: "选择供应商并登录；不带参数则打开列表", takesArgs: "optional" },
+  { name: "logout", hint: "提供方", description: "选择供应商并删除凭证", takesArgs: "optional" },
   { name: "steer", hint: "文本", description: "插入当前操作", takesArgs: "required" },
   { name: "abort", hint: "", description: "中止当前操作", takesArgs: "none" },
   { name: "continue", hint: "", description: "继续已写下的重试等待", takesArgs: "none" },
@@ -70,8 +70,8 @@ export type SlashCommand =
   | { type: "earlier" }
   | { type: "model"; provider?: string; modelId?: string }
   | { type: "thinking"; level?: SlashThinking }
-  | { type: "login"; provider: string }
-  | { type: "logout"; provider: string }
+  | { type: "login"; provider?: string }
+  | { type: "logout"; provider?: string }
   | { type: "session" };
 
 export type SlashAction = Exclude<SlashCommand, { type: "prompt" } | { type: "notice" }>;
@@ -145,9 +145,9 @@ export function parseSlash(input: string): SlashCommand {
     case "thinking":
       return parseThinking(rest);
     case "login":
-      return providerArg(rest, "/login 提供方", "login");
+      return rest ? providerArg(rest, "/login 提供方", "login") : { type: "login" };
     case "logout":
-      return providerArg(rest, "/logout 提供方", "logout");
+      return rest ? providerArg(rest, "/logout 提供方", "logout") : { type: "logout" };
     case "session":
       return rest ? usage("/session") : { type: "session" };
     default:
@@ -240,10 +240,12 @@ export async function executeSlash(command: SlashAction, actions: SlashActions):
         return notice(`思考 ${next.thinkingLevel}`);
       }
       case "login": {
+        if (!command.provider) return notice("用法：/login 提供方");
         if (!actions.login) return notice("当前客户端不能登录");
         return notice(await actions.login(command.provider));
       }
       case "logout": {
+        if (!command.provider) return notice("用法：/logout 提供方");
         if (!actions.logout) return notice("当前客户端不能退出登录");
         return notice(await actions.logout(command.provider));
       }

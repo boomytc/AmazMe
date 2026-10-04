@@ -6,13 +6,25 @@ import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { KeyDecoder } from "./keys.ts";
-import { emptyTui, reduceTui, renderTui, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
+import { emptyTui, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
 
 export { finishDrive } from "./commands.ts";
+
+export interface ProviderChoice {
+  id: string;
+  name: string;
+  stored: boolean;
+  /** Which saved credential is present, when `stored` is true. */
+  storedType: "oauth" | "api_key" | null;
+  oauth: boolean;
+  apiKey: boolean;
+}
 
 export interface HostAccount {
   login(provider: string, handback: (text: string) => void): Promise<string>;
   logout(provider: string): Promise<string>;
+  catalog?(): Promise<ProviderChoice[]>;
+  saveApiKey?(providerId: string, key: string): Promise<string>;
 }
 
 export interface HostAttach {
@@ -95,7 +107,7 @@ export async function presentHost(
   const onData = (chunk: Buffer | string): void => {
     const text = typeof chunk === "string" ? chunk : utf8.write(chunk);
     for (const key of keys.push(text)) {
-      if (key.type === "ctrl-d" && state.input.length === 0 && !state.busy) {
+      if (key.type === "ctrl-d" && !state.picker && state.input.length === 0 && !state.busy) {
         restore();
         return;
       }
@@ -156,10 +168,118 @@ export async function presentHost(
         }
       : {}),
   };
+  const openAccountPicker = async (mode: "login" | "logout"): Promise<void> => {
+    if (!account?.catalog) {
+      state = { ...state, notice: mode === "login" ? "当前客户端不能登录" : "当前客户端不能退出登录" };
+      paint();
+      return;
+    }
+    choices = await account.catalog();
+    showPicker({
+      title: mode === "login" ? "Select provider to configure:" : "Select provider to logout:",
+      hint: "↑↓ navigate    enter select    escape cancel",
+      query: "",
+      index: 0,
+      rows: choiceRows(mode),
+      kind: mode === "login" ? "login-provider" : "logout-provider",
+    });
+  };
+  const applyPick = async (effect: Extract<TuiEffect, { type: "pick" }>): Promise<void> => {
+    if (effect.kind === "logout-provider") {
+      const message = account ? await account.logout(effect.id) : "当前客户端不能退出登录";
+      state = { ...state, notice: message, picker: null };
+      paint();
+      return;
+    }
+    if (effect.kind === "api-key") {
+      const message = account?.saveApiKey && effect.secret
+        ? await account.saveApiKey(effect.id, effect.secret)
+        : "当前客户端不能保存 API key";
+      state = { ...state, notice: message, picker: null };
+      paint();
+      return;
+    }
+    if (effect.kind === "login-method") {
+      const providerId = effect.subject ?? effect.id;
+      if (effect.id === "api_key") {
+        const name = choices.find((item) => item.id === providerId)?.name ?? providerId;
+        showPicker({
+          title: `API key for ${name}:`,
+          hint: "enter save    escape cancel",
+          query: "",
+          index: 0,
+          rows: [],
+          kind: "api-key",
+          subject: providerId,
+          secret: true,
+        });
+        return;
+      }
+      if (!actions.login) {
+        state = { ...state, notice: "当前客户端不能登录", picker: null };
+        paint();
+        return;
+      }
+      state = { ...state, picker: null };
+      state = { ...state, notice: await actions.login(providerId) };
+      paint();
+      return;
+    }
+    const choice = choices.find((item) => item.id === effect.id);
+    if (!choice) return;
+    if (choice.oauth && choice.apiKey) {
+      showPicker({
+        title: `Select authentication method for ${choice.name}:`,
+        hint: "↑↓ navigate    enter select    escape cancel",
+        query: "",
+        index: 0,
+        rows: [
+          { id: "oauth", label: "Sign in with an account", detail: choice.storedType === "oauth" ? "✓ stored" : "• not configured", tone: choice.storedType === "oauth" ? "ok" : "muted" },
+          { id: "api_key", label: "Sign in with an API key", detail: choice.storedType === "api_key" ? "✓ stored" : "• not configured", tone: choice.storedType === "api_key" ? "ok" : "muted" },
+        ],
+        kind: "login-method",
+        subject: choice.id,
+      });
+      return;
+    }
+    if (choice.apiKey && !choice.oauth) {
+      showPicker({
+        title: `API key for ${choice.name}:`,
+        hint: "enter save    escape cancel",
+        query: "",
+        index: 0,
+        rows: [],
+        kind: "api-key",
+        subject: choice.id,
+        secret: true,
+      });
+      return;
+    }
+    if (actions.login) {
+      state = { ...state, picker: null, notice: await actions.login(choice.id) };
+      paint();
+    }
+  };
+  let choices: ProviderChoice[] = [];
+  const choiceRows = (mode: "login" | "logout"): PickerRow[] => choices
+    .filter((choice) => mode === "logout" ? choice.stored : choice.oauth || choice.apiKey)
+    .map((choice) => ({
+      id: choice.id,
+      label: choice.name,
+      detail: choice.stored ? "✓ stored" : "• not configured",
+      tone: choice.stored ? "ok" as const : "muted" as const,
+    }));
+  const showPicker = (picker: Picker): void => {
+    state = { ...state, picker, notice: null };
+    paint();
+  };
   const apply = async (effect: TuiEffect): Promise<void> => {
     if (effect.type === "submit") await lane.submit(effect.text);
     else if (effect.type === "abort") await lane.abort();
-    else {
+    else if (effect.type === "pick") await applyPick(effect);
+    else if ((effect.command.type === "login" || effect.command.type === "logout") && !effect.command.provider) {
+      await openAccountPicker(effect.command.type);
+    } else {
       const outcome = await executeSlash(effect.command, actions);
       await rememberSettings();
       if (outcome.type === "notice") {

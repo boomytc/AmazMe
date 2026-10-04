@@ -1,5 +1,25 @@
 import { parseSlash, slashMatches, type SlashAction } from "./commands.ts";
 import type { Key } from "./keys.ts";
+import { paint, theme } from "./theme.ts";
+
+export interface PickerRow {
+  id: string;
+  label: string;
+  detail: string;
+  tone: "ok" | "muted";
+}
+
+export interface Picker {
+  title: string;
+  hint: string;
+  query: string;
+  index: number;
+  rows: PickerRow[];
+  kind: "login-provider" | "logout-provider" | "login-method" | "api-key";
+  /** Provider chosen before an authentication method or an API key. */
+  subject?: string;
+  secret?: boolean;
+}
 
 export interface TuiEntry {
   id: string;
@@ -31,12 +51,14 @@ export interface TuiState extends TuiWindow {
   provider: string;
   modelId: string;
   thinking: string;
+  picker: Picker | null;
 }
 
 export type TuiEffect =
   | { type: "submit"; text: string }
   | { type: "abort" }
-  | { type: "slash"; command: SlashAction };
+  | { type: "slash"; command: SlashAction }
+  | { type: "pick"; kind: Picker["kind"]; id: string; subject?: string; secret?: string };
 
 export function emptyTui(active = "main"): TuiState {
   return {
@@ -55,6 +77,7 @@ export function emptyTui(active = "main"): TuiState {
     provider: "",
     modelId: "",
     thinking: "",
+    picker: null,
   };
 }
 
@@ -67,12 +90,13 @@ export function reduceTui(state: TuiState, action: { type: "window"; window: Tui
 export function renderTui(state: TuiState, columns = 100, rows = 32): string {
   const width = Math.max(20, columns);
   const height = Math.max(8, rows);
-  const prompt = fit(`› ${state.input}`, width);
-  const status = fit(statusLine(state), width);
-  const menu = menuLines(state, width);
-  const notice = state.notice ? state.notice.split("\n").slice(0, 8).map((line) => fit(line, width)) : [];
+  const prompt = state.picker ? "" : paint(theme.accent, "› ") + paint(theme.text, fit(state.input, Math.max(1, width - 2)));
+  const status = paint(theme.dim, fit(statusLine(state), width));
+  const menu = state.picker ? [] : menuLines(state, width);
+  const picker = state.picker ? pickerLines(state.picker, width) : [];
+  const notice = state.notice ? state.notice.split("\n").slice(0, 8).map((line) => paint(theme.dim, fit(line, width))) : [];
   const transcript = transcriptLines(state).flatMap((line) => wrap(line, width));
-  const chrome = [...menu, ...notice, status, prompt];
+  const chrome = [...picker, ...menu, ...notice, ...(prompt ? [status, prompt] : [status])];
   const room = Math.max(1, height - chrome.length);
   const visible = transcript.slice(-room);
   while (visible.length < room) visible.unshift("");
@@ -87,6 +111,7 @@ function applyWindow(state: TuiState, window: TuiWindow): TuiState {
 }
 
 function applyKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffect | null } {
+  if (state.picker) return pickerKey(state, key);
   if (key.type === "escape") {
     return { state: { ...state, focus: state.focus === "prompt" ? "scroll" : "prompt", notice: null }, effect: null };
   }
@@ -116,6 +141,47 @@ function applyKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffe
     return { state, effect: null };
   }
   return { state, effect: null };
+}
+
+function pickerKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffect | null } {
+  const picker = state.picker;
+  if (!picker) return { state, effect: null };
+  if (key.type === "escape" || key.type === "ctrl-c") return { state: { ...state, picker: null }, effect: null };
+  const rows = visibleRows(picker);
+  if (key.type === "up" || key.type === "down") {
+    if (rows.length === 0) return { state, effect: null };
+    const delta = key.type === "up" ? -1 : 1;
+    const index = (picker.index + delta + rows.length) % rows.length;
+    return { state: { ...state, picker: { ...picker, index } }, effect: null };
+  }
+  if (key.type === "backspace") {
+    const chars = Array.from(picker.query);
+    chars.pop();
+    return { state: { ...state, picker: { ...picker, query: chars.join(""), index: 0 } }, effect: null };
+  }
+  if (key.type === "char") {
+    return { state: { ...state, picker: { ...picker, query: picker.query + key.value, index: 0 } }, effect: null };
+  }
+  if (key.type === "enter") {
+    if (picker.kind === "api-key") {
+      if (!picker.subject || picker.query.length === 0) return { state, effect: null };
+      return { state: { ...state, picker: null }, effect: { type: "pick", kind: picker.kind, id: picker.subject, secret: picker.query } };
+    }
+    const picked = rows[clamp(picker.index, rows.length)];
+    if (!picked) return { state, effect: null };
+    return {
+      state: { ...state, picker: null },
+      effect: { type: "pick", kind: picker.kind, id: picked.id, ...(picker.subject ? { subject: picker.subject } : {}) },
+    };
+  }
+  return { state, effect: null };
+}
+
+function visibleRows(picker: Picker): PickerRow[] {
+  if (picker.kind === "api-key") return [];
+  const query = picker.query.trim().toLowerCase();
+  if (!query) return picker.rows;
+  return picker.rows.filter((row) => row.label.toLowerCase().includes(query) || row.id.toLowerCase().includes(query));
 }
 
 function acceptOrSubmit(state: TuiState): { state: TuiState; effect: TuiEffect | null } {
@@ -187,10 +253,41 @@ function transcriptLines(state: TuiState): string[] {
 }
 
 function label(role: TuiEntry["role"]): string {
-  if (role === "user") return "你";
-  if (role === "assistant") return "AmazMe";
-  if (role === "tool") return "工具";
-  return "记录";
+  if (role === "user") return paint(theme.warm, "你");
+  if (role === "assistant") return paint(theme.accent, "AmazMe");
+  if (role === "tool") return paint(theme.dim, "工具");
+  return paint(theme.dim, "记录");
+}
+
+function pickerLines(picker: Picker, width: number): string[] {
+  const rule = paint(theme.border, "─".repeat(Math.min(width, 80)));
+  const rows = visibleRows(picker);
+  const selected = clamp(picker.index, rows.length);
+  const limit = 8;
+  const start = Math.max(0, Math.min(selected - 1, rows.length - limit));
+  const window = rows.slice(start, start + limit);
+  const lines = [
+    rule,
+    "",
+    paint(theme.accent, picker.title),
+    "",
+    paint(theme.text, picker.kind === "api-key" ? `> ${"•".repeat(Math.min(picker.query.length, 24))}` : `> ${picker.query}`),
+    "",
+  ];
+  if (picker.kind !== "api-key") {
+    for (const [offset, row] of window.entries()) {
+      const index = start + offset;
+      const on = index === selected;
+      const mark = on ? paint(theme.accent, "→ ") : "  ";
+      const name = paint(on ? theme.accent : theme.text, fit(row.label, Math.max(8, width - 24)));
+      const detail = paint(row.tone === "ok" ? theme.green : theme.dim, row.detail.length > 0 ? `  ${row.detail}` : "");
+      lines.push(mark + name + detail);
+    }
+    if (rows.length > limit) lines.push(paint(theme.dim, `  (${selected + 1}/${rows.length})`));
+    if (rows.length === 0) lines.push(paint(theme.dim, "  no match"));
+  }
+  lines.push("", paint(theme.dim, picker.hint), rule);
+  return lines;
 }
 
 function menuLines(state: TuiState, width: number): string[] {
@@ -201,9 +298,10 @@ function menuLines(state: TuiState, width: number): string[] {
   const start = Math.max(0, Math.min(selected - 1, matches.length - limit));
   return matches.slice(start, start + limit).map((item, offset) => {
     const index = start + offset;
-    const mark = index === selected ? ">" : " ";
+    const mark = index === selected ? paint(theme.accent, "→") : " ";
     const hint = item.hint.length > 0 ? ` ${item.hint}` : "";
-    return fit(`${mark} /${item.name}${hint}  ${item.description}`, width);
+    const body = fit(` /${item.name}${hint}  ${item.description}`, Math.max(8, width - 2));
+    return mark + paint(index === selected ? theme.accent : theme.dim, body);
   });
 }
 
@@ -223,10 +321,19 @@ function wrap(line: string, width: number): string[] {
   const rows: string[] = [];
   let row = "";
   let used = 0;
-  for (const char of Array.from(line)) {
+  const chars = Array.from(line);
+  for (let index = 0; index < chars.length; index += 1) {
+    if (chars[index] === "\u001b" && chars[index + 1] === "[") {
+      let end = index + 2;
+      while (end < chars.length && !/[A-Za-z]/.test(chars[end] ?? "")) end += 1;
+      row += chars.slice(index, end + 1).join("");
+      index = end;
+      continue;
+    }
+    const char = chars[index] ?? "";
     const size = char.charCodeAt(0) > 255 ? 2 : 1;
     if (used > 0 && used + size > width) {
-      rows.push(row);
+      rows.push(row + theme.reset);
       row = "";
       used = 0;
     }
