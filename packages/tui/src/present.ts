@@ -67,13 +67,26 @@ export async function presentHost(
   const utf8 = new StringDecoder("utf8");
   let restored = false;
   let finish = (): void => undefined;
-  paint = () => {
-    stdout.write(`\x1b[H\x1b[J${renderTui(state)}\n`);
+  const rememberSettings = async (): Promise<void> => {
+    try {
+      const settings = await remote.lane(active).configure();
+      state = { ...state, provider: settings.provider, modelId: settings.modelId, thinking: settings.thinkingLevel };
+    } catch {
+      // The footer keeps the last settings this lane could report.
+    }
   };
+  paint = () => {
+    const columns = stdout.columns > 0 ? stdout.columns : 80;
+    const rows = stdout.rows > 0 ? stdout.rows : 24;
+    stdout.write(`\x1b[H\x1b[J${renderTui(state, columns, rows)}`);
+  };
+  stdout.on("resize", paint);
+  await rememberSettings();
   const restore = (): void => {
     if (restored) return;
     restored = true;
     stdin.off("data", onData);
+    stdout.off("resize", paint);
     if (stdin.isRaw) stdin.setRawMode(false);
     stdout.write("\x1b[?1049l");
     stdin.pause();
@@ -116,6 +129,7 @@ export async function presentHost(
       active = name;
       lane = new AttachedLane(remote.lane(active), showLane);
       await lane.open();
+      await rememberSettings();
       showLane();
     },
     earlier: () => lane.loadEarlier(),
@@ -147,6 +161,7 @@ export async function presentHost(
     else if (effect.type === "abort") await lane.abort();
     else {
       const outcome = await executeSlash(effect.command, actions);
+      await rememberSettings();
       if (outcome.type === "notice") {
         state = { ...state, notice: outcome.text };
         paint();

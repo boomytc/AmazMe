@@ -1,6 +1,7 @@
 export type Key =
   | { type: "char"; value: string }
   | { type: "enter" }
+  | { type: "tab" }
   | { type: "backspace" }
   | { type: "ctrl-c" }
   | { type: "ctrl-d" }
@@ -46,6 +47,11 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
     }
     if (char === "\u0004") {
       keys.push({ type: "ctrl-d" });
+      index += 1;
+      continue;
+    }
+    if (char === "\t") {
+      keys.push({ type: "tab" });
       index += 1;
       continue;
     }

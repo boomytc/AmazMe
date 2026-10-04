@@ -5,26 +5,46 @@ export type SlashThinking = (typeof THINKING)[number];
 
 const LANE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-const HELP = [
-  "/help 列出这些命令",
-  "/hotkeys 列出按键",
-  "/new、/clear 新对话",
-  "/resume 名称 换对话；不带名称则列出",
-  "/fork 名称 从当前进度分出对话",
-  "/clone 分出并打开",
-  "/rewind、/undo 退到上一轮用户消息之前",
-  "/compact 压缩当前上下文",
-  "/session、/status、/info 显示模型和思考级别",
-  "/model 提供方/模型、/m 切换模型；不带参数则显示",
-  "/thinking 级别、/effort 设置思考级别；不带参数则显示可用级别",
-  "/login 提供方 保存 OAuth 凭证",
-  "/logout 提供方 删除凭证",
-  "/steer 文本 插入当前操作",
-  "/abort 中止当前操作",
-  "/continue 继续已写下的重试等待",
-  "/earlier 再读一页更早的条目",
-  "/quit、/exit 离开全屏；页面和附着端不停止宿主",
-].join("\n");
+export interface SlashListing {
+  name: string;
+  hint: string;
+  description: string;
+  takesArgs: "none" | "optional" | "required";
+}
+
+/** Commands the composer menu can offer. Aliases stay in the parser and are not separate rows. */
+export const SLASH_LIST: readonly SlashListing[] = [
+  { name: "help", hint: "", description: "列出命令", takesArgs: "none" },
+  { name: "hotkeys", hint: "", description: "列出按键", takesArgs: "none" },
+  { name: "new", hint: "", description: "新对话", takesArgs: "none" },
+  { name: "resume", hint: "名称", description: "换对话；不带名称则列出", takesArgs: "optional" },
+  { name: "fork", hint: "名称", description: "从当前进度分出对话", takesArgs: "required" },
+  { name: "clone", hint: "", description: "分出并打开", takesArgs: "none" },
+  { name: "rewind", hint: "", description: "退到上一轮用户消息之前", takesArgs: "none" },
+  { name: "compact", hint: "", description: "压缩当前上下文", takesArgs: "none" },
+  { name: "session", hint: "", description: "显示模型和思考级别", takesArgs: "none" },
+  { name: "model", hint: "提供方/模型", description: "切换模型；不带参数则显示", takesArgs: "optional" },
+  { name: "thinking", hint: "级别", description: "设置思考级别；不带参数则显示", takesArgs: "optional" },
+  { name: "login", hint: "提供方", description: "保存 OAuth 凭证", takesArgs: "required" },
+  { name: "logout", hint: "提供方", description: "删除凭证", takesArgs: "required" },
+  { name: "steer", hint: "文本", description: "插入当前操作", takesArgs: "required" },
+  { name: "abort", hint: "", description: "中止当前操作", takesArgs: "none" },
+  { name: "continue", hint: "", description: "继续已写下的重试等待", takesArgs: "none" },
+  { name: "earlier", hint: "", description: "再读一页更早的条目", takesArgs: "none" },
+  { name: "quit", hint: "", description: "离开全屏；页面和附着端不停止宿主", takesArgs: "none" },
+];
+
+const HELP = SLASH_LIST.map((item) => `/${item.name}${item.hint ? ` ${item.hint}` : ""} ${item.description}`).join("\n");
+
+/** Rows for a composer that is still choosing a command. Arguments hide the menu. */
+export function slashMatches(input: string): SlashListing[] {
+  const text = input.trimStart();
+  if (!text.startsWith("/")) return [];
+  const token = text.slice(1);
+  if (/\s/.test(token)) return [];
+  const query = token.toLowerCase();
+  return SLASH_LIST.filter((item) => query.length === 0 || item.name.includes(query));
+}
 
 const HOTKEYS = [
   "Enter 提交",

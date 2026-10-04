@@ -57,7 +57,10 @@ test("streaming text and tool status appear before the turn settles", () => {
     }),
   }).state;
   assert.equal(state.pendingText, "");
-  assert.match(renderTui(state), /assistant hello/);
+  assert.match(renderTui(state), /你/);
+  assert.match(renderTui(state), /AmazMe/);
+  assert.match(renderTui(state), /hello/);
+  assert.equal(renderTui(state).includes("focus "), false);
 });
 
 test("abort, scroll, prompt focus, and slash commands", () => {
@@ -109,6 +112,13 @@ test("abort, scroll, prompt focus, and slash commands", () => {
   assert.match(help.state.notice ?? "", /\/fork/);
   const prompt = typeLine(help.state, "hello");
   assert.deepEqual(prompt.effect, { type: "submit", text: "hello" });
+  const prefixed = typeLine(emptyTui(), "/n");
+  assert.deepEqual(prefixed.effect, { type: "slash", command: { type: "new-session" } });
+  const typing = reduceTui(emptyTui(), { type: "key", key: { type: "char", value: "/" } }).state;
+  const screen = renderTui({ ...typing, provider: "faux", modelId: "faux-1", thinking: "off" }, 80, 24);
+  assert.match(screen, /\/help/);
+  assert.match(screen, /faux\/faux-1/);
+  assert.match(screen, /› \//);
 });
 
 test("two reads of the host frame show the same assistant text", { timeout: 20_000 }, async (t) => {
