@@ -40,5 +40,6 @@ export interface HarnessTool {
 export interface HarnessModels {
   readonly telemetryContext?: TelemetryContext;
   getModel(providerId: string, modelId: string): Model | undefined;
+  listModels?(): readonly { provider: string; id: string }[];
   streamSimple(model: Model, context: Context, options?: StreamOptions): AssistantEventStream;
 }

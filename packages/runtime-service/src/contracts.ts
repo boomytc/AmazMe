@@ -59,6 +59,7 @@ const ConfigureCall = Strict({
   modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
   thinkingLevel: Type.Optional(ThinkingLevelSchema),
 });
+const CatalogCall = Strict({ method: Type.Literal("catalog"), lane: LaneNameSchema });
 const ForkCall = Strict({
   method: Type.Literal("fork"),
   lane: LaneNameSchema,
@@ -69,7 +70,7 @@ const ConversationsCall = Strict({ method: Type.Literal("conversations") });
 /** Calls on a runtime route. Lane calls name their lane; unsubscribe and conversations do not. */
 export const RuntimeCallSchema = Type.Union([
   AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall,
-  ConfigureCall, ForkCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
+  ConfigureCall, CatalogCall, ForkCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
 ]);
 export type RuntimeCall = Static<typeof RuntimeCallSchema>;
 
@@ -270,6 +271,13 @@ export const LaneSettingsSchema = Strict({
   thinkingLevels: Type.Array(ThinkingLevelSchema),
 });
 export type LaneSettingsDto = Static<typeof LaneSettingsSchema>;
+
+export const CatalogReplySchema = Strict({
+  directory: Type.String(),
+  models: Type.Array(Strict({ provider: Type.String({ minLength: 1 }), modelId: Type.String({ minLength: 1 }) })),
+  thinkingLevels: Type.Array(ThinkingLevelSchema),
+});
+export type CatalogReplyDto = Static<typeof CatalogReplySchema>;
 
 export const ForkReplySchema = Strict({ lane: LaneNameSchema });
 export type ForkReplyDto = Static<typeof ForkReplySchema>;

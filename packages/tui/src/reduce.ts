@@ -1,5 +1,6 @@
 import { parseSlash, slashMatches, type SlashAction } from "./commands.ts";
 import type { Key } from "./keys.ts";
+import { markdownLines } from "./markdown.ts";
 import { paint, theme } from "./theme.ts";
 
 export interface PickerRow {
@@ -15,7 +16,7 @@ export interface Picker {
   query: string;
   index: number;
   rows: PickerRow[];
-  kind: "login-provider" | "logout-provider" | "login-method" | "api-key";
+  kind: "login-provider" | "logout-provider" | "login-method" | "api-key" | "model" | "thinking" | "resume";
   /** Provider chosen before an authentication method or an API key. */
   subject?: string;
   secret?: boolean;
@@ -25,6 +26,8 @@ export interface TuiEntry {
   id: string;
   role: "user" | "assistant" | "tool" | "other";
   text: string;
+  /** Tool name for a result block. Absent on user and assistant text. */
+  title?: string;
 }
 
 export interface TuiTool {
@@ -51,6 +54,7 @@ export interface TuiState extends TuiWindow {
   provider: string;
   modelId: string;
   thinking: string;
+  directory: string;
   picker: Picker | null;
 }
 
@@ -68,6 +72,7 @@ export function emptyTui(active = "main"): TuiState {
     busy: false,
     sessions: [active],
     active,
+    directory: "",
     focus: "prompt",
     entryIndex: 0,
     turnIndex: 0,
@@ -90,13 +95,14 @@ export function reduceTui(state: TuiState, action: { type: "window"; window: Tui
 export function renderTui(state: TuiState, columns = 100, rows = 32): string {
   const width = Math.max(20, columns);
   const height = Math.max(8, rows);
-  const prompt = state.picker ? "" : paint(theme.accent, "› ") + paint(theme.text, fit(state.input, Math.max(1, width - 2)));
+  const prompt = paint(theme.accent, "› ") + paint(theme.text, fit(state.input, Math.max(1, width - 2)));
   const status = paint(theme.dim, fit(statusLine(state), width));
+  const rule = paint(theme.border, "─".repeat(Math.min(width, 80)));
   const menu = state.picker ? [] : menuLines(state, width);
   const picker = state.picker ? pickerLines(state.picker, width) : [];
   const notice = state.notice ? state.notice.split("\n").slice(0, 8).map((line) => paint(theme.dim, fit(line, width))) : [];
   const transcript = transcriptLines(state).flatMap((line) => wrap(line, width));
-  const chrome = [...picker, ...menu, ...notice, ...(prompt ? [status, prompt] : [status])];
+  const chrome = [...picker, ...menu, ...notice, status, rule, prompt];
   const room = Math.max(1, height - chrome.length);
   const visible = transcript.slice(-room);
   while (visible.length < room) visible.unshift("");
@@ -230,7 +236,7 @@ function turnStarts(entries: readonly TuiEntry[]): number[] {
 
 function statusLine(state: TuiState): string {
   const model = state.provider && state.modelId ? `${state.provider}/${state.modelId}` : "";
-  const parts = [state.active, model, state.thinking, state.busy ? "忙" : "空闲"].filter((part) => part.length > 0);
+  const parts = [state.directory, state.active, model, state.thinking, state.busy ? "忙" : "空闲"].filter((part) => part.length > 0);
   if (state.focus === "scroll") parts.push("滚动");
   return parts.join("  ");
 }
@@ -239,24 +245,35 @@ function transcriptLines(state: TuiState): string[] {
   const lines: string[] = [];
   for (const [index, entry] of state.entries.entries()) {
     const mark = state.focus === "scroll" && index === state.entryIndex ? "> " : "";
-    lines.push(`${mark}${label(entry.role)}`);
-    lines.push(entry.text.length > 0 ? entry.text : " ");
+    if (entry.role === "user") {
+      lines.push(...userBlock(entry.text).map((line, lineIndex) => lineIndex === 0 ? mark + line : line));
+    } else if (entry.role === "assistant") {
+      lines.push(mark + paint(theme.accent, "AmazMe"));
+      lines.push(...markdownLines(entry.text, "assistant"));
+    } else if (entry.role === "tool") {
+      lines.push(mark + paint(theme.accent, entry.title && entry.title.length > 0 ? entry.title : "tool"));
+      lines.push(paint(theme.dim, "  result"));
+      for (const row of entry.text.split("\n")) lines.push(paint(theme.text, row));
+    } else {
+      lines.push(mark + paint(theme.dim, entry.text));
+    }
     lines.push("");
   }
   if (state.pendingText.length > 0) {
-    lines.push("AmazMe");
-    lines.push(state.pendingText);
+    lines.push(paint(theme.accent, "AmazMe"));
+    lines.push(...markdownLines(state.pendingText, "assistant"));
     lines.push("");
   }
-  for (const tool of state.tools) lines.push(`${tool.name} ${tool.status}`);
+  for (const tool of state.tools) {
+    lines.push(paint(theme.accent, tool.name));
+    lines.push(paint(theme.dim, `  ${tool.status}`));
+    lines.push("");
+  }
   return lines;
 }
 
-function label(role: TuiEntry["role"]): string {
-  if (role === "user") return paint(theme.warm, "你");
-  if (role === "assistant") return paint(theme.accent, "AmazMe");
-  if (role === "tool") return paint(theme.dim, "工具");
-  return paint(theme.dim, "记录");
+function userBlock(text: string): string[] {
+  return [paint(theme.warm, "┌ 你"), ...markdownLines(text, "user").map((line) => `${paint(theme.warm, "│ ")}${line}`), paint(theme.warm, "└")];
 }
 
 function pickerLines(picker: Picker, width: number): string[] {

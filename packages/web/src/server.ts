@@ -18,7 +18,7 @@ export interface WebOptions {
 export interface PageView {
   sessions: string[];
   active: string;
-  entries: Array<{ id: string; role: string; text: string }>;
+  entries: Array<{ id: string; role: string; text: string; title?: string }>;
   pendingText: string;
   tools: Array<{ name: string; status: string }>;
   busy: boolean;
@@ -26,6 +26,9 @@ export interface PageView {
   provider: string;
   modelId: string;
   thinking: string;
+  directory: string;
+  models: Array<{ provider: string; modelId: string }>;
+  thinkingLevels: string[];
 }
 
 export interface WebServer {
@@ -47,11 +50,19 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
   let lane = remote.lane(active);
   let notice: string | null = null;
   let earlier: EntryDto[] = [];
-  let chrome = { provider: "", modelId: "", thinking: "" };
+  let chrome = { provider: "", modelId: "", thinking: "", directory: "", models: [] as Array<{ provider: string; modelId: string }>, thinkingLevels: [] as string[] };
   const rememberSettings = async (): Promise<void> => {
     try {
       const settings = await lane.configure();
-      chrome = { provider: settings.provider, modelId: settings.modelId, thinking: settings.thinkingLevel };
+      const listed = await lane.catalog();
+      chrome = {
+        provider: settings.provider,
+        modelId: settings.modelId,
+        thinking: settings.thinkingLevel,
+        directory: listed.directory,
+        models: listed.models,
+        thinkingLevels: listed.thinkingLevels,
+      };
     } catch {
       // The status line keeps the last settings this lane could report.
     }
@@ -251,7 +262,7 @@ function project(
   active: string,
   earlier: EntryDto[],
   notice: string | null,
-  chrome: { provider: string; modelId: string; thinking: string },
+  chrome: { provider: string; modelId: string; thinking: string; directory: string; models: Array<{ provider: string; modelId: string }>; thinkingLevels: string[] },
 ): PageView {
   const seen = new Set(snapshot.entries.map((entry) => entry.id));
   return {
@@ -265,13 +276,18 @@ function project(
     provider: chrome.provider,
     modelId: chrome.modelId,
     thinking: chrome.thinking,
+    directory: chrome.directory,
+    models: chrome.models,
+    thinkingLevels: chrome.thinkingLevels,
   };
 }
 
-function entryView(entry: EntryDto): { id: string; role: string; text: string } {
+function entryView(entry: EntryDto): { id: string; role: string; text: string; title?: string } {
   if (entry.payload.type === "compaction") return { id: entry.id, role: "summary", text: entry.payload.summary };
   const message = entry.payload.message;
-  return { id: entry.id, role: message.role, text: messageText(message) };
+  const named = message as { role: string; toolName?: string };
+  const title = named.role === "toolResult" ? named.toolName : undefined;
+  return { id: entry.id, role: message.role, text: messageText(message), ...(title ? { title } : {}) };
 }
 
 function pendingText(snapshot: LaneSnapshotDto): string {
@@ -297,7 +313,10 @@ function messageText(message: { role: string; content?: unknown }): string {
 }
 
 function emptyView(active: string): PageView {
-  return { sessions: [active], active, entries: [], pendingText: "", tools: [], busy: false, notice: null, provider: "", modelId: "", thinking: "" };
+  return {
+    sessions: [active], active, entries: [], pendingText: "", tools: [], busy: false, notice: null,
+    provider: "", modelId: "", thinking: "", directory: "", models: [], thinkingLevels: [],
+  };
 }
 
 function pageHtml(): string {
@@ -340,6 +359,13 @@ const PAGE = `<!doctype html>
   #transcript { flex: 1; overflow: auto; padding: 28px 8vw 16px; }
   article { max-width: 720px; margin: 0 auto 18px; }
   article p { margin: 4px 0 0; white-space: pre-wrap; }
+  article.user { border: 1px solid #6b5b4a; border-radius: 12px; padding: 10px 12px; }
+  article.user header { color: #e6c8a0; }
+  article.assistant header { color: #c4b5fd; }
+  article.tool header { color: #c4b5fd; }
+  article.tool .status { color: #8b93a7; font-size: 12px; }
+  pre, code { font-family: ui-monospace, monospace; }
+  pre { background: #12141c; border: 1px solid #3d4a68; border-radius: 8px; padding: 8px; }
   article header { font-size: 12px; color: #a5b4fc; }
   #dock { max-width: 760px; width: calc(100% - 48px); margin: 0 auto 20px; }
   #menu { margin: 0 0 8px; background: #12141c; border: 1px solid #3d4a68; border-radius: 12px; overflow: hidden; }
@@ -349,7 +375,7 @@ const PAGE = `<!doctype html>
   #notice { min-height: 0; margin: 0 0 8px; color: #8b93a7; white-space: pre-wrap; }
   #tools { margin: 0 0 8px; color: #8b93a7; font-size: 13px; }
   form { display: flex; gap: 8px; align-items: center; background: #12141c; border: 1px solid #3d4a68; border-radius: 14px; padding: 8px; }
-  input { flex: 1; font: inherit; border: 0; outline: none; padding: 6px 8px; background: transparent; color: #d7dbe7; }
+  input, textarea { flex: 1; font: inherit; border: 0; outline: none; padding: 6px 8px; background: transparent; color: #d7dbe7; resize: none; }
   #abort, form button { background: #c4b5fd; color: #161922; }
 </style>
 <main>
@@ -365,7 +391,7 @@ const PAGE = `<!doctype html>
       <ul id="tools"></ul>
       <p id="status"></p>
       <form id="form">
-        <input id="text" autocomplete="off" placeholder="给 AmazMe 发消息，/ 打开命令">
+        <textarea id="text" rows="2" autocomplete="off" placeholder="给 AmazMe 发消息，/ 打开命令"></textarea>
         <button type="submit">发送</button>
         <button type="button" id="abort">中止</button>
       </form>
@@ -382,7 +408,72 @@ const PAGE = `<!doctype html>
   const status = document.querySelector("#status");
   const text = document.querySelector("#text");
   let menuIndex = 0;
-  const label = (role) => role === "user" ? "你" : role === "assistant" ? "AmazMe" : role === "toolResult" || role === "tool" ? "工具" : "记录";
+  let current = { sessions: [], models: [], thinkingLevels: [], entries: [], tools: [], directory: "", active: "", provider: "", modelId: "", thinking: "", busy: false, pendingText: "", notice: "" };
+  function chooserRows(view, input) {
+    const token = String(input || "").trim();
+    if (token === "/model") return (view.models || []).map((model) => ({ submit: "/model " + model.provider + "/" + model.modelId, label: model.provider + "/" + model.modelId }));
+    if (token === "/thinking") return (view.thinkingLevels || []).map((level) => ({ submit: "/thinking " + level, label: level }));
+    if (token === "/resume") return (view.sessions || []).map((name) => ({ submit: "/resume " + name, label: name }));
+    return [];
+  }
+  function messageNodes(text) {
+    const nodes = [];
+    const lines = String(text || "").split("\\n");
+    let fence = null;
+    let list = null;
+    const flushList = () => { if (list) { nodes.push(list); list = null; } };
+    const closeFence = () => {
+      flushList();
+      const pre = document.createElement("pre");
+      pre.textContent = fence.join("\\n");
+      nodes.push(pre);
+      fence = null;
+    };
+    for (const line of lines) {
+      if (fence) {
+        if (line.trim().startsWith("\`\`\`")) closeFence();
+        else fence.push(line);
+        continue;
+      }
+      if (line.trim().startsWith("\`\`\`")) { fence = []; continue; }
+      const heading = /^(#{1,6})\\s+(.*)$/.exec(line);
+      if (heading) {
+        flushList();
+        const title = document.createElement("h3");
+        title.textContent = heading[2];
+        nodes.push(title);
+        continue;
+      }
+      const bullet = /^\\s*[-*]\\s+(.*)$/.exec(line);
+      if (bullet) {
+        if (!list) { list = document.createElement("ul"); }
+        const item = document.createElement("li");
+        item.textContent = bullet[1].replace(/\`([^\`]*)\`/g, "$1");
+        list.append(item);
+        continue;
+      }
+      flushList();
+      const paragraph = document.createElement("p");
+      paragraph.textContent = line.replace(/\`([^\`]*)\`/g, "$1");
+      const code = line.match(/\`([^\`]*)\`/);
+      if (code) {
+        paragraph.textContent = "";
+        const bits = line.split("\`");
+        bits.forEach((bit, index) => {
+          if (!bit) return;
+          if (index % 2 === 1) {
+            const mark = document.createElement("code");
+            mark.textContent = bit;
+            paragraph.append(mark);
+          } else paragraph.append(bit);
+        });
+      }
+      nodes.push(paragraph);
+    }
+    if (fence) closeFence();
+    flushList();
+    return nodes;
+  }
   const matches = () => {
     const value = text.value.trimStart();
     if (!value.startsWith("/")) return [];
@@ -391,16 +482,30 @@ const PAGE = `<!doctype html>
     const query = token.toLowerCase();
     return commands.filter((item) => query.length === 0 || item.name.includes(query));
   };
+  const menuRows = () => {
+    const chosen = chooserRows(current, text.value);
+    if (chosen.length > 0) return chosen.map((row) => ({ text: row.label, submit: row.submit, hint: "" }));
+    return matches().map((item) => ({
+      text: "/" + item.name + (item.hint ? " " + item.hint : "") + "  " + item.description,
+      submit: "/" + item.name + (item.hint ? " " : ""),
+      hint: item.hint,
+      name: item.name,
+    }));
+  };
   const paintMenu = () => {
-    const rows = matches();
+    const rows = menuRows();
     if (menuIndex >= rows.length) menuIndex = 0;
     menu.replaceChildren(...rows.slice(0, 8).map((item, index) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = "/" + item.name + (item.hint ? " " + item.hint : "") + "  " + item.description;
+      button.textContent = item.text;
       if (index === menuIndex) button.setAttribute("aria-selected", "true");
       button.addEventListener("click", () => {
-        text.value = "/" + item.name + (item.hint ? " " : "");
+        if (item.submit.startsWith("/model ") || item.submit.startsWith("/thinking ") || item.submit.startsWith("/resume ")) {
+          act("submit", item.submit);
+          return;
+        }
+        text.value = item.submit;
         text.focus();
         paintMenu();
       });
@@ -408,6 +513,7 @@ const PAGE = `<!doctype html>
     }));
   };
   const paint = (view) => {
+    current = view;
     sessions.replaceChildren(...view.sessions.map((name) => {
       const item = document.createElement("li");
       const button = document.createElement("button");
@@ -418,26 +524,46 @@ const PAGE = `<!doctype html>
       item.append(button);
       return item;
     }));
-    const blocks = view.entries.map((entry) => ({ role: entry.role, text: entry.text }));
+    const blocks = view.entries.map((entry) => entry);
     if (view.pendingText) blocks.push({ role: "assistant", text: view.pendingText });
-    transcript.replaceChildren(...blocks.map((entry) => {
+    const articles = blocks.map((entry) => {
       const article = document.createElement("article");
+      const role = entry.role;
+      if (role === "user") article.className = "user";
+      else if (role === "toolResult" || role === "tool") article.className = "tool";
+      else article.className = "assistant";
       const header = document.createElement("header");
-      header.textContent = label(entry.role);
-      const body = document.createElement("p");
-      body.textContent = entry.text;
-      article.append(header, body);
+      header.textContent = role === "user" ? "你" : role === "toolResult" || role === "tool" ? (entry.title || "tool") : "AmazMe";
+      article.append(header);
+      if (role === "toolResult" || role === "tool") {
+        const marker = document.createElement("p");
+        marker.className = "status";
+        marker.textContent = "result";
+        const body = document.createElement("p");
+        body.textContent = entry.text;
+        article.append(marker, body);
+      } else {
+        article.append(...messageNodes(entry.text));
+      }
       return article;
-    }));
+    });
+    for (const tool of view.tools || []) {
+      const article = document.createElement("article");
+      article.className = "tool";
+      const header = document.createElement("header");
+      header.textContent = tool.name;
+      const marker = document.createElement("p");
+      marker.className = "status";
+      marker.textContent = tool.status;
+      article.append(header, marker);
+      articles.push(article);
+    }
+    transcript.replaceChildren(...articles);
     transcript.scrollTop = transcript.scrollHeight;
     notice.textContent = view.notice || "";
-    tools.replaceChildren(...view.tools.map((tool) => {
-      const item = document.createElement("li");
-      item.textContent = tool.name + " " + tool.status;
-      return item;
-    }));
+    tools.replaceChildren();
     const model = view.provider && view.modelId ? view.provider + "/" + view.modelId : "";
-    status.textContent = [view.active, model, view.thinking, view.busy ? "忙" : "空闲"].filter(Boolean).join("  ");
+    status.textContent = [view.directory, view.active, model, view.thinking, view.busy ? "忙" : "空闲"].filter(Boolean).join("  ");
     paintMenu();
   };
   const source = new EventSource("/events");
@@ -454,8 +580,14 @@ const PAGE = `<!doctype html>
   });
   text.addEventListener("input", () => { menuIndex = 0; paintMenu(); });
   text.addEventListener("keydown", (event) => {
-    const rows = matches();
-    if (rows.length === 0) return;
+    const rows = menuRows();
+    if (rows.length === 0) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        act("submit");
+      }
+      return;
+    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       menuIndex = (menuIndex + (event.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length;
@@ -463,20 +595,25 @@ const PAGE = `<!doctype html>
     } else if (event.key === "Tab") {
       event.preventDefault();
       const picked = rows[menuIndex];
-      if (picked) text.value = "/" + picked.name + (picked.hint ? " " : "");
+      if (picked) text.value = picked.submit;
       paintMenu();
     } else if (event.key === "Enter" && !event.shiftKey) {
       const picked = rows[menuIndex];
       const token = text.value.trim();
-      if (picked && token.slice(1).toLowerCase() !== picked.name) {
+      if (picked && picked.submit !== token) {
         event.preventDefault();
-        text.value = "/" + picked.name + (picked.hint ? " " : "");
-        if (!picked.hint) act("submit");
-        paintMenu();
+        if (picked.submit.startsWith("/model ") || picked.submit.startsWith("/thinking ") || picked.submit.startsWith("/resume ") || !picked.hint) {
+          act("submit", picked.submit.trim());
+        } else {
+          text.value = picked.submit;
+          paintMenu();
+        }
       }
     }
   });
   document.querySelector("#form").addEventListener("submit", (event) => { event.preventDefault(); act("submit"); });
   document.querySelector("#abort").addEventListener("click", () => act("abort", ""));
+  globalThis.paint = paint;
+  globalThis.chooserRows = chooserRows;
 </script>
 `;
