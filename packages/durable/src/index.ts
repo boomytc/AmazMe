@@ -13,6 +13,7 @@ export {
   type OperationResult,
   type PendingResponse,
   type Result,
+  type ToolActivity,
 } from "./harness.ts";
 export {
   list, value, type Address, type Apply, type CommitResult, type Entry, type EntryPayload,

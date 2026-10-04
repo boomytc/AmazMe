@@ -66,7 +66,7 @@ try {
 
 `StorageView.version()` 返回该视图看到的存储总 seq。entry、usage、set、delete、append、deleteList 每一种写入都会推进它，被拒绝的整批不推进；`commit` 返回的 `seq` 与随后读到的版本一致。版本属于整个 Storage，其他 lane 的写入也会推进它，一次发布可能跳过多个号，不代表事件条数。JSONL 重开时由同一个 reducer 重放得到相同版本，不另外存版本，也不增加 fsync 或断电承诺。自定义后端需要实现这个方法，`@amazme/durable/testing` 的契约检查包含对应用例。
 
-`AgentLane.snapshot()` 在一次同步 `storage.read` 中返回 `LaneSnapshot`：`version`、`inspect()` 的全部状态字段、当前 tip 的祖先 entries，以及 `pendingResponse`。所有字段都是深拷贝，修改返回值不会影响存储或之后的快照；同一版本下投影相同，不含查询时间。查询不初始化 lane、不推进 `drive`、不触发恢复，也不调用模型或工具。
+`AgentLane.snapshot()` 在一次同步 `storage.read` 中返回 `LaneSnapshot`：`version`、`inspect()` 的全部状态字段、当前 tip 的祖先 entries、`pendingResponse`，以及当前操作的 `tools`。`tools` 只列出尚未离开 tools 阶段的调用：`planned`、`running`（`effect_pending`）、`settled`（`outcome_ready` 或 `completed`）。已结算的调用只在 entries 里。所有字段都是深拷贝，修改返回值不会影响存储或之后的快照；同一版本下投影相同，不含查询时间。查询不初始化 lane、不推进 `drive`、不触发恢复，也不调用模型或工具。`history(before, limit)` 读取 `before` 之前的祖先，`before: null` 是最新的一页，最多 100 条，并给出更早的条数。它同样不推进。
 
 `pendingResponse` 只投影主 assistant 已持久化的回复前缀：阶段为 `assistant_effect_pending` 时，用 `reduceFrames` 合并已存帧，得到 `operationId`、`responseEntryId`、`content`、`stopReason` 与 `errorMessage`。没有 stop 帧时后两者为 `null`。stop 帧不是结算，不会补造 `aborted`、usage 或时间戳，也不会包装成 `AssistantMessage`。工具调用只在 `toolcall_end` 之后进入帧，参数完整，但未结算前不执行。摘要流不写帧，所以摘要期间为 `null`。结算在同一次 apply 中写入 entry 并删除帧，之后回复只出现在 entries 里。`pendingResponse` 存在只说明持久化状态里有预留的未结算回复，不代表某个进程此刻一定还在生成；崩溃后需要显式 `drive` 才会按既有策略恢复。
 
@@ -117,6 +117,6 @@ npm test
 
 `check:durable` 检查全部包源码、Durable 测试和跨运行时集成测试的类型。包内 `npm run check` 检查 Durable 源码与测试；跨运行时的诊断和依赖边界测试位于根目录 `test/`。
 
-本次对齐覆盖独立运行时、能力接口、平台适配器入口与契约检查。保留 lane 设计；没有引入 Pi 的 Conversation / Task / Chord、deferred、模型请求重发或摘要崩溃重试。
+当前实现覆盖独立运行时、能力接口、平台适配器入口与契约检查。运行时是 lane：`AgentHarness` 在一次操作里驱动模型、工具和摘要。尚未包含 Pi 的 Conversation、Task、Document，也尚未包含 deferred、模型请求重发和摘要崩溃重试。
 
 `new JsonlStorage(file)` 在构造时重放并截断撕裂尾行，不取锁，只适合单进程。跨进程写入用 `openJsonlOwner(file)`：先取得路径锁，打开文件描述符并取得 inode 锁，再通过同一个描述符重放、修复尾行和追加。符号链接和相对路径落到同一路径锁；硬链接靠设备号和 inode 互斥。路径被替换后，现有 owner 的 I/O 仍留在原 inode，不会写入替换文件。两把锁在账户数据库所给主目录的私有目录 `.amazme-jsonl-locks/{path,inode}` 下，不受 `HOME`、`TMPDIR` 或数据目录删除影响。目录必须属于当前账户且没有组或其他用户权限；每次读取回调和提交都校验持有的锁目录身份、权限和所有者令牌，归属丢失后拒绝读写和删除。释放也核对目录身份和令牌，旧实例不能解开新实例的锁。活着的进程不会因为锁时间旧而被抢占。`kill(pid, 0)` 没有返回 ESRCH 时不回收，pid 被无关进程复用时也一样。空目录、坏记录或主机名对不上时返回 `StorageBusyError`（`storage_busy`），不覆盖。`close()` 停止新的存储回调、等待已经准入的队列并关闭文件描述符，不删除、不解锁。`deleteData()` 只在路径上的 inode 仍是打开时的那一个时删除文件，失败则保持锁。`release()` 先等待存储停止，再解开两把锁；失败可以重试，成功后再调用不会动新的锁。不要在存储回调里等待这三步，否则会和正在执行的回调互相等待。不返回的回调会让它们一直等，不能靠超时提前关文件或放锁。范围只限本机本地文件系统，不保护绕过管理入口的文件操作或存储写入。锁目录在 `mkdir` 之后、写入所有者之前崩溃时，空目录无法确认归属，会一直返回 `storage_busy`。JSONL 仍不在每次写入后 fsync。

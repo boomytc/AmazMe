@@ -1,4 +1,4 @@
-import type { JsonValue, Route, RuntimeRoute, ServerRoute } from "@amazme/protocol";
+import type { JsonValue, ProtocolLimits, Route, RuntimeRoute, ServerRoute } from "@amazme/protocol";
 
 /** An accepted, ordered byte stream. The server owns it from `accept()` until it calls `close()`. */
 export interface ByteConnection {
@@ -43,6 +43,8 @@ export interface SubscriptionSink {
 export interface CallContext {
   readonly connectionId: string;
   readonly route: Route;
+  /** Frame limits of this connection. Services fit payloads before returning them. */
+  readonly limits: ProtocolLimits;
   /** Aborts on `cancel`, disconnect or server close. It ends this call only, never business work by itself. */
   readonly signal: AbortSignal;
   /**

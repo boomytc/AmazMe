@@ -427,6 +427,7 @@ export class Server {
     const base: CallContext = {
       connectionId: conn.id,
       route,
+      limits: this.limits,
       signal,
       openSubscription: (subscriptionId) => {
         if (conn.state === "closed") throw new ServiceError("connection_closed", "the connection is closed");

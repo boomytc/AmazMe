@@ -1,6 +1,6 @@
 # AmazMe
 
-一个按 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的传统路径做成的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时 `@amazme/durable` 依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 已有的 `walkBefore`、`walkAfter`、`walkTransform`、`walkYield`。`@amazme/agent` 不依赖 `@amazme/durable`。lane、恢复与存储设计保持原有范围，没有第二套 hook 遍历，也没有采用 Pi 的 Conversation / Task / Chord 架构。
+起步于 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时 `@amazme/durable` 依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 已有的 `walkBefore`、`walkAfter`、`walkTransform`、`walkYield`。`@amazme/agent` 不依赖 `@amazme/durable`。
 
 ```text
 @amazme/telemetry      被动诊断契约、空实现、进程内记录
@@ -11,7 +11,7 @@
 @amazme/ai             Provider、认证、统一消息、流事件
 @amazme/agent          内存里的 turn 循环
 @amazme/durable        可崩溃恢复的 AgentHarness、存储契约与适配器
-@amazme/runtime-service  Durable lane 控制与完整快照订阅；服务端打开并持有 runtime 和存储
+@amazme/runtime-service  Durable lane 控制、完整快照、有界订阅和历史分页；服务端打开并持有 runtime 和存储
 @amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI、MCP 工具适配
 ```
 
@@ -83,7 +83,7 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 
 ## 持久化运行时
 
-`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 在存储事务外、武装工具前调用 `walkBefore`；这段等待中的取消不执行，也不进入 `walkAfter`。`walkAfter` 只在 `execute` 正常返回之后、写入结果之前；`execute` 抛错时不调用它，错误文本仍作为工具结果提交。`walkTransform` 只在助手请求和摘要请求调用 `streamSimple` 之前替换这一次的 messages。变换结果不写回条目。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`drive` 才调用 `walkYield`：非空白字符串追加成一条 user 消息，并和随后的阶段在同一次 apply 里提交，然后再请求一次；空结果则完成。`onYield` 抛错发生在写入之前，不留下 live id，也不重发已经结算的 `streamSimple`。工具轮、terminate、摘要和 navigation 不调用它。`HarnessTool`、`ToolResult`、`HarnessMessage` 仍属于 Durable 自己的契约，不与 Agent 的同名类型合并。更多使用方式见 [Durable README](packages/durable/README.md)。
+`@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。Pi 的 Conversation、Task、Document 还不在本仓库里。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 在存储事务外、武装工具前调用 `walkBefore`；这段等待中的取消不执行，也不进入 `walkAfter`。`walkAfter` 只在 `execute` 正常返回之后、写入结果之前；`execute` 抛错时不调用它，错误文本仍作为工具结果提交。`walkTransform` 只在助手请求和摘要请求调用 `streamSimple` 之前替换这一次的 messages。变换结果不写回条目。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`drive` 才调用 `walkYield`：非空白字符串追加成一条 user 消息，并和随后的阶段在同一次 apply 里提交，然后再请求一次；空结果则完成。`onYield` 抛错发生在写入之前，不留下 live id，也不重发已经结算的 `streamSimple`。工具轮、terminate、摘要和 navigation 不调用它。`HarnessTool`、`ToolResult`、`HarnessMessage` 仍属于 Durable 自己的契约，不与 Agent 的同名类型合并。更多使用方式见 [Durable README](packages/durable/README.md)。
 
 存储只有三类东西：只写一次的 entry 树、可替换的 value 和只追加的 list、只追加的 usage。一次 commit 要么全部可见，要么全部没有。`StorageView.version()` 公开覆盖全部写入的存储总 seq。`AgentLane.snapshot()` 在一次读取里返回版本、lane 状态、当前分支 entries 和主 assistant 已持久化的未结算回复前缀；`AgentLane.result()` 只读已结算结果。两者都返回深拷贝，不推进 `drive`，也不触发恢复。
 
@@ -96,7 +96,7 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 - 工具先写 intent。`replay: "never"` 的工具不重跑，结果里带上最后一次 checkpoint。`replay: "safe"` 用存下来的参数再执行。
 - 多个工具可以乱序完成，entry 仍按源顺序挂到树上。
 - 结束时删掉操作自己的 value，留下不可变的 `pi.result`，其中保存所属 lane。结算后和重启后都只允许所属 lane 读取，缺少归属的结果属于无效数据。
-- `compaction.maxTokens` 只决定何时按输入量压缩。生成输出上限是另一项 `maxTokens`。开启后，阈值和上下文超限最多各走一次有界摘要：专用摘要请求、保留当前输入和完整工具组、一次 `apply` 发布摘要与复制尾段。关闭时超限直接失败。显式压缩仍可用。摘要失败、取消或进程中断都不重发。这不是全模型目录，也不是 Pi 的 Conversation / Task / Chord。
+- `compaction.maxTokens` 只决定何时按输入量压缩。生成输出上限是另一项 `maxTokens`。开启后，阈值和上下文超限最多各走一次有界摘要：专用摘要请求、保留当前输入和完整工具组、一次 `apply` 发布摘要与复制尾段。关闭时超限直接失败。显式压缩仍可用。摘要失败、取消或进程中断都不重发。
 
 Harness 依赖结构化的 `Storage` / `StorageView` 接口，后端不需要继承 `MemoryStorage`。`run` 串行持有写入通道，每次 `apply` 单独原子提交；它不是跨多个 `apply` 的事务，回调失败也不会撤销此前已提交的数据。`apply` 仅在所属回调未结束时有效。
 
@@ -141,7 +141,9 @@ const models = createModels({ telemetryContext });
 
 内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。这四个工具在 macOS 上经 Seatbelt 执行：只能访问工作区，不能读写工作区里的 `.amazme`，也没有网络。不是 darwin，或没有 `/usr/bin/sandbox-exec` 时，工具直接失败，不会退回不受限制的进程。模型请求和调用方自己持有的 MCP 工具不在这道边界里。
 
-CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。本包不打开传输，CLI 也不会自己拉起 MCP 客户端，也不接受 `--mcp`。没有服务器或列表为空时，工具数组不变。
+CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket` 是本机控制端：连上 `serve`，提交、follow-up、`/steer`、`/abort`、`/continue`、`/earlier`。`amazme bridge --socket [--port n]` 只监听 `127.0.0.1`，用同一条 lane 提供页面。两者都不持有 JSONL，也不执行工具。
+
+`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。库导出本身不打开传输。`amazme serve` 在打开 runtime 时读取 `<cwd>/.amazme/mcp.json`：文件不存在就没有 MCP；文件无效或某个服务器连不上，这次打开失败，码是 `mcp_unavailable`。连接跟这次 runtime 走，客户端断开不断开它们。MCP 调用留在宿主进程里，继承宿主环境，不进 Seatbelt。一次性命令和全屏不读这份配置。没有服务器或列表为空时，工具数组不变。
 
 没有一次性 prompt 且标准输出是终端时进入全屏。滚动区只画已经发出的 `AgentEvent`，提交仍走 `session.prompt`，工具确认只接 `beforeToolCall`。
 
@@ -175,4 +177,4 @@ npx tsx packages/coding-agent/src/cli.ts serve --socket /tmp/amazme.sock --cwd .
 
 它只承认 runtime `workspace` 和 lane `main`。JSONL 在 `<cwd>/.amazme/runtime/workspace.jsonl`，和会话树分开。客户端不能传路径或构造参数。已有 lane 的模型、系统提示词和技能文本只在第一次写入；重开改 `--model` 不会覆盖。工具每次用当前进程的 `read` / `write` / `edit` / `bash`。`read` 可以重放，另外三个崩溃后不重放。第一次 `SIGINT` 或 `SIGTERM` 排空后退出，不删除文件；排空过程中的第二次信号改为中止。
 
-这是同一套分层的独立实现，不是 Pi 仓库的拷贝。编码命令有全屏视图和 40 个预设供应商；登录、技能段落和 MCP 工具追加都在这一层。对齐仍不包含 Pi 的 Conversation / Task / Chord，也没有 `convertToLlm` 或 `continue()`。`AgentHarness` 不支持 deferred 和摘要崩溃重试。工具前后回调和 `transformContext` 是上面的有序 hooks，不是另一条循环。
+这是同一套分层的独立实现，不是 Pi 仓库的拷贝。编码命令有全屏视图和 40 个预设供应商；登录、技能段落和 MCP 工具追加都在这一层。当前 `AgentHarness` 没有 deferred，摘要中断后不重试，也没有 `convertToLlm` 或 `continue()`。
