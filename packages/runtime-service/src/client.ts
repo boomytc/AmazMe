@@ -53,6 +53,11 @@ export class RuntimeClient {
     parse(EmptyReplySchema, await this.client.request(this.client.serverRoute(), { method: "detach" }, options), "detach reply");
   }
 
+  /** Asks the host to drain, delete, and drop that runtime. A repeated call shares the host's result. */
+  async remove(runtimeId: string, options?: RequestOptions): Promise<void> {
+    parse(EmptyReplySchema, await this.client.request(this.client.serverRoute(), { method: "remove", runtimeId }, options), "remove reply");
+  }
+
   lane(name: string): RemoteLane {
     parse(LaneNameSchema, name, "lane name");
     return new RemoteLane(this.client, name);

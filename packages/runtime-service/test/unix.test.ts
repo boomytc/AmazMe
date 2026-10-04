@@ -3,28 +3,37 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Client, ClientError } from "@amazme/client";
+import { Client, ClientError, RemoteError } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
-import { AgentHarness } from "@amazme/durable";
-import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
+import type { AgentHarness } from "@amazme/durable";
 import { Server } from "@amazme/server";
 import { listenUnix } from "@amazme/server/unix";
 import type { LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient } from "@amazme/runtime-service/client";
-import { createManagementService, RuntimeHost } from "@amazme/runtime-service/server";
-import { borrowedRuntime, finish, gatedModels, pendingText, textDelta, texts, tick, until } from "./support.ts";
+import { openJsonlRuntime } from "@amazme/runtime-service/jsonl";
+import { createManagementService, openOwnedRuntimes } from "@amazme/runtime-service/server";
+import { finish, gatedModels, pendingText, textDelta, texts, tick, until } from "./support.ts";
 
-/** One "process": JSONL storage, harness, runtime host, protocol server and Unix listener. */
+/** One process: owned JSONL runtime, protocol server and Unix listener. */
 async function start(socket: string, file: string) {
   const errors: Error[] = [];
   const { models, streams } = gatedModels();
-  const harness = new AgentHarness(new JsonlStorage(file), { models, model: { provider: "gated", modelId: "g" } });
-  const host = new RuntimeHost({ harness, publishWindowMs: 5, onError: (error) => errors.push(error) });
-  const server = new Server({
+  let harness: AgentHarness | undefined;
+  let server!: Server;
+  server = new Server({
     serverId: "srv-unix",
-    service: createManagementService(),
+    service: createManagementService({ removeRuntime: (runtimeId) => server.removeRuntime(runtimeId) }),
     onError: (error) => errors.push(error),
-    openRuntime: (runtimeId) => Promise.resolve(runtimeId === "main" ? borrowedRuntime(host) : null),
+    openRuntime: openOwnedRuntimes({
+      async open(runtimeId) {
+        if (runtimeId !== "main") return null;
+        const resources = await openJsonlRuntime(file, { models, model: { provider: "gated", modelId: "g" } });
+        harness = resources.harness;
+        return resources;
+      },
+      publishWindowMs: 5,
+      onError: (error) => errors.push(error),
+    }),
   });
   const listener = await listenUnix(server, { path: socket, onError: (error) => errors.push(error) });
   const clients: Client[] = [];
@@ -36,15 +45,24 @@ async function start(socket: string, file: string) {
   };
   const stop = async (crash = false) => {
     for (const client of clients) await client.dispose();
-    await server.close();
-    await listener.close();
-    await host.close();
-    if (crash) harness.abandon();
+    if (crash) harness?.abandon();
+    const closing = server.close();
     for (const stream of streams) finish(stream, "teardown");
-    await host.drivesSettled();
-    await harness.close();
+    await closing;
+    await listener.close();
   };
-  return { harness, host, server, listener, streams, errors, connect, stop };
+  return {
+    get harness() {
+      if (!harness) throw new Error("runtime was not opened");
+      return harness;
+    },
+    server,
+    listener,
+    streams,
+    errors,
+    connect,
+    stop,
+  };
 }
 
 function workspace(t: test.TestContext) {
@@ -83,9 +101,10 @@ test("the full control and observation loop runs over a real Unix socket with JS
   assert.equal(existsSync(socket), false, "the listener removed its socket");
 });
 
-test("over a Unix socket a disconnect neither cancels nor resends, and a reconnect reattaches to the settled state", async (t) => {
+test("over a Unix socket a disconnect neither cancels nor resends, and drain then reopen does not drive", async (t) => {
   const { socket, file } = workspace(t);
   const node = await start(socket, file);
+  let reopened: Awaited<ReturnType<typeof start>> | undefined;
   try {
     const first = await node.connect();
     await first.remote.attach("main");
@@ -99,15 +118,41 @@ test("over a Unix socket a disconnect neither cancels nor resends, and a reconne
     await until(() => node.server.connectionCount === 0 && node.listener.connectionCount === 0, "the server to release the socket");
     assert.equal((await node.harness.lane("main").inspect()).status, "open");
     finish(node.streams[0]!, "part and rest");
-    await until(async () => (await node.harness.lane("main").inspect()).operationId === null);
+    await until(async () => {
+      try {
+        return (await node.harness.lane("main").inspect()).operationId === null;
+      } catch (error) {
+        return error instanceof Error && error.message === "storage is closed";
+      }
+    }, "the drive to settle or the idle runtime to close");
 
     await first.client.connect();
-    await first.remote.attach("main");
+    await until(async () => {
+      try {
+        await first.remote.attach("main");
+        return true;
+      } catch (error) {
+        if (error instanceof RemoteError && error.code === "runtime_busy") return false;
+        throw error;
+      }
+    }, "reattach after reclaim");
     assert.deepEqual(texts(await lane.snapshot()), ["go", "part and rest"]);
     assert.equal((await lane.result("op"))?.status, "completed");
     assert.equal(node.streams.length, 1);
     assert.deepEqual(node.errors, []);
+    const settled = await lane.snapshot();
+    await node.stop();
+    assert.equal(existsSync(file), true, "drain releases the lock and keeps the file");
+
+    reopened = await start(socket, file);
+    const again = await reopened.connect();
+    await again.remote.attach("main");
+    assert.deepEqual(await again.remote.lane("main").snapshot(), settled);
+    await tick(20);
+    assert.equal(reopened.streams.length, 0, "opening does not drive or resend the model request");
+    assert.deepEqual(reopened.errors, []);
   } finally {
+    await reopened?.stop();
     await node.stop();
   }
 });
@@ -151,6 +196,12 @@ test("after a crash, JSONL reopen serves the same snapshot and an explicit drive
     assert.equal(recovered.pendingResponse, null);
     assert.equal((await lane.result("op"))?.status, "aborted");
     assert.deepEqual(after.errors, []);
+    await remote.remove("main");
+    assert.equal(existsSync(file), false, "remove deletes the JSONL file");
+    await remote.remove("main");
+    await remote.attach("main");
+    assert.deepEqual(texts(await lane.snapshot()), [], "the reopened runtime is a new file");
+    assert.equal(after.streams.length, 0);
   } finally {
     await after.stop();
   }

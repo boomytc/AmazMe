@@ -1,15 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Client, ClientError, RemoteError } from "@amazme/client";
+import { ClientError, RemoteError } from "@amazme/client";
 import { value, type StorageView } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { encodeClientMessage, ProtocolError, type JsonValue } from "@amazme/protocol";
-import { Server, ServiceError, type RuntimeCallContext, type SubscriptionSink } from "@amazme/server";
-import { memoryConnector } from "@amazme/server/testing";
+import { ServiceError, type RuntimeCallContext, type SubscriptionSink } from "@amazme/server";
 import { ContractError, parseLaneSnapshot, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { NotAttachedError, RuntimeClient } from "@amazme/runtime-service/client";
-import { createManagementService } from "@amazme/runtime-service/server";
-import { borrowedRuntime, finish, pendingText, textDelta, texts, tick, until, world } from "./support.ts";
+import { finish, pendingText, textDelta, texts, tick, until, world } from "./support.ts";
 
 const code = (expected: string) => (error: unknown) => error instanceof RemoteError && error.code === expected;
 
@@ -190,11 +188,13 @@ test("only requestAbort cancels; unsubscribe, detach, disconnect and reattach do
   }
 });
 
-test("after a disconnect the drive keeps going, nothing is resent, and a reattached client reads the settled state", async () => {
+test("after a disconnect the drive keeps going, nothing is resent, and another connection reads the settled state", async () => {
   const env = world();
   try {
     const first = await env.connect();
+    const second = await env.connect();
     await first.remote.attach("main");
+    await second.remote.attach("main");
     const lane = first.remote.lane("main");
     await lane.accept({ kind: "prompt", text: "go", operationId: "op" });
     const ended: string[] = [];
@@ -210,16 +210,20 @@ test("after a disconnect the drive keeps going, nothing is resent, and a reattac
     await assert.rejects(lane.snapshot(), (error) => error instanceof NotAttachedError);
 
     finish(env.runtime().streams[0]!, "part and rest");
-    await until(async () => (await env.runtime().harness.lane("main").inspect()).operationId === null);
-
-    await first.client.connect();
-    await assert.rejects(lane.snapshot(), (error) => error instanceof NotAttachedError, "a new connection starts unattached");
-    await first.remote.attach("main");
-    const settled = await lane.snapshot();
-    assert.deepEqual(texts(settled), ["go", "part and rest"]);
-    assert.equal((await lane.result("op"))?.status, "completed");
+    const other = second.remote.lane("main");
+    await until(async () => (await other.result("op")) !== null, "the operation to settle");
+    assert.deepEqual(texts(await other.snapshot()), ["go", "part and rest"]);
+    assert.equal((await other.result("op"))?.status, "completed");
     assert.equal(env.runtime().streams.length, 1, "the model request was not resent");
-    assert.equal(env.links.length, 2, "only the explicit connect opened a transport");
+    assert.equal(env.runtime().harness.isClosed, false, "a remaining attachment keeps the runtime");
+
+    const finished = env.runtime();
+    await second.remote.detach();
+    await until(() => finished.harness.isClosed, "idle reclaim");
+    await second.remote.attach("main");
+    assert.notEqual(env.runtime().harness, finished.harness);
+    assert.equal(env.runtime().streams.length, 0, "reopening does not drive");
+    assert.deepEqual(texts(await second.remote.lane("main").snapshot()), []);
   } finally {
     await env.close();
   }
@@ -244,7 +248,7 @@ test("runtimes, lanes, attachments and subscriptions stay isolated", async () =>
     const otherRoute = await remote.attach("other");
     assert.notEqual(otherRoute.attachmentId, mainRoute.attachmentId);
     assert.deepEqual(await subscription.ended, { reason: "detached" });
-    await env.runtime("main").harness.lane("main").steer("written after the switch");
+    await env.runtime("main").storage.commit([{ type: "set", address: value("test.after_switch"), value: 1 }]);
     await tick(20);
     assert.deepEqual(updates, [], "the old subscription receives nothing after the switch");
     await assert.rejects(client.request(mainRoute, { method: "snapshot", lane: "main" }), code("not_attached"));
@@ -284,7 +288,7 @@ test("queries never start a drive, and steer and follow-up enqueue without drivi
   }
 });
 
-test("the host stops serving and releases subscriptions without closing the harness", async () => {
+test("draining stops admission and subscriptions without persisting requestAbort", async () => {
   const env = world();
   try {
     const { remote } = await env.connect();
@@ -295,25 +299,27 @@ test("the host stops serving and releases subscriptions without closing the harn
     const subscription = await lane.subscribe(() => { updates += 1; });
     const waiting = lane.drive("op");
     await until(() => env.runtime().streams.length === 1);
-    const host = env.runtime().host;
-    const closing = host.close();
-    assert.equal(host.close(), closing);
-    await closing;
+    const handle = env.runtime().handle;
+    let drained = false;
+    const closing = handle.close("drain");
+    assert.equal(handle.close("drain"), closing);
+    void closing.then(() => { drained = true; });
+    await tick();
+    assert.equal(drained, false, "the running model keeps the drain open");
+    assert.equal(env.runtime().harness.signal().aborted, false);
+    assert.equal((await env.runtime().harness.lane("main").inspect()).status, "open");
     assert.deepEqual(await subscription.ended, { reason: "ended", code: "runtime_closed", message: "the runtime host is closed" });
     await assert.rejects(lane.snapshot(), code("runtime_closed"));
     textDelta(env.runtime().streams[0]!, "more", "more");
     await env.runtime().storage.commit([{ type: "set", address: value("test.noise"), value: 1 }]);
     await tick(20);
     assert.equal(updates, 0, "released subscriptions deliver nothing");
-    assert.equal(env.runtime().harness.isClosed, false);
-    let settled = false;
-    const drained = host.drivesSettled().then(() => { settled = true; });
-    await tick();
-    assert.equal(settled, false, "the drive is still owned and running");
+    assert.equal(drained, false);
     finish(env.runtime().streams[0]!, "done");
-    await drained;
+    await closing;
     assert.equal((await waiting).kind, "settled");
-    assert.equal((await env.runtime().harness.lane("main").result("op")).ok, true);
+    const settled = await env.runtime().harness.lane("main").result("op");
+    assert.equal(settled.ok && settled.value?.status, "completed");
   } finally {
     await env.close();
   }
@@ -350,7 +356,7 @@ test("the host is already closed during synchronous subscription cleanup callbac
     const { remote } = await env.connect();
     const route = await remote.attach("main");
     await remote.lane("main").subscribe(() => undefined);
-    const host = env.runtime().host;
+    const { handle, service } = env.runtime();
     let checked: Promise<void> | undefined;
     const context: RuntimeCallContext = {
       connectionId: "reentrant",
@@ -360,10 +366,12 @@ test("the host is already closed during synchronous subscription cleanup callbac
       subscription() { return undefined; },
     };
     storage.once = () => {
-      checked = assert.rejects(host.call({ method: "snapshot", lane: "main" }, context),
-        (error) => error instanceof ServiceError && error.code === "runtime_closed");
+      checked = assert.rejects(
+        () => Promise.resolve(service.call({ method: "snapshot", lane: "main" }, context)),
+        (error: unknown) => error instanceof ServiceError && error.code === "runtime_closed",
+      );
     };
-    await host.close();
+    await handle.close("drain");
     assert.ok(checked);
     await checked;
   } finally {
@@ -418,7 +426,7 @@ test("closing the host waits for an initial snapshot read and refuses that unfin
     const rejected = assert.rejects(subscribing, code("runtime_closed"));
     await until(() => reading, "the initial snapshot read");
     let closed = false;
-    const closing = env.runtime().host.close().then(() => { closed = true; });
+    const closing = env.runtime().handle.close("drain").then(() => { closed = true; });
     await tick();
     assert.equal(closed, false, "the host still owns the initial read");
     release();
@@ -441,7 +449,7 @@ test("closing the host does not wait for a stalled peer, and the end notice foll
     await env.runtime().storage.commit([{ type: "set", address: value("test.stalled"), value: 1 }]);
     await until(() => outbound.queuedBytes > 0, "the snapshot in flight");
     const started = Date.now();
-    await env.runtime().host.close();
+    await env.runtime().handle.close("drain");
     assert.ok(Date.now() - started < 500, "close returned while the peer was not reading");
     outbound.resume();
     const ended = await subscription.ended;
@@ -495,34 +503,24 @@ test("large initial subscriptions on a slow connection also take turns", async (
   }
 });
 
-test("a shared host keeps connections of separate server instances independent", async () => {
+test("a stalled connection does not block another connection's snapshot", async () => {
   const env = world();
-  const secondServer = new Server({
-    serverId: "srv",
-    service: createManagementService(),
-    openRuntime: (runtimeId) => Promise.resolve(runtimeId === "main" ? borrowedRuntime(env.runtime().host) : null),
-  });
-  const connector = memoryConnector((connection) => secondServer.accept(connection));
-  const secondClient = new Client({ serverId: "srv", transport: (handlers) => connector.transport(handlers) });
   try {
-    const { remote } = await env.connect();
-    await remote.attach("main");
-    await remote.lane("main").subscribe(() => undefined);
+    const first = await env.connect();
+    await first.remote.attach("main");
+    await first.remote.lane("main").subscribe(() => undefined);
     env.links[0]!.server.pause();
-    await env.runtime().storage.commit([{ type: "set", address: value("test.two_servers"), value: 1 }]);
+    await env.runtime().storage.commit([{ type: "set", address: value("test.two_connections"), value: 1 }]);
     await until(() => env.links[0]!.server.queuedBytes > 0, "the first connection's stalled snapshot");
-    await secondClient.connect();
-    const secondRemote = new RuntimeClient(secondClient);
-    await secondRemote.attach("main");
+    const second = await env.connect();
+    await second.remote.attach("main");
     let opened = false;
-    const opening = secondRemote.lane("main").subscribe(() => undefined);
+    const opening = second.remote.lane("main").subscribe(() => undefined);
     void opening.then(() => { opened = true; }, () => undefined);
     await until(() => opened, "the independent connection's initial snapshot", 500);
     assert.equal((await opening).initial.version, 1);
   } finally {
     for (const link of env.links) link.server.resume();
-    await secondClient.dispose();
-    await secondServer.close();
     await env.close();
   }
 });
