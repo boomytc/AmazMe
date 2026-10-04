@@ -20,6 +20,7 @@ import {
   McpTimeoutError,
   toError,
 } from "./protocol/jsonrpc.ts";
+import { McpHttpError } from "./transports/http-errors.ts";
 import {
   type ClientCapabilities,
   type DiscoverResult,
@@ -58,8 +59,9 @@ export interface McpClientOptions extends Implementation {
   capabilities?: ClientCapabilities;
   /**
    * Force one revision. A legacy revision skips `server/discover` and opens with `initialize`.
-   * Omitting it probes the modern revision, then falls back to `2025-11-25` when the probe
-   * is not a modern response.
+   * Omitting it probes the modern revision. A stdio probe falls back to `2025-11-25` on a
+   * non-modern JSON-RPC error or a timeout. Streamable HTTP falls back only on HTTP 400 whose
+   * body is not a modern JSON-RPC error.
    */
   protocolVersion?: typeof MODERN_PROTOCOL_VERSION | (typeof LEGACY_PROTOCOL_VERSIONS)[number];
   /** Idle limit. A progress notification starts this window again. `0` disables it. */
@@ -390,12 +392,15 @@ export class McpClient {
     if (isModernProtocolError(error)) return false;
     // The server answered `server/discover` with a result, so it is modern even if the result is unusable.
     if (error instanceof McpError && error.message === "Invalid MCP server/discover result") return false;
+    if (this.transport?.probe === "http") return error instanceof McpHttpError && error.status === 400;
     return true;
   }
 
   private async openModern(): Promise<void> {
     this.era = "modern";
     this.protocolVersionValue = MODERN_PROTOCOL_VERSION;
+    this.transport?.setEra?.("modern");
+    this.transport?.setProtocolVersion?.(MODERN_PROTOCOL_VERSION);
     const discovered = await this.discoverModern();
     if (!discovered.supportedVersions.includes(MODERN_PROTOCOL_VERSION)) {
       throw new McpError(
@@ -407,8 +412,6 @@ export class McpClient {
     this.serverCapabilitiesValue = discovered.capabilities;
     this.instructionsValue = discovered.instructions;
     this.serverInfoValue = serverInfoFromMeta(discovered as unknown as Record<string, unknown>);
-    this.transport?.setProtocolVersion?.(MODERN_PROTOCOL_VERSION);
-    this.transport?.setEra?.("modern");
   }
 
   private async discoverModern(): Promise<DiscoverResult> {
@@ -429,6 +432,8 @@ export class McpClient {
   private async openLegacy(version: (typeof LEGACY_PROTOCOL_VERSIONS)[number]): Promise<void> {
     this.era = "legacy";
     this.protocolVersionValue = version;
+    // Drop the modern version header before the handshake. The selected revision is applied after.
+    this.transport?.setEra?.("legacy");
     const capabilities: ClientCapabilities = { ...this.options.capabilities };
     if (this.options.roots && capabilities.roots === undefined) capabilities.roots = {};
     const result = validateInitializeResult(
@@ -451,7 +456,6 @@ export class McpClient {
     this.serverCapabilitiesValue = result.capabilities;
     this.instructionsValue = result.instructions;
     this.transport?.setProtocolVersion?.(result.protocolVersion);
-    this.transport?.setEra?.("legacy");
     await this.notifyInternal("notifications/initialized", undefined, true);
   }
 

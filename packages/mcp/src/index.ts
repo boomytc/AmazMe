@@ -38,4 +38,12 @@ export {
   type Tool,
 } from "./protocol/types.ts";
 export { McpClient, type McpClientOptions, type McpConnection, type McpRequestOptions } from "./client.ts";
+export type { AuthProvider, McpFetch, UnauthorizedContext } from "./auth-provider.ts";
 export type { McpTransport } from "./transports/transport.ts";
+export { McpAuthRequiredError, McpHttpError, McpSessionExpiredError } from "./transports/http-errors.ts";
+export { StdioTransport, type StdioTransportOptions } from "./transports/stdio.ts";
+export {
+  StreamableHttpTransport,
+  type StreamableHttpReconnectOptions,
+  type StreamableHttpTransportOptions,
+} from "./transports/streamable-http.ts";
