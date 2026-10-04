@@ -26,6 +26,7 @@ import {
   type RequestDeadline,
   type RetryWait,
 } from "./request-policy.ts";
+import { DEFAULT_TOOL_RESULT_LIMIT, projectForRequest, stampSession } from "./session-log.ts";
 import { durableTelemetrySchema } from "./telemetry.ts";
 import type { HarnessMessage, HarnessModels, HarnessTool, QueueMode, ReplayPolicy, ToolExecutionMode, ToolResult } from "./types.ts";
 import {
@@ -71,6 +72,8 @@ export interface LaneConfig {
   requestTimeoutMs: number;
   /** Stored retry wait. The settled `notBefore` is `now + retryDelayMs(retry, attempt)`. */
   retry: RetryWait;
+  /** Maximum tool-result characters placed in the next model request. The log keeps the original. */
+  toolResultLimit: number;
   systemPrompt: string;
 }
 
@@ -95,6 +98,8 @@ export interface HarnessOptions {
   requestTimeoutMs?: number;
   /** Retry wait stored on the lane. Omitted uses a 1 second base capped at 60 seconds. */
   retry?: RetryWait;
+  /** Tool-result clip for the next model request. Omitted uses 8_000 characters. */
+  toolResultLimit?: number;
   /**
    * Test seam for the model deadline. Production uses {@link armRequestDeadline}.
    * The returned signal must abort when `parent` aborts.
@@ -294,6 +299,15 @@ export class AgentHarness {
 
   lane(name = "main"): AgentLane {
     return new AgentLane(this, name);
+  }
+
+  /** Conversation names stored in this session log. */
+  conversations(): Promise<string[]> {
+    const prefix = "value\0pi.lane.state\0";
+    return this.storage.read((view) => view.values()
+      .filter((item) => item.key.startsWith(prefix))
+      .map((item) => item.key.slice(prefix.length))
+      .sort());
   }
 
   /** Drop this process without settling in-flight effects. Storage stays where the last commit left it. */
@@ -560,6 +574,27 @@ export class AgentLane {
     return this.enqueue(typeof message === "string" ? user(message) : message, "followUp");
   }
 
+  /**
+   * Open another conversation at `entryId` in this log. The source tip and its admitted wait stay put.
+   * Later entries on either conversation do not move the other tip.
+   */
+  fork(name: string, entryId: string | null): Promise<Result<{ lane: string }>> {
+    if (this.harness.isClosed) return Promise.resolve(failure("closed", "harness is closed"));
+    if (name.length === 0 || name.includes("\0") || name === this.name) {
+      return Promise.resolve(failure("invalid_message", "fork needs another conversation"));
+    }
+    return admitted(this.harness).run((view, apply) => {
+      this.ensureConfig(view, apply);
+      const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
+      if (entryId !== null && !ancestors(view, tip).some((entry) => entry.id === entryId)) {
+        return failure("unknown_target", "fork point is not in this conversation");
+      }
+      this.ensureLane(view, apply, name);
+      apply([{ type: "set", address: tipAddress(name), value: entryId }]);
+      return { ok: true as const, value: { lane: name } };
+    });
+  }
+
   async requestAbort(operationId: string): Promise<Result<{ operationId: string; newlyRequested: boolean }>> {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
     const result = await admitted(this.harness).run((view, apply) => {
@@ -685,6 +720,7 @@ export class AgentLane {
     if (message.role !== "user" && message.role !== "custom") return failure("invalid_message", "queue accepts user messages");
     const entryId = uuidv7();
     await admitted(this.harness).run((view, apply) => {
+      this.ensureConfig(view, apply);
       const record = this.record(view);
       apply([
         { type: "set", address: pendingAddress(entryId), value: { type: "message", message } satisfies import("./storage.ts").EntryPayload },
@@ -1700,7 +1736,7 @@ export class AgentLane {
     const config = this.config(view);
     const messages = this.visibleEntries(view).map((entry) => entry.kind === "compaction"
       ? { role: "user" as const, content: entry.summary, timestamp: entry.timestamp }
-      : entry.message);
+      : projectForRequest(entry.message, config.toolResultLimit));
     if (pending && pending.role !== "custom") messages.push(pending);
     return {
       systemPrompt: config.systemPrompt,
@@ -1853,8 +1889,15 @@ export class AgentLane {
   }
 
   private ensureConfig(view: StorageView, apply: Apply): void {
-    if (!view.get(configAddress(this.name))) {
+    stampSession(view, apply);
+    this.ensureLane(view, apply, this.name);
+  }
+
+  private ensureLane(view: StorageView, apply: Apply, name: string): void {
+    if (!view.get(configAddress(name))) {
       const options = this.harness.options;
+      const limit = options.toolResultLimit ?? DEFAULT_TOOL_RESULT_LIMIT;
+      if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error("toolResultLimit must be a positive integer");
       const config: LaneConfig = {
         provider: options.model.provider,
         modelId: options.model.modelId,
@@ -1866,19 +1909,20 @@ export class AgentLane {
         ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
         maxAttempts: options.maxAttempts ?? 2,
         ...resolveRequestPolicy(options),
+        toolResultLimit: limit,
         systemPrompt: options.systemPrompt ?? "",
       };
-      apply([{ type: "set", address: configAddress(this.name), value: config }]);
+      apply([{ type: "set", address: configAddress(name), value: config }]);
     }
-    if (!view.get(laneAddress(this.name))) {
+    if (!view.get(laneAddress(name))) {
       apply([{
         type: "set",
-        address: laneAddress(this.name),
+        address: laneAddress(name),
         value: { currentOperationId: null, lastOperationId: null, inbox: [] } satisfies LaneRecord,
       }]);
     }
-    if (view.get<string | null>(tipAddress(this.name)) === undefined) {
-      apply([{ type: "set", address: tipAddress(this.name), value: null }]);
+    if (view.get<string | null>(tipAddress(name)) === undefined) {
+      apply([{ type: "set", address: tipAddress(name), value: null }]);
     }
   }
 
@@ -1904,6 +1948,9 @@ export class AgentLane {
     const config = view.get<LaneConfig>(configAddress(this.name));
     if (!config) throw new Error("lane config is missing");
     const policy = storedRequestPolicy(config);
+    if (!Number.isSafeInteger(config.toolResultLimit) || config.toolResultLimit <= 0) {
+      throw new Error("lane config has no tool result limit");
+    }
     return { ...config, ...policy };
   }
 

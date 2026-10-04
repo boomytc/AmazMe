@@ -93,6 +93,16 @@ try {
 
 缺少 `requestTimeoutMs` 或 `retry` 的 lane 配置直接失败，不补一个固定的短等待。摘要请求使用同一个截止；摘要超时记成中止，不重试摘要。
 
+## 会话日志
+
+条目树就是会话日志，没有第二份转录。`providerContext` 从当前 tip 的祖先投影出下一次模型请求。`models` 是模型适配器，`tools` 的 `execute` 是执行后端，两者都在 `AgentHarness` 构造时传入，测试替换它们时不改这个入口。
+
+一份存储里的每条 lane 是一段对话。`conversations()` 列出它们。`fork(name, entryId)` 把另一段对话的 tip 放在本段已有条目上，不移动本段 tip，也不取消本段已经准入的等待。子对话上的 `requestAbort` 只中止那一条 lane 的信号。
+
+`toolResultLimit` 默认 8,000 个字符。超过的工具结果只在下一次模型请求里被裁成首尾加 `[truncated]`。日志条目保持原文字。压缩也只改变之后请求能看见的范围，不改已经写下的工具结果。
+
+空日志第一次打开写成 `{ version: 1 }`。已经有条目、值、列表或 usage，但没有这个版本的文件是 v1 之前的会话或 runtime，直接抛出 `pre-v1 session file`，不补写、不转换。其他版本号同样拒绝。
+
 ## 上下文预算与压缩
 
 `compaction.maxTokens` 是自动压缩的输入 token 阈值，不是这一次生成的输出上限。`HarnessOptions.maxTokens` 传给普通 `streamSimple`。摘要请求使用自己的输出上限，`tools` 为空，`thinkingLevel` 为 `off`。
