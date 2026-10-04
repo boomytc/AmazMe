@@ -155,6 +155,26 @@ test("runtime-service contracts and client entries load neither Durable nor the 
   }
 });
 
+test("the runtime-service server entry does not load Node or the JSONL lock", () => {
+  const script = `
+    const { registerHooks, builtinModules } = await import("node:module");
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier.startsWith("node:") || builtinModules.includes(specifier)) throw new Error("Node import: " + specifier);
+      const resolved = next(specifier, context);
+      if (/jsonl-node|jsonl-lock|runtime-service\\/src\\/jsonl/.test(resolved.url)) throw new Error("server loaded " + specifier);
+      return resolved;
+    } });
+    globalThis.process = undefined;
+    const loaded = await import("@amazme/runtime-service/server");
+    if (typeof loaded.openOwnedRuntimes !== "function" || typeof loaded.createManagementService !== "function") {
+      throw new Error("missing server exports");
+    }
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 10_000 });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+});
+
 test("the public Agent entry runs without loading Durable", () => {
   const script = `
     const { registerHooks } = await import("node:module");

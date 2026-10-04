@@ -10,7 +10,15 @@ import type {
   Result,
 } from "@amazme/durable";
 import type { JsonObject, JsonValue } from "@amazme/protocol";
-import { ServiceError, type RuntimeCallContext, type RuntimeService, type ServerService, type SubscriptionSink } from "@amazme/server";
+import {
+  ServiceError,
+  type AttachmentLease,
+  type RuntimeCallContext,
+  type RuntimeHandle,
+  type RuntimeService,
+  type ServerService,
+  type SubscriptionSink,
+} from "@amazme/server";
 import {
   ContractError,
   LANE_PHASES,
@@ -33,44 +41,182 @@ const outcomes: Same<DriveOutcome, DriveOutcomeDto> = true;
 const statuses: Same<LaneStatus, StatusDto> = true;
 void [phases, results, admissions, outcomes, statuses];
 
-export interface RuntimeHostOptions {
-  /** The caller keeps owning the harness and its storage; the host never closes or abandons them. */
-  harness: AgentHarness;
+/**
+ * What one host open acquired. The server handle does not expose `harness` or `storage`.
+ * `closeStorage` stops new storage callbacks and waits, without deleting or unlocking.
+ * `remove` deletes this instance's data and only then drops ownership. `release` drops ownership
+ * without deleting. All three are idempotent and may be retried after a rejection.
+ */
+export interface OwnedRuntimeResources {
+  readonly harness: AgentHarness;
+  closeStorage(): Promise<void>;
+  release(): Promise<void>;
+  remove(): Promise<void>;
+}
+
+export interface OwnedRuntimeOptions {
+  /**
+   * Open one runtime the host allows. `null` refuses the id. The signal aborts when every waiter
+   * has left, or when the runtime is removed or the server is closing. It is not one RPC's signal.
+   * This call reads storage and constructs the harness. It must not drive, call a model, or run a tool.
+   * On failure, release anything already acquired before throwing. A returned value still belongs to
+   * the caller until `openOwnedRuntimes` returns the handle; after that the server owns it.
+   */
+  open(runtimeId: string, signal: AbortSignal): Promise<OwnedRuntimeResources | null>;
   /** Lanes clients may name. Omitted allows any lane name the contract accepts. */
   lanes?: readonly string[];
   /** Fixed window that merges storage notifications into one snapshot read per subscription. Default 16 ms. */
   publishWindowMs?: number;
-  /** Drive failures and publisher errors. Its own errors are ignored. */
+  /** Unexpected drive failures and publisher errors. Its own errors are ignored. */
   onError?: (error: Error) => void;
 }
 
 /**
- * Serves the runtime calls of one harness on a runtime route. Drives belong to the host: an RPC may wait for one,
- * but cancelling that wait, unsubscribing, detaching or disconnecting never aborts the operation. Only the explicit
- * `requestAbort` call does.
+ * Server `openRuntime` for runtimes this process owns. Concurrent opens are merged by the server, not here.
+ * A second call opens a second instance. The returned handle's `close` drains or aborts host work and closes
+ * storage, and keeps the write right. The server then calls `release` or `remove`.
  */
-export class RuntimeHost implements RuntimeService {
+export function openOwnedRuntimes(options: OwnedRuntimeOptions): (runtimeId: string, signal: AbortSignal) => Promise<RuntimeHandle | null> {
+  const windowMs = options.publishWindowMs ?? 16;
+  if (!Number.isSafeInteger(windowMs) || windowMs < 0 || windowMs > 60_000) {
+    throw new RangeError("publishWindowMs must be an integer between 0 and 60000");
+  }
+  return async (runtimeId, signal) => {
+    let resources: OwnedRuntimeResources | null;
+    try {
+      resources = await options.open(runtimeId, signal);
+    } catch (error) {
+      if (isStorageBusy(error)) throw new ServiceError("storage_busy", error instanceof Error ? error.message : "storage is busy");
+      throw error;
+    }
+    if (!resources) return null;
+    // An aborted open signal means the server will discard this handle. Returning it lets that
+    // discard close and release the resources. Releasing here as well would drop a lock twice.
+    try {
+      return new OwnedRuntime(resources, options, windowMs);
+    } catch (error) {
+      try {
+        await resources.release();
+      } catch (cause) {
+        throw new AggregateError([error, cause], "opening the runtime failed and releasing ownership failed");
+      }
+      throw error;
+    }
+  };
+}
+
+/**
+ * One opened runtime. Drives, model calls, and tools belong to the harness: cancelling an RPC wait,
+ * unsubscribing, detaching, or disconnecting never aborts them. Only `requestAbort` persists a business cancel.
+ * `close("drain")` waits without that write. `close("abort")` aborts the harness signal and still waits.
+ */
+class OwnedRuntime implements RuntimeHandle, RuntimeService {
   private readonly harness: AgentHarness;
+  private readonly resources: OwnedRuntimeResources;
   private readonly lanes: ReadonlySet<string> | undefined;
   private readonly windowMs: number;
   private readonly onError: ((error: Error) => void) | undefined;
-  private readonly drives = new Map<string, Promise<Result<DriveOutcome>>>();
   private readonly publishers = new Set<SnapshotPublisher>();
+  private readonly reported = new WeakSet<Promise<unknown>>();
   private readonly gate = new ConnectionGate();
+  private stopped = false;
+  private aborting = false;
   private closing: Promise<void> | undefined;
+  private observationEnded = false;
+  private storageClosed = false;
+  private released = false;
+  private removed = false;
+  private releaseOnce: Promise<void> | undefined;
+  private removeOnce: Promise<void> | undefined;
+  private ownership: Promise<void> = Promise.resolve();
 
-  constructor(options: RuntimeHostOptions) {
-    this.harness = options.harness;
+  constructor(resources: OwnedRuntimeResources, options: OwnedRuntimeOptions, windowMs: number) {
+    this.resources = resources;
+    this.harness = resources.harness;
     this.lanes = options.lanes ? new Set(options.lanes) : undefined;
-    this.windowMs = options.publishWindowMs ?? 16;
-    if (!Number.isSafeInteger(this.windowMs) || this.windowMs < 0 || this.windowMs > 60_000) {
-      throw new RangeError("publishWindowMs must be an integer between 0 and 60000");
-    }
+    this.windowMs = windowMs;
     this.onError = options.onError;
   }
 
+  acquire(): AttachmentLease {
+    const service: RuntimeService = this;
+    return { service, release() {} };
+  }
+
+  /**
+   * Stops admission, ends observation, then waits for harness work and closes storage.
+   * A later abort upgrades a drain. A later drain does not clear an abort. Repeated calls share
+   * one operation until it rejects; a rejection can be retried. This does not delete data or unlock.
+   */
+  close(mode: "drain" | "abort"): Promise<void> {
+    if (mode === "abort") this.aborting = true;
+    this.stopped = true;
+    const quiet = this.aborting ? this.harness.close() : this.harness.drain();
+    void quiet.catch(() => undefined);
+    if (!this.closing) {
+      let run!: Promise<void>;
+      run = this.finishClose().then(() => undefined, (error: unknown) => {
+        if (this.closing === run) this.closing = undefined;
+        throw error;
+      });
+      this.closing = run;
+    }
+    return this.closing;
+  }
+
+  /** No running drive or admitted storage work. Attachments are counted by the server. */
+  idle(): boolean {
+    return !this.stopped && this.harness.idle();
+  }
+
+  watchIdle(listener: () => void): () => void {
+    return this.harness.watchIdle(listener);
+  }
+
+  /** Drain, then drop the write right. Does not delete. A failed attempt can be retried. */
+  release(): Promise<void> {
+    if (this.removed) return this.removeOnce ?? Promise.resolve();
+    const closing = this.close("drain");
+    if (this.releaseOnce) return this.releaseOnce;
+    let run!: Promise<void>;
+    run = this.enqueue(async () => {
+      await closing;
+      if (this.removed || this.released) return;
+      await this.resources.release();
+      this.released = true;
+    }).then(() => undefined, (error: unknown) => {
+      if (this.releaseOnce === run && !this.released) this.releaseOnce = undefined;
+      throw error;
+    });
+    this.releaseOnce = run;
+    return run;
+  }
+
+  /**
+   * Drain, delete this instance's data, then drop the write right.
+   * After `release` has succeeded this rejects and does not delete. A failed attempt can be retried.
+   */
+  remove(): Promise<void> {
+    if (this.released && !this.removed) return Promise.reject(new Error("storage ownership was released"));
+    const closing = this.close("drain");
+    if (this.removeOnce) return this.removeOnce;
+    let run!: Promise<void>;
+    run = this.enqueue(async () => {
+      await closing;
+      if (this.removed) return;
+      if (this.released) throw new Error("storage ownership was released");
+      await this.resources.remove();
+      this.removed = true;
+    }).then(() => undefined, (error: unknown) => {
+      if (this.removeOnce === run && !this.removed) this.removeOnce = undefined;
+      throw error;
+    });
+    this.removeOnce = run;
+    return run;
+  }
+
   async call(raw: JsonValue, context: RuntimeCallContext): Promise<JsonValue | undefined> {
-    if (this.closing) throw new ServiceError("runtime_closed", "the runtime host is closed");
+    if (this.stopped) throw new ServiceError("runtime_closed", "the runtime host is closed");
     let call: RuntimeCall;
     try {
       call = parseRuntimeCall(raw);
@@ -105,48 +251,72 @@ export class RuntimeHost implements RuntimeService {
     }
   }
 
-  /** Resolves after every drive this host started or joined has settled. Drives keep running until then. */
-  async drivesSettled(): Promise<void> {
-    while (this.drives.size > 0) await Promise.allSettled([...this.drives.values()]);
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const run = this.ownership.then(task, task);
+    this.ownership = run.then(() => undefined, () => undefined);
+    return run;
   }
 
-  /**
-   * Refuses further calls and ends every subscription with a `runtime_closed` notice. It waits for snapshot
-   * reads in flight, not for a stalled peer to read. Drives continue; await `drivesSettled()` or stop the
-   * harness yourself. Repeated calls share one promise.
-   */
-  close(): Promise<void> {
-    this.closing ??= Promise.resolve().then(async () => {
-      const ended = { code: "runtime_closed", message: "the runtime host is closed" };
-      await Promise.allSettled([...this.publishers].map((publisher) => publisher.close(ended)));
+  private async finishClose(): Promise<void> {
+    const errors: unknown[] = [];
+    const quiet = this.aborting ? this.harness.close() : this.harness.drain();
+    void quiet.catch(() => undefined);
+    const waited = await Promise.allSettled([this.endObservation(), quiet]);
+    for (const result of waited) {
+      if (result.status === "rejected") errors.push(result.reason);
+    }
+    // A rejected wait means producer work may still be running. Leave storage and the lock alone.
+    if (waited[1]?.status === "fulfilled" && !this.storageClosed) {
+      try {
+        await this.resources.closeStorage();
+        this.storageClosed = true;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "runtime close failed");
+  }
+
+  private endObservation(): Promise<void> {
+    if (this.observationEnded) return Promise.resolve();
+    this.observationEnded = true;
+    const ended = { code: "runtime_closed", message: "the runtime host is closed" };
+    return Promise.allSettled([...this.publishers].map((publisher) => publisher.close(ended))).then((settled) => {
+      const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "ending observation failed");
     });
-    return this.closing;
   }
 
   private awaitDrive(lane: AgentLane, operationId: string, waitForRetry: boolean, signal: AbortSignal): Promise<Result<DriveOutcome>> {
-    const key = `${lane.name}\0${operationId}`;
-    let run = this.drives.get(key);
-    if (!run) {
-      const started = lane.drive(operationId, { waitForRetry });
-      run = started;
-      this.drives.set(key, started);
-      void started.then(
-        () => undefined,
-        (error: unknown) => this.report(error),
-      ).finally(() => {
-        if (this.drives.get(key) === started) this.drives.delete(key);
-      });
-    }
-    const joined = run;
+    const run = lane.drive(operationId, { waitForRetry });
+    this.watch(run);
     if (signal.aborted) return Promise.reject(cancelled());
     return new Promise((resolve, reject) => {
-      const onAbort = () => reject(cancelled());
+      const onAbort = () => {
+        signal.removeEventListener("abort", onAbort);
+        reject(cancelled());
+      };
       signal.addEventListener("abort", onAbort, { once: true });
-      joined.then(
-        (outcome) => { signal.removeEventListener("abort", onAbort); resolve(outcome); },
-        () => { signal.removeEventListener("abort", onAbort); reject(new ServiceError("drive_failed", "the drive failed; see the runtime host diagnostics")); },
+      run.then(
+        (outcome) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(outcome);
+        },
+        () => {
+          signal.removeEventListener("abort", onAbort);
+          reject(new ServiceError("drive_failed", "the drive failed; see the runtime host diagnostics"));
+        },
       );
     });
+  }
+
+  /** Report an unexpected rejection once per drive, including when every RPC wait already left. */
+  private watch(run: Promise<Result<DriveOutcome>>): void {
+    if (this.reported.has(run)) return;
+    this.reported.add(run);
+    void run.then(() => undefined, (error: unknown) => this.report(error));
   }
 
   private async subscribe(lane: AgentLane, subscriptionId: string, context: RuntimeCallContext): Promise<JsonValue> {
@@ -157,7 +327,7 @@ export class RuntimeHost implements RuntimeService {
     try {
       return await publisher.start();
     } catch (error) {
-      await publisher.close();
+      await publisher.close().catch((cause: unknown) => this.report(cause));
       throw error;
     }
   }
@@ -169,6 +339,10 @@ export class RuntimeHost implements RuntimeService {
       // Diagnostics cannot change runtime state.
     }
   }
+}
+
+function isStorageBusy(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "storage_busy";
 }
 
 /** One snapshot read-and-send at a time per connection, so its subscriptions never queue more than one frame. */
@@ -262,7 +436,8 @@ class SnapshotPublisher {
 
   /**
    * Stops publishing at once. With `ended`, the notice is queued before the sink closes; nothing waits for the
-   * peer to read it. Resolves once a read in flight finished.
+   * peer to read it. Resolves once a read in flight finished. An unsubscribe failure still closes the sink and
+   * rejects after that read, so a later publisher is not skipped.
    */
   close(ended?: Ended): Promise<void> {
     if (this.closed) return this.done;
@@ -272,7 +447,12 @@ class SnapshotPublisher {
     this.stop("stopped");
     clearTimeout(this.timer);
     this.timer = undefined;
-    this.unsubscribe();
+    let unsubscribeError: unknown;
+    try {
+      this.unsubscribe();
+    } catch (error) {
+      unsubscribeError = error;
+    }
     if (ended && !this.sink.closed) {
       const notice: LaneUpdateDto = { kind: "ended", ...ended };
       void this.sink.send(notice).then(() => this.sink.close(), () => this.sink.close());
@@ -280,7 +460,11 @@ class SnapshotPublisher {
       this.sink.close();
     }
     void Promise.allSettled([this.initialRead, this.running]).then(() => this.finish());
-    return this.done;
+    if (!unsubscribeError) return this.done;
+    const failure = unsubscribeError;
+    return this.done.then(() => {
+      throw failure;
+    });
   }
 
   private invalidate(): void {
@@ -329,11 +513,13 @@ class SnapshotPublisher {
 }
 
 export interface ManagementServiceOptions {
-  /** Runtimes clients may attach. Omitted asks `openRuntime` about every id. */
+  /** Runtimes clients may attach or remove. Omitted asks `openRuntime` about every id. */
   runtimes?: readonly string[];
+  /** Deletes one runtime through the server that owns it. Omitted rejects `remove`. */
+  removeRuntime?: (runtimeId: string) => Promise<void>;
 }
 
-/** The minimal server-route service: `attach` and `detach` through the router's controlled capability. */
+/** Server-route calls: `attach`, `detach`, and, when the host wires it, `remove`. */
 export function createManagementService(options: ManagementServiceOptions = {}): ServerService {
   const allowed = options.runtimes ? new Set(options.runtimes) : undefined;
   return {
@@ -346,6 +532,12 @@ export function createManagementService(options: ManagementServiceOptions = {}):
       }
       if (call.method === "detach") {
         await context.detach();
+        return null;
+      }
+      if (call.method === "remove") {
+        if (!options.removeRuntime) throw new ServiceError("invalid_call", "remove is not offered");
+        if (allowed && !allowed.has(call.runtimeId)) throw new ServiceError("unknown_runtime", `runtime ${call.runtimeId} is not offered`);
+        await options.removeRuntime(call.runtimeId);
         return null;
       }
       if (allowed && !allowed.has(call.runtimeId)) throw new ServiceError("unknown_runtime", `runtime ${call.runtimeId} is not offered`);

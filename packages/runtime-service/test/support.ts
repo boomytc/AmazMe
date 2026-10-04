@@ -8,14 +8,14 @@ import {
   type Provider,
 } from "@amazme/ai";
 import { Client, type ByteTransportFactory } from "@amazme/client";
-import { AgentHarness, type Storage } from "@amazme/durable";
+import { AgentHarness, type HarnessTool, type Storage } from "@amazme/durable";
 import type { ProtocolLimits } from "@amazme/protocol";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { Server, type RuntimeHandle, type RuntimeService } from "@amazme/server";
 import { memoryConnector, type MemoryLink } from "@amazme/server/testing";
 import type { LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient } from "@amazme/runtime-service/client";
-import { createManagementService, RuntimeHost } from "@amazme/runtime-service/server";
+import { createManagementService, openOwnedRuntimes, type OwnedRuntimeResources } from "@amazme/runtime-service/server";
 
 export const model: Model = {
   id: "g",
@@ -89,41 +89,63 @@ export function texts(snapshot: LaneSnapshotDto): string[] {
 export interface RuntimeFixture {
   storage: Storage;
   harness: AgentHarness;
-  host: RuntimeHost;
   streams: AssistantEventStream[];
+  /** Present after the server has opened this runtime. */
+  handle?: RuntimeHandle;
+  service?: RuntimeService;
 }
 
-/** One server with explicitly registered runtimes, reached through the in-memory byte pipe. */
+/** One server whose runtimes are opened on demand and owned by the host. */
 export function world(options: {
   runtimes?: string[];
   storage?: (id: string) => Storage;
+  tools?: HarnessTool[];
   publishWindowMs?: number;
   lanes?: readonly string[];
   limits?: Partial<ProtocolLimits>;
 } = {}) {
   const errors: Error[] = [];
-  const services = new Map<string, RuntimeService>();
-  const server = new Server({
-    serverId: "srv",
-    service: createManagementService(),
+  const fakes = new Map<string, RuntimeService>();
+  const runtimes = new Map<string, RuntimeFixture>();
+  const known = new Set(options.runtimes ?? ["main"]);
+  let server!: Server;
+  const opener = openOwnedRuntimes({
+    open(runtimeId): Promise<OwnedRuntimeResources | null> {
+      if (!known.has(runtimeId)) return Promise.resolve(null);
+      const { models, streams } = gatedModels();
+      const storage = options.storage?.(runtimeId) ?? new MemoryStorage();
+      const harness = new AgentHarness(storage, {
+        models,
+        model: { provider: "gated", modelId: "g" },
+        ...(options.tools ? { tools: options.tools } : {}),
+      });
+      runtimes.set(runtimeId, { storage, harness, streams });
+      return Promise.resolve(memoryResources(storage, harness));
+    },
+    publishWindowMs: options.publishWindowMs ?? 5,
     onError: (error) => errors.push(error),
-    openRuntime: (runtimeId) => Promise.resolve(services.has(runtimeId) ? borrowedRuntime(services.get(runtimeId)!) : null),
+    ...(options.lanes ? { lanes: options.lanes } : {}),
+  });
+  server = new Server({
+    serverId: "srv",
+    service: createManagementService({
+      removeRuntime: (runtimeId) => server.removeRuntime(runtimeId),
+      ...(options.runtimes ? { runtimes: options.runtimes } : {}),
+    }),
+    onError: (error) => errors.push(error),
+    openRuntime: async (runtimeId, signal) => {
+      const fake = fakes.get(runtimeId);
+      if (fake) return detachedService(fake);
+      const handle = await opener(runtimeId, signal);
+      const fixture = runtimes.get(runtimeId);
+      if (handle && fixture) {
+        fixture.handle = handle;
+        fixture.service = handle.acquire().service;
+      }
+      return handle;
+    },
     ...(options.limits ? { limits: options.limits } : {}),
   });
-  const runtimes = new Map<string, RuntimeFixture>();
-  for (const id of options.runtimes ?? ["main"]) {
-    const { models, streams } = gatedModels();
-    const storage = options.storage?.(id) ?? new MemoryStorage();
-    const harness = new AgentHarness(storage, { models, model: { provider: "gated", modelId: "g" } });
-    const host = new RuntimeHost({
-      harness,
-      publishWindowMs: options.publishWindowMs ?? 5,
-      onError: (error) => errors.push(error),
-      ...(options.lanes ? { lanes: options.lanes } : {}),
-    });
-    services.set(id, host);
-    runtimes.set(id, { storage, harness, host, streams });
-  }
   const connector = memoryConnector((connection) => server.accept(connection));
   const links: MemoryLink[] = connector.links;
   const transport: ByteTransportFactory = (handlers) => connector.transport(handlers);
@@ -134,28 +156,39 @@ export function world(options: {
     await client.connect();
     return { client, remote: new RuntimeClient(client) };
   };
-  const runtime = (id = "main") => runtimes.get(id)!;
+  const runtime = (id = "main") => {
+    const fixture = runtimes.get(id);
+    if (!fixture?.handle || !fixture.service) throw new Error(`runtime ${id} is not open`);
+    return fixture as RuntimeFixture & { handle: RuntimeHandle; service: RuntimeService };
+  };
   const close = async () => {
     for (const client of clients) await client.dispose();
-    await server.close();
+    const closing = server.close();
     for (const fixture of runtimes.values()) {
-      await fixture.host.close();
       for (const stream of fixture.streams) finish(stream, "teardown");
-      await fixture.host.drivesSettled();
-      await fixture.harness.close();
     }
+    await closing;
     const thrown = links.flatMap((link) => [...link.client.handlerErrors, ...link.server.handlerErrors]);
     if (thrown.length > 0) throw new AggregateError(thrown, "transport handlers threw");
     if (errors.length > 0) throw new AggregateError(errors, "unexpected server or runtime errors");
   };
-  const allow = (id: string, service: RuntimeService) => { services.set(id, service); };
+  const allow = (id: string, service: RuntimeService) => { fakes.set(id, service); };
   return { server, runtime, connect, links, errors, close, allow };
 }
 
-/** A borrowed service. Closing the server does not close the harness the caller still owns. */
-export function borrowedRuntime(service: RuntimeService): RuntimeHandle {
+function memoryResources(storage: Storage, harness: AgentHarness): OwnedRuntimeResources {
   return {
-    acquire: () => ({ service, release: () => undefined }),
+    harness,
+    closeStorage: () => storage.whenIdle(),
+    release: () => storage.whenIdle(),
+    remove: () => storage.whenIdle(),
+  };
+}
+
+/** A service with no harness. Idle stays false so the server does not reclaim it. */
+function detachedService(service: RuntimeService): RuntimeHandle {
+  return {
+    acquire: () => ({ service, release() {} }),
     close: () => Promise.resolve(),
     idle: () => false,
   };

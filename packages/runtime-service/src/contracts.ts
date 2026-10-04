@@ -45,10 +45,11 @@ export const RuntimeCallSchema = Type.Union([
 ]);
 export type RuntimeCall = Static<typeof RuntimeCallSchema>;
 
-/** Calls on the server route that ask the router to attach or detach this connection. */
+/** Calls on the server route. `remove` deletes one runtime the host offered; it is not a directory API. */
 export const ManagementCallSchema = Type.Union([
   Strict({ method: Type.Literal("attach"), runtimeId: RuntimeIdSchema }),
   Strict({ method: Type.Literal("detach") }),
+  Strict({ method: Type.Literal("remove"), runtimeId: RuntimeIdSchema }),
 ]);
 export type ManagementCall = Static<typeof ManagementCallSchema>;
 
@@ -170,6 +171,8 @@ export const RUNTIME_ERROR_CODES = [
   "nothing_to_compact",
   "no_active_operation",
   "unknown_runtime",
+  "runtime_busy",
+  "storage_busy",
   "wrong_server",
   "not_attached",
   "stale_attachment",
