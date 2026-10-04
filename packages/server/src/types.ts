@@ -115,7 +115,7 @@ export interface ServerService {
   call(call: JsonValue, context: ServerCallContext): MaybePromise<JsonValue | undefined>;
 }
 
-/** Handles calls addressed to one registered runtime through a current attachment. */
+/** Handles calls addressed to one opened runtime through a current attachment. */
 export interface RuntimeService {
   call(call: JsonValue, context: RuntimeCallContext): MaybePromise<JsonValue | undefined>;
 }

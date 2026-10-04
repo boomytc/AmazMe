@@ -687,10 +687,12 @@ test("a failed removal is not success and can retry without opening again", asyn
   const log = emptyLog();
   let failClose = true;
   let opens = 0;
+  let exists = true;
   const server = new Server({
     serverId: "srv",
     service: attachService(),
     openRuntime: () => {
+      if (!exists) return Promise.resolve(null);
       opens += 1;
       return Promise.resolve(scripted(log, {
         idle: () => false,
@@ -700,7 +702,7 @@ test("a failed removal is not success and can retry without opening again", asyn
             throw new Error("close broke");
           }
         },
-        remove: async () => undefined,
+        remove: async () => { exists = false; },
         release: async () => undefined,
       }));
     },
@@ -783,10 +785,483 @@ test("an in-flight release cannot be upgraded into a delete, but an in-flight cl
     assert.equal(lateLog.closes.length, 1);
     assert.equal(lateLog.removes, 0);
     await lateServer.removeRuntime("rt");
-    assert.equal(lateLog.removes, 0, "a finished reclaim no longer has a handle that can delete");
+    assert.equal(lateLog.removes, 1, "a finished reclaim must reacquire ownership before deleting durable data");
+    assert.equal(lateLog.closes.length, 2);
   } finally {
     await lateClient.dispose();
     await lateServer.close().catch(() => undefined);
+  }
+});
+
+test("remove resolves an unloaded runtime under one exclusive slot and only null means absent", async () => {
+  const opening = deferred<RuntimeHandle>();
+  const log = emptyLog();
+  let opens = 0;
+  let openSignal: AbortSignal | undefined;
+  const server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: (id, signal) => {
+      opens += 1;
+      openSignal = signal;
+      return id === "absent" ? Promise.resolve(null) : opening.promise;
+    },
+  });
+  const client = await connectorFor(server)();
+  try {
+    const removing = server.removeRuntime("rt");
+    assert.equal(server.removeRuntime("rt"), removing);
+    await until(() => opens === 1, "the controlled resolver");
+    assert.equal(openSignal?.aborted, false, "opening for deletion must not cancel its own acquisition");
+    await assert.rejects(client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" }), code("runtime_busy"));
+    opening.resolve(scripted(log, { remove: async () => undefined, release: async () => undefined }));
+    await removing;
+    assert.equal(log.acquires, 0);
+    assert.deepEqual(log.closes, ["drain"]);
+    assert.equal(log.removes, 1);
+    assert.equal(log.ownershipReleases, 0);
+    await server.removeRuntime("absent");
+    assert.equal(opens, 2);
+  } finally {
+    await client.dispose();
+    await server.close();
+  }
+});
+
+test("initial abort signals the host before waiting for a runtime call that ignores the RPC signal", async () => {
+  const started = deferred();
+  const work = deferred<JsonValue>();
+  const log = emptyLog();
+  const server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: () => Promise.resolve(scripted(log, {
+      service: { call: () => { started.resolve(); return work.promise; } },
+      close: async (mode) => { if (mode === "abort") work.resolve({ aborted: true }); },
+      release: async () => undefined,
+    })),
+  });
+  const client = await connectorFor(server)();
+  try {
+    await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+    const pending = client.request(client.attachment!, { op: "work" }).catch(() => undefined);
+    await started.promise;
+    const closing = server.close("abort");
+    assert.deepEqual(log.closes, ["abort"], "the host receives abort immediately");
+    await closing;
+    await pending;
+    assert.equal(log.leaseReleases, 1);
+    assert.equal(log.ownershipReleases, 1);
+  } finally {
+    work.resolve(null);
+    await client.dispose();
+    await server.close("abort");
+  }
+});
+
+test("abort upgrade is part of the shutdown barrier and a failed server close retries without reopening admission", async () => {
+  const drain = deferred();
+  const abort = deferred();
+  const log = emptyLog();
+  let retry = false;
+  const failure = new Error("abort upgrade failed");
+  const server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: () => Promise.resolve(scripted(log, {
+      close: (mode) => retry ? Promise.resolve() : mode === "drain" ? drain.promise : abort.promise,
+      release: async () => undefined,
+    })),
+  });
+  const client = await connectorFor(server)();
+  try {
+    await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+    const closing = server.close();
+    const rejected = assert.rejects(closing, (error: unknown) => error === failure);
+    await until(() => log.closes.includes("drain"), "the first drain");
+    assert.equal(server.close("abort"), closing);
+    drain.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(log.ownershipReleases, 0, "the first drain cannot release ahead of the abort upgrade");
+    abort.reject(failure);
+    await rejected;
+    assert.equal(log.ownershipReleases, 0, "a failed upgrade keeps ownership");
+    assert.equal(server.closed, true);
+    await assert.rejects(connectorFor(server)(), code("server_closing"));
+    retry = true;
+    const retried = server.close();
+    assert.notEqual(retried, closing);
+    assert.equal(server.close(), retried);
+    await retried;
+    assert.equal(log.ownershipReleases, 1);
+    assert.deepEqual(log.closes, ["drain", "abort", "abort"]);
+    await assert.rejects(connectorFor(server)(), code("server_closing"));
+  } finally {
+    drain.resolve();
+    abort.resolve();
+    retry = true;
+    await client.dispose();
+    await server.close().catch(() => undefined);
+  }
+});
+
+test("a watcher installation failure closes the acquired owner before allowing another open", async () => {
+  const closed = deferred();
+  const first = emptyLog();
+  const next = emptyLog();
+  let opens = 0;
+  const server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: () => {
+      opens += 1;
+      if (opens > 1) return Promise.resolve(scripted(next));
+      const handle = scripted(first, { close: () => closed.promise, release: async () => undefined });
+      handle.watchIdle = () => { throw new Error("watcher failed"); };
+      return Promise.resolve(handle);
+    },
+  });
+  const client = await connectorFor(server)();
+  try {
+    await assert.rejects(client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" }), code("internal"));
+    assert.equal(first.acquires, 0);
+    await assert.rejects(client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" }), code("runtime_busy"));
+    assert.equal(opens, 1);
+    closed.resolve();
+    await until(() => first.ownershipReleases === 1, "the failed owner's release");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+    assert.equal(opens, 2);
+    assert.equal(next.acquires, 1);
+  } finally {
+    closed.resolve();
+    await shutdown(server, [client]);
+  }
+});
+
+test("a synchronous factory can remove its own opening slot without losing the late owner", async () => {
+  const gate = deferred<RuntimeHandle>();
+  const log = emptyLog();
+  let removing: Promise<void> | undefined;
+  let server!: Server;
+  server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: () => {
+      removing = server.removeRuntime("rt");
+      return gate.promise;
+    },
+  });
+  const client = await connectorFor(server)();
+  try {
+    const pending = assert.rejects(client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" }), code("runtime_busy"));
+    await until(() => removing !== undefined, "the reentrant removal");
+    let finished = false;
+    void removing!.then(() => { finished = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(finished, false, "removal waits for a factory whose open barrier is already registered");
+    gate.resolve(scripted(log, { remove: async () => undefined, release: async () => undefined }));
+    await removing;
+    await pending;
+    assert.equal(log.acquires, 0);
+    assert.deepEqual(log.closes, ["drain"]);
+    assert.equal(log.removes, 1);
+  } finally {
+    await client.dispose();
+    await server.close();
+  }
+});
+
+test("removal during synchronous acquire waits for the orphan lease before releasing ownership", async () => {
+  const released = deferred();
+  const log = emptyLog();
+  let removing: Promise<void> | undefined;
+  let server!: Server;
+  server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: () => Promise.resolve(scripted(log, {
+      acquire: () => {
+        removing = server.removeRuntime("rt");
+        return { service: { call: () => null }, release: () => { log.leaseReleases += 1; return released.promise; } };
+      },
+      release: async () => undefined,
+      remove: async () => undefined,
+    })),
+  });
+  const client = await connectorFor(server)();
+  try {
+    const pending = assert.rejects(client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" }), code("runtime_busy"));
+    await until(() => log.leaseReleases === 1, "the orphan lease's release");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(log.closes.length, 0);
+    assert.equal(log.removes, 0);
+    released.resolve();
+    await removing;
+    await pending;
+    assert.deepEqual(log.closes, ["drain"]);
+    assert.equal(log.removes, 1);
+  } finally {
+    released.resolve();
+    await client.dispose();
+    await server.close();
+  }
+});
+
+test("reentrant removal from an opening-signal callback shares the published removal barrier", async () => {
+  const log = emptyLog();
+  let nested: Promise<void> | undefined;
+  let server!: Server;
+  server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: (_id, signal) => {
+      signal.addEventListener("abort", () => { nested = server.removeRuntime("rt"); }, { once: true });
+      return Promise.resolve(scripted(log, { remove: async () => undefined, release: async () => undefined }));
+    },
+  });
+  const client = await connectorFor(server)();
+  try {
+    await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+    const removing = server.removeRuntime("rt");
+    assert.equal(nested, removing);
+    await removing;
+    assert.deepEqual(log.closes, ["drain"]);
+    assert.equal(log.leaseReleases, 1);
+    assert.equal(log.removes, 1);
+  } finally {
+    await shutdown(server, [client]);
+  }
+});
+
+test("a synchronous factory can close the server without allowing cleanup ahead of its late handle", async () => {
+  const gate = deferred<RuntimeHandle>();
+  const log = emptyLog();
+  let closing: Promise<void> | undefined;
+  let server!: Server;
+  server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: () => {
+      closing = server.close("abort");
+      return gate.promise;
+    },
+  });
+  const client = await connectorFor(server)();
+  try {
+    const pending = client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" }).catch(() => undefined);
+    await until(() => closing !== undefined, "the reentrant close");
+    let finished = false;
+    void closing!.then(() => { finished = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(finished, false);
+    gate.resolve(scripted(log, { release: async () => undefined }));
+    await closing;
+    await pending;
+    assert.equal(log.acquires, 0);
+    assert.deepEqual(log.closes, ["abort"]);
+    assert.equal(log.ownershipReleases, 1);
+  } finally {
+    await client.dispose();
+    await server.close();
+  }
+});
+
+test("synchronous close callbacks cannot overwrite an abort upgrade or recursively start another abort", async () => {
+  for (const fail of [false, true]) {
+    const abort = deferred();
+    const log = emptyLog();
+    let retry = false;
+    let server!: Server;
+    const failure = new Error("reentrant abort failed");
+    server = new Server({
+      serverId: "srv",
+      service: attachService(),
+      openRuntime: () => Promise.resolve(scripted(log, {
+        close: (mode) => {
+          void server.close("abort").catch(() => undefined);
+          return mode === "drain" || retry ? Promise.resolve() : abort.promise;
+        },
+        release: async () => undefined,
+      })),
+    });
+    const client = await connectorFor(server)();
+    try {
+      await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+      const closing = server.close();
+      let finished = false;
+      const observed = closing.then(() => { finished = true; }, (error: unknown) => {
+        assert.equal(error, failure);
+        assert.equal(fail, true);
+        finished = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.deepEqual(log.closes, ["drain", "abort"]);
+      assert.equal(finished, false);
+      assert.equal(log.ownershipReleases, 0);
+      if (fail) abort.reject(failure);
+      else abort.resolve();
+      await observed;
+      assert.equal(log.ownershipReleases, fail ? 0 : 1);
+      if (fail) {
+        retry = true;
+        await server.close();
+        assert.deepEqual(log.closes, ["drain", "abort", "abort"]);
+        assert.equal(log.ownershipReleases, 1);
+      }
+    } finally {
+      abort.resolve();
+      retry = true;
+      await client.dispose();
+      await server.close().catch(() => undefined);
+    }
+  }
+});
+
+test("falsy host and factory rejections remain failures and can retry", async () => {
+  const log = emptyLog();
+  let failClose = true;
+  const server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: () => Promise.resolve(scripted(log, {
+      close: () => failClose ? Promise.reject(undefined) : Promise.resolve(),
+      release: async () => undefined,
+    })),
+  });
+  const client = await connectorFor(server)();
+  try {
+    await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+    await server.close().then(() => assert.fail("undefined rejection became success"), (error: unknown) => assert.equal(error, undefined));
+    assert.equal(log.ownershipReleases, 0);
+    failClose = false;
+    await server.close();
+    assert.equal(log.ownershipReleases, 1);
+  } finally {
+    failClose = false;
+    await client.dispose();
+    await server.close().catch(() => undefined);
+  }
+  for (const failure of [undefined, null, false, 0, ""]) {
+    let failOpen = true;
+    const factory = new Server({
+      serverId: "srv",
+      service: attachService(),
+      openRuntime: () => failOpen ? Promise.reject(failure) : Promise.resolve(null),
+    });
+    await factory.removeRuntime("rt").then(() => assert.fail("falsy factory rejection became success"), (error: unknown) => assert.equal(error, failure));
+    failOpen = false;
+    await factory.removeRuntime("rt");
+    await factory.close();
+  }
+});
+
+test("a failed watcher unsubscribe is retained until a shutdown retry completes it", async () => {
+  let active = 0;
+  let unsubscribes = 0;
+  let released = false;
+  const server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: async () => ({
+      idle: () => false,
+      acquire: () => ({ service: { call: () => null }, release() {} }),
+      close: async () => undefined,
+      release: async () => { released = true; },
+      watchIdle: () => {
+        active += 1;
+        return () => {
+          unsubscribes += 1;
+          if (unsubscribes === 1) throw new Error("unsubscribe once");
+          active -= 1;
+        };
+      },
+    }),
+  });
+  const client = await connectorFor(server)();
+  try {
+    await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+    await assert.rejects(server.close(), /unsubscribe once/);
+    assert.equal(active, 1);
+    await server.close();
+    assert.equal(active, 0);
+    assert.equal(unsubscribes, 2);
+    assert.equal(released, true);
+  } finally {
+    await client.dispose();
+    await server.close().catch(() => undefined);
+  }
+});
+
+test("a synchronous lease release failure can be retried instead of caching its rejected promise", async () => {
+  let attempts = 0;
+  const server = new Server({
+    serverId: "srv",
+    service: attachService(),
+    openRuntime: async () => ({
+      idle: () => false,
+      acquire: () => ({
+        service: { call: () => null },
+        release() {
+          attempts += 1;
+          if (attempts === 1) throw new Error("release sync once");
+        },
+      }),
+      close: async () => undefined,
+      release: async () => undefined,
+    }),
+  });
+  const client = await connectorFor(server)();
+  try {
+    await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+    await assert.rejects(server.close(), /release sync once/);
+    assert.equal(attempts, 1);
+    await server.close();
+    assert.equal(attempts, 2);
+  } finally {
+    await client.dispose();
+    await server.close().catch(() => undefined);
+  }
+});
+
+test("an abort arriving during ownership release or deletion does not restart a completed host close", async () => {
+  for (const deleting of [false, true]) {
+    const dropping = deferred();
+    const ownership = deferred();
+    const abort = deferred();
+    const log = emptyLog();
+    const server = new Server({
+      serverId: "srv",
+      service: attachService(),
+      openRuntime: () => Promise.resolve(scripted(log, {
+        close: (mode) => mode === "abort" ? abort.promise : Promise.resolve(),
+        release: () => { dropping.resolve(); return ownership.promise; },
+        remove: () => { dropping.resolve(); return ownership.promise; },
+      })),
+    });
+    const client = await connectorFor(server)();
+    try {
+      await client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" });
+      const removing = deleting ? server.removeRuntime("rt") : undefined;
+      const closing = server.close();
+      let finished = false;
+      void closing.then(() => { finished = true; });
+      await dropping.promise;
+      assert.equal(server.close("abort"), closing);
+      assert.deepEqual(log.closes, ["drain"], "host work has ended and cannot be restarted after ownership dropping begins");
+      assert.equal(finished, false);
+      ownership.resolve();
+      await closing;
+      await removing;
+      assert.equal(finished, true);
+      assert.equal(log.removes, deleting ? 1 : 0);
+      assert.equal(log.ownershipReleases, deleting ? 0 : 1);
+    } finally {
+      ownership.resolve();
+      abort.resolve();
+      await client.dispose();
+      await server.close().catch(() => undefined);
+    }
   }
 });
 
