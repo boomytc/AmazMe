@@ -8,10 +8,10 @@
 @amazme/ai             Provider、认证、统一消息、流事件
 @amazme/agent          内存里的 turn 循环
 @amazme/durable        可崩溃恢复的 AgentHarness、存储契约与适配器
-@amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI
+@amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI、MCP 工具适配
 ```
 
-`@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 和 `x-mcp-header` 没有实现。OAuth 发现、PKCE、刷新和 step-up 在这个包里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。把 MCP 结果接进 Agent 还不在这里。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。
+`@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 和 `x-mcp-header` 没有实现。OAuth 发现、PKCE、刷新和 step-up 在这个包里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。`@amazme/coding-agent` 把已经连上的客户端适配成 Agent 工具：名字是 `mcp_<serverId>__<toolName>`，冲突或超长就报错，不截断；取消、进度、文本和图片结果交给工具执行。协议包本身不依赖 Agent。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。
 
 今天的 `amazme` 命令走内存循环加会话树。有一次性 prompt 时跑完这一次并退出；没有 prompt 且标准输出是终端时，同一条循环画成全屏。`AgentHarness` 是另一条运行时：`accept` 只落盘，`drive` 才推进；进程挂了以后，下一次 `drive` 从完整的操作状态接着做。
 
@@ -37,7 +37,7 @@ Azure Responses 的默认地址是资源下的 `/openai/v1/responses`，deployme
 
 `StreamOptions.maxTokens` 是这一次生成的输出 token 上限，包含协议会计入的思考 token，不再另加一份思考预算。它会传到 `stream`、`streamSimple`、Provider 和 Models。Agent 上的可选 `maxTokens` 只转发给注入的 `streamFn`，Agent 仍然不持有 Models。一次模型请求的消息替换由有序的 `transformContext` 完成，见下面的内存循环。省略时使用模型声明的输出上限；显式值仍受该上限和剩余上下文约束。放不下时不会发送 0、负数或 NaN，也不会删消息来凑预算，而是以不可重试的 `overflow` 终态结束。参数非法和上下文放不下是两种结果。
 
-输入预算在请求投影之后估算，所以失败 assistant 和补出来的工具结果不会把预算算偏。共享的 `resolveOutputBudget` 对原始或已投影消息执行同一预算投影，Durable 与协议使用相同输入估算。估算覆盖系统提示词、系统消息、用户文本、assistant 文本、实际会发送的思考、工具名和参数、工具结果、工具名/描述/schema，以及每条消息的固定开销。图片按固定 1,200 token 计，不按 base64 长度。字符按 UTF-8 字节近似（约 4 字节一个 token），只是近似值。安全余量是 `min(4096, max(32, floor(contextWindow / 20)))`，小窗口不会被固定 4,096 占满。同一 `systemPrompt` 和内容相同的首条 system 消息只计一次。不沿用上一条 usage。schema 按当前对象计算。循环引用或无法序列化的参数在发请求前失败。
+输入预算在请求投影之后估算，所以失败 assistant 和补出来的工具结果不会把预算算偏。共享的 `resolveOutputBudget` 对原始或已投影消息执行同一预算投影，Durable 与协议使用相同输入估算。估算覆盖系统提示词、系统消息、用户文本、assistant 文本、实际会发送的思考、工具名和参数、工具结果、工具名/描述/schema，以及每条消息的固定开销。图片，包括工具结果里的图片，按固定 1,200 token 计，不按 base64 长度。字符按 UTF-8 字节近似（约 4 字节一个 token），只是近似值。安全余量是 `min(4096, max(32, floor(contextWindow / 20)))`，小窗口不会被固定 4,096 占满。同一 `systemPrompt` 和内容相同的首条 system 消息只计一次。不沿用上一条 usage。schema 按当前对象计算。循环引用或无法序列化的参数在发请求前失败。
 
 原生协议的签名和 redacted payload 也计入请求预算。Anthropic、Google 和 Bedrock 返回的签名随所属内容块或工具调用保存，并通过帧还原；只有目标 api、provider 和 model 都与来源一致时才回传。同源 Google / Vertex 工具调用与结果还会回传原始调用 ID。换模型时去掉签名，redacted 内容丢弃，可读思考按目标协议投影；源消息保持原样。不编造签名，也不合并不同签名的 Google parts。
 
@@ -47,7 +47,7 @@ Azure Responses 的默认地址是资源下的 `/openai/v1/responses`，deployme
 
 `gpt-4o-mini` 保留已核对的 128,000 上下文、16,384 输出上限和费率，`input` 只有文本。其他型号必须在 `models` 或 provider 上显式给出 `contextWindow` 和 `maxTokens`，不会继承这份窗口或输出上限，也不猜测价格。未声明 `input` 时只有文本，不会默认打开 vision。通用 `completionsProvider` 未配置 `cost` 时费率为 0。
 
-用户字符串仍按文本发送。`UserContent` 数组保持原顺序：文本块是 `{ type: "text" }`，图片块是 `{ type: "image_url", image_url: { url: "data:<mimeType>;base64,<data>" } }`。模型声明了 `image` 时不再把图片换成 `[image]`。未声明图片能力的原始图片请求在降级成占位文本之前失败，不调用 fetch。调用方若已经把内容投影成纯文本，则按文本发送。能力错误和图片格式错误是两种不可重试的结果；格式检查要求 `image/*` MIME、非空 base64 数据及合法长度和 padding，错误文本不包含图片数据或提示词。这里不读文件、不解码、不上传、不抓远程图片，也没有图片生成、音频、视频或工具图片结果。`transformMessages` 仍会为文本模型准备占位文本；那是显式投影，不是原始图片请求。图片仍按固定 1,200 token 计入预算。摘要里只保留附件标记。
+用户字符串仍按文本发送。`UserContent` 数组保持原顺序：文本块是 `{ type: "text" }`，图片块是 `{ type: "image_url", image_url: { url: "data:<mimeType>;base64,<data>" } }`。模型声明了 `image` 时不再把图片换成 `[image]`。未声明图片能力的原始图片请求在降级成占位文本之前失败，不调用 fetch。调用方若已经把内容投影成纯文本，则按文本发送。能力错误和图片格式错误是两种不可重试的结果；格式检查要求 `image/*` MIME、非空 base64 数据及合法长度和 padding，错误文本不包含图片数据或提示词。这里不读文件、不解码、不上传、不抓远程图片，也没有图片生成、音频或视频。工具结果可以带图片，序列化时使用和用户图片相同的图片块。未声明图片能力的模型会把工具图片换成占位文本，仍发送请求；格式不合法的工具图片在声明了图片能力时于 fetch 前失败，错误文本不包含图片数据。`transformMessages` 仍会为文本模型准备占位文本；那是显式投影，不是原始图片请求。图片仍按固定 1,200 token 计入预算。摘要里只保留附件标记，工具结果中的图片也是如此。
 
 上下文超限先看错误 code/type（`context_length_exceeded`、`model_context_window_exceeded`），再匹配少量「最大上下文 / 最大输入」文案。不是所有 HTTP 400/413、所有 `length`，也不是 “too many tokens”。限流、配额、账单、认证和普通参数错误排除在外，超限也不会标成可原样重试。普通 `length` 仍是截断；输出为 0 且输入已占满窗口时，额外标上 `overflow`，交给 Durable 决定是否压缩。AI 只分类和限制这一次请求，不自动重发。
 
@@ -135,7 +135,7 @@ const models = createModels({ telemetryContext });
 
 内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。
 
-CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后，`execute` 调用 `client.callTool`。本包不打开传输，CLI 也不会自己拉起 MCP 客户端。没有客户端或列表为空时，工具数组不变。
+CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。本包不打开传输，CLI 也不会自己拉起 MCP 客户端，也不接受 `--mcp`。没有服务器或列表为空时，工具数组不变。
 
 没有一次性 prompt 且标准输出是终端时进入全屏。滚动区只画已经发出的 `AgentEvent`，提交仍走 `session.prompt`，工具确认只接 `beforeToolCall`。
 

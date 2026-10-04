@@ -139,7 +139,7 @@ function messageTokens(message: Message): number {
     return tokens;
   }
   if (message.role === "toolResult") {
-    return message.content.reduce((sum, block) => sum + textTokens(block.text), 0);
+    return message.content.reduce((sum, block) => sum + (block.type === "text" ? textTokens(block.text) : IMAGE_TOKEN_COST), 0);
   }
   let tokens = 0;
   for (const block of message.content) {

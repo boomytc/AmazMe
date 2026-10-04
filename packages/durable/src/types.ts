@@ -1,4 +1,4 @@
-import type { AssistantEventStream, Context, JsonSchema, Message, Model, StreamOptions, TextContent } from "@amazme/ai";
+import type { AssistantEventStream, Context, JsonSchema, Message, Model, StreamOptions, ToolResultContent } from "@amazme/ai";
 import type { TelemetryContext } from "@amazme/telemetry";
 
 export type QueueMode = "all" | "one-at-a-time";
@@ -15,7 +15,7 @@ export interface CustomMessage {
 export type HarnessMessage = Message | CustomMessage;
 
 export interface ToolResult {
-  content: TextContent[];
+  content: ToolResultContent[];
   isError?: boolean;
   terminate?: boolean;
 }

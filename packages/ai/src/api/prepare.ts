@@ -51,15 +51,30 @@ export function terminal(
 
 function imageProblem(model: Model, messages: readonly Message[]): string | undefined {
   for (const message of messages) {
-    if (message.role !== "user" || typeof message.content === "string") continue;
+    if (message.role === "user") {
+      if (typeof message.content === "string") continue;
+      for (const block of message.content) {
+        if (block.type !== "image") continue;
+        const problem = imageBlockProblem(model, block, true);
+        if (problem) return problem;
+      }
+      continue;
+    }
+    if (message.role !== "toolResult" || !model.input.includes("image")) continue;
     for (const block of message.content) {
       if (block.type !== "image") continue;
-      if (!model.input.includes("image")) return `Model ${model.id} does not accept image input`;
-      if (typeof block.mimeType !== "string" || !IMAGE_MIME.test(block.mimeType)) return "Image input requires a mime type";
-      if (typeof block.data !== "string" || block.data.length === 0 || !IMAGE_BASE64.test(block.data)) {
-        return "Image input requires base64 data";
-      }
+      const problem = imageBlockProblem(model, block, false);
+      if (problem) return problem;
     }
+  }
+  return undefined;
+}
+
+function imageBlockProblem(model: Model, block: { mimeType: string; data: string }, rejectTextModel: boolean): string | undefined {
+  if (rejectTextModel && !model.input.includes("image")) return `Model ${model.id} does not accept image input`;
+  if (typeof block.mimeType !== "string" || !IMAGE_MIME.test(block.mimeType)) return "Image input requires a mime type";
+  if (typeof block.data !== "string" || block.data.length === 0 || !IMAGE_BASE64.test(block.data)) {
+    return "Image input requires base64 data";
   }
   return undefined;
 }

@@ -121,7 +121,7 @@ test("afterToolCall replaces the executed result", async () => {
       hooks: [
         {
           afterToolCall: ({ result }) => ({
-            content: [{ type: "text", text: `copy:${result.content[0]?.text ?? ""}` }],
+            content: [{ type: "text", text: `copy:${result.content[0]?.type === "text" ? result.content[0].text : ""}` }],
             isError: true,
             terminate: true,
           }),
@@ -313,7 +313,7 @@ test("the second after sees the text the first already replaced", async () => {
         },
         {
           afterToolCall: ({ result }) => {
-            seen = result.content[0]?.text ?? "";
+            seen = result.content[0]?.type === "text" ? result.content[0].text : "";
             seenError = result.isError === true;
             return {
               content: [{ type: "text", text: `seen:${seen}` }],

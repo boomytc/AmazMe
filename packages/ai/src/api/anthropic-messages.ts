@@ -210,9 +210,14 @@ function convert(message: Message): unknown {
     };
   }
   if (message.role === "toolResult") {
+    const content = message.content.some((block) => block.type === "image")
+      ? message.content.map((block) => block.type === "text"
+        ? { type: "text", text: block.text }
+        : { type: "image", source: { type: "base64", media_type: block.mimeType, data: block.data } })
+      : messageText(message);
     return {
       role: "user",
-      content: [{ type: "tool_result", tool_use_id: message.toolCallId, content: messageText(message), is_error: message.isError }],
+      content: [{ type: "tool_result", tool_use_id: message.toolCallId, content, is_error: message.isError }],
     };
   }
   if (message.role !== "assistant") return { role: "user", content: [{ type: "text", text: message.content }] };

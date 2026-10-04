@@ -15,5 +15,5 @@
     "composite": true
   },
   "include": ["src"],
-  "references": [{ "path": "../ai" }, { "path": "../agent" }]
+  "references": [{ "path": "../ai" }, { "path": "../agent" }, { "path": "../mcp" }]
 }

@@ -19,6 +19,7 @@ import {
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { summaryTranscript } from "../src/compaction/serialize.ts";
 
 const secret = "SU1HU0VDUkVUREFUQQ==";
 
@@ -128,6 +129,28 @@ function workTool(execute: HarnessTool["execute"]): HarnessTool {
     execute,
   };
 }
+
+test("a tool image is summarized as an attachment marker", () => {
+  const transcript = summaryTranscript("", [{
+    id: "tool",
+    timestamp: 1,
+    kind: "message",
+    message: {
+      role: "toolResult",
+      toolCallId: "call",
+      toolName: "shot",
+      content: [
+        { type: "text", text: "caption" },
+        { type: "image", mimeType: "image/png", data: secret },
+      ],
+      isError: false,
+      timestamp: 1,
+    },
+  }], 10_000, 10_000);
+  assert.match(transcript, /\[Image attachment\]/);
+  assert.match(transcript, /caption/);
+  assert.equal(transcript.includes(secret), false);
+});
 
 test("reserve, keep, and summary caps scale with the window", () => {
   assert.equal(outputReserve(200), 32);
