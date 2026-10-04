@@ -12,7 +12,7 @@ import { listenUnix } from "@amazme/server/unix";
 import type { LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { createManagementService, RuntimeHost } from "@amazme/runtime-service/server";
-import { finish, gatedModels, pendingText, textDelta, texts, tick, until } from "./support.ts";
+import { borrowedRuntime, finish, gatedModels, pendingText, textDelta, texts, tick, until } from "./support.ts";
 
 /** One "process": JSONL storage, harness, runtime host, protocol server and Unix listener. */
 async function start(socket: string, file: string) {
@@ -20,8 +20,12 @@ async function start(socket: string, file: string) {
   const { models, streams } = gatedModels();
   const harness = new AgentHarness(new JsonlStorage(file), { models, model: { provider: "gated", modelId: "g" } });
   const host = new RuntimeHost({ harness, publishWindowMs: 5, onError: (error) => errors.push(error) });
-  const server = new Server({ serverId: "srv-unix", service: createManagementService(), onError: (error) => errors.push(error) });
-  server.registerRuntime("main", host);
+  const server = new Server({
+    serverId: "srv-unix",
+    service: createManagementService(),
+    onError: (error) => errors.push(error),
+    openRuntime: (runtimeId) => Promise.resolve(runtimeId === "main" ? borrowedRuntime(host) : null),
+  });
   const listener = await listenUnix(server, { path: socket, onError: (error) => errors.push(error) });
   const clients: Client[] = [];
   const connect = async () => {
@@ -38,7 +42,7 @@ async function start(socket: string, file: string) {
     if (crash) harness.abandon();
     for (const stream of streams) finish(stream, "teardown");
     await host.drivesSettled();
-    harness.close();
+    await harness.close();
   };
   return { harness, host, server, listener, streams, errors, connect, stop };
 }

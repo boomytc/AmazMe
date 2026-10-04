@@ -104,7 +104,7 @@ function fixture(options: Partial<ServerOptions> = {}, pipes: { clientToServer?:
       if (call.op === "attach" || call.op === "gatedAttach") {
         if (call.op === "gatedAttach") await gate(call.name as string).promise;
         try {
-          context.attach(call.runtimeId as string);
+          await context.attach(call.runtimeId as string);
         } catch (error) {
           attachErrors.push(error);
           throw error;
@@ -112,7 +112,7 @@ function fixture(options: Partial<ServerOptions> = {}, pipes: { clientToServer?:
         return { attached: true };
       }
       if (call.op === "detach") {
-        context.detach();
+        await context.detach();
         return null;
       }
       if (call.op === "keep") {
@@ -122,9 +122,14 @@ function fixture(options: Partial<ServerOptions> = {}, pipes: { clientToServer?:
       return common(call, context);
     },
   };
-  const server = new Server({ serverId: "srv", service, onError: (error) => errors.push(error), ...options });
   const runtime = { call: (raw: JsonValue, context: CallContext) => common(raw as Call, context) };
-  const unregister = { a: server.registerRuntime("rt.a", runtime), b: server.registerRuntime("rt.b", runtime) };
+  const server = new Server({
+    openRuntime: (runtimeId) => Promise.resolve(runtimeId === "rt.a" || runtimeId === "rt.b" ? routed(runtime) : null),
+    serverId: "srv",
+    service,
+    onError: (error) => errors.push(error),
+    ...options,
+  });
   const connector = memoryConnector((connection) => server.accept(connection), pipes);
   const transport: ClientOptions["transport"] = (handlers) => {
     const end = connector.transport(handlers);
@@ -132,7 +137,16 @@ function fixture(options: Partial<ServerOptions> = {}, pipes: { clientToServer?:
     return end;
   };
   const client = (extra: Partial<ClientOptions> = {}) => new Client({ serverId: "srv", transport, ...extra });
-  return { server, client, connector, transport, gate, signals, sinks, attachErrors, errors, unregister, contexts };
+  return { server, client, connector, transport, gate, signals, sinks, attachErrors, errors, contexts };
+}
+
+function routed(service: { call: (call: JsonValue, context: CallContext) => Promise<JsonValue | undefined> | JsonValue | undefined }) {
+  return {
+    acquire: () => ({ service, release: () => undefined }),
+    close: () => Promise.resolve(),
+    idle: () => false,
+    done: Promise.resolve(),
+  };
 }
 
 async function attach(client: Client, runtimeId: string) {
@@ -231,7 +245,7 @@ test("cancel aborts only the call context and the late response does not settle 
 });
 
 test("admission checks the whole route against this server and the connection's current attachment", async () => {
-  const { client, server, unregister } = fixture();
+  const { client, server } = fixture();
   const peer = client();
   await peer.connect();
   const ask = (route: Route) => peer.request(route, { op: "whoami" });
@@ -257,8 +271,8 @@ test("admission checks the whole route against this server and the connection's 
   await assert.rejects(ask(b), code("not_attached"));
 
   await attach(peer, "rt.a");
-  unregister.a();
-  await until(() => peer.attachment === null, "unregistering to detach");
+  await server.removeRuntime("rt.a");
+  await until(() => peer.attachment === null, "removing the runtime to detach");
   assert.deepEqual(changes.map((change) => (change as { runtimeId?: string } | null)?.runtimeId ?? null), ["rt.a", "rt.b", null, "rt.a", null]);
   await peer.dispose();
   await server.close();
@@ -296,26 +310,26 @@ test("attachment invalidation precedes subscription abort callbacks", async () =
   const server = new Server({
     serverId: "srv",
     service: {
-      call: (raw, context) => {
-        if (raw === "attach") context.attach("rt");
-        else context.detach();
+      async call(raw, context) {
+        if (raw === "attach") await context.attach("rt");
+        else await context.detach();
         return null;
       },
     },
-  });
-  server.registerRuntime("rt", {
-    call: (_raw, context) => {
-      const sink = context.openSubscription("old");
-      sink.signal.addEventListener("abort", () => {
-        attempted = true;
-        try {
-          reopened = context.openSubscription("escaped");
-        } catch (error) {
-          reopenError = error;
-        }
-      }, { once: true });
-      return new Promise<JsonValue>((resolve) => { settle = resolve; });
-    },
+    openRuntime: () => Promise.resolve(routed({
+      call: (_raw, context) => {
+        const sink = context.openSubscription("old");
+        sink.signal.addEventListener("abort", () => {
+          attempted = true;
+          try {
+            reopened = context.openSubscription("escaped");
+          } catch (error) {
+            reopenError = error;
+          }
+        }, { once: true });
+        return new Promise<JsonValue>((resolve) => { settle = resolve; });
+      },
+    })),
   });
   const connector = memoryConnector((connection) => server.accept(connection));
   const peer = new Client({ serverId: "srv", transport: connector.transport });
@@ -622,7 +636,6 @@ test("closing is repeatable, waits for admitted calls, and observer failures do 
   assert.equal(states, 3, "repeated disconnects do not run cleanup twice");
 
   await assert.rejects(client().connect(), code("server_closing"));
-  assert.throws(() => server.registerRuntime("rt.late", { call: () => null }), /closed/);
   await peer.dispose();
 });
 
@@ -630,7 +643,6 @@ test("closing is published before abort and transport callbacks can reenter the 
   const replies: ServerMessage[] = [];
   const nested: Promise<void>[] = [];
   const observedClosed: boolean[] = [];
-  let registerError: unknown;
   const rejectedConnection = {
     send: async (chunk: Uint8Array) => {
       replies.push(...new ServerMessageDecoder().push(chunk));
@@ -644,15 +656,11 @@ test("closing is published before abort and transport callbacks can reenter the 
   };
   const server = new Server({
     serverId: "srv",
+    openRuntime: () => Promise.resolve(null),
     service: {
       call: (_call, context) => new Promise<JsonValue>((resolve) => {
         context.signal.addEventListener("abort", () => {
           reenter();
-          try {
-            server.registerRuntime("late", { call: () => null });
-          } catch (error) {
-            registerError = error;
-          }
           resolve(null);
         }, { once: true });
       }),
@@ -669,7 +677,6 @@ test("closing is published before abort and transport callbacks can reenter the 
   assert.deepEqual(observedClosed, [true, true]);
   assert.ok(nested.every((promise) => promise === closing), "reentrant close returns the published promise");
   assert.equal(server.connectionCount, 0);
-  assert.ok(registerError instanceof Error && /closed/.test(registerError.message));
   assert.deepEqual(replies.map((message) => message.type === "hello_error" && message.error.code), ["server_closing", "server_closing"]);
 });
 
@@ -677,6 +684,7 @@ test("close prevents requests in the remaining chunk and immediately supplied by
   const calls: JsonValue[] = [];
   const server = new Server({
     serverId: "srv",
+    openRuntime: () => Promise.resolve(null),
     service: {
       call: (call) => {
         calls.push(call);
@@ -706,6 +714,7 @@ test("failure diagnostics cannot reenter a connection before it becomes terminal
   const request = (id: string, call: string) => encodeClientMessage({ type: "request", id, route: { serverId: "srv" }, call });
   const server = new Server({
     serverId: "srv",
+    openRuntime: () => Promise.resolve(null),
     maxQueuedBytes: 256,
     service: { call: (call) => { calls.push(call); return "x".repeat(180); } },
     onError: () => {
@@ -726,6 +735,7 @@ test("failure diagnostics cannot reenter a connection before it becomes terminal
   let protocolReports = 0;
   const protocolServer = new Server({
     serverId: "srv",
+    openRuntime: () => Promise.resolve(null),
     limits: { maxFrameBytes: 64 },
     service: { call: () => null },
     onError: () => {

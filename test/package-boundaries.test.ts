@@ -104,8 +104,15 @@ test("client and server cores depend only on the protocol and run without Node m
     const { Client } = await import("@amazme/client");
     const { Server } = await import("@amazme/server");
     const { memoryConnector } = await import("@amazme/server/testing");
-    const server = new Server({ serverId: "srv", service: { call: (call, context) => { context.attach("rt"); return call; } } });
-    server.registerRuntime("rt", { call: (call) => ({ echoed: call }) });
+    const server = new Server({
+      serverId: "srv",
+      openRuntime: () => Promise.resolve({
+        acquire: () => ({ service: { call: (call) => ({ echoed: call }) }, release() {} }),
+        close: () => Promise.resolve(),
+        idle: () => false,
+      }),
+      service: { async call(call, context) { await context.attach("rt"); return call; } },
+    });
     const connector = memoryConnector((connection) => server.accept(connection));
     const client = new Client({ serverId: "srv", transport: connector.transport });
     await client.connect();

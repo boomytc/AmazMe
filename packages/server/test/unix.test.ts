@@ -30,6 +30,7 @@ const mode = (path: string) => (lstatSync(path).mode & 0o777).toString(8);
 function echoServer(errors: Error[] = []) {
   return new Server({
     serverId: "srv",
+    openRuntime: () => Promise.resolve(null),
     service: { call: (call) => call },
     onError: (error) => errors.push(error),
   });
