@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Client, ClientError, RemoteError, type ByteTransport, type ClientOptions } from "@amazme/client";
+import { Client, ClientError, RemoteError, type ByteTransport, type ByteTransportHandlers, type ClientOptions } from "@amazme/client";
 import { ClientMessageDecoder, encodeServerMessage, type ClientMessage, type ServerMessage } from "@amazme/protocol";
 import { createMemoryLink, type MemoryEnd } from "@amazme/server/testing";
 
@@ -129,6 +129,55 @@ test("the transport factory failing and the send queue overflowing reject explic
   assert.equal(closed, 1);
 });
 
+test("synchronous and asynchronous transport send failures both report transport_error", async () => {
+  for (const synchronous of [true, false]) {
+    let closed = 0;
+    const client = new Client({
+      serverId: "srv",
+      transport: () => ({
+        send: () => {
+          if (synchronous) throw new Error("send failed");
+          return Promise.reject(new Error("send failed"));
+        },
+        close: () => { closed += 1; },
+      }),
+    });
+    await assert.rejects(client.connect(), (error) => error instanceof ClientError && error.code === "transport_error" && /send failed/.test(error.message));
+    assert.equal(client.state, "disconnected");
+    assert.equal(closed, 1);
+  }
+});
+
+test("server bytes arriving before the transport factory returns cannot connect or strand a request", async () => {
+  for (const fragmented of [false, true]) {
+    let closed = 0;
+    const states: string[] = [];
+    const frame = encodeServerMessage({ type: "hello", version: 1, serverId: "srv" });
+    const client = new Client({ serverId: "srv", transport: (handlers) => {
+      handlers.onData(fragmented ? frame.subarray(0, 3) : frame);
+      return {
+        send: async () => { if (fragmented) handlers.onData(frame.subarray(3)); },
+        close: () => { closed += 1; },
+      };
+    } });
+    client.onStateChange((state) => states.push(state));
+    await assert.rejects(client.connect(), code("protocol_error"));
+    assert.deepEqual(states, ["connecting", "disconnected"]);
+    assert.equal(closed, 1);
+    await assert.rejects(client.request(client.serverRoute(), null), code("not_connected"));
+  }
+});
+
+test("a server refusal before the transport factory returns preserves its remote error code", async () => {
+  let closed = 0;
+  const client = new Client({ serverId: "srv", transport: (handlers) => {
+    handlers.onData(encodeServerMessage({ type: "hello_error", error: { code: "server_busy", message: "full" } }));
+    return { send: async () => undefined, close: () => { closed += 1; } };
+  } });
+  await assert.rejects(client.connect(), (error) => error instanceof RemoteError && error.code === "server_busy");
+  assert.equal(closed, 1);
+});
+
 test("a throwing unsubscribe builder cannot strand the messages that follow it in one chunk", async () => {
   const errors: Error[] = [];
   const peer = scripted({ onListenerError: (error) => errors.push(error) });
@@ -183,5 +232,86 @@ test("a locally cancelled subscribe that succeeds remotely is unsubscribed", asy
   await until(() => peer.received.some((message) => message.type === "request" && JSON.stringify(message.call) === '{"close":"s1"}'));
   assert.deepEqual(peer.received.filter((message) => message.type !== "hello").map((message) => message.type), ["request", "cancel", "request"]);
   assert.equal(peer.client.state, "connected");
+  await peer.client.dispose();
+});
+
+test("buffered subscription updates stay ordered when an update callback receives more bytes synchronously", async () => {
+  let handlers!: ByteTransportHandlers;
+  const requests: ClientMessage[] = [];
+  const decoder = new ClientMessageDecoder();
+  const client = new Client({ serverId: "srv", transport: (given) => {
+    handlers = given;
+    return { send: async (frame) => {
+      for (const message of decoder.push(frame)) {
+        if (message.type === "hello") handlers.onData(encodeServerMessage({ type: "hello", version: 1, serverId: "srv" }));
+        else requests.push(message);
+      }
+    }, close: () => undefined };
+  } });
+  await client.connect();
+  const updates: number[] = [];
+  const subscribing = client.subscribe(client.serverRoute(), () => "open", (update) => {
+    updates.push(update as number);
+    if (update === 1) handlers.onData(encodeServerMessage({ type: "service_update", subscriptionId: "s1", update: 3 }));
+  });
+  await until(() => requests.length === 1);
+  for (const update of [1, 2]) handlers.onData(encodeServerMessage({ type: "service_update", subscriptionId: "s1", update }));
+  handlers.onData(encodeServerMessage({ type: "response", id: "r1", ok: true, result: "initial" }));
+  const subscription = await subscribing;
+  subscription.start();
+  assert.deepEqual(updates, [1, 2, 3]);
+  await client.dispose();
+});
+
+test("a reconnect during attachment cleanup prevents an old disconnected event from following connecting", async () => {
+  const peer = scripted();
+  await peer.handshake();
+  peer.reply({ type: "attachment", attachment: { serverId: "srv", runtimeId: "rt", attachmentId: "a1" } });
+  await until(() => peer.client.attachment !== null);
+  const states: string[] = [];
+  peer.client.onStateChange((state) => states.push(state));
+  let connecting: Promise<unknown> | undefined;
+  peer.client.onAttachmentChange((attachment) => {
+    if (attachment === null) connecting = peer.client.connect();
+  });
+  await peer.client.disconnect();
+  assert.equal(peer.client.state, "connecting");
+  assert.deepEqual(states, ["connecting"]);
+  await until(() => peer.received.filter((message) => message.type === "hello").length === 2);
+  peer.reply({ type: "hello", version: 1, serverId: "srv" });
+  await connecting;
+  await peer.client.dispose();
+});
+
+test("a state listener changing the connection cannot deliver the obsolete state to later listeners", async () => {
+  const peer = scripted();
+  peer.client.onStateChange((state) => { if (state === "connected") void peer.client.disconnect(); });
+  const states: string[] = [];
+  peer.client.onStateChange((state) => states.push(state));
+  await assert.rejects(peer.handshake(), code("disconnected"));
+  assert.deepEqual(states, ["connecting", "disconnected"]);
+});
+
+test("route observations and caller mutations cannot change attachment or cancellation identity", async () => {
+  const peer = scripted();
+  await peer.handshake();
+  peer.client.onAttachmentChange((attachment) => { if (attachment) Object.assign(attachment, { runtimeId: "changed" }); });
+  const observed: string[] = [];
+  peer.client.onAttachmentChange((attachment) => { if (attachment) observed.push(attachment.runtimeId); });
+  const route = { serverId: "srv", runtimeId: "rt", attachmentId: "a1" };
+  peer.reply({ type: "attachment", attachment: route });
+  await until(() => observed.length === 1);
+  assert.deepEqual(observed, ["rt"]);
+  const attachment = peer.client.attachment!;
+  Object.assign(attachment, { attachmentId: "changed" });
+  assert.deepEqual(peer.client.attachment, route);
+  const controller = new AbortController();
+  const pending = peer.client.request(route, "wait", { signal: controller.signal });
+  route.runtimeId = "changed";
+  controller.abort();
+  await assert.rejects(pending, (error) => error instanceof Error && error.name === "AbortError");
+  await until(() => peer.received.some((message) => message.type === "cancel"));
+  const cancel = peer.received.find((message) => message.type === "cancel");
+  assert.deepEqual(cancel, { type: "cancel", id: "r1", route: { serverId: "srv", runtimeId: "rt", attachmentId: "a1" } });
   await peer.client.dispose();
 });

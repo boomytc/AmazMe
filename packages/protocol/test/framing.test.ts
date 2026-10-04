@@ -64,3 +64,10 @@ test("empty frames and a stream ending inside a header or payload fail", () => {
   ended.end();
   assert.throws(() => ended.push(new Uint8Array([0])), /ended/);
 });
+
+test("invalid frame bounds cannot disable or bypass the public framing limits", () => {
+  for (const limit of [Number.NaN, Infinity, 0, -1, 1.5, 0x1_0000_0000]) {
+    assert.throws(() => new FrameDecoder(limit), RangeError);
+    assert.throws(() => encodeFrame(new Uint8Array([1]), limit), RangeError);
+  }
+});

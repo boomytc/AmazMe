@@ -56,6 +56,14 @@ test("the listener makes private directories and a 0600 socket, and leaves an ex
   assert.equal(mode(nested), "700");
   assert.equal(mode(listener.path), "600");
   assert.ok(lstatSync(listener.path).isSocket());
+  const privateNames = readdirSync(nested).filter((name) => name.startsWith(".amazme-bind-"));
+  assert.equal(privateNames.length, 1);
+  const privatePath = join(nested, privateNames[0]!);
+  assert.equal(mode(privatePath), "700");
+  const anchor = lstatSync(join(privatePath, "owned"));
+  assert.ok(anchor.isSocket());
+  assert.equal(anchor.dev, lstatSync(listener.path).dev);
+  assert.equal(anchor.ino, lstatSync(listener.path).ino, "a private hard link prevents socket inode reuse until cleanup");
   await listener.close();
   assert.equal(existsSync(listener.path), false);
   assert.deepEqual(readdirSync(nested), [], "no bind or cleanup names are left behind");
@@ -68,21 +76,20 @@ test("the listener makes private directories and a 0600 socket, and leaves an ex
   await second.close();
 });
 
-test("a regular file, a live socket, or by default any leftover socket at the path is refused", async (t) => {
+test("a regular file, a live socket, or any leftover socket at the path is refused without probing", async (t) => {
   const dir = scratch(t);
   const file = join(dir, "file.sock");
   writeFileSync(file, "keep me");
-  await assert.rejects(listenUnix(echoServer(), { path: file, replaceStale: true }), /not a socket/);
+  await assert.rejects(listenUnix(echoServer(), { path: file }), /not a socket/);
   assert.equal(readFileSync(file, "utf8"), "keep me");
 
   const path = join(dir, "s.sock");
   const first = await listenUnix(echoServer(), { path });
   t.after(() => first.close());
-  for (const replaceStale of [false, true]) {
-    const attempt = listenUnix(echoServer(), { path, replaceStale });
-    t.after(async () => (await attempt.catch(() => undefined))?.close());
-    await assert.rejects(attempt, /already listening/);
-  }
+  const attempt = listenUnix(echoServer(), { path });
+  t.after(async () => (await attempt.catch(() => undefined))?.close());
+  await assert.rejects(attempt, /already exists/);
+  assert.equal(first.connectionCount, 0, "rejecting an existing socket makes no probe connection");
   const client = new Client({ serverId: "srv", transport: createUnixTransport({ path }) });
   await client.connect();
   assert.equal(await client.request(client.serverRoute(), "still served"), "still served");
@@ -97,15 +104,8 @@ test("a regular file, a live socket, or by default any leftover socket at the pa
   const refused = listenUnix(echoServer(), { path: stale });
   t.after(async () => (await refused.catch(() => undefined))?.close());
   await assert.rejects(refused, /already exists/);
-  assert.ok(lstatSync(stale).isSocket(), "the leftover socket is kept without replaceStale");
-
-  const replaced = await listenUnix(echoServer(), { path: stale, replaceStale: true });
-  t.after(() => replaced.close());
-  const again = new Client({ serverId: "srv", transport: createUnixTransport({ path: stale }) });
-  await again.connect();
-  await again.dispose();
-  await replaced.close();
-  assert.equal(existsSync(stale), false);
+  assert.ok(lstatSync(stale).isSocket(), "connection refusal never authorizes deleting somebody else's socket");
+  await first.close();
   assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith(".")), [], "no private bind directory is left");
 });
 
@@ -124,9 +124,11 @@ test("closing removes only a socket this listener still owns", async (t) => {
 
   const old = await listenUnix(echoServer(), { path });
   t.after(() => old.close());
+  const oldIdentity = lstatSync(path);
   unlinkSync(path);
   const fresh = await listenUnix(echoServer(), { path });
   t.after(() => fresh.close());
+  assert.notEqual(lstatSync(path).ino, oldIdentity.ino, "the old private link keeps its inode reserved");
   await old.close();
   assert.ok(lstatSync(path).isSocket(), "the newer listener's socket survived");
   const client = new Client({ serverId: "srv", transport: createUnixTransport({ path }) });

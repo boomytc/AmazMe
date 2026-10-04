@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -141,11 +141,12 @@ test("anthropic-messages maps recorded text, thinking, and tool calls", async ()
   assert.equal(seen.message.usage.output, 4);
 });
 
-test("google generative and vertex map recorded text, thinking, and tool calls", async () => {
+test("google generative and vertex map recorded text, thinking, and tool calls", async (t) => {
   const generative = await assertRecorded("google", (fetchImpl) => googleGenerativeAIApi({ fetch: fetchImpl }), chatModel("google-generative-ai", "gemini"), GOOGLE);
   assert.match(generative.url, /\/models\/gemini:streamGenerateContent\?alt=sse$/);
   assert.equal(generative.headers.get("x-goog-api-key"), "recorded-key");
   const dir = mkdtempSync(join(tmpdir(), "amazme-adc-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "adc.json");
   writeFileSync(file, JSON.stringify({ access_token: "adc-token", expiry: "2099-01-01T00:00:00.000Z" }));
   const vertex = await assertRecorded(

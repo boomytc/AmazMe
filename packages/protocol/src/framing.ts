@@ -1,5 +1,5 @@
 // Portions adapted from Pi packages/protocol/src/framing.ts, Copyright (c) 2025 Mario Zechner, MIT License. See NOTICE.
-import { ProtocolError } from "./errors.ts";
+import { ProtocolError, resolveLimits } from "./errors.ts";
 
 export const FRAME_HEADER_BYTES = 4;
 const INITIAL_CAPACITY = 4096;
@@ -7,6 +7,7 @@ const EMPTY = new Uint8Array(0);
 
 /** Prefixes a non-empty payload with its unsigned 32-bit big-endian length. */
 export function encodeFrame(payload: Uint8Array, maxFrameBytes: number): Uint8Array {
+  maxFrameBytes = resolveLimits({ maxFrameBytes }).maxFrameBytes;
   if (payload.byteLength === 0) throw new ProtocolError("invalid_frame", "frame payload is empty");
   if (payload.byteLength > maxFrameBytes) throw new ProtocolError("limit_exceeded", `frame payload exceeds ${maxFrameBytes} bytes`);
   const frame = new Uint8Array(FRAME_HEADER_BYTES + payload.byteLength);
@@ -29,7 +30,7 @@ export class FrameDecoder {
   private state: "open" | "ended" | "failed" = "open";
 
   constructor(maxFrameBytes: number) {
-    this.maxFrameBytes = maxFrameBytes;
+    this.maxFrameBytes = resolveLimits({ maxFrameBytes }).maxFrameBytes;
   }
 
   get failed(): boolean {

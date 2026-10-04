@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import { chmod, link, lstat, mkdir, mkdtemp, rename, rm, unlink } from "node:fs/promises";
-import { createConnection, createServer, type Server as NetServer, type Socket } from "node:net";
+import { createServer, type Server as NetServer, type Socket } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ByteConnection, ByteConnectionHandlers } from "./types.ts";
 
@@ -13,11 +13,6 @@ export interface UnixListenerOptions {
   maxQueuedBytes?: number;
   /** How long a graceful connection close may wait for buffered bytes before destroying. Default 5,000 ms. */
   closeTimeoutMs?: number;
-  /**
-   * Replace a socket left at `path` when repeated connection probes are all refused. Off by default: an existing
-   * socket then fails. A refused probe is not proof, since macOS also refuses while a live server's backlog is full.
-   */
-  replaceStale?: boolean;
   /** Socket and cleanup errors. Its own errors are ignored. */
   onError?: (error: Error) => void;
 }
@@ -36,20 +31,17 @@ interface Acceptor {
 interface Identity {
   dev: number;
   ino: number;
-  birthtimeMs: number;
 }
 
 const DEFAULT_MAX_QUEUED_BYTES = 32 * 1024 * 1024;
-const PROBE_TIMEOUT_MS = 1_000;
-const STALE_PROBES = 3;
-const STALE_PROBE_INTERVAL_MS = 100;
 
 /**
  * Listens on a Unix domain socket and hands each accepted socket to `acceptor.accept`. Directories it creates are
- * 0700 and the socket is 0600; an existing caller directory keeps its mode. A non-socket path or an existing socket
- * fails, unless `replaceStale` allows replacing a socket nobody answers on. The socket is bound inside a private
+ * 0700 and the socket is 0600; an existing caller directory keeps its mode. Any existing path fails.
+ * The socket is bound inside a private
  * 0700 directory, made 0600 there, and hard-linked into place: publishing never replaces a file, nobody can connect
- * before the mode is set, and libuv's close-time unlink only touches the private name.
+ * before the mode is set, and libuv's close-time unlink only touches the private name. A second private link keeps
+ * the socket inode alive until cleanup finishes, including on filesystems without creation timestamps.
  */
 export async function listenUnix(acceptor: Acceptor, options: UnixListenerOptions): Promise<UnixListener> {
   if (process.platform === "win32") throw new Error("the Unix socket listener is not supported on Windows");
@@ -68,7 +60,7 @@ export async function listenUnix(acceptor: Acceptor, options: UnixListenerOption
   const path = resolve(options.path);
   const directory = dirname(path);
   await makePrivateDirectory(directory);
-  await checkExisting(path, options.replaceStale === true);
+  await checkExisting(path);
 
   const connections = new Set<UnixConnection>();
   let published = false;
@@ -105,13 +97,13 @@ export async function listenUnix(acceptor: Acceptor, options: UnixListenerOption
     await chmod(bindPath, 0o600);
     const bound = await lstat(bindPath);
     if (!bound.isSocket()) throw new Error(`bind path is not a socket: ${bindPath}`);
+    await link(bindPath, join(privateDirectory, "owned"));
     await link(bindPath, path);
     identity = identityOf(bound);
   } catch (error) {
     await closeNetServer(server);
-    throw error;
-  } finally {
     await rm(privateDirectory, { recursive: true, force: true }).catch(report);
+    throw error;
   }
   server.on("error", report);
   published = true;
@@ -127,7 +119,11 @@ export async function listenUnix(acceptor: Acceptor, options: UnixListenerOption
         const stopped = closeNetServer(server);
         for (const connection of [...connections]) connection.destroy();
         await stopped;
-        await removeOwned(path, identity).catch(report);
+        try {
+          await removeOwned(path, identity).catch(report);
+        } finally {
+          await rm(privateDirectory, { recursive: true, force: true }).catch(report);
+        }
       })();
       return closing;
     },
@@ -145,7 +141,7 @@ async function makePrivateDirectory(directory: string): Promise<void> {
   for (const entry of created) await chmod(entry, 0o700);
 }
 
-async function checkExisting(path: string, replaceStale: boolean): Promise<void> {
+async function checkExisting(path: string): Promise<void> {
   let existing;
   try {
     existing = await lstat(path);
@@ -154,21 +150,15 @@ async function checkExisting(path: string, replaceStale: boolean): Promise<void>
     throw error;
   }
   if (!existing.isSocket()) throw new Error(`refusing to replace a path that is not a socket: ${path}`);
-  for (let probe = 0; probe < STALE_PROBES; probe++) {
-    if (await isLive(path)) throw new Error(`a server is already listening on ${path}`);
-    if (!replaceStale) throw new Error(`a socket already exists at ${path}; pass replaceStale to replace one nobody answers on`);
-    if (probe + 1 < STALE_PROBES) await new Promise((done) => setTimeout(done, STALE_PROBE_INTERVAL_MS));
-  }
-  await removeOwned(path, identityOf(existing));
+  throw new Error(`a socket already exists at ${path}; release it before listening`);
 }
 
 function identityOf(stats: Stats): Identity {
-  return { dev: stats.dev, ino: stats.ino, birthtimeMs: stats.birthtimeMs };
+  return { dev: stats.dev, ino: stats.ino };
 }
 
 function sameIdentity(stats: Stats, identity: Identity): boolean {
-  if (!stats.isSocket() || stats.dev !== identity.dev || stats.ino !== identity.ino) return false;
-  return stats.birthtimeMs === 0 || identity.birthtimeMs === 0 || stats.birthtimeMs === identity.birthtimeMs;
+  return stats.isSocket() && stats.dev === identity.dev && stats.ino === identity.ino;
 }
 
 /** Moves the entry aside, checks it is still `identity`, and only then unlinks it. Anything else is put back. */
@@ -191,26 +181,6 @@ async function removeOwned(path: string, identity: Identity): Promise<void> {
     throw new Error(`${path} was replaced during cleanup and could not be restored; the replacement is at ${aside}`);
   }
   await unlink(aside);
-}
-
-function isLive(path: string): Promise<boolean> {
-  return new Promise((done, fail) => {
-    const probe = createConnection(path);
-    const timer = setTimeout(() => finish(true), PROBE_TIMEOUT_MS);
-    const finish = (live: boolean, error?: Error) => {
-      clearTimeout(timer);
-      probe.removeAllListeners();
-      probe.on("error", () => undefined);
-      probe.destroy();
-      if (error) fail(error);
-      else done(live);
-    };
-    probe.once("connect", () => finish(true));
-    probe.once("error", (error) => {
-      if (["ECONNREFUSED", "ENOENT", "ECONNRESET", "EPIPE"].includes(code(error) ?? "")) finish(false);
-      else finish(false, error);
-    });
-  });
 }
 
 function closeNetServer(server: NetServer): Promise<void> {

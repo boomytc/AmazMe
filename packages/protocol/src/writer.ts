@@ -12,6 +12,7 @@ export class FrameWriter {
   private failure: Error | undefined;
 
   constructor(send: (chunk: Uint8Array) => Promise<void>, maxQueuedBytes: number, onFailure: (error: Error) => void) {
+    if (!Number.isSafeInteger(maxQueuedBytes) || maxQueuedBytes <= 0) throw new RangeError("maxQueuedBytes must be a positive integer");
     this.send = send;
     this.maxQueuedBytes = maxQueuedBytes;
     this.onFailure = onFailure;

@@ -70,5 +70,44 @@ test("CBOR decoding and encoding stay inside byte, depth and item limits", () =>
   assert.throws(() => encodeCbor("123456789", small), (error) => error instanceof ProtocolError && error.code === "limit_exceeded");
   let dag: JsonValue = ["x".repeat(16)];
   for (let index = 0; index < 50; index++) dag = [dag, dag];
-  assert.throws(() => encodeCbor(dag, resolveLimits({ maxFrameBytes: 1024 })), /exceeds 1024 bytes/);
+  assert.throws(() => encodeCbor(dag, resolveLimits({ maxFrameBytes: 1024 })), (error) => error instanceof ProtocolError && error.code === "limit_exceeded");
+});
+
+test("the public CBOR encoder validates strict JSON and the same container limits as its decoder", () => {
+  const small = resolveLimits({ maxDepth: 1, maxItems: 1 });
+  for (const value of [[[1]], [1, 2]]) {
+    assert.throws(() => encodeCbor(value, small), (error) => error instanceof ProtocolError && error.code === "limit_exceeded");
+  }
+  let getterCalls = 0;
+  const accessor = Object.defineProperty({}, "x", { get() { getterCalls += 1; return 1; }, enumerable: true });
+  const cycle: Record<string, unknown> = {};
+  cycle.self = cycle;
+  for (const value of [Number.NaN, Infinity, "\ud800", accessor, cycle, { x: undefined }, [1, , 3]]) {
+    assert.throws(() => encodeCbor(value as JsonValue, limits), (error) => error instanceof ProtocolError && error.code === "invalid_json");
+  }
+  assert.equal(getterCalls, 0);
+});
+
+test("CBOR rejects malformed limit options before encoding or decoding", () => {
+  for (const key of ["maxFrameBytes", "maxDepth", "maxItems"] as const) {
+    for (const value of [Number.NaN, Infinity, 0, -1, 1.5]) {
+      const invalid = { ...limits, [key]: value };
+      assert.throws(() => encodeCbor(null, invalid), RangeError, `${key}=${value}`);
+      assert.throws(() => decodeCbor(bytes("f6"), invalid), RangeError, `${key}=${value}`);
+    }
+  }
+});
+
+test("oversized CBOR text is rejected before allocating its UTF-8 buffer", (t) => {
+  const original = TextEncoder.prototype.encode;
+  let encoded = 0;
+  t.mock.method(TextEncoder.prototype, "encode", function(this: TextEncoder, input?: string) {
+    encoded += 1;
+    return original.call(this, input);
+  });
+  const small = resolveLimits({ maxFrameBytes: 8 });
+  for (const value of ["x".repeat(1000), "😀".repeat(1000), { ["x".repeat(1000)]: null }]) {
+    assert.throws(() => encodeCbor(value, small), (error) => error instanceof ProtocolError && error.code === "limit_exceeded");
+  }
+  assert.equal(encoded, 0);
 });

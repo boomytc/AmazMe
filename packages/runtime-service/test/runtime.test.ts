@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ClientError, RemoteError } from "@amazme/client";
+import { Client, ClientError, RemoteError } from "@amazme/client";
 import { value, type StorageView } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { encodeClientMessage, ProtocolError, type JsonValue } from "@amazme/protocol";
-import type { SubscriptionSink } from "@amazme/server";
+import { Server, ServiceError, type RuntimeCallContext, type SubscriptionSink } from "@amazme/server";
+import { memoryConnector } from "@amazme/server/testing";
 import { ContractError, parseLaneSnapshot, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { NotAttachedError, RuntimeClient } from "@amazme/runtime-service/client";
+import { createManagementService } from "@amazme/runtime-service/server";
 import { finish, pendingText, textDelta, texts, tick, until, world } from "./support.ts";
 
 const code = (expected: string) => (error: unknown) => error instanceof RemoteError && error.code === expected;
@@ -16,7 +18,7 @@ test("attach, accept, subscribe, drive, pending prefix, settled snapshot and res
   try {
     const { remote, client } = await env.connect();
     const route = await remote.attach("main");
-    assert.equal(client.attachment, route);
+    assert.deepEqual(client.attachment, route);
     const lane = remote.lane("main");
     const admitted = await lane.accept({ kind: "prompt", text: "hi", operationId: "op-1" });
     assert.deepEqual({ operationId: admitted.operationId, kind: admitted.kind }, { operationId: "op-1", kind: "run" });
@@ -328,6 +330,47 @@ class AfterRead extends MemoryStorage {
   }
 }
 
+class OnUnsubscribe extends MemoryStorage {
+  once?: () => void;
+  override subscribe(listener: () => void): () => void {
+    const unsubscribe = super.subscribe(listener);
+    return () => {
+      unsubscribe();
+      const hook = this.once;
+      this.once = undefined;
+      hook?.();
+    };
+  }
+}
+
+test("the host is already closed during synchronous subscription cleanup callbacks", async () => {
+  const storage = new OnUnsubscribe();
+  const env = world({ storage: () => storage });
+  try {
+    const { remote } = await env.connect();
+    const route = await remote.attach("main");
+    await remote.lane("main").subscribe(() => undefined);
+    const host = env.runtime().host;
+    let checked: Promise<void> | undefined;
+    const context: RuntimeCallContext = {
+      connectionId: "reentrant",
+      route,
+      signal: new AbortController().signal,
+      openSubscription() { throw new Error("unused"); },
+      subscription() { return undefined; },
+    };
+    storage.once = () => {
+      checked = assert.rejects(host.call({ method: "snapshot", lane: "main" }, context),
+        (error) => error instanceof ServiceError && error.code === "runtime_closed");
+    };
+    await host.close();
+    assert.ok(checked);
+    await checked;
+  } finally {
+    await env.close();
+  }
+});
+
 test("a write right after the initial snapshot read still produces an update", async () => {
   const storage = new AfterRead();
   const env = world({ storage: () => storage });
@@ -361,6 +404,32 @@ test("a write that lands during a publish read is published afterwards", async (
   }
 });
 
+test("closing the host waits for an initial snapshot read and refuses that unfinished subscription", async () => {
+  const storage = new AfterRead();
+  const env = world({ storage: () => storage });
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    const { remote } = await env.connect();
+    await remote.attach("main");
+    let reading = false;
+    storage.once = async () => { reading = true; await blocked; };
+    const subscribing = remote.lane("main").subscribe(() => undefined);
+    const rejected = assert.rejects(subscribing, code("runtime_closed"));
+    await until(() => reading, "the initial snapshot read");
+    let closed = false;
+    const closing = env.runtime().host.close().then(() => { closed = true; });
+    await tick();
+    assert.equal(closed, false, "the host still owns the initial read");
+    release();
+    await closing;
+    await rejected;
+  } finally {
+    release();
+    await env.close();
+  }
+});
+
 test("closing the host does not wait for a stalled peer, and the end notice follows the snapshot in flight", async () => {
   const env = world();
   try {
@@ -370,7 +439,7 @@ test("closing the host does not wait for a stalled peer, and the end notice foll
     const outbound = env.links[0]!.server;
     outbound.pause();
     await env.runtime().storage.commit([{ type: "set", address: value("test.stalled"), value: 1 }]);
-    await tick(30);
+    await until(() => outbound.queuedBytes > 0, "the snapshot in flight");
     const started = Date.now();
     await env.runtime().host.close();
     assert.ok(Date.now() - started < 500, "close returned while the peer was not reading");
@@ -404,6 +473,57 @@ test("large subscriptions on one slow connection take turns instead of overflowi
   }
 });
 
+test("large initial subscriptions on a slow connection also take turns", async () => {
+  const env = world({ limits: { maxFrameBytes: 64 * 1024 } });
+  try {
+    const { remote } = await env.connect();
+    await remote.attach("main");
+    const lanes = ["l1", "l2", "l3"];
+    for (const name of lanes) await env.runtime().harness.lane(name).accept({ kind: "prompt", text: "b".repeat(50 * 1024) });
+    const outbound = env.links[0]!.server;
+    outbound.pause();
+    const subscribing = Promise.all(lanes.map((name) => remote.lane(name).subscribe(() => undefined)));
+    await tick(60);
+    assert.equal(env.server.connectionCount, 1, "initial snapshots obey transport backpressure");
+    outbound.resume();
+    const subscriptions = await subscribing;
+    assert.deepEqual(subscriptions.map((subscription) => subscription.initial.lane), lanes);
+    assert.ok(subscriptions.every((subscription) => subscription.initial.entries.length === 1));
+  } finally {
+    for (const link of env.links) link.server.resume();
+    await env.close();
+  }
+});
+
+test("a shared host keeps connections of separate server instances independent", async () => {
+  const env = world();
+  const secondServer = new Server({ serverId: "srv", service: createManagementService() });
+  secondServer.registerRuntime("main", env.runtime().host);
+  const connector = memoryConnector((connection) => secondServer.accept(connection));
+  const secondClient = new Client({ serverId: "srv", transport: (handlers) => connector.transport(handlers) });
+  try {
+    const { remote } = await env.connect();
+    await remote.attach("main");
+    await remote.lane("main").subscribe(() => undefined);
+    env.links[0]!.server.pause();
+    await env.runtime().storage.commit([{ type: "set", address: value("test.two_servers"), value: 1 }]);
+    await until(() => env.links[0]!.server.queuedBytes > 0, "the first connection's stalled snapshot");
+    await secondClient.connect();
+    const secondRemote = new RuntimeClient(secondClient);
+    await secondRemote.attach("main");
+    let opened = false;
+    const opening = secondRemote.lane("main").subscribe(() => undefined);
+    void opening.then(() => { opened = true; }, () => undefined);
+    await until(() => opened, "the independent connection's initial snapshot", 500);
+    assert.equal((await opening).initial.version, 1);
+  } finally {
+    for (const link of env.links) link.server.resume();
+    await secondClient.dispose();
+    await secondServer.close();
+    await env.close();
+  }
+});
+
 test("a snapshot too large to send ends the subscription with a notice instead of going silent", async () => {
   const env = world({ limits: { maxFrameBytes: 8 * 1024 } });
   try {
@@ -419,16 +539,29 @@ test("a snapshot too large to send ends the subscription with a notice instead o
   }
 });
 
-test("operations admitted in process with any ID stay observable remotely", async () => {
+test("operations admitted in process with opaque IDs can be observed, driven, aborted and queried remotely", async () => {
   const env = world();
   try {
     const { remote } = await env.connect();
     await remote.attach("main");
-    await env.runtime().harness.lane("main").accept({ kind: "prompt", text: "hi", operationId: "job 42/a" });
+    const operationId = "job 42/a";
+    await env.runtime().harness.lane("main").accept({ kind: "prompt", text: "hi", operationId });
     const lane = remote.lane("main");
-    assert.equal((await lane.snapshot()).operationId, "job 42/a");
+    assert.equal((await lane.snapshot()).operationId, operationId);
     const subscription = await lane.subscribe(() => undefined);
-    assert.equal(subscription.initial.operationId, "job 42/a");
+    assert.equal(subscription.initial.operationId, operationId);
+    assert.equal(await lane.result(operationId), null);
+    const driving = lane.drive(operationId);
+    await until(() => env.runtime().streams.length === 1);
+    assert.deepEqual(await lane.requestAbort(operationId), { operationId, newlyRequested: true });
+    finish(env.runtime().streams[0]!, "ignored");
+    const outcome = await driving;
+    assert.equal(outcome.kind, "settled");
+    const result = await lane.result(operationId);
+    assert.equal(result?.operationId, operationId);
+    assert.equal(result?.status, "aborted");
+    await assert.rejects(remote.lane("other").result(operationId), code("operation_mismatch"));
+    await assert.rejects(lane.result("bad\0id"), code("invalid_call"));
   } finally {
     await env.close();
   }
@@ -454,6 +587,60 @@ test("an update that breaks the contract ends the subscription with invalid_upda
     const ended = await subscription.ended;
     assert.equal(ended.reason === "ended" && ended.code, "invalid_update");
     await until(() => sinks[0]!.closed, "the client to unsubscribe");
+  } finally {
+    await env.close();
+  }
+});
+
+test("mutating exposed snapshots cannot change subscription version tracking", async () => {
+  const env = world();
+  try {
+    const { remote } = await env.connect();
+    await remote.attach("main");
+    const seen: number[] = [];
+    const subscription = await remote.lane("main").subscribe((snapshot) => {
+      seen.push(snapshot.version);
+      Object.assign(snapshot, { version: Number.MAX_SAFE_INTEGER });
+    });
+    const initialVersion = subscription.initial.version;
+    Object.assign(subscription.initial, { version: Number.MAX_SAFE_INTEGER });
+    await env.runtime().storage.commit([{ type: "set", address: value("test.version"), value: 1 }]);
+    await until(() => seen.length === 1, "an update after the initial DTO was modified");
+    Object.assign(subscription.current(), { version: Number.MAX_SAFE_INTEGER });
+    await env.runtime().storage.commit([{ type: "set", address: value("test.version"), value: 2 }]);
+    await until(() => seen.length === 2, "an update after the callback modified the DTO");
+    assert.deepEqual(seen, [initialVersion + 1, initialVersion + 2]);
+  } finally {
+    await env.close();
+  }
+});
+
+test("operation replies must belong to the requested lane and operation", async () => {
+  const env = world();
+  try {
+    let reply: JsonValue = null;
+    env.server.registerRuntime("fake", { call() { return reply; } });
+    const { remote } = await env.connect();
+    await remote.attach("fake");
+    const lane = remote.lane("main");
+    const result = {
+      operationId: "op", lane: "main", kind: "run", status: "completed", fromTipId: null, tipId: null,
+      startedAt: 1, endedAt: 2,
+    };
+    const cases: Array<{ reply: JsonValue; invoke: () => Promise<unknown> }> = [
+      { reply: { result: { ...result, lane: "other" } }, invoke: () => lane.result("op") },
+      { reply: { result: { ...result, operationId: "other" } }, invoke: () => lane.result("op") },
+      { reply: { kind: "settled", result: { ...result, lane: "other" } }, invoke: () => lane.drive("op") },
+      { reply: { kind: "settled", result: { ...result, operationId: "other" } }, invoke: () => lane.drive("op") },
+      { reply: { kind: "waiting", operationId: "other", reason: "retry", notBefore: 3 }, invoke: () => lane.drive("op") },
+      { reply: { operationId: "other", newlyRequested: true }, invoke: () => lane.requestAbort("op") },
+    ];
+    for (const entry of cases) {
+      reply = entry.reply;
+      await assert.rejects(entry.invoke(), ContractError);
+    }
+    reply = { result };
+    assert.deepEqual(await lane.result("op"), result);
   } finally {
     await env.close();
   }
