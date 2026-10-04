@@ -61,8 +61,14 @@ test("the page lists sessions and a submit returns the prompt and assistant text
   });
   assert.equal(painted.user, true);
   assert.equal(painted.heading, "Title");
+  assert.equal(painted.headingColor, "#c4b5fd");
+  assert.equal(painted.marker, "•");
   assert.equal(painted.bullet, "item");
   assert.equal(painted.code, "code");
+  assert.equal(painted.codeColor, "#8b93a7");
+  assert.match(html, /article h3 \{ color: #c4b5fd/);
+  assert.match(html, /article code \{ color: #8b93a7/);
+  assert.match(html, /aside ul, #tools \{ list-style: none/);
   assert.equal(painted.fence.includes("```"), false);
   assert.match(painted.fence, /const value = 1;/);
   assert.equal(painted.toolTitle, "read");
@@ -199,7 +205,7 @@ test("slash commands change the lane instead of prompting the model", { timeout:
 });
 
 function paintPage(html: string, view: Record<string, unknown>): {
-  user: boolean; heading: string; bullet: string; code: string; fence: string;
+  user: boolean; heading: string; headingColor: string; marker: string; bullet: string; code: string; codeColor: string; fence: string;
   toolTitle: string; toolBody: string; liveTool: string; liveStatus: string; status: string;
   modelSubmit: string; thinkingSubmit: string; resumeSubmit: string;
 } {
@@ -225,8 +231,11 @@ function paintPage(html: string, view: Record<string, unknown>): {
   return {
     user: articles.some((node) => node.className === "user"),
     heading: transcript?.querySelector("h3")?.textContent ?? "",
-    bullet: transcript?.querySelector("li")?.textContent ?? "",
+    headingColor: transcript?.querySelector("h3")?.style.color ?? "",
+    marker: transcript?.querySelector(".marker")?.textContent ?? "",
+    bullet: (transcript?.querySelector("li")?.children ?? []).map((node) => node.textContent).join("").replace("•", "").trim(),
     code: transcript?.querySelector("code")?.textContent ?? "",
+    codeColor: transcript?.querySelector("code")?.style.color ?? "",
     fence: transcript?.querySelector("pre")?.textContent ?? "",
     toolTitle: result?.querySelector("header")?.textContent ?? "",
     toolBody: result?.children.find((node) => node.tag === "p" && node.className !== "status")?.textContent ?? "",
@@ -243,6 +252,7 @@ class FakeNode {
   tag: string;
   className = "";
   textContent = "";
+  style: { color: string } = { color: "" };
   children: FakeNode[] = [];
   parent: FakeNode | null = null;
   attrs: Record<string, string> = {};
