@@ -99,7 +99,9 @@ try {
 
 条目树就是会话日志，没有第二份转录。`providerContext` 从当前 tip 的祖先投影出下一次模型请求。`models` 是模型适配器，`tools` 的 `execute` 是执行后端，两者都在 `AgentHarness` 构造时传入，测试替换它们时不改这个入口。
 
-一份存储里的每条 lane 是一段对话。`conversations()` 列出它们。`fork(name, entryId)` 把另一段对话的 tip 放在本段已有条目上，不移动本段 tip，也不取消本段已经准入的等待。子对话上的 `requestAbort` 只中止那一条 lane 的信号。
+一份存储里的每条 lane 是一段对话。`conversations()` 列出它们。`fork(name, entryId)` 把另一段对话的 tip 放在本段已有条目上，不移动本段 tip，也不取消本段已经准入的等待。目标 lane 已经存在时拒绝，不改它的 tip。子对话复制本段已经写下的配置。子对话上的 `requestAbort` 只中止那一条 lane 的信号。
+
+`configure` 读取或更换本 lane 的 provider、modelId 和 thinkingLevel。读取在操作进行中也可以。写入只在 lane 空闲时成功，并成为之后新建 lane 的默认模型和思考级别；已经有配置的 lane 保持自己的配置。系统提示词不在这次写入里。模型必须存在于构造时传入的 `models`。思考级别必须是该模型 `supportedThinkingLevels` 里的一项，不支持就拒绝，不夹到别的级别。
 
 `toolResultLimit` 默认 8,000 个字符。超过的工具结果只在下一次模型请求里被裁成首尾加 `[truncated]`。日志条目保持原文字。压缩也只改变之后请求能看见的范围，不改已经写下的工具结果。
 

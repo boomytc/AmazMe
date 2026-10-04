@@ -89,11 +89,26 @@ test("abort, scroll, prompt focus, and slash commands", () => {
   state = reduceTui(state, { type: "key", key: { type: "char", value: "e" } }).state;
   state = reduceTui(state, { type: "key", key: { type: "char", value: "w" } }).state;
   const created = reduceTui(state, { type: "key", key: { type: "enter" } });
-  assert.deepEqual(created.effect, { type: "new-session" });
+  assert.deepEqual(created.effect, { type: "slash", command: { type: "new-session" } });
   const resume = typeLine(created.state, "/resume main");
-  assert.deepEqual(resume.effect, { type: "resume", name: "main" });
+  assert.deepEqual(resume.effect, { type: "slash", command: { type: "resume", name: "main" } });
   const compact = typeLine(resume.state, "/compact");
-  assert.deepEqual(compact.effect, { type: "compact" });
+  assert.deepEqual(compact.effect, { type: "slash", command: { type: "compact" } });
+  const model = typeLine(compact.state, "/model faux/faux-1");
+  assert.deepEqual(model.effect, { type: "slash", command: { type: "model", provider: "faux", modelId: "faux-1" } });
+  const thinking = typeLine(model.state, "/effort high");
+  assert.deepEqual(thinking.effect, { type: "slash", command: { type: "thinking", level: "high" } });
+  const login = typeLine(thinking.state, "/login openai");
+  assert.deepEqual(login.effect, { type: "slash", command: { type: "login", provider: "openai" } });
+  const unknown = typeLine(login.state, "/nope");
+  assert.equal(unknown.effect, null);
+  assert.match(unknown.state.notice ?? "", /未知命令/);
+  const help = typeLine(unknown.state, "/help");
+  assert.equal(help.effect, null);
+  assert.match(help.state.notice ?? "", /\/login/);
+  assert.match(help.state.notice ?? "", /\/fork/);
+  const prompt = typeLine(help.state, "hello");
+  assert.deepEqual(prompt.effect, { type: "submit", text: "hello" });
 });
 
 test("two reads of the host frame show the same assistant text", { timeout: 20_000 }, async (t) => {
@@ -167,12 +182,8 @@ test("arrow keys decode as entry movement", () => {
 
 function typeLine(start: ReturnType<typeof emptyTui>, text: string) {
   let state = start;
-  let effect = null as ReturnType<typeof reduceTui>["effect"];
   for (const value of Array.from(text)) {
-    const next = reduceTui(state, { type: "key", key: { type: "char", value } });
-    state = next.state;
-    effect = next.effect;
+    state = reduceTui(state, { type: "key", key: { type: "char", value } }).state;
   }
-  const entered = reduceTui(state, { type: "key", key: { type: "enter" } });
-  return entered.effect ? entered : { state, effect };
+  return reduceTui(state, { type: "key", key: { type: "enter" } });
 }

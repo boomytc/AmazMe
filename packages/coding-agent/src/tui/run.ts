@@ -10,6 +10,7 @@ import { SessionStore } from "../session.ts";
 import { appendSkillText } from "../skills.ts";
 import { codingSystemPrompt, createCodingTools } from "../tools.ts";
 import { presentFullscreen, presentHost, type HostAttach } from "@amazme/tui";
+import { formatHandback, loginProvider, logoutProvider } from "../login.ts";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../host.ts";
 
 export interface FullscreenOptions {
@@ -42,7 +43,13 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
   });
   const attach: HostAttach = { socket, serverId: HOST_SERVER_ID, runtimeId: HOST_RUNTIME_ID, lane: HOST_LANE };
   try {
-    await presentHost(attach);
+    await presentHost(attach, process.stdin, process.stdout, {
+      login: (provider, handback) => loginProvider(provider, {
+        credentialsFile: options.credentialsFile,
+        onHandback(value) { handback(formatHandback(value)); },
+      }).then((report) => report.message),
+      logout: (provider) => logoutProvider(provider, options.credentialsFile),
+    });
   } finally {
     await host.close();
   }

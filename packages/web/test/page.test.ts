@@ -116,6 +116,60 @@ test("a streaming chunk is visible before the turn settles", { timeout: 20_000 }
   events.stop();
 });
 
+test("slash commands change the lane instead of prompting the model", { timeout: 20_000 }, async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), "amz-web-slash-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const socket = join(cwd, "host.sock");
+  const models = createModels();
+  models.setProvider(fauxProvider({ respond: (_context, _options, _state, model) => fauxAssistant(`faux:${model.id}`) }));
+  models.setProvider(fauxProvider({
+    id: "other",
+    modelId: "other-1",
+    respond: (_context, _options, _state, model) => fauxAssistant(`other:${model.id}`),
+  }));
+  const host = await startCodingHost({ cwd, socket, provider: "faux", model: "faux-1", models });
+  t.after(() => host.close());
+  const page = await startWeb({ socket, port: 0, serverId: "amazme", runtimeId: "workspace", lane: "main" });
+  t.after(() => page.close());
+  assert.match(await (await fetch(page.url)).text(), /id="notice"/);
+  const thinking = await act(page.url, "/thinking high");
+  assert.equal(thinking.entries.length, 0);
+  assert.match(thinking.notice ?? "", /not supported/);
+  const unknown = await act(page.url, "/nope");
+  assert.equal(unknown.entries.length, 0);
+  assert.match(unknown.notice ?? "", /未知命令/);
+  const login = await act(page.url, "/login openai");
+  assert.equal(login.entries.length, 0);
+  assert.match(login.notice ?? "", /不能登录/);
+  const shown = await act(page.url, "/model");
+  assert.match(shown.notice ?? "", /faux\/faux-1/);
+  const switched = await act(page.url, "/model other/other-1");
+  assert.match(switched.notice ?? "", /other\/other-1/);
+  const hello = await act(page.url, "hello");
+  assert.ok(hello.entries.some((entry) => entry.role === "user" && entry.text === "hello"));
+  assert.ok(hello.entries.some((entry) => entry.role === "assistant" && entry.text === "other:other-1"));
+  const forked = await act(page.url, "/fork side");
+  assert.equal(forked.active, "side");
+  assert.ok(forked.entries.some((entry) => entry.text === "hello"));
+  const side = await act(page.url, "only-side");
+  assert.ok(side.entries.some((entry) => entry.text === "only-side"));
+  const main = await act(page.url, "/resume main");
+  assert.equal(main.active, "main");
+  assert.equal(main.entries.some((entry) => entry.text === "only-side"), false);
+  const rewound = await act(page.url, "/rewind");
+  assert.equal(rewound.entries.some((entry) => entry.text === "hello"), false);
+});
+
+async function act(url: string, text: string): Promise<{ active: string; notice: string | null; entries: Array<{ role: string; text: string }> }> {
+  const response = await fetch(`${url}act`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "submit", text }),
+  });
+  assert.equal(response.status, 200);
+  return response.json() as Promise<{ active: string; notice: string | null; entries: Array<{ role: string; text: string }> }>;
+}
+
 function partialProvider(gate: Promise<void>): Provider {
   const model: Model = {
     id: "faux-1",

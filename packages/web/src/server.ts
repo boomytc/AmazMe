@@ -3,6 +3,7 @@ import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
+import { executeSlash, finishDrive, parseSlash, type SlashActions } from "@amazme/tui";
 
 export interface WebOptions {
   socket: string;
@@ -10,6 +11,8 @@ export interface WebOptions {
   runtimeId: string;
   lane: string;
   port?: number;
+  login?(provider: string, handback: (text: string) => void): Promise<string>;
+  logout?(provider: string): Promise<string>;
 }
 
 export interface PageView {
@@ -19,6 +22,7 @@ export interface PageView {
   pendingText: string;
   tools: Array<{ name: string; status: string }>;
   busy: boolean;
+  notice: string | null;
 }
 
 export interface WebServer {
@@ -38,15 +42,64 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
   const known = new Set<string>([options.lane]);
   let active = options.lane;
   let lane = remote.lane(active);
+  let notice: string | null = null;
+  let earlier: EntryDto[] = [];
   const listeners = new Set<ServerResponse>();
   let latest = emptyView(options.lane);
   const publish = (snapshot: LaneSnapshotDto): void => {
-    latest = project(snapshot, [...known].sort(), active);
+    const parent = snapshot.entries[0]?.parentId ?? null;
+    const tail = earlier.at(-1)?.id;
+    if (tail !== undefined && tail !== parent) earlier = [];
+    latest = project(snapshot, [...known].sort(), active, earlier, notice);
     const frame = `data: ${JSON.stringify(latest)}\n\n`;
     for (const response of listeners) response.write(frame);
   };
   let subscription = await lane.subscribe(publish);
   publish(subscription.current());
+  const openLane = async (name: string): Promise<void> => {
+    known.add(name);
+    earlier = [];
+    await subscription.close();
+    active = name;
+    lane = remote.lane(active);
+    subscription = await lane.subscribe(publish);
+    publish(subscription.current());
+  };
+  const actions: SlashActions = {
+    lane: () => lane,
+    active: () => active,
+    list: async () => {
+      for (const name of await remote.conversations()) known.add(name);
+      return [...known].sort();
+    },
+    open: (name) => openLane(name),
+    earlier: async () => {
+      const snap = subscription.current();
+      const oldest = earlier[0]?.id ?? snap.entries[0]?.id;
+      if (!oldest) return "没有更早的条目";
+      const page = await lane.history(oldest, 20);
+      const seen = new Set([...earlier, ...snap.entries].map((entry) => entry.id));
+      const added = page.entries.filter((entry) => !seen.has(entry.id));
+      earlier = [...added, ...earlier];
+      publish(snap);
+      return added.length === 0 ? "没有更早的条目" : `更早 ${added.length} 条`;
+    },
+    continueRetry: async () => {
+      const snap = await lane.snapshot();
+      if (snap.phase !== "retry_wait" || !snap.operationId) return "没有等待中的重试";
+      await finishDrive(lane, snap.operationId);
+      return "已继续";
+    },
+    ...(options.login
+      ? {
+          login: (provider: string) => options.login!(provider, (text) => {
+            notice = text;
+            publish(subscription.current());
+          }),
+        }
+      : {}),
+    ...(options.logout ? { logout: (provider: string) => options.logout!(provider) } : {}),
+  };
   const server = createServer((request, response) => {
     void handle(request, response, {
       latest: () => latest,
@@ -55,7 +108,7 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
         for (const name of await remote.conversations()) known.add(name);
         return [...known].sort();
       },
-      submit: (text) => submit(lane, text),
+      submit: (text) => interpret(lane, text, actions, (text) => { notice = text; }),
       abort: async () => {
         const operationId = subscription.current().operationId;
         if (operationId) await lane.requestAbort(operationId);
@@ -66,14 +119,7 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
         for (const name of await remote.conversations()) known.add(name);
         return { ...latest, sessions: [...known].sort() };
       },
-      open: async (name) => {
-        known.add(name);
-        await subscription.close();
-        active = name;
-        lane = remote.lane(active);
-        subscription = await lane.subscribe(publish);
-        publish(subscription.current());
-      },
+      open: (name) => openLane(name),
     }).catch((error: unknown) => {
       if (response.headersSent || response.writableEnded) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -101,17 +147,31 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
   };
 }
 
-async function submit(lane: RemoteLane, text: string): Promise<void> {
+async function interpret(lane: RemoteLane, text: string, actions: SlashActions, setNotice: (text: string | null) => void): Promise<void> {
   const body = text.trim();
   if (!body) return;
-  const current = await lane.snapshot();
-  if (current.operationId) {
-    await lane.followUp(body);
+  const parsed = parseSlash(body);
+  if (parsed.type === "prompt") {
+    setNotice(null);
+    const current = await lane.snapshot();
+    if (current.operationId) {
+      await lane.followUp(parsed.text);
+      return;
+    }
+    const admitted = await lane.accept({ kind: "prompt", text: parsed.text });
+    await finishDrive(lane, admitted.operationId);
     return;
   }
-  const admitted = await lane.accept({ kind: "prompt", text: body });
-  const outcome = await lane.drive(admitted.operationId, { waitForRetry: true });
-  if (outcome.kind === "waiting") await lane.drive(outcome.operationId, { waitForRetry: true });
+  if (parsed.type === "notice") {
+    setNotice(parsed.text);
+    return;
+  }
+  const outcome = await executeSlash(parsed, actions);
+  if (outcome.type === "quit") {
+    setNotice("关闭页面不会停止宿主");
+    return;
+  }
+  if (outcome.type === "notice") setNotice(outcome.text);
 }
 
 interface Actions {
@@ -170,14 +230,16 @@ async function handle(request: IncomingMessage, response: ServerResponse, action
   response.writeHead(404, { "content-type": "text/plain; charset=utf-8" }).end("not found");
 }
 
-function project(snapshot: LaneSnapshotDto, sessions: string[], active: string): PageView {
+function project(snapshot: LaneSnapshotDto, sessions: string[], active: string, earlier: EntryDto[], notice: string | null): PageView {
+  const seen = new Set(snapshot.entries.map((entry) => entry.id));
   return {
     sessions,
     active,
-    entries: snapshot.entries.map(entryView),
+    entries: [...earlier.filter((entry) => !seen.has(entry.id)).map(entryView), ...snapshot.entries.map(entryView)],
     pendingText: pendingText(snapshot),
     tools: snapshot.tools.map((tool) => ({ name: tool.name, status: tool.status })),
     busy: snapshot.operationId !== null,
+    notice,
   };
 }
 
@@ -210,7 +272,7 @@ function messageText(message: { role: string; content?: unknown }): string {
 }
 
 function emptyView(active: string): PageView {
-  return { sessions: [active], active, entries: [], pendingText: "", tools: [], busy: false };
+  return { sessions: [active], active, entries: [], pendingText: "", tools: [], busy: false, notice: null };
 }
 
 function readBody(request: IncomingMessage): Promise<string> {
@@ -252,6 +314,7 @@ const PAGE = `<!doctype html>
   <section>
     <h1>transcript</h1>
     <pre id="transcript"></pre>
+    <p id="notice"></p>
     <ul id="tools"></ul>
     <form id="form">
       <input id="text" autocomplete="off" placeholder="prompt">
@@ -264,6 +327,7 @@ const PAGE = `<!doctype html>
   const sessions = document.querySelector("#sessions");
   const transcript = document.querySelector("#transcript");
   const tools = document.querySelector("#tools");
+  const notice = document.querySelector("#notice");
   const text = document.querySelector("#text");
   const paint = (view) => {
     sessions.replaceChildren(...view.sessions.map((name) => {
@@ -278,6 +342,7 @@ const PAGE = `<!doctype html>
     const lines = view.entries.map((entry) => entry.role + " " + entry.text);
     if (view.pendingText) lines.push("assistant " + view.pendingText);
     transcript.textContent = lines.join("\\n");
+    notice.textContent = view.notice || "";
     tools.replaceChildren(...view.tools.map((tool) => {
       const item = document.createElement("li");
       item.textContent = tool.name + " " + tool.status;

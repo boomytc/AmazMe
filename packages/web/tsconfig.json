@@ -19,6 +19,7 @@
   "include": ["src"],
   "references": [
     { "path": "../client" },
-    { "path": "../runtime-service" }
+    { "path": "../runtime-service" },
+    { "path": "../tui" }
   ]
 }

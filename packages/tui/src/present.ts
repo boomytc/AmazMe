@@ -4,8 +4,16 @@ import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
+import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { KeyDecoder } from "./keys.ts";
 import { emptyTui, reduceTui, renderTui, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
+
+export { finishDrive } from "./commands.ts";
+
+export interface HostAccount {
+  login(provider: string, handback: (text: string) => void): Promise<string>;
+  logout(provider: string): Promise<string>;
+}
 
 export interface HostAttach {
   socket: string;
@@ -33,6 +41,7 @@ export async function presentHost(
   attach: HostAttach,
   stdin: ReadStream = process.stdin,
   stdout: WriteStream = process.stdout,
+  account?: HostAccount,
 ): Promise<void> {
   if (typeof stdin.setRawMode !== "function" || stdin.isTTY !== true || stdout.isTTY !== true) {
     throw new Error("fullscreen requires a terminal");
@@ -46,11 +55,11 @@ export async function presentHost(
   let state = emptyTui(active);
   let paint = (): void => undefined;
   let lane = new AttachedLane(remote.lane(active), () => {
-    state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active) }).state;
+    state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
     paint();
   });
   await lane.open();
-  state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active) }).state;
+  state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
   stdin.setRawMode(true);
   stdin.resume();
   stdout.write("\x1b[?1049h\x1b[?25h");
@@ -88,24 +97,60 @@ export async function presentHost(
       }
     }
   };
-  const apply = async (effect: TuiEffect): Promise<void> => {
-    if (effect.type === "submit") await lane.submit(effect.text);
-    else if (effect.type === "abort") await lane.abort();
-    else if (effect.type === "compact") {
-      const admitted = await remote.lane(active).accept({ kind: "compaction" });
-      await remote.lane(active).drive(admitted.operationId, { waitForRetry: true });
-    } else if (effect.type === "new-session" || effect.type === "resume") {
-      const name = effect.type === "new-session" ? `s${sessions.length + 1}` : effect.name;
+  const showLane = (): void => {
+    state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
+    paint();
+  };
+  const actions: SlashActions = {
+    lane: () => remote.lane(active),
+    active: () => active,
+    list: async () => {
+      for (const name of await remote.conversations()) {
+        if (!sessions.includes(name)) sessions.push(name);
+      }
+      return sessions;
+    },
+    open: async (name) => {
       if (!sessions.includes(name)) sessions.push(name);
       await lane.close();
       active = name;
-      lane = new AttachedLane(remote.lane(active), () => {
-        state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active) }).state;
-        paint();
-      });
+      lane = new AttachedLane(remote.lane(active), showLane);
       await lane.open();
-      state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active) }).state;
-      paint();
+      showLane();
+    },
+    earlier: () => lane.loadEarlier(),
+    continueRetry: async () => {
+      const snap = await remote.lane(active).snapshot();
+      if (snap.phase !== "retry_wait" || !snap.operationId) return "没有等待中的重试";
+      await finishDrive(remote.lane(active), snap.operationId);
+      return "已继续";
+    },
+    ...(account
+      ? {
+          login: async (provider: string) => {
+            stdin.setRawMode(false);
+            try {
+              return await account.login(provider, (text) => {
+                state = { ...state, notice: text };
+                paint();
+              });
+            } finally {
+              if (!restored && stdin.isRaw !== true) stdin.setRawMode(true);
+            }
+          },
+          logout: (provider: string) => account.logout(provider),
+        }
+      : {}),
+  };
+  const apply = async (effect: TuiEffect): Promise<void> => {
+    if (effect.type === "submit") await lane.submit(effect.text);
+    else if (effect.type === "abort") await lane.abort();
+    else {
+      const outcome = await executeSlash(effect.command, actions);
+      if (outcome.type === "notice") {
+        state = { ...state, notice: outcome.text };
+        paint();
+      } else if (outcome.type === "quit") restore();
     }
   };
   stdin.on("data", onData);
@@ -118,15 +163,10 @@ export async function presentHost(
   await client.dispose();
 }
 
-/** One durable drive. A waiting outcome continues through the stored `notBefore`; a settled drive is not sent again. */
-export async function finishDrive(lane: RemoteLane, operationId: string): Promise<void> {
-  const outcome = await lane.drive(operationId, { waitForRetry: true });
-  if (outcome.kind === "waiting") await lane.drive(outcome.operationId, { waitForRetry: true });
-}
-
 class AttachedLane {
-  private subscription: { current(): LaneSnapshotDto; close(): Promise<void> } | undefined;
+  private subscription: { current(): LaneSnapshotDto; coverage(): { omitted: number; skipped: number }; close(): Promise<void> } | undefined;
   private generation = 0;
+  private earlierEntries: TuiEntry[] = [];
   private readonly waiters: Array<() => void> = [];
 
   constructor(private readonly lane: RemoteLane, private readonly onView: () => void) {}
@@ -135,8 +175,19 @@ class AttachedLane {
     return this.subscription?.current() ?? emptySnapshot(this.lane.name);
   }
 
+  earlier(): TuiEntry[] {
+    return this.earlierEntries;
+  }
+
   async open(): Promise<void> {
     this.subscription = await this.lane.subscribe(() => {
+      const coverage = this.subscription?.coverage();
+      const snap = this.subscription?.current();
+      const parent = snap?.entries[0]?.parentId ?? null;
+      const tail = this.earlierEntries.at(-1)?.id;
+      if ((coverage && coverage.omitted === 0 && coverage.skipped === 0) || (tail !== undefined && tail !== parent)) {
+        this.earlierEntries = [];
+      }
       this.generation += 1;
       this.onView();
       const waiting = this.waiters.splice(0);
@@ -168,6 +219,18 @@ class AttachedLane {
     if (operationId) await this.lane.requestAbort(operationId);
   }
 
+  async loadEarlier(): Promise<string> {
+    const snap = this.snapshot();
+    const oldest = this.earlierEntries[0]?.id ?? snap.entries[0]?.id;
+    if (!oldest) return "没有更早的条目";
+    const page = await this.lane.history(oldest, 20);
+    const known = new Set([...this.earlierEntries.map((entry) => entry.id), ...snap.entries.map((entry) => entry.id)]);
+    const added = page.entries.filter((entry) => !known.has(entry.id)).map(entryView);
+    this.earlierEntries = [...added, ...this.earlierEntries];
+    this.onView();
+    return added.length === 0 ? "没有更早的条目" : `更早 ${added.length} 条`;
+  }
+
   private async untilLeft(operationId: string, started: number): Promise<void> {
     while (true) {
       const snap = this.snapshot();
@@ -184,9 +247,10 @@ class AttachedLane {
   }
 }
 
-function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active: string): TuiWindow {
+function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active: string, earlier: TuiEntry[] = []): TuiWindow {
+  const seen = new Set(snapshot.entries.map((entry) => entry.id));
   return {
-    entries: snapshot.entries.map(entryView),
+    entries: [...earlier.filter((entry) => !seen.has(entry.id)), ...snapshot.entries.map(entryView)],
     pendingText: pendingText(snapshot),
     tools: snapshot.tools.map((tool) => ({ name: tool.name, status: tool.status })),
     busy: snapshot.operationId !== null,
