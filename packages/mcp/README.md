@@ -30,10 +30,11 @@
 - 旧修订版才保存 `Mcp-Session-Id`，在 `notifications/initialized` 之后打开 GET SSE，并在响应流或 GET 流中断后用 `Last-Event-ID` 续传。关闭时对旧会话发 DELETE。
 - 不生成 `Mcp-Param-*`。传输层看不到工具的 `inputSchema`，不能靠扫参数去补 `x-mcp-header`。
 - 不实现 2024-11-05 的 HTTP+SSE。没有现代 JSON-RPC 正文的 404 或 405 会失败，不会改走那条传输。
-- `AuthProvider` 在 401，或带 `insufficient_scope` 的 403 之后，让同一次刷新重试一遍。第二次仍失败就抛出 `McpAuthRequiredError`，错误文本不包含 bearer token。OAuth 发现、PKCE 和凭证文件还不在这个包里。
+- `AuthProvider` 在 401，或带 `insufficient_scope` 的 403 之后，让同一次刷新重试一遍。第二次仍失败就抛出 `McpAuthRequiredError`，错误文本不包含 bearer token。
+- OAuth 发现、PKCE、刷新和 step-up 在本包内。动态注册会带 `application_type`；调用方没写时用 `native`，写了 `web` 就保留。调用方提供 Client ID Metadata Document 时不再动态注册。授权响应里的 `iss`，以及元数据声明会返回 `iss` 时，必须和发现到的 issuer 一致。凭证按 MCP 服务器地址分开保存。受保护资源元数据给出的 issuer 变了，就丢掉这个授权服务器签发的 client 和 token，不把它们发给新的授权服务器。这次没拿到受保护资源元数据时，仍用已经记录的 issuer。刷新失败不写入半份凭证，也不再发这一次 MCP 请求。`onRedirect` 只把授权地址交给调用方，本包不打开浏览器。`OAuthCallbackServer` 可以在 `127.0.0.1` 上等待回调。凭证放在调用方提供的 store 里，本包不选择凭证文件，也不读取真实密钥。
 
-本地子进程和 `127.0.0.1` fixture 不是真实 MCP 服务器验收，也不是真实 OAuth 验收。
+本地子进程、`127.0.0.1` fixture 和注入的 fetch 不是真实 MCP 服务器验收，也不是真实 OAuth 登录验收。
 
 ## 范围
 
-不实现采样、任务、`subscriptions/listen`，也不打开浏览器。
+不实现采样、任务、`subscriptions/listen`。回调监听不打开浏览器。

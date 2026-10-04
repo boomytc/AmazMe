@@ -11,7 +11,8 @@ export interface UnauthorizedContext {
 
 /**
  * Supplies bearer tokens to the Streamable HTTP transport.
- * OAuth discovery, PKCE, and credential storage are not part of this interface.
+ * OAuth discovery, PKCE, and credential storage implement this interface from `oauth/`.
+ * They are not methods on the interface itself.
  */
 export interface AuthProvider {
   token(): Promise<string | undefined>;
