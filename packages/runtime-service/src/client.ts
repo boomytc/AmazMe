@@ -4,6 +4,7 @@ import {
   AbortReplySchema,
   AttachReplySchema,
   ContractError,
+  ConversationsReplySchema,
   DriveOutcomeSchema,
   EmptyReplySchema,
   EnqueuedReplySchema,
@@ -60,6 +61,13 @@ export class RuntimeClient {
   /** Asks the host to drain, delete, and drop that runtime. A repeated call shares the host's result. */
   async remove(runtimeId: string, options?: RequestOptions): Promise<void> {
     parse(EmptyReplySchema, await this.client.request(this.client.serverRoute(), { method: "remove", runtimeId }, options), "remove reply");
+  }
+
+  /** Lane names stored in this runtime. Does not create a lane. */
+  async conversations(options?: RequestOptions): Promise<string[]> {
+    const route = this.client.attachment;
+    if (!route) throw new NotAttachedError();
+    return parse(ConversationsReplySchema, await this.client.request(route, { method: "conversations" }, options), "conversations").lanes;
   }
 
   lane(name: string): RemoteLane {

@@ -1,5 +1,7 @@
 # @amazme/durable
 
+这是 AmazMe 第一个大版本的持久化运行时。没有版本 1 标头、但已经有数据的会话或 runtime 文件直接拒绝，不迁移。
+
 持久化 lane 运行时。依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 的 `walkBefore`、`walkAfter`、`walkTransform`、`walkYield`。`@amazme/agent` 不依赖本包。运行语义保持本仓库现有设计，不另建 hook 类型或第二套遍历。
 
 ## 入口与使用

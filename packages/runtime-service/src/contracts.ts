@@ -45,9 +45,10 @@ const FollowUpCall = Strict({ method: Type.Literal("followUp"), lane: LaneNameSc
 const RequestAbortCall = Strict({ method: Type.Literal("requestAbort"), lane: LaneNameSchema, operationId: OperationReferenceSchema });
 const SubscribeCall = Strict({ method: Type.Literal("subscribe"), lane: LaneNameSchema, subscriptionId: SubscriptionIdSchema });
 const UnsubscribeCall = Strict({ method: Type.Literal("unsubscribe"), subscriptionId: SubscriptionIdSchema });
-/** Calls on a runtime route. Lane calls name their lane; unsubscribe names its route-local subscription. */
+const ConversationsCall = Strict({ method: Type.Literal("conversations") });
+/** Calls on a runtime route. Lane calls name their lane; unsubscribe and conversations do not. */
 export const RuntimeCallSchema = Type.Union([
-  AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall, SubscribeCall, UnsubscribeCall,
+  AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
 ]);
 export type RuntimeCall = Static<typeof RuntimeCallSchema>;
 
@@ -237,6 +238,9 @@ export function parse<T extends TSchema>(schema: T, value: unknown, label: strin
   if (!Check(schema, value)) throw new ContractError(`invalid ${label}`);
   return value as Static<T>;
 }
+
+export const ConversationsReplySchema = Strict({ lanes: Type.Array(LaneNameSchema) });
+export type ConversationsReply = Static<typeof ConversationsReplySchema>;
 
 export const parseRuntimeCall = (value: JsonValue): RuntimeCall => parse(RuntimeCallSchema, value, "runtime call");
 export const parseManagementCall = (value: JsonValue): ManagementCall => parse(ManagementCallSchema, value, "management call");

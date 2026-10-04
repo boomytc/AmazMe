@@ -2,6 +2,7 @@ export {
   AbortReplySchema,
   AttachReplySchema,
   ContractError,
+  ConversationsReplySchema,
   DriveOutcomeSchema,
   EmptyReplySchema,
   EnqueuedReplySchema,

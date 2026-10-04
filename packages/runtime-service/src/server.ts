@@ -236,6 +236,9 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
     } catch (error) {
       throw new ServiceError("invalid_call", error instanceof ContractError ? error.message : "invalid runtime call");
     }
+    if (call.method === "conversations") {
+      return wire({ lanes: await this.harness.conversations() });
+    }
     if (call.method === "unsubscribe") {
       const sink = context.subscription(call.subscriptionId);
       if (!sink) throw new ServiceError("unknown_subscription", `subscription ${call.subscriptionId} is not open`);

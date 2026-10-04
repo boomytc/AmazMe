@@ -1,5 +1,7 @@
 # AmazMe
 
+这是 AmazMe 的第一个大版本。宿主持有会话日志、工具和模型。全屏在 `@amazme/tui`，网页在 `@amazme/web`，两者都只附着宿主。没有版本 1 标头、但已经有数据的会话或 runtime 文件不可读，也不会被迁移。
+
 起步于 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时 `@amazme/durable` 依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 已有的 `walkBefore`、`walkAfter`、`walkTransform`、`walkYield`。`@amazme/agent` 不依赖 `@amazme/durable`。
 
 ```text
@@ -13,7 +15,8 @@
 @amazme/durable        可崩溃恢复的 AgentHarness、存储契约与适配器
 @amazme/runtime-service  Durable lane 控制、完整快照、有界订阅和历史分页；服务端打开并持有 runtime 和存储
 @amazme/tui            全屏客户端：只附着宿主 socket，不持有会话、工具或模型
-@amazme/coding-agent   宿主、read/write/edit/bash、CLI、MCP 工具适配。全屏由它拉起宿主再交给 tui
+@amazme/web            回环网页：列会话、打开转录、提交、中止。不持有会话、工具或模型
+@amazme/coding-agent   宿主、read/write/edit/bash、CLI、MCP 工具适配。全屏和网页由它拉起宿主再交给对应客户端
 ```
 
 `@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 没有实现。现代 HTTP 按 `tools/list` 中合法的 `x-mcp-header` 标注生成 `Mcp-Param-*`，非法标注工具被过滤，错误参数在发送前失败。OAuth 发现、PKCE、刷新和 step-up 在独立的 `@amazme/mcp/oauth` 入口里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。`@amazme/coding-agent` 把已经连上的客户端适配成 Agent 工具：名字是 `mcp_<serverId>__<toolName>`，冲突或超长就报错，不截断；取消、进度、文本和图片结果交给工具执行。协议包本身不依赖 Agent。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。
@@ -142,7 +145,7 @@ const models = createModels({ telemetryContext });
 
 内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。这四个工具共用一条工作区策略：工作区可写，`<workspace>/.amazme` 不可读写，只有 `<workspace>/.amazme/tmp` 例外，工具没有网络。darwin 用 Seatbelt，linux 用 Bubblewrap（`--unshare-net`，把 `.amazme` 盖成 tmpfs 后再绑回 tmp）。平台不对，或对应的 `sandbox-exec` / `bwrap` 不存在时，工具抛出 `SANDBOX_UNAVAILABLE`，不会退回不受限制的进程。模型请求和调用方自己持有的 MCP 工具不在这道边界里。
 
-CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket` 是本机控制端：连上 `serve`，提交、follow-up、`/steer`、`/abort`、`/earlier`。`/continue` 只对已经写下的 `retry_wait` 再 `drive`，并等到 `notBefore`。没有提示词时的全屏也是这个宿主的客户端：它显示正在到达的助手文本和工具名与状态，可以中止当前操作，按条目和轮次滚动，焦点在提示和滚动之间切换，`/new`、`/resume`、`/compact` 发给宿主。`amazme bridge --socket [--port n]` 只监听 `127.0.0.1`，用同一条 lane 提供页面。这些客户端都不持有 JSONL，也不执行工具，也不调用模型。
+CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket` 是本机控制端：连上 `serve`，提交、follow-up、`/steer`、`/abort`、`/earlier`。`/continue` 只对已经写下的 `retry_wait` 再 `drive`，并等到 `notBefore`。没有提示词时的全屏也是这个宿主的客户端：它显示正在到达的助手文本和工具名与状态，可以中止当前操作，按条目和轮次滚动，焦点在提示和滚动之间切换，`/new`、`/resume`、`/compact` 发给宿主。`amazme bridge --socket [--port n]` 只监听 `127.0.0.1`。页面列出会话、打开一段转录、提交提示，并在回合结束前显示助手文本和工具状态。这些客户端都不持有 JSONL，也不执行工具，也不调用模型。
 
 `appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。库导出本身不打开传输。`amazme serve` 在打开 runtime 时读取 `<cwd>/.amazme/mcp.json`：文件不存在就没有 MCP；文件无效或某个服务器连不上，这次打开失败，码是 `mcp_unavailable`。连接跟这次 runtime 走，客户端断开不断开它们。MCP 调用留在宿主进程里，继承宿主环境，不进 Seatbelt。一次性命令和全屏不读这份配置。没有服务器或列表为空时，工具数组不变。
 
