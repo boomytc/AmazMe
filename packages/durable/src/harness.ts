@@ -220,6 +220,15 @@ type Plan =
 
 const running = (): Scope => ({ control: { status: "running" }, attempt: 0, overflowUsed: false, thresholdUsed: false });
 
+/** Admitted storage calls. The public `storage` field stays the caller's instance. */
+const trackedStorage = new WeakMap<AgentHarness, Storage>();
+
+function admitted(harness: AgentHarness): Storage {
+  const storage = trackedStorage.get(harness);
+  if (!storage) throw new Error("harness storage is missing");
+  return storage;
+}
+
 /**
  * Durable lane runtime. `accept` records an operation and does not call a model.
  * `drive` advances the total operation state. A new process resumes from that state:
@@ -229,7 +238,10 @@ export class AgentHarness {
   private closed = false;
   private abandoned = false;
   private abort = new AbortController();
+  private quiet: Promise<void> | undefined;
   private readonly drives = new Map<string, Promise<Result<DriveOutcome>>>();
+  /** Storage work admitted outside a drive: accept, queue, abort, and reads. */
+  private readonly side = new Set<Promise<unknown>>();
   private readonly laneAborts = new Map<string, AbortController>();
   /** Effects this process has armed. A restarted harness has an empty set, so the same leaf means recovery. */
   readonly live = new Set<string>();
@@ -237,8 +249,15 @@ export class AgentHarness {
   readonly options: HarnessOptions;
 
   constructor(storage: Storage, options: HarnessOptions) {
-    this.storage = storage;
     this.options = options;
+    this.storage = storage;
+    trackedStorage.set(this, {
+      run: (fn) => this.observe(storage.run(fn)),
+      commit: (writes) => this.observe(storage.commit(writes)),
+      read: (fn) => this.observe(storage.read(fn)),
+      subscribe: (listener) => storage.subscribe(listener),
+      whenIdle: () => storage.whenIdle(),
+    });
   }
 
   lane(name = "main"): AgentLane {
@@ -250,9 +269,49 @@ export class AgentHarness {
     this.abandoned = true;
   }
 
-  close(): void {
+  /**
+   * Stops admission and aborts the harness signal. Does not persist `requestAbort` and does not close storage.
+   * Resolves when admitted drives, side operations, and the storage queue behind them have finished.
+   * A tool that ignores the signal keeps this promise pending. Repeated calls share one promise.
+   */
+  close(): Promise<void> {
+    return this.shutdown("abort");
+  }
+
+  /**
+   * Stops admission without aborting in-flight work and without persisting `requestAbort`.
+   * A later `close()` still aborts the signal and waits on this same promise.
+   */
+  drain(): Promise<void> {
+    return this.shutdown("drain");
+  }
+
+  /** Remember work that must finish before `close` or `drain` resolves. */
+  private observe<T>(work: Promise<T>): Promise<T> {
+    this.side.add(work);
+    // The derived promise must not surface a second rejection of `work`.
+    void work.finally(() => {
+      this.side.delete(work);
+    }).catch(() => undefined);
+    return work;
+  }
+
+  private shutdown(mode: "drain" | "abort"): Promise<void> {
+    if (mode === "abort") this.abort.abort();
     this.closed = true;
-    this.abort.abort();
+    return this.quiet ??= this.waitUntilQuiet();
+  }
+
+  private async waitUntilQuiet(): Promise<void> {
+    for (;;) {
+      const pending = [...this.drives.values(), ...this.side];
+      if (pending.length === 0) {
+        await this.storage.whenIdle();
+        if (this.drives.size === 0 && this.side.size === 0) return;
+        continue;
+      }
+      await Promise.allSettled(pending);
+    }
   }
 
   get isClosed(): boolean {
@@ -282,6 +341,7 @@ export class AgentHarness {
     const key = `${lane}\0${operationId}`;
     const existing = this.drives.get(key);
     if (existing) return existing;
+    if (this.closed) return Promise.resolve(failure("closed", "harness is closed"));
     let settle: (value: Result<DriveOutcome>) => void = () => undefined;
     let fail: (error: unknown) => void = () => undefined;
     const run = new Promise<Result<DriveOutcome>>((resolve, reject) => {
@@ -313,9 +373,9 @@ export class AgentLane {
     this.name = name;
   }
 
-  async accept(request: OperationRequest): Promise<Result<OperationAdmission>> {
-    if (this.harness.isClosed) return failure("closed", "harness is closed");
-    return this.harness.storage.run((view, apply) => this.acceptLocked(view, apply, request));
+  accept(request: OperationRequest): Promise<Result<OperationAdmission>> {
+    if (this.harness.isClosed) return Promise.resolve(failure("closed", "harness is closed"));
+    return admitted(this.harness).run((view, apply) => this.acceptLocked(view, apply, request));
   }
 
   drive(operationId: string, options: { waitForRetry?: boolean } = {}): Promise<Result<DriveOutcome>> {
@@ -339,8 +399,8 @@ export class AgentLane {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
     const signal = this.harness.laneSignal(this.name);
     for (let step = 0; step < 64; step++) {
-      if (this.harness.isAbandoned) return this.settledOrWait(operationId);
-      const planned = await this.harness.storage.run((view, apply) => this.plan(view, apply, operationId, span));
+      if (this.harness.isAbandoned || this.harness.signal().aborted) return this.settledOrWait(operationId);
+      const planned = await admitted(this.harness).run((view, apply) => this.plan(view, apply, operationId, span));
       if (this.harness.isAbandoned) return this.settledOrWait(operationId);
       if (planned.type === "error") return { ok: false, error: planned.error };
       if (planned.type === "settled") return { ok: true, value: { kind: "settled", result: planned.result } };
@@ -353,10 +413,16 @@ export class AgentLane {
         return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: planned.notBefore } };
       }
       if (planned.type === "continue") continue;
+      // Abort can land inside plan(), after this step has armed a model or tool effect.
+      // Do not start that effect. Drain leaves the signal alone, so the same step still runs.
+      if (this.harness.signal().aborted) {
+        if (planned.type === "assistant" || planned.type === "summary") this.harness.live.delete(planned.responseEntryId);
+        return this.settledOrWait(operationId);
+      }
       if (planned.type === "yield") {
         const text = await walkYield(this.hookList(), signal);
         if (this.harness.isAbandoned) return this.settledOrWait(operationId);
-        const applied = await this.harness.storage.run((view, apply) => this.applyYield(view, apply, operationId, text, signal));
+        const applied = await admitted(this.harness).run((view, apply) => this.applyYield(view, apply, operationId, text, signal));
         if (applied.type === "error") return { ok: false, error: applied.error };
         if (applied.type === "settled") return { ok: true, value: { kind: "settled", result: applied.result } };
         continue;
@@ -365,7 +431,7 @@ export class AgentLane {
         try {
           const message = await this.streamAssistant(planned, signal, span);
           if (this.harness.isAbandoned || !message) return this.settledOrWait(operationId);
-          await this.harness.storage.run((view, apply) => this.settleAssistant(view, apply, planned, message));
+          await admitted(this.harness).run((view, apply) => this.settleAssistant(view, apply, planned, message));
         } finally {
           this.harness.live.delete(planned.responseEntryId);
         }
@@ -375,7 +441,7 @@ export class AgentLane {
         try {
           const message = await this.streamSummary(signal, span);
           if (this.harness.isAbandoned || !message) return this.settledOrWait(operationId);
-          await this.harness.storage.run((view, apply) => this.settleSummary(view, apply, planned, message));
+          await admitted(this.harness).run((view, apply) => this.settleSummary(view, apply, planned, message));
         } finally {
           this.harness.live.delete(planned.responseEntryId);
         }
@@ -406,7 +472,7 @@ export class AgentLane {
 
   async requestAbort(operationId: string): Promise<Result<{ operationId: string; newlyRequested: boolean }>> {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
-    const result = await this.harness.storage.run((view, apply) => {
+    const result = await admitted(this.harness).run((view, apply) => {
       const record = this.record(view);
       if (record.currentOperationId !== operationId) {
         return failure("operation_mismatch", "operation is not current");
@@ -434,20 +500,20 @@ export class AgentLane {
     return result;
   }
 
-  async inspect(): Promise<LaneStatus> {
-    return this.harness.storage.read((view) => this.status(view).status);
+  inspect(): Promise<LaneStatus> {
+    return admitted(this.harness).read((view) => this.status(view).status);
   }
 
-  async entries(): Promise<Entry[]> {
-    return this.harness.storage.read((view) => {
+  entries(): Promise<Entry[]> {
+    return admitted(this.harness).read((view) => {
       const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
       return ancestors(view, tip);
     });
   }
 
   /** Read-only: does not initialize the lane, drive, or recover, and never synthesizes a settled message. */
-  async snapshot(): Promise<LaneSnapshot> {
-    return this.harness.storage.read((view) => {
+  snapshot(): Promise<LaneSnapshot> {
+    return admitted(this.harness).read((view) => {
       const { status, state } = this.status(view);
       let pendingResponse: PendingResponse | null = null;
       if (status.operationId && state?.phase === "assistant_effect_pending") {
@@ -466,8 +532,8 @@ export class AgentLane {
   }
 
   /** The settled result of an operation of this lane, or `null` before settlement. Never drives. */
-  async result(operationId: string): Promise<Result<OperationResult | null>> {
-    return this.harness.storage.read((view): Result<OperationResult | null> => {
+  result(operationId: string): Promise<Result<OperationResult | null>> {
+    return admitted(this.harness).read((view): Result<OperationResult | null> => {
       const result = view.get<OperationResult>(resultAddress(operationId));
       if (result) {
         if (result.lane !== this.name) return failure("operation_mismatch", "result does not belong to this lane");
@@ -500,7 +566,7 @@ export class AgentLane {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
     if (message.role !== "user" && message.role !== "custom") return failure("invalid_message", "queue accepts user messages");
     const entryId = uuidv7();
-    await this.harness.storage.run((view, apply) => {
+    await admitted(this.harness).run((view, apply) => {
       const record = this.record(view);
       apply([
         { type: "set", address: pendingAddress(entryId), value: { type: "message", message } satisfies import("./storage.ts").EntryPayload },
@@ -699,13 +765,13 @@ export class AgentLane {
   }
 
   private async streamAssistant(planned: Extract<Plan, { type: "assistant" }>, signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage | undefined> {
-    const context = await this.harness.storage.read((view) => this.providerContext(view));
-    const config = await this.harness.storage.read((view) => this.config(view));
+    const context = await admitted(this.harness).read((view) => this.providerContext(view));
+    const config = await admitted(this.harness).read((view) => this.config(view));
     if (this.harness.isAbandoned) return undefined;
     const model = this.harness.options.models.getModel(config.provider, config.modelId);
     if (!model) return missingModel(config);
     const replaced = await walkTransform(this.hookList(), context.messages as AgentMessage[], signal);
-    if (this.harness.isAbandoned) return undefined;
+    if (this.harness.isAbandoned || signal.aborted) return undefined;
     const request = replaced ? { ...context, messages: toProviderMessages(replaced) } : context;
     const stream = this.harness.options.models.streamSimple(model, request, {
       signal,
@@ -732,7 +798,7 @@ export class AgentLane {
   }
 
   private async streamSummary(signal: AbortSignal, telemetryContext: TelemetryContext): Promise<AssistantMessage | undefined> {
-    const prepared = await this.harness.storage.read((view) => {
+    const prepared = await admitted(this.harness).read((view) => {
       const operationId = this.record(view).currentOperationId;
       const state = operationId ? view.get<OperationState>(stateAddress(operationId)) : undefined;
       const config = this.config(view);
@@ -748,7 +814,7 @@ export class AgentLane {
       return failed;
     }
     const replaced = await walkTransform(this.hookList(), request.context.messages as AgentMessage[], signal);
-    if (this.harness.isAbandoned) return undefined;
+    if (this.harness.isAbandoned || signal.aborted) return undefined;
     const summaryContext = replaced
       ? { ...request.context, messages: toProviderMessages(replaced) }
       : request.context;
@@ -766,7 +832,7 @@ export class AgentLane {
   }
 
   private appendFrame(planned: { operationId: string; responseEntryId: string }, frame: import("@amazme/ai").AssistantFrame): Promise<void> {
-    return this.harness.storage.run((view, apply) => {
+    return admitted(this.harness).run((view, apply) => {
       if (this.harness.isAbandoned) return;
       const state = view.get<OperationState>(stateAddress(planned.operationId));
       if (state?.phase !== "assistant_effect_pending" || state.responseEntryId !== planned.responseEntryId) return;
@@ -1004,7 +1070,7 @@ export class AgentLane {
   private async runTools(operationId: string, signal: AbortSignal, telemetryContext: DriveSpan): Promise<void> {
     for (let step = 0; step < 32; step++) {
       if (this.harness.isAbandoned) return;
-      const action = await this.harness.storage.run((view, apply) => this.armTools(view, apply, operationId, telemetryContext));
+      const action = await admitted(this.harness).run((view, apply) => this.armTools(view, apply, operationId, telemetryContext));
       if (action.type === "done" || this.harness.isAbandoned) return;
       const armed = action.type === "run"
         ? action
@@ -1052,7 +1118,7 @@ export class AgentLane {
     decided: readonly ToolDecision[],
     signal: AbortSignal,
   ): Promise<{ type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] }> {
-    return this.harness.storage.run((view, apply) => this.commitToolDecisions(view, apply, operationId, mode, decided, signal));
+    return admitted(this.harness).run((view, apply) => this.commitToolDecisions(view, apply, operationId, mode, decided, signal));
   }
 
   private armTools(view: StorageView, apply: Apply, operationId: string, telemetryContext: DriveSpan): ToolPrep {
@@ -1162,7 +1228,7 @@ export class AgentLane {
           result = applyAfter(result, update);
         }
         if (this.harness.isAbandoned) return;
-        await this.harness.storage.run((view, apply) => this.stageTool(view, apply, operationId, call, result));
+        await admitted(this.harness).run((view, apply) => this.stageTool(view, apply, operationId, call, result));
       } finally {
         this.harness.live.delete(call.resultEntryId);
       }
@@ -1229,7 +1295,7 @@ export class AgentLane {
     const accept = (partial: string, options?: { checkpoint?: boolean }): void => {
       if (!accepting || !options?.checkpoint) return;
       const pending = Promise.resolve()
-        .then(() => this.harness.storage.run((view, apply) => {
+        .then(() => admitted(this.harness).run((view, apply) => {
           if (this.harness.isAbandoned) return;
           const state = view.get<OperationState>(stateAddress(call.operationId));
           if (state?.phase !== "tools") return;
@@ -1709,7 +1775,7 @@ export class AgentLane {
   }
 
   private async settledOrWait(operationId: string): Promise<Result<DriveOutcome>> {
-    const result = await this.harness.storage.read((view) => view.get<OperationResult>(resultAddress(operationId)));
+    const result = await admitted(this.harness).read((view) => view.get<OperationResult>(resultAddress(operationId)));
     if (!result) return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: Date.now() } };
     if (result.lane !== this.name) return failure("operation_mismatch", "result does not belong to this lane");
     return { ok: true, value: { kind: "settled", result } };
@@ -1806,18 +1872,36 @@ async function settleAll(tasks: Promise<void>[]): Promise<void> {
   }
 }
 
-function waitUntil(notBefore: number, signal: AbortSignal): Promise<void> {
+/** Wait until `notBefore`, or until `signal` aborts. An already-aborted signal finishes without a timer. */
+export function waitUntil(notBefore: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
   const ms = Math.max(0, notBefore - Date.now());
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
+  if (ms === 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
         clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+      } finally {
         resolve();
-      },
-      { once: true },
-    );
+      }
+    };
+    const onAbort = () => finish();
+    const timer = setTimeout(finish, ms);
+    try {
+      signal.addEventListener("abort", onAbort, { once: true });
+    } catch (error) {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+      }
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    if (signal.aborted) finish();
   });
 }
 
