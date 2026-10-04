@@ -26,8 +26,10 @@ const handlers = server.accept(byteConnection);
 
 同一个 runtime id 只有一套生命周期。并发打开合并为一次 `openRuntime`；它只收到 runtime id 和打开信号，调用方不能传入路径、模块或构造参数。返回的 handle 归这套生命周期。工厂抛错时必须自行清掉还没交还的资源；返回 handle 之后由服务端关闭，再释放所有权或删除数据。
 
-- `server.close("drain")` 停止接收、撤销路由并等待已准入调用和 handle 结束。`close("abort")` 额外要求 handle 停止；进行中的 drain 会被后到的 abort 升级。两者共享同一次关闭。某个 handle 失败不会跳过其他 handle，失败会拒绝这次关闭，不会报成成功。不响应 abort 的 handle 会让关闭一直等待，所有权也不释放。`close` 不删除数据。
-- `removeRuntime` 禁止新的 attachment、撤销现有路由、排空并关闭 handle，然后在关闭成功时调用 `handle.remove()`（若存在）。重复调用共享进行中的那次；失败可以再试。已经开始 `release()` 的闲置回收不能再改成删除，这次移除会失败。
+`watchIdle` 安装失败时，已取得的 handle 会关闭并释放，清理完成前禁止重新打开。退订失败时保留 handle 和退订步骤，由下一次关闭重试完成，不丢弃仍待清理的资源记录。
+
+- `server.close("drain")` 停止接收、撤销路由并等待已准入调用和 handle 结束。`close("abort")` 立即要求 handle 停止，再等待已准入调用；仍进行中的 handle 关闭会被后到的 abort 升级，升级的完成和错误也计入关闭屏障。host 已结束并开始释放或删除所有权后，不再重新启动 host 关闭，只等待所有权收尾。两者共享同一次关闭。某个 handle 失败不会跳过其他 handle，失败会拒绝这次关闭，不会报成成功；拒绝后可重试清理，准入始终保持关闭。不响应 abort 的 handle 会让关闭一直等待，所有权也不释放。`close` 不删除数据。
+- `removeRuntime` 禁止新的 attachment、撤销现有路由、排空并关闭 handle，然后在关闭成功时调用 `handle.remove()`（若存在）。未加载的 id 同样经过受控 `openRuntime`：取得新所有权后删除，只有返回 `null` 才表示目标不存在。重复调用共享进行中的那次；失败可以再试。已经开始 `release()` 的闲置回收不能再改成删除，这次移除会失败；闲置回收完成后，删除会重新取得所有权。
 - 没有任何 attachment、准入调用，且 `handle.idle()` 为真时，服务端关闭并 `release()`，不删数据。之后的 attach 会重新打开，旧 attachment 失效。`idle()` 为假时，最后一个客户端离开也不关闭 runtime。
 - 传输拥有监听器。每个被接受的 `ByteConnection` 从 `accept()` 起归服务端，直到服务端调用它的 `close()`；`send` 必须保序，它的 Promise 就是背压。传输把收到的字节、对端关闭和错误交给返回的处理函数。
 - 连接拥有它的 request ID、订阅和当前这一份 attachment。两个连接的同号 ID 互不影响，租约也互不影响。
@@ -55,7 +57,7 @@ attach / detach 由宿主的 `ServerService` 通过 `attach(runtimeId)` / `detac
 | `maxQueuedBytes` | 两帧（每连接） | 关闭该连接，不丢弃响应 |
 | `handshakeTimeoutMs` | 10,000 | `handshake_timeout` 并关闭 |
 
-`server.close()` 在同一次关闭上可重复调用并返回同一个 Promise；`onError` 自身的异常被忽略。
+`server.close()` 在同一次关闭上可重复调用并返回同一个 Promise，失败后可开始新一轮清理；`onError` 自身的异常被忽略。
 
 ## Unix socket
 

@@ -95,9 +95,9 @@ interface RuntimeSlot {
   unwatch?: () => void;
   removal?: Promise<void>;
   closeOnce?: Promise<void>;
+  closeMode?: "drain" | "abort";
   /** Explicit removal. An idle reclaim must not clear it. */
   deleteData: boolean;
-  dataDeleted: boolean;
   /** Set for the ownership step that is already in progress. A release cannot be upgraded into a delete. */
   dropping?: "release" | "remove";
 }
@@ -141,6 +141,7 @@ export class Server {
   private readonly connections = new Set<Conn>();
   private readonly tasks = new Set<Promise<void>>();
   private closing: Promise<void> | undefined;
+  private stopped = false;
   private abortClose = false;
 
   constructor(options: ServerOptions) {
@@ -161,18 +162,27 @@ export class Server {
   }
 
   get closed(): boolean {
-    return this.closing !== undefined;
+    return this.stopped;
   }
 
   /**
    * Forbids new attachments, revokes current ones, waits until their admitted calls finish, then closes
    * the handle and, if the handle offers it, deletes host data. Repeated calls share one operation.
-   * A missing runtime resolves. Failure rejects and can be retried; it is not reported as success.
+   * An unloaded id is resolved through `openRuntime` under the same exclusive slot; null is absent.
+   * Failure rejects and can be retried; it is not reported as success.
    */
   removeRuntime(runtimeId: string): Promise<void> {
     const slot = this.slots.get(runtimeId);
-    if (!slot) return this.closing ?? Promise.resolve();
-    return this.removeSlot(slot, true);
+    if (slot) return this.removeSlot(slot, true);
+    if (this.stopped) return Promise.reject(new ServiceError("server_closing", "server is closing"));
+    try {
+      this.validateRuntimeId(runtimeId);
+      // An unloaded runtime can still have durable data. Resolve it under the same slot that
+      // excludes attachment opens, and retain its ownership until removal finishes.
+      return this.removeSlot(this.slotFor(runtimeId, true), true, false);
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
 
   accept(transport: ByteConnection): ByteConnectionHandlers {
@@ -204,7 +214,7 @@ export class Server {
       },
       onError: (error) => this.drop(conn, error),
     };
-    if (this.closing) {
+    if (this.stopped) {
       this.fatal(conn, errorBody("server_closing", "server is closing"));
       return handlers;
     }
@@ -220,18 +230,24 @@ export class Server {
   /**
    * Stops accepting, aborts call signals, and closes every opened runtime.
    * `drain` waits for host work. `abort` asks each handle to stop; a later abort upgrades an in-flight drain.
-   * Repeated calls share this promise. One handle failing does not skip the others.
+   * Repeated calls share this promise. A rejected shutdown can be retried while admission stays closed.
+   * One handle failing does not skip the others.
    */
   close(mode: "drain" | "abort" = "drain"): Promise<void> {
     if (mode === "abort") this.abortClose = true;
+    this.stopped = true;
     if (!this.closing) {
-      let finish!: (error?: unknown) => void;
-      this.closing = new Promise<void>((resolve, reject) => {
-        finish = (error) => error === undefined ? resolve() : reject(error);
-      });
+      const closing = deferred<void>();
+      this.closing = closing.promise;
       for (const conn of [...this.connections]) this.drop(conn);
-      void this.shutdown().then(() => finish(), (error: unknown) => finish(error));
-    } else if (mode === "abort") {
+      void this.shutdown().then(() => closing.resolve(), (error: unknown) => {
+        if (this.closing === closing.promise) this.closing = undefined;
+        closing.reject(error);
+      });
+    }
+    if (mode === "abort") {
+      // Ask the producer to stop before waiting for calls that may themselves await that producer.
+      // closeHandle retains its completion/error barrier; the shutdown waits before dropping ownership.
       for (const slot of this.slots.values()) {
         if (slot.handle) void this.closeHandle(slot, "abort").catch((error: unknown) => this.report(error));
       }
@@ -448,7 +464,7 @@ export class Server {
       },
       attach(runtimeId: string): Promise<RuntimeRoute> {
         if (opened.settled) throw new ServiceError("call_settled", "attachment changes only while their call runs");
-        if (conn.state === "closed" || server.closing) throw new ServiceError("connection_closed", "the connection is closed");
+        if (conn.state === "closed" || server.stopped) throw new ServiceError("connection_closed", "the connection is closed");
         return server.changeAttachment(conn, runtimeId, signal, opened);
       },
       detach(): Promise<void> {
@@ -497,12 +513,12 @@ export class Server {
   private async changeAttachment(conn: Conn, runtimeId: string, signal: AbortSignal, opened: Opened): Promise<RuntimeRoute> {
     return this.exclusive(conn, async () => {
       if (opened.settled) throw new ServiceError("call_settled", "attachment changes only while their call runs");
-      if (closed(conn) || this.closing) throw new ServiceError("connection_closed", "the connection is closed");
+      if (closed(conn) || this.stopped) throw new ServiceError("connection_closed", "the connection is closed");
       if (conn.attachment?.runtimeId === runtimeId && conn.lease && conn.lease.slot.state === "open") return { ...conn.attachment };
       const previous = conn.lease;
       try {
         const handle = await this.joinOpen(runtimeId, signal);
-        if (closed(conn) || this.closing) throw new ServiceError("connection_closed", "the connection closed while attaching");
+        if (closed(conn) || this.stopped) throw new ServiceError("connection_closed", "the connection closed while attaching");
         if (signal.aborted) throw aborted();
         const slot = this.slots.get(runtimeId);
         if (!slot || slot.handle !== handle || !isOpen(slot)) throw new ServiceError("runtime_busy", `runtime ${runtimeId} is closing`);
@@ -513,9 +529,9 @@ export class Server {
           if (error instanceof ServiceError) throw error;
           throw new ServiceError("internal", "the runtime did not grant a lease");
         }
-        if (closed(conn) || this.closing || signal.aborted || !isOpen(slot) || slot.handle !== handle) {
+        if (closed(conn) || this.stopped || signal.aborted || !isOpen(slot) || slot.handle !== handle) {
           await this.settleAcquired(slot, acquired);
-          if (signal.aborted && !closed(conn) && !this.closing) throw aborted();
+          if (signal.aborted && !closed(conn) && !this.stopped) throw aborted();
           if (slot.state === "removing") throw new ServiceError("runtime_busy", `runtime ${runtimeId} is closing`);
           throw new ServiceError("connection_closed", "the connection closed while attaching");
         }
@@ -558,7 +574,7 @@ export class Server {
 
   private async joinOpen(runtimeId: string, signal: AbortSignal): Promise<RuntimeHandle> {
     this.validateRuntimeId(runtimeId);
-    if (this.closing) throw new ServiceError("connection_closed", "the connection is closed");
+    if (this.stopped) throw new ServiceError("connection_closed", "the connection is closed");
     const slot = this.slotFor(runtimeId);
     if (slot.state === "open" && slot.handle) return slot.handle;
     slot.interests += 1;
@@ -582,7 +598,7 @@ export class Server {
     }
   }
 
-  private slotFor(runtimeId: string): RuntimeSlot {
+  private slotFor(runtimeId: string, forRemoval = false): RuntimeSlot {
     const existing = this.slots.get(runtimeId);
     if (existing) {
       if (existing.state === "removing") throw new ServiceError("runtime_busy", `runtime ${runtimeId} is closing`);
@@ -595,14 +611,14 @@ export class Server {
       interests: 0,
       leases: new Set(),
       deleteData: false,
-      dataDeleted: false,
     };
     this.slots.set(runtimeId, slot);
-    slot.ready = this.runOpen(slot);
+    // Publish the open barrier and register interests/removal before invoking a reentrant factory.
+    slot.ready = Promise.resolve().then(() => this.runOpen(slot, forRemoval));
     return slot;
   }
 
-  private async runOpen(slot: RuntimeSlot): Promise<RuntimeHandle> {
+  private async runOpen(slot: RuntimeSlot, forRemoval: boolean): Promise<RuntimeHandle> {
     let handle: RuntimeHandle | null;
     try {
       handle = await this.options.openRuntime(slot.runtimeId, slot.controller.signal);
@@ -614,16 +630,27 @@ export class Server {
       this.dropOpening(slot);
       throw new ServiceError("unknown_runtime", `runtime ${slot.runtimeId} is not available`);
     }
+    if (forRemoval) {
+      slot.handle = handle;
+      return handle;
+    }
     // A signal abort only discards the handle when nobody is still waiting. A waiter that arrived after
     // the previous last waiter left still receives this handle.
-    if (slot.state !== "opening" || slot.interests === 0 || this.closing) {
+    if (slot.state !== "opening" || slot.interests === 0 || this.stopped) {
       slot.handle = handle;
       if (!slot.removal) void this.removeSlot(slot, false).catch((error: unknown) => this.report(error));
-      throw new ServiceError(slot.state === "removing" || this.closing ? "runtime_busy" : "connection_closed", `runtime ${slot.runtimeId} open was discarded`);
+      throw new ServiceError(slot.state === "removing" || this.stopped ? "runtime_busy" : "connection_closed", `runtime ${slot.runtimeId} open was discarded`);
     }
     slot.handle = handle;
     slot.state = "open";
-    slot.unwatch = handle.watchIdle?.(() => this.reclaimIfIdle(slot));
+    try {
+      slot.unwatch = handle.watchIdle?.(() => this.reclaimIfIdle(slot));
+    } catch (error) {
+      // The factory has handed us ownership even when installing the watcher fails. Keep the
+      // slot unavailable until the handle has closed and released; never forget a live owner.
+      void this.removeSlot(slot, false).catch((cause: unknown) => this.report(cause));
+      throw error;
+    }
     return handle;
   }
 
@@ -639,21 +666,21 @@ export class Server {
 
   private settleLease(lease: LeaseState): Promise<void> {
     if (lease.settling) return lease.settling;
-    lease.settling = (async () => {
-      try {
-        while (lease.admitted.size > 0) await Promise.allSettled([...lease.admitted]);
-        if (!lease.released) {
-          await lease.lease.release();
-          lease.released = true;
-        }
-        lease.slot.leases.delete(lease);
-        this.reclaimIfIdle(lease.slot);
-      } catch (error) {
-        lease.settling = undefined;
-        throw error;
+    // Publish before host release code runs, including a synchronous throw or reentrant cleanup.
+    const settling = Promise.resolve().then(async () => {
+      while (lease.admitted.size > 0) await Promise.allSettled([...lease.admitted]);
+      if (!lease.released) {
+        await lease.lease.release();
+        lease.released = true;
       }
-    })();
-    return lease.settling;
+      lease.slot.leases.delete(lease);
+      this.reclaimIfIdle(lease.slot);
+    });
+    lease.settling = settling;
+    void settling.catch(() => {
+      if (lease.settling === settling) lease.settling = undefined;
+    });
+    return settling;
   }
 
   private reclaimIfIdle(slot: RuntimeSlot): void {
@@ -661,8 +688,9 @@ export class Server {
     void this.removeSlot(slot, false).catch((error: unknown) => this.report(error));
   }
 
-  private removeSlot(slot: RuntimeSlot, deleteData: boolean): Promise<void> {
+  private removeSlot(slot: RuntimeSlot, deleteData: boolean, abortOpening = true): Promise<void> {
     if (slot.removal) {
+      if (this.stopped) slot.controller.abort();
       // A release already in progress has dropped the write right. Do not mark the slot for deletion
       // or report that this call removed the data.
       if (deleteData && slot.dropping === "release") {
@@ -672,8 +700,10 @@ export class Server {
       return slot.removal;
     }
     if (deleteData) slot.deleteData = true;
+    const removal = deferred<void>();
+    slot.removal = removal.promise;
     slot.state = "removing";
-    slot.controller.abort();
+    if (abortOpening) slot.controller.abort();
     for (const conn of [...this.connections]) {
       if (conn.lease?.slot !== slot) continue;
       void this.exclusive(conn, () => {
@@ -683,33 +713,28 @@ export class Server {
         if (previous) void this.settleLease(previous).catch((error: unknown) => this.report(error));
       });
     }
-    slot.removal = this.finishRemoval(slot).catch((error: unknown) => {
-      slot.removal = undefined;
-      throw error;
+    void this.finishRemoval(slot).then(() => removal.resolve(), (error: unknown) => {
+      if (slot.removal === removal.promise) slot.removal = undefined;
+      removal.reject(error);
     });
-    return slot.removal;
+    return removal.promise;
   }
 
   private async finishRemoval(slot: RuntimeSlot): Promise<void> {
     let readyError: unknown;
-    const opened = await slot.ready?.then(
-      (handle) => handle,
+    let readyRejected = false;
+    await slot.ready?.then(
+      () => undefined,
       (error: unknown) => {
+        readyRejected = true;
         readyError = error;
         return undefined;
       },
     );
     const errors: unknown[] = [];
-    if (opened && !slot.handle) slot.handle = opened;
-    if (opened && slot.handle && opened !== slot.handle) {
-      try {
-        await opened.close(this.closeMode());
-        await opened.release?.();
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    if (readyError && !slot.handle && !(readyError instanceof ServiceError && readyError.code === "unknown_runtime")) errors.push(readyError);
+    if (readyRejected && !slot.handle && !(readyError instanceof ServiceError && readyError.code === "unknown_runtime")) errors.push(readyError);
+    // Removing forbids later acquires. A synchronous acquire that reentered removal registers
+    // its orphan before the ready await above resumes, so this set includes every admitted lease.
     const releases = await Promise.allSettled([...slot.leases].map((lease) => this.settleLease(lease)));
     for (const result of releases) {
       if (result.status === "rejected") errors.push(result.reason);
@@ -717,10 +742,22 @@ export class Server {
     let closed = !slot.handle;
     if (slot.handle) {
       try {
-        await this.closeHandle(slot, this.closeMode());
+        let work = this.closeHandle(slot, this.closeMode());
+        for (;;) {
+          const [settled] = await Promise.allSettled([work]);
+          // An abort upgrade can add host shutdown work while the first drain is pending.
+          // Wait for the newest barrier, including its failure, before giving up ownership.
+          if (slot.closeOnce === work) {
+            if (settled!.status === "rejected") throw settled!.reason;
+            break;
+          }
+          work = slot.closeOnce!;
+        }
         closed = true;
       } catch (error) {
         errors.push(error);
+        slot.closeOnce = undefined;
+        slot.closeMode = undefined;
       }
     }
     if (closed && slot.handle && (slot.handle.release || slot.handle.remove)) {
@@ -732,10 +769,10 @@ export class Server {
     }
     try {
       slot.unwatch?.();
+      slot.unwatch = undefined;
     } catch (error) {
       errors.push(error);
     }
-    slot.unwatch = undefined;
     const same = this.slots.get(slot.runtimeId) === slot;
     // A handle whose close failed must stay owned so a retry can close it. Without a handle there is nothing to retry.
     if (same && (errors.length === 0 || !slot.handle)) this.slots.delete(slot.runtimeId);
@@ -750,7 +787,6 @@ export class Server {
     if (slot.deleteData && handle.remove) {
       slot.dropping = "remove";
       await handle.remove();
-      slot.dataDeleted = true;
       return;
     }
     if (handle.release) {
@@ -761,10 +797,28 @@ export class Server {
 
   private closeHandle(slot: RuntimeSlot, mode: "drain" | "abort"): Promise<void> {
     if (!slot.handle) return Promise.resolve();
-    const closing = slot.handle.close(mode);
     const previous = slot.closeOnce;
-    slot.closeOnce = previous ? Promise.all([previous.catch(() => undefined), closing]).then(() => undefined) : closing;
-    return closing;
+    // Host work has ended before ownership dropping starts. A late abort cannot restart host
+    // cleanup after storage is closed or the write right is already being released/deleted.
+    if (previous && (slot.dropping || slot.closeMode === "abort" || mode === "drain")) return previous;
+    const closing = deferred<void>();
+    const work = previous ? Promise.allSettled([previous, closing.promise]).then((settled) => {
+      const errors = [...new Set(settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []))];
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, `runtime ${slot.runtimeId} close failed`);
+    }) : closing.promise;
+    // Publish before invoking host code: it can synchronously reenter close and upgrade the mode.
+    slot.closeOnce = work;
+    slot.closeMode = mode;
+    // An early abort may reject before admitted calls finish. Keep its error for finishRemoval,
+    // while also handling it immediately so the shutdown cannot create an unhandled rejection.
+    void work.catch(() => undefined);
+    try {
+      void Promise.resolve(slot.handle.close(mode)).then(() => closing.resolve(), closing.reject);
+    } catch (error) {
+      closing.reject(error);
+    }
+    return work;
   }
 
   private async shutdown(): Promise<void> {
