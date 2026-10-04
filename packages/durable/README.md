@@ -83,6 +83,16 @@ try {
 
 未结算状态的预留 entry / usage ID 必须尚未被占用。不一致的持久化状态直接报错，不尝试补写阶段或猜测归属。复制尾段的预留 ID 同样不能已经被占用。仓库处于初始开发阶段，不提供旧包入口别名、旧数据转换或旧格式修补分支。
 
+## 模型请求截止
+
+一次模型请求有自己的截止时间 `requestTimeoutMs`，默认 60 秒，写在 lane 配置里。它只包住 `streamSimple`，不包住工具执行。`@amazme/ai` 只把可重试错误标成 `retryable`，不重发。Durable 是唯一会重发的一层。
+
+截止在任何内容帧之前到达，并且这次尝试还没用完 `maxAttempts` 时，结算成可重试的模型错误，错误文本是 `model request timed out`。内容帧指文本、思考或已结束的工具调用；单独的 stop 帧不算。重试等待是 `retryDelayMs`：第 n 次重试（从 1 计）等待 `min(baseDelayMs * 2^(n-1), maxDelayMs)`。默认基数 1 秒，上限 60 秒。这个毫秒数在同一次 `apply` 里写成 `retry_wait.notBefore`，不是 `Date.now() + 10`。`drive({ waitForRetry: true })` 等到该时间或被中止。调用方取消优先于截止，不会被当成超时重试。
+
+已经写出内容帧之后到达截止，操作以 `aborted` 结束，错误文本是 `model request timed out after output started`。不重发这次请求。已有帧里的工具调用从结算消息里去掉，不执行。进程在结算前退出时，重新打开仍从已提交的操作恢复：已结算的模型结果不重发，`replay: "never"` 的工具不重跑。
+
+缺少 `requestTimeoutMs` 或 `retry` 的 lane 配置直接失败，不补一个固定的短等待。摘要请求使用同一个截止；摘要超时记成中止，不重试摘要。
+
 ## 上下文预算与压缩
 
 `compaction.maxTokens` 是自动压缩的输入 token 阈值，不是这一次生成的输出上限。`HarnessOptions.maxTokens` 传给普通 `streamSimple`。摘要请求使用自己的输出上限，`tools` 为空，`thinkingLevel` 为 `off`。

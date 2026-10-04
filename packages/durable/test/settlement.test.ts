@@ -63,6 +63,7 @@ function fixture(t: TestContext, messages: Message[], compactAt?: number) {
   };
   const options = {
     models, model: { provider: "faux", modelId: "faux-1" }, tools: [work], systemPrompt: "sys", maxAttempts: 2,
+    retry: { baseDelayMs: 0, maxDelayMs: 0 },
     compaction: { enabled: compactAt !== undefined, maxTokens: compactAt ?? 80_000 },
   };
   const first = new AgentHarness(storage, options);

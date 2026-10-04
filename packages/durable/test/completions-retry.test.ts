@@ -101,6 +101,7 @@ for (const item of cases) {
       model: { provider: "wire", modelId: "reasoner" },
       thinkingLevel: "low",
       maxAttempts: 2,
+      retry: { baseDelayMs: 0, maxDelayMs: 0 },
     });
     try {
       const result = await runtime.lane().prompt("go");
@@ -141,6 +142,7 @@ test("a streamed rate-limit failure stays in the tree but its tool calls never e
   }));
   const runtime = new AgentHarness(new MemoryStorage(), {
     models, model: { provider: "wire", modelId: model.id }, maxAttempts: 2,
+    retry: { baseDelayMs: 0, maxDelayMs: 0 },
     tools: [{ name: "work", description: "work", parameters: { type: "object" }, execute: async () => {
       executions++; return { content: [] };
     } }],
