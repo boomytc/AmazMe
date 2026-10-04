@@ -5,6 +5,7 @@ import {
   ClientMessageDecoder,
   encodeClientMessage,
   encodeServerMessage,
+  ProtocolError,
   ServerMessageDecoder,
   type JsonValue,
   type Route,
@@ -389,6 +390,17 @@ test("subscription updates follow the initial result, wait for start, and stop w
   assert.equal(sinks[2]!.closed, true);
   assert.equal(await closable.close(), undefined);
   assert.deepEqual(await closable.ended, { reason: "closed" });
+
+  const received: JsonValue[] = [];
+  const open = await peer.subscribe(other, (subscriptionId) => ({ op: "subscribe", subscriptionId }), (update) => received.push(update));
+  open.start();
+  const sink = sinks[3]!;
+  await assert.rejects(sink.send({ bad: undefined } as unknown as JsonValue), (error) => error instanceof ProtocolError && error.code === "invalid_json");
+  await assert.rejects(sink.send("z".repeat(17 * 1024 * 1024)), (error) => error instanceof ProtocolError && error.code === "limit_exceeded");
+  assert.equal(sink.closed, false, "an unencodable update leaves the sink open");
+  assert.equal(await sink.send("after"), true);
+  await until(() => received.at(-1) === "after");
+  assert.deepEqual(received, ["after"]);
 
   await peer.request(other, { op: "lateSubscribe" });
   await until(() => attachErrors.length === 1, "the late subscription to be refused");
