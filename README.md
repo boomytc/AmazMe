@@ -11,7 +11,7 @@
 @amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI
 ```
 
-`@amazme/mcp` 是传输无关的协议客户端。默认先按规范修订版 `2026-07-28` 发送 `server/discover`；对方不是现代响应时，才退回 `initialize` 并接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。stdio、Streamable HTTP、OAuth，以及把结果接进 Agent，都不在这个包的当前入口里。内存传输只用于测试。调用方自己持有服务器连接。
+`@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 和 `x-mcp-header` 没有实现。OAuth，以及把结果接进 Agent，还不在这个包里。本地子进程和内存传输都不是真实服务器验收。调用方自己持有服务器连接。
 
 今天的 `amazme` 命令走内存循环加会话树。有一次性 prompt 时跑完这一次并退出；没有 prompt 且标准输出是终端时，同一条循环画成全屏。`AgentHarness` 是另一条运行时：`accept` 只落盘，`drive` 才推进；进程挂了以后，下一次 `drive` 从完整的操作状态接着做。
 
