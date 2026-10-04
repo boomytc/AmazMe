@@ -118,6 +118,12 @@ export async function presentHost(
   await client.dispose();
 }
 
+/** One durable drive. A waiting outcome continues through the stored `notBefore`; a settled drive is not sent again. */
+export async function finishDrive(lane: RemoteLane, operationId: string): Promise<void> {
+  const outcome = await lane.drive(operationId, { waitForRetry: true });
+  if (outcome.kind === "waiting") await lane.drive(outcome.operationId, { waitForRetry: true });
+}
+
 class AttachedLane {
   private subscription: { current(): LaneSnapshotDto; close(): Promise<void> } | undefined;
   private generation = 0;
@@ -153,8 +159,8 @@ class AttachedLane {
     }
     const admitted = await this.lane.accept({ kind: "prompt", text: body });
     const started = this.snapshot().version;
-    const outcome = await this.lane.drive(admitted.operationId, { waitForRetry: false });
-    if (outcome.kind === "settled") await this.untilLeft(admitted.operationId, started);
+    await finishDrive(this.lane, admitted.operationId);
+    await this.untilLeft(admitted.operationId, started);
   }
 
   async abort(): Promise<void> {

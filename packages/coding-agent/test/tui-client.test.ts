@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createModels } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { LaneControl } from "../src/control.ts";
 import { startCodingHost } from "../src/host.ts";
-import { decodeKeys, emptyTui, readHostFrame, reduceTui, renderTui, type TuiWindow } from "@amazme/tui";
+import { decodeKeys, emptyTui, finishDrive, readHostFrame, reduceTui, renderTui, type TuiWindow } from "@amazme/tui";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID } from "../src/host.ts";
 
 function window(partial: Partial<TuiWindow> = {}): TuiWindow {
@@ -120,6 +120,46 @@ test("two reads of the host frame show the same assistant text", { timeout: 20_0
   assert.match(first, /hello/);
   assert.match(first, /ok/);
 });
+
+test("fullscreen submit resends a retryable model error", { timeout: 20_000 }, async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), "amz-tui-retry-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const socket = join(cwd, "host.sock");
+  let calls = 0;
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: () => {
+      calls += 1;
+      if (calls === 1) return fauxAssistant("later", { stopReason: "error", retryable: true, errorMessage: "later" });
+      return fauxAssistant("after-retry");
+    },
+  }));
+  const host = await startCodingHost({ cwd, socket, provider: "faux", model: "faux-1", models });
+  t.after(() => host.close());
+  const client = new Client({ serverId: HOST_SERVER_ID, transport: createUnixTransport({ path: socket }) });
+  await client.connect();
+  t.after(() => client.dispose());
+  const remote = new RuntimeClient(client);
+  await remote.attach(HOST_RUNTIME_ID);
+  const lane = remote.lane(HOST_LANE);
+  const admitted = await lane.accept({ kind: "prompt", text: "retry-me" });
+  await finishDrive(lane, admitted.operationId);
+  const snapshot = await lane.snapshot();
+  assert.equal(calls, 2);
+  assert.equal(snapshot.operationId, null);
+  assert.ok(snapshot.entries.some((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant" && messageText(entry.payload.message) === "after-retry"));
+});
+
+function messageText(message: { content?: unknown }): string {
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((block) => {
+    if (!block || typeof block !== "object") return "";
+    const text = (block as { text?: unknown }).text;
+    return typeof text === "string" ? text : "";
+  }).join("");
+}
 
 test("arrow keys decode as entry movement", () => {
   assert.deepEqual(decodeKeys("\u001b[A\u001b[B").keys, [{ type: "up" }, { type: "down" }]);

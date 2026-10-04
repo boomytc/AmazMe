@@ -1,7 +1,7 @@
 export { FullscreenController, type FullscreenSession } from "./controller.ts";
 export { paintAnsi, promptText, renderFrame, statusText, type ConfirmationPrompt, type Frame, type ScreenState } from "./frame.ts";
 export { decodeKeys, KeyDecoder, type Key } from "./keys.ts";
-export { presentHost, readHostFrame, type HostAttach } from "./present.ts";
+export { finishDrive, presentHost, readHostFrame, type HostAttach } from "./present.ts";
 export {
   emptyTui,
   reduceTui,

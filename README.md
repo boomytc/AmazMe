@@ -21,7 +21,7 @@
 
 `@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 没有实现。现代 HTTP 按 `tools/list` 中合法的 `x-mcp-header` 标注生成 `Mcp-Param-*`，非法标注工具被过滤，错误参数在发送前失败。OAuth 发现、PKCE、刷新和 step-up 在独立的 `@amazme/mcp/oauth` 入口里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。`@amazme/coding-agent` 把已经连上的客户端适配成 Agent 工具：名字是 `mcp_<serverId>__<toolName>`，冲突或超长就报错，不截断；取消、进度、文本和图片结果交给工具执行。协议包本身不依赖 Agent。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。
 
-今天的 `amazme` 单次 prompt 和全屏仍走内存循环加会话树。有一次性 prompt 时跑完这一次并退出；没有 prompt 且标准输出是终端时，同一条循环画成全屏。`amazme serve` 是另一条前台 Unix 宿主：它监听 socket，打开并持有一份 JSONL runtime，`accept` 只落盘，`drive` 才推进。进程挂了以后，下一次显式 `drive` 从完整的操作状态接着做，不会自动重发模型请求。
+今天的 `amazme` 单次 prompt 仍走内存循环加会话树：有一次性 prompt 时跑完这一次并退出。没有 prompt 且标准输出是终端时，全屏会启动前台宿主，视图只附着 socket。`amazme serve` 是同一条宿主：它监听 socket，打开并持有一份 JSONL runtime，`accept` 只落盘，`drive` 才推进。进程挂了以后，下一次显式 `drive` 从完整的操作状态接着做，不会自动重发已经结算的模型请求。可重试错误仍由 Durable 按存储的 `notBefore` 重发。
 
 ## 模型边界
 
@@ -147,9 +147,9 @@ const models = createModels({ telemetryContext });
 
 CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket` 是本机控制端：连上 `serve`，提交、follow-up、`/steer`、`/abort`、`/earlier`。`/continue` 只对已经写下的 `retry_wait` 再 `drive`，并等到 `notBefore`。没有提示词时的全屏也是这个宿主的客户端：它显示正在到达的助手文本和工具名与状态，可以中止当前操作，按条目和轮次滚动，焦点在提示和滚动之间切换，`/new`、`/resume`、`/compact` 发给宿主。`amazme bridge --socket [--port n]` 只监听 `127.0.0.1`。页面列出会话、打开一段转录、提交提示，并在回合结束前显示助手文本和工具状态。这些客户端都不持有 JSONL，也不执行工具，也不调用模型。
 
-`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。库导出本身不打开传输。`amazme serve` 在打开 runtime 时读取 `<cwd>/.amazme/mcp.json`：文件不存在就没有 MCP；文件无效或某个服务器连不上，这次打开失败，码是 `mcp_unavailable`。连接跟这次 runtime 走，客户端断开不断开它们。MCP 调用留在宿主进程里，继承宿主环境，不进 Seatbelt。一次性命令和全屏不读这份配置。没有服务器或列表为空时，工具数组不变。
+`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。库导出本身不打开传输。`amazme serve` 在打开 runtime 时读取 `<cwd>/.amazme/mcp.json`：文件不存在就没有 MCP；文件无效或某个服务器连不上，这次打开失败，码是 `mcp_unavailable`。连接跟这次 runtime 走，客户端断开不断开它们。MCP 调用留在宿主进程里，继承宿主环境，不进 Seatbelt。一次性命令不读这份配置。全屏和 `amazme serve` 都会读。没有服务器或列表为空时，工具数组不变。
 
-没有一次性 prompt 且标准输出是终端时进入全屏。滚动区只画已经发出的 `AgentEvent`，提交仍走 `session.prompt`，工具确认只接 `beforeToolCall`。
+没有一次性 prompt 且标准输出是终端时进入全屏。全屏启动宿主后把画面交给 `@amazme/tui`：提交、中止、`/new`、`/resume`、`/compact` 都发给宿主，不走内存会话的 `session.prompt`。
 
 ## 命令
 
@@ -179,6 +179,6 @@ npx tsx packages/coding-agent/src/cli.ts login --provider openai --method device
 npx tsx packages/coding-agent/src/cli.ts serve --socket /tmp/amazme.sock --cwd .
 ```
 
-它只承认 runtime `workspace` 和 lane `main`。JSONL 在 `<cwd>/.amazme/runtime/workspace.jsonl`，和会话树分开。客户端不能传路径或构造参数。已有 lane 的模型、系统提示词和技能文本只在第一次写入；重开改 `--model` 不会覆盖。工具每次用当前进程的 `read` / `write` / `edit` / `bash`。`read` 可以重放，另外三个崩溃后不重放。第一次 `SIGINT` 或 `SIGTERM` 排空后退出，不删除文件；排空过程中的第二次信号改为中止。
+它只承认 runtime `workspace`。这份日志里的每条对话 lane 都可以附着，`main` 只是默认。JSONL 在 `<cwd>/.amazme/runtime/workspace.jsonl`，和一次性命令的会话树分开。客户端不能传路径或构造参数。已有 lane 的模型、系统提示词和技能文本只在第一次写入；重开改 `--model` 不会覆盖。工具每次用当前进程的 `read` / `write` / `edit` / `bash`。`read` 可以重放，另外三个崩溃后不重放。第一次 `SIGINT` 或 `SIGTERM` 排空后退出，不删除文件；排空过程中的第二次信号改为中止。
 
 这是同一套分层的独立实现，不是 Pi 仓库的拷贝。编码命令有全屏视图和 40 个预设供应商；登录、技能段落和 MCP 工具追加都在这一层。当前 `AgentHarness` 没有 deferred，摘要中断后不重试，也没有 `convertToLlm`。排队的 steer 和 follow-up 在同一次 `prompt` 或 `drive` 里消化。
