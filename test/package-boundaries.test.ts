@@ -21,6 +21,31 @@ test("durable depends on the agent walks and agent does not depend on durable", 
   assert.equal("finishTurn" in agent, false);
 });
 
+test("the MCP package depends on none of the other AmazMe packages", () => {
+  const mcpPkg = JSON.parse(readFileSync(new URL("../packages/mcp/package.json", import.meta.url), "utf8")) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  assert.equal(mcpPkg.dependencies, undefined);
+  assert.equal(mcpPkg.devDependencies, undefined);
+  const script = `
+    const { registerHooks } = await import("node:module");
+    registerHooks({ resolve(specifier, context, next) {
+      const resolved = next(specifier, context);
+      if (/\\/packages\\/(ai|agent|durable|coding-agent)\\//.test(resolved.url)) {
+        throw new Error("MCP loaded " + specifier);
+      }
+      return resolved;
+    } });
+    const { McpClient } = await import("@amazme/mcp");
+    const { createInMemoryTransportPair } = await import("@amazme/mcp/testing");
+    if (typeof McpClient !== "function" || typeof createInMemoryTransportPair !== "function") throw new Error("MCP entry missing");
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 10_000 });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+});
+
 test("the public Agent entry runs without loading Durable", () => {
   const script = `
     const { registerHooks } = await import("node:module");

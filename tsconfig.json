@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/telemetry" },
+    { "path": "packages/mcp" },
     { "path": "packages/ai" },
     { "path": "packages/agent" },
     { "path": "packages/durable" },
