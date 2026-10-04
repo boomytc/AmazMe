@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import {
-  appendFileSync, chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync,
-  readFileSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync,
+  appendFileSync, chmodSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, readdirSync,
+  readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join, relative, sep } from "node:path";
 import test, { type TestContext } from "node:test";
 import { value } from "@amazme/durable";
 import { JsonlStorage, openJsonlOwner, StorageBusyError, type JsonlOwner } from "@amazme/durable/storage/jsonl/node";
-import { canonicalStoragePath, pathLockDirectory } from "../src/storage/jsonl-lock.ts";
+import { canonicalStoragePath, lockHomeDirectory, pathLockDirectory } from "../src/storage/jsonl-lock.ts";
 
 const childSource = `
 import { openJsonlOwner } from "@amazme/durable/storage/jsonl/node";
@@ -76,7 +76,7 @@ function sandbox(t: TestContext) {
 }
 
 function lockDirsHeldBy(pid: number): string[] {
-  const root = join(tmpdir(), "amazme-jsonl-locks", String(userInfo().uid));
+  const root = lockHomeDirectory();
   const found: string[] = [];
   const stack = [root];
   while (stack.length > 0) {
@@ -104,11 +104,11 @@ function lockDirsHeldBy(pid: number): string[] {
   return found;
 }
 
-function hold(file: string, box: ReturnType<typeof sandbox>): Promise<Holder> {
+function hold(file: string, box: ReturnType<typeof sandbox>, environment: Record<string, string> = {}): Promise<Holder> {
   let stderr = "";
   const child = box.track(spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", childSource], {
     cwd: process.cwd(),
-    env: { ...process.env, AMAZME_JSONL_FILE: file },
+    env: { ...process.env, ...environment, AMAZME_JSONL_FILE: file },
     stdio: ["ignore", "ignore", "pipe", "ipc"],
   }));
   child.stderr?.setEncoding("utf8");
@@ -217,6 +217,86 @@ test("a second process cannot open the same file", async (t) => {
   await owner.release();
 });
 
+test("HOME and TMPDIR cannot split cross-process writer exclusion", async (t) => {
+  const box = sandbox(t);
+  const owner = box.own(openJsonlOwner(box.file));
+  const otherHome = join(box.dir, "home");
+  const otherTmp = join(box.dir, "tmp");
+  mkdirSync(otherHome);
+  mkdirSync(otherTmp);
+  await assert.rejects(hold(box.file, box, { HOME: otherHome, TMPDIR: otherTmp }), /storage is busy/);
+  await owner.storage.commit([{ type: "set", address: value("box"), value: 2 }]);
+  await owner.release();
+  const next = await hold(box.file, box, { HOME: otherHome, TMPDIR: otherTmp });
+  await next.release();
+  await next.quit();
+});
+
+test("lock directories are private to the account", async (t) => {
+  const box = sandbox(t);
+  const owner = box.own(openJsonlOwner(box.file));
+  const root = lockHomeDirectory();
+  for (const dir of [root, join(root, "path"), join(root, "inode"), ...lockDirsHeldBy(process.pid)]) {
+    const stat = statSync(dir);
+    assert.equal(stat.uid, userInfo().uid);
+    assert.equal(stat.mode & 0o077, 0);
+  }
+  await owner.release();
+});
+
+test("owned reads and writes fail closed when a lock is replaced", async (t) => {
+  const box = sandbox(t);
+  const before = new Set(lockDirsHeldBy(process.pid));
+  const owner = box.own(openJsonlOwner(box.file));
+  await owner.storage.commit([{ type: "set", address: value("box"), value: 1 }]);
+  for (const dir of lockDirsHeldBy(process.pid).filter((dir) => !before.has(dir))) rmSync(dir, { recursive: true });
+  const next = await hold(box.file, box);
+  await assert.rejects(owner.storage.read((view) => view.version()), busy);
+  await assert.rejects(owner.storage.commit([{ type: "set", address: value("box"), value: 2 }]), busy);
+  await assert.rejects(owner.deleteData(), busy);
+  await owner.release();
+  assert.throws(() => openJsonlOwner(box.file), busy);
+  assert.equal(readFileSync(box.file, "utf8").includes('"value":2'), false);
+  await next.release();
+  await next.quit();
+});
+
+test("owned writes refuse a lock whose permissions become public", async (t) => {
+  const box = sandbox(t);
+  const owner = box.own(openJsonlOwner(box.file));
+  const pathDir = pathLockDirectory(canonicalStoragePath(box.file));
+  box.beforeCleanup(() => { if (existsSync(pathDir)) chmodSync(pathDir, 0o700); });
+  chmodSync(pathDir, 0o755);
+  await assert.rejects(owner.storage.commit([{ type: "set", address: value("box"), value: 2 }]), busy);
+  assert.equal(readFileSync(box.file, "utf8"), "");
+  chmodSync(pathDir, 0o700);
+  await owner.release();
+});
+
+test("delete rechecks ownership after waiting for admitted storage work", async (t) => {
+  const box = sandbox(t);
+  const before = new Set(lockDirsHeldBy(process.pid));
+  const owner = box.own(openJsonlOwner(box.file));
+  let releaseWork!: () => void;
+  const work = new Promise<void>((resolve) => { releaseWork = resolve; });
+  let started!: () => void;
+  const admitted = new Promise<void>((resolve) => { started = resolve; });
+  box.beforeCleanup(() => releaseWork());
+  const running = owner.storage.run(async () => { started(); await work; });
+  await admitted;
+  const deleting = owner.deleteData();
+  for (const dir of lockDirsHeldBy(process.pid).filter((dir) => !before.has(dir))) rmSync(dir, { recursive: true });
+  const next = await hold(box.file, box);
+  releaseWork();
+  await running;
+  await assert.rejects(deleting, busy);
+  assert.equal(existsSync(box.file), true);
+  await owner.release();
+  assert.throws(() => openJsonlOwner(box.file), busy);
+  await next.release();
+  await next.quit();
+});
+
 test("a live owner is not replaced when its lock is old", async (t) => {
   const box = sandbox(t);
   writeFileSync(box.file, "");
@@ -245,6 +325,21 @@ test("a killed owner can be replaced after its pid is gone", async (t) => {
   const owner = box.own(openJsonlOwner(box.file));
   await owner.storage.commit([{ type: "set", address: value("box"), value: 1 }]);
   assert.equal(await owner.storage.read((view) => view.get(value("box"))), 1);
+  await owner.release();
+});
+
+test("an insecure dead lock is refused without reclaiming its owner record", async (t) => {
+  const box = sandbox(t);
+  const holder = await hold(box.file, box);
+  const pathDir = pathLockDirectory(canonicalStoragePath(box.file));
+  const record = readFileSync(join(pathDir, "owner"), "utf8");
+  await holder.kill();
+  box.beforeCleanup(() => { if (existsSync(pathDir)) chmodSync(pathDir, 0o700); });
+  chmodSync(pathDir, 0o755);
+  assert.throws(() => openJsonlOwner(box.file), busy);
+  assert.equal(readFileSync(join(pathDir, "owner"), "utf8"), record);
+  chmodSync(pathDir, 0o700);
+  const owner = box.own(openJsonlOwner(box.file));
   await owner.release();
 });
 
@@ -404,6 +499,41 @@ test("close waits for admitted work, rejects new work, and keeps the lock", asyn
   await reopened.release();
 });
 
+test("close really closes the owned file descriptor before unlock", async (t) => {
+  if (process.platform === "win32" || !existsSync("/dev/fd")) {
+    t.skip("descriptor enumeration requires /dev/fd");
+    return;
+  }
+  const box = sandbox(t);
+  const openDescriptors = () => new Set(readdirSync("/dev/fd").map(Number).filter((fd) => {
+    try { fstatSync(fd); return true; } catch { return false; }
+  }));
+  const before = openDescriptors();
+  const owner = box.own(openJsonlOwner(box.file));
+  const added = [...openDescriptors()].filter((fd) => !before.has(fd));
+  assert.equal(added.length, 1);
+  const fd = added[0];
+  assert.notEqual(fd, undefined);
+  assert.equal(fstatSync(fd!).ino, statSync(box.file).ino);
+  await owner.close();
+  assert.throws(() => fstatSync(fd!), (error: unknown) => (error as NodeJS.ErrnoException).code === "EBADF");
+  assert.throws(() => openJsonlOwner(box.file), busy);
+  await owner.release();
+});
+
+test("a failed close keeps ownership and can be retried", async (t) => {
+  const box = sandbox(t);
+  const owner = box.own(openJsonlOwner(box.file));
+  const whenIdle = owner.storage.whenIdle.bind(owner.storage);
+  let attempts = 0;
+  owner.storage.whenIdle = () => ++attempts === 1 ? Promise.reject(new Error("idle failed")) : whenIdle();
+  await assert.rejects(owner.close(), /idle failed/);
+  assert.throws(() => openJsonlOwner(box.file), busy);
+  await owner.close();
+  assert.equal(attempts, 2);
+  await owner.release();
+});
+
 test("deleteData waits, keeps the lock, and does not unlink a replaced inode", async (t) => {
   const box = sandbox(t);
   const owner = box.own(openJsonlOwner(box.file));
@@ -425,6 +555,28 @@ test("deleteData waits, keeps the lock, and does not unlink a replaced inode", a
   assert.equal(readFileSync(box.file, "utf8"), "replacement\n");
   assert.throws(() => openJsonlOwner(box.file), busy);
   await owner.release();
+});
+
+test("owned I/O stays on its locked inode after the path is replaced", async (t) => {
+  const box = sandbox(t);
+  const oldLink = join(box.dir, "old.jsonl");
+  const newLink = join(box.dir, "new.jsonl");
+  const first = box.own(openJsonlOwner(box.file));
+  linkSync(box.file, oldLink);
+  unlinkSync(box.file);
+  writeFileSync(box.file, "");
+  linkSync(box.file, newLink);
+  const second = box.own(openJsonlOwner(newLink));
+  await first.storage.commit([{ type: "set", address: value("first"), value: 1 }]);
+  await second.storage.commit([{ type: "set", address: value("second"), value: 2 }]);
+  assert.equal(readFileSync(oldLink, "utf8").includes('"namespace":"first"'), true);
+  assert.equal(readFileSync(box.file, "utf8").includes('"namespace":"first"'), false);
+  assert.equal(readFileSync(box.file, "utf8").includes('"namespace":"second"'), true);
+  assert.throws(() => openJsonlOwner(oldLink), busy);
+  await first.deleteData();
+  assert.equal(existsSync(box.file), true);
+  await first.release();
+  await second.release();
 });
 
 test("a failed delete keeps the lock and a later delete removes the file", async (t) => {
@@ -475,6 +627,28 @@ test("a failed inode unlock still releases the path lock", async (t) => {
   assert.equal(existsSync(inodeDir), false);
   const reopened = box.own(openJsonlOwner(box.file));
   await reopened.release();
+});
+
+test("delete remains idempotent after a partial unlock and cannot delete a later owner's file", async (t) => {
+  const box = sandbox(t);
+  const before = new Set(lockDirsHeldBy(process.pid));
+  const first = box.own(openJsonlOwner(box.file));
+  linkSync(box.file, join(box.dir, "original-inode.jsonl"));
+  const inodeDir = lockDirsHeldBy(process.pid).find((dir) => !before.has(dir) && dir.split(sep).includes("inode"));
+  assert.ok(inodeDir);
+  box.beforeCleanup(() => { if (existsSync(inodeDir)) chmodSync(inodeDir, 0o700); });
+  await first.deleteData();
+  chmodSync(inodeDir, 0o500);
+  await assert.rejects(first.release());
+  chmodSync(inodeDir, 0o700);
+  const second = box.own(openJsonlOwner(box.file));
+  await second.storage.commit([{ type: "set", address: value("box"), value: 2 }]);
+  await first.deleteData();
+  await first.release();
+  assert.equal(await second.storage.read((view) => view.get(value("box"))), 2);
+  assert.throws(() => openJsonlOwner(box.file), busy);
+  await assert.rejects(first.deleteData(), /storage ownership was released/);
+  await second.release();
 });
 
 test("an old owner cannot delete the file a later owner holds", async (t) => {

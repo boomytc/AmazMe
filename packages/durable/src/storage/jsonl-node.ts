@@ -1,6 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Apply, StorageView, Write } from "../storage.ts";
+import type { Apply, Storage, StorageView, Write } from "../storage.ts";
 import {
   acquireLock,
   canonicalStoragePath,
@@ -12,25 +12,15 @@ import {
 import type { HeldLock } from "./jsonl-lock.ts";
 import { applyWrites, MemoryStorage } from "./memory.ts";
 
-/**
- * Node filesystem adapter. Each newline-terminated record is one atomic apply.
- * The constructor replays and repairs a torn tail immediately. It does not take a lock;
- * cross-process writers use `openJsonlOwner` so that repair happens only after the lock is held.
- */
-export class JsonlStorage extends MemoryStorage {
-  private readonly file: string;
+abstract class ClosableJsonlStorage extends MemoryStorage {
   private accepting = true;
   private closed: Promise<void> | undefined;
 
-  constructor(file: string) {
+  constructor(text: string) {
     super();
-    this.file = file;
-    if (existsSync(file)) {
-      const text = repairTornTail(file, readFileSync(file, "utf8"));
-      for (const line of text.split("\n").filter((line) => line.trim().length > 0)) {
-        const record = JSON.parse(line) as { writes: Write[] };
-        this.state = applyWrites(this.state, record.writes);
-      }
+    for (const line of text.split("\n").filter((line) => line.trim().length > 0)) {
+      const record = JSON.parse(line) as { writes: Write[] };
+      this.state = applyWrites(this.state, record.writes);
     }
   }
 
@@ -43,9 +33,28 @@ export class JsonlStorage extends MemoryStorage {
   close(): Promise<void> {
     if (!this.closed) {
       this.accepting = false;
-      this.closed = this.whenIdle();
+      const run = this.whenIdle().then(() => this.dispose());
+      this.closed = run.catch((error: unknown) => {
+        this.closed = undefined;
+        throw error;
+      });
     }
     return this.closed;
+  }
+
+  protected dispose(): void {}
+}
+
+/**
+ * Low-level Node adapter. Construction replays and repairs a torn tail without a lock.
+ * Cross-process writers use `openJsonlOwner`, which holds locks and pins the inode before replay.
+ */
+export class JsonlStorage extends ClosableJsonlStorage {
+  private readonly file: string;
+
+  constructor(file: string) {
+    super(existsSync(file) ? repairTornTail(file, readFileSync(file, "utf8")) : "");
+    this.file = file;
   }
 
   protected override persist(writes: readonly Write[]): void {
@@ -54,9 +63,41 @@ export class JsonlStorage extends MemoryStorage {
   }
 }
 
+/** Managed storage keeps the locked inode open; path replacement never redirects I/O. */
+class OwnedJsonlStorage extends ClosableJsonlStorage {
+  private descriptor: number | undefined;
+  private readonly assertOwned: () => void;
+
+  constructor(fd: number, assertOwned: () => void) {
+    super(readOwnedFile(fd, assertOwned));
+    this.descriptor = fd;
+    this.assertOwned = assertOwned;
+  }
+
+  override run<T>(fn: (view: StorageView, apply: Apply) => Promise<T> | T): Promise<T> {
+    return super.run((view, apply) => {
+      this.assertOwned();
+      return fn(view, apply);
+    });
+  }
+
+  protected override persist(writes: readonly Write[]): void {
+    this.assertOwned();
+    if (this.descriptor === undefined) throw new Error("storage is closed");
+    appendFileSync(this.descriptor, `${JSON.stringify({ writes })}\n`);
+  }
+
+  protected override dispose(): void {
+    if (this.descriptor !== undefined) {
+      closeSync(this.descriptor);
+      this.descriptor = undefined;
+    }
+  }
+}
+
 /** Owned JSONL file. `close` stops storage, `deleteData` unlinks that inode, and `release` drops the locks. */
 export interface JsonlOwner {
-  readonly storage: JsonlStorage;
+  readonly storage: Storage & { close(): Promise<void> };
   close(): Promise<void>;
   deleteData(): Promise<void>;
   release(): Promise<void>;
@@ -75,14 +116,23 @@ export function openJsonlOwner(file: string): JsonlOwner {
   prepareLockHome();
   const pathLock = acquireLock(pathLockDirectory(path), `path:${path}`);
   let inodeLock: HeldLock | undefined;
+  let descriptor: number | undefined;
   try {
-    ensureDataFile(path);
-    const stat = statSync(path, { bigint: true });
+    descriptor = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0), 0o600);
+    const stat = fstatSync(descriptor, { bigint: true });
+    if (!stat.isFile()) throw new Error("storage must be a regular file");
     inodeLock = acquireLock(inodeLockDirectory(stat.dev, stat.ino), `inode:${stat.dev}:${stat.ino}`);
-    const storage = new JsonlStorage(path);
+    const heldInode = inodeLock;
+    const storage = new OwnedJsonlStorage(descriptor, () => {
+      pathLock.assertHeld();
+      heldInode.assertHeld();
+    });
     return bindOwner(storage, path, stat.dev, stat.ino, pathLock, inodeLock);
   } catch (error) {
     const cleanup: unknown[] = [];
+    if (descriptor !== undefined) {
+      try { closeSync(descriptor); } catch (cause) { cleanup.push(cause); }
+    }
     if (inodeLock) {
       try { inodeLock.release(); } catch (cause) { cleanup.push(cause); }
     }
@@ -92,8 +142,9 @@ export function openJsonlOwner(file: string): JsonlOwner {
   }
 }
 
-function bindOwner(storage: JsonlStorage, path: string, ownedDev: bigint, ownedIno: bigint, pathLock: HeldLock, inodeLock: HeldLock): JsonlOwner {
+function bindOwner(storage: OwnedJsonlStorage, path: string, ownedDev: bigint, ownedIno: bigint, pathLock: HeldLock, inodeLock: HeldLock): JsonlOwner {
   let released = false;
+  let dataDeleted = false;
   let closing: Promise<void> | undefined;
   let closeOnce: Promise<void> | undefined;
   let releaseOnce: Promise<void> | undefined;
@@ -104,25 +155,44 @@ function bindOwner(storage: JsonlStorage, path: string, ownedDev: bigint, ownedI
     return run;
   };
   const stopAdmission = (): Promise<void> => {
-    closing ??= storage.close();
+    if (!closing) {
+      closing = storage.close().catch((error: unknown) => {
+        closing = undefined;
+        throw error;
+      });
+      // Admission stops immediately, even when this wait is queued behind another owner operation.
+      void closing.catch(() => undefined);
+    }
     return closing;
   };
-  const deleteData = async (): Promise<void> => {
+  const deleteData = async (stopping: Promise<void>): Promise<void> => {
     if (released) throw new Error("storage ownership was released");
-    await stopAdmission();
+    await stopping;
     if (released) throw new Error("storage ownership was released");
+    // A delete that already completed must not be repeated after a partial unlock. The old path
+    // may now name a later owner's data; only retry releasing this owner's remaining locks.
+    if (dataDeleted) return;
+    pathLock.assertHeld();
+    inodeLock.assertHeld();
     try {
       const current = statSync(path, { bigint: true });
-      if (current.dev !== ownedDev || current.ino !== ownedIno) return;
+      if (current.dev !== ownedDev || current.ino !== ownedIno) {
+        dataDeleted = true;
+        return;
+      }
       unlinkSync(path);
+      dataDeleted = true;
     } catch (error) {
-      if (isCode(error, "ENOENT")) return;
+      if (isCode(error, "ENOENT")) {
+        dataDeleted = true;
+        return;
+      }
       throw error;
     }
   };
-  const release = async (): Promise<void> => {
+  const release = async (stopping: Promise<void>): Promise<void> => {
     if (released) return;
-    await stopAdmission();
+    await stopping;
     if (released) return;
     const errors: unknown[] = [];
     try { inodeLock.release(); } catch (error) { errors.push(error); }
@@ -135,17 +205,22 @@ function bindOwner(storage: JsonlStorage, path: string, ownedDev: bigint, ownedI
     storage,
     close() {
       const stopping = stopAdmission();
-      closeOnce ??= enqueue(() => stopping);
+      if (!closeOnce) {
+        closeOnce = enqueue(() => stopping).catch((error: unknown) => {
+          closeOnce = undefined;
+          throw error;
+        });
+      }
       return closeOnce;
     },
     deleteData() {
-      stopAdmission();
-      return enqueue(() => deleteData());
+      const stopping = stopAdmission();
+      return enqueue(() => deleteData(stopping));
     },
     release() {
-      stopAdmission();
       if (releaseOnce) return releaseOnce;
-      const run = enqueue(() => release());
+      const stopping = stopAdmission();
+      const run = enqueue(() => release(stopping));
       releaseOnce = run.then(() => undefined, (error: unknown) => {
         releaseOnce = undefined;
         return Promise.reject(error);
@@ -155,12 +230,15 @@ function bindOwner(storage: JsonlStorage, path: string, ownedDev: bigint, ownedI
   };
 }
 
-function ensureDataFile(path: string): void {
-  try {
-    writeFileSync(path, "", { flag: "wx" });
-  } catch (error) {
-    if (!isCode(error, "EEXIST")) throw error;
-  }
+function readOwnedFile(fd: number, assertOwned: () => void): string {
+  assertOwned();
+  const text = readFileSync(fd, "utf8");
+  assertOwned();
+  if (text.length === 0 || text.endsWith("\n")) return text;
+  const cut = text.lastIndexOf("\n");
+  const kept = cut === -1 ? "" : text.slice(0, cut + 1);
+  ftruncateSync(fd, Buffer.byteLength(kept));
+  return kept;
 }
 
 function repairTornTail(file: string, text: string): string {

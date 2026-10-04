@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir, userInfo } from "node:os";
+import { hostname, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 /** Another writer holds this storage. The caller must not steal or overwrite it. */
@@ -21,6 +21,7 @@ interface OwnerRecord {
 export interface HeldLock {
   readonly directory: string;
   readonly token: string;
+  assertHeld(): void;
   release(): void;
 }
 
@@ -30,18 +31,20 @@ const holders = new Map<string, string>();
  * Exclusive directory lock for one local filesystem.
  * A live pid is never stolen, even when the directory is old.
  * An empty, unreadable, or foreign-host lock stays busy.
- * Directories live under the system temp dir so deleting the data file or its parent does not remove them.
+ * Private directories live under the account's home, independent of HOME/TMPDIR and data paths.
  */
 export function acquireLock(directory: string, key: string): HeldLock {
   if (holders.has(key)) throw new StorageBusyError("storage is busy");
   const token = randomUUID();
   holders.set(key, token);
   let ownedDirectory = false;
+  let identity: ReturnType<typeof assertPrivateDirectory>;
   try {
     takeDirectory(directory);
     ownedDirectory = true;
     const record: OwnerRecord = { token, pid: process.pid, hostname: hostname() };
-    writeFileSync(join(directory, "owner"), JSON.stringify(record), { flag: "wx" });
+    writeFileSync(join(directory, "owner"), JSON.stringify(record), { flag: "wx", mode: 0o600 });
+    identity = assertPrivateDirectory(directory);
   } catch (error) {
     if (holders.get(key) === token) holders.delete(key);
     if (ownedDirectory) {
@@ -56,9 +59,18 @@ export function acquireLock(directory: string, key: string): HeldLock {
   return {
     directory,
     token,
+    assertHeld() {
+      assertPrivateDirectory(lockHomeDirectory());
+      assertPrivateDirectory(dirname(directory));
+      const current = assertPrivateDirectory(directory);
+      const owner = parseRecord(readOwner(join(directory, "owner")));
+      if (current.dev !== identity.dev || current.ino !== identity.ino || owner?.token !== token || owner.pid !== process.pid || owner.hostname !== hostname()) {
+        throw new StorageBusyError("storage ownership was lost");
+      }
+    },
     release() {
       if (released) return;
-      unlock(directory, key, token);
+      unlock(directory, key, token, identity.dev, identity.ino);
       released = true;
     },
   };
@@ -89,32 +101,53 @@ export function canonicalStoragePath(file: string): string {
 }
 
 export function pathLockDirectory(canonicalPath: string): string {
-  return join(lockHome(), "path", createHash("sha256").update(canonicalPath).digest("hex"));
+  return join(lockHomeDirectory(), "path", createHash("sha256").update(canonicalPath).digest("hex"));
 }
 
 export function inodeLockDirectory(dev: bigint, ino: bigint): string {
-  return join(lockHome(), "inode", `${dev}-${ino}`);
+  return join(lockHomeDirectory(), "inode", `${dev}-${ino}`);
 }
 
 export function prepareLockHome(): void {
-  mkdirSync(join(lockHome(), "path"), { recursive: true });
-  mkdirSync(join(lockHome(), "inode"), { recursive: true });
+  for (const directory of [lockHomeDirectory(), join(lockHomeDirectory(), "path"), join(lockHomeDirectory(), "inode")]) {
+    try {
+      mkdirSync(directory, { mode: 0o700 });
+    } catch (error) {
+      if (!isCode(error, "EEXIST")) throw error;
+    }
+    assertPrivateDirectory(directory);
+  }
 }
 
-function lockHome(): string {
-  return join(tmpdir(), "amazme-jsonl-locks", String(userInfo().uid));
+/** One stable per-account namespace; environment variables cannot split writer exclusion. */
+export function lockHomeDirectory(): string {
+  return join(userInfo().homedir, ".amazme-jsonl-locks");
+}
+
+function assertPrivateDirectory(directory: string) {
+  let stat;
+  try {
+    stat = lstatSync(directory, { bigint: true });
+  } catch (error) {
+    if (isCode(error, "ENOENT")) throw new StorageBusyError("storage ownership was lost");
+    throw error;
+  }
+  if (!stat.isDirectory() || stat.uid !== BigInt(userInfo().uid) || (stat.mode & 0o077n) !== 0n) {
+    throw new StorageBusyError("storage lock directory is not private to this account");
+  }
+  return stat;
 }
 
 function takeDirectory(directory: string): void {
   try {
-    mkdirSync(directory);
+    mkdirSync(directory, { mode: 0o700 });
     return;
   } catch (error) {
     if (!isCode(error, "EEXIST")) throw error;
   }
   reclaimDead(directory);
   try {
-    mkdirSync(directory);
+    mkdirSync(directory, { mode: 0o700 });
   } catch (error) {
     if (isCode(error, "EEXIST")) throw new StorageBusyError("storage is busy");
     throw error;
@@ -122,6 +155,7 @@ function takeDirectory(directory: string): void {
 }
 
 function reclaimDead(directory: string): void {
+  assertPrivateDirectory(directory);
   const ownerPath = join(directory, "owner");
   const raw = readOwner(ownerPath);
   const record = parseRecord(raw);
@@ -155,8 +189,19 @@ function reclaimDead(directory: string): void {
   }
 }
 
-function unlock(directory: string, key: string, token: string): void {
+function unlock(directory: string, key: string, token: string, ownedDev: bigint, ownedIno: bigint): void {
   if (holders.get(key) !== token) return;
+  try {
+    const current = lstatSync(directory, { bigint: true });
+    if (current.dev !== ownedDev || current.ino !== ownedIno) {
+      holders.delete(key);
+      return;
+    }
+  } catch (error) {
+    if (!isCode(error, "ENOENT")) throw error;
+    holders.delete(key);
+    return;
+  }
   const ownerPath = join(directory, "owner");
   let raw: string | undefined;
   try {
