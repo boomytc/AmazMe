@@ -171,4 +171,24 @@ test("bubblewrap is selected only on linux and a missing runner does not spawn",
   assert.equal(argv.includes(join(policy.canonical, ".amazme")), true);
   assert.equal(argv.includes(policy.scratch), true);
   assert.equal(argv.at(-3), "/bin/bash");
+  const lookedAt: string[] = [];
+  const fromPath = bubblewrapArgv(policy, ["/bin/bash", "-c", "true"], {
+    platform: "linux",
+    runner: "bwrap",
+    pathEnv: "/opt/bin:/usr/bin",
+    stat(candidate) {
+      lookedAt.push(candidate);
+      return { isFile: () => candidate === "/usr/bin/bwrap" };
+    },
+  });
+  assert.deepEqual(lookedAt, ["/opt/bin/bwrap", "/usr/bin/bwrap"]);
+  assert.equal(fromPath[0], "/usr/bin/bwrap");
+  assert.throws(() => bubblewrapArgv(policy, ["/bin/bash", "-c", "true"], {
+    platform: "linux",
+    runner: "bwrap",
+    pathEnv: "/opt/bin",
+    stat() {
+      return { isFile: () => false };
+    },
+  }), /SANDBOX_UNAVAILABLE: bwrap is required/);
 });

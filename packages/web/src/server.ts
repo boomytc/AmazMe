@@ -110,12 +110,8 @@ async function submit(lane: RemoteLane, text: string): Promise<void> {
     return;
   }
   const admitted = await lane.accept({ kind: "prompt", text: body });
-  const started = current.version;
-  const outcome = await lane.drive(admitted.operationId, { waitForRetry: false });
-  if (outcome.kind !== "settled") return;
-  const seen = await lane.snapshot();
-  if (seen.version > started && seen.operationId !== admitted.operationId) return;
-  await lane.drive(admitted.operationId, { waitForRetry: true });
+  const outcome = await lane.drive(admitted.operationId, { waitForRetry: true });
+  if (outcome.kind === "waiting") await lane.drive(outcome.operationId, { waitForRetry: true });
 }
 
 interface Actions {

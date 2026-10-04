@@ -56,6 +56,35 @@ test("the page lists sessions and a submit returns the prompt and assistant text
   assert.ok(notes.sessions.includes("notes"));
 });
 
+test("a retryable model error is resent through the stored wait", { timeout: 20_000 }, async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), "amz-web-retry-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const socket = join(cwd, "host.sock");
+  let calls = 0;
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: () => {
+      calls += 1;
+      if (calls === 1) return fauxAssistant("later", { stopReason: "error", retryable: true, errorMessage: "later" });
+      return fauxAssistant("after-retry");
+    },
+  }));
+  const host = await startCodingHost({ cwd, socket, provider: "faux", model: "faux-1", models });
+  t.after(() => host.close());
+  const page = await startWeb({ socket, port: 0, serverId: "amazme", runtimeId: "workspace", lane: "main" });
+  t.after(() => page.close());
+  const acted = await fetch(`${page.url}act`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "submit", text: "retry-me" }),
+  });
+  assert.equal(acted.status, 200);
+  const view = await acted.json() as { entries: Array<{ role: string; text: string }>; busy: boolean };
+  assert.equal(calls, 2);
+  assert.equal(view.busy, false);
+  assert.ok(view.entries.some((entry) => entry.role === "assistant" && entry.text === "after-retry"));
+});
+
 test("a streaming chunk is visible before the turn settles", { timeout: 20_000 }, async (t) => {
   const cwd = mkdtempSync(join(tmpdir(), "amz-web-stream-"));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
