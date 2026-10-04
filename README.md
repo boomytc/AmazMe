@@ -30,9 +30,15 @@ import { fauxProvider } from "@amazme/ai/providers/faux";
 
 `StreamOptions` 中的 `baseUrl` 和 `headers` 是各协议共用的请求配置。请求地址覆盖 Provider 默认地址，headers 按字段覆盖并保留其余默认字段。协议专用选项仍由 `ApiStreamOptions` 区分。`signal`、`apiKey`、`telemetryContext` 不会写入 JSON 请求体。
 
+Azure Responses 的默认地址是资源下的 `/openai/v1/responses`，deployment 放在请求体的 `model` 字段，API key 使用 `api-key` 请求头。资源根地址、`/openai`、`/openai/v1` 和完整 Responses 地址会归一化。显式日期版本使用 `/openai/responses?api-version=...`；`preview` 使用 v1 路由。Azure preset 将环境里的资源地址、deployment 和版本传到请求；缺少或无效的地址在 fetch 前失败。凭证文件的同一规范绝对路径在同一进程共享整文件写链；新文件权限为 `0600`，新建私有目录为 `0700`，已有父目录权限保持原样。这不提供跨进程写锁。OAuth 取消后的请求或刷新结果不写入凭证，显式无效的有效期不替换成默认值。
+
 `StreamOptions.maxTokens` 是这一次生成的输出 token 上限，包含协议会计入的思考 token，不再另加一份思考预算。它会传到 `stream`、`streamSimple`、Provider 和 Models。Agent 上的可选 `maxTokens` 只转发给注入的 `streamFn`，Agent 仍然不持有 Models。一次模型请求的消息替换由有序的 `transformContext` 完成，见下面的内存循环。省略时使用模型声明的输出上限；显式值仍受该上限和剩余上下文约束。放不下时不会发送 0、负数或 NaN，也不会删消息来凑预算，而是以不可重试的 `overflow` 终态结束。参数非法和上下文放不下是两种结果。
 
 输入预算在请求投影之后估算，所以失败 assistant 和补出来的工具结果不会把预算算偏。共享的 `resolveOutputBudget` 对原始或已投影消息执行同一预算投影，Durable 与协议使用相同输入估算。估算覆盖系统提示词、系统消息、用户文本、assistant 文本、实际会发送的思考、工具名和参数、工具结果、工具名/描述/schema，以及每条消息的固定开销。图片按固定 1,200 token 计，不按 base64 长度。字符按 UTF-8 字节近似（约 4 字节一个 token），只是近似值。安全余量是 `min(4096, max(32, floor(contextWindow / 20)))`，小窗口不会被固定 4,096 占满。同一 `systemPrompt` 和内容相同的首条 system 消息只计一次。不沿用上一条 usage。schema 按当前对象计算。循环引用或无法序列化的参数在发请求前失败。
+
+原生协议的签名和 redacted payload 也计入请求预算。Anthropic、Google 和 Bedrock 返回的签名随所属内容块或工具调用保存，并通过帧还原；只有目标 api、provider 和 model 都与来源一致时才回传。同源 Google / Vertex 工具调用与结果还会回传原始调用 ID。换模型时去掉签名，redacted 内容丢弃，可读思考按目标协议投影；源消息保持原样。不编造签名，也不合并不同签名的 Google parts。
+
+思考参数按协议映射：Gemini 2.5 使用 `thinkingBudget`，Gemini 3 使用 `thinkingLevel`；无法关闭思考的模型明确拒绝 `off`。Google usage 的输出包含 `thoughtsTokenCount`。Claude 使用 token budget 或 adaptive thinking；token budget 严格小于总输出 cap。Bedrock Claude 使用同一映射，Nova 2 Lite 支持 low / medium 和关闭；high 要求去掉输出上限，因此当前有界输出契约明确拒绝，minimal 也不静默降级。未实现思考控制的 Bedrock reasoning 模型拒绝显式控制，省略级别则沿用服务端默认。总输出 cap 保持不变。
 
 官方 OpenAI 只发送 `max_completion_tokens`。兼容端用 `completionsProvider({ outputTokenField: "max_tokens" })`，这也是该 provider 的默认字段。同一次请求只出现其中一个字段，不按模型名增加分支。
 
@@ -46,9 +52,11 @@ Chat Completions 请求带 `stream_options.include_usage`。最终消息写入�
 
 兼容端可能在 delta 里返回 `reasoning_content`、`reasoning` 或 `reasoning_text`。同一个 chunk 里多个字段同时有值时，只取按这个顺序的第一个非空字符串，不把它们拼在一起，也不读 `reasoning_details`。空字符串和其他类型被忽略。没有这些字段时不会编造思考文本；官方 OpenAI 不保证返回内部思考。思考块和文本、工具共用 `contentIndex`。连续且字段相同的增量留在同一个块里；字段变了，或中间插入了文本/工具，就是新块。块记下第一次出现的字段。错误、取消和帧恢复都保留已经收到的片段。帧上的 `thinkingField` 只可能是这三个名字。
 
-下一轮请求里，目标仍是 `openai-completions` 且块带有上述字段时，思考按该字段回放，不写进 assistant 的普通 `content`。同一个字段的多块用换行拼起来。字段名不在这三个之内时，不会变成 JSON 键。目标 api 不是 `openai-completions` 时，思考文本改写成普通回答；Anthropic 和 Google 目标仍保留思考块。源消息不被改写。本轮没有加密思考、外部签名，也没有完整的 `reasoning_details`。
+下一轮请求里，目标仍是 `openai-completions` 且块带有上述字段时，思考按该字段回放，不写进 assistant 的普通 `content`。同一个字段的多块用换行拼起来。字段名不在这三个之内时，不会变成 JSON 键。其他协议按各自的原生思考与签名规则投影。源消息不被改写。Completions 没有完整的 `reasoning_details` 支持。
 
 流内 `error` 也按错误内容分类，并保留之前的输出和 usage。错误事件形状、成功终态中不完整的工具参数、`content_filter` 和本地序列化失败均以不可重试错误结束。`length` 仍保留截断片段。Durable 将失败 assistant 保存在条目树中，在构建后续模型请求时跳过它们。
+
+空响应也先发布 `start`；成功终态中的工具参数必须完整，包括 `length`。不完整 JSON 留在失败前缀中，不发布成功的 `toolcall_end`。原生协议使用相同的占满窗口判断；明确的 `model_context_window_exceeded` 会标记 `overflow`，普通 `length` 不一律当成超限。SSE 和 AWS event stream 在挂起读取时也响应取消，取消后不继续消费已缓冲的后续块。
 
 AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`deferred` assistant，并为已完成 assistant 中未记录结果的工具调用补错误结果。系统消息排在同组工具结果之后，已有结果不会重复补。原始消息保留，普通 Agent 在订阅者失败后的 Completions 请求也不会发送未配对调用。
 
@@ -60,6 +68,8 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 
 ## 内存循环
 
+每个 `transformContext` 收到独立的消息快照；只有返回数组才会替换请求投影，返回 `undefined` 时的原位修改丢弃。投影过滤 custom 消息后才进入 AI 协议，Agent 和 Durable 使用同一规则。`onYield` 等待结束后重新检查取消与 steer / follow-up；等待期间到达的队列优先，取消后不追加 yielded 消息。
+
 一次 turn 是一次模型响应加上它的工具结果。Agent 不持有 Models。每次模型调用都走构造时传入的 `streamFn(model, context, options)`，它可以同步返回事件流，也可以异步取得事件流。`models.streamSimple.bind(models)` 满足这个形状。`hooks` 按顺序折进原有循环：`beforeToolCall` 可以拦截执行，`afterToolCall` 只改已经执行的结果的 `content`、`isError` 和 `terminate`，`transformContext` 只替换这一次模型请求的消息，不写回 transcript，也不另开一条循环。认证和 Provider 装配留在调用方。未传 `telemetryContext` 时使用空实现；要和某次 Models 共享诊断上下文，由调用方把那个上下文传进来。Steering 在当前 assistant 回合之后进入。Follow-up 要等到这次 run 本来会停的时候。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`walkYield` 可以追加一条普通 user 消息并再请求一次模型；没有可追加的文本就停止。排队中的 steer 或 follow-up 先走，这个钩子不插入。工具轮和 terminate 不调用它。`stopReason === "length"` 的 tool call 不执行。工具可以并行跑完，写回 transcript 时仍按 assistant 里的源顺序。
 
 ## 持久化运行时
@@ -67,6 +77,8 @@ AI 的 `transformMessages` 在请求投影中跳过 `error`、`aborted`、`defer
 `@amazme/durable` 提供 `AgentHarness` 和 `AgentLane`。运行时依赖结构化的 `HarnessModels` 能力接口，只要求模型查找、流式调用与可选诊断上下文；`createModels()` 可直接使用。`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 在存储事务外、武装工具前调用 `walkBefore`；这段等待中的取消不执行，也不进入 `walkAfter`。`walkAfter` 只在 `execute` 正常返回之后、写入结果之前；`execute` 抛错时不调用它，错误文本仍作为工具结果提交。`walkTransform` 只在助手请求和摘要请求调用 `streamSimple` 之前替换这一次的 messages。变换结果不写回条目。模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时，`drive` 才调用 `walkYield`：非空白字符串追加成一条 user 消息，并和随后的阶段在同一次 apply 里提交，然后再请求一次；空结果则完成。`onYield` 抛错发生在写入之前，不留下 live id，也不重发已经结算的 `streamSimple`。工具轮、terminate、摘要和 navigation 不调用它。`HarnessTool`、`ToolResult`、`HarnessMessage` 仍属于 Durable 自己的契约，不与 Agent 的同名类型合并。更多使用方式见 [Durable README](packages/durable/README.md)。
 
 存储只有三类东西：只写一次的 entry 树、可替换的 value 和只追加的 list、只追加的 usage。一次 commit 要么全部可见，要么全部没有。
+
+工具只有在武装提交成功返回后才登记本进程的 live 标记；提交失败后，同一 harness 再 `drive` 仍可按持久化阶段恢复。`abandon()` 在 hook 等待返回、工具启动和存储回调入口阻止继续推进，已提交数据留给新 harness 恢复。
 
 一条 lane 同时最多一个操作。操作状态是一整份当前叶子，每次转移都整份替换。恢复时读这棵叶子，不回放日志。
 

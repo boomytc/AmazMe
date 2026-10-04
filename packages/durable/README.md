@@ -51,6 +51,8 @@ const storage = new JsonlStorage("./state/lane.jsonl");
 
 `Storage` / `StorageView` 是结构化接口。后端可以自行实现，无需继承 `MemoryStorage`。`run` 串行持有写入通道；其中每次 `apply` 分别原子提交，不跨多个 `apply` 回滚。借出的 view 数据应只读，写入时将 payload 的所有权交给存储。`apply` 在所属回调结束后失效。
 
+每个 transform hook 使用独立消息快照，只有返回数组生效，custom 消息在 AI 请求前过滤。`onYield` 等待期间到达的 inbox 优先处理，取消后不追加返回文本。`abandon()` 与 signal 取消分别检查：before / after / transform / yield 等待返回后、工具启动前及排队的存储回调入口都停止推进；保留已经提交的数据供新 harness 恢复。工具武装提交成功返回后才登记 live，提交失败不会留下导致同一 harness 卡住的运行标记。
+
 ## 原子结算与恢复
 
 一条 lane 同时最多一个操作。完整操作状态保存在叶子中，恢复时读取它。响应、usage、tip 与阶段转移或操作终态在一次 `apply` 中提交。模型响应和摘要使用发送前预留的 entry ID。
@@ -65,6 +67,8 @@ const storage = new JsonlStorage("./state/lane.jsonl");
 ## 上下文预算与压缩
 
 `compaction.maxTokens` 是自动压缩的输入 token 阈值，不是这一次生成的输出上限。`HarnessOptions.maxTokens` 传给普通 `streamSimple`。摘要请求使用自己的输出上限，`tools` 为空，`thinkingLevel` 为 `off`。
+
+模型不能关闭思考或协议尚未实现该控制时，摘要请求明确失败并保留原分支；当前摘要契约不会默默改成其他思考级别。原生签名随帧和消息保留，但崩溃恢复生成的 `aborted` assistant 仍不进入后续模型请求。
 
 `compaction.enabled` 同时控制阈值压缩和超限恢复。关闭时这两类明确失败；显式 compaction 和带 `summarize` 的 navigation 仍可执行。每个 operation 最多做一次超限恢复压缩。普通暂时错误仍按 `maxAttempts` 重试，超限不原样重试。
 
