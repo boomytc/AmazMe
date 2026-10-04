@@ -139,7 +139,7 @@ const models = createModels({ telemetryContext });
 
 会话文件是只追加的 JSONL 树，头部版本号是 3。它包含 `id`、`parentId`、`select`、`compaction`，文件格式与 Pi session 不兼容。`select` 把 tip 挪到旧节点。Compaction 插入摘要，把要保留的尾巴复制到摘要下面，并补上被切开的工具调用和工具结果。旧 entry 还在文件里，之后的模型请求不再看见摘要之前的内容。
 
-内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。这四个工具在 macOS 上经 Seatbelt 执行：只能访问工作区，不能读写工作区里的 `.amazme`，也没有网络。不是 darwin，或没有 `/usr/bin/sandbox-exec` 时，工具直接失败，不会退回不受限制的进程。模型请求和调用方自己持有的 MCP 工具不在这道边界里。
+内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。这四个工具共用一条工作区策略：工作区可写，`<workspace>/.amazme` 不可读写，只有 `<workspace>/.amazme/tmp` 例外，工具没有网络。darwin 用 Seatbelt，linux 用 Bubblewrap（`--unshare-net`，把 `.amazme` 盖成 tmpfs 后再绑回 tmp）。平台不对，或对应的 `sandbox-exec` / `bwrap` 不存在时，工具抛出 `SANDBOX_UNAVAILABLE`，不会退回不受限制的进程。模型请求和调用方自己持有的 MCP 工具不在这道边界里。
 
 CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket` 是本机控制端：连上 `serve`，提交、follow-up、`/steer`、`/abort`、`/earlier`。`/continue` 只对已经写下的 `retry_wait` 再 `drive`，并等到 `notBefore`。`amazme bridge --socket [--port n]` 只监听 `127.0.0.1`，用同一条 lane 提供页面。两者都不持有 JSONL，也不执行工具。
 
