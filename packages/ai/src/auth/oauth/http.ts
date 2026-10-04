@@ -2,15 +2,18 @@ import type { LoginInteraction } from "../../auth.ts";
 import type { OAuthCredential } from "../../types.ts";
 
 export function signalOf(interaction: Pick<LoginInteraction, "signal">): AbortSignal {
-  return interaction.signal ?? new AbortController().signal;
+  const signal = interaction.signal ?? new AbortController().signal;
+  checkCancelled(signal);
+  return signal;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export async function readJson(response: Response): Promise<Record<string, unknown>> {
+export async function readJson(response: Response, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const text = await response.text();
+  checkCancelled(signal);
   if (!text) return {};
   try {
     const parsed = JSON.parse(text) as unknown;
@@ -27,17 +30,29 @@ export async function postForm(
   signal: AbortSignal,
   headers: Record<string, string> = {},
 ): Promise<Response> {
-  return fetchImpl(url, {
+  checkCancelled(signal);
+  const response = await fetchImpl(url, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded", ...headers },
     body: new URLSearchParams(fields),
     signal,
   });
+  checkCancelled(signal);
+  return response;
+}
+
+function checkCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("Login cancelled");
 }
 
 export function expiresIn(seconds: unknown, fallbackSeconds = 3600): number {
-  const value = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : fallbackSeconds;
-  return Date.now() + value * 1000;
+  const value = seconds === undefined ? fallbackSeconds : seconds;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error("OAuth response has invalid expires_in");
+  }
+  const expires = Date.now() + value * 1000;
+  if (!Number.isFinite(expires)) throw new Error("OAuth response has invalid expires_in");
+  return expires;
 }
 
 export function credential(access: string, refresh: string, expires: number, extra: Partial<OAuthCredential> = {}): OAuthCredential {

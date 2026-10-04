@@ -159,15 +159,18 @@ export async function resolveModelAuth(input: {
   /** Stream requests refresh. Status reads do not. */
   refresh?: boolean;
 }): Promise<AuthResult | undefined> {
+  input.signal?.throwIfAborted();
   const auth = providerAuth(input.auth);
   if (input.apiKey !== undefined && input.apiKey !== "") {
     return { apiKey: input.apiKey, source: "request" };
   }
   const stored = await input.store.get(input.providerId);
+  input.signal?.throwIfAborted();
   if (stored?.type === "oauth") {
     if (!auth.oauth) return undefined;
     const credential = input.refresh === false ? stored : await refreshOAuth({ ...input, auth }, stored);
     const derived = await auth.oauth.toAuth(credential);
+    input.signal?.throwIfAborted();
     return {
       ...(derived.apiKey ? { apiKey: derived.apiKey } : {}),
       ...(derived.headers ? { headers: derived.headers } : {}),
@@ -176,12 +179,18 @@ export async function resolveModelAuth(input: {
       source: "oauth",
     };
   }
+  if (auth.apiKey?.resolve) {
+    const resolved = await auth.apiKey.resolve({
+      ...(stored?.type === "api_key" ? { credential: stored } : {}),
+      env: input.env,
+    });
+    input.signal?.throwIfAborted();
+    return resolved;
+  }
   if (stored?.type === "api_key") {
-    if (auth.apiKey?.resolve) return auth.apiKey.resolve({ credential: stored, env: input.env });
     if (stored.key) return { apiKey: stored.key, source: "store", ...(stored.env ? { env: stored.env } : {}) };
     return undefined;
   }
-  if (auth.apiKey?.resolve) return auth.apiKey.resolve({ env: input.env });
   const apiKey = auth.apiKey;
   if (!apiKey) return undefined;
   const fromEnv = input.env[apiKey.env];
@@ -206,14 +215,17 @@ async function refreshOAuth(
   try {
     const next = await input.store.modify(input.providerId, async (current) => {
       if (!current || current.type !== "oauth") throw new AuthRefreshError("OAuth credential disappeared");
+      signal.throwIfAborted();
       if (current.expires > Date.now() + OAUTH_REFRESH_SKEW_MS) return current;
       const refreshed = await oauth.refresh(current, signal);
-      if (!refreshed || refreshed.type !== "oauth" || !refreshed.access) {
+      signal.throwIfAborted();
+      if (!usableOAuthCredential(refreshed)) {
         throw new AuthRefreshError("OAuth refresh did not return a credential");
       }
       return refreshed;
     });
-    if (!next || next.type !== "oauth" || !next.access) {
+    signal.throwIfAborted();
+    if (!usableOAuthCredential(next)) {
       throw new AuthRefreshError("OAuth refresh did not return a credential");
     }
     return next;
@@ -221,4 +233,11 @@ async function refreshOAuth(
     if (error instanceof AuthRefreshError) throw error;
     throw new AuthRefreshError(error instanceof Error ? error.message : String(error));
   }
+}
+
+function usableOAuthCredential(value: Credential | undefined): value is OAuthCredential {
+  return value?.type === "oauth"
+    && typeof value.access === "string" && value.access.trim() !== ""
+    && typeof value.refresh === "string"
+    && Number.isFinite(value.expires) && value.expires > Date.now() + OAUTH_REFRESH_SKEW_MS;
 }

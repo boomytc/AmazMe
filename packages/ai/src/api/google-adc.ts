@@ -72,7 +72,9 @@ async function refreshAuthorizedUser(parsed: Record<string, unknown>, fetchImpl:
     signal,
   });
   if (!response.ok) return undefined;
-  return accessToken(await readBody(response));
+  const body = await readBody(response);
+  signal?.throwIfAborted();
+  return accessToken(body);
 }
 
 async function exchangeServiceAccount(
@@ -101,7 +103,9 @@ async function exchangeServiceAccount(
     signal,
   });
   if (!response.ok) return undefined;
-  return accessToken(await readBody(response));
+  const body = await readBody(response);
+  signal?.throwIfAborted();
+  return accessToken(body);
 }
 
 function serviceAccountJwt(email: string, privateKey: string, audience: string, issuedAt: number): string {
@@ -120,6 +124,10 @@ function serviceAccountJwt(email: string, privateKey: string, audience: string, 
 }
 
 function accessToken(parsed: Record<string, unknown> | undefined): string | undefined {
+  const seconds = parsed?.expires_in;
+  if (seconds !== undefined && (typeof seconds !== "number" || !Number.isFinite(seconds * 1000) || seconds * 1000 <= EXPIRY_SKEW_MS)) {
+    return undefined;
+  }
   return text(parsed?.access_token);
 }
 

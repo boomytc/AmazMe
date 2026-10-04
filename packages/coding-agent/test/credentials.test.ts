@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -64,4 +64,45 @@ test("a failed refresh leaves the credential file unchanged and the store usable
     alpha: original,
     beta: { type: "api_key", key: "beta-key" },
   });
+});
+
+test("stores for the same normalized path share one read-modify-write chain", async () => {
+  const { store, file, directory } = storeInTemp();
+  const second = new FileCredentialStore(join(directory, ".", "credentials.json"));
+  await store.set("alpha", { type: "api_key", key: "alpha-old" });
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => { entered = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const updating = store.modify("alpha", async () => {
+    entered();
+    await gate;
+    return { type: "api_key", key: "alpha-new" };
+  });
+  await ready;
+  const setting = second.set("beta", { type: "api_key", key: "beta-key" });
+  release();
+  await Promise.all([updating, setting]);
+  assert.deepEqual(read(file), {
+    alpha: { type: "api_key", key: "alpha-new" }, beta: { type: "api_key", key: "beta-key" },
+  });
+});
+
+test("new credentials and private directories are owner-only without chmodding the parent", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "amazme-credentials-mode-"));
+  const parentMode = statSync(parent).mode & 0o777;
+  const directory = join(parent, "private");
+  const file = join(directory, "credentials.json");
+  await new FileCredentialStore(file).set("alpha", { type: "api_key", key: "private-key" });
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.equal(statSync(directory).mode & 0o777, 0o700);
+  assert.equal(statSync(parent).mode & 0o777, parentMode);
+});
+
+test("a failed atomic rename removes its secret temporary file", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "amazme-credentials-failure-"));
+  const file = join(directory, "credentials.json");
+  mkdirSync(file);
+  await assert.rejects(new FileCredentialStore(file).set("alpha", { type: "api_key", key: "private-key" }));
+  assert.deepEqual(readdirSync(directory), ["credentials.json"]);
 });
