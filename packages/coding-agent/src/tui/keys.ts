@@ -3,7 +3,12 @@ export type Key =
   | { type: "enter" }
   | { type: "backspace" }
   | { type: "ctrl-c" }
-  | { type: "ctrl-d" };
+  | { type: "ctrl-d" }
+  | { type: "escape" }
+  | { type: "up" }
+  | { type: "down" }
+  | { type: "page-up" }
+  | { type: "page-down" };
 
 export function decodeKeys(input: string): { keys: Key[]; rest: string } {
   const chars = Array.from(input);
@@ -19,6 +24,9 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
         while (cursor < chars.length) {
           const code = chars[cursor]?.charCodeAt(0) ?? 0;
           if (code >= 0x40 && code <= 0x7e) {
+            const final = chars[cursor] ?? "";
+            const body = chars.slice(index + 2, cursor).join("");
+            keys.push(csiKey(body, final));
             index = cursor + 1;
             break;
           }
@@ -27,6 +35,7 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
         }
         continue;
       }
+      keys.push({ type: "escape" });
       index += 1;
       continue;
     }
@@ -64,6 +73,14 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
     index += 1;
   }
   return { keys, rest: "" };
+}
+
+function csiKey(body: string, final: string): Key {
+  if (final === "A") return { type: "up" };
+  if (final === "B") return { type: "down" };
+  if (final === "~" && body === "5") return { type: "page-up" };
+  if (final === "~" && body === "6") return { type: "page-down" };
+  return { type: "escape" };
 }
 
 export class KeyDecoder {

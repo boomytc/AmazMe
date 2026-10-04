@@ -423,7 +423,8 @@ test("keys decode enter, backspace, and ctrl-c without treating a partial escape
   const partial = decodeKeys("\u001b");
   assert.deepEqual(partial.keys, []);
   assert.equal(partial.rest, "\u001b");
-  assert.deepEqual(decodeKeys("\u001b[A").keys, []);
+  assert.deepEqual(decodeKeys("\u001b[A").keys, [{ type: "up" }]);
+  assert.deepEqual(decodeKeys("\u001b[6~").keys, [{ type: "page-down" }]);
 });
 
 test("the fullscreen view does not call the model itself", () => {

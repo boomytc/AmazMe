@@ -25,12 +25,8 @@ export function shouldOpenFullscreen(prompt: string, stdoutIsTTY: boolean): bool
 }
 
 export async function runCodingFullscreen(options: FullscreenOptions): Promise<void> {
-  const session = createFullscreenSession(options);
-  try {
-    await presentFullscreen(session);
-  } finally {
-    session.close();
-  }
+  const { runHostFullscreen } = await import("./host-fullscreen.ts");
+  await runHostFullscreen(options);
 }
 
 /** Same session the fullscreen command uses: one agent, the current JSONL tree. */

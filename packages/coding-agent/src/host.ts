@@ -64,7 +64,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
     service: createManagementService({ removeRuntime: (runtimeId) => server.removeRuntime(runtimeId) }),
     onError: report,
     openRuntime: openOwnedRuntimes({
-      lanes: [HOST_LANE],
+      // Every conversation in the session log is servable. `main` is only the default.
       onError: report,
       async open(runtimeId) {
         if (runtimeId !== HOST_RUNTIME_ID) return null;
