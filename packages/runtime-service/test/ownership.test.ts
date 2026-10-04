@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@amazme/ai";
@@ -188,6 +188,7 @@ class HoldRun implements Storage {
 
 class UnsubscribeOnce implements Storage {
   private thrown = false;
+  activeSubscriptions = 0;
 
   constructor(private readonly inner: Storage) {}
 
@@ -205,12 +206,16 @@ class UnsubscribeOnce implements Storage {
 
   subscribe(listener: () => void): () => void {
     const stop = this.inner.subscribe(listener);
+    this.activeSubscriptions += 1;
+    let stopped = false;
     return () => {
       if (!this.thrown) {
         this.thrown = true;
         throw new Error("unsubscribe failed");
       }
       stop();
+      if (!stopped) this.activeSubscriptions -= 1;
+      stopped = true;
     };
   }
 
@@ -218,6 +223,92 @@ class UnsubscribeOnce implements Storage {
     return this.inner.whenIdle();
   }
 }
+
+class IdleFailureOnce extends MemoryStorage {
+  idleCalls = 0;
+
+  override whenIdle(): Promise<void> {
+    this.idleCalls += 1;
+    if (this.idleCalls === 1) return Promise.reject(new Error("storage barrier failed"));
+    return super.whenIdle();
+  }
+}
+
+test("a failed harness barrier keeps storage owned, and a later close retries it", timeout, async () => {
+  const storage = new IdleFailureOnce();
+  const harness = new AgentHarness(storage, modelOptions());
+  let closes = 0;
+  let releases = 0;
+  const open = openOwnedRuntimes({
+    open: async () => ({
+      harness,
+      async closeStorage() { closes += 1; },
+      async release() { releases += 1; },
+      async remove() { assert.fail("closing must not delete data"); },
+    }),
+  });
+  const handle = await open("main", new AbortController().signal);
+  assert.ok(handle);
+  const first = handle.close("drain");
+  assert.equal(handle.close("drain"), first);
+  await assert.rejects(first, /storage barrier failed/);
+  assert.equal(closes, 0);
+  assert.equal(releases, 0);
+  const retry = handle.close("drain");
+  assert.notEqual(retry, first);
+  await retry;
+  assert.equal(storage.idleCalls, 2);
+  assert.equal(closes, 1);
+  assert.equal(releases, 0);
+  await handle.release!();
+  assert.equal(releases, 1);
+  assert.equal(closes, 1);
+});
+
+test("JSONL runtime removal retries a partial unlock after deleting its data", timeout, async (t) => {
+  const file = join(directory(t), "lane.jsonl");
+  const resources = await openJsonlRuntime(file, modelOptions());
+  const open = openOwnedRuntimes({ open: async () => resources });
+  const handle = await open("main", new AbortController().signal);
+  assert.ok(handle);
+  const stat = statSync(file, { bigint: true });
+  const inodeLock = join(userInfo().homedir, ".amazme-jsonl-locks", "inode", `${stat.dev}-${stat.ino}`);
+  try {
+    chmodSync(inodeLock, 0o500);
+    await assert.rejects(handle.remove!(), (error: unknown) => (error as NodeJS.ErrnoException).code === "EACCES");
+    assert.equal(existsSync(file), false, "data deletion succeeded before the partial unlock failed");
+    chmodSync(inodeLock, 0o700);
+    await handle.remove!();
+    assert.equal(existsSync(file), false);
+    await assertFree(file);
+  } finally {
+    if (existsSync(inodeLock)) chmodSync(inodeLock, 0o700);
+    await handle.remove!();
+  }
+});
+
+test("automatic subscription cleanup reports a failure and retains the observer for host close", timeout, async () => {
+  const storage = new UnsubscribeOnce(new MemoryStorage());
+  const harness = new AgentHarness(storage, modelOptions());
+  const host = serve(async () => ({
+    harness,
+    closeStorage: () => storage.whenIdle(),
+    release: () => storage.whenIdle(),
+    remove: () => storage.whenIdle(),
+  }));
+  try {
+    const { remote } = await host.connect();
+    await remote.attach("main");
+    const subscription = await remote.lane("main").subscribe(() => undefined);
+    await subscription.close();
+    await until(() => host.errors.some((error) => error.message === "unsubscribe failed"), "the cleanup failure to be reported");
+    assert.equal(storage.activeSubscriptions, 1);
+    await host.handles[0]!.close("drain");
+    assert.equal(storage.activeSubscriptions, 0);
+  } finally {
+    await host.close();
+  }
+});
 
 test("concurrent attaches share one open, and the next attach after idle opens again", timeout, async () => {
   let releaseOpen!: () => void;
@@ -506,10 +597,11 @@ test("one cleanup failure does not skip the other, and the lock stays until a la
   const file = join(directory(t), "lane.jsonl");
   let storageCloses = 0;
   let harness: AgentHarness | undefined;
+  let observing: UnsubscribeOnce | undefined;
   const host = serve(async (runtimeId) => {
     if (runtimeId !== "main") return null;
     const owner = openJsonlOwner(file);
-    const storage = new UnsubscribeOnce(owner.storage);
+    const storage = observing = new UnsubscribeOnce(owner.storage);
     harness = new AgentHarness(storage, modelOptions());
     return {
       harness,
@@ -546,12 +638,14 @@ test("one cleanup failure does not skip the other, and the lock stays until a la
     if (endA.reason === "ended") assert.equal(endA.code, "runtime_closed");
     if (endB.reason === "ended") assert.equal(endB.code, "runtime_closed");
     await failed;
+    assert.equal(observing!.activeSubscriptions, 1, "the failed unsubscribe remains owned for retry");
     assert.equal(harness!.isClosed, true);
     assert.equal(storageCloses, 1);
     await assertBusy(file);
     const retry = handle.close("drain");
     assert.notEqual(retry, closing);
     await retry;
+    assert.equal(observing!.activeSubscriptions, 0, "retry releases the failed observer too");
     assert.equal(handle.close("drain"), retry);
     assert.equal(storageCloses, 2);
     await assertBusy(file);
@@ -660,17 +754,22 @@ test("an open that finishes after its waiter has left is discarded, unlocked, an
   }
 });
 
-test("remove during open keeps the lock until the handle arrives, then deletes once", timeout, async (t) => {
+test("remove during open keeps the lock until the handle arrives and removes each owner once", timeout, async (t) => {
   const file = join(directory(t), "lane.jsonl");
   let releaseOpen = (): void => undefined;
   const gate = new Promise<void>((resolve) => { releaseOpen = resolve; });
   let opens = 0;
+  const removals: number[] = [];
   const host = serve(async (runtimeId) => {
     if (runtimeId !== "main") return null;
     opens += 1;
+    const index = removals.push(0) - 1;
     const resources = await openJsonlRuntime(file, modelOptions());
     await gate;
-    return resources;
+    return {
+      ...resources,
+      async remove() { removals[index]! += 1; await resources.remove(); },
+    };
   });
   try {
     const waiting = await host.connect();
@@ -694,10 +793,13 @@ test("remove during open keeps the lock until the handle arrives, then deletes o
     assert.ok(error instanceof RemoteError && error.code === "runtime_busy");
     assert.equal(existsSync(file), false);
     await remover.remote.remove("main");
+    assert.equal(existsSync(file), false);
+    assert.deepEqual(removals, [1, 1], "a later removal acquires a new owner instead of cleaning the old one twice");
     await assertFree(file);
     const again = await host.connect();
     await again.remote.attach("main");
-    assert.equal(opens, 2);
+    assert.equal(opens, 3);
+    assert.deepEqual(removals, [1, 1, 0]);
     assert.deepEqual(texts(await again.remote.lane("main").snapshot()), []);
   } finally {
     releaseOpen();
@@ -705,18 +807,24 @@ test("remove during open keeps the lock until the handle arrives, then deletes o
   }
 });
 
-test("remove waits for a running tool before it deletes, and a second remove does not clean up again", timeout, async (t) => {
+test("remove waits for a running tool and acquires new ownership for a later removal", timeout, async (t) => {
   const file = join(directory(t), "lane.jsonl");
   const tools: ReturnType<typeof gatedTool>[] = [];
+  const removals: number[] = [];
   const host = serve(async (runtimeId) => {
     if (runtimeId !== "main") return null;
     const tool = gatedTool();
     tools.push(tool);
-    return openJsonlRuntime(file, {
+    const index = removals.push(0) - 1;
+    const resources = await openJsonlRuntime(file, {
       models: tool.models,
       model: { provider: "faux", modelId: "faux-1" },
       tools: [tool.tool],
     });
+    return {
+      ...resources,
+      async remove() { removals[index]! += 1; await resources.remove(); },
+    };
   });
   try {
     const first = await host.connect();
@@ -744,11 +852,15 @@ test("remove waits for a running tool before it deletes, and a second remove doe
     assert.equal(tools[0]!.calls(), 2);
     assert.equal(existsSync(file), false);
     await remover.remote.remove("main");
+    assert.equal(existsSync(file), false);
+    assert.deepEqual(removals, [1, 1]);
+    assert.equal(tools[1]!.calls(), 0, "opening for removal never drives the new harness");
     await assertFree(file);
     const again = await host.connect();
     await again.remote.attach("main");
-    assert.equal(tools.length, 2);
-    assert.equal(tools[1]!.calls(), 0);
+    assert.equal(tools.length, 3);
+    assert.deepEqual(removals, [1, 1, 0]);
+    assert.equal(tools[2]!.calls(), 0);
     assert.deepEqual(texts(await again.remote.lane("main").snapshot()), []);
     assert.equal((await again.remote.lane("main").result("op")), null);
   } finally {
@@ -756,3 +868,41 @@ test("remove waits for a running tool before it deletes, and a second remove doe
     await host.close();
   }
 });
+
+for (const previouslyOpened of [false, true]) {
+  test(`remove deletes JSONL data after ${previouslyOpened ? "idle reclamation" : "starting a fresh server"} without driving`, timeout, async (t) => {
+    const file = join(directory(t), "lane.jsonl");
+    const seed = openJsonlOwner(file);
+    await seed.storage.commit([{ type: "set", address: value("test", "saved"), value: "keep until removed" }]);
+    await seed.release();
+    const provider = fauxProvider();
+    const models = createModels();
+    models.setProvider(provider);
+    let releases = 0;
+    const host = serve(async (runtimeId) => {
+      if (runtimeId !== "main") return null;
+      const resources = await openJsonlRuntime(file, { models, model: { provider: "faux", modelId: "faux-1" } });
+      return {
+        ...resources,
+        async release() { await resources.release(); releases += 1; },
+      };
+    });
+    try {
+      const { remote } = await host.connect();
+      if (previouslyOpened) {
+        await remote.attach("main");
+        await remote.detach();
+        await until(() => releases === 1, "idle reclamation to release the storage");
+      }
+      assert.equal(existsSync(file), true);
+      await remote.remove("main");
+      assert.equal(existsSync(file), false, "remove must delete persisted data even without a live slot");
+      assert.equal(provider.state.callCount, 0);
+      assert.equal(host.handles.length, previouslyOpened ? 2 : 1);
+      await remote.remove("missing");
+      assert.equal(existsSync(file), false);
+    } finally {
+      await host.close();
+    }
+  });
+}

@@ -122,7 +122,6 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
   private stopped = false;
   private aborting = false;
   private closing: Promise<void> | undefined;
-  private observationEnded = false;
   private storageClosed = false;
   private released = false;
   private removed = false;
@@ -279,8 +278,6 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
   }
 
   private endObservation(): Promise<void> {
-    if (this.observationEnded) return Promise.resolve();
-    this.observationEnded = true;
     const ended = { code: "runtime_closed", message: "the runtime host is closed" };
     return Promise.allSettled([...this.publishers].map((publisher) => publisher.close(ended))).then((settled) => {
       const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
@@ -386,6 +383,8 @@ class SnapshotPublisher {
   private started = false;
   private dirty = false;
   private closed = false;
+  private unsubscribed = false;
+  private closing: Promise<void> | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private running: Promise<void> | undefined;
   private initialRead: Promise<LaneSnapshot> | undefined;
@@ -401,7 +400,9 @@ class SnapshotPublisher {
     this.done = new Promise((resolve) => { this.finish = resolve; });
     this.stopped = new Promise((resolve) => { this.stop = resolve; });
     this.unsubscribe = harness.storage.subscribe(() => this.invalidate());
-    sink.signal.addEventListener("abort", () => void this.close(), { once: true });
+    sink.signal.addEventListener("abort", () => {
+      if (!this.closed) void this.close().catch(this.report);
+    }, { once: true });
   }
 
   /** Reads the initial snapshot after the listener is registered, so no write between them is missed. */
@@ -440,31 +441,42 @@ class SnapshotPublisher {
    * rejects after that read, so a later publisher is not skipped.
    */
   close(ended?: Ended): Promise<void> {
-    if (this.closed) return this.done;
+    if (this.closing) return this.closing;
+    const first = !this.closed;
     this.closed = true;
-    this.rejectInitial?.(new ServiceError(ended?.code ?? "cancelled", ended?.message ?? "the snapshot subscription closed before initialization"));
-    this.rejectInitial = undefined;
-    this.stop("stopped");
-    clearTimeout(this.timer);
-    this.timer = undefined;
-    let unsubscribeError: unknown;
-    try {
-      this.unsubscribe();
-    } catch (error) {
-      unsubscribeError = error;
-    }
-    if (ended && !this.sink.closed) {
-      const notice: LaneUpdateDto = { kind: "ended", ...ended };
-      void this.sink.send(notice).then(() => this.sink.close(), () => this.sink.close());
-    } else {
-      this.sink.close();
-    }
-    void Promise.allSettled([this.initialRead, this.running]).then(() => this.finish());
-    if (!unsubscribeError) return this.done;
-    const failure = unsubscribeError;
-    return this.done.then(() => {
-      throw failure;
+    let run!: Promise<void>;
+    run = Promise.resolve().then(async () => {
+      const errors: unknown[] = [];
+      if (!this.unsubscribed) {
+        try {
+          this.unsubscribe();
+          this.unsubscribed = true;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      await Promise.allSettled([this.initialRead, this.running]);
+      if (errors.length > 0) throw errors[0];
+      this.finish();
+    }).catch((error: unknown) => {
+      if (this.closing === run) this.closing = undefined;
+      throw error;
     });
+    this.closing = run;
+    if (first) {
+      this.rejectInitial?.(new ServiceError(ended?.code ?? "cancelled", ended?.message ?? "the snapshot subscription closed before initialization"));
+      this.rejectInitial = undefined;
+      this.stop("stopped");
+      clearTimeout(this.timer);
+      this.timer = undefined;
+      if (ended && !this.sink.closed) {
+        const notice: LaneUpdateDto = { kind: "ended", ...ended };
+        void this.sink.send(notice).then(() => this.sink.close(), () => this.sink.close());
+      } else {
+        this.sink.close();
+      }
+    }
+    return run;
   }
 
   private invalidate(): void {
@@ -493,7 +505,7 @@ class SnapshotPublisher {
         snapshot = await this.lane.snapshot();
       } catch (error) {
         this.report(error);
-        void this.close({ code: "snapshot_failed", message: "the lane snapshot could not be read" });
+        void this.close({ code: "snapshot_failed", message: "the lane snapshot could not be read" }).catch(this.report);
         return;
       }
       if (this.closed || snapshot.version <= this.version) return;
@@ -503,10 +515,10 @@ class SnapshotPublisher {
         sent = await Promise.race([this.sink.send(update), this.stopped]);
       } catch (error) {
         this.report(error);
-        void this.close({ code: "snapshot_unavailable", message: "the lane snapshot could not be sent" });
+        void this.close({ code: "snapshot_unavailable", message: "the lane snapshot could not be sent" }).catch(this.report);
         return;
       }
-      if (sent === false) void this.close();
+      if (sent === false) void this.close().catch(this.report);
       else if (sent === true) this.version = snapshot.version;
     });
   }
