@@ -12,7 +12,8 @@
 @amazme/agent          内存里的 turn 循环
 @amazme/durable        可崩溃恢复的 AgentHarness、存储契约与适配器
 @amazme/runtime-service  Durable lane 控制、完整快照、有界订阅和历史分页；服务端打开并持有 runtime 和存储
-@amazme/coding-agent   JSONL 会话树、read/write/edit/bash、CLI、MCP 工具适配
+@amazme/tui            全屏客户端：只附着宿主 socket，不持有会话、工具或模型
+@amazme/coding-agent   宿主、read/write/edit/bash、CLI、MCP 工具适配。全屏由它拉起宿主再交给 tui
 ```
 
 `@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 没有实现。现代 HTTP 按 `tools/list` 中合法的 `x-mcp-header` 标注生成 `Mcp-Param-*`，非法标注工具被过滤，错误参数在发送前失败。OAuth 发现、PKCE、刷新和 step-up 在独立的 `@amazme/mcp/oauth` 入口里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。`@amazme/coding-agent` 把已经连上的客户端适配成 Agent 工具：名字是 `mcp_<serverId>__<toolName>`，冲突或超长就报错，不截断；取消、进度、文本和图片结果交给工具执行。协议包本身不依赖 Agent。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。

@@ -10,6 +10,7 @@
     { "path": "packages/agent" },
     { "path": "packages/durable" },
     { "path": "packages/runtime-service" },
+    { "path": "packages/tui" },
     { "path": "packages/coding-agent" }
   ]
 }
