@@ -3,8 +3,9 @@ import { chmodSync, mkdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs"
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { sandboxArgv } from "./backend.ts";
 import { buildPolicy, fileOpPath, type WorkspacePolicy } from "./policy.ts";
-import { seatbeltArgv, unavailable } from "./seatbelt.ts";
+import { unavailable } from "./seatbelt.ts";
 
 const OUTPUT_TAIL_BYTES = 32 * 1024;
 const TOOL_TIMEOUT_MS = 15_000;
@@ -136,7 +137,7 @@ function probe(policy: WorkspacePolicy): void {
   writeFileSync(runtimeFile, token, { mode: 0o600 });
   writeFileSync(canary, token, { mode: 0o600 });
   try {
-    const argv = seatbeltArgv(policy.profile, [process.execPath, fileOpPath, "probe", canary, runtimeFile]);
+    const argv = sandboxArgv(policy, [process.execPath, fileOpPath, "probe", canary, runtimeFile]);
     const result = spawnSync(argv[0] ?? "", argv.slice(1), {
       cwd: policy.canonical,
       env: policy.env,
@@ -158,7 +159,7 @@ function probe(policy: WorkspacePolicy): void {
   }
 }
 
-/** Build the workspace policy and prove Seatbelt once per canonical root. */
+/** Build the workspace policy and prove the selected backend once per canonical root. */
 export function prepareWorkspace(root: string): WorkspacePolicy {
   const policy = buildPolicy(root);
   mkdirSync(policy.scratch, { recursive: true, mode: 0o700 });
@@ -181,7 +182,7 @@ export async function runFileOp(
   body: { path: string; content?: string; old?: string; replacement?: string },
   signal: AbortSignal,
 ): Promise<FileOpResult> {
-  const argv = seatbeltArgv(policy.profile, [process.execPath, fileOpPath, op, policy.workspace]);
+  const argv = sandboxArgv(policy, [process.execPath, fileOpPath, op, policy.workspace]);
   const result = await runConfined({
     argv,
     cwd: policy.canonical,
@@ -207,7 +208,7 @@ export async function runBash(
   signal: AbortSignal,
   onStdout?: (text: string) => void,
 ): Promise<ConfinedResult> {
-  const argv = seatbeltArgv(policy.profile, ["/bin/bash", "-c", command]);
+  const argv = sandboxArgv(policy, ["/bin/bash", "-c", command]);
   return runConfined({
     argv,
     cwd: policy.canonical,

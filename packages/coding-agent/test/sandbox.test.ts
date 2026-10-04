@@ -3,6 +3,9 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { sandboxArgv } from "../src/sandbox/backend.ts";
+import { bubblewrapArgv } from "../src/sandbox/bubblewrap.ts";
+import { buildPolicy } from "../src/sandbox/policy.ts";
 import { seatbeltArgv } from "../src/sandbox/seatbelt.ts";
 import { createCodingTools } from "../src/tools.ts";
 
@@ -134,4 +137,38 @@ test("abort kills a command that ignores SIGTERM", { timeout: 20_000 }, async (t
 
 test("a missing seatbelt runner is unavailable", () => {
   assert.throws(() => seatbeltArgv("(version 1)\n(deny default)", ["/bin/bash", "-c", "true"], "/no/such/sandbox-exec"), /SANDBOX_UNAVAILABLE/);
+});
+
+test("bubblewrap is selected only on linux and a missing runner does not spawn", (t) => {
+  const policy = buildPolicy(directory(t));
+  const selected = sandboxArgv(policy, ["/bin/bash", "-c", "true"]);
+  assert.equal(selected[0], "/usr/bin/sandbox-exec");
+  let looked = 0;
+  assert.throws(() => bubblewrapArgv(policy, ["/bin/bash", "-c", "true"], {
+    platform: "darwin",
+    stat() {
+      looked += 1;
+      return { isFile: () => true };
+    },
+  }), /SANDBOX_UNAVAILABLE: bubblewrap requires linux/);
+  assert.equal(looked, 0);
+  assert.throws(() => bubblewrapArgv(policy, ["/bin/bash", "-c", "true"], {
+    platform: "linux",
+    runner: "/no/such/bwrap",
+    stat() {
+      throw new Error("ENOENT");
+    },
+  }), /SANDBOX_UNAVAILABLE: \/no\/such\/bwrap is required/);
+  assert.throws(() => sandboxArgv(policy, ["/bin/bash", "-c", "true"], "win32"), /SANDBOX_UNAVAILABLE: no sandbox backend for win32/);
+  const argv = bubblewrapArgv(policy, ["/bin/bash", "-c", "true"], {
+    platform: "linux",
+    runner: "/usr/bin/bwrap",
+    stat: () => ({ isFile: () => true }),
+  });
+  assert.equal(argv[0], "/usr/bin/bwrap");
+  assert.equal(argv.includes("--unshare-net"), true);
+  assert.equal(argv.includes("--tmpfs"), true);
+  assert.equal(argv.includes(join(policy.canonical, ".amazme")), true);
+  assert.equal(argv.includes(policy.scratch), true);
+  assert.equal(argv.at(-3), "/bin/bash");
 });
