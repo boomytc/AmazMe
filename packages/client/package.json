@@ -1,0 +1,19 @@
+{
+  "name": "@amazme/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "Transport-neutral protocol client without UI",
+  "dependencies": {
+    "@amazme/protocol": "0.1.0"
+  },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check": "tsc -b && tsc -p tsconfig.test.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  }
+}

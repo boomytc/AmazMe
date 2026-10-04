@@ -3,6 +3,8 @@
   "references": [
     { "path": "packages/telemetry" },
     { "path": "packages/protocol" },
+    { "path": "packages/client" },
+    { "path": "packages/server" },
     { "path": "packages/mcp" },
     { "path": "packages/ai" },
     { "path": "packages/agent" },

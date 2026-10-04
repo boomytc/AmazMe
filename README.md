@@ -5,6 +5,8 @@
 ```text
 @amazme/telemetry      被动诊断契约、空实现、进程内记录
 @amazme/protocol       跨进程路由信封、严格 JSON、CBOR 与分帧，只依赖 TypeBox
+@amazme/client         无界面的协议客户端：握手、请求关联、取消、订阅，传输由调用方注入
+@amazme/server         无界面的协议服务端：显式注册的 runtime 路由、attachment、订阅与上限
 @amazme/mcp            独立的 MCP 客户端，不依赖其余各包
 @amazme/ai             Provider、认证、统一消息、流事件
 @amazme/agent          内存里的 turn 循环

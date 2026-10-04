@@ -84,6 +84,40 @@ test("the protocol depends only on TypeBox and its root entry runs without Node 
   assert.equal(child.status, 0, child.stderr);
 });
 
+test("client and server cores depend only on the protocol and run without Node modules, process, or Durable", () => {
+  for (const name of ["client", "server"]) {
+    const pkg = JSON.parse(readFileSync(new URL(`../packages/${name}/package.json`, import.meta.url), "utf8")) as { dependencies?: Record<string, string> };
+    assert.deepEqual(pkg.dependencies, { "@amazme/protocol": "0.1.0" }, name);
+  }
+  const script = `
+    const { registerHooks, builtinModules } = await import("node:module");
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier.startsWith("node:") || builtinModules.includes(specifier)) throw new Error("Node import in core: " + specifier);
+      const resolved = next(specifier, context);
+      if (/\\/packages\\/(?!(protocol|client|server)\\/)[^/]+\\//.test(resolved.url)) throw new Error("core loaded " + specifier);
+      if (/\\/(unix|runtime-service)/.test(resolved.url)) throw new Error("core loaded " + specifier);
+      return resolved;
+    } });
+    globalThis.process = undefined;
+    const { Client } = await import("@amazme/client");
+    const { Server } = await import("@amazme/server");
+    const { memoryConnector } = await import("@amazme/server/testing");
+    const server = new Server({ serverId: "srv", service: { call: (call, context) => { context.attach("rt"); return call; } } });
+    server.registerRuntime("rt", { call: (call) => ({ echoed: call }) });
+    const connector = memoryConnector((connection) => server.accept(connection));
+    const client = new Client({ serverId: "srv", transport: connector.transport });
+    await client.connect();
+    await client.request(client.serverRoute(), "attach");
+    const result = await client.request(client.attachment, [1, "x"]);
+    if (JSON.stringify(result) !== JSON.stringify({ echoed: [1, "x"] })) throw new Error("round trip failed");
+    await client.dispose();
+    await server.close();
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 10_000 });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+});
+
 test("the public Agent entry runs without loading Durable", () => {
   const script = `
     const { registerHooks } = await import("node:module");

@@ -7,8 +7,8 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "test": "node --import tsx --test packages/telemetry/test/*.test.ts packages/protocol/test/*.test.ts packages/mcp/test/*.test.ts packages/ai/test/*.test.ts packages/agent/test/*.test.ts packages/durable/test/*.test.ts test/*.test.ts packages/coding-agent/test/*.test.ts",
-    "check:core": "tsc -b && tsc -p packages/telemetry/tsconfig.test.json && tsc -p packages/protocol/tsconfig.test.json && tsc -p packages/mcp/tsconfig.test.json && tsc -p packages/ai/tsconfig.test.json && tsc -p packages/agent/tsconfig.test.json && tsc -p packages/durable/tsconfig.test.json && tsc -p test/tsconfig.json",
+    "test": "node --import tsx --test packages/telemetry/test/*.test.ts packages/protocol/test/*.test.ts packages/client/test/*.test.ts packages/server/test/*.test.ts packages/mcp/test/*.test.ts packages/ai/test/*.test.ts packages/agent/test/*.test.ts packages/durable/test/*.test.ts test/*.test.ts packages/coding-agent/test/*.test.ts",
+    "check:core": "tsc -b && tsc -p packages/telemetry/tsconfig.test.json && tsc -p packages/protocol/tsconfig.test.json && tsc -p packages/client/tsconfig.test.json && tsc -p packages/server/tsconfig.test.json && tsc -p packages/mcp/tsconfig.test.json && tsc -p packages/ai/tsconfig.test.json && tsc -p packages/agent/tsconfig.test.json && tsc -p packages/durable/tsconfig.test.json && tsc -p test/tsconfig.json",
     "check:durable": "tsc -b && tsc -p packages/durable/tsconfig.test.json && tsc -p test/tsconfig.json"
   },
   "devDependencies": {
