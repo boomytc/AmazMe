@@ -46,6 +46,7 @@ export {
   type ProviderStreams,
 } from "./models.ts";
 export { isCompletionsThinkingField } from "./types.ts";
+export { imageInputRefusal } from "./image-input.ts";
 export { resolveThinkingLevel, supportedThinkingLevels, type ThinkingResolution } from "./thinking.ts";
 export { aiTelemetrySchema } from "./telemetry.ts";
 export {

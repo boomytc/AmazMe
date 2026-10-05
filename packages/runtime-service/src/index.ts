@@ -58,4 +58,5 @@ export {
   type PendingResponseDto,
   type RuntimeCall,
   type RuntimeErrorCode,
+  type UserContent,
 } from "./contracts.ts";

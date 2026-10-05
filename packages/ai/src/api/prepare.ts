@@ -1,3 +1,4 @@
+import { imageInputRefusal } from "../image-input.ts";
 import { baseAssistant } from "../models.ts";
 import { resolveThinkingLevel } from "../thinking.ts";
 import type { AssistantMessage, Context, Message, Model, StreamOptions } from "../types.ts";
@@ -21,7 +22,7 @@ export function prepareChat(model: Model, context: Context, request: StreamOptio
   if (!resolution.ok) {
     return { ok: false, message: terminal(model, "error", `Thinking level "${resolution.level}" is not supported by ${model.id}`) };
   }
-  const image = imageProblem(model, context.messages);
+  const image = userImageProblem(model, context.messages);
   if (image) return { ok: false, message: terminal(model, "error", image) };
   const wire: Context = { ...context, messages: transformMessages(context.messages, model) };
   const budget = resolveOutputBudget(model, wire, request.maxTokens);
@@ -49,10 +50,24 @@ export function terminal(
   return message;
 }
 
-function imageProblem(model: Model, messages: readonly Message[]): string | undefined {
-  for (const message of messages) {
+/**
+ * Capability and format failures apply only to the user message of this turn.
+ * Earlier user images stay in the transcript. A text-only model projects them
+ * to `[image]`. Refusal follows `model.input`, not a model id.
+ */
+export function userImageProblem(model: Model, messages: readonly Message[]): string | undefined {
+  let latestUser = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      latestUser = index;
+      break;
+    }
+  }
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (!message) continue;
     if (message.role === "user") {
-      if (typeof message.content === "string") continue;
+      if (index !== latestUser || typeof message.content === "string") continue;
       for (const block of message.content) {
         if (block.type !== "image") continue;
         const problem = imageBlockProblem(model, block, true);
@@ -71,7 +86,10 @@ function imageProblem(model: Model, messages: readonly Message[]): string | unde
 }
 
 function imageBlockProblem(model: Model, block: { mimeType: string; data: string }, rejectTextModel: boolean): string | undefined {
-  if (rejectTextModel && !model.input.includes("image")) return `Model ${model.id} does not accept image input`;
+  if (rejectTextModel) {
+    const refused = imageInputRefusal(model, [{ type: "image" }]);
+    if (refused) return refused;
+  }
   if (typeof block.mimeType !== "string" || !IMAGE_MIME.test(block.mimeType)) return "Image input requires a mime type";
   if (typeof block.data !== "string" || block.data.length === 0 || !IMAGE_BASE64.test(block.data)) {
     return "Image input requires base64 data";

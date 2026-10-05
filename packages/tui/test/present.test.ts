@@ -10,7 +10,9 @@ import { Server, ServiceError, type RuntimeCallContext, type RuntimeHandle, type
 import { listenUnix } from "@amazme/server/unix";
 import { emptyActivity, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { emptyTui, presentHost, reduceTui, renderTui, windowFrom, type TuiWindow } from "@amazme/tui";
-import { codingLoginAccount } from "../../coding-agent/src/tui/run.ts";
+import { createModels } from "@amazme/ai";
+import { deepseekProvider } from "@amazme/ai/providers/deepseek";
+import { codingLoginAccount, refuseImageTurn } from "../../coding-agent/src/tui/run.ts";
 
 const LANE = "main";
 
@@ -370,11 +372,56 @@ test("an empty scoped list does not dump the catalog", { timeout: 20_000 }, asyn
   }
 });
 
-async function fakeHost(socket: string, models: Array<{ provider: string; modelId: string }> = []) {
+test("deepseek-v4-pro restores the composer and does not accept an image", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-image-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "shot.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const host = await fakeHost(join(dir, "host.sock"), [], { provider: "deepseek", modelId: "deepseek-v4-pro" });
+  t.after(() => host.close());
+  const models = createModels();
+  models.setProvider(deepseekProvider());
+  const tty = fakeTTY();
+  const screen = presentHost(
+    { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE, cwd: dir },
+    tty.stdin,
+    tty.stdout,
+    undefined,
+    {
+      refuseImages: (provider, modelId, content) => refuseImageTurn(models, provider, modelId, content),
+    },
+  );
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    tty.push("look @shot.png");
+    await until(() => tty.since(0).includes("look @shot.png"), "the image draft");
+    tty.push("\r");
+    await until(() => tty.since(0).includes("Model deepseek-v4-pro does not accept image input"), "the refusal");
+    assert.equal(tty.since(0).includes("look @shot.png"), true);
+    assert.equal(host.calls.some((call) => call.method === "accept" || call.method === "followUp"), false);
+    tty.push("\u0003");
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u0003");
+    tty.push("\u0004");
+    await Promise.race([
+      screen.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\ncalls=${JSON.stringify(host.calls)}\npaint=${tty.since(0)}`);
+  }
+});
+
+async function fakeHost(
+  socket: string,
+  models: Array<{ provider: string; modelId: string }> = [],
+  initial: { provider: string; modelId: string } = { provider: "faux", modelId: "faux-1" },
+) {
   const calls: Recorded[] = [];
   const configures: Array<{ provider?: string; modelId?: string }> = [];
-  let provider = "faux";
-  let modelId = "faux-1";
+  let provider = initial.provider;
+  let modelId = initial.modelId;
   let version = 1;
   let operationId: string | null = null;
   let sink: SubscriptionSink | undefined;

@@ -17,6 +17,7 @@ import {
   usageCost,
   type ThinkingLevel,
   type UsageCost,
+  type UserContent,
 } from "@amazme/ai";
 import { createTypedSpanStarter, type SchemaTelemetrySpan, type TelemetryContext } from "@amazme/telemetry";
 import { acceptedSummary, continuationContext, fitSummaryRequest, planCompaction, summaryRejection } from "./compaction/plan.ts";
@@ -312,7 +313,7 @@ export interface LaneSnapshot extends LaneStatus {
 }
 
 export type OperationRequest =
-  | { kind: "prompt"; text: string; operationId?: string }
+  | { kind: "prompt"; text: string; content?: UserContent[]; operationId?: string }
   | { kind: "compaction"; operationId?: string }
   | { kind: "navigation"; targetId: string | null; summarize?: boolean; operationId?: string };
 
@@ -1102,7 +1103,8 @@ export class AgentLane {
     const startedAt = Date.now();
     const sourceTipId = view.get<string | null>(tipAddress(this.name)) ?? null;
     if (request.kind === "prompt") {
-      if (!request.text.trim()) return failure("invalid_message", "prompt is empty");
+      const imageContent = request.content?.some((block) => block.type === "image") === true ? request.content : undefined;
+      if (!request.text.trim() && !imageContent) return failure("invalid_message", "prompt is empty");
       const placed = this.placeInbox(view, apply, record, true, true);
       const promptId = uuidv7();
       const parent = placed.tipId;
@@ -1112,7 +1114,7 @@ export class AgentLane {
           id: promptId,
           parentId: parent,
           timestamp: startedAt,
-          payload: { type: "message", message: user(request.text) },
+          payload: { type: "message", message: imageContent ? { role: "user", content: imageContent, timestamp: startedAt } : user(request.text) },
         },
         { type: "set", address: tipAddress(this.name), value: promptId },
         {

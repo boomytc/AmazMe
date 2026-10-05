@@ -109,6 +109,28 @@ test("reused tool ids keep the mapping of their own assistant turn", () => {
   }
 });
 
+test("a text model replaces a user image with [image] and leaves the source unchanged", () => {
+  const image = { type: "image" as const, mimeType: "image/png", data: "QUJD" };
+  const messages: Message[] = [{
+    role: "user",
+    content: [{ type: "text", text: "look" }, image],
+    timestamp: 1,
+  }];
+  const before = JSON.stringify(messages);
+  const projected = transformMessages(messages, model);
+  const user = projected[0];
+  assert.ok(user?.role === "user");
+  assert.deepEqual(user.content, [
+    { type: "text", text: "look" },
+    { type: "text", text: "[image]" },
+  ]);
+  const vision = transformMessages(messages, { ...model, input: ["text", "image"] });
+  const kept = vision[0];
+  assert.ok(kept?.role === "user");
+  assert.deepEqual(kept.content, messages[0]?.role === "user" ? messages[0].content : []);
+  assert.equal(JSON.stringify(messages), before);
+});
+
 test("a text model replaces a tool image with one placeholder and leaves the source unchanged", () => {
   const image = { type: "image" as const, mimeType: "image/png", data: "QUJD" };
   const messages: Message[] = [{

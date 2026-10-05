@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
+import { imageInputRefusal } from "@amazme/ai";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { activateProject, presentHost, type HostAccount, type HostAttach } from "@amazme/tui";
-import { createCodingFronts, startWorkspaceHost } from "../fronts.ts";
+import { codingModels, createCodingFronts, startWorkspaceHost } from "../fronts.ts";
 import { waitForSecondInterrupt } from "../interrupt.ts";
 import { commitProviderModels, formatHandback, loginCatalog, loginProvider, logoutProvider, saveApiKey } from "../login.ts";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, runtimeFile, type CodingHost } from "../host.ts";
@@ -21,6 +22,18 @@ export interface FullscreenOptions {
 /** Fullscreen opens when the CLI has no prompt and stdout is a terminal. */
 export function shouldOpenFullscreen(prompt: string, stdoutIsTTY: boolean): boolean {
   return prompt.length === 0 && stdoutIsTTY;
+}
+
+/** Same refusal the provider uses before fetch. An unknown model never leaves the composer. */
+export function refuseImageTurn(
+  models: { getModel(provider: string, modelId: string): { id: string; input: readonly string[] } | undefined },
+  provider: string,
+  modelId: string,
+  content: readonly { type: string }[],
+): string | undefined {
+  const model = models.getModel(provider, modelId);
+  if (!model) return `未知模型 ${provider}/${modelId}`;
+  return imageInputRefusal(model, content);
 }
 
 /** Account and API-key login for the fullscreen view. Models are recorded only after the credential is stored. */
@@ -57,6 +70,7 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
   if (options.lane && !existsSync(runtimeFile(options.cwd))) {
     throw new Error(`session ${options.lane} does not exist`);
   }
+  const models = codingModels(options);
   const host = await startWorkspaceHost(options);
   const fronts = createCodingFronts(host);
   let published = false;
@@ -81,6 +95,7 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
     await presentHost(attach, process.stdin, process.stdout, codingLoginAccount(options), {
       openWeb: () => publish(async () => `网页 ${await fronts.openWeb()}`),
       openGui: () => publish(() => fronts.openGui()),
+      refuseImages: (provider, modelId, content) => refuseImageTurn(models, provider, modelId, content),
     });
     while (pending > 0) await new Promise((resolve) => setTimeout(resolve, 20));
   } catch (error) {

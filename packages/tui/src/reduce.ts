@@ -1,3 +1,4 @@
+import { pastedImageMention } from "./images.ts";
 import type { ActivityDto } from "@amazme/runtime-service";
 import { activeBinding, composerHint, hotkeyText, type BindingId } from "./bindings.ts";
 import { parseSlash, slashMatches, type SlashAction } from "./commands.ts";
@@ -286,7 +287,19 @@ function applyPaste(state: TuiState, text: string): { state: TuiState; effect: T
     return { state: { ...state, picker: { ...state.picker, query: state.picker.query + extra, index: 0 } }, effect: null };
   }
   if (state.focus !== "prompt") return { state, effect: null };
-  return { state: insertText(state, text), effect: null };
+  const mention = pastedImageMention(text);
+  return { state: insertText(state, mention ? boundedMention(state, mention) : text), effect: null };
+}
+
+function boundedMention(state: TuiState, mention: string): string {
+  const chars = Array.from(state.input);
+  const cursor = clamp(state.cursor, chars.length + 1);
+  const prev = chars[cursor - 1];
+  const next = chars[cursor];
+  let text = mention;
+  if (prev !== undefined && !/\s/.test(prev)) text = ` ${text}`;
+  if (next !== undefined && !/\s/.test(next)) text = `${text} `;
+  return text;
 }
 
 function onVertical(state: TuiState, direction: -1 | 1): { state: TuiState; effect: TuiEffect | null } {

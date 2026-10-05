@@ -19,7 +19,22 @@ const StoredIdSchema = Type.String({ minLength: 1 });
 const Text = Type.String({ maxLength: 1_000_000 });
 const Time = Type.Number();
 
-const PromptRequestSchema = Strict({ kind: Type.Literal("prompt"), text: Text, operationId: Type.Optional(OperationIdSchema) });
+const TextBlockSchema = Strict({ type: Type.Literal("text"), text: Text });
+const ImageBlockSchema = Strict({
+  type: Type.Literal("image"),
+  mimeType: Type.String({ minLength: 1, maxLength: 128, pattern: "^image/[\\w.+-]+$" }),
+  data: Type.String({ minLength: 1, maxLength: 8_000_000 }),
+});
+const PromptContentSchema = Type.Array(Type.Union([TextBlockSchema, ImageBlockSchema]), { minItems: 1, maxItems: 32 });
+export type PromptContent = Static<typeof PromptContentSchema>;
+/** One prompt block. TUI imports this type so it does not depend on `@amazme/ai`. */
+export type UserContent = PromptContent[number];
+const PromptRequestSchema = Strict({
+  kind: Type.Literal("prompt"),
+  text: Text,
+  content: Type.Optional(PromptContentSchema),
+  operationId: Type.Optional(OperationIdSchema),
+});
 const CompactionRequestSchema = Strict({ kind: Type.Literal("compaction"), operationId: Type.Optional(OperationIdSchema) });
 const NavigationRequestSchema = Strict({
   kind: Type.Literal("navigation"),
@@ -41,7 +56,12 @@ const HistoryCall = Strict({
 });
 const ResultCall = Strict({ method: Type.Literal("result"), lane: LaneNameSchema, operationId: OperationReferenceSchema });
 const SteerCall = Strict({ method: Type.Literal("steer"), lane: LaneNameSchema, text: Text });
-const FollowUpCall = Strict({ method: Type.Literal("followUp"), lane: LaneNameSchema, text: Text });
+const FollowUpCall = Strict({
+  method: Type.Literal("followUp"),
+  lane: LaneNameSchema,
+  text: Text,
+  content: Type.Optional(PromptContentSchema),
+});
 const RequestAbortCall = Strict({ method: Type.Literal("requestAbort"), lane: LaneNameSchema, operationId: OperationReferenceSchema });
 const SubscribeCall = Strict({ method: Type.Literal("subscribe"), lane: LaneNameSchema, subscriptionId: SubscriptionIdSchema });
 const UnsubscribeCall = Strict({ method: Type.Literal("unsubscribe"), subscriptionId: SubscriptionIdSchema });
