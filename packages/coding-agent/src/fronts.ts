@@ -3,8 +3,7 @@ import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createModels, messageText, type Context } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/testing";
+import { createModels } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
@@ -22,24 +21,11 @@ export interface FrontOptions {
   prompt?: string;
 }
 
-/** Models the fullscreen, web, and graphical fronts share. Faux echoes the latest user text. */
+/** Models the fullscreen, web, and graphical fronts share. */
 export function codingModels(options: FrontOptions) {
   const models = createModels({ store: new FileCredentialStore(options.credentialsFile) });
   for (const provider of builtinProviders()) models.setProvider(provider);
-  if (options.provider === "faux") {
-    models.setProvider(fauxProvider({
-      respond: (context, _streamOptions, _state, model) => ({
-        role: "assistant",
-        content: [{ type: "text", text: `faux:${lastUserText(context)}` }],
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
-        stopReason: "stop",
-        timestamp: Date.now(),
-      }),
-    }));
-  } else if (!models.getProvider(options.provider)) {
+  if (!models.getProvider(options.provider)) {
     throw new Error(`unknown provider ${options.provider}`);
   }
   if (!models.getModel(options.provider, options.model)) {
@@ -227,10 +213,3 @@ function closeChild(child: ChildProcess): Promise<void> {
   });
 }
 
-function lastUserText(context: Context): string {
-  for (let index = context.messages.length - 1; index >= 0; index -= 1) {
-    const message = context.messages[index];
-    if (message?.role === "user") return messageText(message);
-  }
-  return "";
-}

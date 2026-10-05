@@ -5,19 +5,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createModels, messageText } from "@amazme/ai";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { executeSlash, type SlashActions } from "@amazme/tui";
-import { createCodingFronts, startWorkspaceHost } from "../src/fronts.ts";
+import { startCodingHost } from "../src/host.ts";
+import { codingModels, createCodingFronts } from "../src/fronts.ts";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 
+function frontEnv(cwd: string): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.DEEPSEEK_API_KEY;
+  env.AMAZME_CREDENTIALS = join(cwd, "credentials.json");
+  env.AMAZME_DEVICE_ID_FILE = join(cwd, "device-id");
+  return env;
+}
+
 test("amazme --web serves the host page and a signal stops it", { timeout: 20_000 }, async () => {
   const cwd = mkdtempSync(join(tmpdir(), "amz-web-front-"));
-  const child = spawn(process.execPath, ["--import", "tsx", cli, "--web", "--cwd", cwd, "--provider", "faux", "--model", "faux-1", "from-owned-web"], {
+  const child = spawn(process.execPath, ["--import", "tsx", cli, "--web", "--cwd", cwd, "from-owned-web"], {
     cwd: root,
+    env: frontEnv(cwd),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -30,9 +42,11 @@ test("amazme --web serves the host page and a signal stops it", { timeout: 20_00
     await until(() => stdout.includes("http://127.0.0.1:"), () => `${stdout}\n${stderr}`);
     const url = /http:\/\/127\.0\.0\.1:\d+\//.exec(stdout)?.[0];
     if (!url) throw new Error(stdout);
-    const view = await (await fetch(`${url}view`)).json() as { entries: Array<{ text: string }> };
+    const view = await (await fetch(`${url}view`)).json() as { entries: Array<{ text: string }>; provider: string; modelId: string };
+    assert.equal(view.provider, "deepseek");
+    assert.equal(view.modelId, "deepseek-flash");
     assert.ok(view.entries.some((entry) => entry.text === "from-owned-web"));
-    assert.ok(view.entries.some((entry) => entry.text === "faux:from-owned-web"));
+    assert.equal(view.entries.some((entry) => entry.text.startsWith("faux:")), false);
     const again = await fetch(`${url}act`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -53,8 +67,9 @@ test("amazme --web serves the host page and a signal stops it", { timeout: 20_00
 
 test("amazme --gui starts the host and shows the prompt reply", { timeout: 20_000 }, async () => {
   const cwd = mkdtempSync(join(tmpdir(), "amz-gui-front-"));
-  const child = spawn(process.execPath, ["--import", "tsx", cli, "--gui", "--cwd", cwd, "--provider", "faux", "--model", "faux-1", "from-owned-gui"], {
+  const child = spawn(process.execPath, ["--import", "tsx", cli, "--gui", "--cwd", cwd, "from-owned-gui"], {
     cwd: root,
+    env: frontEnv(cwd),
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stdout = "";
@@ -64,9 +79,10 @@ test("amazme --gui starts the host and shows the prompt reply", { timeout: 20_00
   child.stdout.on("data", (chunk: string) => { stdout += chunk; });
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
   try {
-    await until(() => stdout.includes("from-owned-gui") && stdout.includes("faux:from-owned-gui") && stdout.includes('"status":'), () => `${stdout}\n${stderr}`);
+    await until(() => stdout.includes("from-owned-gui") && stdout.includes("deepseek/deepseek-flash") && stdout.includes("空闲"), () => `${stdout}\n${stderr}`);
     const shown = stdout.trim().split("\n").map((line) => JSON.parse(line) as { document: string; status: string });
-    assert.ok(shown.some((row) => row.document.includes('id="status"') && row.status.includes("faux/faux-1") && row.status.includes("空闲")));
+    assert.ok(shown.some((row) => row.document.includes('id="status"') && row.status.includes("deepseek/deepseek-flash") && row.status.includes("空闲")));
+    assert.equal(stdout.includes("faux:"), false);
     child.stdin.end();
     await until(() => child.exitCode !== null, () => `${stdout}\n${stderr}`);
     assert.equal(child.exitCode, 0);
@@ -76,9 +92,27 @@ test("amazme --gui starts the host and shows the prompt reply", { timeout: 20_00
   }
 });
 
+test("product fronts reject faux and load deepseek-flash", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "amz-models-"));
+  try {
+    assert.throws(() => codingModels({ cwd, provider: "faux", model: "faux-1" }), /unknown provider faux/);
+    const models = codingModels({ cwd, provider: "deepseek", model: "deepseek-flash" });
+    assert.ok(models.getModel("deepseek", "deepseek-flash"));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("/web and /gui publish clients on the current host and stop releases it", { timeout: 20_000 }, async () => {
   const cwd = mkdtempSync(join(tmpdir(), "amz-slash-front-"));
-  const host = await startWorkspaceHost({ cwd, provider: "faux", model: "faux-1" });
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (context) => {
+      const text = [...context.messages].reverse().find((message) => message.role === "user");
+      return fauxAssistant(`faux:${text ? messageText(text) : ""}`);
+    },
+  }));
+  const host = await startCodingHost({ cwd, socket: join(cwd, "host.sock"), provider: "faux", model: "faux-1", models });
   const fronts = createCodingFronts(host);
   try {
     const blocked = await executeSlash({ type: "gui" }, slashActions());
