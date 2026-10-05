@@ -227,6 +227,7 @@ interface UsageCounts {
 /**
  * `usageCost` fields. On a sum, a component is null when any counted row's component is null.
  * The whole value is null when a row has no stored model, or that model has no price list.
+ * A row that stored `cost.total: null` did not report usage. Every charge on that row is null.
  */
 export type LaneUsageCost = { [K in keyof UsageCost]: number | null };
 
@@ -242,7 +243,8 @@ export interface LaneUsage {
    * Counts, `hitRate`, and `cost` come from that row. `hitRate` is `cacheHitRate` of the row.
    * `cost` is `usageCost` for the model stored on the row, or null when the row has no model,
    * or that model is missing or has no price list.
-   * A row that stored `cost.total: null` did not report usage. Its cost stays null and is not priced from zero tokens.
+   * A row that stored `cost.total: null` did not report usage. Its cost is an object with every charge null,
+   * and it is not priced from zero tokens. Those nulls include fields a quoted `UsageCost` types as numbers.
    */
   lastTurn: (UsageCounts & { hitRate: number | null; cost: UsageCost | null }) | null;
   /**
@@ -256,8 +258,10 @@ export interface LaneUsage {
    * A reported 0 stays 0.
    * `hitRate` is `cacheHitRate` of those totals, and null only when `cacheRead` is null. A null `cacheWrite`
    * is left out of that rate.
-   * `cost` prices each row with the model stored on that row. A row without one makes the cumulative cost null.
-   * A row that stored `cost.total: null` is an unquoted turn and also makes the cumulative cost null.
+   * `cost` prices each row with the model stored on that row. A row without one, or whose model is missing
+   * or has no price list, makes the cumulative cost null.
+   * A row that stored `cost.total: null` did not report usage. That row's charges are all null, so the
+   * cumulative cost stays an all-null object and is not priced from zero tokens.
    */
   total: UsageCounts & { hitRate: number | null; cost: LaneUsageCost | null };
   /**
@@ -2674,7 +2678,8 @@ function lastTurnUsage(view: StorageView, chain: readonly Entry[], options: Harn
         ...(cacheRead !== null ? { cacheRead } : {}),
         ...(cacheWrite !== null ? { cacheWrite } : {}),
       }),
-      cost: rowCost(options, row),
+      // An unquoted row is an all-null `LaneUsageCost`. `UsageCost` cannot type those null charges.
+      cost: rowCost(options, row) as UsageCost | null,
     };
   }
   return null;
@@ -2757,7 +2762,7 @@ function sumStoredCount(rows: readonly UsageRow[], key: "cacheRead" | "cacheWrit
 
 function totalCost(options: HarnessOptions, rows: readonly UsageRow[]): LaneUsageCost | null {
   if (rows.length === 0) return null;
-  const parts: UsageCost[] = [];
+  const parts: LaneUsageCost[] = [];
   for (const row of rows) {
     const priced = rowCost(options, row);
     if (!priced) return null;
@@ -2772,7 +2777,7 @@ function totalCost(options: HarnessOptions, rows: readonly UsageRow[]): LaneUsag
   };
 }
 
-function sumCharge(parts: readonly UsageCost[], key: keyof UsageCost): number | null {
+function sumCharge(parts: readonly LaneUsageCost[], key: keyof UsageCost): number | null {
   let sum = 0;
   for (const part of parts) {
     const value = part[key];
@@ -2782,8 +2787,8 @@ function sumCharge(parts: readonly UsageCost[], key: keyof UsageCost): number | 
   return sum;
 }
 
-function rowCost(options: HarnessOptions, row: UsageRow): UsageCost | null {
-  if (row.cost?.total === null) return null;
+function rowCost(options: HarnessOptions, row: UsageRow): LaneUsageCost | null {
+  if (row.cost?.total === null) return { input: null, output: null, cacheRead: null, cacheWrite: null, total: null };
   if (!row.model) return null;
   const model = options.models.getModel(row.model.provider, row.model.modelId);
   if (!model) return null;

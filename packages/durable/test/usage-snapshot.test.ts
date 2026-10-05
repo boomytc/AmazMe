@@ -1174,7 +1174,7 @@ test("a cache hit without a hit price nulls that charge and the cumulative total
   }
 });
 
-test("missing usage records a null cost instead of zero dollars", async (t) => {
+test("missing usage keeps an all-null cost object instead of zero dollars", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-usage-missing-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "lane.jsonl");
@@ -1186,6 +1186,7 @@ test("missing usage records a null cost instead of zero dollars", async (t) => {
   priceOf(provider, { input: 1_000_000, output: 2_000_000 });
   const models = createModels();
   models.setProvider(provider);
+  const unquoted = { input: null, output: null, cacheRead: null, cacheWrite: null, total: null };
   const harness = runtime(new JsonlStorage(file), models);
   try {
     const lane = harness.lane();
@@ -1195,8 +1196,12 @@ test("missing usage records a null cost instead of zero dollars", async (t) => {
     assert.equal(rows[0]?.cost?.total, null);
     const usage = await readUsage(lane);
     assert.ok(usage.lastTurn);
-    assert.equal(usage.lastTurn.cost, null);
-    assert.equal(usage.total.cost, null);
+    assert.ok(usage.lastTurn.cost);
+    assert.equal(usage.lastTurn.cost.total, null);
+    assert.deepEqual(usage.lastTurn.cost, unquoted);
+    assert.ok(usage.total.cost);
+    assert.equal(usage.total.cost.total, null);
+    assert.deepEqual(usage.total.cost, unquoted);
     assert.equal(usage.total.input, 0);
     assert.equal(usage.total.output, 0);
     const reopened = runtime(new JsonlStorage(file), models);
@@ -1204,8 +1209,51 @@ test("missing usage records a null cost instead of zero dollars", async (t) => {
       const again = await readUsage(reopened.lane());
       const stored = await reopened.storage.read((view) => view.usageRows());
       assert.equal(stored[0]?.cost?.total, null);
+      assert.ok(again.lastTurn?.cost);
+      assert.equal(again.lastTurn.cost.total, null);
+      assert.deepEqual(again.lastTurn.cost, unquoted);
+      assert.ok(again.total.cost);
+      assert.equal(again.total.cost.total, null);
+      assert.deepEqual(again.total.cost, unquoted);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    harness.close();
+  }
+});
+
+test("a model with no price list keeps cost null", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-usage-unpriced-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "lane.jsonl");
+  const provider = fauxProvider({
+    respond: () => fauxAssistant("ok", { usage: tokens(4, 5) }),
+  });
+  const bare = provider.getModels()[0];
+  assert.ok(bare);
+  delete bare.cost;
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new JsonlStorage(file), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const usage = await readUsage(lane);
+    assert.ok(usage.lastTurn);
+    assert.equal(usage.lastTurn.input, 4);
+    assert.equal(usage.lastTurn.output, 5);
+    assert.equal(usage.lastTurn.cost, null);
+    assert.equal(usage.total.input, 4);
+    assert.equal(usage.total.output, 5);
+    assert.equal(usage.total.cost, null);
+    const reopened = runtime(new JsonlStorage(file), models);
+    try {
+      const again = await readUsage(reopened.lane());
       assert.equal(again.lastTurn?.cost, null);
       assert.equal(again.total.cost, null);
+      assert.equal(again.lastTurn?.input, 4);
+      assert.equal(again.total.input, 4);
     } finally {
       reopened.close();
     }
