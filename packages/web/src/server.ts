@@ -471,10 +471,20 @@ const PAGE = `<!doctype html>
     if (token === "/model") return (view.models || []).map((model) => ({ submit: "/model " + model.provider + "/" + model.modelId, label: model.provider + "/" + model.modelId }));
     if (token === "/thinking") return (view.thinkingLevels || []).map((level) => ({ submit: "/thinking " + level, label: level }));
     if (token === "/resume") return (view.sessions || []).map((name) => ({ submit: "/resume " + name, label: name }));
-    if (token === "/login") return (view.providers || []).map((provider) => ({
+    if (token === "/login") return [
+      { submit: "/login account", label: "Sign in with an account", hold: true },
+      { submit: "/login api-key", label: "Sign in with an API key", hold: true },
+    ];
+    if (token === "/login account") return (view.providers || []).filter((provider) => provider.oauth).map((provider) => ({
       submit: "/login " + provider.id,
-      label: provider.name + (provider.stored ? "  ✓ stored" : "  • not configured"),
+      label: provider.name + (provider.storedType === "oauth" ? "  ✓ stored" : "  • not configured"),
       hold: Boolean(provider.apiKey),
+      providerId: provider.id,
+    }));
+    if (token === "/login api-key") return (view.providers || []).filter((provider) => provider.apiKey).map((provider) => ({
+      submit: "/api-key " + provider.id,
+      label: provider.name + (provider.storedType === "api_key" ? "  ✓ stored" : "  • not configured"),
+      apiKey: true,
       providerId: provider.id,
     }));
     const login = /^\\/login\\s+(\\S+)\\s*$/.exec(token);

@@ -44,6 +44,8 @@ test("the page shows choosers, a masked key, a live reply, and leaves the host r
   assert.match(painted.status, /空闲/);
   assert.match(painted.pending, /from-web/);
   assert.equal(painted.menuCount <= 8, true);
+  assert.match(painted.loginAccount, /Sign in with an account/);
+  assert.match(painted.loginApiKey, /Sign in with an API key/);
   assert.match(painted.loginStored, /stored/);
   assert.match(painted.loginOpen, /not configured/);
   assert.equal(painted.modelSubmit, "/model faux/faux-1");
@@ -85,7 +87,7 @@ interface PagePayload {
 }
 
 function drivePage(html: string, view: PagePayload): {
-  status: string; pending: string; menuCount: number; loginStored: string; loginOpen: string;
+  status: string; pending: string; menuCount: number; loginAccount: string; loginApiKey: string; loginStored: string; loginOpen: string;
   modelSubmit: string; thinkingSubmit: string; resumeSubmit: string; treeLabel: string;
 } {
   const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] ?? "";
@@ -110,8 +112,10 @@ function drivePage(html: string, view: PagePayload): {
     status: document.querySelector("#status")?.textContent ?? "",
     pending: articles.map((node) => nodeText(node)).join("\n"),
     menuCount: document.querySelector("#menu")?.querySelectorAll("button").length ?? 0,
-    loginStored: chooserRows(view, "/login").find((row) => row.submit.endsWith("anthropic"))?.label ?? "",
-    loginOpen: chooserRows(view, "/login").find((row) => row.submit.endsWith("openai"))?.label ?? "",
+    loginAccount: chooserRows(view, "/login").find((row) => row.label.includes("account"))?.label ?? "",
+    loginApiKey: chooserRows(view, "/login").find((row) => row.label.includes("API key"))?.label ?? "",
+    loginStored: chooserRows(view, "/login api-key").find((row) => row.submit.endsWith("anthropic"))?.label ?? "",
+    loginOpen: chooserRows(view, "/login api-key").find((row) => row.submit.endsWith("openai"))?.label ?? "",
     modelSubmit: chooserRows(view, "/model").find((row) => row.submit.includes("faux/faux-1"))?.submit ?? "",
     thinkingSubmit: chooserRows(view, "/thinking").find((row) => row.submit.endsWith("off"))?.submit ?? "",
     resumeSubmit: chooserRows(view, "/resume").find((row) => row.submit.endsWith("main"))?.submit ?? "",

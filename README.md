@@ -146,7 +146,7 @@ const models = createModels({ telemetryContext });
 
 内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。这四个工具共用一条工作区策略：工作区可写，`<workspace>/.amazme` 不可读写，只有 `<workspace>/.amazme/tmp` 例外，工具没有网络。darwin 用 Seatbelt，linux 用 Bubblewrap（`--unshare-net`，把 `.amazme` 盖成 tmpfs 后再绑回 tmp）。平台不对，或对应的 `sandbox-exec` / `bwrap` 不存在时，工具抛出 `SANDBOX_UNAVAILABLE`，不会退回不受限制的进程。模型请求和调用方自己持有的 MCP 工具不在这道边界里。
 
-CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket`、全屏和 `amazme bridge` 用同一套斜杠命令。`/help` 列出它们。以 `/` 开头但无法识别的行不会发给模型。`/new`（`/clear`）、`/resume`、`/fork`、`/clone`、`/rewind`（`/undo`）和 `/compact` 改当前会话；`/model`（`/m`）和 `/thinking`（`/effort`）改当前空闲 lane 的模型和思考级别；`/login`、`/logout` 不带参数时在全屏里打开供应商列表，标出已保存和未配置，再选择账号登录或 API key；带上提供方 id 时仍直接登录。凭证写在本机凭证文件；`/steer`、`/abort`、`/continue`、`/earlier` 沿用原来的 lane 操作。`/continue` 只对已经写下的 `retry_wait` 再 `drive`，并等到 `notBefore`。`/quit`、Ctrl-D，以及空闲且输入为空时连续两次 Ctrl-C，都离开全屏。没有用过 `/web` 或 `/gui` 时，宿主一起关掉。用过之后，这个进程继续服务，终端打印地址，再连续两次 Ctrl-C 才结束。页面上的 `/quit` 不停止宿主。`/web` 在当前宿主上打开回环网页，终端里还会用系统浏览器打开。`/gui` 打开附着在同一宿主上的图形窗口。没有提示词时的全屏把用户消息放在带边的块里，助手文本按标题、列表和代码块排开，工具单独成块。底栏有工作目录、会话、模型和忙闲，输入行在横线下面。`/model`、`/thinking`、`/resume` 和 `/login` 不带参数时打开可筛选列表。网页和图形窗口用同一套块和底栏。`amazme --web` 自己拉起宿主和页面。`amazme bridge --socket [--port n]` 只附着已有宿主，并且只监听 `127.0.0.1`。页面列出会话、打开一段转录、提交提示，并在命令结果处显示说明。这些客户端都不持有 JSONL，也不执行工具，也不调用模型。
+CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket`、全屏和 `amazme bridge` 用同一套斜杠命令。`/help` 列出它们。以 `/` 开头但无法识别的行不会发给模型。`/new`（`/clear`）、`/resume`、`/fork`、`/clone`、`/rewind`（`/undo`）和 `/compact` 改当前会话；`/model`（`/m`）和 `/thinking`（`/effort`）改当前空闲 lane 的模型和思考级别；`/login` 不带参数时先选 “Sign in with an account” 或 “Sign in with an API key”，再列出对应供应商。Grok、Codex 这类账号登录和 API key 是两条入口。只支持一种方式的供应商直接进入那一种；两种都有、又写了 `/login 提供方` 时再选一次。`am login account` 和 `am login api-key` 是命令行上的同样两条入口。`/logout` 只列出已保存的供应商。凭证写在本机凭证文件；`/steer`、`/abort`、`/continue`、`/earlier` 沿用原来的 lane 操作。`/continue` 只对已经写下的 `retry_wait` 再 `drive`，并等到 `notBefore`。`/quit`、Ctrl-D，以及空闲且输入为空时连续两次 Ctrl-C，都离开全屏。没有用过 `/web` 或 `/gui` 时，宿主一起关掉。用过之后，这个进程继续服务，终端打印地址，再连续两次 Ctrl-C 才结束。页面上的 `/quit` 不停止宿主。`/web` 在当前宿主上打开回环网页，终端里还会用系统浏览器打开。`/gui` 打开附着在同一宿主上的图形窗口。没有提示词时的全屏把用户消息放在带边的块里，助手文本按标题、列表和代码块排开，工具单独成块。底栏有工作目录、会话、模型和忙闲，输入行在横线下面。`/model`、`/thinking`、`/resume` 不带参数时打开可筛选列表。`/login` 先选登录方式。网页和图形窗口用同一套块和底栏。`amazme --web` 自己拉起宿主和页面。`amazme bridge --socket [--port n]` 只附着已有宿主，并且只监听 `127.0.0.1`。页面列出会话、打开一段转录、提交提示，并在命令结果处显示说明。这些客户端都不持有 JSONL，也不执行工具，也不调用模型。
 
 `appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。库导出本身不打开传输。`amazme serve` 在打开 runtime 时读取 `<cwd>/.amazme/mcp.json`：文件不存在就没有 MCP；文件无效或某个服务器连不上，这次打开失败，码是 `mcp_unavailable`。连接跟这次 runtime 走，客户端断开不断开它们。MCP 调用留在宿主进程里，继承宿主环境，不进 Seatbelt。一次性命令不读这份配置。全屏、`amazme --web`、`amazme --gui` 和 `amazme serve` 都会读。没有服务器或列表为空时，工具数组不变。
 
@@ -154,7 +154,7 @@ CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文�
 
 ## 命令
 
-需要 Node.js 22.19 或更新版本。安装依赖后把 `amazme` 接到当前环境；这条命令直接跑这份检出里的源码。
+需要 Node.js 22.19 或更新版本。安装依赖后把 `amazme` 接到当前环境；`am` 是同一条命令。它们直接跑这份检出里的源码。
 
 ```bash
 npm install
@@ -181,7 +181,8 @@ amazme --web "你好"
 amazme --gui
 amazme --gui "你好"
 amazme update
-amazme login --provider openai --method device_code
+amazme login account --provider openai --method device_code
+amazme login api-key --provider deepseek
 ```
 
 `amazme update` 在这份检出里执行 `git pull --ff-only`，然后 `npm install`。工作区有未提交的改动时拒绝更新，不覆盖文件。

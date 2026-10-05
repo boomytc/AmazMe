@@ -16,7 +16,7 @@ export interface Picker {
   query: string;
   index: number;
   rows: PickerRow[];
-  kind: "login-provider" | "logout-provider" | "login-method" | "api-key" | "model" | "thinking" | "resume" | "tree";
+  kind: "login-entry" | "login-provider" | "logout-provider" | "login-method" | "api-key" | "model" | "thinking" | "resume" | "tree";
   /** Provider chosen before an authentication method or an API key. */
   subject?: string;
   secret?: boolean;
