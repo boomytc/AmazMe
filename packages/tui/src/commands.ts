@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { RemoteLane } from "@amazme/runtime-service/client";
+import { formatBackgroundJobs } from "./jobs.ts";
 import { hotkeyText } from "./bindings.ts";
 import {
   activateProject,
@@ -50,6 +51,7 @@ export const SLASH_LIST: readonly SlashListing[] = [
   { name: "logout", hint: "提供方", description: "选择供应商并删除凭证", takesArgs: "optional" },
   { name: "steer", hint: "文本", description: "插入当前操作", takesArgs: "required" },
   { name: "abort", hint: "", description: "中止当前操作", takesArgs: "none" },
+  { name: "jobs", hint: "", description: "列出后台任务", takesArgs: "none" },
   { name: "continue", hint: "", description: "继续已写下的重试等待", takesArgs: "none" },
   { name: "earlier", hint: "", description: "再读一页更早的条目", takesArgs: "none" },
   { name: "quit", hint: "", description: "离开全屏；页面和附着端不停止宿主", takesArgs: "none" },
@@ -91,6 +93,7 @@ export type SlashCommand =
   | { type: "clone" }
   | { type: "rewind" }
   | { type: "abort" }
+  | { type: "jobs" }
   | { type: "steer"; text: string }
   | { type: "continue" }
   | { type: "earlier" }
@@ -186,6 +189,8 @@ export function parseSlash(input: string): SlashCommand {
       return rest ? usage("/rewind") : { type: "rewind" };
     case "abort":
       return rest ? usage("/abort") : { type: "abort" };
+    case "jobs":
+      return rest ? usage("/jobs") : { type: "jobs" };
     case "steer":
       return rest ? { type: "steer", text: rest } : usage("/steer 文本");
     case "continue":
@@ -296,6 +301,10 @@ export async function executeSlash(command: SlashAction, actions: SlashActions):
         if (!snap.operationId) return notice("没有进行中的操作");
         await actions.lane().requestAbort(snap.operationId);
         return notice("已请求中止");
+      }
+      case "jobs": {
+        if (!actions.cwd) return notice("当前客户端没有工作区");
+        return notice(formatBackgroundJobs(actions.cwd));
       }
       case "steer":
         await actions.lane().steer(command.text);
@@ -450,6 +459,7 @@ const ALIAS: Record<string, string> = {
   rewind: "rewind",
   undo: "rewind",
   abort: "abort",
+  jobs: "jobs",
   steer: "steer",
   continue: "continue",
   earlier: "earlier",

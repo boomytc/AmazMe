@@ -15,6 +15,7 @@ import { visibleModels } from "./picker.ts";
 import { installHostRetries } from "./contracts.ts";
 import { readApprovalSettings } from "./settings.ts";
 import { installSessionRouter } from "./host-router.ts";
+import { openJobRegistry } from "./jobs.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
 interface HostModels {
@@ -77,6 +78,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
   const provider = options.provider;
   const modelId = options.model;
   if (!options.models.getModel(provider, modelId)) throw new Error(`unknown model ${provider}/${modelId}`);
+  const jobs = openJobRegistry(cwd);
   const report = (error: Error) => {
     try {
       options.onError?.(error);
@@ -97,7 +99,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
         if (runtimeId !== HOST_RUNTIME_ID) return null;
         const file = runtimeFile(cwd);
         mkdirSync(join(cwd, ".amazme", "runtime"), { recursive: true });
-        const coding = createCodingTools(cwd);
+        const coding = createCodingTools(cwd, jobs);
         const mcp = await connectWorkspaceMcp(cwd);
         try {
           const tools = await appendMcpTools(coding, mcp.servers);
@@ -141,7 +143,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
     runtimeId: HOST_RUNTIME_ID,
     lane: HOST_LANE,
     close(mode: "drain" | "abort" = "drain") {
-      const shutdown = server.close(mode);
+      const shutdown = jobs.close().then(() => server.close(mode));
       if (!closing) {
         let run!: Promise<void>;
         run = shutdown.then(() => listener.close()).then(() => undefined, (error: unknown) => {

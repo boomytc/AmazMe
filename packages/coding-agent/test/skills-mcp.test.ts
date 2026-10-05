@@ -67,7 +67,7 @@ FULL_SKILL_BODY
   assert.equal(bare.includes("ship-review"), true);
   assert.deepEqual(
     provider.state.contexts[0]?.tools?.map((tool) => tool.name),
-    ["read", "write", "edit", "bash", "grep", "find", "ls"],
+    ["read", "write", "edit", "bash", "grep", "find", "ls", "job_output", "job_kill"],
   );
   const agentSrc = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "agent", "src");
   assert.equal(walk(agentSrc).includes("loadSkills"), false);
@@ -177,12 +177,12 @@ test("an in-memory MCP tool is called through the same before and after hooks", 
   };
   const coding = createCodingTools(dir);
   const tools = await appendMcpTools(coding, { serverId: "box", client });
-  assert.equal(tools.length, 8);
+  assert.equal(tools.length, 10);
   assert.equal(tools[0], coding[0]);
   assert.equal(tools[1], coding[1]);
   assert.equal(tools[2], coding[2]);
   assert.equal(tools[3], coding[3]);
-  assert.equal(tools[7]?.name, "mcp_box__ping");
+  assert.equal(tools.at(-1)?.name, "mcp_box__ping");
   const respond: FauxResponder = (_context, _options, state) =>
     state.callCount === 1 ? fauxAssistant([fauxToolCall("mcp_box__ping", { value: 1 })]) : fauxAssistant("done");
   const hooks: AgentHook[] = [
@@ -198,7 +198,7 @@ test("an in-memory MCP tool is called through the same before and after hooks", 
   const { provider, produced } = await firstRequest(today, tools, hooks, respond);
   assert.deepEqual(
     provider.state.contexts[0]?.tools?.map((tool) => tool.name),
-    ["read", "write", "edit", "bash", "grep", "find", "ls", "mcp_box__ping"],
+    ["read", "write", "edit", "bash", "grep", "find", "ls", "job_output", "job_kill", "mcp_box__ping"],
   );
   assert.deepEqual(trace, ["before:mcp_box__ping", "call:ping:{\"value\":1}", "after:mcp_box__ping:pong"]);
   const result = produced.find((message) => message.role === "toolResult");
@@ -257,12 +257,12 @@ test("no MCP client leaves the original coding tools", async () => {
   assert.equal(await appendMcpTools(coding, { serverId: "box", client: empty }), coding);
   assert.deepEqual(
     coding.map((tool) => tool.name),
-    ["read", "write", "edit", "bash", "grep", "find", "ls"],
+    ["read", "write", "edit", "bash", "grep", "find", "ls", "job_output", "job_kill"],
   );
   const { provider } = await firstRequest(today, await appendMcpTools(coding));
   assert.deepEqual(
     provider.state.contexts[0]?.tools?.map((tool) => tool.name),
-    ["read", "write", "edit", "bash", "grep", "find", "ls"],
+    ["read", "write", "edit", "bash", "grep", "find", "ls", "job_output", "job_kill"],
   );
 });
 
