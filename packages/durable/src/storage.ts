@@ -35,6 +35,8 @@ export interface UsageRow {
   cacheRead?: number | null;
   /** Absent on old rows, which makes the cumulative total null. New rows store 0 when the provider did not report it. */
   cacheWrite?: number | null;
+  /** Absent on old rows, or null when that turn did not report reasoning tokens. Either makes the cumulative total null. */
+  reasoning?: number | null;
   /** Provider and model that produced this row. Absent on older rows, which makes the cumulative cost null. */
   model?: { provider: string; modelId: string };
 }
@@ -55,6 +57,7 @@ export type Write =
       totalTokens: number;
       cacheRead?: number | null;
       cacheWrite?: number | null;
+      reasoning?: number | null;
       model?: { provider: string; modelId: string };
     }
   | { type: "set"; address: Address; value: unknown }

@@ -79,8 +79,9 @@ try {
 一条 lane 同时最多一个操作。完整操作状态保存在叶子中，恢复时读取它。响应、usage、tip 与阶段转移或操作终态在一次 `apply` 中提交。模型响应和摘要使用发送前预留的 entry ID。
 
 - 未结算的模型流用已存帧生成 `aborted` 响应，不重发请求。帧按内容块序号还原文本、思考和已结束的工具调用；思考帧可以带上收到它的 completions 字段。恢复时仍去掉工具调用，未结束的工具调用没有帧，所以都不会执行。思考片段留在这条 aborted 消息上。帧或响应结算写入失败时，先等待已接受的帧写入收尾，再清理本进程的运行标记；同一 harness 再次 `drive` 也走中断恢复，不重发普通请求或摘要。
-- `replay: "never"` 的未结算工具不重跑，结果保留最后一次 checkpoint。
+- `replay: "never"` 的未结算工具不重跑。错误结果是固定文本 `interrupted before settlement; the tool may already have executed and the result is unknown`。有 checkpoint 时，这段文本的下一行仍是最后一次 checkpoint。
 - `replay: "safe"` 的工具使用持久化参数重跑。
+- 已经写入的审批决定在重开后仍然有效。`allow` 且调用仍是 `planned` 时执行一次；`deny` 写入拒绝结果且不执行。决定已写入、工具尚未执行时进程退出，重开后走这条路径。`effect_pending` 且 `replay: "never"` 时不执行，只写上面的错误结果，然后继续下一次模型请求。
 - 并行工具完成后，entry 按 assistant 中的源顺序写入。
 
 未结算状态的预留 entry / usage ID 必须尚未被占用。不一致的持久化状态直接报错，不尝试补写阶段或猜测归属。复制尾段的预留 ID 同样不能已经被占用。仓库处于初始开发阶段，不提供旧包入口别名、旧数据转换或旧格式修补分支。

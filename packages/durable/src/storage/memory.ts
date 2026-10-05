@@ -38,6 +38,7 @@ export function applyWrites(state: State, writes: readonly Write[]): State {
       };
       if ("cacheRead" in write) row.cacheRead = write.cacheRead ?? null;
       if ("cacheWrite" in write) row.cacheWrite = write.cacheWrite ?? null;
+      if ("reasoning" in write) row.reasoning = write.reasoning ?? null;
       if (write.model) row.model = { provider: write.model.provider, modelId: write.model.modelId };
       usage.push(row);
     } else if (write.type === "set") {

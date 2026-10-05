@@ -10,8 +10,12 @@ import { AgentHarness, effectiveInputThreshold, value, type AgentLane, type Harn
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
-function tokens(input: number, output: number, cache: { cacheRead?: number; cacheWrite?: number } = {}): Usage {
-  return { input, output, totalTokens: input + output, cost: { input: 0, output: 0, total: 0 }, ...cache };
+function tokens(
+  input: number,
+  output: number,
+  extra: { cacheRead?: number; cacheWrite?: number; reasoning?: number } = {},
+): Usage {
+  return { input, output, totalTokens: input + output, cost: { input: 0, output: 0, total: 0 }, ...extra };
 }
 
 function assistantMessage(text: string, usage: Usage, timestamp: number) {
@@ -32,10 +36,11 @@ const zeroPrice = { cost: { input: 0, output: 0 } };
 function turn(
   input: number,
   output: number,
-  cache: { cacheRead?: number | null; cacheWrite?: number | null } = {},
+  cache: { cacheRead?: number | null; cacheWrite?: number | null; reasoning?: number | null } = {},
 ): NonNullable<LaneUsage["lastTurn"]> {
   const cacheRead = cache.cacheRead ?? null;
-  const cacheWrite = cache.cacheWrite ?? null;
+  const cacheWrite = "cacheWrite" in cache ? cache.cacheWrite ?? null : 0;
+  const reasoning = cache.reasoning ?? null;
   const usage = {
     input,
     output,
@@ -47,6 +52,7 @@ function turn(
     output,
     cacheRead,
     cacheWrite,
+    reasoning,
     hitRate: cacheHitRate(usage),
     cost: usageCost(zeroPrice, usage),
   };
@@ -54,13 +60,14 @@ function turn(
 
 function total(input: number, output: number): LaneUsage["total"] {
   if (input === 0 && output === 0) {
-    return { input: 0, output: 0, cacheRead: null, cacheWrite: null, hitRate: null, cost: null };
+    return { input: 0, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, hitRate: null, cost: null };
   }
   return {
     input,
     output,
     cacheRead: null,
     cacheWrite: 0,
+    reasoning: null,
     hitRate: null,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
@@ -206,7 +213,7 @@ test("cacheRead on the latest assistant is part of contextTokens and lastTurn", 
   }
 });
 
-test("an assistant without a reported cache leaves lastTurn cache null", async () => {
+test("an assistant without a reported cache leaves cacheRead null and stores cacheWrite as zero", async () => {
   const { models } = scripted([tokens(5, 6)]);
   const harness = runtime(new MemoryStorage(), models);
   try {
@@ -246,9 +253,12 @@ test("a reported cache zero stays zero and still joins the summed cache", async 
   }
 });
 
-test("two turns that omit cacheWrite store zero and still price the cache reads", async () => {
-  const first = tokens(4, 2, { cacheRead: 6 });
-  const second = tokens(3, 5, { cacheRead: 8 });
+test("two turns that omit cacheWrite store zero and still price the cache reads", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-usage-reasoning-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "lane.jsonl");
+  const first = tokens(4, 2, { cacheRead: 6, reasoning: 7 });
+  const second = tokens(3, 5, { cacheRead: 8, reasoning: 11 });
   const provider = fauxProvider({
     respond: (_context, _options, state) => fauxAssistant(`reply-${state.callCount}`, {
       usage: state.callCount === 1 ? first : second,
@@ -257,7 +267,7 @@ test("two turns that omit cacheWrite store zero and still price the cache reads"
   const model = priceOf(provider, { input: 2_000_000, output: 4_000_000, cacheRead: 500_000 });
   const models = createModels();
   models.setProvider(provider);
-  const harness = runtime(new MemoryStorage(), models);
+  const harness = runtime(new JsonlStorage(file), models);
   try {
     const lane = harness.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
@@ -266,6 +276,11 @@ test("two turns that omit cacheWrite store zero and still price the cache reads"
     const rows = await harness.storage.read((view) => view.usageRows());
     assert.equal(rows.length, 2);
     assert.equal(rows.every((row) => row.cacheWrite === 0 && (row.cacheRead ?? 0) > 0), true);
+    assert.equal(rows[0]?.reasoning, first.reasoning);
+    assert.equal(rows[1]?.reasoning, second.reasoning);
+    assert.equal(usage.lastTurn?.cacheWrite, 0);
+    assert.equal(usage.lastTurn?.reasoning, second.reasoning);
+    assert.equal(usage.total.reasoning, (first.reasoning ?? 0) + (second.reasoning ?? 0));
     const cacheRead = (first.cacheRead ?? 0) + (second.cacheRead ?? 0);
     assert.equal(usage.total.cacheRead, cacheRead);
     assert.equal(usage.total.cacheWrite, 0);
@@ -280,6 +295,12 @@ test("two turns that omit cacheWrite store zero and still price the cache reads"
     assert.ok(one && two && one.total !== null && two.total !== null);
     assert.equal(typeof usage.total.cost?.total, "number");
     assert.equal(usage.total.cost?.total, one.total + two.total);
+    const reopened = runtime(new JsonlStorage(file), models);
+    try {
+      assert.deepEqual((await readUsage(reopened.lane())).lastTurn, usage.lastTurn);
+    } finally {
+      reopened.close();
+    }
   } finally {
     harness.close();
   }
@@ -523,6 +544,18 @@ test("an entry written at the summary timestamp still counts", async () => {
   await storage.commit([
     { type: "entry", id: "summary", parentId: null, timestamp: stamped, payload: { type: "compaction", summary: "folded" } },
     { type: "entry", id: "fresh", parentId: "summary", timestamp: stamped, payload: { type: "message", message: assistantMessage("fresh", tokens(4, 5), stamped) } },
+    {
+      type: "usage",
+      id: "fresh-usage",
+      operationId: "op-fresh",
+      input: 4,
+      output: 5,
+      totalTokens: 9,
+      cacheRead: null,
+      cacheWrite: 0,
+      reasoning: null,
+      model: { provider: "faux", modelId: "faux-1" },
+    },
     { type: "set", address: value("pi.branch.tip", "main"), value: "fresh" },
   ]);
   const { models } = scripted([]);
