@@ -11,7 +11,7 @@ interface CatalogModel {
   input: Array<"text" | "image">;
   contextWindow: number;
   maxTokens: number;
-  cost: { input: number; output: number };
+  cost: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   reasoning?: boolean;
   baseUrl?: string;
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
@@ -42,7 +42,12 @@ export function catalogModels(providerId: string): Model<KnownApi>[] {
     input: row.input,
     contextWindow: row.contextWindow,
     maxTokens: row.maxTokens,
-    cost: { input: row.cost.input, output: row.cost.output },
+    cost: {
+      input: row.cost.input,
+      output: row.cost.output,
+      ...(row.cost.cacheRead !== undefined ? { cacheRead: row.cost.cacheRead } : {}),
+      ...(row.cost.cacheWrite !== undefined ? { cacheWrite: row.cost.cacheWrite } : {}),
+    },
     ...(row.reasoning !== undefined ? { reasoning: row.reasoning } : {}),
     ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
     ...(row.thinkingLevelMap ? { thinkingLevelMap: row.thinkingLevelMap } : {}),

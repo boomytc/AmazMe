@@ -1,5 +1,5 @@
 import type { AssistantAccumulator } from "./events.ts";
-import { usageFromCounts } from "./events.ts";
+import { cacheMissInput, usageFromCounts } from "./events.ts";
 import { isRecord } from "./prepare.ts";
 import type { Context, Message, Model, ThinkingLevel } from "../types.ts";
 import { messageText } from "../transform.ts";
@@ -30,11 +30,13 @@ export function googleBody(model: Model, context: Context, outputCap: number, ef
 export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decoded: Record<string, unknown>, finish: { reason: string; tools: number }): void {
   const usage = isRecord(decoded.usageMetadata) ? decoded.usageMetadata : undefined;
   if (usage) {
+    const cache = cacheMissInput(numberOf(usage.promptTokenCount), numberOf(usage.cachedContentTokenCount));
     const reported = usageFromCounts(
       model,
-      numberOf(usage.promptTokenCount),
+      cache.input,
       (numberOf(usage.candidatesTokenCount) ?? 0) + (numberOf(usage.thoughtsTokenCount) ?? 0),
       numberOf(usage.totalTokenCount),
+      { cacheRead: cache.cacheRead },
     );
     if (reported) acc.usage(reported);
   }

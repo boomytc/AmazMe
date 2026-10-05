@@ -1,7 +1,7 @@
 import { baseAssistant, type AssistantEventStream } from "../models.ts";
 import type { AssistantMessage, Model, StopReason, ToolCall, Usage } from "../types.ts";
 import { isFilledWindowLength } from "../utils/overflow.ts";
-import { emptyUsage } from "../transform.ts";
+import { cloneUsage, emptyUsage } from "../transform.ts";
 
 interface TextBlock {
   kind: "text";
@@ -69,7 +69,7 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
     });
     return {
       ...baseAssistant(model, content.length > 0 ? content : [{ type: "text", text: "" }], stopReason),
-      usage: { input: usage.input, output: usage.output, totalTokens: usage.totalTokens, cost: { ...usage.cost } },
+      usage: cloneUsage(usage),
     };
   };
   const begin = () => {
@@ -235,7 +235,27 @@ function parsedArguments(value: string): unknown {
   try { return JSON.parse(value) as unknown; } catch { return {}; }
 }
 
-export function usageFromCounts(model: Model, input: number | undefined, output: number | undefined, total: number | undefined): Usage | undefined {
+/**
+ * Prompt counts that already include cache hits. The miss portion is `prompt - cacheRead`.
+ * A missing cache read is not zero and is not subtracted.
+ * A cache read larger than the prompt does not match, so it is dropped and `input` stays the prompt.
+ */
+export function cacheMissInput(prompt: number | undefined, cacheRead: number | undefined): {
+  input: number | undefined;
+  cacheRead: number | undefined;
+} {
+  if (prompt === undefined || cacheRead === undefined) return { input: prompt, cacheRead };
+  if (cacheRead > prompt) return { input: prompt, cacheRead: undefined };
+  return { input: prompt - cacheRead, cacheRead };
+}
+
+export function usageFromCounts(
+  model: Model,
+  input: number | undefined,
+  output: number | undefined,
+  total: number | undefined,
+  cache?: { cacheRead?: number; cacheWrite?: number },
+): Usage | undefined {
   if (input === undefined && output === undefined && total === undefined) return undefined;
   const prompt = finite(input) ?? 0;
   const completion = finite(output) ?? 0;
@@ -243,11 +263,19 @@ export function usageFromCounts(model: Model, input: number | undefined, output:
   const outputRate = finite(model.cost?.output) ?? 0;
   const inputCost = (prompt * inputRate) / 1_000_000;
   const outputCost = (completion * outputRate) / 1_000_000;
+  const cacheRead = finite(cache?.cacheRead);
+  const cacheWrite = finite(cache?.cacheWrite);
+  const cacheReadRate = finite(model.cost?.cacheRead);
+  const cacheWriteRate = finite(model.cost?.cacheWrite);
+  const cacheReadCost = cacheRead !== undefined && cacheReadRate !== undefined ? (cacheRead * cacheReadRate) / 1_000_000 : 0;
+  const cacheWriteCost = cacheWrite !== undefined && cacheWriteRate !== undefined ? (cacheWrite * cacheWriteRate) / 1_000_000 : 0;
   return {
     input: prompt,
     output: completion,
-    totalTokens: finite(total) ?? prompt + completion,
-    cost: { input: inputCost, output: outputCost, total: inputCost + outputCost },
+    totalTokens: finite(total) ?? prompt + (cacheRead ?? 0) + (cacheWrite ?? 0) + completion,
+    cost: { input: inputCost, output: outputCost, total: inputCost + outputCost + cacheReadCost + cacheWriteCost },
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
   };
 }
 

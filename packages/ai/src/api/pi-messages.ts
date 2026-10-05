@@ -97,7 +97,14 @@ async function pump(
       if (decoded.type === "done") {
         const usage = isRecord(decoded.usage) ? decoded.usage : undefined;
         if (usage) {
-          const reported = usageFromCounts(model, numberOf(usage.input), numberOf(usage.output), numberOf(usage.totalTokens));
+          const reported = usageFromCounts(
+            model,
+            numberOf(usage.input),
+            numberOf(usage.output),
+            numberOf(usage.totalTokens),
+            // pi-messages already speaks Usage: input is the cache miss, not the full prompt.
+            { cacheRead: numberOf(usage.cacheRead), cacheWrite: numberOf(usage.cacheWrite) },
+          );
           if (reported) acc.usage(reported);
         }
         terminalReason = decoded.reason === "length" ? "length" : decoded.reason === "toolUse" ? "toolUse" : "stop";

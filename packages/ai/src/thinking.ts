@@ -2,7 +2,11 @@ import type { Model, ThinkingLevel } from "./types.ts";
 
 const LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
-/** Levels this chat model accepts. Non-reasoning models accept only "off". */
+/**
+ * Levels this chat model accepts, derived from `reasoning` and `thinkingLevelMap`.
+ * The catalog does not store a second copy of this list.
+ * Non-reasoning models accept only "off". `null` excludes a level. A missing key keeps it.
+ */
 export function supportedThinkingLevels(model: Model): ThinkingLevel[] {
   if (model.reasoning !== true) return ["off"];
   return LEVELS.filter((level) => model.thinkingLevelMap?.[level] !== null);

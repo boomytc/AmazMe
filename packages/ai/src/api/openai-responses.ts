@@ -2,7 +2,7 @@ import { createAssistantEventStream, type AssistantEventStream, type ProviderStr
 import type { Context, Message, Model, OpenAIResponsesOptions, Usage } from "../types.ts";
 import { messageText } from "../transform.ts";
 import { classifyTransportFailure, transportErrorDetail } from "../utils/overflow.ts";
-import { createAccumulator, isAbort, usageFromCounts, type AssistantAccumulator } from "./events.ts";
+import { cacheMissInput, createAccumulator, isAbort, usageFromCounts, type AssistantAccumulator } from "./events.ts";
 import { isRecord, postJson, prepareChat, readSse, terminal } from "./prepare.ts";
 
 export const OPENAI_RESPONSES_API = "openai-responses";
@@ -161,11 +161,14 @@ export async function consumeResponses(
 
 function responsesUsage(model: Model, raw: unknown): Usage | undefined {
   if (!isRecord(raw)) return undefined;
+  const details = isRecord(raw.input_tokens_details) ? raw.input_tokens_details : undefined;
+  const cache = cacheMissInput(numberField(raw, "input_tokens"), details ? numberField(details, "cached_tokens") : undefined);
   return usageFromCounts(
     model,
-    numberField(raw, "input_tokens"),
+    cache.input,
     numberField(raw, "output_tokens"),
     numberField(raw, "total_tokens"),
+    cache.cacheRead !== undefined ? { cacheRead: cache.cacheRead } : undefined,
   );
 }
 
