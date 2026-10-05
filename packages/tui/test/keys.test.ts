@@ -18,6 +18,7 @@ test("a truncated escape is not text, and the next chunk can finish it", () => {
 
 test("ctrl-c, a CJK character, and page-down decode as themselves", () => {
   assert.deepEqual(decodeKeys("\u0003").keys, [{ type: "ctrl-c" }]);
+  assert.deepEqual(decodeKeys("\u0019").keys, [{ type: "ctrl-y" }]);
   assert.deepEqual(decodeKeys("中").keys, [{ type: "char", value: "中" }]);
   assert.deepEqual(decodeKeys("\u001b[6~").keys, [{ type: "page-down" }]);
   const decoder = new KeyDecoder();

@@ -19,31 +19,40 @@ function play(input: string, state: TuiState = emptyTui()): { state: TuiState; e
   return { state: current, effects };
 }
 
-test("the @ scanner attaches only image extensions and leaves every other mention as text", () => {
+test("the @ scanner attaches image extensions and keeps every other @ path as a text mention", () => {
   assert.deepEqual(parseAtMentions("see @readme.md and @shot.PNG."), [
-    { kind: "text", text: "see @readme.md and " },
+    { kind: "text", text: "see " },
+    { kind: "text-mention", path: "readme.md", raw: "@readme.md" },
+    { kind: "text", text: " and " },
     { kind: "image", path: "shot.PNG", raw: "@shot.PNG" },
     { kind: "text", text: "." },
   ]);
   assert.deepEqual(parseAtMentions("user@x.png @notes.txt @a.jpeg @b.gif @c.webp @d.bmp"), [
-    { kind: "text", text: "user@x.png @notes.txt " },
+    { kind: "text", text: "user@x.png " },
+    { kind: "text-mention", path: "notes.txt", raw: "@notes.txt" },
+    { kind: "text", text: " " },
     { kind: "image", path: "a.jpeg", raw: "@a.jpeg" },
     { kind: "text", text: " " },
     { kind: "image", path: "b.gif", raw: "@b.gif" },
     { kind: "text", text: " " },
     { kind: "image", path: "c.webp", raw: "@c.webp" },
-    { kind: "text", text: " @d.bmp" },
+    { kind: "text", text: " " },
+    { kind: "text-mention", path: "d.bmp", raw: "@d.bmp" },
   ]);
-  assert.deepEqual(parseAtMentions("plain"), [{ kind: "text", text: "plain" }]);
+  assert.deepEqual(parseAtMentions("plain @"), [{ kind: "text", text: "plain @" }]);
+  assert.deepEqual(parseAtMentions("open @\"my notes.md\""), [
+    { kind: "text", text: "open " },
+    { kind: "text-mention", path: "my notes.md", raw: "@\"my notes.md\"" },
+  ]);
   assert.equal(pastedImageMention("  ./pic.jpg  "), "@./pic.jpg");
   assert.equal(pastedImageMention("@shot.png"), "@shot.png");
   assert.equal(pastedImageMention("notes.md"), undefined);
   assert.equal(pastedImageMention("see @shot.png"), undefined);
   assert.equal(pastedImageMention("\"my photo.png\""), "@\"my photo.png\"");
   assert.deepEqual(
-    userContentFromParts(parseAtMentions("look @shot.png"), new Map([["shot.png", { mimeType: "image/png", data: "aaaa" }]])),
+    userContentFromParts(parseAtMentions("look @readme.md @shot.png"), new Map([["shot.png", { mimeType: "image/png", data: "aaaa" }]])),
     [
-      { type: "text", text: "look " },
+      { type: "text", text: "look @readme.md " },
       { type: "image", mimeType: "image/png", data: "aaaa" },
     ],
   );
@@ -81,6 +90,8 @@ test("@image paths and a pasted image path become image content; other @ paths s
     assert.equal(notes.state.input, "notes.md");
     const kept = await imagePrompt("keep @notes.md", dir);
     assert.deepEqual(kept, { ok: true });
+    const missingImage = await imagePrompt("keep @notes.md @missing.png", dir);
+    assert.deepEqual(missingImage, { ok: false, message: "找不到图片 missing.png" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

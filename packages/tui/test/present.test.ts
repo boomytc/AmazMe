@@ -132,6 +132,43 @@ test("the attached screen submits, follows up while busy, aborts, and redraws on
   }
 });
 
+test("ctrl-y writes the last assistant reply with OSC 52", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-copy-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const host = await fakeHost(join(dir, "host.sock"));
+  t.after(() => host.close());
+  const tty = fakeTTY();
+  const screen = presentHost(
+    { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE },
+    tty.stdin,
+    tty.stdout,
+  );
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    const before = tty.chunks.length;
+    tty.push("\u0019");
+    await until(() => tty.since(before).includes("没有助手回复"), "notice when nothing was said");
+    assert.equal(tty.since(before).includes("\x1b]52;"), false);
+    await host.showAssistant("hello-reply");
+    await until(() => tty.since(0).includes("hello-reply"), "the assistant reply");
+    const mark = tty.chunks.length;
+    tty.push("\u0019");
+    const payload = Buffer.from("hello-reply", "utf8").toString("base64");
+    await until(() => tty.since(mark).includes(`\x1b]52;c;${payload}\x07`), "OSC 52");
+    assert.match(tty.since(mark), /已复制/);
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u0004");
+    await Promise.race([
+      screen.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${tty.since(0)}`);
+  }
+});
+
 test("a failed assistant turn shows its error in the conversation", () => {
   const snapshot: LaneSnapshotDto = {
     version: 0,
@@ -424,16 +461,27 @@ async function fakeHost(
   let modelId = initial.modelId;
   let version = 1;
   let operationId: string | null = null;
+  let assistantReply: string | null = null;
   let sink: SubscriptionSink | undefined;
+  const entries = () => assistantReply === null ? [] : [{
+    id: "reply-1",
+    parentId: null,
+    seq: 0,
+    timestamp: 1,
+    payload: {
+      type: "message" as const,
+      message: { role: "assistant", content: [{ type: "text", text: assistantReply }] },
+    },
+  }];
   const view = () => ({
     version,
     lane: LANE,
-    tipId: null,
+    tipId: assistantReply === null ? null : "reply-1",
     phase: operationId ? "assistant_ready" as const : null,
     operationId,
     lastOperationId: null,
     status: operationId ? "open" as const : null,
-    entries: [],
+    entries: entries(),
     pendingResponse: null,
     tools: [],
     omitted: 0,
@@ -482,12 +530,12 @@ async function fakeHost(
           return {
             version,
             lane: LANE,
-            tipId: null,
+            tipId: assistantReply === null ? null : "reply-1",
             phase: operationId ? "assistant_ready" : null,
             operationId,
             lastOperationId: null,
             status: operationId ? "open" : null,
-            entries: [],
+            entries: entries(),
             pendingResponse: null,
             tools: [],
             activity: emptyActivity(),
@@ -566,6 +614,11 @@ async function fakeHost(
     errors,
     hold: (id: string) => commit(id),
     release: () => commit(null),
+    showAssistant: async (text: string) => {
+      assistantReply = text;
+      version += 1;
+      await publish();
+    },
     close: async () => {
       await server.close();
       await listener.close();

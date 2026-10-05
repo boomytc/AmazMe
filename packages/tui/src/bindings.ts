@@ -226,6 +226,16 @@ export const BINDINGS = [
     when: prompting,
   }),
   bind({
+    id: "copy-reply",
+    key: "ctrl-y",
+    label: "Ctrl-Y",
+    help: "复制",
+    detail: "复制最后一条助手回复",
+    hint: false,
+    catalog: true,
+    when: (state) => state.picker === null,
+  }),
+  bind({
     id: "insert",
     key: "char",
     label: "",

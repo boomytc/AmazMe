@@ -480,6 +480,12 @@ export async function presentHost(
       await cycleModel();
       return;
     }
+    if (effect.type === "copy") {
+      stdout.write(osc52(effect.text));
+      state = { ...state, notice: "已复制" };
+      paint();
+      return;
+    }
     if (effect.type === "approve") {
       await remote.lane(active).approve(effect.toolCallId, effect.decision, effect.session ? { session: true } : {});
       return;
@@ -599,6 +605,11 @@ export async function presentHost(
   });
   await lane.close();
   await client.dispose();
+}
+
+/** OSC 52 是终端写入剪贴板的控制序列。`c` 选择系统剪贴板，负载是 UTF-8 的 base64。 */
+function osc52(text: string): string {
+  return `\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`;
 }
 
 function restoreComposer(state: TuiState, text: string, notice: string): TuiState {
