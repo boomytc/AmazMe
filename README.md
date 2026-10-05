@@ -1,6 +1,6 @@
 # AmazMe
 
-这是 AmazMe 的第一个大版本。宿主持有会话日志、工具和模型。全屏在 `@amazme/tui`，网页在 `@amazme/web`，两者都只附着宿主。没有版本 1 标头、但已经有数据的会话或 runtime 文件不可读，也不会被迁移。
+这是 AmazMe 的第一个大版本。宿主持有会话日志、工具和模型。全屏在 `@amazme/tui`，网页在 `@amazme/web`，图形窗口在 `@amazme/gui`，三者都只附着宿主。没有版本 1 标头、但已经有数据的会话或 runtime 文件不可读，也不会被迁移。
 
 起步于 [Pi `ed8b3bc`](https://github.com/earendil-works/pi/tree/ed8b3bcc194c8263ec8bec3f337053ae73866da1) 的 TypeScript monorepo。模型 I/O、内存里的 agent 循环、编码会话各管一层，依赖只向下。持久化运行时 `@amazme/durable` 依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 已有的 `walkBefore`、`walkAfter`、`walkTransform`、`walkYield`。`@amazme/agent` 不依赖 `@amazme/durable`。
 
@@ -16,12 +16,13 @@
 @amazme/runtime-service  Durable lane 控制、完整快照、有界订阅和历史分页；服务端打开并持有 runtime 和存储
 @amazme/tui            全屏客户端：只附着宿主 socket，不持有会话、工具或模型
 @amazme/web            回环网页：列会话、打开转录、提交、中止。不持有会话、工具或模型
-@amazme/coding-agent   宿主、read/write/edit/bash、CLI、MCP 工具适配。全屏和网页由它拉起宿主再交给对应客户端
+@amazme/gui            图形窗口：只附着宿主 socket，不持有会话日志
+@amazme/coding-agent   宿主、编码工具、CLI、MCP 工具适配。全屏、网页和图形窗口由它拉起宿主再交给对应客户端
 ```
 
 `@amazme/mcp` 是协议客户端，并带有 stdio 和 Streamable HTTP。默认先按规范修订版 `2026-07-28` 发送 `server/discover`。stdio 上，对方不是现代响应或超时时，才退回 `initialize`。HTTP 上，只有 400 且正文不是现代 JSON-RPC 错误才退回；带方法不存在的 404、超时，以及没有 JSON-RPC 正文的 404/405，都不握手。退回后接受 `2025-11-25` 及更早的三个修订版。进度会重开空闲超时，但不会推迟单次请求的绝对时限。`input_required` 直接失败，不自动再请求。旧的 HTTP+SSE 没有实现。现代 HTTP 按 `tools/list` 中合法的 `x-mcp-header` 标注生成 `Mcp-Param-*`，非法标注工具被过滤，错误参数在发送前失败。OAuth 发现、PKCE、刷新和 step-up 在独立的 `@amazme/mcp/oauth` 入口里：动态注册带 `application_type`，一个授权服务器签发的凭证不会交给另一个，包不打开浏览器，也不读真实密钥。`@amazme/coding-agent` 把已经连上的客户端适配成 Agent 工具：名字是 `mcp_<serverId>__<toolName>`，冲突或超长就报错，不截断；取消、进度、文本和图片结果交给工具执行。协议包本身不依赖 Agent。本地子进程、内存传输和注入的 fetch 都不是真实服务器或真实登录验收。调用方自己持有服务器连接。
 
-今天的 `amazme` 单次 prompt 仍走内存循环加会话树：有一次性 prompt 时跑完这一次并退出。没有 prompt 且标准输出是终端时，全屏会启动前台宿主，视图只附着 socket。`amazme serve` 是同一条宿主：它监听 socket，打开并持有一份 JSONL runtime，`accept` 只落盘，`drive` 才推进。进程挂了以后，下一次显式 `drive` 从完整的操作状态接着做，不会自动重发已经结算的模型请求。可重试错误仍由 Durable 按存储的 `notBefore` 重发。
+今天的 `amazme` 单次 prompt 仍走内存循环加会话树：有一次性 prompt 时跑完这一次并退出。没有 prompt 且标准输出是终端时，全屏会启动前台宿主，视图只附着 socket。`amazme --web` 和 `amazme --gui` 启动同一个宿主，并分别打开回环网页或图形窗口。`amazme serve` 是同一条宿主：它监听调用方给的 socket，打开并持有一份 JSONL runtime，`accept` 只落盘，`drive` 才推进。进程挂了以后，下一次显式 `drive` 从完整的操作状态接着做，不会自动重发已经结算的模型请求。可重试错误仍由 Durable 按存储的 `notBefore` 重发。
 
 ## 模型边界
 
@@ -145,40 +146,57 @@ const models = createModels({ telemetryContext });
 
 内置工具是 `read`、`write`、`edit`、`bash`。`read` 可以重放，`write`、`edit` 和 `bash` 不行。这四个工具共用一条工作区策略：工作区可写，`<workspace>/.amazme` 不可读写，只有 `<workspace>/.amazme/tmp` 例外，工具没有网络。darwin 用 Seatbelt，linux 用 Bubblewrap（`--unshare-net`，把 `.amazme` 盖成 tmpfs 后再绑回 tmp）。平台不对，或对应的 `sandbox-exec` / `bwrap` 不存在时，工具抛出 `SANDBOX_UNAVAILABLE`，不会退回不受限制的进程。模型请求和调用方自己持有的 MCP 工具不在这道边界里。
 
-CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket`、全屏和 `amazme bridge` 用同一套斜杠命令。`/help` 列出它们。以 `/` 开头但无法识别的行不会发给模型。`/new`（`/clear`）、`/resume`、`/fork`、`/clone`、`/rewind`（`/undo`）和 `/compact` 改当前会话；`/model`（`/m`）和 `/thinking`（`/effort`）改当前空闲 lane 的模型和思考级别；`/login`、`/logout` 不带参数时在全屏里打开供应商列表，标出已保存和未配置，再选择账号登录或 API key；带上提供方 id 时仍直接登录。凭证写在本机凭证文件；`/steer`、`/abort`、`/continue`、`/earlier` 沿用原来的 lane 操作。`/continue` 只对已经写下的 `retry_wait` 再 `drive`，并等到 `notBefore`。`/quit` 只离开全屏；页面和附着端不停止宿主。没有提示词时的全屏把用户消息放在带边的块里，助手文本按标题、列表和代码块排开，工具单独成块。底栏有工作目录、会话、模型和忙闲，输入行在横线下面。`/model`、`/thinking`、`/resume` 和 `/login` 不带参数时打开可筛选列表。网页用同一套块和底栏。`amazme bridge --socket [--port n]` 只监听 `127.0.0.1`。页面列出会话、打开一段转录、提交提示，并在命令结果处显示说明。这些客户端都不持有 JSONL，也不执行工具，也不调用模型。
+CLI 和全屏都把工作目录下 `skills/` 里的 `SKILL.md` 合成一段文字，接在已经传给 Agent 的 `systemPrompt` 后面。只读该目录自己的文件和每个直接子目录里的 `SKILL.md`。`disableModelInvocation: true` 的技能不进入；目录不存在或没有可显示的技能时，提示词保持原样。`amazme attach --socket`、全屏和 `amazme bridge` 用同一套斜杠命令。`/help` 列出它们。以 `/` 开头但无法识别的行不会发给模型。`/new`（`/clear`）、`/resume`、`/fork`、`/clone`、`/rewind`（`/undo`）和 `/compact` 改当前会话；`/model`（`/m`）和 `/thinking`（`/effort`）改当前空闲 lane 的模型和思考级别；`/login`、`/logout` 不带参数时在全屏里打开供应商列表，标出已保存和未配置，再选择账号登录或 API key；带上提供方 id 时仍直接登录。凭证写在本机凭证文件；`/steer`、`/abort`、`/continue`、`/earlier` 沿用原来的 lane 操作。`/continue` 只对已经写下的 `retry_wait` 再 `drive`，并等到 `notBefore`。`/quit`、Ctrl-D，以及空闲且输入为空时连续两次 Ctrl-C，都离开全屏。没有用过 `/web` 或 `/gui` 时，宿主一起关掉。用过之后，这个进程继续服务，终端打印地址，再连续两次 Ctrl-C 才结束。页面上的 `/quit` 不停止宿主。`/web` 在当前宿主上打开回环网页，终端里还会用系统浏览器打开。`/gui` 打开附着在同一宿主上的图形窗口。没有提示词时的全屏把用户消息放在带边的块里，助手文本按标题、列表和代码块排开，工具单独成块。底栏有工作目录、会话、模型和忙闲，输入行在横线下面。`/model`、`/thinking`、`/resume` 和 `/login` 不带参数时打开可筛选列表。网页和图形窗口用同一套块和底栏。`amazme --web` 自己拉起宿主和页面。`amazme bridge --socket [--port n]` 只附着已有宿主，并且只监听 `127.0.0.1`。页面列出会话、打开一段转录、提交提示，并在命令结果处显示说明。这些客户端都不持有 JSONL，也不执行工具，也不调用模型。
 
-`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。库导出本身不打开传输。`amazme serve` 在打开 runtime 时读取 `<cwd>/.amazme/mcp.json`：文件不存在就没有 MCP；文件无效或某个服务器连不上，这次打开失败，码是 `mcp_unavailable`。连接跟这次 runtime 走，客户端断开不断开它们。MCP 调用留在宿主进程里，继承宿主环境，不进 Seatbelt。一次性命令不读这份配置。全屏和 `amazme serve` 都会读。没有服务器或列表为空时，工具数组不变。
+`appendMcpTools` 把调用方已经列出的 MCP 工具接在这四个编码工具之后。每个服务器带 `serverId`。暴露给模型的名字是 `mcp_<serverId>__<toolName>`，两边都只允许 `[A-Za-z0-9_-]`。超过 64 个字符，或和数组里已有工具（包括 `read`、`write`、`edit`、`bash`）或其他服务器算出的名字冲突时，抛出错误并写明两边的身份，不截断、不改写字符。`execute` 把取消信号和进度交给 `client.callTool`，文本和图片都进入工具结果。`mcpServer` 可以包住一个已经连接的 `@amazme/mcp` 客户端，并使用它的内容投影。库导出本身不打开传输。`amazme serve` 在打开 runtime 时读取 `<cwd>/.amazme/mcp.json`：文件不存在就没有 MCP；文件无效或某个服务器连不上，这次打开失败，码是 `mcp_unavailable`。连接跟这次 runtime 走，客户端断开不断开它们。MCP 调用留在宿主进程里，继承宿主环境，不进 Seatbelt。一次性命令不读这份配置。全屏、`amazme --web`、`amazme --gui` 和 `amazme serve` 都会读。没有服务器或列表为空时，工具数组不变。
 
 没有一次性 prompt 且标准输出是终端时进入全屏。全屏启动宿主后把画面交给 `@amazme/tui`。提交、中止和斜杠命令都发给宿主，不走内存会话的 `session.prompt`。
 
 ## 命令
 
-`npm test` 包含真实 Unix socket 的测试，需要允许本地监听的环境；受限沙箱中的 `listen EPERM` 是环境限制，不是实现失败。
+需要 Node.js 22.19 或更新版本。安装依赖后把 `amazme` 接到当前环境；这条命令直接跑这份检出里的源码。
 
 ```bash
 npm install
+npm link --workspace @amazme/coding-agent
+```
+
+`npm test` 包含真实 Unix socket 的测试，需要允许本地监听的环境；受限沙箱中的 `listen EPERM` 是环境限制，不是实现失败。
+
+```bash
 npm test
 npm run build
 npm run check:core
 npm run check:durable
-npx tsx packages/coding-agent/src/cli.ts "hello"
 ```
 
-OpenAI：
+不带提示词、且标准输出是终端时，`amazme` 进入全屏，而不是报 missing prompt。全屏、网页和图形窗口各自拉起宿主。宿主 socket 在 `<cwd>/.amazme/runtime/host.sock`。`--web` 和 `--gui` 不能同时用。后面的文字是第一轮提示。
 
 ```bash
-npx tsx packages/coding-agent/src/cli.ts --provider openai --model gpt-4o-mini "你好"
-npx tsx packages/coding-agent/src/cli.ts login --provider openai --method device_code
+amazme
+amazme --provider openai --model gpt-4o-mini
+amazme "hello"
+amazme --web
+amazme --web "你好"
+amazme --gui
+amazme --gui "你好"
+amazme update
+amazme login --provider openai --method device_code
 ```
 
-不带 prompt、且标准输出是终端时，`amazme` 进入全屏，而不是报 missing prompt。
+`amazme update` 在这份检出里执行 `git pull --ff-only`，然后 `npm install`。工作区有未提交的改动时拒绝更新，不覆盖文件。
 
-前台宿主：
+空闲且输入为空时，第一次 Ctrl-C 只提示再按一次，1.5 秒内的第二次才离开。正在生成时第一次只中止这一轮，输入框里有字时第一次只清空。`amazme --web`、`amazme --gui`、`amazme serve`、`amazme bridge`，以及全屏里打开过网页或图形窗口之后留下的宿主，同样要连续两次 Ctrl-C 才结束。`SIGTERM` 立刻退出。全屏里的 Ctrl-D 仍在空闲且输入为空时离开。
+
+第二个客户端加入已经在跑的宿主。`serve` 的 socket 由调用方指定。`bridge` 和 `gui --socket` 不持有会话日志，退出时不停止宿主。
 
 ```bash
-npx tsx packages/coding-agent/src/cli.ts serve --socket /tmp/amazme.sock --cwd .
+amazme serve --socket /tmp/amazme.sock --cwd .
+amazme attach --socket /tmp/amazme.sock
+amazme bridge --socket /tmp/amazme.sock
+amazme gui --socket /tmp/amazme.sock --prompt "你好"
 ```
 
-它只承认 runtime `workspace`。这份日志里的每条对话 lane 都可以附着，`main` 只是默认。JSONL 在 `<cwd>/.amazme/runtime/workspace.jsonl`，和一次性命令的会话树分开。客户端不能传路径或构造参数。已有 lane 的模型、系统提示词和技能文本只在第一次写入；重开改 `--model` 不会覆盖。显式 `/model` 和 `/thinking` 会改当前空闲 lane，并把这次选择作为之后新建 lane 的默认；其他已经存在的 lane 保持原配置。这两条命令不改系统提示词。正在进行的操作上拒绝写入。未知模型和不被该模型接受的思考级别会拒绝，不会夹到别的级别。工具每次用当前进程的 `read` / `write` / `edit` / `bash`。`read` 可以重放，另外三个崩溃后不重放。第一次 `SIGINT` 或 `SIGTERM` 排空后退出，不删除文件；排空过程中的第二次信号改为中止。
+宿主只承认 runtime `workspace`。这份日志里的每条对话 lane 都可以附着，`main` 只是默认。JSONL 在 `<cwd>/.amazme/runtime/workspace.jsonl`，和一次性命令的会话树分开。客户端不能传路径或构造参数。已有 lane 的模型、系统提示词和技能文本只在第一次写入；重开改 `--model` 不会覆盖。显式 `/model` 和 `/thinking` 会改当前空闲 lane，并把这次选择作为之后新建 lane 的默认；其他已经存在的 lane 保持原配置。这两条命令不改系统提示词。正在进行的操作上拒绝写入。未知模型和不被该模型接受的思考级别会拒绝，不会夹到别的级别。退出不删除 JSONL。
 
-这是同一套分层的独立实现，不是 Pi 仓库的拷贝。编码命令有全屏视图和 40 个预设供应商；登录、技能段落和 MCP 工具追加都在这一层。当前 `AgentHarness` 没有 deferred，摘要中断后不重试，也没有 `convertToLlm`。排队的 steer 和 follow-up 在同一次 `prompt` 或 `drive` 里消化。
+这是同一套分层的独立实现，不是 Pi 仓库的拷贝。编码命令有全屏、网页和图形窗口，以及 40 个预设供应商；登录、技能段落和 MCP 工具追加都在这一层。当前 `AgentHarness` 没有 deferred，摘要中断后不重试，也没有 `convertToLlm`。排队的 steer 和 follow-up 在同一次 `prompt` 或 `drive` 里消化。
