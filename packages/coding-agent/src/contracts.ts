@@ -61,6 +61,7 @@ function replaceRetryTimer(lane: object, operationId: string, cancel: (() => voi
  * `cancel` is declared before `schedule` returns. A clock that runs the callback immediately
  * would otherwise read that binding before it was initialized.
  * On fire, a settled operation is left alone: `run` (the host `drive`) is not called.
+ * `result` is called on the lane. Copying the method off the object drops `this`, and `AgentLane` then throws.
  * Returns whether a retry was armed.
  */
 export async function scheduleHostRetry(
@@ -79,12 +80,12 @@ export async function scheduleHostRetry(
     const armed = cancel;
     const arms = retryArms.get(lane);
     if (armed !== undefined && arms?.get(waiting.operationId) === armed) arms.delete(waiting.operationId);
-    const read = lane.result;
-    if (read === undefined) {
+    const settled = lane.result?.(waiting.operationId);
+    if (settled === undefined) {
       run();
       return;
     }
-    void read(waiting.operationId).then((found) => {
+    void settled.then((found) => {
       if (found.ok && found.value !== null) return;
       run();
     }, () => {

@@ -123,6 +123,48 @@ test("pending approvals block a due retry, and clearing them arms it again", asy
   assert.deepEqual(clock.delays, [0]);
 });
 
+test("a fired timer does not drive a settled operation on a real lane", async () => {
+  const provider = fauxProvider({
+    respond: () => fauxAssistant("later", { stopReason: "error", retryable: true, errorMessage: "later" }),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+  });
+  const clock = cancellableClock();
+  installHostRetries(harness, clock);
+  const lane = harness.lane();
+  try {
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const waiting = await lane.drive(admitted.value.operationId);
+    assert.equal(waiting.ok && waiting.value.kind === "waiting" ? waiting.value.reason : "", "retry");
+    assert.equal(clock.live(), 1);
+    assert.equal(provider.state.callCount, 1);
+    const aborted = await lane.requestAbort(admitted.value.operationId);
+    assert.equal(aborted.ok, true);
+    const settled = await lane.drive(admitted.value.operationId);
+    assert.equal(settled.ok && settled.value.kind, "settled");
+    const found = await lane.result(admitted.value.operationId);
+    assert.equal(found.ok && found.value !== null, true);
+    let drivesAfter = 0;
+    const driveNow = lane.drive.bind(lane);
+    lane.drive = (operationId, options) => {
+      drivesAfter += 1;
+      return driveNow(operationId, options);
+    };
+    clock.fire();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(drivesAfter, 0);
+    assert.equal(provider.state.callCount, 1);
+  } finally {
+    harness.close();
+  }
+});
+
 test("a parked tool does not arm a host retry, and the next model retry does", async () => {
   const runs = { n: 0 };
   const provider = fauxProvider({
