@@ -122,6 +122,7 @@ export interface Usage {
    * Google Generative AI and Vertex report this as `usageMetadata.thoughtsTokenCount`.
    * Chat Completions may report `completion_tokens_details.reasoning_tokens`. DeepSeek's schema
    * documents that breakdown of `completion_tokens`. The published deepseek-flash examples omit it.
+   * Responses (OpenAI, Azure, Codex) may report `output_tokens_details.reasoning_tokens`.
    * A missing count stays unset and is not estimated. A reported 0 stays 0.
    */
   reasoning?: number;
