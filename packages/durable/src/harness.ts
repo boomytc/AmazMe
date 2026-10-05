@@ -1696,7 +1696,7 @@ export class AgentLane {
       }
       calls = calls.map((item) => (item.resultEntryId === call.resultEntryId ? { ...item, status: "outcome_ready" as const, terminate: false } : item));
       const checkpoint = view.get<string>(toolOutputAddress(call.resultEntryId));
-      const reason = cancel ? "cancelled" : "interrupted before settlement";
+      const reason = cancel ? "cancelled" : INTERRUPTED_TOOL_EFFECT;
       const text = checkpoint ? `${reason}\n${checkpoint}` : reason;
       recoveryWrites.push({
         type: "set",
@@ -2452,6 +2452,14 @@ function earliestApprovalRequestedAt(state: Extract<OperationState, { phase: "to
   if (earliest === undefined) throw new Error("approval wait has no requestedAt");
   return earliest;
 }
+
+/**
+ * Result text when a `replay: "never"` tool is still `effect_pending` after restart.
+ * The call is not run again: the effect may already have happened, and its result was not stored.
+ * A stored checkpoint is appended on the next line.
+ */
+const INTERRUPTED_TOOL_EFFECT =
+  "interrupted before settlement; the tool may already have executed and the result is unknown";
 
 function approvalDenial(reason: string | undefined): string {
   const text = reason?.trim();

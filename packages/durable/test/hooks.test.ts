@@ -725,10 +725,11 @@ test("after throws, drops the live id, and recovery does not call streamSimple",
     assert.equal(storage.toolResultStored, true);
     assert.equal(runtime.live.has(resultId), false);
     const continued = provider.state.contexts.at(-1);
-    assert.ok(continued?.messages.some((message) => message.role === "toolResult" && messageText(message).includes("interrupted before settlement")));
+    const interrupted = "interrupted before settlement; the tool may already have executed and the result is unknown";
+    assert.ok(continued?.messages.some((message) => message.role === "toolResult" && messageText(message) === interrupted));
     const stored = (await lane.entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
     assert.ok(stored?.payload.type === "message" && stored.payload.message.role === "toolResult");
-    assert.equal(messageText(stored.payload.message), "interrupted before settlement");
+    assert.equal(messageText(stored.payload.message), interrupted);
     assert.equal(provider.state.callCount, callsAtFailure + 1);
   } finally {
     runtime.close();

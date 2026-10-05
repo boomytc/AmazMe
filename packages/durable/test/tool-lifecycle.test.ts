@@ -134,7 +134,9 @@ for (const timing of ["before", "after"] as const) {
         assert.equal(runtime.live.size, 0);
         const result = (await lane.entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
         assert.ok(result?.payload.type === "message" && result.payload.message.role === "toolResult");
-        assert.equal(messageText(result.payload.message), timing === "after" && replay === "never" ? "interrupted before settlement" : "done");
+        assert.equal(messageText(result.payload.message), timing === "after" && replay === "never"
+          ? "interrupted before settlement; the tool may already have executed and the result is unknown"
+          : "done");
       } finally {
         runtime.close();
       }
@@ -197,7 +199,7 @@ test("a failed checkpoint write is awaited and is not settled as success", async
     assert.equal(provider.state.callCount, 2);
     const text = (await lane.entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
     if (!text || text.payload.type !== "message" || text.payload.message.role !== "toolResult") assert.fail("missing tool result");
-    assert.equal(messageText(text.payload.message), "interrupted before settlement");
+    assert.equal(messageText(text.payload.message), "interrupted before settlement; the tool may already have executed and the result is unknown");
   } finally {
     process.off("unhandledRejection", onUnhandled);
   }
