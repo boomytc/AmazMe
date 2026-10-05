@@ -747,3 +747,97 @@ test("callback persist retries do not block the event loop while a live process 
   assert.equal(stored, true, "persist did not finish within 5s of lock release");
   assert.ok(Date.now() - releasedAt <= 5_000);
 });
+
+test("a pending jobs.json.lock retry does not keep the process alive", { timeout: 10_000 }, async (t) => {
+  const root = directory(t);
+  const repo = fileURLToPath(new URL("../../..", import.meta.url));
+  const jobsHref = new URL("../src/jobs.ts", import.meta.url).href;
+  const file = jobsFile(root);
+  let stderr = "";
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+    import { closeSync, constants, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
+    import { dirname } from "node:path";
+    import { jobsFile, openJobRegistry, processStartTicks } from ${JSON.stringify(jobsHref)};
+    const cwd = process.env.JOBS_CWD;
+    if (!cwd) throw new Error("missing cwd");
+    const owner = { pid: process.pid, startTicks: processStartTicks(process.pid) };
+    const file = jobsFile(cwd);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ next: 2, jobs: [{
+      id: "j1",
+      status: "running",
+      summary: "sleep 60",
+      command: "sleep 60",
+      pid: null,
+      startTicks: null,
+      code: null,
+      stdout: "",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      owner,
+    }] }));
+    const jobs = openJobRegistry(cwd);
+    const fd = openSync(file + ".lock", constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    writeSync(fd, JSON.stringify(owner));
+    closeSync(fd);
+    const killed = jobs.kill("j1");
+    if (killed.isError || killed.text !== "killed j1") throw new Error(killed.text);
+    process.stdout.write("scheduled\\n");
+  `], {
+    cwd: repo,
+    env: { ...process.env, JOBS_CWD: root },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  t.after(() => child.kill("SIGKILL"));
+  const outcome = await new Promise<{ line: string; code: number | null }>((resolve, reject) => {
+    let buf = "";
+    let line: string | undefined;
+    let code: number | null | undefined;
+    let settled = false;
+    let alive: ReturnType<typeof setTimeout> | undefined;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(startup);
+      if (alive !== undefined) clearTimeout(alive);
+      reject(error);
+    };
+    const startup = setTimeout(() => {
+      fail(new Error(`child did not schedule a retry\n${stderr}\n${buf}`));
+    }, 8_000);
+    const finish = () => {
+      if (settled || line === undefined || code === undefined) return;
+      settled = true;
+      clearTimeout(startup);
+      if (alive !== undefined) clearTimeout(alive);
+      resolve({ line, code });
+    };
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      if (line !== undefined) return;
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      line = buf.slice(0, nl);
+      alive = setTimeout(() => {
+        fail(new Error(`pending lock retry kept the process alive\n${stderr}`));
+      }, 2_000);
+      finish();
+    });
+    child.once("close", (exitCode) => {
+      code = exitCode;
+      if (line === undefined) {
+        fail(new Error(`child exited ${exitCode} before scheduling\n${stderr}\n${buf}`));
+        return;
+      }
+      finish();
+    });
+  });
+  assert.equal(outcome.line, "scheduled");
+  assert.equal(outcome.code, 0);
+  assert.equal(readJobs(root).find((job) => job.id === "j1")?.status, "running");
+  assert.equal(existsSync(`${file}.lock`), true);
+});
