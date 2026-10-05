@@ -216,7 +216,7 @@ interface UsageCounts {
 
 /**
  * `usageCost` fields. On a sum, a component is null when any counted row's component is null.
- * The whole value is null when a row has no resolvable price list.
+ * The whole value is null when a row has no stored model, or that model has no price list.
  */
 export type LaneUsageCost = { [K in keyof UsageCost]: number | null };
 
@@ -238,10 +238,12 @@ export interface LaneUsage {
    * A row has no lane. An open operation is attributed by the stored `OperationMeta.lane`; after `finish`, by
    * `OperationResult.lane`. There is no ancestor-chain fallback: one operation can write several rows, and a fork
    * can cut in the middle of that operation, so summing assistant messages would not match the rows.
-   * `cacheRead` and `cacheWrite` sum only when every counted row stores a number for that field.
-   * A missing field or a stored null means the count was not reported, and that total is null.
-   * A reported 0 stays 0. `hitRate` is `cacheHitRate` of those totals, and null when either cache total is null.
-   * `cost` prices each row with that row's model, or the lane's configured model when an old row has none.
+   * `cacheRead` sums only when every counted row stores a number. A missing field or a stored null means the
+   * provider did not report it, and that total is null. A new row stores an unreported `cacheWrite` as 0.
+   * Cumulative `cacheWrite` is null only when an old row omitted the field. A reported 0 stays 0.
+   * `hitRate` is `cacheHitRate` of those totals, and null only when `cacheRead` is null. A null `cacheWrite`
+   * is left out of that rate.
+   * `cost` prices each row with the model stored on that row. A row without one makes the cumulative cost null.
    */
   total: UsageCounts & { hitRate: number | null; cost: LaneUsageCost | null };
   /**
@@ -2627,8 +2629,12 @@ function attributedTotal(view: StorageView, lane: string, options: HarnessOption
     output,
     cacheRead,
     cacheWrite,
-    hitRate: cacheRead === null || cacheWrite === null ? null : cacheHitRate({ input, cacheRead, cacheWrite }),
-    cost: totalCost(view, lane, options, rows),
+    hitRate: cacheRead === null ? null : cacheHitRate({
+      input,
+      cacheRead,
+      ...(cacheWrite === null ? {} : { cacheWrite }),
+    }),
+    cost: totalCost(options, rows),
   };
 }
 
@@ -2644,16 +2650,11 @@ function sumStoredCount(rows: readonly UsageRow[], key: "cacheRead" | "cacheWrit
   return sum;
 }
 
-function totalCost(
-  view: StorageView,
-  lane: string,
-  options: HarnessOptions,
-  rows: readonly UsageRow[],
-): LaneUsageCost | null {
+function totalCost(options: HarnessOptions, rows: readonly UsageRow[]): LaneUsageCost | null {
   if (rows.length === 0) return null;
   const parts: UsageCost[] = [];
   for (const row of rows) {
-    const priced = rowCost(view, lane, options, row);
+    const priced = rowCost(options, row);
     if (!priced) return null;
     parts.push(priced);
   }
@@ -2676,10 +2677,9 @@ function sumCharge(parts: readonly UsageCost[], key: keyof UsageCost): number | 
   return sum;
 }
 
-function rowCost(view: StorageView, lane: string, options: HarnessOptions, row: UsageRow): UsageCost | null {
-  const model = row.model
-    ? options.models.getModel(row.model.provider, row.model.modelId)
-    : resolveLaneModel(view, lane, options).model;
+function rowCost(options: HarnessOptions, row: UsageRow): UsageCost | null {
+  if (!row.model) return null;
+  const model = options.models.getModel(row.model.provider, row.model.modelId);
   if (!model) return null;
   return usageCost(model, {
     input: row.input,
@@ -2780,7 +2780,7 @@ function usageWrite(id: string, operationId: string, message: AssistantMessage):
     output: message.usage.output,
     totalTokens: message.usage.totalTokens,
     cacheRead: message.usage.cacheRead ?? null,
-    cacheWrite: message.usage.cacheWrite ?? null,
+    cacheWrite: message.usage.cacheWrite ?? 0,
     model: { provider: message.provider, modelId: message.model },
   };
 }

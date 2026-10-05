@@ -60,7 +60,7 @@ function total(input: number, output: number): LaneUsage["total"] {
     input,
     output,
     cacheRead: null,
-    cacheWrite: null,
+    cacheWrite: 0,
     hitRate: null,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
@@ -195,8 +195,8 @@ test("cacheRead on the latest assistant is part of contextTokens and lastTurn", 
     assert.equal(usage.total.input, 3);
     assert.equal(usage.total.output, 4);
     assert.equal(usage.total.cacheRead, 10);
-    assert.equal(usage.total.cacheWrite, null);
-    assert.equal(usage.total.hitRate, null);
+    assert.equal(usage.total.cacheWrite, 0);
+    assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10, cacheWrite: 0 }));
     assert.equal(usage.total.cost?.cacheRead, null);
     assert.equal(usage.total.cost?.total, null);
     assert.equal(usage.total.cost?.input, 0);
@@ -237,8 +237,8 @@ test("a reported cache zero stays zero and still joins the summed cache", async 
     assert.equal(usage.total.input, 3);
     assert.equal(usage.total.output, 3);
     assert.equal(usage.total.cacheRead, 10);
-    assert.equal(usage.total.cacheWrite, null);
-    assert.equal(usage.total.hitRate, null);
+    assert.equal(usage.total.cacheWrite, 4);
+    assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10, cacheWrite: 4 }));
     assert.equal(usage.total.cost?.cacheRead, null);
     assert.equal(usage.total.cost?.total, null);
   } finally {
@@ -246,21 +246,40 @@ test("a reported cache zero stays zero and still joins the summed cache", async 
   }
 });
 
-test("a missing cacheWrite nulls the cumulative hit rate while cacheRead still sums", async () => {
-  const { models } = scripted([
-    tokens(4, 1, { cacheRead: 500, cacheWrite: 2 }),
-    tokens(3, 1, { cacheRead: 20 }),
-  ]);
+test("two turns that omit cacheWrite store zero and still price the cache reads", async () => {
+  const first = tokens(4, 2, { cacheRead: 6 });
+  const second = tokens(3, 5, { cacheRead: 8 });
+  const provider = fauxProvider({
+    respond: (_context, _options, state) => fauxAssistant(`reply-${state.callCount}`, {
+      usage: state.callCount === 1 ? first : second,
+    }),
+  });
+  const model = priceOf(provider, { input: 2_000_000, output: 4_000_000, cacheRead: 500_000 });
+  const models = createModels();
+  models.setProvider(provider);
   const harness = runtime(new MemoryStorage(), models);
   try {
     const lane = harness.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
     assert.equal((await lane.prompt("two")).status, "completed");
     const usage = await readUsage(lane);
-    assert.equal(usage.total.cacheRead, 520);
-    assert.equal(typeof usage.total.cacheRead, "number");
-    assert.equal(usage.total.cacheWrite, null);
-    assert.equal(usage.total.hitRate, null);
+    const rows = await harness.storage.read((view) => view.usageRows());
+    assert.equal(rows.length, 2);
+    assert.equal(rows.every((row) => row.cacheWrite === 0 && (row.cacheRead ?? 0) > 0), true);
+    const cacheRead = (first.cacheRead ?? 0) + (second.cacheRead ?? 0);
+    assert.equal(usage.total.cacheRead, cacheRead);
+    assert.equal(usage.total.cacheWrite, 0);
+    assert.equal(typeof usage.total.hitRate, "number");
+    assert.equal(usage.total.hitRate, cacheHitRate({
+      input: first.input + second.input,
+      cacheRead,
+      cacheWrite: 0,
+    }));
+    const one = usageCost(model, { ...first, cacheWrite: 0 });
+    const two = usageCost(model, { ...second, cacheWrite: 0 });
+    assert.ok(one && two && one.total !== null && two.total !== null);
+    assert.equal(typeof usage.total.cost?.total, "number");
+    assert.equal(usage.total.cost?.total, one.total + two.total);
   } finally {
     harness.close();
   }
@@ -557,8 +576,8 @@ test("navigating back without a summary keeps abandoned rows in the cache sum", 
     assert.equal(usage.total.input, 28);
     assert.equal(usage.total.output, 8);
     assert.equal(usage.total.cacheRead, 140);
-    assert.equal(usage.total.cacheWrite, null);
-    assert.equal(usage.total.hitRate, null);
+    assert.equal(usage.total.cacheWrite, 0);
+    assert.equal(usage.total.hitRate, cacheHitRate({ input: 28, cacheRead: 140, cacheWrite: 0 }));
     assert.equal(usage.total.cost?.total, null);
     assert.equal((await lane.entries()).some((entry) => entry.payload.type === "compaction"), false);
   } finally {
@@ -937,9 +956,9 @@ test("a cache hit without a hit price nulls that charge and the cumulative total
   }
 });
 
-test("an old usage row is priced from the lane model and nulls the cache sum", async () => {
+test("an old usage row without a model nulls the cumulative cost", async () => {
   const provider = fauxProvider();
-  const model = priceOf(provider, { input: 1_000_000, output: 2_000_000, cacheRead: 100_000, cacheWrite: 100_000 });
+  priceOf(provider, { input: 1_000_000, output: 2_000_000, cacheRead: 100_000, cacheWrite: 100_000 });
   const models = createModels();
   models.setProvider(provider);
   const storage = new MemoryStorage();
@@ -962,36 +981,12 @@ test("an old usage row is priced from the lane model and nulls the cache sum", a
   const harness = runtime(storage, models);
   try {
     const usage = await readUsage(harness.lane());
-    const oldCharge = usageCost(model, { input: 10, output: 4 });
-    const freshCharge = usageCost(model, { input: 1, output: 1, cacheRead: 5, cacheWrite: 0 });
-    assert.ok(oldCharge && freshCharge && oldCharge.total !== null && freshCharge.total !== null);
     assert.equal(usage.total.input, 11);
     assert.equal(usage.total.output, 5);
     assert.equal(usage.total.cacheRead, null);
     assert.equal(usage.total.cacheWrite, null);
     assert.equal(usage.total.hitRate, null);
-    assert.equal(usage.total.cost?.total, oldCharge.total + freshCharge.total);
-    assert.equal(usage.total.cost?.input, oldCharge.input + freshCharge.input);
-  } finally {
-    harness.close();
-  }
-});
-
-test("an old usage row with no resolvable model nulls the cumulative cost", async () => {
-  const { models } = scripted([]);
-  const storage = new MemoryStorage();
-  await storage.commit([
-    { type: "usage", id: "old", operationId: "op-old", input: 10, output: 4, totalTokens: 14 },
-    { type: "set", address: value("pi.result", "op-old"), value: { lane: "main" } },
-  ]);
-  const harness = runtime(storage, models, { modelId: "missing" });
-  try {
-    const usage = await readUsage(harness.lane());
-    assert.equal(usage.total.input, 10);
-    assert.equal(usage.total.output, 4);
-    assert.equal(usage.total.cacheRead, null);
     assert.equal(usage.total.cost, null);
-    assert.equal(usage.total.hitRate, null);
   } finally {
     harness.close();
   }

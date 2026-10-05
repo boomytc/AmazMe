@@ -31,10 +31,11 @@ export interface UsageRow {
   input: number;
   output: number;
   totalTokens: number;
-  /** Absent on rows written before cache counts were stored. A stored null means that turn did not report the count. Both leave the cumulative total null. */
+  /** Absent on old rows, or null when that turn did not report cache reads. Either makes the cumulative total null. */
   cacheRead?: number | null;
+  /** Absent on old rows, which makes the cumulative total null. New rows store 0 when the provider did not report it. */
   cacheWrite?: number | null;
-  /** Provider and model that produced this row. Absent on older rows. */
+  /** Provider and model that produced this row. Absent on older rows, which makes the cumulative cost null. */
   model?: { provider: string; modelId: string };
 }
 
