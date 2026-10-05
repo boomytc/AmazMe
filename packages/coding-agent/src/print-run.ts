@@ -67,6 +67,7 @@ export async function runPrint(options: PrintRunOptions): Promise<void> {
     });
     if (options.json) {
       for (const line of lines) process.stdout.write(`${JSON.stringify({ type: "message", role: line.role, text: line.text })}\n`);
+      process.stdout.write(`${JSON.stringify(jsonResult(snap.activity.usage))}\n`);
       if (failure) process.stdout.write(`${JSON.stringify({ type: "error", message: failure })}\n`);
     } else if (options.continueSession) {
       for (const line of lines) process.stdout.write(`${line.text}\n`);
@@ -79,4 +80,32 @@ export async function runPrint(options: PrintRunOptions): Promise<void> {
     await client.dispose();
     await host.close();
   }
+}
+
+/**
+ * `--json` 原先只有消息文本，底栏上的命中率和金额出不去。
+ * 一次带缓存的回复，活动里本轮 hitRate 是 0.4、cost.total 是算好的美元；没报缓存或没价目时这两项是 null，不能印成 0，也不能省掉字段。
+ * 本轮和累计直接抄快照 `activity.usage`，和画面用的是同一份数。这里不调用 `cacheHitRate` 或 `usageCost`。
+ */
+function jsonResult(usage: {
+  lastTurn: { hitRate: number | null; cost: { total: number | null } | null } | null;
+  total: { hitRate: number | null; cost: { total: number | null } | null };
+}): {
+  type: "result";
+  lastTurn: { usage: { hitRate: number | null }; cost: { total: number | null } };
+  total: { usage: { hitRate: number | null }; cost: { total: number | null } };
+} {
+  const turn = usage.lastTurn;
+  const total = usage.total;
+  return {
+    type: "result",
+    lastTurn: {
+      usage: { hitRate: turn?.hitRate ?? null },
+      cost: { total: turn?.cost?.total ?? null },
+    },
+    total: {
+      usage: { hitRate: total.hitRate ?? null },
+      cost: { total: total.cost?.total ?? null },
+    },
+  };
 }
