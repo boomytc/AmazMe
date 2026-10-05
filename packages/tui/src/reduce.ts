@@ -140,6 +140,7 @@ export type TuiEffect =
   | { type: "pick"; kind: Picker["kind"]; id: string; subject?: string; secret?: string }
   | { type: "cycle-model" }
   | { type: "approve"; toolCallId: string; decision: "allow" | "deny"; session?: boolean }
+  | { type: "copy"; text: string }
   | { type: "quit" };
 
 /** Shown after the first Ctrl-C on an idle, empty prompt. */
@@ -288,6 +289,8 @@ function runBinding(id: BindingId, state: TuiState, key: Key): { state: TuiState
       return { state: move(state, { type: "char", value: "i" }), effect: null };
     case "cycle-model":
       return { state, effect: { type: "cycle-model" } };
+    case "copy-reply":
+      return copyReply(state);
     case "toggle-tool":
       return { state: toggleToolCard(state), effect: null };
     case "insert":
@@ -297,6 +300,15 @@ function runBinding(id: BindingId, state: TuiState, key: Key): { state: TuiState
       return unreachable;
     }
   }
+}
+
+/** 正在生成的回复比已落下的助手条目更新。空文本不复制。 */
+function copyReply(state: TuiState): { state: TuiState; effect: TuiEffect | null } {
+  const text = state.pendingText.length > 0
+    ? state.pendingText
+    : [...state.entries].reverse().find((entry) => entry.role === "assistant")?.text ?? "";
+  if (text.length === 0) return { state: { ...state, notice: "没有助手回复" }, effect: null };
+  return { state, effect: { type: "copy", text } };
 }
 
 function applyPaste(state: TuiState, text: string): { state: TuiState; effect: TuiEffect | null } {

@@ -7,6 +7,7 @@ export type Key =
   | { type: "ctrl-d" }
   | { type: "ctrl-o" }
   | { type: "ctrl-p" }
+  | { type: "ctrl-y" }
   | { type: "escape" }
   | { type: "up" }
   | { type: "down" }
@@ -78,6 +79,11 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
     }
     if (char === "\u0010") {
       keys.push({ type: "ctrl-p" });
+      index += 1;
+      continue;
+    }
+    if (char === "\u0019") {
+      keys.push({ type: "ctrl-y" });
       index += 1;
       continue;
     }

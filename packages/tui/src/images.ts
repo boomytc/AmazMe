@@ -4,16 +4,23 @@ import { isAbsolute, join, resolve } from "node:path";
 import type { UserContent } from "@amazme/runtime-service";
 
 /**
- * One @ scanner for composer text.
- * Image extensions become attachments. Every other @ span, including `@readme.md`
- * and a bare `@`, stays in the text unchanged.
- * A later cut adds non-image mention kinds in this scanner. Do not add a second one.
+ * One @ scanner for composer text. Do not add a second one.
+ * png, jpg, jpeg, gif, and webp become image attachments.
+ * Every other @ path is a text mention: the raw slice stays in the prompt as text
+ * and is not read from disk. A bare `@`, or an `@` that is not a path token, stays ordinary text.
  */
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
 
 export interface AtText {
   kind: "text";
   text: string;
+}
+
+/** A non-image @ path. `raw` is the source slice, including the leading @ and any quotes. */
+export interface AtTextMention {
+  kind: "text-mention";
+  path: string;
+  raw: string;
 }
 
 export interface AtImage {
@@ -23,7 +30,7 @@ export interface AtImage {
   raw: string;
 }
 
-export type AtPart = AtText | AtImage;
+export type AtPart = AtText | AtTextMention | AtImage;
 
 function imageExtension(path: string): string | undefined {
   const base = path.split(/[/\\]/).pop() ?? path;
@@ -56,12 +63,14 @@ export function parseAtMentions(text: string): AtPart[] {
       continue;
     }
     const mention = readMention(text, index);
-    if (!mention || !imageExtension(mention.path)) {
+    if (!mention) {
       index += 1;
       continue;
     }
     if (index > cursor) parts.push({ kind: "text", text: text.slice(cursor, index) });
-    parts.push({ kind: "image", path: mention.path, raw: mention.raw });
+    parts.push(imageExtension(mention.path)
+      ? { kind: "image", path: mention.path, raw: mention.raw }
+      : { kind: "text-mention", path: mention.path, raw: mention.raw });
     cursor = mention.end;
     index = mention.end;
   }
@@ -97,11 +106,12 @@ export function userContentFromParts(
 ): UserContent[] {
   const content: UserContent[] = [];
   for (const part of parts) {
-    if (part.kind === "text") {
-      if (part.text.length === 0) continue;
+    if (part.kind !== "image") {
+      const piece = part.kind === "text" ? part.text : part.raw;
+      if (piece.length === 0) continue;
       const last = content.at(-1);
-      if (last?.type === "text") content[content.length - 1] = { type: "text", text: last.text + part.text };
-      else content.push({ type: "text", text: part.text });
+      if (last?.type === "text") content[content.length - 1] = { type: "text", text: last.text + piece };
+      else content.push({ type: "text", text: piece });
       continue;
     }
     const image = images.get(part.path);
