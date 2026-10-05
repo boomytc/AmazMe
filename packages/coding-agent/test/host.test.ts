@@ -142,6 +142,7 @@ test("SIGTERM drains the serve process and leaves the JSONL reusable", { timeout
       ...process.env,
       AMAZME_CREDENTIALS: join(cwd, "credentials.json"),
       AMAZME_DEVICE_ID_FILE: join(cwd, "device-id"),
+      DEEPSEEK_API_KEY: "local-test-key",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -276,6 +277,7 @@ test("a unix client attaches when the sandbox blocks the canary", { timeout: 20_
       ...process.env,
       AMAZME_CREDENTIALS: join(cwd, "credentials.json"),
       AMAZME_DEVICE_ID_FILE: join(cwd, "device-id"),
+      DEEPSEEK_API_KEY: "local-test-key",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -311,6 +313,7 @@ test("unix attach keeps SANDBOX_UNAVAILABLE when the sandbox runner is missing",
       PATH: emptyPath,
       AMAZME_CREDENTIALS: join(cwd, "credentials.json"),
       AMAZME_DEVICE_ID_FILE: join(cwd, "device-id"),
+      DEEPSEEK_API_KEY: "local-test-key",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { createModels, type LoginInteraction } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { FileCredentialStore } from "./credentials.ts";
+import { codingModels } from "./fronts.ts";
 import { loginProvider } from "./login.ts";
 import { runPrint } from "./print-run.ts";
 import { runCodingFullscreen, shouldOpenFullscreen } from "./tui/run.ts";
@@ -186,6 +187,15 @@ function loadModels(providerId: string) {
   return models;
 }
 
+/** A front may open only after the selected provider has a key. Login stays outside this check. */
+async function requireConfigured(models: ReturnType<typeof loadModels>, providerId: string, modelId: string): Promise<void> {
+  const model = models.getModel(providerId, modelId);
+  if (!model) throw new Error(`unknown model ${providerId}/${modelId}`);
+  if (await models.getAuth(model)) return;
+  const env = models.getProvider(providerId)?.auth.apiKey?.env;
+  throw new Error(`${providerId} is not configured: ${env ? `set ${env} or run amazme login` : "run amazme login"}`);
+}
+
 async function runServe(argv: string[]): Promise<void> {
   let socket = "";
   let provider = DEFAULT_PROVIDER;
@@ -207,8 +217,10 @@ async function runServe(argv: string[]): Promise<void> {
     }
   }
   if (!socket) throw new Error("serve requires --socket");
+  const models = loadModels(provider);
+  await requireConfigured(models, provider, model);
   const { startCodingHost } = await import("./host.ts");
-  const host = await startCodingHost({ cwd, socket, provider, model, models: loadModels(provider) });
+  const host = await startCodingHost({ cwd, socket, provider, model, models });
   process.stdout.write(`${JSON.stringify({ socket: host.socket, serverId: host.serverId, runtimeId: host.runtimeId, lane: host.lane })}\n`);
   const { waitForSecondInterrupt } = await import("./interrupt.ts");
   await waitForSecondInterrupt();
@@ -284,6 +296,7 @@ async function main(): Promise<void> {
     if (args.web && args.gui) throw new Error("choose one of --web or --gui");
     const { runOwnedGui, runOwnedWeb } = await import("./fronts.ts");
     const front = { provider: args.provider, model: args.model, cwd: args.cwd, prompt: args.prompt };
+    await requireConfigured(codingModels(front), front.provider, front.model);
     if (args.web) await runOwnedWeb(front);
     else await runOwnedGui(front);
     return;
@@ -298,6 +311,7 @@ async function main(): Promise<void> {
     args.json = true;
   }
   if (shouldOpenFullscreen(args.prompt, process.stdout.isTTY === true) && !args.continueSession && !args.json && !args.jsonl) {
+    await requireConfigured(codingModels({ provider: args.provider, model: args.model, cwd: args.cwd }), args.provider, args.model);
     await runCodingFullscreen({ provider: args.provider, model: args.model, cwd: args.cwd });
     return;
   }
@@ -306,6 +320,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const models = loadModels(args.provider);
+  await requireConfigured(models, args.provider, args.model);
   await runPrint({
     cwd: args.cwd,
     provider: args.provider,

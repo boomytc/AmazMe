@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -64,34 +64,30 @@ test("--provider faux is not a product provider", async () => {
   assert.match(serve.stderr, /unknown provider faux/);
 });
 
-test("a one-shot prompt uses deepseek-flash and does not open the alt screen", { timeout: 20_000 }, async () => {
+test("a one-shot prompt refuses before a session when deepseek has no key", { timeout: 20_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-oneshot-"));
   const result = await runCli(["--cwd", dir, "一句话"], dir);
-  assert.equal(result.stderr, "");
-  assert.equal(result.code, 0);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /deepseek is not configured: set DEEPSEEK_API_KEY or run amazme login/);
   assert.equal(result.stdout.includes("faux:"), false);
   assert.equal(result.stdout.includes("\x1b[?1049h"), false);
-  const raw = readFileSync(join(dir, ".amazme", "runtime", "workspace.jsonl"), "utf8");
-  assert.match(raw, /一句话/);
-  assert.match(raw, /deepseek-flash/);
-  assert.match(raw, /Provider is not configured: deepseek/);
-  assert.equal(raw.includes("faux:"), false);
+  assert.equal(existsSync(join(dir, ".amazme")), false);
 });
 
-test("continue and jsonl read the same workspace session as the one-shot prompt", { timeout: 20_000 }, async () => {
+test("continue and jsonl refuse before a session when deepseek has no key", { timeout: 20_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-continue-"));
   const first = await runCli(["--cwd", dir, "hello-tree"], dir);
-  assert.equal(first.code, 0);
-  assert.equal(first.stdout.includes("faux:"), false);
+  assert.equal(first.code, 1);
+  assert.match(first.stderr, /deepseek is not configured: set DEEPSEEK_API_KEY or run amazme login/);
   const second = await runCli(["--cwd", dir, "--continue"], dir);
-  assert.equal(second.code, 0);
-  assert.match(second.stdout, /hello-tree/);
-  assert.equal(second.stdout.includes("faux:"), false);
+  assert.equal(second.code, 1);
+  assert.match(second.stderr, /deepseek is not configured: set DEEPSEEK_API_KEY or run amazme login/);
+  assert.equal(second.stdout.includes("hello-tree"), false);
   const jsonl = await runCli(["--cwd", dir, "--jsonl"], dir, `${JSON.stringify({ type: "prompt", text: "second-line" })}\n`);
-  assert.equal(jsonl.code, 0);
-  assert.match(jsonl.stdout, /"text":"second-line"/);
-  assert.match(jsonl.stdout, /hello-tree/);
-  assert.equal(jsonl.stdout.includes("faux:"), false);
+  assert.equal(jsonl.code, 1);
+  assert.match(jsonl.stderr, /deepseek is not configured: set DEEPSEEK_API_KEY or run amazme login/);
+  assert.equal(jsonl.stdout.includes("second-line"), false);
+  assert.equal(existsSync(join(dir, ".amazme")), false);
 });
 
 test("a one-shot without the sandbox runner prints SANDBOX_UNAVAILABLE", { timeout: 20_000 }, async () => {
@@ -103,7 +99,7 @@ test("a one-shot without the sandbox runner prints SANDBOX_UNAVAILABLE", { timeo
       ["--cwd", dir, "--provider", "deepseek", "--model", "deepseek-flash", "ping"],
       dir,
       undefined,
-      { PATH: emptyPath },
+      { PATH: emptyPath, DEEPSEEK_API_KEY: "local-test-key" },
     );
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /SANDBOX_UNAVAILABLE: bwrap is required/);

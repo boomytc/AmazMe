@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -25,71 +25,22 @@ function frontEnv(cwd: string): NodeJS.ProcessEnv {
   return env;
 }
 
-test("amazme --web serves the host page and a signal stops it", { timeout: 20_000 }, async () => {
+test("amazme --web refuses to start when deepseek has no key", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "amz-web-front-"));
-  const child = spawn(process.execPath, ["--import", "tsx", cli, "--web", "--cwd", cwd, "from-owned-web"], {
-    cwd: root,
-    env: frontEnv(cwd),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-  child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-  try {
-    await until(() => stdout.includes("http://127.0.0.1:"), () => `${stdout}\n${stderr}`);
-    const url = /http:\/\/127\.0\.0\.1:\d+\//.exec(stdout)?.[0];
-    if (!url) throw new Error(stdout);
-    const view = await (await fetch(`${url}view`)).json() as { entries: Array<{ text: string }>; provider: string; modelId: string };
-    assert.equal(view.provider, "deepseek");
-    assert.equal(view.modelId, "deepseek-flash");
-    assert.ok(view.entries.some((entry) => entry.text === "from-owned-web"));
-    assert.equal(view.entries.some((entry) => entry.text.startsWith("faux:")), false);
-    const again = await fetch(`${url}act`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "submit", text: "/web" }),
-    });
-    const notice = await again.json() as { notice: string | null };
-    assert.match(notice.notice ?? "", /网页已在当前宿主/);
-    child.kill("SIGINT");
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    child.kill("SIGINT");
-    await until(() => child.exitCode !== null || child.signalCode !== null, () => stderr);
-    await assert.rejects(() => fetch(`${url}view`));
-  } finally {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    rmSync(cwd, { recursive: true, force: true });
-  }
+  const result = await runFront(["--web", "--cwd", cwd, "from-owned-web"], cwd);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /deepseek is not configured: set DEEPSEEK_API_KEY or run amazme login/);
+  assert.equal(existsSync(join(cwd, ".amazme")), false);
+  rmSync(cwd, { recursive: true, force: true });
 });
 
-test("amazme --gui starts the host and shows the prompt reply", { timeout: 20_000 }, async () => {
+test("amazme --gui refuses to start when deepseek has no key", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "amz-gui-front-"));
-  const child = spawn(process.execPath, ["--import", "tsx", cli, "--gui", "--cwd", cwd, "from-owned-gui"], {
-    cwd: root,
-    env: frontEnv(cwd),
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-  child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-  try {
-    await until(() => stdout.includes("from-owned-gui") && stdout.includes("deepseek/deepseek-flash") && stdout.includes("空闲"), () => `${stdout}\n${stderr}`);
-    const shown = stdout.trim().split("\n").map((line) => JSON.parse(line) as { document: string; status: string });
-    assert.ok(shown.some((row) => row.document.includes('id="status"') && row.status.includes("deepseek/deepseek-flash") && row.status.includes("空闲")));
-    assert.equal(stdout.includes("faux:"), false);
-    child.stdin.end();
-    await until(() => child.exitCode !== null, () => `${stdout}\n${stderr}`);
-    assert.equal(child.exitCode, 0);
-  } finally {
-    if (child.exitCode === null) child.kill("SIGKILL");
-    rmSync(cwd, { recursive: true, force: true });
-  }
+  const result = await runFront(["--gui", "--cwd", cwd, "from-owned-gui"], cwd);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /deepseek is not configured: set DEEPSEEK_API_KEY or run amazme login/);
+  assert.equal(existsSync(join(cwd, ".amazme")), false);
+  rmSync(cwd, { recursive: true, force: true });
 });
 
 test("product fronts reject faux and load deepseek-flash", () => {
@@ -162,17 +113,16 @@ function slashActions(extra: Partial<SlashActions> = {}): SlashActions {
   };
 }
 
-function until(ready: () => boolean, detail: () => string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      clearInterval(poll);
-      reject(new Error(detail()));
-    }, 15_000);
-    const poll = setInterval(() => {
-      if (!ready()) return;
-      clearTimeout(timer);
-      clearInterval(poll);
-      resolve();
-    }, 30);
+function runFront(args: string[], cwd: string): Promise<{ code: number; stderr: string }> {
+  const child = spawn(process.execPath, ["--import", "tsx", cli, ...args], {
+    cwd: root,
+    env: frontEnv(cwd),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+  return new Promise((resolve) => {
+    child.on("close", (code) => resolve({ code: code ?? 1, stderr }));
   });
 }
