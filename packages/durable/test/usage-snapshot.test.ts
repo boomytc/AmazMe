@@ -9,8 +9,8 @@ import { AgentHarness, effectiveInputThreshold, type HarnessTool, type LaneUsage
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
-function tokens(input: number, output: number): Usage {
-  return { input, output, totalTokens: input + output, cost: { input: 0, output: 0, total: 0 } };
+function tokens(input: number, output: number, cache: { cacheRead?: number; cacheWrite?: number } = {}): Usage {
+  return { input, output, totalTokens: input + output, cost: { input: 0, output: 0, total: 0 }, ...cache };
 }
 
 function turn(input: number, output: number): NonNullable<LaneUsage["lastTurn"]> {
@@ -104,6 +104,55 @@ test("two turns keep the latest usage, a null cache, and the summed total", asyn
     assert.deepEqual(usage.lastTurn, turn(17, 5));
     assert.deepEqual(usage.total, total(28, 8));
     assert.equal(usage.contextTokens, 22);
+  } finally {
+    harness.close();
+  }
+});
+
+test("cacheRead on the latest assistant is part of contextTokens and lastTurn", async () => {
+  const { models } = scripted([tokens(3, 4, { cacheRead: 10 })]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const usage = (await lane.snapshot()).usage;
+    assert.deepEqual(usage.lastTurn, { input: 3, output: 4, cacheRead: 10, cacheWrite: null });
+    assert.equal(usage.contextTokens, 17);
+    assert.deepEqual(usage.total, { input: 3, output: 4, cacheRead: 10, cacheWrite: null });
+  } finally {
+    harness.close();
+  }
+});
+
+test("an assistant without cache leaves the cache counts null", async () => {
+  const { models } = scripted([tokens(5, 6)]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const usage = (await lane.snapshot()).usage;
+    assert.deepEqual(usage.lastTurn, turn(5, 6));
+    assert.equal(usage.contextTokens, 11);
+    assert.deepEqual(usage.total, total(5, 6));
+  } finally {
+    harness.close();
+  }
+});
+
+test("cache totals sum reported counts on the branch and keep a reported zero", async () => {
+  const { models } = scripted([
+    tokens(1, 1, { cacheRead: 10 }),
+    tokens(2, 2, { cacheRead: 0, cacheWrite: 4 }),
+  ]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    assert.equal((await lane.prompt("two")).status, "completed");
+    const usage = (await lane.snapshot()).usage;
+    assert.deepEqual(usage.lastTurn, { input: 2, output: 2, cacheRead: 0, cacheWrite: 4 });
+    assert.equal(usage.contextTokens, 8);
+    assert.deepEqual(usage.total, { input: 3, output: 3, cacheRead: 10, cacheWrite: 4 });
   } finally {
     harness.close();
   }

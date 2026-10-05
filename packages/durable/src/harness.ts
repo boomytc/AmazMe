@@ -8,6 +8,7 @@ import {
   type AssistantMessage,
   type Context,
   type StopReason,
+  type Usage,
   frameFromEvent,
   reduceFrames,
   resolveOutputBudget,
@@ -184,7 +185,7 @@ export interface ToolActivity {
   outputTail?: string;
 }
 
-/** Input, output, and cache counts. Cache stays null while model `Usage` has no cache fields. */
+/** Input, output, and cache counts. An omitted cache count is null, not zero. */
 interface UsageCounts {
   input: number;
   output: number;
@@ -194,14 +195,14 @@ interface UsageCounts {
 
 /**
  * Token counts derived from this lane's stored usage rows and branch.
- * `cacheRead` and `cacheWrite` stay null: model `Usage` has no cache fields.
+ * An omitted cache count is null. A reported 0 stays 0.
  */
 export interface LaneUsage {
   /** Newest settled assistant on the current branch, excluding `error` and `aborted`. */
   lastTurn: UsageCounts | null;
   /**
-   * Sum of usage rows whose persisted operation belongs to this lane, including summary requests.
-   * Cache totals stay null: a row stores input and output only.
+   * `input` and `output` sum usage rows whose persisted operation belongs to this lane, including summary requests.
+   * `cacheRead` and `cacheWrite` sum assistant messages on this ancestor chain. Null when none of them had the field.
    */
   total: UsageCounts;
   /** Newest non-error assistant prompt size plus output on the visible branch. Null when that suffix has none. */
@@ -2210,27 +2211,15 @@ function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {
 function projectUsage(view: StorageView, lane: string, chain: readonly Entry[], options: HarnessOptions): LaneUsage {
   return {
     lastTurn: lastTurnUsage(chain),
-    total: attributedTotal(view, lane),
+    total: attributedTotal(view, lane, chain),
     contextTokens: contextTokenCount(chain),
     compactionThreshold: compactionThreshold(view, lane, options),
   };
 }
 
-/**
- * Counts one model `Usage` for the snapshot.
- * Prompt size is `usage.input`: that field is the whole prompt while `Usage` has no cache fields.
- * `cacheRead` and `cacheWrite` stay null.
- * When `Usage` splits the prompt, change only this function: add cache into `prompt`, and copy
- * `cacheRead` / `cacheWrite` from usage, null when the field is absent.
- */
-function countUsage(usage: { input: number; output: number }): UsageCounts & { prompt: number } {
-  return {
-    prompt: usage.input,
-    input: usage.input,
-    output: usage.output,
-    cacheRead: null,
-    cacheWrite: null,
-  };
+/** Full prompt length. An omitted cache count is left out of the sum. */
+function promptSize(usage: Usage): number {
+  return usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
 }
 
 function lastTurnUsage(chain: readonly Entry[]): LaneUsage["lastTurn"] {
@@ -2240,12 +2229,11 @@ function lastTurnUsage(chain: readonly Entry[]): LaneUsage["lastTurn"] {
     const message = entry.payload.message;
     if (message.role !== "assistant") continue;
     if (message.stopReason === "error" || message.stopReason === "aborted") continue;
-    const counted = countUsage(message.usage);
     return {
-      input: counted.input,
-      output: counted.output,
-      cacheRead: counted.cacheRead,
-      cacheWrite: counted.cacheWrite,
+      input: message.usage.input,
+      output: message.usage.output,
+      cacheRead: message.usage.cacheRead ?? null,
+      cacheWrite: message.usage.cacheWrite ?? null,
     };
   }
   return null;
@@ -2256,24 +2244,29 @@ function contextTokenCount(chain: readonly Entry[]): number | null {
   for (let index = visible.length - 1; index >= 0; index--) {
     const entry = visible[index];
     if (entry?.kind === "message" && entry.message.role === "assistant") {
-      const counted = countUsage(entry.message.usage);
-      return counted.prompt + counted.output;
+      return promptSize(entry.message.usage) + entry.message.usage.output;
     }
   }
   return null;
 }
 
-function attributedTotal(view: StorageView, lane: string): LaneUsage["total"] {
+function attributedTotal(view: StorageView, lane: string, chain: readonly Entry[]): LaneUsage["total"] {
   let input = 0;
   let output = 0;
   for (const row of view.usageRows()) {
     if (operationLane(view, row.operationId) !== lane) continue;
-    const counted = countUsage(row);
-    input += counted.input;
-    output += counted.output;
+    input += row.input;
+    output += row.output;
   }
-  // Rows persist input and output only, so cache totals stay null rather than a guessed zero.
-  return { input, output, cacheRead: null, cacheWrite: null };
+  let cacheRead: number | null = null;
+  let cacheWrite: number | null = null;
+  for (const entry of chain) {
+    if (entry.payload.type !== "message" || entry.payload.message.role !== "assistant") continue;
+    const usage = entry.payload.message.usage;
+    if (usage.cacheRead !== undefined) cacheRead = (cacheRead ?? 0) + usage.cacheRead;
+    if (usage.cacheWrite !== undefined) cacheWrite = (cacheWrite ?? 0) + usage.cacheWrite;
+  }
+  return { input, output, cacheRead, cacheWrite };
 }
 
 function operationLane(view: StorageView, operationId: string): string | undefined {
