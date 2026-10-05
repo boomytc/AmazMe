@@ -598,7 +598,8 @@ class AttachedLane {
   }
 }
 
-function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active: string, earlier: TuiEntry[] = []): TuiWindow {
+/** 把 lane 快照收成 reducer 窗口。宿主附着和屏幕夹具走同一条。 */
+export function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active: string, earlier: TuiEntry[] = []): TuiWindow {
   const seen = new Set(snapshot.entries.map((entry) => entry.id));
   return {
     entries: [...earlier.filter((entry) => !seen.has(entry.id)), ...snapshot.entries.map(entryView)],
