@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@amazme/agent";
+import { openJobRegistry, type JobRegistry } from "./jobs.ts";
 import { prepareWorkspace, runBash, runFileOp } from "./sandbox/run.ts";
 
 export const codingSystemPrompt = "You are a coding agent. Use tools to inspect and change files in the workspace. File and shell tools can only access the workspace, cannot access .amazme, and have no network.";
@@ -140,15 +141,27 @@ export function createLsTool(root: string): AgentTool {
   return searchTool(root, "ls", "List a directory", []);
 }
 
-export function createBashTool(root: string): AgentTool {
+export function createBashTool(root: string, jobs?: JobRegistry): AgentTool {
   return {
     name: "bash",
-    description: "Run a shell command in the workspace",
+    description: "Run a shell command in the workspace. Set background true to return a jobId without waiting.",
     replay: "never",
-    parameters: { ...objectSchema, properties: { command: { type: "string" } }, required: ["command"] },
+    parameters: {
+      ...objectSchema,
+      properties: {
+        command: { type: "string" },
+        background: { type: "boolean", description: "Start the command in the background and return a jobId" },
+      },
+      required: ["command"],
+    },
     async execute(args, context) {
-      const { command } = args as { command: string };
+      const { command, background } = args as { command: string; background?: boolean };
       try {
+        if (background === true) {
+          if (context.signal.aborted) return { content: [{ type: "text", text: "aborted" }], isError: true };
+          const id = (jobs ?? openJobRegistry(root)).start(command);
+          return { content: [{ type: "text", text: `jobId ${id}` }], isError: false };
+        }
         const result = await runBash(prepareWorkspace(root), command, context.signal, (text) => context.onUpdate?.(text, { checkpoint: true }));
         const notice = [
           result.stdoutTruncated ? "stdout truncated to the last 32 KiB" : "",
@@ -163,7 +176,36 @@ export function createBashTool(root: string): AgentTool {
   };
 }
 
-export function createCodingTools(root: string): AgentTool[] {
+function createJobOutputTool(jobs: JobRegistry): AgentTool {
+  return {
+    name: "job_output",
+    description: "Show the output tail and status of a background job",
+    replay: "never",
+    parameters: { ...objectSchema, properties: { jobId: { type: "string" } }, required: ["jobId"] },
+    async execute(args) {
+      const { jobId } = args as { jobId: string };
+      const text = jobs.output(jobId);
+      if (text === null) return { content: [{ type: "text", text: `unknown job ${jobId}` }], isError: true };
+      return { content: [{ type: "text", text }], isError: false };
+    },
+  };
+}
+
+function createJobKillTool(jobs: JobRegistry): AgentTool {
+  return {
+    name: "job_kill",
+    description: "Stop a background job",
+    replay: "never",
+    parameters: { ...objectSchema, properties: { jobId: { type: "string" } }, required: ["jobId"] },
+    async execute(args) {
+      const { jobId } = args as { jobId: string };
+      const result = jobs.kill(jobId);
+      return { content: [{ type: "text", text: result.text }], isError: result.isError };
+    },
+  };
+}
+
+export function createCodingTools(root: string, jobs: JobRegistry = openJobRegistry(root)): AgentTool[] {
   // Opening a runtime runs this self-check. It stays: a sandbox that can read the canary
   // must fail closed. The failure is `sandbox_unavailable` with the original
   // SANDBOX_UNAVAILABLE text, not an internal error, and tools do not run unsandboxed.
@@ -173,9 +215,11 @@ export function createCodingTools(root: string): AgentTool[] {
     createReadTool(root),
     createWriteTool(root, enqueue),
     createEditTool(root, enqueue),
-    createBashTool(root),
+    createBashTool(root, jobs),
     createGrepTool(root),
     createFindTool(root),
     createLsTool(root),
+    createJobOutputTool(jobs),
+    createJobKillTool(jobs),
   ];
 }
