@@ -111,6 +111,7 @@ test("gpt-5.6-sol cache prices bill half a million tokens at the catalog rates",
 test("gemini-2.5-flash cache read bills half a million tokens at the catalog rate", () => {
   const flash = catalogModel("google", "gemini-2.5-flash");
   // Context caching is $0.03 / MTok. There is no per-token cache-write rate.
+  assert.ok(flash.cost);
   assert.equal("cacheWrite" in flash.cost, false);
   assert.deepEqual(flash.cost, { input: 0.3, output: 2.5, cacheRead: 0.03 });
   // 5e5 / 1e6 × 0.3 = 0.15, × 0.03 = 0.015, write uses 0.3 → 0.15, output × 2.5 = 1.25.
