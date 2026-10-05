@@ -310,10 +310,23 @@ export interface Model<TApi extends Api = Api> {
   /**
    * When true, the model can think. `thinkingLevelMap` maps a level to the protocol parameter.
    * `null` marks that level unsupported. A missing key uses the level name.
+   * Omitting the map on a reasoning model is the empty exclusion list: every level is kept.
    * Models that do not reason accept only "off" and do not send a thinking parameter.
    */
   reasoning?: boolean;
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+  /**
+   * Chat Completions compatibility for the thinking switch, when `reasoning_effort` alone is not that switch.
+   * `"thinking"` is DeepSeek's request body. Both `deepseek-flash` and `deepseek-v4-pro` set it.
+   * https://api-docs.deepseek.com/api/create-chat-completion Request: `thinking`, `reasoning_effort`.
+   * https://api-docs.deepseek.com/guides/thinking_mode Thinking Mode Toggle and Effort Control.
+   * `thinking.type` is `enabled` or `disabled`. `reasoning_effort` on that body is `none` | `low` | `high` | `max`.
+   * `off` and `none` send `{ thinking: { type: "disabled" } }` and omit `reasoning_effort`, including an explicit effort.
+   * `low` and `high` send `enabled` plus that same effort. Any other effort is an error.
+   * The endpoint would rewrite `minimal`, `medium`, and `xhigh`. This client does not send the rewritten value.
+   * `max` is a documented effort and is not one of `ThinkingLevel`.
+   */
+  thinkingSwitch?: "thinking";
 }
 
 export type CompletionsOutputTokenField = "max_completion_tokens" | "max_tokens";

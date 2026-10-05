@@ -241,6 +241,35 @@ test("a supported thinking level is mapped, and reasoningEffort overrides it", a
   assert.equal(explicit.bodies[0]?.reasoning_effort, "medium");
 });
 
+test("thinkingSwitch follows the catalog field, and off omits effort", async () => {
+  const switched = model({
+    id: "switched",
+    provider: "other",
+    reasoning: true,
+    thinkingSwitch: "thinking",
+    thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high" },
+  });
+  const done = async () => sse(['data: {"choices":[{"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"]);
+  const high = await run(done, { thinkingLevel: "high" }, switched);
+  assert.deepEqual(high.bodies[0]?.thinking, { type: "enabled" });
+  assert.equal(high.bodies[0]?.reasoning_effort, "high");
+
+  const off = await run(done, { thinkingLevel: "off", reasoningEffort: "low" }, switched);
+  assert.equal(off.calls, 1);
+  assert.deepEqual(off.bodies[0]?.thinking, { type: "disabled" });
+  assert.equal("reasoning_effort" in (off.bodies[0] ?? {}), false);
+  assert.equal(JSON.stringify(off.bodies[0]).includes("none"), false);
+
+  const rewritten = await run(async () => new Response("unused"), { thinkingLevel: "high", reasoningEffort: "medium" }, switched);
+  assert.equal(rewritten.calls, 0);
+  assert.match(rewritten.message.errorMessage ?? "", /Thinking effort "medium" is not supported by switched/);
+  assert.notEqual(rewritten.message.retryable, true);
+
+  const plain = await run(done, { thinkingLevel: "off" }, model({ reasoning: true, thinkingLevelMap: { off: "none" } }));
+  assert.equal(plain.bodies[0]?.reasoning_effort, "none");
+  assert.equal("thinking" in (plain.bodies[0] ?? {}), false);
+});
+
 test("Models forwards thinkingLevel and reasoningEffort onto the completions body", async () => {
   const seen: Array<Record<string, unknown>> = [];
   const active = model({ id: "reasoner", reasoning: true, thinkingLevelMap: { low: "x-low" } });

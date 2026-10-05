@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveThinkingLevel, supportedThinkingLevels, type Model, type ThinkingLevel } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
+import { catalogModels } from "@amazme/ai/providers/catalog";
 
 const LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
@@ -42,6 +43,7 @@ test("supported thinking levels are derived from reasoning and thinkingLevelMap"
 test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek API", () => {
   const deepseek = builtinProviders().find((provider) => provider.id === "deepseek");
   assert.ok(deepseek);
+  assert.deepEqual(deepseek.getModels(), catalogModels("deepseek"));
   const flash = deepseek.getModels().find((item) => item.id === "deepseek-flash");
   const pro = deepseek.getModels().find((item) => item.id === "deepseek-v4-pro");
   assert.ok(flash);
@@ -81,29 +83,48 @@ test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek AP
 
   // Chat Completions Request lists reasoning_effort as none | low | high | max.
   // https://api-docs.deepseek.com/api/create-chat-completion
-  // flash lists only levels that are sent unchanged. minimal and medium would be rewritten, so they error.
+  // The same request body applies to both model ids. thinking.type is the switch.
+  // https://api-docs.deepseek.com/guides/thinking_mode Thinking Mode Toggle and Effort Control.
+  // Both models list only levels that are sent unchanged. minimal and medium would be rewritten, so they error.
   // off stays supported and has no effort parameter. max is not one of our levels.
-  assert.equal("thinkingLevels" in flash, false);
-  assert.deepEqual(flash.thinkingLevelMap, { minimal: null, low: "low", medium: null, high: "high" });
-  assert.deepEqual(supportedThinkingLevels(flash), ["off", "low", "high"]);
-  assert.deepEqual(resolveThinkingLevel(flash, "off"), { ok: true });
-  assert.deepEqual(resolveThinkingLevel(flash, "low"), { ok: true, parameter: "low" });
-  assert.deepEqual(resolveThinkingLevel(flash, "high"), { ok: true, parameter: "high" });
-  assert.deepEqual(resolveThinkingLevel(flash, "minimal"), { ok: false, level: "minimal" });
-  assert.deepEqual(resolveThinkingLevel(flash, "medium"), { ok: false, level: "medium" });
-
-  // v4-pro is unchanged in this change.
-  const proEffort = {
-    off: "none",
-    minimal: "low",
-    low: "low",
-    medium: "high",
-    high: "high",
-  } as const;
-  assert.equal("thinkingLevels" in pro, false);
-  assert.deepEqual(pro.thinkingLevelMap, proEffort);
-  assert.deepEqual(supportedThinkingLevels(pro), [...LEVELS]);
-  for (const level of LEVELS) {
-    assert.deepEqual(resolveThinkingLevel(pro, level), { ok: true, parameter: proEffort[level] });
+  const unchanged = { minimal: null, low: "low", medium: null, high: "high" };
+  for (const item of [flash, pro]) {
+    assert.equal("thinkingLevels" in item, false);
+    assert.equal(item.thinkingSwitch, "thinking");
+    assert.deepEqual(item.thinkingLevelMap, unchanged);
+    assert.deepEqual(supportedThinkingLevels(item), ["off", "low", "high"]);
+    assert.deepEqual(resolveThinkingLevel(item, "off"), { ok: true });
+    assert.deepEqual(resolveThinkingLevel(item, "low"), { ok: true, parameter: "low" });
+    assert.deepEqual(resolveThinkingLevel(item, "high"), { ok: true, parameter: "high" });
+    assert.deepEqual(resolveThinkingLevel(item, "minimal"), { ok: false, level: "minimal" });
+    assert.deepEqual(resolveThinkingLevel(item, "medium"), { ok: false, level: "medium" });
   }
+});
+
+test("builtin MiniMax limits follow the published Anthropic-compatible API", () => {
+  const minimax = builtinProviders().find((provider) => provider.id === "minimax");
+  assert.ok(minimax);
+  const m27 = minimax.getModels().find((item) => item.id === "MiniMax-M2.7");
+  const fast = minimax.getModels().find((item) => item.id === "MiniMax-M2.7-highspeed");
+  const m3 = minimax.getModels().find((item) => item.id === "MiniMax-M3");
+  assert.ok(m27 && fast && m3);
+  // Supported Models, Context Window.
+  // https://platform.minimax.io/docs/api-reference/text-anthropic-api
+  assert.equal(m27.contextWindow, 204_800);
+  assert.equal(fast.contextWindow, 204_800);
+  assert.equal(m3.contextWindow, 1_000_000);
+  // CreateMessageReq, max_tokens: M3 maximum 524288; other models maximum 204800.
+  // https://platform.minimax.io/docs/api-reference/text-chat-anthropic
+  assert.equal(m27.maxTokens, 204_800);
+  assert.equal(fast.maxTokens, 204_800);
+  assert.equal(m3.maxTokens, 524_288);
+  // Thinking Control: M2.x accepts disabled and ignores it, so off is not a real level.
+  // https://platform.minimax.io/docs/api-reference/text-anthropic-api
+  // The page does not list minimal, low, medium, or high, so those keys stay omitted.
+  assert.deepEqual(m27.thinkingLevelMap, { off: null });
+  assert.deepEqual(fast.thinkingLevelMap, { off: null });
+  assert.equal(supportedThinkingLevels(m27).includes("off"), false);
+  assert.deepEqual(resolveThinkingLevel(m27, "off"), { ok: false, level: "off" });
+  assert.equal("thinkingLevelMap" in m3, false);
+  assert.deepEqual(supportedThinkingLevels(m3), [...LEVELS]);
 });

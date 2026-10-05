@@ -109,8 +109,8 @@ async function pump(
       messages: toChatMessages(wire),
       [field]: budget.outputCap,
     };
-    if (model.provider === "deepseek" && model.id === "deepseek-flash") {
-      const rejected = applyDeepseekFlashThinking(payload, request.thinkingLevel, effort);
+    if (model.thinkingSwitch === "thinking") {
+      const rejected = applyThinkingSwitch(payload, model.id, request.thinkingLevel, effort);
       if (rejected) {
         stream.push({ type: "error", error: terminalMessage(model, [], "error", rejected) });
         return;
@@ -177,7 +177,7 @@ async function pump(
 }
 
 /**
- * deepseek-flash chat completions body.
+ * `Model.thinkingSwitch === "thinking"`.
  * https://api-docs.deepseek.com/api/create-chat-completion Request:
  * `thinking.type` is `enabled` or `disabled`; `reasoning_effort` is `none` | `low` | `high` | `max`.
  * off sends `thinking` disabled and omits effort, including an explicit reasoningEffort.
@@ -185,8 +185,9 @@ async function pump(
  * low and high send `thinking` enabled plus that same effort string.
  * Any other effort is refused here. The API would rewrite minimal, medium, and xhigh.
  */
-function applyDeepseekFlashThinking(
+function applyThinkingSwitch(
   payload: Record<string, unknown>,
+  modelId: string,
   level: ThinkingLevel | undefined,
   effort: string | undefined,
 ): string | undefined {
@@ -200,7 +201,7 @@ function applyDeepseekFlashThinking(
     payload.reasoning_effort = effort;
     return undefined;
   }
-  return `Thinking effort "${effort}" is not supported by deepseek-flash`;
+  return `Thinking effort "${effort}" is not supported by ${modelId}`;
 }
 
 function toChatMessages(context: Context): ChatMessage[] {

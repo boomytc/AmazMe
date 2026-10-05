@@ -115,7 +115,7 @@ async function settle(
   return { message, events };
 }
 
-function replay(handler: typeof fetch) {
+function replay(handler: typeof fetch, id: "deepseek-flash" | "deepseek-v4-pro" = "deepseek-flash") {
   const seen: Array<Record<string, unknown>> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     assert.equal(String(input), "https://api.deepseek.com/chat/completions");
@@ -127,9 +127,10 @@ function replay(handler: typeof fetch) {
   };
   const models = createModels({ env: { DEEPSEEK_API_KEY: KEY } });
   models.setProvider(deepseekProvider({ fetch: fetchImpl }));
-  const model = models.getModel("deepseek", "deepseek-flash");
+  const model = models.getModel("deepseek", id);
   assert.ok(model);
-  assert.deepEqual(model.cost, { input: 0.3, output: 1.2, cacheRead: 0.006 });
+  assert.equal(model.thinkingSwitch, "thinking");
+  if (id === "deepseek-flash") assert.deepEqual(model.cost, { input: 0.3, output: 1.2, cacheRead: 0.006 });
   return { models, model, seen };
 }
 
@@ -348,6 +349,42 @@ test("deepseek-flash rejects a thinking level the chat API would rewrite", async
   assert.equal(effort.message.stopReason, "error");
   assert.notEqual(effort.message.retryable, true);
   assert.match(effort.message.errorMessage ?? "", /Thinking effort "medium" is not supported by deepseek-flash/);
+});
+
+test("deepseek-v4-pro uses the same catalog thinking switch and does not downgrade", async () => {
+  const stop = [
+    chunk({ reasoning_content: "plan", content: "ok" }, null),
+    chunk({}, "stop"),
+    DONE,
+  ];
+  const enabled = replay(async () => responseOf(stop), "deepseek-v4-pro");
+  const high = await settle(enabled.models.stream(enabled.model, context([USER]), { thinkingLevel: "high" }), 1_000);
+  assert.equal(high.message.stopReason, "stop");
+  assert.deepEqual(enabled.seen[0]?.thinking, { type: "enabled" });
+  assert.equal(enabled.seen[0]?.reasoning_effort, "high");
+  assert.equal(enabled.seen[0]?.model, "deepseek-v4-pro");
+
+  const off = replay(async () => responseOf([
+    chunk({ content: "plain" }, null),
+    chunk({}, "stop"),
+    DONE,
+  ]), "deepseek-v4-pro");
+  const disabled = await settle(off.models.stream(off.model, context([USER]), {
+    thinkingLevel: "off",
+    reasoningEffort: "high",
+  }), 1_000);
+  assert.equal(disabled.message.stopReason, "stop");
+  assert.deepEqual(off.seen[0]?.thinking, { type: "disabled" });
+  assert.equal("reasoning_effort" in (off.seen[0] ?? {}), false);
+
+  const rejected = replay(async () => {
+    throw new Error("fetch should not run");
+  }, "deepseek-v4-pro");
+  const medium = await settle(rejected.models.stream(rejected.model, context([USER]), { thinkingLevel: "medium" }), 1_000);
+  assert.equal(rejected.seen.length, 0);
+  assert.equal(medium.message.stopReason, "error");
+  assert.notEqual(medium.message.retryable, true);
+  assert.match(medium.message.errorMessage ?? "", /Thinking level "medium" is not supported by deepseek-v4-pro/);
 });
 
 test("cache hit and miss costs follow the deepseek-flash catalog, and a reported zero stays zero", async () => {
