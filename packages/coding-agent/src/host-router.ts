@@ -154,7 +154,9 @@ function routerModels(models: RouterHostOptions["models"]): RouterModels | undef
 
 /**
  * Add the route record's Jev usage onto the lane total the footer already displays.
- * A missing Jev price, or a null Jev total, makes the cumulative cost null.
+ * A missing Jev price, or a null Jev total, makes a known cumulative cost null.
+ * A lane total whose `cost.total` is already null stays that all-null object.
+ * The footer shows — from `money(null)`. Replacing the object with null hides the amount.
  * Token totals include the classifier. Cache and reasoning stay the lane's own figures.
  */
 export function foldRouteUsage<T extends DisplayedUsage>(usage: T, route: SessionRouteEntry | undefined): T {
@@ -163,10 +165,11 @@ export function foldRouteUsage<T extends DisplayedUsage>(usage: T, route: Sessio
   const next = structuredClone(usage);
   next.total.input += jev.input;
   next.total.output += jev.output;
-  const price = jev.cost;
   const cost = next.total.cost;
+  if (!cost || cost.total === null) return next;
+  const price = jev.cost;
   const priceTotal = price?.total;
-  if (!price || priceTotal === null || priceTotal === undefined || !cost || cost.total === null) {
+  if (!price || priceTotal === null || priceTotal === undefined) {
     next.total.cost = null;
     return next;
   }

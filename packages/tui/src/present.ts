@@ -24,6 +24,26 @@ export function treePickerRows(entries: readonly EntryDto[]): PickerRow[] {
   }));
 }
 
+/**
+ * `/thinking` 的行。档位来自当前模型的 `thinkingLevels`。
+ * 写死 off、minimal、low、medium、high 时，deepseek-flash 会列出它不接受的 minimal 和 medium。
+ */
+export function thinkingPicker(levels: readonly string[], current: string): Picker {
+  return {
+    title: "Select thinking level:",
+    hint: "↑↓ navigate    enter select    escape cancel",
+    query: "",
+    index: 0,
+    kind: "thinking",
+    rows: levels.map((level) => ({
+      id: level,
+      label: level,
+      detail: level === current ? "current" : "",
+      tone: level === current ? "ok" as const : "muted" as const,
+    })),
+  };
+}
+
 /** Rows for bare `/model`. The list is the login `scopedModels`, not the host catalog. */
 export function modelPicker(specs: readonly string[], current: { provider: string; modelId: string }): Picker {
   return {
@@ -126,7 +146,6 @@ export async function presentHost(
   const sessions = [attach.lane];
   let active = attach.lane;
   let state = emptyTui(active);
-  let thinkingRows: string[] = [];
   let paint = (): void => undefined;
   let previousFrame: string | null = null;
   const frame = (): TuiWindow => windowFrom(lane.snapshot(), sessions, active, lane.earlier(), lane.approvals());
@@ -155,7 +174,6 @@ export async function presentHost(
         thinking: settings.thinkingLevel,
         directory: listed.directory,
       };
-      thinkingRows = listed.thinkingLevels;
     } catch {
       // The footer keeps the last settings this lane could report.
     }
@@ -336,10 +354,12 @@ export async function presentHost(
       return;
     }
     if (effect.kind === "thinking") {
-      if (effect.id !== "off" && effect.id !== "minimal" && effect.id !== "low" && effect.id !== "medium" && effect.id !== "high") return;
-      await remote.lane(active).configure({ thinkingLevel: effect.id });
+      const settings = await remote.lane(active).configure();
+      const level = settings.thinkingLevels.find((item) => item === effect.id);
+      if (!level) return;
+      await remote.lane(active).configure({ thinkingLevel: level });
       await rememberSettings();
-      state = { ...state, notice: `思考 ${effect.id}`, picker: null };
+      state = { ...state, notice: `思考 ${level}`, picker: null };
       paint();
       return;
     }
@@ -553,18 +573,15 @@ export async function presentHost(
       }
     } else if (effect.command.type === "model" && !effect.command.provider) {
       showPicker(modelPicker(attach.cwd ? scopedModels(attach.cwd) : [], { provider: state.provider, modelId: state.modelId }));
-    } else if (effect.command.type === "thinking" && !effect.command.level) {
-      showPicker({
-        ...pickerBase,
-        title: "Select thinking level:",
-        kind: "thinking",
-        rows: thinkingRows.map((level) => ({
-          id: level,
-          label: level,
-          detail: level === state.thinking ? "current" : "",
-          tone: level === state.thinking ? "ok" : "muted",
-        })),
-      });
+    } else if (effect.command.type === "thinking" && !effect.command.level && effect.command.invalid !== true) {
+      const settings = await remote.lane(active).configure();
+      state = {
+        ...state,
+        provider: settings.provider,
+        modelId: settings.modelId,
+        thinking: settings.thinkingLevel,
+      };
+      showPicker(thinkingPicker(settings.thinkingLevels, settings.thinkingLevel));
     } else if (effect.command.type === "tree" && !effect.command.entryId) {
       const snap = await remote.lane(active).snapshot();
       showPicker({

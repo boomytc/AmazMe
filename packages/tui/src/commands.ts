@@ -99,7 +99,7 @@ export type SlashCommand =
   | { type: "continue" }
   | { type: "earlier" }
   | { type: "model"; provider?: string; modelId?: string }
-  | { type: "thinking"; level?: SlashThinking }
+  | { type: "thinking"; level?: SlashThinking; invalid?: boolean }
   | { type: "login"; provider?: string }
   | { type: "logout"; provider?: string }
   | { type: "web" }
@@ -327,9 +327,12 @@ export async function executeSlash(command: SlashAction, actions: SlashActions):
         return notice(`模型 ${next.provider}/${next.modelId} 思考 ${next.thinkingLevel}`);
       }
       case "thinking": {
-        if (!command.level) {
-          const current = await actions.lane().configure();
-          return notice(`思考 ${current.thinkingLevel}。可用 ${current.thinkingLevels.join(" ")}`);
+        // 可用档是当前模型的 thinkingLevels。协议五档只判断参数是不是合法档名。
+        const current = await actions.lane().configure();
+        const available = current.thinkingLevels.join(" ");
+        if (!command.level || command.invalid || !current.thinkingLevels.includes(command.level)) {
+          const unknown = command.invalid === true || command.level !== undefined;
+          return notice(unknown ? `未知思考级别。可用 ${available}` : `思考 ${current.thinkingLevel}。可用 ${available}`);
         }
         const next = await actions.lane().configure({ thinkingLevel: command.level });
         return notice(`思考 ${next.thinkingLevel}`);
@@ -569,8 +572,6 @@ function parseModel(rest: string): SlashCommand {
 function parseThinking(rest: string): SlashCommand {
   if (!rest) return { type: "thinking" };
   const level = rest.toLowerCase();
-  if (!THINKING.includes(level as SlashThinking) || /\s/.test(rest)) {
-    return notice(`未知思考级别。可用 ${THINKING.join(" ")}`);
-  }
+  if (/\s/.test(rest) || !(THINKING as readonly string[]).includes(level)) return { type: "thinking", invalid: true };
   return { type: "thinking", level: level as SlashThinking };
 }

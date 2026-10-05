@@ -448,6 +448,55 @@ test("an empty scoped list does not dump the catalog", { timeout: 20_000 }, asyn
   }
 });
 
+test("/thinking lists the current model's levels; deepseek-flash is off, low, and high", { timeout: 20_000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-thinking-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const host = await fakeHost(join(dir, "host.sock"), [], {
+    provider: "deepseek",
+    modelId: "deepseek-flash",
+    thinkingLevel: "off",
+    thinkingLevels: ["off", "low", "high"],
+  });
+  t.after(() => host.close());
+  const tty = fakeTTY();
+  tty.columns = 80;
+  tty.rows = 32;
+  const screen = presentHost(
+    { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE, cwd: dir },
+    tty.stdin,
+    tty.stdout,
+  );
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    const opened = tty.chunks.length;
+    tty.push("/thinking\r");
+    await until(() => tty.since(opened).includes("Select thinking level:"), "the thinking picker");
+    const listed = tty.since(opened);
+    assert.equal(listed.includes("low"), true);
+    assert.equal(listed.includes("high"), true);
+    assert.equal(listed.includes("minimal"), false);
+    assert.equal(listed.includes("medium"), false);
+    tty.push("\u001b");
+    const rejected = tty.chunks.length;
+    tty.push("/thinking medium\r");
+    await until(() => tty.since(rejected).includes("未知思考级别。可用 off low high"), "the model levels");
+    assert.equal(tty.since(rejected).includes("minimal"), false);
+    assert.equal(host.configures.some((call) => call.thinkingLevel === "medium"), false);
+    const accepted = tty.chunks.length;
+    tty.push("/thinking high\r");
+    await until(() => host.configures.some((call) => call.thinkingLevel === "high"), "high applied");
+    await until(() => tty.since(accepted).includes("思考 high"), "the high notice");
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u001b");
+    tty.push("\u0004");
+    await Promise.race([screen.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 500))]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${tty.since(0)}`);
+  }
+});
+
 test("deepseek-v4-pro restores the composer and does not accept an image", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amz-tui-image-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -492,12 +541,19 @@ test("deepseek-v4-pro restores the composer and does not accept an image", async
 async function fakeHost(
   socket: string,
   models: Array<{ provider: string; modelId: string }> = [],
-  initial: { provider: string; modelId: string } = { provider: "faux", modelId: "faux-1" },
+  initial: {
+    provider: string;
+    modelId: string;
+    thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high";
+    thinkingLevels?: readonly ("off" | "minimal" | "low" | "medium" | "high")[];
+  } = { provider: "faux", modelId: "faux-1" },
 ) {
   const calls: Recorded[] = [];
-  const configures: Array<{ provider?: string; modelId?: string }> = [];
+  const configures: Array<{ provider?: string; modelId?: string; thinkingLevel?: string }> = [];
   let provider = initial.provider;
   let modelId = initial.modelId;
+  let thinkingLevel = initial.thinkingLevel ?? "off";
+  const thinkingLevels = [...(initial.thinkingLevels ?? ["off"])];
   let version = 1;
   let operationId: string | null = null;
   let assistantReply: string | null = null;
@@ -553,18 +609,27 @@ async function fakeHost(
         case "configure": {
           const nextProvider = typeof raw.provider === "string" ? raw.provider : undefined;
           const nextModel = typeof raw.modelId === "string" ? raw.modelId : undefined;
+          const nextThinking = typeof raw.thinkingLevel === "string" ? raw.thinkingLevel : undefined;
           configures.push({
             ...(nextProvider !== undefined ? { provider: nextProvider } : {}),
             ...(nextModel !== undefined ? { modelId: nextModel } : {}),
+            ...(nextThinking !== undefined ? { thinkingLevel: nextThinking } : {}),
           });
           if (nextProvider !== undefined && nextModel !== undefined) {
             provider = nextProvider;
             modelId = nextModel;
           }
-          return { provider, modelId, thinkingLevel: "off", thinkingLevels: ["off"] };
+          if (nextThinking !== undefined) {
+            const level = thinkingLevels.find((item) => item === nextThinking);
+            if (!level) {
+              throw new ServiceError("invalid_call", `thinking level ${nextThinking} is not supported; available: ${thinkingLevels.join(", ")}`);
+            }
+            thinkingLevel = level;
+          }
+          return { provider, modelId, thinkingLevel, thinkingLevels };
         }
         case "catalog":
-          return { directory: "work", models, thinkingLevels: ["off"] };
+          return { directory: "work", models, thinkingLevels };
         case "snapshot":
           return {
             version,
