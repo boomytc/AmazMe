@@ -1,6 +1,3 @@
-import type { AgentEvent, AgentMessage } from "@amazme/agent";
-import type { AssistantMessage, ToolResultMessage } from "@amazme/ai";
-
 export type ScrollKind = "user" | "assistant" | "thinking" | "tool";
 
 export interface ScrollEntry {
@@ -11,17 +8,42 @@ export interface ScrollEntry {
   open?: boolean;
 }
 
+interface TextBlock {
+  type: string;
+  text?: string;
+  thinking?: string;
+}
+
+interface TranscriptMessage {
+  role: string;
+  content?: string | TextBlock[];
+}
+
+interface ToolResultBody {
+  content: TextBlock[];
+}
+
+type TranscriptEvent =
+  | { type: "turn_start" }
+  | { type: "turn_end" }
+  | { type: "message_start"; message: TranscriptMessage }
+  | { type: "message_update"; assistantMessageEvent: { type: string }; delta: string }
+  | { type: "message_end"; message: TranscriptMessage }
+  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
+  | { type: "tool_execution_update"; toolCallId: string; partial: string }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: ToolResultBody; isError: boolean };
+
 /**
- * Scroll area for one fullscreen view. Lines come only from AgentEvents that
- * already happened: user text, assistant deltas, thinking deltas, and a tool
- * block from execution start through execution end.
+ * Scroll lines built from events that already happened: user text, assistant
+ * deltas, thinking deltas, and a tool block from execution start through end.
+ * The host-attached screen reads lane snapshots instead of this log.
  */
 export class Transcript {
   readonly entries: ScrollEntry[] = [];
   busy = false;
   private streamed = false;
 
-  apply(event: AgentEvent): void {
+  apply(event: TranscriptEvent): void {
     switch (event.type) {
       case "turn_start":
         this.busy = true;
@@ -72,7 +94,7 @@ export class Transcript {
     return this.entries.map(formatEntry);
   }
 
-  private appendUpdate(event: Extract<AgentEvent, { type: "message_update" }>): void {
+  private appendUpdate(event: { assistantMessageEvent: { type: string }; delta: string }): void {
     const kind = deltaKind(event.assistantMessageEvent.type);
     const delta = event.delta;
     if (!kind || delta.length === 0) return;
@@ -86,15 +108,16 @@ export class Transcript {
     this.entries.push({ kind, text: delta, open: true });
   }
 
-  private seedAssistant(message: AssistantMessage): void {
+  private seedAssistant(message: TranscriptMessage): void {
     if (this.streamed) {
       this.streamed = false;
       this.closeOpen();
       return;
     }
+    if (!Array.isArray(message.content)) return;
     for (const block of message.content) {
-      if (block.type === "text" && block.text.length > 0) this.entries.push({ kind: "assistant", text: block.text });
-      else if (block.type === "thinking" && block.thinking.length > 0) this.entries.push({ kind: "thinking", text: block.thinking });
+      if (block.type === "text" && typeof block.text === "string" && block.text.length > 0) this.entries.push({ kind: "assistant", text: block.text });
+      else if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.length > 0) this.entries.push({ kind: "thinking", text: block.thinking });
     }
   }
 
@@ -134,14 +157,15 @@ function deltaKind(type: string): "assistant" | "thinking" | undefined {
   return undefined;
 }
 
-function userText(message: AgentMessage): string {
+function userText(message: TranscriptMessage): string {
   if (message.role !== "user") return "";
   if (typeof message.content === "string") return message.content;
-  return message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+  if (!Array.isArray(message.content)) return "";
+  return message.content.map((block) => (block.type === "text" && typeof block.text === "string" ? block.text : "")).join("");
 }
 
-function resultText(result: ToolResultMessage): string {
-  return result.content.map((block) => (block.type === "text" ? block.text : "[image]")).join("");
+function resultText(result: ToolResultBody): string {
+  return result.content.map((block) => (block.type === "text" && typeof block.text === "string" ? block.text : "[image]")).join("");
 }
 
 function nameOf(entry: ScrollEntry): string {

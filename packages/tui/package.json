@@ -6,8 +6,6 @@
   "sideEffects": false,
   "description": "Fullscreen client of a running AmazMe host. It does not own the session log, tools, or model calls.",
   "dependencies": {
-    "@amazme/agent": "0.1.0",
-    "@amazme/ai": "0.1.0",
     "@amazme/client": "0.1.0",
     "@amazme/runtime-service": "0.1.0"
   },

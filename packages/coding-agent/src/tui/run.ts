@@ -1,12 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { Agent } from "@amazme/agent";
-import { AgentSession } from "../agent-session.ts";
-import { SessionStore } from "../session.ts";
-import { appendSkillText } from "../skills.ts";
-import { codingSystemPrompt, createCodingTools } from "../tools.ts";
-import { activateProject, presentFullscreen, presentHost, type HostAttach } from "@amazme/tui";
-import { codingModels, createCodingFronts, startWorkspaceHost } from "../fronts.ts";
+import { activateProject, presentHost, type HostAttach } from "@amazme/tui";
+import { createCodingFronts, startWorkspaceHost } from "../fronts.ts";
 import { waitForSecondInterrupt } from "../interrupt.ts";
 import { formatHandback, loginCatalog, loginProvider, logoutProvider, saveApiKey } from "../login.ts";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID } from "../host.ts";
@@ -74,29 +67,4 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
   process.stdout.write(`${fronts.runningLine()}\n`);
   await waitForSecondInterrupt();
   await fronts.stop();
-}
-
-/** Legacy in-memory session. The fullscreen command no longer uses it. */
-export function createFullscreenSession(options: FullscreenOptions): AgentSession {
-  return openSession(options);
-}
-
-function openSession(options: FullscreenOptions): AgentSession {
-  const models = codingModels(options);
-  const model = models.getModel(options.provider, options.model);
-  if (!model) throw new Error(`unknown model ${options.provider}/${options.model}`);
-  const dir = join(options.cwd, ".amazme", "sessions");
-  mkdirSync(dir, { recursive: true });
-  const store = SessionStore.create(join(dir, `${Date.now()}.jsonl`), options.cwd);
-  const agent = new Agent({
-    model,
-    streamFn: models.streamSimple.bind(models),
-    telemetryContext: models.telemetryContext,
-    systemPrompt: appendSkillText(
-      codingSystemPrompt,
-      join(options.cwd, "skills"),
-    ),
-    tools: createCodingTools(options.cwd),
-  });
-  return new AgentSession(store, agent);
 }
