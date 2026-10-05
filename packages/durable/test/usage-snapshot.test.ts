@@ -908,6 +908,58 @@ test("checkpoints are written at most once per 1000ms and the next window stores
   }
 });
 
+test("twenty checkpoints inside one second persist only one or two tool output writes", async () => {
+  class OutputLog extends MemoryStorage {
+    readonly values: string[] = [];
+    protected override persist(writes: readonly Write[]): void {
+      for (const write of writes) {
+        if (write.type === "set" && write.address.namespace === "pi.pending.tool_output" && typeof write.value === "string") {
+          this.values.push(write.value);
+        }
+      }
+    }
+  }
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let updates = 0;
+  const storage = new OutputLog();
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("log", {})], { usage: tokens(1, 1) })
+      : fauxAssistant("after", { usage: tokens(2, 2) }),
+  }));
+  const harness = runtime(storage, models, {
+    tools: [{
+      name: "log",
+      description: "log",
+      parameters: { type: "object", additionalProperties: true },
+      async execute(_args, context) {
+        for (let index = 0; index < 20; index += 1) {
+          context.onUpdate?.(`part-${index}`, { checkpoint: true });
+          updates += 1;
+        }
+        await gate;
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  const started = Date.now();
+  try {
+    const lane = harness.lane();
+    const driving = lane.prompt("go");
+    await until(async () => updates === 20 && storage.values.length >= 1);
+    assert.ok(Date.now() - started < 1_000);
+    assert.ok(storage.values.length >= 1 && storage.values.length <= 2);
+    assert.equal(storage.values[0], "part-0");
+    release();
+    assert.equal((await driving).status, "completed");
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
 test("a forked lane totals only its own operations and reads lastTurn from its branch", async () => {
   const parentA = tokens(10, 1);
   const parentB = tokens(20, 2);
