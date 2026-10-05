@@ -4,7 +4,7 @@ import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { emptyActivity, type EntryDto, type LaneSnapshotDto, type UserContent } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
-import { executeSlash, finishDrive, modelSwitchRefusal, type SlashActions } from "./commands.ts";
+import { executeSlash, finishDrive, laneThinking, modelSwitchRefusal, persistedThinkingHint, thinkingRefusalNotice, type SlashActions } from "./commands.ts";
 import { chatModelSpecs, cycleModels, scopedModels } from "./project.ts";
 import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
@@ -163,16 +163,28 @@ export async function presentHost(
   const utf8 = new StringDecoder("utf8");
   let restored = false;
   let finish = (): void => undefined;
+  let availableLevels: string[] = [];
   const rememberSettings = async (): Promise<void> => {
     try {
-      const settings = await remote.lane(active).configure();
-      const listed = await remote.lane(active).catalog();
+      const settings = await laneThinking(remote.lane(active));
+      let directory = state.directory;
+      try {
+        directory = (await remote.lane(active).catalog()).directory;
+      } catch {
+        // The footer keeps the last directory this lane could report.
+      }
+      availableLevels = [...settings.thinkingLevels];
+      const unsupported = settings.thinkingLevel.length > 0
+        && settings.thinkingLevels.length > 0
+        && settings.thinkingLevels.every((item) => item !== settings.thinkingLevel);
       state = {
         ...state,
-        provider: settings.provider,
-        modelId: settings.modelId,
+        ...(settings.provider.length > 0 ? { provider: settings.provider } : {}),
+        ...(settings.modelId.length > 0 ? { modelId: settings.modelId } : {}),
         thinking: settings.thinkingLevel,
-        directory: listed.directory,
+        directory,
+        // 已存档不在当前模型里。只提示，不调用 configure 去改档。
+        ...(unsupported ? { notice: persistedThinkingHint(settings.thinkingLevel, settings.thinkingLevels) } : {}),
       };
     } catch {
       // The footer keeps the last settings this lane could report.
@@ -246,11 +258,12 @@ export async function presentHost(
       }
       if (reduced.effect) {
         void apply(reduced.effect).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
           state = {
             ...state,
             deciding: false,
             decidingId: null,
-            notice: error instanceof Error ? error.message : String(error),
+            notice: thinkingRefusalNotice(error, availableLevels) ?? message,
           };
           paint();
         });
@@ -355,7 +368,8 @@ export async function presentHost(
       return;
     }
     if (effect.kind === "thinking") {
-      const settings = await remote.lane(active).configure();
+      const settings = await laneThinking(remote.lane(active));
+      availableLevels = [...settings.thinkingLevels];
       const level = settings.thinkingLevels.find((item) => item === effect.id);
       if (!level) return;
       await remote.lane(active).configure({ thinkingLevel: level });
@@ -549,11 +563,7 @@ export async function presentHost(
           return;
         }
       }
-      const followed = await lane.submit(effect.text, prepared.content);
-      if (followed && state.busy) {
-        state = { ...state, queued: state.queued + 1 };
-        paint();
-      }
+      await finishSubmit(effect.text, prepared.content);
     }
     else if (effect.type === "abort") await lane.abort();
     else if (effect.type === "pick") await applyPick(effect);
@@ -575,11 +585,12 @@ export async function presentHost(
     } else if (effect.command.type === "model" && !effect.command.provider) {
       showPicker(modelPicker(attach.cwd ? scopedModels(attach.cwd) : [], { provider: state.provider, modelId: state.modelId }));
     } else if (effect.command.type === "thinking" && !effect.command.level && effect.command.invalid !== true) {
-      const settings = await remote.lane(active).configure();
+      const settings = await laneThinking(remote.lane(active));
+      availableLevels = [...settings.thinkingLevels];
       state = {
         ...state,
-        provider: settings.provider,
-        modelId: settings.modelId,
+        ...(settings.provider.length > 0 ? { provider: settings.provider } : {}),
+        ...(settings.modelId.length > 0 ? { modelId: settings.modelId } : {}),
         thinking: settings.thinkingLevel,
       };
       showPicker(thinkingPicker(settings.thinkingLevels, settings.thinkingLevel));
@@ -607,13 +618,7 @@ export async function presentHost(
     } else {
       const outcome = await executeSlash(effect.command, actions);
       await rememberSettings();
-      if (outcome.type === "submit") {
-        const followed = await lane.submit(outcome.text);
-        if (followed && state.busy) {
-          state = { ...state, queued: state.queued + 1 };
-          paint();
-        }
-      }
+      if (outcome.type === "submit") await finishSubmit(outcome.text);
       else if (outcome.type === "notice") {
         state = { ...state, notice: outcome.text };
         paint();
@@ -637,6 +642,26 @@ export async function presentHost(
     await rememberSettings();
     state = { ...state, notice: `模型 ${provider}/${modelId}`, picker: null };
     paint();
+  };
+  const finishSubmit = async (text: string, content?: UserContent[]): Promise<void> => {
+    try {
+      const followed = await lane.submit(text, content);
+      const reported = latestAssistantError(lane.snapshot());
+      const hint = reported ? thinkingRefusalNotice(reported, availableLevels) : null;
+      if (hint) {
+        state = { ...state, notice: hint };
+        paint();
+      }
+      if (followed && state.busy) {
+        state = { ...state, queued: state.queued + 1 };
+        paint();
+      }
+    } catch (error) {
+      const hint = thinkingRefusalNotice(error, availableLevels);
+      if (!hint) throw error;
+      state = { ...state, notice: hint };
+      paint();
+    }
   };
   const configureModel = async (provider: string, modelId: string): Promise<boolean> => {
     try {
@@ -663,6 +688,16 @@ export async function presentHost(
 /** OSC 52 是终端写入剪贴板的控制序列。`c` 选择系统剪贴板，负载是 UTF-8 的 base64。 */
 function osc52(text: string): string {
   return `\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`;
+}
+
+function latestAssistantError(snapshot: LaneSnapshotDto): string | null {
+  for (let index = snapshot.entries.length - 1; index >= 0; index -= 1) {
+    const entry = snapshot.entries[index];
+    if (!entry || entry.payload.type !== "message" || entry.payload.message.role !== "assistant") continue;
+    const record = entry.payload.message as { errorMessage?: unknown };
+    return typeof record.errorMessage === "string" && record.errorMessage.length > 0 ? record.errorMessage : null;
+  }
+  return null;
 }
 
 function restoreComposer(state: TuiState, text: string, notice: string): TuiState {
