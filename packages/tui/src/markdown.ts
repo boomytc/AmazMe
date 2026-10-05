@@ -50,7 +50,7 @@ function inline(text: string, body: string): string {
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index] ?? "";
     if (part.length === 0) continue;
-    out += index % 2 === 1 ? paint(theme.dim, part) : paint(body, part);
+    out += index % 2 === 1 ? paint(theme.code, part) : paint(body, part);
   }
   return out;
 }

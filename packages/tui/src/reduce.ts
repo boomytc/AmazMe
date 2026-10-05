@@ -49,6 +49,8 @@ export interface TuiState extends TuiWindow {
   entryIndex: number;
   turnIndex: number;
   input: string;
+  /** Code-point index in `input`. The cursor may sit after the last character. */
+  cursor: number;
   notice: string | null;
   menuIndex: number;
   provider: string;
@@ -77,6 +79,7 @@ export function emptyTui(active = "main"): TuiState {
     entryIndex: 0,
     turnIndex: 0,
     input: "",
+    cursor: 0,
     notice: null,
     menuIndex: 0,
     provider: "",
@@ -95,14 +98,14 @@ export function reduceTui(state: TuiState, action: { type: "window"; window: Tui
 export function renderTui(state: TuiState, columns = 100, rows = 32): string {
   const width = Math.max(20, columns);
   const height = Math.max(8, rows);
-  const prompt = paint(theme.accent, "› ") + paint(theme.text, fit(state.input, Math.max(1, width - 2)));
+  const composer = composerLines(state, width);
   const status = paint(theme.dim, fit(statusLine(state), width));
   const rule = paint(theme.border, "─".repeat(Math.min(width, 80)));
   const menu = state.picker ? [] : menuLines(state, width);
   const picker = state.picker ? pickerLines(state.picker, width) : [];
   const notice = state.notice ? state.notice.split("\n").slice(0, 8).map((line) => paint(theme.dim, fit(line, width))) : [];
   const transcript = transcriptLines(state).flatMap((line) => wrap(line, width));
-  const chrome = [...picker, ...menu, ...notice, status, rule, prompt];
+  const chrome = [...picker, ...menu, ...notice, status, rule, ...composer];
   const room = Math.max(1, height - chrome.length);
   const visible = transcript.slice(-room);
   while (visible.length < room) visible.unshift("");
@@ -128,22 +131,21 @@ function applyKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffe
     const menuIndex = (state.menuIndex + delta + matches.length) % matches.length;
     return { state: { ...state, menuIndex }, effect: null };
   }
+  if (key.type === "left" || key.type === "right") return { state: moveCursor(state, key.type === "left" ? -1 : 1), effect: null };
+  if (key.type === "newline") return { state: insertText(state, "\n"), effect: null };
   if (key.type === "tab") {
     const picked = matches[clamp(state.menuIndex, matches.length)];
     if (!picked) return { state, effect: null };
     const suffix = picked.takesArgs === "required" ? " " : "";
-    return { state: { ...state, input: `/${picked.name}${suffix}`, menuIndex: 0, notice: null }, effect: null };
+    const input = `/${picked.name}${suffix}`;
+    return { state: { ...state, input, cursor: Array.from(input).length, menuIndex: 0, notice: null }, effect: null };
   }
-  if (key.type === "char") return { state: { ...state, input: state.input + key.value, menuIndex: 0, notice: null }, effect: null };
-  if (key.type === "backspace") {
-    const chars = Array.from(state.input);
-    chars.pop();
-    return { state: { ...state, input: chars.join(""), menuIndex: 0 }, effect: null };
-  }
+  if (key.type === "char") return { state: insertText(state, key.value), effect: null };
+  if (key.type === "backspace") return { state: deleteBeforeCursor(state), effect: null };
   if (key.type === "enter") return acceptOrSubmit(state);
   if (key.type === "ctrl-c") {
     if (state.busy) return { state: { ...state, notice: null }, effect: { type: "abort" } };
-    if (state.input.length > 0) return { state: { ...state, input: "" }, effect: null };
+    if (state.input.length > 0) return { state: { ...state, input: "", cursor: 0 }, effect: null };
     return { state, effect: null };
   }
   return { state, effect: null };
@@ -196,7 +198,8 @@ function acceptOrSubmit(state: TuiState): { state: TuiState; effect: TuiEffect |
   const token = state.input.trim();
   if (picked && token.startsWith("/") && !/\s/.test(token.slice(1)) && token.slice(1).toLowerCase() !== picked.name) {
     if (picked.takesArgs === "required") {
-      return { state: { ...state, input: `/${picked.name} `, menuIndex: 0 }, effect: null };
+      const input = `/${picked.name} `;
+      return { state: { ...state, input, cursor: Array.from(input).length, menuIndex: 0 }, effect: null };
     }
     return submit({ ...state, input: `/${picked.name}` });
   }
@@ -205,7 +208,7 @@ function acceptOrSubmit(state: TuiState): { state: TuiState; effect: TuiEffect |
 
 function submit(state: TuiState): { state: TuiState; effect: TuiEffect | null } {
   const text = state.input.trim();
-  const cleared = { ...state, input: "", notice: null };
+  const cleared = { ...state, input: "", cursor: 0, notice: null };
   if (!text) return { state: cleared, effect: null };
   const command = parseSlash(text);
   if (command.type === "prompt") return { state: cleared, effect: { type: "submit", text: command.text } };
@@ -232,6 +235,38 @@ function move(state: TuiState, key: Key): TuiState {
 function turnStarts(entries: readonly TuiEntry[]): number[] {
   const starts = entries.flatMap((entry, index) => entry.role === "user" ? [index] : []);
   return starts.length > 0 ? starts : [0];
+}
+
+function composerLines(state: TuiState, width: number): string[] {
+  const chars = Array.from(state.input);
+  const cursor = clamp(state.cursor, chars.length + 1);
+  const marked = [...chars.slice(0, cursor), "▏", ...chars.slice(cursor)].join("");
+  return marked.split("\n").map((line, index) => {
+    const prefix = index === 0 ? paint(theme.accent, "› ") : "  ";
+    return prefix + paint(theme.text, fit(line, Math.max(1, width - 2)));
+  });
+}
+
+function insertText(state: TuiState, text: string): TuiState {
+  const chars = Array.from(state.input);
+  const cursor = clamp(state.cursor, chars.length + 1);
+  const extra = Array.from(text);
+  chars.splice(cursor, 0, ...extra);
+  return { ...state, input: chars.join(""), cursor: cursor + extra.length, menuIndex: 0, notice: null };
+}
+
+function deleteBeforeCursor(state: TuiState): TuiState {
+  const chars = Array.from(state.input);
+  const cursor = clamp(state.cursor, chars.length + 1);
+  if (cursor === 0) return state;
+  chars.splice(cursor - 1, 1);
+  return { ...state, input: chars.join(""), cursor: cursor - 1, menuIndex: 0 };
+}
+
+function moveCursor(state: TuiState, delta: number): TuiState {
+  const length = Array.from(state.input).length;
+  const cursor = clamp(state.cursor, length + 1);
+  return { ...state, cursor: clamp(cursor + delta, length + 1) };
 }
 
 function statusLine(state: TuiState): string {

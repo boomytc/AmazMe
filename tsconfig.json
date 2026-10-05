@@ -12,6 +12,7 @@
     { "path": "packages/runtime-service" },
     { "path": "packages/tui" },
     { "path": "packages/web" },
+    { "path": "packages/gui" },
     { "path": "packages/coding-agent" }
   ]
 }
