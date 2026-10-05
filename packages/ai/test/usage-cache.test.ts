@@ -10,7 +10,7 @@ import { mistralConversationsApi } from "@amazme/ai/api/mistral-conversations";
 import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
 import { openAIResponsesApi } from "@amazme/ai/api/openai-responses";
 import { piMessagesApi } from "@amazme/ai/api/pi-messages";
-import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/testing";
 
 const CONTEXT = { messages: [{ role: "user" as const, content: "hi", timestamp: 1 }] };
 

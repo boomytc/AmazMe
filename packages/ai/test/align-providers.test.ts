@@ -36,6 +36,7 @@ test("every Pi chat provider id is selectable, including cloudflare-workers-ai",
     assert.ok(provider?.getModels()[0], `${id} chat model`);
   }
   assert.equal(ids.has("typesafe"), true);
+  assert.equal(ids.has("faux"), false);
 });
 
 test("cloudflare-workers-ai posts chat completions to the account URL and classifies on /run", async () => {

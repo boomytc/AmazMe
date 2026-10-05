@@ -22,6 +22,7 @@ const ALLOWED = new Set([
 
 test("builtin chat presets share one provider factory and the existing protocol set", () => {
   const providers = builtinProviders();
+  assert.equal(providers.some((provider) => provider.id === "faux"), false);
   assert.equal(new Set(providers.map((provider) => provider.id)).size, providers.length);
   assert.equal(providers.some((provider) => provider.id === "cloudflare-workers-ai"), true);
   const typesafe = providers.find((provider) => provider.id === "typesafe");

@@ -4,7 +4,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createModels } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { Client, RemoteError } from "@amazme/client";
 import {
   AgentHarness,

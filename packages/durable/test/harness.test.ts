@@ -14,7 +14,7 @@ import {
   type Model,
   type Provider,
 } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 
 function harnessText(message: HarnessMessage): string {
   return message.role === "custom" ? message.content : messageText(message);

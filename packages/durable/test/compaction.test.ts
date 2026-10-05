@@ -18,7 +18,7 @@ import {
 } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { summaryTranscript } from "../src/compaction/serialize.ts";
 
 const secret = "SU1HU0VDUkVUREFUQQ==";

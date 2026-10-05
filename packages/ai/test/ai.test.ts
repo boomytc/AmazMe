@@ -13,7 +13,7 @@ import {
   type AssistantEvent,
   type Model,
 } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { openaiProvider } from "@amazme/ai/providers/openai";
 
 const textModel: Model = {

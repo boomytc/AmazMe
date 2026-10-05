@@ -6,7 +6,7 @@ import * as agent from "@amazme/agent";
 import { AgentHarness, type HarnessMessage, type HarnessTool } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { createModels } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 
 test("durable depends on the agent walks and agent does not depend on durable", () => {
   const agentPkg = JSON.parse(readFileSync(new URL("../packages/agent/package.json", import.meta.url), "utf8")) as { dependencies?: Record<string, string> };
@@ -185,7 +185,7 @@ test("the public Agent entry runs without loading Durable", () => {
     } });
     const { Agent } = await import("@amazme/agent");
     const { createModels } = await import("@amazme/ai");
-    const { fauxProvider } = await import("@amazme/ai/providers/faux");
+    const { fauxProvider } = await import("@amazme/ai/testing");
     const models = createModels();
     models.setProvider(fauxProvider());
     const model = models.getModel("faux", "faux-1");
@@ -196,6 +196,18 @@ test("the public Agent entry runs without loading Durable", () => {
   const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 10_000 });
   assert.ifError(child.error);
   assert.equal(child.status, 0, child.stderr);
+});
+
+test("the faux model is only available from the testing entry", async () => {
+  const retired = "@amazme/ai/providers/faux";
+  await assert.rejects(import(retired), (error: NodeJS.ErrnoException) => error.code === "ERR_PACKAGE_PATH_NOT_EXPORTED");
+  const { catalogProviderIds } = await import("@amazme/ai/providers/catalog");
+  const { builtinProviders } = await import("@amazme/ai/providers/builtin");
+  assert.equal(catalogProviderIds().includes("faux"), false);
+  assert.equal(builtinProviders().some((provider) => provider.id === "faux"), false);
+  const models = createModels();
+  models.setProvider(fauxProvider());
+  assert.ok(models.getModel("faux", "faux-1"));
 });
 
 test("the AI root entry does not load a protocol and runs without process or Node modules", () => {
