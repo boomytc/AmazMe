@@ -1,0 +1,99 @@
+{
+  "steps": [
+    {
+      "type": "snapshot",
+      "snapshot": {
+        "version": 3,
+        "lane": "main",
+        "tipId": "tool-1",
+        "phase": null,
+        "operationId": null,
+        "lastOperationId": "op-1",
+        "status": null,
+        "entries": [
+          {
+            "id": "user-1",
+            "parentId": null,
+            "seq": 1,
+            "timestamp": 1,
+            "payload": {
+              "type": "message",
+              "message": {
+                "role": "user",
+                "content": "删掉密钥",
+                "timestamp": 1
+              }
+            }
+          },
+          {
+            "id": "assistant-1",
+            "parentId": "user-1",
+            "seq": 2,
+            "timestamp": 1000,
+            "payload": {
+              "type": "message",
+              "message": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-1",
+                    "name": "bash",
+                    "arguments": {
+                      "command": "rm secret"
+                    }
+                  }
+                ],
+                "timestamp": 1000
+              }
+            }
+          },
+          {
+            "id": "tool-1",
+            "parentId": "assistant-1",
+            "seq": 3,
+            "timestamp": 1200,
+            "payload": {
+              "type": "message",
+              "message": {
+                "role": "toolResult",
+                "toolCallId": "call-1",
+                "toolName": "bash",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Tool call denied\n不要删密钥"
+                  }
+                ],
+                "isError": true,
+                "timestamp": 1200
+              }
+            }
+          }
+        ],
+        "pendingResponse": null,
+        "tools": [],
+        "activity": {
+          "branch": null,
+          "sessionStartedAt": null,
+          "turnStartedAt": null,
+          "notBefore": null,
+          "retryReason": null,
+          "compacting": false,
+          "usage": {
+            "lastTurn": null,
+            "total": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": null,
+              "cacheWrite": null,
+              "reasoning": null,
+              "hitRate": null,
+              "cost": null
+            }
+          }
+        }
+      }
+    }
+  ]
+}

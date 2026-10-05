@@ -180,13 +180,32 @@ export function collectToolCards(input: ToolCardInput, now?: number): ToolCard[]
 export function toolCardRows(card: ToolCard, expanded: boolean): ToolCardRow[] {
   const duration = card.durationMs === null ? "" : `  ${formatDuration(card.durationMs)}`;
   const rows: ToolCardRow[] = [
-    { tone: "accent", text: `┌ ${card.name}  ${STATUS_LABEL[card.status]}${duration}` },
+    { tone: "accent", text: `┌ ${card.name}  ${statusText(card)}${duration}` },
   ];
   if (card.summary.length > 0) rows.push({ tone: "dim", text: `│ ${card.summary}` });
-  const body = expanded ? card.detailLines : card.status === "running" ? card.tailLines : [];
+  const body = expanded ? card.detailLines : card.status === "running" ? card.tailLines : foldedErrorLine(card);
   for (const line of body) rows.push({ tone: "text", text: `│ ${line}` });
   rows.push({ tone: "border", text: "└" });
   return rows;
+}
+
+/** 带理由的拒绝用「已拒绝：理由」。没写理由仍是「被拒」。其余状态用固定词。 */
+function statusText(card: ToolCard): string {
+  if (card.status === "denied") {
+    const reason = denialReason(card.detailLines.join("\n"));
+    if (reason !== null && reason.length > 0) return summarizeArgs(`已拒绝：${reason}`);
+  }
+  return STATUS_LABEL[card.status];
+}
+
+/** 折叠的失败卡片露出错误第一行。摘要已经是这一行时不重复。过长按参数摘要的宽度截断。 */
+function foldedErrorLine(card: ToolCard): string[] {
+  if (card.status !== "error") return [];
+  const line = card.detailLines.find((row) => row.trim().length > 0)?.trim() ?? "";
+  if (line.length === 0) return [];
+  const shown = summarizeArgs(line);
+  if (shown.length === 0 || shown === card.summary) return [];
+  return [shown];
 }
 
 function makeCard(input: {
@@ -234,10 +253,25 @@ function cardStatus(
   return "running";
 }
 
-/** 快照里没有单独的拒绝标记。没写原因时，结果正文就是这句。 */
-function isDenied(text: string): boolean {
+/**
+ * 快照里没有单独的拒绝标记。没写原因时，结果正文就是 `Tool call denied`。
+ * 写了原因时，正文是这句再加一行理由，或 `Tool call denied: 理由`。卡片标「已拒绝：理由」。
+ * 只有理由、没有这句时，和工具错误是同一份正文，卡片仍标失败。
+ */
+function denialReason(text: string): string | null {
   const trimmed = text.trim();
-  return trimmed === DENIED_TEXT || trimmed.startsWith(`${DENIED_TEXT}\n`);
+  if (trimmed === DENIED_TEXT) return "";
+  let rest = "";
+  if (trimmed.startsWith(`${DENIED_TEXT}\n`)) rest = trimmed.slice(DENIED_TEXT.length + 1);
+  else if (trimmed.startsWith(`${DENIED_TEXT}:`)) rest = trimmed.slice(DENIED_TEXT.length + 1);
+  else if (trimmed.startsWith(`${DENIED_TEXT}：`)) rest = trimmed.slice(DENIED_TEXT.length + 1);
+  else return null;
+  const line = rest.split("\n").find((row) => row.trim().length > 0)?.trim() ?? "";
+  return line;
+}
+
+function isDenied(text: string): boolean {
+  return denialReason(text) !== null;
 }
 
 function cardDuration(

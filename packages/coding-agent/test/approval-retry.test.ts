@@ -65,6 +65,35 @@ test("scheduling the same operation twice keeps the later timer", async () => {
   assert.deepEqual(fired, ["second", "other", "elsewhere"]);
 });
 
+test("firing after the operation has settled does not drive", async () => {
+  let drives = 0;
+  const lane = {
+    pendingApprovals: () => Promise.resolve({ items: [] as unknown[] }),
+    result: () => Promise.resolve({ ok: true as const, value: { status: "completed" } }),
+  };
+  const clock = cancellableClock();
+  const waiting: HostRetryWait = { operationId: "op", reason: "retry", notBefore: 1_000 };
+  assert.equal(await scheduleHostRetry(lane, waiting, clock, () => { drives += 1; }), true);
+  clock.fire();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(drives, 0);
+});
+
+test("a clock that runs the callback inside schedule does not throw", async () => {
+  const lane = { pendingApprovals: () => Promise.resolve({ items: [] as unknown[] }) };
+  let ran = false;
+  const clock: RetryClock = {
+    now: () => 0,
+    schedule(_delayMs, run) {
+      run();
+      return () => undefined;
+    },
+  };
+  const waiting: HostRetryWait = { operationId: "op", reason: "retry", notBefore: 0 };
+  await assert.doesNotReject(scheduleHostRetry(lane, waiting, clock, () => { ran = true; }));
+  assert.equal(ran, true);
+});
+
 test("an approval block cancels the timer already armed for that operation", async () => {
   const items: unknown[] = [];
   const lane = { pendingApprovals: () => Promise.resolve({ items }) };
