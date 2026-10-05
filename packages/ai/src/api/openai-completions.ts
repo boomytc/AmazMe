@@ -252,6 +252,7 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
   let finish = "";
   let started = false;
   let closed = false;
+  let sawUsage = false;
   let usage = emptyUsage();
   // Server tool index only finds the same call. contentIndex is the block's place at first appearance.
   const blocks: StreamBlock[] = [];
@@ -266,11 +267,13 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       }
       return toolCallOf(block);
     });
+    const priced = cloneUsage(usage);
+    if (!sawUsage) priced.cost = { input: 0, output: 0, total: null };
     return {
       ...partial,
       content: content.length > 0 ? content : [{ type: "text", text: "" }],
       stopReason,
-      usage: cloneUsage(usage),
+      usage: priced,
     };
   };
   const begin = () => {
@@ -280,8 +283,13 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
   };
   const finishMessage = () => {
     if (closed) return;
+    if (finish === "aborted") {
+      fail("aborted", "aborted", false);
+      return;
+    }
     if (!finish) {
-      fail("error", "OpenAI completions stream ended without a finish reason", false);
+      // The body closed before [DONE] and before a finish reason. The turn can be sent again.
+      fail("error", "OpenAI completions stream ended without a finish reason", true);
       return;
     }
     if (finish === "content_filter") {
@@ -340,7 +348,7 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     if (overflow) failed.overflow = true;
     stream.push({ type: "error", error: failed });
   };
-  const consumeLine = (line: string) => {
+  const consumeLine = (line: string, truncated = false) => {
     if (closed) return;
     const trimmed = line.trim();
     if (!trimmed.startsWith("data:")) return;
@@ -353,7 +361,8 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     try {
       decoded = JSON.parse(data) as unknown;
     } catch {
-      fail("error", "OpenAI completions stream: malformed event", false);
+      // A complete bad event is a protocol error. A frame cut off by EOF can be sent again.
+      fail("error", "OpenAI completions stream: malformed event", truncated);
       return;
     }
     if (isRecord(decoded) && "error" in decoded && isRecord(decoded.error)) {
@@ -372,7 +381,10 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     }
     const parsed = decoded;
     const reported = usageFromChunk(model, parsed.usage);
-    if (reported) usage = reported;
+    if (reported) {
+      usage = reported;
+      sawUsage = true;
+    }
     const choice = parsed.choices?.[0];
     if (!choice) return;
     if (choice.delta?.content) appendText(choice.delta.content);
@@ -396,7 +408,7 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     }
     if (closed) return;
     buffer += decoder.decode();
-    if (buffer.trim()) consumeLine(buffer);
+    if (buffer.trim()) consumeLine(buffer, true);
     if (closed) return;
     if (signal?.aborted && !finish) {
       fail("aborted", "aborted", false);
@@ -553,7 +565,7 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
     if (!isRecord(choice)) return false;
     const finish = choice.finish_reason;
     if (finish !== undefined && finish !== null
-      && (typeof finish !== "string" || !["stop", "length", "tool_calls", "content_filter"].includes(finish))) return false;
+      && (typeof finish !== "string" || !["stop", "length", "tool_calls", "content_filter", "aborted"].includes(finish))) return false;
     if (choice.delta === undefined) return true;
     if (!isRecord(choice.delta)) return false;
     const { content, tool_calls: calls } = choice.delta;
@@ -574,6 +586,7 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
 /**
  * Charges go through `usageCost`. `model.cost` is USD per 1,000,000 tokens.
  * A model with no price list keeps a zero `Usage.cost`; that zero is not a quoted price.
+ * A stream that never reports usage leaves `cost.total` null instead of quoting 0.
  * Cache read is taken only from a reported count. `prompt_tokens_details.cached_tokens` and
  * `prompt_cache_hit_tokens` are the same count when both are present; a disagreement is left unset.
  * `prompt_tokens` includes that cache read. `input` keeps the miss portion. Cache misses are not cache writes.

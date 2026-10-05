@@ -172,7 +172,7 @@ test("string token counts are not coerced, and a missing rate is not invented", 
     'data: {"usage":{"prompt_tokens":"12","completion_tokens":"5","total_tokens":"17"}}\n\n',
     "data: [DONE]\n\n",
   ]));
-  assert.deepEqual(coerced.message.usage, { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } });
+  assert.deepEqual(coerced.message.usage, { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: null } });
   const priced = await run(async () => sse([
     'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
     'data: {"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}\n\n',
@@ -305,14 +305,15 @@ test("a network failure is retryable and keeps one terminal", async () => {
   assert.equal(terminals(events).length, 1);
 });
 
-test("a stream that ends without a finish reason keeps the partial text and is not retryable", async () => {
+test("a stream that ends without a finish reason keeps the partial text and can be sent again", async () => {
   const { message, events } = await run(async () => sse([
     'data: {"choices":[{"delta":{"content":"Keep"}}]}\n\n',
   ]));
   assert.equal(message.stopReason, "error");
   assert.equal(textOf(message), "Keep");
   assert.match(message.errorMessage ?? "", /finish reason/);
-  assert.notEqual(message.retryable, true);
+  assert.equal(message.retryable, true);
+  assert.equal(message.usage.cost.total, null);
   assert.equal(terminals(events).length, 1);
 });
 
