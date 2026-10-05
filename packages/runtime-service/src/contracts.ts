@@ -298,7 +298,12 @@ export type OperationAdmissionDto = Static<typeof OperationAdmissionSchema>;
 
 export const DriveOutcomeSchema = Type.Union([
   Strict({ kind: Type.Literal("settled"), result: OperationResultSchema }),
-  Strict({ kind: Type.Literal("waiting"), operationId: StoredIdSchema, reason: Type.Literal("retry"), notBefore: Time }),
+  Strict({
+    kind: Type.Literal("waiting"),
+    operationId: StoredIdSchema,
+    reason: Type.Union([Type.Literal("retry"), Type.Literal("approval")]),
+    notBefore: Time,
+  }),
 ]);
 export type DriveOutcomeDto = Static<typeof DriveOutcomeSchema>;
 

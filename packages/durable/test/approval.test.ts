@@ -589,7 +589,7 @@ test("repeated drive while approval is waiting does not persist or call the mode
     const requestedAt = pending.items[0]?.requestedAt;
     assert.equal(typeof requestedAt, "number");
     assert.equal(parked.ok && parked.value.kind === "waiting" ? parked.value.notBefore : undefined, requestedAt);
-    assert.equal(parked.ok && parked.value.kind === "waiting" ? parked.value.reason : "", "retry");
+    assert.equal(parked.ok && parked.value.kind === "waiting" ? parked.value.reason : "", "approval");
     const version = (await lane.snapshot()).version;
     const storedVersion = await storage.read((view) => view.version());
     const laneEntries = (await lane.entries()).length;

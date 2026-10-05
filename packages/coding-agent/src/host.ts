@@ -12,6 +12,7 @@ import { appendMcpTools } from "./mcp.ts";
 import { packageSkillText } from "@amazme/tui";
 import { appendSkillText } from "./skills.ts";
 import { visibleModels } from "./picker.ts";
+import { installHostRetries } from "./contracts.ts";
 import { installSessionRouter } from "./host-router.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
@@ -112,6 +113,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
             provider,
             modelId,
           });
+          installHostRetries(resources.harness);
           return {
             harness: resources.harness,
             closeStorage: () => resources.closeStorage(),
