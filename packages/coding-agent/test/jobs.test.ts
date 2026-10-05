@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +11,7 @@ import { createModels } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../src/host.ts";
-import { jobsFile, openJobRegistry, processStartTicks, type JobRecord } from "../src/jobs.ts";
+import { JobRegistry, jobsFile, openJobRegistry, processStartTicks, type JobRecord } from "../src/jobs.ts";
 import { createCodingTools } from "../src/tools.ts";
 
 function directory(t: test.TestContext): string {
@@ -431,4 +431,221 @@ test("corrupt jobs.json is renamed and does not block host startup", async (t) =
   assert.ok(shape);
   assert.match(shape, /^jobs\.json\.corrupt-\d+(?:-\d+)?$/);
   assert.equal(readFileSync(join(runtime, shape), "utf8"), JSON.stringify({ jobs: 1 }));
+});
+
+test("two processes creating jobs do not drop each other's entries", { timeout: 60_000 }, async (t) => {
+  const root = directory(t);
+  const repo = fileURLToPath(new URL("../../..", import.meta.url));
+  const jobsHref = new URL("../src/jobs.ts", import.meta.url).href;
+  let stderr = "";
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+    import { openJobRegistry } from ${JSON.stringify(jobsHref)};
+    const cwd = process.env.JOBS_CWD;
+    if (!cwd) throw new Error("missing cwd");
+    const jobs = openJobRegistry(cwd);
+    const ids = [];
+    for (let i = 0; i < 20; i += 1) ids.push(jobs.start("true"));
+    process.stdout.write(JSON.stringify({ ids }) + "\\n");
+    setInterval(() => undefined, 1_000);
+  `], {
+    cwd: repo,
+    env: { ...process.env, JOBS_CWD: root },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  const reported = new Promise<string>((resolve, reject) => {
+    let buf = "";
+    const timer = setTimeout(() => reject(new Error(`peer did not finish\n${stderr}`)), 40_000);
+    const onExit = (code: number | null) => {
+      clearTimeout(timer);
+      reject(new Error(`peer exited ${code}\n${stderr}`));
+    };
+    child.once("exit", onExit);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      resolve(buf.slice(0, nl));
+    });
+  });
+  t.after(() => child.kill("SIGKILL"));
+  const jobs = openJobRegistry(root);
+  t.after(() => jobs.close());
+  const mine: string[] = [];
+  for (let i = 0; i < 20; i += 1) mine.push(jobs.start("true"));
+  const line = await reported;
+  const parsed: unknown = JSON.parse(line);
+  assert.ok(parsed && typeof parsed === "object" && "ids" in parsed && Array.isArray(parsed.ids));
+  const theirs = parsed.ids.filter((id: unknown): id is string => typeof id === "string");
+  assert.equal(theirs.length, 20);
+  const expected = new Set([...mine, ...theirs]);
+  assert.equal(expected.size, 40);
+  await until(() => {
+    try {
+      const ids = new Set(readJobs(root).map((job) => job.id));
+      for (const id of expected) if (!ids.has(id)) return false;
+      return ids.size === 40;
+    } catch {
+      return false;
+    }
+  }, "jobs.json did not keep all 40 entries");
+  assert.equal(readJobs(root).length, 40);
+  await until(() => !existsSync(`${jobsFile(root)}.lock`), "jobs.json.lock was not released");
+});
+
+test("persist keeps every running job and only the newest 50 finished jobs", { timeout: 20_000 }, async (t) => {
+  const root = directory(t);
+  const owner = { pid: process.pid, startTicks: processStartTicks(process.pid) };
+  const jobs: JobRecord[] = [];
+  for (let i = 0; i < 2; i += 1) {
+    jobs.push({
+      id: `keep-${i}`,
+      status: "running",
+      summary: `keep-${i}`,
+      command: "sleep 30",
+      pid: null,
+      startTicks: null,
+      code: null,
+      stdout: "",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      owner,
+    });
+  }
+  const finishedStatus = ["exited", "killed", "lost"] as const;
+  for (let i = 0; i < 60; i += 1) {
+    const status = finishedStatus[i % 3] ?? "exited";
+    jobs.push({
+      id: `old-${i}`,
+      status,
+      summary: `old-${i}`,
+      command: "true",
+      pid: null,
+      startTicks: null,
+      code: status === "exited" ? 0 : null,
+      stdout: "",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      owner: null,
+    });
+  }
+  mkdirSync(join(root, ".amazme", "runtime"), { recursive: true });
+  writeFileSync(jobsFile(root), JSON.stringify({ next: 1, jobs }));
+  const registry = openJobRegistry(root);
+  t.after(() => registry.close());
+  const id = registry.start("sleep 30");
+  const rows = readJobs(root);
+  const ids = rows.map((job) => job.id);
+  assert.equal(rows.filter((job) => job.status === "running").length, 3);
+  assert.ok(ids.includes("keep-0") && ids.includes("keep-1") && ids.includes(id));
+  for (let i = 0; i < 10; i += 1) assert.equal(ids.includes(`old-${i}`), false);
+  for (let i = 10; i < 60; i += 1) assert.equal(ids.includes(`old-${i}`), true);
+  assert.equal(rows.length, 53);
+});
+
+test("an idle output tick does not rewrite jobs.json when the tail is unchanged", { timeout: 20_000 }, async (t) => {
+  const root = directory(t);
+  const marker = join(root, "marker");
+  const script = `const fs=require("fs");process.stdout.write("a".repeat(40000));fs.writeFileSync(${JSON.stringify(marker)},"1");setTimeout(()=>{process.stdout.write("a".repeat(2000));fs.writeFileSync(${JSON.stringify(marker)},"2");},1200);setInterval(()=>{},1000);`;
+  const jobs = openJobRegistry(root);
+  t.after(() => jobs.close());
+  const id = jobs.start(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`);
+  const file = jobsFile(root);
+  await until(() => {
+    if (!existsSync(marker) || readFileSync(marker, "utf8") !== "1") return false;
+    try {
+      const raw = readFileSync(file, "utf8");
+      return raw.includes(id) && raw.includes("a".repeat(64)) && raw.includes('"stdoutTruncated":true');
+    } catch {
+      return false;
+    }
+  }, "first output was not stored");
+  assert.equal(readFileSync(marker, "utf8"), "1");
+  const written = statSync(file).mtimeMs;
+  await until(() => existsSync(marker) && readFileSync(marker, "utf8") === "2", "second output did not run");
+  await delay(500);
+  assert.equal(statSync(file).mtimeMs, written);
+  assert.equal(readJobs(root).find((job) => job.id === id)?.status, "running");
+});
+
+test("a live lock holder does not crash the host or leave an orphan job", { timeout: 40_000 }, async (t) => {
+  const root = directory(t);
+  const repo = fileURLToPath(new URL("../../..", import.meta.url));
+  const jobsHref = new URL("../src/jobs.ts", import.meta.url).href;
+  const phase = join(root, "phase");
+  const go = join(root, "go");
+  const orphan = join(root, "orphan");
+  const script = `const fs=require("fs");process.stdout.write("hello-first\\n");fs.writeFileSync(${JSON.stringify(phase)},"1");const end=Date.now()+20000;while(!fs.existsSync(${JSON.stringify(go)})&&Date.now()<end){Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40);}process.stdout.write("hello-second\\n");setInterval(()=>{},1000);`;
+  const jobs = openJobRegistry(root);
+  t.after(() => jobs.close());
+  const id = jobs.start(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`);
+  const file = jobsFile(root);
+  await until(() => {
+    if (!existsSync(phase) || readFileSync(phase, "utf8") !== "1") return false;
+    try { return readFileSync(file, "utf8").includes("hello-first"); } catch { return false; }
+  }, "first output was not stored");
+
+  let stderr = "";
+  const holder = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+    import { closeSync, constants, openSync, unlinkSync, writeSync } from "node:fs";
+    import { processStartTicks } from ${JSON.stringify(jobsHref)};
+    const lock = process.env.LOCK_PATH;
+    if (!lock) throw new Error("missing lock");
+    const fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    writeSync(fd, JSON.stringify({ pid: process.pid, startTicks: processStartTicks(process.pid) }));
+    closeSync(fd);
+    process.stdout.write("held\\n");
+    const release = () => {
+      try { unlinkSync(lock); } catch { /* already gone */ }
+      process.exit(0);
+    };
+    process.on("SIGTERM", release);
+    setTimeout(release, 12_000);
+  `], {
+    cwd: repo,
+    env: { ...process.env, LOCK_PATH: `${file}.lock` },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  holder.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  t.after(() => holder.kill("SIGTERM"));
+  await new Promise<void>((resolve, reject) => {
+    let buf = "";
+    const timer = setTimeout(() => reject(new Error(`lock holder did not start\n${stderr}`)), 10_000);
+    holder.stdout?.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      if (!buf.includes("held\n")) return;
+      clearTimeout(timer);
+      resolve();
+    });
+    holder.once("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`lock holder exited ${code}\n${stderr}`));
+    });
+  });
+
+  writeFileSync(go, "1");
+  await until(() => jobs.output(id)?.includes("hello-second") ?? false, "second output did not reach memory");
+  assert.throws(
+    () => jobs.start(`echo orphan >> ${JSON.stringify(orphan)}; sleep 30`),
+    /jobs\.json\.lock busy/,
+  );
+  assert.equal(existsSync(orphan), false);
+  assert.equal(readJobs(root).some((job) => job.summary.includes("orphan")), false);
+  const skipped = JobRegistry.open(root);
+  t.after(() => skipped.close());
+  const deadline = Date.now() + 15_000;
+  while (!readFileSync(file, "utf8").includes("hello-second")) {
+    if (Date.now() > deadline) throw new Error("later persist did not store the output");
+    await delay(50);
+  }
+  assert.equal(readJobs(root).find((job) => job.id === id)?.status, "running");
+  assert.equal(existsSync(orphan), false);
 });
