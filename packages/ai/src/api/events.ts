@@ -51,7 +51,7 @@ export interface AssistantAccumulator {
   tool(key: string, id: string | undefined, name: string | undefined, argumentDelta: string, replace?: boolean, thoughtSignature?: string): void;
   usage(next: Usage): void;
   finish(stopReason: StopReason, overflow?: boolean): void;
-  fail(stopReason: "error" | "aborted", message: string, retryable?: boolean, overflow?: boolean): void;
+  fail(stopReason: "error" | "aborted", message: string, retryable?: boolean, overflow?: boolean, retryAfterMs?: number): void;
 }
 
 export function createAccumulator(stream: AssistantEventStream, model: Model): AssistantAccumulator {
@@ -208,7 +208,7 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
       if (overflow) message.overflow = true;
       stream.push({ type: "done", reason, message });
     },
-    fail(stopReason, message, retryable = false, overflow = false) {
+    fail(stopReason, message, retryable = false, overflow = false, retryAfterMs?: number) {
       if (closed) return;
       begin();
       closed = true;
@@ -216,6 +216,7 @@ export function createAccumulator(stream: AssistantEventStream, model: Model): A
       failed.errorMessage = message;
       if (retryable) failed.retryable = true;
       if (overflow) failed.overflow = true;
+      if (retryAfterMs !== undefined) failed.retryAfterMs = retryAfterMs;
       stream.push({ type: "error", error: failed });
     },
   };

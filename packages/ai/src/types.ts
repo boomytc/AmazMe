@@ -155,6 +155,11 @@ export interface AssistantMessage {
   errorMessage?: string;
   retryable?: boolean;
   overflow?: boolean;
+  /**
+   * Milliseconds to wait, taken from an HTTP error's Retry-After.
+   * Clamped to 0..120_000. Omitted when the header is missing or neither delay-seconds nor an HTTP-date.
+   */
+  retryAfterMs?: number;
   timestamp: number;
 }
 
