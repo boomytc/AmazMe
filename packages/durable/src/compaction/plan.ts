@@ -8,7 +8,7 @@ import {
 } from "@amazme/ai";
 import { summaryOutputLimit } from "./policy.ts";
 import { selectTail, transcriptMessage, type TailCut, type TranscriptEntry } from "./select.ts";
-import { SUMMARY_SYSTEM_PROMPT, summaryTranscript } from "./serialize.ts";
+import { SUMMARY_SECTION_HEADINGS, SUMMARY_SYSTEM_PROMPT, summaryTranscript } from "./serialize.ts";
 
 const SHRINK_LIMITS = [Number.POSITIVE_INFINITY, 4_000, 1_000, 240, 80, 0];
 
@@ -116,12 +116,20 @@ export function continuationContext(
   };
 }
 
-/** A summary can be published only when the model stopped with non-empty text and no tool call. */
+/** A stopped reply shorter than this is not a summary. */
+export const SUMMARY_MIN_CHARS = 80;
+
+const CONVERSATION_OPEN = "<conversation>";
+const CONVERSATION_CLOSE = "</conversation>";
+
+/** A summary can be published only when the model stopped with sectioned text and no tool call. */
 export function acceptedSummary(message: AssistantMessage): string | undefined {
   if (message.stopReason !== "stop") return undefined;
   if (message.content.some((block) => block.type === "toolCall")) return undefined;
-  const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("").trim();
-  return text.length > 0 ? text : undefined;
+  const text = summaryText(message);
+  if (text.length < SUMMARY_MIN_CHARS) return undefined;
+  if (!SUMMARY_SECTION_HEADINGS.some((heading) => text.includes(heading))) return undefined;
+  return text;
 }
 
 export function summaryRejection(message: AssistantMessage): string {
@@ -129,7 +137,14 @@ export function summaryRejection(message: AssistantMessage): string {
   if (message.content.some((block) => block.type === "toolCall")) return "summary called a tool";
   if (message.stopReason === "error") return message.errorMessage ?? "summary failed";
   if (message.stopReason === "aborted") return message.errorMessage ?? "summary aborted";
-  return "summary was empty";
+  const text = summaryText(message);
+  if (text.length === 0) return "summary was empty";
+  if (text.length < SUMMARY_MIN_CHARS) return "summary was too short";
+  return "summary had no section heading";
+}
+
+function summaryText(message: AssistantMessage): string {
+  return message.content.filter((block) => block.type === "text").map((block) => block.text).join("").trim();
 }
 
 function selectFittingTail(
@@ -206,9 +221,12 @@ function shrinkToFit(
 }
 
 function summaryContext(transcript: string): Context {
+  const body = transcript
+    .replaceAll(CONVERSATION_CLOSE, "&lt;/conversation&gt;")
+    .replaceAll(CONVERSATION_OPEN, "&lt;conversation&gt;");
   return {
     systemPrompt: SUMMARY_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: transcript, timestamp: 0 }],
+    messages: [{ role: "user", content: `${CONVERSATION_OPEN}\n${body}\n${CONVERSATION_CLOSE}`, timestamp: 0 }],
     tools: [],
   };
 }

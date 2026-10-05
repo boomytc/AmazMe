@@ -20,6 +20,7 @@ import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { summaryTranscript } from "../src/compaction/serialize.ts";
+import { validSummary } from "./valid-summary.ts";
 
 const secret = "SU1HU0VDUkVUREFUQQ==";
 
@@ -186,7 +187,7 @@ test("server overflow compacts through chat completions and continues with the c
       () => sse("kept the file"),
       () => toolSse(),
       () => overflow(),
-      () => sse("folded the old goal"),
+      () => sse(validSummary("folded the old goal")),
       () => sse("continued"),
     ],
     tools: [workTool(async () => {
@@ -312,7 +313,7 @@ test("a huge old tool result is shortened in the summary request and kept intact
   const blob = "T".repeat(20_000);
   const session = wire({
     model: model({ contextWindow: 2_000, maxTokens: 200, input: ["text"] }),
-    responses: [() => toolSse(), () => sse("folded tool"), () => sse("continued")],
+    responses: [() => toolSse(), () => sse(validSummary("folded tool")), () => sse("continued")],
     tools: [workTool(async () => {
       await session.runtime.lane().steer("CURRENT_KEEP");
       return { content: [{ type: "text", text: blob }] };
@@ -345,7 +346,7 @@ test("a huge old tool result is shortened in the summary request and kept intact
 test("an unusable summary fails without publishing it or moving the source tip", async () => {
   const session = wire({
     model: model({ contextWindow: 2_000, maxTokens: 200, input: ["text"] }),
-    responses: [() => sse("short"), () => sse("S".repeat(20_000))],
+    responses: [() => sse("short"), () => sse(validSummary("S".repeat(20_000)))],
     compaction: { enabled: true, maxTokens: 30 },
     maxTokens: 32,
   });
@@ -397,7 +398,7 @@ for (const boundary of ["finish", "navigation"] as const) {
   test(`${boundary} rejects an oversized summary while retaining the source branch and usage`, async () => {
     const session = wire({
       model: model({ contextWindow: 2_000, maxTokens: 200, input: ["text"] }),
-      responses: [() => sse("seeded"), () => sse("S".repeat(20_000))],
+      responses: [() => sse("seeded"), () => sse(validSummary("S".repeat(20_000)))],
       compaction: { enabled: false, maxTokens: 80_000 },
     });
     try {
@@ -431,7 +432,7 @@ test("manual compaction merges an older summary and a second compact with nothin
         assert.equal(context.tools?.length ?? 0, 0);
         assert.equal(options.thinkingLevel, "off");
         assert.ok((options.maxTokens ?? 0) > 0);
-        return fauxAssistant(state.callCount === 2 ? "first fold" : "second fold");
+        return fauxAssistant(state.callCount === 2 ? validSummary("first fold") : validSummary("second fold"));
       }
       return fauxAssistant(state.callCount === 1 ? "seeded" : "answered");
     },
@@ -555,7 +556,7 @@ test("manual compaction keeps a later unanswered user and summarizes the earlier
     respond: (context, _options, state) => {
       seen.push(context.messages.map((message) => messageText(message)).join("\n"));
       if (state.callCount === 2) return fauxAssistant("nope", { stopReason: "error", errorMessage: "model error" });
-      if (state.callCount === 3) return fauxAssistant("folded the seed");
+      if (state.callCount === 3) return fauxAssistant(validSummary("folded the seed"));
       return fauxAssistant("answered");
     },
   });
@@ -579,7 +580,7 @@ test("manual compaction keeps a later unanswered user and summarizes the earlier
     assert.equal((seen[2] ?? "").includes("PENDING_EXACT"), false);
     const entries = await lane.entries();
     const summary = entries.find((entry) => entry.payload.type === "compaction");
-    assert.equal(summary?.payload.type === "compaction" ? summary.payload.summary : "", "folded the seed");
+    assert.equal(summary?.payload.type === "compaction" ? summary.payload.summary : "", validSummary("folded the seed"));
     const tip = entries.at(-1);
     assert.equal(tip?.id, (await lane.inspect()).tipId);
     assert.equal(tip?.parentId, summary?.id ?? null);
@@ -596,7 +597,7 @@ test("manual compaction keeps a later unanswered user and summarizes the earlier
 test("navigation summary attaches to the target, including null, without copying the left branch", async () => {
   for (const targetNull of [false, true]) {
     const provider = fauxProvider({
-      respond: (_context, _options, state) => fauxAssistant(state.callCount === 1 ? "seeded" : "left the branch"),
+      respond: (_context, _options, state) => fauxAssistant(state.callCount === 1 ? "seeded" : validSummary("left the branch")),
     });
     const models = createModels();
     models.setProvider(provider);
@@ -724,7 +725,7 @@ test("a steer arriving during summary is delivered once on the next request", as
         assert.equal(context.tools?.length ?? 0, 0);
         assert.equal(options.thinkingLevel, "off");
         await lane?.steer("DURING_SUMMARY");
-        return fauxAssistant("folded");
+        return fauxAssistant(validSummary("folded"));
       }
       return fauxAssistant("next");
     },
@@ -757,7 +758,7 @@ test("memory and jsonl keep the same compacted chain", async () => {
   async function project(storage: Storage): Promise<Array<{ kind: string; text: string }>> {
     const provider = fauxProvider({
       respond: (_context, _options, state) => {
-        if (state.callCount === 2) return fauxAssistant("folded");
+        if (state.callCount === 2) return fauxAssistant(validSummary("folded"));
         return fauxAssistant(state.callCount === 1 ? "short" : "answer");
       },
     });

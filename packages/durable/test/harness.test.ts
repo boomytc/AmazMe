@@ -15,6 +15,7 @@ import {
   type Provider,
 } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
+import { validSummary } from "./valid-summary.ts";
 
 function harnessText(message: HarnessMessage): string {
   return message.role === "custom" ? message.content : messageText(message);
@@ -436,7 +437,7 @@ test("overflow compacts once and a second overflow fails the run", async () => {
         assert.equal(context.tools?.length ?? 0, 0);
         assert.equal(options.thinkingLevel, "off");
         assert.ok((options.maxTokens ?? 0) > 0);
-        return fauxAssistant("folded summary");
+        return fauxAssistant(validSummary("folded summary"));
       }
       return fauxAssistant("", { stopReason: "error", overflow: true, errorMessage: "context length" });
     },
@@ -466,7 +467,7 @@ test("threshold compaction keeps the current input and summarizes older context"
         assert.equal(options.thinkingLevel, "off");
         assert.equal(context.tools?.length ?? 0, 0);
         assert.ok((options.maxTokens ?? 0) > 0);
-        return fauxAssistant("folded");
+        return fauxAssistant(validSummary("folded"));
       }
       return fauxAssistant(state.callCount === 1 ? "short" : "answer");
     },

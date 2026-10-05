@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createModels, messageText } from "@amazme/ai";
 import { fauxAssistant, fauxProvider } from "@amazme/ai/testing";
+import { validSummary } from "./valid-summary.ts";
 import { AgentHarness, type Write } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
@@ -17,7 +18,11 @@ class EffectFailureStorage extends MemoryStorage {
 for (const effect of ["frame", "assistant", "summary"] as const) {
   test(`${effect} persistence failure recovers on the same harness without another model call`, async () => {
     const storage = new EffectFailureStorage();
-    const provider = fauxProvider({ respond: () => fauxAssistant("received content across several frames") });
+    const provider = fauxProvider({
+      respond: (_context, _options, state) => fauxAssistant(
+        effect === "summary" && state.callCount > 1 ? validSummary("received") : "received content across several frames",
+      ),
+    });
     const models = createModels();
     models.setProvider(provider);
     const runtime = new AgentHarness(storage, { models, model: { provider: "faux", modelId: "faux-1" } });

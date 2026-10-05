@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AgentHook } from "@amazme/agent";
 import { createModels, messageText, type Message } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/testing";
+import { validSummary } from "./valid-summary.ts";
 import { AgentHarness, type AgentLane, type Entry, type HarnessTool, type Write } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
@@ -371,7 +372,7 @@ test("abandon while the yielded input waits for storage does not publish or adva
 test("summary and navigation do not call onYield", async () => {
   let watch = false;
   let watched = 0;
-  const { provider, models } = modelsFor(() => fauxAssistant("seeded"));
+  const { provider, models } = modelsFor((_context, _options, state) => fauxAssistant(state.callCount === 1 ? "seeded" : validSummary("seeded")));
   const runtime = new AgentHarness(new MemoryStorage(), {
     models,
     model: { provider: "faux", modelId: "faux-1" },
