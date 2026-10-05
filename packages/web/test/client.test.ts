@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Script, createContext } from "node:vm";
 import test from "node:test";
 import { createModels } from "@amazme/ai";
-import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/testing";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { RuntimeClient } from "@amazme/runtime-service/client";

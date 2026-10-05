@@ -8,7 +8,7 @@ import {
   reduceFrames,
   type AssistantEvent,
 } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/testing";
 import { checkAssistantStream } from "@amazme/ai/testing";
 
 async function collect(respond: FauxResponder) {

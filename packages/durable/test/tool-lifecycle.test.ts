@@ -3,7 +3,7 @@ import test from "node:test";
 import { AgentHarness, type HarnessTool, type Write } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 
 class CheckpointFaultStorage extends MemoryStorage {
   protected override persist(writes: Write[]): void {

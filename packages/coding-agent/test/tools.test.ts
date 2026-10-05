@@ -8,7 +8,7 @@ import { Agent } from "@amazme/agent";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../src/host.ts";
 import { createBashTool, createCodingTools } from "../src/tools.ts";

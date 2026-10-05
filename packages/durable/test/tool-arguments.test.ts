@@ -3,7 +3,7 @@ import test from "node:test";
 import { AgentHarness, type HarnessTool } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { createModels, messageText, type JsonSchema } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 
 const nested: JsonSchema = {
   type: "object",

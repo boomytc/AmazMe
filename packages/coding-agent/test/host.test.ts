@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Client, RemoteError } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { createModels } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, runtimeFile, startCodingHost } from "../src/host.ts";
 
@@ -194,7 +194,7 @@ test("a killed host does not replay bash when the runtime is opened again", { ti
   const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
     import { startCodingHost } from ${JSON.stringify(hostModule)};
     import { createModels } from "@amazme/ai";
-    import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+    import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
     const marker = process.env.HOST_MARKER;
     const command = "echo $$ >> " + JSON.stringify(marker) + "; sleep 60";
     const models = createModels();

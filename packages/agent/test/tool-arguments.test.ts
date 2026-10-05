@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Agent, type AgentTool } from "@amazme/agent";
 import { createModels, messageText, type JsonSchema } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 
 const nested: JsonSchema = {
   type: "object",

@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createModels, messageText, type Context } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxProvider } from "@amazme/ai/testing";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";

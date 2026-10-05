@@ -4,7 +4,7 @@ import { AgentHarness, type Apply, type HarnessTool, type Result, type StorageVi
 import { waitUntil } from "../src/harness.ts";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 
 class RetryCloseStorage extends MemoryStorage {
   onRetry?: () => void;

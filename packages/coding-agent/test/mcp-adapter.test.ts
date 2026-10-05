@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Agent, type AgentTool } from "@amazme/agent";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/testing";
 import {
   JSON_RPC_ERROR_CODES,
   type JsonRpcMessage,

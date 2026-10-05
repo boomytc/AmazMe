@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createModels } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxProvider } from "@amazme/ai/testing";
 import { AgentHarness, type StorageView } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 

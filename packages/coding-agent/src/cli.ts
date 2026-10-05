@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 import { createModels, type LoginInteraction } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxProvider } from "@amazme/ai/testing";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { FileCredentialStore } from "./credentials.ts";
 import { loginProvider } from "./login.ts";

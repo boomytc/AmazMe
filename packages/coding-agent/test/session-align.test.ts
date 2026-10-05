@@ -6,7 +6,7 @@ import test from "node:test";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { createModels } from "@amazme/ai";
-import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/testing";
 import {
   activateProject,
   cycleModels,

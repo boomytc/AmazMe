@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Agent, type AgentTool, userMessage } from "@amazme/agent";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/testing";
 
 function echoTool(options: { terminate?: boolean; delayMs?: number; onRun?: (name: string) => void; name?: string } = {}): AgentTool {
   const name = options.name ?? "echo";
