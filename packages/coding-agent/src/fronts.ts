@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createModels, messageText, type Context } from "@amazme/ai";
@@ -9,6 +10,7 @@ import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { finishDrive } from "@amazme/tui";
+import { waitForSecondInterrupt } from "./interrupt.ts";
 import { FileCredentialStore } from "./credentials.ts";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost, type CodingHost } from "./host.ts";
 
@@ -89,7 +91,6 @@ export function createCodingFronts(host: CodingHost): CodingFronts {
       const live = windows.find((child) => child.exitCode === null && child.signalCode === null);
       if (live) return "图形窗口已附着当前宿主";
       const child = spawn(process.execPath, guiLaunchArgs(host.socket), {
-        cwd: fileURLToPath(new URL("../../..", import.meta.url)),
         stdio: ["pipe", "pipe", "pipe"],
       });
       windows.push(child);
@@ -137,7 +138,7 @@ export function createCodingFronts(host: CodingHost): CodingFronts {
 
 /** Start the host and the loopback page. The process stays until SIGINT or SIGTERM. */
 export async function runOwnedWeb(options: FrontOptions): Promise<void> {
-  const signal = waitForSignal();
+  const signal = waitForSecondInterrupt();
   const host = await startWorkspaceHost(options);
   const fronts = createCodingFronts(host);
   try {
@@ -152,7 +153,7 @@ export async function runOwnedWeb(options: FrontOptions): Promise<void> {
 
 /** Start the host and the graphical client. Closing the client, or a signal, stops the host. */
 export async function runOwnedGui(options: FrontOptions): Promise<void> {
-  const signal = waitForSignal();
+  const signal = waitForSecondInterrupt();
   const host = await startWorkspaceHost(options);
   const { runGuiSession, statusText, tryOpenWindow } = await import("@amazme/gui");
   let lastDocument = "";
@@ -178,10 +179,10 @@ export async function runOwnedGui(options: FrontOptions): Promise<void> {
 }
 
 function guiLaunchArgs(socket: string): string[] {
-  const compiled = import.meta.url.endsWith(".js");
-  const script = fileURLToPath(new URL(compiled ? "./cli.js" : "./cli.ts", import.meta.url));
-  const prefix = compiled ? [script] : ["--import", "tsx", script];
-  return [...prefix, "gui", "--socket", socket];
+  const require = createRequire(import.meta.url);
+  const loader = require.resolve("tsx");
+  const script = fileURLToPath(new URL("./cli.ts", import.meta.url));
+  return ["--import", loader, script, "gui", "--socket", socket];
 }
 
 function reveal(url: string): void {
@@ -189,14 +190,6 @@ function reveal(url: string): void {
   const child = spawn("/usr/bin/open", [url], { stdio: "ignore", detached: true });
   child.once("error", () => undefined);
   child.unref();
-}
-
-function waitForSignal(): Promise<void> {
-  return new Promise((resolve) => {
-    const done = (): void => resolve();
-    process.once("SIGINT", done);
-    process.once("SIGTERM", done);
-  });
 }
 
 function stdinEnded(): Promise<void> {

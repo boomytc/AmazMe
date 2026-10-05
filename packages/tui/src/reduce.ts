@@ -58,13 +58,20 @@ export interface TuiState extends TuiWindow {
   thinking: string;
   directory: string;
   picker: Picker | null;
+  /** Empty idle Ctrl-C is armed. The next Ctrl-C quits. */
+  exitArmed: boolean;
 }
 
 export type TuiEffect =
   | { type: "submit"; text: string }
   | { type: "abort" }
   | { type: "slash"; command: SlashAction }
-  | { type: "pick"; kind: Picker["kind"]; id: string; subject?: string; secret?: string };
+  | { type: "pick"; kind: Picker["kind"]; id: string; subject?: string; secret?: string }
+  | { type: "quit" };
+
+/** Shown after the first Ctrl-C on an idle, empty prompt. */
+export const EXIT_HINT = "再按一次 Ctrl-C 退出";
+export const EXIT_WINDOW_MS = 1_500;
 
 export function emptyTui(active = "main"): TuiState {
   return {
@@ -86,6 +93,7 @@ export function emptyTui(active = "main"): TuiState {
     modelId: "",
     thinking: "",
     picker: null,
+    exitArmed: false,
   };
 }
 
@@ -120,7 +128,8 @@ function applyWindow(state: TuiState, window: TuiWindow): TuiState {
 }
 
 function applyKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffect | null } {
-  if (state.picker) return pickerKey(state, key);
+  if (key.type !== "ctrl-c") state = forgetExit(state);
+  if (state.picker) return pickerKey(forgetExit(state), key);
   if (key.type === "escape") {
     return { state: { ...state, focus: state.focus === "prompt" ? "scroll" : "prompt", notice: null }, effect: null };
   }
@@ -144,11 +153,17 @@ function applyKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffe
   if (key.type === "backspace") return { state: deleteBeforeCursor(state), effect: null };
   if (key.type === "enter") return acceptOrSubmit(state);
   if (key.type === "ctrl-c") {
-    if (state.busy) return { state: { ...state, notice: null }, effect: { type: "abort" } };
-    if (state.input.length > 0) return { state: { ...state, input: "", cursor: 0 }, effect: null };
-    return { state, effect: null };
+    if (state.busy) return { state: forgetExit(state), effect: { type: "abort" } };
+    if (state.input.length > 0) return { state: { ...forgetExit(state), input: "", cursor: 0 }, effect: null };
+    if (state.exitArmed) return { state: { ...state, exitArmed: false, notice: null }, effect: { type: "quit" } };
+    return { state: { ...state, exitArmed: true, notice: EXIT_HINT }, effect: null };
   }
   return { state, effect: null };
+}
+
+function forgetExit(state: TuiState): TuiState {
+  if (!state.exitArmed) return state;
+  return { ...state, exitArmed: false, notice: state.notice === EXIT_HINT ? null : state.notice };
 }
 
 function pickerKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffect | null } {

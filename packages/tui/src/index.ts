@@ -16,6 +16,8 @@ export {
 } from "./project.ts";
 export {
   emptyTui,
+  EXIT_HINT,
+  EXIT_WINDOW_MS,
   reduceTui,
   renderTui,
   type TuiEffect,

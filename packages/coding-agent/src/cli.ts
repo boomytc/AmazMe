@@ -40,6 +40,7 @@ function parseArgs(argv: string[]): Args {
       console.log("amazme --web [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme --gui [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme --jsonl    reads one {\"type\":\"prompt\",\"text\":\"...\"} line from stdin");
+      console.log("amazme update");
       console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
       console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
       console.log("amazme attach --socket path");
@@ -124,20 +125,9 @@ async function runServe(argv: string[]): Promise<void> {
   const { startCodingHost } = await import("./host.ts");
   const host = await startCodingHost({ cwd, socket, provider, model, models: loadModels(provider) });
   process.stdout.write(`${JSON.stringify({ socket: host.socket, serverId: host.serverId, runtimeId: host.runtimeId, lane: host.lane })}\n`);
-  let stopping = false;
-  const shutdown = () => {
-    const mode = stopping ? "abort" : "drain";
-    stopping = true;
-    void host.close(mode).then(() => {
-      process.exit(0);
-    }, (error: unknown) => {
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
-    });
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  await new Promise<void>(() => undefined);
+  const { waitForSecondInterrupt } = await import("./interrupt.ts");
+  await waitForSecondInterrupt();
+  await host.close();
 }
 
 async function runAttach(argv: string[]): Promise<void> {
@@ -172,21 +162,17 @@ async function runBridge(argv: string[]): Promise<void> {
   const { startCodingBridge } = await import("./bridge.ts");
   const bridge = await startCodingBridge({ socket, port });
   process.stdout.write(`${JSON.stringify({ url: bridge.url })}\n`);
-  let closed = false;
-  const shutdown = () => {
-    if (closed) return;
-    closed = true;
-    void bridge.close().then(() => process.exit(0), (error: unknown) => {
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
-    });
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  await new Promise<void>(() => undefined);
+  const { waitForSecondInterrupt } = await import("./interrupt.ts");
+  await waitForSecondInterrupt();
+  await bridge.close();
 }
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "update") {
+    const { installationRoot, updateInstallation } = await import("./update.ts");
+    process.stdout.write(`${await updateInstallation(installationRoot())}\n`);
+    return;
+  }
   if (process.argv[2] === "login") {
     await runLogin(process.argv.slice(3));
     return;

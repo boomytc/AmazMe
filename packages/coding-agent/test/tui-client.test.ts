@@ -74,6 +74,7 @@ test("abort, scroll, prompt focus, and slash commands", () => {
   let state = reduceTui(emptyTui(), { type: "window", window: window({ entries, busy: true }) }).state;
   const abort = reduceTui(state, { type: "key", key: { type: "ctrl-c" } });
   assert.deepEqual(abort.effect, { type: "abort" });
+  assert.equal(abort.state.exitArmed, false);
   state = reduceTui(abort.state, { type: "key", key: { type: "escape" } }).state;
   assert.equal(state.focus, "scroll");
   state = reduceTui(state, { type: "key", key: { type: "down" } }).state;
@@ -319,6 +320,22 @@ function messageText(message: { content?: unknown }): string {
 
 test("arrow keys decode as entry movement", () => {
   assert.deepEqual(decodeKeys("\u001b[A\u001b[B").keys, [{ type: "up" }, { type: "down" }]);
+});
+
+test("an idle empty prompt quits on the second ctrl-c", () => {
+  const armed = reduceTui(emptyTui(), { type: "key", key: { type: "ctrl-c" } });
+  assert.equal(armed.effect, null);
+  assert.equal(armed.state.exitArmed, true);
+  assert.match(armed.state.notice ?? "", /再按一次 Ctrl-C 退出/);
+  const typed = reduceTui(armed.state, { type: "key", key: { type: "char", value: "a" } });
+  assert.equal(typed.state.exitArmed, false);
+  assert.equal(typed.state.input, "a");
+  const quit = reduceTui(armed.state, { type: "key", key: { type: "ctrl-c" } });
+  assert.deepEqual(quit.effect, { type: "quit" });
+  const cleared = reduceTui({ ...emptyTui(), input: "draft", cursor: 5 }, { type: "key", key: { type: "ctrl-c" } });
+  assert.equal(cleared.effect, null);
+  assert.equal(cleared.state.input, "");
+  assert.equal(cleared.state.exitArmed, false);
 });
 
 function typeLine(start: ReturnType<typeof emptyTui>, text: string) {

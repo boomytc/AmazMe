@@ -16,7 +16,7 @@
     "@amazme/web": "0.1.0"
   },
   "bin": {
-    "amazme": "./dist/cli.js"
+    "amazme": "./bin/amazme.js"
   },
   "exports": {
     ".": {

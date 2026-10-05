@@ -7,6 +7,7 @@ import { appendSkillText } from "../skills.ts";
 import { codingSystemPrompt, createCodingTools } from "../tools.ts";
 import { activateProject, presentFullscreen, presentHost, type HostAttach } from "@amazme/tui";
 import { codingModels, createCodingFronts, startWorkspaceHost } from "../fronts.ts";
+import { waitForSecondInterrupt } from "../interrupt.ts";
 import { formatHandback, loginCatalog, loginProvider, logoutProvider, saveApiKey } from "../login.ts";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID } from "../host.ts";
 
@@ -71,11 +72,7 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
     return;
   }
   process.stdout.write(`${fronts.runningLine()}\n`);
-  await new Promise<void>((resolve) => {
-    const done = (): void => resolve();
-    process.once("SIGINT", done);
-    process.once("SIGTERM", done);
-  });
+  await waitForSecondInterrupt();
   await fronts.stop();
 }
 

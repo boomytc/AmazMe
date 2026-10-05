@@ -41,6 +41,8 @@ test("amazme --web serves the host page and a signal stops it", { timeout: 20_00
     const notice = await again.json() as { notice: string | null };
     assert.match(notice.notice ?? "", /网页已在当前宿主/);
     child.kill("SIGINT");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    child.kill("SIGINT");
     await until(() => child.exitCode !== null || child.signalCode !== null, () => stderr);
     await assert.rejects(() => fetch(`${url}view`));
   } finally {

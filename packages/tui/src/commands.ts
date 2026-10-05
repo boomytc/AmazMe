@@ -81,7 +81,7 @@ export function slashMatches(input: string): SlashListing[] {
 
 const HOTKEYS = [
   "Enter 提交",
-  "Ctrl-C 忙则中止，有输入则清空",
+  "Ctrl-C 忙则中止，有输入则清空，空闲时再按一次退出",
   "Ctrl-D 空闲且输入为空时离开全屏",
   "Esc 在输入和滚动之间切换",
   "滚动时 ↑↓ 移动条目，PgUp/PgDn 移动轮次，i 回到输入",

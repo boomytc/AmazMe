@@ -8,7 +8,7 @@ import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { scopedModels } from "./project.ts";
 import { KeyDecoder } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
-import { emptyTui, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
+import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
 
 export { finishDrive } from "./commands.ts";
 
@@ -133,9 +133,20 @@ export async function presentHost(
   };
   stdout.on("resize", paint);
   await rememberSettings();
+  let exitTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleExitArm = (): void => {
+    if (exitTimer) clearTimeout(exitTimer);
+    if (!state.exitArmed) return;
+    exitTimer = setTimeout(() => {
+      if (!state.exitArmed) return;
+      state = { ...state, exitArmed: false, notice: state.notice === EXIT_HINT ? null : state.notice };
+      paint();
+    }, EXIT_WINDOW_MS);
+  };
   const restore = (): void => {
     if (restored) return;
     restored = true;
+    if (exitTimer) clearTimeout(exitTimer);
     stdin.off("data", onData);
     stdout.off("resize", paint);
     if (stdin.isRaw) stdin.setRawMode(false);
@@ -152,6 +163,7 @@ export async function presentHost(
       }
       const reduced = reduceTui(state, { type: "key", key });
       state = reduced.state;
+      scheduleExitArm();
       paint();
       if (reduced.effect) {
         void apply(reduced.effect).catch((error: unknown) => {
@@ -349,6 +361,10 @@ export async function presentHost(
     paint();
   };
   const apply = async (effect: TuiEffect): Promise<void> => {
+    if (effect.type === "quit") {
+      restore();
+      return;
+    }
     if (effect.type === "submit") await lane.submit(effect.text);
     else if (effect.type === "abort") await lane.abort();
     else if (effect.type === "pick") await applyPick(effect);
