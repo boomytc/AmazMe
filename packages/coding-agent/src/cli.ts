@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createModels, type LoginInteraction } from "@amazme/ai";
+import { createModels, type LoginInteraction, type Models } from "@amazme/ai";
+import { requireRouterKeys } from "./settings.ts";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { FileCredentialStore } from "./credentials.ts";
 import { codingModels } from "./fronts.ts";
@@ -225,13 +226,21 @@ function loadModels(providerId: string) {
   return models;
 }
 
+type ReadyModels = Pick<Models, "getModel" | "getAuth" | "getProvider">;
+
 /** A front may open only after the selected provider has a key. Login stays outside this check. */
-async function requireConfigured(models: ReturnType<typeof loadModels>, providerId: string, modelId: string): Promise<void> {
+async function requireConfigured(models: ReadyModels, providerId: string, modelId: string): Promise<void> {
   const model = models.getModel(providerId, modelId);
   if (!model) throw new Error(`unknown model ${providerId}/${modelId}`);
   if (await models.getAuth(model)) return;
   const env = models.getProvider(providerId)?.auth.apiKey?.env;
   throw new Error(`${providerId} is not configured: ${env ? `set ${env} or run amazme login` : "run amazme login"}`);
+}
+
+/** The selected model and, when routing is on, strong and cheap. An unset router adds no check and no classifier call. */
+async function requireReady(models: ReadyModels, providerId: string, modelId: string, cwd: string): Promise<void> {
+  await requireConfigured(models, providerId, modelId);
+  await requireRouterKeys(models, cwd);
 }
 
 async function runServe(argv: string[]): Promise<void> {
@@ -256,7 +265,7 @@ async function runServe(argv: string[]): Promise<void> {
   }
   if (!socket) throw new Error("serve requires --socket");
   const models = loadModels(provider);
-  await requireConfigured(models, provider, model);
+  await requireReady(models, provider, model, cwd);
   const { startCodingHost } = await import("./host.ts");
   const { waitForSecondInterrupt } = await import("./interrupt.ts");
   const stopped = waitForSecondInterrupt();
@@ -341,7 +350,7 @@ async function main(): Promise<void> {
     if (args.web && args.gui) throw new Error("choose one of --web or --gui");
     const { runOwnedGui, runOwnedWeb } = await import("./fronts.ts");
     const front = { provider: args.provider, model: args.model, cwd: args.cwd, prompt: args.prompt };
-    await requireConfigured(codingModels(front), front.provider, front.model);
+    await requireReady(codingModels(front), front.provider, front.model, front.cwd);
     if (args.web) await runOwnedWeb(front);
     else await runOwnedGui(front);
     return;
@@ -356,7 +365,7 @@ async function main(): Promise<void> {
     args.json = true;
   }
   if (shouldOpenFullscreen(args.prompt, process.stdout.isTTY === true) && !args.continueSession && !args.json && !args.jsonl) {
-    await requireConfigured(codingModels({ provider: args.provider, model: args.model, cwd: args.cwd }), args.provider, args.model);
+    await requireReady(codingModels({ provider: args.provider, model: args.model, cwd: args.cwd }), args.provider, args.model, args.cwd);
     await runCodingFullscreen({ provider: args.provider, model: args.model, cwd: args.cwd });
     return;
   }
@@ -365,7 +374,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const models = loadModels(args.provider);
-  await requireConfigured(models, args.provider, args.model);
+  await requireReady(models, args.provider, args.model, args.cwd);
   await runPrint({
     cwd: args.cwd,
     provider: args.provider,

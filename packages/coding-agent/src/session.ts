@@ -33,7 +33,32 @@ export interface SessionSelectEntry {
   timestamp: string;
 }
 
-export type SessionEntry = SessionHeader | SessionMessageEntry | SessionCompactionEntry | SessionSelectEntry;
+/**
+ * One routing decision for this file. It is not on the branch, so model context does not include it.
+ * `usage.cost` is null when the classifier has no price list. That makes `cost()` null.
+ */
+export interface RouteUsage {
+  input: number;
+  output: number;
+  totalTokens: number;
+  cost: { input: number; output: number; total: number | null } | null;
+}
+
+export interface SessionRouteEntry {
+  type: "route";
+  timestamp: string;
+  provider: string;
+  modelId: string;
+  /** Choice label. Absent when classification failed. */
+  choice?: "standard" | "complex";
+  /** Probability of complex. Absent when classification failed. */
+  score?: number;
+  /** Why the current model was kept. */
+  reason?: string;
+  usage?: RouteUsage;
+}
+
+export type SessionEntry = SessionHeader | SessionMessageEntry | SessionCompactionEntry | SessionSelectEntry | SessionRouteEntry;
 export type TreeEntry = SessionMessageEntry | SessionCompactionEntry;
 
 /**
@@ -42,6 +67,7 @@ export type TreeEntry = SessionMessageEntry | SessionCompactionEntry;
  */
 export class SessionStore {
   private readonly entries = new Map<string, TreeEntry>();
+  private readonly routes: SessionRouteEntry[] = [];
   private tipId: string | null = null;
   readonly header: SessionHeader;
 
@@ -122,6 +148,49 @@ export class SessionStore {
     return compaction;
   }
 
+  appendRoute(route: Omit<SessionRouteEntry, "type" | "timestamp"> & { timestamp?: string }): SessionRouteEntry {
+    const entry: SessionRouteEntry = {
+      type: "route",
+      timestamp: route.timestamp ?? new Date().toISOString(),
+      provider: route.provider,
+      modelId: route.modelId,
+      ...(route.choice ? { choice: route.choice } : {}),
+      ...(route.score !== undefined ? { score: route.score } : {}),
+      ...(route.reason ? { reason: route.reason } : {}),
+      ...(route.usage ? { usage: route.usage } : {}),
+    };
+    this.write(entry);
+    return entry;
+  }
+
+  latestRoute(): SessionRouteEntry | undefined {
+    return this.routes[this.routes.length - 1];
+  }
+
+  /**
+   * Dollars for every assistant on any branch, plus classifier usage.
+   * Null when nothing was priced, or any classifier price is missing, so an unknown Jev price is not reported as zero.
+   */
+  cost(): { input: number; output: number; total: number } | null {
+    const parts: Array<{ input: number; output: number; total: number | null }> = [];
+    for (const entry of this.entries.values()) {
+      if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+      parts.push(entry.message.usage.cost);
+    }
+    for (const route of this.routes) {
+      if (!route.usage) continue;
+      if (route.usage.cost === null) return null;
+      parts.push(route.usage.cost);
+    }
+    if (parts.length === 0) return null;
+    if (parts.some((part) => part.total === null)) return null;
+    return {
+      input: parts.reduce((sum, part) => sum + part.input, 0),
+      output: parts.reduce((sum, part) => sum + part.output, 0),
+      total: parts.reduce((sum, part) => sum + (part.total ?? 0), 0),
+    };
+  }
+
   select(targetId: string | null): void {
     if (targetId !== null && !this.entries.has(targetId)) throw new Error(`unknown entry ${targetId}`);
     const record: SessionSelectEntry = { type: "select", targetId, timestamp: new Date().toISOString() };
@@ -177,6 +246,10 @@ export class SessionStore {
   }
 
   private remember(entry: SessionEntry): void {
+    if (entry.type === "route") {
+      if (isRoute(entry)) this.routes.push(entry);
+      return;
+    }
     if (entry.type === "message" || entry.type === "compaction") {
       this.entries.set(entry.id, entry);
       this.tipId = entry.id;
@@ -184,6 +257,13 @@ export class SessionStore {
     }
     if (entry.type === "select") this.tipId = entry.targetId;
   }
+}
+
+function isRoute(entry: SessionRouteEntry): boolean {
+  return typeof entry.provider === "string" && entry.provider.length > 0
+    && typeof entry.modelId === "string" && entry.modelId.length > 0
+    && typeof entry.timestamp === "string" && entry.timestamp.length > 0
+    && (entry.choice === undefined || entry.choice === "standard" || entry.choice === "complex");
 }
 
 /** Keep a tool call and its results together when the requested tail would split them. */

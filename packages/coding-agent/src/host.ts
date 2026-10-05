@@ -11,6 +11,7 @@ import { connectWorkspaceMcp } from "./mcp-config.ts";
 import { appendMcpTools } from "./mcp.ts";
 import { packageSkillText } from "@amazme/tui";
 import { appendSkillText } from "./skills.ts";
+import { visibleModels } from "./picker.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
 interface HostModels {
@@ -138,10 +139,15 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
   };
 }
 
+/** Models the `/model` picker can show. Jev stays out of this list. */
+export function listedHostModels(models: HostModels): { provider: string; id: string }[] {
+  return visibleModels(models.listModels?.() ?? []).map((model) => ({ provider: model.provider, id: model.id }));
+}
+
 function withPackageSkills(cwd: string, models: HostModels): HostModels {
   return {
     getModel: (provider, modelId) => models.getModel(provider, modelId),
-    ...(models.listModels ? { listModels: () => models.listModels?.() ?? [] } : {}),
+    ...(models.listModels ? { listModels: () => listedHostModels(models) } : {}),
     streamSimple(model, context, options) {
       const extra = packageSkillText(cwd);
       if (extra.length === 0) return models.streamSimple(model, context, options);

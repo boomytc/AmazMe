@@ -2,6 +2,7 @@ import { type OAuthLoginHandback } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { addScopedModels } from "@amazme/tui";
 import { FileCredentialStore, installationDeviceId } from "./credentials.ts";
+import { visibleModel } from "./picker.ts";
 
 export interface LoginReport {
   provider: string;
@@ -70,7 +71,7 @@ export async function saveApiKey(providerId: string, key: string, credentialsFil
 export function builtinModelSpecs(providerId: string): string[] {
   const provider = builtinProviders().find((item) => item.id === providerId);
   if (!provider) return [];
-  return provider.getModels().map((model) => `${provider.id}/${model.id}`);
+  return provider.getModels().filter(visibleModel).map((model) => `${provider.id}/${model.id}`);
 }
 
 /** Record the builtin chat models after a credential is stored. No workspace means nothing is written. */
