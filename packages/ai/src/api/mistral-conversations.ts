@@ -104,7 +104,7 @@ async function pump(
           typeof fn?.arguments === "string" ? fn.arguments : "",
         );
       }
-    });
+    }, request.onActivity);
     if (acc.closed) return;
     if (!stop) {
       acc.fail("error", "Mistral conversations stream ended without a finish reason");

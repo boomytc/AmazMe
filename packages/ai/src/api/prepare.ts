@@ -101,6 +101,7 @@ export async function readSse(
   response: Response,
   signal: AbortSignal | undefined,
   onEvent: (event: { event?: string; data: string }) => void,
+  onActivity?: () => void,
 ): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("response has no body");
@@ -120,6 +121,8 @@ export async function readSse(
   };
   const consume = (line: string) => {
     if (signal?.aborted) throw abortError();
+    // Comment lines (`: keep-alive`) and blank lines are not events. They still count as activity.
+    onActivity?.();
     if (line.startsWith("event:")) {
       eventName = line.slice(6).trim();
       return;

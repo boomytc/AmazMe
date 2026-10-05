@@ -77,7 +77,7 @@ async function pump(
         return;
       }
       applyGoogleChunk(model, acc, decoded, finish);
-    });
+    }, request.onActivity);
     if (acc.closed) return;
     finishGoogle(acc, finish.reason, "Google generative AI");
   } catch (error) {

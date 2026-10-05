@@ -158,7 +158,7 @@ async function pump(
       if (decoded.type === "error") {
         acc.fail("error", `Anthropic messages stream: ${JSON.stringify(decoded.error ?? decoded).slice(0, 400)}`);
       }
-    });
+    }, request.onActivity);
     if (acc.closed) return;
     if (!stop) {
       acc.fail("error", "Anthropic messages stream ended without a stop reason");

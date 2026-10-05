@@ -94,7 +94,7 @@ export async function pumpResponses(
       );
       return;
     }
-    await consumeResponses(model, response, acc, request.signal);
+    await consumeResponses(model, response, acc, request.signal, request.onActivity);
   } catch (error) {
     const aborted = isAbort(error, request.signal);
     acc.fail(aborted ? "aborted" : "error", error instanceof Error ? error.message : String(error), sent && !aborted);
@@ -106,6 +106,7 @@ export async function consumeResponses(
   response: Response,
   acc: AssistantAccumulator,
   signal: AbortSignal | undefined,
+  onActivity?: () => void,
 ): Promise<void> {
   let sawTerminal = false;
   const tools = new Map<string, string>();
@@ -158,7 +159,7 @@ export async function consumeResponses(
       sawTerminal = true;
       acc.finish(incomplete ? "length" : "stop");
     }
-  });
+  }, onActivity);
   if (!acc.closed) {
     if (sawTerminal) return;
     acc.fail("error", "OpenAI responses stream ended without a terminal event");

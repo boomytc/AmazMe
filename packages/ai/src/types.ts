@@ -357,6 +357,12 @@ export interface StreamOptions {
    * The key itself is never copied into that error text.
    */
   keySource?: AuthResult["source"];
+  /**
+   * One call per SSE line read from the response, including comments (`: keep-alive`) and blank lines.
+   * DeepSeek flash sends those comments before the first reasoning delta. They are not assistant events.
+   * Omitting this leaves the event sequence unchanged.
+   */
+  onActivity?: () => void;
 }
 
 export interface ProviderHeaders {

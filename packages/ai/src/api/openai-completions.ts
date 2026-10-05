@@ -162,7 +162,7 @@ async function pump(
       stream.push({ type: "error", error: failed });
       return;
     }
-    await emitSse(model, response, stream, request.signal);
+    await emitSse(model, response, stream, request.signal, request.onActivity);
   } catch (error) {
     const aborted = isAbort(error, request.signal);
     const failed = terminalMessage(
@@ -284,7 +284,13 @@ function reasoningFields(message: Extract<Message, { role: "assistant" }>): Part
   return fields;
 }
 
-async function emitSse(model: Model, response: Response, stream: AssistantEventStream, signal: AbortSignal | undefined): Promise<void> {
+async function emitSse(
+  model: Model,
+  response: Response,
+  stream: AssistantEventStream,
+  signal: AbortSignal | undefined,
+  onActivity?: () => void,
+): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) {
     stream.push({ type: "error", error: terminalMessage(model, [], "error", "OpenAI completions stream: response has no body") });
@@ -449,13 +455,17 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
       for (const line of lines) {
-        consumeLine(line);
-        if (closed) break;
+        // Every complete line, including `: keep-alive` and blank lines. Not an assistant event.
+        onActivity?.();
+        if (!closed) consumeLine(line);
       }
     }
     if (closed) return;
     buffer += decoder.decode();
-    if (buffer.trim()) consumeLine(buffer, true);
+    if (buffer.length > 0) {
+      onActivity?.();
+      if (buffer.trim()) consumeLine(buffer, true);
+    }
     if (closed) return;
     if (signal?.aborted && !finish) {
       fail("aborted", "aborted", false);
