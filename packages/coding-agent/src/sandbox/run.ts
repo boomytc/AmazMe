@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { sandboxArgv } from "./backend.ts";
+import { networkSeccompFd } from "./bubblewrap.ts";
 import { buildPolicy, fileOpPath, type WorkspacePolicy } from "./policy.ts";
 import { unavailable } from "./seatbelt.ts";
 
@@ -50,12 +51,18 @@ export function runConfined(options: RunConfinedOptions): Promise<ConfinedResult
   const [file, ...args] = options.argv;
   if (!file) return Promise.resolve({ stdout: "", stderr: "missing command", code: 1, stdoutTruncated: false, stderrTruncated: false });
   return new Promise((resolveRun) => {
-    const child = spawn(file, args, {
-      cwd: options.cwd,
-      env: options.env,
-      detached: true,
-      stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-    });
+    const stdio = sandboxStdio(options.argv, options.input === undefined ? "ignore" : "pipe");
+    let child;
+    try {
+      child = spawn(file, args, {
+        cwd: options.cwd,
+        env: options.env,
+        detached: true,
+        stdio: stdio.stdio,
+      });
+    } finally {
+      stdio.close();
+    }
     if (options.input !== undefined && child.stdin) {
       child.stdin.on("error", () => undefined);
       child.stdin.end(options.input);
@@ -116,6 +123,21 @@ export function runConfined(options: RunConfinedOptions): Promise<ConfinedResult
   });
 }
 
+/** Seatbelt has no `--seccomp`. Bubblewrap reads the EPERM filter from fd 3. */
+function sandboxStdio(argv: readonly string[], stdin: "ignore" | "pipe"): { stdio: Array<"ignore" | "pipe" | number>; close: () => void } {
+  const stdio: Array<"ignore" | "pipe" | number> = [stdin, "pipe", "pipe"];
+  const index = argv.indexOf("--seccomp");
+  const target = Number(argv[index + 1]);
+  const opened = index >= 0 && Number.isInteger(target) && target >= 3 ? networkSeccompFd() : undefined;
+  if (opened) stdio[target] = opened.fd;
+  return {
+    stdio,
+    close() {
+      opened?.close();
+    },
+  };
+}
+
 function outsideProbeFile(canonical: string): string {
   const name = `.amazme-probe-${randomBytes(8).toString("hex")}`;
   const directories = [join(homedir(), ".amazme", "probes"), join("/private/tmp", "amazme-probes"), join(tmpdir(), "amazme-probes")];
@@ -138,12 +160,19 @@ function probe(policy: WorkspacePolicy): void {
   writeFileSync(canary, token, { mode: 0o600 });
   try {
     const argv = sandboxArgv(policy, [process.execPath, fileOpPath, "probe", canary, runtimeFile]);
-    const result = spawnSync(argv[0] ?? "", argv.slice(1), {
-      cwd: policy.canonical,
-      env: policy.env,
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const stdio = sandboxStdio(argv, "ignore");
+    let result;
+    try {
+      result = spawnSync(argv[0] ?? "", argv.slice(1), {
+        cwd: policy.canonical,
+        env: policy.env,
+        encoding: "utf8",
+        timeout: 10_000,
+        stdio: stdio.stdio,
+      });
+    } finally {
+      stdio.close();
+    }
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}${result.error?.message ?? ""}`;
     if (output.includes(token) || !String(result.stdout ?? "").includes("PROBE_OK") || result.status !== 0) {
       throw unavailable(`probe failed: ${output.slice(0, 500)}`);

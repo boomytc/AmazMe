@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { sandboxArgv } from "../src/sandbox/backend.ts";
-import { bubblewrapArgv } from "../src/sandbox/bubblewrap.ts";
+import { bubblewrapArgv, networkSeccompFd } from "../src/sandbox/bubblewrap.ts";
 import { buildPolicy } from "../src/sandbox/policy.ts";
 import { seatbeltArgv } from "../src/sandbox/seatbelt.ts";
 import { createCodingTools } from "../src/tools.ts";
@@ -93,6 +93,7 @@ test("bash does not inherit credentials and cannot read the runtime directory", 
     if (previous === undefined) delete process.env.AMAZME_CREDENTIALS;
     else process.env.AMAZME_CREDENTIALS = previous;
   });
+  mkdirSync(join(root, ".amazme", "runtime"), { recursive: true });
   writeFileSync(join(root, ".amazme", "runtime", "workspace.jsonl"), "SECRET-JSONL");
   const result = await bash.execute({
     command: `${JSON.stringify(process.execPath)} -e "console.log('CRED='+(process.env.AMAZME_CREDENTIALS??'')); console.log('HOME='+(process.env.HOME??''))"`,
@@ -142,7 +143,8 @@ test("a missing seatbelt runner is unavailable", () => {
 test("bubblewrap is selected only on linux and a missing runner does not spawn", (t) => {
   const policy = buildPolicy(directory(t));
   const selected = sandboxArgv(policy, ["/bin/bash", "-c", "true"]);
-  assert.equal(selected[0], "/usr/bin/sandbox-exec");
+  if (process.platform === "linux") assert.match(selected[0] ?? "", /bwrap$/);
+  else assert.equal(selected[0], "/usr/bin/sandbox-exec");
   let looked = 0;
   assert.throws(() => bubblewrapArgv(policy, ["/bin/bash", "-c", "true"], {
     platform: "darwin",
@@ -167,6 +169,8 @@ test("bubblewrap is selected only on linux and a missing runner does not spawn",
   });
   assert.equal(argv[0], "/usr/bin/bwrap");
   assert.equal(argv.includes("--unshare-net"), true);
+  assert.equal(argv.includes("--seccomp"), true);
+  assert.equal(argv.includes("--ro-bind"), false);
   assert.equal(argv.includes("--tmpfs"), true);
   assert.equal(argv.includes(join(policy.canonical, ".amazme")), true);
   assert.equal(argv.includes(policy.scratch), true);
@@ -191,4 +195,30 @@ test("bubblewrap is selected only on linux and a missing runner does not spawn",
       return { isFile: () => false };
     },
   }), /SANDBOX_UNAVAILABLE: bwrap is required/);
+});
+
+test("each seccomp filter is a private file and close removes it", () => {
+  if (process.platform !== "linux") return;
+  const first = networkSeccompFd();
+  const second = networkSeccompFd();
+  try {
+    const firstPath = readlinkSync(`/proc/self/fd/${first.fd}`);
+    const secondPath = readlinkSync(`/proc/self/fd/${second.fd}`);
+    assert.notEqual(firstPath, secondPath);
+    assert.equal(basename(firstPath), "filter");
+    assert.equal(basename(dirname(firstPath)).startsWith("amazme-seccomp-"), true);
+    assert.equal(statSync(firstPath).mode & 0o777, 0o600);
+    assert.equal(statSync(dirname(firstPath)).mode & 0o777, 0o700);
+    first.close();
+    assert.equal(existsSync(dirname(firstPath)), false);
+    first.close();
+    assert.equal(existsSync(secondPath), true);
+  } finally {
+    first.close();
+    second.close();
+  }
+  const gone = networkSeccompFd();
+  const path = readlinkSync(`/proc/self/fd/${gone.fd}`);
+  gone.close();
+  assert.equal(existsSync(dirname(path)), false);
 });
