@@ -252,6 +252,54 @@ test("a failed open can be retried and does not stick in the cache", async () =>
   }
 });
 
+test("a sandbox open failure keeps its code and the original message", async () => {
+  const message = "SANDBOX_UNAVAILABLE: probe failed: forbidden file was readable";
+  const forwarded: Error[] = [];
+  const service = new Server({
+    serverId: "srv",
+    service: attachService(),
+    onError: (error) => forwarded.push(error),
+    openRuntime: () => Promise.reject(new ServiceError("sandbox_unavailable", message)),
+  });
+  const connect = connectorFor(service);
+  const clients: Client[] = [];
+  try {
+    const client = await connect();
+    clients.push(client);
+    await assert.rejects(client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" }), (error: unknown) => {
+      assert.ok(error instanceof RemoteError);
+      assert.equal(error.code, "sandbox_unavailable");
+      assert.equal(error.message, message);
+      return true;
+    });
+    assert.equal(forwarded.length, 0);
+  } finally {
+    await shutdown(service, clients);
+  }
+
+  const reported: Error[] = [];
+  const plain = new Server({
+    serverId: "srv",
+    service: attachService(),
+    onError: (error) => reported.push(error),
+    openRuntime: () => Promise.reject(new Error(message)),
+  });
+  const plainClients: Client[] = [];
+  try {
+    const again = await connectorFor(plain)();
+    plainClients.push(again);
+    await assert.rejects(again.request(again.serverRoute(), { op: "attach", runtimeId: "rt" }), (error: unknown) => {
+      assert.ok(error instanceof RemoteError);
+      assert.equal(error.code, "internal");
+      assert.equal(error.message, "internal server error");
+      return true;
+    });
+    assert.equal(reported[0]?.message, message);
+  } finally {
+    await shutdown(plain, plainClients);
+  }
+});
+
 test("disconnect, close and remove during open discard the late handle", async () => {
   for (const mode of ["disconnect", "close", "remove"] as const) {
     const gate = deferred<RuntimeHandle>();

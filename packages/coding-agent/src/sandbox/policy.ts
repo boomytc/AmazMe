@@ -16,12 +16,19 @@ export interface WorkspacePolicy {
   readonly env: Readonly<Record<string, string>>;
 }
 
-/** Read-only trees required to execute the system shell and Homebrew Node. */
-const RUNTIME_TREES = [
+/**
+ * Read-only trees for the system shell, the dynamic linker, and Homebrew Node.
+ * Seatbelt skips a path that is not on the machine. Bubblewrap uses the same
+ * list with `--ro-bind-try`, so a missing macOS or Linux directory is not mounted.
+ */
+export const RUNTIME_TREES = [
   "/System",
   "/usr",
+  "/lib",
+  "/lib64",
   "/bin",
   "/sbin",
+  "/etc",
   "/private/etc",
   "/opt/homebrew/Cellar",
   "/opt/homebrew/opt",
