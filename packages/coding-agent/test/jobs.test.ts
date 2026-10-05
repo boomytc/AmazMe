@@ -11,7 +11,7 @@ import { createModels } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, startCodingHost } from "../src/host.ts";
-import { jobsFile, openJobRegistry, processStartTicks, type JobRecord } from "../src/jobs.ts";
+import { JobRegistry, jobsFile, openJobRegistry, processStartTicks, type JobRecord } from "../src/jobs.ts";
 import { createCodingTools } from "../src/tools.ts";
 
 function directory(t: test.TestContext): string {
@@ -572,4 +572,80 @@ test("an idle output tick does not rewrite jobs.json when the tail is unchanged"
   await delay(500);
   assert.equal(statSync(file).mtimeMs, written);
   assert.equal(readJobs(root).find((job) => job.id === id)?.status, "running");
+});
+
+test("a live lock holder does not crash the host or leave an orphan job", { timeout: 40_000 }, async (t) => {
+  const root = directory(t);
+  const repo = fileURLToPath(new URL("../../..", import.meta.url));
+  const jobsHref = new URL("../src/jobs.ts", import.meta.url).href;
+  const phase = join(root, "phase");
+  const go = join(root, "go");
+  const orphan = join(root, "orphan");
+  const script = `const fs=require("fs");process.stdout.write("hello-first\\n");fs.writeFileSync(${JSON.stringify(phase)},"1");const end=Date.now()+20000;while(!fs.existsSync(${JSON.stringify(go)})&&Date.now()<end){Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40);}process.stdout.write("hello-second\\n");setInterval(()=>{},1000);`;
+  const jobs = openJobRegistry(root);
+  t.after(() => jobs.close());
+  const id = jobs.start(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`);
+  const file = jobsFile(root);
+  await until(() => {
+    if (!existsSync(phase) || readFileSync(phase, "utf8") !== "1") return false;
+    try { return readFileSync(file, "utf8").includes("hello-first"); } catch { return false; }
+  }, "first output was not stored");
+
+  let stderr = "";
+  const holder = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+    import { closeSync, constants, openSync, unlinkSync, writeSync } from "node:fs";
+    import { processStartTicks } from ${JSON.stringify(jobsHref)};
+    const lock = process.env.LOCK_PATH;
+    if (!lock) throw new Error("missing lock");
+    const fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    writeSync(fd, JSON.stringify({ pid: process.pid, startTicks: processStartTicks(process.pid) }));
+    closeSync(fd);
+    process.stdout.write("held\\n");
+    const release = () => {
+      try { unlinkSync(lock); } catch { /* already gone */ }
+      process.exit(0);
+    };
+    process.on("SIGTERM", release);
+    setTimeout(release, 12_000);
+  `], {
+    cwd: repo,
+    env: { ...process.env, LOCK_PATH: `${file}.lock` },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  holder.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  t.after(() => holder.kill("SIGTERM"));
+  await new Promise<void>((resolve, reject) => {
+    let buf = "";
+    const timer = setTimeout(() => reject(new Error(`lock holder did not start\n${stderr}`)), 10_000);
+    holder.stdout?.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      if (!buf.includes("held\n")) return;
+      clearTimeout(timer);
+      resolve();
+    });
+    holder.once("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`lock holder exited ${code}\n${stderr}`));
+    });
+  });
+
+  writeFileSync(go, "1");
+  await until(() => jobs.output(id)?.includes("hello-second") ?? false, "second output did not reach memory");
+  assert.throws(
+    () => jobs.start(`echo orphan >> ${JSON.stringify(orphan)}; sleep 30`),
+    /jobs\.json\.lock busy/,
+  );
+  assert.equal(existsSync(orphan), false);
+  assert.equal(readJobs(root).some((job) => job.summary.includes("orphan")), false);
+  const skipped = JobRegistry.open(root);
+  t.after(() => skipped.close());
+  const deadline = Date.now() + 15_000;
+  while (!readFileSync(file, "utf8").includes("hello-second")) {
+    if (Date.now() > deadline) throw new Error("later persist did not store the output");
+    await delay(50);
+  }
+  assert.equal(readJobs(root).find((job) => job.id === id)?.status, "running");
+  assert.equal(existsSync(orphan), false);
 });

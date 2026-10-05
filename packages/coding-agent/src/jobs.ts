@@ -9,6 +9,7 @@ import { prepareWorkspace, startBash, type StartedBash } from "./sandbox/run.ts"
  * 每条记录带上宿主进程的 `owner`。打开时只回收 owner 已经不在的任务。落盘前重读文件，只替换自己的条目。
  * 两次落盘会交错：各自读到旧内容再整文件写回，后写的一份丢掉先写的新任务。写之前用 `jobs.json.lock` 独占；锁里是持有者的 pid 和 starttime，进程不在就抢走，最多等两秒。
  * 结束了的任务只留最新 50 条，running 不删。输出和状态都没变时不重写文件。
+ * 两秒内拿不到锁时，打开登记跳过回收，不把异常抛出进程。定时器和进程结束回调记下还要写，下次再试。任务编号在启动进程之前分配。
  */
 export type JobStatus = "running" | "exited" | "killed" | "lost";
 
@@ -46,6 +47,7 @@ const KILL_WAIT_MS = 2_000;
 const FINISHED_KEEP = 50;
 const LOCK_WAIT_MS = 2_000;
 const LOCK_POLL_MS = 20;
+const LOCK_BUSY = "jobs.json.lock busy";
 
 const openByCwd = new Map<string, JobRegistry>();
 
@@ -87,6 +89,8 @@ export class JobRegistry {
   private outputTimer: ReturnType<typeof setTimeout> | undefined;
   private closing: Promise<void> | undefined;
   private lockDepth = 0;
+  /** A timer or exit callback failed to write. Memory is unchanged; the next persist retries. */
+  private pendingWrite = false;
 
   private constructor(cwd: string) {
     this.cwd = cwd;
@@ -96,27 +100,32 @@ export class JobRegistry {
 
   static open(cwd: string): JobRegistry {
     const registry = new JobRegistry(resolve(cwd));
-    registry.withLock(() => {
-      const store = registry.readDisk();
-      registry.next = store.next;
-      let changed = false;
-      for (const job of store.jobs) {
-        const mine = sameOwner(job.owner, registry.owner);
-        if (job.status === "running" && !mine && ownerGone(job.owner)) {
-          signalRecorded(job);
-          job.status = "lost";
-          job.code = null;
-          changed = true;
-          registry.jobs.push(job);
-        } else if (mine) registry.jobs.push(job);
-      }
-      if (changed) registry.writeStore();
-    });
+    try {
+      registry.withLock(() => {
+        const store = registry.readDisk();
+        registry.next = store.next;
+        let changed = false;
+        for (const job of store.jobs) {
+          const mine = sameOwner(job.owner, registry.owner);
+          if (job.status === "running" && !mine && ownerGone(job.owner)) {
+            signalRecorded(job);
+            job.status = "lost";
+            job.code = null;
+            changed = true;
+            registry.jobs.push(job);
+          } else if (mine) registry.jobs.push(job);
+        }
+        if (changed) registry.writeStore();
+      });
+    } catch (error) {
+      if (!lockBusy(error)) throw error;
+    }
     return registry;
   }
 
   start(command: string): string {
     if (this.closed) throw new Error("job registry is closed");
+    const id = this.allocateId();
     let started: JobRecord | undefined;
     let running: StartedBash | undefined;
     const handle = startBash(prepareWorkspace(this.cwd), command, () => {
@@ -125,7 +134,6 @@ export class JobRegistry {
       this.scheduleOutput();
     });
     running = handle;
-    const id = this.allocateId();
     const job: JobRecord = {
       id,
       status: "running",
@@ -143,14 +151,21 @@ export class JobRegistry {
     started = job;
     this.jobs.push(job);
     this.handles.set(id, handle);
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      this.jobs = this.jobs.filter((item) => item !== job);
+      this.handles.delete(id);
+      handle.kill();
+      throw error;
+    }
     void handle.done.then((result) => {
       this.capture(job, handle);
       if (job.status === "running") {
         job.status = "exited";
         job.code = result.code;
       }
-      this.persist();
+      this.persistOrRetry();
     });
     if (this.closed) void this.lose(job);
     return id;
@@ -173,11 +188,11 @@ export class JobRegistry {
     job.status = "killed";
     if (handle) handle.kill();
     else signalRecorded(job);
-    this.persist();
+    this.persistOrRetry();
     if (handle) {
       void handle.done.then(() => {
         this.capture(job, handle);
-        this.persist();
+        this.persistOrRetry();
       });
     }
     return { text: `killed ${job.id}`, isError: false };
@@ -198,11 +213,11 @@ export class JobRegistry {
     job.code = null;
     if (handle) handle.kill();
     else signalRecorded(job);
-    this.persist();
+    this.persistOrRetry();
     if (!handle) return Promise.resolve();
     return waitFor(handle.done.then(() => {
       this.capture(job, handle);
-      this.persist();
+      this.persistOrRetry();
     }), KILL_WAIT_MS);
   }
 
@@ -218,7 +233,7 @@ export class JobRegistry {
     if (this.outputTimer !== undefined) return;
     this.outputTimer = setTimeout(() => {
       this.outputTimer = undefined;
-      this.persist();
+      this.persistOrRetry();
     }, OUTPUT_DELAY_MS);
   }
 
@@ -265,6 +280,17 @@ export class JobRegistry {
 
   private persist(): void {
     this.withLock(() => this.writeStore());
+    this.pendingWrite = false;
+  }
+
+  /** Timer and exit callbacks must not reject. A failed write stays in memory and retries. */
+  private persistOrRetry(): void {
+    try {
+      this.persist();
+    } catch {
+      this.pendingWrite = true;
+      this.scheduleOutput();
+    }
   }
 
   /** Caller holds `jobs.json.lock`. Re-reads, merges this registry's jobs, prunes, and skips an identical write. */
@@ -377,7 +403,7 @@ function withJobsLock<T>(file: string, owner: JobOwner, body: () => T): T {
 function acquireJobsLock(lock: string, owner: JobOwner): void {
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
-    if (Date.now() >= deadline) throw new Error("jobs.json.lock busy");
+    if (Date.now() >= deadline) throw new Error(LOCK_BUSY);
     let fd: number | undefined;
     try {
       fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
@@ -423,6 +449,10 @@ function lockAbandoned(lock: string): boolean {
   } catch {
     return true;
   }
+}
+
+function lockBusy(error: unknown): boolean {
+  return error instanceof Error && error.message === LOCK_BUSY;
 }
 
 function sleepSync(ms: number): void {
