@@ -11,6 +11,9 @@ import { prepareWorkspace, startBash, type StartedBash } from "./sandbox/run.ts"
  * 问题：输出定时器、进程结束、kill、lose 若同步空等这把锁，事件循环会停住。
  * 例子：另一个活进程占着锁时，10ms 的定时器会出现大约两秒的空隙。
  * 这些路径用 tryLock，只抢一次，忙就立刻返回。写不上就留着 pendingWrite，200ms 起每次加倍、最多 5s 再试。写成功后清掉 pendingWrite，退避回到 200ms。`start` 和 `open` 仍最多等两秒。
+ * 问题：这次重试的定时器若留着引用，调用方已经返回，进程仍然退不出去。
+ * 例子：`kill` 碰上活着的锁持有者，200ms 后再写。宿主没有别的工作，却要等这次尝试，失败了还会再排下一次。
+ * 安排 `retryTimer` 时 unref，挂着的下一次尝试不能拦住进程退出。
  * 结束了的任务只留最新 50 条，running 不删。输出和状态都没变时不重写文件。
  * 打开登记时若两秒内拿不到锁，跳过回收，不把异常抛出进程。任务编号在启动进程之前分配。
  */
@@ -322,6 +325,7 @@ export class JobRegistry {
       this.retryTimer = undefined;
       this.persistOrRetry();
     }, delay);
+    this.retryTimer.unref();
   }
 
   /** Caller holds `jobs.json.lock`. Re-reads, merges this registry's jobs, prunes, and skips an identical write. */
