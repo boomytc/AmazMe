@@ -2,6 +2,7 @@ import { createAssistantEventStream, type AssistantEventStream, type ProviderStr
 import type { Context, Message, Model, OpenAIResponsesOptions, Usage } from "../types.ts";
 import { messageText } from "../transform.ts";
 import { classifyTransportFailure, transportErrorDetail } from "../utils/overflow.ts";
+import { parseRetryAfter } from "../utils/retry-after.ts";
 import { cacheMissInput, createAccumulator, isAbort, usageFromCounts, type AssistantAccumulator } from "./events.ts";
 import { isRecord, postJson, prepareChat, readSse, terminal } from "./prepare.ts";
 
@@ -80,11 +81,16 @@ export async function pumpResponses(
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       const classification = classifyTransportFailure(response.status, body);
+      // Azure and Codex share this pump. Only openai-responses keeps Retry-After.
+      const retryAfterMs = model.api === OPENAI_RESPONSES_API
+        ? parseRetryAfter(response.headers.get("retry-after"))
+        : undefined;
       acc.fail(
         "error",
         `OpenAI responses ${response.status} ${classification.kind}: ${body.slice(0, 400)}`,
         classification.retryable,
         classification.overflow,
+        retryAfterMs,
       );
       return;
     }

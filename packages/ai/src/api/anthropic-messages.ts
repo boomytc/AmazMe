@@ -4,6 +4,7 @@ import { createAssistantEventStream, type ProviderStreams } from "../models.ts";
 import type { Context, Message, Model } from "../types.ts";
 import { messageText } from "../transform.ts";
 import { classifyTransportFailure } from "../utils/overflow.ts";
+import { parseRetryAfter } from "../utils/retry-after.ts";
 import { createAccumulator, isAbort, usageFromCounts } from "./events.ts";
 import { isRecord, postJson, prepareChat, readSse, terminal } from "./prepare.ts";
 
@@ -78,7 +79,13 @@ async function pump(
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       const classification = classifyTransportFailure(response.status, body);
-      acc.fail("error", `Anthropic messages ${response.status} ${classification.kind}: ${body.slice(0, 400)}`, classification.retryable, classification.overflow);
+      acc.fail(
+        "error",
+        `Anthropic messages ${response.status} ${classification.kind}: ${body.slice(0, 400)}`,
+        classification.retryable,
+        classification.overflow,
+        parseRetryAfter(response.headers.get("retry-after")),
+      );
       return;
     }
     let stop = "";

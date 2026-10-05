@@ -6,6 +6,7 @@ import { cacheMissInput, usageFromCounts } from "./events.ts";
 import { cloneUsage, emptyUsage, messageText, transformMessages } from "../transform.ts";
 import { resolveOutputBudget } from "../utils/budget.ts";
 import { classifyTransportFailure, isFilledWindowLength, transportErrorDetail } from "../utils/overflow.ts";
+import { parseRetryAfter } from "../utils/retry-after.ts";
 
 export const OPENAI_COMPLETIONS_API = "openai-completions";
 
@@ -144,6 +145,8 @@ async function pump(
         classification.retryable,
         classification.overflow,
       );
+      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+      if (retryAfterMs !== undefined) failed.retryAfterMs = retryAfterMs;
       stream.push({ type: "error", error: failed });
       return;
     }
