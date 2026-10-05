@@ -33,7 +33,7 @@ import {
   type OperationResultDto,
   type RuntimeCall,
 } from "./contracts.ts";
-import { projectLaneUsage, readLaneStatus } from "./activity.ts";
+import { projectLaneUsage } from "./activity.ts";
 import { fitHistory, fitWindow, responseFits } from "./window.ts";
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
@@ -81,7 +81,7 @@ export interface OwnedRuntimeOptions {
   lanes?: readonly string[];
   /**
    * Branch name and session start for the footer. The screen does not run git or keep its own session clock.
-   * Turn start is the `startedAt` of the current `run` admission, not this clock.
+   * Turn start is `laneStatus().turnStartedAt`, not this clock.
    */
   clock?: HostClock;
   /** Fixed window that merges storage notifications into one snapshot read per subscription. Default 16 ms. */
@@ -145,8 +145,6 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
   private readonly windowMs: number;
   private readonly onError: ((error: Error) => void) | undefined;
   private readonly clock: HostClock | undefined;
-  /** `startedAt` of the current run admission, keyed by lane. Other operation kinds do not replace it. */
-  private readonly turnStarts = new Map<string, { operationId: string; startedAt: number }>();
   private readonly publishers = new Set<SnapshotPublisher>();
   private readonly reported = new WeakSet<Promise<unknown>>();
   private readonly gate = new ConnectionGate();
@@ -267,13 +265,8 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
     if (this.lanes && !this.lanes.has(call.lane)) throw new ServiceError("unknown_lane", `lane ${call.lane} is not served`);
     const lane = this.harness.lane(call.lane);
     switch (call.method) {
-      case "accept": {
-        const admission = unwrap(await lane.accept(call.request));
-        if (admission.kind === "run") {
-          this.turnStarts.set(call.lane, { operationId: admission.operationId, startedAt: admission.startedAt });
-        }
-        return wire(admission);
-      }
+      case "accept":
+        return wire(unwrap(await lane.accept(call.request)));
       case "drive":
         return wire(structuredClone(unwrap(await this.awaitDrive(lane, call.operationId, call.waitForRetry ?? false, context.signal))));
       case "snapshot":
@@ -381,19 +374,18 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
 
   /**
    * Durable `snapshot()` plus `usage()`, `laneStatus()`, and the host clock.
-   * The three reads are not one storage version. Charges and hit rate are copied, not priced again.
+   * The three reads are not one storage version. Hit rate and charges are copied, not priced again.
    */
   private async laneView(lane: AgentLane): Promise<LaneSnapshotDto> {
     const [snapshot, usage, status] = await Promise.all([
       lane.snapshot(),
       lane.usage(),
-      readLaneStatus(lane),
+      lane.laneStatus(),
     ]);
-    const turn = this.turnStarts.get(snapshot.lane);
     const activity = {
       branch: clockBranch(this.clock),
       sessionStartedAt: clockSession(this.clock),
-      turnStartedAt: snapshot.operationId !== null && turn?.operationId === snapshot.operationId ? turn.startedAt : null,
+      turnStartedAt: status.turnStartedAt,
       notBefore: status.notBefore,
       retryReason: status.retryReason,
       compacting: status.compacting,

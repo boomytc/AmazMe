@@ -166,8 +166,6 @@ const TurnUsageSchema = Strict({
   output: Type.Number(),
   cacheRead: Nullable(Type.Number()),
   cacheWrite: Nullable(Type.Number()),
-  /** Already included in `output`. Omitted when the row did not report it. */
-  reasoning: Type.Optional(Type.Number()),
   hitRate: Nullable(Type.Number()),
   cost: Nullable(UsageCostSchema),
 });
@@ -178,7 +176,6 @@ const TotalUsageSchema = Strict({
   output: Type.Number(),
   cacheRead: Nullable(Type.Number()),
   cacheWrite: Nullable(Type.Number()),
-  reasoning: Type.Optional(Type.Number()),
   hitRate: Nullable(Type.Number()),
   cost: Nullable(CumulativeCostSchema),
 });
@@ -186,8 +183,8 @@ export type TotalUsageDto = Static<typeof TotalUsageSchema>;
 
 /**
  * Footer data beside the lane snapshot.
- * `usage` is `usage()`. `notBefore`, `retryReason`, and `compacting` are `laneStatus()`.
- * Branch and the two clocks come from the host. Nothing here is Durable private state.
+ * `usage` is `usage()`. `notBefore`, `retryReason`, `compacting`, and `turnStartedAt` are `laneStatus()`.
+ * Branch and `sessionStartedAt` come from the host. Nothing here is Durable private state.
  */
 export const ActivitySchema = Strict({
   branch: Nullable(Type.String({ minLength: 1, maxLength: 1024 })),

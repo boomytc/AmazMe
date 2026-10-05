@@ -53,7 +53,6 @@ test("the footer shows branch, elapsed time, retry, hit rate, and priced totals 
         output: 10,
         cacheRead: 1,
         cacheWrite: 0,
-        reasoning: 7,
         hitRate: 0.25,
         cost: { input: 0.1, cacheRead: null, cacheWrite: 0.2, output: 0.3, total: 1.5 },
       },
@@ -62,7 +61,6 @@ test("the footer shows branch, elapsed time, retry, hit rate, and priced totals 
         output: 10,
         cacheRead: null,
         cacheWrite: null,
-        reasoning: 7,
         hitRate: 0.5,
         cost: { input: 0.2, cacheRead: 0, cacheWrite: 0.2, output: 0.4, total: 0 },
       },
@@ -77,7 +75,6 @@ test("the footer shows branch, elapsed time, retry, hit rate, and priced totals 
   assert.equal(frame.includes("%"), false);
   assert.match(frame, /本轮 \$1\.5/);
   assert.match(frame, /累计 \$0/);
-  assert.equal(frame.includes("7"), false);
 });
 
 test("a null price hides the amount and a null retry reason hides the countdown", () => {
