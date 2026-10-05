@@ -143,6 +143,59 @@ export interface Context {
   tools?: ToolDefinition[];
 }
 
+export interface ClassifierModel {
+  id: string;
+  name: string;
+  provider: string;
+  api: string;
+  baseUrl: string;
+}
+
+export interface ClassifierQuestion {
+  type: "choice" | "score" | "bool";
+  instructions: string;
+  criteria?: Record<string, string> | string[];
+}
+
+export interface ClassifierContext {
+  state: { text: string };
+  questions: Record<string, ClassifierQuestion>;
+}
+
+export interface ClassifierResult {
+  api: string;
+  provider: string;
+  model: string;
+  answers: Record<string, unknown>;
+  stopReason: "stop" | "error";
+  errorMessage?: string;
+}
+
+export interface ImageModel {
+  id: string;
+  name: string;
+  provider: string;
+  api: string;
+  baseUrl: string;
+}
+
+export interface ImageRequest {
+  prompt: string;
+}
+
+export interface ImageResult {
+  api: string;
+  provider: string;
+  model: string;
+  images: string[];
+  stopReason: "stop" | "error";
+  errorMessage?: string;
+}
+
+export interface SpecialCallOptions extends StreamOptions {
+  fetch?: typeof fetch;
+}
+
 export interface Model<TApi extends Api = Api> {
   id: string;
   name: string;

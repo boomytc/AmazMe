@@ -5,10 +5,27 @@ import { createUnixTransport } from "@amazme/client/unix";
 import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
+import { scopedModels } from "./project.ts";
 import { KeyDecoder } from "./keys.ts";
 import { emptyTui, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
 
 export { finishDrive } from "./commands.ts";
+
+/** Rows for bare `/tree`. Assistant text comes from content arrays, not only string content. */
+export function treePickerRows(entries: readonly EntryDto[]): PickerRow[] {
+  return entries.map((entry) => ({
+    id: entry.id,
+    label: treeLabel(entry),
+    detail: "",
+    tone: "muted" as const,
+  }));
+}
+
+function treeLabel(entry: EntryDto): string {
+  if (entry.payload.type === "compaction") return `summary ${entry.payload.summary}`.trim();
+  const message = entry.payload.message as { role: string; content?: unknown; toolName?: string };
+  return `${message.role} ${messageText(message)}`.trim();
+}
 
 export interface ProviderChoice {
   id: string;
@@ -32,6 +49,7 @@ export interface HostAttach {
   serverId: string;
   runtimeId: string;
   lane: string;
+  cwd?: string;
 }
 
 /** Read one rendered frame. The host keeps the runtime. */
@@ -162,6 +180,7 @@ export async function presentHost(
       await finishDrive(remote.lane(active), snap.operationId);
       return "已继续";
     },
+    ...(attach.cwd ? { cwd: attach.cwd } : {}),
     ...(account
       ? {
           login: async (provider: string) => {
@@ -218,6 +237,13 @@ export async function presentHost(
     if (effect.kind === "resume") {
       await actions.open(effect.id);
       state = { ...state, notice: `会话 ${effect.id}`, picker: null };
+      paint();
+      return;
+    }
+    if (effect.kind === "tree") {
+      const admitted = await remote.lane(active).accept({ kind: "navigation", targetId: effect.id });
+      await finishDrive(remote.lane(active), admitted.operationId);
+      state = { ...state, notice: "已切换分支", picker: null };
       paint();
       return;
     }
@@ -321,7 +347,11 @@ export async function presentHost(
         ...pickerBase,
         title: "Select model:",
         kind: "model",
-        rows: modelRows.map((model) => ({
+        rows: modelRows.filter((model) => {
+          if (!attach.cwd) return true;
+          const enabled = scopedModels(attach.cwd);
+          return enabled.length === 0 || enabled.includes(`${model.provider}/${model.modelId}`);
+        }).map((model) => ({
           id: `${model.provider}\t${model.modelId}`,
           label: `${model.provider}/${model.modelId}`,
           detail: model.provider === state.provider && model.modelId === state.modelId ? "current" : "",
@@ -340,6 +370,14 @@ export async function presentHost(
           tone: level === state.thinking ? "ok" : "muted",
         })),
       });
+    } else if (effect.command.type === "tree" && !effect.command.entryId) {
+      const snap = await remote.lane(active).snapshot();
+      showPicker({
+        ...pickerBase,
+        title: "Select entry:",
+        kind: "tree",
+        rows: treePickerRows(snap.entries),
+      });
     } else if (effect.command.type === "resume" && !effect.command.name) {
       const names = await actions.list();
       showPicker({
@@ -356,7 +394,8 @@ export async function presentHost(
     } else {
       const outcome = await executeSlash(effect.command, actions);
       await rememberSettings();
-      if (outcome.type === "notice") {
+      if (outcome.type === "submit") await lane.submit(outcome.text);
+      else if (outcome.type === "notice") {
         state = { ...state, notice: outcome.text };
         paint();
       } else if (outcome.type === "quit") restore();

@@ -3,7 +3,7 @@ import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
-import { executeSlash, finishDrive, parseSlash, SLASH_LIST, type SlashActions } from "@amazme/tui";
+import { activateProject, executeSlash, finishDrive, parseSlash, SLASH_LIST, type SlashActions } from "@amazme/tui";
 
 export interface WebOptions {
   socket: string;
@@ -13,6 +13,7 @@ export interface WebOptions {
   port?: number;
   login?(provider: string, handback: (text: string) => void): Promise<string>;
   logout?(provider: string): Promise<string>;
+  cwd?: string;
 }
 
 export interface PageView {
@@ -45,6 +46,7 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
   await client.connect();
   const remote = new RuntimeClient(client);
   await remote.attach(options.runtimeId);
+  if (options.cwd) await activateProject(options.cwd);
   const known = new Set<string>([options.lane]);
   let active = options.lane;
   let lane = remote.lane(active);
@@ -124,6 +126,7 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
         }
       : {}),
     ...(options.logout ? { logout: (provider: string) => options.logout!(provider) } : {}),
+    ...(options.cwd ? { cwd: options.cwd } : {}),
   };
   const server = createServer((request, response) => {
     void handle(request, response, {
@@ -193,6 +196,17 @@ async function interpret(lane: RemoteLane, text: string, actions: SlashActions, 
     return;
   }
   const outcome = await executeSlash(parsed, actions);
+  if (outcome.type === "submit") {
+    setNotice(null);
+    const current = await lane.snapshot();
+    if (current.operationId) {
+      await lane.followUp(outcome.text);
+      return;
+    }
+    const admitted = await lane.accept({ kind: "prompt", text: outcome.text });
+    await finishDrive(lane, admitted.operationId);
+    return;
+  }
   if (outcome.type === "quit") {
     setNotice("关闭页面不会停止宿主");
     return;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const repo = fileURLToPath(new URL("../../..", import.meta.url));
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
-function runCli(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+function runCli(args: string[], cwd: string, stdin?: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--import", "tsx", cli, ...args], {
       cwd: repo,
@@ -18,14 +18,15 @@ function runCli(args: string[], cwd: string): Promise<{ code: number; stdout: st
         AMAZME_CREDENTIALS: join(cwd, "credentials.json"),
         AMAZME_DEVICE_ID_FILE: join(cwd, "device-id"),
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    if (stdin !== undefined) child.stdin.end(stdin);
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`timed out\n${stdout}\n${stderr}`));
-    }, 15_000);
+    }, 20_000);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => { stdout += chunk; });
@@ -37,17 +38,31 @@ function runCli(args: string[], cwd: string): Promise<{ code: number; stdout: st
   });
 }
 
-test("a one-shot prompt prints the last assistant text and exits", async () => {
+test("a one-shot prompt prints the last assistant text and exits", { timeout: 20_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-oneshot-"));
   const result = await runCli(["--cwd", dir, "一句话"], dir);
   assert.equal(result.stderr, "");
   assert.equal(result.code, 0);
   assert.match(result.stdout, /^faux:一句话\n$/);
   assert.equal(result.stdout.includes("\x1b[?1049h"), false);
-  const files = readdirSync(join(dir, ".amazme", "sessions"));
-  const raw = readFileSync(join(dir, ".amazme", "sessions", files[0] ?? ""), "utf8");
-  assert.match(raw, /"version":3/);
+  const raw = readFileSync(join(dir, ".amazme", "runtime", "workspace.jsonl"), "utf8");
   assert.match(raw, /一句话/);
+  assert.match(raw, /faux:一句话/);
+});
+
+test("continue and jsonl read the same workspace session as the one-shot prompt", { timeout: 20_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-continue-"));
+  const first = await runCli(["--cwd", dir, "hello-tree"], dir);
+  assert.equal(first.code, 0);
+  assert.match(first.stdout, /faux:hello-tree/);
+  const second = await runCli(["--cwd", dir, "--continue"], dir);
+  assert.equal(second.code, 0);
+  assert.match(second.stdout, /hello-tree/);
+  assert.match(second.stdout, /faux:hello-tree/);
+  const jsonl = await runCli(["--cwd", dir, "--jsonl"], dir, `${JSON.stringify({ type: "prompt", text: "second-line" })}\n`);
+  assert.equal(jsonl.code, 0);
+  assert.match(jsonl.stdout, /"text":"faux:second-line"/);
+  assert.match(jsonl.stdout, /hello-tree/);
 });
 
 test("login without a provider still fails before any session or screen", async () => {

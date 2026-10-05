@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 function emit(ok, text) {
   const payload = JSON.stringify({ ok, text });
@@ -95,6 +95,69 @@ function readStdin() {
   });
 }
 
+function walk(root) {
+  const files = [];
+  const visit = (dir) => {
+    if (files.length > 2000) return;
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name === ".amazme" || entry.name === "node_modules") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) visit(full);
+      else if (entry.isFile()) files.push(full);
+    }
+  };
+  visit(root);
+  return files;
+}
+
+function glob(pattern) {
+  const body = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
+  return new RegExp(`^${body}$`);
+}
+
+function search(workspace, full, op, body) {
+  const stat = statSync(full);
+  if (op === "ls") {
+    if (!stat.isDirectory()) return basename(full);
+    return readdirSync(full, { withFileTypes: true })
+      .filter((entry) => entry.name !== ".amazme")
+      .map((entry) => entry.name + (entry.isDirectory() ? "/" : ""))
+      .sort()
+      .join("\n");
+  }
+  const pattern = typeof body.pattern === "string" ? body.pattern : "";
+  if (pattern.length === 0) throw new Error("pattern is required");
+  const files = stat.isDirectory() ? walk(full) : [full];
+  if (op === "find") {
+    const match = glob(pattern);
+    return files
+      .map((file) => relative(workspace, file))
+      .filter((file) => match.test(file) || match.test(basename(file)))
+      .sort()
+      .join("\n");
+  }
+  const lines = [];
+  for (const file of files) {
+    let text = "";
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const rel = relative(workspace, file);
+    text.split("\n").forEach((line, index) => {
+      if (line.includes(pattern)) lines.push(`${rel}:${index + 1}:${line}`);
+    });
+  }
+  return lines.join("\n");
+}
+
 function operate(workspace, body) {
   const requested = typeof body.path === "string" ? body.path : "";
   const full = inside(workspace, requested);
@@ -131,6 +194,10 @@ function operate(workspace, body) {
       }
       writeFileSync(full, text.replace(body.old, body.replacement));
       emit(true, "ok");
+      return;
+    }
+    if (op === "grep" || op === "find" || op === "ls") {
+      emit(true, search(workspace, full, op, body));
       return;
     }
   } catch (error) {

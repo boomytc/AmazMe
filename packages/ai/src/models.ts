@@ -6,10 +6,17 @@ import type {
   AssistantEvent,
   AssistantMessage,
   AuthResult,
+  ClassifierContext,
+  ClassifierModel,
+  ClassifierResult,
   Context,
   CredentialStore,
+  ImageModel,
+  ImageRequest,
+  ImageResult,
   Model,
   ProviderHeaders,
+  SpecialCallOptions,
   StreamOptions,
 } from "./types.ts";
 import { normalizeContext } from "./transform.ts";
@@ -21,6 +28,18 @@ export interface ProviderStreams<TApi extends Api = Api> {
   streamSimple(model: Model<TApi>, context: Context, options?: StreamOptions): AssistantEventStream;
 }
 
+export type ClassifyFunction = (
+  model: ClassifierModel,
+  context: ClassifierContext,
+  options: SpecialCallOptions,
+) => Promise<ClassifierResult>;
+
+export type ImageFunction = (
+  model: ImageModel,
+  request: ImageRequest,
+  options: SpecialCallOptions,
+) => Promise<ImageResult>;
+
 export interface Provider<TApi extends Api = Api> {
   readonly id: string;
   readonly name: string;
@@ -30,6 +49,10 @@ export interface Provider<TApi extends Api = Api> {
   getModels(): readonly Model<TApi>[];
   stream<T extends TApi>(model: Model<T>, context: Context, options?: ApiStreamOptions<T>): AssistantEventStream;
   streamSimple(model: Model<TApi>, context: Context, options?: StreamOptions): AssistantEventStream;
+  listClassifiers?(): readonly ClassifierModel[];
+  listImages?(): readonly ImageModel[];
+  classify?(model: ClassifierModel, context: ClassifierContext, options: SpecialCallOptions): Promise<ClassifierResult>;
+  generateImages?(model: ImageModel, request: ImageRequest, options: SpecialCallOptions): Promise<ImageResult>;
 }
 
 export interface CreateProviderOptions<TApi extends Api = Api> {
@@ -38,9 +61,11 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
   baseUrl?: string;
   headers?: ProviderHeaders;
   auth: ApiKeyAuth | ProviderAuth;
-  models: readonly Model<TApi>[];
-  /** One protocol implementation for every model, or a table dispatched by `model.api`. */
-  api: ProviderStreams<TApi> | Partial<Record<TApi, ProviderStreams>>;
+  models?: readonly Model<TApi>[];
+  /** One protocol implementation for every chat model, or a table dispatched by `model.api`. */
+  api?: ProviderStreams<TApi> | Partial<Record<TApi, ProviderStreams>>;
+  classifiers?: { models: readonly ClassifierModel[]; run: Partial<Record<string, ClassifyFunction>> };
+  images?: { models: readonly ImageModel[]; run: Partial<Record<string, ImageFunction>> };
 }
 
 export type AssistantEventStream = EventStream<AssistantEvent, AssistantMessage>;
@@ -82,6 +107,10 @@ export interface Models {
   stream<TApi extends Api>(model: Model<TApi>, context: Context, options?: ApiStreamOptions<TApi>): AssistantEventStream;
   streamSimple(model: Model, context: Context, options?: StreamOptions): AssistantEventStream;
   completeSimple(model: Model, context: Context, options?: StreamOptions): Promise<AssistantMessage>;
+  getClassifier(providerId: string, modelId: string): ClassifierModel | undefined;
+  getImageModel(providerId: string, modelId: string): ImageModel | undefined;
+  classify(model: ClassifierModel, context: ClassifierContext, options?: SpecialCallOptions): Promise<ClassifierResult>;
+  generateImages(model: ImageModel, request: ImageRequest, options?: SpecialCallOptions): Promise<ImageResult>;
 }
 
 /** Management surface for assembling a collection. */
@@ -144,6 +173,64 @@ class ModelRegistry implements MutableModels {
 
   async completeSimple(model: Model, context: Context, options: StreamOptions = {}): Promise<AssistantMessage> {
     return this.streamSimple(model, context, options).result();
+  }
+
+  getClassifier(providerId: string, modelId: string): ClassifierModel | undefined {
+    return this.providers.get(providerId)?.listClassifiers?.().find((model) => model.id === modelId);
+  }
+
+  getImageModel(providerId: string, modelId: string): ImageModel | undefined {
+    return this.providers.get(providerId)?.listImages?.().find((model) => model.id === modelId);
+  }
+
+  classify(model: ClassifierModel, context: ClassifierContext, options: SpecialCallOptions = {}): Promise<ClassifierResult> {
+    return this.special(model, options, (provider, authed) => {
+      if (!provider.classify) return Promise.resolve(failedClassifier(model, `Provider ${provider.id} has no classifier API`));
+      return provider.classify(model, context, authed);
+    }, (item) => item.listClassifiers?.().some((entry) => entry.id === model.id) === true);
+  }
+
+  generateImages(model: ImageModel, request: ImageRequest, options: SpecialCallOptions = {}): Promise<ImageResult> {
+    return this.special(model, options, (provider, authed) => {
+      if (!provider.generateImages) return Promise.resolve(failedImages(model, `Provider ${provider.id} has no image API`));
+      return provider.generateImages(model, request, authed);
+    }, (item) => item.listImages?.().some((entry) => entry.id === model.id) === true);
+  }
+
+  private async special<T>(
+    model: { provider: string; id: string },
+    options: SpecialCallOptions,
+    call: (provider: Provider, options: SpecialCallOptions) => Promise<T>,
+    known: (provider: Provider) => boolean,
+  ): Promise<T> {
+    const provider = this.providers.get(model.provider);
+    if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
+    if (!known(provider)) throw new ModelsError("model", `Unknown model: ${model.provider}/${model.id}`);
+    let auth;
+    try {
+      auth = await resolveModelAuth({
+        providerId: provider.id,
+        auth: provider.auth,
+        store: this.store,
+        env: this.env,
+        refresh: true,
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
+      });
+    } catch (error) {
+      if (error instanceof AuthRefreshError) throw new ModelsError("auth", error.message);
+      throw error;
+    }
+    if (!auth) throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
+    const headers = { ...(auth.headers ?? {}), ...(options.headers ?? {}) };
+    const env = { ...(auth.env ?? {}), ...(options.env ?? {}) };
+    return call(provider, {
+      ...options,
+      ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+      ...(options.baseUrl || auth.baseUrl ? { baseUrl: options.baseUrl || auth.baseUrl } : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+    });
   }
 
   private open(model: Model, context: Context, options: StreamOptions | undefined, kind: "stream" | "simple"): AssistantEventStream {
@@ -228,16 +315,30 @@ function isStreams(value: unknown): value is ProviderStreams {
  * or a table keyed by `model.api`. Invalid assembly throws. A call whose API is
  * missing from the table becomes one error terminal.
  */
+function failedClassifier(model: ClassifierModel, errorMessage: string): ClassifierResult {
+  return { api: model.api, provider: model.provider, model: model.id, answers: {}, stopReason: "error", errorMessage };
+}
+
+function failedImages(model: ImageModel, errorMessage: string): ImageResult {
+  return { api: model.api, provider: model.provider, model: model.id, images: [], stopReason: "error", errorMessage };
+}
+
 export function createProvider<TApi extends Api = Api>(input: CreateProviderOptions<TApi>): Provider<TApi> {
   if (input.id.trim() === "") throw new ModelsError("provider", "Provider id is required");
-  const single = isStreams(input.api) ? input.api : undefined;
-  const byApi = single ? undefined : input.api as Partial<Record<string, ProviderStreams>>;
+  const chatModels = input.models ?? [];
+  const classifierModels = input.classifiers?.models ?? [];
+  const imageModels = input.images?.models ?? [];
+  const single = input.api && isStreams(input.api) ? input.api : undefined;
+  const byApi = single || !input.api ? undefined : input.api as Partial<Record<string, ProviderStreams>>;
   const implementations = single ? [single] : Object.values(byApi ?? {}).filter(isStreams);
-  if (implementations.length === 0) {
+  if (implementations.length === 0 && classifierModels.length === 0 && imageModels.length === 0) {
+    throw new ModelsError("provider", `Provider ${input.id}: api implementation is required`);
+  }
+  if (chatModels.length > 0 && implementations.length === 0) {
     throw new ModelsError("provider", `Provider ${input.id}: api implementation is required`);
   }
   if (byApi) {
-    for (const model of input.models) {
+    for (const model of chatModels) {
       if (!isStreams(byApi[model.api])) {
         throw new ModelsError("provider", `Provider ${input.id} has no API implementation for "${model.api}"`);
       }
@@ -266,7 +367,19 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
     ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
     ...(input.headers ? { headers: input.headers } : {}),
     auth,
-    getModels: () => input.models,
+    getModels: () => chatModels,
+    listClassifiers: () => classifierModels,
+    listImages: () => imageModels,
+    classify(model, context, options) {
+      const fn = input.classifiers?.run[model.api];
+      if (!fn) return Promise.resolve(failedClassifier(model, `Provider ${input.id} has no classifier API for "${model.api}"`));
+      return fn(model, context, options);
+    },
+    generateImages(model, request, options) {
+      const fn = input.images?.run[model.api];
+      if (!fn) return Promise.resolve(failedImages(model, `Provider ${input.id} has no image API for "${model.api}"`));
+      return fn(model, request, options);
+    },
     stream(model, context, options) {
       const implementation = implementationFor(model);
       if (!implementation) return missing(model);

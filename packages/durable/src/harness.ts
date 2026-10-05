@@ -669,6 +669,50 @@ export class AgentLane {
     });
   }
 
+  /**
+   * Create another conversation from plain user and assistant text.
+   * The source conversation stays where it is. Original lines remain in the log.
+   */
+  importConversation(
+    name: string,
+    messages: readonly { role: "user" | "assistant"; text: string }[],
+  ): Promise<Result<{ lane: string; tipId: string | null }>> {
+    if (this.harness.isClosed) return Promise.resolve(failure("closed", "harness is closed"));
+    if (name.length === 0 || name.includes("\0") || name === this.name) {
+      return Promise.resolve(failure("invalid_message", "import needs another conversation"));
+    }
+    if (messages.length === 0) return Promise.resolve(failure("invalid_message", "import needs messages"));
+    return admitted(this.harness).run((view, apply) => {
+      this.ensureConfig(view, apply);
+      if (view.get(laneAddress(name))) return failure("invalid_message", "conversation already exists");
+      const config = this.config(view);
+      apply([{ type: "set", address: configAddress(name), value: config }]);
+      this.ensureLane(view, apply, name);
+      let parent: string | null = null;
+      const writes: Write[] = [];
+      for (const message of messages) {
+        if ((message.role !== "user" && message.role !== "assistant") || typeof message.text !== "string") {
+          return failure("invalid_message", "import messages are user or assistant text");
+        }
+        const id = uuidv7();
+        writes.push({
+          type: "entry",
+          id,
+          parentId: parent,
+          timestamp: Date.now(),
+          payload: {
+            type: "message",
+            message: message.role === "user" ? user(message.text) : importedAssistant(config, message.text),
+          },
+        });
+        parent = id;
+      }
+      writes.push({ type: "set", address: tipAddress(name), value: parent });
+      apply(writes);
+      return { ok: true as const, value: { lane: name, tipId: parent } };
+    });
+  }
+
   async requestAbort(operationId: string): Promise<Result<{ operationId: string; newlyRequested: boolean }>> {
     if (this.harness.isClosed) return failure("closed", "harness is closed");
     const result = await admitted(this.harness).run((view, apply) => {
@@ -2079,6 +2123,19 @@ interface ToolDecision {
 
 function user(text: string): HarnessMessage {
   return { role: "user", content: text, timestamp: Date.now() };
+}
+
+function importedAssistant(config: { provider: string; modelId: string }, text: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "import",
+    provider: config.provider,
+    model: config.modelId,
+    usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
 }
 
 function toolMessage(call: { toolCallId: string; name: string }, text: string, isError: boolean, _terminate: boolean) {

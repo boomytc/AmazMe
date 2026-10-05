@@ -66,11 +66,21 @@ const ForkCall = Strict({
   name: LaneNameSchema,
   entryId: Nullable(EntryIdSchema),
 });
+const ImportMessageSchema = Strict({
+  role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
+  text: Text,
+});
+const ImportCall = Strict({
+  method: Type.Literal("import"),
+  lane: LaneNameSchema,
+  name: LaneNameSchema,
+  messages: Type.Array(ImportMessageSchema, { minItems: 1, maxItems: 200 }),
+});
 const ConversationsCall = Strict({ method: Type.Literal("conversations") });
 /** Calls on a runtime route. Lane calls name their lane; unsubscribe and conversations do not. */
 export const RuntimeCallSchema = Type.Union([
   AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall,
-  ConfigureCall, CatalogCall, ForkCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
+  ConfigureCall, CatalogCall, ForkCall, ImportCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
 ]);
 export type RuntimeCall = Static<typeof RuntimeCallSchema>;
 
@@ -281,6 +291,8 @@ export type CatalogReplyDto = Static<typeof CatalogReplySchema>;
 
 export const ForkReplySchema = Strict({ lane: LaneNameSchema });
 export type ForkReplyDto = Static<typeof ForkReplySchema>;
+export const ImportReplySchema = Strict({ lane: LaneNameSchema, tipId: Nullable(EntryIdSchema) });
+export type ImportReplyDto = Static<typeof ImportReplySchema>;
 
 export const parseRuntimeCall = (value: JsonValue): RuntimeCall => parse(RuntimeCallSchema, value, "runtime call");
 export const parseManagementCall = (value: JsonValue): ManagementCall => parse(ManagementCallSchema, value, "management call");

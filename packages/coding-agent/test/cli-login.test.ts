@@ -4,9 +4,10 @@ import test from "node:test";
 
 test("amazme login prints a handback and does not open a browser or build a TUI", () => {
   const source = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
+  const host = readFileSync(new URL("../src/host.ts", import.meta.url), "utf8");
   const login = readFileSync(new URL("../src/login.ts", import.meta.url), "utf8");
-  assert.equal(source.includes('join(args.cwd, "skills")'), true);
-  assert.equal(source.includes("appendSkillText"), true);
+  assert.equal(host.includes('join(cwd, "skills")'), true);
+  assert.equal(host.includes("appendSkillText"), true);
   assert.equal(source.includes("appendMcpTools"), false);
   assert.equal(source.includes("McpClient"), false);
   assert.equal(source.includes("--mcp"), false);

@@ -11,6 +11,7 @@ const COMPLETIONS = new Set([
   "ant-ling", "baseten", "cerebras", "deepseek", "groq", "huggingface", "moonshotai", "moonshotai-cn",
   "nvidia", "together", "xiaomi", "xiaomi-token-plan-ams", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp",
   "qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual", "zai", "zai-coding-cn",
+  "cloudflare-workers-ai",
 ]);
 
 const ALLOWED = new Set([
@@ -22,8 +23,11 @@ const ALLOWED = new Set([
 test("builtin chat presets share one provider factory and the existing protocol set", () => {
   const providers = builtinProviders();
   assert.equal(new Set(providers.map((provider) => provider.id)).size, providers.length);
-  assert.equal(providers.some((provider) => provider.id === "cloudflare-workers-ai"), false);
-  assert.equal(providers.some((provider) => provider.id === "typesafe"), false);
+  assert.equal(providers.some((provider) => provider.id === "cloudflare-workers-ai"), true);
+  const typesafe = providers.find((provider) => provider.id === "typesafe");
+  assert.ok(typesafe);
+  assert.equal(typesafe.getModels().length, 0);
+  assert.equal(typesafe.listClassifiers?.().some((model) => model.id === "jev-latest"), true);
   for (const provider of providers) {
     assert.equal("refreshModels" in provider, false, provider.id);
     for (const model of provider.getModels()) {

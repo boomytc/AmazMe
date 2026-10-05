@@ -178,8 +178,8 @@ export interface FileOpResult {
 
 export async function runFileOp(
   policy: WorkspacePolicy,
-  op: "read" | "write" | "edit",
-  body: { path: string; content?: string; old?: string; replacement?: string },
+  op: "read" | "write" | "edit" | "grep" | "find" | "ls",
+  body: { path: string; content?: string; old?: string; replacement?: string; pattern?: string },
   signal: AbortSignal,
 ): Promise<FileOpResult> {
   const argv = sandboxArgv(policy, [process.execPath, fileOpPath, op, policy.workspace]);
