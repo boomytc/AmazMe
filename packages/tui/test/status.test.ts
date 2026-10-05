@@ -53,6 +53,7 @@ test("the footer shows branch, elapsed time, retry, hit rate, and priced totals 
         output: 10,
         cacheRead: 1,
         cacheWrite: 0,
+        reasoning: null,
         hitRate: 0.25,
         cost: { input: 0.1, cacheRead: null, cacheWrite: 0.2, output: 0.3, total: 1.5 },
       },
@@ -61,6 +62,7 @@ test("the footer shows branch, elapsed time, retry, hit rate, and priced totals 
         output: 10,
         cacheRead: null,
         cacheWrite: null,
+        reasoning: null,
         hitRate: 0.5,
         cost: { input: 0.2, cacheRead: 0, cacheWrite: 0.2, output: 0.4, total: 0 },
       },
@@ -70,9 +72,8 @@ test("the footer shows branch, elapsed time, retry, hit rate, and priced totals 
   assert.match(frame, /会话 2:05/);
   assert.match(frame, /本轮 1:05/);
   assert.match(frame, /重试 overloaded 5s/);
-  assert.match(frame, /本轮命中 0\.25/);
-  assert.match(frame, /累计命中 0\.5/);
-  assert.equal(frame.includes("%"), false);
+  assert.match(frame, /本轮输入 3 · 命中 1 · 25%/);
+  assert.equal(frame.includes("累计命中"), false);
   assert.match(frame, /本轮 \$1\.5/);
   assert.match(frame, /累计 \$0/);
 });
@@ -87,6 +88,7 @@ test("a null price hides the amount and a null retry reason hides the countdown"
         output: 10,
         cacheRead: 1,
         cacheWrite: 0,
+        reasoning: null,
         hitRate: 0,
         cost: { input: 1, cacheRead: 0, cacheWrite: 0, output: 1, total: null },
       },
@@ -95,15 +97,74 @@ test("a null price hides the amount and a null retry reason hides the countdown"
         output: 10,
         cacheRead: null,
         cacheWrite: null,
+        reasoning: null,
         hitRate: null,
         cost: null,
       },
     },
   }), 125_000);
-  assert.match(frame, /本轮命中 0/);
+  assert.match(frame, /本轮输入 3 · 命中 1 · 0%/);
   assert.equal(frame.includes("累计命中"), false);
   assert.equal(frame.includes("$"), false);
   assert.equal(frame.includes("重试"), false);
+});
+
+test("the turn line shows input, cache read, and a rounded hit percent", () => {
+  const frame = paint(activity({
+    usage: {
+      lastTurn: {
+        input: 2031,
+        output: 10,
+        cacheRead: 1920,
+        cacheWrite: 0,
+        reasoning: null,
+        hitRate: 0.9454,
+        cost: { input: 0.1, cacheRead: 0, cacheWrite: 0, output: 0.2, total: 1.5 },
+      },
+      total: emptyActivity().usage.total,
+    },
+  }));
+  assert.match(frame, /本轮输入 2031 · 命中 1920 · 95%/);
+  assert.match(frame, /本轮 \$1\.5/);
+});
+
+test("a cache read without a hit rate omits the percent", () => {
+  const frame = paint(activity({
+    usage: {
+      lastTurn: {
+        input: 2031,
+        output: 1,
+        cacheRead: 1920,
+        cacheWrite: null,
+        reasoning: null,
+        hitRate: null,
+        cost: null,
+      },
+      total: emptyActivity().usage.total,
+    },
+  }));
+  assert.match(frame, /本轮输入 2031 · 命中 1920/);
+  assert.equal(frame.includes("%"), false);
+});
+
+test("a null input, cache read, and hit rate hide the turn line", () => {
+  const frame = paint(activity({
+    usage: {
+      lastTurn: {
+        input: null,
+        output: 0,
+        cacheRead: null,
+        cacheWrite: null,
+        reasoning: null,
+        hitRate: null,
+        cost: null,
+      } as ActivityDto["usage"]["lastTurn"],
+      total: emptyActivity().usage.total,
+    },
+  }));
+  assert.equal(frame.includes("本轮输入"), false);
+  assert.equal(frame.includes("命中"), false);
+  assert.equal(frame.includes("%"), false);
 });
 
 test("compacting becomes done and clears on the next turn", () => {
@@ -138,8 +199,7 @@ test("the footer does not price tokens, run git, or read the clock itself", () =
     assert.equal(source.includes("Date.now"), false);
     assert.equal(source.includes("setInterval"), false);
     assert.equal(source.includes("usageCost"), false);
-    assert.equal(source.includes("cacheRead"), false);
-    assert.equal(source.includes("* 100"), false);
+    assert.equal(reduce.includes("cacheRead"), false);
     assert.equal(source.includes("rev-parse"), false);
   }
   const joined = [...sources.values()].join("\n");

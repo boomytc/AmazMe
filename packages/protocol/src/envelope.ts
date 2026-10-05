@@ -2,7 +2,7 @@ import Type, { type Static } from "typebox";
 import type { JsonValue } from "./json.ts";
 
 /** Handshakes require exactly this version; there is no negotiation or fallback. */
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 export const MAX_ID_LENGTH = 128;
 export const MAX_ERROR_MESSAGE_LENGTH = 4096;

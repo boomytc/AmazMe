@@ -3,8 +3,10 @@ import type {
   AgentLane,
   DriveOutcome,
   LanePhase,
+  LaneRunStatus,
   LaneSettings,
   LaneStatus,
+  LaneUsage,
   OperationAdmission,
   OperationResult,
   Result,
@@ -24,6 +26,7 @@ import {
   LANE_PHASES,
   parseManagementCall,
   parseRuntimeCall,
+  type ActivityDto,
   type DriveOutcomeDto,
   type EntryDto,
   type LaneSettingsDto,
@@ -44,7 +47,10 @@ const results: Same<OperationResult, OperationResultDto> = true;
 const admissions: Same<OperationAdmission, OperationAdmissionDto> = true;
 const outcomes: Same<DriveOutcome, DriveOutcomeDto> = true;
 const statuses: Same<LaneStatus, StatusDto> = true;
-void [phases, settingsMatch, results, admissions, outcomes, statuses];
+const runStatus: Same<Pick<ActivityDto, "notBefore" | "retryReason" | "compacting" | "turnStartedAt">, LaneRunStatus> = true;
+const lastTurnShape: Same<ActivityDto["usage"]["lastTurn"], LaneUsage["lastTurn"]> = true;
+const totalShape: Same<ActivityDto["usage"]["total"], LaneUsage["total"]> = true;
+void [phases, settingsMatch, results, admissions, outcomes, statuses, runStatus, lastTurnShape, totalShape];
 
 /**
  * What one host open acquired. The server handle does not expose `harness` or `storage`.
@@ -382,7 +388,7 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
       lane.usage(),
       lane.laneStatus(),
     ]);
-    const activity = {
+    const activity: ActivityDto = {
       branch: clockBranch(this.clock),
       sessionStartedAt: clockSession(this.clock),
       turnStartedAt: status.turnStartedAt,
@@ -391,7 +397,9 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
       compacting: status.compacting,
       usage: projectLaneUsage(usage),
     };
-    return wire({ ...snapshot, activity }) as LaneSnapshotDto;
+    const view: LaneSnapshotDto = { ...snapshot, activity };
+    wire(view);
+    return view;
   }
 
   private fullSnapshot(snapshot: LaneSnapshotDto, limits: ProtocolLimits): JsonValue {

@@ -33,7 +33,7 @@ function scripted(options: Partial<ClientOptions> = {}) {
   const handshake = async () => {
     const connected = client.connect();
     await until(() => received.some((message) => message.type === "hello"));
-    reply({ type: "hello", version: 1, serverId: "srv" });
+    reply({ type: "hello", version: 2, serverId: "srv" });
     await connected;
   };
   return { client, received, reply, raw, handshake, server: () => server };
@@ -45,7 +45,7 @@ test("hello is sent first and the handshake fails on hello_error, a wrong first 
   const refused = scripted();
   const connecting = refused.client.connect();
   await until(() => refused.received.length === 1);
-  assert.deepEqual(refused.received, [{ type: "hello", version: 1 }]);
+  assert.deepEqual(refused.received, [{ type: "hello", version: 2 }]);
   refused.reply({ type: "hello_error", error: { code: "unsupported_version", message: "no" } });
   await assert.rejects(connecting, (error) => error instanceof RemoteError && error.code === "unsupported_version");
   assert.equal(refused.client.state, "disconnected");
@@ -65,7 +65,7 @@ test("a response without a request, a foreign attachment, or a second hello is a
   for (const message of [
     { type: "response", id: "r9", ok: true },
     { type: "attachment", attachment: { serverId: "other", runtimeId: "rt", attachmentId: "a" } },
-    { type: "hello", version: 1, serverId: "srv" },
+    { type: "hello", version: 2, serverId: "srv" },
   ] satisfies ServerMessage[]) {
     const peer = scripted();
     await peer.handshake();
@@ -117,7 +117,7 @@ test("the transport factory failing and the send queue overflowing reject explic
   const connecting = client.connect();
   await until(() => sends.length === 1);
   sends[0]!();
-  handlers.onData(encodeServerMessage({ type: "hello", version: 1, serverId: "srv" }));
+  handlers.onData(encodeServerMessage({ type: "hello", version: 2, serverId: "srv" }));
   await connecting;
   const requests = Array.from({ length: 6 }, () => client.request(client.serverRoute(), "x".repeat(40)));
   const outcomes = await Promise.allSettled(requests);
@@ -152,7 +152,7 @@ test("server bytes arriving before the transport factory returns cannot connect 
   for (const fragmented of [false, true]) {
     let closed = 0;
     const states: string[] = [];
-    const frame = encodeServerMessage({ type: "hello", version: 1, serverId: "srv" });
+    const frame = encodeServerMessage({ type: "hello", version: 2, serverId: "srv" });
     const client = new Client({ serverId: "srv", transport: (handlers) => {
       handlers.onData(fragmented ? frame.subarray(0, 3) : frame);
       return {
@@ -243,7 +243,7 @@ test("buffered subscription updates stay ordered when an update callback receive
     handlers = given;
     return { send: async (frame) => {
       for (const message of decoder.push(frame)) {
-        if (message.type === "hello") handlers.onData(encodeServerMessage({ type: "hello", version: 1, serverId: "srv" }));
+        if (message.type === "hello") handlers.onData(encodeServerMessage({ type: "hello", version: 2, serverId: "srv" }));
         else requests.push(message);
       }
     }, close: () => undefined };
@@ -278,7 +278,7 @@ test("a reconnect during attachment cleanup prevents an old disconnected event f
   assert.equal(peer.client.state, "connecting");
   assert.deepEqual(states, ["connecting"]);
   await until(() => peer.received.filter((message) => message.type === "hello").length === 2);
-  peer.reply({ type: "hello", version: 1, serverId: "srv" });
+  peer.reply({ type: "hello", version: 2, serverId: "srv" });
   await connecting;
   await peer.client.dispose();
 });

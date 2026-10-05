@@ -166,6 +166,7 @@ const TurnUsageSchema = Strict({
   output: Type.Number(),
   cacheRead: Nullable(Type.Number()),
   cacheWrite: Nullable(Type.Number()),
+  reasoning: Nullable(Type.Number()),
   hitRate: Nullable(Type.Number()),
   cost: Nullable(UsageCostSchema),
 });
@@ -176,6 +177,7 @@ const TotalUsageSchema = Strict({
   output: Type.Number(),
   cacheRead: Nullable(Type.Number()),
   cacheWrite: Nullable(Type.Number()),
+  reasoning: Nullable(Type.Number()),
   hitRate: Nullable(Type.Number()),
   cost: Nullable(CumulativeCostSchema),
 });
@@ -235,7 +237,7 @@ export function emptyActivity(): ActivityDto {
     compacting: false,
     usage: {
       lastTurn: null,
-      total: { input: 0, output: 0, cacheRead: null, cacheWrite: null, hitRate: null, cost: null },
+      total: { input: 0, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, hitRate: null, cost: null },
     },
   };
 }

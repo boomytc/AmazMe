@@ -18,17 +18,18 @@ function usage(lastTurn: LaneUsage["lastTurn"], total: LaneUsage["total"]): Pick
   return { lastTurn, total };
 }
 
-test("projectLaneUsage copies hitRate and cost and drops the other usage fields", () => {
+test("projectLaneUsage copies hitRate, cost, and reasoning and drops the other usage fields", () => {
   const projected = projectLaneUsage(usage(
-    { input: 3, output: 10, cacheRead: 1, cacheWrite: 0, hitRate: 0.25, cost: turnCost },
-    { input: 8, output: 10, cacheRead: null, cacheWrite: null, hitRate: null, cost: totalCost },
+    { input: 3, output: 10, cacheRead: 1, cacheWrite: 0, reasoning: 4, hitRate: 0.25, cost: turnCost },
+    { input: 8, output: 10, cacheRead: null, cacheWrite: null, reasoning: null, hitRate: null, cost: totalCost },
   ));
   assert.equal(projected.lastTurn?.output, 10);
+  assert.equal(projected.lastTurn?.reasoning, 4);
   assert.equal(projected.lastTurn?.hitRate, 0.25);
   assert.deepEqual(projected.lastTurn?.cost, turnCost);
+  assert.equal(projected.total.reasoning, null);
   assert.equal(projected.total.hitRate, null);
   assert.deepEqual(projected.total.cost, totalCost);
-  assert.equal("reasoning" in (projected.lastTurn ?? {}), false);
   assert.equal("contextTokens" in projected, false);
   assert.equal("compactionThreshold" in projected, false);
 });
@@ -36,7 +37,7 @@ test("projectLaneUsage copies hitRate and cost and drops the other usage fields"
 test("a null last turn and a null cumulative cost stay null", () => {
   const projected = projectLaneUsage(usage(
     null,
-    { input: 0, output: 0, cacheRead: null, cacheWrite: null, hitRate: null, cost: null },
+    { input: 0, output: 0, cacheRead: null, cacheWrite: null, reasoning: null, hitRate: null, cost: null },
   ));
   assert.equal(projected.lastTurn, null);
   assert.equal(projected.total.hitRate, null);
@@ -109,7 +110,8 @@ test("a settled turn copies priced usage() and clears the open turn", async () =
     assert.equal(snap.activity.notBefore, null);
     assert.equal(snap.activity.retryReason, null);
     assert.equal(snap.activity.compacting, false);
-    assert.equal("reasoning" in (snap.activity.usage.lastTurn ?? {}), false);
+    assert.equal(snap.activity.usage.lastTurn.reasoning, usageView.lastTurn.reasoning);
+    assert.equal(snap.activity.usage.total.reasoning, usageView.total.reasoning);
     assert.deepEqual(emptyActivity().usage.total.cost, null);
   } finally {
     await env.close();

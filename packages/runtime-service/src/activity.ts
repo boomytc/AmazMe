@@ -3,8 +3,8 @@ import type { ActivityDto, CumulativeCostDto, TotalUsageDto, TurnUsageDto, Usage
 
 /**
  * Copy `usage().lastTurn` and `usage().total`.
- * `hitRate` and `cost` are the values Durable already stored. This does not call `cacheHitRate` or `usageCost`.
- * `contextTokens` and `compactionThreshold` stay off the protocol object. `reasoning` is not on this `usage()`.
+ * `hitRate`, `cost`, and `reasoning` are the values Durable already stored. This does not call `cacheHitRate` or `usageCost`.
+ * `contextTokens` and `compactionThreshold` stay off the protocol object. `reasoning` stays `number | null` and is not added into `output`.
  */
 export function projectLaneUsage(usage: Pick<LaneUsage, "lastTurn" | "total">): ActivityDto["usage"] {
   return {
@@ -19,6 +19,7 @@ function projectTurn(row: NonNullable<LaneUsage["lastTurn"]>): TurnUsageDto {
     output: row.output,
     cacheRead: row.cacheRead,
     cacheWrite: row.cacheWrite,
+    reasoning: row.reasoning,
     hitRate: row.hitRate,
     cost: copyTurnCost(row.cost),
   };
@@ -30,6 +31,7 @@ function projectTotal(row: LaneUsage["total"]): TotalUsageDto {
     output: row.output,
     cacheRead: row.cacheRead,
     cacheWrite: row.cacheWrite,
+    reasoning: row.reasoning,
     hitRate: row.hitRate,
     cost: copyTotalCost(row.cost),
   };

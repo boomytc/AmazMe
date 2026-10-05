@@ -33,7 +33,7 @@ const clientMessages: ClientMessage[] = [
 ];
 const serverMessages: ServerMessage[] = [
   { type: "hello", version: PROTOCOL_VERSION, serverId: "srv-1" },
-  { type: "hello_error", error: { code: "unsupported_version", message: "expected 1" } },
+  { type: "hello_error", error: { code: "unsupported_version", message: "expected 2" } },
   { type: "response", id: "r1", ok: true, result: opaque },
   { type: "response", id: "r1", ok: true },
   { type: "response", id: "r2", ok: false, error: { code: "route_mismatch", message: "" } },
@@ -87,7 +87,7 @@ test("envelopes reject unknown fields at every level, empty codes and malformed 
     assert.throws(() => decoder.push(framed(message as JsonValue)), protocolError("invalid_message"));
   }
   const invalidServer: unknown[] = [
-    { type: "hello", version: 2, serverId: "srv-1" },
+    { type: "hello", version: 1, serverId: "srv-1" },
     { type: "hello", version: PROTOCOL_VERSION },
     { type: "hello_error", error: { code: "", message: "x" } },
     { type: "hello_error", error: { code: "Bad Code", message: "x" } },
@@ -116,9 +116,9 @@ test("non-JSON values fail before the schema runs, so accessors are never invoke
 });
 
 test("the handshake version is exact and no other version is accepted", () => {
-  assert.equal(PROTOCOL_VERSION, 1);
-  assert.equal(isSupportedVersion(1), true);
-  for (const version of [0, 2, 8]) {
+  assert.equal(PROTOCOL_VERSION, 2);
+  assert.equal(isSupportedVersion(2), true);
+  for (const version of [0, 1, 8]) {
     assert.equal(isSupportedVersion(version), false);
     assert.deepEqual(parseClientMessage({ type: "hello", version }), { type: "hello", version }, "the server answers with hello_error");
     assert.throws(() => parseServerMessage({ type: "hello", version, serverId: "srv-1" }), protocolError("invalid_message"));

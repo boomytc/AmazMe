@@ -2,7 +2,7 @@ import type { ActivityDto } from "@amazme/runtime-service";
 
 /**
  * 底栏上多出来的片段。数字来自快照里的 `activity`，这里不读 git，也不估算 token 或费用。
- * `hitRate` 和 `cost` 只显示协议里已有的数，这里不换算百分数，也不用 token 计价。
+ * 本轮一行是 `本轮输入 N · 命中 cacheRead · round(hitRate * 100)%`。百分比只是显示取整。
  * `now` 由画面在绘制时传入。没有它就不显示耗时和倒计时，渲染本身不读时钟。
  */
 export function footerParts(
@@ -21,10 +21,8 @@ export function footerParts(
   if (retry) parts.push(retry);
   if (activity.compacting) parts.push("压缩中");
   else if (compaction === "done") parts.push("压缩完成");
-  const lastHit = hitPart("本轮命中", activity.usage.lastTurn?.hitRate);
-  if (lastHit) parts.push(lastHit);
-  const totalHit = hitPart("累计命中", activity.usage.total.hitRate);
-  if (totalHit) parts.push(totalHit);
+  const counts = turnLine(activity.usage.lastTurn);
+  if (counts) parts.push(counts);
   const lastCost = money(activity.usage.lastTurn?.cost?.total);
   if (lastCost) parts.push(`本轮 ${lastCost}`);
   const totalCost = money(activity.usage.total.cost?.total);
@@ -65,9 +63,17 @@ function elapsed(start: number | null, now: number | undefined): string | null {
   return `${minutes}:${pad(rest)}`;
 }
 
-function hitPart(label: string, rate: number | null | undefined): string | null {
-  if (typeof rate !== "number" || !Number.isFinite(rate)) return null;
-  return `${label} ${rate}`;
+function turnLine(turn: ActivityDto["usage"]["lastTurn"]): string | null {
+  if (!turn) return null;
+  const segments: string[] = [];
+  if (typeof turn.input === "number" && Number.isFinite(turn.input)) segments.push(`本轮输入 ${turn.input}`);
+  if (typeof turn.cacheRead === "number" && Number.isFinite(turn.cacheRead)) {
+    segments.push(`命中 ${turn.cacheRead}`);
+    if (typeof turn.hitRate === "number" && Number.isFinite(turn.hitRate)) {
+      segments.push(`${Math.round(turn.hitRate * 100)}%`);
+    }
+  }
+  return segments.length > 0 ? segments.join(" · ") : null;
 }
 
 function money(total: number | null | undefined): string | null {
