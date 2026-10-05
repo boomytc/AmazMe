@@ -1,6 +1,6 @@
 import { isCompletionsThinkingField, type AssistantContent, type AssistantMessage, type Message, type Model, type TextContent, type ThinkingContent, type ToolCall, type ToolResultMessage, type Usage, type UserContent } from "./types.ts";
 
-const USER_IMAGE = "(image omitted: model does not support images)";
+const USER_IMAGE = "[image]";
 const TOOL_IMAGE = "(tool image omitted: model does not support images)";
 
 function text(value: string): TextContent {
@@ -35,7 +35,8 @@ function downgradeImages(content: UserContent[], placeholder: string): TextConte
 
 /**
  * Make one transcript acceptable to another provider.
- * Images disappear on text-only models. Tool ids are normalized except for
+ * User images on a text-only model become the text `[image]`. Tool images
+ * use their own placeholder. Tool ids are normalized except for
  * same-origin Google calls, whose native ids must be returned exactly. Tool
  * results follow the mapped ids. A completions thinking block
  * keeps its field when the destination api is openai-completions. Every

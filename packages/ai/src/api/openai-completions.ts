@@ -1,5 +1,5 @@
-import { imageInputRefusal } from "../image-input.ts";
 import { baseAssistant, createAssistantEventStream, type AssistantEventStream, type ProviderStreams } from "../models.ts";
+import { userImageProblem } from "./prepare.ts";
 import { resolveThinkingLevel } from "../thinking.ts";
 import { isCompletionsThinkingField, type AssistantMessage, type CompletionsOutputTokenField, type CompletionsThinkingField, type Context, type Message, type Model, type OpenAICompletionsOptions, type ToolCall, type Usage } from "../types.ts";
 import { cacheMissInput, usageFromCounts } from "./events.ts";
@@ -227,43 +227,6 @@ function toolResultContent(message: Extract<Message, { role: "toolResult" }>): s
   if (!message.content.some((block) => block.type === "image")) return messageText(message);
   const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
   return text || "(see attached image)";
-}
-
-const IMAGE_MIME = /^image\/[\w.+-]+$/;
-const IMAGE_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?$/;
-
-/** Capability failures happen before a text downgrade. Format failures stay distinct. */
-function userImageProblem(model: Model, messages: readonly Message[]): string | undefined {
-  for (const message of messages) {
-    if (message.role === "user") {
-      if (typeof message.content === "string") continue;
-      for (const block of message.content) {
-        if (block.type !== "image") continue;
-        const problem = imageBlockProblem(model, block, true);
-        if (problem) return problem;
-      }
-      continue;
-    }
-    if (message.role !== "toolResult" || !model.input.includes("image")) continue;
-    for (const block of message.content) {
-      if (block.type !== "image") continue;
-      const problem = imageBlockProblem(model, block, false);
-      if (problem) return problem;
-    }
-  }
-  return undefined;
-}
-
-function imageBlockProblem(model: Model, block: { mimeType: string; data: string }, rejectTextModel: boolean): string | undefined {
-  if (rejectTextModel) {
-    const refused = imageInputRefusal(model, [{ type: "image" }]);
-    if (refused) return refused;
-  }
-  if (typeof block.mimeType !== "string" || !IMAGE_MIME.test(block.mimeType)) return "Image input requires a mime type";
-  if (typeof block.data !== "string" || block.data.length === 0 || !IMAGE_BASE64.test(block.data)) {
-    return "Image input requires base64 data";
-  }
-  return undefined;
 }
 
 /** Replay each allowed field. A name outside the three fields is never a JSON key. */
