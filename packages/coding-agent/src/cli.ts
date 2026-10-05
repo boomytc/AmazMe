@@ -196,6 +196,11 @@ async function main(): Promise<void> {
     await runBridge(process.argv.slice(3));
     return;
   }
+  if (process.argv[2] === "gui") {
+    const { runGuiCommand } = await import("@amazme/gui");
+    await runGuiCommand(process.argv.slice(3));
+    return;
+  }
   const args = parseArgs(process.argv.slice(2));
   if (args.jsonl) {
     const line = (await readStdinLine()).trim();

@@ -8,6 +8,9 @@ export type Key =
   | { type: "escape" }
   | { type: "up" }
   | { type: "down" }
+  | { type: "left" }
+  | { type: "right" }
+  | { type: "newline" }
   | { type: "page-up" }
   | { type: "page-down" };
 
@@ -18,6 +21,12 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
   while (index < chars.length) {
     const char = chars[index] ?? "";
     if (char === "\u001b") {
+      if (chars[index + 1] === "\r" || chars[index + 1] === "\n") {
+        keys.push({ type: "newline" });
+        index += 2;
+        if (chars[index - 1] === "\r" && chars[index] === "\n") index += 1;
+        continue;
+      }
       if (index + 1 >= chars.length) return { keys, rest: chars.slice(index).join("") };
       if (chars[index + 1] === "[") {
         let cursor = index + 2;
@@ -84,6 +93,8 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
 function csiKey(body: string, final: string): Key {
   if (final === "A") return { type: "up" };
   if (final === "B") return { type: "down" };
+  if (final === "C") return { type: "right" };
+  if (final === "D") return { type: "left" };
   if (final === "~" && body === "5") return { type: "page-up" };
   if (final === "~" && body === "6") return { type: "page-down" };
   return { type: "escape" };

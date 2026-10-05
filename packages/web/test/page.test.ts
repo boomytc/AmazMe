@@ -260,6 +260,7 @@ class FakeNode {
   listeners: Record<string, Array<(event: { key?: string; preventDefault: () => void; shiftKey?: boolean }) => void>> = {};
   constructor(tag: string) { this.tag = tag; }
   setAttribute(name: string, value: string): void { this.attrs[name] = value; }
+  removeAttribute(name: string): void { delete this.attrs[name]; }
   append(...nodes: Array<FakeNode | string>): void {
     for (const node of nodes) {
       const child = typeof node === "string" ? Object.assign(new FakeNode("#text"), { textContent: node }) : node;
@@ -293,7 +294,7 @@ class FakeNode {
 
 function fakeDocument(html: string): { getElementById(id: string): FakeNode | undefined; querySelector(selector: string): FakeNode | undefined; createElement(tag: string): FakeNode } {
   const root = new FakeNode("main");
-  for (const id of ["sessions", "transcript", "tools", "notice", "menu", "status", "text", "form", "abort"]) {
+  for (const id of ["sessions", "transcript", "tools", "notice", "menu", "status", "text", "mask", "key", "form", "abort"]) {
     const node = new FakeNode(id === "form" ? "form" : "div");
     node.attrs.id = id;
     root.append(node);

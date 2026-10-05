@@ -13,6 +13,8 @@ export interface WebOptions {
   port?: number;
   login?(provider: string, handback: (text: string) => void): Promise<string>;
   logout?(provider: string): Promise<string>;
+  catalog?(): Promise<Array<{ id: string; name: string; stored: boolean; oauth: boolean; apiKey: boolean }>>;
+  saveApiKey?(providerId: string, key: string): Promise<string>;
   cwd?: string;
 }
 
@@ -30,6 +32,8 @@ export interface PageView {
   directory: string;
   models: Array<{ provider: string; modelId: string }>;
   thinkingLevels: string[];
+  providers: Array<{ id: string; name: string; stored: boolean; oauth: boolean; apiKey: boolean }>;
+  secret: boolean;
 }
 
 export interface WebServer {
@@ -53,6 +57,11 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
   let notice: string | null = null;
   let earlier: EntryDto[] = [];
   let chrome = { provider: "", modelId: "", thinking: "", directory: "", models: [] as Array<{ provider: string; modelId: string }>, thinkingLevels: [] as string[] };
+  let account: { providers: PageView["providers"]; secretProvider: string | null } = { providers: [], secretProvider: null };
+  const rememberAccount = async (): Promise<void> => {
+    if (!options.catalog) return;
+    account = { ...account, providers: await options.catalog() };
+  };
   const rememberSettings = async (): Promise<void> => {
     try {
       const settings = await lane.configure();
@@ -68,6 +77,7 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
     } catch {
       // The status line keeps the last settings this lane could report.
     }
+    await rememberAccount();
   };
   const listeners = new Set<ServerResponse>();
   let latest = emptyView(options.lane);
@@ -75,7 +85,7 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
     const parent = snapshot.entries[0]?.parentId ?? null;
     const tail = earlier.at(-1)?.id;
     if (tail !== undefined && tail !== parent) earlier = [];
-    latest = project(snapshot, [...known].sort(), active, earlier, notice, chrome);
+    latest = project(snapshot, [...known].sort(), active, earlier, notice, chrome, account);
     const frame = `data: ${JSON.stringify(latest)}\n\n`;
     for (const response of listeners) response.write(frame);
   };
@@ -136,7 +146,22 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
         for (const name of await remote.conversations()) known.add(name);
         return [...known].sort();
       },
-      submit: (text) => interpret(lane, text, actions, (text) => { notice = text; }),
+      submit: async (text) => {
+        if (account.secretProvider) {
+          const providerId = account.secretProvider;
+          account = { ...account, secretProvider: null };
+          notice = options.saveApiKey ? await options.saveApiKey(providerId, text) : "当前客户端不能保存 API key";
+          await rememberAccount();
+          publish(subscription.current());
+          return;
+        }
+        await interpret(lane, text, actions, (next) => { notice = next; });
+      },
+      apiKey: (providerId: string) => {
+        account = { ...account, secretProvider: providerId };
+        notice = null;
+        publish(subscription.current());
+      },
       abort: async () => {
         const operationId = subscription.current().operationId;
         if (operationId) await lane.requestAbort(operationId);
@@ -222,6 +247,7 @@ interface Actions {
   abort: () => Promise<void>;
   open: (name: string) => Promise<void>;
   refresh: () => Promise<PageView>;
+  apiKey: (providerId: string) => void;
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse, actions: Actions): Promise<void> {
@@ -263,6 +289,9 @@ async function handle(request: IncomingMessage, response: ServerResponse, action
     else if (body.action === "open") {
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(text)) throw new Error("session name is invalid");
       await actions.open(text);
+    } else if (body.action === "api-key") {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(text)) throw new Error("provider id is invalid");
+      actions.apiKey(text);
     } else throw new Error("unknown action");
     response.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(await actions.refresh()));
     return;
@@ -277,6 +306,7 @@ function project(
   earlier: EntryDto[],
   notice: string | null,
   chrome: { provider: string; modelId: string; thinking: string; directory: string; models: Array<{ provider: string; modelId: string }>; thinkingLevels: string[] },
+  account: { providers: PageView["providers"]; secretProvider: string | null },
 ): PageView {
   const seen = new Set(snapshot.entries.map((entry) => entry.id));
   return {
@@ -293,6 +323,8 @@ function project(
     directory: chrome.directory,
     models: chrome.models,
     thinkingLevels: chrome.thinkingLevels,
+    providers: account.providers,
+    secret: account.secretProvider !== null,
   };
 }
 
@@ -330,6 +362,7 @@ function emptyView(active: string): PageView {
   return {
     sessions: [active], active, entries: [], pendingText: "", tools: [], busy: false, notice: null,
     provider: "", modelId: "", thinking: "", directory: "", models: [], thinkingLevels: [],
+    providers: [], secret: false,
   };
 }
 
@@ -394,6 +427,7 @@ const PAGE = `<!doctype html>
   #tools { margin: 0 0 8px; color: #8b93a7; font-size: 13px; }
   form { display: flex; gap: 8px; align-items: center; background: #12141c; border: 1px solid #3d4a68; border-radius: 14px; padding: 8px; }
   input, textarea { flex: 1; font: inherit; border: 0; outline: none; padding: 6px 8px; background: transparent; color: #d7dbe7; resize: none; }
+  textarea[data-secret="true"] { display: none; }
   #abort, form button { background: #c4b5fd; color: #161922; }
 </style>
 <main>
@@ -409,6 +443,8 @@ const PAGE = `<!doctype html>
       <ul id="tools"></ul>
       <p id="status"></p>
       <form id="form">
+        <span id="mask"></span>
+        <input id="key" type="password" hidden autocomplete="off">
         <textarea id="text" rows="2" autocomplete="off" placeholder="给 AmazMe 发消息，/ 打开命令"></textarea>
         <button type="submit">发送</button>
         <button type="button" id="abort">中止</button>
@@ -425,6 +461,8 @@ const PAGE = `<!doctype html>
   const menu = document.querySelector("#menu");
   const status = document.querySelector("#status");
   const text = document.querySelector("#text");
+  const mask = document.querySelector("#mask");
+  const key = document.querySelector("#key");
   let menuIndex = 0;
   let current = { sessions: [], models: [], thinkingLevels: [], entries: [], tools: [], directory: "", active: "", provider: "", modelId: "", thinking: "", busy: false, pendingText: "", notice: "" };
   function chooserRows(view, input) {
@@ -432,6 +470,22 @@ const PAGE = `<!doctype html>
     if (token === "/model") return (view.models || []).map((model) => ({ submit: "/model " + model.provider + "/" + model.modelId, label: model.provider + "/" + model.modelId }));
     if (token === "/thinking") return (view.thinkingLevels || []).map((level) => ({ submit: "/thinking " + level, label: level }));
     if (token === "/resume") return (view.sessions || []).map((name) => ({ submit: "/resume " + name, label: name }));
+    if (token === "/login") return (view.providers || []).map((provider) => ({
+      submit: "/login " + provider.id,
+      label: provider.name + (provider.stored ? "  ✓ stored" : "  • not configured"),
+      hold: Boolean(provider.apiKey),
+      providerId: provider.id,
+    }));
+    const login = /^\\/login\\s+(\\S+)\\s*$/.exec(token);
+    if (login) {
+      const provider = (view.providers || []).find((item) => item.id === login[1]);
+      if (!provider) return [];
+      const rows = [];
+      if (provider.oauth) rows.push({ submit: "/login " + provider.id, label: "Sign in with an account", providerId: provider.id });
+      if (provider.apiKey) rows.push({ submit: "/api-key " + provider.id, label: "Sign in with an API key", apiKey: true, providerId: provider.id });
+      return rows;
+    }
+    if (token === "/tree") return (view.entries || []).filter((entry) => entry.text).map((entry) => ({ submit: "/tree " + entry.id, label: (entry.role === "user" ? "你 " : "AmazMe ") + entry.text }));
     return [];
   }
   function messageNodes(text) {
@@ -508,7 +562,14 @@ const PAGE = `<!doctype html>
   };
   const menuRows = () => {
     const chosen = chooserRows(current, text.value);
-    if (chosen.length > 0) return chosen.map((row) => ({ text: row.label, submit: row.submit, hint: "" }));
+    if (chosen.length > 0) return chosen.map((row) => ({
+      text: row.label,
+      submit: row.submit,
+      hint: "",
+      hold: Boolean(row.hold),
+      apiKey: Boolean(row.apiKey),
+      providerId: row.providerId,
+    }));
     return matches().map((item) => ({
       text: "/" + item.name + (item.hint ? " " + item.hint : "") + "  " + item.description,
       submit: "/" + item.name + (item.hint ? " " : ""),
@@ -524,15 +585,7 @@ const PAGE = `<!doctype html>
       button.type = "button";
       button.textContent = item.text;
       if (index === menuIndex) button.setAttribute("aria-selected", "true");
-      button.addEventListener("click", () => {
-        if (item.submit.startsWith("/model ") || item.submit.startsWith("/thinking ") || item.submit.startsWith("/resume ")) {
-          act("submit", item.submit);
-          return;
-        }
-        text.value = item.submit;
-        text.focus();
-        paintMenu();
-      });
+      button.addEventListener("click", () => choose(item));
       return button;
     }));
   };
@@ -588,21 +641,64 @@ const PAGE = `<!doctype html>
     tools.replaceChildren();
     const model = view.provider && view.modelId ? view.provider + "/" + view.modelId : "";
     status.textContent = [view.directory, view.active, model, view.thinking, view.busy ? "忙" : "空闲"].filter(Boolean).join("  ");
+    if (view.secret) {
+      text.setAttribute("data-secret", "true");
+      text.style.display = "none";
+      text.value = "";
+      text.textContent = "";
+      key.hidden = false;
+      key.type = "password";
+      key.style.display = "";
+      mask.textContent = "•".repeat(String(key.value || "").length);
+    } else {
+      text.removeAttribute("data-secret");
+      text.style.display = "";
+      key.hidden = true;
+      key.value = "";
+      mask.textContent = "";
+    }
     paintMenu();
   };
   const source = new EventSource("/events");
   source.onmessage = (event) => paint(JSON.parse(event.data));
   fetch("/view").then((response) => response.json()).then(paint);
+  const choose = (item) => {
+    if (item.apiKey) {
+      text.value = "";
+      act("api-key", item.providerId);
+      return;
+    }
+    if (item.hold) {
+      text.value = item.submit + " ";
+      text.focus();
+      paintMenu();
+      return;
+    }
+    if (item.submit.startsWith("/model ") || item.submit.startsWith("/thinking ") || item.submit.startsWith("/resume ") || item.submit.startsWith("/login ") || item.submit.startsWith("/tree ") || !item.hint) {
+      act("submit", item.submit.trim());
+      return;
+    }
+    text.value = item.submit;
+    text.focus();
+    paintMenu();
+  };
   const act = (action, value) => fetch("/act", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action, text: value ?? text.value }),
+    body: JSON.stringify({ action, text: value ?? (current.secret ? key.value : text.value) }),
   }).then((response) => response.json()).then((view) => {
     paint(view);
-    if (action === "submit") text.value = "";
+    if (action === "submit" || action === "api-key") {
+      text.value = "";
+      if (!view.secret) key.value = "";
+    }
     paintMenu();
   });
   text.addEventListener("input", () => { menuIndex = 0; paintMenu(); });
+  key.addEventListener("input", () => {
+    if (!current.secret) return;
+    mask.textContent = "•".repeat(String(key.value || "").length);
+  });
   text.addEventListener("keydown", (event) => {
     const rows = menuRows();
     if (rows.length === 0) {
@@ -626,12 +722,7 @@ const PAGE = `<!doctype html>
       const token = text.value.trim();
       if (picked && picked.submit !== token) {
         event.preventDefault();
-        if (picked.submit.startsWith("/model ") || picked.submit.startsWith("/thinking ") || picked.submit.startsWith("/resume ") || !picked.hint) {
-          act("submit", picked.submit.trim());
-        } else {
-          text.value = picked.submit;
-          paintMenu();
-        }
+        choose(picked);
       }
     }
   });

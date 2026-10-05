@@ -7,6 +7,7 @@ import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { scopedModels } from "./project.ts";
 import { KeyDecoder } from "./keys.ts";
+import { writeScreen } from "./diff.ts";
 import { emptyTui, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
 
 export { finishDrive } from "./commands.ts";
@@ -86,6 +87,7 @@ export async function presentHost(
   let modelRows: Array<{ provider: string; modelId: string }> = [];
   let thinkingRows: string[] = [];
   let paint = (): void => undefined;
+  let previousFrame: string | null = null;
   let lane = new AttachedLane(remote.lane(active), () => {
     state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
     paint();
@@ -119,7 +121,8 @@ export async function presentHost(
   paint = () => {
     const columns = stdout.columns > 0 ? stdout.columns : 80;
     const rows = stdout.rows > 0 ? stdout.rows : 24;
-    stdout.write(`\x1b[H\x1b[J${renderTui(state, columns, rows)}`);
+    const next = renderTui(state, columns, rows);
+    previousFrame = writeScreen((chunk) => stdout.write(chunk), previousFrame, next);
   };
   stdout.on("resize", paint);
   await rememberSettings();

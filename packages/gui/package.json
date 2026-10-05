@@ -1,0 +1,19 @@
+{
+  "name": "@amazme/gui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "Graphical client of a running AmazMe host. It does not own the session log.",
+  "dependencies": {
+    "@amazme/client": "0.1.0",
+    "@amazme/runtime-service": "0.1.0"
+  },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check": "tsc -b"
+  }
+}

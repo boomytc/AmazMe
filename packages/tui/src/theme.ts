@@ -2,6 +2,7 @@
 export const theme = {
   reset: "\x1b[0m",
   dim: "\x1b[38;5;245m",
+  code: "\x1b[38;5;109m",
   text: "\x1b[38;5;252m",
   accent: "\x1b[38;5;147m",
   green: "\x1b[38;5;78m",

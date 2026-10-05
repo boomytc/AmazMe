@@ -1,10 +1,11 @@
 import { startWeb, type WebServer } from "@amazme/web";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID } from "./host.ts";
-import { formatHandback, loginProvider, logoutProvider } from "./login.ts";
+import { formatHandback, loginCatalog, loginProvider, logoutProvider, saveApiKey } from "./login.ts";
 
 export interface BridgeOptions {
   socket: string;
   port?: number;
+  credentialsFile?: string;
 }
 
 export interface CodingBridge {
@@ -21,9 +22,12 @@ export async function startCodingBridge(options: BridgeOptions): Promise<CodingB
     runtimeId: HOST_RUNTIME_ID,
     lane: HOST_LANE,
     login: (provider, handback) => loginProvider(provider, {
+      credentialsFile: options.credentialsFile,
       onHandback(value) { handback(formatHandback(value)); },
     }).then((report) => report.message),
-    logout: (provider) => logoutProvider(provider),
+    logout: (provider) => logoutProvider(provider, options.credentialsFile),
+    catalog: () => loginCatalog(options.credentialsFile),
+    saveApiKey: (providerId, key) => saveApiKey(providerId, key, options.credentialsFile),
   });
   return page;
 }
