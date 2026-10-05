@@ -16,6 +16,11 @@ interface CatalogModel {
   reasoning?: boolean;
   baseUrl?: string;
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+  /**
+   * See `Model.thinkingSwitch`. Per-model limit citations that JSON cannot store
+   * live in `data/LIMIT_SOURCES.md`, next to the catalog values they describe.
+   */
+  thinkingSwitch?: string;
 }
 
 // module Node16 cannot emit a JSON import attribute, and Node rejects a bare JSON import.
@@ -37,6 +42,10 @@ export function catalogModels(providerId: string): Model<KnownApi>[] {
   if (!rows) throw new Error(`No chat catalog for ${providerId}`);
   return rows.map((row) => {
     const cost = knownCost(row.cost);
+    const thinkingSwitch = row.thinkingSwitch;
+    if (thinkingSwitch !== undefined && thinkingSwitch !== "thinking") {
+      throw new Error(`Model "${row.provider}/${row.id}" thinkingSwitch must be "thinking"`);
+    }
     return {
       id: row.id,
       name: row.name,
@@ -49,6 +58,7 @@ export function catalogModels(providerId: string): Model<KnownApi>[] {
       ...(row.reasoning !== undefined ? { reasoning: row.reasoning } : {}),
       ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
       ...(row.thinkingLevelMap ? { thinkingLevelMap: row.thinkingLevelMap } : {}),
+      ...(thinkingSwitch ? { thinkingSwitch } : {}),
     };
   });
 }
