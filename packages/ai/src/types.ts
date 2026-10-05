@@ -101,8 +101,10 @@ export interface Usage {
    * `total` sums the known charges. A model with no price list stores zeros; `usageCost` returns null.
    * Cache-read tokens with no hit price are filled in here as 0. That zero is partial, not a confirmed
    * price: `usageCost` returns `total: null` for the same turn.
+   * Chat Completions leaves `total` null when the response did not report usage.
+   * That null is an empty quote, not a zero-dollar turn.
    */
-  cost: { input: number; output: number; total: number };
+  cost: { input: number; output: number; total: number | null };
   /**
    * Prompt tokens served from the provider cache.
    * Omitted when the response did not report a cache read. A reported 0 stays 0.
