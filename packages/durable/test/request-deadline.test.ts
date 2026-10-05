@@ -63,6 +63,23 @@ test("armRequestDeadline fires without counting a caller abort as timeout", asyn
   deadline.dispose();
 });
 
+test("armRequestDeadline restarts on touch and does not cap total time", async () => {
+  const parent = new AbortController();
+  const deadline = armRequestDeadline(80, parent.signal);
+  const started = Date.now();
+  for (let step = 0; step < 3; step += 1) {
+    await delay(50);
+    assert.equal(deadline.timedOut(), false);
+    assert.equal(deadline.signal.aborted, false);
+    deadline.touch();
+  }
+  assert.ok(Date.now() - started >= 150);
+  await delay(100);
+  assert.equal(deadline.timedOut(), true);
+  assert.equal(deadline.signal.aborted, true);
+  deadline.dispose();
+});
+
 test("a stored lane config without a deadline fails closed", () => {
   assert.throws(() => storedRequestPolicy({}), /no request deadline/);
 });
@@ -280,6 +297,52 @@ test("requestAbort is not a timeout resend and does not execute the tool", async
   }
 });
 
+test("a frame every 20ms for 2s does not hit a 100ms idle timeout", { timeout: 10_000 }, async () => {
+  let frames = 0;
+  const provider = scriptedProvider(() => ({ mode: "paced", intervalMs: 20, durationMs: 2_000, onFrame: () => { frames += 1; } }));
+  const runtime = harness(provider, {
+    maxAttempts: 1,
+    requestTimeoutMs: 100,
+    retry: immediate,
+  });
+  try {
+    const started = Date.now();
+    const result = await runtime.lane().prompt("go");
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 2_000, `elapsed ${elapsed}`);
+    assert.equal(result.status, "completed", result.error ?? "");
+    assert.equal(result.error, undefined);
+    assert.ok(frames >= 50, `frames ${frames}`);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("no frames for longer than a 100ms idle timeout times out the request", { timeout: 5_000 }, async () => {
+  let calls = 0;
+  const provider = scriptedProvider(() => {
+    calls += 1;
+    return { mode: "silent" };
+  });
+  const runtime = harness(provider, {
+    maxAttempts: 1,
+    requestTimeoutMs: 100,
+    retry: immediate,
+  });
+  try {
+    const started = Date.now();
+    const result = await runtime.lane().prompt("go");
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 100, `elapsed ${elapsed}`);
+    assert.ok(elapsed < 2_000, `elapsed ${elapsed}`);
+    assert.equal(result.status, "failed");
+    assert.equal(result.error, "model request timed out");
+    assert.equal(calls, 1);
+  } finally {
+    runtime.close();
+  }
+});
+
 test("accept rejects a non-positive request deadline", async () => {
   const models = createModels();
   models.setProvider(fauxProvider());
@@ -296,7 +359,9 @@ type Script =
   | { mode: "timeout"; markTimedOut: () => void }
   | { mode: "text"; text: string }
   | { mode: "tool-then-timeout"; markTimedOut: () => void }
-  | { mode: "wait-abort"; ready: () => void };
+  | { mode: "wait-abort"; ready: () => void }
+  | { mode: "paced"; intervalMs: number; durationMs: number; onFrame: () => void }
+  | { mode: "silent" };
 
 function scriptedProvider(next: () => Script, observe?: (roles: string[]) => void): Provider {
   const model: Model = {
@@ -322,6 +387,31 @@ function scriptedProvider(next: () => Script, observe?: (roles: string[]) => voi
       const script = next();
       const stream = createAssistantEventStream();
       void (async () => {
+        if (script.mode === "silent") {
+          await waitForAbort(options?.signal);
+          const failed = baseAssistant(active, [{ type: "text", text: "" }], "aborted");
+          failed.errorMessage = "aborted";
+          stream.push({ type: "error", error: failed });
+          return;
+        }
+        if (script.mode === "paced") {
+          const started = Date.now();
+          while (Date.now() - started < script.durationMs) {
+            if (options?.signal?.aborted) {
+              const failed = baseAssistant(active, [{ type: "text", text: "" }], "aborted");
+              failed.errorMessage = "aborted";
+              stream.push({ type: "error", error: failed });
+              return;
+            }
+            script.onFrame();
+            const partial = baseAssistant(active, [{ type: "text", text: "x" }], "stop");
+            stream.push({ type: "text_delta", contentIndex: 0, delta: "x", partial });
+            await delay(script.intervalMs);
+          }
+          const message = baseAssistant(active, [{ type: "text", text: "x" }], "stop");
+          stream.push({ type: "done", reason: "stop", message });
+          return;
+        }
         if (script.mode === "wait-abort") {
           script.ready();
           await waitForAbort(options?.signal);
@@ -422,12 +512,17 @@ function follow(parent: AbortSignal): RequestDeadline & { mark(): void } {
   return {
     signal: controller.signal,
     timedOut: () => timedOut && !parent.aborted,
+    touch() {},
     dispose() {},
     mark() {
       timedOut = true;
       controller.abort();
     },
   };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function waitForAbort(signal: AbortSignal | undefined): Promise<void> {

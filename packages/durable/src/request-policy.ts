@@ -1,9 +1,10 @@
 /**
- * Model-request deadline and the single retry wait.
+ * Model-request idle deadline and the single retry wait.
  * `@amazme/ai` only marks `retryable`. This module is the only resend policy.
  * The delay is computed here and stored as `notBefore`. It is not `Date.now() + 10`.
  * A failed assistant's `retryAfterMs` can only lengthen that wait.
  * Tool execution has its own limit and does not use this deadline.
+ * The deadline is idle time since the last received frame. There is no wall-clock cap.
  */
 
 export interface RetryWait {
@@ -16,6 +17,8 @@ export interface RequestDeadline {
   signal: AbortSignal;
   /** True only when this deadline fired and the caller signal did not. */
   timedOut(): boolean;
+  /** Restart the idle timer. A received frame or chunk calls this. */
+  touch(): void;
   dispose(): void;
 }
 
@@ -31,6 +34,7 @@ export type DeadlineAction =
   | { kind: "retryable_timeout" }
   | { kind: "interrupted" };
 
+/** Idle time with no received frame before one model request is cut off. Not a wall-clock cap. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 export const DEFAULT_RETRY_WAIT: RetryWait = { baseDelayMs: 1_000, maxDelayMs: 60_000 };
 
@@ -86,9 +90,10 @@ export function retryNotBeforeDelayMs(policy: RetryWait, attempt: number, retryA
 }
 
 /**
- * A deadline before any content frame is one retryable model error.
- * A deadline after content exists is terminal: do not resend, and do not run tool calls that exist only in frames.
+ * An idle deadline before any content frame is one retryable model error.
+ * An idle deadline after content exists is terminal: do not resend, and do not run tool calls that exist only in frames.
  * Caller cancel wins over the deadline, so a user abort is not a retry.
+ * Frames that keep arriving restart the idle timer, so a long stream is not cut off for total duration.
  */
 export function classifyDeadline(facts: DeadlineFacts): DeadlineAction {
   if (!facts.timedOut || facts.cancelRequested) return { kind: "unchanged" };
@@ -96,23 +101,40 @@ export function classifyDeadline(facts: DeadlineFacts): DeadlineAction {
   return { kind: "interrupted" };
 }
 
-/** Own the timer so a finished request does not leave a pending timeout. */
+/** Own the idle timer. {@link RequestDeadline.touch} restarts it. A finished request must not leave one pending. */
 export function armRequestDeadline(timeoutMs: number, parent: AbortSignal): RequestDeadline {
   const controller = new AbortController();
   let fired = false;
+  let disposed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const onParent = () => controller.abort();
   if (parent.aborted) controller.abort();
   else parent.addEventListener("abort", onParent, { once: true });
-  const timer = setTimeout(() => {
-    fired = true;
-    controller.abort();
-  }, timeoutMs);
-  timer.unref?.();
+  const arm = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (disposed || fired || parent.aborted || controller.signal.aborted) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (disposed || parent.aborted) return;
+      fired = true;
+      controller.abort();
+    }, timeoutMs);
+    // Leave the timer referenced. A stream that is only waiting on this deadline
+    // has no other handle, and unref would let the loop exit before it fires.
+    // dispose() clears it when the request ends.
+  };
+  arm();
   return {
     signal: controller.signal,
     timedOut: () => fired && !parent.aborted,
+    touch() {
+      arm();
+    },
     dispose() {
-      clearTimeout(timer);
+      disposed = true;
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
       parent.removeEventListener("abort", onParent);
     },
   };

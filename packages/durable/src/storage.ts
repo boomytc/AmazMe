@@ -39,6 +39,12 @@ export interface UsageRow {
   reasoning?: number | null;
   /** Provider and model that produced this row. Absent on older rows, which makes the cumulative cost null. */
   model?: { provider: string; modelId: string };
+  /**
+   * Present only when this turn did not report usage. `total` is then null.
+   * Absent on older rows and on turns with a quote. Those are still priced from token counts.
+   * A stored null is an empty quote, not a zero-dollar turn.
+   */
+  cost?: { total: null };
 }
 
 export interface ListItem {
@@ -59,6 +65,8 @@ export type Write =
       cacheWrite?: number | null;
       reasoning?: number | null;
       model?: { provider: string; modelId: string };
+      /** Set only when usage was not reported. `total` stays null and is not priced as zero. */
+      cost?: { total: null };
     }
   | { type: "set"; address: Address; value: unknown }
   | { type: "delete"; address: Address }
