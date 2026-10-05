@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import type { AssistantEventStream, Context, Model, Models, StreamOptions } from "@amazme/ai";
-import { Server } from "@amazme/server";
+import { Server, type ServerService } from "@amazme/server";
 import { listenUnix, type UnixListener } from "@amazme/server/unix";
 import { openJsonlRuntime } from "@amazme/runtime-service/jsonl";
 import { createManagementService, openOwnedRuntimes } from "@amazme/runtime-service/server";
@@ -69,6 +69,16 @@ export function readGitBranch(cwd: string): string | null {
 }
 
 /**
+ * `{ method: "cwd" }` on the server route.
+ * Catalog `directory` is the short status label. Standalone `amazme bridge` is another
+ * process, so it cannot use its own cwd. This reply is the filesystem directory the host was given.
+ */
+function isHostCwdCall(call: Parameters<ServerService["call"]>[0]): boolean {
+  if (typeof call !== "object" || call === null || Array.isArray(call)) return false;
+  return call.method === "cwd" && Object.keys(call).length === 1;
+}
+
+/**
  * Listen for one workspace runtime. Opening reads JSONL and constructs the harness;
  * it does not drive or call a model. The caller owns process signals.
  * The footer clock starts here. The branch is read once; the screen does not run git.
@@ -89,9 +99,15 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
     }
   };
   let server!: Server;
+  const management = createManagementService({ removeRuntime: (runtimeId) => server.removeRuntime(runtimeId) });
   server = new Server({
     serverId: HOST_SERVER_ID,
-    service: createManagementService({ removeRuntime: (runtimeId) => server.removeRuntime(runtimeId) }),
+    service: {
+      call(call, context) {
+        if (isHostCwdCall(call)) return { cwd };
+        return management.call(call, context);
+      },
+    },
     onError: report,
     openRuntime: openOwnedRuntimes({
       // Every conversation in the session log is servable. `main` is only the default.
