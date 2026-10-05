@@ -229,13 +229,27 @@ export async function presentHost(
       return;
     }
     choices = await account.catalog();
+    if (mode === "logout") {
+      showPicker({
+        title: "Select provider to logout:",
+        hint: "↑↓ navigate    enter select    escape cancel",
+        query: "",
+        index: 0,
+        rows: choiceRows("logout"),
+        kind: "logout-provider",
+      });
+      return;
+    }
     showPicker({
-      title: mode === "login" ? "Select provider to configure:" : "Select provider to logout:",
+      title: "Select authentication method:",
       hint: "↑↓ navigate    enter select    escape cancel",
       query: "",
       index: 0,
-      rows: choiceRows(mode),
-      kind: mode === "login" ? "login-provider" : "logout-provider",
+      rows: [
+        { id: "oauth", label: "Sign in with an account", detail: "", tone: "muted" },
+        { id: "api_key", label: "Sign in with an API key", detail: "", tone: "muted" },
+      ],
+      kind: "login-entry",
     });
   };
   const applyPick = async (effect: Extract<TuiEffect, { type: "pick" }>): Promise<void> => {
@@ -285,6 +299,32 @@ export async function presentHost(
       paint();
       return;
     }
+    if (effect.kind === "login-entry") {
+      const method = effect.id === "api_key" ? "api_key" : "oauth";
+      const rows = providerRows(method);
+      if (rows.length === 0) {
+        state = { ...state, notice: method === "oauth" ? "没有可登录的账号供应商" : "没有可配置 API key 的供应商", picker: null };
+        paint();
+        return;
+      }
+      showPicker({
+        title: method === "oauth" ? "Select provider to sign in:" : "Select provider for an API key:",
+        hint: "↑↓ navigate    enter select    escape cancel",
+        query: "",
+        index: 0,
+        rows,
+        kind: "login-provider",
+        subject: method,
+      });
+      return;
+    }
+    if (effect.kind === "login-provider") {
+      const chosen = choices.find((item) => item.id === effect.id);
+      if (!chosen) return;
+      const method = effect.subject === "oauth" || effect.subject === "api_key" ? effect.subject : undefined;
+      await continueProviderLogin(chosen, method);
+      return;
+    }
     if (effect.kind === "login-method") {
       const providerId = effect.subject ?? effect.id;
       if (effect.id === "api_key") {
@@ -313,6 +353,45 @@ export async function presentHost(
     }
     const choice = choices.find((item) => item.id === effect.id);
     if (!choice) return;
+    await continueProviderLogin(choice);
+  };
+  const providerRows = (method: "oauth" | "api_key"): PickerRow[] => choices
+    .filter((choice) => method === "oauth" ? choice.oauth : choice.apiKey)
+    .map((choice) => {
+      const stored = method === "oauth" ? choice.storedType === "oauth" : choice.storedType === "api_key";
+      return {
+        id: choice.id,
+        label: choice.name,
+        detail: stored ? "✓ stored" : "• not configured",
+        tone: stored ? "ok" as const : "muted" as const,
+      };
+    });
+  const continueProviderLogin = async (choice: ProviderChoice, method?: "oauth" | "api_key"): Promise<void> => {
+    const accountLogin = method === "oauth" || (method === undefined && choice.oauth && !choice.apiKey);
+    const keyLogin = method === "api_key" || (method === undefined && choice.apiKey && !choice.oauth);
+    if (accountLogin) {
+      if (!actions.login) {
+        state = { ...state, notice: "当前客户端不能登录", picker: null };
+        paint();
+        return;
+      }
+      state = { ...state, picker: null, notice: await actions.login(choice.id) };
+      paint();
+      return;
+    }
+    if (keyLogin) {
+      showPicker({
+        title: `API key for ${choice.name}:`,
+        hint: "enter save    escape cancel",
+        query: "",
+        index: 0,
+        rows: [],
+        kind: "api-key",
+        subject: choice.id,
+        secret: true,
+      });
+      return;
+    }
     if (choice.oauth && choice.apiKey) {
       showPicker({
         title: `Select authentication method for ${choice.name}:`,
@@ -327,23 +406,6 @@ export async function presentHost(
         subject: choice.id,
       });
       return;
-    }
-    if (choice.apiKey && !choice.oauth) {
-      showPicker({
-        title: `API key for ${choice.name}:`,
-        hint: "enter save    escape cancel",
-        query: "",
-        index: 0,
-        rows: [],
-        kind: "api-key",
-        subject: choice.id,
-        secret: true,
-      });
-      return;
-    }
-    if (actions.login) {
-      state = { ...state, picker: null, notice: await actions.login(choice.id) };
-      paint();
     }
   };
   let choices: ProviderChoice[] = [];
@@ -370,6 +432,19 @@ export async function presentHost(
     else if (effect.type === "pick") await applyPick(effect);
     else if ((effect.command.type === "login" || effect.command.type === "logout") && !effect.command.provider) {
       await openAccountPicker(effect.command.type);
+    } else if (effect.command.type === "login" && effect.command.provider) {
+      const providerId = effect.command.provider;
+      if (!account?.catalog) {
+        state = { ...state, notice: "当前客户端不能登录", picker: null };
+        paint();
+      } else {
+        if (choices.length === 0) choices = await account.catalog();
+        const chosen = choices.find((item) => item.id === providerId);
+        if (!chosen) {
+          state = { ...state, notice: `未知供应商 ${providerId}`, picker: null };
+          paint();
+        } else await continueProviderLogin(chosen);
+      }
     } else if (effect.command.type === "model" && !effect.command.provider) {
       showPicker({
         ...pickerBase,

@@ -41,7 +41,8 @@ function parseArgs(argv: string[]): Args {
       console.log("amazme --gui [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme --jsonl    reads one {\"type\":\"prompt\",\"text\":\"...\"} line from stdin");
       console.log("amazme update");
-      console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
+      console.log("amazme login account [--provider id] [--method pkce|device_code] [--callback-port n]");
+      console.log("amazme login api-key [--provider id]");
       console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
       console.log("amazme attach --socket path");
       console.log("amazme bridge --socket path [--port n]");
@@ -60,38 +61,119 @@ async function readStdinLine(): Promise<string> {
 }
 
 async function runLogin(argv: string[]): Promise<void> {
-  let providerId = "";
+  const parsed = parseLoginArgs(argv);
+  if (parsed.help) {
+    console.log("amazme login account [--provider id] [--method pkce|device_code] [--callback-port n]");
+    console.log("amazme login api-key [--provider id]");
+    return;
+  }
+  const { loginCatalog, saveApiKey } = await import("./login.ts");
+  const rows = await loginCatalog();
+  let entry = parsed.entry;
+  if (!entry && parsed.provider) {
+    const named = rows.find((row) => row.id === parsed.provider);
+    if (!named || (!named.oauth && !named.apiKey)) throw new Error(`${parsed.provider} has no login`);
+    if (named.oauth && named.apiKey) {
+      throw new Error(`choose login account --provider ${named.id} or login api-key --provider ${named.id}`);
+    }
+    entry = named.oauth ? "account" : "api-key";
+  }
+  if (!entry) {
+    console.log("amazme login account [--provider id] [--method pkce|device_code] [--callback-port n]");
+    console.log("amazme login api-key [--provider id]");
+    return;
+  }
+  const matching = entry === "account" ? rows.filter((row) => row.oauth) : rows.filter((row) => row.apiKey);
+  if (!parsed.provider) {
+    for (const row of matching) process.stdout.write(`${row.id}\t${row.name}\n`);
+    return;
+  }
+  const provider = rows.find((row) => row.id === parsed.provider);
+  if (!provider || (entry === "account" ? !provider.oauth : !provider.apiKey)) {
+    throw new Error(`${parsed.provider} has no ${entry} login`);
+  }
+  if (entry === "api-key") {
+    const key = await readApiKey();
+    process.stdout.write(`${await saveApiKey(provider.id, key)}\n`);
+    return;
+  }
+  const report = await loginProvider(provider.id, {
+    ...(parsed.method ? { method: parsed.method } : {}),
+    ...(parsed.callbackPort !== undefined ? { callbackPort: parsed.callbackPort } : {}),
+    onHandback(handback) {
+      console.log(JSON.stringify(handback));
+    },
+  });
+  console.log(JSON.stringify({ stored: true, provider: report.provider, type: report.credentialType }));
+}
+
+function parseLoginArgs(argv: string[]): {
+  entry?: "account" | "api-key";
+  provider: string;
+  method?: LoginInteraction["method"];
+  callbackPort?: number;
+  help: boolean;
+} {
+  let entry: "account" | "api-key" | undefined;
+  let provider = "";
   let method: LoginInteraction["method"];
   let callbackPort: number | undefined;
-  for (let index = 0; index < argv.length; index++) {
+  let help = false;
+  for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === "--provider") providerId = argv[++index] ?? "";
+    if (token === "account" || token === "api-key") entry = token;
+    else if (token === "--provider") provider = argv[++index] ?? "";
     else if (token === "--method") {
       const value = argv[++index];
       if (value === "pkce" || value === "device_code") method = value;
     } else if (token === "--callback-port") callbackPort = Number(argv[++index]);
-    else if (token === "--help") {
-      console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
-      process.exit(0);
-    }
+    else if (token === "--help" || token === "help") help = true;
+    else if (token) throw new Error(`unknown argument ${token}`);
   }
-  if (!providerId) {
-    console.error("login requires --provider");
-    process.exit(1);
+  return { ...(entry ? { entry } : {}), provider, ...(method ? { method } : {}), ...(callbackPort !== undefined && Number.isInteger(callbackPort) ? { callbackPort } : {}), help };
+}
+
+async function readApiKey(): Promise<string> {
+  if (process.stdin.isTTY !== true) {
+    const line = (await readStdinLine()).trim();
+    if (!line) throw new Error("API key is empty");
+    return line;
   }
-  try {
-    const report = await loginProvider(providerId, {
-      ...(method ? { method } : {}),
-      ...(callbackPort !== undefined && Number.isInteger(callbackPort) ? { callbackPort } : {}),
-      onHandback(handback) {
-        console.log(JSON.stringify(handback));
-      },
-    });
-    console.log(JSON.stringify({ stored: true, provider: report.provider, type: report.credentialType }));
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
-    process.exit(1);
-  }
+  process.stdout.write("API key: ");
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  let value = "";
+  return await new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      process.stdin.setRawMode(false);
+      process.stdin.off("data", onData);
+      process.stdin.pause();
+    };
+    const onData = (chunk: Buffer | string): void => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      for (const char of text) {
+        if (char === "\u0003") {
+          cleanup();
+          reject(new Error("canceled"));
+          return;
+        }
+        if (char === "\r" || char === "\n") {
+          process.stdout.write("\n");
+          cleanup();
+          if (!value) reject(new Error("API key is empty"));
+          else resolve(value);
+          return;
+        }
+        if (char === "\u007f" || char === "\b") {
+          value = Array.from(value).slice(0, -1).join("");
+          continue;
+        }
+        value += char;
+        process.stdout.write("•");
+      }
+    };
+    process.stdin.on("data", onData);
+  });
 }
 
 function loadModels(providerId: string) {
