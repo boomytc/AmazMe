@@ -1,7 +1,9 @@
+import type { ActivityDto } from "@amazme/runtime-service";
 import { activeBinding, composerHint, hotkeyText, type BindingId } from "./bindings.ts";
 import { parseSlash, slashMatches, type SlashAction } from "./commands.ts";
 import type { Key } from "./keys.ts";
 import { markdownLines } from "./markdown.ts";
+import { footerParts, nextCompaction } from "./status.ts";
 import { paint, theme } from "./theme.ts";
 
 export interface PickerRow {
@@ -43,6 +45,8 @@ export interface TuiWindow {
   busy: boolean;
   sessions: string[];
   active: string;
+  /** 协议快照上的底栏数据。缺了就不显示分支、耗时、重试、压缩和费用。 */
+  activity?: ActivityDto;
 }
 
 /**
@@ -89,6 +93,8 @@ export interface TuiState extends TuiWindow {
    */
   queued: number;
   meters: TuiMeters;
+  /** 压缩中变成停止之后保留「压缩完成」，直到下一轮开始。 */
+  compaction: "off" | "active" | "done";
 }
 
 export type TuiEffect =
@@ -129,6 +135,7 @@ export function emptyTui(active = "main"): TuiState {
     overlay: false,
     queued: 0,
     meters: {},
+    compaction: "off",
   };
 }
 
@@ -138,11 +145,11 @@ export function reduceTui(state: TuiState, action: { type: "window"; window: Tui
 }
 
 /** Conversation, slash menu, status, and composer. The composer stays on the last row. */
-export function renderTui(state: TuiState, columns = 100, rows = 32): string {
+export function renderTui(state: TuiState, columns = 100, rows = 32, now?: number): string {
   const width = Math.max(20, columns);
   const height = Math.max(8, rows);
   const composer = composerLines(state, width);
-  const status = paint(theme.dim, fit(statusLine(state), width));
+  const status = paint(theme.dim, fit(statusLine(state, now), width));
   const rule = paint(theme.border, "─".repeat(width));
   const menu = state.picker ? [] : menuLines(state, width);
   const picker = state.picker ? pickerLines(state.picker, width) : [];
@@ -171,7 +178,8 @@ function applyWindow(state: TuiState, window: TuiWindow): TuiState {
   const turns = turnStarts(window.entries);
   const entryIndex = clamp(state.entryIndex, window.entries.length);
   const turnIndex = clamp(state.turnIndex, turns.length);
-  const next = { ...state, ...window, entryIndex, turnIndex };
+  const compaction = nextCompaction(state.compaction, state.activity, window.activity);
+  const next = { ...state, ...window, entryIndex, turnIndex, compaction };
   if (!window.busy) next.queued = 0;
   return next;
 }
@@ -475,9 +483,17 @@ function moveCursor(state: TuiState, delta: number): TuiState {
   return { ...state, cursor: clamp(cursor + delta, length + 1) };
 }
 
-function statusLine(state: TuiState): string {
+function statusLine(state: TuiState, now?: number): string {
   const model = state.provider && state.modelId ? `${state.provider}/${state.modelId}` : "";
-  const parts = [model, state.thinking, state.directory, state.active, state.busy ? "忙" : "空闲", ...meterParts(state.meters)];
+  const parts = [
+    model,
+    state.thinking,
+    state.directory,
+    state.active,
+    state.busy ? "忙" : "空闲",
+    ...meterParts(state.meters),
+    ...footerParts(state.activity, state.compaction, now),
+  ];
   if (state.busy && state.queued > 0) parts.push(`排队 ${state.queued}`);
   if (state.focus === "scroll") parts.push("滚动");
   return parts.filter((part) => part.length > 0).join("  ");

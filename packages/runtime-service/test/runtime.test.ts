@@ -5,7 +5,7 @@ import { value, type StorageView } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { encodeClientMessage, resolveLimits, type JsonValue } from "@amazme/protocol";
 import { ServiceError, type RuntimeCallContext, type SubscriptionSink } from "@amazme/server";
-import { ContractError, parseLaneSnapshot, type LaneSnapshotDto } from "@amazme/runtime-service";
+import { ContractError, emptyActivity, parseLaneSnapshot, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { NotAttachedError, RuntimeClient } from "@amazme/runtime-service/client";
 import { finish, pendingText, textDelta, texts, tick, until, world } from "./support.ts";
 
@@ -612,6 +612,7 @@ test("an update that breaks the contract ends the subscription with invalid_upda
         return {
           version: 1, lane: "main", tipId: null, phase: null, operationId: null, lastOperationId: null, status: null,
           entries: [], pendingResponse: null, tools: [], omitted: 0, skipped: 0, pendingOmitted: false,
+          activity: emptyActivity(),
         };
       },
     });

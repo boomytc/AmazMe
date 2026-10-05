@@ -135,6 +135,74 @@ const ToolActivitySchema = Strict({
 });
 export type ToolActivityDto = Static<typeof ToolActivitySchema>;
 
+/**
+ * One turn's USD charges. Same fields as `usageCost`'s return value.
+ * The protocol copies this object. It does not price tokens.
+ */
+export const UsageCostSchema = Strict({
+  input: Type.Number(),
+  cacheRead: Nullable(Type.Number()),
+  cacheWrite: Type.Number(),
+  output: Type.Number(),
+  total: Nullable(Type.Number()),
+});
+export type UsageCostDto = Static<typeof UsageCostSchema>;
+
+/**
+ * Cumulative charges. Each amount may be null when that part of the sum is unknown.
+ * `usageCost` itself returns null for a turn with no price list; a sum of those turns widens each field.
+ */
+export const CumulativeCostSchema = Strict({
+  input: Nullable(Type.Number()),
+  cacheRead: Nullable(Type.Number()),
+  cacheWrite: Nullable(Type.Number()),
+  output: Nullable(Type.Number()),
+  total: Nullable(Type.Number()),
+});
+export type CumulativeCostDto = Static<typeof CumulativeCostSchema>;
+
+const TurnUsageSchema = Strict({
+  input: Type.Number(),
+  output: Type.Number(),
+  cacheRead: Nullable(Type.Number()),
+  cacheWrite: Nullable(Type.Number()),
+  /** Already included in `output`. Omitted when the row did not report it. */
+  reasoning: Type.Optional(Type.Number()),
+  hitRate: Nullable(Type.Number()),
+  cost: Nullable(UsageCostSchema),
+});
+export type TurnUsageDto = Static<typeof TurnUsageSchema>;
+
+const TotalUsageSchema = Strict({
+  input: Type.Number(),
+  output: Type.Number(),
+  cacheRead: Nullable(Type.Number()),
+  cacheWrite: Nullable(Type.Number()),
+  reasoning: Type.Optional(Type.Number()),
+  hitRate: Nullable(Type.Number()),
+  cost: Nullable(CumulativeCostSchema),
+});
+export type TotalUsageDto = Static<typeof TotalUsageSchema>;
+
+/**
+ * Footer data beside the lane snapshot.
+ * `usage` is `usage()`. `notBefore`, `retryReason`, and `compacting` are `laneStatus()`.
+ * Branch and the two clocks come from the host. Nothing here is Durable private state.
+ */
+export const ActivitySchema = Strict({
+  branch: Nullable(Type.String({ minLength: 1, maxLength: 1024 })),
+  sessionStartedAt: Nullable(Time),
+  turnStartedAt: Nullable(Time),
+  notBefore: Nullable(Time),
+  retryReason: Nullable(Type.String({ maxLength: 1_000_000 })),
+  compacting: Type.Boolean(),
+  usage: Strict({
+    lastTurn: Nullable(TurnUsageSchema),
+    total: TotalUsageSchema,
+  }),
+});
+export type ActivityDto = Static<typeof ActivitySchema>;
+
 const LaneViewFields = {
   version: Type.Integer({ minimum: 0 }),
   lane: StoredIdSchema,
@@ -156,7 +224,24 @@ const LaneViewFields = {
   entries: Type.Array(EntrySchema),
   pendingResponse: Nullable(PendingResponseSchema),
   tools: Type.Array(ToolActivitySchema),
+  activity: ActivitySchema,
 };
+
+/** No branch, no clocks, no retry, and no priced usage. */
+export function emptyActivity(): ActivityDto {
+  return {
+    branch: null,
+    sessionStartedAt: null,
+    turnStartedAt: null,
+    notBefore: null,
+    retryReason: null,
+    compacting: false,
+    usage: {
+      lastTurn: null,
+      total: { input: 0, output: 0, cacheRead: null, cacheWrite: null, hitRate: null, cost: null },
+    },
+  };
+}
 
 /** The full ancestor chain when it fits in one frame. `tools` is only the open batch. */
 export const LaneSnapshotSchema = Strict(LaneViewFields);

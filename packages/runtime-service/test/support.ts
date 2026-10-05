@@ -15,7 +15,7 @@ import { Server, type RuntimeHandle, type RuntimeService } from "@amazme/server"
 import { memoryConnector, type MemoryLink } from "@amazme/server/testing";
 import type { LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient } from "@amazme/runtime-service/client";
-import { createManagementService, openOwnedRuntimes, type OwnedRuntimeResources } from "@amazme/runtime-service/server";
+import { createManagementService, openOwnedRuntimes, type HostClock, type OwnedRuntimeResources } from "@amazme/runtime-service/server";
 
 export const model: Model = {
   id: "g",
@@ -101,6 +101,7 @@ export function world(options: {
   storage?: (id: string) => Storage;
   tools?: HarnessTool[];
   publishWindowMs?: number;
+  clock?: HostClock;
   lanes?: readonly string[];
   limits?: Partial<ProtocolLimits>;
 } = {}) {
@@ -123,6 +124,7 @@ export function world(options: {
       return Promise.resolve(memoryResources(storage, harness));
     },
     publishWindowMs: options.publishWindowMs ?? 5,
+    ...(options.clock ? { clock: options.clock } : {}),
     onError: (error) => errors.push(error),
     ...(options.lanes ? { lanes: options.lanes } : {}),
   });

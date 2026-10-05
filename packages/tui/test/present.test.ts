@@ -8,8 +8,8 @@ import type { ReadStream, WriteStream } from "node:tty";
 import type { JsonValue } from "@amazme/protocol";
 import { Server, ServiceError, type RuntimeCallContext, type RuntimeHandle, type RuntimeService, type SubscriptionSink } from "@amazme/server";
 import { listenUnix } from "@amazme/server/unix";
+import { emptyActivity, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { emptyTui, presentHost, reduceTui, renderTui, windowFrom, type TuiWindow } from "@amazme/tui";
-import type { LaneSnapshotDto } from "@amazme/runtime-service";
 
 const LANE = "main";
 
@@ -155,6 +155,7 @@ test("a failed assistant turn shows its error in the conversation", () => {
         },
       },
     }],
+    activity: emptyActivity(),
   };
   const view = windowFrom(snapshot, [LANE], LANE);
   assert.equal(view.entries[0]?.text, "OpenAI completions 401 authentication: invalid api key");
@@ -200,6 +201,7 @@ async function fakeHost(socket: string) {
     omitted: 0,
     skipped: 0,
     pendingOmitted: false,
+    activity: emptyActivity(),
   });
   const publish = async (): Promise<void> => {
     if (!sink || sink.closed) return;
@@ -239,6 +241,7 @@ async function fakeHost(socket: string) {
             entries: [],
             pendingResponse: null,
             tools: [],
+            activity: emptyActivity(),
           };
         case "accept": {
           const request = raw.request;

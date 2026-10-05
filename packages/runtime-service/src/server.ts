@@ -4,7 +4,6 @@ import type {
   DriveOutcome,
   LanePhase,
   LaneSettings,
-  LaneSnapshot,
   LaneStatus,
   OperationAdmission,
   OperationResult,
@@ -34,10 +33,11 @@ import {
   type OperationResultDto,
   type RuntimeCall,
 } from "./contracts.ts";
+import { projectLaneUsage, readLaneStatus } from "./activity.ts";
 import { fitHistory, fitWindow, responseFits } from "./window.ts";
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
-type StatusDto = Omit<LaneSnapshotDto, "version" | "entries" | "pendingResponse" | "tools">;
+type StatusDto = Omit<LaneSnapshotDto, "version" | "entries" | "pendingResponse" | "tools" | "activity">;
 const phases: Same<LanePhase, (typeof LANE_PHASES)[number]> = true;
 const settingsMatch: Same<LaneSettings, LaneSettingsDto> = true;
 const results: Same<OperationResult, OperationResultDto> = true;
@@ -61,6 +61,13 @@ export interface OwnedRuntimeResources {
   closeResources?: () => Promise<void>;
 }
 
+/** Host data copied onto each snapshot. Null means the footer hides that part. */
+export interface HostClock {
+  branch: string | null;
+  /** Milliseconds. The screen subtracts this from the paint clock. */
+  sessionStartedAt: number | null;
+}
+
 export interface OwnedRuntimeOptions {
   /**
    * Open one runtime the host allows. `null` refuses the id. The signal aborts when every waiter
@@ -72,6 +79,11 @@ export interface OwnedRuntimeOptions {
   open(runtimeId: string, signal: AbortSignal): Promise<OwnedRuntimeResources | null>;
   /** Lanes clients may name. Omitted allows any lane name the contract accepts. */
   lanes?: readonly string[];
+  /**
+   * Branch name and session start for the footer. The screen does not run git or keep its own session clock.
+   * Turn start is the `startedAt` of the current `run` admission, not this clock.
+   */
+  clock?: HostClock;
   /** Fixed window that merges storage notifications into one snapshot read per subscription. Default 16 ms. */
   publishWindowMs?: number;
   /** Unexpected drive failures and publisher errors. Its own errors are ignored. */
@@ -132,6 +144,9 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
   private readonly lanes: ReadonlySet<string> | undefined;
   private readonly windowMs: number;
   private readonly onError: ((error: Error) => void) | undefined;
+  private readonly clock: HostClock | undefined;
+  /** `startedAt` of the current run admission, keyed by lane. Other operation kinds do not replace it. */
+  private readonly turnStarts = new Map<string, { operationId: string; startedAt: number }>();
   private readonly publishers = new Set<SnapshotPublisher>();
   private readonly reported = new WeakSet<Promise<unknown>>();
   private readonly gate = new ConnectionGate();
@@ -152,6 +167,7 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
     this.lanes = options.lanes ? new Set(options.lanes) : undefined;
     this.windowMs = windowMs;
     this.onError = options.onError;
+    this.clock = options.clock;
   }
 
   acquire(): AttachmentLease {
@@ -251,12 +267,17 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
     if (this.lanes && !this.lanes.has(call.lane)) throw new ServiceError("unknown_lane", `lane ${call.lane} is not served`);
     const lane = this.harness.lane(call.lane);
     switch (call.method) {
-      case "accept":
-        return wire(unwrap(await lane.accept(call.request)));
+      case "accept": {
+        const admission = unwrap(await lane.accept(call.request));
+        if (admission.kind === "run") {
+          this.turnStarts.set(call.lane, { operationId: admission.operationId, startedAt: admission.startedAt });
+        }
+        return wire(admission);
+      }
       case "drive":
         return wire(structuredClone(unwrap(await this.awaitDrive(lane, call.operationId, call.waitForRetry ?? false, context.signal))));
       case "snapshot":
-        return this.fullSnapshot(await lane.snapshot(), context.limits);
+        return this.fullSnapshot(await this.laneView(lane), context.limits);
       case "history":
         return this.historyPage(lane, call.before, call.limit, context.limits);
       case "result":
@@ -358,7 +379,30 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
     void run.then(() => undefined, (error: unknown) => this.report(error));
   }
 
-  private fullSnapshot(snapshot: LaneSnapshot, limits: ProtocolLimits): JsonValue {
+  /**
+   * Durable `snapshot()` plus `usage()`, `laneStatus()`, and the host clock.
+   * The three reads are not one storage version. Charges and hit rate are copied, not priced again.
+   */
+  private async laneView(lane: AgentLane): Promise<LaneSnapshotDto> {
+    const [snapshot, usage, status] = await Promise.all([
+      lane.snapshot(),
+      lane.usage(),
+      readLaneStatus(lane),
+    ]);
+    const turn = this.turnStarts.get(snapshot.lane);
+    const activity = {
+      branch: clockBranch(this.clock),
+      sessionStartedAt: clockSession(this.clock),
+      turnStartedAt: snapshot.operationId !== null && turn?.operationId === snapshot.operationId ? turn.startedAt : null,
+      notBefore: status.notBefore,
+      retryReason: status.retryReason,
+      compacting: status.compacting,
+      usage: projectLaneUsage(usage),
+    };
+    return wire({ ...snapshot, activity }) as LaneSnapshotDto;
+  }
+
+  private fullSnapshot(snapshot: LaneSnapshotDto, limits: ProtocolLimits): JsonValue {
     const wired = wire(snapshot);
     if (!responseFits(limits, wired)) throw new ServiceError("snapshot_unavailable", "the lane snapshot does not fit in one frame");
     return wired;
@@ -373,7 +417,15 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
 
   private async subscribe(lane: AgentLane, subscriptionId: string, context: RuntimeCallContext): Promise<JsonValue> {
     const sink = context.openSubscription(subscriptionId);
-    const publisher = new SnapshotPublisher(lane, this.harness, sink, this.gate, this.windowMs, context.limits, (error) => this.report(error));
+    const publisher = new SnapshotPublisher(
+      this.harness,
+      sink,
+      this.gate,
+      this.windowMs,
+      context.limits,
+      (error) => this.report(error),
+      () => this.laneView(lane),
+    );
     this.publishers.add(publisher);
     void publisher.done.then(() => this.publishers.delete(publisher));
     try {
@@ -426,12 +478,12 @@ interface Ended {
  */
 class SnapshotPublisher {
   readonly done: Promise<void>;
-  private readonly lane: AgentLane;
   private readonly sink: SubscriptionSink;
   private readonly gate: ConnectionGate;
   private readonly windowMs: number;
   private readonly limits: ProtocolLimits;
   private readonly report: (error: unknown) => void;
+  private readonly read: () => Promise<LaneSnapshotDto>;
   private readonly unsubscribe: () => void;
   private readonly stopped: Promise<"stopped">;
   private stop!: (value: "stopped") => void;
@@ -443,17 +495,25 @@ class SnapshotPublisher {
   private closing: Promise<void> | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private running: Promise<void> | undefined;
-  private initialRead: Promise<LaneSnapshot> | undefined;
+  private initialRead: Promise<LaneSnapshotDto> | undefined;
   private rejectInitial: ((error: unknown) => void) | undefined;
   private version = -1;
 
-  constructor(lane: AgentLane, harness: AgentHarness, sink: SubscriptionSink, gate: ConnectionGate, windowMs: number, limits: ProtocolLimits, report: (error: unknown) => void) {
-    this.lane = lane;
+  constructor(
+    harness: AgentHarness,
+    sink: SubscriptionSink,
+    gate: ConnectionGate,
+    windowMs: number,
+    limits: ProtocolLimits,
+    report: (error: unknown) => void,
+    read: () => Promise<LaneSnapshotDto>,
+  ) {
     this.sink = sink;
     this.gate = gate;
     this.windowMs = windowMs;
     this.limits = limits;
     this.report = report;
+    this.read = read;
     this.done = new Promise((resolve) => { this.finish = resolve; });
     this.stopped = new Promise((resolve) => { this.stop = resolve; });
     this.unsubscribe = harness.storage.subscribe(() => this.invalidate());
@@ -469,12 +529,12 @@ class SnapshotPublisher {
       void this.gate.run(this.sink.connectionId, async () => {
         if (this.closed) return;
         this.dirty = false;
-        const reading = this.lane.snapshot();
+        const reading = this.read();
         this.initialRead = reading;
         try {
           const snapshot = await reading;
           if (this.closed) return;
-          const initial = fitWindow(wire(snapshot) as LaneSnapshotDto, this.limits, { kind: "response" });
+          const initial = fitWindow(snapshot, this.limits, { kind: "response" });
           if (!initial) {
             reject(new ServiceError("snapshot_unavailable", "the lane snapshot could not be sent"));
             return;
@@ -561,16 +621,16 @@ class SnapshotPublisher {
     return this.gate.run(this.sink.connectionId, async () => {
       if (this.closed || !this.dirty) return;
       this.dirty = false;
-      let snapshot: LaneSnapshot;
+      let snapshot: LaneSnapshotDto;
       try {
-        snapshot = await this.lane.snapshot();
+        snapshot = await this.read();
       } catch (error) {
         this.report(error);
         void this.close({ code: "snapshot_failed", message: "the lane snapshot could not be read" }).catch(this.report);
         return;
       }
       if (this.closed || snapshot.version <= this.version) return;
-      const advance = fitWindow(wire(snapshot) as LaneSnapshotDto, this.limits, { kind: "update", subscriptionId: this.sink.id });
+      const advance = fitWindow(snapshot, this.limits, { kind: "update", subscriptionId: this.sink.id });
       if (!advance) {
         void this.close({ code: "snapshot_unavailable", message: "the lane snapshot could not be sent" }).catch(this.report);
         return;
@@ -632,6 +692,16 @@ function unwrap<T>(result: Result<T>): T {
 
 function cancelled(): ServiceError {
   return new ServiceError("cancelled", "stopped waiting for the drive; the operation continues");
+}
+
+function clockBranch(clock: HostClock | undefined): string | null {
+  const branch = clock?.branch;
+  return typeof branch === "string" && branch.length > 0 ? branch : null;
+}
+
+function clockSession(clock: HostClock | undefined): number | null {
+  const started = clock?.sessionStartedAt;
+  return typeof started === "number" && Number.isFinite(started) ? started : null;
 }
 
 /**

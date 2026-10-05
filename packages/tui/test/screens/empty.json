@@ -12,7 +12,19 @@
         "status": null,
         "entries": [],
         "pendingResponse": null,
-        "tools": []
+        "tools": [],
+        "activity": {
+          "branch": null,
+          "sessionStartedAt": null,
+          "turnStartedAt": null,
+          "notBefore": null,
+          "retryReason": null,
+          "compacting": false,
+          "usage": {
+            "lastTurn": null,
+            "total": { "input": 0, "output": 0, "cacheRead": null, "cacheWrite": null, "hitRate": null, "cost": null }
+          }
+        }
       }
     }
   ]

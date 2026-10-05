@@ -301,5 +301,6 @@ function projectWindow(window: LaneWindowDto): LaneSnapshotDto {
     entries: window.entries,
     pendingResponse: window.pendingResponse,
     tools: window.tools,
+    activity: window.activity,
   };
 }

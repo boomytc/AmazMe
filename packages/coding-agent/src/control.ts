@@ -1,4 +1,4 @@
-import type { EntryDto, HistoryPageDto, LaneSnapshotDto } from "@amazme/runtime-service";
+import { emptyActivity, type EntryDto, type HistoryPageDto, type LaneSnapshotDto } from "@amazme/runtime-service";
 import type { LaneSubscription, RemoteLane } from "@amazme/runtime-service/client";
 
 export interface RetryWait {
@@ -181,6 +181,7 @@ function emptySnapshot(lane: string): LaneSnapshotDto {
     entries: [],
     pendingResponse: null,
     tools: [],
+    activity: emptyActivity(),
   };
 }
 

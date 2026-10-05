@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
@@ -45,12 +46,28 @@ export interface CodingHost {
   close(mode?: "drain" | "abort"): Promise<void>;
 }
 
+/** Current branch. Detached HEAD and a directory that is not a repository are null. */
+export function readGitBranch(cwd: string): string | null {
+  const result = spawnSync("git", ["symbolic-ref", "--short", "HEAD"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 2_000,
+  });
+  if (result.error || result.status !== 0) return null;
+  const name = result.stdout.trim();
+  if (name.length === 0) return null;
+  return name;
+}
+
 /**
  * Listen for one workspace runtime. Opening reads JSONL and constructs the harness;
  * it does not drive or call a model. The caller owns process signals.
+ * The footer clock starts here. The branch is read once; the screen does not run git.
  */
 export async function startCodingHost(options: CodingHostOptions): Promise<CodingHost> {
   const cwd = resolve(options.cwd);
+  const sessionStartedAt = Date.now();
+  const branch = readGitBranch(cwd);
   const provider = options.provider;
   const modelId = options.model;
   if (!options.models.getModel(provider, modelId)) throw new Error(`unknown model ${provider}/${modelId}`);
@@ -68,6 +85,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
     onError: report,
     openRuntime: openOwnedRuntimes({
       // Every conversation in the session log is servable. `main` is only the default.
+      clock: { branch, sessionStartedAt },
       onError: report,
       async open(runtimeId) {
         if (runtimeId !== HOST_RUNTIME_ID) return null;
