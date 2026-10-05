@@ -51,9 +51,13 @@ test("--json prints activity hitRate and cost.total, null when unknown", { timeo
 
     const unknown = fauxProvider({
       respond: () => fauxAssistant("unknown-reply", {
-        usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: null } },
+        usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
       }),
     });
+    const unpriced = unknown.getModels()[0];
+    if (!unpriced) throw new Error("faux model missing");
+    // 没有价目时活动里的 cost 整段是 null。用量行的 total 保持数字，未上报用量不是这条路径。
+    delete unpriced.cost;
     const unknownModels = createModels();
     unknownModels.setProvider(unknown);
     const unknownOut = await captureStdout(() => runPrint({
