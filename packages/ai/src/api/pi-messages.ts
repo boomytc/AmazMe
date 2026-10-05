@@ -112,7 +112,7 @@ async function pump(
       if (decoded.type === "error") {
         acc.fail(decoded.reason === "aborted" ? "aborted" : "error", typeof decoded.errorMessage === "string" ? decoded.errorMessage : "pi-messages error");
       }
-    });
+    }, request.onActivity);
     if (acc.closed) return;
     if (!terminalReason) {
       acc.fail("error", "pi-messages stream ended without a terminal event");

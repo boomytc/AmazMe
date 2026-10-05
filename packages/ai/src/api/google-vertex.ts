@@ -84,7 +84,7 @@ async function pump(
       }
       if (!isRecord(decoded)) return;
       applyGoogleChunk(model, acc, decoded, finish);
-    });
+    }, request.onActivity);
     if (acc.closed) return;
     finishGoogle(acc, finish.reason, "Google Vertex");
   } catch (error) {
