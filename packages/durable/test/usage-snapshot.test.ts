@@ -142,7 +142,7 @@ test("a lane with no assistant projects empty usage and the assess threshold", a
     assert.equal(usage.lastTurn, null);
     assert.equal(usage.contextTokens, null);
     assert.deepEqual(usage.total, total(0, 0));
-    assert.deepEqual(assertRoundTrip(await lane.laneStatus()), { notBefore: null, retryReason: null, compacting: false });
+    assert.deepEqual(assertRoundTrip(await lane.laneStatus()), { notBefore: null, retryReason: null, compacting: false, turnStartedAt: null });
     assert.equal(usage.compactionThreshold, effectiveInputThreshold(model.contextWindow, 50_000));
     usage.total.input = 9;
     assert.deepEqual((await lane.usage()).total, total(0, 0));
@@ -1039,7 +1039,292 @@ test("an approval wait leaves retryReason and notBefore null", async () => {
     assert.equal(status.retryReason, null);
     assert.equal(status.notBefore, null);
     assert.equal(status.compacting, false);
+    assert.equal(status.turnStartedAt, admitted.value.startedAt);
   } finally {
+    harness.close();
+  }
+});
+
+test("an idle lane has no turn start, and a finished turn clears it", async () => {
+  const { models } = scripted([tokens(1, 1)]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.laneStatus()).turnStartedAt, null);
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const idle = assertRoundTrip(await lane.laneStatus());
+    assert.equal(idle.turnStartedAt, null);
+    assert.equal(idle.notBefore, null);
+    assert.equal(idle.retryReason, null);
+    assert.equal(idle.compacting, false);
+  } finally {
+    harness.close();
+  }
+});
+
+test("turnStartedAt is the persisted run start and survives reopening the same log", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-turn-start-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "lane.jsonl");
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const provider = fauxProvider({
+    respond: async () => {
+      await gate;
+      return fauxAssistant("ok", { usage: tokens(1, 1) });
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new JsonlStorage(file), models);
+  const driving = (async () => {
+    const lane = harness.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const started = assertRoundTrip(await lane.laneStatus()).turnStartedAt;
+    assert.equal(typeof started, "number");
+    assert.equal(started, admitted.value.startedAt);
+    const outcome = lane.drive(admitted.value.operationId);
+    await until(async () => (await lane.inspect()).phase === "assistant_effect_pending");
+    assert.equal((await lane.laneStatus()).turnStartedAt, started);
+    harness.abandon();
+    const reopened = runtime(new JsonlStorage(file), models);
+    try {
+      const again = assertRoundTrip(await reopened.lane().laneStatus());
+      assert.equal(again.turnStartedAt, started);
+      assert.equal((await reopened.lane().inspect()).operationId, admitted.value.operationId);
+    } finally {
+      reopened.close();
+    }
+    release();
+    await outcome;
+  })();
+  try {
+    await driving;
+  } finally {
+    release();
+    await driving.catch(() => undefined);
+    harness.close();
+  }
+});
+
+test("a turn started from a queued follow-up uses that operation's startedAt", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const provider = fauxProvider({
+    respond: async () => {
+      await gate;
+      return fauxAssistant("ok", { usage: tokens(2, 2) });
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    const queued = await lane.followUp("from-queue");
+    assert.equal(queued.ok, true);
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const driving = lane.drive(admitted.value.operationId);
+    await until(async () => (await lane.inspect()).phase === "assistant_effect_pending");
+    const texts = (await lane.entries()).flatMap((entry) => entry.payload.type === "message" && entry.payload.message.role === "user"
+      ? [typeof entry.payload.message.content === "string" ? entry.payload.message.content : ""]
+      : []);
+    assert.equal(texts.includes("from-queue"), true);
+    const status = assertRoundTrip(await lane.laneStatus());
+    assert.equal(typeof status.turnStartedAt, "number");
+    assert.equal(status.turnStartedAt, admitted.value.startedAt);
+    release();
+    const settled = await driving;
+    assert.equal(settled.ok && settled.value.kind === "settled" ? settled.value.result.status : "", "completed");
+    assert.equal((await lane.laneStatus()).turnStartedAt, null);
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
+test("turnStartedAt stays put across a tool call and the following model call", async () => {
+  let lane: AgentLane | undefined;
+  const seen: Array<number | null> = [];
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const provider = fauxProvider({
+    respond: async (_context, _options, state) => {
+      seen.push((await lane?.laneStatus())?.turnStartedAt ?? null);
+      if (state.callCount === 1) return fauxAssistant([fauxToolCall("work", {})], { usage: tokens(3, 1) });
+      await gate;
+      return fauxAssistant("after", { usage: tokens(4, 1) });
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new MemoryStorage(), models, {
+    tools: [{
+      name: "work",
+      description: "work",
+      parameters: { type: "object", additionalProperties: true },
+      execute: async () => {
+        seen.push((await lane?.laneStatus())?.turnStartedAt ?? null);
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  try {
+    lane = harness.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const driving = lane.drive(admitted.value.operationId);
+    await until(async () => seen.length >= 3);
+    assert.equal(seen.every((value) => value === admitted.value.startedAt), true);
+    const duringSecond = assertRoundTrip(await lane.laneStatus());
+    assert.equal(duringSecond.turnStartedAt, admitted.value.startedAt);
+    assert.equal(duringSecond.compacting, false);
+    release();
+    const settled = await driving;
+    assert.equal(settled.ok && settled.value.kind === "settled" ? settled.value.result.status : "", "completed");
+    assert.equal((await lane.laneStatus()).turnStartedAt, null);
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
+test("a retry wait and the retried model call keep the same turnStartedAt", async () => {
+  let lane: AgentLane | undefined;
+  const seen: Array<number | null> = [];
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const provider = fauxProvider({
+    respond: async (_context, _options, state) => {
+      seen.push((await lane?.laneStatus())?.turnStartedAt ?? null);
+      if (state.callCount === 1) {
+        return fauxAssistant("later", { usage: tokens(1, 1), stopReason: "error", retryable: true, errorMessage: "rate limited" });
+      }
+      await gate;
+      return fauxAssistant("ok", { usage: tokens(2, 1) });
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    maxAttempts: 3,
+    retry: { baseDelayMs: 50, maxDelayMs: 50 },
+    compaction: { enabled: false, maxTokens: 50_000 },
+  });
+  try {
+    lane = harness.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const waiting = await lane.drive(admitted.value.operationId);
+    assert.equal(waiting.ok && waiting.value.kind === "waiting", true);
+    const during = assertRoundTrip(await lane.laneStatus());
+    assert.equal(during.retryReason, "rate limited");
+    assert.equal(during.turnStartedAt, admitted.value.startedAt);
+    assert.equal(seen[0], admitted.value.startedAt);
+    const continued = lane.drive(admitted.value.operationId, { waitForRetry: true });
+    await until(async () => seen.length >= 2);
+    assert.equal(seen[1], admitted.value.startedAt);
+    assert.equal((await lane.laneStatus()).turnStartedAt, admitted.value.startedAt);
+    release();
+    const settled = await continued;
+    assert.equal(settled.ok && settled.value.kind === "settled" ? settled.value.result.status : "", "completed");
+    assert.equal((await lane.laneStatus()).turnStartedAt, null);
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
+test("an approval wait keeps the turn start taken before the tool call", async () => {
+  let lane: AgentLane | undefined;
+  let before: number | null = null;
+  const provider = fauxProvider({
+    respond: async (_context, _options, state) => {
+      if (state.callCount === 1) {
+        before = (await lane?.laneStatus())?.turnStartedAt ?? null;
+        return fauxAssistant([fauxToolCall("work", {}, "call-1")]);
+      }
+      return fauxAssistant("after");
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    tools: [{
+      name: "work",
+      description: "work",
+      parameters: { type: "object", additionalProperties: true },
+      execute: async () => ({ content: [{ type: "text", text: "work" }] }),
+    }],
+    requiresApproval: () => true,
+    compaction: { enabled: false, maxTokens: 50_000 },
+  });
+  try {
+    lane = harness.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.equal(outcome.ok && outcome.value.kind, "waiting");
+    assert.equal((await lane.pendingApprovals()).items.length, 1);
+    const status = assertRoundTrip(await lane.laneStatus());
+    assert.equal(before, admitted.value.startedAt);
+    assert.equal(status.turnStartedAt, before);
+    assert.equal(status.retryReason, null);
+    assert.equal(status.notBefore, null);
+  } finally {
+    harness.close();
+  }
+});
+
+test("auto-compaction stays inside the same turn start", async () => {
+  let lane: AgentLane | undefined;
+  const seen: Array<number | null> = [];
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const provider = fauxProvider({
+    respond: async (_context, _options, state) => {
+      if (state.callCount === 1) return fauxAssistant("short", { usage: tokens(1, 1) });
+      const status = await lane?.laneStatus();
+      seen.push(status?.turnStartedAt ?? null);
+      if (state.callCount === 2) {
+        assert.equal(status?.compacting, true);
+        return fauxAssistant(validSummary("folded"), { usage: tokens(7, 4) });
+      }
+      await gate;
+      return fauxAssistant("answer", { usage: tokens(2, 1) });
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: true, maxTokens: 20 } });
+  try {
+    lane = harness.lane();
+    assert.equal((await lane.prompt("Y".repeat(200))).status, "completed");
+    assert.equal((await lane.laneStatus()).turnStartedAt, null);
+    const admitted = await lane.accept({ kind: "prompt", text: "CURRENT_QUESTION" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const driving = lane.drive(admitted.value.operationId);
+    await until(async () => seen.length >= 2);
+    assert.equal(seen.every((value) => value === admitted.value.startedAt), true);
+    assert.equal((await lane.laneStatus()).turnStartedAt, admitted.value.startedAt);
+    release();
+    const settled = await driving;
+    assert.equal(settled.ok && settled.value.kind === "settled" ? settled.value.result.status : "", "completed");
+    assert.equal((await lane.laneStatus()).turnStartedAt, null);
+  } finally {
+    release();
     harness.close();
   }
 });

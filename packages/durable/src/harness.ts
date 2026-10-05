@@ -172,15 +172,17 @@ export interface LaneSnapshotStatus {
 }
 
 /**
- * Retry expiry and whether a summary is in progress.
+ * Retry expiry, whether a summary is in progress, and when the open turn started.
  * `notBefore` is the stored retry deadline in milliseconds, or null when this lane is not in `retry_wait`.
  * `retryReason` is the error text that opened that wait. An approval wait is not a retry, so both stay null;
  * parked calls are `pendingApprovals()`.
+ * `turnStartedAt` is the persisted start of the whole open turn, or null when no turn is running.
  */
 export interface LaneStatus {
   notBefore: number | null;
   retryReason: string | null;
   compacting: boolean;
+  turnStartedAt: number | null;
 }
 
 /**
@@ -919,7 +921,7 @@ export class AgentLane {
   }
 
   /**
-   * Read-only retry deadline and compaction flag. One storage read.
+   * Read-only retry deadline, compaction flag, and turn start. One storage read.
    * Does not initialize the lane, drive, or recover. Plain data: clone and JSON keep the same value.
    */
   laneStatus(): Promise<LaneStatus> {
@@ -930,6 +932,7 @@ export class AgentLane {
         notBefore: retry ? retry.notBefore : null,
         retryReason: retry ? retryErrorText(view, this.name) : null,
         compacting: state?.phase === "summary_deciding" || state?.phase === "summary_effect_pending",
+        turnStartedAt: turnStartedAt(view, this.name),
       });
     });
   }
@@ -2687,6 +2690,19 @@ function rowCost(view: StorageView, lane: string, options: HarnessOptions, row: 
     ...(typeof row.cacheRead === "number" ? { cacheRead: row.cacheRead } : {}),
     ...(typeof row.cacheWrite === "number" ? { cacheWrite: row.cacheWrite } : {}),
   });
+}
+
+/**
+ * Start of the open turn. A turn is one persisted run operation: tools, retries, approval waits,
+ * and auto-compaction stay on that operation, so its `startedAt` does not move.
+ * Compaction and navigation operations are not turns. Null when nothing is running.
+ */
+function turnStartedAt(view: StorageView, lane: string): number | null {
+  const operationId = view.get<LaneRecord>(laneAddress(lane))?.currentOperationId ?? null;
+  if (!operationId) return null;
+  const meta = view.get<OperationMeta>(metaAddress(operationId));
+  if (!meta || meta.lane !== lane || meta.intent.kind !== "run") return null;
+  return meta.startedAt;
 }
 
 /** Error text on the newest assistant. The retry wait is written in the same commit as that message. */
