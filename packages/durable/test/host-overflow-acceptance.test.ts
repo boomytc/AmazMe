@@ -9,9 +9,9 @@ import { AgentHarness } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 
 /**
- * `coding-agent` `openJsonlRuntime` passes models, model, systemPrompt, workspace, and tools.
- * It does not pass `compaction`. The harness then stores `{ enabled: false, maxTokens: 80_000 }`.
+ * Harness options that omit `compaction`. The harness then stores `{ enabled: false, maxTokens: 80_000 }`.
  * Overflow on that path fails in place. It does not summarize.
+ * The host path enables compaction inside `openJsonlRuntime`; that path is covered separately.
  */
 function hostOptions(models: ReturnType<typeof createModels>) {
   return {
@@ -50,7 +50,7 @@ async function reopen(file: string, operationId: string): Promise<void> {
   }
 }
 
-test("a jsonl lane with the host runtime options fails overflow once and does not compact on reopen", async () => {
+test("a jsonl lane that omits compaction fails overflow once and does not compact on reopen", async () => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-host-overflow-"));
   const file = join(dir, "lane.jsonl");
   const provider = fauxProvider({
