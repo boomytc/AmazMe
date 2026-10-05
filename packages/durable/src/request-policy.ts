@@ -2,6 +2,7 @@
  * Model-request deadline and the single retry wait.
  * `@amazme/ai` only marks `retryable`. This module is the only resend policy.
  * The delay is computed here and stored as `notBefore`. It is not `Date.now() + 10`.
+ * A failed assistant's `retryAfterMs` can only lengthen that wait.
  * Tool execution has its own limit and does not use this deadline.
  */
 
@@ -71,6 +72,17 @@ export function retryDelayMs(policy: RetryWait, attempt: number): number {
   const scaled = policy.baseDelayMs * 2 ** step;
   const safe = Number.isFinite(scaled) ? scaled : policy.maxDelayMs;
   return Math.min(safe, policy.maxDelayMs);
+}
+
+/**
+ * Milliseconds stored in `retry_wait.notBefore` as `now +` this value.
+ * The strategy backoff is `retryDelayMs`. When the failed assistant carries `retryAfterMs`,
+ * the wait is the longer of the two. An absent hint leaves the strategy delay unchanged.
+ */
+export function retryNotBeforeDelayMs(policy: RetryWait, attempt: number, retryAfterMs?: number): number {
+  const strategy = retryDelayMs(policy, attempt);
+  if (retryAfterMs === undefined) return strategy;
+  return Math.max(strategy, retryAfterMs);
 }
 
 /**

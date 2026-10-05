@@ -45,6 +45,7 @@ export {
   classifyDeadline,
   resolveRequestPolicy,
   retryDelayMs,
+  retryNotBeforeDelayMs,
   storedRequestPolicy,
   DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_RETRY_WAIT,

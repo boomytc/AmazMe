@@ -14,6 +14,7 @@ import {
   armRequestDeadline,
   classifyDeadline,
   retryDelayMs,
+  retryNotBeforeDelayMs,
   storedRequestPolicy,
   value,
   type HarnessOptions,
@@ -29,6 +30,14 @@ test("retryDelayMs doubles a stored base and caps it", () => {
   assert.equal(retryDelayMs(policy, 2), 800);
   assert.equal(retryDelayMs(policy, 3), 1_000);
   assert.equal(retryDelayMs({ baseDelayMs: 0, maxDelayMs: 60_000 }, 4), 0);
+});
+
+test("retryNotBeforeDelayMs waits the longer of the strategy backoff and retryAfterMs", () => {
+  const policy = { baseDelayMs: 400, maxDelayMs: 1_000 };
+  assert.equal(retryNotBeforeDelayMs(policy, 1, 2_500), 2_500);
+  assert.equal(retryNotBeforeDelayMs(policy, 2, 100), 800);
+  assert.equal(retryNotBeforeDelayMs(policy, 2), retryDelayMs(policy, 2));
+  assert.equal(retryNotBeforeDelayMs(policy, 3, 50), 1_000);
 });
 
 test("classifyDeadline retries only a pre-frame timeout", () => {
@@ -86,6 +95,32 @@ test("a retryable model error stores notBefore from the lane policy and does not
   } finally {
     runtime.close();
   }
+});
+
+test("a longer retryAfterMs is the wait before the next attempt", async () => {
+  const retry = { baseDelayMs: 400, maxDelayMs: 1_000 };
+  const waited = await storedRetryWait({ retry, retryAfterMs: 2_500 });
+  assert.equal(waited.retryAfterMs, 2_500);
+  assert.ok(2_500 > retryDelayMs(retry, 1));
+  assert.ok(waited.notBefore >= waited.before + 2_500 && waited.notBefore <= waited.after + 2_500);
+});
+
+test("a shorter retryAfterMs still waits the computed strategy backoff", async () => {
+  const retry = { baseDelayMs: 5_000, maxDelayMs: 800 };
+  const strategy = retryDelayMs(retry, 1);
+  assert.equal(strategy, 800);
+  const waited = await storedRetryWait({ retry, retryAfterMs: 100 });
+  assert.equal(waited.retryAfterMs, 100);
+  assert.ok(waited.notBefore >= waited.before + strategy && waited.notBefore <= waited.after + strategy);
+});
+
+test("a retryable error without retryAfterMs waits only the strategy delay", async () => {
+  const retry = { baseDelayMs: 400, maxDelayMs: 1_000 };
+  const strategy = retryDelayMs(retry, 1);
+  const waited = await storedRetryWait({ retry });
+  assert.equal(waited.retryAfterMs, undefined);
+  assert.equal(Object.hasOwn(waited.message, "retryAfterMs"), false);
+  assert.ok(waited.notBefore >= waited.before + strategy && waited.notBefore <= waited.after + strategy);
 });
 
 test("a deadline before any content frame is one retryable resend", async () => {
@@ -331,6 +366,42 @@ function scriptedProvider(next: () => Script, observe?: (roles: string[]) => voi
       return stream;
     },
   };
+}
+
+async function storedRetryWait(options: {
+  retry: { baseDelayMs: number; maxDelayMs: number };
+  retryAfterMs?: number;
+}): Promise<{ notBefore: number; before: number; after: number; retryAfterMs: number | undefined; message: { retryAfterMs?: number } }> {
+  const provider = fauxProvider({
+    respond: () => {
+      const message = fauxAssistant("later", { stopReason: "error", retryable: true, errorMessage: "later" });
+      if (options.retryAfterMs !== undefined) message.retryAfterMs = options.retryAfterMs;
+      return message;
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    maxAttempts: 3,
+    retry: options.retry,
+  });
+  try {
+    const admitted = await runtime.lane().accept({ kind: "prompt", text: "go" });
+    assert.ok(admitted.ok);
+    const before = Date.now();
+    const outcome = await runtime.lane().drive(admitted.value.operationId);
+    const after = Date.now();
+    assert.equal(provider.state.callCount, 1);
+    assert.ok(outcome.ok && outcome.value.kind === "waiting" && outcome.value.reason === "retry");
+    const assistants = await assistantsOf(runtime);
+    const message = assistants[0];
+    assert.ok(message);
+    return { notBefore: outcome.value.notBefore, before, after, retryAfterMs: message.retryAfterMs, message };
+  } finally {
+    runtime.close();
+  }
 }
 
 function harness(provider: Provider, options: Partial<HarnessOptions>): AgentHarness {
