@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { prepareWorkspace, startBash, type StartedBash } from "./sandbox/run.ts";
 
@@ -7,6 +7,8 @@ import { prepareWorkspace, startBash, type StartedBash } from "./sandbox/run.ts"
  * 问题：同一工作区可以同时有两个宿主。后打开的那个若把文件里所有 running 都收成 lost，会杀掉先打开的宿主还在跑的进程，两边还会互相盖写这份文件。
  * 例子：`amazme` 里挂着一个后台服务，接着 `amazme -p` 用临时 socket 再开一份。第二份不能把第一份的服务杀掉。
  * 每条记录带上宿主进程的 `owner`。打开时只回收 owner 已经不在的任务。落盘前重读文件，只替换自己的条目。
+ * 两次落盘会交错：各自读到旧内容再整文件写回，后写的一份丢掉先写的新任务。写之前用 `jobs.json.lock` 独占；锁里是持有者的 pid 和 starttime，进程不在就抢走，最多等两秒。
+ * 结束了的任务只留最新 50 条，running 不删。输出和状态都没变时不重写文件。
  */
 export type JobStatus = "running" | "exited" | "killed" | "lost";
 
@@ -41,6 +43,9 @@ export interface JobText {
 const STATUSES: readonly JobStatus[] = ["running", "exited", "killed", "lost"];
 const OUTPUT_DELAY_MS = 200;
 const KILL_WAIT_MS = 2_000;
+const FINISHED_KEEP = 50;
+const LOCK_WAIT_MS = 2_000;
+const LOCK_POLL_MS = 20;
 
 const openByCwd = new Map<string, JobRegistry>();
 
@@ -81,6 +86,7 @@ export class JobRegistry {
   private readonly handles = new Map<string, StartedBash>();
   private outputTimer: ReturnType<typeof setTimeout> | undefined;
   private closing: Promise<void> | undefined;
+  private lockDepth = 0;
 
   private constructor(cwd: string) {
     this.cwd = cwd;
@@ -90,20 +96,22 @@ export class JobRegistry {
 
   static open(cwd: string): JobRegistry {
     const registry = new JobRegistry(resolve(cwd));
-    const store = registry.readDisk();
-    registry.next = store.next;
-    let changed = false;
-    for (const job of store.jobs) {
-      const mine = sameOwner(job.owner, registry.owner);
-      if (job.status === "running" && !mine && ownerGone(job.owner)) {
-        signalRecorded(job);
-        job.status = "lost";
-        job.code = null;
-        changed = true;
-        registry.jobs.push(job);
-      } else if (mine) registry.jobs.push(job);
-    }
-    if (changed) registry.persist();
+    registry.withLock(() => {
+      const store = registry.readDisk();
+      registry.next = store.next;
+      let changed = false;
+      for (const job of store.jobs) {
+        const mine = sameOwner(job.owner, registry.owner);
+        if (job.status === "running" && !mine && ownerGone(job.owner)) {
+          signalRecorded(job);
+          job.status = "lost";
+          job.code = null;
+          changed = true;
+          registry.jobs.push(job);
+        } else if (mine) registry.jobs.push(job);
+      }
+      if (changed) registry.writeStore();
+    });
     return registry;
   }
 
@@ -215,14 +223,14 @@ export class JobRegistry {
   }
 
   /** Missing file is empty. Unreadable JSON is renamed aside so startup can continue. */
-  private readDisk(): { next: number; jobs: JobRecord[] } {
-    if (!existsSync(this.file)) return { next: 1, jobs: [] };
+  private readDisk(): { next: number; jobs: JobRecord[]; raw: string | null } {
+    if (!existsSync(this.file)) return { next: 1, jobs: [], raw: null };
     let raw: string;
     try {
       raw = readFileSync(this.file, "utf8");
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-      if (code === "ENOENT") return { next: 1, jobs: [] };
+      if (code === "ENOENT") return { next: 1, jobs: [], raw: null };
       throw error;
     }
     let parsed: unknown;
@@ -230,30 +238,37 @@ export class JobRegistry {
       parsed = JSON.parse(raw);
     } catch {
       quarantine(this.file);
-      return { next: 1, jobs: [] };
+      return { next: 1, jobs: [], raw: null };
     }
     const store = parseStore(parsed);
     if (!store) {
       quarantine(this.file);
-      return { next: 1, jobs: [] };
+      return { next: 1, jobs: [], raw: null };
     }
-    return store;
+    return { ...store, raw };
   }
 
   private allocateId(): string {
-    const disk = this.readDisk();
-    const used = new Set<string>([...disk.jobs.map((job) => job.id), ...this.jobs.map((job) => job.id)]);
-    let n = Math.max(this.next, disk.next);
-    let id = `j${this.owner.pid}-${n}`;
-    while (used.has(id)) {
-      n += 1;
-      id = `j${this.owner.pid}-${n}`;
-    }
-    this.next = n + 1;
-    return id;
+    return this.withLock(() => {
+      const disk = this.readDisk();
+      const used = new Set<string>([...disk.jobs.map((job) => job.id), ...this.jobs.map((job) => job.id)]);
+      let n = Math.max(this.next, disk.next);
+      let id = `j${this.owner.pid}-${n}`;
+      while (used.has(id)) {
+        n += 1;
+        id = `j${this.owner.pid}-${n}`;
+      }
+      this.next = n + 1;
+      return id;
+    });
   }
 
   private persist(): void {
+    this.withLock(() => this.writeStore());
+  }
+
+  /** Caller holds `jobs.json.lock`. Re-reads, merges this registry's jobs, prunes, and skips an identical write. */
+  private writeStore(): void {
     if (this.outputTimer !== undefined) {
       clearTimeout(this.outputTimer);
       this.outputTimer = undefined;
@@ -271,9 +286,28 @@ export class JobRegistry {
       if (seen.has(job.id)) continue;
       merged.push(job);
     }
+    const jobs = pruneFinished(merged);
+    const keep = new Set(jobs.map((job) => job.id));
+    this.jobs = this.jobs.filter((job) => keep.has(job.id));
+    const next = Math.max(this.next, disk.next);
+    this.next = next;
+    const text = JSON.stringify({ next, jobs });
+    if (disk.raw === text) return;
     const tmp = `${this.file}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify({ next: Math.max(this.next, disk.next), jobs: merged }));
+    writeFileSync(tmp, text);
     renameSync(tmp, this.file);
+  }
+
+  private withLock<T>(body: () => T): T {
+    if (this.lockDepth > 0) return body();
+    return withJobsLock(this.file, this.owner, () => {
+      this.lockDepth += 1;
+      try {
+        return body();
+      } finally {
+        this.lockDepth -= 1;
+      }
+    });
   }
 }
 
@@ -309,6 +343,90 @@ function ownerGone(owner: JobOwner | null): boolean {
     return owner.startTicks !== null;
   }
   return owner.startTicks !== ticks;
+}
+
+/** Oldest finished rows go first. Running rows stay, including ones older than the kept finished rows. */
+function pruneFinished(jobs: JobRecord[]): JobRecord[] {
+  let finished = 0;
+  for (const job of jobs) if (job.status !== "running") finished += 1;
+  const drop = finished - FINISHED_KEEP;
+  if (drop <= 0) return jobs;
+  let skipped = 0;
+  const kept: JobRecord[] = [];
+  for (const job of jobs) {
+    if (job.status !== "running" && skipped < drop) {
+      skipped += 1;
+      continue;
+    }
+    kept.push(job);
+  }
+  return kept;
+}
+
+function withJobsLock<T>(file: string, owner: JobOwner, body: () => T): T {
+  mkdirSync(dirname(file), { recursive: true });
+  const lock = `${file}.lock`;
+  acquireJobsLock(lock, owner);
+  try {
+    return body();
+  } finally {
+    releaseJobsLock(lock, owner);
+  }
+}
+
+function acquireJobsLock(lock: string, owner: JobOwner): void {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    if (Date.now() >= deadline) throw new Error("jobs.json.lock busy");
+    let fd: number | undefined;
+    try {
+      fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      if (code !== "EEXIST") throw error;
+      if (lockAbandoned(lock)) {
+        try { unlinkSync(lock); } catch { /* the other waiter already removed it */ }
+        continue;
+      }
+      sleepSync(LOCK_POLL_MS);
+      continue;
+    }
+    try {
+      writeSync(fd, JSON.stringify({ pid: owner.pid, startTicks: owner.startTicks }));
+    } finally {
+      closeSync(fd);
+    }
+    if (!sameOwner(readLockOwner(lock), owner)) continue;
+    return;
+  }
+}
+
+function releaseJobsLock(lock: string, owner: JobOwner): void {
+  if (!sameOwner(readLockOwner(lock), owner)) return;
+  try { unlinkSync(lock); } catch { /* already released */ }
+}
+
+function readLockOwner(lock: string): JobOwner | null {
+  try {
+    return parseOwner(JSON.parse(readFileSync(lock, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+/** A parsed holder whose process is gone, or a lock that never recorded a live holder. */
+function lockAbandoned(lock: string): boolean {
+  const holder = readLockOwner(lock);
+  if (holder !== null) return ownerGone(holder);
+  try {
+    return Date.now() - statSync(lock).mtimeMs > LOCK_POLL_MS;
+  } catch {
+    return true;
+  }
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function quarantine(file: string): void {
