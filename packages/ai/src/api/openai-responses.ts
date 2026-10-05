@@ -159,17 +159,33 @@ export async function consumeResponses(
   }
 }
 
+/**
+ * `output_tokens_details.reasoning_tokens`, when present and a number, is already inside `output_tokens`.
+ * This parser fills `Usage.reasoning` for OpenAI Responses, Azure OpenAI Responses, and Codex.
+ * Chat Completions fills it from `completion_tokens_details.reasoning_tokens`.
+ * Google Generative AI and Vertex fill it from `usageMetadata.thoughtsTokenCount`.
+ * A missing count stays unset and is not written as 0.
+ */
 function responsesUsage(model: Model, raw: unknown): Usage | undefined {
   if (!isRecord(raw)) return undefined;
   const details = isRecord(raw.input_tokens_details) ? raw.input_tokens_details : undefined;
   const cache = cacheMissInput(numberField(raw, "input_tokens"), details ? numberField(details, "cached_tokens") : undefined);
+  const reasoning = reasoningFromResponses(raw);
   return usageFromCounts(
     model,
     cache.input,
     numberField(raw, "output_tokens"),
     numberField(raw, "total_tokens"),
-    cache.cacheRead !== undefined ? { cacheRead: cache.cacheRead } : undefined,
+    {
+      ...(cache.cacheRead !== undefined ? { cacheRead: cache.cacheRead } : {}),
+      ...(reasoning !== undefined ? { reasoning } : {}),
+    },
   );
+}
+
+function reasoningFromResponses(record: Record<string, unknown>): number | undefined {
+  if (!isRecord(record.output_tokens_details)) return undefined;
+  return numberField(record.output_tokens_details, "reasoning_tokens");
 }
 
 function toResponsesInput(context: Context): unknown[] {

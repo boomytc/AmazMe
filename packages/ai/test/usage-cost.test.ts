@@ -117,6 +117,29 @@ test("cache hits without a hit price leave the hit charge and the total unknown"
   assert.deepEqual(reported?.cost, { input: 1, output: 2, total: 4 });
 });
 
+test("an explicit zero cache read without a hit price still has a numeric total", () => {
+  const model: Model = {
+    id: "sample",
+    name: "sample",
+    provider: "sample",
+    api: "openai-completions",
+    input: ["text"],
+    contextWindow: 8_000,
+    maxTokens: 1_000,
+    cost: { input: 2, output: 4 },
+  };
+  // cacheRead is 0, so a missing cost.cacheRead does not null the charge or the total.
+  // 5e5 / 1e6 × 2 = 1 input, × 4 = 2 output. The write count is missing, so that charge is 0.
+  const cost = usageCost(model, { input: 500_000, output: 500_000, cacheRead: 0 });
+  assert.ok(cost);
+  assert.equal(cost.cacheRead, 0);
+  assert.equal(typeof cost.total, "number");
+  assert.equal(cost.total, 3);
+  const reported = usageFromCounts(model, 500_000, 500_000, undefined, { cacheRead: 0 });
+  assert.equal(reported?.cacheRead, 0);
+  assert.deepEqual(reported?.cost, { input: 1, output: 2, total: 3 });
+});
+
 test("a model without a price list returns null", () => {
   const model = deepseek("deepseek-flash");
   delete (model as { cost?: Model["cost"] }).cost;

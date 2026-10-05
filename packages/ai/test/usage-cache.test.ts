@@ -289,6 +289,63 @@ test("completions leave reasoning unset when DeepSeek omits it, and keep a repor
   assert.equal(reported.cost.output, 20);
 });
 
+test("responses set reasoning only from a numeric output_tokens_details.reasoning_tokens", async () => {
+  const model = chatModel("openai-responses");
+  model.cost = { input: 1_000_000, output: 2_000_000 };
+  const run = (usage: unknown) => settle(openAIResponsesApi({
+    fetch: recordedFetch(sse([
+      { type: "response.output_text.delta", delta: "Hi" },
+      { type: "response.completed", response: { status: "completed", usage } },
+    ])),
+  }).stream(model, CONTEXT, OPTIONS));
+
+  const absent = await run({ input_tokens: 8, output_tokens: 10, total_tokens: 18 });
+  assert.equal(Object.hasOwn(absent, "reasoning"), false);
+  assert.equal(absent.output, 10);
+  assert.equal(absent.totalTokens, 18);
+  assert.equal(absent.cost.output, 20);
+
+  const emptyDetails = await run({
+    input_tokens: 8,
+    output_tokens: 10,
+    total_tokens: 18,
+    output_tokens_details: {},
+  });
+  assert.equal(Object.hasOwn(emptyDetails, "reasoning"), false);
+  assert.equal(emptyDetails.output, 10);
+
+  const notANumber = await run({
+    input_tokens: 8,
+    output_tokens: 10,
+    total_tokens: 18,
+    output_tokens_details: { reasoning_tokens: "6" },
+  });
+  assert.equal(Object.hasOwn(notANumber, "reasoning"), false);
+
+  const zero = await run({
+    input_tokens: 8,
+    output_tokens: 10,
+    total_tokens: 18,
+    output_tokens_details: { reasoning_tokens: 0 },
+  });
+  assert.equal(zero.reasoning, 0);
+  assert.equal(zero.output, 10);
+  assert.equal(zero.totalTokens, 18);
+  assert.deepEqual(zero.cost, { input: 8, output: 20, total: 28 });
+
+  const reported = await run({
+    input_tokens: 8,
+    output_tokens: 10,
+    total_tokens: 18,
+    output_tokens_details: { reasoning_tokens: 6 },
+  });
+  assert.equal(reported.reasoning, 6);
+  assert.equal(reported.output, 10);
+  assert.equal(reported.totalTokens, 18);
+  assert.equal(reported.cost.output, 20);
+  assert.deepEqual(reported.cost, { input: 8, output: 20, total: 28 });
+});
+
 test("a faux response can carry cache counts, and the default usage leaves them unset", async () => {
   const filled = fauxProvider({
     respond: () => fauxAssistant("ok", {
