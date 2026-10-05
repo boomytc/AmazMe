@@ -711,6 +711,50 @@ test("checkpointed tool output is tailed while running and absent after settle",
   }
 });
 
+test("a long checkpoint is stored as its last 4000 code units", async () => {
+  const body = `head-${"x".repeat(10_000)}-tail`;
+  assert.ok(body.length > 10_000);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const storage = new MemoryStorage();
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("log", {})], { usage: tokens(1, 1) })
+      : fauxAssistant("after", { usage: tokens(2, 2) }),
+  }));
+  const harness = runtime(storage, models, {
+    tools: [{
+      name: "log",
+      description: "log",
+      parameters: { type: "object", additionalProperties: true },
+      async execute(_args, context) {
+        context.onUpdate?.(body, { checkpoint: true });
+        await gate;
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  try {
+    const lane = harness.lane();
+    const driving = lane.prompt("go");
+    await until(async () => (await lane.toolOutput()).tails.length === 1);
+    const stored = await storage.read((view) => {
+      const item = view.values().find((entry) => entry.key.includes("pi.pending.tool_output"));
+      return typeof item?.value === "string" ? item.value : undefined;
+    });
+    assert.equal(typeof stored, "string");
+    assert.ok(stored);
+    assert.ok(stored.length <= 4_000);
+    assert.equal(stored, body.slice(-4_000));
+    release();
+    assert.equal((await driving).status, "completed");
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
 test("a reopened log still returns the checkpoint tail of a call left running", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-tail-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

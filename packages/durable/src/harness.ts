@@ -1877,7 +1877,7 @@ export class AgentLane {
           if (state?.phase !== "tools") return;
           const current = state.calls.find((item) => item.resultEntryId === call.resultEntryId);
           if (current?.status !== "effect_pending") return;
-          apply([{ type: "set", address: toolOutputAddress(call.resultEntryId), value: partial }]);
+          apply([{ type: "set", address: toolOutputAddress(call.resultEntryId), value: checkpointTail(partial) }]);
         }))
         .then(() => undefined);
       writes.push(pending);
