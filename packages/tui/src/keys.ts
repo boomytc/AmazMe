@@ -12,7 +12,8 @@ export type Key =
   | { type: "right" }
   | { type: "newline" }
   | { type: "page-up" }
-  | { type: "page-down" };
+  | { type: "page-down" }
+  | { type: "paste"; text: string };
 
 export function decodeKeys(input: string): { keys: Key[]; rest: string } {
   const chars = Array.from(input);
@@ -25,6 +26,15 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
         keys.push({ type: "newline" });
         index += 2;
         if (chars[index - 1] === "\r" && chars[index] === "\n") index += 1;
+        continue;
+      }
+      if (chars.slice(index, index + 6).join("") === "\u001b[200~") {
+        const tail = chars.slice(index + 6).join("");
+        const end = tail.indexOf("\u001b[201~");
+        if (end < 0) return { keys, rest: chars.slice(index).join("") };
+        const text = tail.slice(0, end).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        keys.push({ type: "paste", text });
+        index += 6 + end + 6;
         continue;
       }
       if (index + 1 >= chars.length) return { keys, rest: chars.slice(index).join("") };
@@ -91,6 +101,8 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
 }
 
 function csiKey(body: string, final: string): Key {
+  const entered = modifiedEnter(body, final);
+  if (entered) return { type: entered };
   if (final === "A") return { type: "up" };
   if (final === "B") return { type: "down" };
   if (final === "C") return { type: "right" };
@@ -100,12 +112,58 @@ function csiKey(body: string, final: string): Key {
   return { type: "escape" };
 }
 
+/** Shift or Alt with Enter. Plain Enter stays a submit. Terminals that cannot tell Shift+Enter apart never send these. */
+function modifiedEnter(body: string, final: string): "newline" | "enter" | null {
+  if (final === "~") {
+    const parts = body.split(";");
+    if (parts[0] !== "27" || parts[2] !== "13") return null;
+    const mod = Number(parts[1] ?? "");
+    if (!Number.isInteger(mod)) return null;
+    return mod >= 2 ? "newline" : "enter";
+  }
+  if (final === "u") {
+    const parts = body.split(";");
+    if (parts[0] !== "13") return null;
+    const raw = parts.length === 1 ? "1" : (parts[1] ?? "").split(":")[0];
+    const mod = Number(raw);
+    if (!Number.isInteger(mod)) return null;
+    return mod >= 2 ? "newline" : "enter";
+  }
+  return null;
+}
+
+/** A lone Escape waits this long so a split sequence can still finish. */
+const ESCAPE_HOLD_MS = 50;
+
 export class KeyDecoder {
   private rest = "";
+  private timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(private readonly delayed: (keys: Key[]) => void = () => undefined) {}
 
   push(chunk: string): Key[] {
+    this.disarm();
     const decoded = decodeKeys(this.rest + chunk);
-    this.rest = decoded.rest.length > 32 ? "" : decoded.rest;
+    const holdingPaste = decoded.rest.includes("\u001b[200~") || decoded.rest.startsWith("\u001b[200");
+    this.rest = !holdingPaste && decoded.rest.length > 32 ? "" : decoded.rest;
+    if (this.rest === "\u001b") {
+      this.timer = setTimeout(() => {
+        this.timer = undefined;
+        if (this.rest !== "\u001b") return;
+        this.rest = "";
+        this.delayed([{ type: "escape" }]);
+      }, ESCAPE_HOLD_MS);
+    }
     return decoded.keys;
+  }
+
+  stop(): void {
+    this.disarm();
+  }
+
+  private disarm(): void {
+    if (this.timer === undefined) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
   }
 }

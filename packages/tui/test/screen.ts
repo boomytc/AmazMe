@@ -1,9 +1,9 @@
 import { parseLaneSnapshot } from "@amazme/runtime-service";
 import { decodeKeys, emptyTui, reduceTui, renderTui, windowFrom, type TuiEffect } from "@amazme/tui";
 
-/** 三条夹具共用的终端宽度。换行和截断按这个宽度。 */
+/** 画面夹具共用的终端宽度。换行和截断按这个宽度。 */
 export const SCREEN_COLUMNS = 60;
-/** 三条夹具共用的终端高度。 */
+/** 画面夹具共用的终端高度。 */
 export const SCREEN_ROWS = 16;
 
 export interface KeyStep {

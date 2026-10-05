@@ -20,6 +20,7 @@ export {
   renderTui,
   type TuiEffect,
   type TuiEntry,
+  type TuiMeters,
   type TuiState,
   type TuiTool,
   type TuiWindow,

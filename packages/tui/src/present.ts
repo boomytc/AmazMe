@@ -6,9 +6,9 @@ import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { scopedModels } from "./project.ts";
-import { KeyDecoder } from "./keys.ts";
+import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
-import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
+import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
 
 export { finishDrive } from "./commands.ts";
 
@@ -103,8 +103,9 @@ export async function presentHost(
   state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
   stdin.setRawMode(true);
   stdin.resume();
-  stdout.write("\x1b[?1049h\x1b[?25h");
-  const keys = new KeyDecoder();
+  stdout.write("\x1b[?1049h\x1b[?25h\x1b[?2004h");
+  let takeKeys: (incoming: Key[]) => void = () => undefined;
+  const keys = new KeyDecoder((delayed) => takeKeys(delayed));
   const utf8 = new StringDecoder("utf8");
   let restored = false;
   let finish = (): void => undefined;
@@ -130,6 +131,8 @@ export async function presentHost(
     const rows = stdout.rows > 0 ? stdout.rows : 24;
     const next = renderTui(state, columns, rows);
     previousFrame = writeScreen((chunk) => stdout.write(chunk), previousFrame, next);
+    const cursor = inputCursorSequence(next);
+    if (cursor.length > 0) stdout.write(cursor);
   };
   stdout.on("resize", paint);
   await rememberSettings();
@@ -147,24 +150,25 @@ export async function presentHost(
     if (restored) return;
     restored = true;
     if (exitTimer) clearTimeout(exitTimer);
+    keys.stop();
     stdin.off("data", onData);
     stdout.off("resize", paint);
     if (stdin.isRaw) stdin.setRawMode(false);
-    stdout.write("\x1b[?1049l");
+    stdout.write("\x1b[?2004l\x1b[?1049l");
     stdin.pause();
     finish();
   };
-  const onData = (chunk: Buffer | string): void => {
-    const text = typeof chunk === "string" ? chunk : utf8.write(chunk);
-    for (const key of keys.push(text)) {
-      if (key.type === "ctrl-d" && !state.picker && state.input.length === 0 && !state.busy) {
-        restore();
-        return;
-      }
+  takeKeys = (incoming) => {
+    if (restored) return;
+    for (const key of incoming) {
       const reduced = reduceTui(state, { type: "key", key });
       state = reduced.state;
       scheduleExitArm();
       paint();
+      if (reduced.effect?.type === "quit") {
+        restore();
+        return;
+      }
       if (reduced.effect) {
         void apply(reduced.effect).catch((error: unknown) => {
           state = { ...state, notice: error instanceof Error ? error.message : String(error) };
@@ -172,6 +176,10 @@ export async function presentHost(
         });
       }
     }
+  };
+  const onData = (chunk: Buffer | string): void => {
+    const text = typeof chunk === "string" ? chunk : utf8.write(chunk);
+    takeKeys(keys.push(text));
   };
   const showLane = (): void => {
     state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
@@ -427,7 +435,13 @@ export async function presentHost(
       restore();
       return;
     }
-    if (effect.type === "submit") await lane.submit(effect.text);
+    if (effect.type === "submit") {
+      const followed = await lane.submit(effect.text);
+      if (followed && state.busy) {
+        state = { ...state, queued: state.queued + 1 };
+        paint();
+      }
+    }
     else if (effect.type === "abort") await lane.abort();
     else if (effect.type === "pick") await applyPick(effect);
     else if ((effect.command.type === "login" || effect.command.type === "logout") && !effect.command.provider) {
@@ -497,7 +511,13 @@ export async function presentHost(
     } else {
       const outcome = await executeSlash(effect.command, actions);
       await rememberSettings();
-      if (outcome.type === "submit") await lane.submit(outcome.text);
+      if (outcome.type === "submit") {
+        const followed = await lane.submit(outcome.text);
+        if (followed && state.busy) {
+          state = { ...state, queued: state.queued + 1 };
+          paint();
+        }
+      }
       else if (outcome.type === "notice") {
         state = { ...state, notice: outcome.text };
         paint();
@@ -551,18 +571,19 @@ class AttachedLane {
     await this.subscription?.close();
   }
 
-  async submit(text: string): Promise<void> {
+  async submit(text: string): Promise<boolean> {
     const body = text.trim();
-    if (!body) return;
+    if (!body) return false;
     const operationId = this.snapshot().operationId;
     if (operationId) {
       await this.lane.followUp(body);
-      return;
+      return true;
     }
     const admitted = await this.lane.accept({ kind: "prompt", text: body });
     const started = this.snapshot().version;
     await finishDrive(this.lane, admitted.operationId);
     await this.untilLeft(admitted.operationId, started);
+    return false;
   }
 
   async abort(): Promise<void> {
