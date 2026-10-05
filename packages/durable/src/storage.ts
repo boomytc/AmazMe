@@ -31,6 +31,12 @@ export interface UsageRow {
   input: number;
   output: number;
   totalTokens: number;
+  /** Absent on old rows, or null when that turn did not report cache reads. Either makes the cumulative total null. */
+  cacheRead?: number | null;
+  /** Absent on old rows, which makes the cumulative total null. New rows store 0 when the provider did not report it. */
+  cacheWrite?: number | null;
+  /** Provider and model that produced this row. Absent on older rows, which makes the cumulative cost null. */
+  model?: { provider: string; modelId: string };
 }
 
 export interface ListItem {
@@ -40,7 +46,17 @@ export interface ListItem {
 
 export type Write =
   | { type: "entry"; id: string; parentId: string | null; timestamp: number; payload: EntryPayload }
-  | { type: "usage"; id: string; operationId: string; input: number; output: number; totalTokens: number }
+  | {
+      type: "usage";
+      id: string;
+      operationId: string;
+      input: number;
+      output: number;
+      totalTokens: number;
+      cacheRead?: number | null;
+      cacheWrite?: number | null;
+      model?: { provider: string; modelId: string };
+    }
   | { type: "set"; address: Address; value: unknown }
   | { type: "delete"; address: Address }
   | { type: "append"; address: Address; item: unknown }
