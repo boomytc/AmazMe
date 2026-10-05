@@ -16,6 +16,11 @@ test("the fullscreen view does not own the model or the in-memory agent", () => 
   const source = readFileSync(root, "utf8");
   assert.equal(source.includes("@amazme/agent"), false);
   assert.equal(source.includes("AgentSession"), false);
+  const agentRoot = fileURLToPath(new URL("../src", import.meta.url));
+  const agent = walk(agentRoot).filter((file) => file.endsWith(".ts")).map((file) => readFileSync(file, "utf8")).join("\n");
+  assert.equal(agent.includes("@amazme/ai/providers/faux"), false);
+  assert.equal(agent.includes("@amazme/ai/testing"), false);
+  assert.equal(agent.includes("fauxProvider"), false);
   const viewRoot = fileURLToPath(new URL("../../tui/src", import.meta.url));
   const view = walk(viewRoot).filter((file) => file.endsWith(".ts")).map((file) => readFileSync(file, "utf8")).join("\n");
   assert.equal(view.includes("@amazme/agent"), false);

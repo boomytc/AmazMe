@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/testing";
 import { runPrint } from "../src/print-run.ts";
 
 const repo = fileURLToPath(new URL("../../..", import.meta.url));

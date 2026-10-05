@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import * as agent from "@amazme/agent";
 import { AgentHarness, type HarnessMessage, type HarnessTool } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
@@ -209,6 +211,33 @@ test("the faux model is only available from the testing entry", async () => {
   models.setProvider(fauxProvider());
   assert.ok(models.getModel("faux", "faux-1"));
 });
+
+test("package sources do not import the AI testing entry", () => {
+  const packages = fileURLToPath(new URL("../packages", import.meta.url));
+  const hits: string[] = [];
+  for (const name of readdirSync(packages)) {
+    collectTestingImports(join(packages, name, "src"), hits);
+  }
+  assert.deepEqual(hits, []);
+});
+
+function collectTestingImports(dir: string, hits: string[]): void {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) collectTestingImports(path, hits);
+    else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx") || entry.name.endsWith(".js")) {
+      const source = readFileSync(path, "utf8");
+      if (source.includes("@amazme/ai/testing") || source.includes("@amazme/ai/providers/faux")) hits.push(path);
+    }
+  }
+}
 
 test("the AI root entry does not load a protocol and runs without process or Node modules", () => {
   const script = `
