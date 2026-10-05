@@ -21,6 +21,8 @@ export {
   EXIT_WINDOW_MS,
   reduceTui,
   renderTui,
+  summarizeArgs,
+  type TuiApproval,
   type TuiEffect,
   type TuiEntry,
   type TuiMeters,

@@ -49,6 +49,11 @@ export interface TuiWindow {
   active: string;
   /** 协议快照上的底栏数据。缺了就不显示分支、耗时、重试、压缩和费用。 */
   activity?: ActivityDto;
+  /**
+   * Parked approvals from `pendingApprovals`. Omitted means none.
+   * The snapshot does not carry this list.
+   */
+  approvals?: TuiApproval[];
 }
 
 /**
@@ -97,6 +102,18 @@ export interface TuiState extends TuiWindow {
   meters: TuiMeters;
   /** 压缩中变成停止之后保留「压缩完成」，直到下一轮开始。 */
   compaction: "off" | "active" | "done";
+  /** Parked tool calls. The first one is the card. Empty means the keys type into the composer. */
+  approvals: TuiApproval[];
+  /** True after y/n/a until that call leaves the pending list, so a second key does not decide twice. */
+  deciding: boolean;
+  decidingId: string | null;
+}
+
+/** One parked tool call the card can show. `summary` is a short argument line. */
+export interface TuiApproval {
+  toolCallId: string;
+  name: string;
+  summary: string;
 }
 
 export type TuiEffect =
@@ -105,6 +122,7 @@ export type TuiEffect =
   | { type: "slash"; command: SlashAction }
   | { type: "pick"; kind: Picker["kind"]; id: string; subject?: string; secret?: string }
   | { type: "cycle-model" }
+  | { type: "approve"; toolCallId: string; decision: "allow" | "deny"; session?: boolean }
   | { type: "quit" };
 
 /** Shown after the first Ctrl-C on an idle, empty prompt. */
@@ -139,6 +157,9 @@ export function emptyTui(active = "main"): TuiState {
     queued: 0,
     meters: {},
     compaction: "off",
+    approvals: [],
+    deciding: false,
+    decidingId: null,
   };
 }
 
@@ -159,9 +180,10 @@ export function renderTui(state: TuiState, columns = 100, rows = 32, now?: numbe
   const notice = state.notice ? state.notice.split("\n").map((line) => paint(theme.dim, fit(line, width))) : [];
   const hint = paint(theme.dim, fit(composerHint(), width));
   const transcript = transcriptLines(state).flatMap((line) => wrap(line, width));
+  const approval = approvalLines(state, width);
   const footer = [status, hint, rule, ...composer];
   if (state.overlay) {
-    const reserved = [...picker, ...menu, ...notice, ...footer];
+    const reserved = [...picker, ...menu, ...notice, ...approval, ...footer];
     const kept = reserved.length >= height ? reserved.slice(-(height - 1)) : reserved;
     const overlay = overlayLines(state, width, height - kept.length);
     const chrome = [...overlay, ...kept];
@@ -170,7 +192,7 @@ export function renderTui(state: TuiState, columns = 100, rows = 32, now?: numbe
     while (visible.length < room) visible.unshift("");
     return [...visible, ...chrome].join("\n");
   }
-  const chrome = [...picker, ...menu, ...notice, ...footer];
+  const chrome = [...picker, ...menu, ...notice, ...approval, ...footer];
   const room = Math.max(1, height - chrome.length);
   const visible = transcript.slice(-room);
   while (visible.length < room) visible.unshift("");
@@ -182,7 +204,18 @@ function applyWindow(state: TuiState, window: TuiWindow): TuiState {
   const entryIndex = clamp(state.entryIndex, window.entries.length);
   const turnIndex = clamp(state.turnIndex, turns.length);
   const compaction = nextCompaction(state.compaction, state.activity, window.activity);
-  const next = { ...state, ...window, entryIndex, turnIndex, compaction };
+  const approvals = window.approvals ?? [];
+  const stillDeciding = state.decidingId !== null && approvals.some((item) => item.toolCallId === state.decidingId);
+  const next = {
+    ...state,
+    ...window,
+    approvals,
+    deciding: stillDeciding,
+    decidingId: stillDeciding ? state.decidingId : null,
+    entryIndex,
+    turnIndex,
+    compaction,
+  };
   if (!window.busy) next.queued = 0;
   return next;
 }
@@ -191,6 +224,8 @@ function applyKey(state: TuiState, key: Key): { state: TuiState; effect: TuiEffe
   if (key.type !== "ctrl-c") state = forgetExit(state);
   if (key.type === "paste") return applyPaste(state, key.text);
   if (state.picker) return pickerKey(forgetExit(state), key);
+  const approval = approvalDecision(state, key);
+  if (approval) return approval;
   const binding = activeBinding(state, key);
   if (!binding) return { state, effect: null };
   return runBinding(binding.id, state, key);
@@ -412,6 +447,64 @@ function overlayLines(state: TuiState, width: number, budget: number): string[] 
   if (budget === 2) return [title, more];
   if (budget === 3) return [rule, title, more];
   return [rule, title, ...body.slice(0, budget - 4), more, rule];
+}
+
+const ARG_SUMMARY_LIMIT = 80;
+
+/** One line for the approval card. Objects become `key=value`; long text is cut. */
+export function summarizeArgs(args: unknown): string {
+  const text = argText(args).replace(/\s+/g, " ").trim();
+  const chars = Array.from(text);
+  if (chars.length <= ARG_SUMMARY_LIMIT) return text;
+  return `${chars.slice(0, ARG_SUMMARY_LIMIT - 1).join("")}…`;
+}
+
+function argText(args: unknown): string {
+  if (typeof args === "string") return args;
+  if (typeof args === "number" || typeof args === "boolean") return String(args);
+  if (Array.isArray(args)) return jsonBit(args);
+  if (typeof args === "object" && args !== null) {
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(args)) {
+      parts.push(`${key}=${typeof value === "string" ? value : jsonBit(value)}`);
+    }
+    return parts.join(" ");
+  }
+  return "";
+}
+
+function jsonBit(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function approvalLines(state: TuiState, width: number): string[] {
+  const card = state.approvals[0];
+  if (!card || state.picker) return [];
+  const summary = card.summary.length > 0 ? `  ${card.summary}` : "";
+  return [
+    paint(theme.border, "─".repeat(width)),
+    paint(theme.accent, "审批"),
+    paint(theme.text, fit(`${card.name}${summary}`, width)),
+    paint(theme.dim, fit("y 允许  n 拒绝  a 本次会话允许", width)),
+  ];
+}
+
+function approvalDecision(state: TuiState, key: Key): { state: TuiState; effect: TuiEffect | null } | null {
+  const card = state.approvals[0];
+  if (!card || state.picker || key.type !== "char") return null;
+  const value = key.value;
+  const decision = value === "n" || value === "N" ? "deny" : value === "y" || value === "Y" || value === "a" || value === "A" ? "allow" : null;
+  if (!decision) return null;
+  if (state.deciding) return { state, effect: null };
+  const session = value === "a" || value === "A";
+  return {
+    state: { ...state, deciding: true, decidingId: card.toolCallId },
+    effect: { type: "approve", toolCallId: card.toolCallId, decision, ...(session ? { session: true } : {}) },
+  };
 }
 
 function insertText(state: TuiState, text: string): TuiState {

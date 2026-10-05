@@ -13,6 +13,7 @@ import { packageSkillText } from "@amazme/tui";
 import { appendSkillText } from "./skills.ts";
 import { visibleModels } from "./picker.ts";
 import { installHostRetries } from "./contracts.ts";
+import { readApprovalSettings } from "./settings.ts";
 import { installSessionRouter } from "./host-router.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
@@ -100,12 +101,16 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
         const mcp = await connectWorkspaceMcp(cwd);
         try {
           const tools = await appendMcpTools(coding, mcp.servers);
+          const approvalTools = approvalNames(cwd);
           const resources = await openJsonlRuntime(file, {
             models: withPackageSkills(cwd, options.models),
             model: { provider, modelId },
             systemPrompt: appendSkillText(SYSTEM_PROMPT, join(cwd, "skills")),
             workspace: shortWorkspace(cwd),
             tools,
+            // Absent or empty approval leaves the predicate unset, so tools run as before.
+            // Session exemption is `lane.allowForSession`, checked before this predicate.
+            ...(approvalTools ? { requiresApproval: (call: { name: string }) => approvalTools.has(call.name) } : {}),
           });
           installSessionRouter(resources.harness, {
             cwd,
@@ -166,6 +171,13 @@ function withPackageSkills(cwd: string, models: HostModels): HostModels {
       return models.streamSimple(model, { ...context, systemPrompt }, options);
     },
   };
+}
+
+/** Names from `approval.tools`. Undefined means the gate is off. */
+function approvalNames(cwd: string): ReadonlySet<string> | undefined {
+  const approval = readApprovalSettings(cwd);
+  if (!approval) return undefined;
+  return new Set(approval.tools);
 }
 
 function shortWorkspace(cwd: string): string {

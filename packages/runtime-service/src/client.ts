@@ -11,6 +11,7 @@ import {
   CatalogReplySchema,
   ForkReplySchema,
   ImportReplySchema,
+  PendingApprovalsReplySchema,
   LaneNameSchema,
   LaneSettingsSchema,
   OperationAdmissionSchema,
@@ -24,6 +25,7 @@ import {
   type DriveOutcomeDto,
   type ForkReplyDto,
   type ImportReplyDto,
+  type PendingApprovalsDto,
   type HistoryPageDto,
   type LaneSettingsDto,
   type LaneSnapshotDto,
@@ -185,6 +187,32 @@ export class RemoteLane {
     options?: RequestOptions,
   ): Promise<ImportReplyDto> {
     return parse(ImportReplySchema, await this.call({ method: "import", lane: this.name, name, messages: [...messages] }, options), "import reply");
+  }
+
+  /** Parked tool calls. Does not drive. The snapshot leaves this list out on purpose. */
+  async pendingApprovals(options?: RequestOptions): Promise<PendingApprovalsDto> {
+    return parse(PendingApprovalsReplySchema, await this.call({ method: "pendingApprovals", lane: this.name }, options), "pending approvals");
+  }
+
+  /**
+   * Record allow or deny, then drive. Deny writes the tool error the model sees next.
+   * `session` remembers that tool name until this host process exits.
+   */
+  async approve(
+    toolCallId: string,
+    decision: "allow" | "deny",
+    options: { reason?: string; session?: boolean } = {},
+    request?: RequestOptions,
+  ): Promise<void> {
+    const call: RuntimeCall = {
+      method: "approve",
+      lane: this.name,
+      toolCallId,
+      decision,
+      ...(options.reason !== undefined ? { reason: options.reason } : {}),
+      ...(options.session === true ? { session: true } : {}),
+    };
+    parse(EmptyReplySchema, await this.call(call, request), "approve reply");
   }
 
   /** The explicit, persisted business cancellation of an operation. */

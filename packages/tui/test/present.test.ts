@@ -480,6 +480,10 @@ async function fakeHost(socket: string, models: Array<{ provider: string; modelI
           calls.push({ method: "requestAbort", operationId: id });
           return { operationId: id, newlyRequested: true };
         }
+        case "pendingApprovals":
+          return { version, items: [] };
+        case "approve":
+          return null;
         default:
           throw new ServiceError("invalid_call", `unexpected ${raw.method}`);
       }

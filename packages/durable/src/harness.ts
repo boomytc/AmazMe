@@ -128,6 +128,8 @@ export interface HarnessOptions {
    * `true` parks that call on the current tools batch until `approve`.
    * The predicate is not stored. A reopened process supplies it again for later calls;
    * a call already parked does not ask the predicate a second time.
+   * `allowForSession` skips this predicate for one tool name until the process exits.
+   * That set is not stored either.
    */
   requiresApproval?: (call: ApprovalRequest) => boolean | Promise<boolean>;
   /**
@@ -408,6 +410,20 @@ const running = (): Scope => ({ control: { status: "running" }, attempt: 0, over
 
 /** Admitted storage calls. The public `storage` field stays the caller's instance. */
 const trackedStorage = new WeakMap<AgentHarness, Storage>();
+
+/**
+ * Tool names `allowForSession` exempts for this process.
+ * A new harness asks again. Parked calls do not consult this set; they still need `approve`.
+ */
+const sessionAllowedTools = new WeakMap<AgentHarness, Set<string>>();
+
+function sessionAllowed(harness: AgentHarness): Set<string> {
+  const existing = sessionAllowedTools.get(harness);
+  if (existing) return existing;
+  const created = new Set<string>();
+  sessionAllowedTools.set(harness, created);
+  return created;
+}
 
 function admitted(harness: AgentHarness): Storage {
   const storage = trackedStorage.get(harness);
@@ -995,6 +1011,15 @@ export class AgentLane {
     if (gate.action === "settled") return;
     const outcome = await this.drive(gate.operationId);
     if (!outcome.ok) throw new Error(outcome.error.message);
+  }
+
+  /**
+   * Later calls of `name` skip `requiresApproval` until this process exits.
+   * A call already parked is unchanged and still needs `approve`.
+   */
+  allowForSession(name: string): void {
+    if (name.length === 0) throw new Error("tool name is empty");
+    sessionAllowed(this.harness).add(name);
   }
 
   /**
@@ -2361,6 +2386,7 @@ export class AgentLane {
   }
 
   private async approvalRequired(call: { toolCallId: string; name: string }, args: unknown): Promise<boolean> {
+    if (sessionAllowed(this.harness).has(call.name)) return false;
     const predicate = this.harness.options.requiresApproval;
     if (!predicate) return false;
     try {

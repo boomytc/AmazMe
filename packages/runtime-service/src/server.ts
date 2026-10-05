@@ -301,6 +301,22 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
         return wire(unwrap(await lane.importConversation(call.name, call.messages)));
       case "subscribe":
         return this.subscribe(lane, call.subscriptionId, context);
+      case "pendingApprovals":
+        return wire(await lane.pendingApprovals());
+      case "approve":
+        if (call.session === true && call.decision === "allow") {
+          const pending = await lane.pendingApprovals();
+          const item = pending.items.find((entry) => entry.toolCallId === call.toolCallId);
+          if (item) {
+            lane.allowForSession(item.name);
+            const same = pending.items.filter((entry) => entry.name === item.name);
+            const ordered = [...same.filter((entry) => entry.toolCallId !== item.toolCallId), item];
+            for (const parked of ordered) await lane.approve(parked.toolCallId, "allow");
+            return null;
+          }
+        }
+        await lane.approve(call.toolCallId, call.decision, call.reason);
+        return null;
     }
   }
 

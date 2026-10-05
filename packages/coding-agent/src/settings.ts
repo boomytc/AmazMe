@@ -3,10 +3,10 @@ import { join, resolve } from "node:path";
 import type { Model, Models } from "@amazme/ai";
 
 /**
- * Workspace router switch.
+ * Workspace switches that do not fit `project.json`.
  *
- * `.amazme/project.json` stores `settings` as `Record<string, string>`, so it cannot hold this object.
- * The router lives in `<cwd>/.amazme/settings.json` and is absent until that file sets it.
+ * `.amazme/project.json` stores `settings` as `Record<string, string>`, so it cannot hold these objects.
+ * They live in `<cwd>/.amazme/settings.json` and stay absent until that file sets them.
  */
 export interface RouterSettings {
   /** Classifier spec, `provider/model`. TypeSafe Jev is `typesafe/jev-latest`. */
@@ -22,12 +22,35 @@ export interface ModelSpec {
   modelId: string;
 }
 
+/** Tool names that park until the user allows them. An empty list is off. */
+export interface ApprovalSettings {
+  tools: string[];
+}
+
 export function settingsFile(cwd: string): string {
   return join(resolve(cwd), ".amazme", "settings.json");
 }
 
+const SETTINGS_KEYS = new Set(["router", "approval"]);
+
 /** Missing file or a file with no router is off. A present router that does not match the schema throws. */
 export function readRouterSettings(cwd: string): RouterSettings | undefined {
+  const parsed = readSettings(cwd);
+  if (!parsed || !("router" in parsed) || parsed.router === undefined) return undefined;
+  return parseRouter(parsed.router);
+}
+
+/**
+ * Missing file, no `approval` key, or `tools: []` is off.
+ * A present approval that does not match the schema throws.
+ */
+export function readApprovalSettings(cwd: string): ApprovalSettings | undefined {
+  const parsed = readSettings(cwd);
+  if (!parsed || !("approval" in parsed) || parsed.approval === undefined) return undefined;
+  return parseApproval(parsed.approval);
+}
+
+function readSettings(cwd: string): Record<string, unknown> | undefined {
   let raw: string;
   try {
     raw = readFileSync(settingsFile(cwd), "utf8");
@@ -43,10 +66,9 @@ export function readRouterSettings(cwd: string): RouterSettings | undefined {
     throw new Error("settings.json must be JSON");
   }
   if (!isRecord(parsed)) throw new Error("settings.json must be an object");
-  const extra = Object.keys(parsed).filter((key) => key !== "router");
-  if (extra.length > 0) throw new Error("settings.json only allows router");
-  if (!("router" in parsed) || parsed.router === undefined) return undefined;
-  return parseRouter(parsed.router);
+  const extra = Object.keys(parsed).filter((key) => !SETTINGS_KEYS.has(key));
+  if (extra.length > 0) throw new Error("settings.json only allows router and approval");
+  return parsed;
 }
 
 /** `provider/model`. The model id may itself contain slashes. */
@@ -93,6 +115,23 @@ function unconfigured(
   const env = models.getProvider(model.provider)?.auth.apiKey?.env;
   const hint = env ? `set ${env} or run amazme login` : "run amazme login";
   return `router ${role} ${spec} is not configured: ${hint}`;
+}
+
+function parseApproval(value: unknown): ApprovalSettings | undefined {
+  if (!isRecord(value)) throw new Error("settings.json approval must be an object");
+  const extra = Object.keys(value).filter((key) => key !== "tools");
+  if (extra.length > 0) throw new Error("settings.json approval only allows tools");
+  if (!("tools" in value)) throw new Error("settings.json approval requires tools");
+  const tools = value.tools;
+  if (!Array.isArray(tools) || tools.some((item) => typeof item !== "string" || item.length === 0)) {
+    throw new Error("settings.json approval tools must be an array of tool names");
+  }
+  if (tools.length === 0) return undefined;
+  const names: string[] = [];
+  for (const name of tools) {
+    if (!names.includes(name)) names.push(name);
+  }
+  return { tools: names };
 }
 
 function parseRouter(value: unknown): RouterSettings {
