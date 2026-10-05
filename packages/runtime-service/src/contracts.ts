@@ -98,6 +98,11 @@ const ImportCall = Strict({
 });
 const ConversationsCall = Strict({ method: Type.Literal("conversations") });
 const PendingApprovalsCall = Strict({ method: Type.Literal("pendingApprovals"), lane: LaneNameSchema });
+const FilesCall = Strict({
+  method: Type.Literal("files"),
+  lane: LaneNameSchema,
+  query: Type.String({ maxLength: 512 }),
+});
 const ApproveCall = Strict({
   method: Type.Literal("approve"),
   lane: LaneNameSchema,
@@ -111,7 +116,7 @@ const ApproveCall = Strict({
 export const RuntimeCallSchema = Type.Union([
   AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall,
   ConfigureCall, CatalogCall, ForkCall, ImportCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
-  PendingApprovalsCall, ApproveCall,
+  PendingApprovalsCall, ApproveCall, FilesCall,
 ]);
 export type RuntimeCall = Static<typeof RuntimeCallSchema>;
 
@@ -427,6 +432,12 @@ export const PendingApprovalsReplySchema = Strict({
   })),
 });
 export type PendingApprovalsDto = Static<typeof PendingApprovalsReplySchema>;
+
+/** Workspace-relative paths for @ completion. The host lists them; the screen does not scan disk. */
+export const FilesReplySchema = Strict({
+  paths: Type.Array(Type.String({ minLength: 1, maxLength: 1_024 }), { maxItems: 200 }),
+});
+export type FilesReplyDto = Static<typeof FilesReplySchema>;
 
 export const parseRuntimeCall = (value: JsonValue): RuntimeCall => parse(RuntimeCallSchema, value, "runtime call");
 export const parseManagementCall = (value: JsonValue): ManagementCall => parse(ManagementCallSchema, value, "management call");

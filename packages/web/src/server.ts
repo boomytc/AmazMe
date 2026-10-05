@@ -221,6 +221,10 @@ async function interpret(lane: RemoteLane, text: string, actions: SlashActions, 
     setNotice(parsed.text);
     return;
   }
+  if (parsed.type === "copy") {
+    setNotice("复制只在全屏客户端里可用");
+    return;
+  }
   const outcome = await executeSlash(parsed, actions);
   if (outcome.type === "submit") {
     setNotice(null);

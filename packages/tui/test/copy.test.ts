@@ -57,3 +57,24 @@ test("ctrl-y copies the last assistant reply and leaves the composer alone", () 
   assert.equal(picking.effect, null);
   assert.equal(picking.state.picker?.kind, "model");
 });
+
+function command(input: string, state: TuiState) {
+  let current = state;
+  for (const value of Array.from(input)) {
+    current = reduceTui(current, { type: "key", key: { type: "char", value } }).state;
+  }
+  return reduceTui(current, { type: "key", key: { type: "enter" } });
+}
+
+test("/copy matches the last reply and /copy code keeps only the last fence", () => {
+  const reply = "intro\n```ts\nconst first = 1;\n```\n```js\nconst last = 2;\n```";
+  const state = shown([{ id: "a", role: "assistant", text: reply }]);
+  assert.deepEqual(command("/copy", state).effect, { type: "copy", text: reply });
+  assert.deepEqual(command("/copy code", state).effect, { type: "copy", text: "const last = 2;" });
+  const plain = command("/copy code", shown([{ id: "a", role: "assistant", text: "plain" }]));
+  assert.equal(plain.effect, null);
+  assert.equal(plain.state.notice, "没有代码块");
+  const missing = command("/copy", emptyTui());
+  assert.equal(missing.effect, null);
+  assert.equal(missing.state.notice, "没有助手回复");
+});

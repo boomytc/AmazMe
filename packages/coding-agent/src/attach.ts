@@ -97,6 +97,10 @@ async function command(control: LaneControl, line: string, actions: SlashActions
     output.write(`${parsed.text}\n`);
     return;
   }
+  if (parsed.type === "copy") {
+    output.write("复制只在全屏客户端里可用\n");
+    return;
+  }
   const outcome = await executeSlash(parsed, actions);
   if (outcome.type === "quit") {
     output.write("结束输入即可离开附着端，宿主继续运行\n");

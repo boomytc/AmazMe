@@ -194,6 +194,27 @@ export async function presentHost(
     stdin.pause();
     finish();
   };
+  let filesEpoch = 0;
+  let filesLoaded: string | null = null;
+  const refreshFiles = (): void => {
+    const query = state.fileQuery;
+    const open = query !== null && !state.fileHidden && state.focus === "prompt" && !state.overlay && state.picker === null;
+    if (!open) {
+      filesLoaded = null;
+      return;
+    }
+    if (filesLoaded === query) return;
+    const epoch = ++filesEpoch;
+    filesLoaded = query;
+    void remote.lane(active).files(query).then((paths) => {
+      if (epoch !== filesEpoch || restored) return;
+      if (state.fileQuery !== query || state.fileHidden) return;
+      state = { ...state, filePaths: [...paths], fileIndex: 0 };
+      paint();
+    }, () => {
+      if (filesLoaded === query) filesLoaded = null;
+    });
+  };
   takeKeys = (incoming) => {
     if (restored) return;
     for (const key of incoming) {
@@ -216,6 +237,7 @@ export async function presentHost(
           paint();
         });
       }
+      refreshFiles();
     }
   };
   const onData = (chunk: Buffer | string): void => {

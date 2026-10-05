@@ -169,6 +169,45 @@ test("ctrl-y writes the last assistant reply with OSC 52", async (t) => {
   }
 });
 
+test("/copy code writes the last fence and does not emit OSC 52 when there is none", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-copy-code-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const host = await fakeHost(join(dir, "host.sock"));
+  t.after(() => host.close());
+  const tty = fakeTTY();
+  const screen = presentHost(
+    { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE },
+    tty.stdin,
+    tty.stdout,
+  );
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    await host.showAssistant("plain answer");
+    await until(() => tty.since(0).includes("plain answer"), "the plain reply");
+    const before = tty.chunks.length;
+    tty.push("/copy code\r");
+    await until(() => tty.since(before).includes("没有代码块"), "notice when the reply has no fence");
+    assert.equal(tty.since(before).includes("\x1b]52;"), false);
+    await host.showAssistant("intro\n```ts\nconst first = 1;\n```\n```js\nconst last = 2;\n```");
+    await until(() => tty.since(0).includes("const last = 2;"), "the fenced reply");
+    const mark = tty.chunks.length;
+    tty.push("/copy code\r");
+    const payload = Buffer.from("const last = 2;", "utf8").toString("base64");
+    await until(() => tty.since(mark).includes(`\x1b]52;c;${payload}\x07`), "OSC 52 of the last fence");
+    assert.match(tty.since(mark), /已复制/);
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u0004");
+    await Promise.race([
+      screen.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${tty.since(0)}`);
+  }
+});
+
 test("a failed assistant turn shows its error in the conversation", () => {
   const snapshot: LaneSnapshotDto = {
     version: 0,
@@ -577,6 +616,8 @@ async function fakeHost(
         }
         case "pendingApprovals":
           return { version, items: [] };
+        case "files":
+          return { paths: [] };
         case "approve":
           return null;
         default:
