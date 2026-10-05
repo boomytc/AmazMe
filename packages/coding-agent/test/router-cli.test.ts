@@ -69,9 +69,10 @@ globalThis.fetch = async (input, init) => {
     const state = typeof parsed.state === "string" ? parsed.state : "";
     const complex = state.includes("complex-task") ? 0.9 : 0.1;
     const choice = complex >= 0.5 ? "complex" : "standard";
+    const inputTokens = complex >= 0.5 ? 2000000 : 1000000;
     return Response.json({
       answers: { route: { type: "choice", choice, confidence: complex, probabilities: { standard: 1 - complex, complex } } },
-      usage: { input_tokens: 1000000, output_tokens: 0 },
+      usage: { input_tokens: inputTokens, output_tokens: 0 },
     });
   }
   note({ model: typeof parsed.model === "string" ? parsed.model : "" });
@@ -129,7 +130,7 @@ test("oneshot routes a simple prompt to cheap and a complex prompt to strong", a
   const simple = await runCli(["--cwd", cwd, "simple-task"], cwd, undefined, { TYPESAFE_API_KEY: "sk-typesafe" }, preload);
   assert.equal(simple.code, 0, simple.stderr);
   assert.deepEqual(readLog(cwd), { typesafe: 1, models: ["deepseek-flash"] });
-  const simpleRoute = readLatestRoute(cwd);
+  const simpleRoute = readLatestRoute(cwd, "main");
   assert.equal(simpleRoute?.choice, "standard");
   assert.equal(simpleRoute?.modelId, "deepseek-flash");
 
@@ -138,8 +139,8 @@ test("oneshot routes a simple prompt to cheap and a complex prompt to strong", a
   const complex = await runCli(["--cwd", cwd, "complex-task"], cwd, undefined, { TYPESAFE_API_KEY: "sk-typesafe" }, preload);
   assert.equal(complex.code, 0, complex.stderr);
   assert.deepEqual(readLog(cwd), { typesafe: 1, models: ["deepseek-v4-pro"] });
-  assert.equal(readLatestRoute(cwd)?.choice, "complex");
-  assert.equal(readLatestRoute(cwd)?.modelId, "deepseek-v4-pro");
+  assert.equal(readLatestRoute(cwd, "main")?.choice, "complex");
+  assert.equal(readLatestRoute(cwd, "main")?.modelId, "deepseek-v4-pro");
 });
 
 test("continue reuses the routed model and does not call TypeSafe again", async (t) => {
@@ -184,7 +185,7 @@ test("an unset router makes no TypeSafe call", async (t) => {
   const result = await runCli(["--cwd", cwd, "complex-task"], cwd, undefined, {}, preload);
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(readLog(cwd), { typesafe: 0, models: ["deepseek-flash"] });
-  assert.equal(readLatestRoute(cwd), undefined);
+  assert.equal(readLatestRoute(cwd, "main"), undefined);
 });
 
 test("a rejected classifier key keeps the current model and records the reason", async (t) => {
@@ -196,7 +197,7 @@ test("a rejected classifier key keeps the current model and records the reason",
   const result = await runCli(["--cwd", cwd, "complex-task"], cwd, undefined, env, preload);
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(readLog(cwd), { typesafe: 1, models: ["deepseek-flash"] });
-  const route = readLatestRoute(cwd);
+  const route = readLatestRoute(cwd, "main");
   assert.match(route?.reason ?? "", /401/);
   assert.equal(route?.modelId, "deepseek-flash");
   const again = await runCli(["--cwd", cwd, "--continue", "complex-task"], cwd, undefined, env, preload);
@@ -259,7 +260,7 @@ test("serve classifies once before the first model call", async (t) => {
     const snap = await lane.snapshot();
     assert.equal(readLog(cwd).typesafe, 1);
     assert.deepEqual(readLog(cwd).models, ["deepseek-v4-pro"]);
-    const route = readLatestRoute(cwd);
+    const route = readLatestRoute(cwd, "main");
     assert.equal(route?.modelId, "deepseek-v4-pro");
     assert.equal(route?.usage?.cost === null, false);
     assert.equal(snap.activity.usage.total.input, (snap.activity.usage.lastTurn?.input ?? 0) + (route?.usage?.input ?? 0));
@@ -331,7 +332,7 @@ test("durable footer cost adds priced Jev usage and becomes null when Jev has no
     if (outcome.kind === "waiting") outcome = await lane.drive(outcome.operationId, { waitForRetry: true });
     assert.equal(outcome.kind, "settled");
     const snap = await lane.snapshot();
-    const route = readLatestRoute(cwd);
+    const route = readLatestRoute(cwd, "main");
     const classifier = models.getClassifier("typesafe", "jev-latest");
     const priced = classifier ? usageCost(classifier, { input: 1_000_000, output: 0 }) : null;
     assert.equal(calls.typesafe, 1);
@@ -383,7 +384,7 @@ test("durable footer cost adds priced Jev usage and becomes null when Jev has no
     if (outcome.kind === "waiting") outcome = await lane.drive(outcome.operationId, { waitForRetry: true });
     assert.equal(outcome.kind, "settled");
     const snap = await lane.snapshot();
-    const route = readLatestRoute(unpriced);
+    const route = readLatestRoute(unpriced, "main");
     assert.equal(route?.usage?.cost, null);
     assert.equal(typeof snap.activity.usage.lastTurn?.cost?.total, "number");
     assert.equal(snap.activity.usage.total.cost, null);
@@ -391,4 +392,65 @@ test("durable footer cost adds priced Jev usage and becomes null when Jev has no
   } finally {
     await secondClient.dispose();
   }
+});
+
+test("each lane classifies on its own and the footer adds only that lane's Jev", async (t) => {
+  const cwd = directory(t);
+  credentials(cwd);
+  writeRouter(cwd);
+  const preload = writePreload(cwd, "route");
+  const env = { TYPESAFE_API_KEY: "sk-typesafe" };
+  const laneA = await runCli(["--cwd", cwd, "--resume", "a", "simple-task"], cwd, undefined, env, preload);
+  assert.equal(laneA.code, 0, laneA.stderr);
+  const laneB = await runCli(["--cwd", cwd, "--resume", "b", "complex-task"], cwd, undefined, env, preload);
+  assert.equal(laneB.code, 0, laneB.stderr);
+  assert.deepEqual(readLog(cwd), { typesafe: 2, models: ["deepseek-flash", "deepseek-v4-pro"] });
+  const routeA = readLatestRoute(cwd, "a");
+  const routeB = readLatestRoute(cwd, "b");
+  assert.equal(routeA?.lane, "a");
+  assert.equal(routeA?.modelId, "deepseek-flash");
+  assert.equal(routeB?.lane, "b");
+  assert.equal(routeB?.modelId, "deepseek-v4-pro");
+  assert.equal(typeof routeA?.usage?.input, "number");
+  assert.equal(typeof routeB?.usage?.input, "number");
+  assert.notEqual(routeA?.usage?.input, routeB?.usage?.input);
+
+  const models = createModels({ store: new FileCredentialStore(join(cwd, "credentials.json")), env: {} });
+  const fetchImpl: typeof fetch = async () => {
+    throw new Error("reading the footer must not call TypeSafe");
+  };
+  models.setProvider(deepseekProvider({ fetch: fetchImpl }));
+  models.setProvider(typesafeProvider({ fetch: fetchImpl }));
+  const host = await startCodingHost({
+    cwd,
+    socket: join(cwd, "snap.sock"),
+    provider: "deepseek",
+    model: "deepseek-flash",
+    models,
+  });
+  const client = new Client({ serverId: HOST_SERVER_ID, transport: createUnixTransport({ path: host.socket }) });
+  try {
+    await client.connect();
+    const remote = new RuntimeClient(client);
+    await remote.attach(HOST_RUNTIME_ID);
+    const snapA = await remote.lane("a").snapshot();
+    const snapB = await remote.lane("b").snapshot();
+    const costA = snapA.activity.usage.lastTurn?.cost?.total;
+    const costB = snapB.activity.usage.lastTurn?.cost?.total;
+    assert.equal(typeof costA, "number");
+    assert.equal(typeof costB, "number");
+    assert.equal(snapB.activity.usage.total.input, (snapB.activity.usage.lastTurn?.input ?? 0) + (routeB?.usage?.input ?? 0));
+    assert.equal(snapB.activity.usage.total.cost?.total, (costB ?? 0) + (routeB?.usage?.cost?.total ?? 0));
+    assert.notEqual(snapB.activity.usage.total.cost?.total, (costB ?? 0) + (routeA?.usage?.cost?.total ?? 0));
+    assert.equal(snapA.activity.usage.total.input, (snapA.activity.usage.lastTurn?.input ?? 0) + (routeA?.usage?.input ?? 0));
+    assert.notEqual(snapA.activity.usage.total.input, (snapA.activity.usage.lastTurn?.input ?? 0) + (routeB?.usage?.input ?? 0));
+  } finally {
+    await client.dispose();
+    await host.close("abort");
+  }
+
+  const again = await runCli(["--cwd", cwd, "--resume", "a", "--continue", "complex-task"], cwd, undefined, env, preload);
+  assert.equal(again.code, 0, again.stderr);
+  assert.equal(readLog(cwd).typesafe, 2);
+  assert.deepEqual(readLog(cwd).models, ["deepseek-flash", "deepseek-v4-pro", "deepseek-flash"]);
 });

@@ -74,7 +74,7 @@ function attach(lane: SessionLane, options: RouterHostOptions): void {
     }
     return accept(request);
   };
-  lane.usage = () => usage().then((view) => foldRouteUsage(view, readLatestRoute(options.cwd)));
+  lane.usage = () => usage().then((view) => foldRouteUsage(view, readLatestRoute(options.cwd, lane.name)));
 }
 
 async function ensureSessionRoute(lane: SessionLane, options: RouterHostOptions, text: string): Promise<void> {
@@ -86,12 +86,13 @@ async function ensureSessionRoute(lane: SessionLane, options: RouterHostOptions,
 }
 
 async function routeOnce(lane: SessionLane, options: RouterHostOptions, text: string): Promise<void> {
-  if (readLatestRoute(options.cwd)) return;
+  if (readLatestRoute(options.cwd, lane.name)) return;
   let router: ReturnType<typeof readRouterSettings>;
   try {
     router = readRouterSettings(options.cwd);
   } catch (error) {
     writeRouteRecord(options.cwd, {
+      lane: lane.name,
       provider: options.provider,
       modelId: options.modelId,
       reason: error instanceof Error ? error.message : String(error),
@@ -105,6 +106,7 @@ async function routeOnce(lane: SessionLane, options: RouterHostOptions, text: st
   const model = options.models.getModel(current.value.provider, current.value.modelId);
   if (!model) {
     writeRouteRecord(options.cwd, {
+      lane: lane.name,
       provider: current.value.provider,
       modelId: current.value.modelId,
       reason: `unknown model ${current.value.provider}/${current.value.modelId}`,
@@ -114,6 +116,7 @@ async function routeOnce(lane: SessionLane, options: RouterHostOptions, text: st
   const models = routerModels(options.models);
   if (!models) {
     writeRouteRecord(options.cwd, {
+      lane: lane.name,
       provider: model.provider,
       modelId: model.id,
       reason: "router needs models",
@@ -125,6 +128,7 @@ async function routeOnce(lane: SessionLane, options: RouterHostOptions, text: st
   const applied = await lane.configure({ provider: decision.provider, modelId: decision.modelId });
   if (!applied.ok) {
     writeRouteRecord(options.cwd, {
+      lane: lane.name,
       provider: model.provider,
       modelId: model.id,
       ...(decision.choice ? { choice: decision.choice } : {}),
@@ -134,7 +138,7 @@ async function routeOnce(lane: SessionLane, options: RouterHostOptions, text: st
     });
     return;
   }
-  writeRouteRecord(options.cwd, decision);
+  writeRouteRecord(options.cwd, { ...decision, lane: lane.name });
 }
 
 function routerModels(models: RouterHostOptions["models"]): RouterModels | undefined {

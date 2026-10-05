@@ -56,6 +56,8 @@ export interface SessionRouteEntry {
   /** Why the current model was kept. */
   reason?: string;
   usage?: RouteUsage;
+  /** Durable lane this decision belongs to. One workspace file holds every lane. */
+  lane?: string;
 }
 
 export type SessionEntry = SessionHeader | SessionMessageEntry | SessionCompactionEntry | SessionSelectEntry | SessionRouteEntry;

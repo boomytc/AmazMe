@@ -7,7 +7,8 @@ export function routeRecordFile(cwd: string): string {
   return join(resolve(cwd), ".amazme", "runtime", "route.jsonl");
 }
 
-export function readLatestRoute(cwd: string): SessionRouteEntry | undefined {
+/** Latest route for this lane. Another lane's line in the same file does not count. */
+export function readLatestRoute(cwd: string, lane: string): SessionRouteEntry | undefined {
   let raw: string;
   try {
     raw = readFileSync(routeRecordFile(cwd), "utf8");
@@ -24,7 +25,7 @@ export function readLatestRoute(cwd: string): SessionRouteEntry | undefined {
     } catch {
       continue;
     }
-    if (!isRoute(parsed)) continue;
+    if (!isRoute(parsed) || parsed.lane !== lane) continue;
     latest = parsed;
   }
   return latest;
@@ -32,13 +33,14 @@ export function readLatestRoute(cwd: string): SessionRouteEntry | undefined {
 
 export function writeRouteRecord(
   cwd: string,
-  route: Omit<SessionRouteEntry, "type" | "timestamp"> & { timestamp?: string },
+  route: Omit<SessionRouteEntry, "type" | "timestamp" | "lane"> & { timestamp?: string; lane: string },
 ): SessionRouteEntry {
   const entry: SessionRouteEntry = {
     type: "route",
     timestamp: route.timestamp ?? new Date().toISOString(),
     provider: route.provider,
     modelId: route.modelId,
+    lane: route.lane,
     ...(route.choice ? { choice: route.choice } : {}),
     ...(route.score !== undefined ? { score: route.score } : {}),
     ...(route.reason !== undefined ? { reason: route.reason } : {}),
