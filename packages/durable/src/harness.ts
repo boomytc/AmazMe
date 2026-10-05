@@ -193,21 +193,30 @@ interface UsageCounts {
  * An omitted cache count is null. A reported 0 stays 0.
  */
 export interface LaneUsage {
-  /** Newest settled assistant on the current branch, excluding `error`, `aborted`, and `deferred`. */
+  /**
+   * Newest settled assistant created after the newest summary, excluding `error`, `aborted`, and `deferred`.
+   * A copied tail is the pre-summary message, so it does not count. Null when that suffix has none.
+   */
   lastTurn: UsageCounts | null;
   /**
    * `input` and `output` sum usage rows whose persisted operation belongs to this lane, including summary requests.
    * A row has no lane. An open operation is attributed by the stored `OperationMeta.lane`; after `finish`, by
    * `OperationResult.lane`. There is no ancestor-chain fallback: one operation can write several rows, and a fork
    * can cut in the middle of that operation, so summing assistant messages would not match the rows.
-   * `cacheRead` and `cacheWrite` are not on the row. They sum assistant messages on this ancestor chain, and stay
-   * null when none of those messages had the field. A summary request is not an assistant message on the chain,
-   * so its cache is not counted.
+   * Those rows do not store `cacheRead` or `cacheWrite`. Both totals stay null so a message on the branch cannot
+   * supply a second source.
    */
   total: UsageCounts;
-  /** Newest assistant prompt size plus output on the visible branch. Null when that suffix has none. */
+  /**
+   * Prompt size plus output of the newest assistant created after the newest summary.
+   * A copied tail does not count. Null when that suffix has none, the same as an empty lane.
+   */
   contextTokens: number | null;
-  /** The input trigger `assess` compares against. Null when compaction is off or the model window is unknown. */
+  /**
+   * The input trigger `assess` compares against. Null when compaction is off, `maxTokens` is not a positive
+   * safe integer, or the model window is unknown.
+   * `assess` compares an estimate of the next request, so comparing `contextTokens` to this threshold is only approximate.
+   */
   compactionThreshold: number | null;
 }
 
@@ -833,7 +842,11 @@ export class AgentLane {
     });
   }
 
-  /** Read-only checkpoint tails for running tool calls. One storage read. Does not drive. */
+  /**
+   * Read-only checkpoint tails for running tool calls. One storage read. Does not drive.
+   * After a process crash, a call left in `effect_pending` keeps showing its old tail until the next drive
+   * moves that call to interrupted.
+   */
   toolOutput(): Promise<ToolOutputView> {
     return admitted(this.harness).read((view) => {
       const { state } = this.status(view);
@@ -1990,9 +2003,10 @@ export class AgentLane {
     pending?: HarnessMessage,
   ): { type: "send" } | { type: "compact"; reason: SummaryReason } | { type: "fail"; message: string } {
     const config = this.config(view);
-    const model = this.harness.options.models.getModel(config.provider, config.modelId);
-    if (!model) return { type: "fail", message: `Unknown model ${config.provider}/${config.modelId}` };
-    if (config.compaction.enabled && (!Number.isSafeInteger(config.compaction.maxTokens) || config.compaction.maxTokens <= 0)) {
+    const resolved = resolveLaneModel(view, this.name, this.harness.options);
+    const model = resolved.model;
+    if (!model) return { type: "fail", message: `Unknown model ${resolved.provider}/${resolved.modelId}` };
+    if (resolved.compaction.enabled && (!Number.isSafeInteger(resolved.compaction.maxTokens) || resolved.compaction.maxTokens <= 0)) {
       return { type: "fail", message: "compaction.maxTokens must be a positive integer" };
     }
     const budget = resolveOutputBudget(model, this.providerContext(view, pending), config.maxTokens);
@@ -2000,12 +2014,13 @@ export class AgentLane {
       return { type: "fail", message: budget.message ?? "Context budget is invalid" };
     }
     if (budget.status === "cannot_fit") {
-      if (!config.compaction.enabled) return { type: "fail", message: `${budget.message}; compaction is disabled` };
+      if (!resolved.compaction.enabled) return { type: "fail", message: `${budget.message}; compaction is disabled` };
       if (scope.overflowUsed) return { type: "fail", message: "context overflow repeated" };
       return { type: "compact", reason: "overflow" };
     }
-    const threshold = effectiveInputThreshold(model.contextWindow, config.compaction.maxTokens);
-    if (config.compaction.enabled && !scope.thresholdUsed && budget.estimatedInput > threshold) {
+    // assess compares an estimate of the next request, so contextTokens against this threshold is only approximate.
+    const threshold = effectiveInputThreshold(model.contextWindow, resolved.compaction.maxTokens);
+    if (resolved.compaction.enabled && !scope.thresholdUsed && budget.estimatedInput > threshold) {
       return { type: "compact", reason: "threshold" };
     }
     return { type: "send" };
@@ -2013,12 +2028,13 @@ export class AgentLane {
 
   private prepareCompaction(view: StorageView, state: Extract<OperationState, { phase: "summary_deciding" }>) {
     const config = this.config(view);
-    const model = this.harness.options.models.getModel(config.provider, config.modelId);
-    if (!model) return { ok: false as const, code: "invalid" as const, message: `Unknown model ${config.provider}/${config.modelId}` };
-    if (config.compaction.enabled && (!Number.isSafeInteger(config.compaction.maxTokens) || config.compaction.maxTokens <= 0)) {
+    const resolved = resolveLaneModel(view, this.name, this.harness.options);
+    const model = resolved.model;
+    if (!model) return { ok: false as const, code: "invalid" as const, message: `Unknown model ${resolved.provider}/${resolved.modelId}` };
+    if (resolved.compaction.enabled && (!Number.isSafeInteger(resolved.compaction.maxTokens) || resolved.compaction.maxTokens <= 0)) {
       return { ok: false as const, code: "invalid" as const, message: "compaction.maxTokens must be a positive integer" };
     }
-    const threshold = effectiveInputThreshold(model.contextWindow, config.compaction.maxTokens);
+    const threshold = effectiveInputThreshold(model.contextWindow, resolved.compaction.maxTokens);
     return planCompaction({
       entries: this.visibleEntries(view),
       systemPrompt: config.systemPrompt,
@@ -2215,7 +2231,7 @@ function toolOutputTails(view: StorageView, state: OperationState | undefined): 
     if (call.status !== "effect_pending") continue;
     const partial = view.get<string>(toolOutputAddress(call.resultEntryId));
     if (typeof partial !== "string") continue;
-    tails.push({ toolCallId: call.toolCallId, outputTail: partial.slice(-OUTPUT_TAIL_LIMIT) });
+    tails.push({ toolCallId: call.toolCallId, outputTail: checkpointTail(partial) });
   }
   return tails;
 }
@@ -2243,10 +2259,11 @@ function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {
 }
 
 function projectUsage(view: StorageView, lane: string, chain: readonly Entry[], options: HarnessOptions): LaneUsage {
+  const counted = entriesAfterSummary(view, chain);
   return {
-    lastTurn: lastTurnUsage(chain),
-    total: attributedTotal(view, lane, chain),
-    contextTokens: contextTokenCount(chain),
+    lastTurn: lastTurnUsage(counted),
+    total: attributedTotal(view, lane),
+    contextTokens: contextTokenCount(counted),
     compactionThreshold: compactionThreshold(view, lane, options),
   };
 }
@@ -2284,7 +2301,42 @@ function contextTokenCount(chain: readonly Entry[]): number | null {
   return null;
 }
 
-function attributedTotal(view: StorageView, lane: string, chain: readonly Entry[]): LaneUsage["total"] {
+/**
+ * Entries created after the newest summary.
+ * A finish compaction copies the kept tail to after the summary and assigns the copy a newer seq, so that seq
+ * still looks like a later turn. The source remains stored with its original seq, the same timestamp, and the
+ * same payload. A suffix entry counts only when no stored entry with an earlier seq has that timestamp and
+ * payload. With no summary, the whole chain counts.
+ */
+function entriesAfterSummary(view: StorageView, chain: readonly Entry[]): Entry[] {
+  let summaryIndex = -1;
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    if (chain[index]?.payload.type === "compaction") {
+      summaryIndex = index;
+      break;
+    }
+  }
+  if (summaryIndex < 0) return [...chain];
+  const summary = chain[summaryIndex];
+  if (!summary) return [...chain];
+  const copied = new Set<string>();
+  for (const entry of view.entries()) {
+    if (entry.seq >= summary.seq) continue;
+    copied.add(entryIdentity(entry));
+  }
+  const suffix: Entry[] = [];
+  for (const entry of chain.slice(summaryIndex + 1)) {
+    if (copied.has(entryIdentity(entry))) continue;
+    suffix.push(entry);
+  }
+  return suffix;
+}
+
+function entryIdentity(entry: Entry): string {
+  return `${entry.timestamp}:${JSON.stringify(entry.payload)}`;
+}
+
+function attributedTotal(view: StorageView, lane: string): LaneUsage["total"] {
   let input = 0;
   let output = 0;
   for (const row of view.usageRows()) {
@@ -2292,15 +2344,7 @@ function attributedTotal(view: StorageView, lane: string, chain: readonly Entry[
     input += row.input;
     output += row.output;
   }
-  let cacheRead: number | null = null;
-  let cacheWrite: number | null = null;
-  for (const entry of chain) {
-    if (entry.payload.type !== "message" || entry.payload.message.role !== "assistant") continue;
-    const usage = entry.payload.message.usage;
-    if (usage.cacheRead !== undefined) cacheRead = (cacheRead ?? 0) + usage.cacheRead;
-    if (usage.cacheWrite !== undefined) cacheWrite = (cacheWrite ?? 0) + usage.cacheWrite;
-  }
-  return { input, output, cacheRead, cacheWrite };
+  return { input, output, cacheRead: null, cacheWrite: null };
 }
 
 function operationLane(view: StorageView, operationId: string): string | undefined {
@@ -2309,16 +2353,38 @@ function operationLane(view: StorageView, operationId: string): string | undefin
   return view.get<OperationResult>(resultAddress(operationId))?.lane;
 }
 
-function compactionThreshold(view: StorageView, lane: string, options: HarnessOptions): number | null {
+/**
+ * Stored lane config when the lane has been initialized, otherwise the harness options.
+ * Does not create the lane. `assess` and the usage projection both read the model and compaction settings here.
+ */
+function resolveLaneModel(view: StorageView, lane: string, options: HarnessOptions): {
+  provider: string;
+  modelId: string;
+  compaction: LaneConfig["compaction"];
+  model: ReturnType<HarnessOptions["models"]["getModel"]>;
+} {
   const stored = view.get<LaneConfig>(configAddress(lane));
   const compaction = stored?.compaction ?? options.compaction ?? { enabled: false, maxTokens: 80_000 };
-  if (!compaction.enabled) return null;
-  if (!Number.isSafeInteger(compaction.maxTokens) || compaction.maxTokens <= 0) return null;
   const provider = stored?.provider ?? options.model.provider;
   const modelId = stored?.modelId ?? options.model.modelId;
-  const model = options.models.getModel(provider, modelId);
+  return { provider, modelId, compaction, model: options.models.getModel(provider, modelId) };
+}
+
+function compactionThreshold(view: StorageView, lane: string, options: HarnessOptions): number | null {
+  const resolved = resolveLaneModel(view, lane, options);
+  if (!resolved.compaction.enabled) return null;
+  if (!Number.isSafeInteger(resolved.compaction.maxTokens) || resolved.compaction.maxTokens <= 0) return null;
+  const model = resolved.model;
   if (!model || !Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0) return null;
-  return effectiveInputThreshold(model.contextWindow, compaction.maxTokens);
+  return effectiveInputThreshold(model.contextWindow, resolved.compaction.maxTokens);
+}
+
+/** Last `OUTPUT_TAIL_LIMIT` code units. A cut that starts on a low surrogate drops that unit so a pair stays whole. */
+function checkpointTail(partial: string): string {
+  const tail = partial.slice(-OUTPUT_TAIL_LIMIT);
+  const lead = tail.charCodeAt(0);
+  if (lead >= 0xDC00 && lead <= 0xDFFF) return tail.slice(1);
+  return tail;
 }
 
 function ancestors(view: StorageView, tip: string | null): Entry[] {

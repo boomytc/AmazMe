@@ -129,7 +129,7 @@ test("cacheRead on the latest assistant is part of contextTokens and lastTurn", 
     const usage = await readUsage(lane);
     assert.deepEqual(usage.lastTurn, { input: 3, output: 4, cacheRead: 10, cacheWrite: null });
     assert.equal(usage.contextTokens, 17);
-    assert.deepEqual(usage.total, { input: 3, output: 4, cacheRead: 10, cacheWrite: null });
+    assert.deepEqual(usage.total, total(3, 4));
   } finally {
     harness.close();
   }
@@ -150,7 +150,7 @@ test("an assistant without cache leaves the cache counts null", async () => {
   }
 });
 
-test("cache totals sum reported counts on the branch and keep a reported zero", async () => {
+test("a reported cache zero stays on lastTurn while the row total leaves cache null", async () => {
   const { models } = scripted([
     tokens(1, 1, { cacheRead: 10 }),
     tokens(2, 2, { cacheRead: 0, cacheWrite: 4 }),
@@ -163,7 +163,7 @@ test("cache totals sum reported counts on the branch and keep a reported zero", 
     const usage = await readUsage(lane);
     assert.deepEqual(usage.lastTurn, { input: 2, output: 2, cacheRead: 0, cacheWrite: 4 });
     assert.equal(usage.contextTokens, 8);
-    assert.deepEqual(usage.total, { input: 3, output: 3, cacheRead: 10, cacheWrite: 4 });
+    assert.deepEqual(usage.total, total(3, 3));
   } finally {
     harness.close();
   }
@@ -249,6 +249,93 @@ test("compaction clears context tokens until the next assistant and keeps summar
   }
 });
 
+test("a real compaction drops the copied assistant until the next turn", async () => {
+  const first = tokens(400, 30);
+  const summary = tokens(7, 4);
+  const next = tokens(8, 9);
+  const { models } = scripted([first, summary, next], ["ok", "folded", "next"]);
+  const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: true, maxTokens: 200 } });
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("U".repeat(2_000))).status, "completed");
+    const before = await readUsage(lane);
+    assert.equal(before.contextTokens, 430);
+    const admitted = await lane.accept({ kind: "compaction" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const folded = await lane.drive(admitted.value.operationId);
+    assert.equal(folded.ok && folded.value.kind === "settled" ? folded.value.result.status : "", "completed");
+    const entries = await lane.entries();
+    let summaryAt = -1;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      if (entries[index]?.payload.type === "compaction") {
+        summaryAt = index;
+        break;
+      }
+    }
+    assert.ok(summaryAt >= 0);
+    const kept = entries.slice(summaryAt + 1);
+    assert.equal(kept.some((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant"), true);
+    const compacted = await readUsage(lane);
+    assert.notEqual(compacted.contextTokens, before.contextTokens);
+    assert.equal(compacted.contextTokens, null);
+    assert.equal(compacted.lastTurn, null);
+    assert.deepEqual(compacted.total, total(407, 34));
+
+    assert.equal((await lane.prompt("three")).status, "completed");
+    const continued = await readUsage(lane);
+    assert.deepEqual(continued.lastTurn, turn(8, 9));
+    assert.equal(continued.contextTokens, 17);
+    assert.deepEqual(continued.total, total(415, 43));
+  } finally {
+    harness.close();
+  }
+});
+
+test("a fresh fork does not inherit the parent cache total", async () => {
+  const { models } = scripted([tokens(10, 1, { cacheRead: 100 })]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const main = harness.lane();
+    assert.equal((await main.prompt("one")).status, "completed");
+    const forkAt = (await main.snapshot()).tipId;
+    assert.equal((await main.fork("side", forkAt)).ok, true);
+    const inherited = await readUsage(harness.lane("side"));
+    assert.deepEqual(inherited.lastTurn, { input: 10, output: 1, cacheRead: 100, cacheWrite: null });
+    assert.deepEqual(inherited.total, total(0, 0));
+    assert.equal(inherited.contextTokens, 111);
+  } finally {
+    harness.close();
+  }
+});
+
+test("navigating back without a summary keeps abandoned rows and leaves cache null", async () => {
+  const { models } = scripted([
+    tokens(11, 3, { cacheRead: 100 }),
+    tokens(17, 5, { cacheRead: 40 }),
+  ]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const target = (await lane.snapshot()).tipId;
+    assert.ok(target);
+    assert.equal((await lane.prompt("two")).status, "completed");
+    const admitted = await lane.accept({ kind: "navigation", targetId: target, summarize: false });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const moved = await lane.drive(admitted.value.operationId);
+    assert.equal(moved.ok && moved.value.kind === "settled" ? moved.value.result.status : "", "completed");
+    const usage = await readUsage(lane);
+    assert.deepEqual(usage.lastTurn, { input: 11, output: 3, cacheRead: 100, cacheWrite: null });
+    assert.equal(usage.contextTokens, 114);
+    assert.deepEqual(usage.total, total(28, 8));
+    assert.equal((await lane.entries()).some((entry) => entry.payload.type === "compaction"), false);
+  } finally {
+    harness.close();
+  }
+});
+
 test("a reopened harness projects the same usage from the same storage", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-usage-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -312,6 +399,96 @@ test("checkpointed tool output is tailed while running and absent after settle",
     const settled = await driving;
     assert.equal(settled.status, "completed");
     assert.deepEqual((await lane.toolOutput()).tails, []);
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
+test("a reopened log still returns the checkpoint tail of a call left running", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-tail-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "lane.jsonl");
+  const body = `kept-${"z".repeat(20)}`;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("log", {})], { usage: tokens(1, 1) })
+      : fauxAssistant("after", { usage: tokens(2, 2) }),
+  }));
+  const harness = runtime(new JsonlStorage(file), models, {
+    tools: [{
+      name: "log",
+      description: "log",
+      parameters: { type: "object", additionalProperties: true },
+      async execute(_args, context) {
+        context.onUpdate?.(body, { checkpoint: true });
+        await gate;
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  const driving = harness.lane().prompt("go");
+  try {
+    await until(async () => (await harness.lane().toolOutput()).tails.length === 1);
+    harness.abandon();
+    const reopened = runtime(new JsonlStorage(file), models);
+    try {
+      const lane = reopened.lane();
+      const tails = assertRoundTrip(await lane.toolOutput());
+      assert.equal(tails.tails.length, 1);
+      assert.equal(tails.tails[0]?.outputTail, body);
+      const operationId = (await lane.inspect()).operationId;
+      assert.ok(operationId);
+      const settled = await lane.drive(operationId);
+      assert.equal(settled.ok && settled.value.kind === "settled" ? settled.value.result.status : "", "completed");
+      assert.deepEqual((await lane.toolOutput()).tails, []);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    release();
+    await driving.catch(() => undefined);
+    harness.close();
+  }
+});
+
+test("a checkpoint tail does not start on a low surrogate", async () => {
+  const marker = "y".repeat(3_999);
+  const body = `x${"😀"}${marker}`;
+  assert.ok(body.slice(-4_000).charCodeAt(0) >= 0xDC00 && body.slice(-4_000).charCodeAt(0) <= 0xDFFF);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("log", {})], { usage: tokens(1, 1) })
+      : fauxAssistant("after", { usage: tokens(2, 2) }),
+  }));
+  const harness = runtime(new MemoryStorage(), models, {
+    tools: [{
+      name: "log",
+      description: "log",
+      parameters: { type: "object", additionalProperties: true },
+      async execute(_args, context) {
+        context.onUpdate?.(body, { checkpoint: true });
+        await gate;
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  try {
+    const lane = harness.lane();
+    const driving = lane.prompt("go");
+    await until(async () => (await lane.toolOutput()).tails.length === 1);
+    const tail = (await lane.toolOutput()).tails[0];
+    assert.ok(tail);
+    assert.equal(tail.outputTail, marker);
+    assert.equal(tail.outputTail.length, 3_999);
+    release();
+    assert.equal((await driving).status, "completed");
   } finally {
     release();
     harness.close();
