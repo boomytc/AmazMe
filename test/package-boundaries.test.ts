@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import * as agent from "@amazme/agent";
 import { AgentHarness, type HarnessMessage, type HarnessTool } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
@@ -274,3 +277,78 @@ test("shared tools and custom messages satisfy the independent Agent and Durable
   assert.ok(customEntry?.payload.type === "message");
   assert.deepEqual(customEntry.payload.message, custom);
 });
+
+test("package sources do not import the AI testing entry", () => {
+  const packages = fileURLToPath(new URL("../packages", import.meta.url));
+  const hits: string[] = [];
+  for (const name of readdirSync(packages)) {
+    collectTestingImports(join(packages, name, "src"), hits);
+  }
+  assert.deepEqual(hits, []);
+});
+
+test("the testing import scan covers script extensions and relative paths into ai/src/testing", () => {
+  const root = mkdtempSync(join(tmpdir(), "amazme-boundaries-"));
+  const agentSrc = join(root, "packages", "coding-agent", "src");
+  const providers = join(root, "packages", "ai", "src", "providers");
+  mkdirSync(agentSrc, { recursive: true });
+  mkdirSync(providers, { recursive: true });
+  const relative = join(agentSrc, "relative.mjs");
+  const retired = join(agentSrc, "retired.cjs");
+  const specifier = join(agentSrc, "specifier.mts");
+  const sibling = join(providers, "sibling.ts");
+  writeFileSync(relative, "import { fauxProvider } from \"../../ai/src/testing/faux.ts\";\n");
+  writeFileSync(retired, "require(\"@amazme/ai/providers/faux\");\n");
+  writeFileSync(specifier, "import \"@amazme/ai/testing\";\n");
+  writeFileSync(sibling, "import { fauxProvider } from \"../testing/faux.ts\";\n");
+  writeFileSync(join(agentSrc, "ok.ts"), "export const value = 1;\n");
+  const hits: string[] = [];
+  collectTestingImports(join(root, "packages"), hits);
+  assert.deepEqual(hits.sort(), [relative, retired, specifier, sibling].sort());
+  rmSync(root, { recursive: true, force: true });
+});
+
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".mts"]);
+
+function collectTestingImports(dir: string, hits: string[]): void {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) collectTestingImports(path, hits);
+    else if (isSourceFile(entry.name) && referencesTestingEntry(path, readFileSync(path, "utf8"))) hits.push(path);
+  }
+}
+
+function isSourceFile(name: string): boolean {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 && SOURCE_EXTENSIONS.has(name.slice(dot));
+}
+
+function referencesTestingEntry(file: string, source: string): boolean {
+  if (source.includes("@amazme/ai/testing") || source.includes("@amazme/ai/providers/faux")) return true;
+  const portable = file.split(sep).join("/");
+  if (portable.includes("/ai/src/testing/")) return false;
+  if (source.includes("ai/src/testing")) return true;
+  for (const specifier of importSpecifiers(source)) {
+    if (!specifier.startsWith(".")) continue;
+    const resolved = resolve(dirname(file), specifier).split(sep).join("/");
+    if (resolved.includes("/ai/src/testing")) return true;
+  }
+  return false;
+}
+
+function importSpecifiers(source: string): string[] {
+  const found: string[] = [];
+  const pattern = /(?:from\s+|import\s*\(\s*|require\s*\(\s*|import\s+)["']([^"']+)["']/g;
+  for (const match of source.matchAll(pattern)) {
+    const specifier = match[1];
+    if (specifier) found.push(specifier);
+  }
+  return found;
+}

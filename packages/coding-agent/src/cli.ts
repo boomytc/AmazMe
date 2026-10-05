@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 import { createModels, type LoginInteraction } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/testing";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { FileCredentialStore } from "./credentials.ts";
+import { codingModels } from "./fronts.ts";
 import { loginProvider } from "./login.ts";
 import { runPrint } from "./print-run.ts";
 import { runCodingFullscreen, shouldOpenFullscreen } from "./tui/run.ts";
@@ -21,8 +21,11 @@ interface Args {
   lane?: string;
 }
 
+const DEFAULT_PROVIDER = "deepseek";
+const DEFAULT_MODEL = "deepseek-flash";
+
 function parseArgs(argv: string[]): Args {
-  const args: Args = { prompt: "", provider: "faux", model: "faux-1", cwd: process.cwd(), continueSession: false, json: false, jsonl: false, web: false, gui: false };
+  const args: Args = { prompt: "", provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL, cwd: process.cwd(), continueSession: false, json: false, jsonl: false, web: false, gui: false };
   const rest: string[] = [];
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index];
@@ -39,6 +42,7 @@ function parseArgs(argv: string[]): Args {
       console.log("amazme [--provider id] [--model id] [--cwd dir] [--continue] [--json] [--resume name] [prompt]");
       console.log("amazme --web [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme --gui [--provider id] [--model id] [--cwd dir] [prompt]");
+      console.log(`defaults: provider ${DEFAULT_PROVIDER}, model ${DEFAULT_MODEL}`);
       console.log("amazme --jsonl    reads one {\"type\":\"prompt\",\"text\":\"...\"} line from stdin");
       console.log("amazme update");
       console.log("amazme login account [--provider id] [--method pkce|device_code] [--callback-port n]");
@@ -179,15 +183,23 @@ async function readApiKey(): Promise<string> {
 function loadModels(providerId: string) {
   const models = createModels({ store: new FileCredentialStore() });
   for (const provider of builtinProviders()) models.setProvider(provider);
-  if (providerId === "faux") models.setProvider(fauxProvider());
-  else if (!models.getProvider(providerId)) throw new Error(`unknown provider ${providerId}`);
+  if (!models.getProvider(providerId)) throw new Error(`unknown provider ${providerId}`);
   return models;
+}
+
+/** A front may open only after the selected provider has a key. Login stays outside this check. */
+async function requireConfigured(models: ReturnType<typeof loadModels>, providerId: string, modelId: string): Promise<void> {
+  const model = models.getModel(providerId, modelId);
+  if (!model) throw new Error(`unknown model ${providerId}/${modelId}`);
+  if (await models.getAuth(model)) return;
+  const env = models.getProvider(providerId)?.auth.apiKey?.env;
+  throw new Error(`${providerId} is not configured: ${env ? `set ${env} or run amazme login` : "run amazme login"}`);
 }
 
 async function runServe(argv: string[]): Promise<void> {
   let socket = "";
-  let provider = "faux";
-  let model = "faux-1";
+  let provider = DEFAULT_PROVIDER;
+  let model = DEFAULT_MODEL;
   let cwd = process.cwd();
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index];
@@ -197,6 +209,7 @@ async function runServe(argv: string[]): Promise<void> {
     else if (token === "--cwd") cwd = resolve(argv[++index] ?? cwd);
     else if (token === "--help") {
       console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
+      console.log(`defaults: provider ${DEFAULT_PROVIDER}, model ${DEFAULT_MODEL}`);
       console.log("MCP servers are read from <cwd>/.amazme/mcp.json when that file exists.");
       process.exit(0);
     } else if (token) {
@@ -204,8 +217,10 @@ async function runServe(argv: string[]): Promise<void> {
     }
   }
   if (!socket) throw new Error("serve requires --socket");
+  const models = loadModels(provider);
+  await requireConfigured(models, provider, model);
   const { startCodingHost } = await import("./host.ts");
-  const host = await startCodingHost({ cwd, socket, provider, model, models: loadModels(provider) });
+  const host = await startCodingHost({ cwd, socket, provider, model, models });
   process.stdout.write(`${JSON.stringify({ socket: host.socket, serverId: host.serverId, runtimeId: host.runtimeId, lane: host.lane })}\n`);
   const { waitForSecondInterrupt } = await import("./interrupt.ts");
   await waitForSecondInterrupt();
@@ -281,6 +296,7 @@ async function main(): Promise<void> {
     if (args.web && args.gui) throw new Error("choose one of --web or --gui");
     const { runOwnedGui, runOwnedWeb } = await import("./fronts.ts");
     const front = { provider: args.provider, model: args.model, cwd: args.cwd, prompt: args.prompt };
+    await requireConfigured(codingModels(front), front.provider, front.model);
     if (args.web) await runOwnedWeb(front);
     else await runOwnedGui(front);
     return;
@@ -295,6 +311,7 @@ async function main(): Promise<void> {
     args.json = true;
   }
   if (shouldOpenFullscreen(args.prompt, process.stdout.isTTY === true) && !args.continueSession && !args.json && !args.jsonl) {
+    await requireConfigured(codingModels({ provider: args.provider, model: args.model, cwd: args.cwd }), args.provider, args.model);
     await runCodingFullscreen({ provider: args.provider, model: args.model, cwd: args.cwd });
     return;
   }
@@ -303,19 +320,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const models = loadModels(args.provider);
-  if (args.provider === "faux") {
-    const prompt = args.prompt;
-    models.setProvider(fauxProvider({ respond: (_context, _options, _state, model) => ({
-      role: "assistant",
-      content: [{ type: "text", text: prompt ? `faux:${prompt}` : "ok" }],
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
-      stopReason: "stop",
-      timestamp: Date.now(),
-    }) }));
-  }
+  await requireConfigured(models, args.provider, args.model);
   await runPrint({
     cwd: args.cwd,
     provider: args.provider,
