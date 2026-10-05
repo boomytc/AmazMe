@@ -206,12 +206,13 @@ export interface ToolActivity {
   status: "planned" | "running" | "settled";
 }
 
-/** Input, output, and cache counts. An omitted cache count is null, not zero. */
+/** Input, output, cache, and reasoning counts. A count missing from storage is null, not zero. */
 interface UsageCounts {
   input: number;
   output: number;
   cacheRead: number | null;
   cacheWrite: number | null;
+  reasoning: number | null;
 }
 
 /**
@@ -221,16 +222,17 @@ interface UsageCounts {
 export type LaneUsageCost = { [K in keyof UsageCost]: number | null };
 
 /**
- * Token counts derived from this lane's stored usage rows and branch.
- * An omitted cache count is null. A reported 0 stays 0.
+ * Token counts for this lane. `lastTurn` and `total` read stored usage rows. `contextTokens` reads the branch.
+ * An omitted cache or reasoning count is null. A reported 0 stays 0.
  */
 export interface LaneUsage {
   /**
    * Newest settled assistant after the newest summary, excluding `error`, `aborted`, and `deferred`.
    * The copied tail is the contiguous run of older timestamps directly after that summary, and it does not count.
-   * Null when nothing after that run counts.
-   * `hitRate` is `cacheHitRate` of this turn. `cost` is `usageCost` for this message's own provider and model,
-   * or null when that model is missing or has no price list.
+   * Null when nothing after that run counts, or that assistant has no usage row written on the next seq.
+   * Counts, `hitRate`, and `cost` come from that row. `hitRate` is `cacheHitRate` of the row.
+   * `cost` is `usageCost` for the model stored on the row, or null when the row has no model,
+   * or that model is missing or has no price list.
    */
   lastTurn: (UsageCounts & { hitRate: number | null; cost: UsageCost | null }) | null;
   /**
@@ -238,9 +240,10 @@ export interface LaneUsage {
    * A row has no lane. An open operation is attributed by the stored `OperationMeta.lane`; after `finish`, by
    * `OperationResult.lane`. There is no ancestor-chain fallback: one operation can write several rows, and a fork
    * can cut in the middle of that operation, so summing assistant messages would not match the rows.
-   * `cacheRead` sums only when every counted row stores a number. A missing field or a stored null means the
-   * provider did not report it, and that total is null. A new row stores an unreported `cacheWrite` as 0.
-   * Cumulative `cacheWrite` is null only when an old row omitted the field. A reported 0 stays 0.
+   * `cacheRead` and `reasoning` sum only when every counted row stores a number. A missing field or a stored null
+   * means the provider did not report it, and that total is null. A new row stores an unreported `reasoning` as null
+   * and an unreported `cacheWrite` as 0. Cumulative `cacheWrite` is null only when an old row omitted the field.
+   * A reported 0 stays 0.
    * `hitRate` is `cacheHitRate` of those totals, and null only when `cacheRead` is null. A null `cacheWrite`
    * is left out of that rate.
    * `cost` prices each row with the model stored on that row. A row without one makes the cumulative cost null.
@@ -2553,7 +2556,7 @@ function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {
 function projectUsage(view: StorageView, lane: string, chain: readonly Entry[], options: HarnessOptions): LaneUsage {
   const counted = entriesAfterSummary(chain);
   return {
-    lastTurn: lastTurnUsage(counted, options.models),
+    lastTurn: lastTurnUsage(view, counted, options),
     total: attributedTotal(view, lane, options),
     contextTokens: contextTokenCount(counted),
     compactionThreshold: compactionThreshold(view, lane, options),
@@ -2565,21 +2568,30 @@ function promptSize(usage: Usage): number {
   return usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
 }
 
-function lastTurnUsage(chain: readonly Entry[], models: HarnessOptions["models"]): LaneUsage["lastTurn"] {
+function lastTurnUsage(view: StorageView, chain: readonly Entry[], options: HarnessOptions): LaneUsage["lastTurn"] {
   for (let index = chain.length - 1; index >= 0; index--) {
     const entry = chain[index];
     if (!entry || entry.payload.type !== "message") continue;
     const message = entry.payload.message;
     if (message.role !== "assistant") continue;
     if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred") continue;
-    const model = models.getModel(message.provider, message.model);
+    const row = view.usageRows().find((candidate) => candidate.seq === entry.seq + 1);
+    if (!row) return null;
+    const cacheRead = typeof row.cacheRead === "number" ? row.cacheRead : null;
+    const cacheWrite = typeof row.cacheWrite === "number" ? row.cacheWrite : null;
+    const reasoning = typeof row.reasoning === "number" ? row.reasoning : null;
     return {
-      input: message.usage.input,
-      output: message.usage.output,
-      cacheRead: message.usage.cacheRead ?? null,
-      cacheWrite: message.usage.cacheWrite ?? null,
-      hitRate: cacheHitRate(message.usage),
-      cost: model ? usageCost(model, message.usage) : null,
+      input: row.input,
+      output: row.output,
+      cacheRead,
+      cacheWrite,
+      reasoning,
+      hitRate: cacheHitRate({
+        input: row.input,
+        ...(cacheRead !== null ? { cacheRead } : {}),
+        ...(cacheWrite !== null ? { cacheWrite } : {}),
+      }),
+      cost: rowCost(options, row),
     };
   }
   return null;
@@ -2632,11 +2644,13 @@ function attributedTotal(view: StorageView, lane: string, options: HarnessOption
   }
   const cacheRead = sumStoredCount(rows, "cacheRead");
   const cacheWrite = sumStoredCount(rows, "cacheWrite");
+  const reasoning = sumStoredCount(rows, "reasoning");
   return {
     input,
     output,
     cacheRead,
     cacheWrite,
+    reasoning,
     hitRate: cacheRead === null ? null : cacheHitRate({
       input,
       cacheRead,
@@ -2646,8 +2660,8 @@ function attributedTotal(view: StorageView, lane: string, options: HarnessOption
   };
 }
 
-/** Sum a cache field. Null when there are no rows, or any row left the field out or stored null. A reported 0 stays 0. */
-function sumStoredCount(rows: readonly UsageRow[], key: "cacheRead" | "cacheWrite"): number | null {
+/** Sum a stored count. Null when there are no rows, or any row left the field out or stored null. A reported 0 stays 0. */
+function sumStoredCount(rows: readonly UsageRow[], key: "cacheRead" | "cacheWrite" | "reasoning"): number | null {
   if (rows.length === 0) return null;
   let sum = 0;
   for (const row of rows) {
@@ -2789,6 +2803,7 @@ function usageWrite(id: string, operationId: string, message: AssistantMessage):
     totalTokens: message.usage.totalTokens,
     cacheRead: message.usage.cacheRead ?? null,
     cacheWrite: message.usage.cacheWrite ?? 0,
+    reasoning: message.usage.reasoning ?? null,
     model: { provider: message.provider, modelId: message.model },
   };
 }
