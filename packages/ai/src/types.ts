@@ -95,9 +95,11 @@ export interface Usage {
   output: number;
   totalTokens: number;
   /**
-   * USD for this turn. `input` is only the cache-miss charge.
-   * Cache tokens are charged only when the model has that cache rate.
-   * `total` is the miss charge, the output charge, and those known cache charges.
+   * USD for this turn. Rates are USD per 1,000,000 tokens.
+   * `input` is only the cache-miss charge. Cache reads are charged only when `cost.cacheRead` is set.
+   * Cache writes use `cost.cacheWrite`, or the input rate when that rate is unset.
+   * `total` sums the miss, cache, and output charges.
+   * A model with no price list still stores zeros here. `usageCost` returns null for that case.
    */
   cost: { input: number; output: number; total: number };
   /**
@@ -109,7 +111,8 @@ export interface Usage {
   /**
    * Prompt tokens written into the provider cache.
    * Omitted when the response did not report a cache write. A reported 0 stays 0.
-   * These tokens are not part of `input` and are not billed at the input rate.
+   * These tokens are not part of `input`.
+   * With no cache-write rate, `usageCost` bills them at the input rate.
    */
   cacheWrite?: number;
 }
@@ -228,7 +231,8 @@ export interface Model<TApi extends Api = Api> {
   maxTokens: number;
   /**
    * USD per 1,000,000 tokens. Absent knowledge stays unset; rates are not invented.
-   * `input` prices cache misses. `cacheRead` and `cacheWrite` price those counts when the rate is known.
+   * `input` prices cache misses. `cacheRead` prices cache hits when that rate is known.
+   * `cacheWrite` prices cache writes when that rate is known. An unset write rate bills those tokens at `input`.
    */
   cost: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   /** Per-model endpoint. A request `baseUrl` still overrides it, then the provider default. */

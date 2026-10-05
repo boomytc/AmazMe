@@ -57,6 +57,8 @@ export {
   normalizeToolCallId,
   transformMessages,
 } from "./transform.ts";
+export { cacheHitRate, usageCost } from "./usage.ts";
+export type { UsageCost } from "./usage.ts";
 export type {
   ApiKeyCredential,
   OAuthCredential,

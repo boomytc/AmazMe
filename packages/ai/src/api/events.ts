@@ -2,6 +2,7 @@ import { baseAssistant, type AssistantEventStream } from "../models.ts";
 import type { AssistantMessage, Model, StopReason, ToolCall, Usage } from "../types.ts";
 import { isFilledWindowLength } from "../utils/overflow.ts";
 import { cloneUsage, emptyUsage } from "../transform.ts";
+import { usageCost } from "../usage.ts";
 
 interface TextBlock {
   kind: "text";
@@ -249,6 +250,11 @@ export function cacheMissInput(prompt: number | undefined, cacheRead: number | u
   return { input: prompt - cacheRead, cacheRead };
 }
 
+/**
+ * Builds `Usage` from provider counts. `input` stays the cache miss.
+ * Charges come from `usageCost`. A model with no price list stores a zero `cost` here;
+ * `usageCost` itself returns null for that case.
+ */
 export function usageFromCounts(
   model: Model,
   input: number | undefined,
@@ -259,21 +265,21 @@ export function usageFromCounts(
   if (input === undefined && output === undefined && total === undefined) return undefined;
   const prompt = finite(input) ?? 0;
   const completion = finite(output) ?? 0;
-  const inputRate = finite(model.cost?.input) ?? 0;
-  const outputRate = finite(model.cost?.output) ?? 0;
-  const inputCost = (prompt * inputRate) / 1_000_000;
-  const outputCost = (completion * outputRate) / 1_000_000;
   const cacheRead = finite(cache?.cacheRead);
   const cacheWrite = finite(cache?.cacheWrite);
-  const cacheReadRate = finite(model.cost?.cacheRead);
-  const cacheWriteRate = finite(model.cost?.cacheWrite);
-  const cacheReadCost = cacheRead !== undefined && cacheReadRate !== undefined ? (cacheRead * cacheReadRate) / 1_000_000 : 0;
-  const cacheWriteCost = cacheWrite !== undefined && cacheWriteRate !== undefined ? (cacheWrite * cacheWriteRate) / 1_000_000 : 0;
+  const amounts = usageCost(model, {
+    input: prompt,
+    output: completion,
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+  });
   return {
     input: prompt,
     output: completion,
     totalTokens: finite(total) ?? prompt + (cacheRead ?? 0) + (cacheWrite ?? 0) + completion,
-    cost: { input: inputCost, output: outputCost, total: inputCost + outputCost + cacheReadCost + cacheWriteCost },
+    cost: amounts === null
+      ? { input: 0, output: 0, total: 0 }
+      : { input: amounts.input, output: amounts.output, total: amounts.total },
     ...(cacheRead !== undefined ? { cacheRead } : {}),
     ...(cacheWrite !== undefined ? { cacheWrite } : {}),
   };

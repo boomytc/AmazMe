@@ -605,7 +605,8 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
 }
 
 /**
- * `model.cost` is USD per 1,000,000 tokens. Non-finite or absent rates contribute 0; no catalog price is invented.
+ * Charges go through `usageCost`. `model.cost` is USD per 1,000,000 tokens.
+ * A model with no price list keeps a zero `Usage.cost`; that zero is not a quoted price.
  * Cache read is taken only from a reported count. `prompt_tokens_details.cached_tokens` and
  * `prompt_cache_hit_tokens` are the same count when both are present; a disagreement is left unset.
  * `prompt_tokens` includes that cache read. `input` keeps the miss portion. Cache misses are not cache writes.
