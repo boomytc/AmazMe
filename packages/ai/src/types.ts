@@ -90,6 +90,16 @@ export interface Usage {
   output: number;
   totalTokens: number;
   cost: { input: number; output: number; total: number };
+  /**
+   * Prompt tokens served from the provider cache.
+   * Omitted when the response did not report a cache read. A reported 0 stays 0.
+   */
+  cacheRead?: number;
+  /**
+   * Prompt tokens written into the provider cache.
+   * Omitted when the response did not report a cache write. A reported 0 stays 0.
+   */
+  cacheWrite?: number;
 }
 
 export interface SystemMessage {

@@ -1,7 +1,8 @@
 import { baseAssistant, createAssistantEventStream, type AssistantEventStream, type ProviderStreams } from "../models.ts";
 import { resolveThinkingLevel } from "../thinking.ts";
 import { isCompletionsThinkingField, type AssistantMessage, type CompletionsOutputTokenField, type CompletionsThinkingField, type Context, type Message, type Model, type OpenAICompletionsOptions, type ToolCall, type Usage } from "../types.ts";
-import { emptyUsage, messageText, transformMessages } from "../transform.ts";
+import { usageFromCounts } from "./events.ts";
+import { cloneUsage, emptyUsage, messageText, transformMessages } from "../transform.ts";
 import { resolveOutputBudget } from "../utils/budget.ts";
 import { classifyTransportFailure, isFilledWindowLength, transportErrorDetail } from "../utils/overflow.ts";
 
@@ -302,7 +303,7 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
       ...partial,
       content: content.length > 0 ? content : [{ type: "text", text: "" }],
       stopReason,
-      usage: { input: usage.input, output: usage.output, totalTokens: usage.totalTokens, cost: { ...usage.cost } },
+      usage: cloneUsage(usage),
     };
   };
   const begin = () => {
@@ -603,26 +604,29 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
   });
 }
 
-/** `model.cost` is USD per 1,000,000 tokens. Non-finite or absent rates contribute 0; no catalog price is invented. */
+/**
+ * `model.cost` is USD per 1,000,000 tokens. Non-finite or absent rates contribute 0; no catalog price is invented.
+ * Cache read is taken only from a reported count. `prompt_tokens_details.cached_tokens` and
+ * `prompt_cache_hit_tokens` are the same count when both are present; a disagreement is left unset.
+ * Cache misses are not cache writes.
+ */
 function usageFromChunk(model: Model, raw: unknown): Usage | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const record = raw as Record<string, unknown>;
-  const input = finiteNumber(record.prompt_tokens);
-  const output = finiteNumber(record.completion_tokens);
-  const total = finiteNumber(record.total_tokens);
-  if (input === undefined && output === undefined && total === undefined) return undefined;
-  const prompt = input ?? 0;
-  const completion = output ?? 0;
-  const inputRate = finiteNumber(model.cost?.input) ?? 0;
-  const outputRate = finiteNumber(model.cost?.output) ?? 0;
-  const inputCost = (prompt * inputRate) / 1_000_000;
-  const outputCost = (completion * outputRate) / 1_000_000;
-  return {
-    input: prompt,
-    output: completion,
-    totalTokens: total ?? prompt + completion,
-    cost: { input: inputCost, output: outputCost, total: inputCost + outputCost },
-  };
+  if (!isRecord(raw)) return undefined;
+  return usageFromCounts(
+    model,
+    finiteNumber(raw.prompt_tokens),
+    finiteNumber(raw.completion_tokens),
+    finiteNumber(raw.total_tokens),
+    { cacheRead: cacheReadFromCompletions(raw) },
+  );
+}
+
+function cacheReadFromCompletions(record: Record<string, unknown>): number | undefined {
+  const details = isRecord(record.prompt_tokens_details) ? record.prompt_tokens_details : undefined;
+  const cached = finiteNumber(details?.cached_tokens);
+  const hit = finiteNumber(record.prompt_cache_hit_tokens);
+  if (cached !== undefined && hit !== undefined && cached !== hit) return undefined;
+  return cached ?? hit;
 }
 
 function finiteNumber(value: unknown): number | undefined {

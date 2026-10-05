@@ -35,6 +35,7 @@ export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decode
       numberOf(usage.promptTokenCount),
       (numberOf(usage.candidatesTokenCount) ?? 0) + (numberOf(usage.thoughtsTokenCount) ?? 0),
       numberOf(usage.totalTokenCount),
+      { cacheRead: numberOf(usage.cachedContentTokenCount) },
     );
     if (reported) acc.usage(reported);
   }

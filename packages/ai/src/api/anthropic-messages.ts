@@ -84,9 +84,18 @@ async function pump(
     let stop = "";
     let inputTokens: number | undefined;
     let outputTokens: number | undefined;
+    let cacheRead: number | undefined;
+    let cacheWrite: number | undefined;
     const toolKeys = new Map<number, string>();
+    const takeCache = (usage: Record<string, unknown> | undefined) => {
+      if (!usage) return;
+      const read = numberOf(usage.cache_read_input_tokens);
+      const write = numberOf(usage.cache_creation_input_tokens);
+      if (read !== undefined) cacheRead = read;
+      if (write !== undefined) cacheWrite = write;
+    };
     const reportUsage = () => {
-      const reported = usageFromCounts(model, inputTokens, outputTokens, undefined);
+      const reported = usageFromCounts(model, inputTokens, outputTokens, undefined, { cacheRead, cacheWrite });
       if (reported) acc.usage(reported);
     };
     await readSse(response, request.signal, ({ data }) => {
@@ -126,14 +135,14 @@ async function pump(
         if (typeof decoded.delta.stop_reason === "string") stop = decoded.delta.stop_reason;
         const usage = isRecord(decoded.usage) ? decoded.usage : undefined;
         const output = numberOf(usage?.output_tokens);
-        if (output !== undefined) {
-          outputTokens = output;
-          reportUsage();
-        }
+        takeCache(usage);
+        if (output !== undefined) outputTokens = output;
+        if (output !== undefined || cacheRead !== undefined || cacheWrite !== undefined) reportUsage();
       }
       if (decoded.type === "message_start" && isRecord(decoded.message) && isRecord(decoded.message.usage)) {
         const input = numberOf(decoded.message.usage.input_tokens);
         const output = numberOf(decoded.message.usage.output_tokens);
+        takeCache(decoded.message.usage);
         if (input !== undefined) inputTokens = input;
         if (output !== undefined) outputTokens = output;
         if (input !== undefined || output !== undefined) reportUsage();

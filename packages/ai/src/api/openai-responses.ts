@@ -161,11 +161,13 @@ export async function consumeResponses(
 
 function responsesUsage(model: Model, raw: unknown): Usage | undefined {
   if (!isRecord(raw)) return undefined;
+  const details = isRecord(raw.input_tokens_details) ? raw.input_tokens_details : undefined;
   return usageFromCounts(
     model,
     numberField(raw, "input_tokens"),
     numberField(raw, "output_tokens"),
     numberField(raw, "total_tokens"),
+    details ? { cacheRead: numberField(details, "cached_tokens") } : undefined,
   );
 }
 
