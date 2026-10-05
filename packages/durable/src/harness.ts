@@ -2575,6 +2575,7 @@ function lastTurnUsage(view: StorageView, chain: readonly Entry[], options: Harn
     const message = entry.payload.message;
     if (message.role !== "assistant") continue;
     if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred") continue;
+    // At settlement the entry is written first, then the usage row on the next seq; pairing depends on that order.
     const row = view.usageRows().find((candidate) => candidate.seq === entry.seq + 1);
     if (!row) return null;
     const cacheRead = typeof row.cacheRead === "number" ? row.cacheRead : null;

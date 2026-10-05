@@ -172,6 +172,29 @@ test("a lane with no assistant projects empty usage and the assess threshold", a
   }
 });
 
+test("settlement writes the assistant entry, then its usage row on the next seq", async () => {
+  const counted = tokens(11, 3);
+  const { models } = scripted([counted]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const assistant = (await lane.entries()).find(
+      (entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant",
+    );
+    assert.ok(assistant);
+    const rows = await harness.storage.read((view) => view.usageRows());
+    const paired = rows.find((row) => row.seq === assistant.seq + 1);
+    assert.ok(paired);
+    assert.equal(paired.input, counted.input);
+    assert.equal(paired.output, counted.output);
+    assert.equal(rows.some((row) => row.seq <= assistant.seq), false);
+    assert.deepEqual((await readUsage(lane)).lastTurn, turn(paired.input, paired.output));
+  } finally {
+    harness.close();
+  }
+});
+
 test("two turns keep the latest usage, a null cache, and the summed total", async () => {
   const first = tokens(11, 3);
   const second = tokens(17, 5);
