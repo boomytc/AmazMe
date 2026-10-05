@@ -1,7 +1,7 @@
-import { activateProject, presentHost, type HostAttach } from "@amazme/tui";
+import { activateProject, presentHost, type HostAccount, type HostAttach } from "@amazme/tui";
 import { createCodingFronts, startWorkspaceHost } from "../fronts.ts";
 import { waitForSecondInterrupt } from "../interrupt.ts";
-import { formatHandback, loginCatalog, loginProvider, logoutProvider, saveApiKey } from "../login.ts";
+import { commitProviderModels, formatHandback, loginCatalog, loginProvider, logoutProvider, saveApiKey } from "../login.ts";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID } from "../host.ts";
 
 export interface FullscreenOptions {
@@ -15,6 +15,25 @@ export interface FullscreenOptions {
 /** Fullscreen opens when the CLI has no prompt and stdout is a terminal. */
 export function shouldOpenFullscreen(prompt: string, stdoutIsTTY: boolean): boolean {
   return prompt.length === 0 && stdoutIsTTY;
+}
+
+/** Account and API-key login for the fullscreen view. Models are recorded only after the credential is stored. */
+export function codingLoginAccount(options: { cwd?: string; credentialsFile?: string }): HostAccount {
+  return {
+    login: async (provider, handback, currentModel) => {
+      const report = await loginProvider(provider, {
+        ...(options.credentialsFile ? { credentialsFile: options.credentialsFile } : {}),
+        onHandback(value) { handback(formatHandback(value)); },
+      });
+      return commitProviderModels(report.provider, options.cwd, currentModel);
+    },
+    logout: (provider) => logoutProvider(provider, options.credentialsFile),
+    catalog: () => loginCatalog(options.credentialsFile),
+    saveApiKey: async (providerId, key, currentModel) => {
+      await saveApiKey(providerId, key, options.credentialsFile);
+      return commitProviderModels(providerId, options.cwd, currentModel);
+    },
+  };
 }
 
 /**
@@ -43,15 +62,7 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
     }
   };
   try {
-    await presentHost(attach, process.stdin, process.stdout, {
-      login: (provider, handback) => loginProvider(provider, {
-        credentialsFile: options.credentialsFile,
-        onHandback(value) { handback(formatHandback(value)); },
-      }).then((report) => report.message),
-      logout: (provider) => logoutProvider(provider, options.credentialsFile),
-      catalog: () => loginCatalog(options.credentialsFile),
-      saveApiKey: (providerId, key) => saveApiKey(providerId, key, options.credentialsFile),
-    }, {
+    await presentHost(attach, process.stdin, process.stdout, codingLoginAccount(options), {
       openWeb: () => publish(async () => `网页 ${await fronts.openWeb()}`),
       openGui: () => publish(() => fronts.openGui()),
     });

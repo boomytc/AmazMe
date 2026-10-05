@@ -4,6 +4,7 @@ export { executeSlash, finishDrive, nextSessionName, parseSlash, slashMatches, S
 export { presentHost, readHostFrame, treePickerRows, windowFrom, type HostAccount, type HostAttach, type HostSurfaces } from "./present.ts";
 export {
   activateProject,
+  addScopedModels,
   cycleModels,
   displayName,
   grantTrust,
