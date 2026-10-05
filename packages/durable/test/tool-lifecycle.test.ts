@@ -169,6 +169,46 @@ function harness(storage: MemoryStorage, execute: HarnessTool["execute"]) {
   return { lane, provider };
 }
 
+test("a failed checkpoint write clears the live id so the call is not left in flight", async () => {
+  const storage = new CheckpointFaultStorage();
+  let runs = 0;
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1 ? fauxAssistant([fauxToolCall("work", {})]) : fauxAssistant("after"),
+  }));
+  const runtime = new AgentHarness(storage, {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    tools: [{
+      name: "work",
+      description: "work",
+      parameters: { type: "object", additionalProperties: true },
+      replay: "never",
+      async execute(_args, context) {
+        runs += 1;
+        context.onUpdate?.("partial", { checkpoint: true });
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  try {
+    const lane = runtime.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    await assert.rejects(lane.drive(admitted.value.operationId), /checkpoint failed/);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(runtime.live.size, 0);
+    assert.equal(await storage.read((view) => view.values().some((item) => item.key.includes("pi.pending.tool_output"))), false);
+    const recovered = await lane.drive(admitted.value.operationId);
+    assert.equal(recovered.ok && recovered.value.kind === "settled" ? recovered.value.result.status : "", "completed");
+    assert.equal(runs, 1);
+    assert.equal(runtime.live.size, 0);
+  } finally {
+    runtime.close();
+  }
+});
+
 test("a failed checkpoint write is awaited and is not settled as success", async () => {
   const unhandled: unknown[] = [];
   const onUnhandled = (error: unknown) => unhandled.push(error);

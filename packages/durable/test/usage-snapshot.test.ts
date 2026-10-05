@@ -6,7 +6,7 @@ import test from "node:test";
 import { cacheHitRate, createModels, usageCost, type Model, type Usage } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { validSummary } from "./valid-summary.ts";
-import { AgentHarness, effectiveInputThreshold, value, type AgentLane, type HarnessTool, type LaneUsage, type LaneUsageView } from "@amazme/durable";
+import { AgentHarness, effectiveInputThreshold, value, type AgentLane, type HarnessTool, type LaneUsage, type LaneUsageView, type Write } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
@@ -129,9 +129,9 @@ async function finishCompaction(lane: AgentLane): Promise<void> {
   assert.equal(folded.ok && folded.value.kind === "settled" ? folded.value.result.status : "", "completed");
 }
 
-async function until(predicate: () => Promise<boolean>): Promise<void> {
+async function until(predicate: () => Promise<boolean>, ms = 2_000): Promise<void> {
   const start = Date.now();
-  while (Date.now() - start < 2000) {
+  while (Date.now() - start < ms) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -699,11 +699,56 @@ test("checkpointed tool output is tailed while running and absent after settle",
     assert.equal(tail.outputTail, body.slice(-4_000));
     const running = (await lane.snapshot()).tools.find((tool) => tool.status === "running");
     assert.ok(running);
-    assert.equal("outputTail" in running, false);
+    assertRoundTrip(running);
+    assert.equal(running.outputTail, tail.outputTail);
     release();
     const settled = await driving;
     assert.equal(settled.status, "completed");
     assert.deepEqual((await lane.toolOutput()).tails, []);
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
+test("a long checkpoint is stored as its last 4000 code units", async () => {
+  const body = `head-${"x".repeat(10_000)}-tail`;
+  assert.ok(body.length > 10_000);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const storage = new MemoryStorage();
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("log", {})], { usage: tokens(1, 1) })
+      : fauxAssistant("after", { usage: tokens(2, 2) }),
+  }));
+  const harness = runtime(storage, models, {
+    tools: [{
+      name: "log",
+      description: "log",
+      parameters: { type: "object", additionalProperties: true },
+      async execute(_args, context) {
+        context.onUpdate?.(body, { checkpoint: true });
+        await gate;
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  try {
+    const lane = harness.lane();
+    const driving = lane.prompt("go");
+    await until(async () => (await lane.toolOutput()).tails.length === 1);
+    const stored = await storage.read((view) => {
+      const item = view.values().find((entry) => entry.key.includes("pi.pending.tool_output"));
+      return typeof item?.value === "string" ? item.value : undefined;
+    });
+    assert.equal(typeof stored, "string");
+    assert.ok(stored);
+    assert.ok(stored.length <= 4_000);
+    assert.equal(stored, body.slice(-4_000));
+    release();
+    assert.equal((await driving).status, "completed");
   } finally {
     release();
     harness.close();
@@ -745,6 +790,8 @@ test("a reopened log still returns the checkpoint tail of a call left running", 
       const tails = assertRoundTrip(await lane.toolOutput());
       assert.equal(tails.tails.length, 1);
       assert.equal(tails.tails[0]?.outputTail, body);
+      const running = (await lane.snapshot()).tools.find((tool) => tool.status === "running");
+      assert.equal(running?.outputTail, body);
       const operationId = (await lane.inspect()).operationId;
       assert.ok(operationId);
       const settled = await lane.drive(operationId);
@@ -792,6 +839,8 @@ test("a checkpoint tail does not start on a low surrogate", async () => {
     assert.ok(tail);
     assert.equal(tail.outputTail, marker);
     assert.equal(tail.outputTail.length, 3_999);
+    const running = (await lane.snapshot()).tools.find((tool) => tool.status === "running");
+    assert.equal(running?.outputTail, marker);
     release();
     assert.equal((await driving).status, "completed");
   } finally {
@@ -834,6 +883,119 @@ test("a tool update without checkpoint does not project an output tail", async (
     const running = (await lane.snapshot()).tools.find((tool) => tool.status === "running");
     assert.ok(running);
     assert.equal("outputTail" in running, false);
+    release();
+    assert.equal((await driving).status, "completed");
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
+test("checkpoints are written at most once per 1000ms and the next window stores the latest partial", async () => {
+  class OutputLog extends MemoryStorage {
+    readonly at: number[] = [];
+    readonly values: string[] = [];
+    protected override persist(writes: readonly Write[]): void {
+      for (const write of writes) {
+        if (write.type === "set" && write.address.namespace === "pi.pending.tool_output" && typeof write.value === "string") {
+          this.at.push(Date.now());
+          this.values.push(write.value);
+        }
+      }
+    }
+  }
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const storage = new OutputLog();
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("log", {})], { usage: tokens(1, 1) })
+      : fauxAssistant("after", { usage: tokens(2, 2) }),
+  }));
+  const harness = runtime(storage, models, {
+    tools: [{
+      name: "log",
+      description: "log",
+      parameters: { type: "object", additionalProperties: true },
+      async execute(_args, context) {
+        context.onUpdate?.("first", { checkpoint: true });
+        context.onUpdate?.("second", { checkpoint: true });
+        context.onUpdate?.("third", { checkpoint: true });
+        await gate;
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  try {
+    const lane = harness.lane();
+    const driving = lane.prompt("go");
+    await until(async () => (await lane.toolOutput()).tails.length === 1);
+    assert.deepEqual(storage.values, ["first"]);
+    assert.equal((await lane.snapshot()).tools.find((tool) => tool.status === "running")?.outputTail, "first");
+    const openedAt = storage.at[0] ?? Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (Date.now() - openedAt < 800) assert.deepEqual(storage.values, ["first"]);
+    await until(async () => storage.values.length === 2, 4_000);
+    assert.equal(storage.values[1], "third");
+    assert.ok(storage.at[1]! - storage.at[0]! >= 950);
+    assert.equal((await lane.toolOutput()).tails[0]?.outputTail, "third");
+    assert.equal((await lane.snapshot()).tools.find((tool) => tool.status === "running")?.outputTail, "third");
+    release();
+    assert.equal((await driving).status, "completed");
+    assert.deepEqual(storage.values, ["first", "third"]);
+    assert.deepEqual((await lane.snapshot()).tools, []);
+    assert.deepEqual((await lane.toolOutput()).tails, []);
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
+test("twenty checkpoints inside one second persist only one or two tool output writes", async () => {
+  class OutputLog extends MemoryStorage {
+    readonly values: string[] = [];
+    protected override persist(writes: readonly Write[]): void {
+      for (const write of writes) {
+        if (write.type === "set" && write.address.namespace === "pi.pending.tool_output" && typeof write.value === "string") {
+          this.values.push(write.value);
+        }
+      }
+    }
+  }
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let updates = 0;
+  const storage = new OutputLog();
+  const models = createModels();
+  models.setProvider(fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("log", {})], { usage: tokens(1, 1) })
+      : fauxAssistant("after", { usage: tokens(2, 2) }),
+  }));
+  const harness = runtime(storage, models, {
+    tools: [{
+      name: "log",
+      description: "log",
+      parameters: { type: "object", additionalProperties: true },
+      async execute(_args, context) {
+        for (let index = 0; index < 20; index += 1) {
+          context.onUpdate?.(`part-${index}`, { checkpoint: true });
+          updates += 1;
+        }
+        await gate;
+        return { content: [{ type: "text", text: "done" }] };
+      },
+    }],
+  });
+  const started = Date.now();
+  try {
+    const lane = harness.lane();
+    const driving = lane.prompt("go");
+    await until(async () => updates === 20 && storage.values.length >= 1);
+    assert.ok(Date.now() - started < 1_000);
+    assert.ok(storage.values.length >= 1 && storage.values.length <= 2);
+    assert.equal(storage.values[0], "part-0");
     release();
     assert.equal((await driving).status, "completed");
   } finally {

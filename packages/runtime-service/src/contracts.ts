@@ -128,10 +128,12 @@ const PendingResponseSchema = Strict({
 });
 export type PendingResponseDto = Static<typeof PendingResponseSchema>;
 
+/** Open tool batch. `outputTail` is the last 4000 code units of a running checkpoint, omitted when none is stored. */
 const ToolActivitySchema = Strict({
   toolCallId: Type.String({ minLength: 1 }),
   name: Type.String({ minLength: 1 }),
   status: Type.Union([Type.Literal("planned"), Type.Literal("running"), Type.Literal("settled")]),
+  outputTail: Type.Optional(Type.String({ maxLength: 4_000 })),
 });
 export type ToolActivityDto = Static<typeof ToolActivitySchema>;
 
