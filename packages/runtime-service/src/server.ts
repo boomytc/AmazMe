@@ -5,7 +5,7 @@ import type {
   LanePhase,
   LaneSettings,
   LaneSnapshot,
-  LaneStatus,
+  LaneSnapshotStatus,
   OperationAdmission,
   OperationResult,
   Result,
@@ -43,7 +43,7 @@ const settingsMatch: Same<LaneSettings, LaneSettingsDto> = true;
 const results: Same<OperationResult, OperationResultDto> = true;
 const admissions: Same<OperationAdmission, OperationAdmissionDto> = true;
 const outcomes: Same<DriveOutcome, DriveOutcomeDto> = true;
-const statuses: Same<LaneStatus, StatusDto> = true;
+const statuses: Same<LaneSnapshotStatus, StatusDto> = true;
 void [phases, settingsMatch, results, admissions, outcomes, statuses];
 
 /**

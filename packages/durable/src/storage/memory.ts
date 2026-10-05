@@ -28,7 +28,18 @@ export function applyWrites(state: State, writes: readonly Write[]): State {
       if (write.parentId !== null && !entries.has(write.parentId)) throw new Error(`missing parent ${write.parentId}`);
       entries.set(write.id, { id: write.id, parentId: write.parentId, seq, timestamp: write.timestamp, payload: write.payload });
     } else if (write.type === "usage") {
-      usage.push({ id: write.id, seq, operationId: write.operationId, input: write.input, output: write.output, totalTokens: write.totalTokens });
+      const row: UsageRow = {
+        id: write.id,
+        seq,
+        operationId: write.operationId,
+        input: write.input,
+        output: write.output,
+        totalTokens: write.totalTokens,
+      };
+      if ("cacheRead" in write) row.cacheRead = write.cacheRead ?? null;
+      if ("cacheWrite" in write) row.cacheWrite = write.cacheWrite ?? null;
+      if (write.model) row.model = { provider: write.model.provider, modelId: write.model.modelId };
+      usage.push(row);
     } else if (write.type === "set") {
       values.set(addressKey(write.address), write.value);
     } else if (write.type === "delete") {

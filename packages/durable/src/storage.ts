@@ -31,6 +31,11 @@ export interface UsageRow {
   input: number;
   output: number;
   totalTokens: number;
+  /** Absent on rows written before cache counts were stored. A stored null is a turn that did not report one. */
+  cacheRead?: number | null;
+  cacheWrite?: number | null;
+  /** Provider and model that produced this row. Absent on older rows. */
+  model?: { provider: string; modelId: string };
 }
 
 export interface ListItem {
@@ -40,7 +45,17 @@ export interface ListItem {
 
 export type Write =
   | { type: "entry"; id: string; parentId: string | null; timestamp: number; payload: EntryPayload }
-  | { type: "usage"; id: string; operationId: string; input: number; output: number; totalTokens: number }
+  | {
+      type: "usage";
+      id: string;
+      operationId: string;
+      input: number;
+      output: number;
+      totalTokens: number;
+      cacheRead?: number | null;
+      cacheWrite?: number | null;
+      model?: { provider: string; modelId: string };
+    }
   | { type: "set"; address: Address; value: unknown }
   | { type: "delete"; address: Address }
   | { type: "append"; address: Address; item: unknown }

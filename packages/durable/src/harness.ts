@@ -11,9 +11,12 @@ import {
   type Usage,
   frameFromEvent,
   reduceFrames,
+  cacheHitRate,
   resolveOutputBudget,
   supportedThinkingLevels,
+  usageCost,
   type ThinkingLevel,
+  type UsageCost,
 } from "@amazme/ai";
 import { createTypedSpanStarter, type SchemaTelemetrySpan, type TelemetryContext } from "@amazme/telemetry";
 import { acceptedSummary, continuationContext, fitSummaryRequest, planCompaction, summaryRejection } from "./compaction/plan.ts";
@@ -38,6 +41,7 @@ import {
   list,
   type Storage,
   type StorageView,
+  type UsageRow,
   value,
   type Write,
 } from "./storage.ts";
@@ -157,13 +161,26 @@ export interface OperationAdmission {
 
 export type LanePhase = OperationState["phase"];
 
-export interface LaneStatus {
+/** Status half of `snapshot()` and the value `inspect()` returns. */
+export interface LaneSnapshotStatus {
   lane: string;
   tipId: string | null;
   phase: LanePhase | null;
   operationId: string | null;
   lastOperationId: string | null;
   status: "open" | "aborting" | null;
+}
+
+/**
+ * Retry expiry and whether a summary is in progress.
+ * `notBefore` is the stored retry deadline in milliseconds, or null when this lane is not in `retry_wait`.
+ * `retryReason` is the error text that opened that wait. An approval wait is not a retry, so both stay null;
+ * parked calls are `pendingApprovals()`.
+ */
+export interface LaneStatus {
+  notBefore: number | null;
+  retryReason: string | null;
+  compacting: boolean;
 }
 
 /**
@@ -196,6 +213,12 @@ interface UsageCounts {
 }
 
 /**
+ * `usageCost` fields. On a sum, a component is null when any counted row's component is null.
+ * The whole value is null when a row has no resolvable price list.
+ */
+export type LaneUsageCost = { [K in keyof UsageCost]: number | null };
+
+/**
  * Token counts derived from this lane's stored usage rows and branch.
  * An omitted cache count is null. A reported 0 stays 0.
  */
@@ -204,17 +227,20 @@ export interface LaneUsage {
    * Newest settled assistant after the newest summary, excluding `error`, `aborted`, and `deferred`.
    * The copied tail is the contiguous run of older timestamps directly after that summary, and it does not count.
    * Null when nothing after that run counts.
+   * `hitRate` is `cacheHitRate` of this turn. `cost` is `usageCost` for this message's own provider and model,
+   * or null when that model is missing or has no price list.
    */
-  lastTurn: UsageCounts | null;
+  lastTurn: (UsageCounts & { hitRate: number | null; cost: UsageCost | null }) | null;
   /**
    * `input` and `output` sum usage rows whose persisted operation belongs to this lane, including summary requests.
    * A row has no lane. An open operation is attributed by the stored `OperationMeta.lane`; after `finish`, by
    * `OperationResult.lane`. There is no ancestor-chain fallback: one operation can write several rows, and a fork
    * can cut in the middle of that operation, so summing assistant messages would not match the rows.
-   * Those rows do not store `cacheRead` or `cacheWrite`. Both totals stay null so a message on the branch cannot
-   * supply a second source.
+   * `cacheRead` and `cacheWrite` sum only when every counted row stores that field. One old row without it makes
+   * that total null. `hitRate` is `cacheHitRate` of those totals, and null when `cacheRead` is null.
+   * `cost` prices each row with that row's model, or the lane's configured model when an old row has none.
    */
-  total: UsageCounts;
+  total: UsageCounts & { hitRate: number | null; cost: LaneUsageCost | null };
   /**
    * Prompt size plus output of the newest assistant after the newest summary.
    * The copied tail is the contiguous run of older timestamps directly after that summary, and it does not count.
@@ -263,7 +289,7 @@ export interface PendingApprovals {
 }
 
 /** One consistent read of a lane. Every field is a detached copy taken at `version`. */
-export interface LaneSnapshot extends LaneStatus {
+export interface LaneSnapshot extends LaneSnapshotStatus {
   version: number;
   entries: Entry[];
   pendingResponse: PendingResponse | null;
@@ -843,7 +869,7 @@ export class AgentLane {
     return result;
   }
 
-  inspect(): Promise<LaneStatus> {
+  inspect(): Promise<LaneSnapshotStatus> {
     return admitted(this.harness).read((view) => this.status(view).status);
   }
 
@@ -888,6 +914,22 @@ export class AgentLane {
       return structuredClone({
         version: view.version(),
         ...projectUsage(view, this.name, chain, this.harness.options),
+      });
+    });
+  }
+
+  /**
+   * Read-only retry deadline and compaction flag. One storage read.
+   * Does not initialize the lane, drive, or recover. Plain data: clone and JSON keep the same value.
+   */
+  laneStatus(): Promise<LaneStatus> {
+    return admitted(this.harness).read((view) => {
+      const { state } = this.status(view);
+      const retry = state?.phase === "retry_wait" ? state : undefined;
+      return structuredClone({
+        notBefore: retry ? retry.notBefore : null,
+        retryReason: retry ? retryErrorText(view, this.name) : null,
+        compacting: state?.phase === "summary_deciding" || state?.phase === "summary_effect_pending",
       });
     });
   }
@@ -979,7 +1021,7 @@ export class AgentLane {
     });
   }
 
-  private status(view: StorageView): { status: LaneStatus; state: OperationState | undefined } {
+  private status(view: StorageView): { status: LaneSnapshotStatus; state: OperationState | undefined } {
     const record = view.get<LaneRecord>(laneAddress(this.name));
     const operationId = record?.currentOperationId ?? null;
     const state = operationId ? view.get<OperationState>(stateAddress(operationId)) : undefined;
@@ -1919,14 +1961,7 @@ export class AgentLane {
         timestamp: message.timestamp,
         payload: { type: "message", message },
       },
-      {
-        type: "usage",
-        id: planned.usageId,
-        operationId: planned.operationId,
-        input: message.usage.input,
-        output: message.usage.output,
-        totalTokens: message.usage.totalTokens,
-      },
+      usageWrite(planned.usageId, planned.operationId, message),
       { type: "set", address: tipAddress(this.name), value: planned.responseEntryId },
       clearFrames,
     ];
@@ -2504,8 +2539,8 @@ function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {
 function projectUsage(view: StorageView, lane: string, chain: readonly Entry[], options: HarnessOptions): LaneUsage {
   const counted = entriesAfterSummary(chain);
   return {
-    lastTurn: lastTurnUsage(counted),
-    total: attributedTotal(view, lane),
+    lastTurn: lastTurnUsage(counted, options.models),
+    total: attributedTotal(view, lane, options),
     contextTokens: contextTokenCount(counted),
     compactionThreshold: compactionThreshold(view, lane, options),
   };
@@ -2516,18 +2551,21 @@ function promptSize(usage: Usage): number {
   return usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
 }
 
-function lastTurnUsage(chain: readonly Entry[]): LaneUsage["lastTurn"] {
+function lastTurnUsage(chain: readonly Entry[], models: HarnessOptions["models"]): LaneUsage["lastTurn"] {
   for (let index = chain.length - 1; index >= 0; index--) {
     const entry = chain[index];
     if (!entry || entry.payload.type !== "message") continue;
     const message = entry.payload.message;
     if (message.role !== "assistant") continue;
     if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred") continue;
+    const model = models.getModel(message.provider, message.model);
     return {
       input: message.usage.input,
       output: message.usage.output,
       cacheRead: message.usage.cacheRead ?? null,
       cacheWrite: message.usage.cacheWrite ?? null,
+      hitRate: cacheHitRate(message.usage),
+      cost: model ? usageCost(model, message.usage) : null,
     };
   }
   return null;
@@ -2570,15 +2608,99 @@ function entriesAfterSummary(chain: readonly Entry[]): Entry[] {
   return chain.slice(start);
 }
 
-function attributedTotal(view: StorageView, lane: string): LaneUsage["total"] {
+function attributedTotal(view: StorageView, lane: string, options: HarnessOptions): LaneUsage["total"] {
+  const rows = view.usageRows().filter((row) => operationLane(view, row.operationId) === lane);
   let input = 0;
   let output = 0;
-  for (const row of view.usageRows()) {
-    if (operationLane(view, row.operationId) !== lane) continue;
+  for (const row of rows) {
     input += row.input;
     output += row.output;
   }
-  return { input, output, cacheRead: null, cacheWrite: null };
+  const cacheRead = sumStoredCount(rows, "cacheRead");
+  const cacheWrite = sumStoredCount(rows, "cacheWrite");
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    hitRate: cacheRead === null ? null : cacheHitRate({
+      input,
+      cacheRead,
+      ...(cacheWrite === null ? {} : { cacheWrite }),
+    }),
+    cost: totalCost(view, lane, options, rows),
+  };
+}
+
+/** Sum a cache field. Null when there are no rows, or any row omitted the field. A stored null counts as 0. */
+function sumStoredCount(rows: readonly UsageRow[], key: "cacheRead" | "cacheWrite"): number | null {
+  if (rows.length === 0) return null;
+  let sum = 0;
+  for (const row of rows) {
+    const value = row[key];
+    if (value === undefined) return null;
+    if (typeof value === "number") sum += value;
+  }
+  return sum;
+}
+
+function totalCost(
+  view: StorageView,
+  lane: string,
+  options: HarnessOptions,
+  rows: readonly UsageRow[],
+): LaneUsageCost | null {
+  if (rows.length === 0) return null;
+  const parts: UsageCost[] = [];
+  for (const row of rows) {
+    const priced = rowCost(view, lane, options, row);
+    if (!priced) return null;
+    parts.push(priced);
+  }
+  return {
+    input: sumCharge(parts, "input"),
+    output: sumCharge(parts, "output"),
+    cacheRead: sumCharge(parts, "cacheRead"),
+    cacheWrite: sumCharge(parts, "cacheWrite"),
+    total: sumCharge(parts, "total"),
+  };
+}
+
+function sumCharge(parts: readonly UsageCost[], key: keyof UsageCost): number | null {
+  let sum = 0;
+  for (const part of parts) {
+    const value = part[key];
+    if (value === null) return null;
+    sum += value;
+  }
+  return sum;
+}
+
+function rowCost(view: StorageView, lane: string, options: HarnessOptions, row: UsageRow): UsageCost | null {
+  const model = row.model
+    ? options.models.getModel(row.model.provider, row.model.modelId)
+    : resolveLaneModel(view, lane, options).model;
+  if (!model) return null;
+  return usageCost(model, {
+    input: row.input,
+    output: row.output,
+    ...(typeof row.cacheRead === "number" ? { cacheRead: row.cacheRead } : {}),
+    ...(typeof row.cacheWrite === "number" ? { cacheWrite: row.cacheWrite } : {}),
+  });
+}
+
+/** Error text on the newest assistant. The retry wait is written in the same commit as that message. */
+function retryErrorText(view: StorageView, lane: string): string | null {
+  const tip = view.get<string | null>(tipAddress(lane)) ?? null;
+  const chain = ancestors(view, tip);
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const entry = chain[index];
+    if (!entry || entry.payload.type !== "message") continue;
+    const message = entry.payload.message;
+    if (message.role !== "assistant") continue;
+    return typeof message.errorMessage === "string" && message.errorMessage.length > 0 ? message.errorMessage : null;
+  }
+  return null;
 }
 
 function operationLane(view: StorageView, operationId: string): string | undefined {
@@ -2644,6 +2766,9 @@ function usageWrite(id: string, operationId: string, message: AssistantMessage):
     input: message.usage.input,
     output: message.usage.output,
     totalTokens: message.usage.totalTokens,
+    cacheRead: message.usage.cacheRead ?? null,
+    cacheWrite: message.usage.cacheWrite ?? null,
+    model: { provider: message.provider, modelId: message.model },
   };
 }
 

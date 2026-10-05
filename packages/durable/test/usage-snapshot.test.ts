@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createModels, type Usage } from "@amazme/ai";
+import { cacheHitRate, createModels, usageCost, type Model, type Usage } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { validSummary } from "./valid-summary.ts";
-import { AgentHarness, type AgentLane, effectiveInputThreshold, type HarnessTool, type LaneUsage, type LaneUsageView } from "@amazme/durable";
+import { AgentHarness, effectiveInputThreshold, value, type AgentLane, type HarnessTool, type LaneUsage, type LaneUsageView } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
@@ -14,12 +14,63 @@ function tokens(input: number, output: number, cache: { cacheRead?: number; cach
   return { input, output, totalTokens: input + output, cost: { input: 0, output: 0, total: 0 }, ...cache };
 }
 
-function turn(input: number, output: number): NonNullable<LaneUsage["lastTurn"]> {
-  return { input, output, cacheRead: null, cacheWrite: null };
+function assistantMessage(text: string, usage: Usage, timestamp: number) {
+  return {
+    role: "assistant" as const,
+    content: [{ type: "text" as const, text }],
+    api: "faux",
+    provider: "faux",
+    model: "faux-1",
+    usage,
+    stopReason: "stop" as const,
+    timestamp,
+  };
+}
+
+const zeroPrice = { cost: { input: 0, output: 0 } };
+
+function turn(
+  input: number,
+  output: number,
+  cache: { cacheRead?: number | null; cacheWrite?: number | null } = {},
+): NonNullable<LaneUsage["lastTurn"]> {
+  const cacheRead = cache.cacheRead ?? null;
+  const cacheWrite = cache.cacheWrite ?? null;
+  const usage = {
+    input,
+    output,
+    ...(cacheRead !== null ? { cacheRead } : {}),
+    ...(cacheWrite !== null ? { cacheWrite } : {}),
+  };
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    hitRate: cacheHitRate(usage),
+    cost: usageCost(zeroPrice, usage),
+  };
 }
 
 function total(input: number, output: number): LaneUsage["total"] {
-  return { input, output, cacheRead: null, cacheWrite: null };
+  if (input === 0 && output === 0) {
+    return { input: 0, output: 0, cacheRead: null, cacheWrite: null, hitRate: null, cost: null };
+  }
+  return {
+    input,
+    output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    hitRate: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function priceOf(provider: ReturnType<typeof fauxProvider>, cost: Model["cost"]): Model {
+  const model = provider.getModels()[0];
+  if (!model) throw new Error("faux model missing");
+  model.cost = cost;
+  return model;
 }
 
 function scripted(usages: readonly Usage[], texts: readonly string[] = []) {
@@ -91,6 +142,7 @@ test("a lane with no assistant projects empty usage and the assess threshold", a
     assert.equal(usage.lastTurn, null);
     assert.equal(usage.contextTokens, null);
     assert.deepEqual(usage.total, total(0, 0));
+    assert.deepEqual(assertRoundTrip(await lane.laneStatus()), { notBefore: null, retryReason: null, compacting: false });
     assert.equal(usage.compactionThreshold, effectiveInputThreshold(model.contextWindow, 50_000));
     usage.total.input = 9;
     assert.deepEqual((await lane.usage()).total, total(0, 0));
@@ -138,15 +190,23 @@ test("cacheRead on the latest assistant is part of contextTokens and lastTurn", 
     const lane = harness.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
     const usage = await readUsage(lane);
-    assert.deepEqual(usage.lastTurn, { input: 3, output: 4, cacheRead: 10, cacheWrite: null });
+    assert.deepEqual(usage.lastTurn, turn(3, 4, { cacheRead: 10 }));
     assert.equal(usage.contextTokens, 17);
-    assert.deepEqual(usage.total, total(3, 4));
+    assert.equal(usage.total.input, 3);
+    assert.equal(usage.total.output, 4);
+    assert.equal(usage.total.cacheRead, 10);
+    assert.equal(usage.total.cacheWrite, 0);
+    assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10 }));
+    assert.equal(usage.total.cost?.cacheRead, null);
+    assert.equal(usage.total.cost?.total, null);
+    assert.equal(usage.total.cost?.input, 0);
+    assert.equal(usage.total.cost?.output, 0);
   } finally {
     harness.close();
   }
 });
 
-test("an assistant without cache leaves the cache counts null", async () => {
+test("an assistant without a reported cache leaves lastTurn cache null", async () => {
   const { models } = scripted([tokens(5, 6)]);
   const harness = runtime(new MemoryStorage(), models);
   try {
@@ -161,7 +221,7 @@ test("an assistant without cache leaves the cache counts null", async () => {
   }
 });
 
-test("a reported cache zero stays on lastTurn while the row total leaves cache null", async () => {
+test("a reported cache zero stays zero and still joins the summed cache", async () => {
   const { models } = scripted([
     tokens(1, 1, { cacheRead: 10 }),
     tokens(2, 2, { cacheRead: 0, cacheWrite: 4 }),
@@ -172,9 +232,15 @@ test("a reported cache zero stays on lastTurn while the row total leaves cache n
     assert.equal((await lane.prompt("one")).status, "completed");
     assert.equal((await lane.prompt("two")).status, "completed");
     const usage = await readUsage(lane);
-    assert.deepEqual(usage.lastTurn, { input: 2, output: 2, cacheRead: 0, cacheWrite: 4 });
+    assert.deepEqual(usage.lastTurn, turn(2, 2, { cacheRead: 0, cacheWrite: 4 }));
     assert.equal(usage.contextTokens, 8);
-    assert.deepEqual(usage.total, total(3, 3));
+    assert.equal(usage.total.input, 3);
+    assert.equal(usage.total.output, 3);
+    assert.equal(usage.total.cacheRead, 10);
+    assert.equal(usage.total.cacheWrite, 4);
+    assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10, cacheWrite: 4 }));
+    assert.equal(usage.total.cost?.cacheRead, null);
+    assert.equal(usage.total.cost?.total, null);
   } finally {
     harness.close();
   }
@@ -349,40 +415,46 @@ test("two compactions each skip only the copied tail just written", async () => 
   }
 });
 
-test("a new assistant identical to the copied tail still counts", async () => {
-  const same = tokens(400, 30);
-  const summary = tokens(7, 4);
-  const { models } = scripted([same, summary, same], ["ok", validSummary("folded"), "ok"]);
-  const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: true, maxTokens: 200 } });
+test("an earlier unique entry directly after the summary does not count", async () => {
+  const storage = new MemoryStorage();
+  const odd = tokens(9, 8);
+  await storage.commit([
+    { type: "entry", id: "user", parentId: null, timestamp: 10, payload: { type: "message", message: { role: "user", content: "seed", timestamp: 10 } } },
+    { type: "entry", id: "kept", parentId: "user", timestamp: 20, payload: { type: "message", message: assistantMessage("kept", tokens(2, 2), 20) } },
+    { type: "entry", id: "summary", parentId: "kept", timestamp: 100, payload: { type: "compaction", summary: "folded" } },
+    { type: "entry", id: "odd", parentId: "summary", timestamp: 40, payload: { type: "message", message: assistantMessage("not-a-copy", odd, 40) } },
+    { type: "set", address: value("pi.branch.tip", "main"), value: "odd" },
+  ]);
+  const { models } = scripted([]);
+  const harness = runtime(storage, models);
   try {
     const lane = harness.lane();
-    assert.equal((await lane.prompt("U".repeat(2_000))).status, "completed");
-    await finishCompaction(lane);
-    const compacted = await readUsage(lane);
-    assert.equal(compacted.contextTokens, null);
-    assert.equal(compacted.lastTurn, null);
-
-    assert.equal((await lane.prompt("three")).status, "completed");
     const entries = await lane.entries();
-    const assistants = entries.filter((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant");
-    const copied = assistants[0];
-    const created = assistants[assistants.length - 1];
-    assert.ok(copied && created);
-    assert.equal(copied.payload.type, "message");
-    assert.equal(created.payload.type, "message");
-    if (copied.payload.type !== "message" || created.payload.type !== "message") return;
-    assert.equal(copied.payload.message.role, "assistant");
-    assert.equal(created.payload.message.role, "assistant");
-    if (copied.payload.message.role !== "assistant" || created.payload.message.role !== "assistant") return;
-    assert.deepEqual(created.payload.message.content, copied.payload.message.content);
-    assert.equal(created.payload.message.usage.input, copied.payload.message.usage.input);
-    assert.equal(created.payload.message.usage.output, copied.payload.message.usage.output);
-    const summaryEntry = entries.find((entry) => entry.payload.type === "compaction");
-    assert.ok(summaryEntry);
-    assert.ok(created.timestamp >= summaryEntry.timestamp);
+    const oddEntry = entries.find((entry) => entry.id === "odd");
+    assert.equal(oddEntry?.payload.type, "message");
+    assert.equal(oddEntry?.timestamp, 40);
     const usage = await readUsage(lane);
-    assert.deepEqual(usage.lastTurn, turn(400, 30));
-    assert.equal(usage.contextTokens, 430);
+    assert.equal(usage.lastTurn, null);
+    assert.equal(usage.contextTokens, null);
+  } finally {
+    harness.close();
+  }
+});
+
+test("an entry written at the summary timestamp still counts", async () => {
+  const storage = new MemoryStorage();
+  const stamped = 1_700_000_000_000;
+  await storage.commit([
+    { type: "entry", id: "summary", parentId: null, timestamp: stamped, payload: { type: "compaction", summary: "folded" } },
+    { type: "entry", id: "fresh", parentId: "summary", timestamp: stamped, payload: { type: "message", message: assistantMessage("fresh", tokens(4, 5), stamped) } },
+    { type: "set", address: value("pi.branch.tip", "main"), value: "fresh" },
+  ]);
+  const { models } = scripted([]);
+  const harness = runtime(storage, models);
+  try {
+    const usage = await readUsage(harness.lane());
+    assert.deepEqual(usage.lastTurn, turn(4, 5));
+    assert.equal(usage.contextTokens, 9);
   } finally {
     harness.close();
   }
@@ -397,7 +469,7 @@ test("a fresh fork does not inherit the parent cache total", async () => {
     const forkAt = (await main.snapshot()).tipId;
     assert.equal((await main.fork("side", forkAt)).ok, true);
     const inherited = await readUsage(harness.lane("side"));
-    assert.deepEqual(inherited.lastTurn, { input: 10, output: 1, cacheRead: 100, cacheWrite: null });
+    assert.deepEqual(inherited.lastTurn, turn(10, 1, { cacheRead: 100 }));
     assert.deepEqual(inherited.total, total(0, 0));
     assert.equal(inherited.contextTokens, 111);
   } finally {
@@ -405,7 +477,7 @@ test("a fresh fork does not inherit the parent cache total", async () => {
   }
 });
 
-test("navigating back without a summary keeps abandoned rows and leaves cache null", async () => {
+test("navigating back without a summary keeps abandoned rows in the cache sum", async () => {
   const { models } = scripted([
     tokens(11, 3, { cacheRead: 100 }),
     tokens(17, 5, { cacheRead: 40 }),
@@ -423,9 +495,14 @@ test("navigating back without a summary keeps abandoned rows and leaves cache nu
     const moved = await lane.drive(admitted.value.operationId);
     assert.equal(moved.ok && moved.value.kind === "settled" ? moved.value.result.status : "", "completed");
     const usage = await readUsage(lane);
-    assert.deepEqual(usage.lastTurn, { input: 11, output: 3, cacheRead: 100, cacheWrite: null });
+    assert.deepEqual(usage.lastTurn, turn(11, 3, { cacheRead: 100 }));
     assert.equal(usage.contextTokens, 114);
-    assert.deepEqual(usage.total, total(28, 8));
+    assert.equal(usage.total.input, 28);
+    assert.equal(usage.total.output, 8);
+    assert.equal(usage.total.cacheRead, 140);
+    assert.equal(usage.total.cacheWrite, 0);
+    assert.equal(usage.total.hitRate, cacheHitRate({ input: 28, cacheRead: 140 }));
+    assert.equal(usage.total.cost?.total, null);
     assert.equal((await lane.entries()).some((entry) => entry.payload.type === "compaction"), false);
   } finally {
     harness.close();
@@ -660,6 +737,308 @@ test("a forked lane totals only its own operations and reads lastTurn from its b
     assert.deepEqual(sideUsage.lastTurn, turn(30, 3));
     assert.deepEqual(sideUsage.total, total(30, 3));
     assert.equal(sideUsage.contextTokens, 33);
+  } finally {
+    harness.close();
+  }
+});
+
+test("a fresh lane with a hit price sums cache reads and prices the rows", async () => {
+  const first = tokens(4, 2, { cacheRead: 6, cacheWrite: 1 });
+  const second = tokens(3, 5, { cacheRead: 8, cacheWrite: 2 });
+  const provider = fauxProvider({
+    respond: (_context, _options, state) => fauxAssistant(`reply-${state.callCount}`, {
+      usage: state.callCount === 1 ? first : second,
+    }),
+  });
+  const model = priceOf(provider, { input: 2_000_000, output: 4_000_000, cacheRead: 500_000, cacheWrite: 1_000_000 });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    assert.equal((await lane.prompt("two")).status, "completed");
+    const usage = await readUsage(lane);
+    const one = usageCost(model, first);
+    const two = usageCost(model, second);
+    assert.ok(one && two && one.total !== null && two.total !== null && one.cacheRead !== null && two.cacheRead !== null);
+    const cacheRead = (first.cacheRead ?? 0) + (second.cacheRead ?? 0);
+    const cacheWrite = (first.cacheWrite ?? 0) + (second.cacheWrite ?? 0);
+    assert.equal(usage.total.cacheRead, cacheRead);
+    assert.equal(usage.total.cacheWrite, cacheWrite);
+    assert.equal(typeof usage.total.hitRate, "number");
+    assert.equal(usage.total.hitRate, cacheHitRate({
+      input: first.input + second.input,
+      cacheRead,
+      cacheWrite,
+    }));
+    assert.equal(typeof usage.total.cost?.total, "number");
+    assert.equal(usage.total.cost?.total, one.total + two.total);
+    assert.equal(usage.total.cost?.input, one.input + two.input);
+    assert.equal(usage.total.cost?.output, one.output + two.output);
+    assert.equal(usage.total.cost?.cacheRead, one.cacheRead + two.cacheRead);
+    assert.equal(usage.total.cost?.cacheWrite, one.cacheWrite + two.cacheWrite);
+    assert.equal(usage.lastTurn?.hitRate, cacheHitRate(second));
+    assert.deepEqual(usage.lastTurn?.cost, two);
+    const rows = await harness.storage.read((view) => view.usageRows());
+    assert.equal(rows.length, 2);
+    assert.equal(rows.every((row) => row.cacheRead !== undefined && row.model?.modelId === "faux-1"), true);
+  } finally {
+    harness.close();
+  }
+});
+
+test("cumulative cost sums each row at that row's own prices", async () => {
+  const first = tokens(10, 4, { cacheRead: 2, cacheWrite: 1 });
+  const second = tokens(8, 3, { cacheRead: 5, cacheWrite: 0 });
+  let call = 0;
+  const respond = () => {
+    call += 1;
+    return fauxAssistant(call === 1 ? "one" : "two", { usage: call === 1 ? first : second });
+  };
+  const alpha = fauxProvider({ id: "alpha", modelId: "alpha-1", respond });
+  const beta = fauxProvider({ id: "beta", modelId: "beta-1", respond });
+  const alphaModel = priceOf(alpha, { input: 1_000_000, output: 2_000_000, cacheRead: 100_000, cacheWrite: 200_000 });
+  const betaModel = priceOf(beta, { input: 3_000_000, output: 5_000_000, cacheRead: 400_000, cacheWrite: 600_000 });
+  const models = createModels();
+  models.setProvider(alpha);
+  models.setProvider(beta);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "alpha", modelId: "alpha-1" },
+    compaction: { enabled: false, maxTokens: 50_000 },
+  });
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    assert.equal((await lane.configure({ provider: "beta", modelId: "beta-1" })).ok, true);
+    assert.equal((await lane.prompt("two")).status, "completed");
+    const usage = await readUsage(lane);
+    const left = usageCost(alphaModel, first);
+    const right = usageCost(betaModel, second);
+    assert.ok(left && right && left.total !== null && right.total !== null);
+    assert.ok(left.cacheRead !== null && right.cacheRead !== null);
+    assert.deepEqual(usage.lastTurn?.cost, right);
+    assert.equal(usage.lastTurn?.hitRate, cacheHitRate(second));
+    assert.equal(usage.total.cost?.input, left.input + right.input);
+    assert.equal(usage.total.cost?.output, left.output + right.output);
+    assert.equal(usage.total.cost?.cacheRead, left.cacheRead + right.cacheRead);
+    assert.equal(usage.total.cost?.cacheWrite, left.cacheWrite + right.cacheWrite);
+    assert.equal(usage.total.cost?.total, left.total + right.total);
+    const rows = await harness.storage.read((view) => view.usageRows());
+    assert.deepEqual(rows.map((row) => row.model), [
+      { provider: "alpha", modelId: "alpha-1" },
+      { provider: "beta", modelId: "beta-1" },
+    ]);
+  } finally {
+    harness.close();
+  }
+});
+
+test("a cache hit without a hit price nulls that charge and the cumulative total", async () => {
+  const pricedUsage = tokens(5, 1, { cacheRead: 2, cacheWrite: 0 });
+  const missed = tokens(4, 2, { cacheRead: 9, cacheWrite: 3 });
+  let call = 0;
+  const respond = () => {
+    call += 1;
+    return fauxAssistant(call === 1 ? "one" : "two", { usage: call === 1 ? pricedUsage : missed });
+  };
+  const priced = fauxProvider({ id: "priced", modelId: "priced-1", respond });
+  const bare = fauxProvider({ id: "bare", modelId: "bare-1", respond });
+  const pricedModel = priceOf(priced, { input: 1_000_000, output: 2_000_000, cacheRead: 100_000, cacheWrite: 100_000 });
+  const bareModel = priceOf(bare, { input: 3_000_000, output: 4_000_000, cacheWrite: 500_000 });
+  const models = createModels();
+  models.setProvider(priced);
+  models.setProvider(bare);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "priced", modelId: "priced-1" },
+    compaction: { enabled: false, maxTokens: 50_000 },
+  });
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    assert.equal((await lane.configure({ provider: "bare", modelId: "bare-1" })).ok, true);
+    assert.equal((await lane.prompt("two")).status, "completed");
+    const usage = await readUsage(lane);
+    const left = usageCost(pricedModel, pricedUsage);
+    const right = usageCost(bareModel, missed);
+    assert.ok(left && right);
+    assert.equal(right.cacheRead, null);
+    assert.equal(right.total, null);
+    assert.equal(typeof right.input, "number");
+    assert.equal(typeof right.output, "number");
+    assert.deepEqual(usage.lastTurn?.cost, right);
+    assert.equal(usage.lastTurn?.hitRate, cacheHitRate(missed));
+    assert.equal(usage.total.cost?.input, left.input + right.input);
+    assert.equal(usage.total.cost?.output, left.output + right.output);
+    assert.equal(usage.total.cost?.cacheWrite, left.cacheWrite + right.cacheWrite);
+    assert.equal(usage.total.cost?.cacheRead, null);
+    assert.equal(usage.total.cost?.total, null);
+  } finally {
+    harness.close();
+  }
+});
+
+test("an old usage row is priced from the lane model and nulls the cache sum", async () => {
+  const provider = fauxProvider();
+  const model = priceOf(provider, { input: 1_000_000, output: 2_000_000, cacheRead: 100_000, cacheWrite: 100_000 });
+  const models = createModels();
+  models.setProvider(provider);
+  const storage = new MemoryStorage();
+  await storage.commit([
+    { type: "usage", id: "old", operationId: "op-old", input: 10, output: 4, totalTokens: 14 },
+    { type: "set", address: value("pi.result", "op-old"), value: { lane: "main" } },
+    {
+      type: "usage",
+      id: "fresh",
+      operationId: "op-fresh",
+      input: 1,
+      output: 1,
+      totalTokens: 2,
+      cacheRead: 5,
+      cacheWrite: 0,
+      model: { provider: "faux", modelId: "faux-1" },
+    },
+    { type: "set", address: value("pi.result", "op-fresh"), value: { lane: "main" } },
+  ]);
+  const harness = runtime(storage, models);
+  try {
+    const usage = await readUsage(harness.lane());
+    const oldCharge = usageCost(model, { input: 10, output: 4 });
+    const freshCharge = usageCost(model, { input: 1, output: 1, cacheRead: 5, cacheWrite: 0 });
+    assert.ok(oldCharge && freshCharge && oldCharge.total !== null && freshCharge.total !== null);
+    assert.equal(usage.total.input, 11);
+    assert.equal(usage.total.output, 5);
+    assert.equal(usage.total.cacheRead, null);
+    assert.equal(usage.total.cacheWrite, null);
+    assert.equal(usage.total.hitRate, null);
+    assert.equal(usage.total.cost?.total, oldCharge.total + freshCharge.total);
+    assert.equal(usage.total.cost?.input, oldCharge.input + freshCharge.input);
+  } finally {
+    harness.close();
+  }
+});
+
+test("an old usage row with no resolvable model nulls the cumulative cost", async () => {
+  const { models } = scripted([]);
+  const storage = new MemoryStorage();
+  await storage.commit([
+    { type: "usage", id: "old", operationId: "op-old", input: 10, output: 4, totalTokens: 14 },
+    { type: "set", address: value("pi.result", "op-old"), value: { lane: "main" } },
+  ]);
+  const harness = runtime(storage, models, { modelId: "missing" });
+  try {
+    const usage = await readUsage(harness.lane());
+    assert.equal(usage.total.input, 10);
+    assert.equal(usage.total.output, 4);
+    assert.equal(usage.total.cacheRead, null);
+    assert.equal(usage.total.cost, null);
+    assert.equal(usage.total.hitRate, null);
+  } finally {
+    harness.close();
+  }
+});
+
+test("laneStatus reports the retry error and its deadline", async () => {
+  const provider = fauxProvider({
+    respond: () => fauxAssistant("later", { stopReason: "error", retryable: true, errorMessage: "rate limited" }),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    maxAttempts: 3,
+    retry: { baseDelayMs: 400, maxDelayMs: 1_000 },
+    compaction: { enabled: false, maxTokens: 50_000 },
+  });
+  try {
+    const lane = harness.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const before = Date.now();
+    const outcome = await lane.drive(admitted.value.operationId);
+    const after = Date.now();
+    assert.equal(outcome.ok && outcome.value.kind === "waiting", true);
+    if (!outcome.ok || outcome.value.kind !== "waiting") return;
+    const status = assertRoundTrip(await lane.laneStatus());
+    assert.equal(status.retryReason, "rate limited");
+    assert.equal(status.compacting, false);
+    assert.equal(status.notBefore, outcome.value.notBefore);
+    assert.ok(status.notBefore !== null && status.notBefore >= before + 400 && status.notBefore <= after + 400);
+  } finally {
+    harness.close();
+  }
+});
+
+test("laneStatus reports compaction while the summary stream is open", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const provider = fauxProvider({
+    respond: async (_context, _options, state) => {
+      if (state.callCount === 2) await gate;
+      return fauxAssistant(state.callCount === 1 ? "ok" : validSummary("folded"), { usage: tokens(state.callCount, 1) });
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: false, maxTokens: 50_000 } });
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const admitted = await lane.accept({ kind: "compaction" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const driving = lane.drive(admitted.value.operationId);
+    await until(async () => (await lane.laneStatus()).compacting);
+    const status = assertRoundTrip(await lane.laneStatus());
+    assert.equal(status.compacting, true);
+    assert.equal(status.notBefore, null);
+    assert.equal(status.retryReason, null);
+    release();
+    const folded = await driving;
+    assert.equal(folded.ok && folded.value.kind === "settled" ? folded.value.result.status : "", "completed");
+    assert.equal((await lane.laneStatus()).compacting, false);
+  } finally {
+    release();
+    harness.close();
+  }
+});
+
+test("an approval wait leaves retryReason and notBefore null", async () => {
+  const provider = fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([fauxToolCall("work", { path: "a" }, "call-1")])
+      : fauxAssistant("after"),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    tools: [{
+      name: "work",
+      description: "work",
+      parameters: { type: "object", additionalProperties: true },
+      execute: async () => ({ content: [{ type: "text", text: "work" }] }),
+    }],
+    requiresApproval: () => true,
+    compaction: { enabled: false, maxTokens: 50_000 },
+  });
+  try {
+    const lane = harness.lane();
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.equal(outcome.ok && outcome.value.kind, "waiting");
+    assert.equal((await lane.pendingApprovals()).items.length, 1);
+    const status = assertRoundTrip(await lane.laneStatus());
+    assert.equal(status.retryReason, null);
+    assert.equal(status.notBefore, null);
+    assert.equal(status.compacting, false);
   } finally {
     harness.close();
   }
