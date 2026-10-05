@@ -649,3 +649,101 @@ test("a live lock holder does not crash the host or leave an orphan job", { time
   assert.equal(readJobs(root).find((job) => job.id === id)?.status, "running");
   assert.equal(existsSync(orphan), false);
 });
+
+test("callback persist retries do not block the event loop while a live process holds the lock", { timeout: 30_000 }, async (t) => {
+  const root = directory(t);
+  const repo = fileURLToPath(new URL("../../..", import.meta.url));
+  const jobsHref = new URL("../src/jobs.ts", import.meta.url).href;
+  const phase = join(root, "phase");
+  const go = join(root, "go");
+  const markerFile = join(root, "marker-text");
+  const marker = `mark-${process.pid}-${Date.now()}`;
+  const script = `const fs=require("fs");process.stdout.write("hello-first\\n");fs.writeFileSync(${JSON.stringify(phase)},"1");const end=Date.now()+20000;while(!fs.existsSync(${JSON.stringify(go)})&&Date.now()<end){Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40);}process.stdout.write(fs.readFileSync(${JSON.stringify(markerFile)},"utf8"));setInterval(()=>{},1000);`;
+  const jobs = openJobRegistry(root);
+  t.after(() => jobs.close());
+  const id = jobs.start(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`);
+  const file = jobsFile(root);
+  await until(() => {
+    if (!existsSync(phase) || readFileSync(phase, "utf8") !== "1") return false;
+    try { return readFileSync(file, "utf8").includes("hello-first"); } catch { return false; }
+  }, "first output was not stored");
+
+  let stderr = "";
+  const holder = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+    import { closeSync, constants, openSync, unlinkSync, writeSync } from "node:fs";
+    import { processStartTicks } from ${JSON.stringify(jobsHref)};
+    const lock = process.env.LOCK_PATH;
+    if (!lock) throw new Error("missing lock");
+    const fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    writeSync(fd, JSON.stringify({ pid: process.pid, startTicks: processStartTicks(process.pid) }));
+    closeSync(fd);
+    process.stdout.write("held\\n");
+    const release = () => {
+      try { unlinkSync(lock); } catch { /* already gone */ }
+      process.exit(0);
+    };
+    process.on("SIGTERM", release);
+    setTimeout(release, 20_000);
+  `], {
+    cwd: repo,
+    env: { ...process.env, LOCK_PATH: `${file}.lock` },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  holder.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  t.after(() => holder.kill("SIGTERM"));
+  await new Promise<void>((resolve, reject) => {
+    let buf = "";
+    const timer = setTimeout(() => reject(new Error(`lock holder did not start\n${stderr}`)), 10_000);
+    holder.stdout?.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      if (!buf.includes("held\n")) return;
+      clearTimeout(timer);
+      resolve();
+    });
+    holder.once("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`lock holder exited ${code}\n${stderr}`));
+    });
+  });
+
+  const stamps: number[] = [];
+  const tick = setInterval(() => { stamps.push(Date.now()); }, 10);
+  t.after(() => clearInterval(tick));
+  writeFileSync(markerFile, marker);
+  writeFileSync(go, "1");
+  await until(() => jobs.output(id)?.includes(marker) ?? false, "second output did not reach memory");
+  const killed = jobs.kill(id);
+  assert.match(killed.text, new RegExp(`killed ${id}`));
+  await delay(600);
+  clearInterval(tick);
+  assert.equal(holder.exitCode, null);
+  let longest = 0;
+  for (let i = 1; i < stamps.length; i += 1) {
+    const gap = (stamps[i] ?? 0) - (stamps[i - 1] ?? 0);
+    if (gap > longest) longest = gap;
+  }
+  assert.ok(stamps.length > 20, "interval did not sample the event loop");
+  assert.ok(longest <= 100, `event loop stalled for ${longest}ms`);
+  const during = readFileSync(file, "utf8");
+  assert.equal(during.includes(marker), false);
+  assert.equal(readJobs(root).find((job) => job.id === id)?.status, "running");
+
+  const releasedAt = Date.now();
+  holder.kill("SIGTERM");
+  const deadline = releasedAt + 5_000;
+  let stored = false;
+  while (Date.now() <= deadline) {
+    try {
+      const raw = readFileSync(file, "utf8");
+      if (raw.includes(marker) && readJobs(root).find((job) => job.id === id)?.status === "killed") {
+        stored = true;
+        break;
+      }
+    } catch { /* writer may be replacing the file */ }
+    await delay(20);
+  }
+  assert.equal(stored, true, "persist did not finish within 5s of lock release");
+  assert.ok(Date.now() - releasedAt <= 5_000);
+});

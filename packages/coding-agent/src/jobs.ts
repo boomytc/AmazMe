@@ -7,9 +7,12 @@ import { prepareWorkspace, startBash, type StartedBash } from "./sandbox/run.ts"
  * 问题：同一工作区可以同时有两个宿主。后打开的那个若把文件里所有 running 都收成 lost，会杀掉先打开的宿主还在跑的进程，两边还会互相盖写这份文件。
  * 例子：`amazme` 里挂着一个后台服务，接着 `amazme -p` 用临时 socket 再开一份。第二份不能把第一份的服务杀掉。
  * 每条记录带上宿主进程的 `owner`。打开时只回收 owner 已经不在的任务。落盘前重读文件，只替换自己的条目。
- * 两次落盘会交错：各自读到旧内容再整文件写回，后写的一份丢掉先写的新任务。写之前用 `jobs.json.lock` 独占；锁里是持有者的 pid 和 starttime，进程不在就抢走，最多等两秒。
+ * 两次落盘会交错：各自读到旧内容再整文件写回，后写的一份丢掉先写的新任务。写之前用 `jobs.json.lock` 独占；锁里是持有者的 pid 和 starttime，进程不在就抢走。
+ * 问题：输出定时器、进程结束、kill、lose 若同步空等这把锁，事件循环会停住。
+ * 例子：另一个活进程占着锁时，10ms 的定时器会出现大约两秒的空隙。
+ * 这些路径用 tryLock，只抢一次，忙就立刻返回。写不上就留着 pendingWrite，200ms 起每次加倍、最多 5s 再试。写成功后清掉 pendingWrite，退避回到 200ms。`start` 和 `open` 仍最多等两秒。
  * 结束了的任务只留最新 50 条，running 不删。输出和状态都没变时不重写文件。
- * 两秒内拿不到锁时，打开登记跳过回收，不把异常抛出进程。定时器和进程结束回调记下还要写，下次再试。任务编号在启动进程之前分配。
+ * 打开登记时若两秒内拿不到锁，跳过回收，不把异常抛出进程。任务编号在启动进程之前分配。
  */
 export type JobStatus = "running" | "exited" | "killed" | "lost";
 
@@ -48,6 +51,8 @@ const FINISHED_KEEP = 50;
 const LOCK_WAIT_MS = 2_000;
 const LOCK_POLL_MS = 20;
 const LOCK_BUSY = "jobs.json.lock busy";
+const RETRY_START_MS = 200;
+const RETRY_MAX_MS = 5_000;
 
 const openByCwd = new Map<string, JobRegistry>();
 
@@ -89,8 +94,10 @@ export class JobRegistry {
   private outputTimer: ReturnType<typeof setTimeout> | undefined;
   private closing: Promise<void> | undefined;
   private lockDepth = 0;
-  /** A timer or exit callback failed to write. Memory is unchanged; the next persist retries. */
+  /** A callback persist could not write. Memory stays; retries back off until a write succeeds. */
   private pendingWrite = false;
+  private retryDelayMs = RETRY_START_MS;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
 
   private constructor(cwd: string) {
     this.cwd = cwd;
@@ -278,19 +285,43 @@ export class JobRegistry {
     });
   }
 
+  /** `start` may wait out the lock. A failed write throws so the caller can kill the unrecorded process. */
   private persist(): void {
     this.withLock(() => this.writeStore());
-    this.pendingWrite = false;
+    this.clearPendingWrite();
   }
 
-  /** Timer and exit callbacks must not reject. A failed write stays in memory and retries. */
+  /**
+   * Output timer, process exit, kill, and lose. One lock attempt, then return.
+   * A failed write stays pending and retries with exponential backoff.
+   */
   private persistOrRetry(): void {
     try {
-      this.persist();
+      this.withTryLock(() => this.writeStore());
+      this.clearPendingWrite();
     } catch {
       this.pendingWrite = true;
-      this.scheduleOutput();
+      this.scheduleRetry();
     }
+  }
+
+  private clearPendingWrite(): void {
+    this.pendingWrite = false;
+    this.retryDelayMs = RETRY_START_MS;
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+  }
+
+  private scheduleRetry(): void {
+    if (this.retryTimer !== undefined) return;
+    const delay = this.retryDelayMs;
+    this.retryDelayMs = Math.min(this.retryDelayMs * 2, RETRY_MAX_MS);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.persistOrRetry();
+    }, delay);
   }
 
   /** Caller holds `jobs.json.lock`. Re-reads, merges this registry's jobs, prunes, and skips an identical write. */
@@ -327,6 +358,18 @@ export class JobRegistry {
   private withLock<T>(body: () => T): T {
     if (this.lockDepth > 0) return body();
     return withJobsLock(this.file, this.owner, () => {
+      this.lockDepth += 1;
+      try {
+        return body();
+      } finally {
+        this.lockDepth -= 1;
+      }
+    });
+  }
+
+  private withTryLock<T>(body: () => T): T {
+    if (this.lockDepth > 0) return body();
+    return tryJobsLock(this.file, this.owner, () => {
       this.lockDepth += 1;
       try {
         return body();
@@ -398,6 +441,46 @@ function withJobsLock<T>(file: string, owner: JobOwner, body: () => T): T {
   } finally {
     releaseJobsLock(lock, owner);
   }
+}
+
+/** One attempt. A live holder returns immediately. An abandoned lock is taken without waiting. */
+function tryJobsLock<T>(file: string, owner: JobOwner, body: () => T): T {
+  mkdirSync(dirname(file), { recursive: true });
+  const lock = `${file}.lock`;
+  if (!tryAcquireJobsLock(lock, owner)) throw new Error(LOCK_BUSY);
+  try {
+    return body();
+  } finally {
+    releaseJobsLock(lock, owner);
+  }
+}
+
+function tryAcquireJobsLock(lock: string, owner: JobOwner): boolean {
+  if (claimJobsLock(lock, owner)) return true;
+  if (!lockAbandoned(lock)) return false;
+  try { unlinkSync(lock); } catch { /* the other waiter already removed it */ }
+  return claimJobsLock(lock, owner);
+}
+
+function claimJobsLock(lock: string, owner: JobOwner): boolean {
+  let fd: number;
+  try {
+    fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    if (code !== "EEXIST") throw error;
+    return false;
+  }
+  try {
+    writeSync(fd, JSON.stringify({ pid: owner.pid, startTicks: owner.startTicks }));
+  } finally {
+    closeSync(fd);
+  }
+  if (sameOwner(readLockOwner(lock), owner)) return true;
+  if (readLockOwner(lock) === null) {
+    try { unlinkSync(lock); } catch { /* already gone */ }
+  }
+  return false;
 }
 
 function acquireJobsLock(lock: string, owner: JobOwner): void {
