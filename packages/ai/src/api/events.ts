@@ -238,11 +238,15 @@ function parsedArguments(value: string): unknown {
 /**
  * Prompt counts that already include cache hits. The miss portion is `prompt - cacheRead`.
  * A missing cache read is not zero and is not subtracted.
+ * A cache read larger than the prompt does not match, so it is dropped and `input` stays the prompt.
  */
-export function cacheMissInput(prompt: number | undefined, cacheRead: number | undefined): number | undefined {
-  if (prompt === undefined) return undefined;
-  if (cacheRead === undefined) return prompt;
-  return prompt - cacheRead;
+export function cacheMissInput(prompt: number | undefined, cacheRead: number | undefined): {
+  input: number | undefined;
+  cacheRead: number | undefined;
+} {
+  if (prompt === undefined || cacheRead === undefined) return { input: prompt, cacheRead };
+  if (cacheRead > prompt) return { input: prompt, cacheRead: undefined };
+  return { input: prompt - cacheRead, cacheRead };
 }
 
 export function usageFromCounts(
@@ -268,7 +272,7 @@ export function usageFromCounts(
   return {
     input: prompt,
     output: completion,
-    totalTokens: finite(total) ?? prompt + completion,
+    totalTokens: finite(total) ?? prompt + (cacheRead ?? 0) + (cacheWrite ?? 0) + completion,
     cost: { input: inputCost, output: outputCost, total: inputCost + outputCost + cacheReadCost + cacheWriteCost },
     ...(cacheRead !== undefined ? { cacheRead } : {}),
     ...(cacheWrite !== undefined ? { cacheWrite } : {}),

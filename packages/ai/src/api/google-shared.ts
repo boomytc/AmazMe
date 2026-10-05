@@ -30,13 +30,13 @@ export function googleBody(model: Model, context: Context, outputCap: number, ef
 export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decoded: Record<string, unknown>, finish: { reason: string; tools: number }): void {
   const usage = isRecord(decoded.usageMetadata) ? decoded.usageMetadata : undefined;
   if (usage) {
-    const cacheRead = numberOf(usage.cachedContentTokenCount);
+    const cache = cacheMissInput(numberOf(usage.promptTokenCount), numberOf(usage.cachedContentTokenCount));
     const reported = usageFromCounts(
       model,
-      cacheMissInput(numberOf(usage.promptTokenCount), cacheRead),
+      cache.input,
       (numberOf(usage.candidatesTokenCount) ?? 0) + (numberOf(usage.thoughtsTokenCount) ?? 0),
       numberOf(usage.totalTokenCount),
-      { cacheRead },
+      { cacheRead: cache.cacheRead },
     );
     if (reported) acc.usage(reported);
   }

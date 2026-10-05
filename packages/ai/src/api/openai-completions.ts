@@ -612,13 +612,13 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
  */
 function usageFromChunk(model: Model, raw: unknown): Usage | undefined {
   if (!isRecord(raw)) return undefined;
-  const cacheRead = cacheReadFromCompletions(raw);
+  const cache = cacheMissInput(finiteNumber(raw.prompt_tokens), cacheReadFromCompletions(raw));
   return usageFromCounts(
     model,
-    cacheMissInput(finiteNumber(raw.prompt_tokens), cacheRead),
+    cache.input,
     finiteNumber(raw.completion_tokens),
     finiteNumber(raw.total_tokens),
-    { cacheRead },
+    { cacheRead: cache.cacheRead },
   );
 }
 

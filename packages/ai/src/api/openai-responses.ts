@@ -162,13 +162,13 @@ export async function consumeResponses(
 function responsesUsage(model: Model, raw: unknown): Usage | undefined {
   if (!isRecord(raw)) return undefined;
   const details = isRecord(raw.input_tokens_details) ? raw.input_tokens_details : undefined;
-  const cacheRead = details ? numberField(details, "cached_tokens") : undefined;
+  const cache = cacheMissInput(numberField(raw, "input_tokens"), details ? numberField(details, "cached_tokens") : undefined);
   return usageFromCounts(
     model,
-    cacheMissInput(numberField(raw, "input_tokens"), cacheRead),
+    cache.input,
     numberField(raw, "output_tokens"),
     numberField(raw, "total_tokens"),
-    cacheRead !== undefined ? { cacheRead } : undefined,
+    cache.cacheRead !== undefined ? { cacheRead: cache.cacheRead } : undefined,
   );
 }
 

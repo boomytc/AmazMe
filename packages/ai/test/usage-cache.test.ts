@@ -101,6 +101,13 @@ test("completions maps a reported cache read and leaves cache write unset", asyn
   assertCache(absent, undefined, undefined);
   assert.equal(absent.input, 10);
   assertPrompt(absent, 10);
+
+  const oversized = await run([
+    { choices: [{ delta: { content: "Hi" } }] },
+    { ...stop, usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, prompt_tokens_details: { cached_tokens: 12 } } },
+  ]);
+  assertCache(oversized, undefined, undefined);
+  assert.equal(oversized.input, 10);
 });
 
 const OPTIONS = { apiKey: "recorded-key", baseUrl: "https://recorded.test/v1" };
@@ -137,6 +144,7 @@ test("responses, anthropic, google, bedrock, and pi map only cache counts they r
   assert.equal(anthropic.output, 1);
   assertCache(anthropic, 6, 2);
   assertPrompt(anthropic, 17);
+  assert.equal(anthropic.totalTokens, 18);
 
   const anthropicBare = await settle(anthropicMessagesApi({
     fetch: recordedFetch(sse([
