@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createModels, type Usage } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
-import { AgentHarness, effectiveInputThreshold, type HarnessTool, type LaneUsage, type LaneUsageView } from "@amazme/durable";
+import { AgentHarness, type AgentLane, effectiveInputThreshold, type HarnessTool, type LaneUsage, type LaneUsageView } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
@@ -58,6 +58,16 @@ async function readUsage(lane: { usage(): Promise<LaneUsageView>; snapshot(): Pr
   const usage = assertRoundTrip(await lane.usage());
   assert.equal(usage.version, snap.version);
   return usage;
+}
+
+async function finishCompaction(lane: AgentLane): Promise<void> {
+  // The copied tail keeps the source timestamp. A summary written in that same millisecond is not strictly later, so the position rule would keep the copy.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const admitted = await lane.accept({ kind: "compaction" });
+  assert.equal(admitted.ok, true);
+  if (!admitted.ok) return;
+  const folded = await lane.drive(admitted.value.operationId);
+  assert.equal(folded.ok && folded.value.kind === "settled" ? folded.value.result.status : "", "completed");
 }
 
 async function until(predicate: () => Promise<boolean>): Promise<void> {
@@ -260,11 +270,7 @@ test("a real compaction drops the copied assistant until the next turn", async (
     assert.equal((await lane.prompt("U".repeat(2_000))).status, "completed");
     const before = await readUsage(lane);
     assert.equal(before.contextTokens, 430);
-    const admitted = await lane.accept({ kind: "compaction" });
-    assert.equal(admitted.ok, true);
-    if (!admitted.ok) return;
-    const folded = await lane.drive(admitted.value.operationId);
-    assert.equal(folded.ok && folded.value.kind === "settled" ? folded.value.result.status : "", "completed");
+    await finishCompaction(lane);
     const entries = await lane.entries();
     let summaryAt = -1;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -287,6 +293,95 @@ test("a real compaction drops the copied assistant until the next turn", async (
     assert.deepEqual(continued.lastTurn, turn(8, 9));
     assert.equal(continued.contextTokens, 17);
     assert.deepEqual(continued.total, total(415, 43));
+  } finally {
+    harness.close();
+  }
+});
+
+test("two compactions each skip only the copied tail just written", async () => {
+  const first = tokens(400, 30);
+  const summary = tokens(7, 4);
+  const second = tokens(8, 9);
+  const summaryAgain = tokens(5, 6);
+  const third = tokens(3, 4);
+  const { models } = scripted(
+    [first, summary, second, summaryAgain, third],
+    ["ok", "folded", "next", "folded-again", "after"],
+  );
+  const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: false, maxTokens: 200 } });
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("U".repeat(2_000))).status, "completed");
+    await finishCompaction(lane);
+    let entries = await lane.entries();
+    let summaryAt = entries.length - 1;
+    while (summaryAt >= 0 && entries[summaryAt]?.payload.type !== "compaction") summaryAt -= 1;
+    assert.ok(summaryAt >= 0);
+    assert.equal(entries.slice(summaryAt + 1).some((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant"), true);
+    const once = await readUsage(lane);
+    assert.equal(once.contextTokens, null);
+    assert.equal(once.lastTurn, null);
+
+    assert.equal((await lane.prompt("U".repeat(2_000))).status, "completed");
+    const between = await readUsage(lane);
+    assert.deepEqual(between.lastTurn, turn(8, 9));
+    assert.equal(between.contextTokens, 17);
+
+    await finishCompaction(lane);
+    entries = await lane.entries();
+    summaryAt = entries.length - 1;
+    while (summaryAt >= 0 && entries[summaryAt]?.payload.type !== "compaction") summaryAt -= 1;
+    assert.ok(summaryAt >= 0);
+    assert.equal(entries.slice(summaryAt + 1).some((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant"), true);
+    const twice = await readUsage(lane);
+    assert.equal(twice.contextTokens, null);
+    assert.equal(twice.lastTurn, null);
+    assert.deepEqual(twice.total, total(420, 49));
+
+    assert.equal((await lane.prompt("three")).status, "completed");
+    const continued = await readUsage(lane);
+    assert.deepEqual(continued.lastTurn, turn(3, 4));
+    assert.equal(continued.contextTokens, 7);
+    assert.deepEqual(continued.total, total(423, 53));
+  } finally {
+    harness.close();
+  }
+});
+
+test("a new assistant identical to the copied tail still counts", async () => {
+  const same = tokens(400, 30);
+  const summary = tokens(7, 4);
+  const { models } = scripted([same, summary, same], ["ok", "folded", "ok"]);
+  const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: true, maxTokens: 200 } });
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("U".repeat(2_000))).status, "completed");
+    await finishCompaction(lane);
+    const compacted = await readUsage(lane);
+    assert.equal(compacted.contextTokens, null);
+    assert.equal(compacted.lastTurn, null);
+
+    assert.equal((await lane.prompt("three")).status, "completed");
+    const entries = await lane.entries();
+    const assistants = entries.filter((entry) => entry.payload.type === "message" && entry.payload.message.role === "assistant");
+    const copied = assistants[0];
+    const created = assistants[assistants.length - 1];
+    assert.ok(copied && created);
+    assert.equal(copied.payload.type, "message");
+    assert.equal(created.payload.type, "message");
+    if (copied.payload.type !== "message" || created.payload.type !== "message") return;
+    assert.equal(copied.payload.message.role, "assistant");
+    assert.equal(created.payload.message.role, "assistant");
+    if (copied.payload.message.role !== "assistant" || created.payload.message.role !== "assistant") return;
+    assert.deepEqual(created.payload.message.content, copied.payload.message.content);
+    assert.equal(created.payload.message.usage.input, copied.payload.message.usage.input);
+    assert.equal(created.payload.message.usage.output, copied.payload.message.usage.output);
+    const summaryEntry = entries.find((entry) => entry.payload.type === "compaction");
+    assert.ok(summaryEntry);
+    assert.ok(created.timestamp >= summaryEntry.timestamp);
+    const usage = await readUsage(lane);
+    assert.deepEqual(usage.lastTurn, turn(400, 30));
+    assert.equal(usage.contextTokens, 430);
   } finally {
     harness.close();
   }

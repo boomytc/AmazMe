@@ -194,8 +194,9 @@ interface UsageCounts {
  */
 export interface LaneUsage {
   /**
-   * Newest settled assistant created after the newest summary, excluding `error`, `aborted`, and `deferred`.
-   * A copied tail is the pre-summary message, so it does not count. Null when that suffix has none.
+   * Newest settled assistant after the newest summary, excluding `error`, `aborted`, and `deferred`.
+   * The copied tail is the contiguous run of older timestamps directly after that summary, and it does not count.
+   * Null when nothing after that run counts.
    */
   lastTurn: UsageCounts | null;
   /**
@@ -208,8 +209,9 @@ export interface LaneUsage {
    */
   total: UsageCounts;
   /**
-   * Prompt size plus output of the newest assistant created after the newest summary.
-   * A copied tail does not count. Null when that suffix has none, the same as an empty lane.
+   * Prompt size plus output of the newest assistant after the newest summary.
+   * The copied tail is the contiguous run of older timestamps directly after that summary, and it does not count.
+   * Null when nothing after that run counts, the same as an empty lane.
    */
   contextTokens: number | null;
   /**
@@ -2259,7 +2261,7 @@ function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {
 }
 
 function projectUsage(view: StorageView, lane: string, chain: readonly Entry[], options: HarnessOptions): LaneUsage {
-  const counted = entriesAfterSummary(view, chain);
+  const counted = entriesAfterSummary(chain);
   return {
     lastTurn: lastTurnUsage(counted),
     total: attributedTotal(view, lane),
@@ -2302,13 +2304,12 @@ function contextTokenCount(chain: readonly Entry[]): number | null {
 }
 
 /**
- * Entries created after the newest summary.
- * A finish compaction copies the kept tail to after the summary and assigns the copy a newer seq, so that seq
- * still looks like a later turn. The source remains stored with its original seq, the same timestamp, and the
- * same payload. A suffix entry counts only when no stored entry with an earlier seq has that timestamp and
- * payload. With no summary, the whole chain counts.
+ * Entries that count after the newest summary.
+ * A finish compaction writes the summary and the kept-tail copies in one commit. The copies sit directly after
+ * the summary and keep the source timestamp, which is strictly earlier than the summary's own timestamp.
+ * Skip that contiguous run. Count from the first entry that is not strictly earlier. With no summary, the whole chain counts.
  */
-function entriesAfterSummary(view: StorageView, chain: readonly Entry[]): Entry[] {
+function entriesAfterSummary(chain: readonly Entry[]): Entry[] {
   let summaryIndex = -1;
   for (let index = chain.length - 1; index >= 0; index -= 1) {
     if (chain[index]?.payload.type === "compaction") {
@@ -2319,21 +2320,13 @@ function entriesAfterSummary(view: StorageView, chain: readonly Entry[]): Entry[
   if (summaryIndex < 0) return [...chain];
   const summary = chain[summaryIndex];
   if (!summary) return [...chain];
-  const copied = new Set<string>();
-  for (const entry of view.entries()) {
-    if (entry.seq >= summary.seq) continue;
-    copied.add(entryIdentity(entry));
+  let start = summaryIndex + 1;
+  while (start < chain.length) {
+    const entry = chain[start];
+    if (!entry || entry.timestamp >= summary.timestamp) break;
+    start += 1;
   }
-  const suffix: Entry[] = [];
-  for (const entry of chain.slice(summaryIndex + 1)) {
-    if (copied.has(entryIdentity(entry))) continue;
-    suffix.push(entry);
-  }
-  return suffix;
-}
-
-function entryIdentity(entry: Entry): string {
-  return `${entry.timestamp}:${JSON.stringify(entry.payload)}`;
+  return chain.slice(start);
 }
 
 function attributedTotal(view: StorageView, lane: string): LaneUsage["total"] {
