@@ -21,6 +21,9 @@ function harnessText(message: HarnessMessage): string {
   return message.role === "custom" ? message.content : messageText(message);
 }
 
+const INTERRUPTED_TOOL_EFFECT =
+  "interrupted before settlement; the tool may already have executed and the result is unknown";
+
 function scripted(messages: ReturnType<typeof fauxAssistant>[]) {
   const provider = fauxProvider({
     respond: (_context, _options, state) => messages[Math.min(state.callCount - 1, messages.length - 1)] ?? fauxAssistant("empty"),
@@ -389,8 +392,9 @@ test("an interrupted unsafe tool is not repeated and keeps its checkpoint", asyn
   assert.equal(provider.state.callCount, 2);
   assert.equal(recovered.ok && recovered.value.kind === "settled" ? recovered.value.result.status : "", "completed");
   const toolEntry = (await second.lane().entries()).find((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult");
-  assert.ok(toolEntry && toolEntry.payload.type === "message");
-  assert.match(harnessText(toolEntry.payload.message), /deleted 1/);
+  assert.ok(toolEntry?.payload.type === "message" && toolEntry.payload.message.role === "toolResult");
+  assert.equal(toolEntry.payload.message.isError, true);
+  assert.equal(harnessText(toolEntry.payload.message), `${INTERRUPTED_TOOL_EFFECT}\ndeleted 1`);
 });
 
 test("an interrupted safe tool runs again with the stored arguments", async () => {
