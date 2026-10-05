@@ -656,7 +656,9 @@ test("callback persist retries do not block the event loop while a live process 
   const jobsHref = new URL("../src/jobs.ts", import.meta.url).href;
   const phase = join(root, "phase");
   const go = join(root, "go");
-  const script = `const fs=require("fs");process.stdout.write("hello-first\\n");fs.writeFileSync(${JSON.stringify(phase)},"1");const end=Date.now()+20000;while(!fs.existsSync(${JSON.stringify(go)})&&Date.now()<end){Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40);}process.stdout.write("hello-second\\n");setInterval(()=>{},1000);`;
+  const markerFile = join(root, "marker-text");
+  const marker = `mark-${process.pid}-${Date.now()}`;
+  const script = `const fs=require("fs");process.stdout.write("hello-first\\n");fs.writeFileSync(${JSON.stringify(phase)},"1");const end=Date.now()+20000;while(!fs.existsSync(${JSON.stringify(go)})&&Date.now()<end){Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40);}process.stdout.write(fs.readFileSync(${JSON.stringify(markerFile)},"utf8"));setInterval(()=>{},1000);`;
   const jobs = openJobRegistry(root);
   t.after(() => jobs.close());
   const id = jobs.start(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`);
@@ -709,8 +711,9 @@ test("callback persist retries do not block the event loop while a live process 
   const stamps: number[] = [];
   const tick = setInterval(() => { stamps.push(Date.now()); }, 10);
   t.after(() => clearInterval(tick));
+  writeFileSync(markerFile, marker);
   writeFileSync(go, "1");
-  await until(() => jobs.output(id)?.includes("hello-second") ?? false, "second output did not reach memory");
+  await until(() => jobs.output(id)?.includes(marker) ?? false, "second output did not reach memory");
   const killed = jobs.kill(id);
   assert.match(killed.text, new RegExp(`killed ${id}`));
   await delay(600);
@@ -724,7 +727,7 @@ test("callback persist retries do not block the event loop while a live process 
   assert.ok(stamps.length > 20, "interval did not sample the event loop");
   assert.ok(longest <= 100, `event loop stalled for ${longest}ms`);
   const during = readFileSync(file, "utf8");
-  assert.equal(during.includes("hello-second"), false);
+  assert.equal(during.includes(marker), false);
   assert.equal(readJobs(root).find((job) => job.id === id)?.status, "running");
 
   const releasedAt = Date.now();
@@ -734,7 +737,7 @@ test("callback persist retries do not block the event loop while a live process 
   while (Date.now() <= deadline) {
     try {
       const raw = readFileSync(file, "utf8");
-      if (raw.includes("hello-second") && readJobs(root).find((job) => job.id === id)?.status === "killed") {
+      if (raw.includes(marker) && readJobs(root).find((job) => job.id === id)?.status === "killed") {
         stored = true;
         break;
       }
