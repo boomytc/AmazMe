@@ -7,6 +7,7 @@ import { AgentHarness, type HarnessTool, type OperationRequest, type Write, valu
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { createModels, messageText } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
+import { validSummary } from "./valid-summary.ts";
 
 type Fault = "before" | "after" | "torn";
 type Message = ReturnType<typeof fauxAssistant>;
@@ -154,7 +155,7 @@ for (const scenario of cases) {
 for (const boundary of ["finish", "navigation", "resume"] as const) {
   for (const timing of ["before", "after", "torn"] as const) {
     test(`summary ${boundary}: ${timing} interruption preserves its settlement`, async (t) => {
-      const f = fixture(t, [answer("seed"), answer("summary"), answer("continued")], boundary === "resume" ? 30 : undefined);
+      const f = fixture(t, [answer("seed"), answer(validSummary("summary")), answer("continued")], boundary === "resume" ? 30 : undefined);
       await f.first.lane().prompt("seed");
       const seedTip = (await f.first.lane().inspect()).tipId;
       const target = (await f.first.lane().entries())[0]?.id ?? null;
@@ -203,7 +204,7 @@ for (const boundary of ["finish", "navigation", "resume"] as const) {
 for (const kind of ["assistant", "summary"] as const) {
   for (const timing of ["before", "after", "torn"] as const) {
     test(`${kind} recovery can crash again with ${timing} settlement without duplicates or resending`, async (t) => {
-      const f = fixture(t, [answer("seed"), answer("answer")]);
+      const f = fixture(t, [answer("seed"), answer(validSummary("answer"))]);
       if (kind === "summary") await f.first.lane().prompt("seed");
       const admission = await f.first.lane().accept(kind === "summary" ? { kind: "compaction" } : { kind: "prompt", text: "go" });
       assert.ok(admission.ok);
@@ -228,7 +229,7 @@ for (const kind of ["assistant", "summary"] as const) {
 }
 
 test("resume compaction with a copied tail can crash again during recovery without resending", async (t) => {
-  const f = fixture(t, [answer("seed"), answer("summary"), answer("continued")], 30);
+  const f = fixture(t, [answer("seed"), answer(validSummary("summary")), answer("continued")], 30);
   await f.first.lane().prompt("seed");
   const admission = await f.first.lane().accept({ kind: "prompt", text: "long input ".repeat(80) });
   assert.ok(admission.ok);
@@ -299,7 +300,7 @@ for (const timing of ["before", "after", "torn"] as const) {
 for (const kind of ["assistant", "summary"] as const) {
   for (const collision of ["entry", "usage"] as const) {
     test(`${kind} pending response with an occupied ${collision} id is rejected without writes`, async (t) => {
-      const f = fixture(t, [answer("seed"), answer("answer")]);
+      const f = fixture(t, [answer("seed"), answer(validSummary("answer"))]);
       if (kind === "summary") await f.first.lane().prompt("seed");
       const admission = await f.first.lane().accept(kind === "summary" ? { kind: "compaction" } : { kind: "prompt", text: "go" });
       assert.ok(admission.ok);

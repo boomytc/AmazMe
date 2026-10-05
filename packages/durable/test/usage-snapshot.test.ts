@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createModels, type Usage } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
+import { validSummary } from "./valid-summary.ts";
 import { AgentHarness, type AgentLane, effectiveInputThreshold, type HarnessTool, type LaneUsage, type LaneUsageView } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
@@ -233,7 +234,7 @@ test("compaction clears context tokens until the next assistant and keeps summar
   const second = tokens(17, 5);
   const summary = tokens(7, 4);
   const next = tokens(8, 9);
-  const { models } = scripted([first, second, summary, next], ["one", "two", "folded", "three"]);
+  const { models } = scripted([first, second, summary, next], ["one", "two", validSummary("folded"), "three"]);
   const harness = runtime(new MemoryStorage(), models);
   try {
     const lane = harness.lane();
@@ -263,7 +264,7 @@ test("a real compaction drops the copied assistant until the next turn", async (
   const first = tokens(400, 30);
   const summary = tokens(7, 4);
   const next = tokens(8, 9);
-  const { models } = scripted([first, summary, next], ["ok", "folded", "next"]);
+  const { models } = scripted([first, summary, next], ["ok", validSummary("folded"), "next"]);
   const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: true, maxTokens: 200 } });
   try {
     const lane = harness.lane();
@@ -306,7 +307,7 @@ test("two compactions each skip only the copied tail just written", async () => 
   const third = tokens(3, 4);
   const { models } = scripted(
     [first, summary, second, summaryAgain, third],
-    ["ok", "folded", "next", "folded-again", "after"],
+    ["ok", validSummary("folded"), "next", validSummary("folded-again"), "after"],
   );
   const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: false, maxTokens: 200 } });
   try {
@@ -351,7 +352,7 @@ test("two compactions each skip only the copied tail just written", async () => 
 test("a new assistant identical to the copied tail still counts", async () => {
   const same = tokens(400, 30);
   const summary = tokens(7, 4);
-  const { models } = scripted([same, summary, same], ["ok", "folded", "ok"]);
+  const { models } = scripted([same, summary, same], ["ok", validSummary("folded"), "ok"]);
   const harness = runtime(new MemoryStorage(), models, { compaction: { enabled: true, maxTokens: 200 } });
   try {
     const lane = harness.lane();

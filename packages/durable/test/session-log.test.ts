@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createModels, messageText } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
+import { validSummary } from "./valid-summary.ts";
 import { AgentHarness, clipToolText, type Entry, type HarnessTool } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
@@ -107,7 +108,7 @@ test("tool-result trimming and compaction change only the next request", async (
         if (message.role === "user" && typeof message.content === "string") return `user:${message.content}`;
         return message.role;
       }));
-      const message = script[index] ?? fauxAssistant("summary");
+      const message = script[index] ?? fauxAssistant(index === 2 ? validSummary("summary") : "after-next");
       index += 1;
       return message;
     },
@@ -135,7 +136,7 @@ test("tool-result trimming and compaction change only the next request", async (
     const continued = await runtime.lane().prompt("next");
     assert.equal(continued.status, "completed");
     const last = requests.at(-1) ?? [];
-    assert.equal(last.some((line) => line.startsWith("user:summary")), true);
+    assert.equal(last.some((line) => line.startsWith("user:") && line.includes("## 目标")), true);
     assert.equal(last.some((line) => line.includes(full)), false);
   } finally {
     runtime.close();
