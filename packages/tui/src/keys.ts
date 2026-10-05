@@ -132,13 +132,38 @@ function modifiedEnter(body: string, final: string): "newline" | "enter" | null 
   return null;
 }
 
+/** A lone Escape waits this long so a split sequence can still finish. */
+const ESCAPE_HOLD_MS = 50;
+
 export class KeyDecoder {
   private rest = "";
+  private timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(private readonly delayed: (keys: Key[]) => void = () => undefined) {}
 
   push(chunk: string): Key[] {
+    this.disarm();
     const decoded = decodeKeys(this.rest + chunk);
     const holdingPaste = decoded.rest.includes("\u001b[200~") || decoded.rest.startsWith("\u001b[200");
     this.rest = !holdingPaste && decoded.rest.length > 32 ? "" : decoded.rest;
+    if (this.rest === "\u001b") {
+      this.timer = setTimeout(() => {
+        this.timer = undefined;
+        if (this.rest !== "\u001b") return;
+        this.rest = "";
+        this.delayed([{ type: "escape" }]);
+      }, ESCAPE_HOLD_MS);
+    }
     return decoded.keys;
+  }
+
+  stop(): void {
+    this.disarm();
+  }
+
+  private disarm(): void {
+    if (this.timer === undefined) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
   }
 }

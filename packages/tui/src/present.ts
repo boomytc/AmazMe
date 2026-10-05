@@ -6,9 +6,9 @@ import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { scopedModels } from "./project.ts";
-import { KeyDecoder } from "./keys.ts";
+import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
-import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
+import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
 
 export { finishDrive } from "./commands.ts";
 
@@ -104,7 +104,8 @@ export async function presentHost(
   stdin.setRawMode(true);
   stdin.resume();
   stdout.write("\x1b[?1049h\x1b[?25h\x1b[?2004h");
-  const keys = new KeyDecoder();
+  let takeKeys: (incoming: Key[]) => void = () => undefined;
+  const keys = new KeyDecoder((delayed) => takeKeys(delayed));
   const utf8 = new StringDecoder("utf8");
   let restored = false;
   let finish = (): void => undefined;
@@ -130,6 +131,8 @@ export async function presentHost(
     const rows = stdout.rows > 0 ? stdout.rows : 24;
     const next = renderTui(state, columns, rows);
     previousFrame = writeScreen((chunk) => stdout.write(chunk), previousFrame, next);
+    const cursor = inputCursorSequence(next);
+    if (cursor.length > 0) stdout.write(cursor);
   };
   stdout.on("resize", paint);
   await rememberSettings();
@@ -147,6 +150,7 @@ export async function presentHost(
     if (restored) return;
     restored = true;
     if (exitTimer) clearTimeout(exitTimer);
+    keys.stop();
     stdin.off("data", onData);
     stdout.off("resize", paint);
     if (stdin.isRaw) stdin.setRawMode(false);
@@ -154,9 +158,9 @@ export async function presentHost(
     stdin.pause();
     finish();
   };
-  const onData = (chunk: Buffer | string): void => {
-    const text = typeof chunk === "string" ? chunk : utf8.write(chunk);
-    for (const key of keys.push(text)) {
+  takeKeys = (incoming) => {
+    if (restored) return;
+    for (const key of incoming) {
       const reduced = reduceTui(state, { type: "key", key });
       state = reduced.state;
       scheduleExitArm();
@@ -172,6 +176,10 @@ export async function presentHost(
         });
       }
     }
+  };
+  const onData = (chunk: Buffer | string): void => {
+    const text = typeof chunk === "string" ? chunk : utf8.write(chunk);
+    takeKeys(keys.push(text));
   };
   const showLane = (): void => {
     state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;

@@ -143,10 +143,10 @@ export function renderTui(state: TuiState, columns = 100, rows = 32): string {
   const height = Math.max(8, rows);
   const composer = composerLines(state, width);
   const status = paint(theme.dim, fit(statusLine(state), width));
-  const rule = paint(theme.border, "─".repeat(Math.min(width, 80)));
+  const rule = paint(theme.border, "─".repeat(width));
   const menu = state.picker ? [] : menuLines(state, width);
   const picker = state.picker ? pickerLines(state.picker, width) : [];
-  const notice = state.notice ? state.notice.split("\n").slice(0, 8).map((line) => paint(theme.dim, fit(line, width))) : [];
+  const notice = state.notice ? state.notice.split("\n").map((line) => paint(theme.dim, fit(line, width))) : [];
   const hint = paint(theme.dim, fit(composerHint(), width));
   const transcript = transcriptLines(state).flatMap((line) => wrap(line, width));
   const footer = [status, hint, rule, ...composer];
@@ -384,19 +384,21 @@ function composerLines(state: TuiState, width: number): string[] {
 }
 
 /**
- * 浮层按剩余行数排。标题先占一行，正文放不下就从末尾丢掉。
+ * 浮层按剩余行数排。标题先占一行，正文放不下就从末尾丢掉，并在末尾标「更多」。
  * 整帧从底部裁时，60×16 会把顶部的「快捷键」裁掉。底栏提示里也有这四个字，不能靠子串判断标题还在。
  */
 function overlayLines(state: TuiState, width: number, budget: number): string[] {
   if (!state.overlay || budget < 1) return [];
-  const rule = paint(theme.border, "─".repeat(Math.min(width, 80)));
+  const rule = paint(theme.border, "─".repeat(width));
   const title = paint(theme.accent, "快捷键");
+  const more = paint(theme.dim, "更多");
   const body = hotkeyText().split("\n").map((line) => paint(theme.text, fit(line, width)));
   const framed = [rule, title, ...body, rule];
   if (framed.length <= budget) return framed;
   if (budget === 1) return [title];
-  if (budget === 2) return [title, body[0] ?? rule];
-  return [rule, title, ...body.slice(0, budget - 3), rule];
+  if (budget === 2) return [title, more];
+  if (budget === 3) return [rule, title, more];
+  return [rule, title, ...body.slice(0, budget - 4), more, rule];
 }
 
 function insertText(state: TuiState, text: string): TuiState {
@@ -545,7 +547,7 @@ function userBlock(text: string): string[] {
 }
 
 function pickerLines(picker: Picker, width: number): string[] {
-  const rule = paint(theme.border, "─".repeat(Math.min(width, 80)));
+  const rule = paint(theme.border, "─".repeat(width));
   const rows = visibleRows(picker);
   const selected = clamp(picker.index, rows.length);
   const limit = 8;
@@ -597,7 +599,7 @@ function widthOf(line: string): number {
 }
 
 /** CJK is two columns. Box drawing and the composer cursor stay one, matching the rule line. */
-function columnWidth(char: string): number {
+export function columnWidth(char: string): number {
   const code = char.codePointAt(0) ?? 0;
   if (code <= 0xff) return 1;
   if (code >= 0x1100 && code <= 0x115f) return 2;
@@ -616,15 +618,40 @@ function columnWidth(char: string): number {
 }
 
 function fit(line: string, width: number): string {
+  if (width <= 0) return "";
+  const ellipsis = "…";
+  const mark = columnWidth(ellipsis);
   let used = 0;
-  let out = "";
+  const chars: string[] = [];
   for (const char of Array.from(line)) {
     const size = columnWidth(char);
-    if (used + size > width) return `${out}…`;
-    out += char;
+    if (used + size > width) {
+      while (used + mark > width && chars.length > 0) {
+        const last = chars.pop() ?? "";
+        used -= columnWidth(last);
+      }
+      if (used + mark > width) return "";
+      return chars.join("") + ellipsis;
+    }
+    chars.push(char);
     used += size;
   }
-  return out;
+  return chars.join("");
+}
+
+/** CUP for the composer caret. `▏` is the input cell; colors do not take columns. */
+export function inputCursorSequence(frame: string): string {
+  const lines = frame.split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const plain = (lines[index] ?? "").replace(/\u001b\[[0-9;]*m/g, "");
+    const chars = Array.from(plain);
+    const at = chars.indexOf("▏");
+    if (at < 0) continue;
+    let column = 1;
+    for (let cursor = 0; cursor < at; cursor += 1) column += columnWidth(chars[cursor] ?? "");
+    return `\x1b[${index + 1};${column}H`;
+  }
+  return "";
 }
 
 function wrap(line: string, width: number): string[] {

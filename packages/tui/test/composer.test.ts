@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decodeKeys, emptyTui, parseSlash, reduceTui, renderTui, type TuiEffect, type TuiState, type TuiWindow } from "@amazme/tui";
-import { KeyDecoder } from "../src/keys.ts";
 import { BINDINGS } from "../src/bindings.ts";
+import { KeyDecoder } from "../src/keys.ts";
+import { columnWidth } from "../src/reduce.ts";
 import { plainScreen, playScreen, SCREEN_COLUMNS, SCREEN_ROWS } from "./screen.ts";
 
 function frame(state: TuiState, columns = SCREEN_COLUMNS, rows = SCREEN_ROWS): string {
@@ -149,6 +150,7 @@ test("the shortcut sheet and a pasted newline render through the screen harness"
   const sheet = playScreen({ steps: [{ type: "keys", input: "?" }] });
   assert.equal(sheet.screen.split("\n").length, SCREEN_ROWS);
   assert.equal(sheet.screen.split("\n").includes("快捷键"), true);
+  assert.equal(sheet.screen.split("\n").includes("更多"), true);
   assert.equal(sheet.effects.length, 0);
   const tight = frame(reduceTui(emptyTui(), { type: "key", key: { type: "char", value: "?" } }).state, 60, 8);
   assert.equal(tight.split("\n")[0], "快捷键");
@@ -157,6 +159,43 @@ test("the shortcut sheet and a pasted newline render through the screen harness"
   assert.match(pasted.screen, /b/);
   assert.deepEqual(pasted.effects, []);
 });
+
+test("/hotkeys shows every binding, not only the first eight lines", () => {
+  const help = parseSlash("/hotkeys");
+  assert.equal(help.type, "notice");
+  if (help.type !== "notice") return;
+  const listed = BINDINGS.filter((binding) => binding.label.length > 0 || binding.detail.length > 0);
+  assert.equal(help.text.split("\n").length, listed.length);
+  const screen = frame({ ...emptyTui(), notice: help.text }, 120, 48);
+  for (const binding of listed) {
+    assert.ok(screen.includes(`${binding.label}  ${binding.detail}`), binding.id);
+  }
+});
+
+test("a long english line keeps the right border in the last column", () => {
+  const columns = 40;
+  const input = "w".repeat(400);
+  assertComposerWidth(frame({ ...emptyTui(), input, cursor: input.length }, columns, 16), columns);
+});
+
+test("a long chinese line keeps the right border in the last column", () => {
+  const columns = 40;
+  const input = "测".repeat(200);
+  assertComposerWidth(frame({ ...emptyTui(), input, cursor: Array.from(input).length }, columns, 16), columns);
+});
+
+function assertComposerWidth(screen: string, columns: number): void {
+  const box = screen.split("\n").filter((line) => line.startsWith("┌") || line.startsWith("└") || (line.startsWith("│") && line.endsWith("│")));
+  assert.ok(box.length >= 3);
+  for (const line of box) {
+    let used = 0;
+    for (const char of Array.from(line)) used += columnWidth(char);
+    assert.equal(used, columns, line);
+  }
+  for (const line of box.filter((line) => line.startsWith("│"))) {
+    assert.equal(Array.from(line).at(-1), "│");
+  }
+}
 
 function window(partial: Partial<TuiWindow>): TuiWindow {
   return {
