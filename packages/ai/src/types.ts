@@ -120,8 +120,9 @@ export interface Usage {
    * Reasoning tokens already included in `output`, and in `totalTokens` when the provider sent a total.
    * They are not added again, and `usageCost` does not price them separately.
    * Google Generative AI and Vertex report this as `usageMetadata.thoughtsTokenCount`.
-   * No other usage parser in this package reads a reasoning token count.
-   * Omitted when the response did not report one. A reported 0 stays 0.
+   * Chat Completions may report `completion_tokens_details.reasoning_tokens`. DeepSeek's schema
+   * documents that breakdown of `completion_tokens`. The published deepseek-flash examples omit it.
+   * A missing count stays unset and is not estimated. A reported 0 stays 0.
    */
   reasoning?: number;
 }
