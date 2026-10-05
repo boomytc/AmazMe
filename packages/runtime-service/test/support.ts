@@ -104,6 +104,7 @@ export function world(options: {
   clock?: HostClock;
   lanes?: readonly string[];
   limits?: Partial<ProtocolLimits>;
+  listFiles?: (query: string) => Promise<readonly string[]>;
 } = {}) {
   const errors: Error[] = [];
   const fakes = new Map<string, RuntimeService>();
@@ -127,6 +128,7 @@ export function world(options: {
     ...(options.clock ? { clock: options.clock } : {}),
     onError: (error) => errors.push(error),
     ...(options.lanes ? { lanes: options.lanes } : {}),
+    ...(options.listFiles ? { listFiles: options.listFiles } : {}),
   });
   server = new Server({
     serverId: "srv",

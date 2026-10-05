@@ -13,6 +13,7 @@ import { packageSkillText } from "@amazme/tui";
 import { appendSkillText } from "./skills.ts";
 import { visibleModels } from "./picker.ts";
 import { installHostRetries } from "./contracts.ts";
+import { listWorkspaceFiles } from "./files.ts";
 import { readApprovalSettings } from "./settings.ts";
 import { installSessionRouter } from "./host-router.ts";
 import { openJobRegistry } from "./jobs.ts";
@@ -95,6 +96,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
       // Every conversation in the session log is servable. `main` is only the default.
       clock: { branch, sessionStartedAt },
       onError: report,
+      listFiles: (query) => listWorkspaceFiles(cwd, query),
       async open(runtimeId) {
         if (runtimeId !== HOST_RUNTIME_ID) return null;
         const file = runtimeFile(cwd);

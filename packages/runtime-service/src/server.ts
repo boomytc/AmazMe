@@ -94,6 +94,11 @@ export interface OwnedRuntimeOptions {
   publishWindowMs?: number;
   /** Unexpected drive failures and publisher errors. Its own errors are ignored. */
   onError?: (error: Error) => void;
+  /**
+   * Workspace files for @ completion. The host scans; this server only forwards the list.
+   * Absent means the lane has no file list.
+   */
+  listFiles?: (query: string) => Promise<readonly string[]>;
 }
 
 /**
@@ -151,6 +156,7 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
   private readonly windowMs: number;
   private readonly onError: ((error: Error) => void) | undefined;
   private readonly clock: HostClock | undefined;
+  private readonly listFiles: ((query: string) => Promise<readonly string[]>) | undefined;
   private readonly publishers = new Set<SnapshotPublisher>();
   private readonly reported = new WeakSet<Promise<unknown>>();
   private readonly gate = new ConnectionGate();
@@ -172,6 +178,7 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
     this.windowMs = windowMs;
     this.onError = options.onError;
     this.clock = options.clock;
+    this.listFiles = options.listFiles;
   }
 
   acquire(): AttachmentLease {
@@ -305,6 +312,11 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
         return this.subscribe(lane, call.subscriptionId, context);
       case "pendingApprovals":
         return wire(await lane.pendingApprovals());
+      case "files": {
+        const listed = this.listFiles ? await this.listFiles(call.query) : [];
+        const paths = listed.filter(workspacePath).slice(0, 200);
+        return wire({ paths });
+      }
       case "approve":
         if (call.session === true && call.decision === "allow") {
           const pending = await lane.pendingApprovals();
@@ -720,6 +732,13 @@ function clockBranch(clock: HostClock | undefined): string | null {
 function clockSession(clock: HostClock | undefined): number | null {
   const started = clock?.sessionStartedAt;
   return typeof started === "number" && Number.isFinite(started) ? started : null;
+}
+
+/** A path the screen can insert. Absolute paths and `..` segments stay off the list. */
+function workspacePath(path: string): boolean {
+  if (path.length === 0 || path.length > 1_024) return false;
+  if (path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:/.test(path)) return false;
+  return !path.split(/[\\/]/).includes("..");
 }
 
 /**

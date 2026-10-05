@@ -38,6 +38,7 @@ export interface SlashListing {
 export const SLASH_LIST: readonly SlashListing[] = [
   { name: "help", hint: "", description: "列出命令", takesArgs: "none" },
   { name: "hotkeys", hint: "", description: "列出按键", takesArgs: "none" },
+  { name: "copy", hint: "code", description: "复制最后一条助手回复；code 只复制最后一个代码块", takesArgs: "optional" },
   { name: "new", hint: "", description: "新对话", takesArgs: "none" },
   { name: "resume", hint: "名称", description: "换对话；不带名称则列出", takesArgs: "optional" },
   { name: "fork", hint: "名称", description: "从当前进度分出对话", takesArgs: "required" },
@@ -114,9 +115,10 @@ export type SlashCommand =
   | { type: "trust" }
   | { type: "external"; name: "share" | "bug" | "llama" }
   | { type: "template"; name: string; rest: string }
-  | { type: "extension"; name: string; rest: string };
+  | { type: "extension"; name: string; rest: string }
+  | { type: "copy"; code: boolean };
 
-export type SlashAction = Exclude<SlashCommand, { type: "prompt" } | { type: "notice" }>;
+export type SlashAction = Exclude<SlashCommand, { type: "prompt" } | { type: "notice" } | { type: "copy" }>;
 
 export type SlashOutcome =
   | { type: "none" }
@@ -165,6 +167,9 @@ export function parseSlash(input: string): SlashCommand {
   switch (name) {
     case "help":
       return rest ? usage("/help") : notice(HELP);
+    case "copy":
+      if (!rest) return { type: "copy", code: false };
+      return rest === "code" ? { type: "copy", code: true } : usage("/copy code");
     case "hotkeys":
       return rest ? usage("/hotkeys") : notice(hotkeyText());
     case "quit":
@@ -448,6 +453,7 @@ function scopedCycleNotice(enabled: readonly string[], next: string): string {
 const ALIAS: Record<string, string> = {
   help: "help",
   hotkeys: "hotkeys",
+  copy: "copy",
   quit: "quit",
   exit: "quit",
   new: "new",

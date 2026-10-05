@@ -12,6 +12,7 @@ import {
   ForkReplySchema,
   ImportReplySchema,
   PendingApprovalsReplySchema,
+  FilesReplySchema,
   LaneNameSchema,
   LaneSettingsSchema,
   OperationAdmissionSchema,
@@ -26,6 +27,7 @@ import {
   type ForkReplyDto,
   type ImportReplyDto,
   type PendingApprovalsDto,
+  type FilesReplyDto,
   type HistoryPageDto,
   type LaneSettingsDto,
   type LaneSnapshotDto,
@@ -194,6 +196,11 @@ export class RemoteLane {
     options?: RequestOptions,
   ): Promise<ImportReplyDto> {
     return parse(ImportReplySchema, await this.call({ method: "import", lane: this.name, name, messages: [...messages] }, options), "import reply");
+  }
+
+  /** Workspace files matching `query` by prefix or substring. At most 200. The screen does not scan disk. */
+  async files(query: string, options?: RequestOptions): Promise<FilesReplyDto["paths"]> {
+    return parse(FilesReplySchema, await this.call({ method: "files", lane: this.name, query }, options), "files reply").paths;
   }
 
   /** Parked tool calls. Does not drive. The snapshot leaves this list out on purpose. */

@@ -124,6 +124,13 @@ export interface TuiState extends TuiWindow {
    * 不进快照。重开是一块新状态，卡片仍从条目里画出来，但是收着的。
    */
   expandedToolId: string | null;
+  /** Query after `@` at the cursor. Null when the cursor is not in a mention. */
+  fileQuery: string | null;
+  /** Paths the host returned for `fileQuery`. The screen does not scan disk. */
+  filePaths: string[];
+  fileIndex: number;
+  /** Esc hides the current query until the mention changes. */
+  fileHidden: boolean;
 }
 
 /** One parked tool call the card can show. `summary` is a short argument line. */
@@ -179,12 +186,17 @@ export function emptyTui(active = "main"): TuiState {
     deciding: false,
     decidingId: null,
     expandedToolId: null,
+    fileQuery: null,
+    filePaths: [],
+    fileIndex: 0,
+    fileHidden: false,
   };
 }
 
 export function reduceTui(state: TuiState, action: { type: "window"; window: TuiWindow } | { type: "key"; key: Key }): { state: TuiState; effect: TuiEffect | null } {
   if (action.type === "window") return { state: applyWindow(state, action.window), effect: null };
-  return applyKey(state, action.key);
+  const step = applyKey(state, action.key);
+  return { state: syncFileQuery(step.state), effect: step.effect };
 }
 
 /** Conversation, slash menu, status, and composer. The composer stays on the last row. */
@@ -267,9 +279,10 @@ function runBinding(id: BindingId, state: TuiState, key: Key): { state: TuiState
     case "backspace":
       return { state: deleteBeforeCursor(state), effect: null };
     case "complete":
-      return completeSlash(state);
+      return fileMenuOpen(state) ? acceptFile(state) : completeSlash(state);
     case "dismiss":
       if (state.overlay) return { state: { ...state, overlay: false }, effect: null };
+      if (fileMenuOpen(state)) return { state: { ...state, fileHidden: true }, effect: null };
       return { state: { ...state, focus: state.focus === "prompt" ? "scroll" : "prompt", notice: null }, effect: null };
     case "overlay":
       return { state: { ...state, overlay: true, notice: null }, effect: null };
@@ -303,12 +316,47 @@ function runBinding(id: BindingId, state: TuiState, key: Key): { state: TuiState
 }
 
 /** 正在生成的回复比已落下的助手条目更新。空文本不复制。 */
+function assistantReply(state: TuiState): string {
+  if (state.pendingText.length > 0) return state.pendingText;
+  return [...state.entries].reverse().find((entry) => entry.role === "assistant")?.text ?? "";
+}
+
 function copyReply(state: TuiState): { state: TuiState; effect: TuiEffect | null } {
-  const text = state.pendingText.length > 0
-    ? state.pendingText
-    : [...state.entries].reverse().find((entry) => entry.role === "assistant")?.text ?? "";
+  const text = assistantReply(state);
   if (text.length === 0) return { state: { ...state, notice: "没有助手回复" }, effect: null };
   return { state, effect: { type: "copy", text } };
+}
+
+/** 最后一个围栏代码块的正文。没有围栏就不是代码块。 */
+function lastCodeBlock(source: string): string | null {
+  const lines = source.split("\n");
+  let open = false;
+  let current: string[] = [];
+  let last: string[] | null = null;
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      if (open) {
+        last = current;
+        open = false;
+        current = [];
+      } else {
+        open = true;
+        current = [];
+      }
+      continue;
+    }
+    if (open) current.push(line);
+  }
+  if (open) last = current;
+  return last === null ? null : last.join("\n");
+}
+
+function copyCommand(state: TuiState, code: boolean): { state: TuiState; effect: TuiEffect | null } {
+  const reply = assistantReply(state);
+  if (!code) return copyReply(state);
+  const block = lastCodeBlock(reply);
+  if (block === null) return { state: { ...state, notice: "没有代码块" }, effect: null };
+  return { state, effect: { type: "copy", text: block } };
 }
 
 function applyPaste(state: TuiState, text: string): { state: TuiState; effect: TuiEffect | null } {
@@ -334,6 +382,11 @@ function boundedMention(state: TuiState, mention: string): string {
 }
 
 function onVertical(state: TuiState, direction: -1 | 1): { state: TuiState; effect: TuiEffect | null } {
+  if (fileMenuOpen(state)) {
+    const count = state.filePaths.length;
+    const fileIndex = (state.fileIndex + direction + count) % count;
+    return { state: { ...state, fileIndex }, effect: null };
+  }
   const matches = slashMatches(state.input);
   if (matches.length > 0) {
     const menuIndex = (state.menuIndex + direction + matches.length) % matches.length;
@@ -408,6 +461,7 @@ function visibleRows(picker: Picker): PickerRow[] {
 }
 
 function acceptOrSubmit(state: TuiState): { state: TuiState; effect: TuiEffect | null } {
+  if (fileMenuOpen(state)) return acceptFile(state);
   const matches = slashMatches(state.input);
   const picked = matches[clamp(state.menuIndex, matches.length)];
   const token = state.input.trim();
@@ -429,6 +483,7 @@ function submit(state: TuiState): { state: TuiState; effect: TuiEffect | null } 
   const command = parseSlash(text);
   if (command.type === "prompt") return { state: cleared, effect: { type: "submit", text: command.text } };
   if (command.type === "notice") return { state: { ...cleared, notice: command.text }, effect: null };
+  if (command.type === "copy") return copyCommand(cleared, command.code);
   return { state: cleared, effect: { type: "slash", command } };
 }
 
@@ -729,7 +784,76 @@ function pickerLines(picker: Picker, width: number): string[] {
   return lines;
 }
 
+function fileMenuOpen(state: TuiState): boolean {
+  return state.focus === "prompt"
+    && state.picker === null
+    && !state.overlay
+    && !state.fileHidden
+    && state.fileQuery !== null
+    && state.filePaths.length > 0
+    && slashMatches(state.input).length === 0;
+}
+
+/** The `@` token touching the cursor. The query is the text between `@` and the cursor. */
+function atToken(input: string, cursor: number): { start: number; end: number; query: string } | null {
+  const chars = Array.from(input);
+  const at = Math.max(0, Math.min(cursor, chars.length));
+  let index = at;
+  while (index > 0 && !/\s/.test(chars[index - 1] ?? "")) index -= 1;
+  if (chars[index] !== "@") return null;
+  if (index > 0 && !/\s/.test(chars[index - 1] ?? "")) return null;
+  if (at <= index) return null;
+  return { start: index, end: at, query: chars.slice(index + 1, at).join("") };
+}
+
+function syncFileQuery(state: TuiState): TuiState {
+  const query = atToken(state.input, state.cursor)?.query ?? null;
+  if (query === state.fileQuery) return state;
+  return { ...state, fileQuery: query, filePaths: [], fileIndex: 0, fileHidden: false };
+}
+
+function mentionText(path: string): string {
+  return /[\s"]/.test(path) ? `@"${path.replaceAll("\"", "")}"` : `@${path}`;
+}
+
+function acceptFile(state: TuiState): { state: TuiState; effect: TuiEffect | null } {
+  const token = atToken(state.input, state.cursor);
+  const path = state.filePaths[clamp(state.fileIndex, state.filePaths.length)];
+  if (!token || !path) return { state, effect: null };
+  const mention = mentionText(path);
+  const chars = Array.from(state.input);
+  chars.splice(token.start, token.end - token.start, ...Array.from(mention));
+  const input = chars.join("");
+  const cursor = token.start + Array.from(mention).length;
+  return {
+    state: {
+      ...state,
+      input,
+      cursor,
+      draft: input,
+      historyAt: null,
+      notice: null,
+      menuIndex: 0,
+      filePaths: [],
+      fileIndex: 0,
+      fileQuery: atToken(input, cursor)?.query ?? null,
+      fileHidden: true,
+    },
+    effect: null,
+  };
+}
+
 function menuLines(state: TuiState, width: number): string[] {
+  if (fileMenuOpen(state)) {
+    const limit = 8;
+    const selected = clamp(state.fileIndex, state.filePaths.length);
+    const start = Math.max(0, Math.min(selected - 1, state.filePaths.length - limit));
+    return state.filePaths.slice(start, start + limit).map((path, offset) => {
+      const index = start + offset;
+      const mark = index === selected ? paint(theme.accent, "→") : " ";
+      return mark + paint(index === selected ? theme.accent : theme.dim, fit(` ${path}`, Math.max(8, width - 2)));
+    });
+  }
   const matches = slashMatches(state.input);
   if (matches.length === 0) return [];
   const limit = 8;
