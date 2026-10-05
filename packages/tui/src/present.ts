@@ -2,13 +2,12 @@ import type { ReadStream, WriteStream } from "node:tty";
 import { StringDecoder } from "node:string_decoder";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
-import { emptyActivity, type EntryDto, type LaneSnapshotDto } from "@amazme/runtime-service";
+import { emptyActivity, type EntryDto, type LaneSnapshotDto, type UserContent } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { chatModelSpecs, cycleModels, scopedModels } from "./project.ts";
 import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
-import type { UserContent } from "@amazme/ai";
 import { imagePrompt } from "./images.ts";
 import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, summarizeArgs, type Picker, type PickerRow, type TuiApproval, type TuiEffect, type TuiEntry, type TuiState, type TuiWindow } from "./reduce.ts";
 

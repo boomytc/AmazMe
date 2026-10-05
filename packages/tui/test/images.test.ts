@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { decodeKeys, emptyTui, reduceTui, type TuiEffect, type TuiState } from "@amazme/tui";
-import { imagePrompt } from "../src/images.ts";
+import { imagePrompt, parseAtMentions, pastedImageMention, userContentFromParts } from "../src/images.ts";
 
 function play(input: string, state: TuiState = emptyTui()): { state: TuiState; effects: TuiEffect[] } {
   const decoded = decodeKeys(input);
@@ -18,6 +18,36 @@ function play(input: string, state: TuiState = emptyTui()): { state: TuiState; e
   }
   return { state: current, effects };
 }
+
+test("the @ scanner attaches only image extensions and leaves every other mention as text", () => {
+  assert.deepEqual(parseAtMentions("see @readme.md and @shot.PNG."), [
+    { kind: "text", text: "see @readme.md and " },
+    { kind: "image", path: "shot.PNG", raw: "@shot.PNG" },
+    { kind: "text", text: "." },
+  ]);
+  assert.deepEqual(parseAtMentions("user@x.png @notes.txt @a.jpeg @b.gif @c.webp @d.bmp"), [
+    { kind: "text", text: "user@x.png @notes.txt " },
+    { kind: "image", path: "a.jpeg", raw: "@a.jpeg" },
+    { kind: "text", text: " " },
+    { kind: "image", path: "b.gif", raw: "@b.gif" },
+    { kind: "text", text: " " },
+    { kind: "image", path: "c.webp", raw: "@c.webp" },
+    { kind: "text", text: " @d.bmp" },
+  ]);
+  assert.deepEqual(parseAtMentions("plain"), [{ kind: "text", text: "plain" }]);
+  assert.equal(pastedImageMention("  ./pic.jpg  "), "@./pic.jpg");
+  assert.equal(pastedImageMention("@shot.png"), "@shot.png");
+  assert.equal(pastedImageMention("notes.md"), undefined);
+  assert.equal(pastedImageMention("see @shot.png"), undefined);
+  assert.equal(pastedImageMention("\"my photo.png\""), "@\"my photo.png\"");
+  assert.deepEqual(
+    userContentFromParts(parseAtMentions("look @shot.png"), new Map([["shot.png", { mimeType: "image/png", data: "aaaa" }]])),
+    [
+      { type: "text", text: "look " },
+      { type: "image", mimeType: "image/png", data: "aaaa" },
+    ],
+  );
+});
 
 test("@image paths and a pasted image path become image content; other @ paths stay text", async () => {
   const dir = mkdtempSync(join(tmpdir(), "amz-image-"));

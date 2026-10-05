@@ -27,6 +27,8 @@ const ImageBlockSchema = Strict({
 });
 const PromptContentSchema = Type.Array(Type.Union([TextBlockSchema, ImageBlockSchema]), { minItems: 1, maxItems: 32 });
 export type PromptContent = Static<typeof PromptContentSchema>;
+/** One prompt block. TUI imports this type so it does not depend on `@amazme/ai`. */
+export type UserContent = PromptContent[number];
 const PromptRequestSchema = Strict({
   kind: Type.Literal("prompt"),
   text: Text,

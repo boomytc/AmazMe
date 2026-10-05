@@ -18,7 +18,6 @@
   },
   "include": ["src"],
   "references": [
-    { "path": "../ai" },
     { "path": "../client" },
     { "path": "../runtime-service" }
   ]

@@ -1,4 +1,4 @@
-import { pastedImageMention } from "@amazme/ai";
+import { pastedImageMention } from "./images.ts";
 import type { ActivityDto } from "@amazme/runtime-service";
 import { activeBinding, composerHint, hotkeyText, type BindingId } from "./bindings.ts";
 import { parseSlash, slashMatches, type SlashAction } from "./commands.ts";
