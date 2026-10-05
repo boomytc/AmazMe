@@ -187,7 +187,10 @@ class ModelRegistry implements MutableModels {
     return this.special(model, options, (provider, authed) => {
       if (!provider.classify) return Promise.resolve(failedClassifier(model, `Provider ${provider.id} has no classifier API`));
       return provider.classify(model, context, authed);
-    }, (item) => item.listClassifiers?.().some((entry) => entry.id === model.id) === true);
+    }, (item) => item.listClassifiers?.().some((entry) => entry.id === model.id) === true).catch((error: unknown) => {
+      if (options.signal?.aborted || (error instanceof Error && error.name === "AbortError")) return abortedClassifier(model);
+      throw error;
+    });
   }
 
   generateImages(model: ImageModel, request: ImageRequest, options: SpecialCallOptions = {}): Promise<ImageResult> {
@@ -317,6 +320,10 @@ function isStreams(value: unknown): value is ProviderStreams {
  */
 function failedClassifier(model: ClassifierModel, errorMessage: string): ClassifierResult {
   return { api: model.api, provider: model.provider, model: model.id, answers: {}, stopReason: "error", errorMessage };
+}
+
+function abortedClassifier(model: ClassifierModel): ClassifierResult {
+  return { api: model.api, provider: model.provider, model: model.id, answers: {}, stopReason: "aborted", errorMessage: "Request aborted" };
 }
 
 function failedImages(model: ImageModel, errorMessage: string): ImageResult {

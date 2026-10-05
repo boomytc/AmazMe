@@ -179,32 +179,84 @@ export interface Context {
   tools?: ToolDefinition[];
 }
 
+/** JSON a classifier may send as state, instructions, or criteria. */
+export type ClassifierValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ClassifierValue[]
+  | { [key: string]: ClassifierValue };
+
 export interface ClassifierModel {
   id: string;
   name: string;
   provider: string;
   api: string;
   baseUrl: string;
+  /** Tokens the classifier accepts. Absent when the provider did not publish a window. */
+  contextWindow?: number;
+  /**
+   * USD per 1,000,000 tokens. Omitted when the price is unknown.
+   * `input` prices cache misses. A listed 0 is a real price.
+   */
+  cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
 }
 
 export interface ClassifierQuestion {
   type: "choice" | "score" | "bool";
-  instructions: string;
-  criteria?: Record<string, string> | string[];
+  /** Plain text or structured JSON. Omitted when the question has no instructions. */
+  instructions?: ClassifierValue;
+  /**
+   * Choice descriptions, ordered score levels, or noul true/false descriptions.
+   * Each value may itself be structured JSON.
+   */
+  criteria?: ClassifierValue;
 }
 
 export interface ClassifierContext {
-  state: { text: string };
+  /** Shared by every question. A string, a JSON object, or an array. */
+  state: string | ClassifierValue[] | { [key: string]: ClassifierValue };
   questions: Record<string, ClassifierQuestion>;
 }
+
+/** Wire `noul` mapped to a yes-probability. */
+export interface BoolClassifierAnswer {
+  type: "bool";
+  probability: number;
+}
+
+export interface ChoiceClassifierAnswer {
+  type: "choice";
+  choice: string;
+  probabilities: Record<string, number>;
+  confidence: number;
+}
+
+export interface ScoreClassifierAnswer {
+  type: "score";
+  score: number;
+  confidence: number;
+  /** Present when the response included a probability for each level. */
+  probabilities?: Record<string, number>;
+  /** Present when the response included the ordered level labels. */
+  legend?: Record<string, string>;
+}
+
+export type ClassifierAnswer = BoolClassifierAnswer | ChoiceClassifierAnswer | ScoreClassifierAnswer;
 
 export interface ClassifierResult {
   api: string;
   provider: string;
   model: string;
-  answers: Record<string, unknown>;
-  stopReason: "stop" | "error";
+  answers: Record<string, ClassifierAnswer>;
+  stopReason: "stop" | "error" | "aborted";
   errorMessage?: string;
+  /**
+   * Counts from `usage.input_tokens` and `usage.output_tokens`, priced with `usageCost`.
+   * Kept when the answer body does not validate.
+   */
+  usage?: Usage;
 }
 
 export interface ImageModel {
@@ -241,11 +293,11 @@ export interface Model<TApi extends Api = Api> {
   contextWindow: number;
   maxTokens: number;
   /**
-   * USD per 1,000,000 tokens. Absent knowledge stays unset; rates are not invented.
-   * `input` prices cache misses. `cacheRead` prices cache hits when that rate is known.
+   * USD per 1,000,000 tokens. Omitted when the price is unknown; rates are not invented.
+   * A listed 0 is a real price. `input` prices cache misses. `cacheRead` prices cache hits when that rate is known.
    * `cacheWrite` prices cache writes when that rate is known. An unset write rate bills those tokens at `input`.
    */
-  cost: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+  cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   /** Per-model endpoint. A request `baseUrl` still overrides it, then the provider default. */
   baseUrl?: string;
   /**

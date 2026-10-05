@@ -171,6 +171,10 @@ test("a plain object satisfies Models without extending a class", async () => {
     completeSimple(active, context, options) {
       return this.streamSimple(active, context, options).result();
     },
+    getClassifier: () => undefined,
+    getImageModel: () => undefined,
+    classify: () => Promise.reject(new Error("unused")),
+    generateImages: () => Promise.reject(new Error("unused")),
   };
   const message = await models.completeSimple(model, { messages: [] });
   assert.equal(message.content[0]?.type === "text" ? message.content[0].text : "", "plain");

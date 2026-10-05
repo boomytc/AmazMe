@@ -11,7 +11,8 @@ interface CatalogModel {
   input: Array<"text" | "image">;
   contextWindow: number;
   maxTokens: number;
-  cost: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+  /** Omitted when the provider did not publish a price. A negative rate is an unknown price, not a charge. */
+  cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   reasoning?: boolean;
   baseUrl?: string;
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
@@ -34,24 +35,40 @@ const data = loadCatalog();
 export function catalogModels(providerId: string): Model<KnownApi>[] {
   const rows = data[providerId];
   if (!rows) throw new Error(`No chat catalog for ${providerId}`);
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    api: row.api,
-    provider: row.provider,
-    input: row.input,
-    contextWindow: row.contextWindow,
-    maxTokens: row.maxTokens,
-    cost: {
-      input: row.cost.input,
-      output: row.cost.output,
-      ...(row.cost.cacheRead !== undefined ? { cacheRead: row.cost.cacheRead } : {}),
-      ...(row.cost.cacheWrite !== undefined ? { cacheWrite: row.cost.cacheWrite } : {}),
-    },
-    ...(row.reasoning !== undefined ? { reasoning: row.reasoning } : {}),
-    ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
-    ...(row.thinkingLevelMap ? { thinkingLevelMap: row.thinkingLevelMap } : {}),
-  }));
+  return rows.map((row) => {
+    const cost = knownCost(row.cost);
+    return {
+      id: row.id,
+      name: row.name,
+      api: row.api,
+      provider: row.provider,
+      input: row.input,
+      contextWindow: row.contextWindow,
+      maxTokens: row.maxTokens,
+      ...(cost ? { cost } : {}),
+      ...(row.reasoning !== undefined ? { reasoning: row.reasoning } : {}),
+      ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
+      ...(row.thinkingLevelMap ? { thinkingLevelMap: row.thinkingLevelMap } : {}),
+    };
+  });
+}
+
+/**
+ * OpenRouter stores an unknown price as -1_000_000 USD per million tokens
+ * (`openrouter/auto`, `openrouter/auto-beta`, `typesafe/jev-router`).
+ * Drop that sentinel, and a missing list, so `usageCost` returns null instead of a negative total.
+ */
+function knownCost(cost: CatalogModel["cost"]): NonNullable<Model["cost"]> | undefined {
+  if (!cost) return undefined;
+  const rates = [cost.input, cost.output, cost.cacheRead, cost.cacheWrite];
+  if (rates.some((rate) => typeof rate === "number" && (!Number.isFinite(rate) || rate < 0))) return undefined;
+  if (typeof cost.input !== "number" || typeof cost.output !== "number") return undefined;
+  return {
+    input: cost.input,
+    output: cost.output,
+    ...(typeof cost.cacheRead === "number" ? { cacheRead: cost.cacheRead } : {}),
+    ...(typeof cost.cacheWrite === "number" ? { cacheWrite: cost.cacheWrite } : {}),
+  };
 }
 
 export function catalogProviderIds(): string[] {

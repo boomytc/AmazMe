@@ -59,6 +59,7 @@ test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek AP
   assert.equal(flash.maxTokens, 393_216);
   // Pricing, USD per 1,000,000 tokens: peak cache-miss input, peak output, and peak cache-hit input.
   // Off-peak is half of peak. There is no separate cache-write rate.
+  assert.ok(flash.cost);
   assert.equal("cacheWrite" in flash.cost, false);
   assert.deepEqual(flash.cost, { input: 0.3, output: 1.2, cacheRead: 0.006 });
 
@@ -70,6 +71,7 @@ test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek AP
   assert.equal(pro.contextWindow, 1_000_000);
   assert.equal(pro.reasoning, true);
   assert.equal(pro.maxTokens, 393_216);
+  assert.ok(pro.cost);
   assert.equal("cacheWrite" in pro.cost, false);
   assert.deepEqual(pro.cost, { input: 1.32, output: 3.96, cacheRead: 0.044 });
 
