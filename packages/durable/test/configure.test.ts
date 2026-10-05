@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/testing";
 import { AgentHarness, type AgentLane } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 

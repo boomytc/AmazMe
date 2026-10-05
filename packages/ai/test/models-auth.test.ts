@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createModels, MemoryCredentialStore, resolveModelAuth, type Provider } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxProvider } from "@amazme/ai/testing";
 
 function gate() {
   let entered!: () => void;

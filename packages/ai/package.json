@@ -25,10 +25,7 @@
       "types": "./dist/providers/openai.d.ts",
       "default": "./src/providers/openai.ts"
     },
-    "./providers/faux": {
-      "types": "./dist/providers/faux.d.ts",
-      "default": "./src/providers/faux.ts"
-    },
+    "./providers/faux": null,
     "./api/*": {
       "types": "./dist/api/*.d.ts",
       "default": "./src/api/*.ts"

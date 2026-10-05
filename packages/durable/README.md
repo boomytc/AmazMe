@@ -8,15 +8,15 @@
 
 ```typescript
 import { createModels } from "@amazme/ai";
-import { fauxProvider } from "@amazme/ai/providers/faux";
+import { deepseekProvider } from "@amazme/ai/providers/deepseek";
 import { AgentHarness } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
 const models = createModels();
-models.setProvider(fauxProvider());
+models.setProvider(deepseekProvider());
 const harness = new AgentHarness(new MemoryStorage(), {
   models,
-  model: { provider: "faux", modelId: "faux-1" },
+  model: { provider: "deepseek", modelId: "deepseek-flash" },
 });
 try {
   const admitted = await harness.lane("main").accept({ kind: "prompt", text: "hello" });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Context, JsonSchema, Model } from "@amazme/ai";
-import { fauxAssistant, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxToolCall } from "@amazme/ai/testing";
 import { anthropicMessagesApi } from "@amazme/ai/api/anthropic-messages";
 import { googleGenerativeAIApi } from "@amazme/ai/api/google-generative-ai";
 import { mistralConversationsApi } from "@amazme/ai/api/mistral-conversations";

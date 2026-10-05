@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Script, createContext } from "node:vm";
 import test from "node:test";
 import { baseAssistant, createAssistantEventStream, createModels, type Model, type Provider } from "@amazme/ai";
-import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/testing";
 import { startCodingHost } from "../../coding-agent/src/host.ts";
 import { startWeb } from "@amazme/web";
 

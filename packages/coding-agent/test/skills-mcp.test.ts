@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Agent, type AgentHook, type AgentTool } from "@amazme/agent";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/testing";
 import { appendMcpTools, appendSkillText, createCodingTools, type McpClient } from "@amazme/coding-agent";
 
 const today = "You are a coding agent. Use tools to inspect and change files in the workspace.";

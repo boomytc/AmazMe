@@ -8,7 +8,7 @@ import {
   type Model,
   type Provider,
 } from "@amazme/ai";
-import { fauxAssistant, fauxProvider } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider } from "@amazme/ai/testing";
 import {
   AgentHarness,
   armRequestDeadline,
