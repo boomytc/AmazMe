@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AgentHook, AgentMessage } from "@amazme/agent";
 import { createModels, messageText, type Message } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall, type FauxResponder } from "@amazme/ai/testing";
+import { validSummary } from "./valid-summary.ts";
 import { AgentHarness, type Entry, type HarnessTool, type Storage, type Write } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
@@ -201,8 +202,8 @@ test("transform changes only the messages passed to streamSimple", async () => {
       transformContext: (messages) => [...messages, { role: "user", content: injected, timestamp: 1 }],
     },
   ];
-  const { provider, models } = modelsFor((context) => (context.systemPrompt ?? "").includes("summarize")
-    ? fauxAssistant("summary-kept")
+  const { provider, models } = modelsFor((context) => (context.systemPrompt ?? "").includes("你只做总结")
+    ? fauxAssistant(validSummary("summary-kept"))
     : fauxAssistant("assistant-kept"));
   const runtime = new AgentHarness(new MemoryStorage(), {
     models,
@@ -231,7 +232,7 @@ test("transform changes only the messages passed to streamSimple", async () => {
     assert.equal(entries.some((entry) => entryText(entry) === injected), false);
     assert.equal(entries.some((entry) => entryText(entry) === "seed goal"), true);
     assert.equal(entries.some((entry) => entryText(entry) === "assistant-kept"), true);
-    assert.equal(entries.some((entry) => entryText(entry) === "summary-kept"), true);
+    assert.equal(entries.some((entry) => entryText(entry) === validSummary("summary-kept")), true);
   } finally {
     runtime.close();
   }
@@ -240,8 +241,8 @@ test("transform changes only the messages passed to streamSimple", async () => {
 for (const request of ["assistant", "summary"] as const) {
   test(`custom messages returned by transform stay out of the ${request} model request`, async () => {
     let inject = request === "assistant";
-    const { provider, models } = modelsFor((context) => (context.systemPrompt ?? "").includes("summarize")
-      ? fauxAssistant("summary-kept")
+    const { provider, models } = modelsFor((context) => (context.systemPrompt ?? "").includes("你只做总结")
+      ? fauxAssistant(validSummary("summary-kept"))
       : fauxAssistant("assistant-kept"));
     const runtime = new AgentHarness(new MemoryStorage(), {
       models,
