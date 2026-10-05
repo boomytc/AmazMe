@@ -7,6 +7,8 @@ export {
   type LaneCatalog,
   type LaneConfig,
   type LaneSettings,
+  type LaneUsage,
+  type LaneUsageView,
   type LanePhase,
   type LaneSnapshot,
   type LaneStatus,
@@ -16,6 +18,7 @@ export {
   type PendingResponse,
   type Result,
   type ToolActivity,
+  type ToolOutputView,
 } from "./harness.ts";
 export {
   list, value, type Address, type Apply, type CommitResult, type Entry, type EntryPayload,
