@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createModels, type Usage } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
-import { AgentHarness, effectiveInputThreshold, type HarnessTool, type LaneUsage } from "@amazme/durable";
+import { AgentHarness, effectiveInputThreshold, type HarnessTool, type LaneUsage, type LaneUsageView } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 
@@ -47,6 +47,19 @@ function runtime(
   });
 }
 
+function assertRoundTrip<T>(value: T): T {
+  assert.deepEqual(structuredClone(value), value);
+  assert.deepEqual(JSON.parse(JSON.stringify(value)) as T, value);
+  return value;
+}
+
+async function readUsage(lane: { usage(): Promise<LaneUsageView>; snapshot(): Promise<{ version: number }> }): Promise<LaneUsageView> {
+  const snap = await lane.snapshot();
+  const usage = assertRoundTrip(await lane.usage());
+  assert.equal(usage.version, snap.version);
+  return usage;
+}
+
 async function until(predicate: () => Promise<boolean>): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < 2000) {
@@ -60,29 +73,27 @@ test("a lane with no assistant projects empty usage and the assess threshold", a
   const { models } = scripted([]);
   const harness = runtime(new MemoryStorage(), models);
   try {
-    const snap = await harness.lane().snapshot();
-    const usage = snap.usage;
+    const lane = harness.lane();
+    const usage = await readUsage(lane);
     const model = models.getModel("faux", "faux-1");
     assert.ok(model);
     assert.equal(usage.lastTurn, null);
     assert.equal(usage.contextTokens, null);
     assert.deepEqual(usage.total, total(0, 0));
     assert.equal(usage.compactionThreshold, effectiveInputThreshold(model.contextWindow, 50_000));
-    assert.equal(Object.hasOwn(snap, "usage"), false);
-    assert.equal(JSON.stringify(snap).includes("\"usage\""), false);
     usage.total.input = 9;
-    assert.deepEqual((await harness.lane().snapshot()).usage.total, total(0, 0));
+    assert.deepEqual((await lane.usage()).total, total(0, 0));
 
     const disabled = runtime(new MemoryStorage(), models, { compaction: { enabled: false, maxTokens: 50_000 } });
     try {
-      assert.equal((await disabled.lane().snapshot()).usage.compactionThreshold, null);
+      assert.equal((await readUsage(disabled.lane())).compactionThreshold, null);
     } finally {
       disabled.close();
     }
 
     const unknown = runtime(new MemoryStorage(), models, { modelId: "missing" });
     try {
-      assert.equal((await unknown.lane().snapshot()).usage.compactionThreshold, null);
+      assert.equal((await readUsage(unknown.lane())).compactionThreshold, null);
     } finally {
       unknown.close();
     }
@@ -100,7 +111,7 @@ test("two turns keep the latest usage, a null cache, and the summed total", asyn
     const lane = harness.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
     assert.equal((await lane.prompt("two")).status, "completed");
-    const usage = (await lane.snapshot()).usage;
+    const usage = await readUsage(lane);
     assert.deepEqual(usage.lastTurn, turn(17, 5));
     assert.deepEqual(usage.total, total(28, 8));
     assert.equal(usage.contextTokens, 22);
@@ -115,7 +126,7 @@ test("cacheRead on the latest assistant is part of contextTokens and lastTurn", 
   try {
     const lane = harness.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
-    const usage = (await lane.snapshot()).usage;
+    const usage = await readUsage(lane);
     assert.deepEqual(usage.lastTurn, { input: 3, output: 4, cacheRead: 10, cacheWrite: null });
     assert.equal(usage.contextTokens, 17);
     assert.deepEqual(usage.total, { input: 3, output: 4, cacheRead: 10, cacheWrite: null });
@@ -130,7 +141,7 @@ test("an assistant without cache leaves the cache counts null", async () => {
   try {
     const lane = harness.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
-    const usage = (await lane.snapshot()).usage;
+    const usage = await readUsage(lane);
     assert.deepEqual(usage.lastTurn, turn(5, 6));
     assert.equal(usage.contextTokens, 11);
     assert.deepEqual(usage.total, total(5, 6));
@@ -149,10 +160,35 @@ test("cache totals sum reported counts on the branch and keep a reported zero", 
     const lane = harness.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
     assert.equal((await lane.prompt("two")).status, "completed");
-    const usage = (await lane.snapshot()).usage;
+    const usage = await readUsage(lane);
     assert.deepEqual(usage.lastTurn, { input: 2, output: 2, cacheRead: 0, cacheWrite: 4 });
     assert.equal(usage.contextTokens, 8);
     assert.deepEqual(usage.total, { input: 3, output: 3, cacheRead: 10, cacheWrite: 4 });
+  } finally {
+    harness.close();
+  }
+});
+
+test("a deferred turn stays in the total and does not replace lastTurn", async () => {
+  const success = tokens(11, 3);
+  const deferred = tokens(8, 2);
+  const provider = fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant("ok", { usage: success })
+      : fauxAssistant("later", { usage: deferred, stopReason: "deferred" }),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const second = await lane.prompt("two");
+    assert.equal(second.status, "completed");
+    const usage = await readUsage(lane);
+    assert.deepEqual(usage.lastTurn, turn(11, 3));
+    assert.equal(usage.contextTokens, 14);
+    assert.deepEqual(usage.total, total(19, 5));
   } finally {
     harness.close();
   }
@@ -173,7 +209,7 @@ test("an error turn stays in the total and does not replace lastTurn", async () 
     const lane = harness.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
     assert.equal((await lane.prompt("two")).status, "failed");
-    const usage = (await lane.snapshot()).usage;
+    const usage = await readUsage(lane);
     assert.deepEqual(usage.lastTurn, turn(11, 3));
     assert.equal(usage.contextTokens, 14);
     assert.deepEqual(usage.total, total(111, 53));
@@ -198,13 +234,13 @@ test("compaction clears context tokens until the next assistant and keeps summar
     if (!admitted.ok) return;
     const folded = await lane.drive(admitted.value.operationId);
     assert.equal(folded.ok && folded.value.kind === "settled" ? folded.value.result.status : "", "completed");
-    const compacted = (await lane.snapshot()).usage;
+    const compacted = await readUsage(lane);
     assert.equal(compacted.contextTokens, null);
     assert.equal(compacted.lastTurn, null);
     assert.deepEqual(compacted.total, total(35, 12));
 
     assert.equal((await lane.prompt("three")).status, "completed");
-    const continued = (await lane.snapshot()).usage;
+    const continued = await readUsage(lane);
     assert.deepEqual(continued.lastTurn, turn(8, 9));
     assert.equal(continued.contextTokens, 17);
     assert.deepEqual(continued.total, total(43, 21));
@@ -225,10 +261,10 @@ test("a reopened harness projects the same usage from the same storage", async (
     const lane = first.lane();
     assert.equal((await lane.prompt("one")).status, "completed");
     assert.equal((await lane.prompt("two")).status, "completed");
-    const before = (await lane.snapshot()).usage;
+    const before = await readUsage(lane);
     const reopened = runtime(new JsonlStorage(file), models);
     try {
-      assert.deepEqual((await reopened.lane().snapshot()).usage, before);
+      assert.deepEqual(await readUsage(reopened.lane()), before);
     } finally {
       reopened.close();
     }
@@ -262,17 +298,20 @@ test("checkpointed tool output is tailed while running and absent after settle",
   try {
     const lane = harness.lane();
     const driving = lane.prompt("go");
-    await until(async () => (await lane.snapshot()).tools.some((tool) => tool.outputTail !== undefined));
+    await until(async () => (await lane.toolOutput()).tails.length === 1);
+    const tails = assertRoundTrip(await lane.toolOutput());
+    assert.equal(tails.version, (await lane.snapshot()).version);
+    const tail = tails.tails[0];
+    assert.ok(tail);
+    assert.equal(tail.outputTail.length, 4_000);
+    assert.equal(tail.outputTail, body.slice(-4_000));
     const running = (await lane.snapshot()).tools.find((tool) => tool.status === "running");
     assert.ok(running);
-    assert.equal(running.outputTail?.length, 4_000);
-    assert.equal(running.outputTail, body.slice(-4_000));
-    assert.equal(Object.hasOwn(running, "outputTail"), false);
-    assert.equal(JSON.stringify(running).includes("outputTail"), false);
+    assert.equal("outputTail" in running, false);
     release();
     const settled = await driving;
     assert.equal(settled.status, "completed");
-    assert.deepEqual((await lane.snapshot()).tools, []);
+    assert.deepEqual((await lane.toolOutput()).tails, []);
   } finally {
     release();
     harness.close();
@@ -308,10 +347,11 @@ test("a tool update without checkpoint does not project an output tail", async (
     const driving = lane.prompt("go");
     await until(async () => updated && (await lane.snapshot()).tools.some((tool) => tool.status === "running"));
     await new Promise((resolve) => setTimeout(resolve, 20));
+    const tails = assertRoundTrip(await lane.toolOutput());
+    assert.deepEqual(tails.tails, []);
     const running = (await lane.snapshot()).tools.find((tool) => tool.status === "running");
     assert.ok(running);
-    assert.equal(running.outputTail, undefined);
-    assert.equal(Object.hasOwn(running, "outputTail"), false);
+    assert.equal("outputTail" in running, false);
     release();
     assert.equal((await driving).status, "completed");
   } finally {
@@ -332,15 +372,15 @@ test("a forked lane totals only its own operations and reads lastTurn from its b
     const forkAt = (await main.snapshot()).tipId;
     assert.equal((await main.fork("side", forkAt)).ok, true);
     const side = harness.lane("side");
-    const inherited = (await side.snapshot()).usage;
+    const inherited = await readUsage(side);
     assert.deepEqual(inherited.lastTurn, turn(10, 1));
     assert.deepEqual(inherited.total, total(0, 0));
     assert.equal(inherited.contextTokens, 11);
 
     assert.equal((await main.prompt("two")).status, "completed");
     assert.equal((await side.prompt("three")).status, "completed");
-    const mainUsage = (await main.snapshot()).usage;
-    const sideUsage = (await side.snapshot()).usage;
+    const mainUsage = await readUsage(main);
+    const sideUsage = await readUsage(side);
     assert.deepEqual(mainUsage.lastTurn, turn(20, 2));
     assert.deepEqual(mainUsage.total, total(30, 3));
     assert.equal(mainUsage.contextTokens, 22);

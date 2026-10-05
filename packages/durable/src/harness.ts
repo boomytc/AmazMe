@@ -178,11 +178,6 @@ export interface ToolActivity {
   name: string;
   /** `running` is `effect_pending`. `outcome_ready` and `completed` are `settled`. */
   status: "planned" | "running" | "settled";
-  /**
-   * Last 4000 characters of the persisted `pi.pending.tool_output` for a running call.
-   * Present only when that call has checkpointed. Absent after it settles.
-   */
-  outputTail?: string;
 }
 
 /** Input, output, and cache counts. An omitted cache count is null, not zero. */
@@ -198,17 +193,31 @@ interface UsageCounts {
  * An omitted cache count is null. A reported 0 stays 0.
  */
 export interface LaneUsage {
-  /** Newest settled assistant on the current branch, excluding `error` and `aborted`. */
+  /** Newest settled assistant on the current branch, excluding `error`, `aborted`, and `deferred`. */
   lastTurn: UsageCounts | null;
   /**
    * `input` and `output` sum usage rows whose persisted operation belongs to this lane, including summary requests.
-   * `cacheRead` and `cacheWrite` sum assistant messages on this ancestor chain. Null when none of them had the field.
+   * A row has no lane. An open operation is attributed by the stored `OperationMeta.lane`; after `finish`, by
+   * `OperationResult.lane`. There is no ancestor-chain fallback: one operation can write several rows, and a fork
+   * can cut in the middle of that operation, so summing assistant messages would not match the rows.
+   * `cacheRead` and `cacheWrite` are not on the row. They sum assistant messages on this ancestor chain, and stay
+   * null when none of those messages had the field. A summary request is not an assistant message on the chain,
+   * so its cache is not counted.
    */
   total: UsageCounts;
-  /** Newest non-error assistant prompt size plus output on the visible branch. Null when that suffix has none. */
+  /** Newest assistant prompt size plus output on the visible branch. Null when that suffix has none. */
   contextTokens: number | null;
   /** The input trigger `assess` compares against. Null when compaction is off or the model window is unknown. */
   compactionThreshold: number | null;
+}
+
+/** `LaneUsage` plus the storage version of the read that produced it. */
+export type LaneUsageView = { version: number } & LaneUsage;
+
+/** Checkpoint tails of the running tool calls in one read. */
+export interface ToolOutputView {
+  version: number;
+  tails: Array<{ toolCallId: string; outputTail: string }>;
 }
 
 /** One consistent read of a lane. Every field is a detached copy taken at `version`. */
@@ -217,7 +226,6 @@ export interface LaneSnapshot extends LaneStatus {
   entries: Entry[];
   pendingResponse: PendingResponse | null;
   tools: ToolActivity[];
-  usage: LaneUsage;
 }
 
 export type OperationRequest =
@@ -803,16 +811,33 @@ export class AgentLane {
           errorMessage: reduced.errorMessage ?? null,
         };
       }
-      const chain = ancestors(view, status.tipId);
-      const projected = structuredClone({
+      return structuredClone({
         version: view.version(),
         ...status,
-        entries: chain,
+        entries: ancestors(view, status.tipId),
         pendingResponse,
-        tools: toolActivity(view, state),
+        tools: toolActivity(state),
       });
-      projected.tools = projected.tools.map(hideOutputTail);
-      return hideUsage(projected, projectUsage(view, this.name, chain, this.harness.options));
+    });
+  }
+
+  /** Read-only usage projection. One storage read. Does not initialize the lane, drive, or recover. */
+  usage(): Promise<LaneUsageView> {
+    return admitted(this.harness).read((view) => {
+      const { status } = this.status(view);
+      const chain = ancestors(view, status.tipId);
+      return structuredClone({
+        version: view.version(),
+        ...projectUsage(view, this.name, chain, this.harness.options),
+      });
+    });
+  }
+
+  /** Read-only checkpoint tails for running tool calls. One storage read. Does not drive. */
+  toolOutput(): Promise<ToolOutputView> {
+    return admitted(this.harness).read((view) => {
+      const { state } = this.status(view);
+      return structuredClone({ version: view.version(), tails: toolOutputTails(view, state) });
     });
   }
 
@@ -2174,16 +2199,25 @@ function readArgs(entry: Entry | undefined, sourceIndex: number): unknown {
 
 const OUTPUT_TAIL_LIMIT = 4_000;
 
-function toolActivity(view: StorageView, state: OperationState | undefined): ToolActivity[] {
+function toolActivity(state: OperationState | undefined): ToolActivity[] {
   if (!state || state.phase !== "tools") return [];
-  return state.calls.map((call) => {
-    const status: ToolActivity["status"] = call.status === "planned" ? "planned" : call.status === "effect_pending" ? "running" : "settled";
-    const activity: ToolActivity = { toolCallId: call.toolCallId, name: call.name, status };
-    if (status !== "running") return activity;
+  return state.calls.map((call) => ({
+    toolCallId: call.toolCallId,
+    name: call.name,
+    status: call.status === "planned" ? "planned" : call.status === "effect_pending" ? "running" : "settled",
+  }));
+}
+
+function toolOutputTails(view: StorageView, state: OperationState | undefined): ToolOutputView["tails"] {
+  if (!state || state.phase !== "tools") return [];
+  const tails: ToolOutputView["tails"] = [];
+  for (const call of state.calls) {
+    if (call.status !== "effect_pending") continue;
     const partial = view.get<string>(toolOutputAddress(call.resultEntryId));
-    if (typeof partial === "string") activity.outputTail = partial.slice(-OUTPUT_TAIL_LIMIT);
-    return activity;
-  });
+    if (typeof partial !== "string") continue;
+    tails.push({ toolCallId: call.toolCallId, outputTail: partial.slice(-OUTPUT_TAIL_LIMIT) });
+  }
+  return tails;
 }
 
 function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {
@@ -2228,7 +2262,7 @@ function lastTurnUsage(chain: readonly Entry[]): LaneUsage["lastTurn"] {
     if (!entry || entry.payload.type !== "message") continue;
     const message = entry.payload.message;
     if (message.role !== "assistant") continue;
-    if (message.stopReason === "error" || message.stopReason === "aborted") continue;
+    if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred") continue;
     return {
       input: message.usage.input,
       output: message.usage.output,
@@ -2285,41 +2319,6 @@ function compactionThreshold(view: StorageView, lane: string, options: HarnessOp
   const model = options.models.getModel(provider, modelId);
   if (!model || !Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0) return null;
   return effectiveInputThreshold(model.contextWindow, compaction.maxTokens);
-}
-
-/**
- * `usage` stays off the object's own keys. The strict snapshot schema rejects unknown fields, and
- * `assertJsonValue` rejects a non-enumerable own property, so the current protocol image cannot carry it.
- * Read `snapshot.usage`. `structuredClone` of the snapshot throws; clone the fields you need.
- */
-function hideUsage(snapshot: Omit<LaneSnapshot, "usage">, usage: LaneUsage): LaneSnapshot {
-  return new Proxy(snapshot, {
-    get(target, key, receiver) {
-      if (key === "usage") return usage;
-      return Reflect.get(target, key, receiver);
-    },
-    has(target, key) {
-      if (key === "usage") return true;
-      return Reflect.has(target, key);
-    },
-  }) as LaneSnapshot;
-}
-
-/** Same constraint as {@link hideUsage}: a checkpoint tail is readable and absent from the protocol image. */
-function hideOutputTail(tool: ToolActivity): ToolActivity {
-  const tail = tool.outputTail;
-  if (tail === undefined) return tool;
-  const visible: ToolActivity = { toolCallId: tool.toolCallId, name: tool.name, status: tool.status };
-  return new Proxy(visible, {
-    get(target, key, receiver) {
-      if (key === "outputTail") return tail;
-      return Reflect.get(target, key, receiver);
-    },
-    has(target, key) {
-      if (key === "outputTail") return true;
-      return Reflect.has(target, key);
-    },
-  });
 }
 
 function ancestors(view: StorageView, tip: string | null): Entry[] {
