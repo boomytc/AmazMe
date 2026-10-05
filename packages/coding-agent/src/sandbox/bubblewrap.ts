@@ -94,13 +94,14 @@ function resolveRunner(runner: string, pathEnv: string, stat: (path: string) => 
 
 const BPF_LD_W_ABS = 0x20;
 const BPF_JMP_JEQ_K = 0x15;
+const BPF_JMP_JGE_K = 0x35;
 const BPF_RET_K = 0x06;
 const SECCOMP_RET_ALLOW = 0x7fff0000;
 const SECCOMP_RET_EPERM = 0x00050001;
 const AUDIT_ARCH_X86_64 = 0xc000003e;
 const AUDIT_ARCH_AARCH64 = 0xc00000b7;
-/** x32 uses the 64-bit syscall numbers with 32-bit pointers. It is not x86_64. */
-const AUDIT_ARCH_X32 = 0x4000003e;
+/** x32 calls keep `AUDIT_ARCH_X86_64` and set this bit in the syscall number. */
+const X32_SYSCALL_BIT = 0x40000000;
 const NR_SOCKET_X86_64 = 41;
 const NR_SOCKET_AARCH64 = 198;
 
@@ -113,7 +114,8 @@ export interface SeccompFilter {
 
 /**
  * A private filter file for one `--seccomp 3` spawn. `socket` returns EPERM on
- * x86_64 and aarch64. Every other architecture, including x32, is denied.
+ * x86_64 and aarch64. x86_64 syscall numbers at or above 0x40000000 are denied.
+ * Every other architecture is denied.
  * The directory is 0700 and the file is created with `O_EXCL` at 0600. `close`
  * removes both after the sandbox has inherited the fd.
  */
@@ -163,26 +165,32 @@ function insn(code: number, k: number, jt = 0, jf = 0): Buffer {
 /**
  * Classic BPF. A new network namespace still answers `127.0.0.1` with
  * ECONNREFUSED, and the probe treats only EPERM as a network denial.
- * x86_64 and aarch64 allow every call except `socket`. x32 and any other
- * architecture hit the default deny, so the child cannot run.
+ * x86_64 and aarch64 allow every call except `socket`. Any other
+ * architecture is denied, so that child cannot run.
+ * x32 syscalls from an x86_64 process keep `AUDIT_ARCH_X86_64` and set bit
+ * 0x40000000 in the number. An architecture compare with 0x4000003e does not
+ * see them, so x86_64 denies every number at or above that bit.
  *
  * Jumps are counted from the next instruction:
  *   0 LD arch
- *   1 JEQ x86_64  -> 5, else 2
- *   2 JEQ aarch64 -> 9, else 3
- *   3 JEQ x32     -> 4 either way
- *   4 RET EPERM
- *   5 LD nr / 6 JEQ socket / 7 RET EPERM / 8 RET ALLOW
- *   9 LD nr / 10 JEQ socket / 11 RET EPERM / 12 RET ALLOW
+ *   1 JEQ x86_64  -> 4, else 2
+ *   2 JEQ aarch64 -> 10, else 3
+ *   3 RET EPERM
+ *   4 LD nr
+ *   5 JGE 0x40000000 -> 6, else 7
+ *   6 RET EPERM
+ *   7 JEQ socket / 8 RET EPERM / 9 RET ALLOW
+ *  10 LD nr / 11 JEQ socket / 12 RET EPERM / 13 RET ALLOW
  */
 function networkSeccompFilter(): Buffer {
   return Buffer.concat([
     insn(BPF_LD_W_ABS, 4),
-    insn(BPF_JMP_JEQ_K, AUDIT_ARCH_X86_64, 3, 0),
-    insn(BPF_JMP_JEQ_K, AUDIT_ARCH_AARCH64, 6, 0),
-    insn(BPF_JMP_JEQ_K, AUDIT_ARCH_X32, 0, 0),
+    insn(BPF_JMP_JEQ_K, AUDIT_ARCH_X86_64, 2, 0),
+    insn(BPF_JMP_JEQ_K, AUDIT_ARCH_AARCH64, 7, 0),
     insn(BPF_RET_K, SECCOMP_RET_EPERM),
     insn(BPF_LD_W_ABS, 0),
+    insn(BPF_JMP_JGE_K, X32_SYSCALL_BIT, 0, 1),
+    insn(BPF_RET_K, SECCOMP_RET_EPERM),
     insn(BPF_JMP_JEQ_K, NR_SOCKET_X86_64, 0, 1),
     insn(BPF_RET_K, SECCOMP_RET_EPERM),
     insn(BPF_RET_K, SECCOMP_RET_ALLOW),

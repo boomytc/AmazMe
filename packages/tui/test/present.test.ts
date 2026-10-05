@@ -8,7 +8,8 @@ import type { ReadStream, WriteStream } from "node:tty";
 import type { JsonValue } from "@amazme/protocol";
 import { Server, ServiceError, type RuntimeCallContext, type RuntimeHandle, type RuntimeService, type SubscriptionSink } from "@amazme/server";
 import { listenUnix } from "@amazme/server/unix";
-import { emptyTui, presentHost, reduceTui, type TuiWindow } from "@amazme/tui";
+import { emptyTui, presentHost, reduceTui, renderTui, windowFrom, type TuiWindow } from "@amazme/tui";
+import type { LaneSnapshotDto } from "@amazme/runtime-service";
 
 const LANE = "main";
 
@@ -126,6 +127,40 @@ test("the attached screen submits, follows up while busy, aborts, and redraws on
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`${detail}\ncalls=${JSON.stringify(host.calls)}\npaint=${tty.chunks.join("")}`);
   }
+});
+
+test("a failed assistant turn shows its error in the conversation", () => {
+  const snapshot: LaneSnapshotDto = {
+    version: 0,
+    lane: LANE,
+    tipId: "e1",
+    phase: null,
+    operationId: null,
+    lastOperationId: null,
+    status: null,
+    pendingResponse: null,
+    tools: [],
+    entries: [{
+      id: "e1",
+      parentId: null,
+      seq: 0,
+      timestamp: 1,
+      payload: {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "OpenAI completions 401 authentication: invalid api key",
+        },
+      },
+    }],
+  };
+  const view = windowFrom(snapshot, [LANE], LANE);
+  assert.equal(view.entries[0]?.text, "OpenAI completions 401 authentication: invalid api key");
+  const painted = renderTui(reduceTui(emptyTui(), { type: "window", window: view }).state, 100);
+  assert.match(painted, /401/);
+  assert.match(painted, /空闲/);
 });
 
 function window(partial: Partial<TuiWindow>): TuiWindow {
