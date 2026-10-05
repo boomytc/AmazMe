@@ -120,6 +120,13 @@ export interface HarnessOptions {
   /** Workspace shown on the client status line. Not a sandbox root by itself. */
   workspace?: string;
   /**
+   * Host gate for one tool call. Omitted or `false` runs the call.
+   * `true` parks that call on the current tools batch until `approve`.
+   * The predicate is not stored. A reopened process supplies it again for later calls;
+   * a call already parked does not ask the predicate a second time.
+   */
+  requiresApproval?: (call: ApprovalRequest) => boolean | Promise<boolean>;
+  /**
    * Test seam for the model deadline. Production uses {@link armRequestDeadline}.
    * The returned signal must abort when `parent` aborts.
    */
@@ -231,6 +238,30 @@ export interface ToolOutputView {
   tails: Array<{ toolCallId: string; outputTail: string }>;
 }
 
+/** The call `requiresApproval` sees. `arguments` is the tool-call object the model sent. */
+export interface ApprovalRequest {
+  toolCallId: string;
+  name: string;
+  arguments: unknown;
+}
+
+/** One parked tool call. The object is plain data and round-trips through clone and JSON. */
+export interface PendingApproval {
+  toolCallId: string;
+  name: string;
+  arguments: unknown;
+  requestedAt?: number;
+}
+
+/**
+ * Parked tool calls from one storage read.
+ * `version` is that read's `view.version()`, the same number `snapshot()` reports for the same view.
+ */
+export interface PendingApprovals {
+  version: number;
+  items: PendingApproval[];
+}
+
 /** One consistent read of a lane. Every field is a detached copy taken at `version`. */
 export interface LaneSnapshot extends LaneStatus {
   version: number;
@@ -251,6 +282,14 @@ interface Scope {
   thresholdUsed: boolean;
 }
 
+/** Parked on the tools batch. Absent on older logs, which keep running every call. */
+interface ToolApproval {
+  arguments: unknown;
+  requestedAt: number;
+  decision?: "allow" | "deny";
+  reason?: string;
+}
+
 interface ToolCallState {
   sourceIndex: number;
   resultEntryId: string;
@@ -259,6 +298,7 @@ interface ToolCallState {
   status: "planned" | "effect_pending" | "outcome_ready" | "completed";
   replay?: ReplayPolicy;
   terminate?: boolean;
+  approval?: ToolApproval;
 }
 
 type SummaryReason = "threshold" | "overflow";
@@ -322,6 +362,7 @@ type Plan =
   | { type: "assistant"; operationId: string; responseEntryId: string; usageId: string }
   | { type: "summary"; operationId: string; responseEntryId: string; usageId: string }
   | { type: "tools"; operationId: string }
+  | { type: "approval" }
   | { type: "yield" };
 
 const running = (): Scope => ({ control: { status: "running" }, attempt: 0, overflowUsed: false, thresholdUsed: false });
@@ -585,6 +626,11 @@ export class AgentLane {
           continue;
         }
         return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: planned.notBefore } };
+      }
+      if (planned.type === "approval") {
+        // DriveOutcome is shared with the runtime contract, which only names a retry wait.
+        // This return is not that wait: the caller is not delayed until notBefore, and the model is not called.
+        return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: Date.now() } };
       }
       if (planned.type === "continue") continue;
       // Abort can land inside plan(), after this step has armed a model or tool effect.
@@ -857,6 +903,45 @@ export class AgentLane {
   }
 
   /**
+   * Tool calls parked by `requiresApproval` and not yet decided.
+   * Does not drive, recover, or call the model. The result is a detached plain object.
+   */
+  pendingApprovals(): Promise<PendingApprovals> {
+    return admitted(this.harness).read((view) => {
+      const operationId = this.record(view).currentOperationId;
+      const state = operationId ? view.get<OperationState>(stateAddress(operationId)) : undefined;
+      const items: PendingApproval[] = state?.phase === "tools"
+        ? state.calls.flatMap((call) => {
+          if (call.status !== "planned" || !call.approval || call.approval.decision) return [];
+          return [{
+            toolCallId: call.toolCallId,
+            name: call.name,
+            arguments: call.approval.arguments,
+            requestedAt: call.approval.requestedAt,
+          }];
+        })
+        : [];
+      return structuredClone({ version: view.version(), items });
+    });
+  }
+
+  /**
+   * Record `decision` before any tool run or denial result.
+   * `allow` then follows the normal tool path. `deny` writes an error result and the turn continues
+   * once every call in the batch is settled. The same id again does not run a second time.
+   * An id that was never parked and has no tool result throws.
+   */
+  async approve(toolCallId: string, decision: "allow" | "deny", reason?: string): Promise<void> {
+    if (decision !== "allow" && decision !== "deny") throw new Error("approval decision must be allow or deny");
+    if (this.harness.isClosed) throw new Error("harness is closed");
+    const gate = await admitted(this.harness).run((view, apply) => this.stageApproval(view, apply, toolCallId, decision, reason));
+    if (gate.action === "unknown") throw new Error(`unknown tool call: ${toolCallId}`);
+    if (gate.action === "settled") return;
+    const outcome = await this.drive(gate.operationId);
+    if (!outcome.ok) throw new Error(outcome.error.message);
+  }
+
+  /**
    * Ancestors strictly before `before`, newest page last, at most `limit` entries.
    * `before: null` is the newest page. `older` is how many ancestors remain before the page.
    * It does not drive or recover.
@@ -1098,7 +1183,15 @@ export class AgentLane {
       span.addEvent("amazme.harness.recovered", { effect: "summary" });
       return { type: "continue" };
     }
-    if (state.phase === "tools") return { type: "tools", operationId };
+    if (state.phase === "tools") {
+      if (state.scope.control.status !== "cancel_requested" && blockedOnApproval(state)) {
+        this.materializeTools(view, apply, operationId);
+        const refreshed = view.get<OperationState>(stateAddress(operationId));
+        if (!refreshed || refreshed.phase !== "tools") return { type: "continue" };
+        if (blockedOnApproval(refreshed)) return { type: "approval" };
+      }
+      return { type: "tools", operationId };
+    }
     const target = state.targetId;
     if (target !== null && !view.entry(target)) {
       return { type: "settled", result: this.finish(view, apply, meta, "failed", "missing navigation target") };
@@ -1473,6 +1566,18 @@ export class AgentLane {
         decided.push({ ...item, outcome: "cancelled" });
         continue;
       }
+      if (item.call.approval?.decision !== "allow") {
+        const needs = await this.approvalRequired(item.call, item.args);
+        if (this.harness.isAbandoned) return decided;
+        if (signal.aborted) {
+          decided.push({ ...item, outcome: "cancelled" });
+          continue;
+        }
+        if (needs) {
+          decided.push({ ...item, waitApproval: true });
+          continue;
+        }
+      }
       const decision = await walkBefore(this.hookList(), {
         toolCallId: item.call.toolCallId,
         toolName: item.call.name,
@@ -1545,12 +1650,18 @@ export class AgentLane {
     const planned = calls.filter((call) => call.status === "planned");
     const batch = sequential ? planned.slice(0, 1) : planned;
     if (batch.length === 0) return { type: "done" };
+    if (!cancel && batch.every((call) => call.approval && !call.approval.decision)) return { type: "done" };
     const decided: ToolDecision[] = [];
     let needsHook = false;
     for (const call of batch) {
-      const args = readArgs(assistant, call.sourceIndex);
+      if (call.approval && !call.approval.decision && !cancel) continue;
+      const args = call.approval?.arguments ?? readArgs(assistant, call.sourceIndex);
       const tool = this.tool(call.name);
       const invalid = tool ? validateArguments(tool.parameters, args) : `Unknown tool: ${call.name}`;
+      if (call.approval?.decision === "deny" && !cancel) {
+        decided.push({ call, args, outcome: approvalDenial(call.approval.reason) });
+        continue;
+      }
       if (cancel || !tool || invalid) {
         decided.push({ call, args, outcome: cancel ? "cancelled" : invalid || "unavailable" });
         continue;
@@ -1558,6 +1669,7 @@ export class AgentLane {
       needsHook = true;
       decided.push({ call, args, tool });
     }
+    if (decided.length === 0) return { type: "done" };
     if (needsHook) {
       return { type: "decide", mode: sequential ? "sequential" : "parallel", batch: decided };
     }
@@ -1638,6 +1750,14 @@ export class AgentLane {
     for (const item of decided) {
       const current = calls.find((entry) => entry.resultEntryId === item.call.resultEntryId);
       if (!current || current.status !== "planned") continue;
+      if (item.waitApproval) {
+        if (current.approval) continue;
+        calls = calls.map((entry) => entry.resultEntryId === item.call.resultEntryId ? {
+          ...entry,
+          approval: { arguments: cloneArgs(item.args), requestedAt: Date.now() },
+        } : entry);
+        continue;
+      }
       const outcome = item.outcome !== undefined ? item.outcome : (cancel ? "cancelled" : undefined);
       if (outcome !== undefined) {
         calls = calls.map((entry) => entry.resultEntryId === item.call.resultEntryId ? { ...entry, status: "outcome_ready" as const, terminate: false } : entry);
@@ -2141,6 +2261,49 @@ export class AgentLane {
     return (this.harness.options.tools ?? []).find((tool) => tool.name === name);
   }
 
+  private async approvalRequired(call: { toolCallId: string; name: string }, args: unknown): Promise<boolean> {
+    const predicate = this.harness.options.requiresApproval;
+    if (!predicate) return false;
+    return await predicate({ toolCallId: call.toolCallId, name: call.name, arguments: args }) === true;
+  }
+
+  /**
+   * Persist the decision on the parked call before the tool runs or the denial is written.
+   * A later drive, including one after a crash, acts on that record once.
+   */
+  private stageApproval(
+    view: StorageView,
+    apply: Apply,
+    toolCallId: string,
+    decision: "allow" | "deny",
+    reason: string | undefined,
+  ): { action: "drive"; operationId: string } | { action: "unknown" } | { action: "settled" } {
+    const operationId = this.record(view).currentOperationId;
+    const state = operationId ? view.get<OperationState>(stateAddress(operationId)) : undefined;
+    if (operationId && state?.phase === "tools") {
+      const call = state.calls.find((item) => item.toolCallId === toolCallId && item.approval);
+      const approval = call?.approval;
+      if (call && approval && !approval.decision && call.status === "planned") {
+        const trimmed = reason?.trim();
+        const calls = state.calls.map((item) => item.resultEntryId !== call.resultEntryId ? item : {
+          ...item,
+          approval: {
+            arguments: approval.arguments,
+            requestedAt: approval.requestedAt,
+            decision,
+            ...(trimmed ? { reason: trimmed } : {}),
+          },
+        });
+        apply([{ type: "set", address: stateAddress(operationId), value: { ...state, calls } }]);
+        return { action: "drive", operationId };
+      }
+      if (approval?.decision && call?.status === "planned") return { action: "drive", operationId };
+      if (approval) return { action: "settled" };
+    }
+    if (storedToolResult(view, this.name, toolCallId)) return { action: "settled" };
+    return { action: "unknown" };
+  }
+
   private hookList(): readonly AgentHook[] {
     return this.harness.options.hooks ?? [];
   }
@@ -2179,6 +2342,7 @@ interface ToolDecision {
   args: unknown;
   outcome?: string;
   tool?: HarnessTool;
+  waitApproval?: boolean;
 }
 
 function user(text: string): HarnessMessage {
@@ -2196,6 +2360,33 @@ function importedAssistant(config: { provider: string; modelId: string }, text: 
     stopReason: "stop",
     timestamp: Date.now(),
   };
+}
+
+function approvalDenial(reason: string | undefined): string {
+  const text = reason?.trim();
+  return text ? text : "Tool call denied";
+}
+
+function cloneArgs(args: unknown): unknown {
+  return args === undefined ? {} : structuredClone(args);
+}
+
+function storedToolResult(view: StorageView, lane: string, toolCallId: string): boolean {
+  const tip = view.get<string | null>(tipAddress(lane)) ?? null;
+  return ancestors(view, tip).some((entry) => {
+    if (entry.payload.type !== "message") return false;
+    const message = entry.payload.message;
+    return message.role === "toolResult" && message.toolCallId === toolCallId;
+  });
+}
+
+/** True when the next call that is not already settled is parked with no decision. */
+function blockedOnApproval(state: Extract<OperationState, { phase: "tools" }>): boolean {
+  for (const call of state.calls) {
+    if (call.status === "completed" || call.status === "outcome_ready") continue;
+    return call.status === "planned" && call.approval !== undefined && call.approval.decision === undefined;
+  }
+  return false;
 }
 
 function toolMessage(call: { toolCallId: string; name: string }, text: string, isError: boolean, _terminate: boolean) {
