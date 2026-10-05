@@ -8,7 +8,9 @@ import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { chatModelSpecs, cycleModels, scopedModels } from "./project.ts";
 import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
-import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, summarizeArgs, type Picker, type PickerRow, type TuiApproval, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
+import type { UserContent } from "@amazme/ai";
+import { imagePrompt } from "./images.ts";
+import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, summarizeArgs, type Picker, type PickerRow, type TuiApproval, type TuiEffect, type TuiEntry, type TuiState, type TuiWindow } from "./reduce.ts";
 
 export { finishDrive } from "./commands.ts";
 
@@ -80,6 +82,11 @@ export interface HostAttach {
 export interface HostSurfaces {
   openWeb?(): Promise<string>;
   openGui?(): Promise<string>;
+  /**
+   * Called when the composer input contains an image.
+   * Return a user-facing refusal to skip the turn. Undefined lets the turn through.
+   */
+  refuseImages?(provider: string, modelId: string, content: readonly { type: string }[]): string | undefined;
 }
 
 /** Read one rendered frame. The host keeps the runtime. */
@@ -478,7 +485,22 @@ export async function presentHost(
       return;
     }
     if (effect.type === "submit") {
-      const followed = await lane.submit(effect.text);
+      const cwd = attach.cwd || process.cwd();
+      const prepared = await imagePrompt(effect.text, cwd);
+      if (!prepared.ok) {
+        state = restoreComposer(state, effect.text, prepared.message);
+        paint();
+        return;
+      }
+      if (prepared.content && surfaces?.refuseImages) {
+        const message = surfaces.refuseImages(state.provider, state.modelId, prepared.content);
+        if (message) {
+          state = restoreComposer(state, effect.text, message);
+          paint();
+          return;
+        }
+      }
+      const followed = await lane.submit(effect.text, prepared.content);
       if (followed && state.busy) {
         state = { ...state, queued: state.queued + 1 };
         paint();
@@ -579,6 +601,12 @@ export async function presentHost(
   await client.dispose();
 }
 
+function restoreComposer(state: TuiState, text: string, notice: string): TuiState {
+  const trimmed = text.trim();
+  const history = state.history.at(-1) === trimmed ? state.history.slice(0, -1) : state.history;
+  return { ...state, input: text, cursor: Array.from(text).length, notice, history, historyAt: null, draft: text };
+}
+
 class AttachedLane {
   private subscription: { current(): LaneSnapshotDto; coverage(): { omitted: number; skipped: number }; close(): Promise<void> } | undefined;
   private generation = 0;
@@ -639,15 +667,16 @@ class AttachedLane {
     await this.subscription?.close();
   }
 
-  async submit(text: string): Promise<boolean> {
+  async submit(text: string, content?: UserContent[]): Promise<boolean> {
     const body = text.trim();
-    if (!body) return false;
+    const images = content?.some((block) => block.type === "image") === true;
+    if (!body && !images) return false;
     const operationId = this.snapshot().operationId;
     if (operationId) {
-      await this.lane.followUp(body);
+      await this.lane.followUp(body, images && content ? { content } : undefined);
       return true;
     }
-    const admitted = await this.lane.accept({ kind: "prompt", text: body });
+    const admitted = await this.lane.accept(images && content ? { kind: "prompt", text: body, content } : { kind: "prompt", text: body });
     const started = this.snapshot().version;
     await finishDrive(this.lane, admitted.operationId);
     await this.untilLeft(admitted.operationId, started);
@@ -749,6 +778,7 @@ function messageText(message: { role: string; content?: unknown; toolName?: stri
           if (!block || typeof block !== "object") return "";
           const record = block as { type?: string; text?: string; name?: string };
           if (record.type === "text" && typeof record.text === "string") return record.text;
+          if (record.type === "image") return "[image]";
           if (record.type === "toolCall" && typeof record.name === "string") return record.name;
           return "";
         }).join("")

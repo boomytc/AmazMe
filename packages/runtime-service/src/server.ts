@@ -284,7 +284,9 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
       case "steer":
         return wire(unwrap(await lane.steer(call.text)));
       case "followUp":
-        return wire(unwrap(await lane.followUp(call.text)));
+        return wire(unwrap(await lane.followUp(call.content?.some((block) => block.type === "image")
+          ? { role: "user", content: call.content, timestamp: Date.now() }
+          : call.text)));
       case "requestAbort":
         return wire(unwrap(await lane.requestAbort(call.operationId)));
       case "catalog":

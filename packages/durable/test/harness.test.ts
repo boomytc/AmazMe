@@ -74,6 +74,39 @@ test("accept records the user entry and does not call the model", async () => {
   assert.equal(entries[0]?.payload.type, "message");
 });
 
+test("a prompt stores ImageContent only when the input itself contains an image", async () => {
+  const { provider, models } = scripted([fauxAssistant("hi")]);
+  const runtime = harness(new MemoryStorage(), models);
+  const lane = runtime.lane();
+  const content = [
+    { type: "text" as const, text: "look " },
+    { type: "image" as const, mimeType: "image/png", data: "aaaa" },
+  ];
+  const admitted = await lane.accept({ kind: "prompt", text: "look @shot.png", content });
+  assert.equal(admitted.ok, true);
+  const stored = (await lane.entries())[0];
+  assert.equal(stored?.payload.type, "message");
+  if (stored?.payload.type !== "message") return;
+  assert.equal(stored.payload.message.role, "user");
+  if (stored.payload.message.role !== "user") return;
+  assert.deepEqual(stored.payload.message.content, content);
+  await runtime.close();
+
+  const textOnly = harness(new MemoryStorage(), models);
+  const plain = await textOnly.lane().accept({
+    kind: "prompt",
+    text: "hello @readme.md",
+    content: [{ type: "text", text: "other" }],
+  });
+  assert.equal(plain.ok, true);
+  const entry = (await textOnly.lane().entries())[0];
+  assert.equal(entry?.payload.type, "message");
+  if (entry?.payload.type !== "message" || entry.payload.message.role !== "user") return;
+  assert.equal(entry.payload.message.content, "hello @readme.md");
+  assert.equal(provider.state.callCount, 0);
+  await textOnly.close();
+});
+
 test("a prompt runs the model, then the tool, then the model again", async () => {
   const { provider, models } = scripted([
     fauxAssistant([fauxToolCall("echo", { value: 1 })]),

@@ -33,6 +33,7 @@ import {
   type LaneWindowDto,
   type OperationAdmissionDto,
   type OperationRequest,
+  type PromptContent,
   type OperationResultDto,
   type RuntimeCall,
 } from "./contracts.ts";
@@ -154,8 +155,14 @@ export class RemoteLane {
     return parse(EnqueuedReplySchema, await this.call({ method: "steer", lane: this.name, text }, options), "steer reply");
   }
 
-  async followUp(text: string, options?: RequestOptions): Promise<{ entryId: string }> {
-    return parse(EnqueuedReplySchema, await this.call({ method: "followUp", lane: this.name, text }, options), "follow-up reply");
+  async followUp(text: string, options?: RequestOptions & { content?: PromptContent }): Promise<{ entryId: string }> {
+    const content = options?.content;
+    return parse(EnqueuedReplySchema, await this.call({
+      method: "followUp",
+      lane: this.name,
+      text,
+      ...(content ? { content } : {}),
+    }, options), "follow-up reply");
   }
 
   /** Registered models, this lane's thinking levels, and the workspace label. */

@@ -1,3 +1,4 @@
+import { imageInputRefusal } from "../image-input.ts";
 import { baseAssistant, createAssistantEventStream, type AssistantEventStream, type ProviderStreams } from "../models.ts";
 import { resolveThinkingLevel } from "../thinking.ts";
 import { isCompletionsThinkingField, type AssistantMessage, type CompletionsOutputTokenField, type CompletionsThinkingField, type Context, type Message, type Model, type OpenAICompletionsOptions, type ToolCall, type Usage } from "../types.ts";
@@ -254,7 +255,10 @@ function userImageProblem(model: Model, messages: readonly Message[]): string | 
 }
 
 function imageBlockProblem(model: Model, block: { mimeType: string; data: string }, rejectTextModel: boolean): string | undefined {
-  if (rejectTextModel && !model.input.includes("image")) return `Model ${model.id} does not accept image input`;
+  if (rejectTextModel) {
+    const refused = imageInputRefusal(model, [{ type: "image" }]);
+    if (refused) return refused;
+  }
   if (typeof block.mimeType !== "string" || !IMAGE_MIME.test(block.mimeType)) return "Image input requires a mime type";
   if (typeof block.data !== "string" || block.data.length === 0 || !IMAGE_BASE64.test(block.data)) {
     return "Image input requires base64 data";
