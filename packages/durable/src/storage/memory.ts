@@ -40,6 +40,7 @@ export function applyWrites(state: State, writes: readonly Write[]): State {
       if ("cacheWrite" in write) row.cacheWrite = write.cacheWrite ?? null;
       if ("reasoning" in write) row.reasoning = write.reasoning ?? null;
       if (write.model) row.model = { provider: write.model.provider, modelId: write.model.modelId };
+      if (write.cost) row.cost = { total: null };
       usage.push(row);
     } else if (write.type === "set") {
       values.set(addressKey(write.address), write.value);

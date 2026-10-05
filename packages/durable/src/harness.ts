@@ -75,7 +75,7 @@ export interface LaneConfig {
   /** Output-token cap forwarded to streamSimple. Omitted uses the model cap. */
   maxTokens?: number;
   maxAttempts: number;
-  /** Model-request deadline. Distinct from any tool execution limit. */
+  /** Idle deadline for one model request. Each received frame restarts it. Not a tool limit or a wall-clock cap. */
   requestTimeoutMs: number;
   /** Stored retry wait. The settled `notBefore` is `now + retryNotBeforeDelayMs(retry, attempt, retryAfterMs?)`. */
   retry: RetryWait;
@@ -116,7 +116,7 @@ export interface HarnessOptions {
   /** Output-token cap for model turns. The summary request uses its own cap. */
   maxTokens?: number;
   maxAttempts?: number;
-  /** Deadline for one model request. Omitted uses 60 seconds. Not a tool limit. */
+  /** Idle deadline for one model request. Each received frame restarts it. Omitted uses 60 seconds. Not a tool limit or a wall-clock cap. */
   requestTimeoutMs?: number;
   /** Retry wait stored on the lane. Omitted uses a 1 second base capped at 60 seconds. */
   retry?: RetryWait;
@@ -134,8 +134,9 @@ export interface HarnessOptions {
    */
   requiresApproval?: (call: ApprovalRequest) => boolean | Promise<boolean>;
   /**
-   * Test seam for the model deadline. Production uses {@link armRequestDeadline}.
+   * Test seam for the model idle deadline. Production uses {@link armRequestDeadline}.
    * The returned signal must abort when `parent` aborts.
+   * `touch` restarts the idle timer. A seam that fires the deadline itself may leave `touch` empty.
    */
   armDeadline?: (timeoutMs: number, parent: AbortSignal) => RequestDeadline;
 }
@@ -241,6 +242,7 @@ export interface LaneUsage {
    * Counts, `hitRate`, and `cost` come from that row. `hitRate` is `cacheHitRate` of the row.
    * `cost` is `usageCost` for the model stored on the row, or null when the row has no model,
    * or that model is missing or has no price list.
+   * A row that stored `cost.total: null` did not report usage. Its cost stays null and is not priced from zero tokens.
    */
   lastTurn: (UsageCounts & { hitRate: number | null; cost: UsageCost | null }) | null;
   /**
@@ -255,6 +257,7 @@ export interface LaneUsage {
    * `hitRate` is `cacheHitRate` of those totals, and null only when `cacheRead` is null. A null `cacheWrite`
    * is left out of that rate.
    * `cost` prices each row with the model stored on that row. A row without one makes the cumulative cost null.
+   * A row that stored `cost.total: null` is an unquoted turn and also makes the cumulative cost null.
    */
   total: UsageCounts & { hitRate: number | null; cost: LaneUsageCost | null };
   /**
@@ -1316,6 +1319,7 @@ export class AgentLane {
       });
       result = stream.result();
       for await (const event of stream) {
+        deadline.touch();
         const frame = frameFromEvent(event);
         if (!frame) continue;
         if (frame.type !== "stop") contentFrames += 1;
@@ -1370,6 +1374,7 @@ export class AgentLane {
     let message: AssistantMessage | undefined;
     try {
       for await (const event of stream) {
+        deadline.touch();
         if (event.type === "done") message = event.message;
         if (event.type === "error") message = event.error;
       }
@@ -2778,6 +2783,7 @@ function sumCharge(parts: readonly UsageCost[], key: keyof UsageCost): number | 
 }
 
 function rowCost(options: HarnessOptions, row: UsageRow): UsageCost | null {
+  if (row.cost?.total === null) return null;
   if (!row.model) return null;
   const model = options.models.getModel(row.model.provider, row.model.modelId);
   if (!model) return null;
@@ -2872,6 +2878,7 @@ function ancestors(view: StorageView, tip: string | null): Entry[] {
 }
 
 function usageWrite(id: string, operationId: string, message: AssistantMessage): Write {
+  const quoted = message.usage.cost?.total;
   return {
     type: "usage",
     id,
@@ -2883,6 +2890,7 @@ function usageWrite(id: string, operationId: string, message: AssistantMessage):
     cacheWrite: message.usage.cacheWrite ?? 0,
     reasoning: message.usage.reasoning ?? null,
     model: { provider: message.provider, modelId: message.model },
+    ...(quoted === null || quoted === undefined ? { cost: { total: null } } : {}),
   };
 }
 

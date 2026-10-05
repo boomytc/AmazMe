@@ -1174,6 +1174,46 @@ test("a cache hit without a hit price nulls that charge and the cumulative total
   }
 });
 
+test("missing usage records a null cost instead of zero dollars", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-usage-missing-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "lane.jsonl");
+  const provider = fauxProvider({
+    respond: () => fauxAssistant("ok", {
+      usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: null } },
+    }),
+  });
+  priceOf(provider, { input: 1_000_000, output: 2_000_000 });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = runtime(new JsonlStorage(file), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    const rows = await harness.storage.read((view) => view.usageRows());
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.cost?.total, null);
+    const usage = await readUsage(lane);
+    assert.ok(usage.lastTurn);
+    assert.equal(usage.lastTurn.cost, null);
+    assert.equal(usage.total.cost, null);
+    assert.equal(usage.total.input, 0);
+    assert.equal(usage.total.output, 0);
+    const reopened = runtime(new JsonlStorage(file), models);
+    try {
+      const again = await readUsage(reopened.lane());
+      const stored = await reopened.storage.read((view) => view.usageRows());
+      assert.equal(stored[0]?.cost?.total, null);
+      assert.equal(again.lastTurn?.cost, null);
+      assert.equal(again.total.cost, null);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    harness.close();
+  }
+});
+
 test("an old usage row without a model nulls the cumulative cost", async () => {
   const provider = fauxProvider();
   priceOf(provider, { input: 1_000_000, output: 2_000_000, cacheRead: 100_000, cacheWrite: 100_000 });
