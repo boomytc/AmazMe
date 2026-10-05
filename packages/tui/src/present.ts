@@ -8,7 +8,7 @@ import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { chatModelSpecs, cycleModels, scopedModels } from "./project.ts";
 import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
-import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
+import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, summarizeArgs, type Picker, type PickerRow, type TuiApproval, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
 
 export { finishDrive } from "./commands.ts";
 
@@ -89,8 +89,13 @@ export async function readHostFrame(attach: HostAttach, lane = attach.lane): Pro
   try {
     const remote = new RuntimeClient(client);
     await remote.attach(attach.runtimeId);
-    const snapshot = await remote.lane(lane).snapshot();
-    return renderTui({ ...emptyTui(lane), ...windowFrom(snapshot, [lane], lane) }, 100, 32, Date.now());
+    const remoteLane = remote.lane(lane);
+    const snapshot = await remoteLane.snapshot();
+    const pending = await remoteLane.pendingApprovals();
+    return renderTui({
+      ...emptyTui(lane),
+      ...windowFrom(snapshot, [lane], lane, [], approvalCards(pending.items)),
+    }, 100, 32, Date.now());
   } finally {
     await client.dispose();
   }
@@ -117,12 +122,13 @@ export async function presentHost(
   let thinkingRows: string[] = [];
   let paint = (): void => undefined;
   let previousFrame: string | null = null;
+  const frame = (): TuiWindow => windowFrom(lane.snapshot(), sessions, active, lane.earlier(), lane.approvals());
   let lane = new AttachedLane(remote.lane(active), () => {
-    state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
+    state = reduceTui(state, { type: "window", window: frame() }).state;
     paint();
   });
   await lane.open();
-  state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
+  state = reduceTui(state, { type: "window", window: frame() }).state;
   stdin.setRawMode(true);
   stdin.resume();
   stdout.write("\x1b[?1049h\x1b[?25h\x1b[?2004h");
@@ -194,7 +200,12 @@ export async function presentHost(
       }
       if (reduced.effect) {
         void apply(reduced.effect).catch((error: unknown) => {
-          state = { ...state, notice: error instanceof Error ? error.message : String(error) };
+          state = {
+            ...state,
+            deciding: false,
+            decidingId: null,
+            notice: error instanceof Error ? error.message : String(error),
+          };
           paint();
         });
       }
@@ -205,7 +216,7 @@ export async function presentHost(
     takeKeys(keys.push(text));
   };
   const showLane = (): void => {
-    state = reduceTui(state, { type: "window", window: windowFrom(lane.snapshot(), sessions, active, lane.earlier()) }).state;
+    state = reduceTui(state, { type: "window", window: frame() }).state;
     paint();
   };
   const actions: SlashActions = {
@@ -462,6 +473,10 @@ export async function presentHost(
       await cycleModel();
       return;
     }
+    if (effect.type === "approve") {
+      await remote.lane(active).approve(effect.toolCallId, effect.decision, effect.session ? { session: true } : {});
+      return;
+    }
     if (effect.type === "submit") {
       const followed = await lane.submit(effect.text);
       if (followed && state.busy) {
@@ -568,6 +583,8 @@ class AttachedLane {
   private subscription: { current(): LaneSnapshotDto; coverage(): { omitted: number; skipped: number }; close(): Promise<void> } | undefined;
   private generation = 0;
   private earlierEntries: TuiEntry[] = [];
+  private approvalCards: TuiApproval[] = [];
+  private approvalEpoch = 0;
   private readonly waiters: Array<() => void> = [];
 
   constructor(private readonly lane: RemoteLane, private readonly onView: () => void) {}
@@ -578,6 +595,10 @@ class AttachedLane {
 
   earlier(): TuiEntry[] {
     return this.earlierEntries;
+  }
+
+  approvals(): TuiApproval[] {
+    return this.approvalCards;
   }
 
   async open(): Promise<void> {
@@ -591,9 +612,26 @@ class AttachedLane {
       }
       this.generation += 1;
       this.onView();
+      void this.refreshApprovals();
       const waiting = this.waiters.splice(0);
       for (const wake of waiting) wake();
     });
+    await this.refreshApprovals();
+  }
+
+  /**
+   * The snapshot leaves parked calls out. Read `pendingApprovals` when the subscription moves,
+   * which is the same commit that parked them. This is not a second retry timer.
+   */
+  private async refreshApprovals(): Promise<void> {
+    const epoch = ++this.approvalEpoch;
+    try {
+      const pending = await this.lane.pendingApprovals();
+      if (epoch !== this.approvalEpoch) return;
+      this.approvalCards = approvalCards(pending.items);
+    } catch {
+      if (epoch !== this.approvalEpoch) return;
+    }
     this.onView();
   }
 
@@ -650,7 +688,13 @@ class AttachedLane {
 }
 
 /** 把 lane 快照收成 reducer 窗口。宿主附着和屏幕夹具走同一条。 */
-export function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active: string, earlier: TuiEntry[] = []): TuiWindow {
+export function windowFrom(
+  snapshot: LaneSnapshotDto,
+  sessions: string[],
+  active: string,
+  earlier: TuiEntry[] = [],
+  approvals: TuiApproval[] = [],
+): TuiWindow {
   const seen = new Set(snapshot.entries.map((entry) => entry.id));
   return {
     entries: [...earlier.filter((entry) => !seen.has(entry.id)), ...snapshot.entries.map(entryView)],
@@ -664,7 +708,16 @@ export function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active
     sessions,
     active,
     activity: snapshot.activity,
+    approvals,
   };
+}
+
+function approvalCards(items: readonly { toolCallId: string; name: string; arguments: unknown }[]): TuiApproval[] {
+  return items.map((item) => ({
+    toolCallId: item.toolCallId,
+    name: item.name,
+    summary: summarizeArgs(item.arguments),
+  }));
 }
 
 function entryView(entry: EntryDto): TuiEntry {

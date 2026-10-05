@@ -1,4 +1,4 @@
-import type { JsonValue } from "@amazme/protocol";
+import { type JsonValue } from "@amazme/protocol";
 import Type, { type Static, type TSchema } from "typebox";
 import { Check } from "typebox/value";
 
@@ -77,10 +77,21 @@ const ImportCall = Strict({
   messages: Type.Array(ImportMessageSchema, { minItems: 1, maxItems: 200 }),
 });
 const ConversationsCall = Strict({ method: Type.Literal("conversations") });
+const PendingApprovalsCall = Strict({ method: Type.Literal("pendingApprovals"), lane: LaneNameSchema });
+const ApproveCall = Strict({
+  method: Type.Literal("approve"),
+  lane: LaneNameSchema,
+  toolCallId: Type.String({ minLength: 1 }),
+  decision: Type.Union([Type.Literal("allow"), Type.Literal("deny")]),
+  reason: Type.Optional(Type.String({ maxLength: 4_000 })),
+  /** When true with `allow`, this process stops asking for that tool name. */
+  session: Type.Optional(Type.Boolean()),
+});
 /** Calls on a runtime route. Lane calls name their lane; unsubscribe and conversations do not. */
 export const RuntimeCallSchema = Type.Union([
   AcceptCall, DriveCall, SnapshotCall, HistoryCall, ResultCall, SteerCall, FollowUpCall, RequestAbortCall,
   ConfigureCall, CatalogCall, ForkCall, ImportCall, SubscribeCall, UnsubscribeCall, ConversationsCall,
+  PendingApprovalsCall, ApproveCall,
 ]);
 export type RuntimeCall = Static<typeof RuntimeCallSchema>;
 
@@ -384,6 +395,18 @@ export const ForkReplySchema = Strict({ lane: LaneNameSchema });
 export type ForkReplyDto = Static<typeof ForkReplySchema>;
 export const ImportReplySchema = Strict({ lane: LaneNameSchema, tipId: Nullable(EntryIdSchema) });
 export type ImportReplyDto = Static<typeof ImportReplySchema>;
+
+const JsonArgument = Type.Unsafe<JsonValue>(Type.Unknown());
+export const PendingApprovalsReplySchema = Strict({
+  version: Type.Integer({ minimum: 0 }),
+  items: Type.Array(Strict({
+    toolCallId: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1 }),
+    arguments: JsonArgument,
+    requestedAt: Type.Optional(Type.Number()),
+  })),
+});
+export type PendingApprovalsDto = Static<typeof PendingApprovalsReplySchema>;
 
 export const parseRuntimeCall = (value: JsonValue): RuntimeCall => parse(RuntimeCallSchema, value, "runtime call");
 export const parseManagementCall = (value: JsonValue): ManagementCall => parse(ManagementCallSchema, value, "management call");

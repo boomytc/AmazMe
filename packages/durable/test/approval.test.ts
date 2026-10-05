@@ -612,3 +612,26 @@ test("repeated drive while approval is waiting does not persist or call the mode
     harness.close();
   }
 });
+
+test("allowForSession runs the next call of that tool without parking it", async () => {
+  const runs = { n: 0 };
+  const { provider, harness, lane } = openLane(new MemoryStorage(), runs, () => true, (_context, _options, state) => {
+    if (state.callCount === 1) return fauxAssistant([fauxToolCall("work", { path: "a" }, "call-1")]);
+    if (state.callCount === 2) return fauxAssistant([fauxToolCall("work", { path: "b" }, "call-2")]);
+    return fauxAssistant("after");
+  });
+  try {
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const parked = await lane.drive(admitted.value.operationId);
+    assert.equal(parked.ok && parked.value.kind === "waiting" ? parked.value.reason : "", "approval");
+    lane.allowForSession("work");
+    await lane.approve("call-1", "allow");
+    assert.equal(runs.n, 2);
+    assert.equal(provider.state.callCount, 3);
+    assert.deepEqual((await lane.pendingApprovals()).items, []);
+  } finally {
+    harness.close();
+  }
+});
