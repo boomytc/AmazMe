@@ -164,6 +164,9 @@ export function createBashTool(root: string): AgentTool {
 }
 
 export function createCodingTools(root: string): AgentTool[] {
+  // Opening a runtime runs this self-check. It stays: a sandbox that can read the canary
+  // must fail closed. The failure is `sandbox_unavailable` with the original
+  // SANDBOX_UNAVAILABLE text, not an internal error, and tools do not run unsandboxed.
   prepareWorkspace(root);
   const enqueue = createQueue();
   return [
