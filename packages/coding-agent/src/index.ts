@@ -5,6 +5,7 @@ export {
   type SessionEntry,
   type SessionHeader,
   type SessionMessageEntry,
+  type SessionRouteEntry,
   type SessionSelectEntry,
 } from "./session.ts";
 export {

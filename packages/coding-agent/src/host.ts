@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import type { AssistantEventStream, Context, Model, StreamOptions } from "@amazme/ai";
+import type { AssistantEventStream, Context, Model, Models, StreamOptions } from "@amazme/ai";
 import { Server } from "@amazme/server";
 import { listenUnix, type UnixListener } from "@amazme/server/unix";
 import { openJsonlRuntime } from "@amazme/runtime-service/jsonl";
@@ -11,12 +11,16 @@ import { connectWorkspaceMcp } from "./mcp-config.ts";
 import { appendMcpTools } from "./mcp.ts";
 import { packageSkillText } from "@amazme/tui";
 import { appendSkillText } from "./skills.ts";
+import { visibleModels } from "./picker.ts";
+import { installSessionRouter } from "./host-router.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
 interface HostModels {
   getModel(providerId: string, modelId: string): Model | undefined;
   streamSimple(model: Model, context: Context, options?: StreamOptions): AssistantEventStream;
   listModels?(): readonly { provider: string; id: string }[];
+  getClassifier?: Models["getClassifier"];
+  classify?: Models["classify"];
 }
 
 export const HOST_SERVER_ID = "amazme";
@@ -102,6 +106,12 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
             workspace: shortWorkspace(cwd),
             tools,
           });
+          installSessionRouter(resources.harness, {
+            cwd,
+            models: options.models,
+            provider,
+            modelId,
+          });
           return {
             harness: resources.harness,
             closeStorage: () => resources.closeStorage(),
@@ -138,10 +148,15 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
   };
 }
 
+/** Models the `/model` picker can show. Jev stays out of this list. */
+export function listedHostModels(models: HostModels): { provider: string; id: string }[] {
+  return visibleModels(models.listModels?.() ?? []).map((model) => ({ provider: model.provider, id: model.id }));
+}
+
 function withPackageSkills(cwd: string, models: HostModels): HostModels {
   return {
     getModel: (provider, modelId) => models.getModel(provider, modelId),
-    ...(models.listModels ? { listModels: () => models.listModels?.() ?? [] } : {}),
+    ...(models.listModels ? { listModels: () => listedHostModels(models) } : {}),
     streamSimple(model, context, options) {
       const extra = packageSkillText(cwd);
       if (extra.length === 0) return models.streamSimple(model, context, options);
