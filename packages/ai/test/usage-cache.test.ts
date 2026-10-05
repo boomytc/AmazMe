@@ -249,6 +249,46 @@ test("a cache-read rate prices the hit tokens and leaves them out of the input c
   assert.deepEqual(written.cost, { input: 9, output: 1, total: 17 });
 });
 
+test("completions leave reasoning unset when DeepSeek omits it, and keep a reported count inside output", async () => {
+  const model = chatModel("openai-completions");
+  model.id = "deepseek-flash";
+  model.cost = { input: 1_000_000, output: 2_000_000 };
+  const stop = { choices: [{ finish_reason: "stop", delta: {} }] };
+  const run = (usage: unknown) => settle(openaiCompletionsApi({
+    fetch: recordedFetch(sse([
+      { choices: [{ delta: { content: "Hi" } }] },
+      { ...stop, usage },
+    ])),
+  }).stream(model, CONTEXT, OPTIONS));
+
+  // Published deepseek-flash chat completion example has no completion_tokens_details.
+  const flash = await run({
+    completion_tokens: 10,
+    prompt_tokens: 16,
+    total_tokens: 26,
+    prompt_tokens_details: { cached_tokens: 0 },
+    prompt_cache_hit_tokens: 0,
+    prompt_cache_miss_tokens: 16,
+  });
+  assert.equal(Object.hasOwn(flash, "reasoning"), false);
+  assert.equal(flash.output, 10);
+  assert.equal(flash.totalTokens, 26);
+  assert.equal(flash.cost.output, 20);
+
+  const reported = await run({
+    completion_tokens: 10,
+    prompt_tokens: 16,
+    total_tokens: 26,
+    prompt_cache_hit_tokens: 0,
+    prompt_cache_miss_tokens: 16,
+    completion_tokens_details: { reasoning_tokens: 6 },
+  });
+  assert.equal(reported.reasoning, 6);
+  assert.equal(reported.output, 10);
+  assert.equal(reported.totalTokens, 26);
+  assert.equal(reported.cost.output, 20);
+});
+
 test("a faux response can carry cache counts, and the default usage leaves them unset", async () => {
   const filled = fauxProvider({
     respond: () => fauxAssistant("ok", {
