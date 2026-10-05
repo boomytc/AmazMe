@@ -18,7 +18,8 @@ function inside(root, target) {
 
 function denied(error) {
   const code = error && typeof error === "object" ? error.code : undefined;
-  return code === "EPERM" || code === "EACCES";
+  // Seatbelt denies an existing path with EPERM. Bubblewrap does not mount it, so the read is ENOENT.
+  return code === "EPERM" || code === "EACCES" || code === "ENOENT";
 }
 
 function probe() {

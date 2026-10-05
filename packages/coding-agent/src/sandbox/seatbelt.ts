@@ -1,10 +1,15 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import { ServiceError } from "@amazme/server";
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
-export function unavailable(detail: string): Error {
-  return new Error(`SANDBOX_UNAVAILABLE: ${detail}`);
+/**
+ * The wire code is `sandbox_unavailable` because protocol error codes are lowercase.
+ * The message keeps the original `SANDBOX_UNAVAILABLE:` text for attach and one-shot.
+ */
+export function unavailable(detail: string): ServiceError {
+  return new ServiceError("sandbox_unavailable", `SANDBOX_UNAVAILABLE: ${detail}`);
 }
 
 /** Wrap an absolute argv with Seatbelt. `runner` is the sandbox-exec path. */

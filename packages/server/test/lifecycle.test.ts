@@ -252,6 +252,38 @@ test("a failed open can be retried and does not stick in the cache", async () =>
   }
 });
 
+test("a sandbox open failure keeps its code and the original message", async () => {
+  const message = "SANDBOX_UNAVAILABLE: probe failed: forbidden file was readable";
+  const cases: unknown[] = [
+    new ServiceError("sandbox_unavailable", message),
+    new Error(message),
+  ];
+  for (const failure of cases) {
+    const errors: Error[] = [];
+    const server = new Server({
+      serverId: "srv",
+      service: attachService(),
+      onError: (error) => errors.push(error),
+      openRuntime: () => Promise.reject(failure),
+    });
+    const connect = connectorFor(server);
+    const clients: Client[] = [];
+    try {
+      const client = await connect();
+      clients.push(client);
+      await assert.rejects(client.request(client.serverRoute(), { op: "attach", runtimeId: "rt" }), (error: unknown) => {
+        assert.ok(error instanceof RemoteError);
+        assert.equal(error.code, "sandbox_unavailable");
+        assert.equal(error.message, message);
+        return true;
+      });
+      assert.equal(errors.length, 0);
+    } finally {
+      await shutdown(server, clients);
+    }
+  }
+});
+
 test("disconnect, close and remove during open discard the late handle", async () => {
   for (const mode of ["disconnect", "close", "remove"] as const) {
     const gate = deferred<RuntimeHandle>();

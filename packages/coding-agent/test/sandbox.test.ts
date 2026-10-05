@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -93,6 +93,7 @@ test("bash does not inherit credentials and cannot read the runtime directory", 
     if (previous === undefined) delete process.env.AMAZME_CREDENTIALS;
     else process.env.AMAZME_CREDENTIALS = previous;
   });
+  mkdirSync(join(root, ".amazme", "runtime"), { recursive: true });
   writeFileSync(join(root, ".amazme", "runtime", "workspace.jsonl"), "SECRET-JSONL");
   const result = await bash.execute({
     command: `${JSON.stringify(process.execPath)} -e "console.log('CRED='+(process.env.AMAZME_CREDENTIALS??'')); console.log('HOME='+(process.env.HOME??''))"`,
@@ -142,7 +143,8 @@ test("a missing seatbelt runner is unavailable", () => {
 test("bubblewrap is selected only on linux and a missing runner does not spawn", (t) => {
   const policy = buildPolicy(directory(t));
   const selected = sandboxArgv(policy, ["/bin/bash", "-c", "true"]);
-  assert.equal(selected[0], "/usr/bin/sandbox-exec");
+  if (process.platform === "linux") assert.match(selected[0] ?? "", /bwrap$/);
+  else assert.equal(selected[0], "/usr/bin/sandbox-exec");
   let looked = 0;
   assert.throws(() => bubblewrapArgv(policy, ["/bin/bash", "-c", "true"], {
     platform: "darwin",
@@ -167,6 +169,8 @@ test("bubblewrap is selected only on linux and a missing runner does not spawn",
   });
   assert.equal(argv[0], "/usr/bin/bwrap");
   assert.equal(argv.includes("--unshare-net"), true);
+  assert.equal(argv.includes("--seccomp"), true);
+  assert.equal(argv.includes("--ro-bind"), false);
   assert.equal(argv.includes("--tmpfs"), true);
   assert.equal(argv.includes(join(policy.canonical, ".amazme")), true);
   assert.equal(argv.includes(policy.scratch), true);

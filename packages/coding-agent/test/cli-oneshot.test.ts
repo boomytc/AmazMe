@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const repo = fileURLToPath(new URL("../../..", import.meta.url));
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
-function runCli(args: string[], cwd: string, stdin?: string): Promise<{ code: number; stdout: string; stderr: string }> {
+function runCli(args: string[], cwd: string, stdin?: string, env?: NodeJS.ProcessEnv): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--import", "tsx", cli, ...args], {
       cwd: repo,
@@ -17,6 +17,7 @@ function runCli(args: string[], cwd: string, stdin?: string): Promise<{ code: nu
         ...process.env,
         AMAZME_CREDENTIALS: join(cwd, "credentials.json"),
         AMAZME_DEVICE_ID_FILE: join(cwd, "device-id"),
+        ...env,
       },
       stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
@@ -63,6 +64,26 @@ test("continue and jsonl read the same workspace session as the one-shot prompt"
   assert.equal(jsonl.code, 0);
   assert.match(jsonl.stdout, /"text":"faux:second-line"/);
   assert.match(jsonl.stdout, /hello-tree/);
+});
+
+test("a one-shot without the sandbox runner prints SANDBOX_UNAVAILABLE", { timeout: 20_000 }, async () => {
+  if (process.platform !== "linux") return;
+  const dir = mkdtempSync(join(tmpdir(), "amazme-oneshot-nosandbox-"));
+  const emptyPath = mkdtempSync(join(tmpdir(), "amazme-empty-path-"));
+  try {
+    const result = await runCli(
+      ["--cwd", dir, "--provider", "deepseek", "--model", "deepseek-flash", "ping"],
+      dir,
+      undefined,
+      { PATH: emptyPath },
+    );
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /SANDBOX_UNAVAILABLE: bwrap is required/);
+    assert.equal(result.stderr.includes("internal server error"), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(emptyPath, { recursive: true, force: true });
+  }
 });
 
 test("login without a provider still fails before any session or screen", async () => {

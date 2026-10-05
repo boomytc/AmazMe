@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { Client } from "@amazme/client";
+import { Client, RemoteError } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { createModels } from "@amazme/ai";
 import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
@@ -136,7 +136,7 @@ test("startup fails before a listener or a JSONL lock exists", async (t) => {
 test("SIGTERM drains the serve process and leaves the JSONL reusable", { timeout: 20_000 }, async (t) => {
   const cwd = directory(t, "amz-host-stop-");
   const socket = join(cwd, "serve.sock");
-  const child = spawn(process.execPath, ["--import", "tsx", cli, "serve", "--socket", socket, "--cwd", cwd, "--provider", "faux", "--model", "faux-1"], {
+  const child = spawn(process.execPath, ["--import", "tsx", cli, "serve", "--socket", socket, "--cwd", cwd, "--provider", "deepseek", "--model", "deepseek-flash"], {
     cwd: repo,
     env: {
       ...process.env,
@@ -265,6 +265,78 @@ test("a killed host does not replay bash when the runtime is opened again", { ti
   const snapshot = await client.remote.lane(HOST_LANE).snapshot();
   assert.match(JSON.stringify(snapshot), /interrupted before settlement/);
   assert.equal(readFileSync(marker, "utf8").trim().split("\n").length, 1);
+});
+
+test("a unix client attaches when the sandbox blocks the canary", { timeout: 20_000 }, async (t) => {
+  const cwd = directory(t, "amz-host-attach-");
+  const socket = join(cwd, "serve.sock");
+  const child = spawn(process.execPath, ["--import", "tsx", cli, "serve", "--socket", socket, "--cwd", cwd, "--provider", "deepseek", "--model", "deepseek-flash"], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      AMAZME_CREDENTIALS: join(cwd, "credentials.json"),
+      AMAZME_DEVICE_ID_FILE: join(cwd, "device-id"),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+  child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+  const exited = new Promise<number>((resolve) => child.on("close", (code) => resolve(code ?? 1)));
+  t.after(async () => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await exited.catch(() => undefined);
+  });
+  await until(() => stdout.includes("\n"), `serve did not announce the socket\n${stderr}`);
+  const opened = await connect(socket);
+  t.after(() => opened.client.dispose());
+  await opened.remote.attach(HOST_RUNTIME_ID);
+  assert.equal((await opened.remote.lane(HOST_LANE).snapshot()).lane, HOST_LANE);
+  child.kill("SIGTERM");
+  assert.equal(await exited, 0, stderr);
+});
+
+test("unix attach keeps SANDBOX_UNAVAILABLE when the sandbox runner is missing", { timeout: 20_000 }, async (t) => {
+  if (process.platform !== "linux") return;
+  const cwd = directory(t, "amz-host-nosandbox-");
+  const emptyPath = directory(t, "amz-host-emptypath-");
+  const socket = join(cwd, "serve.sock");
+  const child = spawn(process.execPath, ["--import", "tsx", cli, "serve", "--socket", socket, "--cwd", cwd, "--provider", "deepseek", "--model", "deepseek-flash"], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      PATH: emptyPath,
+      AMAZME_CREDENTIALS: join(cwd, "credentials.json"),
+      AMAZME_DEVICE_ID_FILE: join(cwd, "device-id"),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+  child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+  const exited = new Promise<number>((resolve) => child.on("close", (code) => resolve(code ?? 1)));
+  t.after(async () => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await exited.catch(() => undefined);
+  });
+  await until(() => stdout.includes("\n"), `serve did not announce the socket\n${stderr}`);
+  const opened = await connect(socket);
+  t.after(() => opened.client.dispose());
+  await assert.rejects(() => opened.remote.attach(HOST_RUNTIME_ID), (error: unknown) => {
+    assert.ok(error instanceof RemoteError);
+    assert.equal(error.code, "sandbox_unavailable");
+    assert.match(error.message, /^SANDBOX_UNAVAILABLE: /);
+    assert.equal(error.message.includes("internal server error"), false);
+    return true;
+  });
+  child.kill("SIGTERM");
+  assert.equal(await exited, 0, stderr);
 });
 
 test("serve requires a socket and does not ask for a prompt", async (t) => {
