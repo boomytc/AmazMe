@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import type { AssistantEventStream, Context, Model, StreamOptions } from "@amazme/ai";
+import type { AssistantEventStream, Context, Model, Models, StreamOptions } from "@amazme/ai";
 import { Server } from "@amazme/server";
 import { listenUnix, type UnixListener } from "@amazme/server/unix";
 import { openJsonlRuntime } from "@amazme/runtime-service/jsonl";
@@ -12,12 +12,15 @@ import { appendMcpTools } from "./mcp.ts";
 import { packageSkillText } from "@amazme/tui";
 import { appendSkillText } from "./skills.ts";
 import { visibleModels } from "./picker.ts";
+import { installSessionRouter } from "./host-router.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
 interface HostModels {
   getModel(providerId: string, modelId: string): Model | undefined;
   streamSimple(model: Model, context: Context, options?: StreamOptions): AssistantEventStream;
   listModels?(): readonly { provider: string; id: string }[];
+  getClassifier?: Models["getClassifier"];
+  classify?: Models["classify"];
 }
 
 export const HOST_SERVER_ID = "amazme";
@@ -102,6 +105,12 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
             systemPrompt: appendSkillText(SYSTEM_PROMPT, join(cwd, "skills")),
             workspace: shortWorkspace(cwd),
             tools,
+          });
+          installSessionRouter(resources.harness, {
+            cwd,
+            models: options.models,
+            provider,
+            modelId,
           });
           return {
             harness: resources.harness,
