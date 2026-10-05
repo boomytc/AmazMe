@@ -323,16 +323,27 @@ export async function executeSlash(command: SlashAction, actions: SlashActions):
           const current = await actions.lane().configure();
           return notice(`模型 ${current.provider}/${current.modelId}。用法：/model 提供方/模型`);
         }
-        const next = await actions.lane().configure({ provider: command.provider, modelId: command.modelId });
-        return notice(`模型 ${next.provider}/${next.modelId} 思考 ${next.thinkingLevel}`);
+        // 思考级别不被目标模型接受时，宿主拒绝这次写入，原模型和原级别都留着。
+        // 例如正在 medium、切到只接受 off/low/high 的 flash。界面不降级，只要求先改 /thinking。
+        const target = `${command.provider}/${command.modelId}`;
+        try {
+          const next = await actions.lane().configure({ provider: command.provider, modelId: command.modelId });
+          return notice(`模型 ${next.provider}/${next.modelId} 思考 ${next.thinkingLevel}`);
+        } catch (error) {
+          const refused = modelSwitchRefusal(error, target);
+          if (refused) return notice(refused);
+          throw error;
+        }
       }
       case "thinking": {
         // 可用档是当前模型的 thinkingLevels。协议五档只判断参数是不是合法档名。
+        // medium 这种合法档名若不在列表里，要说当前模型不支持，不能跟拼错的名字一样说未知。两种都不写入。
         const current = await actions.lane().configure();
         const available = current.thinkingLevels.join(" ");
-        if (!command.level || command.invalid || !current.thinkingLevels.includes(command.level)) {
-          const unknown = command.invalid === true || command.level !== undefined;
-          return notice(unknown ? `未知思考级别。可用 ${available}` : `思考 ${current.thinkingLevel}。可用 ${available}`);
+        if (command.invalid) return notice(`未知思考级别。可用 ${available}`);
+        if (!command.level) return notice(`思考 ${current.thinkingLevel}。可用 ${available}`);
+        if (!current.thinkingLevels.includes(command.level)) {
+          return notice(`当前模型不支持 ${command.level}。可用 ${available}`);
         }
         const next = await actions.lane().configure({ thinkingLevel: command.level });
         return notice(`思考 ${next.thinkingLevel}`);
@@ -536,6 +547,22 @@ function transcriptLine(entry: { payload: { type: string; summary?: string; mess
 
 function notice(text: string): { type: "notice"; text: string } {
   return { type: "notice", text };
+}
+
+/**
+ * 宿主 `configure` 拒绝换模型时的原文是
+ * `thinking level <level> is not supported; available: off, low, high`。
+ * 可用档来自这句，不在这里猜目录。没有这句就返回 null，别的错误照原样显示。
+ */
+export function modelSwitchRefusal(error: unknown, target?: string): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /^thinking level \S+ is not supported; available: (.+)$/.exec(message);
+  const raw = match?.[1];
+  if (!raw) return null;
+  const levels = raw.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
+  if (levels.length === 0) return null;
+  const where = target ? `无法切换到 ${target}。` : "无法切换模型。";
+  return `${where}先用 /thinking 切到 ${levels.join("/")}`;
 }
 
 function usage(text: string): SlashCommand {

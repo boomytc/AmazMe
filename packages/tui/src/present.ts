@@ -4,7 +4,7 @@ import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import { emptyActivity, type EntryDto, type LaneSnapshotDto, type UserContent } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
-import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
+import { executeSlash, finishDrive, modelSwitchRefusal, type SlashActions } from "./commands.ts";
 import { chatModelSpecs, cycleModels, scopedModels } from "./project.ts";
 import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
@@ -347,7 +347,8 @@ export async function presentHost(
       const provider = split >= 0 ? effect.id.slice(0, split) : "";
       const modelId = split >= 0 ? effect.id.slice(split + 1) : "";
       if (!provider || !modelId) return;
-      await remote.lane(active).configure({ provider, modelId });
+      const switched = await configureModel(provider, modelId);
+      if (!switched) return;
       await rememberSettings();
       state = { ...state, notice: `模型 ${provider}/${modelId}`, picker: null };
       paint();
@@ -631,10 +632,23 @@ export async function presentHost(
     const slash = next.indexOf("/");
     const provider = next.slice(0, slash);
     const modelId = next.slice(slash + 1);
-    await remote.lane(active).configure({ provider, modelId });
+    const switched = await configureModel(provider, modelId);
+    if (!switched) return;
     await rememberSettings();
     state = { ...state, notice: `模型 ${provider}/${modelId}`, picker: null };
     paint();
+  };
+  const configureModel = async (provider: string, modelId: string): Promise<boolean> => {
+    try {
+      await remote.lane(active).configure({ provider, modelId });
+      return true;
+    } catch (error) {
+      const refused = modelSwitchRefusal(error, `${provider}/${modelId}`);
+      if (!refused) throw error;
+      state = { ...state, notice: refused, picker: null };
+      paint();
+      return false;
+    }
   };
   stdin.on("data", onData);
   paint();
