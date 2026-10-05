@@ -47,12 +47,13 @@ test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek AP
   assert.ok(flash);
   assert.ok(pro);
 
-  // Models & Pricing: version DeepSeek-V4.1-Flash, context 1M, vision on.
+  // Models & Pricing: version DeepSeek-V4.1-Flash, context 1M.
+  // Catalog input is text only. A new user image is refused before any request.
   // The published agent example uses contextWindow 1000000; the docs do not spell 1048576.
   assert.equal(flash.name, "DeepSeek V4.1 Flash");
   assert.equal(flash.api, "openai-completions");
   assert.equal(flash.baseUrl, "https://api.deepseek.com");
-  assert.deepEqual(flash.input, ["text", "image"]);
+  assert.deepEqual(flash.input, ["text"]);
   assert.equal(flash.contextWindow, 1_000_000);
   assert.equal(flash.reasoning, true);
   // Chat Completions: max_tokens is at most 384K, written as 393216.

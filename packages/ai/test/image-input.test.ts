@@ -70,9 +70,9 @@ test("a vision model sends ImageContent when the input contains an image", async
   ]);
 });
 
-// Flash vision stays ["text","image"] in the catalog. Live vision is deferred to Boom's box test and the docs.
-// Refusal follows model.input. Do not reject by model id, and do not rewrite flash input in a fixture.
-test("deepseek-v4-pro rejects a new image before any request", async () => {
+// Catalog input is text only. Refusal follows model.input. Do not reject by model id,
+// and do not rewrite flash input in a fixture. Restoring image on deepseek-flash fails this test.
+test("deepseek-flash and deepseek-v4-pro reject a new image before any request", async () => {
   let calls = 0;
   const models = createModels({ env: { DEEPSEEK_API_KEY: "sk-test" } });
   models.setProvider(deepseekProvider({
@@ -85,37 +85,53 @@ test("deepseek-v4-pro rejects a new image before any request", async () => {
   const pro = models.getModel("deepseek", "deepseek-v4-pro");
   assert.ok(flash);
   assert.ok(pro);
-  assert.deepEqual(flash.input, ["text", "image"]);
+  assert.deepEqual(flash.input, ["text"]);
   assert.deepEqual(pro.input, ["text"]);
   const content = imageContent("look ");
+  assert.equal(imageInputRefusal(flash, content), "Model deepseek-flash does not accept image input");
   assert.equal(imageInputRefusal(pro, content), "Model deepseek-v4-pro does not accept image input");
-  assert.equal(imageInputRefusal(flash, content), undefined);
-  const result = await models.stream(pro, {
+  const flashResult = await models.stream(flash, {
     messages: [{ role: "user", content, timestamp: 1 }],
   }).result();
   assert.equal(calls, 0);
-  assert.equal(result.stopReason, "error");
-  assert.equal(result.errorMessage, "Model deepseek-v4-pro does not accept image input");
-  assert.notEqual(result.retryable, true);
+  assert.equal(flashResult.stopReason, "error");
+  assert.equal(flashResult.errorMessage, "Model deepseek-flash does not accept image input");
+  assert.notEqual(flashResult.retryable, true);
+  const proResult = await models.stream(pro, {
+    messages: [{ role: "user", content, timestamp: 2 }],
+  }).result();
+  assert.equal(calls, 0);
+  assert.equal(proResult.stopReason, "error");
+  assert.equal(proResult.errorMessage, "Model deepseek-v4-pro does not accept image input");
+  assert.notEqual(proResult.retryable, true);
 });
 
-test("a text turn on deepseek-v4-pro replaces an earlier flash image with [image]", async () => {
+test("a text turn on deepseek-flash replaces an earlier image with [image]", async () => {
   let calls = 0;
   const bodies: string[] = [];
-  const models = createModels({ env: { DEEPSEEK_API_KEY: "sk-test" } });
-  models.setProvider(deepseekProvider({
-    fetch: async (_input, init) => {
-      calls += 1;
-      bodies.push(String(init?.body ?? ""));
-      return sseStop();
-    },
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    calls += 1;
+    bodies.push(String(init?.body ?? ""));
+    return sseStop();
+  };
+  const models = createModels({ env: { DEEPSEEK_API_KEY: "sk-test", COMPAT_KEY: "sk-test" } });
+  models.setProvider(completionsProvider({
+    id: "compat",
+    name: "compat",
+    baseUrl: "https://example.test/v1",
+    env: "COMPAT_KEY",
+    modelIds: ["see"],
+    models: { see: { contextWindow: 8000, maxTokens: 256, input: ["text", "image"] } },
+    fetch: fetchImpl,
   }));
+  models.setProvider(deepseekProvider({ fetch: fetchImpl }));
+  const see = models.getModel("compat", "see");
   const flash = models.getModel("deepseek", "deepseek-flash");
-  const pro = models.getModel("deepseek", "deepseek-v4-pro");
+  assert.ok(see);
   assert.ok(flash);
-  assert.ok(pro);
+  assert.deepEqual(flash.input, ["text"]);
   const content = imageContent();
-  const seen = await models.stream(flash, {
+  const seen = await models.stream(see, {
     messages: [{ role: "user", content, timestamp: 1 }],
   }).result();
   assert.equal(seen.stopReason, "stop");
@@ -123,7 +139,7 @@ test("a text turn on deepseek-v4-pro replaces an earlier flash image with [image
   assert.equal(bodies[0]?.includes("image_url"), true);
   assert.equal(bodies[0]?.includes(PNG), true);
 
-  const next = await models.stream(pro, {
+  const next = await models.stream(flash, {
     messages: [
       { role: "user", content, timestamp: 1 },
       seen,
@@ -143,7 +159,7 @@ test("a text turn on deepseek-v4-pro replaces an earlier flash image with [image
   ]);
   assert.equal(users[1], "next");
 
-  const again = await models.stream(pro, {
+  const again = await models.stream(flash, {
     messages: [
       { role: "user", content, timestamp: 1 },
       seen,
@@ -152,7 +168,7 @@ test("a text turn on deepseek-v4-pro replaces an earlier flash image with [image
   }).result();
   assert.equal(calls, 2);
   assert.equal(again.stopReason, "error");
-  assert.equal(again.errorMessage, "Model deepseek-v4-pro does not accept image input");
+  assert.equal(again.errorMessage, "Model deepseek-flash does not accept image input");
 });
 
 function chatUsers(body: string): unknown[] {
