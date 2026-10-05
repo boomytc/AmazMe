@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ReadStream, WriteStream } from "node:tty";
-import { createModels } from "@amazme/ai";
+import { createAssistantEventStream, createModels, createProvider, supportedThinkingLevels, type Model, type ThinkingLevel } from "@amazme/ai";
 import { deepseekProvider } from "@amazme/ai/providers/deepseek";
 import { AgentHarness } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
@@ -95,7 +95,7 @@ test("switching to flash while thinking is medium is rejected and the lane stays
     tty.stdout,
   );
   try {
-    await until(() => tty.since(0).includes("deepseek/deepseek-v4-pro") && tty.since(0).includes("medium"), "the pro footer");
+    await until(() => tty.since(0).includes("fixture/all-levels") && tty.since(0).includes("medium"), "the fixture footer");
     const rejected = tty.chunks.length;
     tty.push("/model deepseek/deepseek-flash\r");
     await until(() => tty.since(rejected).includes("先用 /thinking 切到 off/low/high"), "the refusal");
@@ -103,12 +103,12 @@ test("switching to flash while thinking is medium is rejected and the lane stays
     const kept = await host.harness.lane(LANE).configure();
     assert.equal(kept.ok, true);
     if (!kept.ok) return;
-    assert.equal(kept.value.provider, "deepseek");
-    assert.equal(kept.value.modelId, "deepseek-v4-pro");
+    assert.equal(kept.value.provider, "fixture");
+    assert.equal(kept.value.modelId, "all-levels");
     assert.equal(kept.value.thinkingLevel, "medium");
     const session = tty.chunks.length;
     tty.push("/session\r");
-    await until(() => tty.since(session).includes("模型 deepseek/deepseek-v4-pro 思考 medium"), "the session still on pro");
+    await until(() => tty.since(session).includes("模型 fixture/all-levels 思考 medium"), "the session still on the fixture");
 
     const lowered = tty.chunks.length;
     tty.push("/thinking low\r");
@@ -184,13 +184,47 @@ function scriptedLane(options: {
   };
 }
 
+/** 协议里的每一档。缺一档这里就编不过，不跟目录里的 v4-pro 走。 */
+const PROTOCOL_LEVELS = {
+  off: "off",
+  minimal: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+} as const satisfies Record<ThinkingLevel, string>;
+
+function allLevelsModel(): Model {
+  return {
+    id: "all-levels",
+    name: "All levels",
+    provider: "fixture",
+    api: "faux",
+    input: ["text"],
+    contextWindow: 8_000,
+    maxTokens: 1_000,
+    reasoning: true,
+    thinkingLevelMap: PROTOCOL_LEVELS,
+  };
+}
+
 async function openHarness(socket: string) {
+  const wide = allLevelsModel();
+  assert.deepEqual(supportedThinkingLevels(wide), Object.keys(PROTOCOL_LEVELS));
   const models = createModels();
+  models.setProvider(createProvider({
+    id: "fixture",
+    auth: { env: "FIXTURE_KEY", ambient: "test" },
+    models: [wide],
+    api: {
+      stream() { return createAssistantEventStream(); },
+      streamSimple() { return createAssistantEventStream(); },
+    },
+  }));
   models.setProvider(deepseekProvider());
   const storage = new MemoryStorage();
   const harness = new AgentHarness(storage, {
     models,
-    model: { provider: "deepseek", modelId: "deepseek-v4-pro" },
+    model: { provider: "fixture", modelId: "all-levels" },
     thinkingLevel: "medium",
     workspace: "work",
   });
