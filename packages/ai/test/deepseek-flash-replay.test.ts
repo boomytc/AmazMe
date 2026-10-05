@@ -207,6 +207,7 @@ test("thinking-mode tool calls assemble across frames and the next request repla
 
   assert.equal(seen[0]?.model, "deepseek-flash");
   assert.equal(seen[0]?.reasoning_effort, "high");
+  assert.deepEqual(seen[0]?.thinking, { type: "enabled" });
   assert.deepEqual(seen[0]?.stream_options, { include_usage: true });
   assert.equal(seen[0]?.max_tokens, model.maxTokens);
   assert.equal("max_completion_tokens" in (seen[0] ?? {}), false);
@@ -270,6 +271,83 @@ test("thinking-mode tool calls assemble across frames and the next request repla
   assert.equal(JSON.stringify(secondWire).includes(REASON_DATE), false);
   assert.equal(occurrences(JSON.stringify(secondWire.tool_calls), "get_weather"), 1);
   assert.ok(Array.isArray(seen[2]?.tools));
+  assert.deepEqual(seen[1]?.thinking, { type: "enabled" });
+  assert.equal(seen[1]?.reasoning_effort, "high");
+  assert.deepEqual(seen[2]?.thinking, { type: "enabled" });
+  assert.equal(seen[2]?.reasoning_effort, "high");
+});
+
+test("deepseek-flash high and low enable thinking with that effort, and off disables it without effort", async () => {
+  const stop = [
+    chunk({ reasoning_content: "plan", content: "ok" }, null),
+    chunk({}, "stop"),
+    DONE,
+  ];
+  const cases = [
+    { level: "high" as const, effort: "high" },
+    { level: "low" as const, effort: "low" },
+  ];
+  for (const item of cases) {
+    const { models, model, seen } = replay(async () => responseOf(stop));
+    const { message } = await settle(models.stream(model, context([USER]), { thinkingLevel: item.level }), 1_000);
+    assert.equal(message.stopReason, "stop", item.level);
+    const thought = message.content.find((block) => block.type === "thinking");
+    assert.ok(thought && thought.type === "thinking", item.level);
+    assert.equal(thought.thinking, "plan", item.level);
+    assert.equal(thought.thinkingField, "reasoning_content", item.level);
+    assert.deepEqual(seen[0]?.thinking, { type: "enabled" }, item.level);
+    assert.equal(seen[0]?.reasoning_effort, item.effort, item.level);
+  }
+
+  const off = replay(async () => responseOf([
+    chunk({ content: "plain" }, null),
+    chunk({}, "stop"),
+    DONE,
+  ]));
+  const disabled = await settle(off.models.stream(off.model, context([USER]), { thinkingLevel: "off" }), 1_000);
+  assert.equal(disabled.message.stopReason, "stop");
+  assert.equal(disabled.message.content.some((block) => block.type === "thinking"), false);
+  assert.deepEqual(off.seen[0]?.thinking, { type: "disabled" });
+  assert.equal("reasoning_effort" in (off.seen[0] ?? {}), false);
+  assert.equal(JSON.stringify(off.seen[0]).includes("none"), false);
+
+  const overridden = replay(async () => responseOf([
+    chunk({ content: "plain" }, null),
+    chunk({}, "stop"),
+    DONE,
+  ]));
+  const stillOff = await settle(overridden.models.stream(overridden.model, context([USER]), {
+    thinkingLevel: "off",
+    reasoningEffort: "high",
+  }), 1_000);
+  assert.equal(stillOff.message.stopReason, "stop");
+  assert.deepEqual(overridden.seen[0]?.thinking, { type: "disabled" });
+  assert.equal("reasoning_effort" in (overridden.seen[0] ?? {}), false);
+});
+
+test("deepseek-flash rejects a thinking level the chat API would rewrite", async () => {
+  for (const level of ["minimal", "medium"] as const) {
+    const { models, model, seen } = replay(async () => {
+      throw new Error("fetch should not run");
+    });
+    const { message } = await settle(models.stream(model, context([USER]), { thinkingLevel: level }), 1_000);
+    assert.equal(seen.length, 0, level);
+    assert.equal(message.stopReason, "error", level);
+    assert.notEqual(message.retryable, true, level);
+    assert.match(message.errorMessage ?? "", new RegExp(`Thinking level "${level}" is not supported by deepseek-flash`), level);
+  }
+
+  const rewritten = replay(async () => {
+    throw new Error("fetch should not run");
+  });
+  const effort = await settle(rewritten.models.stream(rewritten.model, context([USER]), {
+    thinkingLevel: "high",
+    reasoningEffort: "medium",
+  }), 1_000);
+  assert.equal(rewritten.seen.length, 0);
+  assert.equal(effort.message.stopReason, "error");
+  assert.notEqual(effort.message.retryable, true);
+  assert.match(effort.message.errorMessage ?? "", /Thinking effort "medium" is not supported by deepseek-flash/);
 });
 
 test("cache hit and miss costs follow the deepseek-flash catalog, and a reported zero stays zero", async () => {

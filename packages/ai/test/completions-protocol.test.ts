@@ -204,6 +204,7 @@ test("a supported thinking level is mapped, and reasoningEffort overrides it", a
     reasoning,
   );
   assert.equal(mapped.bodies[0]?.reasoning_effort, "x-low");
+  assert.equal("thinking" in (mapped.bodies[0] ?? {}), false);
   assert.equal(mapped.message.stopReason, "stop");
 
   const off = await run(
@@ -212,12 +213,14 @@ test("a supported thinking level is mapped, and reasoningEffort overrides it", a
     reasoning,
   );
   assert.equal(off.bodies[0]?.reasoning_effort, undefined);
+  assert.equal("thinking" in (off.bodies[0] ?? {}), false);
   const mappedOff = await run(
     async () => sse(['data: {"choices":[{"finish_reason":"stop"}]}\n\n', "data: [DONE]\n\n"]),
     { thinkingLevel: "off" },
     model({ reasoning: true, thinkingLevelMap: { off: "none" } }),
   );
   assert.equal(mappedOff.bodies[0]?.reasoning_effort, "none");
+  assert.equal("thinking" in (mappedOff.bodies[0] ?? {}), false);
 
   const rejected = await run(async () => new Response("unused"), { thinkingLevel: "high" }, reasoning);
   assert.equal(rejected.calls, 0);

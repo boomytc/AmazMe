@@ -47,16 +47,19 @@ test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek AP
   assert.ok(flash);
   assert.ok(pro);
 
-  // Models & Pricing: version DeepSeek-V4.1-Flash, context 1M.
+  // Models & Pricing, Model Details: version DeepSeek-V4.1-Flash.
+  // https://api-docs.deepseek.com/quick_start/pricing
   // Catalog input is text only. A new user image is refused before any request.
-  // The published agent example uses contextWindow 1000000; the docs do not spell 1048576.
   assert.equal(flash.name, "DeepSeek V4.1 Flash");
   assert.equal(flash.api, "openai-completions");
   assert.equal(flash.baseUrl, "https://api.deepseek.com");
   assert.deepEqual(flash.input, ["text"]);
-  assert.equal(flash.contextWindow, 1_000_000);
   assert.equal(flash.reasoning, true);
-  // Chat Completions: max_tokens is at most 384K, written as 393216.
+  // CONTEXT LENGTH: 1M. The agent example writes 1000000.
+  // https://api-docs.deepseek.com/quick_start/agent_integrations/oh_my_pi
+  assert.equal(flash.contextWindow, 1_000_000);
+  // Chat Completions, Request, max_tokens: 1 to 384K (393216).
+  // https://api-docs.deepseek.com/api/create-chat-completion
   assert.equal(flash.maxTokens, 393_216);
   // Pricing, USD per 1,000,000 tokens: peak cache-miss input, peak output, and peak cache-hit input.
   // Off-peak is half of peak. There is no separate cache-write rate.
@@ -76,21 +79,31 @@ test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek AP
   assert.equal("cacheWrite" in pro.cost, false);
   assert.deepEqual(pro.cost, { input: 1.32, output: 3.96, cacheRead: 0.044 });
 
-  // reasoning_effort is none | low | high | max. max is not one of our levels.
-  // minimal is accepted and mapped to low; medium is accepted and mapped to high.
-  const effort = {
+  // Chat Completions Request lists reasoning_effort as none | low | high | max.
+  // https://api-docs.deepseek.com/api/create-chat-completion
+  // flash lists only levels that are sent unchanged. minimal and medium would be rewritten, so they error.
+  // off stays supported and has no effort parameter. max is not one of our levels.
+  assert.equal("thinkingLevels" in flash, false);
+  assert.deepEqual(flash.thinkingLevelMap, { minimal: null, low: "low", medium: null, high: "high" });
+  assert.deepEqual(supportedThinkingLevels(flash), ["off", "low", "high"]);
+  assert.deepEqual(resolveThinkingLevel(flash, "off"), { ok: true });
+  assert.deepEqual(resolveThinkingLevel(flash, "low"), { ok: true, parameter: "low" });
+  assert.deepEqual(resolveThinkingLevel(flash, "high"), { ok: true, parameter: "high" });
+  assert.deepEqual(resolveThinkingLevel(flash, "minimal"), { ok: false, level: "minimal" });
+  assert.deepEqual(resolveThinkingLevel(flash, "medium"), { ok: false, level: "medium" });
+
+  // v4-pro is unchanged in this change.
+  const proEffort = {
     off: "none",
     minimal: "low",
     low: "low",
     medium: "high",
     high: "high",
   } as const;
-  for (const item of [flash, pro]) {
-    assert.equal("thinkingLevels" in item, false);
-    assert.deepEqual(item.thinkingLevelMap, effort);
-    assert.deepEqual(supportedThinkingLevels(item), [...LEVELS]);
-    for (const level of LEVELS) {
-      assert.deepEqual(resolveThinkingLevel(item, level), { ok: true, parameter: effort[level] });
-    }
+  assert.equal("thinkingLevels" in pro, false);
+  assert.deepEqual(pro.thinkingLevelMap, proEffort);
+  assert.deepEqual(supportedThinkingLevels(pro), [...LEVELS]);
+  for (const level of LEVELS) {
+    assert.deepEqual(resolveThinkingLevel(pro, level), { ok: true, parameter: proEffort[level] });
   }
 });
