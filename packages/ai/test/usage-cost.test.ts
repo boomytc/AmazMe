@@ -20,6 +20,14 @@ function deepseek(id: string): Model {
   return model;
 }
 
+function catalogModel(providerId: string, id: string): Model {
+  const provider = builtinProviders().find((item) => item.id === providerId);
+  assert.ok(provider);
+  const model = provider.getModels().find((item) => item.id === id);
+  assert.ok(model);
+  return model;
+}
+
 test("deepseek-flash peak prices bill half a million tokens at the catalog rates", () => {
   const flash = deepseek("deepseek-flash");
   assert.equal("cacheWrite" in flash.cost, false);
@@ -65,6 +73,54 @@ test("deepseek-v4-pro peak prices bill half a million tokens at the catalog rate
   });
   assert.equal(reported?.totalTokens, 2_000_000);
   assert.deepEqual(reported?.cost, { input: 0.66, output: 1.98, total: 3.322 });
+});
+
+test("claude-sonnet-4-6 cache prices bill half a million tokens at the catalog rates", () => {
+  const sonnet = catalogModel("anthropic", "claude-sonnet-4-6");
+  // 5-minute cache writes are $3.75 / MTok. Cache hits are $0.30 / MTok.
+  assert.deepEqual(sonnet.cost, { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 });
+  // 5e5 / 1e6 × 3 = 1.5, × 0.3 = 0.15, × 3.75 = 1.875, output × 15 = 7.5.
+  const cost = usageCost(sonnet, HALF_MILLION);
+  assert.deepEqual(cost, {
+    input: 1.5,
+    cacheRead: 0.15,
+    cacheWrite: 1.875,
+    output: 7.5,
+    total: 11.025,
+  });
+  assert.ok(cost !== null && cost.cacheRead > 0 && cost.cacheWrite > 0);
+});
+
+test("gpt-5.6-sol cache prices bill half a million tokens at the catalog rates", () => {
+  const sol = catalogModel("openai", "gpt-5.6-sol");
+  assert.deepEqual(sol.cost, { input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 });
+  // 5e5 / 1e6 × 4 = 2, × 0.4 = 0.2, × 5 = 2.5, output × 20 = 10.
+  const cost = usageCost(sol, HALF_MILLION);
+  assert.deepEqual(cost, {
+    input: 2,
+    cacheRead: 0.2,
+    cacheWrite: 2.5,
+    output: 10,
+    total: 14.7,
+  });
+  assert.ok(cost !== null && cost.cacheRead > 0 && cost.cacheWrite > 0);
+});
+
+test("gemini-2.5-flash cache read bills half a million tokens at the catalog rate", () => {
+  const flash = catalogModel("google", "gemini-2.5-flash");
+  // Context caching is $0.03 / MTok. There is no per-token cache-write rate.
+  assert.equal("cacheWrite" in flash.cost, false);
+  assert.deepEqual(flash.cost, { input: 0.3, output: 2.5, cacheRead: 0.03 });
+  // 5e5 / 1e6 × 0.3 = 0.15, × 0.03 = 0.015, write uses 0.3 → 0.15, output × 2.5 = 1.25.
+  const cost = usageCost(flash, HALF_MILLION);
+  assert.deepEqual(cost, {
+    input: 0.15,
+    cacheRead: 0.015,
+    cacheWrite: 0.15,
+    output: 1.25,
+    total: 1.565,
+  });
+  assert.ok(cost !== null && cost.cacheRead > 0);
 });
 
 test("a listed cache-write rate replaces the input-rate fallback", () => {
