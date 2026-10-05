@@ -35,7 +35,7 @@ test("streaming text and tool status appear before the turn settles", () => {
   assert.equal(state.tools[0]?.status, "running");
   assert.match(renderTui(state), /hel/);
   assert.match(renderTui(state), /read/);
-  assert.match(renderTui(state), /running/);
+  assert.match(renderTui(state), /运行中/);
   state = reduceTui(state, {
     type: "window",
     window: window({
@@ -45,7 +45,7 @@ test("streaming text and tool status appear before the turn settles", () => {
     }),
   }).state;
   assert.equal(state.pendingText, "hello");
-  assert.match(renderTui(state), /settled/);
+  assert.match(renderTui(state), /成功/);
   state = reduceTui(state, {
     type: "window",
     window: window({
@@ -220,8 +220,9 @@ test("a frame separates the user, markdown, and a live tool, and a picker commit
   assert.equal(first.includes("```"), false);
   assert.match(first, /const value = 1;/);
   assert.match(first, /bash/);
-  assert.match(first, /running/);
+  assert.match(first, /运行中/);
   assert.match(first, /read/);
+  assert.match(first, /成功/);
   assert.match(first, /file body/);
   assert.match(first, /~/);
   assert.match(first, /─/);

@@ -5,6 +5,7 @@ export type Key =
   | { type: "backspace" }
   | { type: "ctrl-c" }
   | { type: "ctrl-d" }
+  | { type: "ctrl-o" }
   | { type: "ctrl-p" }
   | { type: "escape" }
   | { type: "up" }
@@ -67,6 +68,11 @@ export function decodeKeys(input: string): { keys: Key[]; rest: string } {
     }
     if (char === "\u0004") {
       keys.push({ type: "ctrl-d" });
+      index += 1;
+      continue;
+    }
+    if (char === "\u000f") {
+      keys.push({ type: "ctrl-o" });
       index += 1;
       continue;
     }

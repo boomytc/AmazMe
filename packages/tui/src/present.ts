@@ -8,6 +8,7 @@ import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { chatModelSpecs, cycleModels, scopedModels } from "./project.ts";
 import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
+import type { ToolCardCall } from "./cards.ts";
 import { imagePrompt } from "./images.ts";
 import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, summarizeArgs, type Picker, type PickerRow, type TuiApproval, type TuiEffect, type TuiEntry, type TuiState, type TuiWindow } from "./reduce.ts";
 
@@ -728,6 +729,7 @@ export function windowFrom(
     entries: [...earlier.filter((entry) => !seen.has(entry.id)), ...snapshot.entries.map(entryView)],
     pendingText: pendingText(snapshot),
     tools: snapshot.tools.map((tool) => ({
+      toolCallId: tool.toolCallId,
       name: tool.name,
       status: tool.status,
       ...(tool.outputTail !== undefined ? { outputTail: tool.outputTail } : {}),
@@ -749,14 +751,57 @@ function approvalCards(items: readonly { toolCallId: string; name: string; argum
 }
 
 function entryView(entry: EntryDto): TuiEntry {
-  if (entry.payload.type === "compaction") return { id: entry.id, role: "other", text: entry.payload.summary };
+  if (entry.payload.type === "compaction") return { id: entry.id, role: "other", text: entry.payload.summary, timestamp: entry.timestamp };
   const message = entry.payload.message;
-  const role = message.role === "user" || message.role === "assistant" || message.role === "toolResult"
-    ? (message.role === "toolResult" ? "tool" : message.role)
-    : "other";
-  const named = message as { role: string; toolName?: string };
-  const title = named.role === "toolResult" && typeof named.toolName === "string" ? named.toolName : undefined;
-  return { id: entry.id, role, text: messageText(message), ...(title ? { title } : {}) };
+  const role: TuiEntry["role"] = message.role === "user"
+    ? "user"
+    : message.role === "assistant"
+      ? "assistant"
+      : message.role === "toolResult"
+        ? "tool"
+        : "other";
+  const base = { id: entry.id, role, timestamp: entry.timestamp };
+  if (role === "assistant") {
+    const body = assistantBody(message);
+    return { ...base, text: body.text, ...(body.calls.length > 0 ? { calls: body.calls } : {}) };
+  }
+  if (role === "tool") {
+    const named = message as { toolName?: string; toolCallId?: string; isError?: unknown };
+    const title = typeof named.toolName === "string" ? named.toolName : undefined;
+    const toolCallId = typeof named.toolCallId === "string" ? named.toolCallId : undefined;
+    return {
+      ...base,
+      text: messageText(message),
+      isError: named.isError === true,
+      ...(title ? { title } : {}),
+      ...(toolCallId ? { toolCallId } : {}),
+    };
+  }
+  return { ...base, text: messageText(message) };
+}
+
+function assistantBody(message: object): { text: string; calls: ToolCardCall[] } {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return { text: content, calls: [] };
+  if (!Array.isArray(content)) {
+    const errorMessage = (message as { errorMessage?: unknown }).errorMessage;
+    return { text: typeof errorMessage === "string" ? errorMessage : "", calls: [] };
+  }
+  const texts: string[] = [];
+  const calls: ToolCardCall[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const record = block as { type?: string; text?: string; id?: string; name?: string; arguments?: unknown };
+    if (record.type === "text" && typeof record.text === "string") texts.push(record.text);
+    else if (record.type === "image") texts.push("[image]");
+    else if (record.type === "toolCall" && typeof record.id === "string" && typeof record.name === "string") {
+      calls.push({ id: record.id, name: record.name, arguments: "arguments" in record ? record.arguments : {} });
+    }
+  }
+  const text = texts.join("");
+  if (text.length > 0 || calls.length > 0) return { text, calls };
+  const errorMessage = (message as { errorMessage?: unknown }).errorMessage;
+  return { text: typeof errorMessage === "string" ? errorMessage : "", calls };
 }
 
 function pendingText(snapshot: LaneSnapshotDto): string {

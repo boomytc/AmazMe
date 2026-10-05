@@ -1,12 +1,12 @@
 
-bash
-  running
-line-28
-line-29
-line-30
+┌ bash  运行中
+│ line-28
+│ line-29
+│ line-30
+└
 
-read
-  settled
+┌ read  成功
+└
 
 main  忙
 Shift+Enter/Alt+Enter 换行  ? 快捷键  Ctrl-C 退出
