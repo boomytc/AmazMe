@@ -230,6 +230,7 @@ class ModelRegistry implements MutableModels {
     return call(provider, {
       ...options,
       ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+      keySource: auth.source,
       ...(options.baseUrl || auth.baseUrl ? { baseUrl: options.baseUrl || auth.baseUrl } : {}),
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
       ...(Object.keys(env).length > 0 ? { env } : {}),
@@ -295,6 +296,7 @@ class ModelRegistry implements MutableModels {
     const authed = {
       ...options,
       ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+      keySource: auth.source,
       ...(options.baseUrl || auth.baseUrl ? { baseUrl: options.baseUrl || auth.baseUrl } : {}),
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
       ...(Object.keys(env).length > 0 ? { env } : {}),
