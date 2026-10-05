@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const root = fileURLToPath(new URL("../../..", import.meta.url));
+const tsx = createRequire(import.meta.url).resolve("tsx");
 
 test("login offers account and api-key entries, and an API key is saved without being echoed", { timeout: 20_000 }, async () => {
   const cwd = mkdtempSync(join(tmpdir(), "amz-login-"));
@@ -26,10 +28,10 @@ test("login offers account and api-key entries, and an API key is saved without 
     assert.match(keys.stdout, /^deepseek\t/m);
     assert.match(keys.stdout, /^typesafe\t/m);
     assert.match(keys.stdout, /^xiaomi\t/m);
-    const saved = await run(["login", "api-key", "--provider", "deepseek"], env, "sk-deepseek\n");
+    const saved = await run(["login", "api-key", "--provider", "deepseek"], env, "sk-deepseek\n", cwd);
     assert.equal(saved.code, 0);
     assert.equal(saved.stdout.includes("sk-deepseek"), false);
-    assert.match(saved.stdout, /已保存 deepseek/);
+    assert.match(saved.stdout, /已保存 deepseek，模型循环加入 2 个/);
     assert.match(readFileSync(credentials, "utf8"), /sk-deepseek/);
     const both = await run(["login", "--provider", "xai"], env);
     assert.notEqual(both.code, 0);
@@ -40,10 +42,10 @@ test("login offers account and api-key entries, and an API key is saved without 
   }
 });
 
-function run(args: string[], env: NodeJS.ProcessEnv, stdin?: string): Promise<{ code: number; stdout: string; stderr: string }> {
+function run(args: string[], env: NodeJS.ProcessEnv, stdin?: string, cwd = root): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--import", "tsx", cli, ...args], {
-      cwd: root,
+    const child = spawn(process.execPath, ["--import", tsx, cli, ...args], {
+      cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });

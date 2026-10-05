@@ -96,6 +96,35 @@ export function scopedModels(cwd: string): string[] {
   return readProject(cwd).scopedModels;
 }
 
+/**
+ * Append `provider/id` specs. Existing order and hand-filled entries stay.
+ * The file is written once, and only when the list grows.
+ * An empty list inserts `current` first so that lane's model remains in `/model`.
+ */
+export function addScopedModels(cwd: string, specs: readonly string[], current?: string): { added: number; models: string[] } {
+  const state = readProject(cwd);
+  const models = [...state.scopedModels];
+  const fresh = specs.filter(acceptScopedSpec);
+  const queue = models.length === 0 && fresh.length > 0 && current !== undefined && acceptScopedSpec(current)
+    ? [current, ...fresh]
+    : fresh;
+  let added = 0;
+  for (const spec of queue) {
+    if (!acceptScopedSpec(spec) || models.includes(spec)) continue;
+    models.push(spec);
+    added += 1;
+  }
+  if (added === 0) return { added, models };
+  state.scopedModels = models;
+  writeProject(cwd, state);
+  return { added, models };
+}
+
+function acceptScopedSpec(spec: string): boolean {
+  const slash = spec.indexOf("/");
+  return slash > 0 && slash < spec.length - 1 && !/\s/.test(spec);
+}
+
 /** Next id in the enabled set. An empty set does not limit cycling. */
 export function cycleModels(enabled: readonly string[], current: string): string {
   if (enabled.length === 0) return current;

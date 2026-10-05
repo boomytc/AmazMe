@@ -39,10 +39,10 @@ export interface ProviderChoice {
 }
 
 export interface HostAccount {
-  login(provider: string, handback: (text: string) => void): Promise<string>;
+  login(provider: string, handback: (text: string) => void, currentModel?: string): Promise<string>;
   logout(provider: string): Promise<string>;
   catalog?(): Promise<ProviderChoice[]>;
-  saveApiKey?(providerId: string, key: string): Promise<string>;
+  saveApiKey?(providerId: string, key: string, currentModel?: string): Promise<string>;
 }
 
 export interface HostAttach {
@@ -136,6 +136,8 @@ export async function presentHost(
   };
   stdout.on("resize", paint);
   await rememberSettings();
+  const currentModel = (): string | undefined =>
+    state.provider && state.modelId ? `${state.provider}/${state.modelId}` : undefined;
   let exitTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleExitArm = (): void => {
     if (exitTimer) clearTimeout(exitTimer);
@@ -221,7 +223,7 @@ export async function presentHost(
               return await account.login(provider, (text) => {
                 state = { ...state, notice: text };
                 paint();
-              });
+              }, currentModel());
             } finally {
               if (!restored && stdin.isRaw !== true) stdin.setRawMode(true);
             }
@@ -301,7 +303,7 @@ export async function presentHost(
     }
     if (effect.kind === "api-key") {
       const message = account?.saveApiKey && effect.secret
-        ? await account.saveApiKey(effect.id, effect.secret)
+        ? await account.saveApiKey(effect.id, effect.secret, currentModel())
         : "当前客户端不能保存 API key";
       state = { ...state, notice: message, picker: null };
       paint();

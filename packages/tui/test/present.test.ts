@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import { Server, ServiceError, type RuntimeCallContext, type RuntimeHandle, type
 import { listenUnix } from "@amazme/server/unix";
 import { emptyActivity, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { emptyTui, presentHost, reduceTui, renderTui, windowFrom, type TuiWindow } from "@amazme/tui";
+import { codingLoginAccount } from "../../coding-agent/src/tui/run.ts";
 
 const LANE = "main";
 
@@ -182,7 +183,94 @@ type Recorded =
   | { method: "followUp"; text: string }
   | { method: "requestAbort"; operationId: string };
 
-async function fakeHost(socket: string) {
+test("account login is told the current lane model", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-account-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const host = await fakeHost(join(dir, "host.sock"));
+  t.after(() => host.close());
+  const tty = fakeTTY();
+  let seen = "";
+  const screen = presentHost(
+    { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE, cwd: dir },
+    tty.stdin,
+    tty.stdout,
+    {
+      login: async (_provider, _handback, current) => {
+        seen = current ?? "";
+        return "已保存 anthropic，模型循环加入 1 个";
+      },
+      logout: async () => "",
+      catalog: async () => [{ id: "anthropic", name: "Anthropic", stored: false, storedType: null, oauth: true, apiKey: false }],
+    },
+  );
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    tty.push("/login anthropic\r");
+    await until(() => seen === "faux/faux-1", "the lane model");
+    assert.equal(seen, "faux/faux-1");
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u0004");
+    await Promise.race([
+      screen.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${tty.chunks.at(-1)}`);
+  }
+});
+
+test("an API key login writes scoped models and /model sees them without a restart", { timeout: 20_000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-login-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const host = await fakeHost(join(dir, "host.sock"), [
+    { provider: "faux", modelId: "faux-1" },
+    { provider: "deepseek", modelId: "deepseek-flash" },
+    { provider: "deepseek", modelId: "deepseek-v4-pro" },
+    { provider: "other", modelId: "hidden" },
+  ]);
+  t.after(() => host.close());
+  const tty = fakeTTY();
+  tty.columns = 120;
+  tty.rows = 40;
+  const screen = presentHost(
+    { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE, cwd: dir },
+    tty.stdin,
+    tty.stdout,
+    codingLoginAccount({ cwd: dir, credentialsFile: join(dir, "credentials.json") }),
+  );
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    tty.push("/login deepseek\r");
+    await until(() => tty.since(0).includes("API key for"), "the API key prompt");
+    tty.push("sk-deepseek\r");
+    await until(() => tty.since(0).includes("模型循环加入 3 个"), "the saved notice");
+    tty.push("/model\r");
+    await until(() => tty.since(0).includes("deepseek/deepseek-v4-pro"), "the model picker");
+    const painted = tty.since(0);
+    assert.equal(painted.includes("deepseek/deepseek-flash"), true);
+    assert.equal(painted.includes("other/hidden"), false);
+    const saved = JSON.parse(readFileSync(join(dir, ".amazme", "project.json"), "utf8")) as { scopedModels: string[] };
+    assert.deepEqual(saved.scopedModels, ["faux/faux-1", "deepseek/deepseek-flash", "deepseek/deepseek-v4-pro"]);
+    tty.push("\u001b");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u001b");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    tty.push("\u0004");
+    await Promise.race([
+      screen.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${tty.chunks.at(-1)}`);
+  }
+});
+
+async function fakeHost(socket: string, models: Array<{ provider: string; modelId: string }> = []) {
   const calls: Recorded[] = [];
   let version = 1;
   let operationId: string | null = null;
@@ -228,7 +316,7 @@ async function fakeHost(socket: string) {
         case "configure":
           return { provider: "faux", modelId: "faux-1", thinkingLevel: "off", thinkingLevels: ["off"] };
         case "catalog":
-          return { directory: "work", models: [], thinkingLevels: ["off"] };
+          return { directory: "work", models, thinkingLevels: ["off"] };
         case "snapshot":
           return {
             version,

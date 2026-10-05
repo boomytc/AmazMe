@@ -394,7 +394,7 @@ export async function executeSlash(command: SlashAction, actions: SlashActions):
           const enabled = scopedModels(actions.cwd);
           const current = await actions.lane().configure();
           const next = cycleModels(enabled, `${current.provider}/${current.modelId}`);
-          return notice(enabled.length === 0 ? "模型循环未限制" : `模型循环 ${enabled.join(" ")} 下一个 ${next}`);
+          return notice(enabled.length === 0 ? "模型循环未限制" : scopedCycleNotice(enabled, next));
         }
         if (!command.spec.includes("/")) return notice("用法：/scoped-models 提供方/模型");
         return notice(`模型循环 ${saveScopedModel(actions.cwd, command.spec)}`);
@@ -421,6 +421,19 @@ export async function executeSlash(command: SlashAction, actions: SlashActions):
   } catch (error) {
     return notice(error instanceof Error ? error.message : String(error));
   }
+}
+
+/** More than eight entries is a count per provider. Shorter lists stay in order. */
+function scopedCycleNotice(enabled: readonly string[], next: string): string {
+  if (enabled.length <= 8) return `模型循环 ${enabled.join(" ")} 下一个 ${next}`;
+  const counts = new Map<string, number>();
+  for (const spec of enabled) {
+    const slash = spec.indexOf("/");
+    const provider = slash > 0 ? spec.slice(0, slash) : spec;
+    counts.set(provider, (counts.get(provider) ?? 0) + 1);
+  }
+  const groups = [...counts].map(([provider, count]) => `${provider} ${count}`).join("、");
+  return `模型循环 ${groups} 下一个 ${next}`;
 }
 
 const ALIAS: Record<string, string> = {

@@ -1,5 +1,6 @@
 import { type OAuthLoginHandback } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
+import { addScopedModels } from "@amazme/tui";
 import { FileCredentialStore, installationDeviceId } from "./credentials.ts";
 
 export interface LoginReport {
@@ -63,6 +64,20 @@ export async function saveApiKey(providerId: string, key: string, credentialsFil
   if (key.length === 0) throw new Error("API key is empty");
   await new FileCredentialStore(credentialsFile).set(provider.id, { type: "api_key", key });
   return `已保存 ${provider.id}`;
+}
+
+/** Chat specs `provider/id` from `getModels()`. TypeSafe Jev is a classifier, and faux is not builtin, so both are empty. */
+export function builtinModelSpecs(providerId: string): string[] {
+  const provider = builtinProviders().find((item) => item.id === providerId);
+  if (!provider) return [];
+  return provider.getModels().map((model) => `${provider.id}/${model.id}`);
+}
+
+/** Record the builtin chat models after a credential is stored. No workspace means nothing is written. */
+export function commitProviderModels(providerId: string, cwd?: string | null, current?: string): string {
+  if (!cwd) return `已保存 ${providerId}，当前没有工作区，未写入模型循环`;
+  const { added } = addScopedModels(cwd, builtinModelSpecs(providerId), current);
+  return `已保存 ${providerId}，模型循环加入 ${added} 个`;
 }
 
 export async function logoutProvider(providerId: string, credentialsFile?: string): Promise<string> {

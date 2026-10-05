@@ -5,7 +5,7 @@ import { createModels, type LoginInteraction } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { FileCredentialStore } from "./credentials.ts";
 import { codingModels } from "./fronts.ts";
-import { loginProvider } from "./login.ts";
+import { commitProviderModels, loginProvider } from "./login.ts";
 import { runPrint } from "./print-run.ts";
 import { runCodingFullscreen, shouldOpenFullscreen } from "./tui/run.ts";
 
@@ -134,7 +134,8 @@ async function runLogin(argv: string[]): Promise<void> {
   }
   if (entry === "api-key") {
     const key = await readApiKey();
-    process.stdout.write(`${await saveApiKey(provider.id, key)}\n`);
+    await saveApiKey(provider.id, key);
+    process.stdout.write(`${commitProviderModels(provider.id, process.cwd())}\n`);
     return;
   }
   const report = await loginProvider(provider.id, {
@@ -144,6 +145,7 @@ async function runLogin(argv: string[]): Promise<void> {
       console.log(JSON.stringify(handback));
     },
   });
+  process.stdout.write(`${commitProviderModels(report.provider, process.cwd())}\n`);
   console.log(JSON.stringify({ stored: true, provider: report.provider, type: report.credentialType }));
 }
 
