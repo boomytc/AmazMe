@@ -206,6 +206,16 @@ export const BINDINGS = [
     when: scrolling,
   }),
   bind({
+    id: "cycle-model",
+    key: "ctrl-p",
+    label: "Ctrl-P",
+    help: "下一个模型",
+    detail: "切到模型循环里的下一个模型",
+    hint: false,
+    catalog: true,
+    when: prompting,
+  }),
+  bind({
     id: "insert",
     key: "char",
     label: "",

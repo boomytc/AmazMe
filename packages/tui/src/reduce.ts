@@ -104,6 +104,7 @@ export type TuiEffect =
   | { type: "abort" }
   | { type: "slash"; command: SlashAction }
   | { type: "pick"; kind: Picker["kind"]; id: string; subject?: string; secret?: string }
+  | { type: "cycle-model" }
   | { type: "quit" };
 
 /** Shown after the first Ctrl-C on an idle, empty prompt. */
@@ -232,6 +233,8 @@ function runBinding(id: BindingId, state: TuiState, key: Key): { state: TuiState
       return { state: move(state, { type: "page-down" }), effect: null };
     case "scroll-edit":
       return { state: move(state, { type: "char", value: "i" }), effect: null };
+    case "cycle-model":
+      return { state, effect: { type: "cycle-model" } };
     case "insert":
       return key.type === "char" ? { state: insertText(state, key.value), effect: null } : { state, effect: null };
     default: {

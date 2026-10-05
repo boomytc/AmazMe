@@ -125,6 +125,19 @@ function acceptScopedSpec(spec: string): boolean {
   return slash > 0 && slash < spec.length - 1 && !/\s/.test(spec);
 }
 
+/**
+ * A `provider/id` chat spec. Classifier ids containing `jev` are not chat models.
+ * `/model` and Ctrl+P use this, the same exclusion as the host catalog.
+ */
+export function visibleModelSpec(spec: string): boolean {
+  return acceptScopedSpec(spec) && !spec.toLowerCase().includes("jev");
+}
+
+/** Chat specs from the login list. Invalid entries and Jev stay out. */
+export function chatModelSpecs(specs: readonly string[]): string[] {
+  return specs.filter(visibleModelSpec);
+}
+
 /** Next id in the enabled set. An empty set does not limit cycling. */
 export function cycleModels(enabled: readonly string[], current: string): string {
   if (enabled.length === 0) return current;

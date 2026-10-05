@@ -11,7 +11,9 @@ export {
   isTrusted,
   loadedTheme,
   packageSkillText,
+  chatModelSpecs,
   scopedModels,
+  visibleModelSpec,
 } from "./project.ts";
 export {
   emptyTui,

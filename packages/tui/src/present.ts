@@ -5,7 +5,7 @@ import { createUnixTransport } from "@amazme/client/unix";
 import { emptyActivity, type EntryDto, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
-import { scopedModels } from "./project.ts";
+import { chatModelSpecs, cycleModels, scopedModels } from "./project.ts";
 import { KeyDecoder, type Key } from "./keys.ts";
 import { writeScreen } from "./diff.ts";
 import { emptyTui, EXIT_HINT, EXIT_WINDOW_MS, inputCursorSequence, reduceTui, renderTui, type Picker, type PickerRow, type TuiEffect, type TuiEntry, type TuiWindow } from "./reduce.ts";
@@ -20,6 +20,29 @@ export function treePickerRows(entries: readonly EntryDto[]): PickerRow[] {
     detail: "",
     tone: "muted" as const,
   }));
+}
+
+/** Rows for bare `/model`. The list is the login `scopedModels`, not the host catalog. */
+export function modelPicker(specs: readonly string[], current: { provider: string; modelId: string }): Picker {
+  return {
+    title: "Select model:",
+    hint: "↑↓ navigate    enter select    escape cancel",
+    query: "",
+    index: 0,
+    kind: "model",
+    rows: chatModelSpecs(specs).map((spec) => {
+      const slash = spec.indexOf("/");
+      const provider = spec.slice(0, slash);
+      const modelId = spec.slice(slash + 1);
+      const selected = provider === current.provider && modelId === current.modelId;
+      return {
+        id: `${provider}\t${modelId}`,
+        label: spec,
+        detail: selected ? "current" : "",
+        tone: selected ? "ok" as const : "muted" as const,
+      };
+    }),
+  };
 }
 
 function treeLabel(entry: EntryDto): string {
@@ -91,7 +114,6 @@ export async function presentHost(
   const sessions = [attach.lane];
   let active = attach.lane;
   let state = emptyTui(active);
-  let modelRows: Array<{ provider: string; modelId: string }> = [];
   let thinkingRows: string[] = [];
   let paint = (): void => undefined;
   let previousFrame: string | null = null;
@@ -120,7 +142,6 @@ export async function presentHost(
         thinking: settings.thinkingLevel,
         directory: listed.directory,
       };
-      modelRows = listed.models;
       thinkingRows = listed.thinkingLevels;
     } catch {
       // The footer keeps the last settings this lane could report.
@@ -437,6 +458,10 @@ export async function presentHost(
       restore();
       return;
     }
+    if (effect.type === "cycle-model") {
+      await cycleModel();
+      return;
+    }
     if (effect.type === "submit") {
       const followed = await lane.submit(effect.text);
       if (followed && state.busy) {
@@ -462,21 +487,7 @@ export async function presentHost(
         } else await continueProviderLogin(chosen);
       }
     } else if (effect.command.type === "model" && !effect.command.provider) {
-      showPicker({
-        ...pickerBase,
-        title: "Select model:",
-        kind: "model",
-        rows: modelRows.filter((model) => {
-          if (!attach.cwd) return true;
-          const enabled = scopedModels(attach.cwd);
-          return enabled.length === 0 || enabled.includes(`${model.provider}/${model.modelId}`);
-        }).map((model) => ({
-          id: `${model.provider}\t${model.modelId}`,
-          label: `${model.provider}/${model.modelId}`,
-          detail: model.provider === state.provider && model.modelId === state.modelId ? "current" : "",
-          tone: model.provider === state.provider && model.modelId === state.modelId ? "ok" : "muted",
-        })),
-      });
+      showPicker(modelPicker(attach.cwd ? scopedModels(attach.cwd) : [], { provider: state.provider, modelId: state.modelId }));
     } else if (effect.command.type === "thinking" && !effect.command.level) {
       showPicker({
         ...pickerBase,
@@ -525,6 +536,23 @@ export async function presentHost(
         paint();
       } else if (outcome.type === "quit") restore();
     }
+  };
+  const cycleModel = async (): Promise<void> => {
+    const enabled = attach.cwd ? chatModelSpecs(scopedModels(attach.cwd)) : [];
+    if (enabled.length === 0) {
+      state = { ...state, notice: "模型循环未限制", picker: null };
+      paint();
+      return;
+    }
+    const current = state.provider && state.modelId ? `${state.provider}/${state.modelId}` : "";
+    const next = cycleModels(enabled, current);
+    const slash = next.indexOf("/");
+    const provider = next.slice(0, slash);
+    const modelId = next.slice(slash + 1);
+    await remote.lane(active).configure({ provider, modelId });
+    await rememberSettings();
+    state = { ...state, notice: `模型 ${provider}/${modelId}`, picker: null };
+    paint();
   };
   stdin.on("data", onData);
   paint();
