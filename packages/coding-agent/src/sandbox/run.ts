@@ -259,3 +259,84 @@ export async function runBash(
     onStdout,
   });
 }
+
+export interface StartedBash {
+  readonly pid: number;
+  output(): Pick<ConfinedResult, "stdout" | "stderr" | "stdoutTruncated" | "stderrTruncated">;
+  /** SIGTERM, then SIGKILL if the group is still alive after the grace period. */
+  kill(): void;
+  readonly done: Promise<{ code: number | null }>;
+}
+
+/**
+ * Start a sandboxed shell and return without waiting for it to exit.
+ * No tool timeout: the caller kills the process group.
+ */
+export function startBash(policy: WorkspacePolicy, command: string, onOutput?: () => void): StartedBash {
+  const argv = sandboxArgv(policy, ["/bin/bash", "-c", command]);
+  const [file, ...args] = argv;
+  if (!file) throw new Error("missing command");
+  const stdio = sandboxStdio(argv, "ignore");
+  let child;
+  try {
+    child = spawn(file, args, {
+      cwd: policy.canonical,
+      env: policy.env,
+      detached: true,
+      stdio: stdio.stdio,
+    });
+  } finally {
+    stdio.close();
+  }
+  const pid = child.pid;
+  if (pid === undefined) {
+    child.kill("SIGKILL");
+    throw new Error("background command did not start");
+  }
+  let stdout = "";
+  let stderr = "";
+  let stdoutTruncated = false;
+  let stderrTruncated = false;
+  let settled = false;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const stop = (signal: NodeJS.Signals) => {
+    killGroup(pid, signal);
+    if (signal === "SIGTERM" && killTimer === undefined) {
+      killTimer = setTimeout(() => killGroup(pid, "SIGKILL"), KILL_GRACE_MS);
+    }
+  };
+  const done = new Promise<{ code: number | null }>((resolveDone) => {
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      if (killTimer !== undefined) clearTimeout(killTimer);
+      resolveDone({ code });
+    };
+    child.on("error", (error) => {
+      stderr = error.message;
+      onOutput?.();
+      finish(1);
+    });
+    child.on("close", (code) => finish(code));
+  });
+  child.stdout?.on("data", (chunk: Buffer) => {
+    const kept = rememberTail(stdout, chunk, OUTPUT_TAIL_BYTES);
+    stdout = kept.text;
+    stdoutTruncated = stdoutTruncated || kept.truncated;
+    onOutput?.();
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    const kept = rememberTail(stderr, chunk, OUTPUT_TAIL_BYTES);
+    stderr = kept.text;
+    stderrTruncated = stderrTruncated || kept.truncated;
+    onOutput?.();
+  });
+  return {
+    pid,
+    output: () => ({ stdout, stderr, stdoutTruncated, stderrTruncated }),
+    kill() {
+      stop("SIGTERM");
+    },
+    done,
+  };
+}

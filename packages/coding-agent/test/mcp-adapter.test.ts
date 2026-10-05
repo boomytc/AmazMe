@@ -77,7 +77,7 @@ test("exposed MCP names stay stable and collisions name both identities", async 
     { serverId: "docs", client: listed("read") },
     { serverId: "other", client: listed("read") },
   ]);
-  assert.deepEqual(tools.map((tool) => tool.name), ["read", "write", "edit", "bash", "grep", "find", "ls", "mcp_docs__read", "mcp_other__read"]);
+  assert.deepEqual(tools.map((tool) => tool.name), ["read", "write", "edit", "bash", "grep", "find", "ls", "job_output", "job_kill", "mcp_docs__read", "mcp_other__read"]);
   assert.equal(tools[0], coding[0]);
 
   const occupied: AgentTool = {
@@ -121,7 +121,7 @@ test("exposed MCP names stay stable and collisions name both identities", async 
       return true;
     },
   );
-  assert.deepEqual(coding.map((tool) => tool.name), ["read", "write", "edit", "bash", "grep", "find", "ls"]);
+  assert.deepEqual(coding.map((tool) => tool.name), ["read", "write", "edit", "bash", "grep", "find", "ls", "job_output", "job_kill"]);
 });
 
 test("an MCP tool forwards cancel and progress and keeps image content", async () => {
