@@ -293,14 +293,18 @@ async function runAttach(argv: string[]): Promise<void> {
 async function runBridge(argv: string[]): Promise<void> {
   let socket = "";
   let port = 8787;
-  let cwd = process.cwd();
+  let cwd: string | undefined;
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index];
     if (token === "--socket") socket = argv[++index] ?? "";
     else if (token === "--port") port = Number(argv[++index]);
-    else if (token === "--cwd") cwd = resolve(argv[++index] ?? cwd);
-    else if (token === "--help") {
+    else if (token === "--cwd") {
+      const value = argv[++index];
+      if (!value) throw new Error("bridge requires a directory after --cwd");
+      cwd = resolve(value);
+    } else if (token === "--help") {
       console.log("amazme bridge --socket path [--port n] [--cwd dir]");
+      console.log("Without --cwd, the working directory is the one the connected host reports.");
       process.exit(0);
     } else if (token) throw new Error(`unknown argument ${token}`);
   }
@@ -309,7 +313,7 @@ async function runBridge(argv: string[]): Promise<void> {
   const { startCodingBridge } = await import("./bridge.ts");
   const { waitForSecondInterrupt } = await import("./interrupt.ts");
   const stopped = waitForSecondInterrupt();
-  const bridge = await startCodingBridge({ socket, port, cwd });
+  const bridge = await startCodingBridge({ socket, port, ...(cwd ? { cwd } : {}) });
   process.stdout.write(`${JSON.stringify({ url: bridge.url })}\n`);
   await stopped;
   await bridge.close();
