@@ -240,7 +240,7 @@ export interface LaneUsage {
    * can cut in the middle of that operation, so summing assistant messages would not match the rows.
    * `cacheRead` and `cacheWrite` sum only when every counted row stores a number for that field.
    * A missing field or a stored null means the count was not reported, and that total is null.
-   * A reported 0 stays 0. `hitRate` is `cacheHitRate` of those totals, and null when `cacheRead` is null.
+   * A reported 0 stays 0. `hitRate` is `cacheHitRate` of those totals, and null when either cache total is null.
    * `cost` prices each row with that row's model, or the lane's configured model when an old row has none.
    */
   total: UsageCounts & { hitRate: number | null; cost: LaneUsageCost | null };
@@ -2627,11 +2627,7 @@ function attributedTotal(view: StorageView, lane: string, options: HarnessOption
     output,
     cacheRead,
     cacheWrite,
-    hitRate: cacheRead === null ? null : cacheHitRate({
-      input,
-      cacheRead,
-      ...(cacheWrite === null ? {} : { cacheWrite }),
-    }),
+    hitRate: cacheRead === null || cacheWrite === null ? null : cacheHitRate({ input, cacheRead, cacheWrite }),
     cost: totalCost(view, lane, options, rows),
   };
 }

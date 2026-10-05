@@ -196,7 +196,7 @@ test("cacheRead on the latest assistant is part of contextTokens and lastTurn", 
     assert.equal(usage.total.output, 4);
     assert.equal(usage.total.cacheRead, 10);
     assert.equal(usage.total.cacheWrite, null);
-    assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10 }));
+    assert.equal(usage.total.hitRate, null);
     assert.equal(usage.total.cost?.cacheRead, null);
     assert.equal(usage.total.cost?.total, null);
     assert.equal(usage.total.cost?.input, 0);
@@ -238,9 +238,29 @@ test("a reported cache zero stays zero and still joins the summed cache", async 
     assert.equal(usage.total.output, 3);
     assert.equal(usage.total.cacheRead, 10);
     assert.equal(usage.total.cacheWrite, null);
-    assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10 }));
+    assert.equal(usage.total.hitRate, null);
     assert.equal(usage.total.cost?.cacheRead, null);
     assert.equal(usage.total.cost?.total, null);
+  } finally {
+    harness.close();
+  }
+});
+
+test("a missing cacheWrite nulls the cumulative hit rate while cacheRead still sums", async () => {
+  const { models } = scripted([
+    tokens(4, 1, { cacheRead: 500, cacheWrite: 2 }),
+    tokens(3, 1, { cacheRead: 20 }),
+  ]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    assert.equal((await lane.prompt("two")).status, "completed");
+    const usage = await readUsage(lane);
+    assert.equal(usage.total.cacheRead, 520);
+    assert.equal(typeof usage.total.cacheRead, "number");
+    assert.equal(usage.total.cacheWrite, null);
+    assert.equal(usage.total.hitRate, null);
   } finally {
     harness.close();
   }
@@ -538,7 +558,7 @@ test("navigating back without a summary keeps abandoned rows in the cache sum", 
     assert.equal(usage.total.output, 8);
     assert.equal(usage.total.cacheRead, 140);
     assert.equal(usage.total.cacheWrite, null);
-    assert.equal(usage.total.hitRate, cacheHitRate({ input: 28, cacheRead: 140 }));
+    assert.equal(usage.total.hitRate, null);
     assert.equal(usage.total.cost?.total, null);
     assert.equal((await lane.entries()).some((entry) => entry.payload.type === "compaction"), false);
   } finally {
