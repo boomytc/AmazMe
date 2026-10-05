@@ -148,9 +148,10 @@ test("ctrl-d leaves only when idle and the composer is empty", () => {
 test("the shortcut sheet and a pasted newline render through the screen harness", () => {
   const sheet = playScreen({ steps: [{ type: "keys", input: "?" }] });
   assert.equal(sheet.screen.split("\n").length, SCREEN_ROWS);
-  assert.match(sheet.screen, /快捷键/);
-  assert.match(sheet.screen, /空闲且输入为空时离开全屏/);
+  assert.equal(sheet.screen.split("\n").includes("快捷键"), true);
   assert.equal(sheet.effects.length, 0);
+  const tight = frame(reduceTui(emptyTui(), { type: "key", key: { type: "char", value: "?" } }).state, 60, 8);
+  assert.equal(tight.split("\n")[0], "快捷键");
   const pasted = playScreen({ steps: [{ type: "keys", input: "\u001b[200~a\r\nb\u001b[201~" }] });
   assert.match(pasted.screen, /a/);
   assert.match(pasted.screen, /b/);

@@ -147,10 +147,20 @@ export function renderTui(state: TuiState, columns = 100, rows = 32): string {
   const menu = state.picker ? [] : menuLines(state, width);
   const picker = state.picker ? pickerLines(state.picker, width) : [];
   const notice = state.notice ? state.notice.split("\n").slice(0, 8).map((line) => paint(theme.dim, fit(line, width))) : [];
-  const overlay = overlayLines(state, width);
   const hint = paint(theme.dim, fit(composerHint(), width));
   const transcript = transcriptLines(state).flatMap((line) => wrap(line, width));
-  const chrome = [...picker, ...menu, ...notice, ...overlay, status, hint, rule, ...composer];
+  const footer = [status, hint, rule, ...composer];
+  if (state.overlay) {
+    const reserved = [...picker, ...menu, ...notice, ...footer];
+    const kept = reserved.length >= height ? reserved.slice(-(height - 1)) : reserved;
+    const overlay = overlayLines(state, width, height - kept.length);
+    const chrome = [...overlay, ...kept];
+    const room = Math.max(0, height - chrome.length);
+    const visible = transcript.slice(-room);
+    while (visible.length < room) visible.unshift("");
+    return [...visible, ...chrome].join("\n");
+  }
+  const chrome = [...picker, ...menu, ...notice, ...footer];
   const room = Math.max(1, height - chrome.length);
   const visible = transcript.slice(-room);
   while (visible.length < room) visible.unshift("");
@@ -373,15 +383,20 @@ function composerLines(state: TuiState, width: number): string[] {
   return [top, ...rows, bottom];
 }
 
-function overlayLines(state: TuiState, width: number): string[] {
-  if (!state.overlay) return [];
+/**
+ * 浮层按剩余行数排。标题先占一行，正文放不下就从末尾丢掉。
+ * 整帧从底部裁时，60×16 会把顶部的「快捷键」裁掉。底栏提示里也有这四个字，不能靠子串判断标题还在。
+ */
+function overlayLines(state: TuiState, width: number, budget: number): string[] {
+  if (!state.overlay || budget < 1) return [];
   const rule = paint(theme.border, "─".repeat(Math.min(width, 80)));
-  return [
-    rule,
-    paint(theme.accent, "快捷键"),
-    ...hotkeyText().split("\n").map((line) => paint(theme.text, fit(line, width))),
-    rule,
-  ];
+  const title = paint(theme.accent, "快捷键");
+  const body = hotkeyText().split("\n").map((line) => paint(theme.text, fit(line, width)));
+  const framed = [rule, title, ...body, rule];
+  if (framed.length <= budget) return framed;
+  if (budget === 1) return [title];
+  if (budget === 2) return [title, body[0] ?? rule];
+  return [rule, title, ...body.slice(0, budget - 3), rule];
 }
 
 function insertText(state: TuiState, text: string): TuiState {
