@@ -103,7 +103,11 @@ test("Google uses 2.5 budgets, disables Flash thinking, and rejects Pro off", as
 
 test("Google bills reasoning tokens as part of output usage", async () => {
   const seen = await collect(googleGenerativeAIApi({ fetch: async () => sse([{ candidates: [{ content: { parts: [{ text: "Hi" }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4, thoughtsTokenCount: 10, totalTokenCount: 17 } }]) }).stream(model("google-generative-ai", "gemini-3-flash-preview"), context, options));
-  assert.equal(seen.message.usage.output, 14); assert.equal(seen.message.usage.cost.output, 28);
+  assert.equal(seen.message.usage.output, 14);
+  assert.equal(seen.message.usage.totalTokens, 17);
+  assert.equal(seen.message.usage.reasoning, 10);
+  assert.equal(seen.message.usage.cost.output, 28);
+  assert.equal(seen.message.usage.cost.total, 28 + seen.message.usage.cost.input);
 });
 
 test("Google signature-only and signed text parts retain their distinct boundaries", async () => {

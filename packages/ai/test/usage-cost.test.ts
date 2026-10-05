@@ -134,6 +134,29 @@ test("a listed zero rate is a zero charge", () => {
   });
 });
 
+test("a reported reasoning count stays on the usage and leaves the total and the cost unchanged", () => {
+  const model: Model = {
+    id: "sample",
+    name: "sample",
+    provider: "sample",
+    api: "openai-completions",
+    input: ["text"],
+    contextWindow: 8_000,
+    maxTokens: 1_000,
+    cost: { input: 1_000_000, output: 2_000_000 },
+  };
+  const plain = usageFromCounts(model, 100, 14, 117, { cacheRead: 3 });
+  const withReasoning = usageFromCounts(model, 100, 14, 117, { cacheRead: 3, reasoning: 10 });
+  assert.ok(plain);
+  assert.ok(withReasoning);
+  assert.equal(Object.hasOwn(plain, "reasoning"), false);
+  assert.equal(withReasoning.reasoning, 10);
+  assert.equal(withReasoning.output, plain.output);
+  assert.equal(withReasoning.totalTokens, plain.totalTokens);
+  assert.deepEqual(withReasoning.cost, plain.cost);
+  assert.deepEqual(withReasoning.cost, { input: 100, output: 28, total: 128 });
+});
+
 test("cache hit rate is null for an empty prompt and cache reads over the full prompt otherwise", () => {
   assert.equal(cacheHitRate({ input: 0 }), null);
   assert.equal(cacheHitRate({ input: 0, cacheRead: 0, cacheWrite: 0 }), null);

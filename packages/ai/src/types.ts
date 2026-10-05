@@ -115,6 +115,14 @@ export interface Usage {
    * With no cache-write rate, `usageCost` bills them at the input rate.
    */
   cacheWrite?: number;
+  /**
+   * Reasoning tokens already included in `output`, and in `totalTokens` when the provider sent a total.
+   * They are not added again, and `usageCost` does not price them separately.
+   * Google Generative AI and Vertex report this as `usageMetadata.thoughtsTokenCount`.
+   * No other usage parser in this package reads a reasoning token count.
+   * Omitted when the response did not report one. A reported 0 stays 0.
+   */
+  reasoning?: number;
 }
 
 export interface SystemMessage {

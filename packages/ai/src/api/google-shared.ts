@@ -31,12 +31,13 @@ export function applyGoogleChunk(model: Model, acc: AssistantAccumulator, decode
   const usage = isRecord(decoded.usageMetadata) ? decoded.usageMetadata : undefined;
   if (usage) {
     const cache = cacheMissInput(numberOf(usage.promptTokenCount), numberOf(usage.cachedContentTokenCount));
+    const thoughts = numberOf(usage.thoughtsTokenCount);
     const reported = usageFromCounts(
       model,
       cache.input,
-      (numberOf(usage.candidatesTokenCount) ?? 0) + (numberOf(usage.thoughtsTokenCount) ?? 0),
+      (numberOf(usage.candidatesTokenCount) ?? 0) + (thoughts ?? 0),
       numberOf(usage.totalTokenCount),
-      { cacheRead: cache.cacheRead },
+      { cacheRead: cache.cacheRead, ...(thoughts !== undefined ? { reasoning: thoughts } : {}) },
     );
     if (reported) acc.usage(reported);
   }

@@ -260,13 +260,14 @@ export function usageFromCounts(
   input: number | undefined,
   output: number | undefined,
   total: number | undefined,
-  cache?: { cacheRead?: number; cacheWrite?: number },
+  counts?: { cacheRead?: number; cacheWrite?: number; reasoning?: number },
 ): Usage | undefined {
   if (input === undefined && output === undefined && total === undefined) return undefined;
   const prompt = finite(input) ?? 0;
   const completion = finite(output) ?? 0;
-  const cacheRead = finite(cache?.cacheRead);
-  const cacheWrite = finite(cache?.cacheWrite);
+  const cacheRead = finite(counts?.cacheRead);
+  const cacheWrite = finite(counts?.cacheWrite);
+  const reasoning = finite(counts?.reasoning);
   const amounts = usageCost(model, {
     input: prompt,
     output: completion,
@@ -282,6 +283,7 @@ export function usageFromCounts(
       : { input: amounts.input, output: amounts.output, total: amounts.total },
     ...(cacheRead !== undefined ? { cacheRead } : {}),
     ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
   };
 }
 
