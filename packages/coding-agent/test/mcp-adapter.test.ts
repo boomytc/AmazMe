@@ -220,12 +220,12 @@ test("a connected MCP client projects images, progress, and abort without openin
     assert.equal(tools[0]?.name, "mcp_docs__shot");
     assert.equal(tools[0]?.description, "Take a picture");
     assert.deepEqual(tools[0]?.parameters, { type: "object", properties: { q: { type: "string" } } });
-    const updates: string[] = [];
+    const updates: Array<{ partial: string; checkpoint?: boolean }> = [];
     const result = await tools[0]?.execute({ q: "x" }, {
       signal: new AbortController().signal,
-      onUpdate: (partial) => updates.push(partial),
+      onUpdate: (partial, options) => updates.push({ partial, checkpoint: options?.checkpoint }),
     });
-    assert.deepEqual(updates, ["working"]);
+    assert.deepEqual(updates, [{ partial: "working", checkpoint: true }]);
     assert.deepEqual(result?.content, [
       { type: "text", text: "cap" },
       { type: "image", mimeType: "image/png", data: "aW1n" },

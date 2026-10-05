@@ -149,7 +149,7 @@ export function createBashTool(root: string): AgentTool {
     async execute(args, context) {
       const { command } = args as { command: string };
       try {
-        const result = await runBash(prepareWorkspace(root), command, context.signal, (text) => context.onUpdate?.(text));
+        const result = await runBash(prepareWorkspace(root), command, context.signal, (text) => context.onUpdate?.(text, { checkpoint: true }));
         const notice = [
           result.stdoutTruncated ? "stdout truncated to the last 32 KiB" : "",
           result.stderrTruncated ? "stderr truncated to the last 32 KiB" : "",

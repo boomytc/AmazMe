@@ -36,6 +36,8 @@ export interface TuiEntry {
 export interface TuiTool {
   name: string;
   status: "planned" | "running" | "settled";
+  /** 运行中检查点的输出尾。缺了就不显示。 */
+  outputTail?: string;
 }
 
 export interface TuiWindow {
@@ -553,9 +555,19 @@ function transcriptLines(state: TuiState): string[] {
   for (const tool of state.tools) {
     lines.push(paint(theme.accent, tool.name));
     lines.push(paint(theme.dim, `  ${tool.status}`));
+    if (tool.status === "running" && tool.outputTail) {
+      for (const row of lastOutputLines(tool.outputTail)) lines.push(paint(theme.text, row));
+    }
     lines.push("");
   }
   return lines;
+}
+
+/** 运行中的工具只露出 outputTail 的最后三行。结尾换行结束上一行，不另起空行。 */
+function lastOutputLines(tail: string): string[] {
+  const lines = tail.split("\n");
+  if (tail.endsWith("\n")) lines.pop();
+  return lines.slice(-3);
 }
 
 function userBlock(text: string): string[] {

@@ -157,7 +157,7 @@ async function callListed(client: McpClient, name: string, args: unknown, contex
       ? {
           onProgress: (update: McpProgressUpdate) => {
             const partial = update.message && update.message.length > 0 ? update.message : String(update.progress);
-            context.onUpdate?.(partial);
+            context.onUpdate?.(partial, { checkpoint: true });
           },
         }
       : {}),
