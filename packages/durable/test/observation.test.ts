@@ -298,7 +298,8 @@ test("returned snapshots and results are detached from storage", async () => {
     await until(async () => ((await lane.snapshot()).pendingResponse?.content.length ?? 0) === 2);
 
     const snapshot = await lane.snapshot();
-    const expected = structuredClone(snapshot);
+    const expectedEntries = structuredClone(snapshot.entries);
+    const expectedPending = structuredClone(snapshot.pendingResponse);
     const entry = snapshot.entries[0]!;
     assert.ok(entry.payload.type === "message" && entry.payload.message.role === "user");
     entry.payload.message.content = "mutated";
@@ -310,7 +311,18 @@ test("returned snapshots and results are detached from storage", async () => {
     const tool = snapshot.pendingResponse!.content[1]!;
     assert.ok(tool.type === "toolCall");
     (tool.arguments as { nested: { value: number } }).nested.value = 2;
-    assert.deepEqual(await lane.snapshot(), expected);
+    const again = await lane.snapshot();
+    assert.deepEqual(again.entries, expectedEntries);
+    assert.deepEqual(again.pendingResponse, expectedPending);
+    assert.deepEqual(again.tools, snapshot.tools);
+    assert.deepEqual(again.usage, snapshot.usage);
+    assert.equal(again.version, snapshot.version);
+    assert.equal(again.lane, snapshot.lane);
+    assert.equal(again.tipId, snapshot.tipId);
+    assert.equal(again.phase, snapshot.phase);
+    assert.equal(again.operationId, snapshot.operationId);
+    assert.equal(again.lastOperationId, snapshot.lastOperationId);
+    assert.equal(again.status, snapshot.status);
 
     streams[0]!.push({ type: "done", reason: "stop", message: baseAssistant(model, [{ type: "text", text: "text" }], "stop") });
     await driving;

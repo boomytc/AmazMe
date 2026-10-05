@@ -7,6 +7,7 @@ export {
   type LaneCatalog,
   type LaneConfig,
   type LaneSettings,
+  type LaneUsage,
   type LanePhase,
   type LaneSnapshot,
   type LaneStatus,

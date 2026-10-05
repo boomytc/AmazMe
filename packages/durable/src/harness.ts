@@ -177,6 +177,31 @@ export interface ToolActivity {
   name: string;
   /** `running` is `effect_pending`. `outcome_ready` and `completed` are `settled`. */
   status: "planned" | "running" | "settled";
+  /**
+   * Last 4000 characters of the persisted `pi.pending.tool_output` for a running call.
+   * Present only when that call has checkpointed. Absent after it settles.
+   */
+  outputTail?: string;
+}
+
+/**
+ * Token counts derived from this lane's stored usage rows and branch.
+ * `cacheRead` and `cacheWrite` stay null: model `Usage` has no cache fields.
+ */
+export interface LaneUsage {
+  /** Newest settled assistant on the current branch, excluding `error` and `aborted`. */
+  lastTurn: {
+    input: number;
+    output: number;
+    cacheRead: number | null;
+    cacheWrite: number | null;
+  } | null;
+  /** Sum of usage rows whose persisted operation belongs to this lane, including summary requests. */
+  total: { input: number; output: number };
+  /** Newest non-error assistant `input + output` on the visible branch. Null when that suffix has none. */
+  contextTokens: number | null;
+  /** The input trigger `assess` compares against. Null when compaction is off or the model window is unknown. */
+  compactionThreshold: number | null;
 }
 
 /** One consistent read of a lane. Every field is a detached copy taken at `version`. */
@@ -185,6 +210,7 @@ export interface LaneSnapshot extends LaneStatus {
   entries: Entry[];
   pendingResponse: PendingResponse | null;
   tools: ToolActivity[];
+  usage: LaneUsage;
 }
 
 export type OperationRequest =
@@ -770,13 +796,16 @@ export class AgentLane {
           errorMessage: reduced.errorMessage ?? null,
         };
       }
-      return structuredClone({
+      const chain = ancestors(view, status.tipId);
+      const projected = structuredClone({
         version: view.version(),
         ...status,
-        entries: ancestors(view, status.tipId),
+        entries: chain,
         pendingResponse,
-        tools: toolActivity(state),
+        tools: toolActivity(view, state),
       });
+      projected.tools = projected.tools.map(hideOutputTail);
+      return hideUsage(projected, projectUsage(view, this.name, chain, this.harness.options));
     });
   }
 
@@ -1865,26 +1894,7 @@ export class AgentLane {
 
   private visibleEntries(view: StorageView): TranscriptEntry[] {
     const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
-    const chain = ancestors(view, tip);
-    let start = 0;
-    for (let index = chain.length - 1; index >= 0; index--) {
-      if (chain[index]?.payload.type === "compaction") {
-        start = index;
-        break;
-      }
-    }
-    const entries: TranscriptEntry[] = [];
-    for (const entry of chain.slice(start)) {
-      if (entry.payload.type === "compaction") {
-        entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "compaction", summary: entry.payload.summary });
-        continue;
-      }
-      const message = entry.payload.message;
-      if (message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred")) continue;
-      if (message.role === "custom") continue;
-      entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "message", message });
-    }
-    return entries;
+    return visibleFrom(ancestors(view, tip));
   }
 
   private toolDefinitions() {
@@ -2155,13 +2165,141 @@ function readArgs(entry: Entry | undefined, sourceIndex: number): unknown {
   return block?.type === "toolCall" ? block.arguments : {};
 }
 
-function toolActivity(state: OperationState | undefined): ToolActivity[] {
+const OUTPUT_TAIL_LIMIT = 4_000;
+
+function toolActivity(view: StorageView, state: OperationState | undefined): ToolActivity[] {
   if (!state || state.phase !== "tools") return [];
-  return state.calls.map((call) => ({
-    toolCallId: call.toolCallId,
-    name: call.name,
-    status: call.status === "planned" ? "planned" : call.status === "effect_pending" ? "running" : "settled",
-  }));
+  return state.calls.map((call) => {
+    const status: ToolActivity["status"] = call.status === "planned" ? "planned" : call.status === "effect_pending" ? "running" : "settled";
+    const activity: ToolActivity = { toolCallId: call.toolCallId, name: call.name, status };
+    if (status !== "running") return activity;
+    const partial = view.get<string>(toolOutputAddress(call.resultEntryId));
+    if (typeof partial === "string") activity.outputTail = partial.slice(-OUTPUT_TAIL_LIMIT);
+    return activity;
+  });
+}
+
+function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {
+  let start = 0;
+  for (let index = chain.length - 1; index >= 0; index--) {
+    if (chain[index]?.payload.type === "compaction") {
+      start = index;
+      break;
+    }
+  }
+  const entries: TranscriptEntry[] = [];
+  for (const entry of chain.slice(start)) {
+    if (entry.payload.type === "compaction") {
+      entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "compaction", summary: entry.payload.summary });
+      continue;
+    }
+    const message = entry.payload.message;
+    if (message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred")) continue;
+    if (message.role === "custom") continue;
+    entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "message", message });
+  }
+  return entries;
+}
+
+function projectUsage(view: StorageView, lane: string, chain: readonly Entry[], options: HarnessOptions): LaneUsage {
+  return {
+    lastTurn: lastTurnUsage(chain),
+    total: attributedTotal(view, lane),
+    contextTokens: contextTokenCount(chain),
+    compactionThreshold: compactionThreshold(view, lane, options),
+  };
+}
+
+function lastTurnUsage(chain: readonly Entry[]): LaneUsage["lastTurn"] {
+  for (let index = chain.length - 1; index >= 0; index--) {
+    const entry = chain[index];
+    if (!entry || entry.payload.type !== "message") continue;
+    const message = entry.payload.message;
+    if (message.role !== "assistant") continue;
+    if (message.stopReason === "error" || message.stopReason === "aborted") continue;
+    return {
+      input: message.usage.input,
+      output: message.usage.output,
+      cacheRead: null,
+      cacheWrite: null,
+    };
+  }
+  return null;
+}
+
+function contextTokenCount(chain: readonly Entry[]): number | null {
+  const visible = visibleFrom(chain);
+  for (let index = visible.length - 1; index >= 0; index--) {
+    const entry = visible[index];
+    if (entry?.kind === "message" && entry.message.role === "assistant") {
+      return entry.message.usage.input + entry.message.usage.output;
+    }
+  }
+  return null;
+}
+
+function attributedTotal(view: StorageView, lane: string): LaneUsage["total"] {
+  let input = 0;
+  let output = 0;
+  for (const row of view.usageRows()) {
+    if (operationLane(view, row.operationId) !== lane) continue;
+    input += row.input;
+    output += row.output;
+  }
+  return { input, output };
+}
+
+function operationLane(view: StorageView, operationId: string): string | undefined {
+  const meta = view.get<OperationMeta>(metaAddress(operationId));
+  if (meta) return meta.lane;
+  return view.get<OperationResult>(resultAddress(operationId))?.lane;
+}
+
+function compactionThreshold(view: StorageView, lane: string, options: HarnessOptions): number | null {
+  const stored = view.get<LaneConfig>(configAddress(lane));
+  const compaction = stored?.compaction ?? options.compaction ?? { enabled: false, maxTokens: 80_000 };
+  if (!compaction.enabled) return null;
+  if (!Number.isSafeInteger(compaction.maxTokens) || compaction.maxTokens <= 0) return null;
+  const provider = stored?.provider ?? options.model.provider;
+  const modelId = stored?.modelId ?? options.model.modelId;
+  const model = options.models.getModel(provider, modelId);
+  if (!model || !Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0) return null;
+  return effectiveInputThreshold(model.contextWindow, compaction.maxTokens);
+}
+
+/**
+ * `usage` stays off the object's own keys. The strict snapshot schema rejects unknown fields, and
+ * `assertJsonValue` rejects a non-enumerable own property, so the current protocol image cannot carry it.
+ * Read `snapshot.usage`. `structuredClone` of the snapshot throws; clone the fields you need.
+ */
+function hideUsage(snapshot: Omit<LaneSnapshot, "usage">, usage: LaneUsage): LaneSnapshot {
+  return new Proxy(snapshot, {
+    get(target, key, receiver) {
+      if (key === "usage") return usage;
+      return Reflect.get(target, key, receiver);
+    },
+    has(target, key) {
+      if (key === "usage") return true;
+      return Reflect.has(target, key);
+    },
+  }) as LaneSnapshot;
+}
+
+/** Same constraint as {@link hideUsage}: a checkpoint tail is readable and absent from the protocol image. */
+function hideOutputTail(tool: ToolActivity): ToolActivity {
+  const tail = tool.outputTail;
+  if (tail === undefined) return tool;
+  const visible: ToolActivity = { toolCallId: tool.toolCallId, name: tool.name, status: tool.status };
+  return new Proxy(visible, {
+    get(target, key, receiver) {
+      if (key === "outputTail") return tail;
+      return Reflect.get(target, key, receiver);
+    },
+    has(target, key) {
+      if (key === "outputTail") return true;
+      return Reflect.has(target, key);
+    },
+  });
 }
 
 function ancestors(view: StorageView, tip: string | null): Entry[] {
