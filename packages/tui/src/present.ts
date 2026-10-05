@@ -53,6 +53,12 @@ export interface HostAttach {
   cwd?: string;
 }
 
+/** Extra clients on the host the fullscreen process already owns. */
+export interface HostSurfaces {
+  openWeb?(): Promise<string>;
+  openGui?(): Promise<string>;
+}
+
 /** Read one rendered frame. The host keeps the runtime. */
 export async function readHostFrame(attach: HostAttach, lane = attach.lane): Promise<string> {
   const client = new Client({ serverId: attach.serverId, transport: createUnixTransport({ path: attach.socket }) });
@@ -73,6 +79,7 @@ export async function presentHost(
   stdin: ReadStream = process.stdin,
   stdout: WriteStream = process.stdout,
   account?: HostAccount,
+  surfaces?: HostSurfaces,
 ): Promise<void> {
   if (typeof stdin.setRawMode !== "function" || stdin.isTTY !== true || stdout.isTTY !== true) {
     throw new Error("fullscreen requires a terminal");
@@ -184,6 +191,8 @@ export async function presentHost(
       return "已继续";
     },
     ...(attach.cwd ? { cwd: attach.cwd } : {}),
+    ...(surfaces?.openWeb ? { openWeb: () => surfaces.openWeb!() } : {}),
+    ...(surfaces?.openGui ? { openGui: () => surfaces.openGui!() } : {}),
     ...(account
       ? {
           login: async (provider: string) => {

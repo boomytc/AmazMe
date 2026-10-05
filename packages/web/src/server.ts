@@ -137,6 +137,7 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
       : {}),
     ...(options.logout ? { logout: (provider: string) => options.logout!(provider) } : {}),
     ...(options.cwd ? { cwd: options.cwd } : {}),
+    openWeb: async () => "网页已在当前宿主",
   };
   const server = createServer((request, response) => {
     void handle(request, response, {
