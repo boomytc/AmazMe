@@ -1,7 +1,7 @@
 import { baseAssistant, createAssistantEventStream, type AssistantEventStream, type ProviderStreams } from "../models.ts";
 import { userImageProblem } from "./prepare.ts";
 import { resolveThinkingLevel } from "../thinking.ts";
-import { isCompletionsThinkingField, type AssistantMessage, type CompletionsOutputTokenField, type CompletionsThinkingField, type Context, type Message, type Model, type OpenAICompletionsOptions, type ToolCall, type Usage } from "../types.ts";
+import { isCompletionsThinkingField, type AssistantMessage, type CompletionsOutputTokenField, type CompletionsThinkingField, type Context, type Message, type Model, type OpenAICompletionsOptions, type ThinkingLevel, type ToolCall, type Usage } from "../types.ts";
 import { cacheMissInput, usageFromCounts } from "./events.ts";
 import { cloneUsage, emptyUsage, messageText, transformMessages } from "../transform.ts";
 import { resolveOutputBudget } from "../utils/budget.ts";
@@ -109,7 +109,15 @@ async function pump(
       messages: toChatMessages(wire),
       [field]: budget.outputCap,
     };
-    if (effort) payload.reasoning_effort = effort;
+    if (model.provider === "deepseek" && model.id === "deepseek-flash") {
+      const rejected = applyDeepseekFlashThinking(payload, request.thinkingLevel, effort);
+      if (rejected) {
+        stream.push({ type: "error", error: terminalMessage(model, [], "error", rejected) });
+        return;
+      }
+    } else if (effort) {
+      payload.reasoning_effort = effort;
+    }
     if (wire.tools && wire.tools.length > 0) {
       payload.tools = wire.tools.map((tool) => ({
         type: "function",
@@ -166,6 +174,33 @@ async function pump(
     );
     stream.push({ type: "error", error: failed });
   }
+}
+
+/**
+ * deepseek-flash chat completions body.
+ * https://api-docs.deepseek.com/api/create-chat-completion Request:
+ * `thinking.type` is `enabled` or `disabled`; `reasoning_effort` is `none` | `low` | `high` | `max`.
+ * off sends `thinking` disabled and omits effort, including an explicit reasoningEffort.
+ * `none` also disables; this request does not send it.
+ * low and high send `thinking` enabled plus that same effort string.
+ * Any other effort is refused here. The API would rewrite minimal, medium, and xhigh.
+ */
+function applyDeepseekFlashThinking(
+  payload: Record<string, unknown>,
+  level: ThinkingLevel | undefined,
+  effort: string | undefined,
+): string | undefined {
+  if (level === "off" || effort === "none") {
+    payload.thinking = { type: "disabled" };
+    return undefined;
+  }
+  if (!effort) return undefined;
+  if (effort === "low" || effort === "high") {
+    payload.thinking = { type: "enabled" };
+    payload.reasoning_effort = effort;
+    return undefined;
+  }
+  return `Thinking effort "${effort}" is not supported by deepseek-flash`;
 }
 
 function toChatMessages(context: Context): ChatMessage[] {
