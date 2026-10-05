@@ -184,21 +184,27 @@ export interface ToolActivity {
   outputTail?: string;
 }
 
+/** Input, output, and cache counts. Cache stays null while model `Usage` has no cache fields. */
+interface UsageCounts {
+  input: number;
+  output: number;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+}
+
 /**
  * Token counts derived from this lane's stored usage rows and branch.
  * `cacheRead` and `cacheWrite` stay null: model `Usage` has no cache fields.
  */
 export interface LaneUsage {
   /** Newest settled assistant on the current branch, excluding `error` and `aborted`. */
-  lastTurn: {
-    input: number;
-    output: number;
-    cacheRead: number | null;
-    cacheWrite: number | null;
-  } | null;
-  /** Sum of usage rows whose persisted operation belongs to this lane, including summary requests. */
-  total: { input: number; output: number };
-  /** Newest non-error assistant `input + output` on the visible branch. Null when that suffix has none. */
+  lastTurn: UsageCounts | null;
+  /**
+   * Sum of usage rows whose persisted operation belongs to this lane, including summary requests.
+   * Cache totals stay null: a row stores input and output only.
+   */
+  total: UsageCounts;
+  /** Newest non-error assistant prompt size plus output on the visible branch. Null when that suffix has none. */
   contextTokens: number | null;
   /** The input trigger `assess` compares against. Null when compaction is off or the model window is unknown. */
   compactionThreshold: number | null;
@@ -2210,6 +2216,23 @@ function projectUsage(view: StorageView, lane: string, chain: readonly Entry[], 
   };
 }
 
+/**
+ * Counts one model `Usage` for the snapshot.
+ * Prompt size is `usage.input`: that field is the whole prompt while `Usage` has no cache fields.
+ * `cacheRead` and `cacheWrite` stay null.
+ * When `Usage` splits the prompt, change only this function: add cache into `prompt`, and copy
+ * `cacheRead` / `cacheWrite` from usage, null when the field is absent.
+ */
+function countUsage(usage: { input: number; output: number }): UsageCounts & { prompt: number } {
+  return {
+    prompt: usage.input,
+    input: usage.input,
+    output: usage.output,
+    cacheRead: null,
+    cacheWrite: null,
+  };
+}
+
 function lastTurnUsage(chain: readonly Entry[]): LaneUsage["lastTurn"] {
   for (let index = chain.length - 1; index >= 0; index--) {
     const entry = chain[index];
@@ -2217,11 +2240,12 @@ function lastTurnUsage(chain: readonly Entry[]): LaneUsage["lastTurn"] {
     const message = entry.payload.message;
     if (message.role !== "assistant") continue;
     if (message.stopReason === "error" || message.stopReason === "aborted") continue;
+    const counted = countUsage(message.usage);
     return {
-      input: message.usage.input,
-      output: message.usage.output,
-      cacheRead: null,
-      cacheWrite: null,
+      input: counted.input,
+      output: counted.output,
+      cacheRead: counted.cacheRead,
+      cacheWrite: counted.cacheWrite,
     };
   }
   return null;
@@ -2232,7 +2256,8 @@ function contextTokenCount(chain: readonly Entry[]): number | null {
   for (let index = visible.length - 1; index >= 0; index--) {
     const entry = visible[index];
     if (entry?.kind === "message" && entry.message.role === "assistant") {
-      return entry.message.usage.input + entry.message.usage.output;
+      const counted = countUsage(entry.message.usage);
+      return counted.prompt + counted.output;
     }
   }
   return null;
@@ -2243,10 +2268,12 @@ function attributedTotal(view: StorageView, lane: string): LaneUsage["total"] {
   let output = 0;
   for (const row of view.usageRows()) {
     if (operationLane(view, row.operationId) !== lane) continue;
-    input += row.input;
-    output += row.output;
+    const counted = countUsage(row);
+    input += counted.input;
+    output += counted.output;
   }
-  return { input, output };
+  // Rows persist input and output only, so cache totals stay null rather than a guessed zero.
+  return { input, output, cacheRead: null, cacheWrite: null };
 }
 
 function operationLane(view: StorageView, operationId: string): string | undefined {
