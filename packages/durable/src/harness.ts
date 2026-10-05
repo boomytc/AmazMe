@@ -198,12 +198,17 @@ export interface PendingResponse {
   errorMessage: string | null;
 }
 
-/** A tool call of the current operation. Settled calls stay in `entries`; this list is only the open batch. */
+/**
+ * A tool call of the current operation. Settled calls stay in `entries`; this list is only the open batch.
+ * `outputTail` is present only while `running` and a checkpoint is stored.
+ */
 export interface ToolActivity {
   toolCallId: string;
   name: string;
   /** `running` is `effect_pending`. `outcome_ready` and `completed` are `settled`. */
   status: "planned" | "running" | "settled";
+  /** Last 4000 code units of the stored checkpoint. A cut on a low surrogate drops that unit. */
+  outputTail?: string;
 }
 
 /** Input, output, cache, and reasoning counts. A count missing from storage is null, not zero. */
@@ -909,7 +914,7 @@ export class AgentLane {
         ...status,
         entries: ancestors(view, status.tipId),
         pendingResponse,
-        tools: toolActivity(state),
+        tools: toolActivity(view, state),
       });
     });
   }
@@ -945,6 +950,7 @@ export class AgentLane {
 
   /**
    * Read-only checkpoint tails for running tool calls. One storage read. Does not drive.
+   * The same tail is `outputTail` on the running tool in `snapshot()`.
    * After a process crash, a call left in `effect_pending` keeps showing its old tail until the next drive
    * moves that call to interrupted.
    */
@@ -1860,8 +1866,10 @@ export class AgentLane {
     if (!tool) return { result: { content: [{ type: "text", text: `Unknown tool: ${call.name}` }], isError: true }, executed: false };
     const writes: Promise<void>[] = [];
     let accepting = true;
-    const accept = (partial: string, options?: { checkpoint?: boolean }): void => {
-      if (!accepting || !options?.checkpoint) return;
+    let lastCheckpointAt = 0;
+    let pendingPartial: string | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const persistCheckpoint = (partial: string): void => {
       const pending = Promise.resolve()
         .then(() => admitted(this.harness).run((view, apply) => {
           if (this.harness.isAbandoned) return;
@@ -1875,6 +1883,33 @@ export class AgentLane {
       writes.push(pending);
       void pending.catch(() => undefined);
     };
+    const flushPending = (): void => {
+      timer = undefined;
+      if (!accepting || pendingPartial === undefined) return;
+      const partial = pendingPartial;
+      pendingPartial = undefined;
+      lastCheckpointAt = Date.now();
+      persistCheckpoint(partial);
+    };
+    // A tool may checkpoint every chunk. One storage write per window keeps the tail, and the latest partial in that window is the one that lands.
+    const accept = (partial: string, options?: { checkpoint?: boolean }): void => {
+      if (!accepting || !options?.checkpoint) return;
+      const now = Date.now();
+      if (lastCheckpointAt !== 0 && now - lastCheckpointAt < CHECKPOINT_INTERVAL_MS) {
+        pendingPartial = partial;
+        if (timer === undefined) {
+          timer = setTimeout(flushPending, CHECKPOINT_INTERVAL_MS - (now - lastCheckpointAt));
+        }
+        return;
+      }
+      pendingPartial = undefined;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      lastCheckpointAt = now;
+      persistCheckpoint(partial);
+    };
     let result: ToolResult;
     let executed = false;
     try {
@@ -1884,6 +1919,11 @@ export class AgentLane {
       result = { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
     } finally {
       accepting = false;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      pendingPartial = undefined;
     }
     await settleAll(writes);
     return { result, executed };
@@ -2509,26 +2549,38 @@ function readArgs(entry: Entry | undefined, sourceIndex: number): unknown {
 }
 
 const OUTPUT_TAIL_LIMIT = 4_000;
+const CHECKPOINT_INTERVAL_MS = 1_000;
 
-function toolActivity(state: OperationState | undefined): ToolActivity[] {
+function toolActivity(view: StorageView, state: OperationState | undefined): ToolActivity[] {
   if (!state || state.phase !== "tools") return [];
-  return state.calls.map((call) => ({
-    toolCallId: call.toolCallId,
-    name: call.name,
-    status: call.status === "planned" ? "planned" : call.status === "effect_pending" ? "running" : "settled",
-  }));
+  return state.calls.map((call) => {
+    const activity: ToolActivity = {
+      toolCallId: call.toolCallId,
+      name: call.name,
+      status: call.status === "planned" ? "planned" : call.status === "effect_pending" ? "running" : "settled",
+    };
+    const outputTail = storedOutputTail(view, call);
+    if (outputTail !== undefined) activity.outputTail = outputTail;
+    return activity;
+  });
 }
 
 function toolOutputTails(view: StorageView, state: OperationState | undefined): ToolOutputView["tails"] {
   if (!state || state.phase !== "tools") return [];
   const tails: ToolOutputView["tails"] = [];
   for (const call of state.calls) {
-    if (call.status !== "effect_pending") continue;
-    const partial = view.get<string>(toolOutputAddress(call.resultEntryId));
-    if (typeof partial !== "string") continue;
-    tails.push({ toolCallId: call.toolCallId, outputTail: checkpointTail(partial) });
+    const outputTail = storedOutputTail(view, call);
+    if (outputTail === undefined) continue;
+    tails.push({ toolCallId: call.toolCallId, outputTail });
   }
   return tails;
+}
+
+function storedOutputTail(view: StorageView, call: { status: string; resultEntryId: string }): string | undefined {
+  if (call.status !== "effect_pending") return undefined;
+  const partial = view.get<string>(toolOutputAddress(call.resultEntryId));
+  if (typeof partial !== "string") return undefined;
+  return checkpointTail(partial);
 }
 
 function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {

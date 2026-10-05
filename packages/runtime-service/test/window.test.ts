@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveLimits } from "@amazme/protocol";
-import { emptyActivity, type EntryDto, type LaneSnapshotDto } from "@amazme/runtime-service";
+import { ContractError, emptyActivity, parseLaneSnapshot, type EntryDto, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { fitHistory, fitWindow } from "../src/window.ts";
 
 function entry(id: string, text: string): EntryDto {
@@ -63,6 +63,34 @@ test("a pending reply that does not fit is marked omitted and the entries stay",
   assert.equal(fitted.pendingResponse, null);
   assert.equal(fitted.pendingOmitted, true);
   assert.deepEqual(fitted.entries.map((item) => item.id), ["note"]);
+});
+
+test("a tool activity may carry an output tail of at most 4000 code units", () => {
+  const base = snapshot([]);
+  const withTail = parseLaneSnapshot({
+    ...base,
+    phase: "tools",
+    operationId: "op",
+    status: "open",
+    tools: [{ toolCallId: "call-1", name: "log", status: "running", outputTail: "x".repeat(4_000) }],
+  });
+  assert.equal(withTail.tools[0]?.outputTail?.length, 4_000);
+  const fitted = fitWindow(withTail, resolveLimits(), { kind: "response" });
+  assert.equal(fitted?.tools[0]?.outputTail?.length, 4_000);
+  assert.throws(() => parseLaneSnapshot({
+    ...base,
+    tools: [{ toolCallId: "call-1", name: "log", status: "running", outputTail: "x".repeat(4_001) }],
+  }), ContractError);
+  assert.throws(() => parseLaneSnapshot({
+    ...base,
+    tools: [{ toolCallId: "call-1", name: "log", status: "running", extra: true }],
+  }), ContractError);
+  const omitted = parseLaneSnapshot({
+    ...base,
+    tools: [{ toolCallId: "call-1", name: "log", status: "planned" }],
+  });
+  assert.equal(omitted.tools[0]?.status, "planned");
+  assert.equal("outputTail" in omitted.tools[0]!, false);
 });
 
 test("history keeps the side closest to the cursor when the page does not fit", () => {
