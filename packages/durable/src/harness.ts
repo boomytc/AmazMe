@@ -151,7 +151,7 @@ export interface OperationResult {
 
 export type DriveOutcome =
   | { kind: "settled"; result: OperationResult }
-  | { kind: "waiting"; operationId: string; reason: "retry"; notBefore: number };
+  | { kind: "waiting"; operationId: string; reason: "retry" | "approval"; notBefore: number };
 
 export interface OperationAdmission {
   operationId: string;
@@ -667,11 +667,8 @@ export class AgentLane {
         return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: planned.notBefore } };
       }
       if (planned.type === "approval") {
-        // Temporary borrow of the retry wait. Hosts and contracts.ts stay as they are.
-        // Tell an approval wait from a retry by pendingApprovals().items being non-empty.
-        // reason:"approval" is added with that protocol change, and this return changes with it.
         // notBefore is the earliest parked requestedAt, so a repeated drive returns the same value and writes nothing.
-        return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: planned.notBefore } };
+        return { ok: true, value: { kind: "waiting", operationId, reason: "approval", notBefore: planned.notBefore } };
       }
       if (planned.type === "continue") continue;
       // Abort can land inside plan(), after this step has armed a model or tool effect.
