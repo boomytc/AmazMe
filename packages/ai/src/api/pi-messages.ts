@@ -102,6 +102,7 @@ async function pump(
             numberOf(usage.input),
             numberOf(usage.output),
             numberOf(usage.totalTokens),
+            // pi-messages already speaks Usage: input is the cache miss, not the full prompt.
             { cacheRead: numberOf(usage.cacheRead), cacheWrite: numberOf(usage.cacheWrite) },
           );
           if (reported) acc.usage(reported);

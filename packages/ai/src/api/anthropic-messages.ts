@@ -95,6 +95,7 @@ async function pump(
       if (write !== undefined) cacheWrite = write;
     };
     const reportUsage = () => {
+      // input_tokens is already the cache miss. cache_read and cache_creation sit beside it.
       const reported = usageFromCounts(model, inputTokens, outputTokens, undefined, { cacheRead, cacheWrite });
       if (reported) acc.usage(reported);
     };

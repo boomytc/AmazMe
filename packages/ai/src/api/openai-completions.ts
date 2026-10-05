@@ -1,7 +1,7 @@
 import { baseAssistant, createAssistantEventStream, type AssistantEventStream, type ProviderStreams } from "../models.ts";
 import { resolveThinkingLevel } from "../thinking.ts";
 import { isCompletionsThinkingField, type AssistantMessage, type CompletionsOutputTokenField, type CompletionsThinkingField, type Context, type Message, type Model, type OpenAICompletionsOptions, type ToolCall, type Usage } from "../types.ts";
-import { usageFromCounts } from "./events.ts";
+import { cacheMissInput, usageFromCounts } from "./events.ts";
 import { cloneUsage, emptyUsage, messageText, transformMessages } from "../transform.ts";
 import { resolveOutputBudget } from "../utils/budget.ts";
 import { classifyTransportFailure, isFilledWindowLength, transportErrorDetail } from "../utils/overflow.ts";
@@ -608,16 +608,17 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
  * `model.cost` is USD per 1,000,000 tokens. Non-finite or absent rates contribute 0; no catalog price is invented.
  * Cache read is taken only from a reported count. `prompt_tokens_details.cached_tokens` and
  * `prompt_cache_hit_tokens` are the same count when both are present; a disagreement is left unset.
- * Cache misses are not cache writes.
+ * `prompt_tokens` includes that cache read. `input` keeps the miss portion. Cache misses are not cache writes.
  */
 function usageFromChunk(model: Model, raw: unknown): Usage | undefined {
   if (!isRecord(raw)) return undefined;
+  const cacheRead = cacheReadFromCompletions(raw);
   return usageFromCounts(
     model,
-    finiteNumber(raw.prompt_tokens),
+    cacheMissInput(finiteNumber(raw.prompt_tokens), cacheRead),
     finiteNumber(raw.completion_tokens),
     finiteNumber(raw.total_tokens),
-    { cacheRead: cacheReadFromCompletions(raw) },
+    { cacheRead },
   );
 }
 

@@ -57,9 +57,10 @@ test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek AP
   assert.equal(flash.reasoning, true);
   // Chat Completions: max_tokens is at most 384K, written as 393216.
   assert.equal(flash.maxTokens, 393_216);
-  // Pricing, USD per 1,000,000 tokens: peak cache-miss input and peak output.
-  // Off-peak is half of peak, and cache-hit input is a separate published rate.
-  assert.deepEqual(flash.cost, { input: 0.3, output: 1.2 });
+  // Pricing, USD per 1,000,000 tokens: peak cache-miss input, peak output, and peak cache-hit input.
+  // Off-peak is half of peak. There is no separate cache-write rate.
+  assert.equal("cacheWrite" in flash.cost, false);
+  assert.deepEqual(flash.cost, { input: 0.3, output: 1.2, cacheRead: 0.006 });
 
   // Models & Pricing: version DeepSeek-V4-Pro-0813, displayed as DeepSeek V4 Pro, vision not supported.
   assert.equal(pro.name, "DeepSeek V4 Pro");
@@ -69,7 +70,8 @@ test("builtin deepseek-flash and deepseek-v4-pro match the published DeepSeek AP
   assert.equal(pro.contextWindow, 1_000_000);
   assert.equal(pro.reasoning, true);
   assert.equal(pro.maxTokens, 393_216);
-  assert.deepEqual(pro.cost, { input: 1.32, output: 3.96 });
+  assert.equal("cacheWrite" in pro.cost, false);
+  assert.deepEqual(pro.cost, { input: 1.32, output: 3.96, cacheRead: 0.044 });
 
   // reasoning_effort is none | low | high | max. max is not one of our levels.
   // minimal is accepted and mapped to low; medium is accepted and mapped to high.

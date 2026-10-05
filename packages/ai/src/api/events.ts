@@ -235,6 +235,16 @@ function parsedArguments(value: string): unknown {
   try { return JSON.parse(value) as unknown; } catch { return {}; }
 }
 
+/**
+ * Prompt counts that already include cache hits. The miss portion is `prompt - cacheRead`.
+ * A missing cache read is not zero and is not subtracted.
+ */
+export function cacheMissInput(prompt: number | undefined, cacheRead: number | undefined): number | undefined {
+  if (prompt === undefined) return undefined;
+  if (cacheRead === undefined) return prompt;
+  return prompt - cacheRead;
+}
+
 export function usageFromCounts(
   model: Model,
   input: number | undefined,
@@ -251,11 +261,15 @@ export function usageFromCounts(
   const outputCost = (completion * outputRate) / 1_000_000;
   const cacheRead = finite(cache?.cacheRead);
   const cacheWrite = finite(cache?.cacheWrite);
+  const cacheReadRate = finite(model.cost?.cacheRead);
+  const cacheWriteRate = finite(model.cost?.cacheWrite);
+  const cacheReadCost = cacheRead !== undefined && cacheReadRate !== undefined ? (cacheRead * cacheReadRate) / 1_000_000 : 0;
+  const cacheWriteCost = cacheWrite !== undefined && cacheWriteRate !== undefined ? (cacheWrite * cacheWriteRate) / 1_000_000 : 0;
   return {
     input: prompt,
     output: completion,
     totalTokens: finite(total) ?? prompt + completion,
-    cost: { input: inputCost, output: outputCost, total: inputCost + outputCost },
+    cost: { input: inputCost, output: outputCost, total: inputCost + outputCost + cacheReadCost + cacheWriteCost },
     ...(cacheRead !== undefined ? { cacheRead } : {}),
     ...(cacheWrite !== undefined ? { cacheWrite } : {}),
   };
