@@ -106,6 +106,15 @@ export async function requireRouterKeys(
   if (problems.length > 0) throw new Error(problems.join("\n"));
 }
 
+/**
+ * API-key providers name the login command. DeepSeek with no key says
+ * `amazme login api-key --provider deepseek`. OAuth-only providers stay on `amazme login`.
+ */
+export function missingApiKeyHint(providerId: string, env: string | undefined): string {
+  if (!env) return "run amazme login";
+  return `set ${env} or run amazme login api-key --provider ${providerId}`;
+}
+
 function unconfigured(
   role: "strong" | "cheap",
   spec: string,
@@ -113,8 +122,7 @@ function unconfigured(
   model: Model,
 ): string {
   const env = models.getProvider(model.provider)?.auth.apiKey?.env;
-  const hint = env ? `set ${env} or run amazme login` : "run amazme login";
-  return `router ${role} ${spec} is not configured: ${hint}`;
+  return `router ${role} ${spec} is not configured: ${missingApiKeyHint(model.provider, env)}`;
 }
 
 function parseApproval(value: unknown): ApprovalSettings | undefined {

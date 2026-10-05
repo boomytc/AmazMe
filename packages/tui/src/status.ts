@@ -3,6 +3,7 @@ import type { ActivityDto } from "@amazme/runtime-service";
 /**
  * 底栏上多出来的片段。数字来自快照里的 `activity`，这里不读 git，也不估算 token 或费用。
  * 本轮一行是 `本轮输入 N · 命中 cacheRead · round(hitRate * 100)%`。百分比只是显示取整。
+ * `cost.total === null` 显示 —，不把未知费用画成 `$0`。没有 cost 对象则不显示费用。
  * `now` 由画面在绘制时传入。没有它就不显示耗时和倒计时，渲染本身不读时钟。
  */
 export function footerParts(
@@ -77,6 +78,7 @@ function turnLine(turn: ActivityDto["usage"]["lastTurn"]): string | null {
 }
 
 function money(total: number | null | undefined): string | null {
+  if (total === null) return "\u2014";
   if (typeof total !== "number" || !Number.isFinite(total)) return null;
   const text = total.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
   return `$${text}`;
