@@ -16,4 +16,4 @@
 
 - Anthropic SDK，Supported Models：`MiniMax-M3` 上下文 1,000,000，`MiniMax-M2.7` 与 `MiniMax-M2.7-highspeed` 上下文 204,800。https://platform.minimax.io/docs/api-reference/text-anthropic-api
 - Messages API，CreateMessageReq，`max_tokens`：`MiniMax-M3` 最大 524288。其余模型最大 204800。https://platform.minimax.io/docs/api-reference/text-chat-anthropic
-- Anthropic SDK，Thinking Control：M2.x 接受 `thinking.type` `disabled` 但忽略它，思考仍然开着。所以 `MiniMax-M2.7` 和 `MiniMax-M2.7-highspeed` 的 `thinkingLevelMap` 把 `off` 标成不支持。该页没有 `minimal`、`low`、`medium`、`high`，这四个键保持省略。`MiniMax-M3` 可以用 `disabled` 关掉、用 `adaptive` 打开。`adaptive` 不是现有思考档的名字，所以 M3 的 `thinkingLevelMap` 没写。
+- Anthropic SDK，Thinking Control：M2.x 接受 `thinking.type` `disabled` 但忽略它，思考仍然开着。这次没有把 `off` 标成不支持。`MiniMax-M2.7` 和 `MiniMax-M2.7-highspeed` 不写 `thinkingLevelMap`，沿用目录默认，五档都在，宿主选 `off` 仍能解析。该页没有 `minimal`、`low`、`medium`、`high`，没有另造映射。`MiniMax-M3` 可以用 `disabled` 关掉、用 `adaptive` 打开。`adaptive` 不是现有思考档的名字，所以 M3 的 `thinkingLevelMap` 也没写。

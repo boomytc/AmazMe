@@ -118,13 +118,16 @@ test("builtin MiniMax limits follow the published Anthropic-compatible API", () 
   assert.equal(m27.maxTokens, 204_800);
   assert.equal(fast.maxTokens, 204_800);
   assert.equal(m3.maxTokens, 524_288);
-  // Thinking Control: M2.x accepts disabled and ignores it, so off is not a real level.
+  // Thinking Control says M2.x accepts disabled and ignores it.
   // https://platform.minimax.io/docs/api-reference/text-anthropic-api
-  // The page does not list minimal, low, medium, or high, so those keys stay omitted.
-  assert.deepEqual(m27.thinkingLevelMap, { off: null });
-  assert.deepEqual(fast.thinkingLevelMap, { off: null });
-  assert.equal(supportedThinkingLevels(m27).includes("off"), false);
-  assert.deepEqual(resolveThinkingLevel(m27, "off"), { ok: false, level: "off" });
+  // The map is omitted so the catalog default stays, including off.
+  // The page does not name minimal, low, medium, or high, so those are not added.
+  assert.equal("thinkingLevelMap" in m27, false);
+  assert.equal("thinkingLevelMap" in fast, false);
+  assert.deepEqual(supportedThinkingLevels(m27), [...LEVELS]);
+  assert.deepEqual(supportedThinkingLevels(fast), [...LEVELS]);
+  assert.deepEqual(resolveThinkingLevel(m27, "off"), { ok: true });
+  assert.deepEqual(resolveThinkingLevel(fast, "off"), { ok: true });
   assert.equal("thinkingLevelMap" in m3, false);
   assert.deepEqual(supportedThinkingLevels(m3), [...LEVELS]);
 });
