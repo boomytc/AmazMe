@@ -339,6 +339,11 @@ export interface StreamOptions {
   env?: Record<string, string | undefined>;
   /** Optional conversation id. OpenCode copies it onto `x-opencode-session` beside the request. */
   sessionId?: string;
+  /**
+   * Where the registry resolved `apiKey`. Completions 401 errors name `store` or `env`.
+   * The key itself is never copied into that error text.
+   */
+  keySource?: AuthResult["source"];
 }
 
 export interface ProviderHeaders {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModels, createProvider, frameFromEvent, messageFromFrames, reduceFrames, type AssistantEvent, type AssistantMessage, type Context, type Model, type OpenAICompletionsOptions, type UserContent } from "@amazme/ai";
+import { createModels, createProvider, frameFromEvent, MemoryCredentialStore, messageFromFrames, reduceFrames, type AssistantEvent, type AssistantMessage, type Context, type Model, type OpenAICompletionsOptions, type UserContent } from "@amazme/ai";
 import { openaiCompletionsApi } from "@amazme/ai/api/openai-completions";
 import { completionsProvider } from "@amazme/ai/providers/completions";
 import { openaiProvider } from "@amazme/ai/providers/openai";
@@ -450,6 +450,54 @@ test("a content-filter finish is a non-retryable error retaining received output
   assert.equal(textOf(message), "Keep");
   assert.match(message.errorMessage ?? "", /content_filter/);
   assert.deepEqual(terminals(events).map((event) => event.type), ["error"]);
+});
+
+test("insufficient_system_resource keeps the text and the usage on that frame and can be sent again", async () => {
+  const { message, events } = await run(async () => sse([
+    'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"insufficient_system_resource"}],"usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13}}\n\n',
+    "data: [DONE]\n\n",
+  ]));
+  assert.equal(message.stopReason, "error");
+  assert.equal(message.retryable, true);
+  assert.equal(textOf(message), "Hel");
+  assert.equal(message.usage.input, 11);
+  assert.equal(message.usage.output, 2);
+  assert.equal(message.usage.totalTokens, 13);
+  assert.equal(message.usage.cost.total, 15);
+  assert.match(message.errorMessage ?? "", /insufficient_system_resource/);
+  assert.deepEqual(terminals(events).map((event) => event.type), ["error"]);
+});
+
+test("a 401 names the store or env key source and does not repeat the key", async () => {
+  const cases = [
+    { source: "store" as const, key: "sk-store-A12-secret" },
+    { source: "env" as const, key: "sk-env-A12-secret" },
+  ];
+  for (const item of cases) {
+    const store = new MemoryCredentialStore();
+    if (item.source === "store") await store.set("openai", { type: "api_key", key: item.key });
+    let authorization = "";
+    const models = createModels({
+      store,
+      env: item.source === "env" ? { OPENAI_API_KEY: item.key } : {},
+    });
+    models.setProvider(openaiProvider({
+      modelIds: ["gpt-4o-mini"],
+      fetch: async (_input, init) => {
+        authorization = new Headers(init?.headers).get("authorization") ?? "";
+        return jsonError(401, { code: "invalid_api_key", message: `Incorrect API key ${item.key}` });
+      },
+    }));
+    const active = models.getModel("openai", "gpt-4o-mini");
+    assert.ok(active, item.source);
+    const message = await models.stream(active, CONTEXT).result();
+    assert.equal(authorization, `Bearer ${item.key}`, item.source);
+    assert.equal(message.stopReason, "error", item.source);
+    assert.notEqual(message.retryable, true, item.source);
+    assert.match(message.errorMessage ?? "", new RegExp(`\\(key source: ${item.source}\\)$`), item.source);
+    assert.equal((message.errorMessage ?? "").includes(item.key), false, item.source);
+  }
 });
 
 test("local request serialization errors do not send or retry the request", async () => {

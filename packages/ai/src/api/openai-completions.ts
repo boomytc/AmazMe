@@ -137,11 +137,15 @@ async function pump(
         if (isAbort(error, request.signal)) throw error;
       }
       const classification = classifyTransportFailure(response.status, body);
+      const visible = request.apiKey ? body.split(request.apiKey).join("[redacted]") : body;
+      const keySource = response.status === 401 && (request.keySource === "store" || request.keySource === "env")
+        ? ` (key source: ${request.keySource})`
+        : "";
       const failed = terminalMessage(
         model,
         [],
         "error",
-        `OpenAI completions ${response.status} ${classification.kind}: ${body.slice(0, 400)}`,
+        `OpenAI completions ${response.status} ${classification.kind}: ${visible.slice(0, 400)}${keySource}`,
         classification.retryable,
         classification.overflow,
       );
@@ -297,6 +301,10 @@ async function emitSse(model: Model, response: Response, stream: AssistantEventS
     }
     if (finish === "content_filter") {
       fail("error", "OpenAI completions stream ended with content_filter", false);
+      return;
+    }
+    if (finish === "insufficient_system_resource") {
+      fail("error", "OpenAI completions stream ended with insufficient_system_resource", true);
       return;
     }
     const stopReason = finish === "length" ? "length" : toolsByServer.size > 0 || finish === "tool_calls" ? "toolUse" : "stop";
@@ -568,7 +576,7 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
     if (!isRecord(choice)) return false;
     const finish = choice.finish_reason;
     if (finish !== undefined && finish !== null
-      && (typeof finish !== "string" || !["stop", "length", "tool_calls", "content_filter", "aborted"].includes(finish))) return false;
+      && (typeof finish !== "string" || !["stop", "length", "tool_calls", "content_filter", "aborted", "insufficient_system_resource"].includes(finish))) return false;
     if (choice.delta === undefined) return true;
     if (!isRecord(choice.delta)) return false;
     const { content, tool_calls: calls } = choice.delta;
