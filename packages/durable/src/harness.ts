@@ -8,6 +8,7 @@ import {
   type AssistantMessage,
   type Context,
   type StopReason,
+  type Usage,
   frameFromEvent,
   reduceFrames,
   resolveOutputBudget,
@@ -177,6 +178,57 @@ export interface ToolActivity {
   name: string;
   /** `running` is `effect_pending`. `outcome_ready` and `completed` are `settled`. */
   status: "planned" | "running" | "settled";
+}
+
+/** Input, output, and cache counts. An omitted cache count is null, not zero. */
+interface UsageCounts {
+  input: number;
+  output: number;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+}
+
+/**
+ * Token counts derived from this lane's stored usage rows and branch.
+ * An omitted cache count is null. A reported 0 stays 0.
+ */
+export interface LaneUsage {
+  /**
+   * Newest settled assistant after the newest summary, excluding `error`, `aborted`, and `deferred`.
+   * The copied tail is the contiguous run of older timestamps directly after that summary, and it does not count.
+   * Null when nothing after that run counts.
+   */
+  lastTurn: UsageCounts | null;
+  /**
+   * `input` and `output` sum usage rows whose persisted operation belongs to this lane, including summary requests.
+   * A row has no lane. An open operation is attributed by the stored `OperationMeta.lane`; after `finish`, by
+   * `OperationResult.lane`. There is no ancestor-chain fallback: one operation can write several rows, and a fork
+   * can cut in the middle of that operation, so summing assistant messages would not match the rows.
+   * Those rows do not store `cacheRead` or `cacheWrite`. Both totals stay null so a message on the branch cannot
+   * supply a second source.
+   */
+  total: UsageCounts;
+  /**
+   * Prompt size plus output of the newest assistant after the newest summary.
+   * The copied tail is the contiguous run of older timestamps directly after that summary, and it does not count.
+   * Null when nothing after that run counts, the same as an empty lane.
+   */
+  contextTokens: number | null;
+  /**
+   * The input trigger `assess` compares against. Null when compaction is off, `maxTokens` is not a positive
+   * safe integer, or the model window is unknown.
+   * `assess` compares an estimate of the next request, so comparing `contextTokens` to this threshold is only approximate.
+   */
+  compactionThreshold: number | null;
+}
+
+/** `LaneUsage` plus the storage version of the read that produced it. */
+export type LaneUsageView = { version: number } & LaneUsage;
+
+/** Checkpoint tails of the running tool calls in one read. */
+export interface ToolOutputView {
+  version: number;
+  tails: Array<{ toolCallId: string; outputTail: string }>;
 }
 
 /** One consistent read of a lane. Every field is a detached copy taken at `version`. */
@@ -777,6 +829,30 @@ export class AgentLane {
         pendingResponse,
         tools: toolActivity(state),
       });
+    });
+  }
+
+  /** Read-only usage projection. One storage read. Does not initialize the lane, drive, or recover. */
+  usage(): Promise<LaneUsageView> {
+    return admitted(this.harness).read((view) => {
+      const { status } = this.status(view);
+      const chain = ancestors(view, status.tipId);
+      return structuredClone({
+        version: view.version(),
+        ...projectUsage(view, this.name, chain, this.harness.options),
+      });
+    });
+  }
+
+  /**
+   * Read-only checkpoint tails for running tool calls. One storage read. Does not drive.
+   * After a process crash, a call left in `effect_pending` keeps showing its old tail until the next drive
+   * moves that call to interrupted.
+   */
+  toolOutput(): Promise<ToolOutputView> {
+    return admitted(this.harness).read((view) => {
+      const { state } = this.status(view);
+      return structuredClone({ version: view.version(), tails: toolOutputTails(view, state) });
     });
   }
 
@@ -1865,26 +1941,7 @@ export class AgentLane {
 
   private visibleEntries(view: StorageView): TranscriptEntry[] {
     const tip = view.get<string | null>(tipAddress(this.name)) ?? null;
-    const chain = ancestors(view, tip);
-    let start = 0;
-    for (let index = chain.length - 1; index >= 0; index--) {
-      if (chain[index]?.payload.type === "compaction") {
-        start = index;
-        break;
-      }
-    }
-    const entries: TranscriptEntry[] = [];
-    for (const entry of chain.slice(start)) {
-      if (entry.payload.type === "compaction") {
-        entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "compaction", summary: entry.payload.summary });
-        continue;
-      }
-      const message = entry.payload.message;
-      if (message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred")) continue;
-      if (message.role === "custom") continue;
-      entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "message", message });
-    }
-    return entries;
+    return visibleFrom(ancestors(view, tip));
   }
 
   private toolDefinitions() {
@@ -1948,9 +2005,10 @@ export class AgentLane {
     pending?: HarnessMessage,
   ): { type: "send" } | { type: "compact"; reason: SummaryReason } | { type: "fail"; message: string } {
     const config = this.config(view);
-    const model = this.harness.options.models.getModel(config.provider, config.modelId);
-    if (!model) return { type: "fail", message: `Unknown model ${config.provider}/${config.modelId}` };
-    if (config.compaction.enabled && (!Number.isSafeInteger(config.compaction.maxTokens) || config.compaction.maxTokens <= 0)) {
+    const resolved = resolveLaneModel(view, this.name, this.harness.options);
+    const model = resolved.model;
+    if (!model) return { type: "fail", message: `Unknown model ${resolved.provider}/${resolved.modelId}` };
+    if (resolved.compaction.enabled && (!Number.isSafeInteger(resolved.compaction.maxTokens) || resolved.compaction.maxTokens <= 0)) {
       return { type: "fail", message: "compaction.maxTokens must be a positive integer" };
     }
     const budget = resolveOutputBudget(model, this.providerContext(view, pending), config.maxTokens);
@@ -1958,12 +2016,13 @@ export class AgentLane {
       return { type: "fail", message: budget.message ?? "Context budget is invalid" };
     }
     if (budget.status === "cannot_fit") {
-      if (!config.compaction.enabled) return { type: "fail", message: `${budget.message}; compaction is disabled` };
+      if (!resolved.compaction.enabled) return { type: "fail", message: `${budget.message}; compaction is disabled` };
       if (scope.overflowUsed) return { type: "fail", message: "context overflow repeated" };
       return { type: "compact", reason: "overflow" };
     }
-    const threshold = effectiveInputThreshold(model.contextWindow, config.compaction.maxTokens);
-    if (config.compaction.enabled && !scope.thresholdUsed && budget.estimatedInput > threshold) {
+    // assess compares an estimate of the next request, so contextTokens against this threshold is only approximate.
+    const threshold = effectiveInputThreshold(model.contextWindow, resolved.compaction.maxTokens);
+    if (resolved.compaction.enabled && !scope.thresholdUsed && budget.estimatedInput > threshold) {
       return { type: "compact", reason: "threshold" };
     }
     return { type: "send" };
@@ -1971,12 +2030,13 @@ export class AgentLane {
 
   private prepareCompaction(view: StorageView, state: Extract<OperationState, { phase: "summary_deciding" }>) {
     const config = this.config(view);
-    const model = this.harness.options.models.getModel(config.provider, config.modelId);
-    if (!model) return { ok: false as const, code: "invalid" as const, message: `Unknown model ${config.provider}/${config.modelId}` };
-    if (config.compaction.enabled && (!Number.isSafeInteger(config.compaction.maxTokens) || config.compaction.maxTokens <= 0)) {
+    const resolved = resolveLaneModel(view, this.name, this.harness.options);
+    const model = resolved.model;
+    if (!model) return { ok: false as const, code: "invalid" as const, message: `Unknown model ${resolved.provider}/${resolved.modelId}` };
+    if (resolved.compaction.enabled && (!Number.isSafeInteger(resolved.compaction.maxTokens) || resolved.compaction.maxTokens <= 0)) {
       return { ok: false as const, code: "invalid" as const, message: "compaction.maxTokens must be a positive integer" };
     }
-    const threshold = effectiveInputThreshold(model.contextWindow, config.compaction.maxTokens);
+    const threshold = effectiveInputThreshold(model.contextWindow, resolved.compaction.maxTokens);
     return planCompaction({
       entries: this.visibleEntries(view),
       systemPrompt: config.systemPrompt,
@@ -2155,6 +2215,8 @@ function readArgs(entry: Entry | undefined, sourceIndex: number): unknown {
   return block?.type === "toolCall" ? block.arguments : {};
 }
 
+const OUTPUT_TAIL_LIMIT = 4_000;
+
 function toolActivity(state: OperationState | undefined): ToolActivity[] {
   if (!state || state.phase !== "tools") return [];
   return state.calls.map((call) => ({
@@ -2162,6 +2224,160 @@ function toolActivity(state: OperationState | undefined): ToolActivity[] {
     name: call.name,
     status: call.status === "planned" ? "planned" : call.status === "effect_pending" ? "running" : "settled",
   }));
+}
+
+function toolOutputTails(view: StorageView, state: OperationState | undefined): ToolOutputView["tails"] {
+  if (!state || state.phase !== "tools") return [];
+  const tails: ToolOutputView["tails"] = [];
+  for (const call of state.calls) {
+    if (call.status !== "effect_pending") continue;
+    const partial = view.get<string>(toolOutputAddress(call.resultEntryId));
+    if (typeof partial !== "string") continue;
+    tails.push({ toolCallId: call.toolCallId, outputTail: checkpointTail(partial) });
+  }
+  return tails;
+}
+
+function visibleFrom(chain: readonly Entry[]): TranscriptEntry[] {
+  let start = 0;
+  for (let index = chain.length - 1; index >= 0; index--) {
+    if (chain[index]?.payload.type === "compaction") {
+      start = index;
+      break;
+    }
+  }
+  const entries: TranscriptEntry[] = [];
+  for (const entry of chain.slice(start)) {
+    if (entry.payload.type === "compaction") {
+      entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "compaction", summary: entry.payload.summary });
+      continue;
+    }
+    const message = entry.payload.message;
+    if (message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred")) continue;
+    if (message.role === "custom") continue;
+    entries.push({ id: entry.id, timestamp: entry.timestamp, kind: "message", message });
+  }
+  return entries;
+}
+
+function projectUsage(view: StorageView, lane: string, chain: readonly Entry[], options: HarnessOptions): LaneUsage {
+  const counted = entriesAfterSummary(chain);
+  return {
+    lastTurn: lastTurnUsage(counted),
+    total: attributedTotal(view, lane),
+    contextTokens: contextTokenCount(counted),
+    compactionThreshold: compactionThreshold(view, lane, options),
+  };
+}
+
+/** Full prompt length. An omitted cache count is left out of the sum. */
+function promptSize(usage: Usage): number {
+  return usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+}
+
+function lastTurnUsage(chain: readonly Entry[]): LaneUsage["lastTurn"] {
+  for (let index = chain.length - 1; index >= 0; index--) {
+    const entry = chain[index];
+    if (!entry || entry.payload.type !== "message") continue;
+    const message = entry.payload.message;
+    if (message.role !== "assistant") continue;
+    if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred") continue;
+    return {
+      input: message.usage.input,
+      output: message.usage.output,
+      cacheRead: message.usage.cacheRead ?? null,
+      cacheWrite: message.usage.cacheWrite ?? null,
+    };
+  }
+  return null;
+}
+
+function contextTokenCount(chain: readonly Entry[]): number | null {
+  const visible = visibleFrom(chain);
+  for (let index = visible.length - 1; index >= 0; index--) {
+    const entry = visible[index];
+    if (entry?.kind === "message" && entry.message.role === "assistant") {
+      return promptSize(entry.message.usage) + entry.message.usage.output;
+    }
+  }
+  return null;
+}
+
+/**
+ * Entries that count after the newest summary.
+ * A finish compaction writes the summary and the kept-tail copies in one commit. The copies sit directly after
+ * the summary and keep the source timestamp, which is strictly earlier than the summary's own timestamp.
+ * Skip that contiguous run. Count from the first entry that is not strictly earlier. With no summary, the whole chain counts.
+ */
+function entriesAfterSummary(chain: readonly Entry[]): Entry[] {
+  let summaryIndex = -1;
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    if (chain[index]?.payload.type === "compaction") {
+      summaryIndex = index;
+      break;
+    }
+  }
+  if (summaryIndex < 0) return [...chain];
+  const summary = chain[summaryIndex];
+  if (!summary) return [...chain];
+  let start = summaryIndex + 1;
+  while (start < chain.length) {
+    const entry = chain[start];
+    if (!entry || entry.timestamp >= summary.timestamp) break;
+    start += 1;
+  }
+  return chain.slice(start);
+}
+
+function attributedTotal(view: StorageView, lane: string): LaneUsage["total"] {
+  let input = 0;
+  let output = 0;
+  for (const row of view.usageRows()) {
+    if (operationLane(view, row.operationId) !== lane) continue;
+    input += row.input;
+    output += row.output;
+  }
+  return { input, output, cacheRead: null, cacheWrite: null };
+}
+
+function operationLane(view: StorageView, operationId: string): string | undefined {
+  const meta = view.get<OperationMeta>(metaAddress(operationId));
+  if (meta) return meta.lane;
+  return view.get<OperationResult>(resultAddress(operationId))?.lane;
+}
+
+/**
+ * Stored lane config when the lane has been initialized, otherwise the harness options.
+ * Does not create the lane. `assess` and the usage projection both read the model and compaction settings here.
+ */
+function resolveLaneModel(view: StorageView, lane: string, options: HarnessOptions): {
+  provider: string;
+  modelId: string;
+  compaction: LaneConfig["compaction"];
+  model: ReturnType<HarnessOptions["models"]["getModel"]>;
+} {
+  const stored = view.get<LaneConfig>(configAddress(lane));
+  const compaction = stored?.compaction ?? options.compaction ?? { enabled: false, maxTokens: 80_000 };
+  const provider = stored?.provider ?? options.model.provider;
+  const modelId = stored?.modelId ?? options.model.modelId;
+  return { provider, modelId, compaction, model: options.models.getModel(provider, modelId) };
+}
+
+function compactionThreshold(view: StorageView, lane: string, options: HarnessOptions): number | null {
+  const resolved = resolveLaneModel(view, lane, options);
+  if (!resolved.compaction.enabled) return null;
+  if (!Number.isSafeInteger(resolved.compaction.maxTokens) || resolved.compaction.maxTokens <= 0) return null;
+  const model = resolved.model;
+  if (!model || !Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0) return null;
+  return effectiveInputThreshold(model.contextWindow, resolved.compaction.maxTokens);
+}
+
+/** Last `OUTPUT_TAIL_LIMIT` code units. A cut that starts on a low surrogate drops that unit so a pair stays whole. */
+function checkpointTail(partial: string): string {
+  const tail = partial.slice(-OUTPUT_TAIL_LIMIT);
+  const lead = tail.charCodeAt(0);
+  if (lead >= 0xDC00 && lead <= 0xDFFF) return tail.slice(1);
+  return tail;
 }
 
 function ancestors(view: StorageView, tip: string | null): Entry[] {
