@@ -222,3 +222,57 @@ test("each seccomp filter is a private file and close removes it", () => {
   gone.close();
   assert.equal(existsSync(dirname(path)), false);
 });
+
+const SECCOMP_RET_ALLOW = 0x7fff0000;
+const SECCOMP_RET_EPERM = 0x00050001;
+const AUDIT_ARCH_X86_64 = 0xc000003e;
+const AUDIT_ARCH_AARCH64 = 0xc00000b7;
+
+function runSeccomp(program: Buffer, nr: number, arch: number): number {
+  const data = Buffer.alloc(8);
+  data.writeUInt32LE(nr >>> 0, 0);
+  data.writeUInt32LE(arch >>> 0, 4);
+  let accumulator = 0;
+  let pc = 0;
+  for (let steps = 0; steps < 32; steps += 1) {
+    const at = pc * 8;
+    if (at < 0 || at + 8 > program.length) throw new Error(`seccomp pc ${pc} left the program`);
+    const code = program.readUInt16LE(at);
+    const jt = program.readUInt8(at + 2);
+    const jf = program.readUInt8(at + 3);
+    const k = program.readUInt32LE(at + 4);
+    if (code === 0x06) return k >>> 0;
+    if (code === 0x20) {
+      accumulator = k + 4 <= data.length ? data.readUInt32LE(k) : 0;
+      pc += 1;
+      continue;
+    }
+    if (code === 0x15 || code === 0x35) {
+      const take = code === 0x15 ? accumulator === k : (accumulator >>> 0) >= (k >>> 0);
+      pc += 1 + (take ? jt : jf);
+      continue;
+    }
+    throw new Error(`unexpected bpf opcode 0x${code.toString(16)}`);
+  }
+  throw new Error("seccomp program did not return");
+}
+
+test("x86_64 seccomp denies syscall numbers at or above 0x40000000", () => {
+  if (process.platform !== "linux") return;
+  const filter = networkSeccompFd();
+  try {
+    const program = readFileSync(readlinkSync(`/proc/self/fd/${filter.fd}`));
+    const immediates: number[] = [];
+    for (let at = 0; at + 8 <= program.length; at += 8) immediates.push(program.readUInt32LE(at + 4));
+    assert.equal(immediates.includes(0x4000003e), false);
+    assert.equal(runSeccomp(program, 41, AUDIT_ARCH_X86_64), SECCOMP_RET_EPERM);
+    assert.equal(runSeccomp(program, 0, AUDIT_ARCH_X86_64), SECCOMP_RET_ALLOW);
+    assert.equal(runSeccomp(program, 0x40000000, AUDIT_ARCH_X86_64), SECCOMP_RET_EPERM);
+    assert.equal(runSeccomp(program, 0x40000029, AUDIT_ARCH_X86_64), SECCOMP_RET_EPERM);
+    assert.equal(runSeccomp(program, 0, 0x4000003e), SECCOMP_RET_EPERM);
+    assert.equal(runSeccomp(program, 198, AUDIT_ARCH_AARCH64), SECCOMP_RET_EPERM);
+    assert.equal(runSeccomp(program, 0, AUDIT_ARCH_AARCH64), SECCOMP_RET_ALLOW);
+  } finally {
+    filter.close();
+  }
+});

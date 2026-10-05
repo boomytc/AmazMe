@@ -15,8 +15,10 @@ test("login offers account and api-key entries, and an API key is saved without 
   const env = { ...process.env, AMAZME_CREDENTIALS: credentials };
   try {
     const usage = await run(["login"], env);
-    assert.match(usage.stdout, /login account/);
-    assert.match(usage.stdout, /login api-key/);
+    assert.equal(usage.code, 1);
+    assert.equal(usage.stdout, "");
+    assert.match(usage.stderr, /login account/);
+    assert.match(usage.stderr, /login api-key/);
     const accounts = await run(["login", "account"], env);
     assert.match(accounts.stdout, /^xai\t/m);
     assert.match(accounts.stdout, /^openai-codex\t/m);

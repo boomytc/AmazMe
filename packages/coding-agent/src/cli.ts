@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createModels, type LoginInteraction } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
@@ -27,8 +28,17 @@ const DEFAULT_MODEL = "deepseek-flash";
 function parseArgs(argv: string[]): Args {
   const args: Args = { prompt: "", provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL, cwd: process.cwd(), continueSession: false, json: false, jsonl: false, web: false, gui: false };
   const rest: string[] = [];
+  let options = true;
   for (let index = 0; index < argv.length; index++) {
-    const token = argv[index];
+    const token = argv[index] ?? "";
+    if (options && token === "--") {
+      options = false;
+      continue;
+    }
+    if (!options || !token.startsWith("-")) {
+      rest.push(token);
+      continue;
+    }
     if (token === "--provider") args.provider = argv[++index] ?? args.provider;
     else if (token === "--model") args.model = argv[++index] ?? args.model;
     else if (token === "--cwd") args.cwd = resolve(argv[++index] ?? args.cwd);
@@ -39,11 +49,12 @@ function parseArgs(argv: string[]): Args {
     else if (token === "--web") args.web = true;
     else if (token === "--gui") args.gui = true;
     else if (token === "--help") {
-      console.log("amazme [--provider id] [--model id] [--cwd dir] [--continue] [--json] [--resume name] [prompt]");
+      console.log("amazme [--provider id] [--model id] [--cwd dir] [--continue] [--json] [--jsonl] [--resume name] [--version|-v] [prompt]");
       console.log("amazme --web [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme --gui [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log(`defaults: provider ${DEFAULT_PROVIDER}, model ${DEFAULT_MODEL}`);
       console.log("amazme --jsonl    reads one {\"type\":\"prompt\",\"text\":\"...\"} line from stdin");
+      console.log("A prompt that starts with - must follow --.");
       console.log("amazme update");
       console.log("amazme login account [--provider id] [--method pkce|device_code] [--callback-port n]");
       console.log("amazme login api-key [--provider id]");
@@ -52,10 +63,34 @@ function parseArgs(argv: string[]): Args {
       console.log("amazme bridge --socket path [--port n]");
       console.log("amazme gui --socket path [--prompt text]");
       process.exit(0);
-    } else rest.push(token ?? "");
+    } else throw new Error(`unknown option ${token}`);
   }
   args.prompt = rest.join(" ").trim();
   return args;
+}
+
+function packageVersion(): string {
+  const parsed: unknown = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  if (typeof parsed !== "object" || parsed === null || !("version" in parsed)) throw new Error("coding-agent package.json has no version");
+  const version = parsed.version;
+  if (typeof version !== "string" || version.length === 0) throw new Error("coding-agent package.json has no version");
+  return version;
+}
+
+/** `-v` / `--version` count only as flags. The token after a valued option, such as `--resume -v`, is that option's value. */
+function versionRequested(argv: string[]): boolean {
+  const end = argv.indexOf("--");
+  const options = end === -1 ? argv : argv.slice(0, end);
+  const takesValue = new Set([
+    "--provider", "--model", "--cwd", "--resume",
+    "--socket", "--port", "--method", "--callback-port", "--prompt",
+  ]);
+  for (let index = 0; index < options.length; index += 1) {
+    const token = options[index] ?? "";
+    if (token === "--version" || token === "-v") return true;
+    if (takesValue.has(token)) index += 1;
+  }
+  return false;
 }
 
 async function readStdinLine(): Promise<string> {
@@ -71,6 +106,11 @@ async function runLogin(argv: string[]): Promise<void> {
     console.log("amazme login api-key [--provider id]");
     return;
   }
+  if (!parsed.entry && parsed.provider.length === 0) {
+    process.stderr.write("amazme login account [--provider id] [--method pkce|device_code] [--callback-port n]\n");
+    process.stderr.write("amazme login api-key [--provider id]\n");
+    process.exit(1);
+  }
   const { loginCatalog, saveApiKey } = await import("./login.ts");
   const rows = await loginCatalog();
   let entry = parsed.entry;
@@ -82,11 +122,7 @@ async function runLogin(argv: string[]): Promise<void> {
     }
     entry = named.oauth ? "account" : "api-key";
   }
-  if (!entry) {
-    console.log("amazme login account [--provider id] [--method pkce|device_code] [--callback-port n]");
-    console.log("amazme login api-key [--provider id]");
-    return;
-  }
+  if (!entry) throw new Error("login requires account or api-key");
   const matching = entry === "account" ? rows.filter((row) => row.oauth) : rows.filter((row) => row.apiKey);
   if (!parsed.provider) {
     for (const row of matching) process.stdout.write(`${row.id}\t${row.name}\n`);
@@ -220,10 +256,11 @@ async function runServe(argv: string[]): Promise<void> {
   const models = loadModels(provider);
   await requireConfigured(models, provider, model);
   const { startCodingHost } = await import("./host.ts");
+  const { waitForSecondInterrupt } = await import("./interrupt.ts");
+  const stopped = waitForSecondInterrupt();
   const host = await startCodingHost({ cwd, socket, provider, model, models });
   process.stdout.write(`${JSON.stringify({ socket: host.socket, serverId: host.serverId, runtimeId: host.runtimeId, lane: host.lane })}\n`);
-  const { waitForSecondInterrupt } = await import("./interrupt.ts");
-  await waitForSecondInterrupt();
+  await stopped;
   await host.close();
 }
 
@@ -257,14 +294,20 @@ async function runBridge(argv: string[]): Promise<void> {
   if (!socket) throw new Error("bridge requires --socket");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("bridge requires a port from 0 to 65535");
   const { startCodingBridge } = await import("./bridge.ts");
+  const { waitForSecondInterrupt } = await import("./interrupt.ts");
+  const stopped = waitForSecondInterrupt();
   const bridge = await startCodingBridge({ socket, port });
   process.stdout.write(`${JSON.stringify({ url: bridge.url })}\n`);
-  const { waitForSecondInterrupt } = await import("./interrupt.ts");
-  await waitForSecondInterrupt();
+  await stopped;
   await bridge.close();
 }
 
 async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  if (versionRequested(argv)) {
+    process.stdout.write(`${packageVersion()}\n`);
+    return;
+  }
   if (process.argv[2] === "update") {
     const { installationRoot, updateInstallation } = await import("./update.ts");
     process.stdout.write(`${await updateInstallation(installationRoot())}\n`);

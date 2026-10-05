@@ -44,10 +44,14 @@ export async function runPrint(options: PrintRunOptions): Promise<void> {
     const remote = new RuntimeClient(client);
     await remote.attach(HOST_RUNTIME_ID);
     const lane = remote.lane(options.lane ?? "main");
+    let failure: string | undefined;
     if (options.prompt) {
       const admitted = await lane.accept({ kind: "prompt", text: options.prompt });
-      const outcome = await lane.drive(admitted.operationId, { waitForRetry: true });
-      if (outcome.kind === "waiting") await lane.drive(outcome.operationId, { waitForRetry: true });
+      let outcome = await lane.drive(admitted.operationId, { waitForRetry: true });
+      if (outcome.kind === "waiting") outcome = await lane.drive(outcome.operationId, { waitForRetry: true });
+      if (outcome.kind !== "settled" || outcome.result.status !== "completed") {
+        failure = outcome.kind === "settled" ? (outcome.result.error ?? `model request ${outcome.result.status}`) : "model request did not finish";
+      }
     }
     const snap = await lane.snapshot();
     const lines = snap.entries.flatMap((entry) => {
@@ -63,14 +67,14 @@ export async function runPrint(options: PrintRunOptions): Promise<void> {
     });
     if (options.json) {
       for (const line of lines) process.stdout.write(`${JSON.stringify({ type: "message", role: line.role, text: line.text })}\n`);
-      return;
-    }
-    if (options.continueSession) {
+      if (failure) process.stdout.write(`${JSON.stringify({ type: "error", message: failure })}\n`);
+    } else if (options.continueSession) {
       for (const line of lines) process.stdout.write(`${line.text}\n`);
-      return;
+    } else {
+      const last = [...lines].reverse().find((line) => line.role === "assistant");
+      if (last) process.stdout.write(`${last.text}\n`);
     }
-    const last = [...lines].reverse().find((line) => line.role === "assistant");
-    if (last) process.stdout.write(`${last.text}\n`);
+    if (failure) throw new Error(failure);
   } finally {
     await client.dispose();
     await host.close();
