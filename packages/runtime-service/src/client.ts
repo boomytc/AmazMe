@@ -10,6 +10,7 @@ import {
   EnqueuedReplySchema,
   CatalogReplySchema,
   ForkReplySchema,
+  ImportReplySchema,
   LaneNameSchema,
   LaneSettingsSchema,
   OperationAdmissionSchema,
@@ -22,6 +23,7 @@ import {
   type CatalogReplyDto,
   type DriveOutcomeDto,
   type ForkReplyDto,
+  type ImportReplyDto,
   type HistoryPageDto,
   type LaneSettingsDto,
   type LaneSnapshotDto,
@@ -174,6 +176,15 @@ export class RemoteLane {
   /** Open another conversation at this lane's entry. An existing target is refused by the host. */
   async fork(name: string, entryId: string | null, options?: RequestOptions): Promise<ForkReplyDto> {
     return parse(ForkReplySchema, await this.call({ method: "fork", lane: this.name, name, entryId }, options), "fork reply");
+  }
+
+  /** Create another conversation from user and assistant text. The current lane stays put. */
+  async importMessages(
+    name: string,
+    messages: readonly { role: "user" | "assistant"; text: string }[],
+    options?: RequestOptions,
+  ): Promise<ImportReplyDto> {
+    return parse(ImportReplySchema, await this.call({ method: "import", lane: this.name, name, messages: [...messages] }, options), "import reply");
   }
 
   /** The explicit, persisted business cancellation of an operation. */

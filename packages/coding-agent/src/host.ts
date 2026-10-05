@@ -8,12 +8,14 @@ import { openJsonlRuntime } from "@amazme/runtime-service/jsonl";
 import { createManagementService, openOwnedRuntimes } from "@amazme/runtime-service/server";
 import { connectWorkspaceMcp } from "./mcp-config.ts";
 import { appendMcpTools } from "./mcp.ts";
+import { packageSkillText } from "@amazme/tui";
 import { appendSkillText } from "./skills.ts";
 import { codingSystemPrompt, createCodingTools } from "./tools.ts";
 
 interface HostModels {
   getModel(providerId: string, modelId: string): Model | undefined;
   streamSimple(model: Model, context: Context, options?: StreamOptions): AssistantEventStream;
+  listModels?(): readonly { provider: string; id: string }[];
 }
 
 export const HOST_SERVER_ID = "amazme";
@@ -76,7 +78,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
         try {
           const tools = await appendMcpTools(coding, mcp.servers);
           const resources = await openJsonlRuntime(file, {
-            models: options.models,
+            models: withPackageSkills(cwd, options.models),
             model: { provider, modelId },
             systemPrompt: appendSkillText(SYSTEM_PROMPT, join(cwd, "skills")),
             workspace: shortWorkspace(cwd),
@@ -114,6 +116,19 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
         closing = run;
       }
       return closing;
+    },
+  };
+}
+
+function withPackageSkills(cwd: string, models: HostModels): HostModels {
+  return {
+    getModel: (provider, modelId) => models.getModel(provider, modelId),
+    ...(models.listModels ? { listModels: () => models.listModels?.() ?? [] } : {}),
+    streamSimple(model, context, options) {
+      const extra = packageSkillText(cwd);
+      if (extra.length === 0) return models.streamSimple(model, context, options);
+      const systemPrompt = context.systemPrompt ? `${context.systemPrompt}\n\n${extra}` : extra;
+      return models.streamSimple(model, { ...context, systemPrompt }, options);
     },
   };
 }

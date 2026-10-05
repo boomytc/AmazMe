@@ -277,6 +277,8 @@ class OwnedRuntime implements RuntimeHandle, RuntimeService {
         })));
       case "fork":
         return wire(unwrap(await lane.fork(call.name, call.entryId)));
+      case "import":
+        return wire(unwrap(await lane.importConversation(call.name, call.messages)));
       case "subscribe":
         return this.subscribe(lane, call.subscriptionId, context);
     }

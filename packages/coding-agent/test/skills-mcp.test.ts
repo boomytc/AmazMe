@@ -67,7 +67,7 @@ FULL_SKILL_BODY
   assert.equal(bare.includes("ship-review"), true);
   assert.deepEqual(
     provider.state.contexts[0]?.tools?.map((tool) => tool.name),
-    ["read", "write", "edit", "bash"],
+    ["read", "write", "edit", "bash", "grep", "find", "ls"],
   );
   const agentSrc = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "agent", "src");
   assert.equal(walk(agentSrc).includes("loadSkills"), false);
@@ -177,12 +177,12 @@ test("an in-memory MCP tool is called through the same before and after hooks", 
   };
   const coding = createCodingTools(dir);
   const tools = await appendMcpTools(coding, { serverId: "box", client });
-  assert.equal(tools.length, 5);
+  assert.equal(tools.length, 8);
   assert.equal(tools[0], coding[0]);
   assert.equal(tools[1], coding[1]);
   assert.equal(tools[2], coding[2]);
   assert.equal(tools[3], coding[3]);
-  assert.equal(tools[4]?.name, "mcp_box__ping");
+  assert.equal(tools[7]?.name, "mcp_box__ping");
   const respond: FauxResponder = (_context, _options, state) =>
     state.callCount === 1 ? fauxAssistant([fauxToolCall("mcp_box__ping", { value: 1 })]) : fauxAssistant("done");
   const hooks: AgentHook[] = [
@@ -198,7 +198,7 @@ test("an in-memory MCP tool is called through the same before and after hooks", 
   const { provider, produced } = await firstRequest(today, tools, hooks, respond);
   assert.deepEqual(
     provider.state.contexts[0]?.tools?.map((tool) => tool.name),
-    ["read", "write", "edit", "bash", "mcp_box__ping"],
+    ["read", "write", "edit", "bash", "grep", "find", "ls", "mcp_box__ping"],
   );
   assert.deepEqual(trace, ["before:mcp_box__ping", "call:ping:{\"value\":1}", "after:mcp_box__ping:pong"]);
   const result = produced.find((message) => message.role === "toolResult");
@@ -237,15 +237,16 @@ test("beforeToolCall block skips the MCP client", async () => {
 });
 
 test("the CLI attaches cwd/skills and does not accept MCP arguments", () => {
-  const source = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
-  assert.equal(source.includes('join(args.cwd, "skills")'), true);
-  assert.equal(source.includes("appendSkillText"), true);
-  assert.equal(source.includes("appendMcpTools"), false);
-  assert.equal(source.includes("McpClient"), false);
-  assert.equal(source.includes("--mcp"), false);
+  const cli = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
+  const host = readFileSync(new URL("../src/host.ts", import.meta.url), "utf8");
+  assert.equal(host.includes('join(cwd, "skills")'), true);
+  assert.equal(host.includes("appendSkillText"), true);
+  assert.equal(cli.includes("appendMcpTools"), false);
+  assert.equal(cli.includes("McpClient"), false);
+  assert.equal(cli.includes("--mcp"), false);
 });
 
-test("no MCP client leaves the original four tools", async () => {
+test("no MCP client leaves the original coding tools", async () => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-mcp-none-"));
   const coding = createCodingTools(dir);
   const empty: McpClient = {
@@ -256,12 +257,12 @@ test("no MCP client leaves the original four tools", async () => {
   assert.equal(await appendMcpTools(coding, { serverId: "box", client: empty }), coding);
   assert.deepEqual(
     coding.map((tool) => tool.name),
-    ["read", "write", "edit", "bash"],
+    ["read", "write", "edit", "bash", "grep", "find", "ls"],
   );
   const { provider } = await firstRequest(today, await appendMcpTools(coding));
   assert.deepEqual(
     provider.state.contexts[0]?.tools?.map((tool) => tool.name),
-    ["read", "write", "edit", "bash"],
+    ["read", "write", "edit", "bash", "grep", "find", "ls"],
   );
 });
 

@@ -1,16 +1,11 @@
 #!/usr/bin/env node
-import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { Agent } from "@amazme/agent";
+import { resolve } from "node:path";
 import { createModels, type LoginInteraction } from "@amazme/ai";
 import { fauxProvider } from "@amazme/ai/providers/faux";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
-import { AgentSession } from "./agent-session.ts";
 import { FileCredentialStore } from "./credentials.ts";
 import { loginProvider } from "./login.ts";
-import { SessionStore } from "./session.ts";
-import { appendSkillText } from "./skills.ts";
-import { codingSystemPrompt, createCodingTools } from "./tools.ts";
+import { runPrint } from "./print-run.ts";
 import { runCodingFullscreen, shouldOpenFullscreen } from "./tui/run.ts";
 
 interface Args {
@@ -18,18 +13,27 @@ interface Args {
   provider: string;
   model: string;
   cwd: string;
+  continueSession: boolean;
+  json: boolean;
+  jsonl: boolean;
+  lane?: string;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { prompt: "", provider: "faux", model: "faux-1", cwd: process.cwd() };
+  const args: Args = { prompt: "", provider: "faux", model: "faux-1", cwd: process.cwd(), continueSession: false, json: false, jsonl: false };
   const rest: string[] = [];
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index];
     if (token === "--provider") args.provider = argv[++index] ?? args.provider;
     else if (token === "--model") args.model = argv[++index] ?? args.model;
     else if (token === "--cwd") args.cwd = resolve(argv[++index] ?? args.cwd);
+    else if (token === "--continue") args.continueSession = true;
+    else if (token === "--json") args.json = true;
+    else if (token === "--jsonl") args.jsonl = true;
+    else if (token === "--resume") args.lane = argv[++index] ?? args.lane;
     else if (token === "--help") {
-      console.log("amazme [--provider id] [--model id] [--cwd dir] [prompt]");
+      console.log("amazme [--provider id] [--model id] [--cwd dir] [--continue] [--json] [--resume name] [prompt]");
+      console.log("amazme --jsonl    reads one {\"type\":\"prompt\",\"text\":\"...\"} line from stdin");
       console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
       console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
       console.log("amazme attach --socket path");
@@ -39,6 +43,12 @@ function parseArgs(argv: string[]): Args {
   }
   args.prompt = rest.join(" ").trim();
   return args;
+}
+
+async function readStdinLine(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return Buffer.concat(chunks).toString("utf8").split(/\r?\n/).find((line) => line.trim().length > 0) ?? "";
 }
 
 async function runLogin(argv: string[]): Promise<void> {
@@ -187,19 +197,29 @@ async function main(): Promise<void> {
     return;
   }
   const args = parseArgs(process.argv.slice(2));
-  if (shouldOpenFullscreen(args.prompt, process.stdout.isTTY === true)) {
+  if (args.jsonl) {
+    const line = (await readStdinLine()).trim();
+    const parsed = JSON.parse(line) as { type?: string; text?: string };
+    if (parsed.type !== "prompt" || typeof parsed.text !== "string" || parsed.text.length === 0) {
+      throw new Error("stdin JSONL requires {\"type\":\"prompt\",\"text\":\"...\"}");
+    }
+    args.prompt = parsed.text;
+    args.json = true;
+  }
+  if (shouldOpenFullscreen(args.prompt, process.stdout.isTTY === true) && !args.continueSession && !args.json && !args.jsonl) {
     await runCodingFullscreen({ provider: args.provider, model: args.model, cwd: args.cwd });
     return;
   }
-  if (!args.prompt) {
+  if (!args.prompt && !args.continueSession) {
     console.error("missing prompt");
     process.exit(1);
   }
   const models = loadModels(args.provider);
   if (args.provider === "faux") {
+    const prompt = args.prompt;
     models.setProvider(fauxProvider({ respond: (_context, _options, _state, model) => ({
       role: "assistant",
-      content: [{ type: "text", text: `faux:${args.prompt}` }],
+      content: [{ type: "text", text: prompt ? `faux:${prompt}` : "ok" }],
       api: model.api,
       provider: model.provider,
       model: model.id,
@@ -208,30 +228,16 @@ async function main(): Promise<void> {
       timestamp: Date.now(),
     }) }));
   }
-  const model = models.getModel(args.provider, args.model);
-  if (!model) throw new Error(`unknown model ${args.provider}/${args.model}`);
-  const dir = join(args.cwd, ".amazme", "sessions");
-  mkdirSync(dir, { recursive: true });
-  const store = SessionStore.create(join(dir, `${Date.now()}.jsonl`), args.cwd);
-  const agent = new Agent({
-    model,
-    streamFn: models.streamSimple.bind(models),
-    telemetryContext: models.telemetryContext,
-    systemPrompt: appendSkillText(
-      codingSystemPrompt,
-      join(args.cwd, "skills"),
-    ),
-    tools: createCodingTools(args.cwd),
+  await runPrint({
+    cwd: args.cwd,
+    provider: args.provider,
+    model: args.model,
+    models,
+    prompt: args.prompt,
+    continueSession: args.continueSession || args.jsonl,
+    json: args.json,
+    ...(args.lane ? { lane: args.lane } : {}),
   });
-  const session = new AgentSession(store, agent);
-  const produced = await session.prompt(args.prompt);
-  session.close();
-  const last = [...produced].reverse().find((message) => message.role === "assistant");
-  if (last && last.role === "assistant") {
-    for (const block of last.content) {
-      if (block.type === "text") console.log(block.text);
-    }
-  }
 }
 
 main().catch((error: unknown) => {

@@ -10,7 +10,7 @@ import { createUnixTransport } from "@amazme/client/unix";
 import { RuntimeClient } from "@amazme/runtime-service/client";
 import { LaneControl } from "../src/control.ts";
 import { startCodingHost } from "../src/host.ts";
-import { decodeKeys, emptyTui, finishDrive, readHostFrame, reduceTui, renderTui, type TuiWindow } from "@amazme/tui";
+import { decodeKeys, emptyTui, finishDrive, readHostFrame, reduceTui, renderTui, treePickerRows, type TuiWindow } from "@amazme/tui";
 import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID } from "../src/host.ts";
 
 function window(partial: Partial<TuiWindow> = {}): TuiWindow {
@@ -148,6 +148,49 @@ test("abort, scroll, prompt focus, and slash commands", () => {
     picker: { ...picker, kind: "api-key", query: "sk-secret", rows: [], subject: "anthropic", secret: true },
   });
   assert.equal(secret.includes("sk-secret"), false);
+  const treePicker = {
+    title: "Select entry:",
+    hint: "↑↓ navigate    enter select    escape cancel",
+    query: "",
+    index: 0,
+    kind: "tree" as const,
+    rows: treePickerRows([
+      {
+        id: "user-1",
+        parentId: null,
+        seq: 0,
+        timestamp: 1,
+        payload: { type: "message", message: { role: "user", content: "left-branch", timestamp: 1 } },
+      },
+      {
+        id: "assistant-1",
+        parentId: "user-1",
+        seq: 1,
+        timestamp: 2,
+        payload: {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "faux-reply" }],
+            api: "faux",
+            provider: "faux",
+            model: "faux-1",
+            usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
+            stopReason: "stop",
+            timestamp: 2,
+          },
+        },
+      },
+    ]),
+  };
+  assert.match(treePicker.rows[1]?.label ?? "", /assistant faux-reply/);
+  const tree = renderTui({ ...emptyTui(), picker: treePicker }, 80, 24);
+  assert.match(tree, /Select entry:/);
+  assert.match(tree, /left-branch/);
+  const narrowed = reduceTui({ ...emptyTui(), picker: treePicker }, { type: "key", key: { type: "char", value: "x" } });
+  const treeFrame = renderTui(narrowed.state, 80, 24);
+  assert.match(treeFrame, /faux-reply/);
+  assert.equal(treeFrame.includes("left-branch"), false);
 });
 
 test("a frame separates the user, markdown, and a live tool, and a picker commits model, thinking, and resume", () => {

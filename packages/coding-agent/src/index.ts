@@ -19,4 +19,4 @@ export {
   type McpToolResult,
 } from "./mcp.ts";
 export { appendSkillText } from "./skills.ts";
-export { createBashTool, createCodingTools, createEditTool, createReadTool, createWriteTool } from "./tools.ts";
+export { createBashTool, createCodingTools, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool } from "./tools.ts";

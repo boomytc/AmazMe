@@ -101,6 +101,45 @@ function failureText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function searchTool(root: string, name: "grep" | "find" | "ls", description: string, required: string[]): AgentTool {
+  return {
+    name,
+    description,
+    replay: "safe",
+    parameters: {
+      ...objectSchema,
+      properties: {
+        ...(name === "ls" ? {} : { pattern: { type: "string" } }),
+        path: { type: "string" },
+      },
+      required,
+    },
+    async execute(args, context) {
+      const { path: file = ".", pattern } = args as { path?: string; pattern?: string };
+      try {
+        const full = inside(root, file);
+        const outcome = await runFileOp(prepareWorkspace(root), name, { path: full, ...(pattern !== undefined ? { pattern } : {}) }, context.signal);
+        if (!outcome.ok) return { content: [{ type: "text", text: outcome.text }], isError: true };
+        return { content: [{ type: "text", text: outcome.text }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: failureText(error) }], isError: true };
+      }
+    },
+  };
+}
+
+export function createGrepTool(root: string): AgentTool {
+  return searchTool(root, "grep", "Find lines that contain a literal pattern", ["pattern"]);
+}
+
+export function createFindTool(root: string): AgentTool {
+  return searchTool(root, "find", "Find paths matching a glob pattern", ["pattern"]);
+}
+
+export function createLsTool(root: string): AgentTool {
+  return searchTool(root, "ls", "List a directory", []);
+}
+
 export function createBashTool(root: string): AgentTool {
   return {
     name: "bash",
@@ -127,5 +166,13 @@ export function createBashTool(root: string): AgentTool {
 export function createCodingTools(root: string): AgentTool[] {
   prepareWorkspace(root);
   const enqueue = createQueue();
-  return [createReadTool(root), createWriteTool(root, enqueue), createEditTool(root, enqueue), createBashTool(root)];
+  return [
+    createReadTool(root),
+    createWriteTool(root, enqueue),
+    createEditTool(root, enqueue),
+    createBashTool(root),
+    createGrepTool(root),
+    createFindTool(root),
+    createLsTool(root),
+  ];
 }
