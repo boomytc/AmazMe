@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { UsageCost } from "@amazme/ai";
-import { AgentLane } from "@amazme/durable";
 import { emptyActivity, type CumulativeCostDto, type UsageCostDto } from "@amazme/runtime-service";
 import { projectLaneUsage, readLaneStatus } from "../src/activity.ts";
 import { finish, until, world } from "./support.ts";
@@ -58,52 +57,13 @@ test("missing hit rate and cost stay null", () => {
   assert.deepEqual(projectLaneUsage({ lastTurn: null, total: { input: 0, output: 0, cacheRead: null, cacheWrite: null } }).lastTurn, null);
 });
 
-test("readLaneStatus copies the agreed fields and treats a missing method as idle", async () => {
+test("readLaneStatus copies laneStatus() and stays empty when the method is absent", async () => {
   assert.deepEqual(await readLaneStatus({}), { notBefore: null, retryReason: null, compacting: false });
-  assert.deepEqual(
-    await readLaneStatus({
-      laneStatus: async () => ({ notBefore: 5_000, retryReason: "overloaded", compacting: true }),
-    }),
-    { notBefore: 5_000, retryReason: "overloaded", compacting: true },
-  );
-  assert.deepEqual(
-    await readLaneStatus({
-      laneStatus: async () => ({ notBefore: null, retryReason: null, compacting: false }),
-    }),
-    { notBefore: null, retryReason: null, compacting: false },
-  );
+  const status = { notBefore: 5_000, retryReason: "overloaded", compacting: true };
+  assert.deepEqual(await readLaneStatus({ laneStatus: async () => status }), status);
 });
 
-test("the snapshot copies host clock, turn start, usage(), and laneStatus() without approvals", async () => {
-  const proto = AgentLane.prototype as AgentLane & {
-    laneStatus?: () => Promise<{ notBefore: number | null; retryReason: string | null; compacting: boolean }>;
-  };
-  const originalUsage = AgentLane.prototype.usage;
-  const previousStatus = proto.laneStatus;
-  proto.laneStatus = async () => ({ notBefore: 5_000, retryReason: "overloaded", compacting: true });
-  AgentLane.prototype.usage = function (this: AgentLane) {
-    return originalUsage.call(this).then((view) => {
-      const lastTurn = {
-        input: 3,
-        output: 10,
-        cacheRead: 1,
-        cacheWrite: 0,
-        reasoning: 4,
-        hitRate: 0.25,
-        cost: turnCost,
-      };
-      const total = {
-        input: view.total.input,
-        output: view.total.output,
-        cacheRead: view.total.cacheRead,
-        cacheWrite: view.total.cacheWrite,
-        reasoning: 4,
-        hitRate: 0.5,
-        cost: totalCost,
-      };
-      return { ...view, lastTurn, total } as typeof view;
-    });
-  };
+test("the snapshot copies the host clock and leaves U2 usage and lane status empty", async () => {
   const env = world({ clock: { branch: "feature", sessionStartedAt: 1_700_000_000_000 } });
   try {
     const { remote } = await env.connect();
@@ -111,27 +71,25 @@ test("the snapshot copies host clock, turn start, usage(), and laneStatus() with
     const lane = remote.lane("main");
     const admitted = await lane.accept({ kind: "prompt", text: "hi", operationId: "op-1" });
     const snap = await lane.snapshot();
+    const usage = await env.runtime().harness.lane("main").usage();
     assert.equal(snap.activity.branch, "feature");
     assert.equal(snap.activity.sessionStartedAt, 1_700_000_000_000);
     assert.equal(snap.activity.turnStartedAt, admitted.startedAt);
-    assert.equal(snap.activity.notBefore, 5_000);
-    assert.equal(snap.activity.retryReason, "overloaded");
-    assert.equal(snap.activity.compacting, true);
-    assert.equal(snap.activity.usage.lastTurn?.output, 10);
-    assert.equal(snap.activity.usage.lastTurn?.reasoning, 4);
-    assert.equal(snap.activity.usage.lastTurn?.hitRate, 0.25);
-    assert.deepEqual(snap.activity.usage.lastTurn?.cost, turnCost);
-    assert.equal(snap.activity.usage.total.hitRate, 0.5);
-    assert.deepEqual(snap.activity.usage.total.cost, totalCost);
+    assert.equal(snap.activity.notBefore, null);
+    assert.equal(snap.activity.retryReason, null);
+    assert.equal(snap.activity.compacting, false);
+    assert.equal(snap.activity.usage.lastTurn, null);
+    assert.equal(snap.activity.usage.total.input, usage.total.input);
+    assert.equal(snap.activity.usage.total.output, usage.total.output);
+    assert.equal(snap.activity.usage.total.hitRate, null);
+    assert.equal(snap.activity.usage.total.cost, null);
     assert.equal("pendingApprovals" in snap, false);
     const subscription = await lane.subscribe(() => undefined);
     assert.equal(subscription.initial.activity.branch, "feature");
-    assert.equal(subscription.initial.activity.compacting, true);
+    assert.equal(subscription.initial.activity.compacting, false);
+    assert.equal(subscription.initial.activity.usage.total.hitRate, null);
     await subscription.close();
   } finally {
-    AgentLane.prototype.usage = originalUsage;
-    if (previousStatus) proto.laneStatus = previousStatus;
-    else delete proto.laneStatus;
     await env.close();
   }
 });

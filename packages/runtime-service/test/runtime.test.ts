@@ -121,7 +121,16 @@ test("a slow subscriber gets coalesced complete snapshots and still ends on the 
     await driving;
     const final = await local.snapshot();
     await until(() => subscription.current().version === final.version, "the final snapshot");
-    assert.deepEqual(subscription.current(), parseLaneSnapshot(JSON.parse(JSON.stringify(final))));
+    const seen = subscription.current();
+    const { activity, ...body } = seen;
+    assert.deepEqual(body, JSON.parse(JSON.stringify(final)));
+    assert.equal(activity.usage.lastTurn?.hitRate ?? null, null);
+    assert.equal(activity.usage.total.hitRate, null);
+    assert.equal(activity.usage.lastTurn?.cost ?? null, null);
+    assert.equal(activity.usage.total.cost, null);
+    assert.equal(activity.notBefore, null);
+    assert.equal(activity.retryReason, null);
+    assert.equal(activity.compacting, false);
     assert.ok(delivered < writes, `${delivered} updates for ${writes} writes`);
   } finally {
     await env.close();

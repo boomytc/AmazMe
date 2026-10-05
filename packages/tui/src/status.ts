@@ -2,7 +2,7 @@ import type { ActivityDto } from "@amazme/runtime-service";
 
 /**
  * 底栏上多出来的片段。数字来自快照里的 `activity`，这里不读 git，也不估算 token 或费用。
- * `hitRate` 是 `usage()` 给出的比值（缓存读 / 整段提示）。写成百分数只是显示。
+ * `hitRate` 和 `cost` 只显示协议里已有的数，这里不换算百分数，也不用 token 计价。
  * `now` 由画面在绘制时传入。没有它就不显示耗时和倒计时，渲染本身不读时钟。
  */
 export function footerParts(
@@ -67,9 +67,7 @@ function elapsed(start: number | null, now: number | undefined): string | null {
 
 function hitPart(label: string, rate: number | null | undefined): string | null {
   if (typeof rate !== "number" || !Number.isFinite(rate)) return null;
-  const percent = rate * 100;
-  const text = Number.isInteger(percent) ? String(percent) : percent.toFixed(1).replace(/\.0$/, "");
-  return `${label} ${text}%`;
+  return `${label} ${rate}`;
 }
 
 function money(total: number | null | undefined): string | null {

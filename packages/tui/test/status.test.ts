@@ -72,8 +72,9 @@ test("the footer shows branch, elapsed time, retry, hit rate, and priced totals 
   assert.match(frame, /会话 2:05/);
   assert.match(frame, /本轮 1:05/);
   assert.match(frame, /重试 overloaded 5s/);
-  assert.match(frame, /本轮命中 25%/);
-  assert.match(frame, /累计命中 50%/);
+  assert.match(frame, /本轮命中 0\.25/);
+  assert.match(frame, /累计命中 0\.5/);
+  assert.equal(frame.includes("%"), false);
   assert.match(frame, /本轮 \$1\.5/);
   assert.match(frame, /累计 \$0/);
   assert.equal(frame.includes("7"), false);
@@ -102,7 +103,7 @@ test("a null price hides the amount and a null retry reason hides the countdown"
       },
     },
   }), 125_000);
-  assert.match(frame, /本轮命中 0%/);
+  assert.match(frame, /本轮命中 0/);
   assert.equal(frame.includes("累计命中"), false);
   assert.equal(frame.includes("$"), false);
   assert.equal(frame.includes("重试"), false);
@@ -141,6 +142,7 @@ test("the footer does not price tokens, run git, or read the clock itself", () =
     assert.equal(source.includes("setInterval"), false);
     assert.equal(source.includes("usageCost"), false);
     assert.equal(source.includes("cacheRead"), false);
+    assert.equal(source.includes("* 100"), false);
     assert.equal(source.includes("rev-parse"), false);
   }
   const joined = [...sources.values()].join("\n");
