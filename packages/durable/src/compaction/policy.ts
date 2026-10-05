@@ -10,12 +10,21 @@ export function outputReserve(contextWindow: number): number {
 }
 
 /**
+ * Tokens held back from `contextWindow` when a host enables automatic compaction.
+ * Output reserve plus the context safety margin. Large windows hold back 8,192.
+ * The stored trigger is `contextWindow - compactionReserve(contextWindow)`, which matches the hard cap below.
+ */
+export function compactionReserve(contextWindow: number): number {
+  return outputReserve(contextWindow) + contextSafetyMargin(contextWindow);
+}
+
+/**
  * Input-token trigger after the model window, output reserve, and safety margin.
  * `configured` is `compaction.maxTokens`. It is not the generation output cap.
  * A non-positive configured value does not widen the trigger; callers reject it before use.
  */
 export function effectiveInputThreshold(contextWindow: number, configuredThreshold: number): number {
-  const hard = contextWindow - outputReserve(contextWindow) - contextSafetyMargin(contextWindow);
+  const hard = contextWindow - compactionReserve(contextWindow);
   if (!Number.isSafeInteger(configuredThreshold) || configuredThreshold <= 0) return hard;
   return Math.min(configuredThreshold, hard);
 }

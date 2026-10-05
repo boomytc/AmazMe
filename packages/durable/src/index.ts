@@ -35,6 +35,7 @@ export type {
 } from "./types.ts";
 export { durableTelemetrySchema } from "./telemetry.ts";
 export {
+  compactionReserve,
   effectiveInputThreshold,
   keepRecentBudget,
   outputReserve,
