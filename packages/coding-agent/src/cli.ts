@@ -16,11 +16,13 @@ interface Args {
   continueSession: boolean;
   json: boolean;
   jsonl: boolean;
+  web: boolean;
+  gui: boolean;
   lane?: string;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { prompt: "", provider: "faux", model: "faux-1", cwd: process.cwd(), continueSession: false, json: false, jsonl: false };
+  const args: Args = { prompt: "", provider: "faux", model: "faux-1", cwd: process.cwd(), continueSession: false, json: false, jsonl: false, web: false, gui: false };
   const rest: string[] = [];
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index];
@@ -31,13 +33,18 @@ function parseArgs(argv: string[]): Args {
     else if (token === "--json") args.json = true;
     else if (token === "--jsonl") args.jsonl = true;
     else if (token === "--resume") args.lane = argv[++index] ?? args.lane;
+    else if (token === "--web") args.web = true;
+    else if (token === "--gui") args.gui = true;
     else if (token === "--help") {
       console.log("amazme [--provider id] [--model id] [--cwd dir] [--continue] [--json] [--resume name] [prompt]");
+      console.log("amazme --web [--provider id] [--model id] [--cwd dir] [prompt]");
+      console.log("amazme --gui [--provider id] [--model id] [--cwd dir] [prompt]");
       console.log("amazme --jsonl    reads one {\"type\":\"prompt\",\"text\":\"...\"} line from stdin");
       console.log("amazme login --provider id [--method pkce|device_code] [--callback-port n]");
       console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
       console.log("amazme attach --socket path");
       console.log("amazme bridge --socket path [--port n]");
+      console.log("amazme gui --socket path [--prompt text]");
       process.exit(0);
     } else rest.push(token ?? "");
   }
@@ -202,6 +209,14 @@ async function main(): Promise<void> {
     return;
   }
   const args = parseArgs(process.argv.slice(2));
+  if (args.web || args.gui) {
+    if (args.web && args.gui) throw new Error("choose one of --web or --gui");
+    const { runOwnedGui, runOwnedWeb } = await import("./fronts.ts");
+    const front = { provider: args.provider, model: args.model, cwd: args.cwd, prompt: args.prompt };
+    if (args.web) await runOwnedWeb(front);
+    else await runOwnedGui(front);
+    return;
+  }
   if (args.jsonl) {
     const line = (await readStdinLine()).trim();
     const parsed = JSON.parse(line) as { type?: string; text?: string };

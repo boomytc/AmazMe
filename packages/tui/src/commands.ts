@@ -52,6 +52,8 @@ export const SLASH_LIST: readonly SlashListing[] = [
   { name: "continue", hint: "", description: "继续已写下的重试等待", takesArgs: "none" },
   { name: "earlier", hint: "", description: "再读一页更早的条目", takesArgs: "none" },
   { name: "quit", hint: "", description: "离开全屏；页面和附着端不停止宿主", takesArgs: "none" },
+  { name: "web", hint: "", description: "在当前宿主上打开网页", takesArgs: "none" },
+  { name: "gui", hint: "", description: "在当前宿主上打开图形窗口", takesArgs: "none" },
   { name: "name", hint: "名称", description: "设置会话显示名", takesArgs: "optional" },
   { name: "tree", hint: "", description: "在当前会话里选择条目", takesArgs: "none" },
   { name: "import", hint: "路径", description: "导入 JSONL 会话", takesArgs: "required" },
@@ -103,6 +105,8 @@ export type SlashCommand =
   | { type: "thinking"; level?: SlashThinking }
   | { type: "login"; provider?: string }
   | { type: "logout"; provider?: string }
+  | { type: "web" }
+  | { type: "gui" }
   | { type: "session" }
   | { type: "name"; value?: string }
   | { type: "tree"; entryId?: string }
@@ -133,6 +137,10 @@ export interface SlashActions {
   continueRetry(): Promise<string>;
   login?(provider: string): Promise<string>;
   logout?(provider: string): Promise<string>;
+  /** Open the loopback page on the host this client already uses. */
+  openWeb?(): Promise<string>;
+  /** Open a graphical window on the host this client already uses. */
+  openGui?(): Promise<string>;
   cwd?: string;
 }
 
@@ -199,6 +207,10 @@ export function parseSlash(input: string): SlashCommand {
       return rest ? providerArg(rest, "/login 提供方", "login") : { type: "login" };
     case "logout":
       return rest ? providerArg(rest, "/logout 提供方", "logout") : { type: "logout" };
+    case "web":
+      return rest ? usage("/web") : { type: "web" };
+    case "gui":
+      return rest ? usage("/gui") : { type: "gui" };
     case "session":
       return rest ? usage("/session") : { type: "session" };
     case "name":
@@ -325,6 +337,10 @@ export async function executeSlash(command: SlashAction, actions: SlashActions):
         if (!actions.logout) return notice("当前客户端不能退出登录");
         return notice(await actions.logout(command.provider));
       }
+      case "web":
+        return actions.openWeb ? notice(await actions.openWeb()) : notice("当前客户端不能打开网页");
+      case "gui":
+        return actions.openGui ? notice(await actions.openGui()) : notice("当前客户端不能打开图形窗口");
       case "session": {
         const current = await actions.lane().configure();
         const named = actions.cwd ? displayName(actions.cwd, actions.active()) : "";
@@ -437,6 +453,8 @@ const ALIAS: Record<string, string> = {
   effort: "thinking",
   login: "login",
   logout: "logout",
+  web: "web",
+  gui: "gui",
   session: "session",
   "session-info": "session",
   status: "session",
