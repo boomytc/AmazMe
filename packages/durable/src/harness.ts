@@ -27,7 +27,7 @@ import {
   armRequestDeadline,
   classifyDeadline,
   resolveRequestPolicy,
-  retryDelayMs,
+  retryNotBeforeDelayMs,
   storedRequestPolicy,
   type RequestDeadline,
   type RetryWait,
@@ -77,7 +77,7 @@ export interface LaneConfig {
   maxAttempts: number;
   /** Model-request deadline. Distinct from any tool execution limit. */
   requestTimeoutMs: number;
-  /** Stored retry wait. The settled `notBefore` is `now + retryDelayMs(retry, attempt)`. */
+  /** Stored retry wait. The settled `notBefore` is `now + retryNotBeforeDelayMs(retry, attempt, retryAfterMs?)`. */
   retry: RetryWait;
   /** Maximum tool-result characters placed in the next model request. The log keeps the original. */
   toolResultLimit: number;
@@ -1460,7 +1460,7 @@ export class AgentLane {
         value: {
           phase: "retry_wait",
           scope: { ...state.scope, attempt: state.scope.attempt + 1 },
-          notBefore: Date.now() + retryDelayMs(config.retry, state.scope.attempt + 1),
+          notBefore: Date.now() + retryNotBeforeDelayMs(config.retry, state.scope.attempt + 1, message.retryAfterMs),
         },
       }]);
       return;
