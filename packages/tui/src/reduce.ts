@@ -495,7 +495,7 @@ function approvalLines(state: TuiState, width: number): string[] {
 
 function approvalDecision(state: TuiState, key: Key): { state: TuiState; effect: TuiEffect | null } | null {
   const card = state.approvals[0];
-  if (!card || state.picker || key.type !== "char") return null;
+  if (!card || state.picker || key.type !== "char" || state.input.length > 0) return null;
   const value = key.value;
   const decision = value === "n" || value === "N" ? "deny" : value === "y" || value === "Y" || value === "a" || value === "A" ? "allow" : null;
   if (!decision) return null;

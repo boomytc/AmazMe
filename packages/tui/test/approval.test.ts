@@ -57,6 +57,15 @@ test("a pending approval shows one card and y n a decide it", () => {
   assert.equal(other.state.input, "z");
 });
 
+test("y n a type into a composer that already has text", () => {
+  const card = { toolCallId: "call-1", name: "bash", summary: "command=ls" };
+  const state = reduceTui(emptyTui(), { type: "window", window: window({ approvals: [card] }) }).state;
+  const typed = reduceTui({ ...state, input: "x", cursor: 1 }, { type: "key", key: { type: "char", value: "a" } });
+  assert.equal(typed.effect, null);
+  assert.equal(typed.state.input, "xa");
+  assert.equal(typed.state.deciding, false);
+});
+
 test("without a pending approval y is typed, and clearing the card releases the key", () => {
   const typed = reduceTui(emptyTui(), { type: "key", key: { type: "char", value: "y" } });
   assert.equal(typed.effect, null);
