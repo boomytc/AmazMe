@@ -4,7 +4,7 @@
  * The delay is computed here and stored as `notBefore`. It is not `Date.now() + 10`.
  * A failed assistant's `retryAfterMs` can only lengthen that wait.
  * Tool execution has its own limit and does not use this deadline.
- * The deadline is idle time since the last received frame. There is no wall-clock cap.
+ * The deadline is idle time since the last received frame or stream activity. There is no wall-clock cap.
  */
 
 export interface RetryWait {
@@ -17,7 +17,7 @@ export interface RequestDeadline {
   signal: AbortSignal;
   /** True only when this deadline fired and the caller signal did not. */
   timedOut(): boolean;
-  /** Restart the idle timer. A received frame or chunk calls this. */
+  /** Restart the idle timer. A received frame or stream `onActivity` calls this. */
   touch(): void;
   dispose(): void;
 }

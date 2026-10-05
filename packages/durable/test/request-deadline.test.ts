@@ -13,10 +13,12 @@ import {
   AgentHarness,
   armRequestDeadline,
   classifyDeadline,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   retryDelayMs,
   retryNotBeforeDelayMs,
   storedRequestPolicy,
   value,
+  type HarnessModels,
   type HarnessOptions,
   type RequestDeadline,
 } from "@amazme/durable";
@@ -343,6 +345,67 @@ test("no frames for longer than a 100ms idle timeout times out the request", { t
   }
 });
 
+test("onActivity every 10s across 70s of fake time does not idle-timeout without stream events", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  const seen: number[] = [];
+  const probe = openProbe("activity");
+  const runtime = probeHarness(probe.models, (timeoutMs, parent) => {
+    seen.push(timeoutMs);
+    return armRequestDeadline(timeoutMs, parent);
+  });
+  const wall = Date.now();
+  try {
+    const pending = runtime.lane().prompt("go");
+    await probe.started;
+    for (let remaining = 7; remaining > 0; remaining -= 1) t.mock.timers.tick(10_000);
+    assert.equal(probe.idleAborted(), false);
+    assert.equal(probe.activityCalls(), 7);
+    assert.deepEqual(probe.events(), ["done"]);
+    const result = await pending;
+    assert.equal(result.status, "completed", result.error ?? "");
+    assert.deepEqual(seen, [DEFAULT_REQUEST_TIMEOUT_MS]);
+    assert.equal(DEFAULT_REQUEST_TIMEOUT_MS, 60_000);
+    const assistants = await assistantsOf(runtime);
+    assert.equal(assistants.length, 1);
+    assert.equal(messageText(assistants[0]!), "done");
+    assert.ok(Date.now() - wall < 5_000, `wall ${Date.now() - wall}`);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("silence for 60s of fake time still idle-timeouts the request", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  const seen: number[] = [];
+  const probe = openProbe("silence");
+  const runtime = probeHarness(probe.models, (timeoutMs, parent) => {
+    seen.push(timeoutMs);
+    return armRequestDeadline(timeoutMs, parent);
+  });
+  const wall = Date.now();
+  try {
+    const pending = runtime.lane().prompt("go");
+    await probe.started;
+    t.mock.timers.tick(59_999);
+    assert.equal(probe.idleAborted(), false);
+    assert.equal(probe.activityCalls(), 0);
+    assert.deepEqual(probe.events(), []);
+    t.mock.timers.tick(1);
+    assert.equal(probe.idleAborted(), true);
+    const result = await pending;
+    assert.equal(result.status, "failed");
+    assert.equal(result.error, "model request timed out");
+    assert.deepEqual(seen, [60_000]);
+    assert.equal(probe.activityCalls(), 0);
+    assert.deepEqual(probe.events(), ["error"]);
+    assert.ok(Date.now() - wall < 5_000, `wall ${Date.now() - wall}`);
+  } finally {
+    runtime.close();
+  }
+});
+
 test("accept rejects a non-positive request deadline", async () => {
   const models = createModels();
   models.setProvider(fauxProvider());
@@ -533,4 +596,85 @@ function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
 async function assistantsOf(runtime: AgentHarness) {
   return runtime.storage.read((view) => view.entries().flatMap((entry) =>
     entry.payload.type === "message" && entry.payload.message.role === "assistant" ? [entry.payload.message] : []));
+}
+
+function openProbe(mode: "activity" | "silence"): {
+  models: HarnessModels;
+  started: Promise<void>;
+  idleAborted: () => boolean;
+  activityCalls: () => number;
+  events: () => string[];
+} {
+  let markStarted: () => void = () => undefined;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let aborted = false;
+  let calls = 0;
+  const events: string[] = [];
+  const model: Model = {
+    id: "faux-1",
+    name: "Faux",
+    provider: "faux",
+    api: "faux",
+    input: ["text"],
+    contextWindow: 8_000,
+    maxTokens: 1_000,
+    cost: { input: 0, output: 0 },
+  };
+  const models: HarnessModels = {
+    getModel: () => model,
+    streamSimple(active, _context, options) {
+      markStarted();
+      const stream = createAssistantEventStream();
+      const onActivity = options?.onActivity;
+      const fail = () => {
+        if (events.length > 0) return;
+        const failed = baseAssistant(active, [{ type: "text", text: "" }], "aborted");
+        failed.errorMessage = "aborted";
+        events.push("error");
+        stream.push({ type: "error", error: failed });
+      };
+      if (options?.signal?.aborted) {
+        aborted = true;
+        fail();
+        return stream;
+      }
+      options?.signal?.addEventListener("abort", () => {
+        aborted = true;
+        fail();
+      }, { once: true });
+      if (mode === "silence") return stream;
+      const pump = () => {
+        if (options?.signal?.aborted) return;
+        calls += 1;
+        onActivity?.();
+        if (calls >= 7) {
+          const message = baseAssistant(active, [{ type: "text", text: "done" }], "stop");
+          events.push("done");
+          stream.push({ type: "done", reason: "stop", message });
+          return;
+        }
+        setTimeout(pump, 10_000);
+      };
+      setTimeout(pump, 10_000);
+      return stream;
+    },
+  };
+  return {
+    models,
+    started,
+    idleAborted: () => aborted,
+    activityCalls: () => calls,
+    events: () => events,
+  };
+}
+
+function probeHarness(models: HarnessModels, armDeadline: NonNullable<HarnessOptions["armDeadline"]>): AgentHarness {
+  return new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    maxAttempts: 1,
+    armDeadline,
+  });
 }
