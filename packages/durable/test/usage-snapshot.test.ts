@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createModels, type Usage } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { AgentHarness, type AgentLane, effectiveInputThreshold, type HarnessTool, type LaneUsage, type LaneUsageView } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
