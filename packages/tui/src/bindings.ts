@@ -206,6 +206,16 @@ export const BINDINGS = [
     when: scrolling,
   }),
   bind({
+    id: "toggle-tool",
+    key: "ctrl-o",
+    label: "Ctrl-O",
+    help: "工具详情",
+    detail: "展开或收起最近一张工具卡片，最多 20 行",
+    hint: false,
+    catalog: true,
+    when: (state) => state.picker === null && !state.overlay,
+  }),
+  bind({
     id: "cycle-model",
     key: "ctrl-p",
     label: "Ctrl-P",

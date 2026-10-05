@@ -1,11 +1,14 @@
 import { pastedImageMention } from "./images.ts";
 import type { ActivityDto } from "@amazme/runtime-service";
 import { activeBinding, composerHint, hotkeyText, type BindingId } from "./bindings.ts";
+import { collectToolCards, summarizeArgs, toolCardRows, type ToolCardCall } from "./cards.ts";
 import { parseSlash, slashMatches, type SlashAction } from "./commands.ts";
 import type { Key } from "./keys.ts";
 import { markdownLines } from "./markdown.ts";
 import { footerParts, nextCompaction } from "./status.ts";
 import { paint, theme } from "./theme.ts";
+
+export { summarizeArgs };
 
 export interface PickerRow {
   id: string;
@@ -32,6 +35,12 @@ export interface TuiEntry {
   text: string;
   /** Tool name for a result block. Absent on user and assistant text. */
   title?: string;
+  /** Snapshot entry time. Card duration is the result time minus the call's entry time. */
+  timestamp?: number;
+  toolCallId?: string;
+  isError?: boolean;
+  /** Tool calls on an assistant entry. The card is drawn from these, not from a stored card. */
+  calls?: ToolCardCall[];
 }
 
 export interface TuiTool {
@@ -39,6 +48,8 @@ export interface TuiTool {
   status: "planned" | "running" | "settled";
   /** 运行中检查点的输出尾。缺了就不显示。 */
   outputTail?: string;
+  /** 用来把开放批次对上助手消息里的调用。手写窗口可以不带。 */
+  toolCallId?: string;
 }
 
 export interface TuiWindow {
@@ -108,6 +119,11 @@ export interface TuiState extends TuiWindow {
   /** True after y/n/a until that call leaves the pending list, so a second key does not decide twice. */
   deciding: boolean;
   decidingId: string | null;
+  /**
+   * Ctrl+O 展开的调用。只对最近一张卡生效。
+   * 不进快照。重开是一块新状态，卡片仍从条目里画出来，但是收着的。
+   */
+  expandedToolId: string | null;
 }
 
 /** One parked tool call the card can show. `summary` is a short argument line. */
@@ -161,6 +177,7 @@ export function emptyTui(active = "main"): TuiState {
     approvals: [],
     deciding: false,
     decidingId: null,
+    expandedToolId: null,
   };
 }
 
@@ -180,7 +197,7 @@ export function renderTui(state: TuiState, columns = 100, rows = 32, now?: numbe
   const picker = state.picker ? pickerLines(state.picker, width) : [];
   const notice = state.notice ? state.notice.split("\n").map((line) => paint(theme.dim, fit(line, width))) : [];
   const hint = paint(theme.dim, fit(composerHint(), width));
-  const transcript = transcriptLines(state).flatMap((line) => wrap(line, width));
+  const transcript = transcriptLines(state, width, now).flatMap((line) => wrap(line, width));
   const approval = approvalLines(state, width);
   const footer = [status, hint, rule, ...composer];
   if (state.overlay) {
@@ -271,6 +288,8 @@ function runBinding(id: BindingId, state: TuiState, key: Key): { state: TuiState
       return { state: move(state, { type: "char", value: "i" }), effect: null };
     case "cycle-model":
       return { state, effect: { type: "cycle-model" } };
+    case "toggle-tool":
+      return { state: toggleToolCard(state), effect: null };
     case "insert":
       return key.type === "char" ? { state: insertText(state, key.value), effect: null } : { state, effect: null };
     default: {
@@ -462,38 +481,6 @@ function overlayLines(state: TuiState, width: number, budget: number): string[] 
   return [rule, title, ...body.slice(0, budget - 4), more, rule];
 }
 
-const ARG_SUMMARY_LIMIT = 80;
-
-/** One line for the approval card. Objects become `key=value`; long text is cut. */
-export function summarizeArgs(args: unknown): string {
-  const text = argText(args).replace(/\s+/g, " ").trim();
-  const chars = Array.from(text);
-  if (chars.length <= ARG_SUMMARY_LIMIT) return text;
-  return `${chars.slice(0, ARG_SUMMARY_LIMIT - 1).join("")}…`;
-}
-
-function argText(args: unknown): string {
-  if (typeof args === "string") return args;
-  if (typeof args === "number" || typeof args === "boolean") return String(args);
-  if (Array.isArray(args)) return jsonBit(args);
-  if (typeof args === "object" && args !== null) {
-    const parts: string[] = [];
-    for (const [key, value] of Object.entries(args)) {
-      parts.push(`${key}=${typeof value === "string" ? value : jsonBit(value)}`);
-    }
-    return parts.join(" ");
-  }
-  return "";
-}
-
-function jsonBit(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? "";
-  } catch {
-    return "";
-  }
-}
-
 function approvalLines(state: TuiState, width: number): string[] {
   const card = state.approvals[0];
   if (!card || state.picker) return [];
@@ -638,45 +625,61 @@ function formatUsd(value: number | undefined): string {
   return `$${text}`;
 }
 
-function transcriptLines(state: TuiState): string[] {
+function toggleToolCard(state: TuiState): TuiState {
+  const latest = collectToolCards(state).at(-1);
+  if (!latest) return state;
+  return { ...state, expandedToolId: state.expandedToolId === latest.id ? null : latest.id };
+}
+
+function transcriptLines(state: TuiState, width: number, now?: number): string[] {
+  const cards = collectToolCards(state, now);
+  const latestId = cards.at(-1)?.id ?? null;
+  const emitted = new Set<string>();
   const lines: string[] = [];
+  const pushCard = (card: (typeof cards)[number], mark: string): void => {
+    if (emitted.has(card.id)) return;
+    emitted.add(card.id);
+    const expanded = state.expandedToolId === card.id && card.id === latestId;
+    const rows = toolCardRows(card, expanded);
+    for (const [rowIndex, row] of rows.entries()) {
+      const painted = paint(theme[row.tone], fit(row.text, width));
+      lines.push(rowIndex === 0 ? mark + painted : painted);
+    }
+  };
   for (const [index, entry] of state.entries.entries()) {
     const mark = state.focus === "scroll" && index === state.entryIndex ? "> " : "";
     if (entry.role === "user") {
       lines.push(...userBlock(entry.text).map((line, lineIndex) => lineIndex === 0 ? mark + line : line));
+      lines.push("");
     } else if (entry.role === "assistant") {
-      lines.push(mark + paint(theme.accent, "AmazMe"));
-      lines.push(...markdownLines(entry.text, "assistant"));
+      const anchored = cards.filter((card) => card.anchorId === entry.id);
+      const showSpeaker = entry.text.length > 0 || anchored.length === 0;
+      if (showSpeaker) {
+        lines.push(mark + paint(theme.accent, "AmazMe"));
+        if (entry.text.length > 0) lines.push(...markdownLines(entry.text, "assistant"));
+      }
+      for (const [cardIndex, card] of anchored.entries()) pushCard(card, showSpeaker || cardIndex > 0 ? "" : mark);
+      lines.push("");
     } else if (entry.role === "tool") {
-      lines.push(mark + paint(theme.accent, entry.title && entry.title.length > 0 ? entry.title : "tool"));
-      lines.push(paint(theme.dim, "  result"));
-      for (const row of entry.text.split("\n")) lines.push(paint(theme.text, row));
+      const before = lines.length;
+      for (const card of cards) if (card.anchorId === entry.id) pushCard(card, mark);
+      if (lines.length !== before) lines.push("");
     } else {
       lines.push(mark + paint(theme.dim, entry.text));
+      lines.push("");
     }
-    lines.push("");
   }
   if (state.pendingText.length > 0) {
     lines.push(paint(theme.accent, "AmazMe"));
     lines.push(...markdownLines(state.pendingText, "assistant"));
     lines.push("");
   }
-  for (const tool of state.tools) {
-    lines.push(paint(theme.accent, tool.name));
-    lines.push(paint(theme.dim, `  ${tool.status}`));
-    if (tool.status === "running" && tool.outputTail) {
-      for (const row of lastOutputLines(tool.outputTail)) lines.push(paint(theme.text, row));
-    }
+  for (const card of cards) {
+    if (emitted.has(card.id)) continue;
+    pushCard(card, "");
     lines.push("");
   }
   return lines;
-}
-
-/** 运行中的工具只露出 outputTail 的最后三行。结尾换行结束上一行，不另起空行。 */
-function lastOutputLines(tail: string): string[] {
-  const lines = tail.split("\n");
-  if (tail.endsWith("\n")) lines.pop();
-  return lines.slice(-3);
 }
 
 function userBlock(text: string): string[] {
