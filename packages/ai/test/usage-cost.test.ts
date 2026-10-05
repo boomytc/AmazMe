@@ -88,7 +88,7 @@ test("a listed cache-write rate replaces the input-rate fallback", () => {
   });
 });
 
-test("an unset cache-hit rate charges nothing for those tokens", () => {
+test("cache hits without a hit price leave the hit charge and the total unknown", () => {
   const model: Model = {
     id: "sample",
     name: "sample",
@@ -99,14 +99,17 @@ test("an unset cache-hit rate charges nothing for those tokens", () => {
     maxTokens: 1_000,
     cost: { input: 2, output: 4 },
   };
-  // 5e5 / 1e6 × 2 = 1, hit rate unset → 0, write × 2 = 1, output × 4 = 2.
-  assert.deepEqual(usageCost(model, HALF_MILLION), {
-    input: 1,
-    cacheRead: 0,
-    cacheWrite: 1,
-    output: 2,
-    total: 4,
-  });
+  // 5e5 / 1e6 × 2 = 1 input, × 4 = 2 output. Write rate unset, so write uses 2 → 1.
+  // Hit tokens are above 0 and cost.cacheRead is missing, so that charge and the total are null.
+  const cost = usageCost(model, HALF_MILLION);
+  assert.ok(cost);
+  assert.equal(cost.cacheRead, null);
+  assert.equal(cost.total, null);
+  assert.equal(typeof cost.input, "number");
+  assert.equal(typeof cost.output, "number");
+  assert.equal(cost.input, 1);
+  assert.equal(cost.cacheWrite, 1);
+  assert.equal(cost.output, 2);
   const reported = usageFromCounts(model, 500_000, 500_000, undefined, {
     cacheRead: 500_000,
     cacheWrite: 500_000,
@@ -125,7 +128,15 @@ test("a model without a price list returns null", () => {
 test("a listed zero rate is a zero charge", () => {
   const model = deepseek("deepseek-flash");
   model.cost = { input: 0, output: 0 };
-  assert.deepEqual(usageCost(model, HALF_MILLION), {
+  assert.deepEqual(usageCost(model, { input: 500_000, output: 500_000 }), {
+    input: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    output: 0,
+    total: 0,
+  });
+  model.cost = { input: 2, output: 4, cacheRead: 0 };
+  assert.deepEqual(usageCost(model, { input: 0, output: 0, cacheRead: 500_000 }), {
     input: 0,
     cacheRead: 0,
     cacheWrite: 0,

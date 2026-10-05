@@ -96,10 +96,11 @@ export interface Usage {
   totalTokens: number;
   /**
    * USD for this turn. Rates are USD per 1,000,000 tokens.
-   * `input` is only the cache-miss charge. Cache reads are charged only when `cost.cacheRead` is set.
+   * `input` is only the cache-miss charge.
    * Cache writes use `cost.cacheWrite`, or the input rate when that rate is unset.
-   * `total` sums the miss, cache, and output charges.
-   * A model with no price list still stores zeros here. `usageCost` returns null for that case.
+   * `total` sums the known charges. A model with no price list stores zeros; `usageCost` returns null.
+   * Cache-read tokens with no hit price are filled in here as 0. That zero is partial, not a confirmed
+   * price: `usageCost` returns `total: null` for the same turn.
    */
   cost: { input: number; output: number; total: number };
   /**

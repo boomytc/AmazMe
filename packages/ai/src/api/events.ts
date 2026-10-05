@@ -254,6 +254,7 @@ export function cacheMissInput(prompt: number | undefined, cacheRead: number | u
  * Builds `Usage` from provider counts. `input` stays the cache miss.
  * Charges come from `usageCost`. A model with no price list stores a zero `cost` here;
  * `usageCost` itself returns null for that case.
+ * A null `usageCost` total still stores a number: the unknown cache-hit charge is filled with 0.
  */
 export function usageFromCounts(
   model: Model,
@@ -280,7 +281,11 @@ export function usageFromCounts(
     totalTokens: finite(total) ?? prompt + (cacheRead ?? 0) + (cacheWrite ?? 0) + completion,
     cost: amounts === null
       ? { input: 0, output: 0, total: 0 }
-      : { input: amounts.input, output: amounts.output, total: amounts.total },
+      : {
+          input: amounts.input,
+          output: amounts.output,
+          total: amounts.total ?? amounts.input + amounts.cacheWrite + amounts.output,
+        },
     ...(cacheRead !== undefined ? { cacheRead } : {}),
     ...(cacheWrite !== undefined ? { cacheWrite } : {}),
     ...(reasoning !== undefined ? { reasoning } : {}),
