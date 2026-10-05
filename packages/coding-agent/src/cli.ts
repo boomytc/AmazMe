@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createModels, type LoginInteraction, type Models } from "@amazme/ai";
-import { requireRouterKeys } from "./settings.ts";
+import { missingApiKeyHint, requireRouterKeys } from "./settings.ts";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { FileCredentialStore } from "./credentials.ts";
 import { codingModels } from "./fronts.ts";
@@ -234,7 +234,7 @@ async function requireConfigured(models: ReadyModels, providerId: string, modelI
   if (!model) throw new Error(`unknown model ${providerId}/${modelId}`);
   if (await models.getAuth(model)) return;
   const env = models.getProvider(providerId)?.auth.apiKey?.env;
-  throw new Error(`${providerId} is not configured: ${env ? `set ${env} or run amazme login` : "run amazme login"}`);
+  throw new Error(`${providerId} is not configured: ${missingApiKeyHint(providerId, env)}`);
 }
 
 /** The selected model and, when routing is on, strong and cheap. An unset router adds no check and no classifier call. */

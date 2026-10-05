@@ -78,6 +78,35 @@ test("the footer shows branch, elapsed time, retry, hit rate, and priced totals 
   assert.match(frame, /累计 \$0/);
 });
 
+test("a null cost total shows an em dash instead of $0", () => {
+  const frame = paint(activity({
+    usage: {
+      lastTurn: {
+        input: 4,
+        output: 1,
+        cacheRead: null,
+        cacheWrite: 0,
+        reasoning: null,
+        hitRate: null,
+        cost: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, total: null },
+      },
+      total: {
+        input: 4,
+        output: 1,
+        cacheRead: null,
+        cacheWrite: null,
+        reasoning: null,
+        hitRate: null,
+        cost: { input: null, cacheRead: null, cacheWrite: null, output: null, total: null },
+      },
+    },
+  }));
+  assert.match(frame, /本轮 \u2014/);
+  assert.match(frame, /累计 \u2014/);
+  assert.equal(frame.includes("$"), false);
+  assert.equal(frame.includes("$0"), false);
+});
+
 test("a null price hides the amount and a null retry reason hides the countdown", () => {
   const frame = paint(activity({
     notBefore: 130_000,
