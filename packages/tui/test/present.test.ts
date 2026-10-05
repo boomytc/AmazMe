@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -270,8 +270,111 @@ test("an API key login writes scoped models and /model sees them without a resta
   }
 });
 
+test("/model lists scoped models, filters, and enter plus ctrl-p configure the lane", { timeout: 20_000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-model-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, ".amazme"));
+  writeFileSync(join(dir, ".amazme", "project.json"), `${JSON.stringify({
+    trusted: false,
+    settings: {},
+    names: {},
+    scopedModels: ["faux/faux-1", "deepseek/deepseek-flash", "deepseek/deepseek-v4-pro", "typesafe/jev-latest", "notes"],
+  }, null, 2)}\n`);
+  const host = await fakeHost(join(dir, "host.sock"), [
+    { provider: "faux", modelId: "faux-1" },
+    { provider: "deepseek", modelId: "deepseek-flash" },
+    { provider: "deepseek", modelId: "deepseek-v4-pro" },
+    { provider: "catalog-only", modelId: "not-scoped" },
+    { provider: "typesafe", modelId: "jev-latest" },
+  ]);
+  t.after(() => host.close());
+  const tty = fakeTTY();
+  tty.columns = 60;
+  tty.rows = 16;
+  const attach = { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE, cwd: dir };
+  const screen = presentHost(attach, tty.stdin, tty.stdout);
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    tty.push("\u0010");
+    await until(() => tty.since(0).includes("模型 deepseek/deepseek-flash"), "ctrl-p notice");
+    tty.push("/model\r");
+    await until(() => tty.since(0).includes("Select model:"), "the model picker");
+    const opened = tty.since(0);
+    assert.equal(opened.includes("deepseek/deepseek-flash"), true);
+    assert.equal(opened.includes("deepseek/deepseek-v4-pro"), true);
+    assert.equal(opened.includes("catalog-only/not-scoped"), false);
+    assert.equal(opened.includes("jev"), false);
+    assert.equal(opened.includes("notes"), false);
+    tty.push("v4\r");
+    await until(() => host.configures.some((call) => call.provider === "deepseek" && call.modelId === "deepseek-v4-pro"), "enter configure");
+    await until(() => tty.since(0).includes("模型 deepseek/deepseek-v4-pro"), "the switched notice");
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u001b");
+    tty.push("\u0004");
+    await Promise.race([screen.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 500))]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${tty.chunks.at(-1)}`);
+  }
+
+  const again = fakeTTY();
+  again.columns = 60;
+  again.rows = 16;
+  const reopened = presentHost(attach, again.stdin, again.stdout);
+  try {
+    await until(() => again.since(0).includes("deepseek/deepseek-v4-pro"), "the reopened model");
+    again.push("\u0004");
+    await reopened;
+  } catch (error) {
+    again.push("\u0004");
+    await Promise.race([reopened.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 500))]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${again.chunks.at(-1)}`);
+  }
+});
+
+test("an empty scoped list does not dump the catalog", { timeout: 20_000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-empty-model-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const host = await fakeHost(join(dir, "host.sock"), [
+    { provider: "catalog-only", modelId: "not-scoped" },
+    { provider: "typesafe", modelId: "jev-latest" },
+  ]);
+  t.after(() => host.close());
+  const tty = fakeTTY();
+  const screen = presentHost(
+    { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE, cwd: dir },
+    tty.stdin,
+    tty.stdout,
+  );
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    tty.push("/model\r");
+    await until(() => tty.since(0).includes("no match"), "the empty picker");
+    const painted = tty.since(0);
+    assert.equal(painted.includes("catalog-only/not-scoped"), false);
+    assert.equal(painted.includes("jev"), false);
+    tty.push("\u001b");
+    tty.push("\u0010");
+    await until(() => tty.since(0).includes("模型循环未限制"), "ctrl-p with nothing scoped");
+    assert.equal(host.configures.some((call) => call.provider !== undefined), false);
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u001b");
+    tty.push("\u0004");
+    await Promise.race([screen.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 500))]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${tty.chunks.at(-1)}`);
+  }
+});
+
 async function fakeHost(socket: string, models: Array<{ provider: string; modelId: string }> = []) {
   const calls: Recorded[] = [];
+  const configures: Array<{ provider?: string; modelId?: string }> = [];
+  let provider = "faux";
+  let modelId = "faux-1";
   let version = 1;
   let operationId: string | null = null;
   let sink: SubscriptionSink | undefined;
@@ -313,8 +416,19 @@ async function fakeHost(socket: string, models: Array<{ provider: string; modelI
           sink?.close();
           sink = undefined;
           return null;
-        case "configure":
-          return { provider: "faux", modelId: "faux-1", thinkingLevel: "off", thinkingLevels: ["off"] };
+        case "configure": {
+          const nextProvider = typeof raw.provider === "string" ? raw.provider : undefined;
+          const nextModel = typeof raw.modelId === "string" ? raw.modelId : undefined;
+          configures.push({
+            ...(nextProvider !== undefined ? { provider: nextProvider } : {}),
+            ...(nextModel !== undefined ? { modelId: nextModel } : {}),
+          });
+          if (nextProvider !== undefined && nextModel !== undefined) {
+            provider = nextProvider;
+            modelId = nextModel;
+          }
+          return { provider, modelId, thinkingLevel: "off", thinkingLevels: ["off"] };
+        }
         case "catalog":
           return { directory: "work", models, thinkingLevels: ["off"] };
         case "snapshot":
@@ -397,6 +511,7 @@ async function fakeHost(socket: string, models: Array<{ provider: string; modelI
   return {
     path: socket,
     calls,
+    configures,
     errors,
     hold: (id: string) => commit(id),
     release: () => commit(null),
