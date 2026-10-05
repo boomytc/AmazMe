@@ -366,7 +366,12 @@ async function main(): Promise<void> {
   }
   if (shouldOpenFullscreen(args.prompt, process.stdout.isTTY === true) && !args.continueSession && !args.json && !args.jsonl) {
     await requireReady(codingModels({ provider: args.provider, model: args.model, cwd: args.cwd }), args.provider, args.model, args.cwd);
-    await runCodingFullscreen({ provider: args.provider, model: args.model, cwd: args.cwd });
+    await runCodingFullscreen({
+      provider: args.provider,
+      model: args.model,
+      cwd: args.cwd,
+      ...(args.lane ? { lane: args.lane } : {}),
+    });
     return;
   }
   if (!args.prompt && !args.continueSession) {

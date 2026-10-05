@@ -1,8 +1,12 @@
+import { existsSync } from "node:fs";
+import { Client } from "@amazme/client";
+import { createUnixTransport } from "@amazme/client/unix";
+import { RuntimeClient } from "@amazme/runtime-service/client";
 import { activateProject, presentHost, type HostAccount, type HostAttach } from "@amazme/tui";
 import { createCodingFronts, startWorkspaceHost } from "../fronts.ts";
 import { waitForSecondInterrupt } from "../interrupt.ts";
 import { commitProviderModels, formatHandback, loginCatalog, loginProvider, logoutProvider, saveApiKey } from "../login.ts";
-import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID } from "../host.ts";
+import { HOST_LANE, HOST_RUNTIME_ID, HOST_SERVER_ID, runtimeFile, type CodingHost } from "../host.ts";
 
 export interface FullscreenOptions {
   provider: string;
@@ -10,6 +14,8 @@ export interface FullscreenOptions {
   cwd: string;
   /** Overrides the default credential file. Tests pass a temp path. */
   credentialsFile?: string;
+  /** Named session from `--resume`. Omitted keeps the default lane. */
+  lane?: string;
 }
 
 /** Fullscreen opens when the CLI has no prompt and stdout is a terminal. */
@@ -45,12 +51,18 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
   if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
     throw new Error("fullscreen requires a terminal");
   }
+  // 问题：进入全屏后会读 configure()，而 configure() 会 ensureLane。
+  // 例如 `amazme --resume notes` 在 notes 还没写入时，会新建 notes，画面仍可能停在 main。
+  // 先看日志里有没有这个名字。没有就退出。presentHost 只附着已经存在的 lane。
+  if (options.lane && !existsSync(runtimeFile(options.cwd))) {
+    throw new Error(`session ${options.lane} does not exist`);
+  }
   const host = await startWorkspaceHost(options);
   const fronts = createCodingFronts(host);
   let published = false;
   let pending = 0;
-  const attach: HostAttach = { socket: host.socket, serverId: HOST_SERVER_ID, runtimeId: HOST_RUNTIME_ID, lane: HOST_LANE, cwd: options.cwd };
-  await activateProject(options.cwd);
+  const lane = options.lane ?? HOST_LANE;
+  const attach: HostAttach = { socket: host.socket, serverId: HOST_SERVER_ID, runtimeId: HOST_RUNTIME_ID, lane, cwd: options.cwd };
   const publish = async (open: () => Promise<string>): Promise<string> => {
     pending += 1;
     try {
@@ -62,6 +74,10 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
     }
   };
   try {
+    if (options.lane && !await sessionExists(host, options.lane)) {
+      throw new Error(`session ${options.lane} does not exist`);
+    }
+    await activateProject(options.cwd);
     await presentHost(attach, process.stdin, process.stdout, codingLoginAccount(options), {
       openWeb: () => publish(async () => `网页 ${await fronts.openWeb()}`),
       openGui: () => publish(() => fronts.openGui()),
@@ -78,4 +94,17 @@ export async function runCodingFullscreen(options: FullscreenOptions): Promise<v
   process.stdout.write(`${fronts.runningLine()}\n`);
   await waitForSecondInterrupt();
   await fronts.stop();
+}
+
+/** True when this workspace log already stores `lane`. Does not create a lane. */
+async function sessionExists(host: CodingHost, lane: string): Promise<boolean> {
+  const client = new Client({ serverId: HOST_SERVER_ID, transport: createUnixTransport({ path: host.socket }) });
+  await client.connect();
+  try {
+    const remote = new RuntimeClient(client);
+    await remote.attach(HOST_RUNTIME_ID);
+    return (await remote.conversations()).includes(lane);
+  } finally {
+    await client.dispose();
+  }
 }
