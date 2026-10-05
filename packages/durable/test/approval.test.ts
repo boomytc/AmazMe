@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createModels, messageText } from "@amazme/ai";
-import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
+import { fauxAssistant, fauxProvider, fauxToolCall } from "@amazme/ai/testing";
 import { AgentHarness, value, type AgentLane, type ApprovalRequest, type HarnessTool, type Write } from "@amazme/durable";
 import { JsonlStorage } from "@amazme/durable/storage/jsonl/node";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
@@ -420,6 +420,194 @@ test("a crash after a deny decision still records the error once", async () => {
     assert.ok(result?.payload.type === "message" && result.payload.message.role === "toolResult");
     assert.equal(result.payload.message.isError, true);
     assert.equal(messageText(result.payload.message), "not now");
+  } finally {
+    harness.close();
+  }
+});
+
+function openSequential(
+  gate: (name: string) => boolean,
+  asked: string[],
+  hooked: string[],
+  firstRuns: { n: number },
+  secondRuns: { n: number },
+) {
+  const provider = fauxProvider({
+    respond: (_context, _options, state) => state.callCount === 1
+      ? fauxAssistant([
+        fauxToolCall("first", { n: 1 }, "first-1"),
+        fauxToolCall("second", { n: 2 }, "second-1"),
+      ])
+      : fauxAssistant("after"),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    toolExecution: "sequential",
+    tools: [workTool("first", firstRuns), workTool("second", secondRuns)],
+    hooks: [{
+      beforeToolCall: (input) => {
+        hooked.push(input.toolName);
+        return undefined;
+      },
+    }],
+    requiresApproval: (call) => {
+      asked.push(call.name);
+      return gate(call.name);
+    },
+  });
+  return { provider, harness, lane: harness.lane() };
+}
+
+test("sequential execution leaves the later call untouched until the parked call is allowed", async () => {
+  const asked: string[] = [];
+  const hooked: string[] = [];
+  const firstRuns = { n: 0 };
+  const secondRuns = { n: 0 };
+  const ungated = openSequential((name) => name === "first", asked, hooked, firstRuns, secondRuns);
+  try {
+    const admitted = await ungated.lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const waiting = await ungated.lane.drive(admitted.value.operationId);
+    assert.equal(waiting.ok && waiting.value.kind, "waiting");
+    assert.equal(ungated.provider.state.callCount, 1);
+    assert.deepEqual(asked, ["first"]);
+    assert.deepEqual(hooked, []);
+    assert.equal(firstRuns.n, 0);
+    assert.equal(secondRuns.n, 0);
+    const parked = await ungated.harness.storage.read((view) => view.get<{
+      calls: Array<{ name: string; status: string; approval?: { decision?: string } }>;
+    }>(value("pi.op.state", admitted.value.operationId)));
+    assert.equal(parked?.calls[0]?.name, "first");
+    assert.equal(parked?.calls[0]?.approval?.decision, undefined);
+    assert.equal(parked?.calls[1]?.name, "second");
+    assert.equal(parked?.calls[1]?.status, "planned");
+    assert.equal(parked?.calls[1]?.approval, undefined);
+    await ungated.lane.approve("first-1", "allow");
+    assert.equal(firstRuns.n, 1);
+    assert.equal(secondRuns.n, 1);
+    assert.equal(ungated.provider.state.callCount, 2);
+    assert.deepEqual(asked, ["first", "second"]);
+    assert.deepEqual(hooked, ["first", "second"]);
+    assert.deepEqual((await ungated.lane.pendingApprovals()).items, []);
+  } finally {
+    ungated.harness.close();
+  }
+
+  const gatedAsked: string[] = [];
+  const gatedHooked: string[] = [];
+  const gatedFirst = { n: 0 };
+  const gatedSecond = { n: 0 };
+  const gated = openSequential(() => true, gatedAsked, gatedHooked, gatedFirst, gatedSecond);
+  try {
+    const admitted = await gated.lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const waiting = await gated.lane.drive(admitted.value.operationId);
+    assert.equal(waiting.ok && waiting.value.kind, "waiting");
+    assert.deepEqual(gatedAsked, ["first"]);
+    assert.deepEqual(gatedHooked, []);
+    assert.equal(gatedSecond.n, 0);
+    await gated.lane.approve("first-1", "allow");
+    assert.equal(gatedFirst.n, 1);
+    assert.equal(gatedSecond.n, 0);
+    assert.equal(gated.provider.state.callCount, 1);
+    assert.deepEqual(gatedAsked, ["first", "second"]);
+    assert.deepEqual(gatedHooked, ["first"]);
+    const pending = await gated.lane.pendingApprovals();
+    assert.deepEqual(pending.items.map((item) => item.toolCallId), ["second-1"]);
+    const still = await gated.lane.drive(admitted.value.operationId);
+    assert.equal(still.ok && still.value.kind, "waiting");
+    assert.equal(gatedSecond.n, 0);
+    assert.equal(gated.provider.state.callCount, 1);
+    await gated.lane.approve("second-1", "allow");
+    assert.equal(gatedSecond.n, 1);
+    assert.equal(gated.provider.state.callCount, 2);
+    assert.deepEqual(gatedHooked, ["first", "second"]);
+    assert.deepEqual((await gated.lane.pendingApprovals()).items, []);
+  } finally {
+    gated.harness.close();
+  }
+});
+
+test("a throwing approval predicate fails the operation and leaves the lane free", async () => {
+  const runs = { n: 0 };
+  const { provider, harness, lane } = openLane(new MemoryStorage(), runs, () => {
+    throw new Error("predicate boom");
+  });
+  try {
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok || outcome.value.kind !== "settled") return;
+    assert.equal(outcome.value.result.status, "failed");
+    assert.equal(outcome.value.result.error, "predicate boom");
+    assert.equal(provider.state.callCount, 1);
+    assert.equal(runs.n, 0);
+    assert.deepEqual((await lane.pendingApprovals()).items, []);
+    const info = await lane.inspect();
+    assert.equal(info.phase, null);
+    assert.equal(info.operationId, null);
+    assert.equal((await lane.entries()).some((entry) => entry.payload.type === "message" && entry.payload.message.role === "toolResult"), false);
+    const next = await lane.accept({ kind: "prompt", text: "again" });
+    assert.equal(next.ok, true);
+    if (!next.ok) return;
+    const continued = await lane.drive(next.value.operationId);
+    assert.equal(continued.ok && continued.value.kind === "settled" ? continued.value.result.status : "", "completed");
+    assert.equal(provider.state.callCount, 2);
+    assert.equal(runs.n, 0);
+  } finally {
+    harness.close();
+  }
+});
+
+class PersistCount extends MemoryStorage {
+  writes = 0;
+
+  protected override persist(writes: readonly Write[]): void {
+    this.writes += writes.length;
+  }
+}
+
+test("repeated drive while approval is waiting does not persist or call the model", async () => {
+  const runs = { n: 0 };
+  const storage = new PersistCount();
+  const { provider, harness, lane } = openLane(storage, runs, () => true);
+  try {
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const operationId = admitted.value.operationId;
+    const parked = await lane.drive(operationId);
+    assert.equal(parked.ok && parked.value.kind, "waiting");
+    const pending = await lane.pendingApprovals();
+    const requestedAt = pending.items[0]?.requestedAt;
+    assert.equal(typeof requestedAt, "number");
+    assert.equal(parked.ok && parked.value.kind === "waiting" ? parked.value.notBefore : undefined, requestedAt);
+    assert.equal(parked.ok && parked.value.kind === "waiting" ? parked.value.reason : "", "retry");
+    const version = (await lane.snapshot()).version;
+    const storedVersion = await storage.read((view) => view.version());
+    const laneEntries = (await lane.entries()).length;
+    const storedEntries = await storage.read((view) => view.entries().length);
+    const writes = storage.writes;
+    assert.equal(version, storedVersion);
+    const again = [await lane.drive(operationId), await lane.drive(operationId), await lane.drive(operationId)];
+    assert.deepEqual(again[0], parked);
+    assert.deepEqual(again[1], parked);
+    assert.deepEqual(again[2], parked);
+    assert.equal(provider.state.callCount, 1);
+    assert.equal(runs.n, 0);
+    assert.equal((await lane.snapshot()).version, version);
+    assert.equal(await storage.read((view) => view.version()), storedVersion);
+    assert.equal((await lane.entries()).length, laneEntries);
+    assert.equal(await storage.read((view) => view.entries().length), storedEntries);
+    assert.equal(storage.writes, writes);
+    assert.equal((await lane.pendingApprovals()).items[0]?.requestedAt, requestedAt);
   } finally {
     harness.close();
   }

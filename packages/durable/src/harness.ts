@@ -362,7 +362,7 @@ type Plan =
   | { type: "assistant"; operationId: string; responseEntryId: string; usageId: string }
   | { type: "summary"; operationId: string; responseEntryId: string; usageId: string }
   | { type: "tools"; operationId: string }
-  | { type: "approval" }
+  | { type: "approval"; notBefore: number }
   | { type: "yield" };
 
 const running = (): Scope => ({ control: { status: "running" }, attempt: 0, overflowUsed: false, thresholdUsed: false });
@@ -628,9 +628,11 @@ export class AgentLane {
         return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: planned.notBefore } };
       }
       if (planned.type === "approval") {
-        // DriveOutcome is shared with the runtime contract, which only names a retry wait.
-        // This return is not that wait: the caller is not delayed until notBefore, and the model is not called.
-        return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: Date.now() } };
+        // Temporary borrow of the retry wait. Hosts and contracts.ts stay as they are.
+        // Tell an approval wait from a retry by pendingApprovals().items being non-empty.
+        // reason:"approval" is added with that protocol change, and this return changes with it.
+        // notBefore is the earliest parked requestedAt, so a repeated drive returns the same value and writes nothing.
+        return { ok: true, value: { kind: "waiting", operationId, reason: "retry", notBefore: planned.notBefore } };
       }
       if (planned.type === "continue") continue;
       // Abort can land inside plan(), after this step has armed a model or tool effect.
@@ -1185,10 +1187,15 @@ export class AgentLane {
     }
     if (state.phase === "tools") {
       if (state.scope.control.status !== "cancel_requested" && blockedOnApproval(state)) {
-        this.materializeTools(view, apply, operationId);
-        const refreshed = view.get<OperationState>(stateAddress(operationId));
-        if (!refreshed || refreshed.phase !== "tools") return { type: "continue" };
-        if (blockedOnApproval(refreshed)) return { type: "approval" };
+        let parked = state;
+        if (state.calls.some((call) => call.status === "outcome_ready")) {
+          this.materializeTools(view, apply, operationId);
+          const refreshed = view.get<OperationState>(stateAddress(operationId));
+          if (!refreshed || refreshed.phase !== "tools") return { type: "continue" };
+          if (!blockedOnApproval(refreshed)) return { type: "tools", operationId };
+          parked = refreshed;
+        }
+        return { type: "approval", notBefore: earliestApprovalRequestedAt(parked) };
       }
       return { type: "tools", operationId };
     }
@@ -1544,9 +1551,20 @@ export class AgentLane {
       if (this.harness.isAbandoned) return;
       const action = await admitted(this.harness).run((view, apply) => this.armTools(view, apply, operationId, telemetryContext));
       if (action.type === "done" || this.harness.isAbandoned) return;
-      const armed = action.type === "run"
-        ? action
-        : await this.commitDecidedTools(operationId, action.mode, await this.decideToolCalls(action.batch, signal), signal);
+      let armed: { type: "done" } | { type: "run"; mode: ToolExecutionMode; calls: ArmedCall[] };
+      if (action.type === "run") {
+        armed = action;
+      } else {
+        let decided: ToolDecision[];
+        try {
+          decided = await this.decideToolCalls(action.batch, signal);
+        } catch (error) {
+          if (!(error instanceof ApprovalPredicateFailure)) throw error;
+          await admitted(this.harness).run((view, apply) => this.failForPredicate(view, apply, operationId, error.message));
+          return;
+        }
+        armed = await this.commitDecidedTools(operationId, action.mode, decided, signal);
+      }
       if (armed.type === "done" || this.harness.isAbandoned) return;
       for (const call of armed.calls) this.harness.live.add(call.resultEntryId);
       await this.executeArmed(operationId, armed.mode, armed.calls, signal, telemetryContext);
@@ -2264,7 +2282,21 @@ export class AgentLane {
   private async approvalRequired(call: { toolCallId: string; name: string }, args: unknown): Promise<boolean> {
     const predicate = this.harness.options.requiresApproval;
     if (!predicate) return false;
-    return await predicate({ toolCallId: call.toolCallId, name: call.name, arguments: args }) === true;
+    try {
+      return await predicate({ toolCallId: call.toolCallId, name: call.name, arguments: args }) === true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message.trim() : String(error).trim();
+      throw new ApprovalPredicateFailure(message || "approval predicate failed");
+    }
+  }
+
+  /** Settle the open operation. A thrown predicate must not leave the lane parked or reject `drive`. */
+  private failForPredicate(view: StorageView, apply: Apply, operationId: string, message: string): void {
+    if (this.harness.isAbandoned) return;
+    if (this.record(view).currentOperationId !== operationId) return;
+    const meta = view.get<OperationMeta>(metaAddress(operationId));
+    if (!meta || meta.lane !== this.name) return;
+    this.finish(view, apply, meta, "failed", message);
   }
 
   /**
@@ -2360,6 +2392,24 @@ function importedAssistant(config: { provider: string; modelId: string }, text: 
     stopReason: "stop",
     timestamp: Date.now(),
   };
+}
+
+class ApprovalPredicateFailure extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ApprovalPredicateFailure";
+  }
+}
+
+function earliestApprovalRequestedAt(state: Extract<OperationState, { phase: "tools" }>): number {
+  let earliest: number | undefined;
+  for (const call of state.calls) {
+    if (call.status !== "planned" || !call.approval || call.approval.decision !== undefined) continue;
+    const at = call.approval.requestedAt;
+    if (earliest === undefined || at < earliest) earliest = at;
+  }
+  if (earliest === undefined) throw new Error("approval wait has no requestedAt");
+  return earliest;
 }
 
 function approvalDenial(reason: string | undefined): string {
