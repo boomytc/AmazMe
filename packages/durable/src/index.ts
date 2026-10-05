@@ -1,6 +1,7 @@
 export {
   AgentHarness,
   AgentLane,
+  type ApprovalRequest,
   type DriveOutcome,
   type HarnessFailure,
   type HarnessOptions,
@@ -15,6 +16,8 @@ export {
   type OperationAdmission,
   type OperationRequest,
   type OperationResult,
+  type PendingApproval,
+  type PendingApprovals,
   type PendingResponse,
   type Result,
   type ToolActivity,
