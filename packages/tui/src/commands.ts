@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { RemoteLane } from "@amazme/runtime-service/client";
+import { hotkeyText } from "./bindings.ts";
 import {
   activateProject,
   cycleModels,
@@ -78,14 +79,6 @@ export function slashMatches(input: string): SlashListing[] {
   const query = token.toLowerCase();
   return SLASH_LIST.filter((item) => query.length === 0 || item.name.includes(query));
 }
-
-const HOTKEYS = [
-  "Enter 提交",
-  "Ctrl-C 忙则中止，有输入则清空，空闲时再按一次退出",
-  "Ctrl-D 空闲且输入为空时离开全屏",
-  "Esc 在输入和滚动之间切换",
-  "滚动时 ↑↓ 移动条目，PgUp/PgDn 移动轮次，i 回到输入",
-].join("\n");
 
 export type SlashCommand =
   | { type: "prompt"; text: string }
@@ -170,7 +163,7 @@ export function parseSlash(input: string): SlashCommand {
     case "help":
       return rest ? usage("/help") : notice(HELP);
     case "hotkeys":
-      return rest ? usage("/hotkeys") : notice(HOTKEYS);
+      return rest ? usage("/hotkeys") : notice(hotkeyText());
     case "quit":
       return rest ? usage("/quit") : { type: "quit" };
     case "new":

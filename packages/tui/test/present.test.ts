@@ -62,6 +62,7 @@ test("the attached screen submits, follows up while busy, aborts, and redraws on
     await until(() => tty.since(beforeBusy).includes("later"), "the follow-up draft");
     tty.push("\r");
     await until(() => host.calls.some((call) => call.method === "followUp" && call.text === "later"), "followUp while an operation is open");
+    await until(() => tty.since(beforeBusy).includes("排队 1"), "queued follow-up count");
     assert.equal(host.calls.filter((call) => call.method === "accept").length, 1);
     tty.push("\u0003");
     await until(() => host.calls.some((call) => call.method === "requestAbort" && call.operationId === "op-live"), "requestAbort");
