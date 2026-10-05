@@ -61,7 +61,7 @@ function parseArgs(argv: string[]): Args {
       console.log("amazme login api-key [--provider id]");
       console.log("amazme serve --socket path [--cwd dir] [--provider id] [--model id]");
       console.log("amazme attach --socket path");
-      console.log("amazme bridge --socket path [--port n]");
+      console.log("amazme bridge --socket path [--port n] [--cwd dir]");
       console.log("amazme gui --socket path [--prompt text]");
       process.exit(0);
     } else throw new Error(`unknown option ${token}`);
@@ -293,12 +293,14 @@ async function runAttach(argv: string[]): Promise<void> {
 async function runBridge(argv: string[]): Promise<void> {
   let socket = "";
   let port = 8787;
+  let cwd = process.cwd();
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index];
     if (token === "--socket") socket = argv[++index] ?? "";
     else if (token === "--port") port = Number(argv[++index]);
+    else if (token === "--cwd") cwd = resolve(argv[++index] ?? cwd);
     else if (token === "--help") {
-      console.log("amazme bridge --socket path [--port n]");
+      console.log("amazme bridge --socket path [--port n] [--cwd dir]");
       process.exit(0);
     } else if (token) throw new Error(`unknown argument ${token}`);
   }
@@ -307,7 +309,7 @@ async function runBridge(argv: string[]): Promise<void> {
   const { startCodingBridge } = await import("./bridge.ts");
   const { waitForSecondInterrupt } = await import("./interrupt.ts");
   const stopped = waitForSecondInterrupt();
-  const bridge = await startCodingBridge({ socket, port });
+  const bridge = await startCodingBridge({ socket, port, cwd });
   process.stdout.write(`${JSON.stringify({ url: bridge.url })}\n`);
   await stopped;
   await bridge.close();

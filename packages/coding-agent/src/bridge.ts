@@ -6,6 +6,7 @@ export interface BridgeOptions {
   socket: string;
   port?: number;
   credentialsFile?: string;
+  cwd?: string;
 }
 
 export interface CodingBridge {
@@ -28,6 +29,7 @@ export async function startCodingBridge(options: BridgeOptions): Promise<CodingB
     logout: (provider) => logoutProvider(provider, options.credentialsFile),
     catalog: () => loginCatalog(options.credentialsFile),
     saveApiKey: (providerId, key) => saveApiKey(providerId, key, options.credentialsFile),
+    cwd: options.cwd,
   });
   return page;
 }

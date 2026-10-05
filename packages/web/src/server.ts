@@ -3,7 +3,7 @@ import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
 import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
-import { activateProject, executeSlash, finishDrive, parseSlash, SLASH_LIST, type SlashActions } from "@amazme/tui";
+import { activateProject, chatModelSpecs, executeSlash, finishDrive, parseSlash, scopedModels, SLASH_LIST, type SlashActions } from "@amazme/tui";
 
 export interface WebOptions {
   socket: string;
@@ -42,6 +42,20 @@ export interface WebServer {
 }
 
 /**
+ * Rows for `/model`.
+ * The host catalog still lists models the login never scoped, so an empty scope used to show all of them.
+ * `scopedModels` `["faux/faux-1", "typesafe/jev-latest", "notes"]` with catalog `catalog-only/not-scoped` lists only `faux/faux-1`.
+ * The page reads `chatModelSpecs(scopedModels(cwd))`. No cwd, or an empty file, stays empty.
+ */
+function scopedModelList(cwd: string | undefined): Array<{ provider: string; modelId: string }> {
+  if (!cwd) return [];
+  return chatModelSpecs(scopedModels(cwd)).map((spec) => {
+    const slash = spec.indexOf("/");
+    return { provider: spec.slice(0, slash), modelId: spec.slice(slash + 1) };
+  });
+}
+
+/**
  * Loopback page for one host. The page is a client: it does not own the log, tools, or model.
  * Only `127.0.0.1` and `localhost` are accepted.
  */
@@ -71,7 +85,7 @@ export async function startWeb(options: WebOptions): Promise<WebServer> {
         modelId: settings.modelId,
         thinking: settings.thinkingLevel,
         directory: listed.directory,
-        models: listed.models,
+        models: scopedModelList(options.cwd),
         thinkingLevels: listed.thinkingLevels,
       };
     } catch {
