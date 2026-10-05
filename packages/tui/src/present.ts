@@ -652,17 +652,21 @@ function pendingText(snapshot: LaneSnapshotDto): string {
   }).join("");
 }
 
-function messageText(message: { role: string; content?: unknown; toolName?: string }): string {
+function messageText(message: { role: string; content?: unknown; toolName?: string; errorMessage?: unknown }): string {
   const content = message.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.map((block) => {
-    if (!block || typeof block !== "object") return "";
-    const record = block as { type?: string; text?: string; name?: string };
-    if (record.type === "text" && typeof record.text === "string") return record.text;
-    if (record.type === "toolCall" && typeof record.name === "string") return record.name;
-    return "";
-  }).join("");
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map((block) => {
+          if (!block || typeof block !== "object") return "";
+          const record = block as { type?: string; text?: string; name?: string };
+          if (record.type === "text" && typeof record.text === "string") return record.text;
+          if (record.type === "toolCall" && typeof record.name === "string") return record.name;
+          return "";
+        }).join("")
+      : "";
+  if (text.length > 0) return text;
+  return typeof message.errorMessage === "string" ? message.errorMessage : "";
 }
 
 function emptySnapshot(lane: string): LaneSnapshotDto {
