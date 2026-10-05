@@ -605,21 +605,32 @@ function isCompletionChunk(value: unknown): value is CompletionChunk {
 }
 
 /**
- * `model.cost` is USD per 1,000,000 tokens. Non-finite or absent rates contribute 0; no catalog price is invented.
+ * Charges go through `usageCost`. `model.cost` is USD per 1,000,000 tokens.
+ * A model with no price list keeps a zero `Usage.cost`; that zero is not a quoted price.
  * Cache read is taken only from a reported count. `prompt_tokens_details.cached_tokens` and
  * `prompt_cache_hit_tokens` are the same count when both are present; a disagreement is left unset.
  * `prompt_tokens` includes that cache read. `input` keeps the miss portion. Cache misses are not cache writes.
+ * `completion_tokens_details.reasoning_tokens`, when present, is already inside `completion_tokens`.
  */
 function usageFromChunk(model: Model, raw: unknown): Usage | undefined {
   if (!isRecord(raw)) return undefined;
   const cache = cacheMissInput(finiteNumber(raw.prompt_tokens), cacheReadFromCompletions(raw));
+  const reasoning = reasoningFromCompletions(raw);
   return usageFromCounts(
     model,
     cache.input,
     finiteNumber(raw.completion_tokens),
     finiteNumber(raw.total_tokens),
-    { cacheRead: cache.cacheRead },
+    {
+      cacheRead: cache.cacheRead,
+      ...(reasoning !== undefined ? { reasoning } : {}),
+    },
   );
+}
+
+function reasoningFromCompletions(record: Record<string, unknown>): number | undefined {
+  const details = isRecord(record.completion_tokens_details) ? record.completion_tokens_details : undefined;
+  return finiteNumber(details?.reasoning_tokens);
 }
 
 function cacheReadFromCompletions(record: Record<string, unknown>): number | undefined {

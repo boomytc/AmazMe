@@ -173,7 +173,7 @@ export function emptyUsage(): Usage {
   return { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } };
 }
 
-/** Copy usage without inventing cache counts the provider did not report. */
+/** Copy usage without inventing cache or reasoning counts the provider did not report. */
 export function cloneUsage(usage: Usage): Usage {
   return {
     input: usage.input,
@@ -182,6 +182,7 @@ export function cloneUsage(usage: Usage): Usage {
     cost: { input: usage.cost.input, output: usage.cost.output, total: usage.cost.total },
     ...(usage.cacheRead !== undefined ? { cacheRead: usage.cacheRead } : {}),
     ...(usage.cacheWrite !== undefined ? { cacheWrite: usage.cacheWrite } : {}),
+    ...(usage.reasoning !== undefined ? { reasoning: usage.reasoning } : {}),
   };
 }
 

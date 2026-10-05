@@ -95,9 +95,12 @@ export interface Usage {
   output: number;
   totalTokens: number;
   /**
-   * USD for this turn. `input` is only the cache-miss charge.
-   * Cache tokens are charged only when the model has that cache rate.
-   * `total` is the miss charge, the output charge, and those known cache charges.
+   * USD for this turn. Rates are USD per 1,000,000 tokens.
+   * `input` is only the cache-miss charge.
+   * Cache writes use `cost.cacheWrite`, or the input rate when that rate is unset.
+   * `total` sums the known charges. A model with no price list stores zeros; `usageCost` returns null.
+   * Cache-read tokens with no hit price are filled in here as 0. That zero is partial, not a confirmed
+   * price: `usageCost` returns `total: null` for the same turn.
    */
   cost: { input: number; output: number; total: number };
   /**
@@ -109,9 +112,19 @@ export interface Usage {
   /**
    * Prompt tokens written into the provider cache.
    * Omitted when the response did not report a cache write. A reported 0 stays 0.
-   * These tokens are not part of `input` and are not billed at the input rate.
+   * These tokens are not part of `input`.
+   * With no cache-write rate, `usageCost` bills them at the input rate.
    */
   cacheWrite?: number;
+  /**
+   * Reasoning tokens already included in `output`, and in `totalTokens` when the provider sent a total.
+   * They are not added again, and `usageCost` does not price them separately.
+   * Google Generative AI and Vertex report this as `usageMetadata.thoughtsTokenCount`.
+   * Chat Completions may report `completion_tokens_details.reasoning_tokens`. DeepSeek's schema
+   * documents that breakdown of `completion_tokens`. The published deepseek-flash examples omit it.
+   * A missing count stays unset and is not estimated. A reported 0 stays 0.
+   */
+  reasoning?: number;
 }
 
 export interface SystemMessage {
@@ -228,7 +241,8 @@ export interface Model<TApi extends Api = Api> {
   maxTokens: number;
   /**
    * USD per 1,000,000 tokens. Absent knowledge stays unset; rates are not invented.
-   * `input` prices cache misses. `cacheRead` and `cacheWrite` price those counts when the rate is known.
+   * `input` prices cache misses. `cacheRead` prices cache hits when that rate is known.
+   * `cacheWrite` prices cache writes when that rate is known. An unset write rate bills those tokens at `input`.
    */
   cost: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   /** Per-model endpoint. A request `baseUrl` still overrides it, then the provider default. */

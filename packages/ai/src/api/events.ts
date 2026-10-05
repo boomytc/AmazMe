@@ -2,6 +2,7 @@ import { baseAssistant, type AssistantEventStream } from "../models.ts";
 import type { AssistantMessage, Model, StopReason, ToolCall, Usage } from "../types.ts";
 import { isFilledWindowLength } from "../utils/overflow.ts";
 import { cloneUsage, emptyUsage } from "../transform.ts";
+import { usageCost } from "../usage.ts";
 
 interface TextBlock {
   kind: "text";
@@ -249,33 +250,45 @@ export function cacheMissInput(prompt: number | undefined, cacheRead: number | u
   return { input: prompt - cacheRead, cacheRead };
 }
 
+/**
+ * Builds `Usage` from provider counts. `input` stays the cache miss.
+ * Charges come from `usageCost`. A model with no price list stores a zero `cost` here;
+ * `usageCost` itself returns null for that case.
+ * A null `usageCost` total still stores a number: the unknown cache-hit charge is filled with 0.
+ */
 export function usageFromCounts(
   model: Model,
   input: number | undefined,
   output: number | undefined,
   total: number | undefined,
-  cache?: { cacheRead?: number; cacheWrite?: number },
+  counts?: { cacheRead?: number; cacheWrite?: number; reasoning?: number },
 ): Usage | undefined {
   if (input === undefined && output === undefined && total === undefined) return undefined;
   const prompt = finite(input) ?? 0;
   const completion = finite(output) ?? 0;
-  const inputRate = finite(model.cost?.input) ?? 0;
-  const outputRate = finite(model.cost?.output) ?? 0;
-  const inputCost = (prompt * inputRate) / 1_000_000;
-  const outputCost = (completion * outputRate) / 1_000_000;
-  const cacheRead = finite(cache?.cacheRead);
-  const cacheWrite = finite(cache?.cacheWrite);
-  const cacheReadRate = finite(model.cost?.cacheRead);
-  const cacheWriteRate = finite(model.cost?.cacheWrite);
-  const cacheReadCost = cacheRead !== undefined && cacheReadRate !== undefined ? (cacheRead * cacheReadRate) / 1_000_000 : 0;
-  const cacheWriteCost = cacheWrite !== undefined && cacheWriteRate !== undefined ? (cacheWrite * cacheWriteRate) / 1_000_000 : 0;
+  const cacheRead = finite(counts?.cacheRead);
+  const cacheWrite = finite(counts?.cacheWrite);
+  const reasoning = finite(counts?.reasoning);
+  const amounts = usageCost(model, {
+    input: prompt,
+    output: completion,
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+  });
   return {
     input: prompt,
     output: completion,
     totalTokens: finite(total) ?? prompt + (cacheRead ?? 0) + (cacheWrite ?? 0) + completion,
-    cost: { input: inputCost, output: outputCost, total: inputCost + outputCost + cacheReadCost + cacheWriteCost },
+    cost: amounts === null
+      ? { input: 0, output: 0, total: 0 }
+      : {
+          input: amounts.input,
+          output: amounts.output,
+          total: amounts.total ?? amounts.input + amounts.cacheWrite + amounts.output,
+        },
     ...(cacheRead !== undefined ? { cacheRead } : {}),
     ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
   };
 }
 
