@@ -178,7 +178,7 @@ test("slash commands change the lane instead of prompting the model", { timeout:
   assert.match(await (await fetch(page.url)).text(), /id="notice"/);
   const thinking = await act(page.url, "/thinking high");
   assert.equal(thinking.entries.length, 0);
-  assert.match(thinking.notice ?? "", /not supported/);
+  assert.match(thinking.notice ?? "", /当前模型不支持 high/);
   const unknown = await act(page.url, "/nope");
   assert.equal(unknown.entries.length, 0);
   assert.match(unknown.notice ?? "", /未知命令/);
