@@ -14,8 +14,11 @@ export interface HostRetryWait {
 
 export interface RetryClock {
   now(): number;
-  /** Arm `run` after `delayMs`. `delayMs` is zero when `notBefore` has already passed. */
-  schedule(delayMs: number, run: () => void): void;
+  /**
+   * Arm `run` after `delayMs`. `delayMs` is zero when `notBefore` has already passed.
+   * The returned function cancels that arm so a later schedule can drop it.
+   */
+  schedule(delayMs: number, run: () => void): () => void;
 }
 
 export interface PendingApprovalSource {
@@ -23,9 +26,33 @@ export interface PendingApprovalSource {
 }
 
 /**
- * Arm one automatic model retry.
+ * One retry timer per lane and operation.
+ * Two drives of the same operation each called `clock.schedule`, and both timeouts later called `drive`.
+ * The later schedule cancels the earlier arm. An approval block cancels and does not arm.
+ */
+const retryArms = new WeakMap<object, Map<string, () => void>>();
+
+function replaceRetryTimer(lane: object, operationId: string, cancel: (() => void) | undefined): void {
+  let arms = retryArms.get(lane);
+  const previous = arms?.get(operationId);
+  if (cancel) {
+    if (!arms) {
+      arms = new Map();
+      retryArms.set(lane, arms);
+    }
+    arms.set(operationId, cancel);
+  } else {
+    arms?.delete(operationId);
+  }
+  previous?.();
+}
+
+/**
+ * Arm one automatic model retry for this operation.
  * `pendingApprovals().items` is checked first. A non-empty list means tools are waiting for the user,
- * so no timer is armed. After that list is empty, the retry is armed from `notBefore` as usual.
+ * so no timer is armed and any timer already armed for this operation is cancelled.
+ * After that list is empty, the retry is armed from `notBefore`. A second schedule for the same
+ * operation cancels the previous timer before the new one can fire.
  * Returns whether a retry was armed.
  */
 export async function scheduleHostRetry(
@@ -35,8 +62,16 @@ export async function scheduleHostRetry(
   run: () => void,
 ): Promise<boolean> {
   const pending = await lane.pendingApprovals();
-  if (pending.items.length > 0) return false;
-  clock.schedule(Math.max(0, waiting.notBefore - clock.now()), run);
+  if (pending.items.length > 0) {
+    replaceRetryTimer(lane, waiting.operationId, undefined);
+    return false;
+  }
+  const cancel = clock.schedule(Math.max(0, waiting.notBefore - clock.now()), () => {
+    const arms = retryArms.get(lane);
+    if (arms?.get(waiting.operationId) === cancel) arms.delete(waiting.operationId);
+    run();
+  });
+  replaceRetryTimer(lane, waiting.operationId, cancel);
   return true;
 }
 
@@ -88,6 +123,7 @@ function liveRetryClock(): RetryClock {
     schedule(delayMs, run) {
       const timer = setTimeout(run, delayMs);
       timer.unref?.();
+      return () => clearTimeout(timer);
     },
   };
 }
