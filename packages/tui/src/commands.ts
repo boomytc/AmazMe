@@ -338,7 +338,8 @@ export async function executeSlash(command: SlashAction, actions: SlashActions):
       case "thinking": {
         // 可用档是当前模型的 thinkingLevels。协议五档只判断参数是不是合法档名。
         // medium 这种合法档名若不在列表里，要说当前模型不支持，不能跟拼错的名字一样说未知。两种都不写入。
-        const current = await actions.lane().configure();
+        // 已存档不被当前模型接受时，configure 连读也会拒绝。laneThinking 改从 catalog 取可用档，仍不改已存的档。
+        const current = await laneThinking(actions.lane());
         const available = current.thinkingLevels.join(" ");
         if (command.invalid) return notice(`未知思考级别。可用 ${available}`);
         if (!command.level) return notice(`思考 ${current.thinkingLevel}。可用 ${available}`);
@@ -555,14 +556,75 @@ function notice(text: string): { type: "notice"; text: string } {
  * 可用档来自这句，不在这里猜目录。没有这句就返回 null，别的错误照原样显示。
  */
 export function modelSwitchRefusal(error: unknown, target?: string): string | null {
-  const message = error instanceof Error ? error.message : String(error);
-  const match = /^thinking level \S+ is not supported; available: (.+)$/.exec(message);
-  const raw = match?.[1];
-  if (!raw) return null;
-  const levels = raw.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
-  if (levels.length === 0) return null;
+  const parsed = parseThinkingRefusal(error);
+  if (!parsed || parsed.levels.length === 0) return null;
   const where = target ? `无法切换到 ${target}。` : "无法切换模型。";
-  return `${where}先用 /thinking 切到 ${levels.join("/")}`;
+  return `${where}先用 /thinking 切到 ${parsed.levels.join("/")}`;
+}
+
+/**
+ * 打开画面或发送时，lane 里存着的档不在当前模型的 thinkingLevels 里。
+ * 不改已存的档，只告诉用户先用 /thinking 切到模型实际接受的档。
+ */
+export function persistedThinkingHint(level: string, levels: readonly string[]): string {
+  return `当前模型不支持 ${level}，先用 /thinking 切到 ${levels.join("/")}`;
+}
+
+/**
+ * 把宿主或模型的「不支持该思考档」报告收成和打开时同一句提示。
+ * 宿主句子自带可用档。模型句子只有档名，可用档用本 lane 已经读到的列表。
+ * 对不上就返回 null，别的错误照原样显示。
+ */
+export function thinkingRefusalNotice(source: unknown, knownLevels: readonly string[]): string | null {
+  const parsed = parseThinkingRefusal(source);
+  if (!parsed) return null;
+  const levels = parsed.levels.length > 0 ? parsed.levels : knownLevels;
+  if (levels.length === 0) return null;
+  return persistedThinkingHint(parsed.level, levels);
+}
+
+/**
+ * 读本 lane 的思考档。
+ * 旧会话可能存着当前模型已经不接受的档。宿主 configure 连读也会拒绝，
+ * 并且不会把已存的档改掉。可用档改从 catalog 拿，这样 /thinking 仍能写回一个受支持的档。
+ */
+export async function laneThinking(lane: RemoteLane): Promise<Awaited<ReturnType<RemoteLane["configure"]>>> {
+  try {
+    return await lane.configure();
+  } catch (error) {
+    const parsed = parseThinkingRefusal(error);
+    const level = parsed ? knownLevel(parsed.level) : null;
+    if (!parsed || !level) throw error;
+    const listed = await lane.catalog();
+    const fromError = parsed.levels.flatMap((item) => {
+      const known = knownLevel(item);
+      return known ? [known] : [];
+    });
+    return {
+      provider: "",
+      modelId: "",
+      thinkingLevel: level,
+      thinkingLevels: listed.thinkingLevels.length > 0 ? listed.thinkingLevels : fromError,
+    };
+  }
+}
+
+function parseThinkingRefusal(source: unknown): { level: string; levels: string[] } | null {
+  const message = (typeof source === "string" ? source : source instanceof Error ? source.message : String(source)).trim();
+  const stored = /^thinking level (\S+) is not supported; available: (.+)$/.exec(message);
+  if (stored?.[1] && stored[2]) {
+    const levels = stored[2].split(",").map((item) => item.trim()).filter((item) => item.length > 0);
+    if (levels.length === 0) return null;
+    return { level: stored[1], levels };
+  }
+  const reported = /^Thinking (?:level|effort) "([^"]+)" is not supported\b/.exec(message);
+  const level = reported?.[1];
+  if (!level) return null;
+  return { level, levels: [] };
+}
+
+function knownLevel(value: string): SlashThinking | null {
+  return (THINKING as readonly string[]).includes(value) ? value as SlashThinking : null;
 }
 
 function usage(text: string): SlashCommand {
