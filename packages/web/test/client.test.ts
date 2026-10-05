@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Script, createContext } from "node:vm";
@@ -23,7 +23,14 @@ test("the page shows choosers, a masked key, a live reply, and leaves the host r
   await saveApiKey("anthropic", "sk-stored", credentials);
   const host = await startCodingHost({ cwd, socket, provider: "faux", model: "faux-1", models });
   t.after(() => host.close());
-  const page = await startCodingBridge({ socket, port: 0, credentialsFile: credentials });
+  mkdirSync(join(cwd, ".amazme"), { recursive: true });
+  writeFileSync(join(cwd, ".amazme", "project.json"), `${JSON.stringify({
+    trusted: false,
+    settings: {},
+    names: {},
+    scopedModels: ["faux/faux-1"],
+  }, null, 2)}\n`);
+  const page = await startCodingBridge({ socket, port: 0, credentialsFile: credentials, cwd });
   t.after(() => page.close());
   const hello = await fetch(`${page.url}act`, {
     method: "POST",

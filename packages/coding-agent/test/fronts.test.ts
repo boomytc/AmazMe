@@ -81,8 +81,9 @@ test("/web and /gui publish clients on the current host and stop releases it", {
       body: JSON.stringify({ action: "submit", text: "from-slash-web" }),
     });
     assert.equal(saved.status, 200);
-    const view = await saved.json() as { entries: Array<{ text: string }> };
+    const view = await saved.json() as { entries: Array<{ text: string }>; models: Array<{ provider: string; modelId: string }> };
     assert.ok(view.entries.some((entry) => entry.text === "faux:from-slash-web"));
+    assert.deepEqual(view.models, []);
     const gui = await executeSlash({ type: "gui" }, slashActions({ openGui: () => fronts.openGui() }));
     assert.equal(gui.type, "notice");
     if (gui.type === "notice") assert.match(gui.text, /图形窗口已附着/);

@@ -51,6 +51,7 @@ export interface CodingHost {
   readonly serverId: string;
   readonly runtimeId: string;
   readonly lane: string;
+  readonly cwd: string;
   close(mode?: "drain" | "abort"): Promise<void>;
 }
 
@@ -144,6 +145,7 @@ export async function startCodingHost(options: CodingHostOptions): Promise<Codin
     serverId: HOST_SERVER_ID,
     runtimeId: HOST_RUNTIME_ID,
     lane: HOST_LANE,
+    cwd,
     close(mode: "drain" | "abort" = "drain") {
       const shutdown = jobs.close().then(() => server.close(mode));
       if (!closing) {

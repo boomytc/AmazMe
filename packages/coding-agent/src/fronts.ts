@@ -68,7 +68,7 @@ export function createCodingFronts(host: CodingHost): CodingFronts {
     async openWeb() {
       if (webUrl) return webUrl;
       const { startCodingBridge } = await import("./bridge.ts");
-      bridge = await startCodingBridge({ socket: host.socket, port: 0 });
+      bridge = await startCodingBridge({ socket: host.socket, port: 0, cwd: host.cwd });
       webUrl = bridge.url;
       reveal(webUrl);
       return webUrl;
