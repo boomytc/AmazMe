@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { sandboxArgv } from "../src/sandbox/backend.ts";
-import { bubblewrapArgv } from "../src/sandbox/bubblewrap.ts";
+import { bubblewrapArgv, networkSeccompFd } from "../src/sandbox/bubblewrap.ts";
 import { buildPolicy } from "../src/sandbox/policy.ts";
 import { seatbeltArgv } from "../src/sandbox/seatbelt.ts";
 import { createCodingTools } from "../src/tools.ts";
@@ -195,4 +195,30 @@ test("bubblewrap is selected only on linux and a missing runner does not spawn",
       return { isFile: () => false };
     },
   }), /SANDBOX_UNAVAILABLE: bwrap is required/);
+});
+
+test("each seccomp filter is a private file and close removes it", () => {
+  if (process.platform !== "linux") return;
+  const first = networkSeccompFd();
+  const second = networkSeccompFd();
+  try {
+    const firstPath = readlinkSync(`/proc/self/fd/${first.fd}`);
+    const secondPath = readlinkSync(`/proc/self/fd/${second.fd}`);
+    assert.notEqual(firstPath, secondPath);
+    assert.equal(basename(firstPath), "filter");
+    assert.equal(basename(dirname(firstPath)).startsWith("amazme-seccomp-"), true);
+    assert.equal(statSync(firstPath).mode & 0o777, 0o600);
+    assert.equal(statSync(dirname(firstPath)).mode & 0o777, 0o700);
+    first.close();
+    assert.equal(existsSync(dirname(firstPath)), false);
+    first.close();
+    assert.equal(existsSync(secondPath), true);
+  } finally {
+    first.close();
+    second.close();
+  }
+  const gone = networkSeccompFd();
+  const path = readlinkSync(`/proc/self/fd/${gone.fd}`);
+  gone.close();
+  assert.equal(existsSync(dirname(path)), false);
 });

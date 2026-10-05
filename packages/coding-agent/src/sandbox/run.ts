@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, closeSync, mkdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -52,13 +52,17 @@ export function runConfined(options: RunConfinedOptions): Promise<ConfinedResult
   if (!file) return Promise.resolve({ stdout: "", stderr: "missing command", code: 1, stdoutTruncated: false, stderrTruncated: false });
   return new Promise((resolveRun) => {
     const stdio = sandboxStdio(options.argv, options.input === undefined ? "ignore" : "pipe");
-    const child = spawn(file, args, {
-      cwd: options.cwd,
-      env: options.env,
-      detached: true,
-      stdio: stdio.stdio,
-    });
-    stdio.close();
+    let child;
+    try {
+      child = spawn(file, args, {
+        cwd: options.cwd,
+        env: options.env,
+        detached: true,
+        stdio: stdio.stdio,
+      });
+    } finally {
+      stdio.close();
+    }
     if (options.input !== undefined && child.stdin) {
       child.stdin.on("error", () => undefined);
       child.stdin.end(options.input);
@@ -124,20 +128,12 @@ function sandboxStdio(argv: readonly string[], stdin: "ignore" | "pipe"): { stdi
   const stdio: Array<"ignore" | "pipe" | number> = [stdin, "pipe", "pipe"];
   const index = argv.indexOf("--seccomp");
   const target = Number(argv[index + 1]);
-  let opened: number | undefined;
-  if (index >= 0 && Number.isInteger(target) && target >= 3) {
-    opened = networkSeccompFd();
-    stdio[target] = opened;
-  }
+  const opened = index >= 0 && Number.isInteger(target) && target >= 3 ? networkSeccompFd() : undefined;
+  if (opened) stdio[target] = opened.fd;
   return {
     stdio,
     close() {
-      if (opened === undefined) return;
-      try {
-        closeSync(opened);
-      } catch {
-        // spawnSync closes a stdio fd it was given.
-      }
+      opened?.close();
     },
   };
 }
@@ -165,14 +161,18 @@ function probe(policy: WorkspacePolicy): void {
   try {
     const argv = sandboxArgv(policy, [process.execPath, fileOpPath, "probe", canary, runtimeFile]);
     const stdio = sandboxStdio(argv, "ignore");
-    const result = spawnSync(argv[0] ?? "", argv.slice(1), {
-      cwd: policy.canonical,
-      env: policy.env,
-      encoding: "utf8",
-      timeout: 10_000,
-      stdio: stdio.stdio,
-    });
-    stdio.close();
+    let result;
+    try {
+      result = spawnSync(argv[0] ?? "", argv.slice(1), {
+        cwd: policy.canonical,
+        env: policy.env,
+        encoding: "utf8",
+        timeout: 10_000,
+        stdio: stdio.stdio,
+      });
+    } finally {
+      stdio.close();
+    }
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}${result.error?.message ?? ""}`;
     if (output.includes(token) || !String(result.stdout ?? "").includes("PROBE_OK") || result.status !== 0) {
       throw unavailable(`probe failed: ${output.slice(0, 500)}`);

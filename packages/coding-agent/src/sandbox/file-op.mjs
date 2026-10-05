@@ -18,8 +18,10 @@ function inside(root, target) {
 
 function denied(error) {
   const code = error && typeof error === "object" ? error.code : undefined;
-  // Seatbelt denies an existing path with EPERM. Bubblewrap does not mount it, so the read is ENOENT.
-  return code === "EPERM" || code === "EACCES" || code === "ENOENT";
+  // Seatbelt denies an existing path with EPERM. Only Linux treats ENOENT as a
+  // denial: bubblewrap does not mount the path, so the read misses it.
+  if (process.platform === "linux") return code === "EPERM" || code === "EACCES" || code === "ENOENT";
+  return code === "EPERM";
 }
 
 function probe() {

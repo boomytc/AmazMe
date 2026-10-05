@@ -942,7 +942,6 @@ export class Server {
 
   private errorFor(error: unknown, signal: AbortSignal): ErrorBody {
     if (error instanceof ServiceError && CODE.test(error.code) && error.code.length <= 64) return errorBody(error.code, error.message);
-    if (error instanceof Error && error.message.startsWith("SANDBOX_UNAVAILABLE:")) return errorBody("sandbox_unavailable", error.message);
     if (signal.aborted) return errorBody("cancelled", "the request was cancelled");
     this.report(error);
     return errorBody("internal", "internal server error");

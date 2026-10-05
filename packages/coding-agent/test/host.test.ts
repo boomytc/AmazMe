@@ -136,7 +136,7 @@ test("startup fails before a listener or a JSONL lock exists", async (t) => {
 test("SIGTERM drains the serve process and leaves the JSONL reusable", { timeout: 20_000 }, async (t) => {
   const cwd = directory(t, "amz-host-stop-");
   const socket = join(cwd, "serve.sock");
-  const child = spawn(process.execPath, ["--import", "tsx", cli, "serve", "--socket", socket, "--cwd", cwd, "--provider", "deepseek", "--model", "deepseek-flash"], {
+  const child = spawn(process.execPath, ["--import", "tsx", cli, "serve", "--socket", socket, "--cwd", cwd, "--provider", "faux", "--model", "faux-1"], {
     cwd: repo,
     env: {
       ...process.env,
