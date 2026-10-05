@@ -1,0 +1,45 @@
+{
+  "steps": [
+    { "type": "keys", "input": "今天天气怎么样\r" },
+    {
+      "type": "snapshot",
+      "snapshot": {
+        "version": 2,
+        "lane": "main",
+        "tipId": "assistant-1",
+        "phase": null,
+        "operationId": null,
+        "lastOperationId": "op-1",
+        "status": null,
+        "entries": [
+          {
+            "id": "user-1",
+            "parentId": null,
+            "seq": 1,
+            "timestamp": 1,
+            "payload": {
+              "type": "message",
+              "message": { "role": "user", "content": "今天天气怎么样", "timestamp": 1 }
+            }
+          },
+          {
+            "id": "assistant-1",
+            "parentId": "user-1",
+            "seq": 2,
+            "timestamp": 2,
+            "payload": {
+              "type": "message",
+              "message": {
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "晴，适宜出门。" }],
+                "timestamp": 2
+              }
+            }
+          }
+        ],
+        "pendingResponse": null,
+        "tools": []
+      }
+    }
+  ]
+}

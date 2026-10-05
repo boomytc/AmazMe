@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "type": "snapshot",
+      "snapshot": {
+        "version": 0,
+        "lane": "main",
+        "tipId": null,
+        "phase": null,
+        "operationId": null,
+        "lastOperationId": null,
+        "status": null,
+        "entries": [],
+        "pendingResponse": null,
+        "tools": []
+      }
+    }
+  ]
+}
