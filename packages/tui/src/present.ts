@@ -2,7 +2,7 @@ import type { ReadStream, WriteStream } from "node:tty";
 import { StringDecoder } from "node:string_decoder";
 import { Client } from "@amazme/client";
 import { createUnixTransport } from "@amazme/client/unix";
-import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
+import { emptyActivity, type EntryDto, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { RuntimeClient, type RemoteLane } from "@amazme/runtime-service/client";
 import { executeSlash, finishDrive, type SlashActions } from "./commands.ts";
 import { scopedModels } from "./project.ts";
@@ -67,7 +67,7 @@ export async function readHostFrame(attach: HostAttach, lane = attach.lane): Pro
     const remote = new RuntimeClient(client);
     await remote.attach(attach.runtimeId);
     const snapshot = await remote.lane(lane).snapshot();
-    return renderTui({ ...emptyTui(lane), ...windowFrom(snapshot, [lane], lane) });
+    return renderTui({ ...emptyTui(lane), ...windowFrom(snapshot, [lane], lane) }, 100, 32, Date.now());
   } finally {
     await client.dispose();
   }
@@ -129,7 +129,7 @@ export async function presentHost(
   paint = () => {
     const columns = stdout.columns > 0 ? stdout.columns : 80;
     const rows = stdout.rows > 0 ? stdout.rows : 24;
-    const next = renderTui(state, columns, rows);
+    const next = renderTui(state, columns, rows, Date.now());
     previousFrame = writeScreen((chunk) => stdout.write(chunk), previousFrame, next);
     const cursor = inputCursorSequence(next);
     if (cursor.length > 0) stdout.write(cursor);
@@ -629,6 +629,7 @@ export function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active
     busy: snapshot.operationId !== null,
     sessions,
     active,
+    activity: snapshot.activity,
   };
 }
 
@@ -681,5 +682,6 @@ function emptySnapshot(lane: string): LaneSnapshotDto {
     entries: [],
     pendingResponse: null,
     tools: [],
+    activity: emptyActivity(),
   };
 }

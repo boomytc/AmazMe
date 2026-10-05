@@ -3,7 +3,7 @@
     {
       "type": "snapshot",
       "snapshot": {
-        "version": 0,
+        "version": 1,
         "lane": "main",
         "tipId": null,
         "phase": null,
@@ -21,15 +21,19 @@
           "retryReason": null,
           "compacting": false,
           "usage": {
-            "lastTurn": null,
-            "total": { "input": 0, "output": 0, "cacheRead": null, "cacheWrite": null, "reasoning": null, "hitRate": null, "cost": null }
+            "lastTurn": {
+              "input": 2031,
+              "output": 10,
+              "cacheRead": 1920,
+              "cacheWrite": 0,
+              "reasoning": null,
+              "hitRate": 0.9454,
+              "cost": { "input": 0.1, "cacheRead": 0, "cacheWrite": 0, "output": 0.2, "total": 1.5 }
+            },
+            "total": { "input": 2031, "output": 10, "cacheRead": 1920, "cacheWrite": 0, "reasoning": null, "hitRate": 0.9454, "cost": { "input": 0.1, "cacheRead": 0, "cacheWrite": 0, "output": 0.2, "total": null } }
           }
         }
       }
-    },
-    {
-      "type": "keys",
-      "input": "?"
     }
   ]
 }

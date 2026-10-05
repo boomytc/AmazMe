@@ -438,7 +438,7 @@ test("detach publishes attachment null, then the response, then releases the lea
     })),
   });
   const handlers = server.accept(connection);
-  handlers.onData(encodeClientMessage({ type: "hello", version: 1 }));
+  handlers.onData(encodeClientMessage({ type: "hello", version: 2 }));
   await until(() => order.includes("hello"), "the hello");
   handlers.onData(encodeClientMessage({ type: "request", id: "a", route: { serverId: "srv" }, call: { op: "attach", runtimeId: "rt" } }));
   await until(() => order.includes("response:a") && attached !== undefined, "the attach response");

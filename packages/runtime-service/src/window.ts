@@ -49,6 +49,7 @@ function shrink(
     entries,
     omitted,
     skipped,
+    activity: snapshot.activity,
   });
   while (!windowFits(limits, build(), envelope)) {
     if (entries.length === 0) return undefined;
@@ -99,6 +100,7 @@ function entryFits(entry: EntryDto, snapshot: LaneSnapshotDto, limits: ProtocolL
     entries: [entry],
     omitted: 0,
     skipped: 0,
+    activity: snapshot.activity,
   };
   return windowFits(limits, alone, envelope);
 }

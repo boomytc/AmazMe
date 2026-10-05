@@ -40,7 +40,19 @@
         "pendingResponse": null,
         "tools": [
           { "toolCallId": "call-1", "name": "read", "status": "running" }
-        ]
+        ],
+        "activity": {
+          "branch": null,
+          "sessionStartedAt": null,
+          "turnStartedAt": null,
+          "notBefore": null,
+          "retryReason": null,
+          "compacting": false,
+          "usage": {
+            "lastTurn": null,
+            "total": { "input": 0, "output": 0, "cacheRead": null, "cacheWrite": null, "reasoning": null, "hitRate": null, "cost": null }
+          }
+        }
       }
     }
   ]

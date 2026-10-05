@@ -191,7 +191,7 @@ test("the handshake verifies the logical server ID and requests wait for it", as
 test("an unsupported version or a missing hello ends the connection with hello_error", async () => {
   const { server } = fixture();
   for (const [first, expected] of [
-    [encodeClientMessage({ type: "hello", version: 2 }), "unsupported_version"],
+    [encodeClientMessage({ type: "hello", version: 1 }), "unsupported_version"],
     [encodeClientMessage({ type: "request", id: "r1", route: { serverId: "srv" }, call: null }), "protocol_error"],
     [new Uint8Array([0, 0, 0, 1, 0xc1]), "protocol_error"],
   ] as const) {
@@ -350,7 +350,7 @@ test("attachment invalidation precedes subscription abort callbacks", async () =
 test("a duplicate active request ID closes the connection and aborts its calls", async () => {
   const { server, signals, gate } = fixture();
   const peer = rawPeer(server);
-  peer.send(encodeClientMessage({ type: "hello", version: 1 }));
+  peer.send(encodeClientMessage({ type: "hello", version: 2 }));
   const request = encodeClientMessage({ type: "request", id: "same", route: { serverId: "srv" }, call: { op: "gate", name: "never" } });
   peer.send(request);
   await until(() => signals.length === 1);
@@ -667,7 +667,7 @@ test("closing is published before abort and transport callbacks can reenter the 
     },
   });
   const handlers = server.accept({ send: async () => undefined, close: reenter });
-  handlers.onData(encodeClientMessage({ type: "hello", version: 1 }));
+  handlers.onData(encodeClientMessage({ type: "hello", version: 2 }));
   handlers.onData(encodeClientMessage({ type: "request", id: "waiting", route: { serverId: "srv" }, call: null }));
 
   const closing = server.close();
@@ -694,7 +694,7 @@ test("close prevents requests in the remaining chunk and immediately supplied by
     },
   });
   const handlers = server.accept({ send: async () => undefined, close: () => undefined });
-  handlers.onData(encodeClientMessage({ type: "hello", version: 1 }));
+  handlers.onData(encodeClientMessage({ type: "hello", version: 2 }));
   const frame = (id: string, call: string) => encodeClientMessage({ type: "request", id, route: { serverId: "srv" }, call });
   const first = frame("r1", "close");
   const second = frame("r2", "same chunk");
@@ -723,7 +723,7 @@ test("failure diagnostics cannot reenter a connection before it becomes terminal
     },
   });
   handlers = server.accept({ send: () => new Promise(() => undefined), close: () => undefined });
-  handlers.onData(encodeClientMessage({ type: "hello", version: 1 }));
+  handlers.onData(encodeClientMessage({ type: "hello", version: 2 }));
   handlers.onData(request("r1", "one"));
   handlers.onData(request("r2", "two"));
   await until(() => reports > 0, "the queue overflow diagnostic");

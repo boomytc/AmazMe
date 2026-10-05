@@ -194,7 +194,7 @@ test("the protocol over a Unix socket handles byte-by-byte and coalesced writes"
   const listener = await listenUnix(server, { path: join(dir, "s.sock") });
   t.after(async () => { await server.close(); await listener.close(); });
   const peer = await rawPeer(listener.path);
-  const hello = encodeClientMessage({ type: "hello", version: 1 });
+  const hello = encodeClientMessage({ type: "hello", version: 2 });
   const one = encodeClientMessage({ type: "request", id: "r1", route: { serverId: "srv" }, call: { n: 1 } });
   const two = encodeClientMessage({ type: "request", id: "r2", route: { serverId: "srv" }, call: "two" });
   peer.socket.write(Buffer.concat([hello, one, two]));
@@ -214,7 +214,7 @@ test("oversized frames, half frames at end of stream and resets close the connec
   const server = echoServer(errors);
   const listener = await listenUnix(server, { path: join(dir, "s.sock") });
   t.after(async () => { await server.close(); await listener.close(); });
-  const hello = encodeClientMessage({ type: "hello", version: 1 });
+  const hello = encodeClientMessage({ type: "hello", version: 2 });
 
   const oversized = await rawPeer(listener.path);
   oversized.socket.write(hello);
@@ -250,7 +250,7 @@ test("the client Unix transport checks the logical ID, reports a mid-frame end a
   const broken = createServer((socket) => {
     sockets.push(socket);
     socket.once("data", () => {
-      socket.write(encodeServerMessage({ type: "hello", version: 1, serverId: "srv" }));
+      socket.write(encodeServerMessage({ type: "hello", version: 2, serverId: "srv" }));
       setTimeout(() => socket.end(encodeServerMessage({ type: "attachment", attachment: null }).subarray(0, 5)), 20);
     });
   });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveLimits } from "@amazme/protocol";
-import type { EntryDto, LaneSnapshotDto } from "@amazme/runtime-service";
+import { emptyActivity, type EntryDto, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { fitHistory, fitWindow } from "../src/window.ts";
 
 function entry(id: string, text: string): EntryDto {
@@ -32,6 +32,7 @@ function snapshot(entries: EntryDto[], pending: string | null = null): LaneSnaps
       errorMessage: null,
     },
     tools: [],
+    activity: emptyActivity(),
   };
 }
 

@@ -5,7 +5,7 @@ import { value, type StorageView } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { encodeClientMessage, resolveLimits, type JsonValue } from "@amazme/protocol";
 import { ServiceError, type RuntimeCallContext, type SubscriptionSink } from "@amazme/server";
-import { ContractError, parseLaneSnapshot, type LaneSnapshotDto } from "@amazme/runtime-service";
+import { ContractError, emptyActivity, parseLaneSnapshot, type LaneSnapshotDto } from "@amazme/runtime-service";
 import { NotAttachedError, RuntimeClient } from "@amazme/runtime-service/client";
 import { finish, pendingText, textDelta, texts, tick, until, world } from "./support.ts";
 
@@ -121,7 +121,18 @@ test("a slow subscriber gets coalesced complete snapshots and still ends on the 
     await driving;
     const final = await local.snapshot();
     await until(() => subscription.current().version === final.version, "the final snapshot");
-    assert.deepEqual(subscription.current(), parseLaneSnapshot(JSON.parse(JSON.stringify(final))));
+    const seen = subscription.current();
+    const { activity, ...body } = seen;
+    const usage = await local.usage();
+    const status = await local.laneStatus();
+    assert.deepEqual(body, JSON.parse(JSON.stringify(final)));
+    assert.deepEqual(activity.usage.lastTurn, usage.lastTurn);
+    assert.equal(activity.usage.total.hitRate, usage.total.hitRate);
+    assert.deepEqual(activity.usage.total.cost, usage.total.cost);
+    assert.equal(activity.turnStartedAt, status.turnStartedAt);
+    assert.equal(activity.notBefore, status.notBefore);
+    assert.equal(activity.retryReason, status.retryReason);
+    assert.equal(activity.compacting, status.compacting);
     assert.ok(delivered < writes, `${delivered} updates for ${writes} writes`);
   } finally {
     await env.close();
@@ -612,6 +623,7 @@ test("an update that breaks the contract ends the subscription with invalid_upda
         return {
           version: 1, lane: "main", tipId: null, phase: null, operationId: null, lastOperationId: null, status: null,
           entries: [], pendingResponse: null, tools: [], omitted: 0, skipped: 0, pendingOmitted: false,
+          activity: emptyActivity(),
         };
       },
     });

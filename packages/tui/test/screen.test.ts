@@ -9,6 +9,7 @@ const scenarios: ReadonlyArray<{ name: string; effects: TuiEffect[] }> = [
   { name: "turn", effects: [{ type: "submit", text: "今天天气怎么样" }] },
   { name: "tool", effects: [{ type: "submit", text: "读一下 README" }] },
   { name: "overlay", effects: [] },
+  { name: "footer", effects: [] },
 ];
 
 function readJson(name: string): unknown {

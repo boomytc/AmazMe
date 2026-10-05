@@ -6,7 +6,7 @@
 
 ## 消息
 
-协议版本 `PROTOCOL_VERSION` 为 `1`，握手要求精确相等，没有协商或降级。
+协议版本 `PROTOCOL_VERSION` 为 `2`，握手要求精确相等，没有协商或降级。快照带必填的 `activity`，旧客户端应在握手时收到 `unsupported_version`。
 
 | 方向 | `type` | 内容 |
 | --- | --- | --- |

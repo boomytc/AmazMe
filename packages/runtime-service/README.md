@@ -54,7 +54,9 @@ lane 调用都显式带 `lane`：`accept`、`drive`、`snapshot`、`history`、`
 
 `snapshot()` 返回完整祖先链和当前 `tools`。这一帧放不下时，调用失败，码是 `snapshot_unavailable`，连接保持。`history(before, limit)` 按页读取更早的祖先：`before` 是客户端已有的最旧条目，`null` 表示从最新的一条往前。回复是 `{ entries, older, skipped }`。单条放不进一帧的条目计入 `skipped`，不把连接关掉。
 
-订阅返回的是有界窗口，不是整份祖先链。服务端先注册 Storage 监听，再读取初始快照，因此两者之间的写入不会遗漏。初始窗口作为订阅调用的结果返回；server 在传输接受这条响应之后才激活订阅并交付更新。客户端先安装初始窗口，再按序处理期间到达的更新。窗口里的 `entries` 是放得进这一帧的最新后缀。`omitted` 是更早、仍可用 `history` 读取的条数。`skipped` 是单条就放不进一帧的条数。`pendingOmitted` 表示未结算回复被留在帧外。状态、阶段和 `tools` 每次都在窗口里。
+订阅返回的是有界窗口，不是整份祖先链。服务端先注册 Storage 监听，再读取初始快照，因此两者之间的写入不会遗漏。初始窗口作为订阅调用的结果返回；server 在传输接受这条响应之后才激活订阅并交付更新。客户端先安装初始窗口，再按序处理期间到达的更新。窗口里的 `entries` 是放得进这一帧的最新后缀。`omitted` 是更早、仍可用 `history` 读取的条数。`skipped` 是单条就放不进一帧的条数。`pendingOmitted` 表示未结算回复被留在帧外。状态、阶段、`tools` 和 `activity` 每次都在窗口里。
+
+`activity` 不是 Durable 的私有操作状态，也不含 `pendingApprovals`。服务端直接读 `usage()` 和 `laneStatus()`，原样放进 `activity.usage`、`notBefore`、`retryReason`、`compacting`、`turnStartedAt`。`hitRate`、`cost` 和 `reasoning` 用 Durable 给出的值，不在这里重算。`reasoning` 是 `number | null`，不另加进 `output`。一轮的 `cost` 与 `usageCost` 的返回值同形；累计的 `cost` 每一项都可以是 null。审批等待不是重试，那时 `retryReason` 为 null。`branch` 和 `sessionStartedAt` 来自宿主的 `clock`。
 
 Storage 监听器只置 dirty 并安排一次固定窗口（`publishWindowMs`，默认 16 ms）。窗口结束时读取前先消费 dirty，然后读一次快照、裁成一帧、发送一次；读取或发送期间的新通知保留下来，结束后开启下一个窗口。这不是会被持续写入无限推迟的尾随 debounce：持续生成期间，更新按窗口加一次收发的节奏到达。同一条连接上的订阅轮流读取和发送，一次只有一份快照在途。每个订阅最多只有一份正在处理的快照加一个 dirty 标记；慢客户端只会降低更新频率。
 
