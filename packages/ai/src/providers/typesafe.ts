@@ -8,6 +8,9 @@ const model: ClassifierModel = {
   provider: "typesafe",
   api: "typesafe-system-one",
   baseUrl: "https://api.typesafe.ai/v1/",
+  contextWindow: 64_000,
+  // List price, USD per 1,000,000 tokens. Output and cache rates are free, not unknown.
+  cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
 /** Classifier provider. It has no chat models. */

@@ -30,6 +30,7 @@ function catalogModel(providerId: string, id: string): Model {
 
 test("deepseek-flash peak prices bill half a million tokens at the catalog rates", () => {
   const flash = deepseek("deepseek-flash");
+  assert.ok(flash.cost);
   assert.equal("cacheWrite" in flash.cost, false);
   assert.deepEqual(flash.cost, { input: 0.3, output: 1.2, cacheRead: 0.006 });
   // 5e5 / 1e6 × 0.3 = 0.15, × 0.006 = 0.003, write uses 0.3 → 0.15, output × 1.2 = 0.6.
@@ -57,6 +58,7 @@ test("deepseek-flash peak prices bill half a million tokens at the catalog rates
 
 test("deepseek-v4-pro peak prices bill half a million tokens at the catalog rates", () => {
   const pro = deepseek("deepseek-v4-pro");
+  assert.ok(pro.cost);
   assert.equal("cacheWrite" in pro.cost, false);
   assert.deepEqual(pro.cost, { input: 1.32, output: 3.96, cacheRead: 0.044 });
   // 5e5 / 1e6 × 1.32 = 0.66, × 0.044 = 0.022, write uses 1.32 → 0.66, output × 3.96 = 1.98.

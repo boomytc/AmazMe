@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModels, ModelsError } from "@amazme/ai";
+import { createModels, ModelsError, type ClassifierContext } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/builtin";
 import { cloudflareWorkersAIProvider } from "@amazme/ai/providers/cloudflare-workers-ai";
 import { openrouterProvider } from "@amazme/ai/providers/openrouter";
@@ -87,7 +87,7 @@ test("a classifier and an image model form a request, and missing credentials, a
     assert.equal(String(input), "https://api.typesafe.ai/v1/systemone");
     return Response.json({ answers: { approved: { type: "noul", noul: 0.95 } } });
   };
-  const questions = {
+  const questions: ClassifierContext = {
     state: { text: "ship it" },
     questions: { approved: { type: "bool", instructions: "approve?" } },
   };
