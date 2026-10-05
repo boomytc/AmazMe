@@ -238,6 +238,32 @@ test("a prompt after -- may start with a dash", { timeout: 20_000 }, async () =>
   }
 });
 
+test("a wrong key in $HOME prints the 401 instead of an internal error", { timeout: 20_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "amazme-401-home-"));
+  const preload = join(dir, "fetch-401.mjs");
+  writeFileSync(preload, [
+    "globalThis.fetch = async () => new Response(",
+    "JSON.stringify({ error: { message: \"invalid api key\", type: \"authentication_error\" } }),",
+    "{ status: 401, headers: { \"content-type\": \"application/json\" } },",
+    ");",
+  ].join("\n"));
+  writeFileSync(join(dir, "credentials.json"), JSON.stringify({ deepseek: { type: "api_key", key: "sk-wrong" } }));
+  try {
+    const result = await runCli(
+      ["--cwd", dir, "--provider", "deepseek", "--model", "deepseek-flash", "ping"],
+      dir,
+      undefined,
+      { HOME: dir },
+      preload,
+    );
+    assert.equal(result.code, 1, result.stderr);
+    assert.match(result.stderr, /401/);
+    assert.equal(result.stderr.includes("internal server error"), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a wrong key that gets 401 is printed on stderr and in json", { timeout: 20_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "amazme-401-"));
   const preload = join(dir, "fetch-401.mjs");

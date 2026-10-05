@@ -5,16 +5,21 @@ import { emptyActivity, type EntryDto, type LaneSnapshotDto } from "@amazme/runt
 import { fitHistory, fitWindow } from "../src/window.ts";
 
 function entry(id: string, text: string): EntryDto {
+  // Message content is opaque on the wire. The static type only names `role`,
+  // so the extra fields are built first and then assigned.
+  const message = { role: "user", content: text, timestamp: 1 };
   return {
     id,
     parentId: null,
     seq: 1,
     timestamp: 1,
-    payload: { type: "message", message: { role: "user", content: text, timestamp: 1 } },
+    payload: { type: "message", message },
   };
 }
 
 function snapshot(entries: EntryDto[], pending: string | null = null): LaneSnapshotDto {
+  // Content blocks are opaque past `type`. Build the block before assigning it.
+  const pendingContent = pending === null ? null : [{ type: "text", text: pending }];
   return {
     version: 3,
     lane: "main",
@@ -24,10 +29,10 @@ function snapshot(entries: EntryDto[], pending: string | null = null): LaneSnaps
     lastOperationId: null,
     status: pending === null ? null : "open",
     entries,
-    pendingResponse: pending === null ? null : {
+    pendingResponse: pendingContent === null ? null : {
       operationId: "op",
       responseEntryId: "reply",
-      content: [{ type: "text", text: pending }],
+      content: pendingContent,
       stopReason: null,
       errorMessage: null,
     },
