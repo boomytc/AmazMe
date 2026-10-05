@@ -59,9 +59,9 @@ function total(input: number, output: number): LaneUsage["total"] {
   return {
     input,
     output,
-    cacheRead: 0,
-    cacheWrite: 0,
-    hitRate: 0,
+    cacheRead: null,
+    cacheWrite: null,
+    hitRate: null,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
 }
@@ -195,7 +195,7 @@ test("cacheRead on the latest assistant is part of contextTokens and lastTurn", 
     assert.equal(usage.total.input, 3);
     assert.equal(usage.total.output, 4);
     assert.equal(usage.total.cacheRead, 10);
-    assert.equal(usage.total.cacheWrite, 0);
+    assert.equal(usage.total.cacheWrite, null);
     assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10 }));
     assert.equal(usage.total.cost?.cacheRead, null);
     assert.equal(usage.total.cost?.total, null);
@@ -237,10 +237,47 @@ test("a reported cache zero stays zero and still joins the summed cache", async 
     assert.equal(usage.total.input, 3);
     assert.equal(usage.total.output, 3);
     assert.equal(usage.total.cacheRead, 10);
-    assert.equal(usage.total.cacheWrite, 4);
-    assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10, cacheWrite: 4 }));
+    assert.equal(usage.total.cacheWrite, null);
+    assert.equal(usage.total.hitRate, cacheHitRate({ input: 3, cacheRead: 10 }));
     assert.equal(usage.total.cost?.cacheRead, null);
     assert.equal(usage.total.cost?.total, null);
+  } finally {
+    harness.close();
+  }
+});
+
+test("an unreported cacheRead nulls the cumulative cache and hit rate", async () => {
+  const { models } = scripted([
+    tokens(4, 1, { cacheRead: 500, cacheWrite: 0 }),
+    tokens(3, 1, { cacheWrite: 0 }),
+  ]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    assert.equal((await lane.prompt("two")).status, "completed");
+    const usage = await readUsage(lane);
+    assert.equal(usage.total.cacheRead, null);
+    assert.equal(usage.total.hitRate, null);
+    assert.equal(usage.total.cacheWrite, 0);
+  } finally {
+    harness.close();
+  }
+});
+
+test("a reported cacheRead of zero still joins the cumulative cache", async () => {
+  const { models } = scripted([
+    tokens(4, 1, { cacheRead: 500, cacheWrite: 0 }),
+    tokens(3, 1, { cacheRead: 0, cacheWrite: 0 }),
+  ]);
+  const harness = runtime(new MemoryStorage(), models);
+  try {
+    const lane = harness.lane();
+    assert.equal((await lane.prompt("one")).status, "completed");
+    assert.equal((await lane.prompt("two")).status, "completed");
+    const usage = await readUsage(lane);
+    assert.equal(usage.total.cacheRead, 500);
+    assert.equal(usage.total.hitRate, cacheHitRate({ input: 7, cacheRead: 500, cacheWrite: 0 }));
   } finally {
     harness.close();
   }
@@ -500,7 +537,7 @@ test("navigating back without a summary keeps abandoned rows in the cache sum", 
     assert.equal(usage.total.input, 28);
     assert.equal(usage.total.output, 8);
     assert.equal(usage.total.cacheRead, 140);
-    assert.equal(usage.total.cacheWrite, 0);
+    assert.equal(usage.total.cacheWrite, null);
     assert.equal(usage.total.hitRate, cacheHitRate({ input: 28, cacheRead: 140 }));
     assert.equal(usage.total.cost?.total, null);
     assert.equal((await lane.entries()).some((entry) => entry.payload.type === "compaction"), false);

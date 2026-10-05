@@ -162,7 +162,7 @@ export interface OperationAdmission {
 export type LanePhase = OperationState["phase"];
 
 /** Status half of `snapshot()` and the value `inspect()` returns. */
-export interface LaneSnapshotStatus {
+export interface LaneStatus {
   lane: string;
   tipId: string | null;
   phase: LanePhase | null;
@@ -178,7 +178,7 @@ export interface LaneSnapshotStatus {
  * parked calls are `pendingApprovals()`.
  * `turnStartedAt` is the persisted start of the whole open turn, or null when no turn is running.
  */
-export interface LaneStatus {
+export interface LaneRunStatus {
   notBefore: number | null;
   retryReason: string | null;
   compacting: boolean;
@@ -238,8 +238,9 @@ export interface LaneUsage {
    * A row has no lane. An open operation is attributed by the stored `OperationMeta.lane`; after `finish`, by
    * `OperationResult.lane`. There is no ancestor-chain fallback: one operation can write several rows, and a fork
    * can cut in the middle of that operation, so summing assistant messages would not match the rows.
-   * `cacheRead` and `cacheWrite` sum only when every counted row stores that field. One old row without it makes
-   * that total null. `hitRate` is `cacheHitRate` of those totals, and null when `cacheRead` is null.
+   * `cacheRead` and `cacheWrite` sum only when every counted row stores a number for that field.
+   * A missing field or a stored null means the count was not reported, and that total is null.
+   * A reported 0 stays 0. `hitRate` is `cacheHitRate` of those totals, and null when `cacheRead` is null.
    * `cost` prices each row with that row's model, or the lane's configured model when an old row has none.
    */
   total: UsageCounts & { hitRate: number | null; cost: LaneUsageCost | null };
@@ -291,7 +292,7 @@ export interface PendingApprovals {
 }
 
 /** One consistent read of a lane. Every field is a detached copy taken at `version`. */
-export interface LaneSnapshot extends LaneSnapshotStatus {
+export interface LaneSnapshot extends LaneStatus {
   version: number;
   entries: Entry[];
   pendingResponse: PendingResponse | null;
@@ -871,7 +872,7 @@ export class AgentLane {
     return result;
   }
 
-  inspect(): Promise<LaneSnapshotStatus> {
+  inspect(): Promise<LaneStatus> {
     return admitted(this.harness).read((view) => this.status(view).status);
   }
 
@@ -924,7 +925,7 @@ export class AgentLane {
    * Read-only retry deadline, compaction flag, and turn start. One storage read.
    * Does not initialize the lane, drive, or recover. Plain data: clone and JSON keep the same value.
    */
-  laneStatus(): Promise<LaneStatus> {
+  laneStatus(): Promise<LaneRunStatus> {
     return admitted(this.harness).read((view) => {
       const { state } = this.status(view);
       const retry = state?.phase === "retry_wait" ? state : undefined;
@@ -1024,7 +1025,7 @@ export class AgentLane {
     });
   }
 
-  private status(view: StorageView): { status: LaneSnapshotStatus; state: OperationState | undefined } {
+  private status(view: StorageView): { status: LaneStatus; state: OperationState | undefined } {
     const record = view.get<LaneRecord>(laneAddress(this.name));
     const operationId = record?.currentOperationId ?? null;
     const state = operationId ? view.get<OperationState>(stateAddress(operationId)) : undefined;
@@ -2635,14 +2636,14 @@ function attributedTotal(view: StorageView, lane: string, options: HarnessOption
   };
 }
 
-/** Sum a cache field. Null when there are no rows, or any row omitted the field. A stored null counts as 0. */
+/** Sum a cache field. Null when there are no rows, or any row left the field out or stored null. A reported 0 stays 0. */
 function sumStoredCount(rows: readonly UsageRow[], key: "cacheRead" | "cacheWrite"): number | null {
   if (rows.length === 0) return null;
   let sum = 0;
   for (const row of rows) {
     const value = row[key];
-    if (value === undefined) return null;
-    if (typeof value === "number") sum += value;
+    if (typeof value !== "number") return null;
+    sum += value;
   }
   return sum;
 }
