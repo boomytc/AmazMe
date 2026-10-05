@@ -140,13 +140,25 @@ function sandboxStdio(argv: readonly string[], stdin: "ignore" | "pipe"): { stdi
 
 function outsideProbeFile(canonical: string): string {
   const name = `.amazme-probe-${randomBytes(8).toString("hex")}`;
+  // `$HOME` as the workspace puts `~/.amazme/probes` inside it. `/private/tmp` is next,
+  // but Linux has no `/private`, and creating it needs write access to `/`. That mkdir
+  // is a raw filesystem error, not a ServiceError, so the host reports
+  // "internal server error" and the model failure (for example 401) never surfaces.
+  // Skip a directory that cannot be created and try the next one, including `os.tmpdir()`.
   const directories = [join(homedir(), ".amazme", "probes"), join("/private/tmp", "amazme-probes"), join(tmpdir(), "amazme-probes")];
+  let failure = "";
   for (const directory of directories) {
     const file = join(directory, name);
     const rel = relative(canonical, resolve(file));
-    if (rel.startsWith("..") || isAbsolute(rel)) return file;
+    if (!(rel.startsWith("..") || isAbsolute(rel))) continue;
+    try {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      return file;
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
   }
-  throw unavailable("no probe path outside the workspace");
+  throw unavailable(failure.length > 0 ? `no probe path outside the workspace: ${failure}` : "no probe path outside the workspace");
 }
 
 function probe(policy: WorkspacePolicy): void {
