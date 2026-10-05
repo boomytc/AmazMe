@@ -25,9 +25,57 @@ function recordingClock(now: number): RetryClock & { delays: number[] } {
     now: () => now,
     schedule(delayMs) {
       delays.push(delayMs);
+      return () => undefined;
     },
   };
 }
+
+function cancellableClock(): RetryClock & { live: () => number; fire: () => void } {
+  const runs = new Set<() => void>();
+  return {
+    live: () => runs.size,
+    now: () => 0,
+    schedule(_delayMs, run) {
+      runs.add(run);
+      return () => {
+        runs.delete(run);
+      };
+    },
+    fire() {
+      for (const run of [...runs]) run();
+    },
+  };
+}
+
+test("scheduling the same operation twice keeps the later timer", async () => {
+  const lane = { pendingApprovals: () => Promise.resolve({ items: [] as unknown[] }) };
+  const clock = cancellableClock();
+  const fired: string[] = [];
+  const first: HostRetryWait = { operationId: "op", reason: "retry", notBefore: 1_000 };
+  const second: HostRetryWait = { operationId: "op", reason: "retry", notBefore: 2_000 };
+  assert.equal(await scheduleHostRetry(lane, first, clock, () => fired.push("first")), true);
+  assert.equal(await scheduleHostRetry(lane, second, clock, () => fired.push("second")), true);
+  assert.equal(clock.live(), 1);
+  const other: HostRetryWait = { operationId: "other", reason: "retry", notBefore: 1_000 };
+  assert.equal(await scheduleHostRetry(lane, other, clock, () => fired.push("other")), true);
+  const elsewhere = { pendingApprovals: () => Promise.resolve({ items: [] as unknown[] }) };
+  assert.equal(await scheduleHostRetry(elsewhere, first, clock, () => fired.push("elsewhere")), true);
+  assert.equal(clock.live(), 3);
+  clock.fire();
+  assert.deepEqual(fired, ["second", "other", "elsewhere"]);
+});
+
+test("an approval block cancels the timer already armed for that operation", async () => {
+  const items: unknown[] = [];
+  const lane = { pendingApprovals: () => Promise.resolve({ items }) };
+  const clock = cancellableClock();
+  const waiting: HostRetryWait = { operationId: "op", reason: "retry", notBefore: 1_000 };
+  assert.equal(await scheduleHostRetry(lane, waiting, clock, () => undefined), true);
+  assert.equal(clock.live(), 1);
+  items.push({ toolCallId: "call-1" });
+  assert.equal(await scheduleHostRetry(lane, waiting, clock, () => undefined), false);
+  assert.equal(clock.live(), 0);
+});
 
 test("pending approvals block a due retry, and clearing them arms it again", async () => {
   const items: unknown[] = [{ toolCallId: "call-1" }];
