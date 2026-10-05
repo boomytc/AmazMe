@@ -8,6 +8,7 @@ const scenarios: ReadonlyArray<{ name: string; effects: TuiEffect[] }> = [
   { name: "empty", effects: [] },
   { name: "turn", effects: [{ type: "submit", text: "今天天气怎么样" }] },
   { name: "tool", effects: [{ type: "submit", text: "读一下 README" }] },
+  { name: "tail", effects: [] },
   { name: "overlay", effects: [] },
   { name: "footer", effects: [] },
 ];

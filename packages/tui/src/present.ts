@@ -627,7 +627,11 @@ export function windowFrom(snapshot: LaneSnapshotDto, sessions: string[], active
   return {
     entries: [...earlier.filter((entry) => !seen.has(entry.id)), ...snapshot.entries.map(entryView)],
     pendingText: pendingText(snapshot),
-    tools: snapshot.tools.map((tool) => ({ name: tool.name, status: tool.status })),
+    tools: snapshot.tools.map((tool) => ({
+      name: tool.name,
+      status: tool.status,
+      ...(tool.outputTail !== undefined ? { outputTail: tool.outputTail } : {}),
+    })),
     busy: snapshot.operationId !== null,
     sessions,
     active,

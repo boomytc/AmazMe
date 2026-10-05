@@ -58,6 +58,21 @@ test("bash removes its abort listener after the command ends and when abort kill
   assert.equal(getEventListeners(running.signal, "abort").length, 0);
 });
 
+test("bash checkpoints stdout so a restart can keep the tail", async () => {
+  const bash = createBashTool(tmpdir());
+  const updates: Array<{ text: string; checkpoint?: boolean }> = [];
+  const result = await bash.execute({
+    command: `${process.execPath} -e "process.stdout.write('one\\ntwo\\nthree\\n')"`,
+  }, {
+    signal: new AbortController().signal,
+    onUpdate: (text, options) => updates.push({ text, checkpoint: options?.checkpoint }),
+  });
+  assert.equal(result.isError, false);
+  assert.ok(updates.length > 0);
+  assert.equal(updates.every((update) => update.checkpoint === true), true);
+  assert.equal(updates.at(-1)?.text, "one\ntwo\nthree\n");
+});
+
 test("bash keeps only the tail of large output", async () => {
   const bash = createBashTool(tmpdir());
   const result = await bash.execute({
