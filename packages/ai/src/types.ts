@@ -86,10 +86,32 @@ export type ToolResultContent = TextContent | ImageContent;
 export type AssistantContent = TextContent | ThinkingContent | ToolCall;
 
 export interface Usage {
+  /**
+   * Prompt tokens that missed the provider cache.
+   * `input + cacheRead + cacheWrite` is the full prompt length for this turn.
+   * An omitted cache count is not a zero: it is left out of that sum, and it is not subtracted from `input`.
+   */
   input: number;
   output: number;
   totalTokens: number;
+  /**
+   * USD for this turn. `input` is only the cache-miss charge.
+   * Cache tokens are charged only when the model has that cache rate.
+   * `total` is the miss charge, the output charge, and those known cache charges.
+   */
   cost: { input: number; output: number; total: number };
+  /**
+   * Prompt tokens served from the provider cache.
+   * Omitted when the response did not report a cache read. A reported 0 stays 0.
+   * These tokens are not part of `input` and are not billed at the input rate.
+   */
+  cacheRead?: number;
+  /**
+   * Prompt tokens written into the provider cache.
+   * Omitted when the response did not report a cache write. A reported 0 stays 0.
+   * These tokens are not part of `input` and are not billed at the input rate.
+   */
+  cacheWrite?: number;
 }
 
 export interface SystemMessage {
@@ -204,8 +226,11 @@ export interface Model<TApi extends Api = Api> {
   input: Array<"text" | "image">;
   contextWindow: number;
   maxTokens: number;
-  /** USD per 1,000,000 tokens. Absent knowledge stays unset; rates are not invented. */
-  cost: { input: number; output: number };
+  /**
+   * USD per 1,000,000 tokens. Absent knowledge stays unset; rates are not invented.
+   * `input` prices cache misses. `cacheRead` and `cacheWrite` price those counts when the rate is known.
+   */
+  cost: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   /** Per-model endpoint. A request `baseUrl` still overrides it, then the provider default. */
   baseUrl?: string;
   /**

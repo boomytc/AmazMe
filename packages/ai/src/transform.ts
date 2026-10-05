@@ -1,4 +1,4 @@
-import { isCompletionsThinkingField, type AssistantContent, type AssistantMessage, type Message, type Model, type TextContent, type ThinkingContent, type ToolCall, type ToolResultMessage, type UserContent } from "./types.ts";
+import { isCompletionsThinkingField, type AssistantContent, type AssistantMessage, type Message, type Model, type TextContent, type ThinkingContent, type ToolCall, type ToolResultMessage, type Usage, type UserContent } from "./types.ts";
 
 const USER_IMAGE = "(image omitted: model does not support images)";
 const TOOL_IMAGE = "(tool image omitted: model does not support images)";
@@ -169,8 +169,20 @@ export function normalizeContext(context: { systemPrompt?: string; messages: Mes
   };
 }
 
-export function emptyUsage(): import("./types.ts").Usage {
+export function emptyUsage(): Usage {
   return { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } };
+}
+
+/** Copy usage without inventing cache counts the provider did not report. */
+export function cloneUsage(usage: Usage): Usage {
+  return {
+    input: usage.input,
+    output: usage.output,
+    totalTokens: usage.totalTokens,
+    cost: { input: usage.cost.input, output: usage.cost.output, total: usage.cost.total },
+    ...(usage.cacheRead !== undefined ? { cacheRead: usage.cacheRead } : {}),
+    ...(usage.cacheWrite !== undefined ? { cacheWrite: usage.cacheWrite } : {}),
+  };
 }
 
 export function estimateTokens(textValue: string): number {

@@ -150,7 +150,14 @@ function applyBedrockEvent(
   const metadata = isRecord(decoded.metadata) ? decoded.metadata : undefined;
   const usage = metadata && isRecord(metadata.usage) ? metadata.usage : isRecord(decoded.usage) ? decoded.usage : undefined;
   if (usage) {
-    const reported = usageFromCounts(model, numberOf(usage.inputTokens), numberOf(usage.outputTokens), numberOf(usage.totalTokens));
+    // inputTokens is already the cache miss. The cache counts sit beside it.
+    const reported = usageFromCounts(
+      model,
+      numberOf(usage.inputTokens),
+      numberOf(usage.outputTokens),
+      numberOf(usage.totalTokens),
+      { cacheRead: numberOf(usage.cacheReadInputTokens), cacheWrite: numberOf(usage.cacheWriteInputTokens) },
+    );
     if (reported) acc.usage(reported);
   }
   const start = isRecord(decoded.contentBlockStart) ? decoded.contentBlockStart : undefined;
