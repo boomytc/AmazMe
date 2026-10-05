@@ -74,7 +74,7 @@ test("a one-shot prompt uses deepseek-flash and does not open the alt screen", {
   const raw = readFileSync(join(dir, ".amazme", "runtime", "workspace.jsonl"), "utf8");
   assert.match(raw, /一句话/);
   assert.match(raw, /deepseek-flash/);
-  assert.match(raw, /apiKey/);
+  assert.match(raw, /Provider is not configured: deepseek/);
   assert.equal(raw.includes("faux:"), false);
 });
 
@@ -141,9 +141,9 @@ test("runPrint prints assistant text from the model the caller supplies", { time
 function captureStdout(run: () => Promise<void>): Promise<string> {
   const chunks: string[] = [];
   const original = process.stdout.write;
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
-    return true;
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    if (typeof chunk === "string") chunks.push(chunk);
+    return original.call(process.stdout, chunk, encoding as BufferEncoding, callback);
   }) as typeof process.stdout.write;
   return run().finally(() => {
     process.stdout.write = original;
