@@ -23,6 +23,11 @@ export interface RetryClock {
 
 export interface PendingApprovalSource {
   pendingApprovals(): Promise<{ items: readonly unknown[] }>;
+  /**
+   * Settled result of this operation, or `{ ok: true, value: null }` while it is still open.
+   * Absent on test doubles that only arm timers. A host lane has it.
+   */
+  result?(operationId: string): Promise<{ ok: true; value: unknown } | { ok: false }>;
 }
 
 /**
@@ -53,6 +58,10 @@ function replaceRetryTimer(lane: object, operationId: string, cancel: (() => voi
  * so no timer is armed and any timer already armed for this operation is cancelled.
  * After that list is empty, the retry is armed from `notBefore`. A second schedule for the same
  * operation cancels the previous timer before the new one can fire.
+ * `cancel` is declared before `schedule` returns. A clock that runs the callback immediately
+ * would otherwise read that binding before it was initialized.
+ * On fire, a settled operation is left alone: `run` (the host `drive`) is not called.
+ * `result` is called on the lane. Copying the method off the object drops `this`, and `AgentLane` then throws.
  * Returns whether a retry was armed.
  */
 export async function scheduleHostRetry(
@@ -66,10 +75,22 @@ export async function scheduleHostRetry(
     replaceRetryTimer(lane, waiting.operationId, undefined);
     return false;
   }
-  const cancel = clock.schedule(Math.max(0, waiting.notBefore - clock.now()), () => {
+  let cancel: (() => void) | undefined;
+  cancel = clock.schedule(Math.max(0, waiting.notBefore - clock.now()), () => {
+    const armed = cancel;
     const arms = retryArms.get(lane);
-    if (arms?.get(waiting.operationId) === cancel) arms.delete(waiting.operationId);
-    run();
+    if (armed !== undefined && arms?.get(waiting.operationId) === armed) arms.delete(waiting.operationId);
+    const settled = lane.result?.(waiting.operationId);
+    if (settled === undefined) {
+      run();
+      return;
+    }
+    void settled.then((found) => {
+      if (found.ok && found.value !== null) return;
+      run();
+    }, () => {
+      run();
+    });
   });
   replaceRetryTimer(lane, waiting.operationId, cancel);
   return true;

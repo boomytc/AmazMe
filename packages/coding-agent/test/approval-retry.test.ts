@@ -65,6 +65,35 @@ test("scheduling the same operation twice keeps the later timer", async () => {
   assert.deepEqual(fired, ["second", "other", "elsewhere"]);
 });
 
+test("firing after the operation has settled does not drive", async () => {
+  let drives = 0;
+  const lane = {
+    pendingApprovals: () => Promise.resolve({ items: [] as unknown[] }),
+    result: () => Promise.resolve({ ok: true as const, value: { status: "completed" } }),
+  };
+  const clock = cancellableClock();
+  const waiting: HostRetryWait = { operationId: "op", reason: "retry", notBefore: 1_000 };
+  assert.equal(await scheduleHostRetry(lane, waiting, clock, () => { drives += 1; }), true);
+  clock.fire();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(drives, 0);
+});
+
+test("a clock that runs the callback inside schedule does not throw", async () => {
+  const lane = { pendingApprovals: () => Promise.resolve({ items: [] as unknown[] }) };
+  let ran = false;
+  const clock: RetryClock = {
+    now: () => 0,
+    schedule(_delayMs, run) {
+      run();
+      return () => undefined;
+    },
+  };
+  const waiting: HostRetryWait = { operationId: "op", reason: "retry", notBefore: 0 };
+  await assert.doesNotReject(scheduleHostRetry(lane, waiting, clock, () => { ran = true; }));
+  assert.equal(ran, true);
+});
+
 test("an approval block cancels the timer already armed for that operation", async () => {
   const items: unknown[] = [];
   const lane = { pendingApprovals: () => Promise.resolve({ items }) };
@@ -92,6 +121,48 @@ test("pending approvals block a due retry, and clearing them arms it again", asy
   const resumed = await scheduleHostRetry(lane, waiting, clock, () => undefined);
   assert.equal(resumed, true);
   assert.deepEqual(clock.delays, [0]);
+});
+
+test("a fired timer does not drive a settled operation on a real lane", async () => {
+  const provider = fauxProvider({
+    respond: () => fauxAssistant("later", { stopReason: "error", retryable: true, errorMessage: "later" }),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const harness = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+  });
+  const clock = cancellableClock();
+  installHostRetries(harness, clock);
+  const lane = harness.lane();
+  try {
+    const admitted = await lane.accept({ kind: "prompt", text: "go" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const waiting = await lane.drive(admitted.value.operationId);
+    assert.equal(waiting.ok && waiting.value.kind === "waiting" ? waiting.value.reason : "", "retry");
+    assert.equal(clock.live(), 1);
+    assert.equal(provider.state.callCount, 1);
+    const aborted = await lane.requestAbort(admitted.value.operationId);
+    assert.equal(aborted.ok, true);
+    const settled = await lane.drive(admitted.value.operationId);
+    assert.equal(settled.ok && settled.value.kind, "settled");
+    const found = await lane.result(admitted.value.operationId);
+    assert.equal(found.ok && found.value !== null, true);
+    let drivesAfter = 0;
+    const driveNow = lane.drive.bind(lane);
+    lane.drive = (operationId, options) => {
+      drivesAfter += 1;
+      return driveNow(operationId, options);
+    };
+    clock.fire();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(drivesAfter, 0);
+    assert.equal(provider.state.callCount, 1);
+  } finally {
+    harness.close();
+  }
 });
 
 test("a parked tool does not arm a host retry, and the next model retry does", async () => {

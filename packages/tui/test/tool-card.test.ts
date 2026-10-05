@@ -152,12 +152,37 @@ test("waiting for approval is a card status and does not steal y", () => {
   assert.equal(allow.state.input, "");
 });
 
+test("a folded failure card shows the first error line and truncates a long one", () => {
+  const narrow = playScreen(readScript("tool-fail-long")).screen;
+  assert.match(narrow, /read {2}失败/);
+  assert.match(narrow, /path=missing.txt/);
+  assert.equal(narrow.includes("-END"), false);
+  const script = readScript("tool-fail-long");
+  const step = script.steps[0];
+  if (!step || step.type !== "snapshot") throw new Error("missing snapshot");
+  const snapshot = parseLaneSnapshot(step.snapshot);
+  const state = reduceTui(emptyTui(), { type: "window", window: windowFrom(snapshot, ["main"], "main") }).state;
+  const wide = plain(state, 120, 24);
+  assert.match(wide, /失败/);
+  assert.match(wide, /cannot-open-/);
+  assert.match(wide, /…/);
+  assert.equal(wide.includes("-END"), false);
+});
+
+test("a denial with a reason is labeled 已拒绝 and not 失败", () => {
+  const screen = playScreen(readScript("tool-deny-reason")).screen;
+  assert.match(screen, /已拒绝：不要删密钥/);
+  assert.equal(screen.includes("失败"), false);
+  assert.match(screen, /command=rm secret/);
+  assert.equal(screen.includes("Tool call denied"), false);
+});
+
 test("failure and denial cards keep their status words", () => {
   const failed = playScreen(readScript("tool-fail")).screen;
   const denied = playScreen(readScript("tool-deny")).screen;
   assert.match(failed, /read {2}失败 {2}2s/);
   assert.match(failed, /path=missing.txt/);
-  assert.equal(failed.includes("找不到文件"), false);
+  assert.match(failed, /找不到文件/);
   assert.match(denied, /bash {2}被拒 {2}200ms/);
   assert.match(denied, /command=rm secret/);
   assert.equal(denied.includes("Tool call denied"), false);
