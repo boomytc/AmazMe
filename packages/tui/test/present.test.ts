@@ -12,6 +12,44 @@ import { emptyTui, presentHost, reduceTui, type TuiWindow } from "@amazme/tui";
 
 const LANE = "main";
 
+test("present parks the cursor on one line, many lines, and CJK", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "amz-tui-cursor-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const host = await fakeHost(join(dir, "host.sock"));
+  t.after(() => host.close());
+  const tty = fakeTTY();
+  tty.columns = 80;
+  tty.rows = 24;
+  const screen = presentHost(
+    { socket: host.path, serverId: "tui-test", runtimeId: "main", lane: LANE },
+    tty.stdin,
+    tty.stdout,
+  );
+  try {
+    await until(() => tty.since(0).includes("空闲"), "the first paint");
+    tty.push("hi");
+    assert.equal(tty.chunks.at(-1), "\x1b[23;6H");
+    tty.push("\u0003");
+    tty.push("ab\x1b\rcd");
+    tty.push("\x1b[A");
+    assert.equal(tty.chunks.at(-1), "\x1b[22;6H");
+    tty.push("\u0003");
+    tty.push("中文");
+    assert.equal(tty.chunks.at(-1), "\x1b[23;8H");
+    tty.push("\u0003");
+    tty.push("\u0004");
+    await screen;
+  } catch (error) {
+    tty.push("\u0004");
+    await Promise.race([
+      screen.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\npaint=${tty.chunks.at(-1)}`);
+  }
+});
+
 test("typing fills the composer and enter submits", () => {
   let state = emptyTui();
   state = reduceTui(state, { type: "key", key: { type: "char", value: "h" } }).state;
@@ -62,6 +100,7 @@ test("the attached screen submits, follows up while busy, aborts, and redraws on
     await until(() => tty.since(beforeBusy).includes("later"), "the follow-up draft");
     tty.push("\r");
     await until(() => host.calls.some((call) => call.method === "followUp" && call.text === "later"), "followUp while an operation is open");
+    await until(() => tty.since(beforeBusy).includes("排队 1"), "queued follow-up count");
     assert.equal(host.calls.filter((call) => call.method === "accept").length, 1);
     tty.push("\u0003");
     await until(() => host.calls.some((call) => call.method === "requestAbort" && call.operationId === "op-live"), "requestAbort");
