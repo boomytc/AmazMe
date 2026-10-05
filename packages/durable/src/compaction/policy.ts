@@ -34,10 +34,10 @@ export function keepRecentBudget(contextWindow: number, inputThreshold: number):
 
 /**
  * Output cap for the one summary request.
- * It follows the output reserve, not the caller's generation `maxTokens`, and still cannot exceed the model cap.
+ * It is 80% of the output reserve, floored. A positive model output cap, when present, keeps the smaller value.
  */
 export function summaryOutputLimit(modelMaxTokens: number, contextWindow: number): number {
-  const scaled = Math.max(32, Math.floor(outputReserve(contextWindow) / 2));
+  const scaled = Math.floor(0.8 * outputReserve(contextWindow));
   const modelCap = Number.isSafeInteger(modelMaxTokens) && modelMaxTokens > 0 ? modelMaxTokens : scaled;
   return Math.max(1, Math.min(modelCap, scaled));
 }

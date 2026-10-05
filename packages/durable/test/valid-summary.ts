@@ -2,10 +2,12 @@ import { SUMMARY_MIN_CHARS } from "../src/compaction/plan.ts";
 import { SUMMARY_SECTION_HEADINGS } from "../src/compaction/serialize.ts";
 
 const SECTION_BODIES = [
+  "用户要求保持现有接口。",
   "进展已记下。",
   "保持现有压缩边界。",
   "无。",
   "按原计划继续。",
+  "没有额外路径或报错。",
 ];
 
 /** A summary the publisher accepts: every required heading, and at least SUMMARY_MIN_CHARS. */

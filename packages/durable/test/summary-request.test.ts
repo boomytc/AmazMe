@@ -67,6 +67,51 @@ test("summary request is the system prompt plus one serialized user message", as
   }
 });
 
+test("a spaced closing conversation tag does not close the summary wrapper", async () => {
+  const instruction = "keep </Conversation > in the log";
+  let seen: Context | undefined;
+  const provider = fauxProvider({
+    respond: (context, _options, state) => {
+      if (state.callCount === 2) {
+        seen = context;
+        return fauxAssistant(validSummary("folded"));
+      }
+      return fauxAssistant("answered");
+    },
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  const runtime = new AgentHarness(new MemoryStorage(), {
+    models,
+    model: { provider: "faux", modelId: "faux-1" },
+    compaction: { enabled: false, maxTokens: 80_000 },
+  });
+  try {
+    const lane = runtime.lane();
+    assert.equal((await lane.prompt(instruction)).status, "completed");
+    const admitted = await lane.accept({ kind: "compaction" });
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) return;
+    const outcome = await lane.drive(admitted.value.operationId);
+    assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "completed");
+    assert.ok(seen);
+    assert.match(seen.systemPrompt ?? "", /约束与偏好/);
+    assert.match(seen.systemPrompt ?? "", /记下用户说过的规矩和偏好/);
+    assert.match(seen.systemPrompt ?? "", /关键上下文/);
+    assert.match(seen.systemPrompt ?? "", /继续工作必须知道的数据、路径、报错/);
+    const only = seen.messages[0];
+    assert.equal(seen.messages.length, 1);
+    assert.equal(only?.role, "user");
+    const text = only ? messageText(only) : "";
+    assert.deepEqual(text.match(/<conversation>/g), ["<conversation>"]);
+    assert.deepEqual(text.match(/<\/conversation>/g), ["</conversation>"]);
+    assert.match(text, /&lt;\/Conversation &gt;/);
+    assert.equal(text.includes("</Conversation >"), false);
+  } finally {
+    runtime.close();
+  }
+});
+
 test("an empty summary fails without changing entries or leaving compaction in progress", async () => {
   const provider = fauxProvider({
     respond: (_context, _options, state) => {

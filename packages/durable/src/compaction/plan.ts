@@ -119,9 +119,6 @@ export function continuationContext(
 /** A stopped reply shorter than this is not a summary. */
 export const SUMMARY_MIN_CHARS = 80;
 
-const CONVERSATION_OPEN = "<conversation>";
-const CONVERSATION_CLOSE = "</conversation>";
-
 /** A summary can be published only when the model stopped with sectioned text and no tool call. */
 export function acceptedSummary(message: AssistantMessage): string | undefined {
   if (message.stopReason !== "stop") return undefined;
@@ -221,12 +218,10 @@ function shrinkToFit(
 }
 
 function summaryContext(transcript: string): Context {
-  const body = transcript
-    .replaceAll(CONVERSATION_CLOSE, "&lt;/conversation&gt;")
-    .replaceAll(CONVERSATION_OPEN, "&lt;conversation&gt;");
+  const body = transcript.replace(/<\s*\/?\s*conversation\s*>/gi, (tag) => tag.replaceAll("<", "&lt;").replaceAll(">", "&gt;"));
   return {
     systemPrompt: SUMMARY_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: `${CONVERSATION_OPEN}\n${body}\n${CONVERSATION_CLOSE}`, timestamp: 0 }],
+    messages: [{ role: "user", content: `<conversation>\n${body}\n</conversation>`, timestamp: 0 }],
     tools: [],
   };
 }

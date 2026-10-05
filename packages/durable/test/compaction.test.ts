@@ -159,7 +159,40 @@ test("reserve, keep, and summary caps scale with the window", () => {
   assert.equal(effectiveInputThreshold(200, 10_000), 136);
   assert.equal(keepRecentBudget(200, 136), 64);
   assert.equal(keepRecentBudget(128_000, 80_000), 8_192);
-  assert.equal(summaryOutputLimit(50, 200), 32);
+  assert.equal(summaryOutputLimit(50, 200), Math.floor(0.8 * outputReserve(200)));
+});
+
+test("summary request maxTokens is 0.8 of the output reserve and stays within the model cap", async () => {
+  const wide = model({ contextWindow: 8_000, maxTokens: 1_000 });
+  const reserve = outputReserve(wide.contextWindow);
+  const scaled = Math.floor(0.8 * reserve);
+  assert.ok(scaled < wide.maxTokens);
+  const narrow = model({ contextWindow: 8_000, maxTokens: 40 });
+  assert.ok(narrow.maxTokens < scaled);
+
+  async function summaryCap(active: ReturnType<typeof model>): Promise<unknown> {
+    const session = wire({
+      model: active,
+      responses: [() => sse("seeded"), () => sse(validSummary("cap"))],
+      compaction: { enabled: false, maxTokens: 80_000 },
+    });
+    try {
+      const lane = session.runtime.lane();
+      assert.equal((await lane.prompt("seed goal")).status, "completed");
+      const admitted = await lane.accept({ kind: "compaction" });
+      assert.equal(admitted.ok, true);
+      if (!admitted.ok) return undefined;
+      const outcome = await lane.drive(admitted.value.operationId);
+      assert.equal(outcome.ok && outcome.value.kind === "settled" ? outcome.value.result.status : "", "completed");
+      assert.equal(session.calls(), 2);
+      return session.bodies[1]?.max_completion_tokens;
+    } finally {
+      session.runtime.close();
+    }
+  }
+
+  assert.equal(await summaryCap(wide), scaled);
+  assert.equal(await summaryCap(narrow), narrow.maxTokens);
 });
 
 test("a small window still sends a short prompt when automatic compaction is off", async () => {
@@ -218,7 +251,7 @@ test("server overflow compacts through chat completions and continues with the c
     assert.equal(session.bodies[1]?.max_completion_tokens, 64);
     assert.equal(session.bodies[2]?.max_completion_tokens, 64);
     const summary = JSON.stringify(session.bodies[3]);
-    assert.equal(session.bodies[3]?.max_completion_tokens, 250);
+    assert.equal(session.bodies[3]?.max_completion_tokens, Math.floor(0.8 * outputReserve(8_000)));
     assert.equal(Object.hasOwn(session.bodies[3] ?? {}, "tools"), false);
     assert.equal(Object.hasOwn(session.bodies[3] ?? {}, "reasoning_effort"), false);
     assert.match(summary, /\[Image attachment\]/);
@@ -331,7 +364,7 @@ test("a huge old tool result is shortened in the summary request and kept intact
     assert.match(summary, /\[truncated\]/);
     assert.equal(summary.includes(blob), false);
     assert.match(summary, /\[ToolResult id=call_keep name=work\]/);
-    assert.equal(session.bodies[1]?.max_completion_tokens, 62);
+    assert.equal(session.bodies[1]?.max_completion_tokens, Math.floor(0.8 * outputReserve(2_000)));
     assert.equal(Object.hasOwn(session.bodies[1] ?? {}, "tools"), false);
     assert.match(continued, /CURRENT_KEEP/);
     assert.equal(continued.includes(blob), false);
