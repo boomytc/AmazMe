@@ -1,18 +1,58 @@
 {
-  "files": [],
-  "references": [
-    { "path": "packages/telemetry" },
-    { "path": "packages/protocol" },
-    { "path": "packages/client" },
-    { "path": "packages/server" },
-    { "path": "packages/mcp" },
-    { "path": "packages/ai" },
-    { "path": "packages/agent" },
-    { "path": "packages/durable" },
-    { "path": "packages/runtime-service" },
-    { "path": "packages/tui" },
-    { "path": "packages/web" },
-    { "path": "packages/gui" },
-    { "path": "packages/coding-agent" }
-  ]
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"paths": {
+			"@amazme/chord": ["./packages/chord/src/index.ts"],
+			"@amazme/chord/bundler": ["./packages/chord/src/bundler.ts"],
+			"@amazme/chord/context": ["./packages/chord/src/context/index.ts"],
+			"@amazme/chord/delta": ["./packages/chord/src/delta/index.ts"],
+			"@amazme/chord/node": ["./packages/chord/src/node.ts"],
+			"@amazme/telemetry": ["./packages/telemetry/src/index.ts"],
+			"@amazme/telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
+			"@amazme/codemode": ["./packages/codemode/src/index.ts"],
+			"@amazme/codemode/declarations": ["./packages/codemode/src/declarations.ts"],
+			"@amazme/codemode/source": ["./packages/codemode/src/source.ts"],
+			"@amazme/codemode/worker": ["./packages/codemode/src/runtime/worker.ts"],
+			"@amazme/mcp": ["./packages/mcp/src/index.ts"],
+			"@amazme/mcp/oauth": ["./packages/mcp/src/oauth/index.ts"],
+			"@amazme/mcp/testing": ["./packages/mcp/src/testing/index.ts"],
+			"@amazme/ai": ["./packages/ai/src/index.ts"],
+			"@amazme/ai/oauth": ["./packages/ai/src/oauth.ts"],
+			"@amazme/ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
+			"@amazme/ai/dist/*": ["./packages/ai/src/*"],
+			"@amazme/durable": ["./packages/durable/src/index.ts"],
+			"@amazme/durable/testing": ["./packages/durable/src/testing/index.ts"],
+			"@amazme/durable/*": [
+				"./packages/durable/src/*.ts",
+				"./packages/durable/src/*/index.ts",
+				"./packages/durable/src/*"
+			],
+			"@amazme/env": ["./packages/env/src/index.ts"],
+			"@amazme/agent": ["./packages/agent/src/index.ts"],
+			"@amazme/coding-agent": ["./packages/coding-agent/src/index.ts"],
+			"@amazme/coding-agent/experimental/plugin": [
+				"./packages/coding-agent/src/experimental/plugin.ts"
+			],
+			"@amazme/coding-agent/hooks": ["./packages/coding-agent/src/core/hooks/index.ts"],
+			"@amazme/coding-agent/*": ["./packages/coding-agent/src/*"],
+			"@amazme/protocol": ["./packages/protocol/src/index.ts"],
+			"@amazme/protocol/*": ["./packages/protocol/src/*"],
+			"@amazme/client": ["./packages/client/src/index.ts"],
+			"@amazme/client/unix": ["./packages/client/src/unix.ts"],
+			"@amazme/client/*": ["./packages/client/src/*"],
+			"@amazme/server": ["./packages/server/src/index.ts"],
+			"@amazme/server/unix": ["./packages/server/src/transports/unix/index.ts"],
+			"@amazme/server/*": ["./packages/server/src/*"],
+			"typebox": ["./node_modules/typebox"],
+			"@amazme/tui": ["./packages/tui/src/index.ts"],
+			"@amazme/tui/*": ["./packages/tui/src/*"],
+			"@amazme/agent-old": ["./packages/agent-old/src/index.ts"],
+			"@amazme/agent-old/*": ["./packages/agent-old/src/*"]
+		}
+	},
+	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
+	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
 }
