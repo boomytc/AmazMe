@@ -3412,6 +3412,7 @@ export class InteractiveMode {
 			prefs,
 		);
 		this.dashboardView.setPointerInput(this.pointerInputAvailable());
+		this.dashboardView.setMarkdownTheme(this.getMarkdownThemeWithSettings());
 		return this.dashboardView;
 	}
 
@@ -3432,6 +3433,7 @@ export class InteractiveMode {
 			updatedAt: Date.now(),
 			attached: true,
 			lastQuestion: this.sessionManager.getLastUserMessageText(),
+			lastReply: this.sessionManager.getLastAssistantMessageText(),
 			path: this.session.sessionFile,
 		};
 	}
@@ -3455,6 +3457,7 @@ export class InteractiveMode {
 				updatedAt: session.modified.getTime(),
 				attached: false,
 				lastQuestion: session.lastUserMessage ?? "",
+				lastReply: session.lastAssistantMessage ?? "",
 				path: session.path,
 			}));
 		} catch {

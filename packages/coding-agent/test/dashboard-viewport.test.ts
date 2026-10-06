@@ -1,4 +1,4 @@
-import { Container, isViewportTUI, Text } from "@amazme/tui";
+import { Container, isViewportTUI, stripTerminalSequences, Text } from "@amazme/tui";
 import { beforeAll, describe, expect, test } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { createChatViewport } from "../src/modes/interactive/chat-viewport.ts";
@@ -18,6 +18,7 @@ function sessions(): DashboardAgent[] {
 		updatedAt: NOW - 60_000,
 		attached: index === 18,
 		lastQuestion: `Question ${index}`,
+		lastReply: `Reply ${index}`,
 	}));
 }
 
@@ -100,7 +101,9 @@ function expectSessionVisible(terminal: VirtualTerminal, index: number): void {
 	const lines = terminal.getViewport();
 	const row = lines.findIndex((line) => line.includes(`Session ${index}`));
 	expect(row).toBeGreaterThan(0);
-	expect(lines[row]).toContain("▌");
+	// The cursor frames its row, so the marker sits on the border above it.
+	expect(stripTerminalSequences(lines[row - 1] ?? "")).toMatch(/^╭─/);
+	expect(lines[row]).toMatch(/^│/);
 	expect(lines[row + 1]).toContain(`Question ${index}`);
 }
 
@@ -226,8 +229,25 @@ describe("dashboard fullscreen viewport", () => {
 			terminal.resize(24, 8);
 			await terminal.waitForRender();
 			const row = terminal.getViewport().find((line) => line.includes("Session 18"));
-			expect(row).toContain("▌");
-			expect(view.scrollView.viewportHeight).toBe(1);
+			expect(row).toMatch(/^│/);
+			expect(view.scrollView.viewportHeight).toBe(2);
+		} finally { ui.stop(); }
+	});
+
+	test("the reply preview only appears once the terminal can spare its lines", async () => {
+		const { terminal, ui, view } = fixture();
+		try {
+			await terminal.waitForRender();
+			view.toggle();
+			await terminal.waitForRender();
+			// Sixteen rows cannot hold the preview without squeezing the list below it.
+			expect(terminal.getViewport().join("\n")).not.toContain("Response");
+			terminal.resize(80, 30);
+			await terminal.waitForRender();
+			expect(terminal.getViewport().join("\n")).toContain("Response");
+			expect(terminal.getViewport().join("\n")).toContain("Reply 18");
+			// The list keeps the selection visible with the preview in place.
+			expectSessionVisible(terminal, 18);
 		} finally { ui.stop(); }
 	});
 

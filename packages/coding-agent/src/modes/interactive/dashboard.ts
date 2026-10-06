@@ -2,6 +2,8 @@ import {
 	type Component,
 	type Focusable,
 	Input,
+	Markdown,
+	type MarkdownTheme,
 	matchesKey,
 	ScrollView,
 	stripTerminalSequences,
@@ -13,7 +15,7 @@ import {
 } from "@amazme/tui";
 import { matchesAppBinding } from "../../core/keybindings.ts";
 import { getTerminalPasteText } from "../../utils/clipboard-paste.ts";
-import { theme } from "./theme/theme.ts";
+import { getMarkdownTheme, theme } from "./theme/theme.ts";
 
 export type DashboardRowState = "needs-input" | "working" | "idle" | "inactive" | "completed" | "failed";
 
@@ -26,6 +28,8 @@ export interface DashboardAgent {
 	updatedAt: number;
 	attached: boolean;
 	lastQuestion: string;
+	/** Latest assistant reply, previewed under the list while this row holds the cursor. */
+	lastReply: string;
 	path?: string;
 }
 
@@ -154,7 +158,8 @@ export function serializeDashboardPrefs(state: Pick<DashboardScreenState, "group
 }
 
 export function formatDashboardAge(ageMs: number): string {
-	const minutes = Math.max(0, Math.floor(ageMs / 60_000));
+	if (ageMs < 60_000) return "just now";
+	const minutes = Math.floor(ageMs / 60_000);
 	if (minutes < 60) return `${minutes}m`;
 	const hours = Math.floor(minutes / 60);
 	if (hours < 48) return `${hours}h`;
@@ -437,6 +442,11 @@ export function pressDashboard(
 			clearArm(state);
 			return { type: "stop", id: agent.id };
 		}
+		// The current session has no close badge, and the delete effect refuses it too.
+		if (agent.attached) {
+			clearArm(state);
+			return status(state, "The current session stays open");
+		}
 		if (state.deleteArmedFor === agent.id && state.deleteArmedAt !== undefined && now - state.deleteArmedAt <= DELETE_WINDOW_MS) {
 			clearArm(state);
 			return { type: "delete", id: agent.id };
@@ -532,15 +542,21 @@ function clip(text: string, width: number): string {
 	return truncateToWidth(text, Math.max(0, width), width === 1 && text.startsWith("▌") ? "" : "…");
 }
 
-/** Reserve action columns before hover so the title never changes its truncation. */
+/**
+ * Reserve action columns before hover so the title never changes its truncation.
+ * The current session drops only the close badge, so its action slot keeps the
+ * columns blank and every age stays on the same column.
+ */
 function sessionRow(
 	label: string,
 	age: string,
 	badge: boolean,
 	columns: number,
+	closable = true,
 ): { body: string; closeStart?: number; renameStart?: number; renameEnd?: number } {
 	const rename = columns >= 56 ? "[rename]" : columns >= 32 ? "[r]" : "";
-	const actions = columns >= 20 ? `${rename ? `${rename} ` : ""}[x]` : "";
+	const close = closable ? "[x]" : " ".repeat("[x]".length);
+	const actions = columns >= 20 ? `${rename ? `${rename} ` : ""}${close}` : "";
 	const tail = `${columns >= 32 ? `${age} ` : ""}${badge ? actions : " ".repeat(actions.length)}`;
 	const room = Math.max(0, columns - visibleWidth(tail) - (tail ? 1 : 0));
 	const left = clip(label, room);
@@ -548,7 +564,7 @@ function sessionRow(
 	const renameStart = badge && rename ? columns - actions.length : undefined;
 	return {
 		body: `${left}${" ".repeat(gap)}${tail}`,
-		closeStart: badge && actions ? columns - 3 : undefined,
+		closeStart: badge && closable && actions ? columns - 3 : undefined,
 		renameStart,
 		renameEnd: renameStart === undefined ? undefined : renameStart + rename.length,
 	};
@@ -562,7 +578,7 @@ function bar(text: string, columns: number, highlighted: boolean): string {
 
 function glyph(state: DashboardRowState): string {
 	if (state === "working") return "·";
-	if (state === "idle" || state === "inactive") return "○";
+	if (state === "idle" || state === "inactive") return "◇";
 	return "●";
 }
 
@@ -572,14 +588,20 @@ function dashboardHeader(agents: readonly DashboardAgent[], width: number): stri
 	const idle = agents.filter((agent) => agent.state === "idle").length;
 	const title = width < 24 ? "Sessions" : `Sessions ${agents.length}`;
 	const variants = [
-		[awaiting ? `${awaiting} awaiting` : "", working ? `${working} working` : "", idle ? `${idle} idle` : ""]
-			.filter(Boolean).join("  "),
-		[awaiting ? `${awaiting} wait` : "", working ? `${working} busy` : ""].filter(Boolean).join("  "),
-		awaiting ? `${awaiting} wait` : working ? `${working} busy` : idle ? `${idle} idle` : "",
+		[
+			awaiting ? `${awaiting} awaiting` : "",
+			working ? `${working} working` : "",
+			idle ? `${glyph("idle")} ${idle} idle` : "",
+		]
+			.filter(Boolean)
+			.join(" │ "),
+		[awaiting ? `${awaiting} wait` : "", working ? `${working} busy` : ""].filter(Boolean).join(" │ "),
+		awaiting ? `${awaiting} wait` : working ? `${working} busy` : idle ? `${glyph("idle")} ${idle} idle` : "",
 	];
 	const stats = variants.find((text) => text && visibleWidth(title) + 2 + visibleWidth(text) <= width) ?? "";
-	const line = title + (stats ? " ".repeat(width - visibleWidth(title) - visibleWidth(stats)) + stats : "");
-	return [clip(line, width), ""];
+	if (!stats) return [clip(title, width)];
+	const gap = " ".repeat(width - visibleWidth(title) - visibleWidth(stats));
+	return [clip(title + gap + theme.fg("dim", stats), width)];
 }
 
 function dashboardFooter(state: DashboardScreenState, width: number, pointerInput = true): string[] {
@@ -613,10 +635,12 @@ function dashboardBody(
 		const selected = id === state.selected;
 		if (slot.kind === "actions") {
 			const labels = width >= 38
-				? ["+ New session", "Open Previous /resume"]
+				? ["+ New Agent", "Open Previous /resume"]
 				: width >= 18 ? ["+ New", "Previous"] : ["+", "Prev"];
-			const create = `${selected && state.column === 0 ? "▌" : width === 1 ? "" : " "}${labels[0]}`;
-			const previous = `${selected && state.column === 1 ? "▌" : width === 1 ? "" : " "}${labels[1]}`;
+			// Both actions reserve the cursor column so neither label shifts when it takes the cursor.
+			const cursor = (active: boolean) => (active ? "▌" : width === 1 ? "" : " ");
+			const create = `${cursor(selected && state.column === 0)}${theme.fg("success", labels[0])}`;
+			const previous = `${cursor(selected && state.column === 1)}${labels[1]}`;
 			const line = lines.length;
 			if (visibleWidth(create) + 1 + visibleWidth(previous) <= width) {
 				const start = width - visibleWidth(previous);
@@ -632,15 +656,17 @@ function dashboardBody(
 		}
 		if (slot.kind === "section") {
 			const arrow = slot.collapsed ? "▸" : "▾";
-			const prefix = `${selected ? "▌" : " "}${arrow} `;
-			const count = ` ${slot.count}`;
+			const prefix = `${selected ? "▌" : " "}${theme.fg("dim", `${arrow} `)}`;
+			const count = theme.fg("dim", ` ${slot.count} `);
 			const title = singleLine(slot.title);
-			const room = Math.max(0, width - visibleWidth(prefix) - visibleWidth(count));
+			// One column goes to the rule when the width can spare it, so the header keeps its marker at width 1.
+			const ruleRoom = width >= 2 ? 1 : 0;
+			const room = Math.max(0, width - ruleRoom - visibleWidth(prefix) - visibleWidth(count));
 			const label = state.grouping === "directory" && visibleWidth(title) > room
 				? (title.split(/[\\/]/).filter(Boolean).at(-1) ?? title) : title;
 			remember({ line: lines.length, kind: "section", id: slot.key });
-			lines.push(clip(prefix + clip(label, room) + count, width));
-			lines.push(theme.fg("dim", "─".repeat(Math.max(0, width))));
+			const head = clip(prefix + clip(label, room) + count, Math.max(0, width - ruleRoom));
+			lines.push(head + theme.fg("dim", "─".repeat(Math.max(0, width - visibleWidth(head)))));
 			continue;
 		}
 		if (slot.kind === "more") {
@@ -652,27 +678,42 @@ function dashboardBody(
 		if (!agent) continue;
 		const age = formatDashboardAge(Math.max(0, now - agent.updatedAt));
 		const name = singleLine(agent.name);
-		const label = `${selected ? "▌" : " "}${glyph(agent.state)} ${name}`;
+		// The cursor frames its row, which costs one column per side and replaces the bar cursor.
+		const framed = selected && width >= 6;
+		const edge = framed ? 1 : 0;
+		const label = `${selected && !framed ? "▌" : " "}${glyph(agent.state)} ${name}`;
 		const renaming = state.renameFor === agent.id;
 		const badge = state.hoverId === agent.id || state.deleteArmedFor === agent.id;
-		const row = sessionRow(label, age, badge, width);
-		const line = lines.length;
-		// Current-session highlighting is independent of keyboard focus and pointer hover.
-		lines.push(bar(renaming ? (renameLine ?? `> ${state.renameText}`) : row.body, width, agent.attached));
+		// The frame marks the cursor while the current session keeps its background,
+		// so a fill and a frame stay readable as two different things.
+		const inner = width - edge * 2;
+		const row = sessionRow(label, theme.fg("dim", age), badge, inner, !agent.attached);
+		const question = singleLine(agent.lastQuestion);
+		if (framed) lines.push(theme.fg("accent", `╭${"─".repeat(width - 2)}╮`));
+		const title = renaming ? (renameLine ?? `> ${state.renameText}`) : row.body;
+		lines.push(framedRow(bar(title, inner, agent.attached), edge));
 		remember({
-			line,
+			line: lines.length - 1,
 			kind: "row",
 			id: agent.id,
-			closeStart: renaming ? undefined : row.closeStart,
-			closeEnd: renaming || row.closeStart === undefined ? undefined : row.closeStart + 3,
-			renameStart: renaming ? undefined : row.renameStart,
-			renameEnd: renaming ? undefined : row.renameEnd,
+			closeStart: renaming || row.closeStart === undefined ? undefined : row.closeStart + edge,
+			closeEnd: renaming || row.closeStart === undefined ? undefined : row.closeStart + edge + 3,
+			renameStart: renaming || row.renameStart === undefined ? undefined : row.renameStart + edge,
+			renameEnd: renaming || row.renameEnd === undefined ? undefined : row.renameEnd + edge,
 		});
-		const question = singleLine(agent.lastQuestion);
-		lines.push(bar(theme.fg("muted", `  ${question || "No question yet"}`), width, agent.attached));
+		lines.push(
+			framedRow(bar(theme.fg("muted", `  ${question || "No question yet"}`), inner, agent.attached), edge),
+		);
 		remember({ line: lines.length - 1, kind: "row", id: agent.id });
+		if (framed) lines.push(theme.fg("accent", `╰${"─".repeat(width - 2)}╯`));
 	}
 	return lines.map((line) => (line.includes("\x1b") ? line : clip(line, width)));
+}
+
+/** Wrap a row line in the cursor frame's side edges. */
+function framedRow(line: string, edge: number): string {
+	if (edge === 0) return line;
+	return `${theme.fg("accent", "│")}${line}${theme.fg("accent", "│")}`;
 }
 
 export function renderDashboard(
@@ -735,6 +776,96 @@ export interface DashboardActions {
 	paste?(data: string): boolean;
 }
 
+/** Reply lines the preview shows before it clips and reports the rest. */
+const RESPONSE_LINES = 3;
+/** Borders plus one space of padding on each side of the preview. */
+const RESPONSE_CHROME = 4;
+/** Columns the preview needs before its label line, borders included, fits whole. */
+const RESPONSE_MIN_WIDTH = 24;
+/**
+ * Terminal rows the preview needs before it is worth its six lines: the top bar and
+ * composer take five, the roster's own header and footer two, and the list keeps seven.
+ */
+const RESPONSE_MIN_HEIGHT = 20;
+
+/**
+ * Peek at the reply of the session under the cursor, so several sessions can be
+ * assigned work from the roster without opening each one. Sits above the composer.
+ */
+class ResponsePanel implements Component {
+	private readonly agentOf: () => DashboardAgent | undefined;
+	private readonly now: () => number;
+	private text = "";
+	private markdown: Markdown;
+
+	constructor(agentOf: () => DashboardAgent | undefined, now: () => number, markdownTheme = getMarkdownTheme()) {
+		this.agentOf = agentOf;
+		this.now = now;
+		this.markdown = new Markdown("", 0, 0, markdownTheme);
+	}
+
+	/** The preview renders Markdown, so the app hands over the transcript's theme after construction. */
+	setMarkdownTheme(markdownTheme: MarkdownTheme): void {
+		this.markdown = new Markdown(this.text, 0, 0, markdownTheme);
+	}
+
+	/** The panel only has something to say while the cursor rests on a session row. */
+	wanted(): boolean {
+		return this.agentOf() !== undefined;
+	}
+
+	invalidate(): void {
+		this.markdown.invalidate();
+	}
+
+	render(width: number): string[] {
+		const agent = this.agentOf();
+		if (!agent || width < RESPONSE_MIN_WIDTH) return [];
+		const inner = width - RESPONSE_CHROME;
+		const edge = theme.fg("border", "│");
+		const body = this.bodyLines(agent.lastReply, inner);
+		const shown = body.slice(0, RESPONSE_LINES);
+		const lines = [theme.fg("border", `╭${"─".repeat(Math.max(0, width - 2))}╮`)];
+		lines.push(`${edge} ${this.labelLine(agent, inner)} ${edge}`);
+		const rows = shown.length > 0 ? shown : [theme.fg("muted", "No reply yet")];
+		for (const row of rows) {
+			lines.push(`${edge} ${row}${" ".repeat(Math.max(0, inner - visibleWidth(row)))} ${edge}`);
+		}
+		lines.push(this.bottomBorder(width, body.length - shown.length));
+		return lines;
+	}
+
+	private bodyLines(reply: string, width: number): string[] {
+		if (this.text !== reply) {
+			this.text = reply;
+			this.markdown.setText(reply);
+		}
+		return this.markdown.render(width);
+	}
+
+	/** Title on the left, age on the right, both dim so the reply below stays dominant. */
+	private labelLine(agent: DashboardAgent, width: number): string {
+		const age = theme.fg("dim", formatDashboardAge(Math.max(0, this.now() - agent.updatedAt)));
+		const gap = " ".repeat(Math.max(1, width - "Response".length - visibleWidth(age)));
+		return truncateToWidth(`${theme.fg("dim", "Response")}${gap}${age}`, width, "");
+	}
+
+	private bottomBorder(width: number, hidden: number): string {
+		const inner = Math.max(0, width - 2);
+		const label = `… ${hidden} more ${hidden === 1 ? "line" : "lines"}`;
+		if (hidden <= 0 || visibleWidth(label) + 6 > inner) {
+			return theme.fg("border", `╰${"─".repeat(inner)}╯`);
+		}
+		const right = 2;
+		const left = Math.max(1, inner - visibleWidth(label) - right - 2);
+		return (
+			theme.fg("border", `╰${"─".repeat(left)} `) +
+			theme.fg("dim", label) +
+			theme.fg("border", ` ${"─".repeat(right)}╯`)
+		);
+	}
+}
+
 /** Full-screen agent roster. The transcript hides behind it while `open` is set. */
 export class DashboardView implements Component, Focusable {
 	focused = false;
@@ -749,6 +880,7 @@ export class DashboardView implements Component, Focusable {
 	private pointerInput = true;
 	private revealRequested = true;
 	private selectedRange = "";
+	private readonly responsePanel: ResponsePanel;
 	readonly scrollView: ScrollView;
 	readonly viewport: Component;
 
@@ -778,6 +910,7 @@ export class DashboardView implements Component, Focusable {
 			handleMouse: (event) => this.handleMouse(event),
 		};
 		this.scrollView = new DashboardScrollView(body, (resized) => this.revealSelection(resized));
+		this.responsePanel = new ResponsePanel(() => selectedAgent(this.agentsOf(), this.state), this.now);
 		this.viewport = new VStack([
 			{
 				component: { render: (width) => dashboardHeader(this.agentsOf(), width), invalidate() {} },
@@ -788,6 +921,12 @@ export class DashboardView implements Component, Focusable {
 				component: { render: (width) => dashboardFooter(this.state, width, this.pointerInput), invalidate() {} },
 				shrink: 0, minSize: 1,
 			},
+			{
+				component: this.responsePanel,
+				shrink: 1, minSize: 0,
+				// The preview is a convenience, so it steps aside on short terminals instead of squeezing the list.
+				visible: (viewport) => this.responsePanel.wanted() && viewport.height >= RESPONSE_MIN_HEIGHT,
+			},
 		]);
 	}
 
@@ -797,6 +936,11 @@ export class DashboardView implements Component, Focusable {
 
 	setPointerInput(enabled: boolean): void {
 		this.pointerInput = enabled;
+	}
+
+	/** The reply preview renders Markdown, so the transcript's theme is handed over after construction. */
+	setMarkdownTheme(markdownTheme: MarkdownTheme): void {
+		this.responsePanel.setMarkdownTheme(markdownTheme);
 	}
 
 	shortcutLine(): string {
@@ -811,7 +955,15 @@ export class DashboardView implements Component, Focusable {
 		else if (this.state.selected === "actions") {
 			action = this.state.column === 1 ? "previous" : this.state.draft.trim() ? "send" : "create";
 		} else if (this.state.selected.startsWith("row:")) action = this.state.reply.trim() ? "reply" : "open";
-		return [chip("Enter", action), chip("Tab", this.focused ? "input" : "list")].join(" │ ");
+		const parts = [chip("Enter", action), chip("Tab", this.focused ? "input" : "list")];
+		// Esc backs out of a row or heading to the New Agent action.
+		if (this.state.selected !== "actions") parts.push(chip("Esc", "New Agent"));
+		const agent = selectedAgent(this.agentsOf(), this.state);
+		// The current session can only be stopped, while the saved ones can be closed.
+		if (agent?.attached && agent.state === "working") parts.push(chip("Ctrl+X", "stop"));
+		else if (agent && !agent.attached) parts.push(chip("Ctrl+X", "close"));
+		parts.push(chip("?", "help"));
+		return parts.join(" │ ");
 	}
 
 	/** Capture the operation target so an asynchronous paste cannot retarget another session. */
@@ -847,7 +999,7 @@ export class DashboardView implements Component, Focusable {
 		if (this.state.renameFor) return "Editing title above";
 		if (this.state.search) return "Search sessions";
 		const agent = selectedAgent(this.agentsOf(), this.state);
-		return agent ? `Reply to ${singleLine(agent.name)}` : "Start a new session";
+		return agent ? `Reply to ${singleLine(agent.name)}` : "Dispatch a new agent";
 	}
 
 	toggle(): void {
@@ -905,6 +1057,7 @@ export class DashboardView implements Component, Focusable {
 
 	invalidate(): void {
 		this.revealRequested = true;
+		this.responsePanel.invalidate();
 	}
 
 	private renderBody(width: number): string[] {
@@ -928,8 +1081,10 @@ export class DashboardView implements Component, Focusable {
 			return selected === `${hit.kind}:${hit.id}`;
 		});
 		if (rows.length === 0) return;
-		const start = rows[0]!.line;
-		const end = rows.at(-1)!.line + 1;
+		// A framed row also owns the border lines around it.
+		const framed = selected.startsWith("row:") ? 1 : 0;
+		const start = rows[0]!.line - framed;
+		const end = rows.at(-1)!.line + 1 + framed;
 		const range = `${selected}:${start}:${end}`;
 		if (!this.revealRequested && !resized && range === this.selectedRange) return;
 		this.selectedRange = range;
@@ -946,16 +1101,19 @@ export class DashboardView implements Component, Focusable {
 		this.hits = [];
 		if (this.renameInput) this.renameInput.focused = this.focused;
 		const renameLine = this.renameInput?.render(width)[0];
-		return renderDashboard(
-			this.agentsOf(),
-			this.state,
-			this.placeOf(),
-			this.now(),
-			width,
-			this.hits,
-			renameLine,
-			this.pointerInput,
-		).map(
+		return [
+			...renderDashboard(
+				this.agentsOf(),
+				this.state,
+				this.placeOf(),
+				this.now(),
+				width,
+				this.hits,
+				renameLine,
+				this.pointerInput,
+			),
+			...this.responsePanel.render(width),
+		].map(
 			(line) => theme.fg("text", line),
 		);
 	}

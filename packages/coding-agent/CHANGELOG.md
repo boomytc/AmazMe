@@ -5,13 +5,16 @@
 ### Added
 
 - Added `outputPad` to the tool render context ([#10557](https://github.com/earendil-works/pi/pull/10557))
+- Added a reply preview to the Dashboard: a `Response` panel above the composer shows the latest reply of the session under the cursor, so several sessions can be assigned work without opening them
 
 ### Changed
 
 - Changed `outputPad` to also apply to `!` command output, tool output, and summary blocks ([#9946](https://github.com/earendil-works/pi/issues/9946), [#10557](https://github.com/earendil-works/pi/pull/10557))
+- Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
 
 ### Fixed
 
+- Fixed the Dashboard offering a close badge for the current session, which cannot be deleted from there; the close column stays blank so ages keep their alignment, and `Ctrl+X` on it reports that the session stays open
 - Fixed managed installs keeping every old release; `amazme update` now keeps only the new release and the one it updated from
 - Fixed standalone binaries loading `.env`, `.env.local`, and `.env.development` from the launch directory into AmazMe's environment
 - Fixed `!!` command headers losing their dim color once output arrives ([#10557](https://github.com/earendil-works/pi/pull/10557))

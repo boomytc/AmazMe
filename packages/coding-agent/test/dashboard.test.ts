@@ -6,6 +6,7 @@ import {
 	type DashboardHit,
 	DashboardView,
 	defaultDashboardState,
+	formatDashboardAge,
 	pressDashboard,
 	readDashboardPrefs,
 	renderDashboard,
@@ -24,6 +25,7 @@ function agent(id: string, patch: Partial<DashboardAgent> = {}): DashboardAgent 
 		updatedAt: NOW - 60_000,
 		attached: false,
 		lastQuestion: "",
+		lastReply: "",
 		...patch,
 	};
 }
@@ -93,9 +95,8 @@ describe("agent dashboard", () => {
 		let rendered = renderDashboard(agents, state, { branch: "main", cwd: "~/repo" }, NOW, 80).join("\n");
 		expect(rendered).toContain("Sessions 2");
 		expect(rendered).not.toContain("main ~/repo");
-		expect(rendered).toContain("1 working");
-		expect(rendered).toContain("1 idle");
-		expect(rendered).toContain("+ New session");
+		expect(rendered).toContain("1 working │ ◇ 1 idle");
+		expect(rendered).toContain("+ New Agent");
 		expect(rendered).toContain("Open Previous /resume");
 		expect(rendered).toContain("reviewer");
 		expect(rendered).toContain("1m");
@@ -111,6 +112,124 @@ describe("agent dashboard", () => {
 		expect(state.selected).toBe("actions");
 		expect(pressDashboard(state, agents, "\x1b", NOW)).toEqual({ type: "exit" });
 		expect(state.open).toBe(false);
+	});
+
+	test("ages read as just now, minutes, hours, and days", () => {
+		expect(formatDashboardAge(0)).toBe("just now");
+		expect(formatDashboardAge(59_999)).toBe("just now");
+		expect(formatDashboardAge(60_000)).toBe("1m");
+		expect(formatDashboardAge(3_600_000)).toBe("1h");
+		expect(formatDashboardAge(47 * 3_600_000)).toBe("47h");
+		expect(formatDashboardAge(48 * 3_600_000)).toBe("2d");
+	});
+
+	test("the header carries state chips and every section folds its rule onto the title line", () => {
+		const agents = [
+			agent("live", { name: "current", state: "working", attached: true }),
+			agent("waiting", { state: "needs-input", updatedAt: NOW - 5_000 }),
+			agent("saved", { state: "idle", updatedAt: NOW - 8 * 3_600_000 }),
+		];
+		const state = defaultDashboardState();
+		state.open = true;
+		const lines = renderDashboard(agents, state, { branch: null, cwd: "/repo" }, NOW, 80).map(stripTerminalSequences);
+		expect(lines[0]).toMatch(/^Sessions 3 .*1 awaiting │ 1 working │ ◇ 1 idle$/);
+		expect(lines[1]).toContain("New Agent");
+		expect(lines[2]).toMatch(/^ ▾ Needs input 1 ─+$/);
+		// The rule belongs to the title line, so no section costs a second line.
+		expect(lines.some((line) => /^─+$/.test(line.trim()))).toBe(false);
+		expect(lines.join("\n")).toContain("just now");
+	});
+
+	test("the current session offers rename but no close badge, and keeps every age on one column", () => {
+		const seen: string[] = [];
+		const view = viewFor(
+			() => [agent("live", { name: "current", attached: true }), agent("saved", { name: "saved" })],
+			seen,
+		);
+		view.toggle();
+		// The cursor frames the current session on open, so compare the ages with the cursor off the list.
+		view.handleKey("\x1b");
+		const before = view.render(80);
+		const liveRow = before.findIndex((line) => line.includes(" current"));
+		const savedRow = before.findIndex((line) => line.includes(" saved"));
+		const ageColumn = (line: string) => stripTerminalSequences(line).indexOf("1m");
+		expect(ageColumn(before[liveRow]!)).toBe(ageColumn(before[savedRow]!));
+		expect(view.handleMouse(mouse("move", 2, liveRow))).toEqual({ handled: true, render: true });
+		const hovered = view.render(80);
+		expect(hovered[liveRow]).toContain("[rename]");
+		expect(hovered[liveRow]).not.toContain("[x]");
+		expect(hovered[savedRow]).not.toContain("[rename]");
+		view.handleMouse(mouse("click", 78, liveRow));
+		expect(seen).not.toContain("stop:live");
+		expect(seen).not.toContain("delete:live");
+	});
+
+	test("ctrl+x leaves the current session open and still deletes another session", () => {
+		const agents = [agent("live", { state: "idle", attached: true }), agent("saved", { state: "idle" })];
+		const state = defaultDashboardState();
+		pressDashboard(state, agents, "\x1c", NOW);
+		state.selected = "row:live";
+		expect(pressDashboard(state, agents, "\x18", NOW)).toEqual({
+			type: "status",
+			text: "The current session stays open",
+		});
+		expect(state.deleteArmedFor).toBeUndefined();
+		state.selected = "row:saved";
+		expect(pressDashboard(state, agents, "\x18", NOW)).toEqual({
+			type: "status",
+			text: "Press Ctrl+X again to delete this session",
+		});
+		expect(pressDashboard(state, agents, "\x18", NOW)).toEqual({ type: "delete", id: "saved" });
+	});
+
+	test("the cursor frames its row, which stands apart from the current session's fill", () => {
+		const view = viewFor(() => [agent("live", { attached: true }), agent("saved")]);
+		view.toggle();
+		const lines = view.render(80).map(stripTerminalSequences);
+		const row = lines.findIndex((line) => line.includes(" live"));
+		expect(lines[row - 1]).toMatch(/^╭─+╮$/);
+		expect(lines[row]).toMatch(/^│ ◇ live/);
+		expect(lines[row + 1]).toContain("No question yet");
+		expect(lines[row + 2]).toMatch(/^╰─+╯$/);
+		// The frame replaces the bar cursor, so the two highlights never spell the same thing.
+		expect(lines.join("\n")).not.toContain("▌");
+		for (const line of view.render(80)) expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+	});
+
+	test("the reply preview follows the cursor, clips, and steps aside for quiet slots", () => {
+		const view = viewFor(() => [
+			agent("live", { name: "current", attached: true, lastReply: "First line\n\nSecond line" }),
+			agent("saved", { name: "saved", lastReply: "Saved reply" }),
+		]);
+		view.toggle();
+		const opened = view.render(80).map(stripTerminalSequences).join("\n");
+		expect(opened).toContain("Response");
+		expect(opened).toContain("First line");
+		expect(opened).toContain("Second line");
+		for (let step = 0; step < 3; step++) view.handleKey("\x1b[B");
+		const moved = view.render(80).map(stripTerminalSequences).join("\n");
+		expect(moved).toContain("Saved reply");
+		expect(moved).not.toContain("First line");
+		// The preview belongs to session rows, so the action and section slots drop it.
+		view.handleKey("\x1b");
+		expect(view.render(80).join("\n")).not.toContain("Response");
+	});
+
+	test("the reply preview reports the lines it clips and never widens the row", () => {
+		const reply = Array.from({ length: 8 }, (_unused, index) => `line ${index}`).join("\n\n");
+		const view = viewFor(() => [agent("live", { attached: true, lastReply: reply })]);
+		view.toggle();
+		for (const width of [22, 24, 40, 80]) {
+			const lines = view.render(width);
+			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+			const text = lines.map(stripTerminalSequences).join("\n");
+			if (width < 24) {
+				expect(text).not.toContain("Response");
+				continue;
+			}
+			expect(text).toContain("line 0");
+			expect(text).toMatch(/… \d+ more lines/);
+		}
 	});
 
 	test("dispatches, searches, groups, pins, and confirms delete", () => {
@@ -207,9 +326,11 @@ describe("agent dashboard", () => {
 					expect(liveRow).toContain(background);
 					expect(lines[savedRow]).not.toContain(background);
 					expect(lines.filter((line) => line.includes(background))).toHaveLength(2);
-					expect(lines[savedRow + 1]).toContain("saved question");
+					// The frame insets its row by two columns, so only an unframed question fits whole at 16.
+					const question = stripTerminalSequences(lines[savedRow + 1] ?? "");
+					expect(question).toContain(selected === "row:saved" ? "saved quest" : "saved question");
 					expect(lines[savedRow + 1]).not.toContain(background);
-					if (selected === "row:saved") expect(stripTerminalSequences(lines[savedRow]!)).toMatch(/^▌/);
+					if (selected === "row:saved") expect(stripTerminalSequences(lines[savedRow]!)).toMatch(/^│ ◇/);
 					for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 				}
 			}
@@ -297,16 +418,19 @@ describe("agent dashboard", () => {
 		lines = view.render(80);
 		expect(lines[row] ?? "").toContain("[x]");
 		expect(lines[row + 1]).toContain("hello notes");
+		// Clicking the row moves the cursor onto it, which frames it one line further down.
 		view.handleMouse(mouse("click", 2, row));
 		expect(seen).toContain("open:saved");
 		lines = view.render(80);
-		expect(lines[row + 1] ?? "").toContain("hello notes");
-		expect(lines[row]).not.toContain(theme.getBgAnsi("selectedBg"));
-		expect(lines[row + 1]).not.toContain(theme.getBgAnsi("selectedBg"));
-		view.handleMouse(mouse("click", 78, row));
+		const framed = lines.findIndex((line) => line.includes("notes"));
+		expect(stripTerminalSequences(lines[framed - 1] ?? "")).toMatch(/^╭─/);
+		expect(lines[framed + 1] ?? "").toContain("hello notes");
+		expect(lines[framed]).not.toContain(theme.getBgAnsi("selectedBg"));
+		expect(lines[framed + 1]).not.toContain(theme.getBgAnsi("selectedBg"));
+		view.handleMouse(mouse("click", 78, framed));
 		expect(seen).not.toContain("delete:saved");
 		expect(view.render(80).join("\n")).toContain("再点一次关闭");
-		view.handleMouse(mouse("click", 78, row));
+		view.handleMouse(mouse("click", 78, framed));
 		expect(seen).toContain("delete:saved");
 	});
 
@@ -376,9 +500,11 @@ describe("agent dashboard", () => {
 		view.render(80);
 		expect(view.handleMouse(mouse("click", 70, row))).toEqual({ handled: true, render: true, focus: true });
 		lines = view.render(80);
-		expect(stripTerminalSequences(lines[row]!)).toContain("> saved");
-		expect(lines[row]).toContain(CURSOR_MARKER);
-		expect(lines[row + 1]).toContain("Saved question");
+		// Renaming moves the cursor onto the row, which frames it and shifts its lines down by one.
+		const framed = lines.findIndex((line) => stripTerminalSequences(line).includes("> saved"));
+		expect(stripTerminalSequences(lines[framed]!)).toContain("> saved");
+		expect(lines[framed]).toContain(CURSOR_MARKER);
+		expect(lines[framed + 1]).toContain("Saved question");
 		expect(view.shortcutLine()).toContain("Enter save");
 		expect(seen).toEqual(["opened"]);
 		view.handleInput("\x15");
@@ -392,9 +518,10 @@ describe("agent dashboard", () => {
 		expect(seen).toEqual(["opened", "rename:saved:[新标题a]"]);
 		saved = { ...saved, name: "[新标题a]" };
 		lines = view.render(80);
-		expect(lines[row]).toContain("[新标题a]");
-		expect(lines[row + 1]).toContain("Saved question");
-		expect(lines[row]).not.toContain(theme.getBgAnsi("selectedBg"));
+		const renamed = lines.findIndex((line) => stripTerminalSequences(line).includes("[新标题a]"));
+		expect(stripTerminalSequences(lines[renamed]!)).toContain("[新标题a]");
+		expect(lines[renamed + 1]).toContain("Saved question");
+		expect(lines[renamed]).not.toContain(theme.getBgAnsi("selectedBg"));
 		expect(lines.filter((line) => line.includes(theme.getBgAnsi("selectedBg")))).toHaveLength(2);
 	});
 
@@ -464,7 +591,7 @@ describe("agent dashboard", () => {
 		const view = viewFor(() => [], seen);
 		view.toggle();
 		const lines = view.render(80);
-		const row = lines.findIndex((line) => line.includes("New session"));
+		const row = lines.findIndex((line) => line.includes("New Agent"));
 		view.handleMouse(mouse("click", 2, row));
 		view.handleMouse(mouse("click", 70, row));
 		expect(view.handleMouse(mouse("click", 30, row))).toBeUndefined();
@@ -475,7 +602,10 @@ describe("agent dashboard", () => {
 		const view = viewFor(() => [agent("live", { attached: true })]);
 		view.toggle();
 		let lines = view.render(80);
-		expect(stripTerminalSequences(lines.find((line) => line.includes(" live"))!)).toMatch(/^▌/);
+		// Opening puts the cursor on the attached session, which frames its row.
+		const liveRow = lines.findIndex((line) => line.includes(" live"));
+		expect(stripTerminalSequences(lines[liveRow - 1]!)).toMatch(/^╭─/);
+		expect(stripTerminalSequences(lines[liveRow]!)).toMatch(/^│ ◇/);
 		const section = lines.findIndex((line) => line.includes("Idle"));
 		view.handleMouse(mouse("click", 3, section));
 		lines = view.render(80);
@@ -527,8 +657,29 @@ describe("agent dashboard", () => {
 		expect(stripTerminalSequences(view.composerShortcutLine())).toBe("Ctrl+\\:dashboard");
 		view.handleKey("\x1b");
 		view.handleKey("\x1b");
-		expect(view.composerPlaceholder()).toBe("Start a new session");
+		expect(view.composerPlaceholder()).toBe("Dispatch a new agent");
 		expect(stripTerminalSequences(view.composerShortcutLine())).toContain("Enter:create");
+	});
+
+	test("composer chips name the keys that apply to the cursor", () => {
+		const onCurrent = viewFor(() => [agent("live", { name: "current", state: "working", attached: true })]);
+		onCurrent.toggle();
+		const chips = stripTerminalSequences(onCurrent.composerShortcutLine());
+		expect(chips).toContain("Esc:New Agent");
+		expect(chips).toContain("?:help");
+		expect(chips).toContain("Ctrl+X:stop");
+
+		const idleCurrent = viewFor(() => [agent("live", { attached: true })]);
+		idleCurrent.toggle();
+		expect(stripTerminalSequences(idleCurrent.composerShortcutLine())).not.toContain("Ctrl+X");
+
+		const view = viewFor(() => [agent("live", { name: "current", attached: true }), agent("saved")]);
+		view.toggle();
+		// The New Agent slot has nothing to back out of.
+		view.handleKey("\x1b");
+		expect(stripTerminalSequences(view.composerShortcutLine())).not.toContain("Esc:New Agent");
+		for (let step = 0; step < 3; step++) view.handleKey("\x1b[B");
+		expect(stripTerminalSequences(view.composerShortcutLine())).toContain("Ctrl+X:close");
 	});
 
 	test("header prioritizes status over location and narrow footer keeps rename controls", () => {

@@ -154,4 +154,34 @@ describe("latest session question", () => {
 			lastUserMessage: "Latest legacy question",
 		});
 	});
+
+	test("the live and saved reply track the latest answer, not the question", async () => {
+		manager.appendMessage({ role: "user", content: "Question one", timestamp: 1 });
+		manager.appendMessage(assistant("Reply one"));
+		manager.appendMessage({ role: "user", content: "Question two", timestamp: 3 });
+		expect(manager.getLastAssistantMessageText()).toBe("Reply one");
+		expect((await listed()).lastAssistantMessage).toBe("Reply one");
+
+		manager.appendMessage(assistant("Reply two"));
+		expect(manager.getLastAssistantMessageText()).toBe("Reply two");
+		expect(await listed()).toMatchObject({
+			lastUserMessage: "Question two",
+			lastAssistantMessage: "Reply two",
+		});
+	});
+
+	test("a branch summary inherits the reply at the branch point, and an empty branch has none", async () => {
+		manager.appendMessage({ role: "user", content: "Shared question", timestamp: 1 });
+		const reply = manager.appendMessage(assistant("Shared reply"));
+		manager.appendMessage({ role: "user", content: "Abandoned question", timestamp: 3 });
+		manager.appendMessage(assistant("Abandoned reply"));
+		manager.branchWithSummary(reply, "Branched summary");
+		expect(manager.getLastAssistantMessageText()).toBe("Shared reply");
+		expect((await listed()).lastAssistantMessage).toBe("Shared reply");
+
+		manager.resetLeaf();
+		manager.appendCustomEntry("new-root");
+		expect(manager.getLastAssistantMessageText()).toBe("");
+		expect((await listed()).lastAssistantMessage).toBe("");
+	});
 });

@@ -95,8 +95,28 @@ function fixture(bindings = new KeybindingsManager()) {
 			return true;
 		},
 	}, () => [
-		{ id: "live", name: "live", cwd: "/repo", state: "idle", activity: "idle", updatedAt: Date.now(), attached: true, lastQuestion: "" },
-		{ id: "saved", name: "saved", cwd: "/repo", state: "idle", activity: "idle", updatedAt: Date.now(), attached: false, lastQuestion: "" },
+		{
+			id: "live",
+			name: "live",
+			cwd: "/repo",
+			state: "idle",
+			activity: "idle",
+			updatedAt: Date.now(),
+			attached: true,
+			lastQuestion: "",
+			lastReply: "",
+		},
+		{
+			id: "saved",
+			name: "saved",
+			cwd: "/repo",
+			state: "idle",
+			activity: "idle",
+			updatedAt: Date.now(),
+			attached: false,
+			lastQuestion: "",
+			lastReply: "",
+		},
 	], () => ({ cwd: "/repo", branch: null }));
 	mode.dashboardView = view;
 	prototype.setupKeyHandlers.call(mode);

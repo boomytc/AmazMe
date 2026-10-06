@@ -241,6 +241,8 @@ export interface SessionInfo {
 	firstMessage: string;
 	/** Last user prompt on the saved active branch; empty when there is none. */
 	lastUserMessage?: string;
+	/** Last assistant reply on the saved active branch; empty when there is none. */
+	lastAssistantMessage?: string;
 	allMessagesText: string;
 }
 
@@ -262,6 +264,7 @@ export type ReadonlySessionManager = Pick<
 	| "getTree"
 	| "getSessionName"
 	| "getLastUserMessageText"
+	| "getLastAssistantMessageText"
 >;
 
 function createSessionId(): string {
@@ -816,7 +819,9 @@ async function buildSessionInfo(
 		let messageCount = 0;
 		let firstMessage = "";
 		let lastUserMessage = "";
+		let lastAssistantMessage = "";
 		const branchQuestions = new Map<string, string>();
+		const branchReplies = new Map<string, string>();
 		const allMessages: string[] = [];
 		let name: string | undefined;
 		let lastActivityTime: number | undefined;
@@ -837,14 +842,23 @@ async function buildSessionInfo(
 			}
 
 			if (entry.type === "session") continue;
-			// Each entry inherits its branch's latest question, including metadata after a branch switch.
+			// Each entry inherits its branch's latest question and reply, including metadata after a branch switch.
 			if (typeof entry.id === "string" && "parentId" in entry) {
 				lastUserMessage = entry.parentId ? (branchQuestions.get(entry.parentId) ?? "") : "";
+				lastAssistantMessage = entry.parentId ? (branchReplies.get(entry.parentId) ?? "") : "";
 			}
 			if (entry.type === "message" && entry.message.role === "user") {
 				lastUserMessage = extractUserMessageText(entry.message);
 			}
-			if (typeof entry.id === "string") branchQuestions.set(entry.id, lastUserMessage);
+			// One walk serves both the question line and the reply preview in the Dashboard.
+			if (entry.type === "message" && entry.message.role === "assistant") {
+				const reply = extractTextContent(entry.message).trim();
+				if (reply) lastAssistantMessage = reply;
+			}
+			if (typeof entry.id === "string") {
+				branchQuestions.set(entry.id, lastUserMessage);
+				branchReplies.set(entry.id, lastAssistantMessage);
+			}
 
 			// Extract session name (use latest, including explicit clears)
 			if (entry.type === "session_info") {
@@ -895,6 +909,7 @@ async function buildSessionInfo(
 			messageCount,
 			firstMessage: firstMessage || "(no messages)",
 			lastUserMessage,
+			lastAssistantMessage,
 			allMessagesText: allMessages.join(" "),
 		};
 	} catch {
@@ -1506,6 +1521,18 @@ export class SessionManager {
 		const visited = new Set<string>();
 		while (entry && !visited.has(entry.id)) {
 			if (entry.type === "message" && entry.message.role === "user") return extractUserMessageText(entry.message);
+			visited.add(entry.id);
+			entry = entry.parentId ? this.byId.get(entry.parentId) : undefined;
+		}
+		return "";
+	}
+
+	/** Latest assistant reply on the active branch, including history retained only in the session file. */
+	getLastAssistantMessageText(): string {
+		let entry = this.getLeafEntry();
+		const visited = new Set<string>();
+		while (entry && !visited.has(entry.id)) {
+			if (entry.type === "message" && entry.message.role === "assistant") return extractTextContent(entry.message);
 			visited.add(entry.id);
 			entry = entry.parentId ? this.byId.get(entry.parentId) : undefined;
 		}
