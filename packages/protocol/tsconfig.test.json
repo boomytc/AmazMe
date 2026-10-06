@@ -1,13 +1,10 @@
 {
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "composite": false,
-    "declaration": false,
-    "noEmit": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "types": ["node"],
-    "rootDir": "."
-  },
-  "include": ["src", "test"]
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"types": ["node", "vitest"]
+	},
+	"include": ["src/**/*.ts", "test/**/*.ts"]
 }

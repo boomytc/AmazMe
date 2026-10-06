@@ -1,104 +1,151 @@
-// Portions adapted from Pi packages/protocol/src/framing.ts, Copyright (c) 2025 Mario Zechner, MIT License. See NOTICE.
-import { ProtocolError, resolveLimits } from "./errors.ts";
+const FRAME_HEADER_LENGTH = 4;
+const MAX_UINT32 = 0xffff_ffff;
+const PAYLOAD_BLOCK_SIZE = 64 * 1024;
 
-export const FRAME_HEADER_BYTES = 4;
-const INITIAL_CAPACITY = 4096;
-const EMPTY = new Uint8Array(0);
+/** Default upper bound for one framed CBOR payload. */
+export const DEFAULT_MAX_FRAME_LENGTH = 16 * 1024 * 1024;
 
-/** Prefixes a non-empty payload with its unsigned 32-bit big-endian length. */
-export function encodeFrame(payload: Uint8Array, maxFrameBytes: number): Uint8Array {
-  maxFrameBytes = resolveLimits({ maxFrameBytes }).maxFrameBytes;
-  if (payload.byteLength === 0) throw new ProtocolError("invalid_frame", "frame payload is empty");
-  if (payload.byteLength > maxFrameBytes) throw new ProtocolError("limit_exceeded", `frame payload exceeds ${maxFrameBytes} bytes`);
-  const frame = new Uint8Array(FRAME_HEADER_BYTES + payload.byteLength);
-  new DataView(frame.buffer).setUint32(0, payload.byteLength);
-  frame.set(payload, FRAME_HEADER_BYTES);
-  return frame;
+export interface FrameDecoderOptions {
+	maxFrameLength?: number;
 }
 
-/**
- * Splits an ordered byte stream into payloads. Memory grows with bytes actually received, never with a
- * declared length; a header above the limit fails as soon as its four bytes arrive. Any failure is final.
- */
+export class FrameError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "FrameError";
+	}
+}
+
+function resolveMaxFrameLength(options: FrameDecoderOptions | undefined): number {
+	const value = options?.maxFrameLength ?? DEFAULT_MAX_FRAME_LENGTH;
+	if (!Number.isSafeInteger(value) || value < 0 || value > MAX_UINT32) {
+		throw new RangeError(`maxFrameLength must be an integer between 0 and ${MAX_UINT32}`);
+	}
+	return value;
+}
+
+/** Prefixes a payload with its unsigned 32-bit big-endian byte length. */
+export function encodeFrame(payload: Uint8Array): Uint8Array {
+	if (!(payload instanceof Uint8Array)) throw new TypeError("Frame payload must be a Uint8Array");
+	if (payload.byteLength > MAX_UINT32) throw new RangeError("Frame payload exceeds the unsigned 32-bit length limit");
+	const frame = new Uint8Array(FRAME_HEADER_LENGTH + payload.byteLength);
+	const length = payload.byteLength;
+	frame[0] = length >>> 24;
+	frame[1] = length >>> 16;
+	frame[2] = length >>> 8;
+	frame[3] = length;
+	frame.set(payload, FRAME_HEADER_LENGTH);
+	return frame;
+}
+
+type DecoderState = "open" | "ended" | "failed";
+
+/** Incrementally splits arbitrary byte chunks into length-prefixed payloads. */
 export class FrameDecoder {
-  private readonly maxFrameBytes: number;
-  private readonly header = new Uint8Array(FRAME_HEADER_BYTES);
-  private headerBytes = 0;
-  private expected: number | undefined;
-  private payload = EMPTY;
-  private received = 0;
-  private state: "open" | "ended" | "failed" = "open";
+	private readonly header = new Uint8Array(FRAME_HEADER_LENGTH);
+	private headerLength = 0;
+	private readonly maxFrameLength: number;
+	private payloadBlocks: Uint8Array[] = [];
+	private currentPayloadBlock: Uint8Array | undefined;
+	private currentPayloadBlockLength = 0;
+	private expectedPayloadLength: number | undefined;
+	private payloadLength = 0;
+	private state: DecoderState = "open";
 
-  constructor(maxFrameBytes: number) {
-    this.maxFrameBytes = resolveLimits({ maxFrameBytes }).maxFrameBytes;
-  }
+	constructor(options?: FrameDecoderOptions) {
+		this.maxFrameLength = resolveMaxFrameLength(options);
+	}
 
-  get failed(): boolean {
-    return this.state === "failed";
-  }
+	push(chunk: Uint8Array): Uint8Array[] {
+		if (this.state === "ended") throw new FrameError("Frame decoder has ended");
+		if (this.state === "failed") throw new FrameError("Frame decoder has failed");
+		if (!(chunk instanceof Uint8Array)) throw new TypeError("Frame chunk must be a Uint8Array");
 
-  push(chunk: Uint8Array): Uint8Array[] {
-    this.assertOpen();
-    const frames: Uint8Array[] = [];
-    let offset = 0;
-    while (offset < chunk.byteLength) {
-      if (this.expected === undefined) {
-        const take = Math.min(FRAME_HEADER_BYTES - this.headerBytes, chunk.byteLength - offset);
-        this.header.set(chunk.subarray(offset, offset + take), this.headerBytes);
-        this.headerBytes += take;
-        offset += take;
-        if (this.headerBytes < FRAME_HEADER_BYTES) break;
-        const length = new DataView(this.header.buffer).getUint32(0);
-        this.headerBytes = 0;
-        if (length === 0) this.fail("invalid_frame", "frame payload is empty");
-        if (length > this.maxFrameBytes) this.fail("limit_exceeded", `frame length ${length} exceeds ${this.maxFrameBytes} bytes`);
-        this.expected = length;
-      }
-      const take = Math.min(this.expected - this.received, chunk.byteLength - offset);
-      this.reserve(this.received + take, this.expected);
-      this.payload.set(chunk.subarray(offset, offset + take), this.received);
-      this.received += take;
-      offset += take;
-      if (this.received === this.expected) frames.push(this.complete());
-    }
-    return frames;
-  }
+		const frames: Uint8Array[] = [];
+		let chunkOffset = 0;
+		while (chunkOffset < chunk.byteLength) {
+			if (this.expectedPayloadLength === undefined) {
+				const headerBytes = Math.min(FRAME_HEADER_LENGTH - this.headerLength, chunk.byteLength - chunkOffset);
+				this.header.set(chunk.subarray(chunkOffset, chunkOffset + headerBytes), this.headerLength);
+				this.headerLength += headerBytes;
+				chunkOffset += headerBytes;
+				if (this.headerLength < FRAME_HEADER_LENGTH) continue;
 
-  /** Marks the end of the stream; a partial header or payload fails as truncated. */
-  end(): void {
-    this.assertOpen();
-    if (this.headerBytes > 0 || this.expected !== undefined) this.fail("invalid_frame", "stream ended inside a frame");
-    this.state = "ended";
-  }
+				const frameLength =
+					this.header[0]! * 0x1_000_000 + this.header[1]! * 0x1_0000 + this.header[2]! * 0x100 + this.header[3]!;
+				this.headerLength = 0;
+				if (frameLength > this.maxFrameLength) {
+					this.fail(`Frame length ${frameLength} exceeds configured limit of ${this.maxFrameLength}`);
+				}
+				if (frameLength === 0) {
+					frames.push(new Uint8Array());
+					continue;
+				}
+				this.expectedPayloadLength = frameLength;
+				this.payloadBlocks = [];
+				this.currentPayloadBlock = undefined;
+				this.currentPayloadBlockLength = 0;
+				this.payloadLength = 0;
+			}
 
-  private reserve(required: number, expected: number): void {
-    if (required <= this.payload.byteLength) return;
-    let capacity = Math.max(this.payload.byteLength * 2, INITIAL_CAPACITY);
-    while (capacity < required) capacity *= 2;
-    const grown = new Uint8Array(Math.min(capacity, expected));
-    grown.set(this.payload.subarray(0, this.received));
-    this.payload = grown;
-  }
+			const expectedPayloadLength = this.expectedPayloadLength;
+			if (expectedPayloadLength === undefined) continue;
+			while (chunkOffset < chunk.byteLength && this.payloadLength < expectedPayloadLength) {
+				let block = this.currentPayloadBlock;
+				if (!block || this.currentPayloadBlockLength === block.byteLength) {
+					block = new Uint8Array(Math.min(PAYLOAD_BLOCK_SIZE, expectedPayloadLength - this.payloadLength));
+					this.payloadBlocks.push(block);
+					this.currentPayloadBlock = block;
+					this.currentPayloadBlockLength = 0;
+				}
+				const payloadBytes = Math.min(
+					block.byteLength - this.currentPayloadBlockLength,
+					chunk.byteLength - chunkOffset,
+				);
+				block.set(chunk.subarray(chunkOffset, chunkOffset + payloadBytes), this.currentPayloadBlockLength);
+				this.currentPayloadBlockLength += payloadBytes;
+				this.payloadLength += payloadBytes;
+				chunkOffset += payloadBytes;
+			}
+			if (this.payloadLength === expectedPayloadLength) {
+				if (this.payloadBlocks.length === 1) {
+					frames.push(this.payloadBlocks[0]!);
+				} else {
+					const payload = new Uint8Array(expectedPayloadLength);
+					let offset = 0;
+					for (const payloadBlock of this.payloadBlocks) {
+						payload.set(payloadBlock, offset);
+						offset += payloadBlock.byteLength;
+					}
+					frames.push(payload);
+				}
+				this.payloadBlocks = [];
+				this.currentPayloadBlock = undefined;
+				this.currentPayloadBlockLength = 0;
+				this.expectedPayloadLength = undefined;
+				this.payloadLength = 0;
+			}
+		}
+		return frames;
+	}
 
-  private complete(): Uint8Array {
-    const payload = this.payload.byteLength === this.received ? this.payload : this.payload.slice(0, this.received);
-    this.payload = EMPTY;
-    this.received = 0;
-    this.expected = undefined;
-    return payload;
-  }
+	end(): void {
+		if (this.state === "ended") throw new FrameError("Frame decoder has ended");
+		if (this.state === "failed") throw new FrameError("Frame decoder has failed");
+		if (this.headerLength !== 0 || this.expectedPayloadLength !== undefined) {
+			this.fail("Truncated frame at end of stream");
+		}
+		this.state = "ended";
+	}
 
-  private assertOpen(): void {
-    if (this.state === "failed") throw new ProtocolError("decoder_failed", "frame decoder has failed");
-    if (this.state === "ended") throw new ProtocolError("decoder_failed", "frame decoder has ended");
-  }
-
-  private fail(code: "invalid_frame" | "limit_exceeded", message: string): never {
-    this.state = "failed";
-    this.payload = EMPTY;
-    this.received = 0;
-    this.expected = undefined;
-    this.headerBytes = 0;
-    throw new ProtocolError(code, message);
-  }
+	private fail(message: string): never {
+		this.state = "failed";
+		this.headerLength = 0;
+		this.payloadBlocks = [];
+		this.currentPayloadBlock = undefined;
+		this.currentPayloadBlockLength = 0;
+		this.expectedPayloadLength = undefined;
+		this.payloadLength = 0;
+		throw new FrameError(message);
+	}
 }

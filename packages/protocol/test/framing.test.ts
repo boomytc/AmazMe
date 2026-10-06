@@ -1,73 +1,110 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import { encodeFrame, FrameDecoder, ProtocolError } from "@amazme/protocol";
+import { describe, expect, test } from "vitest";
+import { DEFAULT_MAX_FRAME_LENGTH, encodeFrame, FrameDecoder, FrameError } from "../src/index.ts";
 
-function concat(parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.byteLength, 0));
-  let at = 0;
-  for (const part of parts) { out.set(part, at); at += part.byteLength; }
-  return out;
+function concatenate(...chunks: Uint8Array[]): Uint8Array {
+	const result = new Uint8Array(chunks.reduce((length, chunk) => length + chunk.byteLength, 0));
+	let offset = 0;
+	for (const chunk of chunks) {
+		result.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return result;
 }
 
-const payloads = [new Uint8Array([1]), new Uint8Array(300).fill(7), new Uint8Array([9, 8, 7]), new Uint8Array(5000).map((_, i) => i % 251)];
-const stream = concat(payloads.map((payload) => encodeFrame(payload, 1 << 20)));
+describe("binary framing", () => {
+	test("prefixes payloads with a four-byte big-endian length", () => {
+		expect(encodeFrame(new Uint8Array([0xaa, 0xbb, 0xcc]))).toEqual(
+			new Uint8Array([0x00, 0x00, 0x00, 0x03, 0xaa, 0xbb, 0xcc]),
+		);
+		expect(encodeFrame(new Uint8Array())).toEqual(new Uint8Array([0, 0, 0, 0]));
+	});
 
-test("every split point and every coalesced chunk yields the same frames", () => {
-  for (let cut = 0; cut <= stream.byteLength; cut++) {
-    const decoder = new FrameDecoder(1 << 20);
-    const frames = [...decoder.push(stream.subarray(0, cut)), ...decoder.push(stream.subarray(cut))];
-    decoder.end();
-    assert.deepEqual(frames, payloads, `cut ${cut}`);
-  }
-  for (const size of [1, 2, 3, 5, 7, 64, 4099]) {
-    const decoder = new FrameDecoder(1 << 20);
-    const frames: Uint8Array[] = [];
-    for (let at = 0; at < stream.byteLength; at += size) frames.push(...decoder.push(stream.subarray(at, at + size)));
-    decoder.end();
-    assert.deepEqual(frames, payloads, `chunk ${size}`);
-  }
-});
+	test("decodes fragmented, coalesced, and empty frames in order", () => {
+		const wire = concatenate(
+			encodeFrame(new Uint8Array([1, 2, 3])),
+			encodeFrame(new Uint8Array()),
+			encodeFrame(new Uint8Array([4])),
+		);
+		const decoder = new FrameDecoder();
+		const frames: Uint8Array[] = [];
+		for (const byte of wire) frames.push(...decoder.push(new Uint8Array([byte])));
+		decoder.end();
+		expect(frames).toEqual([new Uint8Array([1, 2, 3]), new Uint8Array(), new Uint8Array([4])]);
 
-test("frames are detached from the caller's chunk buffer", () => {
-  const chunk = encodeFrame(new Uint8Array([1, 2, 3]), 16);
-  const [frame] = new FrameDecoder(16).push(chunk);
-  chunk.fill(0);
-  assert.deepEqual(frame, new Uint8Array([1, 2, 3]));
-});
+		const coalesced = new FrameDecoder();
+		expect(coalesced.push(wire)).toEqual(frames);
+		coalesced.end();
+	});
 
-test("an oversized length header fails on its fourth byte, before any payload arrives", () => {
-  const decoder = new FrameDecoder(1024);
-  assert.deepEqual(decoder.push(new Uint8Array([0xff, 0xff, 0xff])), []);
-  assert.throws(() => decoder.push(new Uint8Array([0xff])), (error) => error instanceof ProtocolError && error.code === "limit_exceeded");
-  assert.equal(decoder.failed, true);
-  assert.throws(() => decoder.push(encodeFrame(new Uint8Array([1]), 16)), (error) => error instanceof ProtocolError && error.code === "decoder_failed");
-  assert.throws(() => decoder.end(), (error) => error instanceof ProtocolError && error.code === "decoder_failed");
-});
+	test("assembles payloads spanning multiple internal blocks", () => {
+		const payload = Uint8Array.from({ length: 70_000 }, (_, index) => index % 251);
+		const wire = encodeFrame(payload);
+		const decoder = new FrameDecoder();
+		const frames = [
+			...decoder.push(wire.subarray(0, 101)),
+			...decoder.push(wire.subarray(101, 65_541)),
+			...decoder.push(wire.subarray(65_541)),
+		];
+		decoder.end();
+		expect(frames).toEqual([payload]);
+	});
 
-test("a frame at the limit passes and one byte more fails", () => {
-  const decoder = new FrameDecoder(4);
-  assert.equal(decoder.push(encodeFrame(new Uint8Array(4), 4)).length, 1);
-  assert.throws(() => encodeFrame(new Uint8Array(5), 4), /exceeds 4 bytes/);
-  assert.throws(() => decoder.push(new Uint8Array([0, 0, 0, 5])), /exceeds 4 bytes/);
-});
+	test("handles every split point across a frame", () => {
+		const wire = encodeFrame(new Uint8Array([10, 20, 30, 40]));
+		for (let split = 0; split <= wire.byteLength; split++) {
+			const decoder = new FrameDecoder();
+			const frames = [...decoder.push(wire.subarray(0, split)), ...decoder.push(wire.subarray(split))];
+			decoder.end();
+			expect(frames).toEqual([new Uint8Array([10, 20, 30, 40])]);
+		}
+	});
 
-test("empty frames and a stream ending inside a header or payload fail", () => {
-  assert.throws(() => encodeFrame(new Uint8Array(0), 4), (error) => error instanceof ProtocolError && error.code === "invalid_frame");
-  assert.throws(() => new FrameDecoder(4).push(new Uint8Array(4)), /empty/);
-  for (const partial of [new Uint8Array([0, 0]), new Uint8Array([0, 0, 0, 2, 1])]) {
-    const decoder = new FrameDecoder(16);
-    decoder.push(partial);
-    assert.throws(() => decoder.end(), (error) => error instanceof ProtocolError && error.code === "invalid_frame");
-    assert.throws(() => decoder.push(new Uint8Array([1])), /failed/);
-  }
-  const ended = new FrameDecoder(16);
-  ended.end();
-  assert.throws(() => ended.push(new Uint8Array([0])), /ended/);
-});
+	test("copies payload bytes instead of retaining or aliasing input chunks", () => {
+		const chunk = encodeFrame(new Uint8Array([1, 2, 3]));
+		const decoder = new FrameDecoder();
+		const frames = decoder.push(chunk);
+		chunk.fill(9);
+		expect(frames).toEqual([new Uint8Array([1, 2, 3])]);
+	});
 
-test("invalid frame bounds cannot disable or bypass the public framing limits", () => {
-  for (const limit of [Number.NaN, Infinity, 0, -1, 1.5, 0x1_0000_0000]) {
-    assert.throws(() => new FrameDecoder(limit), RangeError);
-    assert.throws(() => encodeFrame(new Uint8Array([1]), limit), RangeError);
-  }
+	test("accepts empty chunks and a clean empty stream", () => {
+		const decoder = new FrameDecoder();
+		expect(decoder.push(new Uint8Array())).toEqual([]);
+		expect(() => decoder.end()).not.toThrow();
+	});
+
+	test.each([
+		["partial header", new Uint8Array([0, 0, 0])],
+		["partial payload", new Uint8Array([0, 0, 0, 2, 1])],
+	] as const)("rejects a truncated stream at end: %s", (_label, wire) => {
+		const decoder = new FrameDecoder();
+		expect(decoder.push(wire)).toEqual([]);
+		expect(() => decoder.end()).toThrow(FrameError);
+	});
+
+	test("rejects an oversized declared length as soon as its header is complete", () => {
+		const decoder = new FrameDecoder({ maxFrameLength: 3 });
+		expect(() => decoder.push(new Uint8Array([0, 0, 0, 4]))).toThrow(/limit/i);
+		expect(() => decoder.push(new Uint8Array([1]))).toThrow(/failed/i);
+	});
+
+	test("accepts a frame exactly at the configured maximum", () => {
+		const decoder = new FrameDecoder({ maxFrameLength: 3 });
+		expect(decoder.push(encodeFrame(new Uint8Array([1, 2, 3])))).toEqual([new Uint8Array([1, 2, 3])]);
+		decoder.end();
+	});
+
+	test("cannot be pushed after end", () => {
+		const decoder = new FrameDecoder();
+		decoder.end();
+		expect(() => decoder.push(new Uint8Array())).toThrow(/ended/i);
+		expect(() => decoder.end()).toThrow(/ended/i);
+	});
+
+	test.each([-1, 1.5, Number.NaN, DEFAULT_MAX_FRAME_LENGTH * 1_000])(
+		"rejects invalid maximum frame length: %s",
+		(maxFrameLength) => {
+			expect(() => new FrameDecoder({ maxFrameLength })).toThrow(RangeError);
+		},
+	);
 });
