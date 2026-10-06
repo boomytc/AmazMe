@@ -83,6 +83,9 @@ export class ForegroundCommands {
 				if (running.detached) {
 					const completion = { command: running.command, output: running.output, exitCode };
 					for (const listener of this.completionListeners) listener(completion);
+				} else {
+					const index = this.tasks.indexOf(running);
+					if (index >= 0) this.tasks.splice(index, 1);
 				}
 				this.emit();
 			},

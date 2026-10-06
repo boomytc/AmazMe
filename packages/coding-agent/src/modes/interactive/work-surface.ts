@@ -3,14 +3,12 @@ import { matchesKey } from "@amazme/tui";
 import { childFrameLines, childLifecycleLine, type ChildAgentBook } from "../../core/child-session.ts";
 import { type ForegroundCommands, type ForegroundTask } from "../../core/foreground-commands.ts";
 
+/** Live sticky row. A finished command already has its result in the transcript. */
 function commandLines(task: ForegroundTask): string[] {
-	if (task.status === "running") {
-		const lines = [`Command running: ${task.command}`];
-		const output = task.output.trimEnd();
-		if (output) lines.push(output);
-		return lines;
-	}
-	return [`Task completed: ${task.command} (${task.exitCode ?? "none"})`];
+	const lines = [`Command running: ${task.command}`];
+	const output = task.output.trimEnd();
+	if (output) lines.push(output);
+	return lines;
 }
 
 /**
@@ -42,7 +40,9 @@ export class WorkSurface implements Component {
 				const marker = record.id === this.book.highlightId ? "> " : "";
 				lines.push(`${marker}${childLifecycleLine(record)}`);
 			}
-			for (const task of this.commands.list()) lines.push(...commandLines(task));
+			for (const task of this.commands.list()) {
+				if (task.status === "running") lines.push(...commandLines(task));
+			}
 		}
 		if (this.book.tasksOpen) {
 			lines.push("Tasks");

@@ -118,6 +118,9 @@ describe("foreground command presentation", () => {
 			expect(textOf((await chord).content)).toContain("Command running in the background");
 			expect(alive(pid)).toBe(true);
 			await waitFor(() => foregroundCommands.list().filter((task) => task.status === "completed").length >= 2, "both completions");
+			const pinned = surface.render(200).join("\n");
+			expect(pinned).not.toContain("Task completed");
+			expect(pinned).not.toContain("setTimeout");
 
 			surface.book.tasksOpen = true;
 			const tasks = surface.render(200).join("\n");
