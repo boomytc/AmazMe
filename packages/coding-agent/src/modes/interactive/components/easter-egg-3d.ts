@@ -13,6 +13,7 @@ import {
 	visibleWidth,
 } from "@amazme/tui";
 import { theme } from "../theme/theme.ts";
+import { AM_LOGO_ROWS, amLogoCellWidth, amLogoPixel } from "./am-logo.ts";
 import { ARMIN_HEIGHT, ARMIN_WIDTH, isArminPixel } from "./armin.ts";
 import { formatKeyText } from "./keybinding-hints.ts";
 
@@ -25,7 +26,7 @@ import { formatKeyText } from "./keybinding-hints.ts";
  * Armin grows out of a speck at the center; the dust spreads out from the center.
  *
  * The blocks are ray cast per braille dot. A braille cell holds 2x4 roughly square dots, so one pixel of a
- * half-block bitmap is exactly 2x2 dots, and the header logo (4x2 cells) is 8x8 dots when it lifts off.
+ * half-block bitmap is exactly 2x2 dots, and the header AM (10x2 cells) is 20x8 dots when it lifts off.
  */
 
 type Rgb = readonly [number, number, number];
@@ -129,16 +130,10 @@ function createModel(
 	};
 }
 
-const CORAL: Rgb = [228, 138, 122];
-const BLUE: Rgb = [79, 142, 179];
-const YELLOW: Rgb = [234, 182, 93];
-const AMAZME_LOGO_PIXELS = ["ccc.", "b.c.", "bb.y", "b..y"];
-const AMAZME_LOGO_COLORS: Record<string, Rgb> = { c: CORAL, b: BLUE, y: YELLOW };
-
-function piLogoModel(origin: { column: number; row: number }): Model {
-	return createModel(4, 4, (column, row) => AMAZME_LOGO_COLORS[AMAZME_LOGO_PIXELS[row]![column]!], {
-		cameraDistance: 10,
-		widthShare: 0.35,
+function amLogoModel(origin: { column: number; row: number }): Model {
+	return createModel(amLogoCellWidth, AM_LOGO_ROWS.length, (column, row) => amLogoPixel(column, row), {
+		cameraDistance: 12,
+		widthShare: 0.5,
 		puzzleMoves: (random) => (random < 0.4 ? 2 : 1),
 		origin,
 	});
@@ -860,7 +855,7 @@ export async function playEasterEgg3d(tui: TUI, screen: readonly string[], egg: 
 		return;
 	}
 	const model =
-		egg.kind === "armin" ? arminModel(toRgb(theme.colors.accent)) : piLogoModel({ column: egg.column, row: egg.row });
+		egg.kind === "armin" ? arminModel(toRgb(theme.colors.accent)) : amLogoModel({ column: egg.column, row: egg.row });
 	const animation = new EasterEgg3dAnimation(tui, screen, model, colors, () => {
 		playing = false;
 		overlay.hide();

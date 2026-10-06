@@ -172,7 +172,7 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
-import { piLogoLines, piWordmark, supportsPiLogo } from "./components/pi-logo.ts";
+import { amLogoCellWidth, amLogoLines, amWordmark, supportsAmLogo } from "./components/am-logo.ts";
 import { createLoginMenuSelector } from "./components/radius-login-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
@@ -269,7 +269,9 @@ class BuiltInHeader extends ExpandableText {
 	onLogoClick: ((column: number, row: number) => void) | undefined;
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.type !== "click" || event.y > 1 || event.x < 1 || event.x > 4 || !this.onLogoClick) return undefined;
+		if (event.type !== "click" || event.y > 1 || event.x < 1 || event.x >= 1 + amLogoCellWidth || !this.onLogoClick) {
+			return undefined;
+		}
 		this.onLogoClick(event.screenX - event.x + 1, event.screenY - event.y);
 		return { handled: true };
 	}
@@ -1025,11 +1027,11 @@ export class InteractiveMode {
 			const showDetails = this.shouldShowStartupDetails();
 			// Built on demand so the header follows theme changes. The logo's first line carries the version,
 			// its second line the first line of key hints. Terminals that cannot render the logo get a
-			// "Pi vX" line instead, with the key hints below it.
-			const showLogo = supportsPiLogo();
+			// "AM vX" line instead, with the key hints below it.
+			const showLogo = supportsAmLogo();
 			const withLogo = (hints: string) => {
-				if (!showLogo) return `${piWordmark()} ${theme.fg("dim", `v${this.version}`)}\n${hints}`;
-				const [top, bottom] = piLogoLines();
+				if (!showLogo) return `${amWordmark()} ${theme.fg("dim", `v${this.version}`)}\n${hints}`;
+				const [top, bottom] = amLogoLines();
 				return `${top} ${theme.fg("dim", `v${this.version}`)}\n${bottom} ${hints}`;
 			};
 
