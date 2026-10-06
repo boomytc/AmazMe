@@ -1,147 +1,613 @@
 # @amazme/durable
 
-这是 AmazMe 第一个大版本的持久化运行时。没有版本 1 标头、但已经有数据的会话或 runtime 文件直接拒绝，不迁移。
+> **Experimental.** The API changes without notice between releases.
 
-持久化 lane 运行时。依赖 `@amazme/ai`、`@amazme/telemetry`，以及 `@amazme/agent` 的 `walkBefore`、`walkAfter`、`walkTransform`、`walkYield`。`@amazme/agent` 不依赖本包。运行语义保持本仓库现有设计，不另建 hook 类型或第二套遍历。
+A durable agent harness. Conversations, model turns, tool calls, and your own state are committed to storage before anything is shown. If the process dies mid-turn, reopening the storage picks the work up where it stopped.
 
-## 入口与使用
+Built on [`@amazme/ai`](../ai/README.md) for model access and `@amazme/chord` for document state.
 
-```typescript
-import { createModels } from "@amazme/ai";
-import { deepseekProvider } from "@amazme/ai/providers/deepseek";
-import { AgentHarness } from "@amazme/durable";
-import { MemoryStorage } from "@amazme/durable/storage/memory";
+## Table of Contents
 
-const models = createModels();
-models.setProvider(deepseekProvider());
-const harness = new AgentHarness(new MemoryStorage(), {
-  models,
-  model: { provider: "deepseek", modelId: "deepseek-flash" },
-});
-try {
-  const admitted = await harness.lane("main").accept({ kind: "prompt", text: "hello" });
-  if (!admitted.ok) throw new Error(admitted.error.message);
-  const outcome = await harness.lane("main").drive(admitted.value.operationId, { waitForRetry: true });
-  if (!outcome.ok) throw new Error(outcome.error.message);
-  console.log(outcome.value);
-} finally {
-  await harness.close();
-}
-```
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Concepts](#concepts)
+- [Persist and Resume](#persist-and-resume)
+- [Extensions](#extensions)
+- [Tools](#tools)
+- [System Prompt](#system-prompt)
+- [Per-Conversation Agent](#per-conversation-agent)
+- [Settings](#settings)
+- [Environment](#environment)
+- [Reload](#reload)
+- [Watching a Conversation](#watching-a-conversation)
+- [Busy Conversations](#busy-conversations)
+- [Reset and Handoff](#reset-and-handoff)
+- [Compaction](#compaction)
+- [Agent Events (Experimental)](#agent-events-experimental)
+- [Hooks](#hooks)
+- [More Conversations and Forks](#more-conversations-and-forks)
+- [Abort and Subagents](#abort-and-subagents)
+- [Child Tasks](#child-tasks)
+- [Task Graph](#task-graph)
+- [Your Own State](#your-own-state)
+- [Usage and Cost](#usage-and-cost)
+- [Storage](#storage)
+- [Examples](#examples)
+- [Design Documents](#design-documents)
 
-`accept` 持久化操作与消息，`drive` 推进模型调用、工具、摘要与结算。`prompt` 合并这两个步骤。
-
-`drain()` 停止新的 accept、drive、steer、follow-up 和 requestAbort，并等待已经准入的 drive、经 lane 准入且还在排队的存储操作，然后等待此时的存储队列。直接调用传入的 Storage 不计入这次等待。它不中止正在运行的模型或工具，也不写入 `requestAbort`。`close()` 在此之上中止 harness 信号。已经取出的模型结果和工具结果仍会结算；尚未发出的模型调用不会开始。不响应信号的工具会让 `close()` 一直等待，存储不会因此提前关闭。不要在存储回调里等待 `close` 或 `drain`，否则会和正在执行的回调互相等待。并发调用共享同一次等待；存储排空失败后可以重新等待，准入仍保持关闭，成功后的等待继续复用。两者都不关闭 Storage，也不隐式重发模型请求。`retry_wait` 里持久化的 `notBefore` 仍是结算时写入的时间；没有正在执行的 drive 时，它不算作运行中的工作。`idle()` 为真表示没有进行中的 drive，也没有经 lane 准入的存储操作。`watchIdle` 在这些工作开始或结束时通知，注册当下的状态不会补发。直接调用传入的 Storage 不改变 `idle()`。
-
-| 入口 | 内容 |
-| --- | --- |
-| `@amazme/durable` | Harness、lane、操作与消息类型、只读快照与结果 DTO、Storage 契约、`value` / `list` 地址辅助函数 |
-| `@amazme/durable/storage/memory` | 可移植的内存参考实现 |
-| `@amazme/durable/storage/jsonl/node` | Node 文件系统 JSONL。`openJsonlOwner` 取得排他写入权；`new JsonlStorage` 不取锁 |
-| `@amazme/durable/testing` | 独立于测试框架的共享存储契约检查，仅此测试入口使用 Node 断言 |
-
-核心入口和内存后端可在没有 Node 模块、全局 `process` 或业务客户端的环境中使用。入口会加载 `@amazme/agent` 的 hook 遍历。需要持久化文件时显式导入 Node 适配器：
-
-```typescript
-import { value } from "@amazme/durable";
-import { openJsonlOwner } from "@amazme/durable/storage/jsonl/node";
-
-const owner = openJsonlOwner("./state/lane.jsonl");
-try {
-  await owner.storage.commit([{ type: "set", address: value("lane"), value: 1 }]);
-} finally {
-  await owner.release();
-}
-```
-
-## 依赖与能力契约
-
-`HarnessModels` 只要求 `getModel`、`streamSimple` 和可选的 `telemetryContext`，无需继承 `Models` 或提供认证存储、目录修改等额外能力。`createModels()` 返回的对象直接满足接口。
-
-`HarnessOptions.hooks` 使用 `@amazme/agent` 的 `AgentHook`。`drive` 调用已导出的遍历：`walkBefore` 在存储事务外等待，仍在 `live.add` 和 `effect_pending` 之前；这段等待中的取消不武装、不执行，也不进入 `walkAfter`，而 `beforeToolCall` 返回的 block 仍记下拦截原因。`walkAfter` 只在 `execute` 正常返回之后、`stageTool` 之前；`execute` 抛错时不调用它，错误文本仍作为工具结果提交。`walkTransform` 只在 `streamAssistant` 和 `streamSummary` 调用 `streamSimple` 之前替换该次请求的 messages，不写回条目。`walkYield` 只在模型已经结束、这一轮没有工具调用、steer 和 follow-up 都为空时调用。返回的非空白字符串追加成一条普通 user 消息，并和随后的 `assistant_ready` 或 `summary_deciding` 在同一次 apply 里提交，然后再请求模型；没有可追加的文本就完成。不会留下「tip 已是这条 user 消息、操作仍停在 checkpoint / may_finish」的提交。第一个非空白字符串生效，后面的 `onYield` 不再调用。抛错发生在写入之前：不留下 live id，阶段仍是这次 checkpoint，下一次 `drive` 在钩子返回字符串之前不会重发已经结算的 `streamSimple`。工具轮、terminate、摘要和 navigation 不调用它。terminate 不会因此再请求模型。`HarnessTool`、`ToolContext`、`ToolResult`、`HarnessMessage` 仍由 Durable 自己定义，不与 Agent 的同名类型合并。工具重放策略保存在操作状态中。
-
-`Storage` / `StorageView` 是结构化接口。后端可以自行实现，无需继承 `MemoryStorage`。`run` 串行持有写入通道；其中每次 `apply` 分别原子提交，不跨多个 `apply` 回滚。借出的 view 数据应只读，写入时将 payload 的所有权交给存储。`apply` 在所属回调结束后失效。
-
-每个 transform hook 使用独立消息快照，只有返回数组生效，custom 消息在 AI 请求前过滤。`onYield` 等待期间到达的 inbox 优先处理，取消后不追加返回文本。`abandon()` 与 signal 取消分别检查：before / after / transform / yield 等待返回后、工具启动前及排队的存储回调入口都停止推进；保留已经提交的数据供新 harness 恢复。工具武装提交成功返回后才登记 live，提交失败不会留下导致同一 harness 卡住的运行标记。
-
-## 只读观察
-
-`StorageView.version()` 返回该视图看到的存储总 seq。entry、usage、set、delete、append、deleteList 每一种写入都会推进它，被拒绝的整批不推进；`commit` 返回的 `seq` 与随后读到的版本一致。版本属于整个 Storage，其他 lane 的写入也会推进它，一次发布可能跳过多个号，不代表事件条数。JSONL 重开时由同一个 reducer 重放得到相同版本，不另外存版本，也不增加 fsync 或断电承诺。自定义后端需要实现这个方法，`@amazme/durable/testing` 的契约检查包含对应用例。
-
-`AgentLane.snapshot()` 在一次同步 `storage.read` 中返回 `LaneSnapshot`：`version`、`inspect()` 的全部状态字段、当前 tip 的祖先 entries、`pendingResponse`，以及当前操作的 `tools`。`tools` 只列出尚未离开 tools 阶段的调用：`planned`、`running`（`effect_pending`）、`settled`（`outcome_ready` 或 `completed`）。已结算的调用只在 entries 里。所有字段都是深拷贝，修改返回值不会影响存储或之后的快照；同一版本下投影相同，不含查询时间。查询不初始化 lane、不推进 `drive`、不触发恢复，也不调用模型或工具。`history(before, limit)` 读取 `before` 之前的祖先，`before: null` 是最新的一页，最多 100 条，并给出更早的条数。它同样不推进。
-
-`pendingResponse` 只投影主 assistant 已持久化的回复前缀：阶段为 `assistant_effect_pending` 时，用 `reduceFrames` 合并已存帧，得到 `operationId`、`responseEntryId`、`content`、`stopReason` 与 `errorMessage`。没有 stop 帧时后两者为 `null`。stop 帧不是结算，不会补造 `aborted`、usage 或时间戳，也不会包装成 `AssistantMessage`。工具调用只在 `toolcall_end` 之后进入帧，参数完整，但未结算前不执行。摘要流不写帧，所以摘要期间为 `null`。结算在同一次 apply 中写入 entry 并删除帧，之后回复只出现在 entries 里。`pendingResponse` 存在只说明持久化状态里有预留的未结算回复，不代表某个进程此刻一定还在生成；崩溃后需要显式 `drive` 才会按既有策略恢复。
-
-`AgentLane.result(operationId)` 只读取已经持久化的 `OperationResult` 并返回深拷贝。尚未结算或未知的操作返回 `{ ok: true, value: null }`；结果或进行中的操作属于其他 lane 时返回 `operation_mismatch`。它不调用 `drive`，也不生成 retry 或 `notBefore`。`inspect()` 和 `entries()` 保持原来的轻量读取，不复制整份 transcript。
-
-## 原子结算与恢复
-
-一条 lane 同时最多一个操作。完整操作状态保存在叶子中，恢复时读取它。响应、usage、tip 与阶段转移或操作终态在一次 `apply` 中提交。模型响应和摘要使用发送前预留的 entry ID。
-
-- 未结算的模型流用已存帧生成 `aborted` 响应，不重发请求。帧按内容块序号还原文本、思考和已结束的工具调用；思考帧可以带上收到它的 completions 字段。恢复时仍去掉工具调用，未结束的工具调用没有帧，所以都不会执行。思考片段留在这条 aborted 消息上。帧或响应结算写入失败时，先等待已接受的帧写入收尾，再清理本进程的运行标记；同一 harness 再次 `drive` 也走中断恢复，不重发普通请求或摘要。
-- `replay: "never"` 的未结算工具不重跑。错误结果是固定文本 `interrupted before settlement; the tool may already have executed and the result is unknown`。有 checkpoint 时，这段文本的下一行仍是最后一次 checkpoint。
-- `replay: "safe"` 的工具使用持久化参数重跑。
-- 已经写入的审批决定在重开后仍然有效。`allow` 且调用仍是 `planned` 时执行一次；`deny` 写入拒绝结果且不执行。决定已写入、工具尚未执行时进程退出，重开后走这条路径。`effect_pending` 且 `replay: "never"` 时不执行，只写上面的错误结果，然后继续下一次模型请求。
-- 并行工具完成后，entry 按 assistant 中的源顺序写入。
-
-未结算状态的预留 entry / usage ID 必须尚未被占用。不一致的持久化状态直接报错，不尝试补写阶段或猜测归属。复制尾段的预留 ID 同样不能已经被占用。仓库处于初始开发阶段，不提供旧包入口别名、旧数据转换或旧格式修补分支。
-
-## 模型请求截止
-
-一次模型请求有自己的空闲截止 `requestTimeoutMs`，默认 60 秒，写在 lane 配置里。它只包住 `streamSimple`，不包住工具执行。每收到一帧就重新计时。`streamSimple` 的 `onActivity` 同样重新计时，这样还没有变成帧的活动（例如 SSE keep-alive）也不会被当成空闲。没有墙钟总时长上限。持续产出的长流或思考不会因为总时长超过 60 秒而被记成 `timed out after output started`。`@amazme/ai` 只把可重试错误标成 `retryable`，不重发。Durable 是唯一会重发的一层。
-
-空闲截止在任何内容帧之前到达，并且这次尝试还没用完 `maxAttempts` 时，结算成可重试的模型错误，错误文本是 `model request timed out`。内容帧指文本、思考或已结束的工具调用；单独的 stop 帧不算。重试等待是 `retryDelayMs`：第 n 次重试（从 1 计）等待 `min(baseDelayMs * 2^(n-1), maxDelayMs)`。默认基数 1 秒，上限 60 秒。这个毫秒数在同一次 `apply` 里写成 `retry_wait.notBefore`，不是 `Date.now() + 10`。`drive({ waitForRetry: true })` 等到该时间或被中止。调用方取消优先于截止，不会被当成超时重试。
-
-已经写出内容帧之后空闲截止到达，操作以 `aborted` 结束，错误文本是 `model request timed out after output started`。不重发这次请求。已有帧里的工具调用从结算消息里去掉，不执行。进程在结算前退出时，重新打开仍从已提交的操作恢复：已结算的模型结果不重发，`replay: "never"` 的工具不重跑。
-
-缺少 `requestTimeoutMs` 或 `retry` 的 lane 配置直接失败，不补一个固定的短等待。摘要请求使用同一个截止；摘要超时记成中止，不重试摘要。
-
-## 会话日志
-
-条目树就是会话日志，没有第二份转录。`providerContext` 从当前 tip 的祖先投影出下一次模型请求。`models` 是模型适配器，`tools` 的 `execute` 是执行后端，两者都在 `AgentHarness` 构造时传入，测试替换它们时不改这个入口。
-
-一份存储里的每条 lane 是一段对话。`conversations()` 列出它们。`fork(name, entryId)` 把另一段对话的 tip 放在本段已有条目上，不移动本段 tip，也不取消本段已经准入的等待。目标 lane 已经存在时拒绝，不改它的 tip。子对话复制本段已经写下的配置。子对话上的 `requestAbort` 只中止那一条 lane 的信号。
-
-`configure` 读取或更换本 lane 的 provider、modelId 和 thinkingLevel。读取在操作进行中也可以。写入只在 lane 空闲时成功，并成为之后新建 lane 的默认模型和思考级别；已经有配置的 lane 保持自己的配置。系统提示词不在这次写入里。模型必须存在于构造时传入的 `models`。思考级别必须是该模型 `supportedThinkingLevels` 里的一项，不支持就拒绝，不夹到别的级别。
-
-`toolResultLimit` 默认 8,000 个字符。超过的工具结果只在下一次模型请求里被裁成首尾加 `[truncated]`。日志条目保持原文字。压缩也只改变之后请求能看见的范围，不改已经写下的工具结果。
-
-空日志第一次打开写成 `{ version: 1 }`。已经有条目、值、列表或 usage，但没有这个版本的文件是 v1 之前的会话或 runtime，直接抛出 `pre-v1 session file`，不补写、不转换。其他版本号同样拒绝。
-
-## 上下文预算与压缩
-
-`compaction.maxTokens` 是自动压缩的输入 token 阈值，不是这一次生成的输出上限。`HarnessOptions.maxTokens` 传给普通 `streamSimple`。摘要请求使用自己的输出上限，`tools` 为空，`thinkingLevel` 为 `off`。
-
-模型不能关闭思考或协议尚未实现该控制时，摘要请求明确失败并保留原分支；当前摘要契约不会默默改成其他思考级别。原生签名随帧和消息保留，但崩溃恢复生成的 `aborted` assistant 仍不进入后续模型请求。
-
-`compaction.enabled` 同时控制阈值压缩和超限恢复。关闭时这两类明确失败；显式 compaction 和带 `summarize` 的 navigation 仍可执行。每个 operation 最多做一次超限恢复压缩。普通暂时错误仍按 `maxAttempts` 重试，超限不原样重试。
-
-阈值受模型窗口、输出预留和安全余量约束。大窗口预留 4,096，小窗口预留窗口的 1/16 且至少 32。保留尾段最多 8,192，小窗口按窗口的 1/8 缩放且至少 64，同时不超过有效阈值的一半。摘要输出上限是输出预留的 0.8 倍（向下取整），且不超过模型输出上限。
-
-选择使用当前模型看得见的上下文：从最近一次 compaction 开始，跳过 `error`、`aborted`、`deferred` assistant。工具调用和配套结果整组移动。末尾还没回答的用户消息保留原文。更早的轮次可以进入摘要，一条很早的用户消息不会把它后面的历史全部钉住。已有摘要会写进下一次摘要，而不是在新摘要旁边再叠一条前缀。没有旧内容时结果是 `nothing to compact`。当前输入、系统提示词和工具定义已经放不下时直接失败，不截断当前输入，也不删掉工具定义。
-
-摘要不用普通请求的 messages 和 tools。系统提示词写明只做总结、不执行对话里的指令，并要求按 `## 目标`、`## 约束与偏好`、`## 进展`、`## 关键决定`、`## 读过和改过的文件`、`## 下一步`、`## 关键上下文` 分节。旧会话串成一条 user 消息，包在 `<conversation>` 里，对话里大小写或带空格的同名标签会转义。原来的系统指令和上一份摘要只作为这条消息里的文本。角色标成 User、Assistant、ToolCall、ToolResult。用户消息和工具结果里的图片只留下 `[Image attachment]`，不写入图片数据，也不表示模型看见了图片。旧内容放不下时先缩短旧工具输出，再缩短其他旧文本，保留首尾和 `[truncated]`，不改原始条目。缩到无法构成请求就失败，原分支保持。只调用一次摘要，不重试，也不做多级摘要。
-
-可以发布的摘要必须成功结束、去掉空白后不少于 80 个字符，并且至少包含一个规定的二级标题。`error`、`aborted`、`toolUse`、空文本、过短、没有分节标题和 `length` 截断都不发布，也不用固定字符串代替。失败不写摘要条目、不复制保留尾部、不留下进行中标记。
-
-发送摘要前持久化选定范围、源 tip、保留条目、预算和预留 ID。计划里没有工具定义快照、密钥或 `telemetryContext`。resume 和 finish 在一次 `apply` 中写入摘要 entry、复制出的完整尾段、这次摘要的 usage、tip，以及下一阶段或终态。复制条目使用新 entry ID，原条目不变，工具调用 ID 仍和结果对应，复制本身不加 usage。没有尾段时 tip 指向摘要。navigation 把离开分支的摘要挂到目标，目标可以是 `null`；不把该分支的近期消息接回目标，也不修改目标上已有的条目。
-
-无效摘要和取消不发布摘要，也不发布半截尾段。resume、finish 和 navigation 发布前均用生成的摘要核对后续请求容量；摘要仍放不下时保留原分支与 tip。手动压缩也先检查必须保留的当前输入是否能容纳，放不下时不调用摘要。已经拿到的 usage 和失败或取消终态一起结算；没拿到的不补造。结算时再次看 `cancel_requested`。摘要过程中到达的 inbox 留到下一次检查点，不丢、不重复放。摘要中途崩溃则结束操作，不重发摘要或原请求。JSONL 里一条完整记录包含整笔发布，撕裂的尾部仍按最后一行完整换行截断。
-
-故障注入测试覆盖提交前、完整记录写入后、记录尾部撕裂，以及恢复再次中断。存储契约检查对内存与 JSONL 后端执行同一套用例。
-
-## 检查与范围
-
-在仓库根目录运行：
+## Installation
 
 ```bash
-npm run check:durable
-npm run test --workspace @amazme/durable
-npm test
+npm install @amazme/durable @amazme/ai @amazme/chord
 ```
 
-`check:durable` 检查全部包源码、Durable 测试和跨运行时集成测试的类型。包内 `npm run check` 检查 Durable 源码与测试；跨运行时的诊断和依赖边界测试位于根目录 `test/`。
+## Quick Start
 
-当前实现覆盖独立运行时、能力接口、平台适配器入口与契约检查。运行时是 lane：`AgentHarness` 在一次操作里驱动模型、工具和摘要。尚未包含 Pi 的 Conversation、Task、Document，也尚未包含 deferred、模型请求重发和摘要崩溃重试。
+```typescript
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { createModels } from "@amazme/ai/models";
+import { openaiProvider } from "@amazme/ai/providers/openai";
+import { AssistantEntry, createRegistry, Harness, MemoryStorage } from "@amazme/durable";
 
-`new JsonlStorage(file)` 在构造时重放并截断撕裂尾行，不取锁，只适合单进程。跨进程写入用 `openJsonlOwner(file)`：先取得路径锁，打开文件描述符并取得 inode 锁，再通过同一个描述符重放、修复尾行和追加。符号链接和相对路径落到同一路径锁；硬链接靠设备号和 inode 互斥。路径被替换后，现有 owner 的 I/O 仍留在原 inode，不会写入替换文件。两把锁在账户数据库所给主目录的私有目录 `.amazme-jsonl-locks/{path,inode}` 下，不受 `HOME`、`TMPDIR` 或数据目录删除影响。目录必须属于当前账户且没有组或其他用户权限；每次读取回调和提交都校验持有的锁目录身份、权限和所有者令牌，归属丢失后拒绝读写和删除。释放也核对目录身份和令牌，旧实例不能解开新实例的锁。活着的进程不会因为锁时间旧而被抢占。`kill(pid, 0)` 没有返回 ESRCH 时不回收，pid 被无关进程复用时也一样。空目录、坏记录或主机名对不上时返回 `StorageBusyError`（`storage_busy`），不覆盖。`close()` 停止新的存储回调、等待已经准入的队列并关闭文件描述符，不删除、不解锁。`deleteData()` 只在路径上的 inode 仍是打开时的那一个时删除文件，失败则保持锁。`release()` 先等待存储停止，再解开两把锁；失败可以重试，成功后再调用不会动新的锁。不要在存储回调里等待这三步，否则会和正在执行的回调互相等待。不返回的回调会让它们一直等，不能靠超时提前关文件或放锁。范围只限本机本地文件系统，不保护绕过管理入口的文件操作或存储写入。锁目录在 `mkdir` 之后、写入所有者之前崩溃时，空目录无法确认归属，会一直返回 `storage_busy`。JSONL 仍不在每次写入后 fsync。
+const context = BACKGROUND_CONTEXT;
+
+const models = createModels();
+models.setProvider(openaiProvider()); // reads OPENAI_API_KEY
+
+const harness = await Harness.open(new MemoryStorage(), { models, registry: createRegistry() }, context);
+const root = await harness.root(context, { agent: { model: { provider: "openai", modelId: "gpt-6-sol" } } });
+
+const submission = await root.submit({ type: "input", content: "What is the capital of France?" }, context);
+const settled = await submission.wait(context);
+if (settled.status === "done" && settled.type === "input") {
+	const answer = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
+	console.log(answer?.model?.[0]);
+}
+await harness.close(context);
+```
+
+What happened:
+
+- `Harness.open()` opens a Session over a storage backend. `MemoryStorage` keeps everything in memory.
+- `root()` returns the root conversation, creating it on first use with the given agent choices. A conversation is a transcript of immutable entries.
+- `submit()` durably admits your input and returns a `Submission`. A built-in generation task calls the model and appends the answer.
+- `wait()` resolves once the input is answered (`done`) or has failed (`unanswered`, with a reason).
+
+Every async call takes a Chord `Context`, which carries cancellation. `BACKGROUND_CONTEXT` never cancels. Cancelling a wait only cancels that wait, never the work.
+
+## Concepts
+
+- **Harness**: one open storage plus the machinery that runs agents on it. All changes go through one line of atomic commits, and nothing is shown before its commit is stored.
+- **Conversation**: a transcript. `root()` creates the root conversation on first use; you can create more and fork them. A `Conversation` handle holds no state; compare handles by `id`.
+- **Entry**: one immutable transcript record, such as a user message (`pi.user`), a model response (`pi.assistant`), a tool result (`pi.tool-result`), a system prompt change (`pi.system`), a reset (`pi.reset`), or your own kind. The model sees the entries from the newest reset onward.
+- **Commit**: an atomic write. `conversation.commit((tx) => ...)` can append entries, edit documents, and create tasks together; either all of it is stored or none of it.
+- **Document**: typed JSON state stored next to the transcript and changed in commits. Built-in ones hold each conversation's agent choices (`pi.agent`), provider-facing session identity (`pi.provider`), running generation and tools (`pi.live`), queued submissions (`pi.inbox`), and spend (`pi.usage`).
+- **Task**: a durable state machine that saves a checkpoint at every step, so a restarted process continues from the last one. Every task has an owner: its conversation, or another task. The Harness runs answers as built-in tasks: `pi.generation` calls the model and owns the `pi.tool` tasks of its tool calls, waits for them, and hands the run to the next generation.
+- **Submission**: something you hand to a conversation, either user input or an entry to write, which you can wait for.
+- **Turn and run**: a turn is one model response and its tool calls; a run is the turns from an input to its final answer. A conversation is busy while a run is going.
+- **Extension**: a named bundle of tools, system prompt sections, hooks, wrappers, and tasks.
+- **Registry**: the extensions this process installed. It can change while the Harness runs; new work uses the new state.
+- **Agent**: what a conversation runs with: model, thinking level, selected extensions, tools, instructions, and working directory. Stored per conversation as names in `pi.agent`, resolved against the registry at each use.
+
+One answered input, as entries and tasks:
+
+```text
+submit(input) → pi.user
+  pi.generation → pi.system (only if the prompt or tools changed), pi.assistant (tool calls)
+    pi.tool × n → pi.tool-result × n   (owned by the generation, which waits for them)
+  pi.generation → pi.assistant (answer) → submission done
+```
+
+## Persist and Resume
+
+Use SQLite or JSONL storage to keep conversations across restarts:
+
+```typescript
+import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
+
+const harness = await Harness.open(await openNodeSqliteStorage("./session.sqlite"), { models, registry }, context);
+const root = await harness.root(context); // the same root as last time
+harness.resume(); // continue any run the last process left unfinished
+```
+
+Work interrupted by a crash or close stays pending. `resume()` starts the task scheduler; submitting or waiting starts it too. Each conversation has its own persisted UUIDv7 in `pi.provider`, forwarded to pi-ai as `sessionId` for provider prompt-cache and session affinity. It survives reopen, retries, reset, compaction, and model changes; a child or fork receives a fresh identity. A legacy conversation receives and persists one before its first generation or compaction request.
+
+A retried submission with the same `requestId` returns the existing submission instead of submitting twice:
+
+```typescript
+const submission = await root.submit({ type: "input", content: "Hello", requestId: "greeting-1" }, context);
+// After a restart: the same request ID finds the same submission.
+const again = await root.submit({ type: "input", content: "Hello", requestId: "greeting-1" }, context);
+// again.id === submission.id
+```
+
+`harness.submission(id)` reacquires a submission by ID, for example to wait for it after a restart.
+
+## Extensions
+
+Code the Harness runs, other than its built-in tasks, comes in named extensions installed in a registry your process owns:
+
+```typescript
+import { createRegistry, defineExtension, defineTool, hook, section, ToolTask } from "@amazme/durable";
+import { CodingTools } from "@amazme/durable/tools";
+
+const Coding = defineExtension({
+	name: "coding",
+	sections: [section("preamble", () => "You are a concise coding assistant.", { tag: false })],
+	hooks: [hook(ToolTask, { beforeTool: (call) => (isDangerous(call) ? { block: "Needs approval" } : undefined) })],
+});
+
+const registry = createRegistry();
+registry.install(CodingTools);
+registry.install(Coding);
+```
+
+An extension may bring `tools`, `sections`, `hooks`, `wraps` (decorators of a tool or section by name), and `tasks`. By default every conversation selects every installed extension, in install order. Nothing in the registry is stored; conversations store extension names.
+
+## Tools
+
+`@amazme/durable/tools` provides `read`, `write`, `edit`, and `bash`, and the `CodingTools` extension with all four. They touch files and processes only through the call's environment (see [Environment](#environment)). Reading images is not supported yet.
+
+Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `content`:
+
+```typescript
+import { Type } from "@amazme/ai";
+
+const count = defineTool({
+	name: "count",
+	description: "Count from 1 to n",
+	parameters: Type.Object({ n: Type.Number() }),
+	execute: async (args, api) => {
+		for (let i = 1; i <= args.n; i++) api.output(`${i}\n`);
+		return {};
+	},
+});
+registry.install(defineExtension({ name: "count", tools: [count] }));
+```
+
+Each call runs as its own durable task. Its intent is committed before `execute()` runs. If the process dies mid-call, the tool reruns on reopen only when it is declared `replay: "safe"`; otherwise the model gets an `interrupted` error result with the output committed so far. Throwing from `execute()` gives the model an error result. A result can also return `usage`, which is added to the conversation's [usage](#usage-and-cost). It can also return `control: { terminate: true }`: when every result of the round asks for it, the run ends without another model request.
+
+A later extension's tool with the same name replaces an earlier one where both are selected, and `wrapTool()` decorates whichever tool won:
+
+```typescript
+const Venv = defineExtension({ name: "venv", tools: [createBashTool({ commandPrefix: "source .venv/bin/activate" })] });
+const Timing = defineExtension({
+	name: "timing",
+	wraps: [wrapTool(createBashTool(), (bash) => ({ ...bash, execute: (args, api, ctx) => timed(() => bash.execute(args, api, ctx)) }))],
+});
+```
+
+## System Prompt
+
+The system prompt is built from the selected extensions' sections, rendered in order before each request. A section sees the resolved agent, the environment built for the request, and committed documents:
+
+```typescript
+section("cwd", (input) => input.env?.cwd); // rendered as <cwd>\n...\n</cwd>; undefined omits it
+```
+
+A conversation's `instructions` render last, as the section `instructions`. Sections and tool changes are stored as positional system entries in the transcript. Only what changed is sent again, which keeps provider prompt caches warm. A section that returns something different every time, such as the current time, defeats that.
+
+## Per-Conversation Agent
+
+Each conversation stores what it runs with in its `pi.agent` document. `configure()` changes it in one commit; unset fields follow the host:
+
+```typescript
+await root.configure(
+	{
+		model: { provider: "openai", modelId: "gpt-6-sol" },
+		thinkingLevel: "high",
+		extensions: { remove: [Coding] }, // edits the host default; an array selects exactly these, in order
+		tools: [readTool, bashTool], // an array offers exactly these; { remove: [...] } drops some
+		instructions: "Only read; never edit files.",
+		cwd: "/work/repo",
+	},
+	context,
+);
+await root.configure({ tools: null }, context); // null clears a field back to the host default
+const agent = await root.agent(context); // resolved: model, extensions, tools, sections, cwd
+```
+
+Extensions and tools are passed as objects and stored by name, so a stored name outlives its code: after an extension is uninstalled, conversations that select it just stop getting it until it is installed again. `createConversation()`, `fork()`, and `root()` take the same change as `agent`. A task-owned conversation, such as a subagent's, starts as a copy of its owner's conversation's agent. A fork starts with the agent its parent had at the fork entry. The model, prompt, and offered tools of a request are fixed when it is prepared; a change applies from the next request. Tool calls and hooks use the agent as their task phase resolves it, and the environment is built from the current `cwd` at each use, so a `cwd` or extension change can reach calls the model already made.
+
+## Settings
+
+Run policy shared by every conversation is passed as `settings`. It is read at every use and never stored, so getters make it live, for example backed by a settings file:
+
+```typescript
+const harness = await Harness.open(storage, {
+	models,
+	registry,
+	settings: {
+		extensions: [CodingTools, Coding], // default selection; absent: every installed extension
+		stream: { timeoutMs: 120_000 },
+		retry: { maxRetries: 3 },
+		compaction: { reserveTokens: 16384 },
+		progress: { partialIntervalMs: 100, outputIntervalMs: 100 },
+		toolExecution: "parallel",
+		get followUpMode() {
+			return userSettings.followUpMode;
+		},
+	},
+}, context);
+```
+
+## Environment
+
+`env` builds the execution environment for each tool call, section rendering, and `runtime.env()`. It receives the conversation's ID, its agent `cwd`, and committed reads, so one function serves a directory per conversation or a container per conversation:
+
+```typescript
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
+
+const harness = await Harness.open(storage, {
+	models,
+	registry,
+	env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? process.cwd() }),
+}, context);
+```
+
+A throw from `env` becomes the call's error result. Without an environment, the built-in tools fail with an error result. A fresh environment object per call is fine: `edit` and `write` serialize changes to one file by the environment's `id` and path. A custom `ExecutionEnv` sets `id` so that equal ids see the same files at the same paths, for example one id per container.
+
+Hosts can use the environment directly too, for example to show a project's files. `openBinaryReader()` reads byte ranges of one opened file, `openDirReader()` pages a directory, and `exec()` with an argv array runs a program without a shell, reporting which stream each output chunk came from:
+
+```typescript
+const status = { stdout: "", stderr: "" };
+await env.exec(["git", "status", "--porcelain=v2", "-z"], {
+	onOutput: (text, _context, { stream }) => {
+		status[stream] += text;
+	},
+}, context);
+```
+
+Abort the context to stop one call; `cleanup()` is for shutting the environment down. A custom environment can check itself with `registerEnvConformance()` from `@amazme/durable/testing`, like storage below.
+
+## Reload
+
+Installing an extension with an installed name replaces it in place, in one step:
+
+```typescript
+registry.install(await loadCodingExtension()); // same name "coding": replaces the installed one
+```
+
+`registry.uninstall(extension)` removes the installed extension with that name, whichever object it is.
+
+Work that already started keeps the code it took: a running tool call finishes under its old implementation, and each task phase resolves hooks and the agent once, from the registry at the phase's start. The next phase, request, or call uses the new code. After a restart, install the same extensions again; pending tasks of an extension's `tasks` resume once it is installed.
+
+## Watching a Conversation
+
+Everything a UI needs is committed state. `viewState()` returns the conversation's structural view as a read-only Chord state, updated after every commit that touches it:
+
+```typescript
+const view = await root.viewState(context);
+view.subscribe((value) => {
+	// value.entries: the active transcript
+	// value.docs["amazme.live"]: the running generation (streamed partial, retry, deferred) and tool calls (output, details)
+	// value.docs["amazme.inbox"], value.docs["amazme.usage"], value.docs["amazme.agent"], value.docs["amazme.provider"]
+	render(value);
+});
+// later: view.dispose();
+```
+
+`watch()` delivers the same view with the exact Chord operations of each commit, one callback at a time:
+
+```typescript
+const watch = await root.watch(context);
+render(watch.value); // the state at attachment
+watch.start(async (value, ops) => {
+	await send(ops); // for example to a remote client that applies them
+});
+// later: await watch.stop();
+```
+
+A slow watch keeps at most 100 undelivered frames. After that, the pending frames are replaced by one frame holding the whole newest view. A client that joins late or reconnects starts from the current view; nothing is replayed.
+
+Partial answers and tool output are committed at most every 100 ms by default, so a crash loses at most that window. `settings.progress` changes the intervals; a host whose storage is remote can commit less often, for example `{ partialIntervalMs: 500, outputIntervalMs: 500 }`.
+
+## Busy Conversations
+
+A conversation is busy while a run is working on an input. Submitting to a busy conversation queues the submission in the conversation's inbox, `docs["amazme.inbox"]` in the view:
+
+```typescript
+await root.submit({ type: "input", content: "Also run the tests" }, context); // follow-up (default)
+await root.submit({ type: "input", content: "Use pnpm, not npm", whenBusy: "steer" }, context);
+await root.submit({ type: "input", content: "Only if idle", whenBusy: "reject" }, context); // throws ConversationBusy
+await root.submit({ type: "write", entry: { kind: "app.note", data: "user opened a file" } }, context);
+```
+
+- **Steers** are placed after the current tool round and join the running work.
+- **Follow-ups** are placed when the run answers, and start the next run.
+- **Writes** append an entry without asking the model anything.
+- `await submission.abort(context)` withdraws a queued submission.
+- The [settings](#settings) `steeringMode: "all"` and `followUpMode: "all"` place every queued item at once instead of one per turn.
+
+If a run fails, queued items stay in the inbox until the next submission places them, oldest first.
+
+## Reset and Handoff
+
+`reset()` starts a new context. The model no longer sees older entries, but they stay in storage:
+
+```typescript
+await root.reset(undefined, context);                                  // start from nothing
+await root.reset("We were fixing the flaky login test. Continue.", context); // start from a handoff note
+```
+
+While busy, the reset is queued like a write. When it is placed during a tool round, the current run ends. A tool can request the same with `control: { handoff: "..." }`.
+
+## Compaction
+
+Compaction shrinks what the model sees: it summarizes older entries and appends a `pi.compaction` entry that holds the summary and heads the first entry it keeps. Older entries stay in storage.
+
+```typescript
+const id = await root.compact("Keep the failing test names", context); // manual, with optional instructions
+const { outcome } = (await harness.waitForTask(id, context)).state;
+if (outcome.status === "completed" && outcome.result.submissionId !== undefined) {
+	const placed = await (await harness.submission(outcome.result.submissionId, context))!.wait(context);
+	console.log(placed.status); // "done", or "unanswered" with reason "stale"
+}
+```
+
+The conversation keeps working while the summary is made. The summary is placed at once when the conversation is idle, otherwise at the next turn boundary. Esc (`abort()`) cancels a manual compaction.
+
+Generation also compacts on its own, controlled by the [settings](#settings):
+
+```typescript
+settings: {
+	compaction: {
+		enabled: true, // automatic compaction; manual compact() always works
+		reserveTokens: 16384, // above contextWindow - reserveTokens, the next request waits for a compaction
+		keepRecentTokens: 20000, // roughly how much recent context stays verbatim
+		backgroundTokens: 32768, // this far below that, a compaction starts in the background; 0 disables it
+	},
+}
+```
+
+When a provider rejects a request because the context is too long, generation compacts and retries once. A summary that would cut before the start of the current context settles as `stale` when it is placed, so when several are in flight, the furthest cut stays in effect. Summarization spend counts in `pi.usage`. A `beforeCompact` hook on `CompactionTask` can decline or supply its own summary.
+
+Running compactions are listed in `docs["amazme.live"].compactions` with their reason, attempt, and retry backoff. The agent events add `compaction_start` and `compaction_end`, and a `compactions` field in the snapshot.
+
+## Agent Events (Experimental)
+
+For consumers that want coding-agent style events (`message_start`, `message_update`, `tool_execution_start`, ...) instead of structural state:
+
+```typescript
+import { watchEvents } from "@amazme/durable";
+
+const stream = await watchEvents(harness, root.id, context);
+initialize(stream.snapshot); // entries, run, in-flight generation, tools, compactions, inbox, agent, usage
+stream.start(async (events) => {
+	for (const event of events) console.log(JSON.stringify(event));
+});
+```
+
+Events are derived from commits, one batch per commit, and apply on top of the snapshot. Message and tool updates carry deltas: text and thinking appends, appended tool-call argument text, and output trims and appends. When a consumer falls more than 100 batches behind, it receives a fresh `snapshot` event instead. See `test/examples/19-json.ts` for the full stream of one run.
+
+## Hooks
+
+Hooks let extensions observe or adjust the built-in tasks, in the conversations that select them:
+
+```typescript
+import { GenerationTask, hook, ToolTask } from "@amazme/durable";
+
+const Guard = defineExtension({
+	name: "guard",
+	hooks: [
+		hook(ToolTask, { beforeTool: (call) => (call.name === "bash" ? { block: "bash is disabled here" } : undefined) }),
+		hook(GenerationTask, { onYield: (answer) => (needsMoreWork(answer) ? { continue: "Keep going." } : undefined) }),
+	],
+});
+```
+
+- **Generation:** `beforeRequest` (replace the messages of one request), `afterResponse`, `onYield` (continue the run with another user message), and `afterTools` (runs once a round's tools are done).
+- **Tools:** `beforeTool` (block or rewrite arguments) and `afterTool` (replace the result).
+
+To limit a hook to some conversations, select its extension only there, for example with `configure({ extensions: { add: [Guard] } })`.
+
+## More Conversations and Forks
+
+```typescript
+const other = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
+const fork = await root.fork(entryId, { ownership: { kind: "ownerless" } }, context);
+```
+
+A fork sees its parent's entries up to `entryId` and continues independently. It keeps the parent's agent as of that entry but receives a fresh provider session identity. Both take `agent` and `init`, applied in the creating commit.
+
+## Abort and Subagents
+
+`await root.abort(context)` stops a conversation: queued inputs are withdrawn (queued writes stay), every task of its current work is aborted, and the call resolves once the conversation is idle.
+
+A conversation can be **owned** by a task. A subagent tool creates its child inside `api.commit()` with `ownership: { kind: "task", taskId: api.taskId }`, then drives it through `api.conversation(id)`:
+
+```typescript
+const Subagent: Extension = defineExtension({
+	name: "subagent",
+	tools: [
+		defineTool({
+			name: "subagent",
+			description: "Delegate a self-contained task to a subagent and get its answer back.",
+			parameters: Type.Object({ task: Type.String() }),
+			replay: "safe", // a rerun after a crash finds the same child and submission
+			execute: async (args, api, context) => {
+				const child = await api.commit(async (tx) => {
+					// The ownership index remembers the child, so a rerun reuses it.
+					const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
+					if (existing !== undefined) return existing.id;
+					// Starts as a copy of this conversation's agent: model, extensions, tools, cwd.
+					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+					// A cheaper model, and no subagents of its own.
+					await configure(tx, created.id, { model: haiku, extensions: { remove: [Subagent] } });
+					return created.id;
+				}, context);
+				await api.details({ conversationId: child }, context); // lets a UI attach to the child
+				const request = { type: "input", content: args.task, requestId: `subagent:${api.taskId}` } as const;
+				const settled = await (await (await api.conversation(child, context))!.submit(request, context)).wait(context);
+				return { content: [{ type: "text", text: settled.status }] };
+			},
+		}),
+	],
+});
+```
+
+Owned work belongs to its owner:
+
+- Aborting the call aborts the child. So does the call failing: `execute()` throwing, or a crash that interrupts a call that is not replay-safe.
+- The parent is idle only once the child is.
+- A task created with `{ background: true }` is a boundary: work it owns survives the parent's abort and does not keep the parent busy. `root.abort(context, { background: true })` aborts it too.
+
+The examples show both patterns as product code:
+
+- [`22-subagent-foreground.ts`](test/examples/22-subagent-foreground.ts): the tool above, returning the child's answer. The UI finds the child through the call's `details` and prints the child's events indented under the call.
+- [`23-subagent-background.ts`](test/examples/23-subagent-background.ts): persistent subagents behind one `subagent` tool that spawns, messages (steer or follow-up), waits for, stops, and lists them. Each child is owned by a background anchor task, so the parent's Esc and idle waits never reach it. Each message is delivered by a background reporter task that posts the answer back to the parent as a follow-up input once it arrives; request IDs keep a restart from sending a message or a report twice.
+
+## Child Tasks
+
+A task can own child tasks, created with `ownership: { kind: "task", taskId }`, and wait for them by committing a `waiting` state:
+
+```typescript
+pay: async (task, runtime, context) => {
+	await runtime.commit(async (tx) => {
+		const payments = [];
+		for (const card of task.input.cards) {
+			payments.push(await tx.createTask(Payment, { card }, { ownership: { kind: "task", taskId: task.id } }));
+		}
+		// Resume in `decide` once every payment is done; the first failure aborts the rest.
+		return { status: "waiting", checkpoint: { phase: "decide", payments }, on: payments, policy: "failFast" };
+	}, context);
+},
+decide: async (task, runtime, context) => {
+	const outcomes = await runtime.outcomes(task.state.checkpoint.payments, context);
+	// ...commit the checkout's own outcome
+},
+```
+
+- **Waiting:** the task runs no code while it waits. With `allSettled` it resumes once every task in `on` is done; with `failFast` the first failed child also aborts the others. `on` may name other tasks too, with `allSettled`.
+- **Finishing:** a task that finishes while work it owns is still running is `completing`: its outcome is decided, but it becomes terminal, and `waitForTask()` returns, only once that work is done. A failed or aborted outcome aborts that work first.
+- **Aborting:** abort runs bottom-up. Aborting a task aborts the work it owns first, and its own abort handler starts only once that work is done, so each task undoes its own effects.
+
+[`24-child-tasks.ts`](test/examples/24-child-tasks.ts) runs a checkout with four payments: a declined card, a cancelled checkout, and a restart while the payments run.
+
+## Task Graph
+
+`harness.taskGraph(context)` shows every live task of the Session as one Chord state, for a task panel or debugging. Each node has its owner edge (`owner` task, or none for a task its conversation owns), its status, whether it is `background` or abort-marked, and the conversations it owns. `harness.watchTaskGraph(context)` delivers the same value as a watch, like a conversation's `watch()`.
+
+```typescript
+const graph = await harness.taskGraph(context);
+graph.subscribe((value) => {
+	for (const node of Object.values(value.tasks)) {
+		const status = node.state.status === "waiting" ? `waiting on ${node.state.on.join(", ")}` : node.state.status;
+		console.log(`${node.id} ${node.kind} ${status}`, node.owner ?? `conversation ${node.conversationId}`);
+	}
+});
+```
+
+A task appears with the commit that creates it and leaves with the commit that makes it terminal. Statuses are the committed ones: `pending`, `running`, `waiting` (with `on` and `policy`), and `completing` (with the held outcome's status). After a restart, tasks that were `running` show as `pending` until they run again. Whether a pending task is blocked by a missing definition is not part of the graph; `harness.inspect()` reports that. The graph lists live tasks only: once a subagent's owner task is terminal, a later task in its conversation is a top-level node, and the conversation's `ConversationRecord.owner` (also in its view's `conversation`) links it to its parent. [`24-child-tasks.ts`](test/examples/24-child-tasks.ts) prints the checkout's tree while its payments run.
+
+## Your Own State
+
+Documents are typed JSON objects committed together with entries. Define one, and edit it in a commit:
+
+```typescript
+import { defineDoc } from "@amazme/durable";
+
+const Todos = defineDoc<{ items: string[] }>({
+	kind: "app.todos",
+	version: 1,
+	scope: "conversation",
+	history: "latest", // or "rewindable" to read old values with snapshotAsOf()
+	fork: "initial", // what a fork starts with: "initial", "current", or "asOf"
+	initial: () => ({ items: [] }),
+});
+
+await root.commit(async (tx) => {
+	(await tx.doc(Todos, root.id)).items.push("write docs");
+}, context);
+console.log(await harness.snapshot(Todos, root.id, context));
+```
+
+`harness.watchDoc()` and `harness.documentState()` observe one document like the view above. `HarnessOptions.conversationCreated(tx, conversation)` runs in every commit that creates or forks a conversation, including a tool's raw `tx.createConversation()`, so every conversation gets your documents; `init` in `createConversation()`, `fork()`, and `root()` writes per-call data in the same commit. An extension's tools, sections, and hooks read their own documents through `api` or `input.read`, and treat an absent one as its default ([`11-extension-state.ts`](test/examples/11-extension-state.ts)).
+
+## Usage and Cost
+
+Each conversation keeps token and cost totals in `docs["amazme.usage"]`: per `provider/model` for model responses, and per tool name for tool results that report usage. Failed and aborted attempts count too. For the whole Session:
+
+```typescript
+const usage = await harness.usage(context); // { models: { "openai/gpt-6-sol": Usage }, tools: {...} }
+```
+
+## Storage
+
+| Backend | Import | Notes |
+|---|---|---|
+| Memory | `MemoryStorage` from the package root | Nothing is persisted. |
+| SQLite | `openNodeSqliteStorage(file)` from `@amazme/durable/storage/sqlite/node` | One database file. WAL mode with `synchronous = NORMAL`: commits survive process crashes; the newest may be lost on power or host failure. |
+| JSONL | `openNodeJsonlStorage(directory, context)` from `@amazme/durable/storage/jsonl/node` | Append-only files in one directory. Pass `{ fsync: true }` to flush before each commit marker. |
+
+One process owns a storage at a time; there is no cross-process locking. The portable SQLite and JSONL cores (`/storage/sqlite`, `/storage/jsonl`) run without Node APIs, for example on Bun or in Cloudflare Durable Objects, given an asynchronous `SqliteDatabase` facade or a `FileSystem` from `@amazme/durable/env`.
+
+SQLite adapters implement promise-based `exec`, `run`, `get`, `all`, `transaction`, and `close`. `run`, `get`, and `all` take SQL text plus positional bindings; adapters may cache prepared statements by SQL text. A transaction callback receives a transaction handle; all work in the transaction must use it, and the handle expires when the callback settles. Adapters must queue unrelated operations and other transactions until the transaction finishes, so calling `database` itself inside the callback never settles:
+
+```typescript
+await database.transaction(async (transaction) => {
+	await transaction.exec("CREATE TABLE example (value TEXT)");
+	await transaction.run("INSERT INTO example (value) VALUES (?)", "stored atomically");
+});
+```
+
+Custom backends can run the shared conformance suite with any Vitest- or Jest-compatible runner:
+
+```typescript
+import { registerStorageConformance } from "@amazme/durable/testing";
+import { describe, expect, it } from "vitest";
+
+registerStorageConformance({ describe, expect, it }, "My Storage", async (use) => {
+	const storage = await openMyStorage();
+	try {
+		await use(storage);
+	} finally {
+		await closeMyStorage(storage);
+	}
+});
+```
+
+The package root loads TypeBox, because the tool task validates arguments with pi-ai's `validateToolArguments()`. That costs about 23 MB of peak RSS unbundled, about 4 MB in a tree-shaken bundle.
+
+## Examples
+
+Runnable examples live in [`test/examples`](test/examples). Run one from this package directory with:
+
+```bash
+node --conditions=source --experimental-strip-types test/examples/14-chat.ts
+```
+
+| Example | Shows |
+|---|---|
+| [14-chat](test/examples/14-chat.ts) | One question and answer |
+| [16-real-model](test/examples/16-real-model.ts) | Streaming an answer from OpenAI |
+| [17-coding-tools](test/examples/17-coding-tools.ts) | A tool-using turn on JSONL storage |
+| [18-print](test/examples/18-print.ts) | Print mode: submit a prompt, print the answer |
+| [19-json](test/examples/19-json.ts) | JSON mode: agent events or raw view operations, on SQLite, JSONL, or memory |
+| [20-inbox](test/examples/20-inbox.ts) | Steers, follow-ups, writes, and withdrawal while busy |
+| [21-late-join](test/examples/21-late-join.ts) | Attaching a view and an event stream mid-run |
+| [22-subagent-foreground](test/examples/22-subagent-foreground.ts) | A replay-safe subagent tool whose child the call owns, with the child's events under the call |
+| [23-subagent-background](test/examples/23-subagent-background.ts) | Persistent subagents: spawn, steer, stop, list, answers reported back, restart-safe |
+| [24-child-tasks](test/examples/24-child-tasks.ts) | A checkout that owns and waits for four payments: failFast, abort, restart |
+| [25-compaction](test/examples/25-compaction.ts) | A long chat compacted in the background, manually, and after a context overflow |
+| [26-coding-agent](test/examples/26-coding-agent.ts) | CodingTools, live settings from a settings object, an environment that follows the conversation's directory |
+| [27-plan-mode](test/examples/27-plan-mode.ts) | A read-only plan mode as an extension with its own document, switched with `configure()` |
+| [28-reviewer](test/examples/28-reviewer.ts) | A reviewer conversation with its own model, extensions, tools, directory, and review loop |
+| [29-sandbox-per-conversation](test/examples/29-sandbox-per-conversation.ts) | An environment per conversation, looked up from an app document |
+| [30-tool-override](test/examples/30-tool-override.ts) | A same-name bash for some conversations, and a wrapper that times whichever bash won |
+| [31-reload-and-restart](test/examples/31-reload-and-restart.ts) | Reloading an extension mid-call, and stored choices surviving a restart |
+| [00](test/examples/00-conversation.ts)–[13](test/examples/13-recovery.ts) | The layers underneath: sessions, documents, forks, watches, the Harness, agent configuration, reload, extension state, tasks, recovery |
+
+Examples that call OpenAI need `OPENAI_API_KEY`; most use the faux provider otherwise.
+
+## Design Documents
+
+- [`docs/spec.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/spec.md): the normative specification
+- [`docs/pico-v5-handoff.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/pico-v5-handoff.md): the implementation plan
+- [`docs/pico-v5-chord-usage.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/pico-v5-chord-usage.md): how the package uses Chord
+
+Benchmarks: `npm run bench:storage`, `npm run bench:storage:memory`, and `npm run bench:tool-output`.
+
+## License
+
+MIT
