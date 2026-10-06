@@ -61,6 +61,7 @@ interface SessionStats {
  */
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
+	private composerLine: (() => string | undefined) | undefined;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private sessionStats?: SessionStats;
@@ -76,6 +77,11 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	/** Enter/queue hint rendered under the session stats. */
+	setComposerLine(provider: () => string | undefined): void {
+		this.composerLine = provider;
 	}
 
 	/**
@@ -285,6 +291,8 @@ export class FooterComponent implements Component {
 
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+		const composerLine = this.composerLine?.();
+		if (composerLine) lines.push(truncateToWidth(theme.fg("dim", composerLine), width, theme.fg("dim", "...")));
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

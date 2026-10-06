@@ -31,6 +31,8 @@ export interface BashResult {
 	exitCode: number | undefined;
 	/** Whether the command was cancelled via signal */
 	cancelled: boolean;
+	/** The process was left running so the conversation could continue. */
+	backgrounded?: boolean;
 	/** Whether the output was truncated */
 	truncated: boolean;
 	/** Path to temp file containing full output (if output exceeded truncation threshold) */
@@ -105,6 +107,15 @@ export async function executeBashWithOperations(
 			onData,
 			signal: options?.signal,
 		});
+		if (result.backgrounded) {
+			return {
+				output: outputChunks.join(""),
+				exitCode: undefined,
+				cancelled: false,
+				truncated: false,
+				backgrounded: true,
+			};
+		}
 
 		const fullOutput = outputChunks.join("");
 		const truncationResult = truncateTail(fullOutput);

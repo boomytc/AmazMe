@@ -14,6 +14,7 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { foregroundCommands } from "../foreground-commands.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -90,7 +91,7 @@ export interface BashOperations {
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
 		},
-	) => Promise<{ exitCode: number | null }>;
+	) => Promise<{ exitCode: number | null; backgrounded?: boolean }>;
 }
 
 /** Shared process execution used by the built-in shell tools. */
@@ -123,8 +124,23 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			if (child.pid) trackDetachedChildPid(child.pid);
 			let timedOut = false;
 			let timeoutHandle: NodeJS.Timeout | undefined;
+			let detached = false;
 			const onAbort = () => {
+				if (detached) return;
 				if (child.pid) killProcessTree(child.pid);
+			};
+			const tracked = foregroundCommands.attach({
+				command,
+				pid: child.pid,
+				detachAbort: () => {
+					detached = true;
+					if (timeoutHandle) clearTimeout(timeoutHandle);
+					if (signal) signal.removeEventListener("abort", onAbort);
+				},
+			});
+			const forward = (data: Buffer) => {
+				tracked.noteOutput(data.toString());
+				onData(data);
 			};
 
 			try {
@@ -132,12 +148,12 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				if (timeoutMs !== undefined) {
 					timeoutHandle = setTimeout(() => {
 						timedOut = true;
-						if (child.pid) killProcessTree(child.pid);
+						if (!detached && child.pid) killProcessTree(child.pid);
 					}, timeoutMs);
 				}
 				// Stream stdout and stderr.
-				child.stdout?.on("data", onData);
-				child.stderr?.on("data", onData);
+				child.stdout?.on("data", forward);
+				child.stderr?.on("data", forward);
 				// Handle abort signal by killing the entire process tree.
 				if (signal) {
 					if (signal.aborted) onAbort();
@@ -145,8 +161,19 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				}
 				// Handle shell spawn errors and wait for the process to terminate without hanging
 				// on inherited stdio handles held by detached descendants.
-				const exitCode = await waitForChildProcess(child);
-				if (signal?.aborted) {
+				const exited = waitForChildProcess(child).then((code) => {
+					tracked.finish(code);
+					return code;
+				});
+				await Promise.race([
+					exited.then(() => "exit" as const),
+					tracked.whenDetached.then(() => "detach" as const),
+				]);
+				if (tracked.isDetached()) {
+					return { exitCode: null, backgrounded: true };
+				}
+				const exitCode = await exited;
+				if (signal?.aborted && !detached) {
 					throw new Error("aborted");
 				}
 				if (timedOut) {
@@ -157,7 +184,7 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				const signalCode = child.signalCode;
 				return { exitCode: exitCode ?? (signalCode ? 128 + (osConstants.signals[signalCode] ?? 0) : 1) };
 			} finally {
-				if (child.pid) untrackDetachedChildPid(child.pid);
+				if (child.pid && !detached) untrackDetachedChildPid(child.pid);
 				if (timeoutHandle) clearTimeout(timeoutHandle);
 				if (signal) signal.removeEventListener("abort", onAbort);
 			}
@@ -367,6 +394,19 @@ export function createShellToolDefinition(
 						timeout,
 						env: spawnContext.env,
 					});
+					if (result.backgrounded) {
+						const snapshot = await finishOutput();
+						const { text } = formatOutput(snapshot, "");
+						return {
+							content: [
+								{
+									type: "text",
+									text: appendStatus(text, "Command running in the background"),
+								},
+							],
+							details: undefined,
+						};
+					}
 					exitCode = result.exitCode;
 				} catch (err) {
 					const snapshot = await finishOutput();

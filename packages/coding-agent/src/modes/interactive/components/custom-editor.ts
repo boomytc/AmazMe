@@ -20,6 +20,10 @@ export class CustomEditor extends Editor {
 	public onEscape?: () => void;
 	public onCtrlD?: () => void;
 	public onPasteImage?: () => void;
+	/** Return true when the interactive session consumed the key. */
+	public onBeforeInput?: (data: string) => boolean;
+	/** Child transcript view hides the composer by skipping its render. */
+	public hidden = false;
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
 
@@ -85,7 +89,16 @@ export class CustomEditor extends Editor {
 		this.actionHandlers.set(action, handler);
 	}
 
+	override render(width: number): string[] {
+		if (this.hidden) return [];
+		return super.render(width);
+	}
+
 	handleInput(data: string): void {
+		if (this.onBeforeInput?.(data)) {
+			return;
+		}
+
 		// Check extension-registered shortcuts first
 		if (this.onExtensionShortcut?.(data)) {
 			return;

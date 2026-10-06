@@ -27,6 +27,7 @@ export class BashExecutionComponent extends Container {
 	private truncationResult?: TruncationResult;
 	private fullOutputPath?: string;
 	private expanded = false;
+	private backgrounded = false;
 	private contentContainer: Container;
 
 	constructor(command: string, ui: TUI, excludeFromContext = false) {
@@ -93,6 +94,25 @@ export class BashExecutionComponent extends Container {
 		}
 
 		this.updateDisplay();
+	}
+
+	/** The process was detached. Keep the loader up until the real exit arrives. */
+	setBackgrounded(): void {
+		this.backgrounded = true;
+		this.status = "running";
+		this.loader.setMessage("Running in background");
+		this.updateDisplay();
+	}
+
+	isBackgrounded(): boolean {
+		return this.backgrounded && this.status === "running";
+	}
+
+	/** Replace the streamed preview with the finished output and stop the loader. */
+	finishBackground(output: string, exitCode: number | undefined): void {
+		this.outputLines = output.length > 0 ? output.split("\n") : [];
+		this.backgrounded = false;
+		this.setComplete(exitCode, false);
 	}
 
 	setComplete(

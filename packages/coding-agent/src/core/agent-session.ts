@@ -18,7 +18,7 @@ import { basename, dirname } from "node:path";
 import {
 	type AfterToolCallContext,
 	type AfterToolCallResult,
-	type Agent,
+	Agent,
 	type AgentContext,
 	type AgentEvent,
 	type AgentMessage,
@@ -114,6 +114,8 @@ import {
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import { createToolNameMatcher, isMcpToolName } from "./mcp-servers.ts";
+import { ChildAgentBook, type ChildRecord, launchChildAgent } from "./child-session.ts";
+import { foregroundCommands } from "./foreground-commands.ts";
 import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -284,6 +286,8 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
+	/** When false, a background command's completion is not copied into this session. Child sessions set this. */
+	recordBackgroundCompletions?: boolean;
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
 }
@@ -407,6 +411,7 @@ export class AgentSession {
 	private _failedResponse: AssistantMessage | undefined;
 
 	// Bash execution state
+	readonly childAgents = new ChildAgentBook();
 	private readonly _bashAbortControllers = new Set<AbortController>();
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
@@ -499,6 +504,16 @@ export class AgentSession {
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
+		if (config.recordBackgroundCompletions !== false) {
+			foregroundCommands.onComplete((completion) => {
+				this.recordBashResult(completion.command, {
+					output: completion.output,
+					exitCode: completion.exitCode ?? undefined,
+					cancelled: false,
+					truncated: false,
+				});
+			});
+		}
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
 		this._installAgentRequestProjection();
@@ -1952,6 +1967,7 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		foregroundCommands.backgroundCurrent();
 		if (this._isEmittingAgentSettled) {
 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
 			return;
@@ -3850,7 +3866,7 @@ export class AgentSession {
 				},
 			);
 
-			this.recordBashResult(command, result, options);
+			if (!result.backgrounded) this.recordBashResult(command, result, options);
 			return result;
 		} finally {
 			this._bashAbortControllers.delete(abortController);
@@ -3879,9 +3895,61 @@ export class AgentSession {
 			// Queue for later - will be flushed on agent_end
 			this._pendingBashMessages.push(bashMessage);
 		} else {
-			this.sessionManager.appendMessage(bashMessage);
-			this._refreshFinalizedContext();
+			this._appendBashMessage(bashMessage);
 		}
+	}
+
+	private _appendBashMessage(bashMessage: BashExecutionMessage): void {
+		const id = this.sessionManager.appendMessage(bashMessage);
+		const entry = this.sessionManager.getEntry(id);
+		if (entry) this._emit({ type: "entry_appended", entry });
+		this._refreshFinalizedContext();
+	}
+
+	/**
+	 * Start a child session on this session's model. The row stays in `childAgents`.
+	 * Cancelling the child does not cancel this session.
+	 */
+	spawnChild(description: string, prompt: string): ChildRecord {
+		const model = this.model;
+		if (!model) throw new Error("No model selected");
+		let child: AgentSession | undefined;
+		const record: ChildRecord = {
+			id: `child-${this.childAgents.records.length + 1}`,
+			description,
+			modelId: model.id,
+			status: "running",
+			activity: "Thinking",
+			startedAt: Date.now(),
+			transcript: [prompt],
+			cancel: () => {
+				if (record.status !== "running") return;
+				record.status = "cancelled";
+				record.endedAt = Date.now();
+				void child?.abort();
+				this.childAgents.touch();
+			},
+		};
+		this.childAgents.add(record);
+		void launchChildAgent({
+			cwd: this.sessionManager.getCwd(),
+			model,
+			modelRuntime: this._modelRuntime,
+			prompt,
+			createSession: (config) => new AgentSession(config),
+			onSession: (session) => {
+				child = session;
+			},
+			onUpdate: (update) => {
+				if (update.activity !== undefined) record.activity = update.activity;
+				if (update.transcript !== undefined) record.transcript = update.transcript;
+				if (update.status !== undefined && record.status === "running") record.status = update.status;
+				if (update.endedAt !== undefined) record.endedAt = update.endedAt;
+				this.childAgents.touch();
+			},
+			isCancelled: () => record.status === "cancelled",
+		});
+		return record;
 	}
 
 	/**
@@ -3911,10 +3979,9 @@ export class AgentSession {
 		if (this._pendingBashMessages.length === 0) return;
 
 		for (const bashMessage of this._pendingBashMessages) {
-			this.sessionManager.appendMessage(bashMessage);
+			this._appendBashMessage(bashMessage);
 		}
 		this._pendingBashMessages = [];
-		this._refreshFinalizedContext();
 	}
 
 	// =========================================================================

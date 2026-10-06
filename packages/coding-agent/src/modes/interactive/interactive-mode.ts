@@ -66,6 +66,11 @@ import {
 	VERSION,
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import { foregroundCommands } from "../../core/foreground-commands.ts";
+import { InteractiveComposer } from "./composer-contract.ts";
+import { routeInteractiveInput } from "./interactive-input.ts";
+import { scrollbackRows, TranscriptFocus } from "./transcript-focus.ts";
+import { BashRunTable, ParentTranscript, syncComposerVisibility, WorkSurface } from "./work-surface.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
 import {
@@ -469,6 +474,12 @@ export class InteractiveMode {
 	private activeSelectorToken?: object;
 	private activeSelectorDispose?: () => void;
 	private footer: FooterComponent;
+	private composer!: InteractiveComposer;
+	private transcriptFocus!: TranscriptFocus;
+	private workSurface!: WorkSurface;
+	private readonly parentTranscript = new ParentTranscript();
+	private readonly bashRuns = new BashRunTable();
+	private submitEditorText: (text: string) => Promise<void> = async () => {};
 	private footerContainer: Container;
 	private footerDataProvider: FooterDataProvider;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
@@ -2001,8 +2012,9 @@ export class InteractiveMode {
 						return { cancelled: true };
 					}
 
-					this.chatContainer.clear();
+					this.parentTranscript.replaceAll([]);
 					this.renderInitialMessages();
+					this.ensureWorkSurface();
 					if (result.editorText && !this.editor.getText().trim()) {
 						this.editor.setText(result.editorText);
 					}
@@ -2200,13 +2212,14 @@ export class InteractiveMode {
 
 	private renderCurrentSessionState(): void {
 		this.loadedResourcesContainer.clear();
-		this.chatContainer.clear();
+		this.parentTranscript.replaceAll([]);
 		this.pendingMessagesContainer.clear();
 		this.compactionQueuedMessages = [];
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
 		this.renderInitialMessages();
+		this.ensureWorkSurface();
 	}
 
 	/**
@@ -3045,6 +3058,7 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private setupKeyHandlers(): void {
+		this.installInteractiveInput();
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
@@ -3176,8 +3190,78 @@ export class InteractiveMode {
 		this.showStatus("Startup is still in progress");
 	}
 
+	private installInteractiveInput(): void {
+		this.composer = new InteractiveComposer(this.defaultEditor, {
+			isTurnRunning: () => this.session.isStreaming,
+			send: (text) => {
+				void this.submitEditorText(text);
+			},
+			queue: () => {
+				this.updatePendingMessagesDisplay();
+			},
+			sendQueued: (text) => {
+				void this.session.steer(text);
+				this.updatePendingMessagesDisplay();
+			},
+			cancelAndSend: (text) => {
+				void this.cancelTurnAndSend(text);
+			},
+			cancelTurn: () => {
+				void this.session.abort();
+			},
+			showEscHint: () => {
+				this.showStatus("Press Ctrl+C to cancel the turn");
+			},
+		});
+		this.transcriptFocus = new TranscriptFocus(
+			(lines) => {
+				this.transcriptScrollView?.scrollBy(lines);
+			},
+			() =>
+				scrollbackRows(
+					this.chatContainer.children.filter((child) => child !== this.workSurface),
+					this.session.childAgents.records,
+					(id) => this.session.childAgents.open(id),
+				),
+			10,
+			(childId) => {
+				this.session.childAgents.highlightId = childId;
+				this.session.childAgents.touch();
+			},
+		);
+		this.workSurface = new WorkSurface(this.session.childAgents, foregroundCommands);
+		this.parentTranscript.bind(this.chatContainer, this.workSurface);
+		const sync = () => {
+			syncComposerVisibility(this.editorContainer, this.defaultEditor, this.workSurface.composerHidden);
+			this.ensureWorkSurface();
+			this.ui.requestRender();
+		};
+		this.session.childAgents.onChange(sync);
+		foregroundCommands.onChange(sync);
+		this.ensureWorkSurface();
+		this.footer.setComposerLine(() => this.composer.footerText());
+		this.defaultEditor.onBeforeInput = (data) =>
+			routeInteractiveInput(data, {
+				child: this.workSurface,
+				transcript: this.transcriptFocus,
+				composer: this.composer,
+			});
+	}
+
+	/** Project the parent transcript. The container is not a second copy of the entries. */
+	private ensureWorkSurface(): void {
+		if (!this.workSurface) return;
+		this.parentTranscript.project();
+	}
+
+	private async cancelTurnAndSend(text: string): Promise<void> {
+		foregroundCommands.backgroundCurrent();
+		await this.session.abort();
+		await this.submitEditorText(text);
+	}
+
 	private setupEditorSubmitHandler(): void {
-		this.defaultEditor.onSubmit = async (text: string) => {
+		this.submitEditorText = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
 
@@ -3375,6 +3459,9 @@ export class InteractiveMode {
 			}
 			this.editor.addToHistory?.(text);
 		};
+		this.defaultEditor.onSubmit = (text) => {
+			void this.submitEditorText(text);
+		};
 	}
 
 	private subscribeToAgent(): void {
@@ -3422,7 +3509,11 @@ export class InteractiveMode {
 
 			case "entry_appended":
 				if (this.entriesRenderedByBoundaryCompaction.delete(event.entry.id)) break;
-				if (event.entry.type === "custom") {
+				if (event.entry.type === "message" && event.entry.message.role === "bashExecution") {
+					this.presentBashCompletion(event.entry.message);
+					this.ensureWorkSurface();
+					this.ui.requestRender();
+				} else if (event.entry.type === "custom") {
 					this.addCustomEntryToChat(event.entry);
 					this.ui.requestRender();
 				} else if (event.entry.type === "usage" && event.entry.kind === "cache_warm") {
@@ -3442,7 +3533,7 @@ export class InteractiveMode {
 				} else if (event.entry.type === "compaction") {
 					const entries = this.sessionManager.buildContextEntries();
 					if (entries[0]?.id !== event.entry.id) break;
-					this.chatContainer.clear();
+					this.parentTranscript.replaceAll([]);
 					const branch = this.sessionManager.getBranch();
 					const compactionIndex = branch.findIndex((entry) => entry.id === event.entry.id);
 					const entriesAfterCompaction = new Set(branch.slice(compactionIndex + 1).map((entry) => entry.id));
@@ -3460,6 +3551,7 @@ export class InteractiveMode {
 					}
 					this.renderSessionEntries(retainedEntries.filter((entry) => entriesAfterCompaction.has(entry.id)));
 					for (const entryId of entriesAfterCompaction) this.entriesRenderedByBoundaryCompaction.add(entryId);
+					this.ensureWorkSurface();
 					this.footer.invalidate();
 					this.ui.requestRender();
 				}
@@ -3628,6 +3720,9 @@ export class InteractiveMode {
 			}
 
 			case "agent_end":
+				this.composer?.deliverAfterTurn((text) => {
+					void this.submitEditorText(text);
+				});
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
@@ -3680,7 +3775,7 @@ export class InteractiveMode {
 					if (entries[0]?.type !== "compaction") {
 						throw new Error("Completed compaction is missing from the session context");
 					}
-					this.chatContainer.clear();
+					this.parentTranscript.replaceAll([]);
 					// The latest compaction is prepended for model context; append it below at its chronological position.
 					this.renderSessionEntries(entries.slice(1));
 					this.addMessageToChat(
@@ -3697,6 +3792,7 @@ export class InteractiveMode {
 							usage: event.result.usage,
 						});
 					}
+					this.ensureWorkSurface();
 					this.footer.invalidate();
 				} else if (event.errorMessage) {
 					if (event.reason === "manual") {
@@ -3799,7 +3895,7 @@ export class InteractiveMode {
 	 * we update the previous status line instead of appending new ones to avoid log spam.
 	 */
 	private showStatus(message: string): void {
-		const children = this.chatContainer.children;
+		const children = this.parentTranscript?.isBound() ? this.parentTranscript.list() : this.chatContainer.children;
 		const last = children.length > 0 ? children[children.length - 1] : undefined;
 		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
 
@@ -3831,7 +3927,10 @@ export class InteractiveMode {
 			return;
 		}
 
-		if (this.streamingComponent) {
+		if (this.streamingComponent && this.parentTranscript.insertBefore(component, this.streamingComponent)) {
+			return;
+		}
+		if (this.streamingComponent && !this.parentTranscript.isBound()) {
 			const streamingIndex = this.chatContainer.children.indexOf(this.streamingComponent);
 			if (streamingIndex >= 0) {
 				this.chatContainer.children.splice(streamingIndex, 0, component);
@@ -4218,8 +4317,9 @@ export class InteractiveMode {
 	}
 
 	private rebuildChatFromMessages(): void {
-		this.chatContainer.clear();
+		this.parentTranscript.replaceAll([]);
 		this.renderSessionEntries(this.sessionManager.buildContextEntries());
+		this.ensureWorkSurface();
 	}
 
 	// =========================================================================
@@ -5631,8 +5731,9 @@ export class InteractiveMode {
 						}
 
 						// Update UI
-						this.chatContainer.clear();
+						this.parentTranscript.replaceAll([]);
 						this.renderInitialMessages();
+						this.ensureWorkSurface();
 						if (result.editorText && !this.editor.getText().trim()) {
 							this.editor.setText(result.editorText);
 						}
@@ -6970,6 +7071,7 @@ export class InteractiveMode {
 
 			// Create UI component for display
 			this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
+			this.bashRuns.mount(this.bashComponent);
 			if (this.session.isStreaming) {
 				this.pendingMessagesContainer.addChild(this.bashComponent);
 				this.pendingBashComponents.push(this.bashComponent);
@@ -6998,6 +7100,7 @@ export class InteractiveMode {
 		// Normal execution path (possibly with custom operations)
 		const isDeferred = this.session.isStreaming;
 		this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
+		this.bashRuns.mount(this.bashComponent);
 
 		if (isDeferred) {
 			// Show in pending area when agent is streaming
@@ -7022,12 +7125,16 @@ export class InteractiveMode {
 			);
 
 			if (this.bashComponent) {
-				this.bashComponent.setComplete(
-					result.exitCode,
-					result.cancelled,
-					result.truncated ? ({ truncated: true, content: result.output } as TruncationResult) : undefined,
-					result.fullOutputPath,
-				);
+				if (result.backgrounded) {
+					this.bashComponent.setBackgrounded();
+				} else {
+					this.bashComponent.setComplete(
+						result.exitCode,
+						result.cancelled,
+						result.truncated ? ({ truncated: true, content: result.output } as TruncationResult) : undefined,
+						result.fullOutputPath,
+					);
+				}
 			}
 		} catch (error) {
 			if (this.bashComponent) {
@@ -7038,6 +7145,20 @@ export class InteractiveMode {
 
 		this.bashComponent = undefined;
 		this.ui.requestRender();
+	}
+
+	/** A bash result landed. Reuse a block that is still in the transcript or pending, or append when replaceAll dropped it. */
+	private presentBashCompletion(message: Extract<AgentMessage, { role: "bashExecution" }>): void {
+		const mounted = (component: object) =>
+			this.parentTranscript.contains(component as Component) ||
+			this.pendingMessagesContainer.children.includes(component as Component) ||
+			this.chatContainer.children.includes(component as Component);
+		if (this.bashRuns.settle(message, mounted) !== "append") return;
+		// The pending list can still hold a block the queue redraw already detached. Flush would draw it again.
+		this.pendingBashComponents = this.pendingBashComponents.filter(
+			(component) => component.getCommand() !== message.command || mounted(component),
+		);
+		this.addMessageToChat(message);
 	}
 
 	private async handleCompactCommand(customInstructions?: string): Promise<void> {
