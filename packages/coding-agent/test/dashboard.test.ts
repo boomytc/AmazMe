@@ -49,16 +49,15 @@ describe("agent dashboard", () => {
 		expect(rendered).toContain("main ~/repo");
 		expect(rendered).toContain("1 working");
 		expect(rendered).toContain("1 idle");
-		expect(rendered).toContain("+ New Agent");
+		expect(rendered).toContain("+ New session");
 		expect(rendered).toContain("Open Previous /resume");
 		expect(rendered).toContain("reviewer");
-		expect(rendered).toContain("Responding…");
+		expect(rendered).toContain("1m");
 
 		pressDashboard(state, agents, "\x1b[B", NOW);
 		pressDashboard(state, agents, "\x1b[B", NOW);
 		rendered = renderDashboard(agents, state, { branch: "main", cwd: "~/repo" }, NOW, 80).join("\n");
 		expect(rendered).toContain("looking");
-		expect(rendered).toContain("❯ reply");
 		expect(state.selected).toBe("row:live");
 
 		expect(pressDashboard(state, agents, "\x1b", NOW).type).toBe("none");
@@ -158,6 +157,46 @@ describe("agent dashboard", () => {
 			grouping: "directory",
 			pinned: ["live"],
 		});
+	});
+
+	test("click opens a session and the close badge takes two clicks", () => {
+		const seen: string[] = [];
+		const saved = agent("saved", { name: "notes", peek: "hello notes", cwd: "/repo/notes" });
+		const view = new DashboardView(
+			{
+				exit: () => seen.push("exit"),
+				create: () => seen.push("create"),
+				openPrevious: () => seen.push("previous"),
+				open: (id) => seen.push(`open:${id}`),
+				dispatch: () => seen.push("dispatch"),
+				reply: () => seen.push("reply"),
+				rename: () => seen.push("rename"),
+				stop: () => seen.push("stop"),
+				delete: (id) => seen.push(`delete:${id}`),
+				status: () => seen.push("status"),
+				prefs: () => seen.push("prefs"),
+				opened: () => seen.push("opened"),
+			},
+			() => [saved],
+			() => ({ branch: "main", cwd: "~/repo" }),
+			undefined,
+			() => NOW,
+		);
+		view.toggle();
+		let lines = view.render(80);
+		const row = lines.findIndex((line) => line.includes("notes"));
+		expect(row).toBeGreaterThan(0);
+		view.handleMouse({ type: "move", button: "none", x: 2, y: row } as never);
+		lines = view.render(80);
+		expect(lines[row] ?? "").toContain("[x]");
+		expect(lines[row + 1] ?? "").toContain("hello notes");
+		view.handleMouse({ type: "click", button: "left", x: 2, y: row } as never);
+		expect(seen).toContain("open:saved");
+		view.handleMouse({ type: "click", button: "left", x: 78, y: row } as never);
+		expect(seen).not.toContain("delete:saved");
+		expect(view.render(80).join("\n")).toContain("再点一次关闭");
+		view.handleMouse({ type: "click", button: "left", x: 78, y: row } as never);
+		expect(seen).toContain("delete:saved");
 	});
 
 	test("records the same outcomes on a second pass", () => {

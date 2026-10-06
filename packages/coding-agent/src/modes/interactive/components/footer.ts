@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { type Component, truncateToWidth, visibleWidth } from "@amazme/tui";
+import { type Component, type TuiMouseEvent, type TuiMouseEventResult, truncateToWidth, visibleWidth } from "@amazme/tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ContextUsage } from "../../../core/extensions/types.ts";
@@ -62,7 +62,8 @@ interface SessionStats {
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private composerLine: (() => string | undefined) | undefined;
-	private dashboardHint = false;
+	private dashboardHit: { start: number; end: number } | undefined;
+
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private sessionStats?: SessionStats;
@@ -78,10 +79,6 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
-	}
-
-	setDashboardHint(enabled: boolean): void {
-		this.dashboardHint = enabled;
 	}
 
 	/** Enter/queue hint rendered under the session stats. */
@@ -165,31 +162,73 @@ export class FooterComponent implements Component {
 		return this.sessionStats;
 	}
 
+	/** Fixed top line: where you are on the left, context, cost, and Dashboard on the right. */
+	renderTopBar(width: number): string[] {
+		const state = this.session.state;
+		const { usageTotals, contextUsage } = this.getSessionStats();
+		const sessionName = this.session.sessionManager.getSessionName();
+		const left = [sessionName, this.placeLabel()].filter((part): part is string => part !== undefined && part.length > 0).join(" • ");
+		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
+		const used = contextUsage?.tokens === null || contextUsage?.tokens === undefined ? "?" : formatTokens(contextUsage.tokens);
+		const contextText = `${used} / ${formatTokens(contextWindow)}`;
+		const percent = contextUsage?.percent;
+		const context =
+			percent !== null && percent !== undefined && percent > 90
+				? theme.fg("error", contextText)
+				: percent !== null && percent !== undefined && percent > 70
+					? theme.fg("warning", contextText)
+					: theme.fg("dim", contextText);
+		const usingSubscription = state.model
+			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
+			: false;
+		const cost =
+			usageTotals.cost || usingSubscription
+				? theme.fg("dim", `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`)
+				: "";
+		const dashboard = "[Dashboard]";
+		const before = [context, cost].filter((part) => part.length > 0).join("  ");
+		const right = before.length > 0 ? `${before}  ${theme.fg("accent", dashboard)}` : theme.fg("accent", dashboard);
+		const dashboardOffset = visibleWidth(before) + (before.length > 0 ? 2 : 0);
+		const leftWidth = visibleWidth(left);
+		const rightWidth = visibleWidth(right);
+		let rightStart = 0;
+		let line: string;
+		if (leftWidth + 2 + rightWidth <= width) {
+			rightStart = width - rightWidth;
+			line = theme.fg("dim", left) + " ".repeat(width - leftWidth - rightWidth) + right;
+		} else if (rightWidth <= width) {
+			rightStart = width - rightWidth;
+			line = " ".repeat(width - rightWidth) + right;
+		} else {
+			rightStart = 0;
+			line = truncateToWidth(right, width, "");
+		}
+		const start = rightStart + dashboardOffset;
+		this.dashboardHit = start >= 0 && start + dashboard.length <= width ? { start, end: start + dashboard.length } : undefined;
+		return [line];
+	}
+
+	dashboardHitRange(): { start: number; end: number } | undefined {
+		return this.dashboardHit;
+	}
+
+	private placeLabel(): string {
+		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
+		const branch = this.footerData.getGitBranch();
+		if (branch) pwd = `${pwd} (${branch})`;
+		return pwd;
+	}
+
 	render(width: number): string[] {
 		const state = this.session.state;
-		const { usageTotals, latestCacheHitRate, contextUsage } = this.getSessionStats();
-		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
-		const contextPercentValue = contextUsage?.percent ?? 0;
-		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
-
-		// Replace home directory with ~
-		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
-
-		// Add git branch if available
-		const branch = this.footerData.getGitBranch();
-		if (branch) {
-			pwd = `${pwd} (${branch})`;
-		}
+		const { usageTotals, latestCacheHitRate } = this.getSessionStats();
+		let pwd = this.placeLabel();
 
 		// Add session name if set
 		const sessionName = this.session.sessionManager.getSessionName();
 		if (sessionName) {
 			pwd = `${pwd} • ${sessionName}`;
 		}
-		if (this.dashboardHint) {
-			pwd = `${pwd}  [Dashboard]`;
-		}
-
 		// Build stats line
 		const statsParts = [];
 		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
@@ -200,38 +239,11 @@ export class FooterComponent implements Component {
 			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
 		}
 
-		// Kimi Coding is subscription-backed despite using API-key authentication.
-		const usingSubscription = state.model
-			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
-			: false;
-		if (usageTotals.cost || usingSubscription) {
-			const costStr = `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
-		}
-
-		// Colorize context percentage based on usage
-		let contextPercentStr: string;
-		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const contextPercentDisplay =
-			contextPercent === "?"
-				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
-		} else {
-			contextPercentStr = contextPercentDisplay;
-		}
-		statsParts.push(contextPercentStr);
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
 
 		let statsLeft = statsParts.join(" ");
-
-		// Add model name on the right side, plus thinking level if model supports it
-		const modelName = state.model?.id || "no-model";
 
 		let statsLeftWidth = visibleWidth(statsLeft);
 
@@ -241,43 +253,27 @@ export class FooterComponent implements Component {
 			statsLeftWidth = visibleWidth(statsLeft);
 		}
 
-		// Calculate available space for padding (minimum 2 spaces between stats and model)
-		const minPadding = 2;
-
-		// Add thinking level indicator if model supports reasoning
-		let rightSideWithoutProvider = modelName;
-		if (state.model?.reasoning) {
-			const thinkingLevel = state.thinkingLevel || "off";
-			rightSideWithoutProvider =
-				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
+		// The prompt border already shows the selected model and its thinking level.
+		// The footer keeps only what that border does not: the provider, and where a virtual model routed.
+		const rightParts: string[] = [];
+		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
+			rightParts.push(`(${state.model.provider})`);
 		}
-		// A virtual model routes each request; show where the latest response went.
 		const routed = this.session.routedModel;
 		if (routed) {
 			const level = routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : "";
-			rightSideWithoutProvider += ` → ${routed.model.id}${level}`;
+			rightParts.push(`→ ${routed.model.id}${level}`);
 		}
-
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
-		let rightSide = rightSideWithoutProvider;
-		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
-			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
-			}
-		}
-
+		const rightSide = rightParts.join(" ");
+		const minPadding = 2;
 		const rightSideWidth = visibleWidth(rightSide);
-		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
+		const totalNeeded = statsLeftWidth + (rightSide.length > 0 ? minPadding + rightSideWidth : 0);
 
 		let statsLine: string;
-		if (totalNeeded <= width) {
-			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
+		if (rightSide.length === 0 || totalNeeded <= width) {
+			const padding = rightSide.length === 0 ? "" : " ".repeat(Math.max(0, width - statsLeftWidth - rightSideWidth));
 			statsLine = statsLeft + padding + rightSide;
 		} else {
-			// Need to truncate right side
 			const availableForRight = width - statsLeftWidth - minPadding;
 			if (availableForRight > 0) {
 				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
@@ -285,7 +281,6 @@ export class FooterComponent implements Component {
 				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
 				statsLine = statsLeft + padding + truncatedRight;
 			} else {
-				// Not enough space for right side at all
 				statsLine = statsLeft;
 			}
 		}
@@ -298,7 +293,8 @@ export class FooterComponent implements Component {
 		const dimRemainder = theme.fg("dim", remainder);
 
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+		const statsLineRendered = dimStatsLeft + dimRemainder;
+		const lines = visibleWidth(statsLineRendered) > 0 ? [pwdLine, statsLineRendered] : [pwdLine];
 		const composerLine = this.composerLine?.();
 		if (composerLine) lines.push(truncateToWidth(theme.fg("dim", composerLine), width, theme.fg("dim", "...")));
 
@@ -314,5 +310,30 @@ export class FooterComponent implements Component {
 		}
 
 		return lines;
+	}
+}
+
+/** The one line fixed above the transcript. */
+export class SessionTopBar implements Component {
+	private readonly footer: FooterComponent;
+	private readonly onDashboardClick: () => void;
+
+	constructor(footer: FooterComponent, onDashboardClick: () => void) {
+		this.footer = footer;
+		this.onDashboardClick = onDashboardClick;
+	}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		return this.footer.renderTopBar(width);
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "click" || event.button !== "left" || event.y !== 0) return undefined;
+		const hit = this.footer.dashboardHitRange();
+		if (!hit || event.x < hit.start || event.x >= hit.end) return undefined;
+		this.onDashboardClick();
+		return { handled: true };
 	}
 }

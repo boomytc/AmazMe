@@ -67,7 +67,7 @@ import {
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
 import { foregroundCommands } from "../../core/foreground-commands.ts";
-import { InteractiveComposer } from "./composer-contract.ts";
+import { InteractiveComposer, promptShortcutLine } from "./composer-contract.ts";
 import { promptOwnsKey, routeInteractiveInput } from "./interactive-input.ts";
 import { scrollbackRows, TranscriptFocus } from "./transcript-focus.ts";
 import { BashRunTable, ParentTranscript, syncComposerVisibility, WorkSurface } from "./work-surface.ts";
@@ -154,7 +154,7 @@ import { playArmin3d, playPiLogo3d } from "./components/easter-egg-3d.lazy.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
-import { FooterComponent, formatCwdForFooter, formatTokens } from "./components/footer.ts";
+import { FooterComponent, formatCwdForFooter, formatTokens, SessionTopBar } from "./components/footer.ts";
 import {
 	type DashboardAgent,
 	DashboardView,
@@ -494,6 +494,7 @@ export class InteractiveMode {
 	private dashboardDisk: DashboardAgent[] = [];
 	private submitEditorText: (text: string) => Promise<void> = async () => {};
 	private footerContainer: Container;
+	private statusBar!: SessionTopBar;
 	private footerDataProvider: FooterDataProvider;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
@@ -676,27 +677,28 @@ export class InteractiveMode {
 		this.defaultEditor.onCopySelection = (text) => {
 			void copyToClipboard(text);
 		};
-		this.defaultEditor.setShortcutLine(() => {
-			const chip = (key: string, action: string) => `\x1b[1m${key}\x1b[22m:${action}`;
-			const multiline = this.composer?.multiline ?? false;
-			const running = this.session.isStreaming;
-			const enter = multiline ? "newline" : running ? "queue" : "send";
-			const alternate = multiline ? "Shift+Enter:send" : "Shift+Enter/Alt+Enter:newline";
-			return [
-				chip("Ctrl+\\", "dashboard"),
-				chip("Enter", enter),
-				chip(alternate.split(":")[0] ?? "Shift+Enter", alternate.split(":")[1] ?? "newline"),
-				chip("Tab", "complete"),
-				chip("Cmd+⌫", "line"),
-			].join(" │ ");
-		});
+		this.defaultEditor.setPlaceholder(() => (this.dashboardView?.isOpen() ? "Start a new session" : undefined));
+		this.defaultEditor.setShortcutLine(() =>
+			this.dashboardView?.isOpen()
+				? "\x1b[1mEnter\x1b[22m:create │ \x1b[1mTab\x1b[22m:list"
+				: promptShortcutLine({
+				draft: this.defaultEditor.getText(),
+				queue: this.composer?.queue ?? [],
+				turnRunning: this.session.isStreaming,
+				multiline: this.composer?.multiline ?? false,
+				terminalClass: this.composer?.terminalClass ?? "default",
+				autocompleteOpen: this.defaultEditor.isShowingAutocomplete(),
+			}),
+		);
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
-		this.footer.setDashboardHint(true);
+		this.statusBar = new SessionTopBar(this.footer, () => {
+			this.dashboard().toggle();
+		});
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
 
@@ -1007,6 +1009,7 @@ export class InteractiveMode {
 		// Keep one component tree and remount it when changing renderers.
 		this.renderWidgets(); // Initialize with default spacer
 		const viewport = createChatViewport({
+			statusBar: this.statusBar,
 			document: this.documentContainer,
 			pendingMessages: this.pendingMessagesContainer,
 			status: this.statusContainer,
@@ -1021,6 +1024,7 @@ export class InteractiveMode {
 		this.transcriptScrollView = viewport.transcript;
 		this.fullscreenLayoutRoot = viewport.root;
 		this.mountInteractiveTui(this.renderer, [
+			this.statusBar,
 			this.documentContainer,
 			this.pendingMessagesContainer,
 			this.statusContainer,
@@ -3277,10 +3281,14 @@ export class InteractiveMode {
 		this.session.childAgents.onChange(sync);
 		foregroundCommands.onChange(sync);
 		this.ensureWorkSurface();
-		this.footer.setComposerLine(() => this.composer.footerText());
+		this.footer.setComposerLine(() => undefined);
 		this.defaultEditor.onBeforeInput = (data) => {
 			if (typeof this.dashboard === "function" && this.dashboard().handleKey(data)) return true;
 			if (promptOwnsKey(data, this.defaultEditor.isShowingAutocomplete())) return false;
+			if (this.dashboardView?.isOpen() && matchesKey(data, "tab")) {
+				this.ui.setFocus(this.dashboard());
+				return true;
+			}
 			return routeInteractiveInput(data, {
 				child: this.workSurface,
 				transcript: this.transcriptFocus,
@@ -3332,6 +3340,7 @@ export class InteractiveMode {
 					}
 				},
 				opened: (open) => this.syncDashboard(open),
+				focusInput: () => this.ui.setFocus(this.editor),
 			},
 			() => this.dashboardAgents(),
 			() => ({
@@ -3353,7 +3362,7 @@ export class InteractiveMode {
 		else if (child) activity = child.activity || "Subagent running";
 		return {
 			id: this.session.sessionId,
-			name: this.session.sessionName || "New agent",
+			name: this.session.sessionName || "Current session",
 			cwd: this.sessionManager.getCwd(),
 			state: working ? "working" : "idle",
 			activity,
@@ -3391,19 +3400,30 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private setStartupChrome(visible: boolean): void {
+		this.documentContainer.clear();
+		if (visible) {
+			this.documentContainer.addChild(this.headerContainer);
+			this.documentContainer.addChild(this.loadedResourcesContainer);
+		}
+		this.documentContainer.addChild(this.chatContainer);
+	}
+
 	private syncDashboard(open: boolean): void {
 		const dashboard = this.dashboard();
 		if (open) {
 			this.session.childAgents.close();
+			this.setStartupChrome(false);
 			this.parentTranscript.setOverlay(dashboard);
-			syncComposerVisibility(this.editorContainer, this.defaultEditor, true);
-			this.footer.setComposerLine(() => dashboard.shortcutLine());
+			syncComposerVisibility(this.editorContainer, this.defaultEditor, false);
+			this.footer.setComposerLine(() => undefined);
 			this.ui.setFocus(dashboard);
 			void this.reloadDashboardDisk();
 		} else {
 			this.parentTranscript.setOverlay(undefined);
+			this.setStartupChrome(true);
 			syncComposerVisibility(this.editorContainer, this.defaultEditor, this.workSurface.composerHidden);
-			this.footer.setComposerLine(() => this.composer.footerText());
+			this.footer.setComposerLine(() => undefined);
 			this.ui.setFocus(this.editor);
 		}
 		this.ui.requestRender();
@@ -3485,6 +3505,11 @@ export class InteractiveMode {
 	private setupEditorSubmitHandler(): void {
 		this.submitEditorText = async (text: string) => {
 			text = text.trim();
+			if (this.dashboardView?.isOpen()) {
+				this.editor.setText("");
+				await this.dispatchDashboard(text, false);
+				return;
+			}
 			if (!text) return;
 
 			// Handle commands

@@ -50,6 +50,40 @@ export function detectTerminalClass(env: NodeJS.ProcessEnv = process.env): Termi
 	return "default";
 }
 
+/** One hint under the prompt. It names only the keys that do something in this state. */
+export function promptShortcutLine(
+	state: ComposerState & { terminalClass: TerminalClass; autocompleteOpen: boolean },
+): string {
+	const trimmed = state.draft.trim();
+	const top = state.queue[0]?.replace(/\s+/g, " ").trim();
+	const chip = (key: string, action: string) => `\x1b[1m${key}\x1b[22m:${action}`;
+	const enter =
+		state.multiline && !(trimmed.length === 0 && state.turnRunning && top !== undefined)
+			? "newline"
+			: state.turnRunning && trimmed.length > 0
+				? "queue"
+				: state.turnRunning && top === undefined
+					? "queue"
+					: "send";
+	const parts = [chip("Ctrl+\\", "dashboard"), chip("Enter", enter)];
+	if (state.multiline) parts.push(chip("Shift+Enter", "send"));
+	else parts.push(chip("Shift+Enter/Alt+Enter", "newline"));
+	if (state.turnRunning) {
+		const sendNow =
+			state.terminalClass === "apple-terminal" ? "Ctrl+O" : state.terminalClass === "vscode" ? "Ctrl+L" : "Ctrl+Enter";
+		parts.push(chip(sendNow, "now"));
+	}
+	parts.push(chip("Tab", state.autocompleteOpen ? "complete" : "scrollback"));
+	if (trimmed.length > 0) parts.push(chip("Ctrl+c", "clear"));
+	else if (state.turnRunning) parts.push(chip("Ctrl+c", "cancel"));
+	parts.push(chip("Ctrl+U", "line"));
+	if (top !== undefined) {
+		const extra = state.queue.length > 1 ? ` +${state.queue.length - 1}` : "";
+		parts.push(`Queued: ${top}${extra}`);
+	}
+	return parts.join(" │ ");
+}
+
 /** The footer line that says what Enter will do, plus any visible queued rows. */
 export function composerFooterLine(state: Pick<ComposerState, "turnRunning" | "multiline" | "queue">): string {
 	const enter = state.multiline ? "Enter: newline" : state.turnRunning ? "Enter: queue" : "Enter: send";

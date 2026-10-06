@@ -2,7 +2,7 @@ import { visibleWidth } from "@amazme/tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
-import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
+import { FooterComponent, formatCwdForFooter, SessionTopBar } from "../src/modes/interactive/components/footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -169,7 +169,9 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 
-		expect(statsLine).toContain("auto \u2022 high \u2192 gpt-5.6-luna \u2022 medium");
+		expect(statsLine).toContain("\u2192 gpt-5.6-luna \u2022 medium");
+		expect(statsLine).not.toContain("auto \u2022");
+		expect(statsLine).not.toContain("high");
 	});
 
 	it("includes summary and tool result usage in the total cost", () => {
@@ -206,18 +208,20 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
-		expect(statsLine).toContain("$1.250");
+		const top = stripAnsi(footer.renderTopBar(120)[0] ?? "");
+		expect(top).toContain("$1.250");
+		expect(top).toContain("[Dashboard]");
+		expect(stripAnsi(footer.render(120).join("\n"))).not.toContain("$1.250");
 	});
 
 	it("updates cached usage totals after an entry is appended", () => {
 		const usage = { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } };
 		const session = createSession({ sessionName: "", usage });
 		const footer = new FooterComponent(session, createFooterData(1));
-		expect(stripAnsi(footer.render(120)[1])).toContain("$0.500");
+		expect(stripAnsi(footer.renderTopBar(120)[0] ?? "")).toContain("$0.500");
 
 		session.sessionManager.getEntries().push({ type: "message", message: { role: "assistant", usage } } as never);
-		expect(stripAnsi(footer.render(120)[1])).toContain("$1.000");
+		expect(stripAnsi(footer.renderTopBar(120)[0] ?? "")).toContain("$1.000");
 	});
 
 	it("shows the latest cache hit rate when cache usage is present", () => {
@@ -251,14 +255,32 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		expect(stripAnsi(footer.render(120)[1])).toContain("$1.234 (sub)");
+		expect(stripAnsi(footer.renderTopBar(120)[0] ?? "")).toContain("$1.234 (sub)");
 	});
 
 	it("marks explicitly identified subscription auth", () => {
 		const session = createSession({ sessionName: "", provider: "anthropic", usingSubscription: true });
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		expect(stripAnsi(footer.render(120)[1])).toContain("$0.000 (sub)");
+		expect(stripAnsi(footer.renderTopBar(120)[0] ?? "")).toContain("$0.000 (sub)");
+	});
+
+	it("opens the dashboard when its top-right label is clicked", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "chat" }), createFooterData(1));
+		let clicks = 0;
+		const bar = new SessionTopBar(footer, () => {
+			clicks += 1;
+		});
+		const line = bar.render(80)[0] ?? "";
+		const hit = footer.dashboardHitRange();
+		expect(hit).toBeDefined();
+		expect(stripAnsi(line).slice(hit?.start ?? 0, hit?.end ?? 0)).toBe("[Dashboard]");
+		expect(
+			bar.handleMouse({ type: "click", button: "left", x: hit?.start ?? 0, y: 0 } as never),
+		).toEqual({ handled: true });
+		expect(clicks).toBe(1);
+		expect(bar.handleMouse({ type: "click", button: "left", x: 0, y: 0 } as never)).toBeUndefined();
+		expect(clicks).toBe(1);
 	});
 
 	it("does not mark generic OAuth sign-in as a subscription", () => {
@@ -274,7 +296,7 @@ describe("FooterComponent width handling", () => {
 			},
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
-		const stats = stripAnsi(footer.render(120)[1]);
+		const stats = stripAnsi(footer.renderTopBar(120)[0] ?? "");
 
 		expect(stats).toContain("$1.234");
 		expect(stats).not.toContain("(sub)");

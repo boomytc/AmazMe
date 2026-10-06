@@ -5,6 +5,7 @@ import { defaultEditorTheme } from "../../tui/test/test-themes.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
 import { promptOwnsKey } from "../src/modes/interactive/interactive-input.ts";
+import { promptShortcutLine } from "../src/modes/interactive/composer-contract.ts";
 import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const SUPER_BACKSPACE = "\x1b[27;9;127~";
@@ -18,14 +19,61 @@ describe("prompt chrome", () => {
 		const editor = new CustomEditor(ui, getEditorTheme(), new KeybindingsManager());
 		editor.setModelLabel(() => "model-x · high");
 		editor.setText("hello");
-		const rendered = editor.render(80).join("\n");
+		const rendered = editor.render(120).join("\n");
 		expect(rendered).toContain("╭");
 		expect(rendered).toContain("╮");
 		expect(rendered).toContain("> ");
 		expect(rendered).toContain("hello");
 		expect(rendered).toContain("model-x · high");
 		expect(rendered).toContain("Tab");
-		expect(rendered).toContain("complete");
+		expect(rendered).toContain("scrollback");
+		expect(rendered).toContain("Ctrl+U");
+		expect(rendered).not.toContain("Cmd+");
+	});
+
+	test("the shortcut line names only the keys that apply", () => {
+		const idle = promptShortcutLine({
+			draft: "",
+			queue: [],
+			turnRunning: false,
+			multiline: false,
+			terminalClass: "default",
+			autocompleteOpen: false,
+		});
+		expect(idle).toContain("Enter");
+		expect(idle).toContain("send");
+		expect(idle).toContain("scrollback");
+		expect(idle).not.toContain("cancel");
+		expect(idle).not.toContain("Ctrl+Enter");
+
+		const running = promptShortcutLine({
+			draft: "later",
+			queue: ["first", "second"],
+			turnRunning: true,
+			multiline: false,
+			terminalClass: "apple-terminal",
+			autocompleteOpen: true,
+		});
+		expect(running).toContain("queue");
+		expect(running).toContain("Ctrl+O");
+		expect(running).toContain("now");
+		expect(running).toContain("complete");
+		expect(running).toContain("Ctrl+c");
+		expect(running).toContain("clear");
+		expect(running).toContain("Queued: first +1");
+
+		const emptyQueue = promptShortcutLine({
+			draft: "",
+			queue: ["ship it"],
+			turnRunning: true,
+			multiline: false,
+			terminalClass: "vscode",
+			autocompleteOpen: false,
+		});
+		expect(emptyQueue).toContain("send");
+		expect(emptyQueue).toContain("Ctrl+L");
+		expect(emptyQueue).toContain("cancel");
+		expect(emptyQueue).toContain("Queued: ship it");
 	});
 
 	test("a slash menu highlights the selected command and its description", () => {

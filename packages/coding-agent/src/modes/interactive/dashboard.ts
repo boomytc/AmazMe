@@ -1,5 +1,4 @@
-import type { Component } from "@amazme/tui";
-import { matchesKey } from "@amazme/tui";
+import { type Component, matchesKey, type TuiMouseEvent, type TuiMouseEventResult, truncateToWidth, visibleWidth } from "@amazme/tui";
 import { theme } from "./theme/theme.ts";
 
 export type DashboardRowState = "needs-input" | "working" | "idle" | "inactive" | "completed" | "failed";
@@ -52,6 +51,15 @@ export interface DashboardScreenState {
 	deleteArmedFor?: string;
 	deleteArmedAt?: number;
 	notice?: string;
+	hoverId?: string;
+}
+
+export interface DashboardHit {
+	line: number;
+	kind: "new" | "previous" | "row";
+	id?: string;
+	closeStart?: number;
+	closeEnd?: number;
 }
 
 export type DashboardEffect =
@@ -520,10 +528,23 @@ function status(state: DashboardScreenState, text: string): DashboardEffect {
 }
 
 function clip(text: string, width: number): string {
-	if (width <= 0) return "";
-	if (text.length <= width) return text;
-	if (width === 1) return "…";
-	return `${text.slice(0, width - 1)}…`;
+	return truncateToWidth(text, Math.max(0, width), "…");
+}
+
+/** One session row. The right edge is only the age, plus [x] while the pointer is on it. */
+function sessionRow(label: string, age: string, badge: boolean, columns: number): { body: string; closeStart?: number } {
+	const tail = badge ? `${age} [x]` : age;
+	const tailWidth = visibleWidth(tail);
+	const room = Math.max(1, columns - tailWidth - 1);
+	const left = truncateToWidth(label, room, "…");
+	const gap = Math.max(1, columns - visibleWidth(left) - tailWidth);
+	return { body: `${left}${" ".repeat(gap)}${tail}`, closeStart: badge ? columns - 3 : undefined };
+}
+
+function bar(text: string, columns: number, selected: boolean): string {
+	const padded = text + " ".repeat(Math.max(0, columns - visibleWidth(text)));
+	const line = truncateToWidth(padded, columns, "");
+	return selected ? theme.bg("selectedBg", line) : line;
 }
 
 function glyph(state: DashboardRowState): string {
@@ -538,6 +559,7 @@ export function renderDashboard(
 	place: DashboardPlace,
 	now: number,
 	width: number,
+	hits?: DashboardHit[],
 ): string[] {
 	const slots = dashboardSlots(agents, state, now);
 	clampSelection(state, slots);
@@ -547,63 +569,64 @@ export function renderDashboard(
 		if (agent.state === "needs-input" || agent.state === "working" || agent.state === "idle") counts[agent.state] += 1;
 	}
 	const where = [place.branch, place.cwd].filter((part): part is string => part !== null && part.length > 0).join(" ");
-	const chips = `◆ ${counts["needs-input"]} awaiting │ ⋮ ${counts.working} working │ ◇ ${counts.idle} idle`;
-	const lines = [clip(`${where}  ${chips}`, width), ""];
+	const chipParts: string[] = [];
+	if (counts["needs-input"] > 0) chipParts.push(`◆ ${counts["needs-input"]} awaiting`);
+	if (counts.working > 0) chipParts.push(`⋮ ${counts.working} working`);
+	if (counts.idle > 0) chipParts.push(`◇ ${counts.idle} idle`);
+	const chips = chipParts.join("  ");
+	const headerGap = Math.max(1, width - where.length - chips.length);
+	const lines = [clip(`${where}${" ".repeat(headerGap)}${chips}`, width), ""];
+	const remember = (hit: DashboardHit) => hits?.push(hit);
 	for (const slot of slots) {
 		const id = slotId(slot);
-		const mark = id === state.selected ? "▌" : " ";
+		const selected = id === state.selected;
 		if (slot.kind === "actions") {
-			const create = state.column === 0 && id === state.selected ? "▌+ New Agent" : " + New Agent";
-			const previous = state.column === 1 && id === state.selected ? "▌Open Previous /resume" : " Open Previous /resume";
+			const create = "+ New session";
+			const previous = "Open Previous /resume";
 			const gap = Math.max(1, width - create.length - previous.length);
-			lines.push(clip(`${create}${" ".repeat(gap)}${previous}`, width));
+			const line = lines.length;
+			lines.push(clip(`${selected && state.column === 0 ? "▌" : " "}${create}${" ".repeat(Math.max(1, gap - 1))}${previous}`, width));
+			remember({ line, kind: "new", closeEnd: create.length + 1 });
+			remember({ line, kind: "previous", closeStart: Math.max(0, width - previous.length) });
 			continue;
 		}
 		if (slot.kind === "section") {
 			const arrow = slot.collapsed ? "▸" : "▾";
-			lines.push(clip(`${mark}${arrow} ${slot.title} (${slot.count})`, width));
+			lines.push(clip(`${arrow} ${slot.title} ${slot.count}`, width));
+			lines.push(theme.fg("dim", "─".repeat(Math.max(0, width))));
 			continue;
 		}
 		if (slot.kind === "more") {
-			lines.push(clip(`${mark}${slot.count} more`, width));
+			lines.push(clip(`${selected ? "▌" : " "}${slot.count} more`, width));
 			continue;
 		}
 		const agent = byId.get(slot.agentId);
 		if (!agent) continue;
 		const age = formatDashboardAge(Math.max(0, now - agent.updatedAt));
-		const label = `${glyph(agent.state)} ${agent.name}`;
-		const right = `${agent.activity}  ${age}`;
-		const gap = Math.max(1, width - mark.length - label.length - right.length);
-		lines.push(clip(`${mark}${label}${" ".repeat(gap)}${right}`, width));
+		const directory = agent.cwd.split("/").filter((part) => part.length > 0).at(-1) ?? agent.cwd;
+		const label = `${glyph(agent.state)} ${agent.name} · ${directory}`;
+		const badge = state.hoverId === agent.id || state.deleteArmedFor === agent.id;
+		const row = sessionRow(label, age, badge, width);
+		const line = lines.length;
+		lines.push(bar(row.body, width, selected));
+		remember({
+			line,
+			kind: "row",
+			id: agent.id,
+			closeStart: row.closeStart,
+			closeEnd: row.closeStart === undefined ? undefined : row.closeStart + 3,
+		});
+		if (selected) {
+			const preview = agent.peek.replace(/\s+/g, " ").trim();
+			lines.push(bar(`  ${preview.length > 0 ? preview : "No response yet"}`, width, true));
+			remember({ line: lines.length - 1, kind: "row", id: agent.id });
+		}
 	}
-	lines.push("");
-	if (state.help) {
-		lines.push("↑/↓ move  Enter open  Ctrl+S send and attach  Ctrl+/ search  Ctrl+G group");
-		lines.push("Ctrl+R rename  Ctrl+T pin  Ctrl+X stop or delete  Esc step back  Ctrl+\\ close");
-		return lines.map((line) => clip(line, width));
-	}
-	const agent = selectedAgent(agents, state);
-	if (state.renameFor) {
-		lines.push("╭ rename");
-		lines.push(clip(`│ ${state.renameText}`, width));
-		lines.push("╰ enter to save");
-	} else if (state.search) {
-		lines.push("╭ search");
-		lines.push(clip(`│ Search: ${state.query}`, width));
-		lines.push("╰ enter keeps the filter");
-	} else if (agent) {
-		const preview = agent.peek.replace(/\s+/g, " ").trim();
-		lines.push(clip(`${agent.activity}  ${formatDashboardAge(Math.max(0, now - agent.updatedAt))}`, width));
-		lines.push(clip(preview.length > 0 ? preview : "No response yet", width));
-		lines.push(clip(`❯ ${state.reply.length > 0 ? state.reply.replace(/\n/g, "⏎") : "reply"}`, width));
-	} else {
-		lines.push("╭ dispatch");
-		lines.push(clip(`│ ❯ ${state.draft.length > 0 ? state.draft.replace(/\n/g, "⏎") : "Dispatch a new agent"}`, width));
-		lines.push("╰ dispatch");
-	}
+	if (state.help) lines.push(clip("↑/↓ move  Enter open  Tab input  Ctrl+R rename  Ctrl+X close", width));
+	if (state.renameFor) lines.push(clip(`Rename: ${state.renameText}`, width));
+	else if (state.search) lines.push(clip(`Search: ${state.query}`, width));
 	if (state.notice) lines.push(clip(state.notice, width));
-	lines.push(dashboardShortcutLine());
-	return lines.map((line) => clip(line, width));
+	return lines.map((line) => (line.includes("\x1b") ? line : clip(line, width)));
 }
 
 export interface DashboardActions {
@@ -619,6 +642,7 @@ export interface DashboardActions {
 	status(text: string): void;
 	prefs(state: DashboardScreenState): void;
 	opened(open: boolean): void;
+	focusInput?(): void;
 }
 
 /** Full-screen agent roster. The transcript hides behind it while `open` is set. */
@@ -628,6 +652,7 @@ export class DashboardView implements Component {
 	private readonly agentsOf: () => readonly DashboardAgent[];
 	private readonly placeOf: () => DashboardPlace;
 	private readonly now: () => number;
+	private hits: DashboardHit[] = [];
 
 	constructor(
 		actions: DashboardActions,
@@ -662,6 +687,10 @@ export class DashboardView implements Component {
 	}
 
 	handleInput(data: string): void {
+		if (this.state.open && matchesKey(data, "tab")) {
+			this.actions.focusInput?.();
+			return;
+		}
 		this.press(data);
 	}
 
@@ -676,9 +705,60 @@ export class DashboardView implements Component {
 
 	render(width: number): string[] {
 		if (!this.state.open) return [];
-		return renderDashboard(this.agentsOf(), this.state, this.placeOf(), this.now(), width).map((line) =>
+		this.hits = [];
+		return renderDashboard(this.agentsOf(), this.state, this.placeOf(), this.now(), width, this.hits).map((line) =>
 			theme.fg("text", line),
 		);
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (!this.state.open || event.y < 0) return undefined;
+		const hit = this.hits.find((item) => item.line === event.y);
+		if (event.type === "move") {
+			const next = hit?.kind === "row" ? hit.id : undefined;
+			if (next === this.state.hoverId) return { handled: true, render: false };
+			this.state.hoverId = next;
+			if (next) this.state.selected = `row:${next}`;
+			return { handled: true, render: true };
+		}
+		if (event.type !== "click" || event.button !== "left" || !hit) return undefined;
+		if (hit.kind === "new" && (hit.closeEnd === undefined || event.x < hit.closeEnd)) {
+			this.actions.create();
+			return { handled: true };
+		}
+		if (hit.kind === "previous" && (hit.closeStart === undefined || event.x >= hit.closeStart)) {
+			this.actions.openPrevious();
+			return { handled: true };
+		}
+		if (hit.kind !== "row" || !hit.id) return undefined;
+		if (hit.closeStart !== undefined && hit.closeEnd !== undefined && event.x >= hit.closeStart && event.x < hit.closeEnd) {
+			this.pressClose(hit.id);
+			return { handled: true, render: true };
+		}
+		this.state.selected = `row:${hit.id}`;
+		this.actions.open(hit.id);
+		return { handled: true };
+	}
+
+	private pressClose(id: string): void {
+		const agent = this.agentsOf().find((item) => item.id === id);
+		if (!agent) return;
+		const now = this.now();
+		if (
+			this.state.deleteArmedFor === id &&
+			this.state.deleteArmedAt !== undefined &&
+			now - this.state.deleteArmedAt <= 2000
+		) {
+			this.state.deleteArmedFor = undefined;
+			this.state.deleteArmedAt = undefined;
+			if (agent.state === "working") this.actions.stop(id);
+			else this.actions.delete(id);
+			return;
+		}
+		this.state.deleteArmedFor = id;
+		this.state.deleteArmedAt = now;
+		this.state.hoverId = id;
+		this.state.notice = "再点一次关闭";
 	}
 
 	private press(data: string): void {

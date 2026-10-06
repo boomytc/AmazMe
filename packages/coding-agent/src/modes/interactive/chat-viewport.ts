@@ -6,6 +6,7 @@ export interface ChatViewportOptions {
 	readonly status: Component;
 	readonly editor: Component;
 	readonly footer: Component;
+	readonly statusBar?: Component;
 	readonly widgetsAbove?: Component;
 	readonly widgetsBelow?: Component;
 	readonly scrollbar?: ScrollViewScrollbar;
@@ -39,6 +40,7 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
 	return {
 		transcript,
 		root: new VStack([
+			...(options.statusBar === undefined ? [] : [{ component: options.statusBar, shrink: 1, minSize: 0 }]),
 			{ component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
 			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
 		]),

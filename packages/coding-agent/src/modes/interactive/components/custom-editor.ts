@@ -25,6 +25,7 @@ export class CustomEditor extends Editor {
 	public readonly embedWorkingStatus: boolean;
 	private modelLabel: (() => string) | undefined;
 	private shortcutLine: (() => string) | undefined;
+	private placeholder: (() => string | undefined) | undefined;
 	private boxTop = 0;
 	private menuLines = 0;
 	private boxed = false;
@@ -57,6 +58,10 @@ export class CustomEditor extends Editor {
 
 	setShortcutLine(line: () => string): void {
 		this.shortcutLine = line;
+	}
+
+	setPlaceholder(placeholder: () => string | undefined): void {
+		this.placeholder = placeholder;
 	}
 
 	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
@@ -158,7 +163,9 @@ export class CustomEditor extends Editor {
 		}
 		lines.push(`${this.borderColor("╭")}${this.renderTopBorder(width - 2, this.scrollOffset)}${this.borderColor("╮")}`);
 		content.forEach((line, index) => {
-			lines.push(`${this.borderColor("│")}${index === 0 ? "> " : "  "}${line}${this.borderColor("│")}`);
+			const hint = index === 0 && this.getText() === "" ? this.placeholder?.() : undefined;
+			const body = hint ? `\x1b[2m${truncateToWidth(hint, Math.max(1, inner - 2), "…")}\x1b[22m` : line;
+			lines.push(`${this.borderColor("│")}${index === 0 ? "> " : "  "}${body}${this.borderColor("│")}`);
 		});
 		lines.push(this.bottomBorder(width));
 		lines.push(truncateToWidth(this.shortcutBar(), width, ""));
@@ -188,9 +195,13 @@ export class CustomEditor extends Editor {
 		const supplied = this.shortcutLine?.();
 		if (supplied) return supplied;
 		const chip = (key: string, action: string) => `\x1b[1m${key}\x1b[22m:${action}`;
-		return [chip("Ctrl+\\", "dashboard"), chip("Ctrl+c", "cancel"), chip("Tab", "complete"), chip("Cmd+⌫", "line")].join(
-			" │ ",
-		);
+		return [
+			chip("Ctrl+\\", "dashboard"),
+			chip("Enter", "send"),
+			chip("Shift+Enter/Alt+Enter", "newline"),
+			chip("Tab", "scrollback"),
+			chip("Ctrl+U", "line"),
+		].join(" │ ");
 	}
 
 	handleInput(data: string): void {
