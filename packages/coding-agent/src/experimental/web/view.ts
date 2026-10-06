@@ -14,11 +14,9 @@ import {
 	type EntryId,
 	type EntryRecord,
 } from "@amazme/durable";
-import type { InboxState, LiveState } from "@amazme/durable";
+import type { InboxState } from "@amazme/durable";
 import type { SessionDirectoryState, SessionSummary } from "../services/sessions.ts";
-
-const LIVE_DOC = "amazme.live";
-const INBOX_DOC = "amazme.inbox";
+import { inboxOf, liveOf } from "../services/transcript.ts";
 
 export type BlockTone = "plain" | "muted" | "error";
 
@@ -54,11 +52,6 @@ export interface WebViewInput {
 	readonly transcript: ConversationView | undefined;
 	readonly attachedId: string | undefined;
 	readonly now: number;
-}
-
-/** The `amazme.live` document of a view: the active run, the streaming answer, and running tools. */
-export function liveOf(view: ConversationView): LiveState {
-	return (view.docs[LIVE_DOC] ?? {}) as LiveState;
 }
 
 export function formatAge(createdAt: number, now: number): string {
@@ -330,7 +323,7 @@ export function composerPlaceholder(attachedId: string | undefined): string {
 
 /** Inputs the session has accepted but not started yet. */
 export function queuedInputs(view: ConversationView | undefined): string[] {
-	const inbox = (view?.docs[INBOX_DOC] ?? { items: [] }) as InboxState;
+	const inbox = view === undefined ? { items: [] } : inboxOf(view);
 	return inbox.items.map(queuedItemText);
 }
 

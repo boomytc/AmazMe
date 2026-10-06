@@ -2,14 +2,28 @@
 
 Facet setup generates each host's RPC service catalogue from its provided non-local tokens. Remote service sources obtain those catalogues and bind only services required by consuming facets; there is no handwritten built-in service inventory. With no selected Session, its deferred source admits unresolved requirements as unavailable and keeps their handles disconnected. Attachment validates them against the worker's generated catalogue, which is cached for later detached generations. Keyed services hydrate as an empty directory until their owning feature spawns an instance.
 
-Run the source-only server and client from the repository root:
+Run the source-only server, client, and web entry from the repository root. The slice is source-only because
+it is excluded from npm packages and standalone binaries, so every command starts from the repository's
+TypeScript through the source resolver:
 
 ```bash
-AMAZME_EXPERIMENTAL=1 ./pi-test.sh server
-AMAZME_EXPERIMENTAL=1 ./pi-test.sh client
+AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
+  ./packages/coding-agent/src/experimental/cli.ts server
+AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
+  ./packages/coding-agent/src/experimental/cli.ts client
+AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
+  ./packages/coding-agent/src/experimental/cli.ts web
 ```
 
-`AMAZME_SERVER_DIR` overrides the server profile and socket directory, which defaults to `~/.amazme/server`. `AMAZME_SERVER_ID` selects the logical server ID when `--server-id` is omitted. The server, client, and experimental package subpaths are excluded from npm packages and standalone binaries.
+`AMAZME_SERVER_DIR` overrides the server profile and socket directory, which defaults to `~/.amazme/server`. `AMAZME_SERVER_ID` selects the logical server ID when `--server-id` is omitted.
+
+`web` serves the same host to a browser: loopback HTTP for the page, the same port's `/amazme` path for the
+byte protocol over WebSocket, and the same Unix socket for the TUI client. It prints `Web: <url>`,
+`Mode: <mode>`, `WebSocket: <url>`, and `Server: <id>` once the host accepts connections, binds loopback only,
+and injects a boot manifest into the document so a page without one reports an error instead of rendering an
+empty shell. The page bundle is built in memory from `experimental/web/page` with the repository's esbuild and
+the root tsconfig paths, so the browser runs the same protocol and client code the TUI does. Changes to the
+page take effect after the host restarts.
 
 | Scope | Service | Current slice | Continuation point |
 |---|---|---|---|

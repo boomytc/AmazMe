@@ -24,6 +24,16 @@ node /path/to/AmazMe/packages/coding-agent/dist/bundle/cli.js
 
 进入交互界面后用 `/login` 连接订阅或 API key，然后给出任务。
 
+实验切片还能把同一个宿主交给浏览器（回环 WebSocket + 内置的网页客户端）：
+
+```bash
+AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
+  ./packages/coding-agent/src/experimental/cli.ts web
+```
+
+它会打印回环 URL、模式和 server id，随后在浏览器里打开该 URL 即可看到会话名册、transcript、实时状态与输入框；
+细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。这一入口依赖源码切片，尚未进入打包产物。
+
 项目配置在当前目录的 `.amazme`，用户配置在 `~/.amazme/agent`。命令名是 `amazme`。`@amazme/coding-agent` 的 bin 指向 `dist/bundle/cli.js`，所以要先构建，再从本仓库运行或做 `npm link`。
 
 ## 包

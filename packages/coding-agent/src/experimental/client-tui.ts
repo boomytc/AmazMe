@@ -31,7 +31,7 @@ import { getEditorTheme, setRegisteredThemes, stopThemeWatcher, theme } from "..
 import { InteractiveThemeController } from "../modes/interactive/theme/theme-controller.ts";
 import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
 import { type OpenClientRuntimeOptions, openClientRuntime } from "./client-runtime.ts";
-import { ExperimentalChatView, liveOf } from "./client-tui-chat.ts";
+import { ExperimentalChatView } from "./client-tui-chat.ts";
 import { createPresentationFacetLoaders } from "./plugins/bundled.ts";
 import { AgentController, type AgentOperationResponse, type AgentQueueResponse } from "./services/agent-controller.ts";
 import type {
@@ -48,7 +48,7 @@ import {
 	createBuiltInSlashCommandsFacet,
 	createSlashCommandsRuntimeFacet,
 } from "./services/slash-commands-provider.ts";
-import { Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
+import { liveOf, Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
 
 export interface RunClientTuiOptions extends OpenClientRuntimeOptions {
 	readonly facetLoader?: FacetLoader;

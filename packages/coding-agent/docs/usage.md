@@ -88,6 +88,38 @@ While the cursor rests on a session, the area above the composer previews that s
 
 Click `[rename]`, or select a session and press `Ctrl+R`, to edit its title inline. `Enter` saves, `Escape` cancels, and `Ctrl+U` clears the field. The title is saved with the session. With fewer than 56 available list columns, the button becomes `[r]`; below 32, it is hidden. Age is also hidden below 32 available list columns, and `[x]` is hidden below 20 to prioritize the title. `Ctrl+R` and `Ctrl+X` remain available at every width; deleting an idle session still requires confirmation.
 
+## Use the web client
+
+The experimental slice can serve the same host to a browser. From the repository root:
+
+```bash
+AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
+  ./packages/coding-agent/src/experimental/cli.ts web
+```
+
+It prints the canonical loopback URL, the mode it serves (`source`), the WebSocket URL, and the server ID once
+the host accepts connections, and it binds loopback only: a connection to another address of this machine is
+refused. Open the printed `http://127.0.0.1:<port>/` URL.
+
+The page lists the host's sessions on the left and the attached session's transcript on the right. The roster
+shows each session's age and marks the attached one; click a row to attach another session. The transcript
+renders the same durable state the TUI shows: user and assistant blocks, thinking, tool calls with their
+results or a "Not run" notice, compaction and reset notices, and an error notice for an answer that failed,
+was aborted, or was truncated. The line under the header carries the session's live status (working, running a
+tool, retrying, compacting) and the inputs the session has queued but not started.
+
+Type in the composer and press `Enter` to submit: while the session is idle the text starts a run, and while a
+turn is running it queues as the next input. `Shift+Enter` inserts a newline and `Abort` withdraws queued input
+and stops the running turn. Committed entries appear without reloading, and any other attached presentation —
+a second browser tab or the client TUI — sees the same committed state.
+
+Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
+served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of
+rendering an empty shell. Restarting the host keeps sessions: the same server ID and the durable storage are
+reused, so a fresh load shows the committed entries again. Page changes take effect after the host restarts
+(the bundle is built in memory when the host starts), and this slice is not part of the packaged `amazme`
+binary yet, so it always runs from the repository.
+
 ## Run a terminal command
 
 Prefix a command with `!` to run it and include its output in the conversation:

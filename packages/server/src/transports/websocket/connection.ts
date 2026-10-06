@@ -3,6 +3,7 @@ import type { ByteConnection } from "../../connection.ts";
 import {
 	CLOSE_NORMAL,
 	CLOSE_PROTOCOL_ERROR,
+	CLOSE_UNSUPPORTED_DATA,
 	encodeCloseFrame,
 	encodeFrame,
 	OPCODE_BINARY,
@@ -78,7 +79,7 @@ export class WebSocketByteConnection implements ByteConnection {
 					void this.finishClose();
 					break;
 				default:
-					void this.closeWithCode(1003);
+					void this.closeWithCode(CLOSE_UNSUPPORTED_DATA);
 					handler.onError(new Error("WebSocket transport accepts binary messages only"));
 					return;
 			}

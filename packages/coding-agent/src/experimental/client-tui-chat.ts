@@ -1,5 +1,6 @@
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "@amazme/ai";
 import type { ConversationView, EntryRecord, InboxState, LiveState } from "@amazme/durable";
+import { inboxOf, liveOf } from "./services/transcript.ts";
 import { Container, Spacer, Text, TruncatedText, type TUI } from "@amazme/tui";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
@@ -7,11 +8,6 @@ import { type StatusIndicator, WorkingStatusIndicator } from "../modes/interacti
 import { ToolExecutionComponent, type ToolRenderers } from "../modes/interactive/components/tool-execution.ts";
 import { UserMessageComponent } from "../modes/interactive/components/user-message.ts";
 import { theme } from "../modes/interactive/theme/theme.ts";
-
-/** The `pi.live` document of a view: the active run, the streaming answer, and running tools. */
-export function liveOf(view: ConversationView): LiveState {
-	return (view.docs["amazme.live"] ?? {}) as LiveState;
-}
 
 function userText(content: UserMessage["content"]): string {
 	if (typeof content === "string") return content;
@@ -66,7 +62,7 @@ export class ExperimentalChatView {
 				);
 			}
 		}
-		this.#syncQueue((view.docs["amazme.inbox"] ?? { items: [] }) as InboxState);
+		this.#syncQueue(inboxOf(view));
 		this.#syncStatus(live);
 		this.transcript.invalidate();
 		this.pendingMessages.invalidate();

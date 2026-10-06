@@ -15,8 +15,8 @@ import {
 	WEB_PAGE_SCRIPT,
 } from "./bundle.ts";
 /** Canonical loopback address the page and the WebSocket endpoint are served on. */
-export const WEB_HOST = "127.0.0.1";
-export const WEB_SOCKET_PATH = "/amazme";
+const WEB_HOST = "127.0.0.1";
+const WEB_SOCKET_PATH = "/amazme";
 const DEFAULT_INDEX = "index.html";
 const NOT_FOUND = "Not found\n";
 
