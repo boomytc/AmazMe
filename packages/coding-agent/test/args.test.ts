@@ -494,6 +494,12 @@ describe("parseArgs", () => {
 			expect(result.messages).toEqual(["hello", "world"]);
 		});
 
+		test("opens the dashboard from the dashboard command without sending it as a prompt", () => {
+			expect(parseArgs(["dashboard"])).toMatchObject({ dashboard: true, messages: [] });
+			expect(parseArgs(["--dashboard"])).toMatchObject({ dashboard: true, messages: [] });
+			expect(parseArgs(["dashboard", "keep going"]).messages).toEqual(["keep going"]);
+		});
+
 		test("parses @file arguments", () => {
 			const result = parseArgs(["@README.md", "@src/main.ts"]);
 			expect(result.fileArgs).toEqual(["README.md", "src/main.ts"]);

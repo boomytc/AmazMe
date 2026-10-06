@@ -960,6 +960,7 @@ export async function main(args: string[], options?: MainOptions) {
 			verbose: parsed.verbose,
 			tuiMode: parsed.tuiMode,
 			initialThemeSetting: parsed.useTheme,
+			openDashboard: parsed.dashboard,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

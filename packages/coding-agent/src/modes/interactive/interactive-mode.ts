@@ -154,7 +154,14 @@ import { playArmin3d, playPiLogo3d } from "./components/easter-egg-3d.lazy.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
-import { FooterComponent, formatTokens } from "./components/footer.ts";
+import { FooterComponent, formatCwdForFooter, formatTokens } from "./components/footer.ts";
+import {
+	type DashboardAgent,
+	DashboardView,
+	dashboardPeek,
+	readDashboardPrefs,
+	serializeDashboardPrefs,
+} from "./dashboard.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
@@ -450,6 +457,8 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 	/** Terminal implementation. Defaults to the current process terminal. */
 	terminal?: Terminal;
+	/** Open the agent dashboard once the interactive session is ready. */
+	openDashboard?: boolean;
 }
 
 export class InteractiveMode {
@@ -479,6 +488,8 @@ export class InteractiveMode {
 	private workSurface!: WorkSurface;
 	private readonly parentTranscript = new ParentTranscript();
 	private readonly bashRuns = new BashRunTable();
+	private dashboardView?: DashboardView;
+	private dashboardDisk: DashboardAgent[] = [];
 	private submitEditorText: (text: string) => Promise<void> = async () => {};
 	private footerContainer: Container;
 	private footerDataProvider: FooterDataProvider;
@@ -660,6 +671,7 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.footer.setDashboardHint(true);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
 
@@ -1104,6 +1116,7 @@ export class InteractiveMode {
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
+		if (this.options.openDashboard) this.dashboard().toggle();
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -3240,12 +3253,195 @@ export class InteractiveMode {
 		foregroundCommands.onChange(sync);
 		this.ensureWorkSurface();
 		this.footer.setComposerLine(() => this.composer.footerText());
-		this.defaultEditor.onBeforeInput = (data) =>
-			routeInteractiveInput(data, {
+		this.defaultEditor.onBeforeInput = (data) => {
+			if (typeof this.dashboard === "function" && this.dashboard().handleKey(data)) return true;
+			return routeInteractiveInput(data, {
 				child: this.workSurface,
 				transcript: this.transcriptFocus,
 				composer: this.composer,
 			});
+		};
+	}
+
+	private dashboard(): DashboardView {
+		if (this.dashboardView) return this.dashboardView;
+		let prefs = readDashboardPrefs(undefined);
+		try {
+			prefs = readDashboardPrefs(fs.readFileSync(path.join(getAgentDir(), "dashboard.json"), "utf8"));
+		} catch {
+			// Missing or unreadable prefs keep the defaults.
+		}
+		this.dashboardView = new DashboardView(
+			{
+				exit: () => this.syncDashboard(false),
+				create: () => {
+					void this.dispatchDashboard("", true);
+				},
+				openPrevious: () => this.showSessionSelector(),
+				open: (id) => {
+					void this.openDashboardAgent(id);
+				},
+				dispatch: (text, attach) => {
+					void this.dispatchDashboard(text, attach);
+				},
+				reply: (id, text, attach) => {
+					void this.replyDashboard(id, text, attach);
+				},
+				rename: (id, name) => {
+					this.renameDashboardAgent(id, name);
+				},
+				stop: (id) => {
+					this.stopDashboardAgent(id);
+				},
+				delete: (id) => {
+					this.deleteDashboardAgent(id);
+				},
+				status: (text) => this.showStatus(text),
+				prefs: (dashboardState) => {
+					try {
+						fs.mkdirSync(getAgentDir(), { recursive: true });
+						fs.writeFileSync(path.join(getAgentDir(), "dashboard.json"), serializeDashboardPrefs(dashboardState));
+					} catch {
+						// The roster still works without a saved pin list.
+					}
+				},
+				opened: (open) => this.syncDashboard(open),
+			},
+			() => this.dashboardAgents(),
+			() => ({
+				branch: this.footerDataProvider.getGitBranch(),
+				cwd: formatCwdForFooter(this.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE),
+			}),
+			prefs,
+		);
+		return this.dashboardView;
+	}
+
+	private liveDashboardAgent(): DashboardAgent {
+		const child = this.session.childAgents.records.find((record) => record.status === "running");
+		const command = foregroundCommands.list().find((task) => task.status === "running");
+		const working = this.session.isStreaming || child !== undefined || command !== undefined;
+		let activity = "idle";
+		if (this.session.isStreaming) activity = "Responding…";
+		else if (command) activity = `Running: ${command.command}`;
+		else if (child) activity = child.activity || "Subagent running";
+		return {
+			id: this.session.sessionId,
+			name: this.session.sessionName || "New agent",
+			cwd: this.sessionManager.getCwd(),
+			state: working ? "working" : "idle",
+			activity,
+			updatedAt: Date.now(),
+			attached: true,
+			peek: dashboardPeek(this.session.messages),
+			path: this.session.sessionFile,
+		};
+	}
+
+	private dashboardAgents(): DashboardAgent[] {
+		const live = this.liveDashboardAgent();
+		const rest = this.dashboardDisk.filter((agent) => agent.id !== live.id && agent.path !== live.path);
+		return [live, ...rest];
+	}
+
+	private async reloadDashboardDisk(): Promise<void> {
+		try {
+			const cwd = this.sessionManager.getCwd();
+			const sessions = await SessionManager.list(cwd, this.sessionManager.getSessionDir());
+			this.dashboardDisk = sessions.map((session) => ({
+				id: session.id,
+				name: session.name || session.firstMessage.split("\n")[0] || session.id.slice(0, 8),
+				cwd: session.cwd || cwd,
+				state: "idle" as const,
+				activity: "idle",
+				updatedAt: session.modified.getTime(),
+				attached: false,
+				peek: session.firstMessage,
+				path: session.path,
+			}));
+		} catch {
+			this.dashboardDisk = [];
+		}
+		this.ui.requestRender();
+	}
+
+	private syncDashboard(open: boolean): void {
+		const dashboard = this.dashboard();
+		if (open) {
+			this.session.childAgents.close();
+			this.parentTranscript.setOverlay(dashboard);
+			syncComposerVisibility(this.editorContainer, this.defaultEditor, true);
+			this.footer.setComposerLine(() => dashboard.shortcutLine());
+			this.ui.setFocus(dashboard);
+			void this.reloadDashboardDisk();
+		} else {
+			this.parentTranscript.setOverlay(undefined);
+			syncComposerVisibility(this.editorContainer, this.defaultEditor, this.workSurface.composerHidden);
+			this.footer.setComposerLine(() => this.composer.footerText());
+			this.ui.setFocus(this.editor);
+		}
+		this.ui.requestRender();
+	}
+
+	private async dispatchDashboard(text: string, attach: boolean): Promise<void> {
+		const working = this.session.isStreaming;
+		await this.handleClearCommand();
+		if (text.length > 0) await this.submitEditorText(text);
+		if (working) this.showStatus("Previous session stopped");
+		await this.reloadDashboardDisk();
+		if (attach) this.dashboard().forceClose();
+		else if (this.dashboard().isOpen()) this.syncDashboard(true);
+	}
+
+	private async openDashboardAgent(id: string): Promise<void> {
+		const agent = this.dashboardAgents().find((item) => item.id === id);
+		if (!agent) return;
+		if (!agent.attached && agent.path) await this.handleResumeSession(agent.path);
+		this.dashboard().forceClose();
+	}
+
+	private async replyDashboard(id: string, text: string, attach: boolean): Promise<void> {
+		const agent = this.dashboardAgents().find((item) => item.id === id);
+		if (!agent) return;
+		if (!agent.attached && agent.path) await this.handleResumeSession(agent.path);
+		if (this.session.isStreaming) await this.session.steer(text);
+		else await this.submitEditorText(text);
+		if (attach) this.dashboard().forceClose();
+	}
+
+	private renameDashboardAgent(id: string, name: string): void {
+		const agent = this.dashboardAgents().find((item) => item.id === id);
+		if (!agent) return;
+		if (agent.attached) this.session.setSessionName(name);
+		else if (agent.path) SessionManager.open(agent.path).appendSessionInfo(name);
+		void this.reloadDashboardDisk();
+		this.showStatus(`Renamed to ${name}`);
+	}
+
+	private stopDashboardAgent(id: string): void {
+		const agent = this.dashboardAgents().find((item) => item.id === id);
+		if (!agent?.attached) {
+			this.showStatus("Open the session to stop it");
+			return;
+		}
+		void this.session.abort();
+	}
+
+	private deleteDashboardAgent(id: string): void {
+		const agent = this.dashboardAgents().find((item) => item.id === id);
+		if (!agent?.path || agent.attached || agent.path === this.session.sessionFile) {
+			this.showStatus("Leave this session before deleting it");
+			return;
+		}
+		try {
+			fs.unlinkSync(agent.path);
+		} catch (error: unknown) {
+			this.showStatus(error instanceof Error ? error.message : "Could not delete that session");
+			return;
+		}
+		this.dashboardDisk = this.dashboardDisk.filter((item) => item.id !== id);
+		this.showStatus("Session deleted");
+		this.ui.requestRender();
 	}
 
 	/** Project the parent transcript. The container is not a second copy of the entries. */
@@ -3399,6 +3595,11 @@ export class InteractiveMode {
 			if (text === "/resume") {
 				this.showSessionSelector();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/dashboard" || text === "/sessions" || text === "/agents-dashboard") {
+				this.editor.setText("");
+				if (!this.dashboard().isOpen()) this.dashboard().toggle();
 				return;
 			}
 			if (text === "/quit") {

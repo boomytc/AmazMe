@@ -62,6 +62,7 @@ interface SessionStats {
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private composerLine: (() => string | undefined) | undefined;
+	private dashboardHint = false;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private sessionStats?: SessionStats;
@@ -77,6 +78,10 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	setDashboardHint(enabled: boolean): void {
+		this.dashboardHint = enabled;
 	}
 
 	/** Enter/queue hint rendered under the session stats. */
@@ -180,6 +185,9 @@ export class FooterComponent implements Component {
 		const sessionName = this.session.sessionManager.getSessionName();
 		if (sessionName) {
 			pwd = `${pwd} • ${sessionName}`;
+		}
+		if (this.dashboardHint) {
+			pwd = `${pwd}  [Dashboard]`;
 		}
 
 		// Build stats line

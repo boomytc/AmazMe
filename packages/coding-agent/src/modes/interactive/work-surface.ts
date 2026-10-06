@@ -88,6 +88,7 @@ type ChatList = {
 export class ParentTranscript {
 	private entries: Component[] = [];
 	private surface: WorkSurface | undefined;
+	private overlay: Component | undefined;
 	private container: ChatList | undefined;
 	private rawAdd: ((component: Component) => void) | undefined;
 	private rawRemove: ((component: Component) => void) | undefined;
@@ -159,6 +160,12 @@ export class ParentTranscript {
 		return this.entries;
 	}
 
+	/** Cover the transcript with one component, or clear that cover. Entries stay put. */
+	setOverlay(component: Component | undefined): void {
+		this.overlay = component;
+		this.project();
+	}
+
 	/** Show the frame alone, or the parent entries and then the frame. */
 	project(): void {
 		const surface = this.surface;
@@ -166,6 +173,11 @@ export class ParentTranscript {
 		const rawAdd = this.rawAdd;
 		if (!surface || !rawClear || !rawAdd) return;
 		rawClear();
+		const overlay = this.overlay;
+		if (overlay) {
+			rawAdd(overlay);
+			return;
+		}
 		if (!surface.composerHidden) {
 			for (const entry of this.entries) rawAdd(entry);
 		}
