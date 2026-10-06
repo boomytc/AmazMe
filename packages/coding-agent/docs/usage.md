@@ -16,7 +16,18 @@ To include files or images:
 
 - Type `@` to search for a file and add it to your prompt.
 - Press `Tab` to complete a path.
-- Paste an image or drag it into a compatible terminal.
+- Use the system's clipboard paste shortcuts below to paste an image. The image is saved to a private temporary file and its path is inserted at the cursor, separated from surrounding text. This also works in the Dashboard's selected reply or new-session input. Copied Finder files retain their original paths; text is the final fallback.
+- Drag a file or image into a compatible terminal. The terminal's own paste command may only paste text; use the application shortcut for clipboard images.
+
+Default keys are detected from the operating system; WSL uses the Windows defaults. Startup help and `/hotkeys` show your active bindings, including custom overrides.
+
+| System | Paste | Fallback for clipboard images |
+|---|---|---|
+| macOS | `Cmd+V` | `Ctrl+V` (Control+V) |
+| Windows / WSL | `Ctrl+V` | `Alt+V` |
+| Linux | `Ctrl+Shift+V` | `Ctrl+V` |
+
+The primary shortcut can use the terminal's normal paste action. When a terminal reports a paste with no text, AmazMe reads the system clipboard for the image instead of discarding the notification. Nonempty text pastes remain unchanged. The secondary key also reads the clipboard directly. Successful image pastes show a temporary file path in the draft. Clipboard paste also works when running directly from TypeScript with the source resolver.
 
 ## Follow Pi's work
 
@@ -89,7 +100,7 @@ Use `!!` when you want to run a command without sending its output to the model.
 
 ## Copy, export, or share results
 
-Press `Ctrl+X` or run `/copy` to copy the last assistant response. Use `/export` to save the session as HTML or JSONL.
+Press `Ctrl+X` or run `/copy` to copy the last assistant response. Successful copies, including fullscreen text selection and editor selection, show a short-lived, right-aligned `Copied!` line immediately above the composer. The feedback does not take focus or add a chat message. Use `/export` to save the session as HTML or JSONL.
 
 Use `/share` to upload the session and get a viewer link. With Radius authentication, the artifact is visible to your Radius organization. Otherwise, Pi creates a private GitHub gist through the GitHub CLI. Review the session first because it can contain prompts, tool output, file contents, and credentials exposed during the conversation.
 

@@ -11,6 +11,7 @@ import {
 	visibleWidth,
 	VStack,
 } from "@amazme/tui";
+import { getTerminalPasteText } from "../../utils/clipboard-paste.ts";
 import { theme } from "./theme/theme.ts";
 
 export type DashboardRowState = "needs-input" | "working" | "idle" | "inactive" | "completed" | "failed";
@@ -64,6 +65,13 @@ export interface DashboardScreenState {
 	deleteArmedAt?: number;
 	notice?: string;
 	hoverId?: string;
+}
+
+export interface DashboardPasteTarget {
+	getText(): string;
+	getCursor(): { line: number; col: number };
+	insertTextAtCursor(text: string): void;
+	isActive(): boolean;
 }
 
 export interface DashboardHit {
@@ -576,7 +584,7 @@ function dashboardHeader(agents: readonly DashboardAgent[], width: number): stri
 function dashboardFooter(state: DashboardScreenState, width: number): string[] {
 	let text = state.notice ?? "";
 	if (!text && state.renameFor) text = width >= 40 ? "Enter save · Esc cancel · Ctrl+U clear" : "Enter save · Esc cancel";
-	else if (!text && state.search) text = `Search: ${state.query}`;
+	else if (!text && state.search) text = `Search: ${singleLine(state.query)}`;
 	else if (!text && state.help) text = "↑/↓ move · Enter open · Ctrl+R rename · Ctrl+X close";
 	else if (!text && state.filter) text = `Filter: ${state.filter}`;
 	else if (!text && state.reply) text = `Reply: ${singleLine(state.reply)}`;
@@ -721,6 +729,7 @@ export interface DashboardActions {
 	opened(open: boolean): void;
 	focusInput?(): void;
 	focusList?(): void;
+	paste?(data: string): boolean;
 }
 
 /** Full-screen agent roster. The transcript hides behind it while `open` is set. */
@@ -796,6 +805,35 @@ export class DashboardView implements Component, Focusable {
 		return [chip("Enter", action), chip("Tab", this.focused ? "input" : "list")].join(" │ ");
 	}
 
+	/** Capture the operation target so an asynchronous paste cannot retarget another session. */
+	createPasteTarget(): DashboardPasteTarget | undefined {
+		if (!this.state.open || this.state.renameFor) return undefined;
+		const selected = this.state.selected;
+		const column = this.state.column;
+		const which = field(this.state);
+		const isActive = () => this.state.open && field(this.state) === which &&
+			(which === "query" || (this.state.selected === selected && this.state.column === column));
+		return {
+			getText: () => fieldText(this.state),
+			getCursor: () => {
+				const lines = fieldText(this.state).split("\n");
+				return { line: lines.length - 1, col: lines.at(-1)!.length };
+			},
+			isActive,
+			insertTextAtCursor: (text) => {
+				if (!isActive()) return;
+				const normalized = stripTerminalSequences(text).replace(/\r\n?/g, "\n").replace(/\t/g, "    ")
+					.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+				setField(this.state, `${fieldText(this.state)}${normalized}`.slice(0, PROMPT_LIMIT));
+				this.state.focus = "input";
+				this.state.help = false;
+				this.state.notice = undefined;
+				this.revealRequested = true;
+				clearArm(this.state);
+			},
+		};
+	}
+
 	composerPlaceholder(): string {
 		if (this.state.renameFor) return "Editing title above";
 		if (this.state.search) return "Search sessions";
@@ -815,6 +853,7 @@ export class DashboardView implements Component, Focusable {
 	}
 
 	handleInput(data: string): void {
+		if (this.handlePaste(data)) return;
 		if (this.state.open && !this.state.renameFor && matchesKey(data, "tab")) {
 			this.state.focus = "input";
 			this.state.notice = undefined;
@@ -828,6 +867,7 @@ export class DashboardView implements Component, Focusable {
 	/** Editor route. Returns true when the dashboard consumed the key. */
 	handleKey(data: string): boolean {
 		if (!this.state.open && !matchesKey(data, "ctrl+\\")) return false;
+		if (this.handlePaste(data)) return true;
 		if (this.state.open && !this.state.renameFor && matchesKey(data, "tab")) {
 			this.state.focus = "list";
 			this.state.notice = undefined;
@@ -837,6 +877,20 @@ export class DashboardView implements Component, Focusable {
 			return true;
 		}
 		this.press(data);
+		return true;
+	}
+
+	private handlePaste(data: string): boolean {
+		if (this.state.open && !this.renameInput && this.actions.paste?.(data)) return true;
+		return this.handleTerminalTextPaste(data);
+	}
+
+	private handleTerminalTextPaste(data: string): boolean {
+		const text = getTerminalPasteText(data);
+		if (!text) return false;
+		const target = this.createPasteTarget();
+		if (!target) return false;
+		target.insertTextAtCursor(text);
 		return true;
 	}
 

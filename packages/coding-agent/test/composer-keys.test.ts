@@ -124,7 +124,9 @@ describe("interactive composer keys", () => {
 			expect(effects).toEqual(["send:hello"]);
 			expect(editor.getText()).toBe("");
 			expect(footerText()).toContain("Enter: send");
-			expect(footerText()).toContain("Newline: Shift+Enter or Alt+Enter");
+			expect(footerText()).toContain(
+				process.platform === "darwin" ? "Newline: Shift+Enter or Option+Enter" : "Newline: Shift+Enter or Alt+Enter",
+			);
 
 			turnRunning = true;
 			editor.setText("later");
@@ -171,7 +173,9 @@ describe("interactive composer keys", () => {
 			editor.handleInput("\r");
 			expect(editor.getText()).toBe("two\n");
 			expect(footerText()).toContain("Enter: newline");
-			expect(footerText()).toContain("Shift+Enter or Alt+Enter: send");
+			expect(footerText()).toContain(
+				process.platform === "darwin" ? "Shift+Enter or Option+Enter: send" : "Shift+Enter or Alt+Enter: send",
+			);
 			editor.handleInput(SHIFT_ENTER);
 			expect(effects.at(-1)).toBe("send:two");
 

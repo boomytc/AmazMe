@@ -66,6 +66,19 @@ export function useWindowsKeybindings(
 	return platform === "win32" || (platform === "linux" && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP));
 }
 
+export function getClipboardPasteKeys(
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+): KeyId[] {
+	if (platform === "darwin") return ["super+v", "ctrl+v"];
+	if (useWindowsKeybindings(platform, env)) return ["ctrl+v", "alt+v"];
+	return ["ctrl+shift+v", "ctrl+v"];
+}
+
+export function getClipboardPasteDescription(platform: NodeJS.Platform = process.platform): string {
+	return platform === "darwin" ? "Paste files, images, or text from clipboard" : "Paste images or text from clipboard";
+}
+
 declare module "@amazme/tui" {
 	interface Keybindings extends AppKeybindings {}
 }
@@ -140,8 +153,8 @@ export const KEYBINDINGS = {
 		description: "Restore queued messages",
 	},
 	"app.clipboard.pasteImage": {
-		defaultKeys: windowsKeybindings ? "alt+v" : "ctrl+v",
-		description: "Paste files on macOS, images, or text from clipboard",
+		defaultKeys: getClipboardPasteKeys(),
+		description: getClipboardPasteDescription(),
 	},
 	"app.session.new": { defaultKeys: [], description: "Start a new session" },
 	"app.session.tree": { defaultKeys: [], description: "Open session tree" },

@@ -1,5 +1,6 @@
 import { matchesKey } from "@amazme/tui";
 import { foregroundCommands } from "../../core/foreground-commands.ts";
+import { formatKeyText } from "../../core/keybinding-labels.ts";
 
 export type TerminalClass = "default" | "apple-terminal" | "vscode";
 
@@ -56,7 +57,7 @@ export function promptShortcutLine(
 ): string {
 	const trimmed = state.draft.trim();
 	const top = state.queue[0]?.replace(/\s+/g, " ").trim();
-	const chip = (key: string, action: string) => `\x1b[1m${key}\x1b[22m:${action}`;
+	const chip = (key: string, action: string) => `\x1b[1m${formatKeyText(key, { capitalize: true })}\x1b[22m:${action}`;
 	const parts = [chip("Ctrl+\\", "dashboard")];
 	const enter = decideComposerAction(state, "enter");
 	if (enter.type === "insert-newline") parts.push(chip("Enter", "newline"));
@@ -80,7 +81,8 @@ export function promptShortcutLine(
 /** The footer line that says what Enter will do, plus any visible queued rows. */
 export function composerFooterLine(state: Pick<ComposerState, "turnRunning" | "multiline" | "queue">): string {
 	const enter = state.multiline ? "Enter: newline" : state.turnRunning ? "Enter: queue" : "Enter: send";
-	const alternate = state.multiline ? "Shift+Enter or Alt+Enter: send" : "Newline: Shift+Enter or Alt+Enter";
+	const altEnter = formatKeyText("alt+enter", { capitalize: true });
+	const alternate = state.multiline ? `Shift+Enter or ${altEnter}: send` : `Newline: Shift+Enter or ${altEnter}`;
 	const queued = state.queue.length > 0 ? `Queued: ${state.queue.join(" | ")}` : "";
 	return [enter, alternate, queued].filter((part) => part.length > 0).join("  ");
 }

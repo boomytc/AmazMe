@@ -52,9 +52,21 @@ Write a key as `modifier+key`. Modifiers are `ctrl`, `shift`, `alt`, and `super`
 
 Examples: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `super+k`, `ctrl+super+k`, and `ctrl+1`.
 
-On macOS, `super` is the Command key. The default `Cmd+Left` and `Cmd+Right` shortcuts move to the start and end of the current logical line, including when that line wraps across terminal rows.
+The interface displays modifiers using system names: `Cmd` and `Option` on macOS, `Win` and `Alt` on Windows/WSL, and `Super` and `Alt` on Linux. Configuration files keep the portable names `super` and `alt`.
+
+On macOS, the default `Cmd+Left` and `Cmd+Right` shortcuts move to the start and end of the current logical line, including when that line wraps across terminal rows.
 
 `super` bindings require a terminal that reports the modifier separately, typically through the Kitty keyboard protocol. They may not work in terminals without that support; `Home`/`End` and `Ctrl+A`/`Ctrl+E` remain available.
+
+Clipboard paste defaults follow the operating system:
+
+| System | Primary binding | Fallback binding |
+|---|---|---|
+| macOS | `super+v` (`Cmd+V`) | `ctrl+v` |
+| Windows / WSL | `ctrl+v` | `alt+v` |
+| Linux | `ctrl+shift+v` | `ctrl+v` |
+
+Terminal paste notifications are supported as well as key events: an empty bracketed paste reads images from the system clipboard. This handles image-only `Cmd+V` pastes without requiring the terminal to forward a Command key event. Nonempty terminal text pastes remain unchanged. The secondary key also reads the clipboard directly. Startup help and `/hotkeys` describe these paths when both default keys are enabled. Custom bindings replace the application's shortcut defaults; they do not alter the terminal's own paste action.
 
 ## Actions
 
@@ -140,7 +152,7 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `app.exit` | `ctrl+d` | Exit (when editor empty) |
 | `app.suspend` | `ctrl+z` (None on Windows) | Suspend to background |
 | `app.editor.external` | `ctrl+g` | Open in external editor (`externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere) |
-| `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows and WSL) | Paste files on macOS, images, or text from clipboard |
+| `app.clipboard.pasteImage` | macOS: `super+v`, `ctrl+v`; Windows/WSL: `ctrl+v`, `alt+v`; Linux: `ctrl+shift+v`, `ctrl+v` | Paste images, text, or macOS file paths from clipboard |
 
 On native Windows, `app.suspend` has no default because Windows terminals do not support Unix job control. If you assign it manually, Pi shows a status message instead of suspending. WSL uses the normal `ctrl+z` and `fg` behavior.
 

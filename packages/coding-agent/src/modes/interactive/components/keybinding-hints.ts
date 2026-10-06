@@ -2,29 +2,15 @@
  * Utilities for formatting keybinding hints in the UI.
  */
 
-import { getKeybindings, type Keybinding, type KeyId } from "@amazme/tui";
+import type { Keybinding, KeybindingsManager, KeyId } from "@amazme/tui";
+import { getKeybindings } from "@amazme/tui";
+import type { KeyTextFormatOptions } from "../../../core/keybinding-labels.ts";
+import { formatKeyText } from "../../../core/keybinding-labels.ts";
+import { getClipboardPasteKeys } from "../../../core/keybindings.ts";
 import { theme } from "../theme/theme.ts";
 
-export interface KeyTextFormatOptions {
-	capitalize?: boolean;
-}
-
-function formatKeyPart(part: string, options: KeyTextFormatOptions): string {
-	const displayPart = process.platform === "darwin" && part.toLowerCase() === "alt" ? "option" : part;
-	return options.capitalize ? displayPart.charAt(0).toUpperCase() + displayPart.slice(1) : displayPart;
-}
-
-export function formatKeyText(key: string, options: KeyTextFormatOptions = {}): string {
-	return key
-		.split("/")
-		.map((k) =>
-			k
-				.split("+")
-				.map((part) => formatKeyPart(part, options))
-				.join("+"),
-		)
-		.join("/");
-}
+export type { KeyTextFormatOptions };
+export { formatKeyText };
 
 function formatKeys(keys: KeyId[], options: KeyTextFormatOptions = {}): string {
 	if (keys.length === 0) return "";
@@ -39,8 +25,21 @@ export function keyDisplayText(keybinding: Keybinding): string {
 	return formatKeys(getKeybindings().getKeys(keybinding), { capitalize: true });
 }
 
+export function clipboardPasteFallbackText(
+	keybindings: KeybindingsManager = getKeybindings(),
+	options: KeyTextFormatOptions = {},
+): string | undefined {
+	const [primary, fallback] = getClipboardPasteKeys(options.platform, options.env);
+	const keys = keybindings.getKeys("app.clipboard.pasteImage");
+	if (!keys.includes(primary) || !keys.includes(fallback)) return undefined;
+	const displayOptions = { ...options, capitalize: true };
+	return `${formatKeyText(primary, displayOptions)} supports terminal image paste; ${formatKeyText(fallback, displayOptions)} also reads the clipboard directly.`;
+}
+
 export function keyHint(keybinding: Keybinding, description: string): string {
-	return theme.fg("dim", keyText(keybinding)) + theme.fg("muted", ` ${description}`);
+	const text = keyText(keybinding);
+	if (!text) return "";
+	return theme.fg("dim", text) + theme.fg("muted", ` ${description}`);
 }
 
 export function rawKeyHint(key: string, description: string): string {

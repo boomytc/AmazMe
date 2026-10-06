@@ -11,6 +11,7 @@ export interface InteractiveTuiOptions {
 	readonly logDirectory: string;
 	readonly terminal?: Terminal;
 	readonly onRightClickPaste?: () => void;
+	readonly onCopySuccess?: () => void;
 	readonly fullscreenCopyOnSelect?: boolean;
 	readonly fullscreenWheelScrollLines?: WheelScrollLines;
 }
@@ -34,6 +35,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			},
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
+			onCopySuccess: options.onCopySuccess,
 			copyOnSelect: options.fullscreenCopyOnSelect,
 			wheelScrollLines: options.fullscreenWheelScrollLines ?? "auto",
 			copySelection: async (text) => {

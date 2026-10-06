@@ -99,7 +99,8 @@ import type {
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
-import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
+import type { AppKeybinding } from "../../core/keybindings.ts";
+import { getClipboardPasteDescription, KeybindingsManager } from "../../core/keybindings.ts";
 import type { McpHttpServerConfig } from "../../core/mcp-servers.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import {
@@ -130,6 +131,7 @@ import { addMcpServerConfig, loadMcpConfig } from "../../extensions/mcp/config.t
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
+import { isEmptyTerminalPaste } from "../../utils/clipboard-paste.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
@@ -146,6 +148,7 @@ import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
+import { ClipboardFeedback } from "./components/clipboard-feedback.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
@@ -169,7 +172,14 @@ import {
 	readDashboardPrefs,
 	serializeDashboardPrefs,
 } from "./dashboard.ts";
-import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
+import {
+	clipboardPasteFallbackText,
+	formatKeyText,
+	keyDisplayText,
+	keyHint,
+	keyText,
+	rawKeyHint,
+} from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -490,6 +500,7 @@ export class InteractiveMode {
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
 	private fdPath: string | undefined;
 	private editorContainer: Container;
+	private readonly clipboardFeedback = new ClipboardFeedback(() => this.ui.requestRender());
 	private activeSelectorToken?: object;
 	private activeSelectorDispose?: () => void;
 	private footer: FooterComponent;
@@ -500,7 +511,7 @@ export class InteractiveMode {
 	private readonly bashRuns = new BashRunTable();
 	private dashboardView?: DashboardView;
 	private dashboardDisk: DashboardAgent[] = [];
-	private submitEditorText: (text: string) => Promise<void> = async () => {};
+	private submitEditorText: (text: string, options?: { fromDashboard?: boolean }) => Promise<void> = async () => {};
 	private footerContainer: Container;
 	private statusBar!: SessionTopBar;
 	private contextOverlay: { hide(): void; focus(): void } | undefined;
@@ -653,6 +664,7 @@ export class InteractiveMode {
 			logDirectory: getAgentDir(),
 			terminal: options.terminal,
 			onRightClickPaste: this.onRightClickPaste,
+			onCopySuccess: () => this.clipboardFeedback.showCopied(),
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 		});
@@ -685,7 +697,7 @@ export class InteractiveMode {
 			return `${model.id}${thinking}`;
 		});
 		this.defaultEditor.onCopySelection = (text) => {
-			void copyToClipboard(text);
+			void this.copyWithFeedback(text);
 		};
 		this.defaultEditor.setPlaceholder(() =>
 			this.dashboardView?.isOpen() ? this.dashboardView.composerPlaceholder() : undefined,
@@ -977,6 +989,7 @@ export class InteractiveMode {
 			logDirectory: getAgentDir(),
 			terminal,
 			onRightClickPaste: this.onRightClickPaste,
+			onCopySuccess: () => this.clipboardFeedback.showCopied(),
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 		});
@@ -1035,6 +1048,7 @@ export class InteractiveMode {
 			pendingMessages: this.pendingMessagesContainer,
 			status: this.statusContainer,
 			widgetsAbove: this.widgetContainerAbove,
+			feedback: this.clipboardFeedback,
 			editor: this.editorContainer,
 			widgetsBelow: this.widgetContainerBelow,
 			footer: this.footerContainer,
@@ -1050,6 +1064,7 @@ export class InteractiveMode {
 			this.pendingMessagesContainer,
 			this.statusContainer,
 			this.widgetContainerAbove,
+			this.clipboardFeedback,
 			this.editorContainer,
 			this.widgetContainerBelow,
 			this.footerContainer,
@@ -1108,21 +1123,26 @@ export class InteractiveMode {
 					rawKeyHint("!!", "to run bash (no context)"),
 					hint("app.message.followUp", "to queue follow-up"),
 					hint("app.message.dequeue", "to edit all queued messages"),
-					hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"),
+					hint("app.clipboard.pasteImage", `to ${getClipboardPasteDescription().toLowerCase()}`),
 					rawKeyHint("drop files", "to attach"),
-				].join("\n");
+					clipboardPasteFallbackText(this.keybindings),
+				].filter(Boolean).join("\n");
 			const compactInstructions = () =>
 				[
 					hint("app.interrupt", "interrupt"),
 					rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
 					rawKeyHint("/", "commands"),
 					rawKeyHint("!", "bash"),
+					hint("app.clipboard.pasteImage", "paste image"),
 					hint("app.tools.expand", "more"),
-				].join(theme.fg("muted", " · "));
+				].filter(Boolean).join(theme.fg("muted", " · "));
 			const compactOnboarding = () =>
 				theme.fg(
 					"dim",
-					`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
+					[
+						`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
+						clipboardPasteFallbackText(this.keybindings),
+					].filter(Boolean).join("\n"),
 				);
 			const onboarding = () =>
 				theme.fg("dim", `AmazMe can explain its own features and look up its docs. Ask it how to use or extend AmazMe.`);
@@ -3172,7 +3192,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
 		this.defaultEditor.onAction(
 			"app.message.copy",
-			() => void this.handleCopyCommand({ flashConfirmation: true, preferSelection: true }),
+			() => void this.handleCopyCommand({ preferSelection: true }),
 		);
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
@@ -3189,7 +3209,7 @@ export class InteractiveMode {
 			}
 		};
 
-		// Handle clipboard paste (triggered on Ctrl+V). Copied files use their original paths,
+		// Handle the configured clipboard paste keys. Copied files use their original paths,
 		// images are attached via temporary files, and plain text is the final fallback.
 		this.defaultEditor.onPasteImage = () => {
 			void this.handleClipboardPaste();
@@ -3200,6 +3220,10 @@ export class InteractiveMode {
 		const target = this.renderer.getFocusedComponent();
 		const handleInput = target?.handleInput;
 		if (!target || !handleInput) return;
+		if (target === this.editor || (this.dashboardView?.focused && this.dashboardView.createPasteTarget())) {
+			await this.handleClipboardPaste();
+			return;
+		}
 		try {
 			const text = await readClipboardText();
 			if (!text || this.renderer.getFocusedComponent() !== target) return;
@@ -3211,40 +3235,55 @@ export class InteractiveMode {
 	}
 
 	private async handleClipboardPaste(): Promise<void> {
+		const editor = this.editor;
+		const focused = this.renderer?.getFocusedComponent();
+		const sessionId = this.runtimeHost?.session.sessionId;
+		const dashboard = this.dashboardView?.isOpen() ? this.dashboardView : undefined;
+		const target = dashboard ? dashboard.createPasteTarget() : {
+			getText: () => editor.getText(),
+			getCursor: () => editor.getCursor?.(),
+			insertTextAtCursor: (text: string) => editor.insertTextAtCursor?.(text),
+			isActive: () => this.editor === editor && !this.dashboardView?.isOpen() &&
+				this.runtimeHost?.session.sessionId === sessionId &&
+				(!focused || this.renderer?.getFocusedComponent() === focused),
+		};
+		if (!target) return;
+		const bashMode = dashboard ? target.getText().trimStart().startsWith("!") : this.isBashMode;
+		const insertPaths = (filePaths: string[]) => {
+			if (filePaths.some((filePath) => /\p{Cc}/u.test(filePath))) {
+				throw new Error("Clipboard file path contains control characters");
+			}
+			const paths = bashMode ? filePaths.map(quoteIfNeeded).join(" ") : filePaths.join("\n");
+			const cursor = target.getCursor();
+			const currentLine = cursor ? (target.getText().split("\n")[cursor.line] ?? "") : "";
+			const before = cursor && cursor.col > 0 ? currentLine[cursor.col - 1] : "";
+			const after = cursor ? currentLine[cursor.col] : "";
+			const leadingSpace = before && !/\s/.test(before) ? " " : "";
+			const trailingSpace = after && !/\s/.test(after) ? " " : "";
+			target.insertTextAtCursor(`${leadingSpace}${paths}${trailingSpace}`);
+			this.ui.requestRender();
+		};
 		try {
 			const filePaths = await readClipboardFilePaths();
-			if (filePaths) {
-				if (filePaths.some((filePath) => /\p{Cc}/u.test(filePath))) {
-					throw new Error("Clipboard file path contains control characters");
-				}
-				const paths = this.isBashMode ? filePaths.map(quoteIfNeeded).join(" ") : filePaths.join("\n");
-				const cursor = this.editor.getCursor?.();
-				const currentLine = cursor ? (this.editor.getText().split("\n")[cursor.line] ?? "") : "";
-				const characterBeforeCursor = cursor && cursor.col > 0 ? currentLine[cursor.col - 1] : "";
-				const characterAfterCursor = cursor ? currentLine[cursor.col] : "";
-				const leadingSpace = characterBeforeCursor && !/\s/.test(characterBeforeCursor) ? " " : "";
-				const trailingSpace = characterAfterCursor && !/\s/.test(characterAfterCursor) ? " " : "";
-				this.editor.insertTextAtCursor?.(`${leadingSpace}${paths}${trailingSpace}`);
-				this.ui.requestRender();
+			if (!target.isActive()) return;
+			if (filePaths?.length) {
+				insertPaths(filePaths);
 				return;
 			}
 
 			const image = await readClipboardImage();
+			if (!target.isActive()) return;
 			if (image) {
-				const tmpDir = os.tmpdir();
 				const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-				const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
-				const filePath = path.join(tmpDir, fileName);
-				fs.writeFileSync(filePath, Buffer.from(image.bytes));
-
-				this.editor.insertTextAtCursor?.(filePath);
-				this.ui.requestRender();
+				const filePath = path.join(os.tmpdir(), `amazme-clipboard-${crypto.randomUUID()}.${ext}`);
+				fs.writeFileSync(filePath, Buffer.from(image.bytes), { mode: 0o600 });
+				insertPaths([filePath]);
 				return;
 			}
 
 			const text = await readClipboardText();
-			if (text) {
-				this.editor.insertTextAtCursor?.(text);
+			if (text && target.isActive()) {
+				target.insertTextAtCursor(text);
 				this.ui.requestRender();
 			}
 		} catch (error) {
@@ -3313,6 +3352,9 @@ export class InteractiveMode {
 		this.ensureWorkSurface();
 		this.footer.setComposerLine(() => undefined);
 		this.defaultEditor.onBeforeInput = (data) => {
+			if (isEmptyTerminalPaste(data) || this.keybindings?.matches(data, "app.clipboard.pasteImage")) {
+				return this.workSurface.composerHidden ? this.workSurface.handleInput(data) : false;
+			}
 			if (typeof this.dashboard === "function" && this.dashboard().handleKey(data)) return true;
 			if (promptOwnsKey(data, this.defaultEditor.isShowingAutocomplete())) return false;
 			if (this.dashboardView?.isOpen() && matchesKey(data, "tab")) {
@@ -3372,6 +3414,11 @@ export class InteractiveMode {
 				opened: (open) => this.syncDashboard(open),
 				focusInput: () => this.ui.setFocus(this.editor),
 				focusList: () => this.ui.setFocus(this.dashboard()),
+				paste: (data) => {
+					if (!isEmptyTerminalPaste(data) && !this.keybindings.matches(data, "app.clipboard.pasteImage")) return false;
+					void this.handleClipboardPaste();
+					return true;
+				},
 			},
 			() => this.dashboardAgents(),
 			() => ({
@@ -3509,6 +3556,7 @@ export class InteractiveMode {
 				pendingMessages: this.pendingMessagesContainer,
 				status: this.statusContainer,
 				widgetsAbove: this.widgetContainerAbove,
+				feedback: this.clipboardFeedback,
 				editor: this.editorContainer,
 				widgetsBelow: this.widgetContainerBelow,
 				footer: this.footerContainer,
@@ -3537,7 +3585,7 @@ export class InteractiveMode {
 	private async dispatchDashboard(text: string, attach: boolean): Promise<void> {
 		const working = this.session.isStreaming;
 		await this.handleClearCommand();
-		if (text.length > 0) await this.submitEditorText(text);
+		if (text.length > 0) await this.submitEditorText(text, { fromDashboard: true });
 		if (working) this.showStatus("Previous session stopped");
 		await this.reloadDashboardDisk();
 		if (attach) this.dashboard().forceClose();
@@ -3556,7 +3604,7 @@ export class InteractiveMode {
 		if (!agent) return;
 		if (!agent.attached && agent.path) await this.handleResumeSession(agent.path);
 		if (this.session.isStreaming) await this.session.steer(text);
-		else await this.submitEditorText(text);
+		else await this.submitEditorText(text, { fromDashboard: true });
 		if (attach) this.dashboard().forceClose();
 	}
 
@@ -3608,9 +3656,9 @@ export class InteractiveMode {
 	}
 
 	private setupEditorSubmitHandler(): void {
-		this.submitEditorText = async (text: string) => {
+		this.submitEditorText = async (text: string, options) => {
 			text = text.trim();
-			if (this.dashboardView?.isOpen()) {
+			if (this.dashboardView?.isOpen() && !options?.fromDashboard) {
 				this.editor.setText("");
 				await this.dispatchDashboard(text, false);
 				return;
@@ -6122,12 +6170,7 @@ export class InteractiveMode {
 					this.showError("Selected entry has no text to copy");
 					return;
 				}
-				try {
-					await copyToClipboard(text);
-					this.showStatus("Copied selected message to clipboard");
-				} catch (error) {
-					this.showError(error instanceof Error ? error.message : String(error));
-				}
+				await this.copyWithFeedback(text);
 			};
 			return { component: selector, focus: selector };
 		});
@@ -7056,9 +7099,16 @@ export class InteractiveMode {
 		);
 	}
 
-	private async handleCopyCommand(
-		options: { flashConfirmation?: boolean; preferSelection?: boolean } = {},
-	): Promise<void> {
+	private async copyWithFeedback(text: string): Promise<void> {
+		try {
+			await copyToClipboard(text);
+			this.clipboardFeedback.showCopied();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private async handleCopyCommand(options: { preferSelection?: boolean } = {}): Promise<void> {
 		if (
 			options.preferSelection &&
 			this.ui instanceof TuiAltScreen &&
@@ -7075,16 +7125,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		try {
-			await copyToClipboard(text);
-			if (options.flashConfirmation && this.ui instanceof TuiAltScreen) {
-				this.ui.flash("Copied!");
-			} else {
-				this.showStatus("Copied last agent message to clipboard");
-			}
-		} catch (error) {
-			this.showError(error instanceof Error ? error.message : String(error));
-		}
+		await this.copyWithFeedback(text);
 	}
 
 	private handleNameCommand(text: string): void {
@@ -7279,7 +7320,7 @@ These main-editor controls take precedence over the configured bindings below.
 | Key | Action |
 |-----|--------|
 | \`Enter\` | Send when idle; queue during a turn; with an empty draft during a turn, send the oldest queued message. In multiline mode, insert a new line unless sending a queued message |
-| \`Shift+Enter\` / \`Alt+Enter\` | Insert a new line; in multiline mode, send the draft |
+| \`Shift+Enter\` / \`${formatKeyText("alt+enter", { capitalize: true })}\` | Insert a new line; in multiline mode, send the draft |
 | \`Ctrl+C\` | Clear the draft; when the draft is empty, cancel the running turn |
 | \`Tab\` | Accept autocomplete while the menu is open; otherwise switch between the prompt and scrollback |
 
@@ -7324,11 +7365,14 @@ These main-editor controls take precedence over the configured bindings below.
 | \`${copyMessage}\` | Copy selection or last assistant message |
 | \`${followUp}\` | Queue follow-up message |
 | \`${dequeue}\` | Restore queued messages |
-| \`${pasteImage}\` | Paste files on macOS, images, or text from clipboard |
+| \`${pasteImage}\` | ${getClipboardPasteDescription()} |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |
 | \`!!\` | Run bash command (excluded from context) |
 `;
+
+		const pasteFallback = clipboardPasteFallbackText(this.keybindings);
+		if (pasteFallback) hotkeys += `\n${pasteFallback}\n`;
 
 		// Add extension-registered shortcuts
 		const extensionRunner = this.session.extensionRunner;
@@ -7541,6 +7585,7 @@ These main-editor controls take precedence over the configured bindings below.
 
 	stop(fullscreenExitOutput = this.settingsManager.getFullscreenExitOutput()): void {
 		this.disposeActiveSelector();
+		this.clipboardFeedback.dispose();
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}

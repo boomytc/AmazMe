@@ -8,6 +8,7 @@ export interface ChatViewportOptions {
 	readonly footer: Component;
 	readonly statusBar?: Component;
 	readonly widgetsAbove?: Component;
+	readonly feedback?: Component;
 	readonly widgetsBelow?: Component;
 	readonly scrollbar?: ScrollViewScrollbar;
 	readonly scrollbarTrackStyle?: (text: string) => string;
@@ -38,6 +39,7 @@ export function createScreenViewport(content: Component, options: Omit<ChatViewp
 		{ component: options.pendingMessages, shrink: 1, minSize: 0 },
 		{ component: options.status, shrink: 1, minSize: 0 },
 		...(options.widgetsAbove === undefined ? [] : [{ component: options.widgetsAbove, shrink: 1, minSize: 0 }]),
+		...(options.feedback === undefined ? [] : [{ component: options.feedback, shrink: 1, minSize: 0 }]),
 		{ component: options.editor, shrink: 1, minSize: 3 },
 		...(options.widgetsBelow === undefined ? [] : [{ component: options.widgetsBelow, shrink: 1, minSize: 0 }]),
 		{ component: options.footer, shrink: 1, minSize: 0 },

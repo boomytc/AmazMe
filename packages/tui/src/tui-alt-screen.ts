@@ -196,6 +196,8 @@ export interface TuiAltScreenOptions {
 	 * via an OSC 52 write.
 	 */
 	copySelection?: (text: string) => Promise<boolean | string>;
+	/** Show host-owned feedback after copying, instead of the default success flash. */
+	onCopySuccess?: () => void;
 }
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
@@ -251,6 +253,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly onRightClickPaste?: () => void;
 	private copyOnSelect: boolean;
 	private readonly copySelection?: (text: string) => Promise<boolean | string>;
+	private readonly onCopySuccess?: () => void;
 
 	constructor(
 		terminal: Terminal,
@@ -278,6 +281,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.onRightClickPaste = options.onRightClickPaste;
 		this.copyOnSelect = options.copyOnSelect ?? true;
 		this.copySelection = options.copySelection;
+		this.onCopySuccess = options.onCopySuccess;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
 
@@ -1467,15 +1471,18 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (this.copySelection) {
 			const result = await this.copySelection(text);
 			const ok = result === true;
-			this.flash(
-				ok ? "Copied!" : typeof result === "string" ? result : "Copy failed",
-				ok ? undefined : COPY_ERROR_FLASH_DURATION_MS,
-			);
+			if (ok) this.notifyCopySuccess();
+			else this.flash(typeof result === "string" ? result : "Copy failed", COPY_ERROR_FLASH_DURATION_MS);
 			return ok;
 		}
 		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
-		this.flash("Copied!");
+		this.notifyCopySuccess();
 		return true;
+	}
+
+	private notifyCopySuccess(): void {
+		if (this.onCopySuccess) this.onCopySuccess();
+		else this.flash("Copied!");
 	}
 
 	private applySearchTextHighlight(text: string, current: boolean): string {

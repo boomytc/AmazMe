@@ -1,5 +1,13 @@
 import { stripVTControlCharacters } from "node:util";
-import { Container, Editor, getKeybindings, SelectList, setKeybindings, TuiMainScreen, visibleWidth } from "@amazme/tui";
+import {
+	Container,
+	Editor,
+	getKeybindings,
+	SelectList,
+	setKeybindings,
+	TuiMainScreen,
+	visibleWidth,
+} from "@amazme/tui";
 import { beforeAll, describe, expect, test } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { defaultEditorTheme } from "../../tui/test/test-themes.ts";
@@ -113,7 +121,9 @@ describe("prompt chrome", () => {
 			expected: "Ctrl+\\:dashboard │ Enter:newline │ Ctrl+C:cancel",
 		},
 	])("the shortcut line stays compact for $name", ({ state, expected }) => {
-		expect(stripVTControlCharacters(promptShortcutLine({ ...idleState, ...state }))).toBe(expected);
+		expect(stripVTControlCharacters(promptShortcutLine({ ...idleState, ...state }))).toBe(
+			process.platform === "darwin" ? expected.replaceAll("Alt+", "Option+") : expected,
+		);
 	});
 
 	test("the editor renders state-specific shortcuts without exceeding narrow widths", () => {

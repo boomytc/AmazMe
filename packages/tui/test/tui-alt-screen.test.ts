@@ -1390,6 +1390,53 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("delegates successful copy feedback to the host without also flashing", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		let notifications = 0;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async () => true,
+			onCopySuccess: () => { notifications += 1; },
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;4;2M");
+			terminal.sendInput("\x1b[<0;4;2m");
+			await terminal.waitForRender();
+			assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+			await terminal.waitForRender();
+			assert.strictEqual(notifications, 1);
+			assert.ok(terminal.getViewport().every((line) => !line.includes("Copied!")));
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("does not notify the host of successful copying when the clipboard fails", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		let notifications = 0;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async () => false,
+			onCopySuccess: () => { notifications += 1; },
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;4;2M");
+			terminal.sendInput("\x1b[<0;4;2m");
+			await terminal.waitForRender();
+			assert.strictEqual(notifications, 0);
+			assert.ok(terminal.getViewport().some((line) => line.includes("Copy failed")));
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("leaves selections visible without copying when copyOnSelect is disabled", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const copied: string[] = [];

@@ -9,6 +9,7 @@ import {
 	visibleWidth,
 } from "@amazme/tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
+import { isEmptyTerminalPaste } from "../../../utils/clipboard-paste.ts";
 import { promptShortcutLine } from "../composer-contract.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
@@ -216,7 +217,7 @@ export class CustomEditor extends Editor {
 		}
 
 		// Check for clipboard paste keybinding
-		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
+		if (isEmptyTerminalPaste(data) || this.keybindings.matches(data, "app.clipboard.pasteImage")) {
 			this.onPasteImage?.();
 			return;
 		}
