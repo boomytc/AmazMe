@@ -1,0 +1,15 @@
+{
+	"name": "@amazme/coding-agent-install",
+	"version": "1.0.4",
+	"private": true,
+	"description": "Lockfile root used by the AmazMe installer and updater.",
+	"dependencies": {
+		"@amazme/coding-agent": "1.0.4"
+	},
+	"overrides": {
+		"protobufjs": "7.6.6"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}
