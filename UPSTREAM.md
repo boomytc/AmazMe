@@ -21,22 +21,22 @@
 | `56b25ff4e` | 对齐 `docs/message-types.md` | 暂缓，纯文档 |
 | `8b5708dbb` | 重试 `server_busy` 瞬时错误 | 吸收 |
 | `83c9e2645` | 全屏选区在 transcript 重建时清理 | 吸收 |
-| `68ccef176` | durable 复用已扫描的 context 范围 | 暂缓，durable 不在 CLI 默认路径 |
-| `b0114ef5f` | durable 在 `ToolExecutionApi`/`HookApi` 暴露 `models` | 暂缓，同上 |
-| `76f6c06da` | durable 可读更早条目的 context | 暂缓，同上 |
+| `68ccef176` | durable 复用已扫描的 context 范围 | 吸收 |
+| `b0114ef5f` | durable 在 `ToolExecutionApi`/`HookApi` 暴露 `models` | 吸收 |
+| `76f6c06da` | durable 可读更早条目的 context | 吸收 |
 | `18336987a` | `outputPad` 覆盖所有 transcript 块，`!!` 头部保持 dim | 吸收，`!!` 颜色本仓库已在 `e20383c` 修正，只取 `outputPad` 部分 |
 | `27075fe07` | context 估算改为 3.5 字符/token | 吸收 |
 | `269121616` | codemode 查找助手在描述里标注 async | 吸收 |
 | `311f0e020` | 随估算调整输出上限断言 | 吸收，与 `27075fe07` 同批 |
 | `2989eb581` | Bedrock Converse 传 OpenAI 推理档位 | 暂缓，只影响 Bedrock 上的 GPT 模型 |
-| `636703a0a` | durable `context()` 截止点改为 options 对象 | 暂缓，与上面三项 durable 一起做，避免两次改接口 |
+| `636703a0a` | durable `context()` 截止点改为 options 对象 | 吸收，与上面三项一起（破坏性改动落在同一批） |
 
 ## 刻意偏离
 
 - 面向供应商的身份字符串维持 pi：运行时请求头（Codex `originator`/`User-Agent`、OpenRouter、opencode client）和登录默认名（ChatGPT `agent_name_hint`、Codex 登录 `originator`）都保持 pi 身份，避免脱离 pi 与供应商的合作关系。`LoginOptions.agentName` 选项保留，调用方需要时可覆盖。
 - `coding-agent` 与 `tui` 已按 AmazMe 方向重做（Dashboard、子会话、前台命令、编辑器选区等），吸收上游时只取功能，不覆盖界面结构。
 - 库包（`agent`、`ai`、`chord`、`durable`、`env`、`mcp`、`protocol`、`server`、`client`、`codemode`、`telemetry`、`evals`）与上游逐文件一致，差异应只有改名和品牌路径。
-- `durable` 暂时落后上游：`68ccef176`、`b0114ef5f`、`76f6c06da`、`636703a0a` 未吸收。它们要一起做（`636703a0a` 把 `context()` 的截止点参数改成 options 对象，是破坏性变更），等 durable 进入实际使用路径时一次性吸收。
+- `durable` 已与上游一致：`68ccef176`、`b0114ef5f`、`76f6c06da`、`636703a0a` 在 Web 客户端开工前一次性吸收，`runtime.context()` 的 options 对象改动随之落地。
 
 ## 跟进方法
 

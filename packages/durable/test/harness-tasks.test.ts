@@ -544,8 +544,8 @@ describe("task runtime", () => {
 			);
 			seen.push((await runtime.snapshot(Notes, runtime.conversationId, ctx))?.text);
 			seen.push((await runtime.snapshotAsOf(Notes, runtime.conversationId, first!, ctx))?.text);
-			seen.push((await runtime.context(runtime.conversationId, ctx, first)).entries.length);
-			seen.push((await runtime.context(runtime.conversationId, ctx, second)).messages.length);
+			seen.push((await runtime.context(runtime.conversationId, ctx, { at: first })).entries.length);
+			seen.push((await runtime.context(runtime.conversationId, ctx, { at: second })).messages.length);
 			seen.push(runtime.now());
 			runtime.report(new Error("reported"));
 			await runtime.commit(() => completed(null), ctx);

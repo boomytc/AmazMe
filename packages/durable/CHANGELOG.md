@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `TaskRuntime.context()` takes the cutoff as an options object, matching `Conversation.context()`: `runtime.context(conversationId, context, { at })` replaces `runtime.context(conversationId, context, at)`.
+
+### Added
+
+- `ToolExecutionApi.models` and `HookApi.models`: the Harness's `models`, so tools and hooks can resolve models and make requests with the same catalog, credentials, and request transforms as generation ([#10395](https://github.com/earendil-works/pi/issues/10395)).
+- `Conversation.context(context, { at })` returns the model context as of a visible earlier entry, the same view `fork(at)` would start with, without creating a conversation ([#10512](https://github.com/earendil-works/pi/issues/10512)).
+
+### Changed
+
+- Within one task invocation, `runtime.context()` reuses the range its previous read scanned and reads only entries committed since then, unless the head marker changed. A generation's request no longer rereads the whole transcript after its prepare, which roughly halves context reads per turn. The range is dropped when the invocation ends or sleeps.
+
 ## [1.0.4] - 2026-10-05
 
 ### Breaking Changes

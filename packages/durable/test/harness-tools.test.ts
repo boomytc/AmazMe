@@ -111,6 +111,30 @@ describe("tool round", () => {
 		await harness.close(context);
 	});
 
+	// #10395
+	it("gives tools and hooks the Harness's models", async () => {
+		const setup = chatSetup();
+		const seen: unknown[] = [];
+		addTool(
+			setup.registry,
+			tool("echo", async (_args, api) => {
+				seen.push(api.models);
+				return { content: [] };
+			}),
+		);
+		addHooks(setup.registry, ToolTask, {
+			beforeTool: (_call, api) => {
+				seen.push(api.models);
+				return undefined;
+			},
+		});
+		const { harness, status } = await run(setup, [calls(["echo", {}, "c1"]), DONE]);
+		expect(status).toBe("done");
+		expect(seen).toEqual([setup.models, setup.models]);
+		expect(seen.every((models) => models === setup.models)).toBe(true);
+		await harness.close(context);
+	});
+
 	it("answers calls to tools the request did not offer without a task", async () => {
 		const setup = chatSetup();
 		addTool(

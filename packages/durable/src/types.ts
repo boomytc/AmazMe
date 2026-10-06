@@ -220,7 +220,7 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	/** Undefined when the entry is absent, not visible, or has another kind. */
 	entry<D extends JsonValue>(token: Entry<D>, id: EntryId, context: Context): Promise<TypedEntry<D> | undefined>;
 	/** Committed raw active transcript and model context, optionally cut off at the visible entry `at`. */
-	context(conversationId: ConversationId, context: Context, at?: EntryId): Promise<ContextView>;
+	context(conversationId: ConversationId, context: Context, options?: { readonly at?: EntryId }): Promise<ContextView>;
 	/** The Harness clock. */
 	now(): number;
 	/** Forward a non-fatal failure to `HarnessOptions.onReport`. */

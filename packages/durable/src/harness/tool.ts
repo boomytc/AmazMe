@@ -190,6 +190,7 @@ async function run(
 		callId: call.id,
 		registry: runtime.registry,
 		agent: runtime.agent,
+		models: runtime.models,
 		output: (chunk, skipped) => {
 			assertLive();
 			if (reported.output.push(chunk, skipped)) progress.mark();

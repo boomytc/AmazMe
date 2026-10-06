@@ -539,7 +539,8 @@ interface Conversation {
     change: (tx: Tx) => T | Promise<T>,
     context: Context,
   ): Promise<T>;
-  context(context: Context): Promise<ContextView>;
+  /** With `at`, the context as of that visible entry, as `fork(at)` would start with. */
+  context(context: Context, options?: { readonly at?: EntryId }): Promise<ContextView>;
   entries(
     query: Omit<EntryQuery, "conversationId">,
     limit: number,
@@ -1697,7 +1698,7 @@ interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver, Docum
   entry(id: EntryId, context: Context): Promise<EntryRecord | undefined>;
   entry<D extends JsonValue>(token: Entry<D>, id: EntryId, context: Context): Promise<TypedEntry<D> | undefined>;
   /** Committed raw active transcript and model context, optionally cut off at `at`. */
-  context(conversationId: ConversationId, context: Context, at?: EntryId): Promise<ContextView>;
+  context(conversationId: ConversationId, context: Context, options?: { readonly at?: EntryId }): Promise<ContextView>;
   /** The Harness clock. */
   now(): number;
   /** Forward a non-fatal failure to `HarnessOptions.onReport`. */
@@ -2561,6 +2562,8 @@ type HookResult<T> = T | undefined | Promise<T | undefined>;
 interface HookApi extends DocumentReader {
   readonly taskId: TaskId;
   readonly conversationId: ConversationId;
+  /** `HarnessOptions.models`. */
+  readonly models: Models;
   memo<T extends JsonValue>(name: string, context: Context): Promise<T | undefined>;
   memo<T extends JsonValue>(name: string, candidate: T, context: Context): Promise<T>;
 }
@@ -2693,6 +2696,8 @@ interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extends Docum
   readonly registry: RegistrySnapshot;
   /** The calling conversation's agent, as the tool task's phase resolved it. */
   agent(context: Context): Promise<Agent>;
+  /** `HarnessOptions.models`: the catalog, credentials, and request transforms generation uses. */
+  readonly models: Models;
   /** Built by `HarnessOptions.env` for this call. */
   readonly env: ExecutionEnv | undefined;
   output(chunk: string | Uint8Array): void;
