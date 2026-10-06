@@ -1,236 +1,613 @@
-import { toolDefinition, type AssistantMessage, type Context, type Model, type ThinkingLevel } from "@amazme/ai";
-import { runAgentLoop, toProviderMessages } from "./loop.ts";
-import { createTypedSpanStarter, NOOP_TELEMETRY_CONTEXT, type TelemetryContext } from "@amazme/telemetry";
-import { agentTelemetrySchema } from "./telemetry.ts";
+import {
+	createInitialSystemMessage,
+	getCurrentSystemMessage,
+	getCurrentSystemPrompt,
+	type ImageContent,
+	type Message,
+	type Model,
+	type SimpleStreamOptions,
+	type TextContent,
+	type ThinkingBudgets,
+	type Transport,
+	toToolDeclaration,
+} from "@amazme/ai";
+import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
+import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
-  AgentEvent,
-  AgentHook,
-  AgentMessage,
-  AgentState,
-  AgentTool,
-  PrepareRequestUpdate,
-  QueueMode,
-  StreamFn,
-  ToolExecutionMode,
+	AfterToolCallContext,
+	AfterToolCallResult,
+	AgentContext,
+	AgentEvent,
+	AgentLoopConfig,
+	AgentLoopTurnUpdate,
+	AgentMessage,
+	AgentState,
+	AgentTool,
+	BeforeToolCallContext,
+	BeforeToolCallResult,
+	FinishTurn,
+	PrepareNextTurnContext,
+	PrepareRequest,
+	QueueMode,
+	StreamFn,
+	ToolExecutionMode,
 } from "./types.ts";
 
-type Listener = (event: AgentEvent, signal: AbortSignal) => Promise<void> | void;
+export type { QueueMode } from "./types.ts";
 
+function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
+	return messages.filter(
+		(message) =>
+			message.role === "system" ||
+			message.role === "user" ||
+			message.role === "assistant" ||
+			message.role === "toolResult",
+	);
+}
+
+const EMPTY_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+const DEFAULT_MODEL = {
+	id: "unknown",
+	name: "unknown",
+	api: "unknown",
+	provider: "unknown",
+	baseUrl: "",
+	reasoning: false,
+	input: [],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 0,
+	maxTokens: 0,
+} satisfies Model<any>;
+
+type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "pendingToolCalls" | "errorMessage"> & {
+	isStreaming: boolean;
+	streamingMessage?: AgentMessage;
+	pendingToolCalls: Set<string>;
+	errorMessage?: string;
+};
+
+/** Initial state for {@link Agent}. `systemPrompt` and `tools` become the leading system message unless `messages` already starts with one. */
+export type AgentInitialState = Partial<
+	Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">
+>;
+
+function createMutableAgentState(initialState?: AgentInitialState): MutableAgentState {
+	let tools = initialState?.tools?.slice() ?? [];
+	let messages = initialState?.messages?.slice() ?? [];
+	const initialMessage = createInitialSystemMessage(initialState?.systemPrompt, tools.map(toToolDeclaration));
+	if (messages[0]?.role !== "system" && initialMessage) messages.unshift(initialMessage);
+
+	return {
+		get systemPrompt() {
+			return getCurrentSystemPrompt(messages);
+		},
+		model: initialState?.model ?? DEFAULT_MODEL,
+		thinkingLevel: initialState?.thinkingLevel ?? "off",
+		get tools() {
+			return tools;
+		},
+		set tools(nextTools: AgentTool<any>[]) {
+			tools = nextTools.slice();
+		},
+		get messages() {
+			return messages;
+		},
+		set messages(nextMessages: AgentMessage[]) {
+			messages = nextMessages.slice();
+		},
+		isStreaming: false,
+		streamingMessage: undefined,
+		pendingToolCalls: new Set<string>(),
+		errorMessage: undefined,
+	};
+}
+
+/** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
-  telemetryContext?: TelemetryContext;
-  systemPrompt?: string;
-  model: Model;
-  streamFn: StreamFn;
-  tools?: AgentTool[];
-  thinkingLevel?: ThinkingLevel;
-  /** Output-token cap forwarded to `streamFn`. The agent does not apply a model catalog. */
-  maxTokens?: number;
-  messages?: AgentMessage[];
-  steeringMode?: QueueMode;
-  followUpMode?: QueueMode;
-  toolExecution?: ToolExecutionMode;
-  prepareRequest?: (
-    input: { messages: AgentMessage[]; model: Model; thinkingLevel: ThinkingLevel },
-    signal: AbortSignal,
-  ) => Promise<PrepareRequestUpdate | undefined> | PrepareRequestUpdate | undefined;
-  /** Ordered hooks. The loop folds this list into one before, one after, and one transform. `onYield` runs only at an empty stop. */
-  hooks?: AgentHook[];
+	initialState?: AgentInitialState;
+	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
+	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+	streamFn: StreamFn;
+	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+	onPayload?: SimpleStreamOptions["onPayload"];
+	onResponse?: SimpleStreamOptions["onResponse"];
+	onProviderStreamEvent?: SimpleStreamOptions["onProviderStreamEvent"];
+	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
+	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+	finishTurn?: FinishTurn;
+	prepareRequest?: PrepareRequest;
+	prepareNextTurn?: (
+		signal?: AbortSignal,
+	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	prepareNextTurnWithContext?: (
+		context: PrepareNextTurnContext,
+		signal?: AbortSignal,
+	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	steeringMode?: QueueMode;
+	followUpMode?: QueueMode;
+	sessionId?: string;
+	thinkingBudgets?: ThinkingBudgets;
+	transport?: Transport;
+	maxRetryDelayMs?: number;
+	toolExecution?: ToolExecutionMode;
 }
 
-class Queue {
-  private items: AgentMessage[] = [];
-  private readonly mode: QueueMode;
+class PendingMessageQueue {
+	private messages: AgentMessage[] = [];
+	public mode: QueueMode;
 
-  constructor(mode: QueueMode) {
-    this.mode = mode;
-  }
+	constructor(mode: QueueMode) {
+		this.mode = mode;
+	}
 
-  enqueue(message: AgentMessage): void {
-    this.items.push(message);
-  }
+	enqueue(message: AgentMessage): void {
+		this.messages.push(message);
+	}
 
-  take(): AgentMessage[] {
-    if (this.items.length === 0) return [];
-    if (this.mode === "all") {
-      const taken = this.items;
-      this.items = [];
-      return taken;
-    }
-    return [this.items.shift() as AgentMessage];
-  }
+	hasItems(): boolean {
+		return this.messages.length > 0;
+	}
 
-  clear(): void {
-    this.items = [];
-  }
+	peek(): AgentMessage[] {
+		if (this.mode === "all") return this.messages.slice();
+		const first = this.messages[0];
+		return first ? [first] : [];
+	}
+
+	drain(): AgentMessage[] {
+		const drained = this.peek();
+		this.messages = this.messages.slice(drained.length);
+		return drained;
+	}
+
+	clear(): void {
+		this.messages = [];
+	}
 }
+
+type ActiveRun = {
+	promise: Promise<void>;
+	resolve: () => void;
+	abortController: AbortController;
+};
 
 /**
- * Process-local agent. The transcript lives in memory. `streamFn` performs each
- * model call. `prepareRequest` may replace the transcript before that call.
- * `hooks` then run in order. Each `transformContext` sees the previous hook's
- * messages and changes only that model call. `onYield` runs only when the model
- * has finished with no tool calls and both queues are empty.
+ * Stateful wrapper around the low-level agent loop.
+ *
+ * `Agent` owns the current transcript, emits lifecycle events, executes tools,
+ * and exposes queueing APIs for steering and follow-up messages.
  */
 export class Agent {
-  private readonly listeners = new Set<Listener>();
-  private readonly steering: Queue;
-  private readonly followUps: Queue;
-  private running = false;
-  private abortController: AbortController | undefined;
-  private runPromise: Promise<void> = Promise.resolve();
+	private _state: MutableAgentState;
+	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
+	private readonly steeringQueue: PendingMessageQueue;
+	private readonly followUpQueue: PendingMessageQueue;
 
-  systemPrompt: string;
-  model: Model;
-  thinkingLevel: ThinkingLevel;
-  maxTokens?: number;
-  tools: AgentTool[];
-  messages: AgentMessage[];
-  toolExecution: ToolExecutionMode;
-  prepareRequest: AgentOptions["prepareRequest"];
-  hooks: AgentHook[];
-  private readonly streamFn: StreamFn;
-  private readonly telemetryContext: TelemetryContext;
+	public convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
+	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+	public streamFunction: StreamFn;
+	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+	public onPayload?: SimpleStreamOptions["onPayload"];
+	public onResponse?: SimpleStreamOptions["onResponse"];
+	public onProviderStreamEvent?: SimpleStreamOptions["onProviderStreamEvent"];
+	public beforeToolCall?: (
+		context: BeforeToolCallContext,
+		signal?: AbortSignal,
+	) => Promise<BeforeToolCallResult | undefined>;
+	public afterToolCall?: (
+		context: AfterToolCallContext,
+		signal?: AbortSignal,
+	) => Promise<AfterToolCallResult | undefined>;
+	public finishTurn?: FinishTurn;
+	public prepareRequest?: PrepareRequest;
+	public prepareNextTurn?: (
+		signal?: AbortSignal,
+	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	public prepareNextTurnWithContext?: (
+		context: PrepareNextTurnContext,
+		signal?: AbortSignal,
+	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	private activeRun?: ActiveRun;
+	/** Session identifier forwarded to providers for cache-aware backends. */
+	public sessionId?: string;
+	/** Optional per-level thinking token budgets forwarded to the stream function. */
+	public thinkingBudgets?: ThinkingBudgets;
+	/** Preferred transport forwarded to the stream function. */
+	public transport: Transport;
+	/** Optional cap for provider-requested retry delays. */
+	public maxRetryDelayMs?: number;
+	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
+	public toolExecution: ToolExecutionMode;
 
-  constructor(options: AgentOptions) {
-    this.systemPrompt = options.systemPrompt ?? "";
-    this.model = options.model;
-    this.streamFn = options.streamFn;
-    this.telemetryContext = options.telemetryContext ?? NOOP_TELEMETRY_CONTEXT;
-    this.tools = options.tools ?? [];
-    this.thinkingLevel = options.thinkingLevel ?? "off";
-    if (options.maxTokens !== undefined) this.maxTokens = options.maxTokens;
-    this.messages = options.messages ?? [];
-    this.toolExecution = options.toolExecution ?? "parallel";
-    this.prepareRequest = options.prepareRequest;
-    this.hooks = options.hooks ?? [];
-    this.steering = new Queue(options.steeringMode ?? "one-at-a-time");
-    this.followUps = new Queue(options.followUpMode ?? "one-at-a-time");
-  }
+	constructor(options: AgentOptions) {
+		// Older compiled consumers may omit options or streamFn even though the current API requires them.
+		const runtimeOptions: Partial<AgentOptions> = options ?? {};
+		this._state = createMutableAgentState(runtimeOptions.initialState);
+		this.convertToLlm = runtimeOptions.convertToLlm ?? defaultConvertToLlm;
+		this.transformContext = runtimeOptions.transformContext;
+		this.streamFunction = runtimeOptions.streamFn ?? getDefaultStreamFn();
+		this.getApiKey = runtimeOptions.getApiKey;
+		this.onPayload = runtimeOptions.onPayload;
+		this.onResponse = runtimeOptions.onResponse;
+		this.onProviderStreamEvent = runtimeOptions.onProviderStreamEvent;
+		this.beforeToolCall = runtimeOptions.beforeToolCall;
+		this.afterToolCall = runtimeOptions.afterToolCall;
+		this.finishTurn = runtimeOptions.finishTurn;
+		this.prepareRequest = runtimeOptions.prepareRequest;
+		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
+		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
+		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
+		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
+		this.sessionId = runtimeOptions.sessionId;
+		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
+		this.transport = runtimeOptions.transport ?? "auto";
+		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
+		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+	}
 
-  get state(): AgentState {
-    return {
-      systemPrompt: this.systemPrompt,
-      model: this.model,
-      thinkingLevel: this.thinkingLevel,
-      tools: this.tools,
-      messages: this.messages,
-    };
-  }
+	/**
+	 * Subscribe to agent lifecycle events.
+	 *
+	 * Listener promises are awaited in subscription order and are included in
+	 * the current run's settlement. Listeners also receive the active abort
+	 * signal for the current run.
+	 *
+	 * `agent_end` is the final emitted event for a run, but the agent does not
+	 * become idle until all awaited listeners for that event have settled.
+	 */
+	subscribe(listener: (event: AgentEvent, signal: AbortSignal) => Promise<void> | void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
 
-  subscribe(listener: Listener): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
+	/**
+	 * Current agent state.
+	 *
+	 * Assigning `state.tools` or `state.messages` copies the provided top-level array.
+	 */
+	get state(): AgentState {
+		return this._state;
+	}
 
-  steer(message: AgentMessage | string): void {
-    this.steering.enqueue(typeof message === "string" ? userMessage(message) : message);
-  }
+	/** Controls how queued steering messages are drained. */
+	set steeringMode(mode: QueueMode) {
+		this.steeringQueue.mode = mode;
+	}
 
-  followUp(message: AgentMessage | string): void {
-    this.followUps.enqueue(typeof message === "string" ? userMessage(message) : message);
-  }
+	get steeringMode(): QueueMode {
+		return this.steeringQueue.mode;
+	}
 
-  abort(): void {
-    this.abortController?.abort();
-  }
+	/** Controls how queued follow-up messages are drained. */
+	set followUpMode(mode: QueueMode) {
+		this.followUpQueue.mode = mode;
+	}
 
-  waitForIdle(): Promise<void> {
-    return this.runPromise;
-  }
+	get followUpMode(): QueueMode {
+		return this.followUpQueue.mode;
+	}
 
-  async prompt(input: string | AgentMessage | AgentMessage[]): Promise<AgentMessage[]> {
-    if (this.running) throw new Error("Agent is already processing");
-    const prompts = Array.isArray(input) ? input : [typeof input === "string" ? userMessage(input) : input];
-    this.running = true;
-    const controller = new AbortController();
-    this.abortController = controller;
-    const signal = controller.signal;
-    let resolveRun: () => void = () => {};
-    this.runPromise = new Promise((resolve) => {
-      resolveRun = resolve;
-    });
-    try {
-      return await createTypedSpanStarter(this.telemetryContext, [agentTelemetrySchema])(
-        "amazme.agent.run",
-        { provider: this.model.provider, model: this.model.id },
-        async (span) => {
-          const agent = this;
-          const produced = await runAgentLoop(
-            {
-              messages: this.messages,
-              model: this.model,
-              tools: this.tools,
-              thinkingLevel: this.thinkingLevel,
-              systemPrompt: this.systemPrompt,
-              toolExecution: this.toolExecution,
-              prompts,
-              signal,
-              telemetryContext: span,
-              hooks: {
-                prepareRequest: (request, requestSignal) => this.prepareRequest?.(request, requestSignal),
-                get hooks() {
-                  return agent.hooks;
-                },
-                takeSteering: () => this.steering.take(),
-                takeFollowUp: () => this.followUps.take(),
-                stream: (model, messages, tools, thinkingLevel, requestSignal) => {
-                  const context: Context = {
-                    systemPrompt: this.systemPrompt,
-                    messages: toProviderMessages(messages),
-                    tools: tools.map(toolDefinition),
-                  };
-                  return this.streamFn(model, context, {
-                    thinkingLevel,
-                    signal: requestSignal,
-                    telemetryContext: span,
-                    ...(this.maxTokens !== undefined ? { maxTokens: this.maxTokens } : {}),
-                  });
-                },
-              },
-            },
-            async (event) => {
-              this.absorb(event);
-              try {
-                for (const listener of this.listeners) await listener(event, signal);
-              } catch (error) {
-                controller.abort();
-                throw error;
-              }
-            },
-          );
-          if (signal.aborted || produced.some((message) => message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted"))) {
-            span.setStatus({ status: "error" });
-          }
-          return produced;
-        });
-    } finally {
-      this.running = false;
-      this.abortController = undefined;
-      resolveRun();
-    }
-  }
+	/** Queue a message to be injected after the current assistant turn finishes. */
+	steer(message: AgentMessage): void {
+		this.steeringQueue.enqueue(message);
+	}
 
-  private absorb(event: AgentEvent): void {
-    if (event.type === "message_end") {
-      const already = this.messages[this.messages.length - 1] === event.message;
-      if (!already) this.messages = [...this.messages, event.message];
-    }
-  }
-}
+	/** Queue a message to run only after the agent would otherwise stop. */
+	followUp(message: AgentMessage): void {
+		this.followUpQueue.enqueue(message);
+	}
 
-export function userMessage(text: string): AgentMessage {
-  return { role: "user", content: text, timestamp: Date.now() };
-}
+	/** Remove all queued steering messages. */
+	clearSteeringQueue(): void {
+		this.steeringQueue.clear();
+	}
 
-export function assistantText(text: string, model: Model): AssistantMessage {
-  return {
-    role: "assistant",
-    content: [{ type: "text", text }],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: { input: 0, output: 0, totalTokens: 0, cost: { input: 0, output: 0, total: 0 } },
-    stopReason: "stop",
-    timestamp: Date.now(),
-  };
+	/** Remove all queued follow-up messages. */
+	clearFollowUpQueue(): void {
+		this.followUpQueue.clear();
+	}
+
+	/** Remove all queued steering and follow-up messages. */
+	clearAllQueues(): void {
+		this.clearSteeringQueue();
+		this.clearFollowUpQueue();
+	}
+
+	/** Returns true when either queue still contains pending messages. */
+	hasQueuedMessages(): boolean {
+		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
+	}
+
+	/** Preview the messages selected for the next turn without consuming them. */
+	peekQueuedMessages(): AgentMessage[] {
+		const steering = this.steeringQueue.peek();
+		return steering.length > 0 ? steering : this.followUpQueue.peek();
+	}
+
+	/** Active abort signal for the current run, if any. */
+	get signal(): AbortSignal | undefined {
+		return this.activeRun?.abortController.signal;
+	}
+
+	/** Abort the current run, if one is active. */
+	abort(): void {
+		this.activeRun?.abortController.abort();
+	}
+
+	/**
+	 * Resolve when the current run and all awaited event listeners have finished.
+	 *
+	 * This resolves after `agent_end` listeners settle.
+	 */
+	waitForIdle(): Promise<void> {
+		return this.activeRun?.promise ?? Promise.resolve();
+	}
+
+	/** Clear conversation state and queues while retaining the replayed prompt/tool baseline. */
+	reset(): void {
+		if (this.activeRun) {
+			throw new Error("Agent is already processing. Wait for completion before resetting.");
+		}
+
+		const baseline = getCurrentSystemMessage(this._state.messages);
+		this._state.messages = baseline ? [baseline] : [];
+		this._state.isStreaming = false;
+		this._state.streamingMessage = undefined;
+		this._state.pendingToolCalls = new Set<string>();
+		this._state.errorMessage = undefined;
+		this.clearFollowUpQueue();
+		this.clearSteeringQueue();
+	}
+
+	/** Start a new prompt from text, a single message, or a batch of messages. */
+	async prompt(message: AgentMessage | AgentMessage[]): Promise<void>;
+	async prompt(input: string, images?: ImageContent[]): Promise<void>;
+	async prompt(input: string | AgentMessage | AgentMessage[], images?: ImageContent[]): Promise<void> {
+		if (this.activeRun) {
+			throw new Error(
+				"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.",
+			);
+		}
+		const messages = this.normalizePromptInput(input, images);
+		await this.runPromptMessages(messages);
+	}
+
+	/** Continue from the current transcript. The last message must be a user or tool-result message. */
+	async continue(): Promise<void> {
+		if (this.activeRun) {
+			throw new Error("Agent is already processing. Wait for completion before continuing.");
+		}
+
+		const lastMessage = this._state.messages[this._state.messages.length - 1];
+		if (!lastMessage || this._state.messages.every((message) => message.role === "system")) {
+			throw new Error("No messages to continue from");
+		}
+
+		if (lastMessage.role === "assistant") {
+			const queuedSteering = this.steeringQueue.drain();
+			if (queuedSteering.length > 0) {
+				await this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
+				return;
+			}
+
+			const queuedFollowUps = this.followUpQueue.drain();
+			if (queuedFollowUps.length > 0) {
+				await this.runPromptMessages(queuedFollowUps);
+				return;
+			}
+
+			throw new Error("Cannot continue from message role: assistant");
+		}
+
+		await this.runContinuation();
+	}
+
+	private normalizePromptInput(
+		input: string | AgentMessage | AgentMessage[],
+		images?: ImageContent[],
+	): AgentMessage[] {
+		if (Array.isArray(input)) {
+			return input;
+		}
+
+		if (typeof input !== "string") {
+			return [input];
+		}
+
+		const content: Array<TextContent | ImageContent> = [{ type: "text", text: input }];
+		if (images && images.length > 0) {
+			content.push(...images);
+		}
+		return [{ role: "user", content, timestamp: Date.now() }];
+	}
+
+	private async runPromptMessages(
+		messages: AgentMessage[],
+		options: { skipInitialSteeringPoll?: boolean } = {},
+	): Promise<void> {
+		await this.runWithLifecycle(async (signal) => {
+			await runAgentLoop(
+				messages,
+				this.createContextSnapshot(),
+				this.createLoopConfig(options),
+				(event) => this.processEvents(event),
+				signal,
+				this.streamFunction,
+			);
+		});
+	}
+
+	private async runContinuation(): Promise<void> {
+		await this.runWithLifecycle(async (signal) => {
+			await runAgentLoopContinue(
+				this.createContextSnapshot(),
+				this.createLoopConfig(),
+				(event) => this.processEvents(event),
+				signal,
+				this.streamFunction,
+			);
+		});
+	}
+
+	private createContextSnapshot(): AgentContext {
+		return {
+			messages: this._state.messages.slice(),
+			tools: this._state.tools.slice(),
+		};
+	}
+
+	private createLoopConfig(options: { skipInitialSteeringPoll?: boolean } = {}): AgentLoopConfig {
+		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
+		return {
+			model: this._state.model,
+			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+			sessionId: this.sessionId,
+			onPayload: this.onPayload,
+			onResponse: this.onResponse,
+			onProviderStreamEvent: this.onProviderStreamEvent,
+			transport: this.transport,
+			thinkingBudgets: this.thinkingBudgets,
+			maxRetryDelayMs: this.maxRetryDelayMs,
+			toolExecution: this.toolExecution,
+			beforeToolCall: this.beforeToolCall,
+			afterToolCall: this.afterToolCall,
+			finishTurn: this.finishTurn,
+			prepareRequest: this.prepareRequest,
+			prepareNextTurn:
+				this.prepareNextTurnWithContext || this.prepareNextTurn
+					? async (context) => {
+							if (this.prepareNextTurnWithContext) {
+								return await this.prepareNextTurnWithContext(context, this.signal);
+							}
+							return await this.prepareNextTurn?.(this.signal);
+						}
+					: undefined,
+			convertToLlm: this.convertToLlm,
+			transformContext: this.transformContext,
+			getApiKey: this.getApiKey,
+			getSteeringMessages: async () => {
+				if (skipInitialSteeringPoll) {
+					skipInitialSteeringPoll = false;
+					return [];
+				}
+				return this.steeringQueue.drain();
+			},
+			getFollowUpMessages: async () => this.followUpQueue.drain(),
+		};
+	}
+
+	private async runWithLifecycle(executor: (signal: AbortSignal) => Promise<void>): Promise<void> {
+		if (this.activeRun) {
+			throw new Error("Agent is already processing.");
+		}
+
+		const abortController = new AbortController();
+		let resolvePromise = () => {};
+		const promise = new Promise<void>((resolve) => {
+			resolvePromise = resolve;
+		});
+		this.activeRun = { promise, resolve: resolvePromise, abortController };
+
+		this._state.isStreaming = true;
+		this._state.streamingMessage = undefined;
+		this._state.errorMessage = undefined;
+
+		try {
+			await executor(abortController.signal);
+		} catch (error) {
+			await this.handleRunFailure(error, abortController.signal.aborted);
+		} finally {
+			this.finishRun();
+		}
+	}
+
+	private async handleRunFailure(error: unknown, aborted: boolean): Promise<void> {
+		const failureMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "" }],
+			api: this._state.model.api,
+			provider: this._state.model.provider,
+			model: this._state.model.id,
+			usage: EMPTY_USAGE,
+			stopReason: aborted ? "aborted" : "error",
+			errorMessage: error instanceof Error ? error.message : String(error),
+			timestamp: Date.now(),
+		} satisfies AgentMessage;
+		await this.processEvents({ type: "message_start", message: failureMessage });
+		await this.processEvents({ type: "message_end", message: failureMessage });
+		await this.processEvents({ type: "turn_end", message: failureMessage, toolResults: [] });
+		await this.processEvents({ type: "agent_end", messages: [failureMessage] });
+	}
+
+	private finishRun(): void {
+		this._state.isStreaming = false;
+		this._state.streamingMessage = undefined;
+		this._state.pendingToolCalls = new Set<string>();
+		this.activeRun?.resolve();
+		this.activeRun = undefined;
+	}
+
+	/**
+	 * Reduce internal state for a loop event, then await listeners.
+	 *
+	 * `agent_end` only means no further loop events will be emitted. The run is
+	 * considered idle later, after all awaited listeners for `agent_end` finish
+	 * and `finishRun()` clears runtime-owned state.
+	 */
+	private async processEvents(event: AgentEvent): Promise<void> {
+		switch (event.type) {
+			case "message_start":
+				this._state.streamingMessage = event.message;
+				break;
+
+			case "message_update":
+				this._state.streamingMessage = event.message;
+				break;
+
+			case "message_end":
+				this._state.streamingMessage = undefined;
+				this._state.messages.push(event.message);
+				break;
+
+			case "tool_execution_start": {
+				const pendingToolCalls = new Set(this._state.pendingToolCalls);
+				pendingToolCalls.add(event.toolCallId);
+				this._state.pendingToolCalls = pendingToolCalls;
+				break;
+			}
+
+			case "tool_execution_end": {
+				const pendingToolCalls = new Set(this._state.pendingToolCalls);
+				pendingToolCalls.delete(event.toolCallId);
+				this._state.pendingToolCalls = pendingToolCalls;
+				break;
+			}
+
+			case "turn_end":
+				if (event.message.role === "assistant" && event.message.errorMessage) {
+					this._state.errorMessage = event.message.errorMessage;
+				}
+				break;
+
+			case "agent_end":
+				this._state.streamingMessage = undefined;
+				break;
+		}
+
+		const signal = this.activeRun?.abortController.signal;
+		if (!signal) {
+			throw new Error("Agent listener invoked outside active run");
+		}
+		for (const listener of this.listeners) {
+			await listener(event, signal);
+		}
+	}
 }
