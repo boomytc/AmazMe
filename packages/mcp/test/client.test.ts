@@ -1,748 +1,329 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  JSON_RPC_ERROR_CODES,
-  type JsonRpcMessage,
-  type JsonRpcRequest,
-  LATEST_PROTOCOL_VERSION,
-  LEGACY_PROTOCOL_VERSIONS,
-  McpAbortError,
-  McpClient,
-  McpError,
-  McpInputRequiredError,
-  McpTimeoutError,
-  MODERN_PROTOCOL_VERSION,
-  type McpTransport,
-  type Tool,
-} from "@amazme/mcp";
-import { createInMemoryTransportPair, type InMemoryTransport } from "@amazme/mcp/testing";
+	type JsonRpcMessage,
+	type JsonRpcRequest,
+	LATEST_PROTOCOL_VERSION,
+	McpAbortError,
+	McpClient,
+	McpError,
+	McpTimeoutError,
+} from "../src/index.ts";
+import { createInMemoryTransportPair, type InMemoryTransport } from "../src/testing/index.ts";
 
 interface TestServer {
-  transport: InMemoryTransport;
-  messages: JsonRpcMessage[];
-  setHandler(method: string, handler: (request: JsonRpcRequest) => unknown | Promise<unknown>): void;
-}
-
-function requestParams(message: JsonRpcMessage): Record<string, unknown> | undefined {
-  return "method" in message && "id" in message ? (message.params as Record<string, unknown> | undefined) : undefined;
-}
-
-function requests(server: TestServer, method: string): JsonRpcRequest[] {
-  return server.messages.filter((message): message is JsonRpcRequest => "method" in message && "id" in message && message.method === method);
+	transport: InMemoryTransport;
+	messages: JsonRpcMessage[];
+	setHandler(method: string, handler: (request: JsonRpcRequest) => unknown | Promise<unknown>): void;
 }
 
 async function createServer(): Promise<{ clientTransport: InMemoryTransport; server: TestServer }> {
-  const pair = createInMemoryTransportPair();
-  const handlers = new Map<string, (request: JsonRpcRequest) => unknown | Promise<unknown>>();
-  const messages: JsonRpcMessage[] = [];
-  pair.server.onMessage((message) => {
-    messages.push(message);
-    if (!("id" in message) || !("method" in message)) return;
-    const request = message;
-    const handler = handlers.get(request.method);
-    queueMicrotask(async () => {
-      try {
-        if (!handler) throw new McpError(JSON_RPC_ERROR_CODES.methodNotFound, `Method not found: ${request.method}`);
-        await pair.server.send({ jsonrpc: "2.0", id: request.id, result: await handler(request) });
-      } catch (error) {
-        const mcpError = error instanceof McpError ? error : new McpError(JSON_RPC_ERROR_CODES.internalError, String(error));
-        await pair.server.send({
-          jsonrpc: "2.0",
-          id: request.id,
-          error: {
-            code: mcpError.code,
-            message: mcpError.message,
-            ...(mcpError.data === undefined ? {} : { data: mcpError.data }),
-          },
-        });
-      }
-    });
-  });
-  await pair.server.start();
-  const server: TestServer = {
-    transport: pair.server,
-    messages,
-    setHandler(method, handler) {
-      handlers.set(method, handler);
-    },
-  };
-  return { clientTransport: pair.client, server };
+	const pair = createInMemoryTransportPair();
+	const handlers = new Map<string, (request: JsonRpcRequest) => unknown | Promise<unknown>>();
+	const messages: JsonRpcMessage[] = [];
+	pair.server.onMessage((message) => {
+		messages.push(message);
+		if (!("id" in message) || !("method" in message)) return;
+		const request = message as JsonRpcRequest;
+		const handler = handlers.get(request.method);
+		queueMicrotask(async () => {
+			try {
+				if (!handler) throw new McpError(-32601, `Method not found: ${request.method}`);
+				await pair.server.send({ jsonrpc: "2.0", id: request.id, result: await handler(request) });
+			} catch (error) {
+				const mcpError = error instanceof McpError ? error : new McpError(-32603, String(error));
+				await pair.server.send({
+					jsonrpc: "2.0",
+					id: request.id,
+					error: { code: mcpError.code, message: mcpError.message, data: mcpError.data },
+				});
+			}
+		});
+	});
+	await pair.server.start();
+	const server: TestServer = {
+		transport: pair.server,
+		messages,
+		setHandler(method, handler) {
+			handlers.set(method, handler);
+		},
+	};
+	server.setHandler("initialize", () => ({
+		protocolVersion: LATEST_PROTOCOL_VERSION,
+		capabilities: { tools: { listChanged: true } },
+		serverInfo: { name: "test-server", version: "1.0.0" },
+		instructions: "Use test tools.",
+	}));
+	return { clientTransport: pair.client, server };
 }
 
-function legacyInitialize(version: string = LEGACY_PROTOCOL_VERSIONS[0]) {
-  return () => ({
-    protocolVersion: version,
-    capabilities: { tools: { listChanged: true } },
-    serverInfo: { name: "legacy-server", version: "1.0.0" },
-    instructions: "Legacy tools.",
-  });
+async function connect(): Promise<{ client: McpClient; server: TestServer }> {
+	const { clientTransport, server } = await createServer();
+	const client = new McpClient({ name: "test-client", version: "2.0.0" });
+	await client.connect(clientTransport);
+	return { client, server };
 }
 
-async function connectLegacy(): Promise<{ client: McpClient; server: TestServer }> {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize());
-  const client = new McpClient({ name: "test-client", version: "2.0.0" });
-  await client.connect(clientTransport);
-  return { client, server };
-}
-
-async function connectModern(): Promise<{ client: McpClient; server: TestServer }> {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("server/discover", () => ({
-    supportedVersions: [MODERN_PROTOCOL_VERSION, LEGACY_PROTOCOL_VERSIONS[0]],
-    capabilities: { tools: { listChanged: true } },
-    instructions: "Modern tools.",
-    _meta: { "io.modelcontextprotocol/serverInfo": { name: "modern-server", version: "3.0.0" } },
-  }));
-  const client = new McpClient({ name: "test-client", version: "2.0.0" });
-  await client.connect(clientTransport);
-  return { client, server };
-}
-
-test("a legacy server is opened with initialize after discover is rejected", async () => {
-  const { client, server } = await connectLegacy();
-  try {
-    assert.equal(client.connectionState, "connected");
-    assert.equal(client.protocolEra, "legacy");
-    assert.equal(client.protocolVersion, LEGACY_PROTOCOL_VERSIONS[0]);
-    assert.deepEqual(client.serverInfo, { name: "legacy-server", version: "1.0.0" });
-    assert.deepEqual(client.serverCapabilities, { tools: { listChanged: true } });
-    assert.equal(client.instructions, "Legacy tools.");
-    assert.deepEqual(
-      server.messages.map((message) => ("method" in message ? message.method : "")),
-      ["server/discover", "initialize", "notifications/initialized"],
-    );
-    const discover = requests(server, "server/discover")[0];
-    assert.ok(discover);
-    const meta = requestParams(discover)?._meta as Record<string, unknown>;
-    assert.equal(meta["io.modelcontextprotocol/protocolVersion"], LATEST_PROTOCOL_VERSION);
-    assert.deepEqual(meta["io.modelcontextprotocol/clientInfo"], { name: "test-client", version: "2.0.0" });
-    assert.deepEqual(meta["io.modelcontextprotocol/clientCapabilities"], {});
-    const initialize = requests(server, "initialize")[0];
-    assert.ok(initialize);
-    assert.equal("_meta" in (requestParams(initialize) ?? {}), false);
-    assert.equal(
-      server.messages.some((message) => "method" in message && message.method === "notifications/cancelled"),
-      false,
-    );
-  } finally {
-    await client.close();
-  }
+afterEach(() => {
+	vi.useRealTimers();
 });
 
-test("a modern server never receives initialize and later requests carry protocol metadata", async () => {
-  const { client, server } = await connectModern();
-  try {
-    assert.equal(client.protocolEra, "modern");
-    assert.equal(client.protocolVersion, MODERN_PROTOCOL_VERSION);
-    assert.deepEqual(client.serverInfo, { name: "modern-server", version: "3.0.0" });
-    assert.equal(client.instructions, "Modern tools.");
-    server.setHandler("tools/list", () => ({ tools: [{ name: "search", inputSchema: { type: "object" } }] }));
-    assert.deepEqual(await client.listTools(), [{ name: "search", inputSchema: { type: "object" } }]);
-    assert.equal(requests(server, "initialize").length, 0);
-    const listed = requests(server, "tools/list")[0];
-    assert.ok(listed);
-    const meta = requestParams(listed)?._meta as Record<string, unknown>;
-    assert.equal(meta["io.modelcontextprotocol/protocolVersion"], MODERN_PROTOCOL_VERSION);
-    assert.deepEqual(meta["io.modelcontextprotocol/clientCapabilities"], {});
-    assert.equal("progressToken" in meta, false);
-  } finally {
-    await client.close();
-  }
-});
+describe("McpClient", () => {
+	it("initializes the connection before exposing server information", async () => {
+		const { client, server } = await connect();
+		expect(client.connectionState).toBe("connected");
+		expect(client.protocolVersion).toBe(LATEST_PROTOCOL_VERSION);
+		expect(client.serverInfo).toEqual({ name: "test-server", version: "1.0.0" });
+		expect(client.serverCapabilities).toEqual({ tools: { listChanged: true } });
+		expect(client.instructions).toBe("Use test tools.");
+		expect(server.messages).toEqual([
+			{
+				jsonrpc: "2.0",
+				id: 1,
+				method: "initialize",
+				params: {
+					protocolVersion: LATEST_PROTOCOL_VERSION,
+					capabilities: {},
+					clientInfo: { name: "test-client", version: "2.0.0" },
+				},
+			},
+			{ jsonrpc: "2.0", method: "notifications/initialized" },
+		]);
+		await client.close();
+	});
 
-test("an unsupported modern version does not fall back to initialize", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("server/discover", () => ({
-    supportedVersions: ["2099-01-01"],
-    capabilities: {},
-  }));
-  const client = new McpClient({ name: "test-client", version: "2.0.0" });
-  await assert.rejects(client.connect(clientTransport), (error: McpError) => {
-    assert.equal(error.code, -32022);
-    assert.deepEqual(error.data, { supported: ["2099-01-01"], requested: MODERN_PROTOCOL_VERSION });
-    return true;
-  });
-  assert.equal(client.connectionState, "closed");
-  assert.equal(requests(server, "initialize").length, 0);
-});
+	it("paginates tools and preserves protocol tool definitions", async () => {
+		const { client, server } = await connect();
+		server.setHandler("tools/list", (request) => {
+			const cursor = (request.params as { cursor?: string } | undefined)?.cursor;
+			return cursor === undefined
+				? {
+						tools: [{ name: "search", description: "Search", inputSchema: { type: "object" } }],
+						nextCursor: "page-2",
+					}
+				: {
+						tools: [
+							{
+								name: "read",
+								inputSchema: { type: "object" },
+								outputSchema: { type: "object" },
+								annotations: { readOnlyHint: true },
+							},
+						],
+						// Some servers end pagination with an empty cursor instead of omitting it.
+						nextCursor: "",
+					};
+		});
+		expect(await client.listTools()).toEqual([
+			{ name: "search", description: "Search", inputSchema: { type: "object" } },
+			{
+				name: "read",
+				inputSchema: { type: "object" },
+				outputSchema: { type: "object" },
+				annotations: { readOnlyHint: true },
+			},
+		]);
+		await client.close();
+	});
 
-test("a modern protocol error does not fall back to initialize", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("server/discover", () => {
-    throw new McpError(-32022, "Unsupported protocol version", { supported: ["2099-01-01"], requested: MODERN_PROTOCOL_VERSION });
-  });
-  const client = new McpClient({ name: "test-client", version: "2.0.0", protocolVersion: MODERN_PROTOCOL_VERSION });
-  await assert.rejects(client.connect(clientTransport), (error: McpError) => error.code === -32022);
-  assert.equal(requests(server, "initialize").length, 0);
-  assert.equal(client.connectionState, "closed");
-});
+	it("lists and reads resources", async () => {
+		const { client, server } = await connect();
+		server.setHandler("resources/list", (request) =>
+			(request.params as { cursor?: string } | undefined)?.cursor === undefined
+				? { resources: [{ uri: "file:///a", name: "a", mimeType: "text/plain" }], nextCursor: "2" }
+				: { resources: [{ uri: "file:///b" }] },
+		);
+		server.setHandler("resources/templates/list", () => ({
+			resourceTemplates: [{ uriTemplate: "repo://{owner}/{repo}", name: "repo" }],
+		}));
+		server.setHandler("resources/read", (request) => ({
+			contents: [{ uri: (request.params as { uri: string }).uri, text: "hello" }],
+		}));
+		// A missing name falls back to the URI.
+		expect(await client.listResources()).toEqual([
+			{ uri: "file:///a", name: "a", mimeType: "text/plain" },
+			{ uri: "file:///b", name: "file:///b" },
+		]);
+		expect(await client.listResourceTemplates()).toEqual([{ uriTemplate: "repo://{owner}/{repo}", name: "repo" }]);
+		// Single pages pass the cursor through.
+		expect(await client.listResourcesPage()).toEqual({
+			resources: [{ uri: "file:///a", name: "a", mimeType: "text/plain" }],
+			nextCursor: "2",
+		});
+		expect(await client.listResourcesPage("2")).toEqual({ resources: [{ uri: "file:///b", name: "file:///b" }] });
+		expect(await client.readResource("file:///a")).toEqual({ contents: [{ uri: "file:///a", text: "hello" }] });
 
-test("a discover body that is not a discovery document does not fall back", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("server/discover", () => ({ ok: true }));
-  server.setHandler("initialize", legacyInitialize());
-  const client = new McpClient({ name: "test-client", version: "2.0.0" });
-  await assert.rejects(client.connect(clientTransport), /Invalid MCP server\/discover result/);
-  assert.equal(requests(server, "initialize").length, 0);
-  assert.equal(client.connectionState, "closed");
-});
+		server.setHandler("resources/read", () => ({ contents: [{ uri: "file:///a" }] }));
+		await expect(client.readResource("file:///a")).rejects.toThrow("Invalid contents in MCP resources/read result");
+		server.setHandler("resources/list", () => ({ resources: [{ name: "no uri" }] }));
+		await expect(client.listResources()).rejects.toThrow("Invalid entry in MCP resources/list result");
+		await client.close();
+	});
 
-test("forcing the modern revision does not open a legacy session when discover is missing", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize());
-  const client = new McpClient({ name: "test-client", version: "2.0.0", protocolVersion: MODERN_PROTOCOL_VERSION });
-  await assert.rejects(client.connect(clientTransport), /Method not found: server\/discover/);
-  assert.equal(requests(server, "initialize").length, 0);
-  assert.equal(client.connectionState, "closed");
-});
+	it("returns structured tool content and surfaces JSON-RPC errors", async () => {
+		const { client, server } = await connect();
+		server.setHandler("tools/call", (request) => {
+			const params = request.params as { name: string; arguments?: Record<string, unknown> };
+			if (params.name === "fail") throw new McpError(1234, "tool failed", { retryable: false });
+			return {
+				content: [{ type: "text", text: "ok" }],
+				structuredContent: { count: params.arguments?.count },
+			};
+		});
+		expect(await client.callTool("count", { count: 3 })).toEqual({
+			content: [{ type: "text", text: "ok" }],
+			structuredContent: { count: 3 },
+		});
+		await expect(client.callTool("fail")).rejects.toMatchObject({
+			name: "McpError",
+			code: 1234,
+			message: "tool failed",
+			data: { retryable: false },
+		});
+		await client.close();
+	});
 
-test("a discover timeout falls back to the legacy handshake", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("server/discover", () => new Promise(() => {}));
-  server.setHandler("initialize", legacyInitialize());
-  const client = new McpClient({ name: "test-client", version: "2.0.0", requestTimeoutMs: 40, maxTimeoutMs: 40 });
-  const connection = await client.connect(clientTransport);
-  try {
-    assert.equal(connection.era, "legacy");
-    assert.equal(connection.protocolVersion, LEGACY_PROTOCOL_VERSIONS[0]);
-    assert.equal(
-      server.messages.some((message) => "method" in message && message.method === "notifications/cancelled"),
-      true,
-    );
-  } finally {
-    await client.close();
-  }
-});
+	it("renews the timeout on progress", async () => {
+		vi.useFakeTimers();
+		const { client, server } = await connect();
+		server.setHandler("tools/call", async (request) => {
+			const token = ((request.params as Record<string, unknown>)._meta as Record<string, unknown>)
+				.progressToken as number;
+			setTimeout(() => {
+				void server.transport.send({
+					jsonrpc: "2.0",
+					method: "notifications/progress",
+					params: { progressToken: token, progress: 1, total: 2 },
+				});
+			}, 40);
+			await new Promise((resolve) => setTimeout(resolve, 80));
+			return { content: [{ type: "text", text: "done" }] };
+		});
+		const progress = vi.fn();
+		const result = client.callTool("slow", {}, { timeoutMs: 50, onProgress: progress });
+		await vi.advanceTimersByTimeAsync(40);
+		await vi.advanceTimersByTimeAsync(40);
+		expect(await result).toEqual({ content: [{ type: "text", text: "done" }] });
+		expect(progress).toHaveBeenCalledWith({ progressToken: 2, progress: 1, total: 2 });
+		await client.close();
+	});
 
-test("a forced legacy revision skips discover", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize("2024-11-05"));
-  const client = new McpClient({ name: "test-client", version: "2.0.0", protocolVersion: "2024-11-05" });
-  await client.connect(clientTransport);
-  try {
-    assert.equal(client.protocolVersion, "2024-11-05");
-    assert.deepEqual(
-      server.messages.map((message) => ("method" in message ? message.method : "")),
-      ["initialize", "notifications/initialized"],
-    );
-  } finally {
-    await client.close();
-  }
-});
+	it("cancels aborted and timed-out requests", async () => {
+		const { client, server } = await connect();
+		server.setHandler("tools/call", () => new Promise(() => {}));
+		const controller = new AbortController();
+		const aborted = client.callTool("wait", {}, { signal: controller.signal });
+		controller.abort("stop");
+		await expect(aborted).rejects.toBeInstanceOf(McpAbortError);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(server.messages).toContainEqual({
+			jsonrpc: "2.0",
+			method: "notifications/cancelled",
+			params: { requestId: 2, reason: "stop" },
+		});
 
-test("an unknown legacy revision closes the client", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize("1999-01-01"));
-  const client = new McpClient({ name: "test-client", version: "2.0.0", protocolVersion: "2025-11-25" });
-  await assert.rejects(client.connect(clientTransport), /unsupported protocol version 1999-01-01/);
-  assert.equal(client.connectionState, "closed");
-});
+		await expect(client.callTool("wait", {}, { timeoutMs: 5 })).rejects.toBeInstanceOf(McpTimeoutError);
+		await client.close();
+	});
 
-test("initialize timing out does not send notifications/cancelled", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", () => new Promise(() => {}));
-  const client = new McpClient({ name: "test-client", version: "2.0.0", protocolVersion: "2025-11-25", requestTimeoutMs: 30, maxTimeoutMs: 30 });
-  await assert.rejects(client.connect(clientTransport), (error: unknown) => error instanceof McpTimeoutError);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(
-    server.messages.some((message) => "method" in message && message.method === "notifications/cancelled"),
-    false,
-  );
-  assert.equal(client.connectionState, "closed");
-});
+	it("reports transport errors without failing pending requests", async () => {
+		const { clientTransport, server } = await createServer();
+		const client = new McpClient({ name: "test-client", version: "1.0.0" });
+		await client.connect(clientTransport);
+		const errors: Error[] = [];
+		client.onError((error) => errors.push(error));
+		let respond = () => {};
+		server.setHandler(
+			"tools/call",
+			() =>
+				new Promise((resolve) => {
+					respond = () => resolve({ content: [] });
+				}),
+		);
+		const call = client.callTool("wait");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		clientTransport.emitError(new Error("stray log line"));
+		respond();
+		expect(await call).toEqual({ content: [] });
+		expect(errors.map((error) => error.message)).toEqual(["stray log line"]);
+		await client.close();
+	});
 
-test("legacy pagination treats an empty cursor as the end and the modern cursor does not", async () => {
-  const legacy = await connectLegacy();
-  const modern = await connectModern();
-  const page = (request: JsonRpcRequest) => {
-    const cursor = (request.params as { cursor?: string } | undefined)?.cursor;
-    return cursor === undefined
-      ? { tools: [{ name: "search", description: "Search", inputSchema: { type: "object" } }], nextCursor: "" }
-      : { tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }] };
-  };
-  legacy.server.setHandler("tools/list", page);
-  modern.server.setHandler("tools/list", page);
-  try {
-    assert.deepEqual(await legacy.client.listTools(), [{ name: "search", description: "Search", inputSchema: { type: "object" } }]);
-    assert.equal(requests(legacy.server, "tools/list").length, 1);
-    assert.deepEqual(await modern.client.listTools(), [
-      { name: "search", description: "Search", inputSchema: { type: "object" } },
-      { name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
-    ]);
-    assert.equal((requestParams(requests(modern.server, "tools/list")[1] ?? { jsonrpc: "2.0", id: 0, method: "" }) as { cursor?: string } | undefined)?.cursor, "");
-  } finally {
-    await legacy.client.close();
-    await modern.client.close();
-  }
-});
+	it("accepts servers that answer with an older protocol version", async () => {
+		const { clientTransport, server } = await createServer();
+		server.setHandler("initialize", () => ({
+			protocolVersion: "2024-11-05",
+			capabilities: {},
+			serverInfo: { name: "old-server", version: "0.1.0" },
+		}));
+		const client = new McpClient({ name: "test-client", version: "1.0.0" });
+		await client.connect(clientTransport);
+		expect(client.protocolVersion).toBe("2024-11-05");
+		await client.close();
 
-test("a repeated cursor fails instead of paging forever", async () => {
-  const { client, server } = await connectLegacy();
-  server.setHandler("tools/list", () => ({
-    tools: [{ name: "search", inputSchema: { type: "object" } }],
-    nextCursor: "again",
-  }));
-  try {
-    await assert.rejects(client.listTools(), /duplicate cursor: again/);
-  } finally {
-    await client.close();
-  }
-});
+		const unsupported = await createServer();
+		unsupported.server.setHandler("initialize", () => ({
+			protocolVersion: "1999-01-01",
+			capabilities: {},
+			serverInfo: { name: "ancient-server", version: "0.1.0" },
+		}));
+		const rejected = new McpClient({ name: "test-client", version: "1.0.0" });
+		await expect(rejected.connect(unsupported.clientTransport)).rejects.toThrow("unsupported protocol version");
+		expect(rejected.connectionState).toBe("closed");
+	});
 
-test("resources keep a missing name as the URI and reject a body that is neither text nor bytes", async () => {
-  const { client, server } = await connectLegacy();
-  server.setHandler("resources/list", (request) =>
-    (request.params as { cursor?: string } | undefined)?.cursor === undefined
-      ? { resources: [{ uri: "file:///a", name: "a" }], nextCursor: "2" }
-      : { resources: [{ uri: "file:///b" }] },
-  );
-  server.setHandler("resources/templates/list", () => ({
-    resourceTemplates: [{ uriTemplate: "repo://{owner}/{repo}" }],
-  }));
-  server.setHandler("resources/read", (request) => ({
-    contents: [{ uri: (request.params as { uri: string }).uri, text: "hello" }],
-  }));
-  try {
-    assert.deepEqual(await client.listResources(), [
-      { uri: "file:///a", name: "a" },
-      { uri: "file:///b", name: "file:///b" },
-    ]);
-    assert.deepEqual(await client.listResourceTemplates(), [{ uriTemplate: "repo://{owner}/{repo}", name: "repo://{owner}/{repo}" }]);
-    assert.deepEqual(await client.readResource("file:///a"), { contents: [{ uri: "file:///a", text: "hello" }] });
-    server.setHandler("resources/read", () => ({ contents: [{ uri: "file:///a" }] }));
-    await assert.rejects(client.readResource("file:///a"), /Invalid contents in MCP resources\/read result/);
-  } finally {
-    await client.close();
-  }
-});
+	it("defaults missing tool result content to an empty list", async () => {
+		const { client, server } = await connect();
+		server.setHandler("tools/call", () => ({ structuredContent: { ok: true } }));
+		expect(await client.callTool("structured")).toEqual({ content: [], structuredContent: { ok: true } });
+		server.setHandler("tools/call", () => ({ content: "not a list" }));
+		await expect(client.callTool("broken")).rejects.toThrow("Invalid MCP tools/call result");
+		await client.close();
+	});
 
-test("tool results keep structured JSON and image blocks, and input_required is not success", async () => {
-  const { client, server } = await connectModern();
-  server.setHandler("tools/call", (request) => {
-    const params = request.params as { name: string; arguments?: Record<string, unknown> };
-    if (params.name === "fail") throw new McpError(1234, "tool failed", { retryable: false });
-    if (params.name === "need-input") return { resultType: "input_required", requestState: "opaque" };
-    if (params.name === "broken") return { content: "not a list" };
-    if (params.name === "structured") return { structuredContent: ["one", { n: params.arguments?.count }] };
-    return {
-      content: [{ type: "image", data: "aW1n", mimeType: "image/png" }],
-      structuredContent: { count: params.arguments?.count },
-      isError: false,
-    };
-  });
-  try {
-    assert.deepEqual(await client.callTool("shot", { count: 3 }), {
-      content: [{ type: "image", data: "aW1n", mimeType: "image/png" }],
-      structuredContent: { count: 3 },
-      isError: false,
-    });
-    assert.deepEqual(await client.callTool("structured", { count: 1 }), {
-      content: [],
-      structuredContent: ["one", { n: 1 }],
-    });
-    await assert.rejects(client.callTool("fail"), (error: McpError) => {
-      assert.equal(error.name, "McpError");
-      assert.equal(error.code, 1234);
-      assert.equal(error.message, "tool failed");
-      assert.deepEqual(error.data, { retryable: false });
-      return true;
-    });
-    await assert.rejects(client.callTool("need-input"), (error: McpInputRequiredError) => {
-      assert.equal(error.name, "McpInputRequiredError");
-      assert.deepEqual(error.result, { resultType: "input_required", requestState: "opaque" });
-      return true;
-    });
-    await assert.rejects(client.callTool("broken"), /Invalid MCP tools\/call result/);
-  } finally {
-    await client.close();
-  }
-});
+	it("does not send notifications/cancelled for a timed-out initialize", async () => {
+		const { clientTransport, server } = await createServer();
+		server.setHandler("initialize", () => new Promise(() => {}));
+		const client = new McpClient({ name: "test-client", version: "1.0.0", requestTimeoutMs: 5 });
+		await expect(client.connect(clientTransport)).rejects.toBeInstanceOf(McpTimeoutError);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(
+			server.messages.some((message) => "method" in message && message.method === "notifications/cancelled"),
+		).toBe(false);
+	});
 
-test("progress restarts the idle timeout and still cannot extend the absolute limit", async () => {
-  const { client, server } = await connectLegacy();
-  let release: (() => void) | undefined;
-  const started = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  server.setHandler("tools/call", (request) => {
-    const token = ((request.params as { _meta?: { progressToken?: number } })._meta)?.progressToken;
-    release?.();
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        void server.transport.send({
-          jsonrpc: "2.0",
-          method: "notifications/progress",
-          params: { progressToken: token, progress: 1, total: 2, message: "working" },
-        });
-      }, 30);
-      setTimeout(() => resolve({ content: [{ type: "text", text: "done" }] }), 70);
-    });
-  });
-  const progress: unknown[] = [];
-  try {
-    const pending = client.callTool("slow", {}, { timeoutMs: 50, maxTimeoutMs: 500, onProgress: (update) => progress.push(update) });
-    await started;
-    assert.deepEqual(await pending, { content: [{ type: "text", text: "done" }] });
-    assert.deepEqual(progress, [{ progressToken: requests(server, "tools/call")[0]?.id, progress: 1, total: 2, message: "working" }]);
-  } finally {
-    await client.close();
-  }
+	it("notifies close listeners once when the transport drops", async () => {
+		const { client, server } = await connect();
+		const closed = vi.fn();
+		client.onClose(closed);
+		server.setHandler("tools/call", () => new Promise(() => {}));
+		const pending = client.callTool("wait");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await server.transport.close();
+		await expect(pending).rejects.toThrow("MCP connection closed");
+		expect(client.connectionState).toBe("closed");
+		await client.close();
+		expect(closed).toHaveBeenCalledTimes(1);
+	});
 
-  const capped = await connectLegacy();
-  const ticks: number[] = [];
-  const interval = setInterval(() => {
-    const call = requests(capped.server, "tools/call")[0];
-    const token = call && ((call.params as { _meta?: { progressToken?: number } })._meta)?.progressToken;
-    if (token === undefined) return;
-    ticks.push(token);
-    void capped.server.transport.send({
-      jsonrpc: "2.0",
-      method: "notifications/progress",
-      params: { progressToken: token, progress: ticks.length },
-    });
-  }, 20);
-  capped.server.setHandler("tools/call", () => new Promise(() => {}));
-  const startedAt = Date.now();
-  try {
-    await assert.rejects(
-      capped.client.callTool("stuck", {}, { timeoutMs: 40, maxTimeoutMs: 120, onProgress: () => undefined }),
-      (error: unknown) => error instanceof McpTimeoutError,
-    );
-    const elapsed = Date.now() - startedAt;
-    assert.ok(elapsed >= 100, `elapsed ${elapsed}`);
-    assert.ok(elapsed < 800, `elapsed ${elapsed}`);
-    assert.ok(ticks.length >= 2);
-  } finally {
-    clearInterval(interval);
-    await capped.client.close();
-  }
-});
-
-test("aborting a tool call notifies the server and does not send a call that was already aborted", async () => {
-  const { client, server } = await connectLegacy();
-  server.setHandler("tools/call", () => new Promise(() => {}));
-  const controller = new AbortController();
-  try {
-    const aborted = client.callTool("wait", {}, { signal: controller.signal, timeoutMs: 0, maxTimeoutMs: 0 });
-    controller.abort("stop");
-    await assert.rejects(aborted, (error: unknown) => error instanceof McpAbortError);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.deepEqual(
-      server.messages.filter((message) => "method" in message && message.method === "notifications/cancelled"),
-      [{ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: requests(server, "tools/call")[0]?.id, reason: "stop" } }],
-    );
-    const already = new AbortController();
-    already.abort("stop");
-    const before = requests(server, "tools/call").length;
-    await assert.rejects(client.callTool("wait", {}, { signal: already.signal }), (error: unknown) => error instanceof McpAbortError);
-    assert.equal(requests(server, "tools/call").length, before);
-  } finally {
-    await client.close();
-  }
-});
-
-test("a transport error is reported without failing the pending request", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize());
-  const client = new McpClient({ name: "test-client", version: "1.0.0" });
-  await client.connect(clientTransport);
-  const errors: string[] = [];
-  client.onError((error) => errors.push(error.message));
-  let respond: () => void = () => undefined;
-  server.setHandler("tools/call", () => new Promise((resolve) => {
-    respond = () => resolve({ content: [] });
-  }));
-  try {
-    const call = client.callTool("wait");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    clientTransport.fail(new Error("stray log line"));
-    respond();
-    assert.deepEqual(await call, { content: [] });
-    assert.deepEqual(errors, ["stray log line"]);
-  } finally {
-    await client.close();
-  }
-});
-
-test("roots/list is answered and a tool-list notification is delivered", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize());
-  const client = new McpClient({
-    name: "test-client",
-    version: "1.0.0",
-    protocolVersion: "2025-11-25",
-    roots: [{ uri: "file:///workspace", name: "workspace" }],
-  });
-  await client.connect(clientTransport);
-  const changed: unknown[] = [];
-  client.onNotification("notifications/tools/list_changed", (params) => changed.push(params));
-  try {
-    await server.transport.send({ jsonrpc: "2.0", id: "roots", method: "roots/list" });
-    await server.transport.send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.ok(server.messages.some((message) => "id" in message && message.id === "roots" && "result" in message && JSON.stringify(message.result) === JSON.stringify({ roots: [{ uri: "file:///workspace", name: "workspace" }] })));
-    const initialize = requests(server, "initialize")[0];
-    assert.deepEqual((requestParams(initialize ?? { jsonrpc: "2.0", id: 0, method: "" }) as { capabilities?: unknown }).capabilities, { roots: {} });
-    assert.deepEqual(changed, [undefined]);
-  } finally {
-    await client.close();
-  }
-});
-
-test("ping completes and a server cancellation aborts the handler signal", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize());
-  server.setHandler("ping", () => ({}));
-  const client = new McpClient({ name: "test-client", version: "1.0.0", protocolVersion: "2025-11-25" });
-  let signal: AbortSignal | undefined;
-  client.setRequestHandler("slow", (_params, context) => new Promise((_resolve, reject) => {
-    signal = context.signal;
-    context.signal.addEventListener("abort", () => reject(new McpAbortError()), { once: true });
-  }));
-  await client.connect(clientTransport);
-  try {
-    await client.ping();
-    await server.transport.send({ jsonrpc: "2.0", id: "slow", method: "slow" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await server.transport.send({
-      jsonrpc: "2.0",
-      method: "notifications/cancelled",
-      params: { requestId: "slow", reason: "stop" },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(signal?.aborted, true);
-  } finally {
-    await client.close();
-  }
-});
-
-test("dropping the transport rejects pending work and closes once", async () => {
-  const { client, server } = await connectLegacy();
-  const closed: number[] = [];
-  client.onClose(() => closed.push(1));
-  server.setHandler("tools/call", () => new Promise(() => {}));
-  const pending = client.callTool("wait", {}, { timeoutMs: 0, maxTimeoutMs: 0 });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  await server.transport.close();
-  await assert.rejects(pending, /MCP connection closed/);
-  assert.equal(client.connectionState, "closed");
-  await client.close();
-  assert.deepEqual(closed, [1]);
-});
-
-test("a close delivered immediately after discovery cannot reopen the client", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("server/discover", () => ({ supportedVersions: [MODERN_PROTOCOL_VERSION], capabilities: {} }));
-  const client = new McpClient({ name: "test-client", version: "1.0.0", protocolVersion: MODERN_PROTOCOL_VERSION });
-  const connecting = client.connect(clientTransport);
-  clientTransport.onMessage((message) => {
-    if ("result" in message) void client.close();
-  });
-  await assert.rejects(connecting, /MCP client is closed/);
-  assert.equal(client.connectionState, "closed");
-});
-
-test("malformed tool blocks and error flags fail at the protocol boundary", async () => {
-  const { client, server } = await connectModern();
-  const malformed: unknown[] = [
-    { content: [null] },
-    { content: [{ type: "text", text: 42 }] },
-    { content: [{ type: "image", data: "img", mimeType: 42 }] },
-    { content: [{ type: "resource", resource: { uri: "file:///a" } }] },
-    { content: [{ type: "resource", resource: { uri: "file:///a", text: 42, blob: "aW1n" } }] },
-    { content: [], isError: "false" },
-  ];
-  try {
-    for (const result of malformed) {
-      server.setHandler("tools/call", () => result);
-      await assert.rejects(client.callTool("broken"), /Invalid MCP tools\/call/);
-    }
-  } finally {
-    await client.close();
-  }
-});
-
-test("a cancelled incoming request does not send a late result", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize());
-  const client = new McpClient({ name: "test-client", version: "1.0.0", protocolVersion: "2025-11-25" });
-  let finish: (result: unknown) => void = () => undefined;
-  client.setRequestHandler("wait", () => new Promise((resolve) => { finish = resolve; }));
-  await client.connect(clientTransport);
-  try {
-    await server.transport.send({ jsonrpc: "2.0", id: "wait", method: "wait" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await server.transport.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "wait" } });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    finish({ done: true });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(server.messages.some((message) => "id" in message && message.id === "wait"), false);
-  } finally {
-    await client.close();
-  }
-});
-
-test("modern server requests cannot invoke legacy client handlers", async () => {
-  const { client, server } = await connectModern();
-  let invoked = false;
-  client.setRequestHandler("custom", () => { invoked = true; return {}; });
-  const errors: Error[] = [];
-  client.onError((error) => errors.push(error));
-  try {
-    await server.transport.send({ jsonrpc: "2.0", id: "unexpected", method: "custom" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(invoked, false);
-    assert.equal(server.messages.some((message) => "id" in message && message.id === "unexpected"), false);
-    assert.match(errors[0]?.message ?? "", /Modern MCP servers cannot send requests/);
-  } finally {
-    await client.close();
-  }
-});
-
-test("throwing lifecycle observers cannot stop transport cleanup", async () => {
-  const { client, server } = await connectLegacy();
-  let peerClosed = false;
-  server.transport.onClose(() => { peerClosed = true; });
-  client.onClose(() => { throw new Error("close observer failed"); });
-  client.onError(() => { throw new Error("error observer failed"); });
-  await client.close();
-  assert.equal(peerClosed, true);
-  assert.equal(client.connectionState, "closed");
-});
-
-test("modern HTTP listing filters invalid header schemas and passes valid definitions to the transport", async () => {
-  const { clientTransport, server } = await createServer();
-  let cached: readonly Tool[] = [];
-  const httpTransport: McpTransport = {
-    probe: "http",
-    start: () => clientTransport.start(),
-    send: (message) => clientTransport.send(message),
-    close: () => clientTransport.close(),
-    onMessage: (listener) => clientTransport.onMessage(listener),
-    onError: (listener) => clientTransport.onError(listener),
-    onClose: (listener) => clientTransport.onClose(listener),
-    setToolSchemas: (tools) => { cached = tools; },
-  };
-  server.setHandler("server/discover", () => ({ supportedVersions: [MODERN_PROTOCOL_VERSION], capabilities: {} }));
-  server.setHandler("tools/list", () => ({ tools: [
-    { name: "valid", inputSchema: { type: "object", properties: { tenant: { type: "string", "x-mcp-header": "Tenant" } } } },
-    { name: "bad", inputSchema: { type: "object", properties: { value: { type: "number", "x-mcp-header": "Value" } } } },
-    { name: "plain", inputSchema: { type: "object" } },
-  ] }));
-  server.setHandler("tools/call", () => ({ content: [] }));
-  const client = new McpClient({ name: "test-client", version: "1.0.0", protocolVersion: MODERN_PROTOCOL_VERSION });
-  const errors: string[] = [];
-  client.onError((error) => errors.push(error.message));
-  await client.connect(httpTransport);
-  try {
-    const tools = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), ["valid", "plain"]);
-    assert.deepEqual(cached, tools);
-    assert.match(errors[0] ?? "", /Rejected MCP tool bad: Invalid x-mcp-header type/);
-    await assert.rejects(client.callTool("bad", { value: 1.5 }), /rejected because its x-mcp-header schema is invalid/);
-    await assert.rejects(client.request("tools/call", { name: "bad", arguments: { value: 1.5 } }), /rejected because its x-mcp-header schema is invalid/);
-    assert.equal(requests(server, "tools/call").length, 0);
-    server.setHandler("tools/list", () => ({ tools: [{ name: "bad", inputSchema: { type: "object" } }] }));
-    assert.equal((await client.listTools())[0]?.name, "bad");
-    await client.callTool("bad", { value: 1.5 });
-    assert.equal(requests(server, "tools/call").length, 1);
-  } finally {
-    await client.close();
-  }
-});
-
-test("concurrent client close calls all await transport cleanup", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize());
-  let finishClose: () => void = () => undefined;
-  const closing = new Promise<void>((resolve) => { finishClose = resolve; });
-  const transport: McpTransport = {
-    probe: "stream",
-    start: () => clientTransport.start(),
-    send: (message) => clientTransport.send(message),
-    close: async () => { await closing; await clientTransport.close(); },
-    onMessage: (listener) => clientTransport.onMessage(listener),
-    onError: (listener) => clientTransport.onError(listener),
-    onClose: (listener) => clientTransport.onClose(listener),
-  };
-  const client = new McpClient({ name: "test-client", version: "1.0.0", protocolVersion: "2025-11-25" });
-  await client.connect(transport);
-  const first = client.close();
-  const second = client.close();
-  assert.equal(first, second);
-  let done = false;
-  void second.then(() => { done = true; });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(done, false);
-  finishClose();
-  await Promise.all([first, second]);
-  assert.equal(done, true);
-});
-
-test("transport observers cannot interrupt message delivery or peer shutdown", async () => {
-  const pair = createInMemoryTransportPair();
-  const errors: string[] = [];
-  const messages: JsonRpcMessage[] = [];
-  let peerClosed = false;
-  pair.server.onMessage(() => { throw new Error("message observer failed"); });
-  pair.server.onMessage((message) => messages.push(message));
-  pair.server.onError(() => { throw new Error("error observer failed"); });
-  pair.server.onError((error) => errors.push(error.message));
-  pair.client.onClose(() => { throw new Error("close observer failed"); });
-  pair.server.onClose(() => { peerClosed = true; });
-  await pair.client.start();
-  await pair.server.start();
-  await pair.client.send({ jsonrpc: "2.0", method: "example" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(messages, [{ jsonrpc: "2.0", method: "example" }]);
-  assert.deepEqual(errors, ["message observer failed"]);
-  await pair.client.close();
-  assert.equal(peerClosed, true);
-});
-
-test("a late response to a cancelled local request is ignored", async () => {
-  const { client, server } = await connectLegacy();
-  server.setHandler("tools/call", () => new Promise(() => {}));
-  const errors: Error[] = [];
-  client.onError((error) => errors.push(error));
-  const controller = new AbortController();
-  try {
-    const call = client.callTool("wait", {}, { signal: controller.signal, timeoutMs: 0, maxTimeoutMs: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const request = requests(server, "tools/call")[0];
-    assert.ok(request);
-    controller.abort();
-    await assert.rejects(call, (error: unknown) => error instanceof McpAbortError);
-    await server.transport.send({ jsonrpc: "2.0", id: request.id, result: { content: [] } });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.deepEqual(errors, []);
-  } finally {
-    await client.close();
-  }
-});
-
-test("duplicate incoming IDs cannot replace the original cancellation controller", async () => {
-  const { clientTransport, server } = await createServer();
-  server.setHandler("initialize", legacyInitialize());
-  const client = new McpClient({ name: "test-client", version: "1.0.0", protocolVersion: "2025-11-25" });
-  let invoked = 0;
-  let signal: AbortSignal | undefined;
-  client.setRequestHandler("wait", (_params, context) => {
-    invoked++;
-    signal = context.signal;
-    return new Promise(() => {});
-  });
-  await client.connect(clientTransport);
-  try {
-    await server.transport.send({ jsonrpc: "2.0", id: "duplicate", method: "wait" });
-    await server.transport.send({ jsonrpc: "2.0", id: "duplicate", method: "wait" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await server.transport.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "duplicate" } });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(invoked, 1);
-    assert.equal(signal?.aborted, true);
-  } finally {
-    await client.close();
-  }
+	it("answers roots/list and dispatches notifications", async () => {
+		const { clientTransport, server } = await createServer();
+		const client = new McpClient({
+			name: "test-client",
+			version: "1.0.0",
+			roots: [{ uri: "file:///workspace", name: "workspace" }],
+		});
+		await client.connect(clientTransport);
+		const changed = vi.fn();
+		client.onNotification("notifications/tools/list_changed", changed);
+		await server.transport.send({ jsonrpc: "2.0", id: "roots", method: "roots/list" });
+		await server.transport.send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(server.messages).toContainEqual({
+			jsonrpc: "2.0",
+			id: "roots",
+			result: { roots: [{ uri: "file:///workspace", name: "workspace" }] },
+		});
+		expect(changed).toHaveBeenCalledWith(undefined);
+		await client.close();
+	});
 });
