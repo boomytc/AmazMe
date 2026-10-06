@@ -15,6 +15,7 @@ import {
   resolveOutputBudget,
   supportedThinkingLevels,
   usageCost,
+  type StreamOptions,
   type ThinkingLevel,
   type UsageCost,
   type UserContent,
@@ -1315,12 +1316,14 @@ export class AgentLane {
     let contentFrames = 0;
     let result: Promise<AssistantMessage> | undefined;
     try {
-      const stream = this.harness.options.models.streamSimple(model, request, {
+      const requestOptions: StreamOptions = {
         signal: deadline.signal,
         thinkingLevel: config.thinkingLevel,
         telemetryContext,
+        onActivity: () => deadline.touch(),
         ...(config.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
-      });
+      };
+      const stream = this.harness.options.models.streamSimple(model, request, requestOptions);
       result = stream.result();
       for await (const event of stream) {
         deadline.touch();
@@ -1370,11 +1373,14 @@ export class AgentLane {
       ? { ...request.context, messages: toProviderMessages(replaced) }
       : request.context;
     const deadline = this.deadline(prepared.config.requestTimeoutMs, signal);
-    const stream = this.harness.options.models.streamSimple(
-      model,
-      summaryContext,
-      { signal: deadline.signal, thinkingLevel: "off", maxTokens: request.maxTokens, telemetryContext },
-    );
+    const requestOptions: StreamOptions = {
+      signal: deadline.signal,
+      thinkingLevel: "off",
+      maxTokens: request.maxTokens,
+      telemetryContext,
+      onActivity: () => deadline.touch(),
+    };
+    const stream = this.harness.options.models.streamSimple(model, summaryContext, requestOptions);
     let message: AssistantMessage | undefined;
     try {
       for await (const event of stream) {

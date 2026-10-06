@@ -88,7 +88,7 @@ try {
 
 ## 模型请求截止
 
-一次模型请求有自己的空闲截止 `requestTimeoutMs`，默认 60 秒，写在 lane 配置里。它只包住 `streamSimple`，不包住工具执行。每收到一帧就重新计时，没有墙钟总时长上限。持续产出的长流或思考不会因为总时长超过 60 秒而被记成 `timed out after output started`。`@amazme/ai` 只把可重试错误标成 `retryable`，不重发。Durable 是唯一会重发的一层。
+一次模型请求有自己的空闲截止 `requestTimeoutMs`，默认 60 秒，写在 lane 配置里。它只包住 `streamSimple`，不包住工具执行。每收到一帧就重新计时。`streamSimple` 的 `onActivity` 同样重新计时，这样还没有变成帧的活动（例如 SSE keep-alive）也不会被当成空闲。没有墙钟总时长上限。持续产出的长流或思考不会因为总时长超过 60 秒而被记成 `timed out after output started`。`@amazme/ai` 只把可重试错误标成 `retryable`，不重发。Durable 是唯一会重发的一层。
 
 空闲截止在任何内容帧之前到达，并且这次尝试还没用完 `maxAttempts` 时，结算成可重试的模型错误，错误文本是 `model request timed out`。内容帧指文本、思考或已结束的工具调用；单独的 stop 帧不算。重试等待是 `retryDelayMs`：第 n 次重试（从 1 计）等待 `min(baseDelayMs * 2^(n-1), maxDelayMs)`。默认基数 1 秒，上限 60 秒。这个毫秒数在同一次 `apply` 里写成 `retry_wait.notBefore`，不是 `Date.now() + 10`。`drive({ waitForRetry: true })` 等到该时间或被中止。调用方取消优先于截止，不会被当成超时重试。
 
