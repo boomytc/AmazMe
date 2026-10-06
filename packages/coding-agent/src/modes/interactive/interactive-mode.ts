@@ -68,7 +68,7 @@ import {
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
 import { foregroundCommands } from "../../core/foreground-commands.ts";
 import { InteractiveComposer } from "./composer-contract.ts";
-import { routeInteractiveInput } from "./interactive-input.ts";
+import { promptOwnsKey, routeInteractiveInput } from "./interactive-input.ts";
 import { scrollbackRows, TranscriptFocus } from "./transcript-focus.ts";
 import { BashRunTable, ParentTranscript, syncComposerVisibility, WorkSurface } from "./work-surface.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
@@ -666,6 +666,29 @@ export class InteractiveMode {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
 			embedWorkingStatus: true,
+		});
+		this.defaultEditor.setModelLabel(() => {
+			const model = this.session.state.model;
+			if (!model) return "";
+			const thinking = model.reasoning ? ` · ${this.session.state.thinkingLevel || "off"}` : "";
+			return `${model.id}${thinking}`;
+		});
+		this.defaultEditor.onCopySelection = (text) => {
+			void copyToClipboard(text);
+		};
+		this.defaultEditor.setShortcutLine(() => {
+			const chip = (key: string, action: string) => `\x1b[1m${key}\x1b[22m:${action}`;
+			const multiline = this.composer?.multiline ?? false;
+			const running = this.session.isStreaming;
+			const enter = multiline ? "newline" : running ? "queue" : "send";
+			const alternate = multiline ? "Shift+Enter:send" : "Shift+Enter/Alt+Enter:newline";
+			return [
+				chip("Ctrl+\\", "dashboard"),
+				chip("Enter", enter),
+				chip(alternate.split(":")[0] ?? "Shift+Enter", alternate.split(":")[1] ?? "newline"),
+				chip("Tab", "complete"),
+				chip("Cmd+⌫", "line"),
+			].join(" │ ");
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
@@ -3257,6 +3280,7 @@ export class InteractiveMode {
 		this.footer.setComposerLine(() => this.composer.footerText());
 		this.defaultEditor.onBeforeInput = (data) => {
 			if (typeof this.dashboard === "function" && this.dashboard().handleKey(data)) return true;
+			if (promptOwnsKey(data, this.defaultEditor.isShowingAutocomplete())) return false;
 			return routeInteractiveInput(data, {
 				child: this.workSurface,
 				transcript: this.transcriptFocus,

@@ -35,6 +35,8 @@ export interface SelectListLayoutOptions {
 	minPrimaryColumnWidth?: number;
 	maxPrimaryColumnWidth?: number;
 	truncatePrimary?: (context: SelectListTruncatePrimaryContext) => string;
+	/** Slash and file menus: a full-width selected row instead of an arrow. */
+	highlightSelected?: boolean;
 }
 
 export class SelectList implements Component {
@@ -187,7 +189,7 @@ export class SelectList implements Component {
 		descriptionSingleLine: string | undefined,
 		primaryColumnWidth: number,
 	): string {
-		const prefix = isSelected ? "→ " : "  ";
+		const prefix = this.layout.highlightSelected ? " " : isSelected ? "→ " : "  ";
 		const prefixWidth = visibleWidth(prefix);
 
 		if (descriptionSingleLine && width > 40) {
@@ -201,6 +203,11 @@ export class SelectList implements Component {
 
 			if (remainingWidth > MIN_DESCRIPTION_WIDTH) {
 				const truncatedDesc = truncateToWidth(descriptionSingleLine, remainingWidth, "");
+				if (this.layout.highlightSelected) {
+					const body = `${prefix}${truncatedValue}${spacing}${truncatedDesc}`;
+					const padded = body + " ".repeat(Math.max(0, width - visibleWidth(body)));
+					return isSelected ? `\x1b[7m${padded}\x1b[27m` : prefix + truncatedValue + this.theme.description(spacing + truncatedDesc);
+				}
 				if (isSelected) {
 					return this.theme.selectedText(`${prefix}${truncatedValue}${spacing}${truncatedDesc}`);
 				}
