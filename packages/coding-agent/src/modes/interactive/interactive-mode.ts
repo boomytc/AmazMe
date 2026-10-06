@@ -162,6 +162,7 @@ import {
 	formatTokens,
 	SessionTopBar,
 } from "./components/footer.ts";
+import { PopupClose, ProcessPanel } from "./components/popup-frame.ts";
 import {
 	type DashboardAgent,
 	DashboardView,
@@ -503,6 +504,7 @@ export class InteractiveMode {
 	private footerContainer: Container;
 	private statusBar!: SessionTopBar;
 	private contextOverlay: { hide(): void; focus(): void } | undefined;
+	private processOverlay: { hide(): void; focus(): void } | undefined;
 	private footerDataProvider: FooterDataProvider;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
@@ -2764,6 +2766,11 @@ export class InteractiveMode {
 			};
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 
+			const cancelSelector = () => {
+				opts?.signal?.removeEventListener("abort", onAbort);
+				this.hideExtensionSelector();
+				resolve(undefined);
+			};
 			this.extensionSelector = new ExtensionSelectorComponent(
 				title,
 				options,
@@ -2772,17 +2779,13 @@ export class InteractiveMode {
 					this.hideExtensionSelector();
 					resolve(option);
 				},
-				() => {
-					opts?.signal?.removeEventListener("abort", onAbort);
-					this.hideExtensionSelector();
-					resolve(undefined);
-				},
+				cancelSelector,
 				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
 			);
 
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
-			this.editorContainer.addChild(this.extensionSelector);
+			this.editorContainer.addChild(new PopupClose(this.extensionSelector, cancelSelector));
 			this.ui.setFocus(this.extensionSelector);
 			this.ui.requestRender();
 		});
@@ -2840,6 +2843,11 @@ export class InteractiveMode {
 			};
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 
+			const cancelInput = () => {
+				opts?.signal?.removeEventListener("abort", onAbort);
+				this.hideExtensionInput();
+				resolve(undefined);
+			};
 			this.extensionInput = new ExtensionInputComponent(
 				title,
 				placeholder,
@@ -2848,17 +2856,13 @@ export class InteractiveMode {
 					this.hideExtensionInput();
 					resolve(value);
 				},
-				() => {
-					opts?.signal?.removeEventListener("abort", onAbort);
-					this.hideExtensionInput();
-					resolve(undefined);
-				},
+				cancelInput,
 				{ tui: this.ui, timeout: opts?.timeout },
 			);
 
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
-			this.editorContainer.addChild(this.extensionInput);
+			this.editorContainer.addChild(new PopupClose(this.extensionInput, cancelInput));
 			this.ui.setFocus(this.extensionInput);
 			this.ui.requestRender();
 		});
@@ -2881,6 +2885,10 @@ export class InteractiveMode {
 	 */
 	private showExtensionEditor(title: string, prefill?: string): Promise<string | undefined> {
 		return new Promise((resolve) => {
+			const cancelEditor = () => {
+				this.hideExtensionEditor();
+				resolve(undefined);
+			};
 			this.extensionEditor = new ExtensionEditorComponent(
 				this.ui,
 				this.keybindings,
@@ -2890,17 +2898,14 @@ export class InteractiveMode {
 					this.hideExtensionEditor();
 					resolve(value);
 				},
-				() => {
-					this.hideExtensionEditor();
-					resolve(undefined);
-				},
+				cancelEditor,
 				undefined,
 				this.settingsManager.getExternalEditorCommand(),
 			);
 
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
-			this.editorContainer.addChild(this.extensionEditor);
+			this.editorContainer.addChild(new PopupClose(this.extensionEditor, cancelEditor));
 			this.ui.setFocus(this.extensionEditor);
 			this.ui.requestRender();
 		});
@@ -3285,7 +3290,12 @@ export class InteractiveMode {
 				this.session.childAgents.touch();
 			},
 		);
-		this.workSurface = new WorkSurface(this.session.childAgents, foregroundCommands);
+		this.workSurface = new WorkSurface(this.session.childAgents, foregroundCommands, {
+			openProcess: (id) => this.openProcessPanel(id),
+			closeProcess: (id) => {
+				foregroundCommands.stop(id);
+			},
+		});
 		this.parentTranscript.bind(this.chatContainer, this.workSurface);
 		const sync = () => {
 			syncComposerVisibility(this.editorContainer, this.defaultEditor, this.workSurface.composerHidden);
@@ -3412,6 +3422,20 @@ export class InteractiveMode {
 			this.dashboardDisk = [];
 		}
 		this.ui.requestRender();
+	}
+
+	private openProcessPanel(id: string): void {
+		this.processOverlay?.hide();
+		const panel = new ProcessPanel(
+			() => foregroundCommands.list().find((task) => task.id === id),
+			() => {
+				this.processOverlay?.hide();
+				this.processOverlay = undefined;
+				this.ui.requestRender();
+			},
+		);
+		this.processOverlay = this.ui.showOverlay(panel, { anchor: "center", width: 72, maxHeight: "80%" });
+		this.processOverlay.focus();
 	}
 
 	private toggleContextPanel(): void {
@@ -5270,11 +5294,12 @@ export class InteractiveMode {
 		};
 		const created = create(done);
 		dispose = created.dispose;
+		const framed = new PopupClose(created.component, done);
 		this.disposeActiveSelector();
 		this.activeSelectorToken = token;
 		this.activeSelectorDispose = dispose;
 		this.editorContainer.clear();
-		this.editorContainer.addChild(created.component);
+		this.editorContainer.addChild(framed);
 		this.ui.setFocus(created.focus);
 		this.ui.requestRender();
 	}

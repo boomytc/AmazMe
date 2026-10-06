@@ -1,3 +1,5 @@
+import { killProcessTree, untrackDetachedChildPid } from "../utils/shell.ts";
+
 /** Foreground shell commands that can leave the conversation without being killed. */
 
 export type ForegroundStatus = "running" | "completed" | "failed";
@@ -9,6 +11,8 @@ export interface ForegroundTask {
 	output: string;
 	exitCode: number | null;
 	pid: number | undefined;
+	/** True after the command leaves the foreground and keeps running. */
+	detached: boolean;
 }
 
 export interface ForegroundCompletion {
@@ -107,6 +111,15 @@ export class ForegroundCommands {
 
 	runningPid(): number | undefined {
 		return this.running?.pid;
+	}
+
+	/** Stop one running command. A detached command still reports its exit afterward. */
+	stop(id: string): boolean {
+		const task = this.tasks.find((item) => item.id === id && item.status === "running");
+		if (!task?.pid) return false;
+		untrackDetachedChildPid(task.pid);
+		killProcessTree(task.pid);
+		return true;
 	}
 
 	list(): readonly ForegroundTask[] {

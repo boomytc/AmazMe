@@ -12,7 +12,9 @@ import { CustomEditor } from "../src/modes/interactive/components/custom-editor.
 import { routeInteractiveInput } from "../src/modes/interactive/interactive-input.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { TranscriptFocus } from "../src/modes/interactive/transcript-focus.ts";
+import { ProcessPanel } from "../src/modes/interactive/components/popup-frame.ts";
 import { BashRunTable, ParentTranscript, WorkSurface } from "../src/modes/interactive/work-surface.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { createHarness } from "./suite/harness.ts";
 
@@ -47,6 +49,48 @@ function bashEntries(harness: Awaited<ReturnType<typeof createHarness>>): Array<
 }
 
 describe("foreground command presentation", () => {
+	test("a background process keeps one row with open and close badges", () => {
+		const task = {
+			id: "cmd-1",
+			command: "sleep 5",
+			status: "running" as const,
+			output: "hello\nworld",
+			exitCode: null,
+			pid: 1,
+			detached: true,
+		};
+		let opened = "";
+		let closed = "";
+		const surface = new WorkSurface(new ChildAgentBook(), { list: () => [task] } as never, {
+			openProcess: (id) => {
+				opened = id;
+			},
+			closeProcess: (id) => {
+				closed = id;
+			},
+		});
+		const lines = surface.render(80);
+		const line = lines.findIndex((item) => item.includes("[open]"));
+		expect(line).toBeGreaterThanOrEqual(0);
+		expect(lines[line]).toContain("[close]");
+		expect(lines.join("\n")).not.toContain("hello");
+		const text = lines[line] ?? "";
+		surface.handleMouse({ type: "click", button: "left", x: text.indexOf("[open]"), y: line } as never);
+		surface.handleMouse({ type: "click", button: "left", x: text.indexOf("[close]"), y: line } as never);
+		expect(opened).toBe("cmd-1");
+		expect(closed).toBe("cmd-1");
+
+		let panelClosed = 0;
+		const panel = new ProcessPanel(() => task, () => {
+			panelClosed += 1;
+		});
+		const top = stripAnsi(panel.render(40)[0] ?? "");
+		expect(top.endsWith("[x]╮")).toBe(true);
+		expect(panel.render(40).join("\n")).toContain("hello");
+		panel.handleMouse({ type: "click", button: "left", x: top.lastIndexOf("[x]"), y: 0 } as never);
+		expect(panelClosed).toBe(1);
+	});
+
 	beforeAll(() => initTheme("dark"));
 
 	test("streams a local command, backgrounds it without killing it, and reports completion", async () => {

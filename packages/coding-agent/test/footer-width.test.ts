@@ -4,10 +4,12 @@ import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import {
 	contextPanelLines,
+	ContextUsagePanel,
 	FooterComponent,
 	formatCwdForFooter,
 	SessionTopBar,
 } from "../src/modes/interactive/components/footer.ts";
+import { PopupClose } from "../src/modes/interactive/components/popup-frame.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -330,6 +332,47 @@ describe("FooterComponent width handling", () => {
 		expect(panel).toContain("◇");
 		expect(panel).toContain("Messages        4");
 		expect(panel).not.toContain("System prompt");
+	});
+
+	it("closes the context popup from the top-right badge", () => {
+		let closed = 0;
+		const panel = new ContextUsagePanel(
+			() => ({
+				used: 1,
+				window: 10,
+				percent: 10,
+				model: "m",
+				cost: 0,
+				subscription: false,
+				autoCompact: false,
+				reserveTokens: 1,
+				messages: 0,
+				toolCalls: 0,
+				compactions: 0,
+			}),
+			() => {
+				closed += 1;
+			},
+		);
+		const line = stripAnsi(panel.render(40)[0] ?? "");
+		expect(line.endsWith("[x]╮")).toBe(true);
+		const badge = line.lastIndexOf("[x]");
+		expect(panel.handleMouse({ type: "click", button: "left", x: badge, y: 0 } as never)).toEqual({ handled: true });
+		expect(closed).toBe(1);
+		expect(panel.handleMouse({ type: "click", button: "left", x: 0, y: 0 } as never)).toBeUndefined();
+		expect(closed).toBe(1);
+	});
+
+	it("puts a close badge on the top-right of a dialog", () => {
+		let closed = 0;
+		const popup = new PopupClose({ render: () => ["body"], invalidate() {} }, () => {
+			closed += 1;
+		});
+		const lines = popup.render(10);
+		expect(stripAnsi(lines[0] ?? "").endsWith("[x]")).toBe(true);
+		expect(lines[1]).toBe("body");
+		expect(popup.handleMouse({ type: "click", button: "left", x: 7, y: 0 } as never)).toEqual({ handled: true });
+		expect(closed).toBe(1);
 	});
 
 	it("does not mark generic OAuth sign-in as a subscription", () => {

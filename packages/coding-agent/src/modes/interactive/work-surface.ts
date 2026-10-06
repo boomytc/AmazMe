@@ -1,14 +1,48 @@
-import type { Component } from "@amazme/tui";
-import { matchesKey } from "@amazme/tui";
+import { matchesKey, type Component, type TuiMouseEvent, type TuiMouseEventResult, truncateToWidth, visibleWidth } from "@amazme/tui";
 import { childFrameLines, childLifecycleLine, type ChildAgentBook } from "../../core/child-session.ts";
 import { type ForegroundCommands, type ForegroundTask } from "../../core/foreground-commands.ts";
 
-/** Live sticky row. A finished command already has its result in the transcript. */
+const OPEN_BADGE = "[open]";
+const CLOSE_BADGE = "[close]";
+
+export interface WorkSurfaceActions {
+	openProcess(id: string): void;
+	closeProcess(id: string): void;
+}
+
+interface ProcessHit {
+	id: string;
+	line: number;
+	openStart: number;
+	openEnd: number;
+	closeStart: number;
+	closeEnd: number;
+}
+
+/** Live sticky row for a command that is still in the foreground. */
 function commandLines(task: ForegroundTask): string[] {
 	const lines = [`Command running: ${task.command}`];
 	const output = task.output.trimEnd();
 	if (output) lines.push(output);
 	return lines;
+}
+
+/** One row for a background process. The output stays behind [open]. */
+function backgroundRow(task: ForegroundTask, width: number): Omit<ProcessHit, "id" | "line"> & { body: string } {
+	const tail = `${OPEN_BADGE} ${CLOSE_BADGE}`;
+	const tailWidth = visibleWidth(tail);
+	const room = Math.max(1, width - tailWidth - 1);
+	const left = truncateToWidth(task.command, room, "…");
+	const gap = Math.max(1, width - visibleWidth(left) - tailWidth);
+	const openStart = visibleWidth(left) + gap;
+	const closeStart = openStart + visibleWidth(OPEN_BADGE) + 1;
+	return {
+		body: `${left}${" ".repeat(gap)}${tail}`,
+		openStart,
+		openEnd: openStart + visibleWidth(OPEN_BADGE),
+		closeStart,
+		closeEnd: closeStart + visibleWidth(CLOSE_BADGE),
+	};
 }
 
 /**
@@ -18,10 +52,13 @@ function commandLines(task: ForegroundTask): string[] {
 export class WorkSurface implements Component {
 	readonly book: ChildAgentBook;
 	private readonly commands: ForegroundCommands;
+	private readonly actions: WorkSurfaceActions | undefined;
+	private processHits: ProcessHit[] = [];
 
-	constructor(book: ChildAgentBook, commands: ForegroundCommands) {
+	constructor(book: ChildAgentBook, commands: ForegroundCommands, actions?: WorkSurfaceActions) {
 		this.book = book;
 		this.commands = commands;
+		this.actions = actions;
 	}
 
 	get composerHidden(): boolean {
@@ -32,27 +69,63 @@ export class WorkSurface implements Component {
 
 	render(width: number): string[] {
 		const lines: string[] = [];
+		const hits: ProcessHit[] = [];
+		const push = (text: string): void => {
+			for (const part of text.split("\n")) {
+				lines.push(part.length > width ? part.slice(0, width) : part);
+			}
+		};
 		const open = this.book.records.find((record) => record.id === this.book.openId);
 		if (open) {
-			lines.push(...childFrameLines(open));
+			for (const line of childFrameLines(open)) push(line);
 		} else {
 			for (const record of this.book.records) {
 				const marker = record.id === this.book.highlightId ? "> " : "";
-				lines.push(`${marker}${childLifecycleLine(record)}`);
+				push(`${marker}${childLifecycleLine(record)}`);
 			}
 			for (const task of this.commands.list()) {
-				if (task.status === "running") lines.push(...commandLines(task));
+				if (task.status !== "running") continue;
+				if (task.detached) {
+					const row = backgroundRow(task, width);
+					hits.push({
+						id: task.id,
+						line: lines.length,
+						openStart: row.openStart,
+						openEnd: row.openEnd,
+						closeStart: row.closeStart,
+						closeEnd: row.closeEnd,
+					});
+					push(row.body);
+				} else {
+					for (const line of commandLines(task)) push(line);
+				}
 			}
 		}
 		if (this.book.tasksOpen) {
-			lines.push("Tasks");
+			push("Tasks");
 			for (const record of this.book.records) {
 				const marker = record.id === this.book.highlightId ? ">" : " ";
-				lines.push(`${marker} subagent ${record.status} ${record.description}`);
+				push(`${marker} subagent ${record.status} ${record.description}`);
 			}
-			for (const task of this.commands.list()) lines.push(`  command ${task.status} ${task.command}`);
+			for (const task of this.commands.list()) push(`  command ${task.status} ${task.command}`);
 		}
-		return lines.flatMap((line) => line.split("\n")).map((line) => (line.length > width ? line.slice(0, width) : line));
+		this.processHits = hits;
+		return lines;
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "click" || event.button !== "left") return undefined;
+		const hit = this.processHits.find((item) => item.line === event.y);
+		if (!hit || !this.actions) return undefined;
+		if (event.x >= hit.closeStart && event.x < hit.closeEnd) {
+			this.actions.closeProcess(hit.id);
+			return { handled: true };
+		}
+		if (event.x >= hit.openStart && event.x < hit.openEnd) {
+			this.actions.openProcess(hit.id);
+			return { handled: true };
+		}
+		return undefined;
 	}
 
 	handleInput(data: string): boolean {

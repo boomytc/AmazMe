@@ -13,6 +13,7 @@ import type { ContextUsage } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
+import { popupCloseClicked, popupFrame } from "./popup-frame.ts";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -381,8 +382,6 @@ export function contextPanelLines(detail: ContextDetail, width: number): string[
 		detail.window > 0 ? `${(((detail.window - detail.reserveTokens) / detail.window) * 100).toFixed(0)}%` : "?";
 	const cost = `$${detail.cost.toFixed(3)}${detail.subscription ? " (sub)" : ""}`;
 	const lines = [
-		"Context usage",
-		"",
 		`${used} / ${formatTokens(detail.window)} tokens (${percent})`,
 		detail.model,
 		"",
@@ -393,13 +392,12 @@ export function contextPanelLines(detail: ContextDetail, width: number): string[
 		`Messages        ${detail.messages}`,
 		`Tool calls      ${detail.toolCalls}`,
 		`Compactions     ${detail.compactions}`,
-		"",
-		"Esc close",
 	];
 	return lines.map((line) => truncateToWidth(line, width, "…"));
 }
 
 export class ContextUsagePanel implements Component {
+	private width = 0;
 	private readonly detail: () => ContextDetail;
 	private readonly onClose: () => void;
 
@@ -411,19 +409,19 @@ export class ContextUsagePanel implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
+		this.width = width;
 		const inner = Math.max(1, width - 4);
-		const body = contextPanelLines(this.detail(), inner);
-		const lines = [theme.fg("text", `╭${"─".repeat(Math.max(0, width - 2))}╮`)];
-		for (const line of body) {
-			const pad = " ".repeat(Math.max(0, inner - visibleWidth(line)));
-			lines.push(theme.fg("text", `│ ${line}${pad} │`));
-		}
-		lines.push(theme.fg("text", `╰${"─".repeat(Math.max(0, width - 2))}╯`));
-		return lines;
+		return popupFrame("Context", contextPanelLines(this.detail(), inner), width);
 	}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || data === "q") this.onClose();
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (!popupCloseClicked(event, this.width)) return undefined;
+		this.onClose();
+		return { handled: true };
 	}
 }
 
