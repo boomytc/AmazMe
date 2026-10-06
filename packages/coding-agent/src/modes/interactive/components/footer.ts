@@ -2,6 +2,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
 	type Component,
 	matchesKey,
+	stripTerminalSequences,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	truncateToWidth,
@@ -73,6 +74,7 @@ export class FooterComponent implements Component {
 	private dashboardHit: { start: number; end: number } | undefined;
 	private contextHit: { start: number; end: number } | undefined;
 	private contextHover = false;
+	private showLocation = true;
 
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
@@ -85,6 +87,11 @@ export class FooterComponent implements Component {
 
 	setSession(session: AgentSession): void {
 		this.session = session;
+	}
+
+	/** The interactive top bar owns location; standalone footers can still include it. */
+	setShowLocation(show: boolean): void {
+		this.showLocation = show;
 	}
 
 	setAutoCompactEnabled(enabled: boolean): void {
@@ -176,55 +183,59 @@ export class FooterComponent implements Component {
 	renderTopBar(width: number): string[] {
 		const state = this.session.state;
 		const { usageTotals, contextUsage } = this.getSessionStats();
-		const sessionName = this.session.sessionManager.getSessionName();
-		const left = [sessionName, this.placeLabel()].filter((part): part is string => part !== undefined && part.length > 0).join(" • ");
+		this.dashboardHit = undefined;
+		this.contextHit = undefined;
+		if (width <= 0) return [""];
+		const sessionName = sanitizeStatusText(stripTerminalSequences(this.session.sessionManager.getSessionName() ?? ""));
+		const place = sanitizeStatusText(stripTerminalSequences(this.placeLabel()));
+		const directory = sanitizeStatusText(
+			stripTerminalSequences(this.session.sessionManager.getCwd().split(/[\\/]/).filter(Boolean).at(-1) ?? place),
+		);
+		const primary = sessionName || directory;
+		const dashboard = width >= 32 ? "[Dashboard]" : width >= 3 ? "[D]" : "D";
+		const primaryBudget = Math.min(visibleWidth(primary), width >= 24 ? 12 : 4);
+		const contextBudget = Math.max(0, width - primaryBudget - visibleWidth(dashboard) - 3);
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
 		const used = contextUsage?.tokens === null || contextUsage?.tokens === undefined ? "?" : formatTokens(contextUsage.tokens);
 		const percent = contextUsage?.percent;
-		const contextPlain =
-			this.contextHover && percent !== null && percent !== undefined
-				? contextMeter(percent)
-				: `${used} / ${formatTokens(contextWindow)}`;
+		const fullContext = `${used} / ${formatTokens(contextWindow)}`;
+		const compactContext = percent === null || percent === undefined ? "ctx?" : `${Math.round(percent)}%`;
+		const meter = percent === null || percent === undefined ? fullContext : contextMeter(percent);
+		const normalContext =
+			visibleWidth(fullContext) <= contextBudget
+				? fullContext
+				: visibleWidth(compactContext) <= contextBudget ? compactContext : "";
+		const expandedWidth = Math.max(visibleWidth(normalContext), visibleWidth(meter));
+		const contextWidth = normalContext
+			? (expandedWidth <= contextBudget ? expandedWidth : visibleWidth(normalContext)) : 0;
+		const contextPlain = this.contextHover && normalContext
+			? (visibleWidth(meter) <= contextWidth ? meter : compactContext) : normalContext;
 		const contextColor =
 			percent !== null && percent !== undefined && percent > 90
 				? "error"
 				: percent !== null && percent !== undefined && percent > 70
 					? "warning"
 					: "dim";
-		const context = theme.fg(contextColor, contextPlain);
+		const context = contextPlain
+			? theme.fg(contextColor, contextPlain) + " ".repeat(Math.max(0, contextWidth - visibleWidth(contextPlain))) : "";
 		const usingSubscription = state.model
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
+		const costLabel = usageTotals.cost || usingSubscription
+			? `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}` : "";
 		const cost =
-			usageTotals.cost || usingSubscription
-				? theme.fg("dim", `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`)
-				: "";
-		const dashboard = "[Dashboard]";
-		const before = [context, cost].filter((part) => part.length > 0).join("  ");
-		const right = before.length > 0 ? `${before}  ${theme.fg("accent", dashboard)}` : theme.fg("accent", dashboard);
-		const contextWidth = visibleWidth(context);
-		const dashboardOffset = visibleWidth(before) + (before.length > 0 ? 2 : 0);
-		const leftWidth = visibleWidth(left);
+			costLabel && visibleWidth(primary) + contextWidth + visibleWidth(costLabel) + visibleWidth(dashboard) + 6 <= width
+				? theme.fg("dim", costLabel) : "";
+		const right = [context, cost, theme.fg("accent", dashboard)].filter(Boolean).join("  ");
 		const rightWidth = visibleWidth(right);
-		let rightStart = 0;
-		let line: string;
-		if (leftWidth + 2 + rightWidth <= width) {
-			rightStart = width - rightWidth;
-			line = theme.fg("dim", left) + " ".repeat(width - leftWidth - rightWidth) + right;
-		} else if (rightWidth <= width) {
-			rightStart = width - rightWidth;
-			line = " ".repeat(width - rightWidth) + right;
-		} else {
-			rightStart = 0;
-			line = truncateToWidth(right, width, "");
-		}
-		const start = rightStart + dashboardOffset;
-		this.dashboardHit = start >= 0 && start + dashboard.length <= width ? { start, end: start + dashboard.length } : undefined;
-		this.contextHit =
-			contextWidth > 0 && rightStart + contextWidth <= width
-				? { start: rightStart, end: rightStart + contextWidth }
-				: undefined;
-		return [line];
+		const available = Math.max(0, width - rightWidth - 1);
+		const candidates = sessionName
+			? [`${sessionName} • ${place}`, `${sessionName} • ${directory}`, sessionName] : [place, directory];
+		const left = candidates.find((text) => visibleWidth(text) <= available) ?? truncateToWidth(primary, available, "…");
+		const rightStart = width - rightWidth;
+		this.dashboardHit = { start: width - visibleWidth(dashboard), end: width };
+		if (contextWidth > 0) this.contextHit = { start: rightStart, end: rightStart + contextWidth };
+		return [theme.fg("dim", left) + " ".repeat(Math.max(0, rightStart - visibleWidth(left))) + right];
 	}
 
 	dashboardHitRange(): { start: number; end: number } | undefined {
@@ -329,7 +340,10 @@ export class FooterComponent implements Component {
 
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 		const statsLineRendered = dimStatsLeft + dimRemainder;
-		const lines = visibleWidth(statsLineRendered) > 0 ? [pwdLine, statsLineRendered] : [pwdLine];
+		const lines = [
+			...(this.showLocation ? [pwdLine] : []),
+			...(visibleWidth(statsLineRendered) > 0 ? [statsLineRendered] : []),
+		];
 		const composerLine = this.composerLine?.();
 		if (composerLine) lines.push(truncateToWidth(theme.fg("dim", composerLine), width, theme.fg("dim", "...")));
 

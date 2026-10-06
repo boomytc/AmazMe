@@ -6,7 +6,7 @@ Pi may ask whether you trust the working folder before loading its project resou
 
 <p align="center"><img src="images/interactive-mode.png" alt="Pi interactive mode showing a conversation, editor, and status information" width="750"></p>
 
-The transcript shows your prompts, Pi's responses, tool calls, results, and errors. You write prompts and commands in the editor. The footer shows the current folder, session, model, context usage, and accumulated usage and cost.
+The transcript shows your prompts, Pi's responses, tool calls, results, and errors. You write prompts and commands in the editor. The top bar owns the session title, folder and branch, context usage, cost, and Dashboard entry. The editor border shows the model and thinking level; the footer keeps usage statistics, routing, and extension statuses without repeating the location.
 
 ## Enter a prompt
 
@@ -69,9 +69,13 @@ After leaving Pi, run `pi --continue` from the same folder to resume its most re
 
 Open the Dashboard with `Ctrl+\` or `/dashboard`. Every session occupies two lines: its title, then the latest user question on that session's active branch. Questions are kept visible without selection, collapsed to one line, and truncated to fit; an empty session shows `No question yet`. Assistant replies and command output do not replace the question.
 
-The background highlight always identifies the current session, independently of pointer hover or keyboard focus. `Up`/`Down` moves the `▌` action cursor without moving that highlight. Hovering reveals `[rename]` and `[x]` on the title line; clicking either line opens the session unless an action button is clicked.
+The background highlight always identifies the current session, independently of pointer hover or keyboard focus. `Up`/`Down` moves the `▌` action cursor without moving that highlight. The same cursor marks group headings and both New/Previous actions. Click a heading to fold or expand it; click either session line to open that session. `Tab` switches between the list and composer. The composer placeholder identifies the reply or new-session target, and its compact Enter hint follows the selected action.
 
-Click `[rename]`, or select a session and press `Ctrl+R`, to edit its title inline. `Enter` saves, `Escape` cancels, and `Ctrl+U` clears the field. The title is saved with the session. On narrow terminals, the `[rename]` button is hidden to leave room for the title, but `Ctrl+R` remains available.
+In fullscreen mode, Dashboard uses an independent scroll position and opens at the current session. Keyboard navigation keeps both selected session lines visible whenever there is room; manual wheel scrolling does not pull the list back to the keyboard cursor. Its header and contextual hints stay fixed, and closing Dashboard restores the previous chat scroll position. Regular mode continues to use terminal scrollback.
+
+Hovering reveals the title line's action buttons in reserved columns, so the title and question do not change their truncation. Dashboard's header shows session counts and activity rather than repeating the folder and branch from the top bar.
+
+Click `[rename]`, or select a session and press `Ctrl+R`, to edit its title inline. `Enter` saves, `Escape` cancels, and `Ctrl+U` clears the field. The title is saved with the session. With fewer than 56 available list columns, the button becomes `[r]`; below 32, it is hidden. Age is also hidden below 32 available list columns, and `[x]` is hidden below 20 to prioritize the title. `Ctrl+R` and `Ctrl+X` remain available at every width; deleting an idle session still requires confirmation.
 
 ## Run a terminal command
 
@@ -92,6 +96,8 @@ Use `/share` to upload the session and get a viewer link. With Radius authentica
 ## Adjust the terminal
 
 Fullscreen mode, the default, keeps the editor and status area fixed while the transcript scrolls within the terminal window. Regular mode uses the terminal's normal scrollback. Choose a mode through `/settings` or `--tui-mode`.
+
+Narrow terminals keep the session title and Dashboard entry ahead of paths and cost. The top-bar Dashboard label becomes `[D]` below 32 columns, and context usage can become a compact percentage. Context details remain available by clicking the context indicator.
 
 Terminal support for mouse input, keyboard shortcuts, and inline images varies. See [Terminal Setup](terminal-setup.md) for platform-specific configuration and [Keybindings](keybindings.md) for every configurable shortcut. Run `/hotkeys` to inspect the shortcuts active in your current session.
 

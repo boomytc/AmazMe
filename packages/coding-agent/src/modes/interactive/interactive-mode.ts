@@ -139,7 +139,7 @@ import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
-import { createChatViewport } from "./chat-viewport.ts";
+import { createChatViewport, createScreenViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -480,6 +480,7 @@ export class InteractiveMode {
 	private documentContainer: Container;
 	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
 	private fullscreenLayoutRoot: Component | undefined;
+	private dashboardLayoutRoot: Component | undefined;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
@@ -686,10 +687,12 @@ export class InteractiveMode {
 		this.defaultEditor.onCopySelection = (text) => {
 			void copyToClipboard(text);
 		};
-		this.defaultEditor.setPlaceholder(() => (this.dashboardView?.isOpen() ? "Start a new session" : undefined));
+		this.defaultEditor.setPlaceholder(() =>
+			this.dashboardView?.isOpen() ? this.dashboardView.composerPlaceholder() : undefined,
+		);
 		this.defaultEditor.setShortcutLine(() =>
 			this.dashboardView?.isOpen()
-				? "\x1b[1mEnter\x1b[22m:create │ \x1b[1mTab\x1b[22m:list"
+				? this.dashboardView.composerShortcutLine()
 				: promptShortcutLine({
 				draft: this.defaultEditor.getText(),
 				queue: this.composer?.queue ?? [],
@@ -704,6 +707,7 @@ export class InteractiveMode {
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
+		this.footer.setShowLocation(false);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.statusBar = new SessionTopBar(
 			this.footer,
@@ -932,7 +936,9 @@ export class InteractiveMode {
 		for (const component of components) tui.addChild(component);
 		if (TuiLayouts.isViewportTUI(tui)) {
 			if (!this.fullscreenLayoutRoot) throw new Error("Fullscreen layout is not initialized");
-			tui.setLayoutRoot(this.fullscreenLayoutRoot);
+			tui.setLayoutRoot(
+				this.dashboardView?.isOpen() ? (this.dashboardLayoutRoot ?? this.fullscreenLayoutRoot) : this.fullscreenLayoutRoot,
+			);
 		}
 	}
 
@@ -2108,6 +2114,7 @@ export class InteractiveMode {
 
 	private applyFullscreenScrollbarSetting(): void {
 		this.transcriptScrollView?.setScrollbar(this.settingsManager.getFullscreenScrollbar());
+		this.dashboardView?.scrollView.setScrollbar(this.settingsManager.getFullscreenScrollbar());
 	}
 
 	/** Lets extension images use the PNG transcoder; tool results register it themselves. */
@@ -3497,6 +3504,16 @@ export class InteractiveMode {
 	private syncDashboard(open: boolean): void {
 		const dashboard = this.dashboard();
 		if (open) {
+			this.dashboardLayoutRoot ??= createScreenViewport(dashboard.viewport, {
+				statusBar: this.statusBar,
+				pendingMessages: this.pendingMessagesContainer,
+				status: this.statusContainer,
+				widgetsAbove: this.widgetContainerAbove,
+				editor: this.editorContainer,
+				widgetsBelow: this.widgetContainerBelow,
+				footer: this.footerContainer,
+			});
+			dashboard.scrollView.setScrollbar(this.settingsManager.getFullscreenScrollbar());
 			this.session.childAgents.close();
 			this.setStartupChrome(false);
 			this.parentTranscript.setOverlay(dashboard);
@@ -3510,6 +3527,9 @@ export class InteractiveMode {
 			syncComposerVisibility(this.editorContainer, this.defaultEditor, this.workSurface.composerHidden);
 			this.footer.setComposerLine(() => undefined);
 			this.ui.setFocus(this.editor);
+		}
+		if (TuiLayouts.isViewportTUI(this.renderer)) {
+			this.renderer.setLayoutRoot(open ? this.dashboardLayoutRoot : this.fullscreenLayoutRoot);
 		}
 		this.ui.requestRender();
 	}

@@ -1,4 +1,4 @@
-import { visibleWidth } from "@amazme/tui";
+import { sliceByColumn, visibleWidth } from "@amazme/tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
@@ -27,6 +27,7 @@ function createSession(options: {
 	provider?: string;
 	reasoning?: boolean;
 	thinkingLevel?: string;
+	contextPercent?: number;
 	usage?: AssistantUsage;
 	branchUsage?: AssistantUsage;
 	compactionUsage?: AssistantUsage;
@@ -89,7 +90,7 @@ function createSession(options: {
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		getContextUsage: () => ({ contextWindow: 200_000, percent: options.contextPercent ?? 12.3 }),
 		routedModel: options.routedModel,
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
@@ -373,6 +374,75 @@ describe("FooterComponent width handling", () => {
 		expect(lines[1]).toBe("body");
 		expect(popup.handleMouse({ type: "click", button: "left", x: 7, y: 0 } as never)).toEqual({ handled: true });
 		expect(closed).toBe(1);
+	});
+
+	it("keeps the Dashboard entry clickable and preserves a Unicode title at narrow widths", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "会话标题".repeat(10) }), createFooterData(1));
+		let opened = 0;
+		const bar = new SessionTopBar(footer, () => { opened += 1; }, () => {});
+		for (const width of [1, 2, 3, 8, 16, 24, 32, 40, 80, 120]) {
+			const line = bar.render(width)[0]!;
+			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+			const hit = footer.dashboardHitRange()!;
+			expect(hit).toBeDefined();
+			expect(stripAnsi(sliceByColumn(line, hit.start, hit.end - hit.start))).toBe(width >= 32 ? "[Dashboard]" : width >= 3 ? "[D]" : "D");
+			bar.handleMouse({ type: "click", button: "left", x: hit.start, y: 0 } as never);
+			if (width >= 16) expect(stripAnsi(line)).toMatch(/^会话/);
+		}
+		expect(opened).toBe(10);
+		expect(bar.render(0)).toEqual([""]);
+		expect(footer.dashboardHitRange()).toBeUndefined();
+	});
+
+	it("keeps context warnings and titles ahead of location and cost on narrow screens", () => {
+		const footer = new FooterComponent(createSession({
+			sessionName: "重要会话标题",
+			contextPercent: 94,
+			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 1.234 } },
+		}), createFooterData(1));
+		const line = stripAnsi(footer.renderTopBar(24)[0]!);
+		expect(line).toContain("重要会话标题");
+		expect(line).toContain("94%");
+		expect(line).toContain("[D]");
+		expect(line).not.toContain("/tmp/project");
+		expect(line).not.toContain("$1.234");
+		expect(footer.contextHitRange()).toBeDefined();
+	});
+
+	it("context hover does not move the title or Dashboard click target", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "Stable title" }), createFooterData(1));
+		for (const width of [24, 40, 100]) {
+			footer.setContextHover(false);
+			const before = stripAnsi(footer.renderTopBar(width)[0]!);
+			const hit = footer.dashboardHitRange();
+			const context = footer.contextHitRange();
+			footer.setContextHover(true);
+			const after = stripAnsi(footer.renderTopBar(width)[0]!);
+			expect(footer.dashboardHitRange()).toEqual(hit);
+			expect(footer.contextHitRange()).toEqual(context);
+			expect(before.slice(0, context?.start)).toBe(after.slice(0, context?.start));
+		}
+	});
+
+	it("can omit repeated location without dropping usage, routing, or extension status", () => {
+		const session = createSession({
+			sessionName: "chat",
+			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+			routedModel: { model: { id: "physical-model" } },
+		});
+		const provider = { ...createFooterData(1), getExtensionStatuses: () => new Map([["status", "Extension status"]]) };
+		const footer = new FooterComponent(session, provider);
+		footer.setShowLocation(false);
+		const lines = footer.render(100).map(stripAnsi);
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("↑100 ↓10");
+		expect(lines[0]).toContain("physical-model");
+		expect(lines[1]).toBe("Extension status");
+		expect(lines.join("\n")).not.toContain("/tmp/project");
+		expect(lines.join("\n")).not.toContain("chat");
+		const empty = new FooterComponent(createSession({ sessionName: "chat" }), createFooterData(1));
+		empty.setShowLocation(false);
+		expect(empty.render(80)).toEqual([]);
 	});
 
 	it("does not mark generic OAuth sign-in as a subscription", () => {

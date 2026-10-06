@@ -3,11 +3,13 @@ import {
 	type Focusable,
 	Input,
 	matchesKey,
+	ScrollView,
 	stripTerminalSequences,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	truncateToWidth,
 	visibleWidth,
+	VStack,
 } from "@amazme/tui";
 import { theme } from "./theme/theme.ts";
 
@@ -66,8 +68,10 @@ export interface DashboardScreenState {
 
 export interface DashboardHit {
 	line: number;
-	kind: "new" | "previous" | "row";
+	kind: "new" | "previous" | "section" | "more" | "row";
 	id?: string;
+	start?: number;
+	end?: number;
 	closeStart?: number;
 	closeEnd?: number;
 	renameStart?: number;
@@ -224,7 +228,7 @@ export function dashboardSlots(agents: readonly DashboardAgent[], state: Dashboa
 		if (key === "idle" && !filtering && !state.idleExpanded) {
 			const fresh = [...rows].sort((a, b) => b.updatedAt - a.updatedAt);
 			const kept = new Set(
-				fresh.filter((agent, index) => index < IDLE_KEEP || now - agent.updatedAt <= IDLE_WINDOW_MS).map((agent) => agent.id),
+				fresh.filter((agent, index) => agent.attached || index < IDLE_KEEP || now - agent.updatedAt <= IDLE_WINDOW_MS).map((agent) => agent.id),
 			);
 			visible = rows.filter((agent) => kept.has(agent.id));
 			const hidden = rows.length - visible.length;
@@ -516,26 +520,28 @@ function singleLine(text: string): string {
 }
 
 function clip(text: string, width: number): string {
-	return truncateToWidth(text, Math.max(0, width), "…");
+	return truncateToWidth(text, Math.max(0, width), width === 1 && text.startsWith("▌") ? "" : "…");
 }
 
-/** Session title, with age and hover actions. Narrow terminals retain Ctrl+R for renaming. */
+/** Reserve action columns before hover so the title never changes its truncation. */
 function sessionRow(
 	label: string,
 	age: string,
 	badge: boolean,
 	columns: number,
-): { body: string; closeStart?: number; renameStart?: number } {
-	const renameBadge = badge && columns >= 32;
-	const tail = badge ? `${age}${renameBadge ? " [rename]" : ""} [x]` : age;
-	const tailWidth = visibleWidth(tail);
-	const room = Math.max(1, columns - tailWidth - 1);
-	const left = truncateToWidth(label, room, "…");
-	const gap = Math.max(1, columns - visibleWidth(left) - tailWidth);
+): { body: string; closeStart?: number; renameStart?: number; renameEnd?: number } {
+	const rename = columns >= 56 ? "[rename]" : columns >= 32 ? "[r]" : "";
+	const actions = columns >= 20 ? `${rename ? `${rename} ` : ""}[x]` : "";
+	const tail = `${columns >= 32 ? `${age} ` : ""}${badge ? actions : " ".repeat(actions.length)}`;
+	const room = Math.max(0, columns - visibleWidth(tail) - (tail ? 1 : 0));
+	const left = clip(label, room);
+	const gap = Math.max(0, columns - visibleWidth(left) - visibleWidth(tail));
+	const renameStart = badge && rename ? columns - actions.length : undefined;
 	return {
 		body: `${left}${" ".repeat(gap)}${tail}`,
-		closeStart: badge ? columns - 3 : undefined,
-		renameStart: renameBadge ? columns - 12 : undefined,
+		closeStart: badge && actions ? columns - 3 : undefined,
+		renameStart,
+		renameEnd: renameStart === undefined ? undefined : renameStart + rename.length,
 	};
 }
 
@@ -551,51 +557,84 @@ function glyph(state: DashboardRowState): string {
 	return "●";
 }
 
-export function renderDashboard(
+function dashboardHeader(agents: readonly DashboardAgent[], width: number): string[] {
+	const working = agents.filter((agent) => agent.state === "working").length;
+	const awaiting = agents.filter((agent) => agent.state === "needs-input").length;
+	const idle = agents.filter((agent) => agent.state === "idle").length;
+	const title = width < 24 ? "Sessions" : `Sessions ${agents.length}`;
+	const variants = [
+		[awaiting ? `${awaiting} awaiting` : "", working ? `${working} working` : "", idle ? `${idle} idle` : ""]
+			.filter(Boolean).join("  "),
+		[awaiting ? `${awaiting} wait` : "", working ? `${working} busy` : ""].filter(Boolean).join("  "),
+		awaiting ? `${awaiting} wait` : working ? `${working} busy` : idle ? `${idle} idle` : "",
+	];
+	const stats = variants.find((text) => text && visibleWidth(title) + 2 + visibleWidth(text) <= width) ?? "";
+	const line = title + (stats ? " ".repeat(width - visibleWidth(title) - visibleWidth(stats)) + stats : "");
+	return [clip(line, width), ""];
+}
+
+function dashboardFooter(state: DashboardScreenState, width: number): string[] {
+	let text = state.notice ?? "";
+	if (!text && state.renameFor) text = width >= 40 ? "Enter save · Esc cancel · Ctrl+U clear" : "Enter save · Esc cancel";
+	else if (!text && state.search) text = `Search: ${state.query}`;
+	else if (!text && state.help) text = "↑/↓ move · Enter open · Ctrl+R rename · Ctrl+X close";
+	else if (!text && state.filter) text = `Filter: ${state.filter}`;
+	else if (!text && state.reply) text = `Reply: ${singleLine(state.reply)}`;
+	else if (!text && state.draft) text = `New: ${singleLine(state.draft)}`;
+	return [clip(text, width)];
+}
+
+function dashboardBody(
 	agents: readonly DashboardAgent[],
 	state: DashboardScreenState,
-	place: DashboardPlace,
 	now: number,
 	width: number,
 	hits?: DashboardHit[],
 	renameLine?: string,
+	lineOffset = 0,
 ): string[] {
 	const slots = dashboardSlots(agents, state, now);
 	clampSelection(state, slots);
 	const byId = new Map(agents.map((agent) => [agent.id, agent]));
-	const counts = { "needs-input": 0, working: 0, idle: 0 };
-	for (const agent of agents) {
-		if (agent.state === "needs-input" || agent.state === "working" || agent.state === "idle") counts[agent.state] += 1;
-	}
-	const where = [place.branch, place.cwd].filter((part): part is string => part !== null && part.length > 0).join(" ");
-	const chipParts: string[] = [];
-	if (counts["needs-input"] > 0) chipParts.push(`◆ ${counts["needs-input"]} awaiting`);
-	if (counts.working > 0) chipParts.push(`⋮ ${counts.working} working`);
-	if (counts.idle > 0) chipParts.push(`◇ ${counts.idle} idle`);
-	const chips = chipParts.join("  ");
-	const headerGap = Math.max(1, width - where.length - chips.length);
-	const lines = [clip(`${where}${" ".repeat(headerGap)}${chips}`, width), ""];
-	const remember = (hit: DashboardHit) => hits?.push(hit);
+	const lines: string[] = [];
+	const remember = (hit: DashboardHit) => hits?.push({ start: 0, end: width, ...hit, line: hit.line + lineOffset });
 	for (const slot of slots) {
 		const id = slotId(slot);
 		const selected = id === state.selected;
 		if (slot.kind === "actions") {
-			const create = "+ New session";
-			const previous = "Open Previous /resume";
-			const gap = Math.max(1, width - create.length - previous.length);
+			const labels = width >= 38
+				? ["+ New session", "Open Previous /resume"]
+				: width >= 18 ? ["+ New", "Previous"] : ["+", "Prev"];
+			const create = `${selected && state.column === 0 ? "▌" : width === 1 ? "" : " "}${labels[0]}`;
+			const previous = `${selected && state.column === 1 ? "▌" : width === 1 ? "" : " "}${labels[1]}`;
 			const line = lines.length;
-			lines.push(clip(`${selected && state.column === 0 ? "▌" : " "}${create}${" ".repeat(Math.max(1, gap - 1))}${previous}`, width));
-			remember({ line, kind: "new", closeEnd: create.length + 1 });
-			remember({ line, kind: "previous", closeStart: Math.max(0, width - previous.length) });
+			if (visibleWidth(create) + 1 + visibleWidth(previous) <= width) {
+				const start = width - visibleWidth(previous);
+				lines.push(create + " ".repeat(start - visibleWidth(create)) + previous);
+				remember({ line, kind: "new", end: visibleWidth(create) });
+				remember({ line, kind: "previous", start });
+			} else {
+				lines.push(clip(create, width), clip(previous, width));
+				remember({ line, kind: "new" });
+				remember({ line: line + 1, kind: "previous" });
+			}
 			continue;
 		}
 		if (slot.kind === "section") {
 			const arrow = slot.collapsed ? "▸" : "▾";
-			lines.push(clip(`${arrow} ${slot.title} ${slot.count}`, width));
+			const prefix = `${selected ? "▌" : " "}${arrow} `;
+			const count = ` ${slot.count}`;
+			const title = singleLine(slot.title);
+			const room = Math.max(0, width - visibleWidth(prefix) - visibleWidth(count));
+			const label = state.grouping === "directory" && visibleWidth(title) > room
+				? (title.split(/[\\/]/).filter(Boolean).at(-1) ?? title) : title;
+			remember({ line: lines.length, kind: "section", id: slot.key });
+			lines.push(clip(prefix + clip(label, room) + count, width));
 			lines.push(theme.fg("dim", "─".repeat(Math.max(0, width))));
 			continue;
 		}
 		if (slot.kind === "more") {
+			remember({ line: lines.length, kind: "more" });
 			lines.push(clip(`${selected ? "▌" : " "}${slot.count} more`, width));
 			continue;
 		}
@@ -617,17 +656,54 @@ export function renderDashboard(
 			closeStart: renaming ? undefined : row.closeStart,
 			closeEnd: renaming || row.closeStart === undefined ? undefined : row.closeStart + 3,
 			renameStart: renaming ? undefined : row.renameStart,
-			renameEnd: renaming || row.renameStart === undefined ? undefined : row.renameStart + 8,
+			renameEnd: renaming ? undefined : row.renameEnd,
 		});
 		const question = singleLine(agent.lastQuestion);
 		lines.push(bar(theme.fg("muted", `  ${question || "No question yet"}`), width, agent.attached));
 		remember({ line: lines.length - 1, kind: "row", id: agent.id });
 	}
-	if (state.help) lines.push(clip("↑/↓ move  Enter open  Tab input  Ctrl+R rename  Ctrl+X close", width));
-	if (state.renameFor) lines.push(clip("Rename title · Enter save · Esc cancel · Ctrl+U clear", width));
-	else if (state.search) lines.push(clip(`Search: ${state.query}`, width));
-	if (state.notice) lines.push(clip(state.notice, width));
 	return lines.map((line) => (line.includes("\x1b") ? line : clip(line, width)));
+}
+
+export function renderDashboard(
+	agents: readonly DashboardAgent[],
+	state: DashboardScreenState,
+	_place: DashboardPlace,
+	now: number,
+	width: number,
+	hits?: DashboardHit[],
+	renameLine?: string,
+): string[] {
+	const header = dashboardHeader(agents, width);
+	return [
+		...header,
+		...dashboardBody(agents, state, now, width, hits, renameLine, header.length),
+		...dashboardFooter(state, width),
+	];
+}
+
+/** The layout callback runs after content and viewport sizes are known, before clipping. */
+class DashboardScrollView extends ScrollView {
+	private readonly revealSelection: (resized: boolean) => void;
+
+	constructor(body: Component, revealSelection: (resized: boolean) => void) {
+		super(body, {
+			follow: "none", primary: true, overscroll: "contain", scrollbar: "auto",
+			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
+			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
+		});
+		this.revealSelection = revealSelection;
+	}
+
+	override getContentWidth(width: number): number {
+		return Math.max(1, width - 1);
+	}
+
+	override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
+		const resized = this.viewportHeight !== viewportHeight;
+		super.updateLayout(contentHeight, viewportHeight, requestRender);
+		this.revealSelection(resized);
+	}
 }
 
 export interface DashboardActions {
@@ -657,6 +733,10 @@ export class DashboardView implements Component, Focusable {
 	private readonly placeOf: () => DashboardPlace;
 	private readonly now: () => number;
 	private hits: DashboardHit[] = [];
+	private revealRequested = true;
+	private selectedRange = "";
+	readonly scrollView: ScrollView;
+	readonly viewport: Component;
 
 	constructor(
 		actions: DashboardActions,
@@ -670,6 +750,31 @@ export class DashboardView implements Component, Focusable {
 		this.placeOf = placeOf;
 		this.state = defaultDashboardState(prefs);
 		this.now = now;
+		const owner = this;
+		const body: Component & Focusable = {
+			get focused() {
+				return owner.focused;
+			},
+			set focused(value: boolean) {
+				owner.focused = value;
+			},
+			render: (width) => this.renderBody(width),
+			invalidate: () => this.invalidate(),
+			handleInput: (data) => this.handleInput(data),
+			handleMouse: (event) => this.handleMouse(event),
+		};
+		this.scrollView = new DashboardScrollView(body, (resized) => this.revealSelection(resized));
+		this.viewport = new VStack([
+			{
+				component: { render: (width) => dashboardHeader(this.agentsOf(), width), invalidate() {} },
+				shrink: 1, minSize: 0,
+			},
+			{ component: this.scrollView, basis: 0, grow: 1, minSize: 1 },
+			{
+				component: { render: (width) => dashboardFooter(this.state, width), invalidate() {} },
+				shrink: 0, minSize: 1,
+			},
+		]);
 	}
 
 	isOpen(): boolean {
@@ -678,6 +783,24 @@ export class DashboardView implements Component, Focusable {
 
 	shortcutLine(): string {
 		return this.state.renameFor ? "Enter save · Esc cancel · Ctrl+U clear" : dashboardShortcutLine();
+	}
+
+	composerShortcutLine(): string {
+		const chip = (key: string, action: string) => `\x1b[1m${key}\x1b[22m:${action}`;
+		if (this.state.renameFor) return chip("Ctrl+\\", "dashboard");
+		let action = "toggle";
+		if (this.state.search) action = "filter";
+		else if (this.state.selected === "actions") {
+			action = this.state.column === 1 ? "previous" : this.state.draft.trim() ? "send" : "create";
+		} else if (this.state.selected.startsWith("row:")) action = this.state.reply.trim() ? "reply" : "open";
+		return [chip("Enter", action), chip("Tab", this.focused ? "input" : "list")].join(" │ ");
+	}
+
+	composerPlaceholder(): string {
+		if (this.state.renameFor) return "Editing title above";
+		if (this.state.search) return "Search sessions";
+		const agent = selectedAgent(this.agentsOf(), this.state);
+		return agent ? `Reply to ${singleLine(agent.name)}` : "Start a new session";
 	}
 
 	toggle(): void {
@@ -693,6 +816,9 @@ export class DashboardView implements Component, Focusable {
 
 	handleInput(data: string): void {
 		if (this.state.open && !this.state.renameFor && matchesKey(data, "tab")) {
+			this.state.focus = "input";
+			this.state.notice = undefined;
+			clearArm(this.state);
 			this.actions.focusInput?.();
 			return;
 		}
@@ -702,11 +828,55 @@ export class DashboardView implements Component, Focusable {
 	/** Editor route. Returns true when the dashboard consumed the key. */
 	handleKey(data: string): boolean {
 		if (!this.state.open && !matchesKey(data, "ctrl+\\")) return false;
+		if (this.state.open && !this.state.renameFor && matchesKey(data, "tab")) {
+			this.state.focus = "list";
+			this.state.notice = undefined;
+			clearArm(this.state);
+			this.revealRequested = true;
+			this.actions.focusList?.();
+			return true;
+		}
 		this.press(data);
 		return true;
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.revealRequested = true;
+	}
+
+	private renderBody(width: number): string[] {
+		this.hits = [];
+		if (this.renameInput) this.renameInput.focused = this.focused;
+		return dashboardBody(
+			this.agentsOf(),
+			this.state,
+			this.now(),
+			width,
+			this.hits,
+			this.renameInput?.render(width)[0],
+		).map((line) => theme.fg("text", line));
+	}
+
+	private revealSelection(resized: boolean): void {
+		const selected = this.state.selected;
+		const rows = this.hits.filter((hit) => {
+			if (selected === "actions") return hit.kind === (this.state.column === 0 ? "new" : "previous");
+			if (selected === "more-idle") return hit.kind === "more";
+			return selected === `${hit.kind}:${hit.id}`;
+		});
+		if (rows.length === 0) return;
+		const start = rows[0]!.line;
+		const end = rows.at(-1)!.line + 1;
+		const range = `${selected}:${start}:${end}`;
+		if (!this.revealRequested && !resized && range === this.selectedRange) return;
+		this.selectedRange = range;
+		this.revealRequested = false;
+		const height = this.scrollView.viewportHeight;
+		if (height <= 0) return;
+		const top = this.scrollView.scrollTop;
+		if (start < top) this.scrollView.scrollTo(start);
+		else if (end > top + height) this.scrollView.scrollTo(end - start > height ? start : end - height);
+	}
 
 	render(width: number): string[] {
 		if (!this.state.open) return [];
@@ -720,7 +890,9 @@ export class DashboardView implements Component, Focusable {
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (!this.state.open || event.y < 0) return undefined;
-		const hit = this.hits.find((item) => item.line === event.y);
+		const hit = this.hits.find((item) =>
+			item.line === event.y && event.x >= (item.start ?? 0) && event.x < (item.end ?? event.width),
+		);
 		if (this.renameInput) {
 			const title = this.hits.find((item) => item.kind === "row" && item.id === this.state.renameFor);
 			if (title?.line === event.y) {
@@ -735,13 +907,24 @@ export class DashboardView implements Component, Focusable {
 			return { handled: true, render: true };
 		}
 		if (event.type !== "click" || event.button !== "left" || !hit) return undefined;
-		if (hit.kind === "new" && (hit.closeEnd === undefined || event.x < hit.closeEnd)) {
-			this.actions.create();
+		if (hit.kind === "new" || hit.kind === "previous") {
+			this.state.selected = "actions";
+			this.state.column = hit.kind === "new" ? 0 : 1;
+			if (hit.kind === "new") this.actions.create();
+			else this.actions.openPrevious();
 			return { handled: true };
 		}
-		if (hit.kind === "previous" && (hit.closeStart === undefined || event.x >= hit.closeStart)) {
-			this.actions.openPrevious();
-			return { handled: true };
+		if (hit.kind === "section" || hit.kind === "more") {
+			this.state.selected = hit.kind === "section" ? `section:${hit.id}` : "more-idle";
+			if (hit.kind === "section" && hit.id) {
+				this.state.collapsed = this.state.collapsed.includes(hit.id)
+					? this.state.collapsed.filter((key) => key !== hit.id) : [...this.state.collapsed, hit.id];
+			} else this.state.idleExpanded = !this.state.idleExpanded;
+			this.state.focus = "list";
+			this.state.notice = undefined;
+			this.revealRequested = true;
+			clearArm(this.state);
+			return { handled: true, render: true, focus: true };
 		}
 		if (hit.kind !== "row" || !hit.id) return undefined;
 		if (hit.renameStart !== undefined && hit.renameEnd !== undefined && event.x >= hit.renameStart && event.x < hit.renameEnd) {
@@ -796,6 +979,7 @@ export class DashboardView implements Component, Focusable {
 		};
 		input.onEscape = () => this.cancelRename();
 		this.renameInput = input;
+		this.revealRequested = true;
 		this.actions.focusList?.();
 	}
 
@@ -808,7 +992,22 @@ export class DashboardView implements Component, Focusable {
 			return;
 		}
 		const wasOpen = this.state.open;
+		const previousSelection = this.state.selected;
 		const effect = pressDashboard(this.state, this.agentsOf(), data, this.now());
+		if (!wasOpen && this.state.open) {
+			const current = this.agentsOf().find((agent) => agent.attached && matchesAgent(agent, activeQuery(this.state)));
+			if (current) {
+				const key = this.state.grouping === "directory" ? current.cwd || "." : current.state;
+				this.state.collapsed = this.state.collapsed.filter((item) => item !== key);
+				this.state.selected = `row:${current.id}`;
+				this.state.reply = "";
+			}
+			this.scrollView.scrollToStart();
+			this.revealRequested = true;
+		}
+		if (previousSelection !== this.state.selected || matchesKey(data, "left") || matchesKey(data, "right")) {
+			this.revealRequested = true;
+		}
 		if (!this.state.open) this.cancelRename();
 		else if (this.state.renameFor && !this.renameInput) this.startRenameInput();
 		if (this.state.open !== wasOpen) this.actions.opened(this.state.open);

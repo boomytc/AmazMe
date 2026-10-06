@@ -29,6 +29,11 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
 		...(options.scrollbarTrackStyle === undefined ? {} : { scrollbarTrackStyle: options.scrollbarTrackStyle }),
 		...(options.scrollbarThumbStyle === undefined ? {} : { scrollbarThumbStyle: options.scrollbarThumbStyle }),
 	});
+	return { transcript, root: createScreenViewport(transcript, options) };
+}
+
+/** Keep shared chrome while giving each screen its own bounded content and scroll state. */
+export function createScreenViewport(content: Component, options: Omit<ChatViewportOptions, "document">): Component {
 	const dock = new VStack([
 		{ component: options.pendingMessages, shrink: 1, minSize: 0 },
 		{ component: options.status, shrink: 1, minSize: 0 },
@@ -37,12 +42,9 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
 		...(options.widgetsBelow === undefined ? [] : [{ component: options.widgetsBelow, shrink: 1, minSize: 0 }]),
 		{ component: options.footer, shrink: 1, minSize: 0 },
 	]);
-	return {
-		transcript,
-		root: new VStack([
-			...(options.statusBar === undefined ? [] : [{ component: options.statusBar, shrink: 1, minSize: 0 }]),
-			{ component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
-			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
-		]),
-	};
+	return new VStack([
+		...(options.statusBar === undefined ? [] : [{ component: options.statusBar, shrink: 1, minSize: 0 }]),
+		{ component: content, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+		{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
+	]);
 }

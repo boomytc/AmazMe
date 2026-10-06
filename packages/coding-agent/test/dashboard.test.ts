@@ -1,4 +1,4 @@
-import { CURSOR_MARKER, stripTerminalSequences, type TuiMouseEvent, visibleWidth } from "@amazme/tui";
+import { CURSOR_MARKER, sliceByColumn, stripTerminalSequences, type TuiMouseEvent, visibleWidth } from "@amazme/tui";
 import { beforeAll, describe, expect, test } from "vitest";
 import {
 	type DashboardAgent,
@@ -91,7 +91,8 @@ describe("agent dashboard", () => {
 		expect(state.open).toBe(true);
 		expect(state.focus).toBe("list");
 		let rendered = renderDashboard(agents, state, { branch: "main", cwd: "~/repo" }, NOW, 80).join("\n");
-		expect(rendered).toContain("main ~/repo");
+		expect(rendered).toContain("Sessions 2");
+		expect(rendered).not.toContain("main ~/repo");
 		expect(rendered).toContain("1 working");
 		expect(rendered).toContain("1 idle");
 		expect(rendered).toContain("+ New session");
@@ -221,8 +222,6 @@ describe("agent dashboard", () => {
 		let agents = [agent("live", { attached: true, lastQuestion: "live question" }), agent("saved")];
 		const view = viewFor(() => agents);
 		view.toggle();
-		view.handleKey("\x1b[B");
-		view.handleKey("\x1b[B");
 		const background = theme.getBgAnsi("selectedBg");
 		expect(view.render(80).filter((line) => line.includes(background))).toHaveLength(2);
 
@@ -242,8 +241,6 @@ describe("agent dashboard", () => {
 		const agents = [agent("live", { attached: true, lastQuestion: "live question" }), agent("saved", { lastQuestion: "saved question" })];
 		const view = viewFor(() => agents, seen);
 		view.toggle();
-		view.handleKey("\x1b[B");
-		view.handleKey("\x1b[B");
 		view.handleKey("h");
 		view.handleKey("i");
 		const before = view.render(80);
@@ -389,8 +386,6 @@ describe("agent dashboard", () => {
 		const seen: string[] = [];
 		const view = viewFor(() => [agent("live", { attached: true }), agent("saved")], seen);
 		view.toggle();
-		view.handleKey("\x1b[B");
-		view.handleKey("\x1b[B");
 		const before = view.render(80);
 		const row = before.findIndex((line) => line.includes(" saved"));
 		view.focused = false;
@@ -428,6 +423,107 @@ describe("agent dashboard", () => {
 		view.toggle();
 		expect(view.shortcutLine()).not.toContain("Enter save");
 		expect(view.render(80).join("\n")).not.toContain("Rename title");
+	});
+
+	test("marks both action columns and section focus, with non-overlapping mouse targets at every width", () => {
+		for (const width of [1, 8, 16, 24, 32, 40, 80]) {
+			const state = defaultDashboardState();
+			state.open = true;
+			state.column = 1;
+			const hits: DashboardHit[] = [];
+			const lines = renderDashboard([agent("saved")], state, { branch: null, cwd: "/repo" }, NOW, width, hits);
+			const previous = hits.find((hit) => hit.kind === "previous")!;
+			const create = hits.find((hit) => hit.kind === "new")!;
+			expect(stripTerminalSequences(lines[previous.line]!).slice(previous.start ?? 0)).toMatch(/^▌/);
+			if (create.line === previous.line) expect(create.end).toBeLessThanOrEqual(previous.start!);
+			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+
+			state.selected = "section:idle";
+			expect(renderDashboard([agent("saved")], state, { branch: null, cwd: "/repo" }, NOW, width).some((line) => stripTerminalSequences(line).startsWith("▌"))).toBe(true);
+		}
+	});
+
+	test("clicks New and Previous independently and does not activate the gap between them", () => {
+		const seen: string[] = [];
+		const view = viewFor(() => [], seen);
+		view.toggle();
+		const lines = view.render(80);
+		const row = lines.findIndex((line) => line.includes("New session"));
+		view.handleMouse(mouse("click", 2, row));
+		view.handleMouse(mouse("click", 70, row));
+		expect(view.handleMouse(mouse("click", 30, row))).toBeUndefined();
+		expect(seen).toEqual(["opened", "create", "previous"]);
+	});
+
+	test("section clicks fold and expand; opening focuses and reveals the attached session", () => {
+		const view = viewFor(() => [agent("live", { attached: true })]);
+		view.toggle();
+		let lines = view.render(80);
+		expect(stripTerminalSequences(lines.find((line) => line.includes(" live"))!)).toMatch(/^▌/);
+		const section = lines.findIndex((line) => line.includes("Idle"));
+		view.handleMouse(mouse("click", 3, section));
+		lines = view.render(80);
+		expect(stripTerminalSequences(lines[section]!)).toMatch(/^▌▸/);
+		expect(lines.join("\n")).not.toContain("No question yet");
+		view.handleMouse(mouse("click", 3, section));
+		expect(view.render(80).join("\n")).toContain("No question yet");
+	});
+
+	test("section clicks fold during search instead of silently submitting the search", () => {
+		const view = viewFor(() => [agent("saved")]);
+		view.toggle();
+		view.handleKey("\x1f");
+		const lines = view.render(80);
+		const section = lines.findIndex((line) => line.includes("Idle"));
+		view.handleMouse(mouse("click", 3, section));
+		const folded = view.render(80);
+		expect(stripTerminalSequences(folded[section]!)).toMatch(/^▌▸/);
+		expect(folded.join("\n")).toContain("Search:");
+		expect(folded.join("\n")).not.toContain("No question yet");
+	});
+
+	test("hover keeps long titles byte-for-byte stable before the reserved action area", () => {
+		for (const width of [16, 24, 40, 80]) {
+			const state = defaultDashboardState();
+			const title = "很长的会话标题和更多内容".repeat(3);
+			const agents = [agent("saved", { name: title })];
+			const beforeHits: DashboardHit[] = [];
+			const before = renderDashboard(agents, state, { branch: null, cwd: "/repo" }, NOW, width, beforeHits);
+			state.hoverId = "saved";
+			const hits: DashboardHit[] = [];
+			const hovered = renderDashboard(agents, state, { branch: null, cwd: "/repo" }, NOW, width, hits);
+			const hit = hits.find((item) => item.kind === "row")!;
+			const boundary = hit.renameStart ?? hit.closeStart ?? width;
+			expect(stripTerminalSequences(sliceByColumn(hovered[hit.line]!, 0, boundary))).toBe(stripTerminalSequences(sliceByColumn(before[hit.line]!, 0, boundary)));
+			expect(hovered[hit.line + 1]).toBe(before[hit.line + 1]);
+			if (width === 40) expect(hovered[hit.line]).toContain("[r] [x]");
+			if (width === 16) expect(hit.closeStart).toBeUndefined();
+		}
+	});
+
+	test("composer placeholder names the focused reply, new-session, and rename targets", () => {
+		const view = viewFor(() => [agent("live", { attached: true })]);
+		view.toggle();
+		expect(view.composerPlaceholder()).toBe("Reply to live");
+		expect(stripTerminalSequences(view.composerShortcutLine())).toContain("Enter:open");
+		view.handleKey("\x12");
+		expect(view.composerPlaceholder()).toBe("Editing title above");
+		expect(stripTerminalSequences(view.composerShortcutLine())).toBe("Ctrl+\\:dashboard");
+		view.handleKey("\x1b");
+		view.handleKey("\x1b");
+		expect(view.composerPlaceholder()).toBe("Start a new session");
+		expect(stripTerminalSequences(view.composerShortcutLine())).toContain("Enter:create");
+	});
+
+	test("header prioritizes status over location and narrow footer keeps rename controls", () => {
+		const state = defaultDashboardState();
+		state.open = true;
+		state.renameFor = "live";
+		const lines = renderDashboard([agent("live", { attached: true, state: "working" })], state, { branch: "very-long-branch", cwd: "/very/long/path" }, NOW, 24);
+		expect(lines[0]).toContain("1 working");
+		expect(lines.join("\n")).not.toContain("/very/long/path");
+		expect(lines.at(-1)).toContain("Enter save");
+		expect(lines.at(-1)).toContain("Esc cancel");
 	});
 
 	test("records the same outcomes on a second pass", () => {
