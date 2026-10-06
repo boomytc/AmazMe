@@ -65,6 +65,10 @@ Use `/tree`, `/fork`, or `/clone` when you want to explore another approach with
 
 After leaving Pi, run `pi --continue` from the same folder to resume its most recent session.
 
+## Browse sessions in the Dashboard
+
+Open the Dashboard with `Ctrl+\` or `/dashboard`. Its background highlight always identifies the current session, independently of pointer hover or keyboard focus. `Up`/`Down` moves the `▌` action cursor and preview without moving that highlight. Hovering only reveals the row's `[x]` close button; clicking a row opens that session.
+
 ## Run a terminal command
 
 Prefix a command with `!` to run it and include its output in the conversation:

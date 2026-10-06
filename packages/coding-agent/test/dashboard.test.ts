@@ -1,3 +1,5 @@
+import { stripVTControlCharacters } from "node:util";
+import { type TuiMouseEvent, visibleWidth } from "@amazme/tui";
 import { beforeAll, describe, expect, test } from "vitest";
 import {
 	type DashboardAgent,
@@ -8,7 +10,7 @@ import {
 	readDashboardPrefs,
 	renderDashboard,
 } from "../src/modes/interactive/dashboard.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 const NOW = 1_700_000_000_000;
 
@@ -31,6 +33,45 @@ function effects(agents: DashboardAgent[], keys: string[]): DashboardEffect[] {
 	const seen: DashboardEffect[] = [];
 	for (const key of keys) seen.push(pressDashboard(state, agents, key, NOW));
 	return seen;
+}
+
+function viewFor(agentsOf: () => readonly DashboardAgent[], seen: string[] = []): DashboardView {
+	return new DashboardView(
+		{
+			exit: () => seen.push("exit"),
+			create: () => seen.push("create"),
+			openPrevious: () => seen.push("previous"),
+			open: (id) => seen.push(`open:${id}`),
+			dispatch: (text) => seen.push(`dispatch:${text}`),
+			reply: (id, text) => seen.push(`reply:${id}:${text}`),
+			rename: (id, name) => seen.push(`rename:${id}:${name}`),
+			stop: (id) => seen.push(`stop:${id}`),
+			delete: (id) => seen.push(`delete:${id}`),
+			status: (text) => seen.push(`status:${text}`),
+			prefs: () => seen.push("prefs"),
+			opened: (open) => seen.push(open ? "opened" : "closed"),
+		},
+		agentsOf,
+		() => ({ branch: "main", cwd: "~/repo" }),
+		undefined,
+		() => NOW,
+	);
+}
+
+function mouse(type: "move" | "click", x: number, y: number): TuiMouseEvent {
+	return {
+		type,
+		button: type === "click" ? "left" : "none",
+		x,
+		y,
+		screenX: x,
+		screenY: y,
+		width: 80,
+		height: 24,
+		shift: false,
+		alt: false,
+		ctrl: false,
+	};
 }
 
 describe("agent dashboard", () => {
@@ -128,26 +169,7 @@ describe("agent dashboard", () => {
 
 	test("the view consumes ctrl+backslash and leaves other keys alone while closed", () => {
 		const seen: string[] = [];
-		const view = new DashboardView(
-			{
-				exit: () => seen.push("exit"),
-				create: () => seen.push("create"),
-				openPrevious: () => seen.push("previous"),
-				open: () => seen.push("open"),
-				dispatch: () => seen.push("dispatch"),
-				reply: () => seen.push("reply"),
-				rename: () => seen.push("rename"),
-				stop: () => seen.push("stop"),
-				delete: () => seen.push("delete"),
-				status: () => seen.push("status"),
-				prefs: () => seen.push("prefs"),
-				opened: (open) => seen.push(open ? "opened" : "closed"),
-			},
-			() => [agent("live", { state: "working", attached: true, peek: "hello" })],
-			() => ({ branch: "main", cwd: "~/repo" }),
-			undefined,
-			() => NOW,
-		);
+		const view = viewFor(() => [agent("live", { state: "working", attached: true, peek: "hello" })], seen);
 		expect(view.handleKey("\r")).toBe(false);
 		expect(view.handleKey("\x1c")).toBe(true);
 		expect(view.isOpen()).toBe(true);
@@ -159,43 +181,115 @@ describe("agent dashboard", () => {
 		});
 	});
 
+	test.each(["dark", "light"] as const)("highlights only the current session in the %s theme", (themeName) => {
+		initTheme(themeName);
+		try {
+			const agents = [
+				agent("live", { name: "当前会话", cwd: "/repo/中文", attached: true, peek: "live preview" }),
+				agent("saved", { name: "另一会话", cwd: "/repo/中文", peek: "saved preview" }),
+			];
+			const state = defaultDashboardState();
+			state.open = true;
+			state.hoverId = "saved";
+			const background = theme.getBgAnsi("selectedBg");
+			for (const width of [16, 40, 80]) {
+				for (const selected of ["actions", "row:live", "row:saved", "section:idle"]) {
+					state.selected = selected;
+					const lines = renderDashboard(agents, state, { branch: "main", cwd: "~/repo" }, NOW, width);
+					const liveRow = lines.find((line) => line.includes("当前会话"));
+					const savedRow = lines.findIndex((line) => line.includes("另一"));
+					expect(liveRow).toContain(background);
+					expect(lines[savedRow]).not.toContain(background);
+					expect(lines.filter((line) => line.includes(background))).toHaveLength(selected === "row:live" ? 2 : 1);
+					if (selected === "row:saved") {
+						expect(stripVTControlCharacters(lines[savedRow]!)).toMatch(/^▌/);
+						expect(lines[savedRow + 1]).toContain("saved preview");
+						expect(lines[savedRow + 1]).not.toContain(background);
+					}
+					for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+				}
+			}
+		} finally {
+			initTheme("dark");
+		}
+	});
+
+	test("refreshes the highlighted session from the current attachment, not the action cursor", () => {
+		let agents = [agent("live", { attached: true, peek: "live preview" }), agent("saved")];
+		const view = viewFor(() => agents);
+		view.toggle();
+		view.handleKey("\x1b[B");
+		view.handleKey("\x1b[B");
+		const background = theme.getBgAnsi("selectedBg");
+		expect(view.render(80).filter((line) => line.includes(background))).toHaveLength(2);
+
+		agents = agents.map((item) => ({ ...item, attached: item.id === "saved" }));
+		const lines = view.render(80);
+		expect(lines.find((line) => line.includes("live ·"))).not.toContain(background);
+		expect(lines.find((line) => line.includes("live preview"))).not.toContain(background);
+		expect(lines.find((line) => line.includes("saved ·"))).toContain(background);
+		expect(lines.filter((line) => line.includes(background))).toHaveLength(1);
+
+		agents = agents.map((item) => ({ ...item, attached: false }));
+		expect(view.render(80).filter((line) => line.includes(background))).toEqual([]);
+	});
+
+	test("hover reveals only the close badge without changing preview, reply, or rename targets", () => {
+		const seen: string[] = [];
+		const agents = [agent("live", { attached: true, peek: "live preview" }), agent("saved", { peek: "saved preview" })];
+		const view = viewFor(() => agents, seen);
+		view.toggle();
+		view.handleKey("\x1b[B");
+		view.handleKey("\x1b[B");
+		view.handleKey("h");
+		view.handleKey("i");
+		const before = view.render(80);
+		const row = before.findIndex((line) => line.includes("saved ·"));
+		expect(row).toBeGreaterThan(0);
+		expect(view.handleMouse(mouse("move", 2, row))).toEqual({ handled: true, render: true });
+		const hovered = view.render(80);
+		expect(hovered).toHaveLength(before.length);
+		expect(hovered[row]).toContain("[x]");
+		expect(hovered[row]).not.toContain(theme.getBgAnsi("selectedBg"));
+		expect(hovered.join("\n")).not.toContain("saved preview");
+		expect(hovered.filter((line) => line.includes(theme.getBgAnsi("selectedBg")))).toEqual(
+			before.filter((line) => line.includes(theme.getBgAnsi("selectedBg"))),
+		);
+		expect(view.handleMouse(mouse("move", 2, row))).toEqual({ handled: true, render: false });
+		view.handleMouse(mouse("move", 2, 0));
+		expect(view.render(80)).toEqual(before);
+		view.handleKey("\r");
+		expect(seen).toEqual(["opened", "reply:live:hi"]);
+
+		view.handleMouse(mouse("move", 2, row));
+		view.handleKey("\x12");
+		expect(view.render(80).join("\n")).toContain("Rename: live");
+		view.handleKey("\r");
+		expect(seen.at(-1)).toBe("rename:live:live");
+	});
+
 	test("click opens a session and the close badge takes two clicks", () => {
 		const seen: string[] = [];
 		const saved = agent("saved", { name: "notes", peek: "hello notes", cwd: "/repo/notes" });
-		const view = new DashboardView(
-			{
-				exit: () => seen.push("exit"),
-				create: () => seen.push("create"),
-				openPrevious: () => seen.push("previous"),
-				open: (id) => seen.push(`open:${id}`),
-				dispatch: () => seen.push("dispatch"),
-				reply: () => seen.push("reply"),
-				rename: () => seen.push("rename"),
-				stop: () => seen.push("stop"),
-				delete: (id) => seen.push(`delete:${id}`),
-				status: () => seen.push("status"),
-				prefs: () => seen.push("prefs"),
-				opened: () => seen.push("opened"),
-			},
-			() => [saved],
-			() => ({ branch: "main", cwd: "~/repo" }),
-			undefined,
-			() => NOW,
-		);
+		const view = viewFor(() => [agent("live", { attached: true }), saved], seen);
 		view.toggle();
 		let lines = view.render(80);
 		const row = lines.findIndex((line) => line.includes("notes"));
 		expect(row).toBeGreaterThan(0);
-		view.handleMouse({ type: "move", button: "none", x: 2, y: row } as never);
+		view.handleMouse(mouse("move", 2, row));
 		lines = view.render(80);
 		expect(lines[row] ?? "").toContain("[x]");
-		expect(lines[row + 1] ?? "").toContain("hello notes");
-		view.handleMouse({ type: "click", button: "left", x: 2, y: row } as never);
+		expect(lines.join("\n")).not.toContain("hello notes");
+		view.handleMouse(mouse("click", 2, row));
 		expect(seen).toContain("open:saved");
-		view.handleMouse({ type: "click", button: "left", x: 78, y: row } as never);
+		lines = view.render(80);
+		expect(lines[row + 1] ?? "").toContain("hello notes");
+		expect(lines[row]).not.toContain(theme.getBgAnsi("selectedBg"));
+		expect(lines[row + 1]).not.toContain(theme.getBgAnsi("selectedBg"));
+		view.handleMouse(mouse("click", 78, row));
 		expect(seen).not.toContain("delete:saved");
 		expect(view.render(80).join("\n")).toContain("再点一次关闭");
-		view.handleMouse({ type: "click", button: "left", x: 78, y: row } as never);
+		view.handleMouse(mouse("click", 78, row));
 		expect(seen).toContain("delete:saved");
 	});
 

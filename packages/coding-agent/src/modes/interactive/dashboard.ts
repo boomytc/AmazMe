@@ -541,10 +541,10 @@ function sessionRow(label: string, age: string, badge: boolean, columns: number)
 	return { body: `${left}${" ".repeat(gap)}${tail}`, closeStart: badge ? columns - 3 : undefined };
 }
 
-function bar(text: string, columns: number, selected: boolean): string {
+function bar(text: string, columns: number, highlighted: boolean): string {
 	const padded = text + " ".repeat(Math.max(0, columns - visibleWidth(text)));
 	const line = truncateToWidth(padded, columns, "");
-	return selected ? theme.bg("selectedBg", line) : line;
+	return highlighted ? theme.bg("selectedBg", line) : line;
 }
 
 function glyph(state: DashboardRowState): string {
@@ -604,11 +604,12 @@ export function renderDashboard(
 		if (!agent) continue;
 		const age = formatDashboardAge(Math.max(0, now - agent.updatedAt));
 		const directory = agent.cwd.split("/").filter((part) => part.length > 0).at(-1) ?? agent.cwd;
-		const label = `${glyph(agent.state)} ${agent.name} · ${directory}`;
+		const label = `${selected ? "▌" : " "}${glyph(agent.state)} ${agent.name} · ${directory}`;
 		const badge = state.hoverId === agent.id || state.deleteArmedFor === agent.id;
 		const row = sessionRow(label, age, badge, width);
 		const line = lines.length;
-		lines.push(bar(row.body, width, selected));
+		// Current-session highlighting is independent of keyboard focus and pointer hover.
+		lines.push(bar(row.body, width, agent.attached));
 		remember({
 			line,
 			kind: "row",
@@ -618,7 +619,7 @@ export function renderDashboard(
 		});
 		if (selected) {
 			const preview = agent.peek.replace(/\s+/g, " ").trim();
-			lines.push(bar(`  ${preview.length > 0 ? preview : "No response yet"}`, width, true));
+			lines.push(bar(`  ${preview.length > 0 ? preview : "No response yet"}`, width, agent.attached));
 			remember({ line: lines.length - 1, kind: "row", id: agent.id });
 		}
 	}
@@ -718,7 +719,6 @@ export class DashboardView implements Component {
 			const next = hit?.kind === "row" ? hit.id : undefined;
 			if (next === this.state.hoverId) return { handled: true, render: false };
 			this.state.hoverId = next;
-			if (next) this.state.selected = `row:${next}`;
 			return { handled: true, render: true };
 		}
 		if (event.type !== "click" || event.button !== "left" || !hit) return undefined;
