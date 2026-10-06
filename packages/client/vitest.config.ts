@@ -9,9 +9,24 @@ export default defineConfig({
 	},
 	resolve: {
 		conditions: ["source"],
-		alias: {
-			"@amazme/protocol": fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
-		},
+		alias: [
+			{
+				find: /^@amazme\/protocol$/,
+				replacement: fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
+			},
+			{
+				find: /^@amazme\/server$/,
+				replacement: fileURLToPath(new URL("../server/src/index.ts", import.meta.url)),
+			},
+			{
+				find: /^@amazme\/server\/testing$/,
+				replacement: fileURLToPath(new URL("../server/src/testing/index.ts", import.meta.url)),
+			},
+			{
+				find: /^@amazme\/server\/websocket$/,
+				replacement: fileURLToPath(new URL("../server/src/transports/websocket/index.ts", import.meta.url)),
+			},
+		],
 	},
 	ssr: { resolve: { conditions: ["source"] } },
 });

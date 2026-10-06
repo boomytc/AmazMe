@@ -25,8 +25,10 @@ export const workspaceSourcePaths = {
 	protocolIndex: fileURLToPath(new URL("./packages/protocol/src/index.ts", import.meta.url)),
 	clientIndex: fileURLToPath(new URL("./packages/client/src/index.ts", import.meta.url)),
 	clientUnix: fileURLToPath(new URL("./packages/client/src/unix.ts", import.meta.url)),
+	clientWebSocket: fileURLToPath(new URL("./packages/client/src/websocket.ts", import.meta.url)),
 	serverIndex: fileURLToPath(new URL("./packages/server/src/index.ts", import.meta.url)),
 	serverUnix: fileURLToPath(new URL("./packages/server/src/transports/unix/index.ts", import.meta.url)),
+	serverWebSocket: fileURLToPath(new URL("./packages/server/src/transports/websocket/index.ts", import.meta.url)),
 	codingAgentIndex: fileURLToPath(new URL("./packages/coding-agent/src/index.ts", import.meta.url)),
 	tuiIndex: fileURLToPath(new URL("./packages/tui/src/index.ts", import.meta.url)),
 } as const;

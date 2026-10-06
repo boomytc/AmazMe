@@ -17,6 +17,10 @@
 		"./unix": {
 			"types": "./dist/transports/unix/index.d.ts",
 			"import": "./dist/transports/unix/index.js"
+		},
+		"./websocket": {
+			"types": "./dist/transports/websocket/index.d.ts",
+			"import": "./dist/transports/websocket/index.js"
 		}
 	},
 	"files": [

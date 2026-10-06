@@ -10,6 +10,9 @@
 			"@amazme/ai": ["../ai/src/index.ts"],
 			"@amazme/ai/*": ["../ai/src/*.ts", "../ai/src/providers/*.ts"],
 			"@amazme/protocol": ["../protocol/src/index.ts"],
+		"@amazme/server": ["../server/src/index.ts"],
+		"@amazme/server/testing": ["../server/src/testing/index.ts"],
+		"@amazme/server/websocket": ["../server/src/transports/websocket/index.ts"],
 			"@amazme/telemetry": ["../telemetry/src/index.ts"]
 		}
 	},

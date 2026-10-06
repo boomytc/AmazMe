@@ -14,7 +14,11 @@
 			"types": "./dist/unix.d.ts",
 			"import": "./dist/unix.js"
 		},
-		"./package.json": "./package.json"
+		"./package.json": "./package.json",
+		"./websocket": {
+			"types": "./dist/websocket.d.ts",
+			"import": "./dist/websocket.js"
+		}
 	},
 	"sideEffects": false,
 	"files": [
