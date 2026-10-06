@@ -2,7 +2,7 @@
 
 AmazMe 是终端里的编码代理。它读取文件、运行命令、修改内容，并完成多步任务。
 
-实现来自 [Pi](https://github.com/earendil-works/pi) 的 packages，包作用域和命令名是 AmazMe。许可证是 MIT，版权归 Mario Zechner。
+实现来自 [Pi](https://github.com/earendil-works/pi) 的 packages，包作用域和命令名是 AmazMe。许可证是 MIT，版权归 Mario Zechner。当前对齐的上游版本和后续跟进方法见 [UPSTREAM.md](UPSTREAM.md)。
 
 需要 Node.js 22.19 或更新版本。
 
