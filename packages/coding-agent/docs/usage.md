@@ -67,7 +67,11 @@ After leaving Pi, run `pi --continue` from the same folder to resume its most re
 
 ## Browse sessions in the Dashboard
 
-Open the Dashboard with `Ctrl+\` or `/dashboard`. Its background highlight always identifies the current session, independently of pointer hover or keyboard focus. `Up`/`Down` moves the `▌` action cursor and preview without moving that highlight. Hovering only reveals the row's `[x]` close button; clicking a row opens that session.
+Open the Dashboard with `Ctrl+\` or `/dashboard`. Every session occupies two lines: its title, then the latest user question on that session's active branch. Questions are kept visible without selection, collapsed to one line, and truncated to fit; an empty session shows `No question yet`. Assistant replies and command output do not replace the question.
+
+The background highlight always identifies the current session, independently of pointer hover or keyboard focus. `Up`/`Down` moves the `▌` action cursor without moving that highlight. Hovering reveals `[rename]` and `[x]` on the title line; clicking either line opens the session unless an action button is clicked.
+
+Click `[rename]`, or select a session and press `Ctrl+R`, to edit its title inline. `Enter` saves, `Escape` cancels, and `Ctrl+U` clears the field. The title is saved with the session. On narrow terminals, the `[rename]` button is hidden to leave room for the title, but `Ctrl+R` remains available.
 
 ## Run a terminal command
 

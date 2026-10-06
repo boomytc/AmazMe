@@ -1,4 +1,14 @@
-import { type Component, matchesKey, type TuiMouseEvent, type TuiMouseEventResult, truncateToWidth, visibleWidth } from "@amazme/tui";
+import {
+	type Component,
+	type Focusable,
+	Input,
+	matchesKey,
+	stripTerminalSequences,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	truncateToWidth,
+	visibleWidth,
+} from "@amazme/tui";
 import { theme } from "./theme/theme.ts";
 
 export type DashboardRowState = "needs-input" | "working" | "idle" | "inactive" | "completed" | "failed";
@@ -11,7 +21,7 @@ export interface DashboardAgent {
 	activity: string;
 	updatedAt: number;
 	attached: boolean;
-	peek: string;
+	lastQuestion: string;
 	path?: string;
 }
 
@@ -60,6 +70,8 @@ export interface DashboardHit {
 	id?: string;
 	closeStart?: number;
 	closeEnd?: number;
+	renameStart?: number;
+	renameEnd?: number;
 }
 
 export type DashboardEffect =
@@ -128,37 +140,6 @@ export function serializeDashboardPrefs(state: Pick<DashboardScreenState, "group
 	return `${JSON.stringify({ grouping: state.grouping, pinned: state.pinned }, null, "\t")}\n`;
 }
 
-export function dashboardPeek(
-	messages: readonly { role: string; content?: unknown; command?: string; output?: string }[],
-): string {
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const message = messages[index];
-		if (!message) continue;
-		if (message.role === "bashExecution") {
-			const output = message.output?.trim();
-			if (output) return output;
-			if (message.command) return message.command;
-		}
-		if (message.role !== "assistant" && message.role !== "user") continue;
-		const text = dashboardContentText(message.content).trim();
-		if (text.length > 0) return text;
-	}
-	return "";
-}
-
-function dashboardContentText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.map((part) => {
-			if (typeof part !== "object" || part === null) return "";
-			const record = part as { type?: unknown; text?: unknown };
-			return record.type === "text" && typeof record.text === "string" ? record.text : "";
-		})
-		.filter((text) => text.length > 0)
-		.join("\n");
-}
-
 export function formatDashboardAge(ageMs: number): string {
 	const minutes = Math.max(0, Math.floor(ageMs / 60_000));
 	if (minutes < 60) return `${minutes}m`;
@@ -168,7 +149,7 @@ export function formatDashboardAge(ageMs: number): string {
 }
 
 export function dashboardShortcutLine(): string {
-	return "↑/↓ select (peek) · Enter open · Ctrl+R rename · Ctrl+T pin · Ctrl+X stop · ? help · Esc new";
+	return "↑/↓ select · Enter open · Ctrl+R rename · Ctrl+T pin · Ctrl+X stop · ? help · Esc new";
 }
 
 function activeQuery(state: DashboardScreenState): string {
@@ -200,7 +181,7 @@ function matchesAgent(agent: DashboardAgent, query: string): boolean {
 		return wanted !== undefined && agent.state === wanted;
 	}
 	if (lower.startsWith("#")) return agent.name.toLowerCase().includes(`#${lower.slice(1)}`);
-	return `${agent.name} ${agent.cwd} ${agent.activity}`.toLowerCase().includes(lower);
+	return `${agent.name} ${agent.lastQuestion} ${agent.cwd} ${agent.activity}`.toLowerCase().includes(lower);
 }
 
 function slotId(slot: Slot): string {
@@ -332,6 +313,12 @@ export function pressDashboard(
 		consumeArm();
 	}
 	if (matchesKey(data, "escape")) {
+		if (state.renameFor) {
+			state.renameFor = undefined;
+			state.renameText = "";
+			state.focus = "list";
+			return { type: "none" };
+		}
 		if (state.help) {
 			state.help = false;
 			return { type: "none" };
@@ -340,11 +327,6 @@ export function pressDashboard(
 			state.search = false;
 			state.query = "";
 			state.filter = "";
-			return { type: "none" };
-		}
-		if (state.renameFor) {
-			state.renameFor = undefined;
-			state.renameText = "";
 			return { type: "none" };
 		}
 		if (state.reply.length > 0) {
@@ -420,8 +402,9 @@ export function pressDashboard(
 		const agent = selectedAgent(agents, state);
 		if (!agent) return status(state, "Select an agent to rename");
 		state.renameFor = agent.id;
-		state.renameText = agent.name;
+		state.renameText = singleLine(agent.name);
 		state.focus = "input";
+		state.help = false;
 		consumeArm();
 		return { type: "none" };
 	}
@@ -462,6 +445,7 @@ export function pressDashboard(
 			const id = state.renameFor;
 			state.renameFor = undefined;
 			state.renameText = "";
+			state.focus = "list";
 			if (name.length === 0) return status(state, "Name left unchanged");
 			return { type: "rename", id, name };
 		}
@@ -527,18 +511,32 @@ function status(state: DashboardScreenState, text: string): DashboardEffect {
 	return { type: "status", text };
 }
 
+function singleLine(text: string): string {
+	return stripTerminalSequences(text).replace(/\s+/g, " ").trim();
+}
+
 function clip(text: string, width: number): string {
 	return truncateToWidth(text, Math.max(0, width), "…");
 }
 
-/** One session row. The right edge is only the age, plus [x] while the pointer is on it. */
-function sessionRow(label: string, age: string, badge: boolean, columns: number): { body: string; closeStart?: number } {
-	const tail = badge ? `${age} [x]` : age;
+/** Session title, with age and hover actions. Narrow terminals retain Ctrl+R for renaming. */
+function sessionRow(
+	label: string,
+	age: string,
+	badge: boolean,
+	columns: number,
+): { body: string; closeStart?: number; renameStart?: number } {
+	const renameBadge = badge && columns >= 32;
+	const tail = badge ? `${age}${renameBadge ? " [rename]" : ""} [x]` : age;
 	const tailWidth = visibleWidth(tail);
 	const room = Math.max(1, columns - tailWidth - 1);
 	const left = truncateToWidth(label, room, "…");
 	const gap = Math.max(1, columns - visibleWidth(left) - tailWidth);
-	return { body: `${left}${" ".repeat(gap)}${tail}`, closeStart: badge ? columns - 3 : undefined };
+	return {
+		body: `${left}${" ".repeat(gap)}${tail}`,
+		closeStart: badge ? columns - 3 : undefined,
+		renameStart: renameBadge ? columns - 12 : undefined,
+	};
 }
 
 function bar(text: string, columns: number, highlighted: boolean): string {
@@ -560,6 +558,7 @@ export function renderDashboard(
 	now: number,
 	width: number,
 	hits?: DashboardHit[],
+	renameLine?: string,
 ): string[] {
 	const slots = dashboardSlots(agents, state, now);
 	clampSelection(state, slots);
@@ -603,28 +602,29 @@ export function renderDashboard(
 		const agent = byId.get(slot.agentId);
 		if (!agent) continue;
 		const age = formatDashboardAge(Math.max(0, now - agent.updatedAt));
-		const directory = agent.cwd.split("/").filter((part) => part.length > 0).at(-1) ?? agent.cwd;
-		const label = `${selected ? "▌" : " "}${glyph(agent.state)} ${agent.name} · ${directory}`;
+		const name = singleLine(agent.name);
+		const label = `${selected ? "▌" : " "}${glyph(agent.state)} ${name}`;
+		const renaming = state.renameFor === agent.id;
 		const badge = state.hoverId === agent.id || state.deleteArmedFor === agent.id;
 		const row = sessionRow(label, age, badge, width);
 		const line = lines.length;
 		// Current-session highlighting is independent of keyboard focus and pointer hover.
-		lines.push(bar(row.body, width, agent.attached));
+		lines.push(bar(renaming ? (renameLine ?? `> ${state.renameText}`) : row.body, width, agent.attached));
 		remember({
 			line,
 			kind: "row",
 			id: agent.id,
-			closeStart: row.closeStart,
-			closeEnd: row.closeStart === undefined ? undefined : row.closeStart + 3,
+			closeStart: renaming ? undefined : row.closeStart,
+			closeEnd: renaming || row.closeStart === undefined ? undefined : row.closeStart + 3,
+			renameStart: renaming ? undefined : row.renameStart,
+			renameEnd: renaming || row.renameStart === undefined ? undefined : row.renameStart + 8,
 		});
-		if (selected) {
-			const preview = agent.peek.replace(/\s+/g, " ").trim();
-			lines.push(bar(`  ${preview.length > 0 ? preview : "No response yet"}`, width, agent.attached));
-			remember({ line: lines.length - 1, kind: "row", id: agent.id });
-		}
+		const question = singleLine(agent.lastQuestion);
+		lines.push(bar(theme.fg("muted", `  ${question || "No question yet"}`), width, agent.attached));
+		remember({ line: lines.length - 1, kind: "row", id: agent.id });
 	}
 	if (state.help) lines.push(clip("↑/↓ move  Enter open  Tab input  Ctrl+R rename  Ctrl+X close", width));
-	if (state.renameFor) lines.push(clip(`Rename: ${state.renameText}`, width));
+	if (state.renameFor) lines.push(clip("Rename title · Enter save · Esc cancel · Ctrl+U clear", width));
 	else if (state.search) lines.push(clip(`Search: ${state.query}`, width));
 	if (state.notice) lines.push(clip(state.notice, width));
 	return lines.map((line) => (line.includes("\x1b") ? line : clip(line, width)));
@@ -644,10 +644,13 @@ export interface DashboardActions {
 	prefs(state: DashboardScreenState): void;
 	opened(open: boolean): void;
 	focusInput?(): void;
+	focusList?(): void;
 }
 
 /** Full-screen agent roster. The transcript hides behind it while `open` is set. */
-export class DashboardView implements Component {
+export class DashboardView implements Component, Focusable {
+	focused = false;
+	private renameInput?: Input;
 	private readonly state: DashboardScreenState;
 	private readonly actions: DashboardActions;
 	private readonly agentsOf: () => readonly DashboardAgent[];
@@ -674,7 +677,7 @@ export class DashboardView implements Component {
 	}
 
 	shortcutLine(): string {
-		return dashboardShortcutLine();
+		return this.state.renameFor ? "Enter save · Esc cancel · Ctrl+U clear" : dashboardShortcutLine();
 	}
 
 	toggle(): void {
@@ -684,11 +687,12 @@ export class DashboardView implements Component {
 	forceClose(): void {
 		if (!this.state.open) return;
 		this.state.open = false;
+		this.cancelRename();
 		this.actions.opened(false);
 	}
 
 	handleInput(data: string): void {
-		if (this.state.open && matchesKey(data, "tab")) {
+		if (this.state.open && !this.state.renameFor && matchesKey(data, "tab")) {
 			this.actions.focusInput?.();
 			return;
 		}
@@ -707,14 +711,23 @@ export class DashboardView implements Component {
 	render(width: number): string[] {
 		if (!this.state.open) return [];
 		this.hits = [];
-		return renderDashboard(this.agentsOf(), this.state, this.placeOf(), this.now(), width, this.hits).map((line) =>
-			theme.fg("text", line),
+		if (this.renameInput) this.renameInput.focused = this.focused;
+		const renameLine = this.renameInput?.render(width)[0];
+		return renderDashboard(this.agentsOf(), this.state, this.placeOf(), this.now(), width, this.hits, renameLine).map(
+			(line) => theme.fg("text", line),
 		);
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (!this.state.open || event.y < 0) return undefined;
 		const hit = this.hits.find((item) => item.line === event.y);
+		if (this.renameInput) {
+			const title = this.hits.find((item) => item.kind === "row" && item.id === this.state.renameFor);
+			if (title?.line === event.y) {
+				return this.renameInput.handleMouse({ ...event, y: 0 }) ?? { handled: true, render: false };
+			}
+			return { handled: true, render: false };
+		}
 		if (event.type === "move") {
 			const next = hit?.kind === "row" ? hit.id : undefined;
 			if (next === this.state.hoverId) return { handled: true, render: false };
@@ -731,6 +744,11 @@ export class DashboardView implements Component {
 			return { handled: true };
 		}
 		if (hit.kind !== "row" || !hit.id) return undefined;
+		if (hit.renameStart !== undefined && hit.renameEnd !== undefined && event.x >= hit.renameStart && event.x < hit.renameEnd) {
+			this.state.selected = `row:${hit.id}`;
+			this.press("\x12");
+			return { handled: true, render: true, focus: true };
+		}
 		if (hit.closeStart !== undefined && hit.closeEnd !== undefined && event.x >= hit.closeStart && event.x < hit.closeEnd) {
 			this.pressClose(hit.id);
 			return { handled: true, render: true };
@@ -761,9 +779,38 @@ export class DashboardView implements Component {
 		this.state.notice = "再点一次关闭";
 	}
 
+	private cancelRename(): void {
+		this.renameInput = undefined;
+		this.state.renameFor = undefined;
+		this.state.renameText = "";
+		this.state.focus = "list";
+	}
+
+	private startRenameInput(): void {
+		const input = new Input({ placeholder: "Session title" });
+		input.setValue(this.state.renameText);
+		input.onSubmit = (value) => {
+			this.state.renameText = value;
+			this.renameInput = undefined;
+			this.press("\r");
+		};
+		input.onEscape = () => this.cancelRename();
+		this.renameInput = input;
+		this.actions.focusList?.();
+	}
+
 	private press(data: string): void {
+		if (this.renameInput && !matchesKey(data, "ctrl+\\")) {
+			if (matchesKey(data, "ctrl+u")) this.renameInput.setValue("");
+			else if (matchesKey(data, "ctrl+s")) this.renameInput.onSubmit?.(this.renameInput.getValue());
+			else this.renameInput.handleInput(data);
+			if (this.renameInput) this.state.renameText = this.renameInput.getValue();
+			return;
+		}
 		const wasOpen = this.state.open;
 		const effect = pressDashboard(this.state, this.agentsOf(), data, this.now());
+		if (!this.state.open) this.cancelRename();
+		else if (this.state.renameFor && !this.renameInput) this.startRenameInput();
 		if (this.state.open !== wasOpen) this.actions.opened(this.state.open);
 		this.apply(effect);
 	}

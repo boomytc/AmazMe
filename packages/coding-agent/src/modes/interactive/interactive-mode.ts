@@ -166,7 +166,6 @@ import { PopupClose, ProcessPanel } from "./components/popup-frame.ts";
 import {
 	type DashboardAgent,
 	DashboardView,
-	dashboardPeek,
 	readDashboardPrefs,
 	serializeDashboardPrefs,
 } from "./dashboard.ts";
@@ -3365,6 +3364,7 @@ export class InteractiveMode {
 				},
 				opened: (open) => this.syncDashboard(open),
 				focusInput: () => this.ui.setFocus(this.editor),
+				focusList: () => this.ui.setFocus(this.dashboard()),
 			},
 			() => this.dashboardAgents(),
 			() => ({
@@ -3392,7 +3392,7 @@ export class InteractiveMode {
 			activity,
 			updatedAt: Date.now(),
 			attached: true,
-			peek: dashboardPeek(this.session.messages),
+			lastQuestion: this.sessionManager.getLastUserMessageText(),
 			path: this.session.sessionFile,
 		};
 	}
@@ -3415,7 +3415,7 @@ export class InteractiveMode {
 				activity: "idle",
 				updatedAt: session.modified.getTime(),
 				attached: false,
-				peek: session.firstMessage,
+				lastQuestion: session.lastUserMessage ?? "",
 				path: session.path,
 			}));
 		} catch {

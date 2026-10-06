@@ -39,6 +39,8 @@ Sessions are persistent by default. `SessionManager` owns the persisted or in-me
 
 `SessionManager` is authoritative for finalized model context. Restore external history by constructing the session with a manager containing those entries. Assigning `session.agent.state.messages` does not replace persisted context.
 
+`getLastUserMessageText()` reads the latest raw user prompt on the active branch, even if compaction removed it from model context. Session listings expose the same saved-branch text as `SessionInfo.lastUserMessage`, separately from `firstMessage`. Image-only prompts return `[Image]`; branches without a user prompt return an empty string.
+
 Use an in-memory manager when the host does not want session files:
 
 ```typescript
