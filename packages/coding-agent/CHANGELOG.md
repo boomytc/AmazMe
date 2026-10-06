@@ -2,10 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `outputPad` to the tool render context ([#10557](https://github.com/earendil-works/pi/pull/10557))
+
+### Changed
+
+- Changed `outputPad` to also apply to `!` command output, tool output, and summary blocks ([#9946](https://github.com/earendil-works/pi/issues/9946), [#10557](https://github.com/earendil-works/pi/pull/10557))
+
 ### Fixed
 
 - Fixed managed installs keeping every old release; `amazme update` now keeps only the new release and the one it updated from
 - Fixed standalone binaries loading `.env`, `.env.local`, and `.env.development` from the launch directory into AmazMe's environment
+- Fixed `!!` command headers losing their dim color once output arrives ([#10557](https://github.com/earendil-works/pi/pull/10557))
+- Fixed the codemode description not marking `searchTools()`, `describeTool()`, and `describeNamespace()` as async, which led models to serialize the unawaited promise as `{}` ([#10555](https://github.com/earendil-works/pi/issues/10555))
 
 ## [1.0.4] - 2026-10-05
 
