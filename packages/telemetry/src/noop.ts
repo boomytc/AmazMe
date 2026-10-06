@@ -1,12 +1,20 @@
-import type { TelemetryContext, TelemetrySpan } from "./types.ts";
+import type { SpanOptions, TelemetryContext, TelemetrySpan } from "./index.ts";
 
-const inert: TelemetrySpan = Object.freeze({
-  startSpan<T>(_options: unknown, callback: (span: TelemetrySpan) => T | Promise<T>): Promise<T> {
-    try { return Promise.resolve(callback(inert)); }
-    catch (error) { return Promise.reject(error); }
-  },
-  addEvent() {}, setAttributes() {}, setStatus() {},
-});
+function startNoopSpan<T>(_options: SpanOptions, callback: (span: TelemetrySpan) => T | Promise<T>): Promise<T> {
+	try {
+		return Promise.resolve(callback(noopTelemetrySpan));
+	} catch (error) {
+		return Promise.reject(error);
+	}
+}
 
-/** Does not inspect or retain diagnostic payloads. */
-export const NOOP_TELEMETRY_CONTEXT: TelemetryContext = inert;
+const noopTelemetrySpan: TelemetrySpan = {
+	startSpan: startNoopSpan,
+	addEvent: () => {},
+	setAttributes: () => {},
+	setStatus: () => {},
+};
+Object.freeze(noopTelemetrySpan);
+
+/** Shared telemetry context used when an application does not provide one. */
+export const NOOP_TELEMETRY_CONTEXT: TelemetryContext = noopTelemetrySpan;
