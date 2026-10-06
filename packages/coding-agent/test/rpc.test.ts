@@ -283,10 +283,13 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 		// Send a prompt first
 		await client.promptAndWait("Hello");
 
-		// Export
-		const result = await client.exportHtml();
+		// Export into the test's own directory: without an output path the HTML lands
+		// in the CLI working directory, which is the shipped package.
+		const exportPath = join(sessionDir, "export.html");
+		const result = await client.exportHtml(exportPath);
 		expect(result.path).toBeDefined();
 		expect(result.path.endsWith(".html")).toBe(true);
+		expect(result.path).toBe(exportPath);
 		expect(existsSync(result.path)).toBe(true);
 	}, 90000);
 

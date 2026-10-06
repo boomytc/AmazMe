@@ -16,6 +16,7 @@ import type { ContextUsage } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
+import { keyDisplayText } from "./keybinding-hints.ts";
 import { popupCloseClicked, popupFrame } from "./popup-frame.ts";
 
 /**
@@ -72,7 +73,7 @@ interface SessionStats {
  */
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
-	private composerLine: (() => string | undefined) | undefined;
+	private pointerInputEnabled = true;
 	private dashboardHit: { start: number; end: number } | undefined;
 	private contextHit: { start: number; end: number } | undefined;
 	private contextHover = false;
@@ -100,9 +101,9 @@ export class FooterComponent implements Component {
 		this.autoCompactEnabled = enabled;
 	}
 
-	/** Enter/queue hint rendered under routing information. */
-	setComposerLine(provider: () => string | undefined): void {
-		this.composerLine = provider;
+	/** Regular mode has no pointer, so click-only chrome names its key instead. */
+	setPointerInputEnabled(enabled: boolean): void {
+		this.pointerInputEnabled = enabled;
 	}
 
 	/**
@@ -194,7 +195,17 @@ export class FooterComponent implements Component {
 			stripTerminalSequences(this.session.sessionManager.getCwd().split(/[\\/]/).filter(Boolean).at(-1) ?? place),
 		);
 		const primary = sessionName || directory;
-		const dashboard = width >= 32 ? "[Dashboard]" : width >= 3 ? "[D]" : "D";
+		// Regular mode delivers no pointer events, so the label names its chord instead of posing as a target.
+		const dashboardChord = keyDisplayText("app.dashboard.toggle");
+		const dashboard = this.pointerInputEnabled
+			? width >= 32
+				? "[Dashboard]"
+				: width >= 3
+					? "[D]"
+					: "D"
+			: width >= 32
+				? `${dashboardChord} dashboard`
+				: dashboardChord;
 		const primaryBudget = Math.min(visibleWidth(primary), width >= 24 ? 12 : 4);
 		const contextBudget = Math.max(0, width - primaryBudget - visibleWidth(dashboard) - 3);
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
@@ -235,8 +246,10 @@ export class FooterComponent implements Component {
 			? [`${sessionName} • ${place}`, `${sessionName} • ${directory}`, sessionName] : [place, directory];
 		const left = candidates.find((text) => visibleWidth(text) <= available) ?? truncateToWidth(primary, available, "…");
 		const rightStart = width - rightWidth;
-		this.dashboardHit = { start: width - visibleWidth(dashboard), end: width };
-		if (contextWidth > 0) this.contextHit = { start: rightStart, end: rightStart + contextWidth };
+		if (this.pointerInputEnabled) {
+			this.dashboardHit = { start: width - visibleWidth(dashboard), end: width };
+			if (contextWidth > 0) this.contextHit = { start: rightStart, end: rightStart + contextWidth };
+		}
 		return [theme.fg("dim", left) + " ".repeat(Math.max(0, rightStart - visibleWidth(left))) + right];
 	}
 
@@ -299,8 +312,6 @@ export class FooterComponent implements Component {
 			...(this.showLocation ? [pwdLine] : []),
 			...(visibleWidth(routingLine) > 0 ? [routingLine] : []),
 		];
-		const composerLine = this.composerLine?.();
-		if (composerLine) lines.push(truncateToWidth(theme.fg("dim", composerLine), width, theme.fg("dim", "...")));
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();
@@ -397,16 +408,18 @@ export class ContextUsagePanel implements Component {
 	private readonly onClose: () => void;
 	private readonly maxHeight: (() => number) | undefined;
 	private readonly requestRender: () => void;
+	private readonly mouseEnabled: () => boolean;
 
 	constructor(
 		detail: () => ContextDetail,
 		onClose: () => void,
-		options: { maxHeight?: () => number; requestRender?: () => void } = {},
+		options: { maxHeight?: () => number; requestRender?: () => void; mouseEnabled?: () => boolean } = {},
 	) {
 		this.detail = detail;
 		this.onClose = onClose;
 		this.maxHeight = options.maxHeight;
 		this.requestRender = options.requestRender ?? (() => {});
+		this.mouseEnabled = options.mouseEnabled ?? (() => true);
 		this.scrollView = new ScrollView({ render: () => this.lines, invalidate() {} }, { overscroll: "contain" });
 	}
 
@@ -424,7 +437,9 @@ export class ContextUsagePanel implements Component {
 		const start = this.scrollView.scrollTop;
 		const body = this.scrollView.render(inner).slice(start, start + bodyHeight);
 		if (showHint) body.push(theme.fg("dim", `↑/↓ scroll · ${start + 1}-${start + bodyHeight}/${this.lines.length}`));
-		return popupFrame("Context", body, width).map((line) => truncateToWidth(line, width, "…"));
+		return popupFrame("Context", body, width, { mouseEnabled: this.mouseEnabled() }).map((line) =>
+			truncateToWidth(line, width, "…"),
+		);
 	}
 
 	handleInput(data: string): void {
@@ -439,6 +454,7 @@ export class ContextUsagePanel implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (!this.mouseEnabled()) return undefined;
 		if (popupCloseClicked(event, this.width)) {
 			this.onClose();
 			return { handled: true };

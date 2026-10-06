@@ -76,7 +76,9 @@ function fixture(bindings = new KeybindingsManager()) {
 		installInteractiveInput: (): void => prototype.installInteractiveInput.call(mode),
 		session: { isStreaming: false, childAgents: new ChildAgentBook(), abort: vi.fn(), abortBash: vi.fn() },
 		chatContainer: new Container(), editorContainer: new Container(), parentTranscript: new ParentTranscript(),
-		footer: { setComposerLine: () => {} },
+		footer: { setPointerInputEnabled: () => {} },
+		pointerInputAvailable: Reflect.get(InteractiveMode.prototype, "pointerInputAvailable"),
+		syncPointerInput: Reflect.get(InteractiveMode.prototype, "syncPointerInput"),
 		ensureWorkSurface: () => {}, updateEditorBorderColor: () => {},
 		submitEditorText: vi.fn(), showStatus: vi.fn(), showError: vi.fn(), isBashMode: false,
 	};

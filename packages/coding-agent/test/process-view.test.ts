@@ -1,4 +1,4 @@
-import { Container, getKeybindings, setKeybindings, TuiMainScreen } from "@amazme/tui";
+import { Container, getKeybindings, setKeybindings, sliceByColumn, TuiMainScreen, visibleWidth } from "@amazme/tui";
 import { fauxAssistantMessage } from "@amazme/ai";
 import { beforeAll, describe, expect, test } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
@@ -49,7 +49,241 @@ function bashEntries(harness: Awaited<ReturnType<typeof createHarness>>): Array<
 }
 
 describe("foreground command presentation", () => {
-	test("a background process keeps one row with open and close badges", () => {
+	test("regular mode drops the click-only badges and the tasks list carries the same actions", () => {
+	const previous = getKeybindings();
+	const keybindings = new KeybindingsManager();
+	setKeybindings(keybindings);
+	const child = {
+		id: "child-1",
+		description: "working the task",
+		modelId: "model-x",
+		status: "running" as const,
+		activity: "Thinking",
+		startedAt: Date.now(),
+		transcript: ["child line"],
+		cancel: () => {},
+	};
+	const book = new ChildAgentBook();
+	book.add(child);
+	const task = {
+		id: "cmd-1",
+		command: "sleep 5",
+		status: "running" as const,
+		output: "hello\nworld",
+		exitCode: null,
+		pid: 1,
+		detached: true,
+	};
+	let opened = "";
+	const surface = new WorkSurface(
+		book,
+		{ list: () => [task] } as never,
+		{
+			openProcess: (id) => {
+				opened = id;
+			},
+			closeProcess: () => {},
+		},
+		{ mouseEnabled: false, emptyDraft: () => true },
+	);
+	try {
+		const rendered = surface.render(80).join("\n");
+		expect(rendered).not.toContain("[open]");
+		expect(rendered).not.toContain("[close]");
+		// No pointer, so the badges are not targets either.
+		surface.handleMouse({ type: "click", button: "left", x: 40, y: 1 } as never);
+		expect(opened).toBe("");
+
+		// F2 opens the tasks list, which names the keys it answers to.
+		surface.handleInput("\x1bOQ");
+		expect(book.tasksOpen).toBe(true);
+		const tasks = surface.render(80).join("\n");
+		expect(tasks).toContain("Tasks");
+		expect(tasks).toContain("subagent running working the task");
+		expect(tasks).toContain("command running sleep 5");
+		expect(tasks).toContain("Enter open");
+		expect(tasks).toContain("Escape close");
+
+		// The selection starts on the subagent row and moves to the command row.
+		surface.handleInput("\x1b[A");
+		surface.handleInput("\r");
+		expect(book.openId).toBe("child-1");
+		book.close();
+		surface.handleInput("\x1b[B");
+		surface.handleInput("\r");
+		expect(opened).toBe("cmd-1");
+
+		surface.handleInput("\x1b");
+		expect(book.tasksOpen).toBe(false);
+
+		// Enter belongs to the composer while the draft holds text.
+		const withDraft = new WorkSurface(book, { list: () => [] } as never, undefined, {
+			mouseEnabled: false,
+			emptyDraft: () => false,
+		});
+		withDraft.handleInput("\x1bOQ");
+		expect(withDraft.book.tasksOpen).toBe(true);
+		expect(withDraft.handleInput("\r")).toBe(false);
+		withDraft.handleInput("\x1b");
+		expect(book.tasksOpen).toBe(false);
+	} finally {
+		setKeybindings(previous);
+	}
+});
+
+test("a command that contains the badge text does not move the badge targets", () => {
+	const task = {
+		id: "cmd-token",
+		command: "echo [open] 和 [close] 字面量",
+		status: "running" as const,
+		output: "out",
+		exitCode: null,
+		pid: 1,
+		detached: true,
+	};
+	let opened = 0;
+	let closed = 0;
+	const surface = new WorkSurface(new ChildAgentBook(), { list: () => [task] } as never, {
+		openProcess: () => {
+			opened += 1;
+		},
+		closeProcess: () => {
+			closed += 1;
+		},
+	});
+	const width = 80;
+	const line = surface.render(width).find((item) => item.includes("[open]")) ?? "";
+	const tail = "[open] [close]";
+	// The badges are right-aligned in the drawn row, so their columns follow from
+	// the row width and the tail width alone.
+	const openCol = visibleWidth(line) - visibleWidth(tail);
+	const closeCol = openCol + "[open] ".length;
+	expect(sliceByColumn(line, openCol, "[open]".length)).toBe("[open]");
+	expect(sliceByColumn(line, closeCol, "[close]".length)).toBe("[close]");
+
+	// The literal tokens in the command text are not targets.
+	const literalCol = line.indexOf("[open]");
+	expect(literalCol).toBeLessThan(openCol);
+	surface.handleMouse({ type: "click", button: "left", x: literalCol, y: 0 } as never);
+	expect([opened, closed]).toEqual([0, 0]);
+
+	surface.handleMouse({ type: "click", button: "left", x: openCol, y: 0 } as never);
+	expect(opened).toBe(1);
+	surface.handleMouse({ type: "click", button: "left", x: closeCol, y: 0 } as never);
+	expect(closed).toBe(1);
+});
+
+test("wide rows keep every line inside the terminal and the badges on their drawn columns", () => {
+	const description = "分析当前 TUI 实现里还存在的改进点并给出建议";
+	const book = new ChildAgentBook();
+	book.add({
+		id: "child-cjk",
+		description,
+		modelId: "grok-4.5",
+		status: "running",
+		activity: "正在阅读 packages/coding-agent 的交互模式源码",
+		startedAt: Date.now(),
+		transcript: ["结论：中文段落行同样按显示宽度截断，不再有整行溢出", "第二行同样要落在 80 列之内"],
+		cancel: () => {},
+	});
+	const detached = {
+		id: "cmd-cjk",
+		command: "echo 你好世界并等待一段时间再继续输出后续内容以便观察行宽",
+		status: "running" as const,
+		output: "你好世界",
+		exitCode: null,
+		pid: 1,
+		detached: true,
+	};
+	let opened = "";
+	let closed = "";
+	const surface = new WorkSurface(book, { list: () => [detached] } as never, {
+		openProcess: (id) => {
+			opened = id;
+		},
+		closeProcess: (id) => {
+			closed = id;
+		},
+	});
+	const width = 80;
+	const assertFits = (lines: string[], label: string) => {
+		for (const line of lines) {
+			expect(visibleWidth(line), `${label} line wider than ${width}: ${line}`).toBeLessThanOrEqual(width);
+		}
+	};
+
+	// The task rows carry wide glyphs in the description, activity, transcript, and command.
+	assertFits(surface.render(width), "task rows");
+
+	const badgeLine = surface.render(width).findIndex((line) => line.includes("[open]"));
+	expect(badgeLine).toBeGreaterThanOrEqual(0);
+	const badgeText = surface.render(width)[badgeLine] ?? "";
+	// Right-aligned badges: the columns follow from the drawn row and tail widths.
+	const openCol = visibleWidth(badgeText) - visibleWidth("[open] [close]");
+	const closeCol = openCol + "[open] ".length;
+	expect(sliceByColumn(badgeText, openCol, "[open]".length)).toBe("[open]");
+	expect(sliceByColumn(badgeText, closeCol, "[close]".length)).toBe("[close]");
+	surface.handleMouse({ type: "click", button: "left", x: openCol, y: badgeLine } as never);
+	surface.handleMouse({ type: "click", button: "left", x: closeCol, y: badgeLine } as never);
+	expect(opened).toBe("cmd-cjk");
+	expect(closed).toBe("cmd-cjk");
+
+	// The child frame repeats the wide transcript through the same rows.
+	book.open("child-cjk");
+	assertFits(surface.render(width), "child frame");
+	book.close();
+
+	// A large Chinese command line in the foreground row stays inside the width too.
+	const foreground = {
+		id: "cmd-fg",
+		command: "echo 你好世界并等待一段时间再继续输出后续内容以便观察行宽是否溢出终端",
+		status: "running" as const,
+		output: "正在执行的输出行，包含大量中文字符以便触发行宽检查，确认整行都落在终端宽度之内",
+		exitCode: null,
+		pid: 2,
+		detached: false,
+	};
+	const foregroundSurface = new WorkSurface(new ChildAgentBook(), { list: () => [foreground] } as never);
+	assertFits(foregroundSurface.render(width), "foreground rows");
+});
+
+test("regular mode renders wide work-surface rows twice without stopping the renderer", async () => {
+	const book = new ChildAgentBook();
+	book.add({
+		id: "child-cjk",
+		description: "分析当前 TUI 实现里还存在的改进点并给出建议",
+		modelId: "grok-4.5",
+		status: "running",
+		activity: "正在阅读 packages/coding-agent 的交互模式源码",
+		startedAt: Date.now(),
+		transcript: [],
+		cancel: () => {},
+	});
+	const surface = new WorkSurface(book, { list: () => [] } as never);
+	const terminal = new VirtualTerminal(80, 24);
+	const ui = new TuiMainScreen(terminal);
+	ui.addChild(surface);
+	const render = ui as unknown as { renderNow(force?: boolean): void; stopped?: boolean };
+	try {
+		ui.start();
+		// First paint, then a diffed paint: the incremental path is where an
+		// over-wide line used to abort the renderer.
+		render.renderNow(true);
+		book.records[0]!.activity = "正在阅读 coding-agent 的交互模式源码与测试文件";
+		book.touch();
+		render.renderNow();
+		render.renderNow();
+		await terminal.waitForRender();
+		book.close();
+		for (const line of surface.render(80)) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+		}
+	} finally {
+		ui.stop();
+	}
+});
+
+test("a background process keeps one row with open and close badges", () => {
 		const task = {
 			id: "cmd-1",
 			command: "sleep 5",
@@ -109,6 +343,7 @@ describe("foreground command presentation", () => {
 			cancelAndSend: () => {},
 			cancelTurn: () => {},
 			showEscHint: () => {},
+			background: () => foregroundCommands.backgroundCurrent(),
 		});
 		const surface = new WorkSurface(harness.session.childAgents, foregroundCommands);
 		editor.onBeforeInput = (data) =>

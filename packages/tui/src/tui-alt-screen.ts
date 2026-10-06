@@ -503,6 +503,18 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.requestRender();
 	}
 
+	/** True while the transcript search box is open. */
+	get searchOpen(): boolean {
+		return this.activeSearch !== undefined;
+	}
+
+	/** Open the transcript search box, for entries that do not rely on the search chord. */
+	openSearch(): void {
+		if (!this.activeSearch) this.toggleSearch();
+		this.activeSearch?.overlay?.focus();
+		this.requestRender();
+	}
+
 	private scrollToPrompt(direction: -1 | 1): void {
 		if (!this.currentLayout) return;
 		const scrollView = this.getPrimaryScrollView();

@@ -1,6 +1,6 @@
 import { matchesKey } from "@amazme/tui";
-import { foregroundCommands } from "../../core/foreground-commands.ts";
 import { formatKeyText } from "../../core/keybinding-labels.ts";
+import { keyDisplayText } from "./components/keybinding-hints.ts";
 
 export type TerminalClass = "default" | "apple-terminal" | "vscode";
 
@@ -40,6 +40,30 @@ export interface ComposerEffects {
 	cancelAndSend(text: string): void;
 	cancelTurn(): void;
 	showEscHint(): void;
+	/** Move the running foreground command to the background. Returns false when nothing is running. */
+	background(): boolean;
+	/**
+	 * A retry or compaction countdown installed its own Escape handler, so the
+	 * composer hands the key through instead of showing the cancel hint.
+	 */
+	escOwnedBySurface?(): boolean;
+}
+
+/**
+ * Chord that cancels a running turn. Every surface that advertises the cancel
+ * action spells it through this helper.
+ */
+export function turnCancelKey(): string {
+	return formatKeyText("ctrl+c", { capitalize: true });
+}
+
+/** Reminder shown when Esc is pressed during a turn, and next to the working indicator. */
+export function turnCancelHint(): string {
+	return `${turnCancelKey()} to cancel`;
+}
+
+export function turnCancelNotice(): string {
+	return `Press ${turnCancelKey()} to cancel the turn`;
 }
 
 const VS_CODE_TERMINALS = new Set(["vscode", "cursor", "windsurf", "zed"]);
@@ -58,7 +82,7 @@ export function promptShortcutLine(
 	const trimmed = state.draft.trim();
 	const top = state.queue[0]?.replace(/\s+/g, " ").trim();
 	const chip = (key: string, action: string) => `\x1b[1m${formatKeyText(key, { capitalize: true })}\x1b[22m:${action}`;
-	const parts = [chip("Ctrl+\\", "dashboard")];
+	const parts = [chip(keyDisplayText("app.dashboard.toggle"), "dashboard")];
 	const enter = decideComposerAction(state, "enter");
 	if (enter.type === "insert-newline") parts.push(chip("Enter", "newline"));
 	else if (enter.type === "queue") parts.push(chip("Enter", "queue"));
@@ -70,21 +94,12 @@ export function promptShortcutLine(
 		parts.push(chip(sendNow, "now"));
 	}
 	if (state.autocompleteOpen) parts.push(chip("Tab", "complete"));
-	if (trimmed.length === 0 && state.turnRunning) parts.push(chip("Ctrl+C", "cancel"));
+	if (trimmed.length === 0 && state.turnRunning) parts.push(chip(turnCancelKey(), "cancel"));
 	if (top !== undefined) {
 		const extra = state.queue.length > 1 ? ` +${state.queue.length - 1}` : "";
 		parts.push(`Queued: ${top}${extra}`);
 	}
 	return parts.join(" │ ");
-}
-
-/** The footer line that says what Enter will do, plus any visible queued rows. */
-export function composerFooterLine(state: Pick<ComposerState, "turnRunning" | "multiline" | "queue">): string {
-	const enter = state.multiline ? "Enter: newline" : state.turnRunning ? "Enter: queue" : "Enter: send";
-	const altEnter = formatKeyText("alt+enter", { capitalize: true });
-	const alternate = state.multiline ? `Shift+Enter or ${altEnter}: send` : `Newline: Shift+Enter or ${altEnter}`;
-	const queued = state.queue.length > 0 ? `Queued: ${state.queue.join(" | ")}` : "";
-	return [enter, alternate, queued].filter((part) => part.length > 0).join("  ");
 }
 
 /**
@@ -160,14 +175,6 @@ export class InteractiveComposer {
 		this.terminalClass = terminalClass;
 	}
 
-	footerText(): string {
-		return composerFooterLine({
-			turnRunning: this.effects.isTurnRunning(),
-			multiline: this.multiline,
-			queue: this.queue,
-		});
-	}
-
 	/** Send the oldest queued row after the current turn ends. Returns false when nothing is queued. */
 	deliverAfterTurn(send: (text: string) => void): boolean {
 		const next = this.queue.shift();
@@ -179,6 +186,7 @@ export class InteractiveComposer {
 	handleInput(data: string): boolean {
 		const key = classifyComposerKey(data, this.terminalClass);
 		if (!key) return false;
+		if (key === "escape" && this.effects.escOwnedBySurface?.() === true) return false;
 		const decision = decideComposerAction(
 			{
 				draft: this.editor.getText(),
@@ -189,8 +197,12 @@ export class InteractiveComposer {
 			key,
 		);
 		if (this.apply(decision)) return true;
-		// Send-now and the newline chords are the composer's. A no-op must not fall through into submit or a newline.
-		return key === "send-now" || key === "shift+enter" || key === "alt+enter";
+		// The newline chords belong to the composer, so a no-op still consumes them.
+		// Send-now and the background chord fall back to the application binding that
+		// shares the key when there is nothing to cancel or background (Apple
+		// Terminal's Ctrl+O toggles tool output, VS Code's Ctrl+L opens the model
+		// selector, Ctrl+B moves the cursor left).
+		return key === "shift+enter" || key === "alt+enter";
 	}
 
 	private apply(decision: ComposerDecision): boolean {
@@ -210,8 +222,7 @@ export class InteractiveComposer {
 				this.effects.cancelTurn();
 				return true;
 			case "background":
-				foregroundCommands.backgroundCurrent();
-				return true;
+				return this.effects.background();
 			case "queue":
 				this.queue.push(decision.text);
 				this.editor.setText("");

@@ -67,7 +67,8 @@ import {
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
 import { foregroundCommands } from "../../core/foreground-commands.ts";
-import { InteractiveComposer, promptShortcutLine } from "./composer-contract.ts";
+import { InteractiveComposer, promptShortcutLine, turnCancelHint, turnCancelNotice } from "./composer-contract.ts";
+import { compactStartupHints, expandedStartupHints, startupHelpHint } from "./startup-hints.ts";
 import { promptOwnsKey, routeInteractiveInput } from "./interactive-input.ts";
 import { scrollbackRows, TranscriptFocus } from "./transcript-focus.ts";
 import { BashRunTable, ParentTranscript, syncComposerVisibility, WorkSurface } from "./work-surface.ts";
@@ -176,9 +177,6 @@ import {
 	clipboardPasteFallbackText,
 	formatKeyText,
 	keyDisplayText,
-	keyHint,
-	keyText,
-	rawKeyHint,
 } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
@@ -721,6 +719,8 @@ export class InteractiveMode {
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setShowLocation(false);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		// The first painted frame must already match the renderer's input model.
+		this.footer.setPointerInputEnabled(this.pointerInputAvailable());
 		this.statusBar = new SessionTopBar(
 			this.footer,
 			() => {
@@ -963,6 +963,19 @@ export class InteractiveMode {
 		this.ui.stop({ preserveScreen: this.renderer.mode === "fullscreen" });
 	}
 
+	/** Only the fullscreen renderer delivers pointer events; regular mode is keyboard only. */
+	private pointerInputAvailable(): boolean {
+		return this.renderer?.mode === "fullscreen";
+	}
+
+	/** Keep click-only chrome and its keyboard stand-ins in step with the active renderer. */
+	private syncPointerInput(): void {
+		const enabled = this.pointerInputAvailable();
+		if (this.workSurface) this.workSurface.mouseEnabled = enabled;
+		this.footer.setPointerInputEnabled(enabled);
+		this.dashboardView?.setPointerInput(enabled);
+	}
+
 	private switchTuiMode(mode: TuiMode, restoreProgress = true, startRenderer = true): boolean {
 		const previousUi = this.renderer;
 		if (mode === previousUi.mode) return true;
@@ -1000,6 +1013,7 @@ export class InteractiveMode {
 		}
 		this.renderer = nextUi;
 		this.options.tuiMode = mode;
+		this.syncPointerInput();
 		this.mountInteractiveTui(nextUi, components);
 		nextUi.invalidate();
 		nextUi.setFocus(focus);
@@ -1098,53 +1112,13 @@ export class InteractiveMode {
 				return `${top} ${theme.fg("dim", `v${this.version}`)}\n${bottom} ${hints}`;
 			};
 
-			// Build startup instructions using keybinding hint helpers
-			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
-
-			const expandedInstructions = () =>
-				[
-					hint("app.interrupt", "to interrupt"),
-					hint("app.clear", "to clear"),
-					rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
-					hint("app.exit", "to exit (empty)"),
-					hint("app.suspend", "to suspend"),
-					keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
-					hint("app.thinking.cycle", "to cycle thinking level"),
-					rawKeyHint(
-						`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`,
-						"to cycle models",
-					),
-					hint("app.model.select", "to select model"),
-					hint("app.tools.expand", "to expand tools"),
-					hint("app.thinking.toggle", "to expand thinking"),
-					hint("app.editor.external", "for external editor"),
-					rawKeyHint("/", "for commands"),
-					rawKeyHint("!", "to run bash"),
-					rawKeyHint("!!", "to run bash (no context)"),
-					hint("app.message.followUp", "to queue follow-up"),
-					hint("app.message.dequeue", "to edit all queued messages"),
-					hint("app.clipboard.pasteImage", `to ${getClipboardPasteDescription().toLowerCase()}`),
-					rawKeyHint("drop files", "to attach"),
-					clipboardPasteFallbackText(this.keybindings),
-				].filter(Boolean).join("\n");
-			const compactInstructions = () =>
-				[
-					hint("app.interrupt", "interrupt"),
-					rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
-					rawKeyHint("/", "commands"),
-					rawKeyHint("!", "bash"),
-					hint("app.clipboard.pasteImage", "paste image"),
-					hint("app.tools.expand", "more"),
-				].filter(Boolean).join(theme.fg("muted", " · "));
-			const compactOnboarding = () =>
-				theme.fg(
-					"dim",
-					[
-						`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
-						clipboardPasteFallbackText(this.keybindings),
-					].filter(Boolean).join("\n"),
-				);
-			const onboarding = () =>
+			// Startup hints live in one place so the header, /hotkeys, and the prompt
+		// shortcut bar cannot drift apart.
+		const hintOptions = { keybindings: this.keybindings, showDetails };
+		const expandedInstructions = () => expandedStartupHints(hintOptions);
+		const compactInstructions = () => compactStartupHints(hintOptions);
+		const compactOnboarding = () => startupHelpHint(hintOptions);
+		const onboarding = () =>
 				theme.fg("dim", `AmazMe can explain its own features and look up its docs. Ask it how to use or extend AmazMe.`);
 			const header = new BuiltInHeader(
 				() => `${withLogo(compactInstructions())}\n${compactOnboarding()}\n\n${onboarding()}`,
@@ -2564,7 +2538,7 @@ export class InteractiveMode {
 		this.setWorkingIndicator();
 		if (this.activeStatusIndicator?.kind === "working") {
 			this.activeStatusIndicator.setMessage(
-				`${this.defaultWorkingMessage} (${keyText("app.interrupt")} to interrupt)`,
+				`${this.defaultWorkingMessage} (${turnCancelHint()})`,
 			);
 		}
 		this.setHiddenThinkingLabel();
@@ -2811,7 +2785,7 @@ export class InteractiveMode {
 
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
-			this.editorContainer.addChild(new PopupClose(this.extensionSelector, cancelSelector));
+			this.editorContainer.addChild(new PopupClose(this.extensionSelector, cancelSelector, () => this.pointerInputAvailable()));
 			this.ui.setFocus(this.extensionSelector);
 			this.ui.requestRender();
 		});
@@ -2888,7 +2862,7 @@ export class InteractiveMode {
 
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
-			this.editorContainer.addChild(new PopupClose(this.extensionInput, cancelInput));
+			this.editorContainer.addChild(new PopupClose(this.extensionInput, cancelInput, () => this.pointerInputAvailable()));
 			this.ui.setFocus(this.extensionInput);
 			this.ui.requestRender();
 		});
@@ -2931,7 +2905,7 @@ export class InteractiveMode {
 
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
-			this.editorContainer.addChild(new PopupClose(this.extensionEditor, cancelEditor));
+			this.editorContainer.addChild(new PopupClose(this.extensionEditor, cancelEditor, () => this.pointerInputAvailable()));
 			this.ui.setFocus(this.extensionEditor);
 			this.ui.requestRender();
 		});
@@ -3316,8 +3290,10 @@ export class InteractiveMode {
 				void this.session.abort();
 			},
 			showEscHint: () => {
-				this.showStatus("Press Ctrl+C to cancel the turn");
+				this.showStatus(turnCancelNotice());
 			},
+			background: () => foregroundCommands.backgroundCurrent(),
+			escOwnedBySurface: () => this.retryEscapeHandler !== undefined || this.autoCompactionEscapeHandler !== undefined,
 		});
 		this.transcriptFocus = new TranscriptFocus(
 			(lines) => {
@@ -3335,13 +3311,22 @@ export class InteractiveMode {
 				this.session.childAgents.touch();
 			},
 		);
-		this.workSurface = new WorkSurface(this.session.childAgents, foregroundCommands, {
-			openProcess: (id) => this.openProcessPanel(id),
-			closeProcess: (id) => {
-				foregroundCommands.stop(id);
+		this.workSurface = new WorkSurface(
+			this.session.childAgents,
+			foregroundCommands,
+			{
+				openProcess: (id) => this.openProcessPanel(id),
+				closeProcess: (id) => {
+					foregroundCommands.stop(id);
+				},
 			},
-		});
+			{
+				mouseEnabled: this.pointerInputAvailable(),
+				emptyDraft: () => this.defaultEditor.getText().trim().length === 0,
+			},
+		);
 		this.parentTranscript.bind(this.chatContainer, this.workSurface);
+		this.syncPointerInput();
 		const sync = () => {
 			syncComposerVisibility(this.editorContainer, this.defaultEditor, this.workSurface.composerHidden);
 			this.ensureWorkSurface();
@@ -3350,7 +3335,6 @@ export class InteractiveMode {
 		this.session.childAgents.onChange(sync);
 		foregroundCommands.onChange(sync);
 		this.ensureWorkSurface();
-		this.footer.setComposerLine(() => undefined);
 		this.defaultEditor.onBeforeInput = (data) => {
 			if (isEmptyTerminalPaste(data) || this.keybindings?.matches(data, "app.clipboard.pasteImage")) {
 				return this.workSurface.composerHidden ? this.workSurface.handleInput(data) : false;
@@ -3427,6 +3411,7 @@ export class InteractiveMode {
 			}),
 			prefs,
 		);
+		this.dashboardView.setPointerInput(this.pointerInputAvailable());
 		return this.dashboardView;
 	}
 
@@ -3487,6 +3472,7 @@ export class InteractiveMode {
 				this.processOverlay = undefined;
 				this.ui.requestRender();
 			},
+			() => this.pointerInputAvailable(),
 		);
 		this.processOverlay = this.ui.showOverlay(panel, { anchor: "center", width: 72, maxHeight: "80%" });
 		this.processOverlay.focus();
@@ -3509,6 +3495,7 @@ export class InteractiveMode {
 			{
 				maxHeight: () => Math.floor(this.ui.terminal.rows * 0.8),
 				requestRender: () => this.ui.requestRender(),
+			mouseEnabled: () => this.pointerInputAvailable(),
 			},
 		);
 		this.contextOverlay = this.ui.showOverlay(panel, { anchor: "center", width: 72, maxHeight: "80%" });
@@ -3575,15 +3562,13 @@ export class InteractiveMode {
 			this.setStartupChrome(false);
 			this.parentTranscript.setOverlay(dashboard);
 			syncComposerVisibility(this.editorContainer, this.defaultEditor, false);
-			this.footer.setComposerLine(() => undefined);
-			this.ui.setFocus(dashboard);
+				this.ui.setFocus(dashboard);
 			void this.reloadDashboardDisk();
 		} else {
 			this.parentTranscript.setOverlay(undefined);
 			this.setStartupChrome(true);
 			syncComposerVisibility(this.editorContainer, this.defaultEditor, this.workSurface.composerHidden);
-			this.footer.setComposerLine(() => undefined);
-			this.ui.setFocus(this.editor);
+				this.ui.setFocus(this.editor);
 		}
 		if (TuiLayouts.isViewportTUI(this.renderer)) {
 			this.renderer.setLayoutRoot(open ? this.dashboardLayoutRoot : this.fullscreenLayoutRoot);
@@ -3741,6 +3726,11 @@ export class InteractiveMode {
 			if (text === "/hotkeys") {
 				this.handleHotkeysCommand();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/find" || text === "/search") {
+				this.editor.setText("");
+				this.handleFindCommand();
 				return;
 			}
 			if (text === "/fork") {
@@ -5371,7 +5361,7 @@ export class InteractiveMode {
 		};
 		const created = create(done);
 		dispose = created.dispose;
-		const framed = new PopupClose(created.component, done);
+		const framed = new PopupClose(created.component, done, () => this.pointerInputAvailable());
 		this.disposeActiveSelector();
 		this.activeSelectorToken = token;
 		this.activeSelectorDispose = dispose;
@@ -7278,6 +7268,15 @@ export class InteractiveMode {
 		return keyDisplayText(action);
 	}
 
+	/** Opens the transcript search box. Terminals without the search chord reach it here. */
+	private handleFindCommand(): void {
+		if (this.renderer instanceof TuiAltScreen) {
+			this.renderer.openSearch();
+			return;
+		}
+		this.showStatus("Transcript search needs fullscreen mode; in regular mode use your terminal's own search");
+	}
+
 	private handleHotkeysCommand(): void {
 		// Navigation keybindings
 		const cursorUp = this.getEditorKeyDisplay("tui.editor.cursorUp");
@@ -7321,6 +7320,9 @@ export class InteractiveMode {
 		const followUp = this.getAppKeyDisplay("app.message.followUp");
 		const dequeue = this.getAppKeyDisplay("app.message.dequeue");
 		const pasteImage = this.getAppKeyDisplay("app.clipboard.pasteImage");
+		const tasks = this.getAppKeyDisplay("app.tasks.toggle");
+		const dashboard = this.getAppKeyDisplay("app.dashboard.toggle");
+		const searchTranscript = this.getEditorKeyDisplay("tui.altScreen.search");
 
 		let hotkeys = `
 **Composer**
@@ -7361,19 +7363,22 @@ These main-editor controls take precedence over the configured bindings below.
 | Key | Action |
 |-----|--------|
 | \`${tab}\` | Path completion / accept autocomplete |
-| \`${interrupt}\` | Cancel autocomplete / abort streaming |
-| \`${clear}\` | Clear editor (first) / exit (second) |
+| \`${interrupt}\` | Close autocomplete and overlays; during a turn it reminds you to cancel with \`Ctrl+C\` |
+| \`${clear}\` | Clear the draft; with an empty draft cancel the running turn; twice in a row exits |
 | \`${exit}\` | Exit (when editor is empty) |
 | \`${suspend}\` | Suspend to background |
 | \`${cycleThinkingLevel}\` | Cycle thinking level |
 | \`${cycleModelForward}\` / \`${cycleModelBackward}\` | Cycle models |
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |
+| \`${tasks}\` | Show running subagents and background commands |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy selection or last assistant message |
 | \`${followUp}\` | Queue follow-up message |
 | \`${dequeue}\` | Restore queued messages |
+| \`${dashboard}\` | Open the agent dashboard |
+| \`${searchTranscript}\` | Search the rendered transcript in fullscreen mode (\`/find\` reaches it too) |
 | \`${pasteImage}\` | ${getClipboardPasteDescription()} |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |

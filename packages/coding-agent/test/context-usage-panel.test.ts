@@ -240,12 +240,10 @@ describe("context usage details", () => {
 			getExtensionStatuses: () => new Map([["status", "Extension ready"]]),
 		});
 		footer.setShowLocation(false);
-		footer.setComposerLine(() => "Ctrl+\\:dashboard");
 		vi.stubEnv("AMAZME_EXPERIMENTAL", "1");
 		const lines = footer.render(100).map(stripAnsi);
 		expect(lines[0]).toContain("xp");
 		expect(lines[0]).toContain("→ physical-model • medium");
-		expect(lines).toContain("Ctrl+\\:dashboard");
 		expect(lines).toContain("Extension ready");
 		expect(lines.join("\n")).not.toContain("test-provider");
 		expect(lines.join("\n")).not.toMatch(/↑\d|↓\d|CH\d|R\d|W\d/);
@@ -253,7 +251,31 @@ describe("context usage details", () => {
 });
 
 describe("bounded context detail panel", () => {
-	it("scrolls with configured keys and the wheel while keeping its close badge fixed", () => {
+	it("names the close key instead of the badge when there is no pointer", () => {
+const { detail } = fixture();
+const panel = new ContextUsagePanel(detail, () => {}, {
+maxHeight: () => 10,
+requestRender: () => {},
+mouseEnabled: () => false,
+});
+const top = stripAnsi(panel.render(72)[0] ?? "");
+expect(top.endsWith("Esc╮")).toBe(true);
+expect(top).not.toContain("[x]");
+expect(panel.handleMouse({ type: "click", button: "left", x: 68, y: 0 } as TuiMouseEvent)).toBeUndefined();
+// Keyboard closing keeps working.
+const closed: string[] = [];
+const closable = new ContextUsagePanel(detail, () => closed.push("closed"), {
+maxHeight: () => 10,
+requestRender: () => {},
+mouseEnabled: () => false,
+});
+closable.render(72);
+closable.handleInput("\x1b");
+closable.handleInput("q");
+expect(closed).toEqual(["closed", "closed"]);
+});
+
+it("scrolls with configured keys and the wheel while keeping its close badge fixed", () => {
 		const { detail } = fixture();
 		const onClose = vi.fn();
 		const requestRender = vi.fn();
@@ -318,7 +340,13 @@ describe("bounded context detail panel", () => {
 				getEditorTheme(),
 				new KeybindingsManager(),
 			);
-			const context = { ui, contextDetail: detail, contextOverlay: undefined };
+			const context = {
+				ui,
+				renderer: ui,
+				contextDetail: detail,
+				contextOverlay: undefined,
+				pointerInputAvailable: Reflect.get(InteractiveMode.prototype, "pointerInputAvailable"),
+			};
 			const bar = new SessionTopBar(
 				footer,
 				() => {},

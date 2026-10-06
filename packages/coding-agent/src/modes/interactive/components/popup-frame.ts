@@ -4,6 +4,9 @@ import { theme } from "../theme/theme.ts";
 
 export const POPUP_CLOSE_BADGE = "[x]";
 
+/** Regular mode has no pointer, so popups name the key that closes them instead of a badge. */
+export const POPUP_CLOSE_KEY_LABEL = "Esc";
+
 /** Columns of the close badge on the top border, excluding the corner. */
 export function popupCloseRange(width: number): { start: number; end: number } {
 	const end = Math.max(0, width - 1);
@@ -17,16 +20,27 @@ export function popupCloseClicked(event: TuiMouseEvent, width: number): boolean 
 	return event.x >= hit.start && event.x < hit.end;
 }
 
+export interface PopupFrameOptions {
+	/** Render a clickable [x] badge; otherwise the border names the close key. */
+	mouseEnabled?: boolean;
+}
+
 /** Rounded card. The top border keeps a title on the left and [x] on the right. */
-export function popupFrame(title: string, body: readonly string[], width: number): string[] {
-	const safe = Math.max(POPUP_CLOSE_BADGE.length + 2, width);
+export function popupFrame(
+	title: string,
+	body: readonly string[],
+	width: number,
+	options: PopupFrameOptions = {},
+): string[] {
+	const closeLabel = (options.mouseEnabled ?? true) ? POPUP_CLOSE_BADGE : POPUP_CLOSE_KEY_LABEL;
+	const safe = Math.max(closeLabel.length + 2, width);
 	const inner = Math.max(0, safe - 2);
-	const titleRoom = Math.max(0, inner - POPUP_CLOSE_BADGE.length);
+	const titleRoom = Math.max(0, inner - closeLabel.length);
 	const titled = truncateToWidth(` ${title} `, titleRoom, "…");
-	const gap = Math.max(0, inner - visibleWidth(titled) - POPUP_CLOSE_BADGE.length);
+	const gap = Math.max(0, inner - visibleWidth(titled) - closeLabel.length);
 	const top =
 		theme.fg("text", `╭${titled}${"─".repeat(gap)}`) +
-		theme.fg("accent", POPUP_CLOSE_BADGE) +
+		theme.fg("accent", closeLabel) +
 		theme.fg("text", "╮");
 	const lines = [top];
 	const contentWidth = Math.max(1, safe - 4);
@@ -44,10 +58,12 @@ export class PopupClose implements Component {
 	private width = 0;
 	private readonly inner: Component;
 	private readonly onClose: () => void;
+	private readonly mouseEnabled: () => boolean;
 
-	constructor(inner: Component, onClose: () => void) {
+	constructor(inner: Component, onClose: () => void, mouseEnabled: () => boolean = () => true) {
 		this.inner = inner;
 		this.onClose = onClose;
+		this.mouseEnabled = mouseEnabled;
 	}
 
 	invalidate(): void {
@@ -56,6 +72,7 @@ export class PopupClose implements Component {
 
 	render(width: number): string[] {
 		this.width = width;
+		if (!this.mouseEnabled()) return this.inner.render(width);
 		const gap = Math.max(0, width - POPUP_CLOSE_BADGE.length);
 		const bar = `${" ".repeat(gap)}${theme.fg("accent", POPUP_CLOSE_BADGE)}`;
 		return [bar, ...this.inner.render(width)];
@@ -67,7 +84,8 @@ export class PopupClose implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.y === 0) {
+		const offset = this.mouseEnabled() ? 1 : 0;
+		if (offset === 1 && event.y === 0) {
 			if (event.type === "click" && event.button === "left" && event.x >= Math.max(0, this.width - POPUP_CLOSE_BADGE.length)) {
 				this.onClose();
 				return { handled: true };
@@ -75,7 +93,7 @@ export class PopupClose implements Component {
 			return { handled: true };
 		}
 		const inner = this.inner as { handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined };
-		return inner.handleMouse?.({ ...event, y: event.y - 1 });
+		return inner.handleMouse?.({ ...event, y: event.y - offset });
 	}
 }
 
@@ -84,10 +102,12 @@ export class ProcessPanel implements Component {
 	private width = 0;
 	private readonly task: () => ForegroundTask | undefined;
 	private readonly onClose: () => void;
+	private readonly mouseEnabled: () => boolean;
 
-	constructor(task: () => ForegroundTask | undefined, onClose: () => void) {
+	constructor(task: () => ForegroundTask | undefined, onClose: () => void, mouseEnabled: () => boolean = () => true) {
 		this.task = task;
 		this.onClose = onClose;
+		this.mouseEnabled = mouseEnabled;
 	}
 
 	invalidate(): void {}
@@ -97,7 +117,7 @@ export class ProcessPanel implements Component {
 		const task = this.task();
 		const inner = Math.max(1, width - 4);
 		const body = task ? processBody(task, inner) : ["This process has ended."];
-		return popupFrame("Process", body, width);
+		return popupFrame("Process", body, width, { mouseEnabled: this.mouseEnabled() });
 	}
 
 	handleInput(data: string): void {
@@ -105,7 +125,7 @@ export class ProcessPanel implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (!popupCloseClicked(event, this.width)) return undefined;
+		if (!this.mouseEnabled() || !popupCloseClicked(event, this.width)) return undefined;
 		this.onClose();
 		return { handled: true };
 	}

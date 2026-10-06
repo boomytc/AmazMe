@@ -136,7 +136,7 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `tui.altScreen.lineDown` | None | Scroll the transcript down by one line |
 | `tui.altScreen.previousPrompt` | `ctrl+shift+up`, `ctrl+up` (`ctrl+up` only on Windows and WSL) | Jump to the previous marked message |
 | `tui.altScreen.nextPrompt` | `ctrl+shift+down`, `ctrl+down` (`ctrl+down` only on Windows and WSL) | Jump to the next marked message |
-| `tui.altScreen.search` | `ctrl+shift+f` (`ctrl+f` on Windows and WSL) | Search the rendered transcript |
+| `tui.altScreen.search` | `ctrl+shift+f`, `f3` (`ctrl+f`, `f3` on Windows and WSL) | Search the rendered transcript; `f3` works on terminals that cannot report a shifted chord |
 | `tui.altScreen.searchNext` | `enter`, `ctrl+g` | Select the next search match while searching |
 | `tui.altScreen.searchPrevious` | `shift+enter`, `ctrl+shift+g` | Select the previous search match while searching |
 | `tui.altScreen.searchClose` | `escape` | Close transcript search |
@@ -147,8 +147,10 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.interrupt` | `escape` | Cancel / abort |
-| `app.clear` | `ctrl+c` | Clear editor (first) / exit (second) |
+| `app.interrupt` | `escape` | Close autocomplete and overlays. During a turn it shows a reminder to cancel with `ctrl+c` |
+| `app.clear` | `ctrl+c` | Clear the draft; with an empty draft cancel the running turn; twice in a row exit |
+| `app.tasks.toggle` | `f2` | Show running subagents and background commands |
+| `app.dashboard.toggle` | `ctrl+\` | Open the agent dashboard |
 | `app.exit` | `ctrl+d` | Exit (when editor empty) |
 | `app.suspend` | `ctrl+z` (None on Windows) | Suspend to background |
 | `app.editor.external` | `ctrl+g` | Open in external editor (`externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere) |
@@ -175,7 +177,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.model.select` | `ctrl+l` | Open model selector |
+| `app.model.select` | `ctrl+l` | Open model selector. VS Code-family terminals use this chord as send-now while a turn runs |
 | `app.model.cycleForward` | `ctrl+p` | Cycle to next model |
 | `app.model.cycleBackward` | `shift+ctrl+p` (`alt+p` on Windows and WSL) | Cycle to previous model |
 | `app.models.save` | `ctrl+s` | Save the selected default model or scoped model configuration to settings |
@@ -187,7 +189,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.tools.expand` | `ctrl+o` | Collapse or expand tool output |
+| `app.tools.expand` | `ctrl+o` | Collapse or expand tool output. While a turn runs this chord is send-now, so it is idle-only on Apple Terminal |
 | `app.message.copy` | `ctrl+x` | Copy the selected message in `/tree`; in fullscreen mode, copy the active selection when `fullscreenCopyOnSelect` is `false`; otherwise copy the last assistant message. On OAuth sign-in screens, copy the sign-in URL |
 | `app.message.followUp` | `alt+enter` (`ctrl+q` on Windows and WSL) | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` (`alt+q` on Windows and WSL) | Restore queued messages to editor |

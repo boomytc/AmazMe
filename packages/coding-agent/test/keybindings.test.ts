@@ -31,7 +31,9 @@ describe("Windows keybinding defaults", () => {
 		const nativeWindows = process.platform === "win32";
 
 		expect(KEYBINDINGS["app.clipboard.pasteImage"].defaultKeys).toEqual(getClipboardPasteKeys());
-		expect(KEYBINDINGS["tui.altScreen.search"].defaultKeys).toBe(windowsKeybindings ? "ctrl+f" : "ctrl+shift+f");
+		expect(KEYBINDINGS["tui.altScreen.search"].defaultKeys).toEqual(
+			windowsKeybindings ? ["ctrl+f", "f3"] : ["ctrl+shift+f", "f3"],
+		);
 		expect(KEYBINDINGS["app.message.followUp"].defaultKeys).toBe(windowsKeybindings ? "ctrl+q" : "alt+enter");
 		expect(KEYBINDINGS["app.model.cycleBackward"].defaultKeys).toBe(windowsKeybindings ? "alt+p" : "shift+ctrl+p");
 		expect(KEYBINDINGS["tui.editor.undo"].defaultKeys).toBe(

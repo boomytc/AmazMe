@@ -1,4 +1,4 @@
-import { Container, getKeybindings, setKeybindings, TuiMainScreen } from "@amazme/tui";
+import { Container, getKeybindings, setKeybindings, TuiMainScreen, visibleWidth } from "@amazme/tui";
 import type { SimpleStreamOptions } from "@amazme/ai";
 import { fauxAssistantMessage } from "@amazme/ai";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -100,6 +100,7 @@ describe("child agent presentation", () => {
 				void harness.session.abort();
 			},
 			showEscHint: () => {},
+			background: () => false,
 		});
 		const transcript = new TranscriptFocus(
 			() => {},
@@ -221,7 +222,47 @@ describe("child agent presentation", () => {
 		}
 	});
 
-	test("status lines coalesce on the transcript and an inserted row survives the next projection", () => {
+	test("a Chinese subagent renders inside 80 columns through the real regular-mode renderer", async () => {
+const harness = await createHarness();
+const previous = getKeybindings();
+setKeybindings(new KeybindingsManager());
+const surface = new WorkSurface(harness.session.childAgents, { list: () => [] } as never);
+const terminal = new VirtualTerminal(80, 24);
+const ui = new TuiMainScreen(terminal);
+ui.addChild(surface);
+const renderNow = (ui as unknown as { renderNow(force?: boolean): void }).renderNow.bind(ui);
+try {
+harness.setResponses([
+fauxAssistantMessage("子代理分析的结论是：中文段落行也必须按显示宽度截断，否则整行会溢出终端，进而让差分渲染器抛出行宽错误并终止整个交互会话。"),
+]);
+const child = harness.session.spawnChild("分析当前 TUI 的实现并给出改进建议", "分析实现");
+await waitFor(() => child.status === "finished");
+
+const rows = surface.render(80);
+expect(rows.join("\n")).toContain("Subagent finished");
+for (const line of rows) expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+
+// The child frame repeats the wide transcript through the same rows.
+harness.session.childAgents.open(child.id);
+try {
+ui.start();
+renderNow(true);
+renderNow();
+await terminal.waitForRender();
+const frame = surface.render(80);
+expect(frame.join("\n")).toContain("子代理分析");
+for (const line of frame) expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+} finally {
+harness.session.childAgents.close();
+ui.stop();
+}
+} finally {
+harness.cleanup();
+setKeybindings(previous);
+}
+});
+
+test("status lines coalesce on the transcript and an inserted row survives the next projection", () => {
 		const ui = new TuiMainScreen(new VirtualTerminal());
 		const chat = new Container();
 		const surface = new WorkSurface(new ChildAgentBook(), { list: () => [] } as never);

@@ -1,5 +1,7 @@
 import {
+	getKeybindings,
 	type Keybinding,
+	matchesKey,
 	type KeybindingDefinitions,
 	type KeybindingsConfig,
 	type KeyId,
@@ -28,6 +30,8 @@ export interface AppKeybindings {
 	"app.message.copy": true;
 	"app.message.followUp": true;
 	"app.message.dequeue": true;
+	"app.tasks.toggle": true;
+	"app.dashboard.toggle": true;
 	"app.clipboard.pasteImage": true;
 	"app.session.new": true;
 	"app.session.tree": true;
@@ -79,6 +83,24 @@ export function getClipboardPasteDescription(platform: NodeJS.Platform = process
 	return platform === "darwin" ? "Paste files, images, or text from clipboard" : "Paste images or text from clipboard";
 }
 
+/**
+ * True when the input matches an application keybinding. Shared components can be
+ * mounted before the application keybinding table is installed, so the shipped
+ * default stands in for the resolved keys in that case.
+ */
+export function matchesAppBinding(data: string, id: AppKeybinding): boolean {
+	const manager = getKeybindings();
+	// A known binding reports what it resolved to, including a deliberate empty list.
+	const effective =
+		manager.getDefinition(id) !== undefined ? manager.getKeys(id) : normalizeDefaultKeys(KEYBINDINGS[id]?.defaultKeys);
+	return effective.some((key) => matchesKey(data, key));
+}
+
+function normalizeDefaultKeys(keys: KeyId | KeyId[] | undefined): KeyId[] {
+	if (keys === undefined) return [];
+	return Array.isArray(keys) ? keys : [keys];
+}
+
 declare module "@amazme/tui" {
 	interface Keybindings extends AppKeybindings {}
 }
@@ -101,9 +123,11 @@ export const KEYBINDINGS = {
 	},
 	"tui.altScreen.search": {
 		...TUI_KEYBINDINGS["tui.altScreen.search"],
-		defaultKeys: windowsKeybindings ? "ctrl+f" : "ctrl+shift+f",
+		// F3 reaches every terminal, including those that cannot deliver a shifted
+		// chord or report the Kitty keyboard protocol.
+		defaultKeys: windowsKeybindings ? ["ctrl+f", "f3"] : ["ctrl+shift+f", "f3"],
 	},
-	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
+	"app.interrupt": { defaultKeys: "escape", description: "Dismiss autocomplete and overlays; during a turn it points at the cancel key" },
 	"app.clear": { defaultKeys: "ctrl+c", description: "Clear editor" },
 	"app.exit": { defaultKeys: "ctrl+d", description: "Exit when editor is empty" },
 	"app.suspend": {
@@ -151,6 +175,14 @@ export const KEYBINDINGS = {
 	"app.message.dequeue": {
 		defaultKeys: windowsKeybindings ? "alt+q" : "alt+up",
 		description: "Restore queued messages",
+	},
+	"app.tasks.toggle": {
+		defaultKeys: "f2",
+		description: "Show running subagents and background commands",
+	},
+	"app.dashboard.toggle": {
+		defaultKeys: "ctrl+\\",
+		description: "Open the agent dashboard",
 	},
 	"app.clipboard.pasteImage": {
 		defaultKeys: getClipboardPasteKeys(),

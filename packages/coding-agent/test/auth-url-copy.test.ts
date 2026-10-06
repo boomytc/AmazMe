@@ -34,7 +34,7 @@ describe("sign-in URL copy key", () => {
 		const dialog = new LoginDialogComponent(tui, "test", () => {});
 		dialog.showAuth(URL);
 		void dialog.showManualInput("Paste the code:");
-		expect(rendered(dialog)).toContain("ctrl+x to copy");
+		expect(rendered(dialog)).toContain("Ctrl+X to copy");
 
 		dialog.handleInput(CTRL_X);
 		await vi.waitFor(() => expect(rendered(dialog)).toContain("Copied URL to clipboard"));
@@ -51,7 +51,7 @@ describe("sign-in URL copy key", () => {
 	test("MCP sign-in screen copies the authorization URL", async () => {
 		const view = new McpManagerView(tui, theme, new KeybindingsManager());
 		void view.redirectUrl("Sign in to issues", URL, new AbortController().signal);
-		expect(rendered(view)).toContain("ctrl+x to copy");
+		expect(rendered(view)).toContain("Ctrl+X to copy");
 
 		view.handleInput(CTRL_X);
 		await vi.waitFor(() => expect(rendered(view)).toContain("Copied URL to clipboard"));

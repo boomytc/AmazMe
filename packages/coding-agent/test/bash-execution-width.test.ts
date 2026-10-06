@@ -5,7 +5,7 @@
 import { visibleWidth } from "@amazme/tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 /** Minimal TUI stub that only exposes terminal.columns */
 function createTuiStub(columns: number): { columns: number; stub: any } {
@@ -32,7 +32,19 @@ describe("BashExecutionComponent width handling (#2569)", () => {
 		initTheme(undefined, false);
 	});
 
-	it("collapsed preview lines respect render-time width, not construction-time width", () => {
+	it("keeps the excluded-from-context command header dim before and after output arrives", () => {
+const { stub } = createTuiStub(120);
+const component = new BashExecutionComponent("echo 你好", stub, true);
+const dim = (text: string) => `${theme.getFgAnsi("dim")}${text}`;
+const running = component.render(120).join("\n");
+expect(running).toContain(dim(theme.bold("$ echo 你好")));
+component.appendOutput("你好\n");
+const settled = component.render(120).join("\n");
+expect(settled).toContain(dim(theme.bold("$ echo 你好")));
+expect(settled).not.toContain(theme.getFgAnsi("bashMode"));
+});
+
+it("collapsed preview lines respect render-time width, not construction-time width", () => {
 		const wideWidth = 200;
 		const narrowWidth = 80;
 

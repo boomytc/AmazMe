@@ -212,6 +212,7 @@ describe("prompt chrome", () => {
 				cancelAndSend: unexpectedEffect,
 				cancelTurn: unexpectedEffect,
 				showEscHint: unexpectedEffect,
+			background: () => false,
 			});
 			editor.onBeforeInput = (data) => composer.handleInput(data);
 			editor.setText("first\nmiddle\nlast");

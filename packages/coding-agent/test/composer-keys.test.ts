@@ -1,18 +1,20 @@
+import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, Container, getKeybindings, setKeybindings, TuiMainScreen } from "@amazme/tui";
 import { beforeAll, describe, expect, test } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
-import type { AgentSession } from "../src/core/agent-session.ts";
 import { ChildAgentBook } from "../src/core/child-session.ts";
 import { foregroundCommands } from "../src/core/foreground-commands.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
-import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
-import { detectTerminalClass, InteractiveComposer } from "../src/modes/interactive/composer-contract.ts";
-import { FooterComponent } from "../src/modes/interactive/components/footer.ts";
+import {
+	detectTerminalClass,
+	InteractiveComposer,
+	promptShortcutLine,
+} from "../src/modes/interactive/composer-contract.ts";
 import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
 import { routeInteractiveInput } from "../src/modes/interactive/interactive-input.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.ts";
-import { ParentTranscript } from "../src/modes/interactive/work-surface.ts";
+import { ParentTranscript, WorkSurface } from "../src/modes/interactive/work-surface.ts";
 import { scrollbackRows, TranscriptFocus } from "../src/modes/interactive/transcript-focus.ts";
 import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -24,36 +26,6 @@ const CTRL_L = "\x0c";
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function createFooterSession(): AgentSession {
-	const entries: unknown[] = [];
-	return {
-		state: {
-			model: { id: "test-model", provider: "test", contextWindow: 200_000, reasoning: false },
-			thinkingLevel: "off",
-		},
-		sessionManager: {
-			getEntries: () => entries,
-			getEntryCount: () => entries.length,
-			getSessionId: () => "test-session",
-			getLeafId: () => null,
-			getSessionName: () => "",
-			getCwd: () => "/tmp/project",
-		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 1 }),
-		routedModel: undefined,
-		modelRuntime: { isUsingSubscription: () => false },
-	} as unknown as AgentSession;
-}
-
-function createFooterData(): ReadonlyFooterDataProvider {
-	return {
-		getGitBranch: () => undefined,
-		getExtensionStatuses: () => new Map(),
-		getAvailableProviderCount: () => 1,
-		onBranchChange: () => () => {},
-	};
 }
 
 describe("interactive composer keys", () => {
@@ -88,9 +60,18 @@ describe("interactive composer keys", () => {
 			() => scrollbackRows([filler, first, second], [], () => {}),
 		);
 		editor.onBeforeInput = (data) => routeInteractiveInput(data, { transcript, composer });
-		const footer = new FooterComponent(createFooterSession(), createFooterData());
-		footer.setComposerLine(() => composer.footerText());
-		const footerText = () => footer.render(120).join("\n");
+		// The shortcut bar under the prompt is the chrome users actually see.
+		editor.setShortcutLine(() =>
+			promptShortcutLine({
+				draft: editor.getText(),
+				queue: composer.queue,
+				turnRunning,
+				multiline: composer.multiline,
+				terminalClass: composer.terminalClass,
+				autocompleteOpen: editor.isShowingAutocomplete(),
+			}),
+		);
+		const shortcutLine = () => stripVTControlCharacters(editor.render(120).at(-1) ?? "");
 
 		editor.setAutocompleteProvider({
 			getSuggestions: async (lines, _cursorLine, cursorCol) => {
@@ -123,10 +104,7 @@ describe("interactive composer keys", () => {
 			editor.handleInput("\r");
 			expect(effects).toEqual(["send:hello"]);
 			expect(editor.getText()).toBe("");
-			expect(footerText()).toContain("Enter: send");
-			expect(footerText()).toContain(
-				process.platform === "darwin" ? "Newline: Shift+Enter or Option+Enter" : "Newline: Shift+Enter or Alt+Enter",
-			);
+			expect(shortcutLine()).toBe("Ctrl+\\:dashboard");
 
 			turnRunning = true;
 			editor.setText("later");
@@ -134,8 +112,12 @@ describe("interactive composer keys", () => {
 			expect(effects).toEqual(["send:hello", "queue:later"]);
 			expect(composer.queue).toEqual(["later"]);
 			expect(editor.getText()).toBe("");
-			expect(footerText()).toContain("Enter: queue");
-			expect(footerText()).toContain("Queued: later");
+			// The draft is empty now, so Enter sends the queued head; a fresh draft queues again.
+			expect(shortcutLine()).toContain("Enter:send");
+			expect(shortcutLine()).toContain("Queued: later");
+			editor.setText("another");
+			expect(shortcutLine()).toContain("Enter:queue");
+			editor.setText("");
 
 			editor.handleInput("\r");
 			expect(effects.at(-1)).toBe("send-queued:later");
@@ -172,9 +154,9 @@ describe("interactive composer keys", () => {
 			editor.setText("two");
 			editor.handleInput("\r");
 			expect(editor.getText()).toBe("two\n");
-			expect(footerText()).toContain("Enter: newline");
-			expect(footerText()).toContain(
-				process.platform === "darwin" ? "Shift+Enter or Option+Enter: send" : "Shift+Enter or Alt+Enter: send",
+			expect(shortcutLine()).toContain("Enter:newline");
+			expect(shortcutLine()).toContain(
+				process.platform === "darwin" ? "Shift+Enter/Option+Enter:send" : "Shift+Enter/Alt+Enter:send",
 			);
 			editor.handleInput(SHIFT_ENTER);
 			expect(effects.at(-1)).toBe("send:two");
@@ -202,12 +184,12 @@ describe("interactive composer keys", () => {
 			editor.setText("second queued");
 			editor.handleInput("\r");
 			expect(composer.queue).toEqual(["first queued", "second queued"]);
-			expect(footerText()).toContain("Queued: first queued | second queued");
+			expect(shortcutLine()).toContain("Queued: first queued +1");
 			editor.setText("");
 			editor.handleInput(CTRL_ENTER);
 			expect(effects.at(-1)).toBe("cancel-and-send:first queued");
 			expect(composer.queue).toEqual(["second queued"]);
-			expect(footerText()).toContain("Queued: second queued");
+			expect(shortcutLine()).toContain("Queued: second queued");
 			editor.handleInput(CTRL_ENTER);
 			expect(effects.at(-1)).toBe("cancel-and-send:second queued");
 			expect(composer.queue).toEqual([]);
@@ -299,6 +281,86 @@ describe("interactive composer keys", () => {
 		}
 	});
 
+	test("advertised chords reach their actions instead of being swallowed by the composer", () => {
+		const previous = getKeybindings();
+		const keybindings = new KeybindingsManager();
+		setKeybindings(keybindings);
+		const ui = new TuiMainScreen(new VirtualTerminal());
+		const editor = new CustomEditor(ui, getEditorTheme(), keybindings);
+		const fired: string[] = [];
+		editor.onAction("app.editor.external", () => fired.push("external-editor"));
+		editor.onAction("app.tools.expand", () => fired.push("tools-expand"));
+		editor.onAction("app.model.select", () => fired.push("model-select"));
+		let turnRunning = false;
+		const composer = new InteractiveComposer(editor, {
+			isTurnRunning: () => turnRunning,
+			send: () => {},
+			queue: () => {},
+			sendQueued: () => {},
+			cancelAndSend: () => {},
+			cancelTurn: () => {},
+			showEscHint: () => {},
+			background: () => foregroundCommands.backgroundCurrent(),
+		});
+		const surface = new WorkSurface(new ChildAgentBook(), foregroundCommands, undefined, {
+			mouseEnabled: true,
+			emptyDraft: () => editor.getText().trim().length === 0,
+		});
+		editor.onBeforeInput = (data) =>
+			routeInteractiveInput(data, { child: surface, transcript: new TranscriptFocus(() => {}, () => []), composer });
+		try {
+			// Ctrl+G belongs to the external editor; the tasks list moved to F2.
+			editor.setText("draft");
+			editor.handleInput("\x07");
+			expect(fired).toEqual(["external-editor"]);
+			expect(surface.book.tasksOpen).toBe(false);
+			editor.setText("");
+
+			// The tasks list keeps a reachable chord and a keyboard path to its rows.
+			composer.terminalClass = "default";
+			editor.handleInput("\x1bOQ");
+			expect(surface.book.tasksOpen).toBe(true);
+			editor.handleInput("\x1b[B");
+			editor.handleInput("\x1b[A");
+			editor.handleInput("\x1b");
+			expect(surface.book.tasksOpen).toBe(false);
+
+			// Apple Terminal advertises Ctrl+O for send-now, so an idle Ctrl+O has to keep
+			// toggling tool output; VS Code advertises Ctrl+L the same way for the model selector.
+			composer.terminalClass = "apple-terminal";
+			editor.handleInput(CTRL_O);
+			expect(fired).toEqual(["external-editor", "tools-expand"]);
+			composer.terminalClass = "vscode";
+			editor.handleInput(CTRL_L);
+			expect(fired).toEqual(["external-editor", "tools-expand", "model-select"]);
+
+			// Ctrl+B only backgrounds a running command; otherwise it moves the cursor.
+			composer.terminalClass = "default";
+			editor.setText("ab");
+			const before = editor.getCursor();
+			editor.handleInput("\x02");
+			expect(foregroundCommands.list()).toEqual([]);
+			expect(editor.getCursor()).toEqual({ line: before.line, col: before.col - 1 });
+
+			// With a foreground command attached, the same chord backgrounds it and keeps the cursor.
+			foregroundCommands.attach({ command: "sleep 30", pid: process.pid, detachAbort: () => {} });
+			editor.setText("ab");
+			const kept = editor.getCursor();
+			editor.handleInput("\x02");
+			expect(foregroundCommands.list()[0]?.detached).toBe(true);
+			expect(editor.getCursor()).toEqual(kept);
+			foregroundCommands.reset();
+
+			// Send-now still cancels and sends while a turn runs.
+			turnRunning = true;
+			editor.setText("");
+			editor.handleInput(CTRL_ENTER);
+			expect(fired).toEqual(["external-editor", "tools-expand", "model-select"]);
+		} finally {
+			setKeybindings(previous);
+		}
+	});
+
 	test("the installed editor tells the user to press Ctrl+C and pages without changing the draft", () => {
 		const previous = getKeybindings();
 		const keybindings = new KeybindingsManager();
@@ -323,7 +385,10 @@ describe("interactive composer keys", () => {
 			editorContainer,
 			parentTranscript,
 			ui,
-			footer: { setComposerLine(_render: () => string) {} },
+			footer: { setPointerInputEnabled(_enabled: boolean) {} },
+			renderer: { mode: "fullscreen" as const },
+			pointerInputAvailable: Reflect.get(InteractiveMode.prototype, "pointerInputAvailable"),
+			syncPointerInput: Reflect.get(InteractiveMode.prototype, "syncPointerInput"),
 			transcriptScrollView: { scrollBy: (lines: number) => scrolled.push(lines) },
 			transcriptFocus: undefined as TranscriptFocus | undefined,
 			ensureWorkSurface: Reflect.get(InteractiveMode.prototype, "ensureWorkSurface"),

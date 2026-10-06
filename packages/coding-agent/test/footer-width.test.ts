@@ -10,7 +10,7 @@ import {
 	formatCwdForFooter,
 	SessionTopBar,
 } from "../src/modes/interactive/components/footer.ts";
-import { PopupClose } from "../src/modes/interactive/components/popup-frame.ts";
+import { PopupClose, ProcessPanel } from "../src/modes/interactive/components/popup-frame.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -379,7 +379,52 @@ describe("FooterComponent width handling", () => {
 		expect(closed).toBe(1);
 	});
 
-	it("puts a close badge on the top-right of a dialog", () => {
+	it("regular mode names the dashboard chord and drops the click-only badges", () => {
+const footer = new FooterComponent(createSession({ sessionName: "会话标题" }), createFooterData(1));
+footer.setPointerInputEnabled(false);
+const bar = new SessionTopBar(footer, () => {
+throw new Error("a pointer click must not fire in regular mode");
+}, () => {});
+for (const width of [40, 80, 120]) {
+const line = bar.render(width)[0]!;
+expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+expect(stripAnsi(line)).toContain(width >= 32 ? "Ctrl+\\ dashboard" : "Ctrl+\\");
+expect(stripAnsi(line)).not.toContain("[Dashboard]");
+// Nothing that looks like a target stays hit-testable without a pointer.
+expect(footer.dashboardHitRange()).toBeUndefined();
+expect(footer.contextHitRange()).toBeUndefined();
+expect(bar.handleMouse({ type: "click", button: "left", x: width - 4, y: 0 } as never)).toBeUndefined();
+}
+footer.setPointerInputEnabled(true);
+const line = bar.render(80)[0]!;
+expect(stripAnsi(line)).toContain("[Dashboard]");
+expect(footer.dashboardHitRange()).toBeDefined();
+});
+
+it("popups name the close key when there is no pointer", () => {
+let closed = 0;
+const popup = new PopupClose(
+{ render: () => ["body"], invalidate() {} },
+() => {
+closed += 1;
+},
+() => false,
+);
+const lines = popup.render(10);
+// No badge line at all: the dialog's own footer already names Escape.
+expect(lines).toEqual(["body"]);
+expect(popup.handleMouse({ type: "click", button: "left", x: 7, y: 0 } as never)).toBeUndefined();
+expect(closed).toBe(0);
+
+const panel = new ProcessPanel(() => undefined, () => {
+closed += 1;
+}, () => false);
+const topBorder = stripAnsi(panel.render(40)[0] ?? "");
+expect(topBorder.endsWith("Esc╮")).toBe(true);
+expect(topBorder).not.toContain("[x]");
+});
+
+it("puts a close badge on the top-right of a dialog", () => {
 		let closed = 0;
 		const popup = new PopupClose({ render: () => ["body"], invalidate() {} }, () => {
 			closed += 1;

@@ -11,6 +11,7 @@ import {
 	visibleWidth,
 	VStack,
 } from "@amazme/tui";
+import { matchesAppBinding } from "../../core/keybindings.ts";
 import { getTerminalPasteText } from "../../utils/clipboard-paste.ts";
 import { theme } from "./theme/theme.ts";
 
@@ -310,7 +311,7 @@ export function pressDashboard(
 		if (armed !== undefined && !matchesKey(data, "ctrl+x")) clearArm(state);
 	};
 
-	if (matchesKey(data, "ctrl+\\")) {
+	if (matchesAppBinding(data, "app.dashboard.toggle")) {
 		state.open = !state.open;
 		if (state.open) {
 			state.focus = agents.length > 0 ? "list" : "input";
@@ -581,11 +582,12 @@ function dashboardHeader(agents: readonly DashboardAgent[], width: number): stri
 	return [clip(line, width), ""];
 }
 
-function dashboardFooter(state: DashboardScreenState, width: number): string[] {
+function dashboardFooter(state: DashboardScreenState, width: number, pointerInput = true): string[] {
 	let text = state.notice ?? "";
 	if (!text && state.renameFor) text = width >= 40 ? "Enter save · Esc cancel · Ctrl+U clear" : "Enter save · Esc cancel";
 	else if (!text && state.search) text = `Search: ${singleLine(state.query)}`;
-	else if (!text && state.help) text = "↑/↓ move · Enter open · Ctrl+R rename · Ctrl+X close";
+	// Without a pointer the row badges never appear, so the keys stand in for them.
+	else if (!text && (state.help || !pointerInput)) text = "↑/↓ move · Enter open · Ctrl+R rename · Ctrl+X close";
 	else if (!text && state.filter) text = `Filter: ${state.filter}`;
 	else if (!text && state.reply) text = `Reply: ${singleLine(state.reply)}`;
 	else if (!text && state.draft) text = `New: ${singleLine(state.draft)}`;
@@ -681,12 +683,13 @@ export function renderDashboard(
 	width: number,
 	hits?: DashboardHit[],
 	renameLine?: string,
+	pointerInput = true,
 ): string[] {
 	const header = dashboardHeader(agents, width);
 	return [
 		...header,
 		...dashboardBody(agents, state, now, width, hits, renameLine, header.length),
-		...dashboardFooter(state, width),
+		...dashboardFooter(state, width, pointerInput),
 	];
 }
 
@@ -742,6 +745,8 @@ export class DashboardView implements Component, Focusable {
 	private readonly placeOf: () => DashboardPlace;
 	private readonly now: () => number;
 	private hits: DashboardHit[] = [];
+	/** Regular mode has no pointer, so the footer names the row keys instead of the hover badges. */
+	private pointerInput = true;
 	private revealRequested = true;
 	private selectedRange = "";
 	readonly scrollView: ScrollView;
@@ -780,7 +785,7 @@ export class DashboardView implements Component, Focusable {
 			},
 			{ component: this.scrollView, basis: 0, grow: 1, minSize: 1 },
 			{
-				component: { render: (width) => dashboardFooter(this.state, width), invalidate() {} },
+				component: { render: (width) => dashboardFooter(this.state, width, this.pointerInput), invalidate() {} },
 				shrink: 0, minSize: 1,
 			},
 		]);
@@ -788,6 +793,10 @@ export class DashboardView implements Component, Focusable {
 
 	isOpen(): boolean {
 		return this.state.open;
+	}
+
+	setPointerInput(enabled: boolean): void {
+		this.pointerInput = enabled;
 	}
 
 	shortcutLine(): string {
@@ -866,7 +875,7 @@ export class DashboardView implements Component, Focusable {
 
 	/** Editor route. Returns true when the dashboard consumed the key. */
 	handleKey(data: string): boolean {
-		if (!this.state.open && !matchesKey(data, "ctrl+\\")) return false;
+		if (!this.state.open && !matchesAppBinding(data, "app.dashboard.toggle")) return false;
 		if (this.handlePaste(data)) return true;
 		if (this.state.open && !this.state.renameFor && matchesKey(data, "tab")) {
 			this.state.focus = "list";
@@ -937,9 +946,25 @@ export class DashboardView implements Component, Focusable {
 		this.hits = [];
 		if (this.renameInput) this.renameInput.focused = this.focused;
 		const renameLine = this.renameInput?.render(width)[0];
-		return renderDashboard(this.agentsOf(), this.state, this.placeOf(), this.now(), width, this.hits, renameLine).map(
+		return renderDashboard(
+			this.agentsOf(),
+			this.state,
+			this.placeOf(),
+			this.now(),
+			width,
+			this.hits,
+			renameLine,
+			this.pointerInput,
+		).map(
 			(line) => theme.fg("text", line),
 		);
+	}
+
+	/** Pointer left the list: drop the hover-only row badges. */
+	handleMouseLeave(): boolean {
+		if (this.state.hoverId === undefined) return false;
+		this.state.hoverId = undefined;
+		return true;
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -1038,7 +1063,7 @@ export class DashboardView implements Component, Focusable {
 	}
 
 	private press(data: string): void {
-		if (this.renameInput && !matchesKey(data, "ctrl+\\")) {
+		if (this.renameInput && !matchesAppBinding(data, "app.dashboard.toggle")) {
 			if (matchesKey(data, "ctrl+u")) this.renameInput.setValue("");
 			else if (matchesKey(data, "ctrl+s")) this.renameInput.onSubmit?.(this.renameInput.getValue());
 			else this.renameInput.handleInput(data);

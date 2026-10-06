@@ -251,12 +251,28 @@ describe("agent dashboard", () => {
 		expect(hovered).toHaveLength(before.length);
 		expect(hovered[row]).toContain("[x]");
 		expect(hovered[row]).toContain("[rename]");
+		// The row badges are pointer-only, so the dashboard chrome names the same-work keys.
+		expect(view.shortcutLine()).toContain("Ctrl+R");
+		expect(view.shortcutLine()).toContain("Ctrl+X");
+		view.setPointerInput(false);
+		expect(stripTerminalSequences(view.render(80).join("\n"))).toContain("Ctrl+R rename");
+		expect(stripTerminalSequences(view.render(80).join("\n"))).toContain("Ctrl+X close");
+		view.setPointerInput(true);
 		expect(hovered[row]).not.toContain(theme.getBgAnsi("selectedBg"));
 		expect(hovered[row + 1]).toBe(before[row + 1]);
 		expect(hovered.filter((line) => line.includes(theme.getBgAnsi("selectedBg")))).toEqual(
 			before.filter((line) => line.includes(theme.getBgAnsi("selectedBg"))),
 		);
 		expect(view.handleMouse(mouse("move", 2, row))).toEqual({ handled: true, render: false });
+
+		// Leaving the component is what used to strand the hover-only badges.
+		expect(view.handleMouseLeave()).toBe(true);
+		expect(view.render(80)[row]).not.toContain("[rename]");
+		expect(view.render(80)[row]).not.toContain("[x]");
+		expect(view.render(80)).toEqual(before);
+		expect(view.handleMouseLeave()).toBe(false);
+
+		view.handleMouse(mouse("move", 2, row));
 		view.handleMouse(mouse("move", 2, 0));
 		expect(view.render(80)).toEqual(before);
 		view.handleKey("\r");

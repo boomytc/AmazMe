@@ -48,7 +48,7 @@ describe("clipboard key hints", () => {
 		bindings.setUserBindings({ "app.clipboard.pasteImage": "ctrl+shift+x" });
 		expect(keyDisplayText("app.clipboard.pasteImage")).toBe("Ctrl+Shift+X");
 		expect(stripVTControlCharacters(keyHint("app.clipboard.pasteImage", "paste image"))).toBe(
-			"ctrl+shift+x paste image",
+			"Ctrl+Shift+X paste image",
 		);
 		expect(clipboardPasteFallbackText(bindings)).toBeUndefined();
 		bindings.setUserBindings({ "app.clipboard.pasteImage": [] });

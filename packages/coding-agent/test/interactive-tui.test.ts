@@ -144,6 +144,7 @@ describe("createInteractiveTui", () => {
 			options: { tuiMode?: TuiMode };
 			themeController: { rebindTui: () => void };
 			extensionTerminalInputSubscriptions: Set<never>;
+			footer: { setPointerInputEnabled(enabled: boolean): void };
 		};
 		const context = Object.assign(Object.create(InteractiveMode.prototype), {
 			runtimeHost: {
@@ -157,6 +158,7 @@ describe("createInteractiveTui", () => {
 			options: { tuiMode: "regular" as TuiMode },
 			themeController: { rebindTui: () => {} },
 			extensionTerminalInputSubscriptions: new Set<never>(),
+			footer: { setPointerInputEnabled() {} },
 		}) as SwitchContext;
 		stableUi = createInteractiveTuiReference(() => context.renderer);
 		context.ui = stableUi;

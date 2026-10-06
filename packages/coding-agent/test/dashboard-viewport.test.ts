@@ -84,7 +84,7 @@ function fixture() {
 		workSurface: { composerHidden: false },
 		parentTranscript: { setOverlay: () => {} },
 		setStartupChrome: () => {},
-		footer: { setComposerLine: () => {} },
+		footer: { setPointerInputEnabled: () => {} },
 		reloadDashboardDisk: async () => {},
 	};
 	const prototype = InteractiveMode.prototype as unknown as {
