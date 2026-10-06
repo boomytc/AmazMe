@@ -429,10 +429,10 @@ describe("agent events", () => {
 		);
 		const ghostEnd = round.indexOf("tool_execution_end");
 		expect(round.slice(ghostEnd - 1, ghostEnd + 3)).toEqual([
-			"end:pi.assistant",
+			"end:amazme.assistant",
 			"tool_execution_end",
 			"start:toolResult",
-			"end:pi.tool-result",
+			"end:amazme.tool-result",
 		]);
 		const tool = events().filter((event) => event.type.startsWith("tool_execution"));
 		expect(tool.map((event) => [event.type, "toolCallId" in event && event.toolCallId, "entry" in event])).toEqual([

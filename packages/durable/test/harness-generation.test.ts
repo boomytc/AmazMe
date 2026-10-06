@@ -687,6 +687,6 @@ describe("generation", () => {
 				{ models: chatSetup().models, registry: { snapshot: () => snapshot, subscribe: () => () => {} } },
 				context,
 			),
-		).rejects.toThrow("Registry lacks built-in tasks pi.generation");
+		).rejects.toThrow("Registry lacks built-in tasks amazme.generation");
 	});
 });
