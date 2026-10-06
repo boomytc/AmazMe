@@ -2,7 +2,9 @@ import type { AssistantMessage, ToolCall, ToolResultMessage, UserMessage } from 
 import {
 	AssistantEntry,
 	CompactionEntry,
+	type ConversationId,
 	type ConversationView,
+	type EntryId,
 	type EntryRecord,
 	type JsonObject,
 	ResetEntry,
@@ -21,15 +23,23 @@ import {
 	transcriptBlocks,
 } from "../src/experimental/web/view.ts";
 
-const CONVERSATION = 1;
+const CONVERSATION = 1 as ConversationId;
 const NOW = 1_700_000_000_000;
+
+function entryId(value: number): EntryId {
+	return value as EntryId;
+}
 
 function userEntry(id: number, text: string): EntryRecord {
 	const message: UserMessage = { role: "user", content: text, timestamp: id };
-	return { id, conversationId: CONVERSATION, kind: UserEntry.kind, model: [message] };
+	return { id: entryId(id), conversationId: CONVERSATION, kind: UserEntry.kind, model: [message] };
 }
 
-function assistantEntry(id: number, content: AssistantMessage["content"], stopReason = "stop"): EntryRecord {
+function assistantEntry(
+	id: number,
+	content: AssistantMessage["content"],
+	stopReason: AssistantMessage["stopReason"] = "stop",
+): EntryRecord {
 	const message: AssistantMessage = {
 		role: "assistant",
 		content,
@@ -47,7 +57,7 @@ function assistantEntry(id: number, content: AssistantMessage["content"], stopRe
 		stopReason,
 		timestamp: id,
 	};
-	return { id, conversationId: CONVERSATION, kind: AssistantEntry.kind, model: [message] };
+	return { id: entryId(id), conversationId: CONVERSATION, kind: AssistantEntry.kind, model: [message] };
 }
 
 function toolCall(id: string, name = "bash"): ToolCall {
@@ -63,16 +73,13 @@ function toolResultEntry(id: number, callId: string, text: string, isError = fal
 		isError,
 		timestamp: id,
 	};
-	return { id, conversationId: CONVERSATION, kind: ToolResultEntry.kind, model: [message] };
+	return { id: entryId(id), conversationId: CONVERSATION, kind: ToolResultEntry.kind, model: [message] };
 }
 
 function viewOf(entries: EntryRecord[], docs: Record<string, JsonObject> = {}): ConversationView {
+	// The view model reads entries and docs only; a conversation record is not part of these assertions.
 	return {
-		conversation: {
-			id: CONVERSATION,
-			createdAt: NOW,
-			agent: { provider: "test", modelId: "test" },
-		} as ConversationView["conversation"],
+		conversation: { id: CONVERSATION, createdAt: NOW } as unknown as ConversationView["conversation"],
 		entries,
 		docs,
 	};
@@ -124,8 +131,13 @@ describe("web view model", () => {
 					toolCall("call-1"),
 				]),
 				toolResultEntry(3, "call-1", "exit 0"),
-				{ id: 4, conversationId: CONVERSATION, kind: CompactionEntry.kind, model: [userEntry(0, "summary text").model![0]!] },
-				{ id: 5, conversationId: CONVERSATION, kind: ResetEntry.kind },
+				{
+					id: entryId(4),
+					conversationId: CONVERSATION,
+					kind: CompactionEntry.kind,
+					model: [userEntry(0, "summary text").model![0]!],
+				},
+				{ id: entryId(5), conversationId: CONVERSATION, kind: ResetEntry.kind },
 			]),
 		);
 		expect(blocks.map((block) => [block.kind, block.title])).toEqual([

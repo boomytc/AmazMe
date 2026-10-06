@@ -95,7 +95,7 @@
 			}
 			#transcript-panel {
 				display: grid;
-				grid-template-rows: auto minmax(0, 1fr) auto;
+				grid-template-rows: auto minmax(0, 1fr) auto auto;
 				min-height: 0;
 			}
 			#status {
@@ -119,6 +119,42 @@
 				display: grid;
 				gap: 10px;
 				align-content: start;
+			}
+			.composer {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) auto auto;
+				gap: 8px;
+				align-items: end;
+				padding: 10px 16px;
+				border-top: 1px solid var(--line);
+			}
+			.composer textarea {
+				resize: vertical;
+				min-height: 38px;
+				padding: 8px 10px;
+				background: var(--panel);
+				color: inherit;
+				font: inherit;
+				border: 1px solid var(--line);
+				border-radius: 6px;
+			}
+			.composer textarea:focus {
+				outline: none;
+				border-color: var(--accent);
+			}
+			.composer button {
+				padding: 8px 12px;
+				background: var(--panel);
+				color: inherit;
+				font: inherit;
+				border: 1px solid var(--line);
+				border-radius: 6px;
+				cursor: pointer;
+			}
+			.composer button:disabled,
+			.composer textarea:disabled {
+				opacity: 0.5;
+				cursor: default;
 			}
 			.block {
 				border: 1px solid var(--line);
@@ -184,6 +220,11 @@
 				<div id="status"></div>
 				<div id="transcript"><p class="state">No session attached.</p></div>
 				<div id="queue"></div>
+				<form class="composer" id="composer">
+					<textarea id="prompt" rows="2" placeholder="No session attached" disabled></textarea>
+					<button type="submit" id="send" disabled>Send</button>
+					<button type="button" id="abort" disabled>Abort</button>
+				</form>
 			</section>
 		</main>
 		<script type="module" src="/page.js"></script>

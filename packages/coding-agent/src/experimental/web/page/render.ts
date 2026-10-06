@@ -4,7 +4,7 @@
  * Every update rebuilds the panels, then restores the transcript's scroll position so streaming
  * does not yank the reader around.
  */
-import type { TranscriptBlock, WebView } from "../view.ts";
+import { composerPlaceholder, type TranscriptBlock, type WebView } from "../view.ts";
 
 export interface PageElements {
 	readonly connection: HTMLElement;
@@ -13,13 +13,20 @@ export interface PageElements {
 	readonly transcript: HTMLElement;
 	readonly status: HTMLElement;
 	readonly queue: HTMLElement;
+	readonly composer: HTMLFormElement;
+	readonly prompt: HTMLTextAreaElement;
+	readonly abort: HTMLButtonElement;
 }
 
 export interface PageRenderer {
 	render(view: WebView): void;
 	setConnection(text: string, kind: "state" | "error"): void;
-	/** Set by the page entry once it can attach a session. */
+	/** Handlers the page entry fills in once it can drive the host. */
 	onSelect: (sessionId: string) => void;
+	onSubmit: (text: string) => void;
+	onAbort: () => void;
+	/** The view the composer's enabled state and placeholder were last rendered from. */
+	readonly view: WebView | undefined;
 }
 
 export function collectPageElements(): PageElements {
@@ -35,7 +42,20 @@ export function collectPageElements(): PageElements {
 		transcript: pick("transcript"),
 		status: pick("status"),
 		queue: pick("queue"),
+		composer: pickElement(document, "composer", HTMLFormElement),
+		prompt: pickElement(document, "prompt", HTMLTextAreaElement),
+		abort: pickElement(document, "abort", HTMLButtonElement),
 	};
+}
+
+function pickElement<T extends HTMLElement>(
+	document: Document,
+	id: string,
+	constructor: new () => T,
+): T {
+	const element = document.getElementById(id);
+	if (!(element instanceof constructor)) throw new Error(`Page document is missing #${id}`);
+	return element;
 }
 
 const BLOCK_CLASS: Readonly<Record<TranscriptBlock["kind"], string>> = {
@@ -66,9 +86,16 @@ function blockElement(block: TranscriptBlock): HTMLElement {
 }
 
 export function createRenderer(elements: PageElements, onSelect: (sessionId: string) => void = () => {}): PageRenderer {
+	let lastView: WebView | undefined;
 	const renderer: PageRenderer = {
 		onSelect,
+		onSubmit: () => {},
+		onAbort: () => {},
+		get view(): WebView | undefined {
+			return lastView;
+		},
 		render(view: WebView): void {
+			lastView = view;
 			const stick = atBottom(elements.transcript);
 			elements.roster.replaceChildren();
 			for (const item of view.roster) {
@@ -105,6 +132,9 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 			}
 			if (stick) elements.transcript.scrollTop = elements.transcript.scrollHeight;
 
+			elements.prompt.disabled = view.attachedId === undefined;
+			elements.prompt.placeholder = composerPlaceholder(view.attachedId);
+			elements.abort.disabled = view.attachedId === undefined;
 			elements.status.textContent = view.status;
 			elements.status.classList.toggle("busy", view.status.length > 0);
 			elements.status.classList.remove("error");
@@ -121,5 +151,19 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 			elements.connection.className = kind;
 		},
 	};
+	elements.composer.addEventListener("submit", (event) => {
+		event.preventDefault();
+		const text = elements.prompt.value.trim();
+		if (text.length === 0 || lastView?.attachedId === undefined) return;
+		elements.prompt.value = "";
+		renderer.onSubmit(text);
+	});
+	elements.prompt.addEventListener("keydown", (event) => {
+		// Enter submits, Shift+Enter keeps the newline: the same contract the TUI composer uses.
+		if (event.key !== "Enter" || event.shiftKey) return;
+		event.preventDefault();
+		elements.composer.requestSubmit();
+	});
+	elements.abort.addEventListener("click", () => renderer.onAbort());
 	return renderer;
 }

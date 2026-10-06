@@ -288,6 +288,16 @@ export function sessionStatus(view: ConversationView | undefined): string {
 	return "";
 }
 
+/** Whether the session is running: a prompt then steers or queues instead of starting a run. */
+export function isBusy(view: ConversationView | undefined): boolean {
+	return view !== undefined && liveOf(view).run !== undefined;
+}
+
+/** The composer's placeholder names what the next submit will do. */
+export function composerPlaceholder(attachedId: string | undefined): string {
+	return attachedId === undefined ? "No session attached" : `Send a task to ${attachedId}`;
+}
+
 /** Inputs the session has accepted but not started yet. */
 export function queuedInputs(view: ConversationView | undefined): string[] {
 	const inbox = (view?.docs[INBOX_DOC] ?? { items: [] }) as InboxState;

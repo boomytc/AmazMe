@@ -15,9 +15,10 @@ import {
 	createSessionServiceSource,
 	type SessionServiceSource,
 } from "../../services/connection.ts";
+import { AgentController } from "../../services/agent-controller.ts";
 import { SessionDirectory, SessionManagement } from "../../services/sessions.ts";
 import { Transcript } from "../../services/transcript.ts";
-import { buildWebView, failureView } from "../view.ts";
+import { buildWebView, failureView, isBusy } from "../view.ts";
 import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
 
 function readManifest(): WebBootManifest | undefined {
@@ -37,6 +38,7 @@ class SessionPainter {
 	readonly #sessionSource: SessionServiceSource;
 	readonly #renderer: PageRenderer;
 	#transcript: ReplicatedState<ConversationView> | undefined;
+	#controller: AgentController | undefined;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
 	#sessionId: string | undefined;
 
@@ -53,6 +55,26 @@ class SessionPainter {
 		return this.#transcript?.value;
 	}
 
+	/** Send input to the attached session: a new run when idle, queued input while one runs. */
+	async submit(text: string): Promise<void> {
+		const controller = this.#controller;
+		if (controller === undefined) return;
+		const request = { message: text, images: null };
+		const response = isBusy(this.transcriptValue)
+			? await controller.followUp(request, BACKGROUND_CONTEXT)
+			: await controller.prompt(request, BACKGROUND_CONTEXT);
+		if (!response.accepted) {
+			this.#renderer.setConnection(`prompt rejected: ${response.error.message}`, "error");
+			return;
+		}
+		this.#renderer.setConnection("prompt accepted", "state");
+	}
+
+	/** Withdraw queued input and abort the running turn and compaction. */
+	async abort(): Promise<void> {
+		await this.#controller?.abort(BACKGROUND_CONTEXT);
+	}
+
 	async attach(sessionId: string, paint: () => void): Promise<void> {
 		if (this.#sessionId === sessionId) return;
 		await this.detach();
@@ -62,7 +84,7 @@ class SessionPainter {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
 		const services = this.#sessionSource.open({
-			services: [Transcript],
+			services: [Transcript, AgentController],
 			assertAccess(): void {},
 			onError: (error: Error) => this.#renderer.setConnection(`stream error: ${message(error)}`, "error"),
 		});
@@ -70,6 +92,7 @@ class SessionPainter {
 		const transcript = services.use(Transcript);
 		this.#services = services;
 		this.#transcript = transcript.state;
+		this.#controller = services.use(AgentController);
 		transcript.state.subscribe(() => paint());
 		paint();
 	}
@@ -78,6 +101,7 @@ class SessionPainter {
 		await this.#services?.dispose(BACKGROUND_CONTEXT);
 		this.#services = undefined;
 		this.#transcript = undefined;
+		this.#controller = undefined;
 		this.#sessionId = undefined;
 	}
 }
@@ -124,6 +148,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	renderer.onSelect = (sessionId) => {
 		void selectSession(sessionId).catch((error: unknown) => {
 			renderer.setConnection(`attach failed: ${message(error)}`, "error");
+		});
+	};
+	renderer.onSubmit = (text) => {
+		void painter.submit(text).catch((error: unknown) => {
+			renderer.setConnection(`send failed: ${message(error)}`, "error");
+		});
+	};
+	renderer.onAbort = () => {
+		void painter.abort().catch((error: unknown) => {
+			renderer.setConnection(`abort failed: ${message(error)}`, "error");
 		});
 	};
 
