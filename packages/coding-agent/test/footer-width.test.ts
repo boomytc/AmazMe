@@ -28,7 +28,9 @@ function createSession(options: {
 	provider?: string;
 	reasoning?: boolean;
 	thinkingLevel?: string;
-	contextPercent?: number;
+	contextPercent?: number | null;
+	contextTokens?: number | null;
+	contextWindow?: number;
 	usage?: AssistantUsage;
 	branchUsage?: AssistantUsage;
 	compactionUsage?: AssistantUsage;
@@ -91,7 +93,11 @@ function createSession(options: {
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: options.contextPercent ?? 12.3 }),
+		getContextUsage: () => ({
+			tokens: options.contextTokens,
+			contextWindow: options.contextWindow ?? 200_000,
+			percent: options.contextPercent === undefined ? 12.3 : options.contextPercent,
+		}),
 		routedModel: options.routedModel,
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
@@ -313,7 +319,7 @@ describe("FooterComponent width handling", () => {
 		bar.handleMouse({ type: "move", button: "none", x: hit?.start ?? 0, y: 0 } as never);
 		const hovered = stripAnsi(bar.render(100)[0] ?? "");
 		expect(hovered).toContain("12.3%");
-		expect(hovered).toContain("█");
+		expect(hovered).toMatch(/[█░]/);
 		const hoveredHit = footer.contextHitRange();
 		bar.handleMouse({ type: "click", button: "left", x: hoveredHit?.start ?? 0, y: 0 } as never);
 		expect(opened).toBe(1);
@@ -430,6 +436,98 @@ describe("FooterComponent width handling", () => {
 			expect(footer.dashboardHitRange()).toEqual(hit);
 			expect(footer.contextHitRange()).toEqual(context);
 			expect(before.slice(0, context?.start)).toBe(after.slice(0, context?.start));
+		}
+	});
+
+	it.each(["dark", "light"])("keeps screenshot-sized context, cost, and Dashboard gaps compact in %s theme", (appearance) => {
+		initTheme(appearance, false);
+		try {
+			const footer = new FooterComponent(createSession({
+				sessionName: "Current session",
+				contextTokens: 158_000,
+				contextWindow: 272_000,
+				contextPercent: 58.3,
+				usingSubscription: true,
+				usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 7.661 } },
+			}), createFooterData(1));
+			const before = stripAnsi(footer.renderTopBar(100)[0] ?? "");
+			const context = footer.contextHitRange();
+			const dashboard = footer.dashboardHitRange();
+			expect((context?.end ?? 0) - (context?.start ?? 0)).toBe("158k / 272k".length);
+			expect(before).toContain("158k / 272k  $7.661 (sub)  [Dashboard]");
+			footer.setContextHover(true);
+			const after = stripAnsi(footer.renderTopBar(100)[0] ?? "");
+			expect(after).toContain("███░░ 58.3%  $7.661 (sub)  [Dashboard]");
+			expect(footer.contextHitRange()).toEqual(context);
+			expect(footer.dashboardHitRange()).toEqual(dashboard);
+			expect(after.slice(0, context?.start)).toBe(before.slice(0, context?.start));
+			expect(after.slice(context?.end)).toBe(before.slice(context?.end));
+		} finally {
+			initTheme(undefined, false);
+		}
+	});
+
+	it.each([46, 48, 52, 80])("does not sacrifice context counts or subscription cost to hover-only meter space at width %s", (width) => {
+		const footer = new FooterComponent(createSession({
+			sessionName: "会话名",
+			contextTokens: 158_000,
+			contextWindow: 272_000,
+			contextPercent: 58.3,
+			usingSubscription: true,
+			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 7.661 } },
+		}), createFooterData(1));
+		const before = footer.renderTopBar(width)[0] ?? "";
+		const hit = footer.contextHitRange();
+		expect(stripAnsi(before)).toContain("会话名");
+		expect(stripAnsi(before)).toContain("158k / 272k  $7.661 (sub)  [Dashboard]");
+		footer.setContextHover(true);
+		const after = footer.renderTopBar(width)[0] ?? "";
+		expect(visibleWidth(after)).toBeLessThanOrEqual(width);
+		expect(footer.contextHitRange()).toEqual(hit);
+		expect(stripAnsi(after)).toContain("58.3%  $7.661 (sub)  [Dashboard]");
+	});
+
+	it.each([
+		{ tokens: 0, percent: 0 },
+		{ tokens: 1_234, percent: 0.5 },
+		{ tokens: 158_000, percent: 58.3 },
+		{ tokens: 266_400, percent: 97.9 },
+		{ tokens: 272_000, percent: 100 },
+		{ tokens: 327_760, percent: 120.5 },
+		{ tokens: null, percent: null },
+	])("keeps hover within the count's own hit area for $percent% at every width", ({ tokens, percent }) => {
+		const footer = new FooterComponent(createSession({
+			sessionName: "稳定标题",
+			contextTokens: tokens,
+			contextWindow: 272_000,
+			contextPercent: percent,
+		}), createFooterData(1));
+		let opens = 0;
+		const bar = new SessionTopBar(footer, () => {}, () => { opens += 1; });
+		const clickAt = (x: number) => bar.handleMouse({ type: "click", button: "left", x, y: 0 } as never);
+		for (const width of [8, 16, 24, 32, 40, 48, 80, 120]) {
+			footer.setContextHover(false);
+			const before = bar.render(width)[0] ?? "";
+			const hit = footer.contextHitRange();
+			const dashboard = footer.dashboardHitRange();
+			footer.setContextHover(true);
+			const after = bar.render(width)[0] ?? "";
+			expect(visibleWidth(after)).toBeLessThanOrEqual(width);
+			expect(footer.contextHitRange()).toEqual(hit);
+			expect(footer.dashboardHitRange()).toEqual(dashboard);
+			if (!hit) continue;
+			expect(stripAnsi(sliceByColumn(after, 0, hit.start))).toBe(stripAnsi(sliceByColumn(before, 0, hit.start)));
+			expect(stripAnsi(sliceByColumn(after, hit.end, width - hit.end)))
+				.toBe(stripAnsi(sliceByColumn(before, hit.end, width - hit.end)));
+			const hovered = stripAnsi(sliceByColumn(after, hit.start, hit.end - hit.start));
+			expect((hovered.match(/[█░]/g) ?? []).length).toBeLessThanOrEqual(6);
+			if (percent === null) expect(hovered).toBe(stripAnsi(sliceByColumn(before, hit.start, hit.end - hit.start)));
+			const previousOpens = opens;
+			clickAt(hit.start);
+			clickAt(hit.end - 1);
+			expect(opens).toBe(previousOpens + 2);
+			clickAt(hit.end);
+			expect(opens).toBe(previousOpens + 2);
 		}
 	});
 

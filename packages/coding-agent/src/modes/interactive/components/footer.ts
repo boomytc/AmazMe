@@ -202,16 +202,16 @@ export class FooterComponent implements Component {
 		const percent = contextUsage?.percent;
 		const fullContext = `${used} / ${formatTokens(contextWindow)}`;
 		const compactContext = percent === null || percent === undefined ? "ctx?" : `${Math.round(percent)}%`;
-		const meter = percent === null || percent === undefined ? fullContext : contextMeter(percent);
 		const normalContext =
 			visibleWidth(fullContext) <= contextBudget
 				? fullContext
 				: visibleWidth(compactContext) <= contextBudget ? compactContext : "";
-		const expandedWidth = Math.max(visibleWidth(normalContext), visibleWidth(meter));
-		const contextWidth = normalContext
-			? (expandedWidth <= contextBudget ? expandedWidth : visibleWidth(normalContext)) : 0;
-		const contextPlain = this.contextHover && normalContext
-			? (visibleWidth(meter) <= contextWidth ? meter : compactContext) : normalContext;
+		// Hover fits the count's own width instead of reserving room for a longer meter.
+		const contextWidth = visibleWidth(normalContext);
+		const contextPlain =
+			this.contextHover && normalContext && percent !== null && percent !== undefined
+				? contextMeter(percent, contextWidth)
+				: normalContext;
 		const contextColor =
 			percent !== null && percent !== undefined && percent > 90
 				? "error"
@@ -317,10 +317,13 @@ export class FooterComponent implements Component {
 	}
 }
 
-function contextMeter(percent: number): string {
-	const cells = 12;
+function contextMeter(percent: number, width: number): string {
+	const label = `${percent.toFixed(1)}%`;
+	const cells = Math.min(6, Math.max(0, width - visibleWidth(label) - 1));
+	// A one-cell meter reads as noise, so below two cells show the percentage alone.
+	if (cells < 2) return visibleWidth(label) <= width ? label : `${Math.round(percent)}%`;
 	const filled = Math.max(0, Math.min(cells, Math.round((percent / 100) * cells)));
-	return `${"█".repeat(filled)}${"░".repeat(cells - filled)} ${percent.toFixed(1)}%`;
+	return `${"█".repeat(filled)}${"░".repeat(cells - filled)} ${label}`;
 }
 
 export interface ContextDetail {
@@ -466,17 +469,22 @@ export class SessionTopBar implements Component {
 		return this.footer.renderTopBar(width);
 	}
 
+	handleMouseLeave(): boolean {
+		const changed = this.footer.contextHovering();
+		this.footer.setContextHover(false);
+		return changed;
+	}
+
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.y !== 0) return undefined;
 		const context = this.footer.contextHitRange();
-		const overContext = context !== undefined && event.x >= context.start && event.x < context.end;
+		const overContext = event.y === 0 && context !== undefined && event.x >= context.start && event.x < context.end;
 		if (event.type === "move") {
 			const hover = Boolean(overContext);
 			if (hover === this.footer.contextHovering()) return { handled: true, render: false };
 			this.footer.setContextHover(hover);
 			return { handled: true, render: true };
 		}
-		if (event.type !== "click" || event.button !== "left") return undefined;
+		if (event.y !== 0 || event.type !== "click" || event.button !== "left") return undefined;
 		if (overContext) {
 			this.onContextClick();
 			return { handled: true };

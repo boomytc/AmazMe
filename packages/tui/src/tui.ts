@@ -128,6 +128,9 @@ export interface Component {
 	/** Optional normalized mouse handler. */
 	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
 
+	/** Clear hover after the pointer leaves this target. Return true to request a repaint. */
+	handleMouseLeave?(): boolean;
+
 	/**
 	 * If true, component receives key release events (Kitty protocol).
 	 * Default is false - release events are filtered out.

@@ -232,6 +232,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private activeSearch?: ActiveSearch;
 	private pressedUrl?: string;
 	private selectionDragged = false;
+	private mouseHoverTarget?: TuiMouseDispatchTarget;
 	private mouseCapture?: TuiMouseDispatchTarget;
 	private mousePressTarget?: TuiMouseDispatchTarget;
 	private mousePressPoint?: { x: number; y: number };
@@ -324,6 +325,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	setLayoutRoot(component: Component | undefined): void {
 		if (this.layoutRoot === component) return;
+		this.clearComponentMouseHover();
 		this.layoutRoot = component;
 		this.currentLayout = undefined;
 		this.requestRender();
@@ -342,6 +344,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	protected override beforeTerminalStart(): void {
+		this.clearComponentMouseHover(false);
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = false;
 		this.stopScrollbarHover();
@@ -384,6 +387,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	protected override beforeTerminalStop(_options: TuiStopOptions): void {
+		this.clearComponentMouseHover(false);
 		this.closeSearch();
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = false;
@@ -666,6 +670,30 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
 	}
 
+	/** Clear the hovered target's state; `render` is false while the terminal starts or stops. */
+	private clearComponentMouseHover(render = true): void {
+		const target = this.mouseHoverTarget;
+		this.mouseHoverTarget = undefined;
+		const changed = target?.component.handleMouseLeave?.() ?? false;
+		if (changed && render) this.requestRender();
+	}
+
+	private clearComponentMouseHoverIfOutside(event: TuiMouseEvent): void {
+		const target = this.mouseHoverTarget;
+		if (!target) return;
+		const inside =
+			event.screenX >= target.originX &&
+			event.screenX < target.originX + target.width &&
+			event.screenY >= target.originY &&
+			event.screenY < target.originY + target.height;
+		if (!inside) this.clearComponentMouseHover();
+	}
+
+	private updateComponentMouseHover(target: TuiMouseDispatchTarget | undefined): void {
+		if (this.mouseHoverTarget?.component !== target?.component) this.clearComponentMouseHover();
+		this.mouseHoverTarget = target;
+	}
+
 	private clearComponentMouseGesture(): void {
 		this.mouseCapture = undefined;
 		this.mousePressTarget = undefined;
@@ -675,6 +703,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private handleViewportInput(data: string): { consume?: boolean } | undefined {
 		if (data === FOCUS_OUT) {
+			this.clearComponentMouseHover();
 			const hadActiveSelection = this.selectionPressActive;
 			const hadNonEmptyActiveSelection = hadActiveSelection && this.getSelectionBounds() !== undefined;
 			this.selectionPressActive = false;
@@ -705,6 +734,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			const wheelDelta =
 				wheelEvent.direction * ((wheelEvent.button & 8) !== 0 ? lines * ALT_WHEEL_SCROLL_MULTIPLIER : lines);
 			const event = this.createMouseEvent("wheel", wheelEvent.button, wheelEvent.x, wheelEvent.y, { wheelDelta });
+			this.clearComponentMouseHoverIfOutside(event);
 			const overlay = this.dispatchMouseToOverlay(event);
 			const result = overlay.result ?? (overlay.hit ? undefined : this.dispatchMouseToLayout(event));
 			if (result) {
@@ -905,6 +935,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 					: "drag"
 				: "press";
 		const event = this.createMouseEvent(type, raw.button, raw.x, raw.y);
+		this.clearComponentMouseHoverIfOutside(event);
 
 		if (this.mouseCapture || this.mousePressTarget) {
 			const target = this.mouseCapture ?? this.mousePressTarget!;
@@ -929,19 +960,29 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			return;
 		}
 
-		if (this.handleSearchMouseEvent(raw)) return;
+		if (this.handleSearchMouseEvent(raw)) {
+			this.clearComponentMouseHover();
+			return;
+		}
 
 		const overlay = this.dispatchMouseToOverlay(event);
 		if (!overlay.hit) {
-			if (this.handleScrollToEndIndicatorMouseEvent(raw)) return;
+			if (this.handleScrollToEndIndicatorMouseEvent(raw)) {
+				this.clearComponentMouseHover();
+				return;
+			}
 			const scrollbarHandled = this.handleScrollbarMouseEvent(raw);
 			if (!this.scrollbarDrag) this.updateScrollbarHover(raw.x, raw.y);
-			if (scrollbarHandled) return;
+			if (scrollbarHandled) {
+				this.clearComponentMouseHover();
+				return;
+			}
 		} else {
 			this.stopScrollbarHover();
 		}
 
 		const result = overlay.result ?? (overlay.hit ? undefined : this.dispatchMouseToLayout(event));
+		if (type === "move") this.updateComponentMouseHover(result?.target);
 		if (result) {
 			const render = this.applyMouseDispatchResult(event, result);
 			if (type === "press") {
