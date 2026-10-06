@@ -5,7 +5,7 @@ describe("experimental CLI command composition", () => {
 	test("requires an experimental subcommand", () => {
 		expect(cli.parse([])).toEqual({
 			ok: false,
-			errors: ["Expected experimental command: server or client"],
+			errors: ["Expected experimental command: server, client, or web"],
 		});
 	});
 
@@ -23,7 +23,7 @@ describe("experimental CLI command composition", () => {
 				"--model",
 				"claude-sonnet-4-5",
 			],
-			{ runServer, runClient: vi.fn(() => undefined) },
+			{ runServer, runClient: vi.fn(() => undefined), runWeb: vi.fn(() => undefined) },
 		);
 
 		const command = {
@@ -37,15 +37,17 @@ describe("experimental CLI command composition", () => {
 		expect(runServer).toHaveBeenCalledWith(command);
 	});
 
-	test.each(["server", "client"] as const)("executes the parsed %s command", async (name) => {
+	test.each(["server", "client", "web"] as const)("executes the parsed %s command", async (name) => {
 		const context = {
 			runServer: vi.fn(() => undefined),
 			runClient: vi.fn(() => undefined),
+			runWeb: vi.fn(() => undefined),
 		};
 		const result = await cli.execute([name], context);
 
 		expect(result).toEqual({ ok: true, command: { command: name } });
 		expect(context.runServer).toHaveBeenCalledTimes(name === "server" ? 1 : 0);
 		expect(context.runClient).toHaveBeenCalledTimes(name === "client" ? 1 : 0);
+		expect(context.runWeb).toHaveBeenCalledTimes(name === "web" ? 1 : 0);
 	});
 });

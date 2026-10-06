@@ -2,11 +2,13 @@ import chalk from "chalk";
 import { cli } from "../cli/experimental/cli.ts";
 import type { ClientCommand } from "../cli/experimental/commands/client.ts";
 import type { ServerCommand } from "../cli/experimental/commands/server.ts";
+import type { WebCommand } from "../cli/experimental/commands/web.ts";
 import { areExperimentalFeaturesEnabled } from "../core/experimental.ts";
 import { runClient } from "./client.ts";
 import { runClientTui } from "./client-tui.ts";
 import type { RadiusRelayHostStatus } from "./radius-relay.ts";
 import { startForegroundServer } from "./server.ts";
+import { startWebHost, type WebHost } from "./web/host.ts";
 
 async function runServerCommand(command: ServerCommand): Promise<void> {
 	let previousRelayStatus = "";
@@ -81,11 +83,57 @@ async function runClientCommand(command: ClientCommand): Promise<void> {
 	for (const session of result.sessions) console.log(`${session.serverId}\t${session.sessionId}`);
 }
 
+async function runWebCommand(command: WebCommand): Promise<void> {
+const host = await startWebHost({
+...(command.port === undefined ? {} : { port: command.port }),
+...(command.serverId === undefined ? {} : { serverId: command.serverId }),
+...(command.sessionDir === undefined ? {} : { sessionDir: command.sessionDir }),
+});
+for (const line of webLaunchLines(host)) console.log(line);
+try {
+await new Promise<void>((resolve, reject) => {
+const cleanup = (): void => {
+process.off("SIGINT", finish);
+process.off("SIGTERM", finish);
+};
+const finish = (): void => {
+cleanup();
+resolve();
+};
+const fail = (error: unknown): void => {
+cleanup();
+reject(error);
+};
+process.once("SIGINT", finish);
+process.once("SIGTERM", finish);
+void host.closed.then(finish, fail);
+});
+} finally {
+await host.close();
+}
+}
+
+/** The launch line the operator (and the model) reads: canonical URL, mode, and transport. */
+export function webLaunchLines(host: Pick<WebHost, "url" | "mode" | "serverId" | "webSocketUrl">): string[] {
+return [
+`Web: ${host.url}`,
+`Mode: ${host.mode}`,
+`WebSocket: ${host.webSocketUrl}`,
+`Server: ${host.serverId}`,
+];
+}
+
 /** Development-only command dispatch. Published entrypoints must not import this module. */
 export async function runExperimentalCommand(args: string[]): Promise<boolean> {
-	if (!areExperimentalFeaturesEnabled() || (args[0] !== "server" && args[0] !== "client")) return false;
+	if (!areExperimentalFeaturesEnabled() || (args[0] !== "server" && args[0] !== "client" && args[0] !== "web")) {
+return false;
+}
 	try {
-		const result = await cli.execute(args, { runServer: runServerCommand, runClient: runClientCommand });
+		const result = await cli.execute(args, {
+runServer: runServerCommand,
+runClient: runClientCommand,
+runWeb: runWebCommand,
+});
 		if (!result.ok) {
 			for (const error of result.errors) console.error(chalk.red(`Error: ${error}`));
 			process.exitCode = 1;

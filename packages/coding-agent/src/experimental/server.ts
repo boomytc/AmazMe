@@ -9,12 +9,13 @@ import { Client, ServerError as ClientServerError, DisconnectedError } from "@am
 import { createUnixTransportFactory, type UnixServerRoute } from "@amazme/client/unix";
 import { isServerId, type ServerId } from "@amazme/protocol";
 import {
+	Server,
 	ServerError as RoutedServerError,
-	type Server,
 	type ServerHost,
 	SessionNotFoundError,
 } from "@amazme/server";
-import { createUnixServer, getUnixSocketPath } from "@amazme/server/unix";
+import type { ServerListener } from "@amazme/server";
+import { createUnixListener, getUnixSocketPath } from "@amazme/server/unix";
 import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";
@@ -343,6 +344,8 @@ export interface StartServerOptions {
 	readonly model?: string;
 	/** Hold the server open without client or Session demand. Defaults to true for foreground servers. */
 	readonly keepAlive?: boolean;
+	/** Extra listeners composed alongside the Unix socket, e.g. the loopback WebSocket endpoint. */
+	readonly listeners?: readonly ServerListener[];
 	/** Optional explicit Radius credential. Stored Radius auth is used when omitted. */
 	readonly relayAuth?: AuthInput;
 	/** Explicit plugin packages. Undefined restores the logical server profile; an empty list clears it. */
@@ -360,6 +363,7 @@ interface StartServerBackendOptions {
 	readonly path: string;
 	readonly serverId: ServerId;
 	readonly sessionDir?: string;
+	readonly listeners?: readonly ServerListener[];
 	resolveSessionPlugins(
 		metadata: SessionCatalogMetadata,
 		packagePaths: readonly string[] | undefined,
@@ -442,10 +446,9 @@ async function startServerBackend(
 	};
 	const socketPath = options.path;
 	const closeCatalog = (): Promise<void> => serverServices.dispose();
-	const server = createUnixServer(host, {
+	const server = new Server(host, {
 		serverId,
-		path: socketPath,
-		mode: 0o600,
+		listeners: [createUnixListener({ path: socketPath, mode: 0o600 }), ...(options.listeners ?? [])],
 		onConnectionCountChanged,
 	});
 	try {
@@ -594,6 +597,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 				path: serverPath,
 				serverId,
 				sessionDir: options.sessionDir,
+				...(options.listeners === undefined ? {} : { listeners: options.listeners }),
 				resolveSessionPlugins,
 				removeSessionPlugins,
 				reloadPresentationFacetBundles,

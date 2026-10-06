@@ -3,6 +3,7 @@ import { cli } from "../src/cli/experimental/cli.ts";
 
 const UNSUPPORTED_SERVER_OPTIONS = "The experimental server command does not support existing CLI options yet";
 const UNSUPPORTED_CLIENT_OPTIONS = "The experimental client command does not support existing CLI options yet";
+const UNSUPPORTED_WEB_OPTIONS = "The experimental web command does not support existing CLI options yet";
 
 describe("experimental CLI commands", () => {
 	test("parses server configuration", () => {
@@ -38,6 +39,29 @@ describe("experimental CLI commands", () => {
 		expect(cli.parse(["server", "--model", "anthropic/claude-sonnet-4-5:high"])).toEqual({
 			ok: true,
 			command: { command: "server", model: "anthropic/claude-sonnet-4-5:high" },
+		});
+	});
+
+	test("parses the web launcher port and defaults", () => {
+		expect(cli.parse(["web"])).toEqual({ ok: true, command: { command: "web" } });
+		expect(
+			cli.parse(["web", "--port", "8080", "--server-id", "00000000-0000-4000-8000-000000000001", "--session-dir", "./s"]),
+		).toEqual({
+			ok: true,
+			command: {
+				command: "web",
+				port: 8080,
+				serverId: "00000000-0000-4000-8000-000000000001",
+				sessionDir: "./s",
+			},
+		});
+		expect(cli.parse(["web", "--port", "70000"])).toEqual({
+			ok: false,
+			errors: ['Invalid --port "70000"; expected 0-65535'],
+		});
+		expect(cli.parse(["web", "--port", "http"])).toEqual({
+			ok: false,
+			errors: ['Invalid --port "http"; expected a port number'],
 		});
 	});
 
@@ -123,6 +147,8 @@ describe("experimental CLI commands", () => {
 		[["client", "-c", "-r"], "--session-id, --continue, and --resume are mutually exclusive"],
 		[["client", "--continue=true"], "--continue does not take a value"],
 		[["server", "--provider", "anthropic"], "--provider requires --model"],
+	[["web", "--model", "anthropic/claude-sonnet-4-5"], UNSUPPORTED_WEB_OPTIONS],
+	[["web", "--server-id", "not-a-uuid"], "Invalid --server-id"],
 		[["server", "--server-id", "not-a-uuid"], "Invalid --server-id"],
 		[["server", "--server-id"], "--server-id requires a value"],
 		[["server", "--session-dir"], "--session-dir requires a value"],

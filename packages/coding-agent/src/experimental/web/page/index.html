@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>AmazMe</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				--bg: #12141a;
+				--panel: #191c24;
+				--line: #262a35;
+				--text: #e2e4e8;
+				--dim: #8b93a3;
+				--accent: #a798d7;
+				--error: #e06c75;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				min-height: 100vh;
+				background: var(--bg);
+				color: var(--text);
+				font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+				display: flex;
+				flex-direction: column;
+			}
+			header {
+				display: flex;
+				gap: 12px;
+				align-items: baseline;
+				padding: 10px 16px;
+				border-bottom: 1px solid var(--line);
+			}
+			header .name {
+				font-weight: 600;
+			}
+			header .meta {
+				color: var(--dim);
+			}
+			main {
+				flex: 1;
+				padding: 16px;
+				display: grid;
+				gap: 16px;
+				grid-template-columns: minmax(240px, 320px) 1fr;
+				align-content: start;
+			}
+			section {
+				background: var(--panel);
+				border: 1px solid var(--line);
+				border-radius: 8px;
+				padding: 12px;
+				min-height: 120px;
+			}
+			h2 {
+				margin: 0 0 8px;
+				font-size: 12px;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				color: var(--dim);
+			}
+			.state {
+				color: var(--accent);
+			}
+			.error {
+				color: var(--error);
+				white-space: pre-wrap;
+			}
+		</style>
+		<!--amazme-boot-->
+	</head>
+	<body>
+		<header>
+			<span class="name">AmazMe</span>
+			<span class="meta" id="mode"></span>
+			<span class="meta" id="connection"></span>
+		</header>
+		<main>
+			<section id="sessions">
+				<h2>Sessions</h2>
+				<p class="state" id="sessions-state">Waiting for the host…</p>
+			</section>
+			<section id="transcript">
+				<h2>Transcript</h2>
+				<p class="state" id="transcript-state">No session attached.</p>
+			</section>
+		</main>
+		<script type="module" src="/page.js"></script>
+	</body>
+</html>
