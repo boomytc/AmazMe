@@ -6,7 +6,7 @@ Pi may ask whether you trust the working folder before loading its project resou
 
 <p align="center"><img src="images/interactive-mode.png" alt="Pi interactive mode showing a conversation, editor, and status information" width="750"></p>
 
-The transcript shows your prompts, Pi's responses, tool calls, results, and errors. You write prompts and commands in the editor. The top bar owns the session title, folder and branch, context usage, cost, and Dashboard entry. The editor border shows the model and thinking level; the footer keeps usage statistics, routing, and extension statuses without repeating the location.
+The transcript shows your prompts, Pi's responses, tool calls, results, and errors. You write prompts and commands in the editor. The top bar owns the session title, folder and branch, context usage, cost, and Dashboard entry. The editor border shows the model and thinking level; the footer keeps actual model routing and extension statuses without repeating location, provider names, or usage statistics. Provider information is available through `/model`.
 
 ## Enter a prompt
 
@@ -33,7 +33,7 @@ The primary shortcut can use the terminal's normal paste action. When a terminal
 
 Pi shows each tool call and result while it works. Press `Ctrl+O` to expand or collapse tool output. Press `Ctrl+T` to show or hide thinking blocks.
 
-The startup header lists the instructions and resources Pi loaded. The editor border indicates the current thinking level. The footer updates as the model uses context and reports usage.
+The startup header lists the instructions and resources Pi loaded. The editor border indicates the current thinking level. The top bar updates current context occupancy and cost as the model works. Click the context indicator for detailed usage statistics.
 
 Pi does not ask before every tool call. Review commands and changed files, and use a sandbox for untrusted or unattended work. See [Security](security.md).
 
@@ -108,7 +108,7 @@ Use `/share` to upload the session and get a viewer link. With Radius authentica
 
 Fullscreen mode, the default, keeps the editor and status area fixed while the transcript scrolls within the terminal window. Regular mode uses the terminal's normal scrollback. Choose a mode through `/settings` or `--tui-mode`.
 
-Narrow terminals keep the session title and Dashboard entry ahead of paths and cost. The top-bar Dashboard label becomes `[D]` below 32 columns, and context usage can become a compact percentage. Context details remain available by clicking the context indicator.
+Narrow terminals keep the session title and Dashboard entry ahead of paths and cost. The top-bar Dashboard label becomes `[D]` below 32 columns, and context usage can become a compact percentage. Context details remain available by clicking the context indicator. The panel separates current context occupancy from **Session totals** (uncached input, output, cache reads/writes, and cost) and the **Last assistant request** (cache hit rate). Session totals include recorded tool, summary, compaction, and background usage; they are not the current context size. Cache hit rate is also not context occupancy. Small terminals can scroll the detail panel with arrows, Page Up/Down, Home/End, or the mouse wheel; its close badge stays fixed. Escape, `q`, or `[x]` closes it without changing the transcript scroll position.
 
 Terminal support for mouse input, keyboard shortcuts, and inline images varies. See [Terminal Setup](terminal-setup.md) for platform-specific configuration and [Keybindings](keybindings.md) for every configurable shortcut. Run `/hotkeys` to inspect the shortcuts active in your current session.
 

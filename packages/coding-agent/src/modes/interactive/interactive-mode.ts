@@ -3499,18 +3499,25 @@ export class InteractiveMode {
 			this.ui.requestRender();
 			return;
 		}
-		const panel = new ContextUsagePanel(() => this.contextDetail(), () => {
-			this.contextOverlay?.hide();
-			this.contextOverlay = undefined;
-			this.ui.requestRender();
-		});
+		const panel = new ContextUsagePanel(
+			() => this.contextDetail(),
+			() => {
+				this.contextOverlay?.hide();
+				this.contextOverlay = undefined;
+				this.ui.requestRender();
+			},
+			{
+				maxHeight: () => Math.floor(this.ui.terminal.rows * 0.8),
+				requestRender: () => this.ui.requestRender(),
+			},
+		);
 		this.contextOverlay = this.ui.showOverlay(panel, { anchor: "center", width: 72, maxHeight: "80%" });
 		this.contextOverlay.focus();
 	}
 
 	private contextDetail(): ContextDetail {
 		const usage = this.session.getContextUsage();
-		const cost = this.footer.usageCost();
+		const { totals, latestCacheHitRate } = this.footer.usageDetail();
 		let messages = 0;
 		let toolCalls = 0;
 		let compactions = 0;
@@ -3527,7 +3534,9 @@ export class InteractiveMode {
 			window: usage?.contextWindow ?? model?.contextWindow ?? 0,
 			percent: usage?.percent ?? null,
 			model: model?.id ?? "no-model",
-			cost,
+			cost: totals.cost,
+			usageTotals: totals,
+			latestCacheHitRate,
 			subscription: model
 				? model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(model.provider)
 				: false,

@@ -2,6 +2,7 @@ import { sliceByColumn, visibleWidth } from "@amazme/tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
+import { createUsageTotals } from "../src/core/usage-totals.ts";
 import {
 	contextPanelLines,
 	ContextUsagePanel,
@@ -141,7 +142,7 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
-	it("keeps stats line within width for wide model and provider names", () => {
+	it("keeps routing information within width for wide model and provider names", () => {
 		const width = 60;
 		const session = createSession({
 			sessionName: "",
@@ -232,7 +233,7 @@ describe("FooterComponent width handling", () => {
 		expect(stripAnsi(footer.renderTopBar(120)[0] ?? "")).toContain("$1.000");
 	});
 
-	it("shows the latest cache hit rate when cache usage is present", () => {
+	it("moves cache usage and the latest hit rate out of the footer into usage details", () => {
 		const session = createSession({
 			sessionName: "",
 			usage: {
@@ -245,8 +246,12 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
-		expect(statsLine).toContain("CH25.0%");
+		footer.setShowLocation(false);
+		expect(footer.render(120)).toEqual([]);
+		expect(footer.usageDetail()).toEqual({
+			totals: { input: 100, output: 10, cacheRead: 50, cacheWrite: 50, cost: 0.001 },
+			latestCacheHitRate: 25,
+		});
 	});
 
 	it("marks Kimi Coding costs as subscription estimates", () => {
@@ -319,6 +324,8 @@ describe("FooterComponent width handling", () => {
 				percent: 67.6,
 				model: "test-model",
 				cost: 1.2,
+				usageTotals: { ...createUsageTotals(), cost: 1.2 },
+				latestCacheHitRate: null,
 				subscription: false,
 				autoCompact: true,
 				reserveTokens: 16_384,
@@ -344,6 +351,8 @@ describe("FooterComponent width handling", () => {
 				percent: 10,
 				model: "m",
 				cost: 0,
+				usageTotals: createUsageTotals(),
+				latestCacheHitRate: null,
 				subscription: false,
 				autoCompact: false,
 				reserveTokens: 1,
@@ -424,7 +433,7 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
-	it("can omit repeated location without dropping usage, routing, or extension status", () => {
+	it("omits location and usage without dropping routing or extension status", () => {
 		const session = createSession({
 			sessionName: "chat",
 			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
@@ -435,7 +444,7 @@ describe("FooterComponent width handling", () => {
 		footer.setShowLocation(false);
 		const lines = footer.render(100).map(stripAnsi);
 		expect(lines).toHaveLength(2);
-		expect(lines[0]).toContain("↑100 ↓10");
+		expect(lines.join("\n")).not.toMatch(/↑|↓|CH|R\d|W\d/);
 		expect(lines[0]).toContain("physical-model");
 		expect(lines[1]).toBe("Extension status");
 		expect(lines.join("\n")).not.toContain("/tmp/project");

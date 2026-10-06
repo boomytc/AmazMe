@@ -1,7 +1,9 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
 	type Component,
+	getKeybindings,
 	matchesKey,
+	ScrollView,
 	stripTerminalSequences,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
@@ -65,8 +67,8 @@ interface SessionStats {
 }
 
 /**
- * Footer component that shows pwd, token stats, and context usage.
- * Computes token/context stats from session, gets git branch and extension statuses from provider.
+ * Compact footer for location, routing, and extension statuses.
+ * Session usage lives in the context detail panel; the top bar keeps context and cost summaries.
  */
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
@@ -98,7 +100,7 @@ export class FooterComponent implements Component {
 		this.autoCompactEnabled = enabled;
 	}
 
-	/** Enter/queue hint rendered under the session stats. */
+	/** Enter/queue hint rendered under routing information. */
 	setComposerLine(provider: () => string | undefined): void {
 		this.composerLine = provider;
 	}
@@ -258,6 +260,11 @@ export class FooterComponent implements Component {
 		return this.getSessionStats().usageTotals.cost;
 	}
 
+	usageDetail(): { totals: Readonly<UsageTotals>; latestCacheHitRate: number | null } {
+		const { usageTotals, latestCacheHitRate } = this.getSessionStats();
+		return { totals: { ...usageTotals }, latestCacheHitRate: latestCacheHitRate ?? null };
+	}
+
 	private placeLabel(): string {
 		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 		const branch = this.footerData.getGitBranch();
@@ -266,8 +273,6 @@ export class FooterComponent implements Component {
 	}
 
 	render(width: number): string[] {
-		const state = this.session.state;
-		const { usageTotals, latestCacheHitRate } = this.getSessionStats();
 		let pwd = this.placeLabel();
 
 		// Add session name if set
@@ -275,74 +280,24 @@ export class FooterComponent implements Component {
 		if (sessionName) {
 			pwd = `${pwd} • ${sessionName}`;
 		}
-		// Build stats line
-		const statsParts = [];
-		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
-		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
-		if (usageTotals.cacheRead) statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
-		if (usageTotals.cacheWrite) statsParts.push(`W${formatTokens(usageTotals.cacheWrite)}`);
-		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
-		}
+		const statusLeft = areExperimentalFeaturesEnabled()
+			? `${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`
+			: "";
 
-		if (areExperimentalFeaturesEnabled()) {
-			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
-		}
-
-		let statsLeft = statsParts.join(" ");
-
-		let statsLeftWidth = visibleWidth(statsLeft);
-
-		// If statsLeft is too wide, truncate it
-		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
-			statsLeftWidth = visibleWidth(statsLeft);
-		}
-
-		// The prompt border already shows the selected model and its thinking level.
-		// The footer keeps only what that border does not: the provider, and where a virtual model routed.
-		const rightParts: string[] = [];
-		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightParts.push(`(${state.model.provider})`);
-		}
+		// The prompt border owns model/thinking labels; /model owns provider details.
+		// Only a virtual model's actual routing result needs a footer label.
 		const routed = this.session.routedModel;
-		if (routed) {
-			const level = routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : "";
-			rightParts.push(`→ ${routed.model.id}${level}`);
-		}
-		const rightSide = rightParts.join(" ");
-		const minPadding = 2;
-		const rightSideWidth = visibleWidth(rightSide);
-		const totalNeeded = statsLeftWidth + (rightSide.length > 0 ? minPadding + rightSideWidth : 0);
-
-		let statsLine: string;
-		if (rightSide.length === 0 || totalNeeded <= width) {
-			const padding = rightSide.length === 0 ? "" : " ".repeat(Math.max(0, width - statsLeftWidth - rightSideWidth));
-			statsLine = statsLeft + padding + rightSide;
-		} else {
-			const availableForRight = width - statsLeftWidth - minPadding;
-			if (availableForRight > 0) {
-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-				const truncatedRightWidth = visibleWidth(truncatedRight);
-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-				statsLine = statsLeft + padding + truncatedRight;
-			} else {
-				statsLine = statsLeft;
-			}
-		}
-
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
-		const dimStatsLeft = theme.fg("dim", statsLeft);
-		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
-		const dimRemainder = theme.fg("dim", remainder);
-
+		const level = routed?.thinkingLevel ? ` • ${routed.thinkingLevel}` : "";
+		const rightSide = routed ? `→ ${routed.model.id}${level}` : "";
+		const left = truncateToWidth(statusLeft, width, "");
+		const rightBudget = Math.max(0, width - visibleWidth(left) - (left && rightSide ? 2 : 0));
+		const right = truncateToWidth(rightSide, rightBudget, "");
+		const padding = right ? " ".repeat(Math.max(0, width - visibleWidth(left) - visibleWidth(right))) : "";
+		const routingLine = left + padding + theme.fg("dim", right);
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const statsLineRendered = dimStatsLeft + dimRemainder;
 		const lines = [
 			...(this.showLocation ? [pwdLine] : []),
-			...(visibleWidth(statsLineRendered) > 0 ? [statsLineRendered] : []),
+			...(visibleWidth(routingLine) > 0 ? [routingLine] : []),
 		];
 		const composerLine = this.composerLine?.();
 		if (composerLine) lines.push(truncateToWidth(theme.fg("dim", composerLine), width, theme.fg("dim", "...")));
@@ -374,6 +329,8 @@ export interface ContextDetail {
 	percent: number | null;
 	model: string;
 	cost: number;
+	usageTotals: Readonly<UsageTotals>;
+	latestCacheHitRate: number | null;
 	subscription: boolean;
 	autoCompact: boolean;
 	reserveTokens: number;
@@ -395,47 +352,99 @@ export function contextPanelLines(detail: ContextDetail, width: number): string[
 	const threshold =
 		detail.window > 0 ? `${(((detail.window - detail.reserveTokens) / detail.window) * 100).toFixed(0)}%` : "?";
 	const cost = `$${detail.cost.toFixed(3)}${detail.subscription ? " (sub)" : ""}`;
+	const row = (label: string, value: string): string[] => {
+		const labelBudget = width - visibleWidth(value);
+		return labelBudget > visibleWidth(label)
+			? [`${label.padEnd(Math.min(18, labelBudget))}${value}`]
+			: [label, value];
+	};
+	const count = (value: number) => value.toLocaleString("en-US");
+	const cacheHitRate =
+		detail.latestCacheHitRate === null ? "Not recorded" : `${detail.latestCacheHitRate.toFixed(1)}%`;
 	const lines = [
 		`${used} / ${formatTokens(detail.window)} tokens (${percent})`,
 		detail.model,
 		"",
 		grid,
 		"",
-		`Cost            ${cost}`,
 		detail.autoCompact ? `Auto-compact    at ${threshold} · ${remaining} remaining` : "Auto-compact    off",
 		`Messages        ${detail.messages}`,
 		`Tool calls      ${detail.toolCalls}`,
 		`Compactions     ${detail.compactions}`,
+		"",
+		theme.bold(theme.fg("accent", "Session totals")),
+		...row("Input (uncached)", count(detail.usageTotals.input)),
+		...row("Output", count(detail.usageTotals.output)),
+		...row("Cache reads", count(detail.usageTotals.cacheRead)),
+		...row("Cache writes", count(detail.usageTotals.cacheWrite)),
+		...row("Cost", cost),
+		"",
+		theme.bold(theme.fg("accent", "Last assistant request")),
+		...row("Cache hit rate", cacheHitRate),
+		theme.fg("dim", "Not the context occupancy percentage."),
 	];
 	return lines.map((line) => truncateToWidth(line, width, "…"));
 }
 
 export class ContextUsagePanel implements Component {
 	private width = 0;
+	private lines: string[] = [];
+	private readonly scrollView: ScrollView;
 	private readonly detail: () => ContextDetail;
 	private readonly onClose: () => void;
+	private readonly maxHeight: (() => number) | undefined;
+	private readonly requestRender: () => void;
 
-	constructor(detail: () => ContextDetail, onClose: () => void) {
+	constructor(
+		detail: () => ContextDetail,
+		onClose: () => void,
+		options: { maxHeight?: () => number; requestRender?: () => void } = {},
+	) {
 		this.detail = detail;
 		this.onClose = onClose;
+		this.maxHeight = options.maxHeight;
+		this.requestRender = options.requestRender ?? (() => {});
+		this.scrollView = new ScrollView({ render: () => this.lines, invalidate() {} }, { overscroll: "contain" });
 	}
 
 	invalidate(): void {}
 
 	render(width: number): string[] {
 		this.width = width;
+		if (width <= 0) return [];
 		const inner = Math.max(1, width - 4);
-		return popupFrame("Context", contextPanelLines(this.detail(), inner), width);
+		this.lines = contextPanelLines(this.detail(), inner);
+		const height = Math.max(3, Math.floor(this.maxHeight?.() ?? this.lines.length + 2));
+		const showHint = this.lines.length + 2 > height && height >= 4;
+		const bodyHeight = Math.min(this.lines.length, Math.max(1, height - 2 - (showHint ? 1 : 0)));
+		this.scrollView.updateLayout(this.lines.length, bodyHeight, this.requestRender);
+		const start = this.scrollView.scrollTop;
+		const body = this.scrollView.render(inner).slice(start, start + bodyHeight);
+		if (showHint) body.push(theme.fg("dim", `↑/↓ scroll · ${start + 1}-${start + bodyHeight}/${this.lines.length}`));
+		return popupFrame("Context", body, width).map((line) => truncateToWidth(line, width, "…"));
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "escape") || data === "q") this.onClose();
+		const kb = getKeybindings();
+		if (kb.matches(data, "tui.select.cancel") || data === "q") this.onClose();
+		else if (kb.matches(data, "tui.select.up")) this.scrollView.scrollBy(-1);
+		else if (kb.matches(data, "tui.select.down")) this.scrollView.scrollBy(1);
+		else if (kb.matches(data, "tui.select.pageUp")) this.scrollView.scrollBy(-this.scrollView.viewportHeight);
+		else if (kb.matches(data, "tui.select.pageDown")) this.scrollView.scrollBy(this.scrollView.viewportHeight);
+		else if (matchesKey(data, "home")) this.scrollView.scrollToStart();
+		else if (matchesKey(data, "end")) this.scrollView.scrollToEnd();
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (!popupCloseClicked(event, this.width)) return undefined;
-		this.onClose();
-		return { handled: true };
+		if (popupCloseClicked(event, this.width)) {
+			this.onClose();
+			return { handled: true };
+		}
+		if (event.type === "wheel") {
+			this.scrollView.scrollBy(event.wheelDelta ?? 0);
+			return { handled: true };
+		}
+		return undefined;
 	}
 }
 
