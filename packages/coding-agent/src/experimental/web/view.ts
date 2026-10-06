@@ -120,6 +120,21 @@ function toolCallText(message: AssistantMessage): ToolCall[] {
 	return message.content.filter((block): block is ToolCall => block.type === "toolCall");
 }
 
+/** The failure notice the TUI shows for a committed answer that never completed, if any. */
+function failureNotice(message: AssistantMessage): { title: string; text: string } | undefined {
+	if (message.stopReason === "length") return { title: "Truncated", text: "Response was truncated before completion." };
+	// A tool-calling answer shows the failure on its cards instead.
+	if (message.content.some((block) => block.type === "toolCall")) return undefined;
+	if (message.stopReason === "aborted") {
+		const detail = message.errorMessage;
+		return { title: "Aborted", text: detail !== undefined && detail !== "Request was aborted" ? detail : "Operation aborted" };
+	}
+	if (message.stopReason === "error") {
+		return { title: "Error", text: message.errorMessage ?? "Unknown error" };
+	}
+	return undefined;
+}
+
 function toolResultText(message: ToolResultMessage): string {
 	const text = messageText(message.content, "\n\n").trim();
 	if (text.length > 0) return text;
@@ -202,14 +217,29 @@ export function transcriptBlocks(view: ConversationView | undefined): Transcript
 							running: false,
 						});
 					}
-					blocks.push({
-						id: entry.id,
-						kind: "assistant",
-						title: "AmazMe",
-						text: assistantText(message.content),
-						tone: "plain",
-						running: false,
-					});
+					const answer = assistantText(message.content);
+					const failure = failureNotice(message);
+					// A failed answer with no text is the failure notice alone, not an empty card above it.
+					if (answer.length > 0 || failure === undefined) {
+						blocks.push({
+							id: entry.id,
+							kind: "assistant",
+							title: "AmazMe",
+							text: answer,
+							tone: "plain",
+							running: false,
+						});
+					}
+					if (failure !== undefined) {
+						blocks.push({
+							id: `${entry.id}:failure`,
+							kind: "notice",
+							title: failure.title,
+							text: failure.text,
+							tone: "error",
+							running: false,
+						});
+					}
 					// Only a tool-calling answer runs its calls; an aborted, failed, or truncated one never does.
 					for (const call of toolCallText(message)) pushTool(call, message.stopReason === "toolUse", false);
 				}

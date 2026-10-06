@@ -63,11 +63,8 @@ class SessionPainter {
 		const response = isBusy(this.transcriptValue)
 			? await controller.followUp(request, BACKGROUND_CONTEXT)
 			: await controller.prompt(request, BACKGROUND_CONTEXT);
-		if (!response.accepted) {
-			this.#renderer.setConnection(`prompt rejected: ${response.error.message}`, "error");
-			return;
-		}
-		this.#renderer.setConnection("prompt accepted", "state");
+		// A rejection must be visible; an accepted prompt shows itself in the transcript.
+		if (!response.accepted) this.#renderer.setConnection(`prompt rejected: ${response.error.message}`, "error");
 	}
 
 	/** Withdraw queued input and abort the running turn and compaction. */

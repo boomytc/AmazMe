@@ -39,6 +39,7 @@ function assistantEntry(
 	id: number,
 	content: AssistantMessage["content"],
 	stopReason: AssistantMessage["stopReason"] = "stop",
+	errorMessage?: string,
 ): EntryRecord {
 	const message: AssistantMessage = {
 		role: "assistant",
@@ -55,6 +56,7 @@ function assistantEntry(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason,
+		...(errorMessage === undefined ? {} : { errorMessage }),
 		timestamp: id,
 	};
 	return { id: entryId(id), conversationId: CONVERSATION, kind: AssistantEntry.kind, model: [message] };
@@ -174,6 +176,32 @@ describe("web view model", () => {
 			]),
 		);
 		expect(failed.find((block) => block.kind === "tool")).toMatchObject({ text: "boom", tone: "error" });
+	});
+
+	test("surfaces a committed answer that failed instead of leaving an empty block", () => {
+		// A failed answer with no text is the notice alone: no empty card above it.
+		const failed = transcriptBlocks(viewOf([assistantEntry(1, [], "error")]));
+		expect(failed.map((block) => [block.kind, block.title, block.tone])).toEqual([["notice", "Error", "error"]]);
+		expect(failed[0]?.text).toBe("Unknown error");
+		const withText = transcriptBlocks(viewOf([assistantEntry(1, [{ type: "text", text: "partial" }], "error", "no credentials")]));
+		expect(withText.map((block) => [block.kind, block.title])).toEqual([
+			["assistant", "AmazMe"],
+			["notice", "Error"],
+		]);
+
+		const withReason = transcriptBlocks(viewOf([assistantEntry(1, [], "error", "no credentials")]));
+		expect(withReason).toHaveLength(1);
+		expect(withReason[0]).toMatchObject({ title: "Error", text: "no credentials", tone: "error" });
+
+		const aborted = transcriptBlocks(viewOf([assistantEntry(1, [{ type: "text", text: "half" }], "aborted")]));
+		expect(aborted[1]).toMatchObject({ title: "Aborted", text: "Operation aborted", tone: "error" });
+
+		const truncated = transcriptBlocks(viewOf([assistantEntry(1, [{ type: "text", text: "cut" }], "length")]));
+		expect(truncated[1]).toMatchObject({ title: "Truncated", tone: "error" });
+
+		// A tool-calling answer reports the failure on its cards, not as a notice.
+		const withTool = transcriptBlocks(viewOf([assistantEntry(1, [toolCall("call-1")], "aborted")]));
+		expect(withTool.some((block) => block.kind === "notice")).toBe(false);
 	});
 
 	test("projects the live partial, running tools, status, and queue from the view docs", () => {

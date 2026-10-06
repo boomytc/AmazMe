@@ -15,6 +15,7 @@ export interface PageElements {
 	readonly queue: HTMLElement;
 	readonly composer: HTMLFormElement;
 	readonly prompt: HTMLTextAreaElement;
+	readonly send: HTMLButtonElement;
 	readonly abort: HTMLButtonElement;
 }
 
@@ -44,6 +45,7 @@ export function collectPageElements(): PageElements {
 		queue: pick("queue"),
 		composer: pickElement(document, "composer", HTMLFormElement),
 		prompt: pickElement(document, "prompt", HTMLTextAreaElement),
+		send: pickElement(document, "send", HTMLButtonElement),
 		abort: pickElement(document, "abort", HTMLButtonElement),
 	};
 }
@@ -132,9 +134,11 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 			}
 			if (stick) elements.transcript.scrollTop = elements.transcript.scrollHeight;
 
-			elements.prompt.disabled = view.attachedId === undefined;
+			const detached = view.attachedId === undefined;
+			elements.prompt.disabled = detached;
 			elements.prompt.placeholder = composerPlaceholder(view.attachedId);
-			elements.abort.disabled = view.attachedId === undefined;
+			elements.send.disabled = detached;
+			elements.abort.disabled = detached;
 			elements.status.textContent = view.status;
 			elements.status.classList.toggle("busy", view.status.length > 0);
 			elements.status.classList.remove("error");
