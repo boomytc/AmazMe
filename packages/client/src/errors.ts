@@ -1,40 +1,34 @@
-export type ClientErrorCode =
-  | "not_connected"
-  | "already_connected"
-  | "disconnected"
-  | "detached"
-  | "disposed"
-  | "server_mismatch"
-  | "handshake_timeout"
-  | "protocol_error"
-  | "transport_error"
-  | "too_many_requests"
-  | "too_many_subscriptions"
-  | "subscription_overflow"
-  | "send_overflow";
+import type { ProtocolError, ProtocolErrorCode } from "@amazme/protocol";
 
-/** A local failure of the client or its connection. */
-export class ClientError extends Error {
-  readonly code: ClientErrorCode;
+export class ServerError extends Error {
+	readonly code: ProtocolErrorCode;
 
-  constructor(code: ClientErrorCode, message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = "ClientError";
-    this.code = code;
-  }
+	constructor(error: ProtocolError) {
+		super(error.message);
+		this.name = "ServerError";
+		this.code = error.code;
+	}
 }
 
-/** An error body sent by the server: a failed response, or a terminal `hello_error`. */
-export class RemoteError extends Error {
-  readonly code: string;
+export class DisconnectedError extends Error {
+	constructor(message = "Client is disconnected", cause?: Error) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "DisconnectedError";
+	}
+}
 
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "RemoteError";
-    this.code = code;
-  }
+export class ClientDisposedError extends Error {
+	constructor() {
+		super("Client is disposed");
+		this.name = "ClientDisposedError";
+	}
 }
 
 export function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
+	return error instanceof Error ? error : new Error(String(error));
+}
+
+export function toDisconnectedError(error: unknown): DisconnectedError {
+	const cause = toError(error);
+	return cause instanceof DisconnectedError ? cause : new DisconnectedError(cause.message, cause);
 }

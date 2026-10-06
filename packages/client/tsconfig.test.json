@@ -1,14 +1,17 @@
 {
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "composite": false,
-    "declaration": false,
-    "noEmit": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "types": ["node"],
-    "rootDir": "."
-  },
-  "include": ["src", "test"],
-  "references": [{ "path": "../protocol" }, { "path": "../server" }]
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"types": ["node", "vitest"],
+		"paths": {
+			"@amazme/agent": ["../agent/src/index.ts"],
+			"@amazme/ai": ["../ai/src/index.ts"],
+			"@amazme/ai/*": ["../ai/src/*.ts", "../ai/src/providers/*.ts"],
+			"@amazme/protocol": ["../protocol/src/index.ts"],
+			"@amazme/telemetry": ["../telemetry/src/index.ts"]
+		}
+	},
+	"include": ["src/**/*.ts", "test/**/*.ts"]
 }

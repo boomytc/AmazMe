@@ -1,18 +1,18 @@
-/** An ordered byte stream to one server. The client owns it from creation until it calls `close()`. */
 export interface ByteTransport {
-  /** Sends bytes in call order. Resolution is backpressure: the client waits before sending more. */
-  send(chunk: Uint8Array): Promise<void>;
-  /** Releases the stream. Must tolerate repeated calls; no handler is expected afterwards. */
-  close(): void;
+	/** Sends one byte chunk. Calls must be delivered in invocation order. */
+	send(chunk: Uint8Array): Promise<void>;
+	/** Closes the transport. Implementations must make repeated calls harmless. */
+	close(): void;
 }
 
 export interface ByteTransportHandlers {
-  onData(chunk: Uint8Array): void;
-  /** The peer ended the stream. Terminal. */
-  onClose(): void;
-  /** The stream failed. Terminal. */
-  onError(error: Error): void;
+	/** Delivers an arbitrary inbound byte chunk. */
+	onData(chunk: Uint8Array): void;
+	/** Reports an orderly terminal close. */
+	onClose(): void;
+	/** Reports a terminal transport failure. */
+	onError(error: Error): void;
 }
 
-/** Opens a fresh connection for one `connect()` attempt. Physical addressing belongs to the factory. */
+/** Creates a fresh connected, authenticated transport. Exactly one terminal handler is expected. */
 export type ByteTransportFactory = (handlers: ByteTransportHandlers) => ByteTransport | Promise<ByteTransport>;

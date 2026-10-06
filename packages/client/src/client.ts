@@ -1,565 +1,479 @@
 import {
-  assertJsonValue,
-  encodeClientMessage,
-  isRuntimeRoute,
-  PROTOCOL_VERSION,
-  resolveLimits,
-  sameRoute,
-  ServerMessageDecoder,
-  type ClientMessage,
-  type JsonValue,
-  type ProtocolLimits,
-  type ResponseEnvelope,
-  type Route,
-  type RuntimeRoute,
-  type ServerHello,
-  type ServerMessage,
-  type ServerRoute,
+	createServiceCatalogueCall,
+	createServiceStateDecoder,
+	createServiceSubscribeCall,
+	createServiceUnsubscribeCall,
+	type JsonValue,
+	parseServiceCall,
+	parseServiceCatalogue,
+	parseWireServiceProviderUpdate,
+	parseWireServiceSubscriptionSnapshot,
+	type RemoteServiceTransport,
+	type ServiceCall,
+	type ServiceCatalogueEntry,
+	type ServiceMode,
+	type ServiceProviderUpdate,
+	type ServiceStateDecoder,
+	type ServiceSubscriptionSnapshot,
+} from "@amazme/chord";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import {
+	type AttachmentEnvelope,
+	encodeClientMessage,
+	isServerId,
+	ProtocolValidationError,
+	type ResponseEnvelope,
+	type RpcTarget,
+	type ServerHello,
+	type ServiceEventEnvelope,
+	type SessionTarget,
 } from "@amazme/protocol";
-import { ClientError, RemoteError, toError } from "./errors.ts";
-import type { ByteTransport, ByteTransportFactory, ByteTransportHandlers } from "./transport.ts";
-import { FrameWriter } from "@amazme/protocol/writer";
+import { Connection } from "./connection.ts";
+import { ClientDisposedError, DisconnectedError, ServerError, toError } from "./errors.ts";
+import { createPromiseResolvers } from "./promise.ts";
+import type {
+	AttachmentChangeListener,
+	ClientOptions,
+	ConnectionState,
+	ConnectionStateChange,
+	ServiceSubscription,
+	Unsubscribe,
+} from "./types.ts";
 
-export interface ClientOptions {
-  /** The logical server identity the handshake must report. Unrelated to the physical address. */
-  serverId: string;
-  transport: ByteTransportFactory;
-  limits?: Partial<ProtocolLimits>;
-  /** Requests awaiting a response, including locally cancelled ones the server has not answered. Default 128. */
-  maxPendingRequests?: number;
-  /** Open subscriptions on one connection. Default 32. */
-  maxSubscriptions?: number;
-  /** Updates held before `start()` or during reentrant callbacks. Going over fails the connection. Default 64. */
-  maxBufferedUpdates?: number;
-  /** Encoded bytes waiting for the transport. Going over fails the connection. Default two frames. */
-  maxQueuedBytes?: number;
-  handshakeTimeoutMs?: number;
-  /** Receives errors thrown by state, attachment and update listeners. Its own errors are ignored. */
-  onListenerError?: (error: Error) => void;
+type ServiceResult = JsonValue | undefined;
+
+interface PendingRequest {
+	resolve(result: ServiceResult): void;
+	reject(error: Error): void;
+	cleanup(): void;
 }
 
-export type ConnectionState = "disconnected" | "connecting" | "connected";
-
-export interface RequestOptions {
-  /** Aborting rejects locally and sends `cancel`. It cancels this RPC, not any business operation. */
-  signal?: AbortSignal;
+interface ActiveServiceListener {
+	readonly target: RpcTarget;
+	readonly listener: (update: ServiceProviderUpdate) => void | Promise<void>;
+	readonly decoder: ServiceStateDecoder;
+	readonly queuedWireUpdates: JsonValue[];
+	readonly queued: ServiceProviderUpdate[];
+	deliveryTail: Promise<void>;
+	hydrated: boolean;
+	ready: boolean;
 }
 
-export interface SubscribeOptions extends RequestOptions {
-  /** The call that closes this subscription on the service. `close()` sends it while the route is current. */
-  unsubscribe?: (subscriptionId: string) => JsonValue;
-}
-
-export type SubscriptionEnd =
-  | { reason: "closed" }
-  | { reason: "detached" }
-  | { reason: "disconnected"; error: Error };
-
-export interface Subscription {
-  readonly id: string;
-  readonly route: Route;
-  /** The result of the subscribe call. Install it before calling `start()`. */
-  readonly initial: JsonValue | undefined;
-  /** Delivers the updates held since the subscribe call, in order, and then live updates. */
-  start(): void;
-  /** Stops delivery at once and resolves after the unsubscribe call, if any, settled. Repeatable. */
-  close(): Promise<void>;
-  /** Resolves once; never rejects. */
-  readonly ended: Promise<SubscriptionEnd>;
-}
-
-interface Pending {
-  settled: boolean;
-  resolve(value: JsonValue | undefined): void;
-  reject(error: Error): void;
-}
-
-interface Sub {
-  readonly id: string;
-  readonly route: Route;
-  readonly onUpdate: (update: JsonValue) => void;
-  readonly buffer: JsonValue[];
-  started: boolean;
-  delivering: boolean;
-  end?: SubscriptionEnd;
-  finish(end: SubscriptionEnd): void;
-}
-
-interface Live {
-  readonly id: number;
-  state: "connecting" | "connected" | "closed";
-  readonly decoder: ServerMessageDecoder;
-  readonly pending: Map<string, Pending>;
-  readonly subscriptions: Map<string, Sub>;
-  readonly handshake: { resolve(hello: ServerHello): void; reject(error: Error): void };
-  transport?: ByteTransport;
-  writer?: FrameWriter;
-  timer?: ReturnType<typeof setTimeout>;
-  attachment: RuntimeRoute | null;
-  requests: number;
-  subscriptionsOpened: number;
-  earlyData: boolean;
-}
-
-const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
-const MAX_TIMER_MS = 2_147_483_647;
-
-/**
- * Speaks the protocol over one connection at a time. Never reconnects or resends: after a disconnect,
- * call `connect()` again, attach again, and repeat only the operations known to be safe.
- */
 export class Client {
-  private readonly options: ClientOptions;
-  private readonly limits: ProtocolLimits;
-  private readonly maxPending: number;
-  private readonly maxSubscriptions: number;
-  private readonly maxBuffered: number;
-  private readonly maxQueued: number;
-  private readonly stateListeners = new Set<(state: ConnectionState, error?: Error) => void>();
-  private readonly attachmentListeners = new Set<(attachment: RuntimeRoute | null) => void>();
-  private live: Live | undefined;
-  private connectionsOpened = 0;
-  private disposed = false;
+	readonly #options: ClientOptions;
+	readonly #connection: Connection;
+	readonly #pendingRequests = new Map<string, PendingRequest>();
+	readonly #connectionStateListeners = new Set<(change: ConnectionStateChange) => void>();
+	readonly #attachmentListeners = new Set<AttachmentChangeListener>();
+	readonly #serviceListeners = new Map<string, ActiveServiceListener>();
+	#requestSequence = 0;
+	#serviceSubscriptionSequence = 0;
+	#hello: ServerHello | undefined;
+	#attachment: SessionTarget | undefined;
+	#disposed = false;
+	#disposePromise: Promise<void> | undefined;
 
-  constructor(options: ClientOptions) {
-    this.options = options;
-    this.limits = resolveLimits(options.limits);
-    this.maxPending = positive("maxPendingRequests", options.maxPendingRequests ?? 128);
-    this.maxSubscriptions = positive("maxSubscriptions", options.maxSubscriptions ?? 32);
-    this.maxBuffered = positive("maxBufferedUpdates", options.maxBufferedUpdates ?? 64);
-    this.maxQueued = positive("maxQueuedBytes", options.maxQueuedBytes ?? 2 * (this.limits.maxFrameBytes + 4));
-    const timeout = options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
-    if (positive("handshakeTimeoutMs", timeout) > MAX_TIMER_MS) throw new RangeError(`handshakeTimeoutMs must be at most ${MAX_TIMER_MS}`);
-  }
+	constructor(options: ClientOptions) {
+		if (!isServerId(options.serverId)) {
+			throw new TypeError("serverId must be a canonical lowercase UUIDv4");
+		}
+		this.#options = options;
+		this.#connection = new Connection({
+			transportFactory: options.transportFactory,
+			serverId: options.serverId,
+			maxFrameLength: options.maxFrameLength,
+			onHandshake: (hello) => {
+				this.#hello = hello;
+			},
+			onMessage: (message) => this.#handleMessage(message),
+			onStateChange: (change) => this.#handleConnectionStateChange(change),
+		});
+	}
 
-  get serverId(): string {
-    return this.options.serverId;
-  }
+	get disposed(): boolean {
+		return this.#disposed;
+	}
 
-  get state(): ConnectionState {
-    return this.live?.state === "connecting" ? "connecting" : this.live?.state === "connected" ? "connected" : "disconnected";
-  }
+	get connectionState(): ConnectionState {
+		return this.#connection.state;
+	}
 
-  /** The runtime route the server attached to the current connection, or `null`. */
-  get attachment(): RuntimeRoute | null {
-    const attachment = this.live?.attachment;
-    return attachment ? { ...attachment } : null;
-  }
+	get connected(): boolean {
+		return this.#connection.state === "connected";
+	}
 
-  serverRoute(): ServerRoute {
-    return { serverId: this.options.serverId };
-  }
+	get serverId(): string {
+		return this.#options.serverId;
+	}
 
-  onStateChange(listener: (state: ConnectionState, error?: Error) => void): () => void {
-    this.stateListeners.add(listener);
-    return () => this.stateListeners.delete(listener);
-  }
+	get hello(): ServerHello | undefined {
+		return this.#hello;
+	}
 
-  onAttachmentChange(listener: (attachment: RuntimeRoute | null) => void): () => void {
-    this.attachmentListeners.add(listener);
-    return () => this.attachmentListeners.delete(listener);
-  }
+	get attachment(): SessionTarget | undefined {
+		return this.#attachment;
+	}
 
-  /** Opens a fresh transport and completes the handshake. Requests are refused until it resolves. */
-  connect(): Promise<ServerHello> {
-    if (this.disposed) return Promise.reject(new ClientError("disposed", "client is disposed"));
-    if (this.live) return Promise.reject(new ClientError("already_connected", `client is ${this.live.state}`));
-    let handshake!: Live["handshake"];
-    const hello = new Promise<ServerHello>((resolve, reject) => { handshake = { resolve, reject }; });
-    const live: Live = {
-      id: ++this.connectionsOpened,
-      state: "connecting",
-      decoder: new ServerMessageDecoder(this.limits),
-      pending: new Map(),
-      subscriptions: new Map(),
-      handshake,
-      attachment: null,
-      requests: 0,
-      subscriptionsOpened: 0,
-      earlyData: false,
-    };
-    this.live = live;
-    live.timer = setTimeout(
-      () => this.fail(live, new ClientError("handshake_timeout", "server hello did not arrive in time")),
-      this.options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS,
-    );
-    this.emitState(live, "connecting");
-    void this.open(live);
-    return hello;
-  }
+	static async connect(options: ClientOptions): Promise<Client> {
+		const client = new Client(options);
+		try {
+			await client.connect();
+			return client;
+		} catch (error) {
+			await client.dispose();
+			throw error;
+		}
+	}
 
-  /** Ends the current connection: pending requests reject, subscriptions end, the attachment clears. */
-  disconnect(reason = "client disconnected"): Promise<void> {
-    const live = this.live;
-    if (live) this.fail(live, new ClientError("disconnected", reason));
-    return Promise.resolve();
-  }
+	connect(): Promise<ServerHello> {
+		if (this.#disposed) return Promise.reject(new ClientDisposedError());
+		this.#hello = undefined;
+		return this.#connection.connect();
+	}
 
-  dispose(): Promise<void> {
-    if (this.disposed) return Promise.resolve();
-    this.disposed = true;
-    const live = this.live;
-    if (live) this.fail(live, new ClientError("disposed", "client is disposed"));
-    this.stateListeners.clear();
-    this.attachmentListeners.clear();
-    return Promise.resolve();
-  }
+	reconnect(): Promise<ServerHello> {
+		return this.connect();
+	}
 
-  request(route: Route, call: JsonValue, options: RequestOptions = {}): Promise<JsonValue | undefined> {
-    return this.send(route, call, options);
-  }
+	disconnect(reason = "Client disconnected"): void {
+		this.#connection.disconnect(reason);
+	}
 
-  private send(route: Route, call: JsonValue, options: RequestOptions, onLateSuccess?: () => void): Promise<JsonValue | undefined> {
-    const live = this.connected();
-    if (live instanceof Error) return Promise.reject(live);
-    const signal = options.signal;
-    if (signal?.aborted) return Promise.reject(abortReason(signal));
-    if (live.pending.size >= this.maxPending) {
-      return Promise.reject(new ClientError("too_many_requests", `more than ${this.maxPending} pending requests`));
-    }
-    const id = `r${++live.requests}`;
-    let frame: Uint8Array;
-    try {
-      frame = encodeClientMessage({ type: "request", id, route, call }, this.limits);
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    route = { ...route };
-    return new Promise<JsonValue | undefined>((resolve, reject) => {
-      const onAbort = () => {
-        if (pending.settled) return;
-        pending.reject(abortReason(signal!));
-        if (this.live === live && live.state === "connected") this.write(live, { type: "cancel", id, route });
-      };
-      const pending: Pending = {
-        settled: false,
-        resolve: (value) => {
-          if (settle()) resolve(value);
-          else onLateSuccess?.();
-        },
-        reject: (error) => { if (settle()) reject(error); },
-      };
-      const settle = () => {
-        if (pending.settled) return false;
-        pending.settled = true;
-        signal?.removeEventListener("abort", onAbort);
-        return true;
-      };
-      live.pending.set(id, pending);
-      signal?.addEventListener("abort", onAbort, { once: true });
-      this.writeFrame(live, frame);
-    });
-  }
+	onConnectionStateChange(listener: (change: ConnectionStateChange) => void): Unsubscribe {
+		this.#assertNotDisposed();
+		this.#connectionStateListeners.add(listener);
+		return () => this.#connectionStateListeners.delete(listener);
+	}
 
-  /**
-   * Registers the subscription before sending `call(subscriptionId)`, so updates that arrive before the
-   * result are held. They stay held until `start()`, letting the caller install `initial` first.
-   */
-  async subscribe(
-    route: Route,
-    call: (subscriptionId: string) => JsonValue,
-    onUpdate: (update: JsonValue) => void,
-    options: SubscribeOptions = {},
-  ): Promise<Subscription> {
-    const live = this.connected();
-    if (live instanceof Error) throw live;
-    if (live.subscriptions.size >= this.maxSubscriptions) {
-      throw new ClientError("too_many_subscriptions", `more than ${this.maxSubscriptions} subscriptions`);
-    }
-    assertJsonValue(route, this.limits);
-    route = { ...route };
-    const id = `s${++live.subscriptionsOpened}`;
-    let finish!: (end: SubscriptionEnd) => void;
-    const ended = new Promise<SubscriptionEnd>((resolve) => { finish = resolve; });
-    const sub: Sub = { id, route, onUpdate, buffer: [], started: false, delivering: false, finish: (end) => finish(end) };
-    live.subscriptions.set(id, sub);
-    const unsubscribe = options.unsubscribe;
-    const sendUnsubscribe = async (): Promise<void> => {
-      if (!unsubscribe || this.live !== live || live.state !== "connected") return;
-      let call: JsonValue;
-      try {
-        call = unsubscribe(id);
-      } catch (error) {
-        this.reportListenerError(error);
-        return;
-      }
-      await this.send(route, call, {}).then(() => undefined, () => undefined);
-    };
-    const lateSuccess = unsubscribe ? () => void sendUnsubscribe() : undefined;
-    let initial: JsonValue | undefined;
-    try {
-      initial = await this.send(route, call(id), options, lateSuccess);
-    } catch (error) {
-      this.endSubscription(live, sub, { reason: "closed" });
-      throw error;
-    }
-    if (sub.end) throw sub.end.reason === "disconnected" ? sub.end.error : new ClientError("detached", "subscription route was detached");
-    let closing: Promise<void> | undefined;
-    return {
-      id,
-      get route() { return { ...route }; },
-      initial,
-      ended,
-      start: () => {
-        if (sub.started || sub.end) return;
-        sub.started = true;
-        this.drain(sub);
-      },
-      close: () => {
-        closing ??= (async () => {
-          const wasOpen = !sub.end;
-          this.endSubscription(live, sub, { reason: "closed" });
-          const current = !isRuntimeRoute(route) || sameRoute(route, live.attachment);
-          if (wasOpen && current) await sendUnsubscribe();
-        })();
-        return closing;
-      },
-    };
-  }
+	onAttachmentChange(listener: AttachmentChangeListener): Unsubscribe {
+		this.#assertNotDisposed();
+		this.#attachmentListeners.add(listener);
+		return () => this.#attachmentListeners.delete(listener);
+	}
 
-  private async open(live: Live): Promise<void> {
-    if (this.live !== live) return;
-    let transport: ByteTransport;
-    try {
-      transport = await this.options.transport(this.handlers(live));
-    } catch (error) {
-      this.fail(live, new ClientError("transport_error", `transport failed to open: ${toError(error).message}`, { cause: error }));
-      return;
-    }
-    if (this.live !== live || live.state === "closed") {
-      this.closeTransport(transport);
-      return;
-    }
-    live.transport = transport;
-    const send = async (chunk: Uint8Array) => {
-      try {
-        await transport.send(chunk);
-      } catch (cause) {
-        throw new ClientError("transport_error", `transport failed to send: ${toError(cause).message}`, { cause });
-      }
-    };
-    live.writer = new FrameWriter(send, this.maxQueued, (error) => this.fail(live, error));
-    this.write(live, { type: "hello", version: PROTOCOL_VERSION });
-  }
+	/** Invoke one low-level protocol call against an explicit routed target. */
+	request(target: RpcTarget, call: ServiceCall, signal?: AbortSignal): Promise<ServiceResult> {
+		return this.#request(target, call, signal);
+	}
 
-  private handlers(live: Live): ByteTransportHandlers {
-    return {
-      onData: (chunk) => {
-        if (this.live !== live) return;
-        if (!live.writer && chunk.byteLength > 0) live.earlyData = true;
-        let messages: ServerMessage[];
-        try {
-          messages = live.decoder.push(chunk);
-        } catch (error) {
-          this.fail(live, new ClientError("protocol_error", toError(error).message, { cause: error }));
-          return;
-        }
-        for (const message of messages) {
-          if (this.live !== live) return;
-          try {
-            this.handle(live, message);
-          } catch (error) {
-            this.reportListenerError(error);
-            this.fail(live, new ClientError("protocol_error", `handling ${message.type} failed: ${toError(error).message}`, { cause: error }));
-            return;
-          }
-        }
-      },
-      onClose: () => {
-        if (this.live !== live) return;
-        let error = new ClientError("disconnected", "server closed the connection");
-        try {
-          live.decoder.end();
-        } catch (cause) {
-          error = new ClientError("protocol_error", toError(cause).message, { cause });
-        }
-        this.fail(live, error);
-      },
-      onError: (cause) => {
-        if (this.live !== live) return;
-        this.fail(live, new ClientError("transport_error", cause.message, { cause }));
-      },
-    };
-  }
+	async serviceCatalogue(target: RpcTarget, signal?: AbortSignal): Promise<readonly ServiceCatalogueEntry[]> {
+		const result = await this.#request(target, createServiceCatalogueCall(), signal);
+		try {
+			return parseServiceCatalogue(result);
+		} catch (error) {
+			const validationError = new ProtocolValidationError(
+				error instanceof Error ? error.message : "Invalid service catalogue",
+			);
+			this.#connection.fail(validationError);
+			throw validationError;
+		}
+	}
 
-  private handle(live: Live, message: ServerMessage): void {
-    if (message.type === "hello_error") {
-      this.fail(live, new RemoteError(message.error.code, message.error.message));
-      return;
-    }
-    if (live.state === "connecting") {
-      if (message.type !== "hello") {
-        this.fail(live, new ClientError("protocol_error", `expected server hello, received ${message.type}`));
-        return;
-      }
-      if (live.earlyData) {
-        this.fail(live, new ClientError("protocol_error", "server hello arrived before the client hello could be sent"));
-        return;
-      }
-      if (message.serverId !== this.options.serverId) {
-        this.fail(live, new ClientError("server_mismatch", `connected to server ${message.serverId}, expected ${this.options.serverId}`));
-        return;
-      }
-      live.state = "connected";
-      clearTimeout(live.timer);
-      this.emitState(live, "connected");
-      if (this.live === live) live.handshake.resolve(message);
-      return;
-    }
-    if (message.type === "hello") {
-      this.fail(live, new ClientError("protocol_error", "unexpected server hello"));
-      return;
-    }
-    if (message.type === "response") {
-      const pending = live.pending.get(message.id);
-      if (!pending) {
-        this.fail(live, new ClientError("protocol_error", `response ${message.id} has no request`));
-        return;
-      }
-      live.pending.delete(message.id);
-      settleResponse(pending, message);
-      return;
-    }
-    if (message.type === "service_update") {
-      const sub = live.subscriptions.get(message.subscriptionId);
-      if (!sub) return;
-      if (sub.buffer.length >= this.maxBuffered) {
-        this.fail(live, new ClientError("subscription_overflow", `subscription ${sub.id} held more than ${this.maxBuffered} updates`));
-        return;
-      }
-      sub.buffer.push(message.update);
-      if (sub.started) this.drain(sub);
-      return;
-    }
-    if (message.attachment && message.attachment.serverId !== this.options.serverId) {
-      this.fail(live, new ClientError("protocol_error", "attachment belongs to another server"));
-      return;
-    }
-    this.setAttachment(live, message.attachment);
-  }
+	async subscribeService(
+		target: RpcTarget,
+		serviceId: string,
+		mode: ServiceMode,
+		listener: (update: ServiceProviderUpdate) => void | Promise<void>,
+		signal?: AbortSignal,
+	): Promise<ServiceSubscription> {
+		const subscriptionId = `service-${++this.#serviceSubscriptionSequence}`;
+		const active: ActiveServiceListener = {
+			target,
+			listener,
+			decoder: createServiceStateDecoder(),
+			queuedWireUpdates: [],
+			queued: [],
+			deliveryTail: Promise.resolve(),
+			hydrated: false,
+			ready: false,
+		};
+		this.#serviceListeners.set(subscriptionId, active);
+		let snapshot: ServiceSubscriptionSnapshot;
+		try {
+			snapshot = await this.#request(
+				target,
+				createServiceSubscribeCall(subscriptionId, serviceId, mode),
+				signal,
+				(result) => {
+					const decoded = active.decoder.decodeSnapshot(parseWireServiceSubscriptionSnapshot(result));
+					active.hydrated = true;
+					for (const update of active.queuedWireUpdates.splice(0)) {
+						active.queued.push(active.decoder.decodeUpdate(parseWireServiceProviderUpdate(update)));
+					}
+					return decoded;
+				},
+			);
+		} catch (error) {
+			if (this.#serviceListeners.get(subscriptionId) === active) this.#serviceListeners.delete(subscriptionId);
+			throw error;
+		}
+		if (this.#serviceListeners.get(subscriptionId) !== active) throw new DisconnectedError();
+		let disposed = false;
+		return {
+			id: subscriptionId,
+			target,
+			snapshot,
+			start: () => {
+				if (disposed || active.ready) return;
+				active.ready = true;
+				for (const update of active.queued.splice(0)) this.#deliverServiceUpdate(active, update);
+			},
+			dispose: async () => {
+				if (disposed) return;
+				disposed = true;
+				if (this.#serviceListeners.get(subscriptionId) === active) this.#serviceListeners.delete(subscriptionId);
+				try {
+					if (this.connected && this.#targetIsCurrent(target)) {
+						await this.#request(target, createServiceUnsubscribeCall(subscriptionId));
+					}
+					await active.deliveryTail;
+				} finally {
+					active.queuedWireUpdates.length = 0;
+					active.queued.length = 0;
+				}
+			},
+		};
+	}
 
-  private setAttachment(live: Live, attachment: RuntimeRoute | null): void {
-    if (sameRoute(live.attachment, attachment)) return;
-    live.attachment = attachment;
-    for (const sub of [...live.subscriptions.values()]) {
-      if (isRuntimeRoute(sub.route) && !sameRoute(sub.route, attachment)) this.endSubscription(live, sub, { reason: "detached" });
-    }
-    for (const listener of [...this.attachmentListeners]) {
-      if (live.id !== this.connectionsOpened || live.attachment !== attachment) return;
-      try {
-        listener(attachment ? { ...attachment } : null);
-      } catch (error) {
-        this.reportListenerError(error);
-      }
-    }
-  }
+	#request<T = ServiceResult>(
+		target: RpcTarget,
+		call: ServiceCall,
+		signal?: AbortSignal,
+		transform?: (result: ServiceResult) => T,
+	): Promise<T> {
+		if (this.#disposed) return Promise.reject(new ClientDisposedError());
+		if (!this.connected) return Promise.reject(new DisconnectedError());
+		if (signal?.aborted) return Promise.reject(abortError(signal));
+		const id = `request-${++this.#requestSequence}`;
+		const { promise, resolve, reject } = createPromiseResolvers<T>();
+		let sent = false;
+		let aborted = false;
+		let onAbort: (() => void) | undefined;
+		const sendCancel = (): void => {
+			if (!sent || !this.connected) return;
+			try {
+				this.#connection.send(
+					encodeClientMessage({ type: "cancel", id, target }, { maxFrameLength: this.#connection.maxFrameLength }),
+				);
+			} catch (error) {
+				this.#connection.fail(toError(error));
+			}
+		};
+		if (signal !== undefined) {
+			onAbort = () => {
+				if (aborted) return;
+				aborted = true;
+				reject(abortError(signal));
+				sendCancel();
+			};
+			signal.addEventListener("abort", onAbort, { once: true });
+		}
+		this.#pendingRequests.set(id, {
+			resolve: (result) => {
+				try {
+					resolve(transform === undefined ? (result as T) : transform(result));
+				} catch (error) {
+					const validationError = new ProtocolValidationError(
+						error instanceof Error ? error.message : "Invalid service operation stream",
+					);
+					this.#connection.fail(validationError);
+					reject(validationError);
+				}
+			},
+			reject,
+			cleanup: () => {
+				if (signal !== undefined && onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+			},
+		});
+		let frame: Uint8Array;
+		try {
+			frame = encodeClientMessage(
+				{ type: "request", id, target, call: parseServiceCall(call) as unknown as JsonValue },
+				{ maxFrameLength: this.#connection.maxFrameLength },
+			);
+		} catch (error) {
+			this.#takePendingRequest(id)?.reject(toError(error));
+			return promise;
+		}
+		this.#connection.send(frame);
+		sent = true;
+		if (aborted) sendCancel();
+		return promise;
+	}
 
-  private fail(live: Live, error: Error): void {
-    if (live.state === "closed") return;
-    const wasConnected = live.state === "connected";
-    live.state = "closed";
-    if (this.live === live) this.live = undefined;
-    clearTimeout(live.timer);
-    live.handshake.reject(error);
-    for (const pending of live.pending.values()) pending.reject(error);
-    live.pending.clear();
-    for (const sub of [...live.subscriptions.values()]) this.endSubscription(live, sub, { reason: "disconnected", error });
-    live.writer?.fail(error);
-    if (live.transport) this.closeTransport(live.transport);
-    if (wasConnected) this.setAttachment(live, null);
-    this.emitState(live, "disconnected", error);
-  }
+	#handleMessage(message: ResponseEnvelope | ServiceEventEnvelope | AttachmentEnvelope): void {
+		if (message.type === "attachment") {
+			if (message.attachment !== null && message.attachment.serverId !== this.#options.serverId) {
+				this.#connection.fail(new ProtocolValidationError("Attachment update belongs to another server"));
+				return;
+			}
+			this.#setAttachment(message.attachment ?? undefined);
+			return;
+		}
+		if (message.type === "service_update") {
+			const active = this.#serviceListeners.get(message.subscriptionId);
+			if (active === undefined) return;
+			if (!active.hydrated) {
+				active.queuedWireUpdates.push(message.update);
+				return;
+			}
+			let update: ServiceProviderUpdate;
+			try {
+				update = active.decoder.decodeUpdate(parseWireServiceProviderUpdate(message.update));
+			} catch (error) {
+				this.#connection.fail(
+					new ProtocolValidationError(error instanceof Error ? error.message : "Invalid service operation stream"),
+				);
+				return;
+			}
+			if (active.ready) this.#deliverServiceUpdate(active, update);
+			else active.queued.push(update);
+			return;
+		}
+		const pending = this.#takePendingRequest(message.id);
+		if (!pending) {
+			this.#connection.fail(new ProtocolValidationError("Response has no matching request"));
+			return;
+		}
+		if (!message.ok) {
+			pending.reject(new ServerError(message.error));
+			return;
+		}
+		pending.resolve(message.result);
+	}
 
-  private closeTransport(transport: ByteTransport): void {
-    try {
-      transport.close();
-    } catch (error) {
-      this.reportListenerError(error);
-    }
-  }
+	#handleConnectionStateChange(change: ConnectionStateChange): void {
+		if (change.state === "disconnected") {
+			this.#hello = undefined;
+			this.#setAttachment(undefined);
+			this.#rejectPendingRequests(change.error ?? new DisconnectedError());
+			this.#serviceListeners.clear();
+		}
+		for (const listener of this.#connectionStateListeners) {
+			try {
+				listener(change);
+			} catch (error) {
+				this.#reportListenerError(error);
+			}
+		}
+	}
 
-  private endSubscription(live: Live, sub: Sub, end: SubscriptionEnd): void {
-    if (sub.end) return;
-    sub.end = end;
-    sub.buffer.length = 0;
-    if (live.subscriptions.get(sub.id) === sub) live.subscriptions.delete(sub.id);
-    sub.finish(end);
-  }
+	#takePendingRequest(id: string): PendingRequest | undefined {
+		const request = this.#pendingRequests.get(id);
+		if (request) {
+			this.#pendingRequests.delete(id);
+			request.cleanup();
+		}
+		return request;
+	}
 
-  private drain(sub: Sub): void {
-    if (sub.delivering) return;
-    sub.delivering = true;
-    try {
-      while (!sub.end && sub.buffer.length > 0) {
-        const update = sub.buffer.shift()!;
-        try {
-          sub.onUpdate(update);
-        } catch (error) {
-          this.reportListenerError(error);
-        }
-      }
-    } finally {
-      sub.delivering = false;
-    }
-  }
+	#rejectPendingRequests(error: Error): void {
+		const requests = [...this.#pendingRequests.values()];
+		this.#pendingRequests.clear();
+		for (const request of requests) {
+			request.cleanup();
+			request.reject(error);
+		}
+	}
 
-  private connected(): Live | Error {
-    if (this.disposed) return new ClientError("disposed", "client is disposed");
-    const live = this.live;
-    if (!live || live.state !== "connected") return new ClientError("not_connected", "client is not connected");
-    return live;
-  }
+	dispose(): Promise<void> {
+		if (this.#disposePromise) return this.#disposePromise;
+		this.#disposed = true;
+		this.#disposePromise = Promise.resolve();
+		const error = new ClientDisposedError();
+		this.#rejectPendingRequests(error);
+		this.#connection.disconnect(error);
+		this.#hello = undefined;
+		this.#setAttachment(undefined);
+		this.#connectionStateListeners.clear();
+		this.#attachmentListeners.clear();
+		this.#serviceListeners.clear();
+		return this.#disposePromise;
+	}
 
-  private write(live: Live, message: ClientMessage): void {
-    let frame: Uint8Array;
-    try {
-      frame = encodeClientMessage(message, this.limits);
-    } catch (error) {
-      this.fail(live, new ClientError("protocol_error", toError(error).message, { cause: error }));
-      return;
-    }
-    this.writeFrame(live, frame);
-  }
+	[Symbol.asyncDispose](): Promise<void> {
+		return this.dispose();
+	}
 
-  private writeFrame(live: Live, frame: Uint8Array): void {
-    const writer = live.writer;
-    if (!writer) {
-      this.fail(live, new ClientError("protocol_error", "client transport is not initialized"));
-      return;
-    }
-    void writer.write(frame, () => new ClientError("send_overflow", `more than ${this.maxQueued} bytes are waiting to be sent`)).catch(() => undefined);
-  }
+	#setAttachment(attachment: SessionTarget | undefined): void {
+		const previous = this.#attachment;
+		if (
+			previous?.serverId === attachment?.serverId &&
+			previous?.sessionId === attachment?.sessionId &&
+			previous?.attachmentId === attachment?.attachmentId
+		) {
+			return;
+		}
+		this.#attachment = attachment;
+		for (const listener of this.#attachmentListeners) {
+			try {
+				listener(attachment);
+			} catch (error) {
+				this.#reportListenerError(error);
+			}
+		}
+	}
 
-  private emitState(live: Live, state: ConnectionState, error?: Error): void {
-    for (const listener of [...this.stateListeners]) {
-      if (live.id !== this.connectionsOpened || this.state !== state) return;
-      try {
-        listener(state, error);
-      } catch (listenerError) {
-        this.reportListenerError(listenerError);
-      }
-    }
-  }
+	#deliverServiceUpdate(active: ActiveServiceListener, update: ServiceProviderUpdate): void {
+		active.deliveryTail = active.deliveryTail
+			.then(() => active.listener(update))
+			.catch((error: unknown) => this.#reportListenerError(error));
+	}
 
-  private reportListenerError(error: unknown): void {
-    try {
-      this.options.onListenerError?.(toError(error));
-    } catch {
-      // Diagnostics cannot change connection state.
-    }
-  }
+	#targetIsCurrent(target: RpcTarget): boolean {
+		if (!("sessionId" in target)) return this.#hello?.serverId === target.serverId;
+		const attachment = this.#attachment;
+		return (
+			attachment?.serverId === target.serverId &&
+			attachment.sessionId === target.sessionId &&
+			attachment.attachmentId === target.attachmentId
+		);
+	}
+
+	#assertNotDisposed(): void {
+		if (this.#disposed) throw new ClientDisposedError();
+	}
+
+	#reportListenerError(error: unknown): void {
+		if (!this.#options.onListenerError) return;
+		try {
+			this.#options.onListenerError(toError(error));
+		} catch {
+			// Diagnostics cannot affect protocol or transport state.
+		}
+	}
 }
 
-function settleResponse(pending: Pending, message: ResponseEnvelope): void {
-  if (message.ok) pending.resolve(message.result);
-  else pending.reject(new RemoteError(message.error.code, message.error.message));
+/** Adapts a lazily resolved routed client target to a Chord service transport. */
+export function createClientServiceTransport(
+	client: Client,
+	getTarget: () => RpcTarget | undefined,
+): RemoteServiceTransport {
+	const target = (): RpcTarget => {
+		const resolved = getTarget();
+		if (resolved === undefined) throw new Error("Remote service target is unavailable");
+		return resolved;
+	};
+	return {
+		invoke: async (call, context) => client.request(target(), call, context.abortSignal),
+		async subscribe(serviceId, mode, listener, context) {
+			const subscription = await client.subscribeService(
+				target(),
+				serviceId,
+				mode,
+				(update) => listener(update, BACKGROUND_CONTEXT),
+				context.abortSignal,
+			);
+			return {
+				snapshot: subscription.snapshot,
+				activate: () => subscription.start(),
+				close: () => subscription.dispose(),
+			};
+		},
+	};
 }
 
-function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error ? signal.reason : new DOMException("The request was aborted", "AbortError");
-}
-
-function positive(name: string, value: number): number {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive integer`);
-  return value;
+function abortError(signal: AbortSignal): Error {
+	const reason: unknown = signal.reason;
+	return reason instanceof Error ? reason : new DOMException("The operation was aborted", "AbortError");
 }
