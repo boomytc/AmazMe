@@ -89,7 +89,7 @@ describe("OpenAI ChatGPT OAuth", () => {
 		);
 
 		expect(authorizeUrl?.searchParams.get("client_id")).toBe("dynamic_agent_client");
-		expect(authorizeUrl?.searchParams.get("agent_name_hint")).toBe("Pi");
+		expect(authorizeUrl?.searchParams.get("agent_name_hint")).toBe("AmazMe");
 		expect(authorizeUrl?.searchParams.get("ext_agent_host_id")).toBe(`urn:uuid:${DEVICE_ID}`);
 		expect(authorizeUrl?.searchParams.get("scope")).toBe(REQUIRED_SCOPE);
 		expect(authorizeUrl?.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:1455/auth/callback");
@@ -106,6 +106,23 @@ describe("OpenAI ChatGPT OAuth", () => {
 			clientId: "oaiapp_issued",
 			scopes: REQUIRED_SCOPE.split(" "),
 		});
+	});
+
+	it("uses the app's agent name as the name hint", async () => {
+		let authorizeUrl: URL | undefined;
+		stubTokenEndpoint(tokenResponse());
+
+		await openaiChatGPTOAuth.login(
+			loginInteraction({
+				callbackClientId: "oaiapp_issued",
+				onAuthorize: (url) => {
+					authorizeUrl = url;
+				},
+			}),
+			{ getDeviceId: () => DEVICE_ID, agentName: "my-app" },
+		);
+
+		expect(authorizeUrl?.searchParams.get("agent_name_hint")).toBe("my-app");
 	});
 
 	it("rejects registration without an issued client ID", async () => {

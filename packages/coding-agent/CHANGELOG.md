@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed managed installs keeping every old release; `amazme update` now keeps only the new release and the one it updated from
+- Fixed standalone binaries loading `.env`, `.env.local`, and `.env.development` from the launch directory into AmazMe's environment
+
 ## [1.0.4] - 2026-10-05
 
 ### New Features
