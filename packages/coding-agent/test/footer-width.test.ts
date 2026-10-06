@@ -2,7 +2,12 @@ import { visibleWidth } from "@amazme/tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
-import { FooterComponent, formatCwdForFooter, SessionTopBar } from "../src/modes/interactive/components/footer.ts";
+import {
+	contextPanelLines,
+	FooterComponent,
+	formatCwdForFooter,
+	SessionTopBar,
+} from "../src/modes/interactive/components/footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -268,9 +273,13 @@ describe("FooterComponent width handling", () => {
 	it("opens the dashboard when its top-right label is clicked", () => {
 		const footer = new FooterComponent(createSession({ sessionName: "chat" }), createFooterData(1));
 		let clicks = 0;
-		const bar = new SessionTopBar(footer, () => {
-			clicks += 1;
-		});
+		const bar = new SessionTopBar(
+			footer,
+			() => {
+				clicks += 1;
+			},
+			() => {},
+		);
 		const line = bar.render(80)[0] ?? "";
 		const hit = footer.dashboardHitRange();
 		expect(hit).toBeDefined();
@@ -281,6 +290,46 @@ describe("FooterComponent width handling", () => {
 		expect(clicks).toBe(1);
 		expect(bar.handleMouse({ type: "click", button: "left", x: 0, y: 0 } as never)).toBeUndefined();
 		expect(clicks).toBe(1);
+	});
+
+	it("shows a percent bar on hover and opens details on click", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "" }), createFooterData(1));
+		let opened = 0;
+		const bar = new SessionTopBar(footer, () => {}, () => {
+			opened += 1;
+		});
+		bar.render(100);
+		const hit = footer.contextHitRange();
+		expect(hit).toBeDefined();
+		expect(stripAnsi(bar.render(100)[0] ?? "")).toContain("/");
+		bar.handleMouse({ type: "move", button: "none", x: hit?.start ?? 0, y: 0 } as never);
+		const hovered = stripAnsi(bar.render(100)[0] ?? "");
+		expect(hovered).toContain("12.3%");
+		expect(hovered).toContain("█");
+		const hoveredHit = footer.contextHitRange();
+		bar.handleMouse({ type: "click", button: "left", x: hoveredHit?.start ?? 0, y: 0 } as never);
+		expect(opened).toBe(1);
+		const panel = contextPanelLines(
+			{
+				used: 338_000,
+				window: 500_000,
+				percent: 67.6,
+				model: "test-model",
+				cost: 1.2,
+				subscription: false,
+				autoCompact: true,
+				reserveTokens: 16_384,
+				messages: 4,
+				toolCalls: 2,
+				compactions: 1,
+			},
+			60,
+		).join("\n");
+		expect(panel).toContain("338k / 500k tokens (67.6%)");
+		expect(panel).toContain("◆");
+		expect(panel).toContain("◇");
+		expect(panel).toContain("Messages        4");
+		expect(panel).not.toContain("System prompt");
 	});
 
 	it("does not mark generic OAuth sign-in as a subscription", () => {

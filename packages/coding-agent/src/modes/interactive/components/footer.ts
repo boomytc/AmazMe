@@ -1,5 +1,12 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { type Component, type TuiMouseEvent, type TuiMouseEventResult, truncateToWidth, visibleWidth } from "@amazme/tui";
+import {
+	type Component,
+	matchesKey,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	truncateToWidth,
+	visibleWidth,
+} from "@amazme/tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ContextUsage } from "../../../core/extensions/types.ts";
@@ -63,6 +70,8 @@ export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private composerLine: (() => string | undefined) | undefined;
 	private dashboardHit: { start: number; end: number } | undefined;
+	private contextHit: { start: number; end: number } | undefined;
+	private contextHover = false;
 
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
@@ -170,14 +179,18 @@ export class FooterComponent implements Component {
 		const left = [sessionName, this.placeLabel()].filter((part): part is string => part !== undefined && part.length > 0).join(" • ");
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
 		const used = contextUsage?.tokens === null || contextUsage?.tokens === undefined ? "?" : formatTokens(contextUsage.tokens);
-		const contextText = `${used} / ${formatTokens(contextWindow)}`;
 		const percent = contextUsage?.percent;
-		const context =
+		const contextPlain =
+			this.contextHover && percent !== null && percent !== undefined
+				? contextMeter(percent)
+				: `${used} / ${formatTokens(contextWindow)}`;
+		const contextColor =
 			percent !== null && percent !== undefined && percent > 90
-				? theme.fg("error", contextText)
+				? "error"
 				: percent !== null && percent !== undefined && percent > 70
-					? theme.fg("warning", contextText)
-					: theme.fg("dim", contextText);
+					? "warning"
+					: "dim";
+		const context = theme.fg(contextColor, contextPlain);
 		const usingSubscription = state.model
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
@@ -188,6 +201,7 @@ export class FooterComponent implements Component {
 		const dashboard = "[Dashboard]";
 		const before = [context, cost].filter((part) => part.length > 0).join("  ");
 		const right = before.length > 0 ? `${before}  ${theme.fg("accent", dashboard)}` : theme.fg("accent", dashboard);
+		const contextWidth = visibleWidth(context);
 		const dashboardOffset = visibleWidth(before) + (before.length > 0 ? 2 : 0);
 		const leftWidth = visibleWidth(left);
 		const rightWidth = visibleWidth(right);
@@ -205,11 +219,31 @@ export class FooterComponent implements Component {
 		}
 		const start = rightStart + dashboardOffset;
 		this.dashboardHit = start >= 0 && start + dashboard.length <= width ? { start, end: start + dashboard.length } : undefined;
+		this.contextHit =
+			contextWidth > 0 && rightStart + contextWidth <= width
+				? { start: rightStart, end: rightStart + contextWidth }
+				: undefined;
 		return [line];
 	}
 
 	dashboardHitRange(): { start: number; end: number } | undefined {
 		return this.dashboardHit;
+	}
+
+	contextHitRange(): { start: number; end: number } | undefined {
+		return this.contextHit;
+	}
+
+	setContextHover(hover: boolean): void {
+		this.contextHover = hover;
+	}
+
+	contextHovering(): boolean {
+		return this.contextHover;
+	}
+
+	usageCost(): number {
+		return this.getSessionStats().usageTotals.cost;
 	}
 
 	private placeLabel(): string {
@@ -313,14 +347,96 @@ export class FooterComponent implements Component {
 	}
 }
 
+function contextMeter(percent: number): string {
+	const cells = 12;
+	const filled = Math.max(0, Math.min(cells, Math.round((percent / 100) * cells)));
+	return `${"█".repeat(filled)}${"░".repeat(cells - filled)} ${percent.toFixed(1)}%`;
+}
+
+export interface ContextDetail {
+	used: number | null;
+	window: number;
+	percent: number | null;
+	model: string;
+	cost: number;
+	subscription: boolean;
+	autoCompact: boolean;
+	reserveTokens: number;
+	messages: number;
+	toolCalls: number;
+	compactions: number;
+}
+
+/** Detail card for the context meter. Counts only what the session log actually records. */
+export function contextPanelLines(detail: ContextDetail, width: number): string[] {
+	const used = detail.used === null ? "?" : formatTokens(detail.used);
+	const percent = detail.percent === null ? "?" : `${detail.percent.toFixed(1)}%`;
+	const cells = 40;
+	const fraction = detail.percent === null ? 0 : Math.max(0, Math.min(100, detail.percent));
+	const filled = Math.round((fraction / 100) * cells);
+	const grid = `${"◆".repeat(filled)}${"◇".repeat(cells - filled)}`;
+	const remaining =
+		detail.used === null ? "?" : formatTokens(Math.max(0, detail.window - detail.reserveTokens - detail.used));
+	const threshold =
+		detail.window > 0 ? `${(((detail.window - detail.reserveTokens) / detail.window) * 100).toFixed(0)}%` : "?";
+	const cost = `$${detail.cost.toFixed(3)}${detail.subscription ? " (sub)" : ""}`;
+	const lines = [
+		"Context usage",
+		"",
+		`${used} / ${formatTokens(detail.window)} tokens (${percent})`,
+		detail.model,
+		"",
+		grid,
+		"",
+		`Cost            ${cost}`,
+		detail.autoCompact ? `Auto-compact    at ${threshold} · ${remaining} remaining` : "Auto-compact    off",
+		`Messages        ${detail.messages}`,
+		`Tool calls      ${detail.toolCalls}`,
+		`Compactions     ${detail.compactions}`,
+		"",
+		"Esc close",
+	];
+	return lines.map((line) => truncateToWidth(line, width, "…"));
+}
+
+export class ContextUsagePanel implements Component {
+	private readonly detail: () => ContextDetail;
+	private readonly onClose: () => void;
+
+	constructor(detail: () => ContextDetail, onClose: () => void) {
+		this.detail = detail;
+		this.onClose = onClose;
+	}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		const inner = Math.max(1, width - 4);
+		const body = contextPanelLines(this.detail(), inner);
+		const lines = [theme.fg("text", `╭${"─".repeat(Math.max(0, width - 2))}╮`)];
+		for (const line of body) {
+			const pad = " ".repeat(Math.max(0, inner - visibleWidth(line)));
+			lines.push(theme.fg("text", `│ ${line}${pad} │`));
+		}
+		lines.push(theme.fg("text", `╰${"─".repeat(Math.max(0, width - 2))}╯`));
+		return lines;
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "escape") || data === "q") this.onClose();
+	}
+}
+
 /** The one line fixed above the transcript. */
 export class SessionTopBar implements Component {
 	private readonly footer: FooterComponent;
 	private readonly onDashboardClick: () => void;
+	private readonly onContextClick: () => void;
 
-	constructor(footer: FooterComponent, onDashboardClick: () => void) {
+	constructor(footer: FooterComponent, onDashboardClick: () => void, onContextClick: () => void) {
 		this.footer = footer;
 		this.onDashboardClick = onDashboardClick;
+		this.onContextClick = onContextClick;
 	}
 
 	invalidate(): void {}
@@ -330,7 +446,20 @@ export class SessionTopBar implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.type !== "click" || event.button !== "left" || event.y !== 0) return undefined;
+		if (event.y !== 0) return undefined;
+		const context = this.footer.contextHitRange();
+		const overContext = context !== undefined && event.x >= context.start && event.x < context.end;
+		if (event.type === "move") {
+			const hover = Boolean(overContext);
+			if (hover === this.footer.contextHovering()) return { handled: true, render: false };
+			this.footer.setContextHover(hover);
+			return { handled: true, render: true };
+		}
+		if (event.type !== "click" || event.button !== "left") return undefined;
+		if (overContext) {
+			this.onContextClick();
+			return { handled: true };
+		}
 		const hit = this.footer.dashboardHitRange();
 		if (!hit || event.x < hit.start || event.x >= hit.end) return undefined;
 		this.onDashboardClick();

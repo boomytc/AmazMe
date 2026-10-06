@@ -154,7 +154,14 @@ import { playArmin3d, playPiLogo3d } from "./components/easter-egg-3d.lazy.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
-import { FooterComponent, formatCwdForFooter, formatTokens, SessionTopBar } from "./components/footer.ts";
+import {
+	type ContextDetail,
+	ContextUsagePanel,
+	FooterComponent,
+	formatCwdForFooter,
+	formatTokens,
+	SessionTopBar,
+} from "./components/footer.ts";
 import {
 	type DashboardAgent,
 	DashboardView,
@@ -495,6 +502,7 @@ export class InteractiveMode {
 	private submitEditorText: (text: string) => Promise<void> = async () => {};
 	private footerContainer: Container;
 	private statusBar!: SessionTopBar;
+	private contextOverlay: { hide(): void; focus(): void } | undefined;
 	private footerDataProvider: FooterDataProvider;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
@@ -696,9 +704,15 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
-		this.statusBar = new SessionTopBar(this.footer, () => {
-			this.dashboard().toggle();
-		});
+		this.statusBar = new SessionTopBar(
+			this.footer,
+			() => {
+				this.dashboard().toggle();
+			},
+			() => {
+				this.toggleContextPanel();
+			},
+		);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
 
@@ -3398,6 +3412,53 @@ export class InteractiveMode {
 			this.dashboardDisk = [];
 		}
 		this.ui.requestRender();
+	}
+
+	private toggleContextPanel(): void {
+		if (this.contextOverlay) {
+			this.contextOverlay.hide();
+			this.contextOverlay = undefined;
+			this.ui.requestRender();
+			return;
+		}
+		const panel = new ContextUsagePanel(() => this.contextDetail(), () => {
+			this.contextOverlay?.hide();
+			this.contextOverlay = undefined;
+			this.ui.requestRender();
+		});
+		this.contextOverlay = this.ui.showOverlay(panel, { anchor: "center", width: 72, maxHeight: "80%" });
+		this.contextOverlay.focus();
+	}
+
+	private contextDetail(): ContextDetail {
+		const usage = this.session.getContextUsage();
+		const cost = this.footer.usageCost();
+		let messages = 0;
+		let toolCalls = 0;
+		let compactions = 0;
+		for (const entry of this.sessionManager.getEntries()) {
+			if (entry.type === "compaction") compactions += 1;
+			if (entry.type !== "message") continue;
+			if (entry.message.role === "toolResult") toolCalls += 1;
+			if (entry.message.role === "user" || entry.message.role === "assistant") messages += 1;
+		}
+		const model = this.session.state.model;
+		const reserve = model ? this.settingsManager.getCompactionSettings(model).reserveTokens : 16_384;
+		return {
+			used: usage?.tokens ?? null,
+			window: usage?.contextWindow ?? model?.contextWindow ?? 0,
+			percent: usage?.percent ?? null,
+			model: model?.id ?? "no-model",
+			cost,
+			subscription: model
+				? model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(model.provider)
+				: false,
+			autoCompact: this.session.autoCompactionEnabled,
+			reserveTokens: reserve,
+			messages,
+			toolCalls,
+			compactions,
+		};
 	}
 
 	private setStartupChrome(visible: boolean): void {
