@@ -1,60 +1,100 @@
-import { homedir } from "node:os";
-import type { ApiKeyAuth } from "../auth.ts";
-import { adcCanAuthenticate } from "../api/google-adc.ts";
+import { googleVertexApi } from "../api/google-vertex.lazy.ts";
+import type { ApiKeyAuth } from "../auth/types.ts";
 import { createProvider, type Provider } from "../models.ts";
-import type { AuthResult } from "../types.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { GOOGLE_VERTEX_MODELS } from "./google-vertex.models.ts";
 
-const DEFAULT_ADC = `${homedir()}/.config/gcloud/application_default_credentials.json`;
+const VERTEX_ADC_PATH = "~/.config/gcloud/application_default_credentials.json";
 
 /**
- * API key, or project / location / ADC path. The file is read again on the request
- * so a refresh token or private key is never copied into the credential store.
+ * Vertex accepts an explicit API key or Application Default Credentials
+ * (`gcloud auth application-default login`). ADC additionally requires
+ * project and location env vars, which the implementation reads itself.
  */
-function vertexAuth(): ApiKeyAuth {
-  return {
-    env: "GOOGLE_CLOUD_API_KEY",
-    name: "Google Cloud credentials",
-    async resolve({ credential, env }): Promise<AuthResult | undefined> {
-      if (credential?.key) return { apiKey: credential.key, source: "store", ...(credential.env ? { env: credential.env } : {}) };
-      const project = credential?.env?.GOOGLE_CLOUD_PROJECT ?? env.GOOGLE_CLOUD_PROJECT ?? env.GCLOUD_PROJECT;
-      const location = credential?.env?.GOOGLE_CLOUD_LOCATION ?? env.GOOGLE_CLOUD_LOCATION;
-      if (!credential) {
-        const key = env.GOOGLE_CLOUD_API_KEY;
-        if (key) {
-          return {
-            apiKey: key,
-            source: "env",
-            ...((project || location) ? { env: { ...(project ? { GOOGLE_CLOUD_PROJECT: project } : {}), ...(location ? { GOOGLE_CLOUD_LOCATION: location } : {}) } } : {}),
-          };
-        }
-      }
-      const credentials = credential?.env?.GOOGLE_APPLICATION_CREDENTIALS ?? env.GOOGLE_APPLICATION_CREDENTIALS ?? DEFAULT_ADC;
-      const path = expandHome(credentials);
-      if (!project || !location || !await adcCanAuthenticate(path)) return undefined;
-      return {
-        source: credential ? "store" : "env",
-        env: {
-          GOOGLE_CLOUD_PROJECT: project,
-          GOOGLE_CLOUD_LOCATION: location,
-          GOOGLE_APPLICATION_CREDENTIALS: path,
-        },
-      };
-    },
-  };
-}
+const vertexAuth: ApiKeyAuth = {
+	name: "Google Cloud credentials",
+	login: async (interaction) => {
+		interaction.signal.throwIfAborted();
+		const method = await interaction.prompt({
+			type: "select",
+			message: "Select Google Vertex AI authentication method:",
+			options: [
+				{ id: "api-key", label: "Google Cloud API key" },
+				{ id: "adc", label: "Application Default Credentials" },
+				{ id: "service-account", label: "Service account credentials file" },
+			],
+		});
+		interaction.signal.throwIfAborted();
+		if (method === "api-key") {
+			return {
+				type: "api_key",
+				key: await interaction.prompt({ type: "secret", message: "Enter Google Cloud API key" }),
+			};
+		}
+		if (method !== "adc" && method !== "service-account") {
+			throw new Error(`Unknown Google Vertex AI auth method: ${method}`);
+		}
+		interaction.notify({
+			type: "info",
+			message:
+				method === "adc"
+					? "Run `gcloud auth application-default login`, then provide the project and location."
+					: "Provide a service account credentials file, project, and location.",
+			links: [
+				{
+					label: "Application Default Credentials",
+					url: "https://cloud.google.com/docs/authentication/provide-credentials-adc",
+				},
+			],
+		});
+		const project = await interaction.prompt({ type: "text", message: "Enter Google Cloud project ID" });
+		const location = await interaction.prompt({ type: "text", message: "Enter Google Cloud location" });
+		const credentialsPath =
+			method === "service-account"
+				? await interaction.prompt({ type: "text", message: "Enter service account credentials file path" })
+				: undefined;
+		return {
+			type: "api_key",
+			env: {
+				GOOGLE_CLOUD_PROJECT: project,
+				GOOGLE_CLOUD_LOCATION: location,
+				...(credentialsPath ? { GOOGLE_APPLICATION_CREDENTIALS: credentialsPath } : {}),
+			},
+		};
+	},
+	resolve: async ({ ctx, credential, signal }) => {
+		const env = async (name: string) => {
+			signal.throwIfAborted();
+			const value = await ctx.env(name);
+			signal.throwIfAborted();
+			return value;
+		};
+		const key = credential?.key ?? (await env("GOOGLE_CLOUD_API_KEY"));
+		if (key) return { auth: { apiKey: key }, source: credential?.key ? "stored credential" : "GOOGLE_CLOUD_API_KEY" };
 
-function expandHome(path: string): string {
-  return path.startsWith("~/") ? `${homedir()}${path.slice(1)}` : path;
-}
+		const adcPath = credential?.env?.GOOGLE_APPLICATION_CREDENTIALS ?? (await env("GOOGLE_APPLICATION_CREDENTIALS"));
+		signal.throwIfAborted();
+		const hasCredentials = await ctx.fileExists(adcPath ?? VERTEX_ADC_PATH);
+		signal.throwIfAborted();
+		const project =
+			credential?.env?.GOOGLE_CLOUD_PROJECT ?? (await env("GOOGLE_CLOUD_PROJECT")) ?? (await env("GCLOUD_PROJECT"));
+		const location = credential?.env?.GOOGLE_CLOUD_LOCATION ?? (await env("GOOGLE_CLOUD_LOCATION"));
+		if (hasCredentials && project && location) {
+			return {
+				auth: {},
+				env: credential?.env,
+				source: credential ? "stored credential" : "gcloud application default credentials",
+			};
+		}
+		return undefined;
+	},
+};
 
-export function googleVertexProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "google-vertex",
-    name: "Google Vertex AI",
-    auth: { apiKey: vertexAuth() },
-    models: catalogModels("google-vertex"),
-    api: wires("google-vertex", options),
-  });
+export function googleVertexProvider(): Provider<"google-vertex"> {
+	return createProvider({
+		id: "google-vertex",
+		name: "Google Vertex AI",
+		auth: { apiKey: vertexAuth },
+		models: Object.values(GOOGLE_VERTEX_MODELS),
+		api: googleVertexApi(),
+	});
 }

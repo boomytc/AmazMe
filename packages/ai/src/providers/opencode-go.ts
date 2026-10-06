@@ -1,17 +1,21 @@
+import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { withOpenCodeSessionHeader } from "./request-headers.ts";
-import { wires } from "./wires.ts";
+import { OPENCODE_GO_MODELS } from "./opencode-go.models.ts";
+import { withOpenCodeSessionHeader } from "./opencode-headers.ts";
 
-export function opencodeGoProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "opencode-go",
-    name: "OpenCode Go",
-    auth: { apiKey: { env: "OPENCODE_API_KEY", name: "OpenCode API key" } },
-    models: catalogModels("opencode-go"),
-    api: wires(["anthropic-messages", "openai-completions", "openai-responses"], {
-      ...options,
-      wrap: withOpenCodeSessionHeader,
-    }),
-  });
+export function opencodeGoProvider(): Provider<"anthropic-messages" | "openai-completions" | "openai-responses"> {
+	return createProvider<"anthropic-messages" | "openai-completions" | "openai-responses">({
+		id: "opencode-go",
+		name: "OpenCode Go",
+		auth: { apiKey: envApiKeyAuth("OpenCode API key", ["OPENCODE_API_KEY"]) },
+		models: Object.values(OPENCODE_GO_MODELS),
+		api: {
+			"anthropic-messages": withOpenCodeSessionHeader(anthropicMessagesApi()),
+			"openai-completions": withOpenCodeSessionHeader(openAICompletionsApi()),
+			"openai-responses": withOpenCodeSessionHeader(openAIResponsesApi()),
+		},
+	});
 }

@@ -1,38 +1,27 @@
-import type { ApiKeyAuth } from "../auth.ts";
+import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
 import { createProvider, type Provider } from "../models.ts";
-import type { AuthResult } from "../types.ts";
-import { catalogModels } from "./catalog.ts";
-import { withCloudflarePlaceholders } from "./request-headers.ts";
-import { wires } from "./wires.ts";
+import { CLOUDFLARE_AI_GATEWAY_MODELS } from "./cloudflare-ai-gateway.models.ts";
+import { cloudflareAIGatewayAuth } from "./cloudflare-auth.ts";
+import { cloudflareStreams } from "./cloudflare-stream.ts";
 
-function cloudflareAuth(): ApiKeyAuth {
-  return {
-    env: "CLOUDFLARE_API_KEY",
-    name: "Cloudflare API key",
-    async resolve({ credential, env }): Promise<AuthResult | undefined> {
-      const key = credential?.key ?? env.CLOUDFLARE_API_KEY;
-      const account = credential?.env?.CLOUDFLARE_ACCOUNT_ID ?? env.CLOUDFLARE_ACCOUNT_ID;
-      const gateway = credential?.env?.CLOUDFLARE_GATEWAY_ID ?? env.CLOUDFLARE_GATEWAY_ID;
-      if (!key || !account || !gateway) return undefined;
-      return {
-        apiKey: key,
-        source: credential?.key ? "store" : "env",
-        headers: { "cf-aig-authorization": `Bearer ${key}` },
-        env: { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_GATEWAY_ID: gateway },
-      };
-    },
-  };
-}
+type CloudflareAIGatewayApi = "anthropic-messages" | "openai-completions" | "openai-responses";
 
-export function cloudflareAIGatewayProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "cloudflare-ai-gateway",
-    name: "Cloudflare AI Gateway",
-    auth: { apiKey: cloudflareAuth() },
-    models: catalogModels("cloudflare-ai-gateway"),
-    api: wires(["anthropic-messages", "openai-completions", "openai-responses"], {
-      ...options,
-      wrap: withCloudflarePlaceholders,
-    }),
-  });
+export function cloudflareAIGatewayProvider(): Provider<CloudflareAIGatewayApi> {
+	// The api map is pinned to all three APIs: models.dev's gateway catalog drops and
+	// restores `workers-ai/*` (openai-completions) entries over time, and inference from
+	// `models` alone would otherwise reject the openai-completions entry whenever the
+	// generated catalog happens to contain none.
+	return createProvider<CloudflareAIGatewayApi>({
+		id: "cloudflare-ai-gateway",
+		name: "Cloudflare AI Gateway",
+		auth: { apiKey: cloudflareAIGatewayAuth() },
+		models: Object.values(CLOUDFLARE_AI_GATEWAY_MODELS),
+		api: {
+			"anthropic-messages": cloudflareStreams(anthropicMessagesApi()),
+			"openai-completions": cloudflareStreams(openAICompletionsApi()),
+			"openai-responses": cloudflareStreams(openAIResponsesApi()),
+		},
+	});
 }

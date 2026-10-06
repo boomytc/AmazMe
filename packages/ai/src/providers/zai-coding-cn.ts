@@ -1,14 +1,15 @@
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { ZAI_CODING_CN_MODELS } from "./zai-coding-cn.models.ts";
 
-export function zaiCodingCnProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "zai-coding-cn",
-    name: "Z.AI Coding CN",
-    baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
-    auth: { apiKey: { env: "ZAI_CODING_CN_API_KEY", name: "Z.AI Coding CN API key" } },
-    models: catalogModels("zai-coding-cn"),
-    api: wires("openai-completions", options),
-  });
+export function zaiCodingCnProvider(): Provider<"openai-completions"> {
+	return createProvider({
+		id: "zai-coding-cn",
+		name: "Z.AI Coding CN",
+		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		auth: { apiKey: envApiKeyAuth("Z.AI Coding CN API key", ["ZAI_CODING_CN_API_KEY"]) },
+		models: Object.values(ZAI_CODING_CN_MODELS),
+		api: openAICompletionsApi(),
+	});
 }

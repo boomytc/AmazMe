@@ -1,14 +1,15 @@
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { QWEN_TOKEN_PLAN_CN_MODELS } from "./qwen-token-plan-cn.models.ts";
 
-export function qwenTokenPlanCnProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "qwen-token-plan-cn",
-    name: "Qwen Token Plan CN",
-    baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-    auth: { apiKey: { env: "QWEN_TOKEN_PLAN_CN_API_KEY", name: "Qwen Token Plan CN API key" } },
-    models: catalogModels("qwen-token-plan-cn"),
-    api: wires("openai-completions", options),
-  });
+export function qwenTokenPlanCnProvider(): Provider<"openai-completions"> {
+	return createProvider({
+		id: "qwen-token-plan-cn",
+		name: "Qwen Token Plan CN",
+		baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+		auth: { apiKey: envApiKeyAuth("Qwen Token Plan CN API key", ["QWEN_TOKEN_PLAN_CN_API_KEY"]) },
+		models: Object.values(QWEN_TOKEN_PLAN_CN_MODELS),
+		api: openAICompletionsApi(),
+	});
 }

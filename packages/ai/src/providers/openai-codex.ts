@@ -1,16 +1,22 @@
-import { codexOAuth } from "../auth/oauth/flows.ts";
+import { openAICodexResponsesApi } from "../api/openai-codex-responses.lazy.ts";
+import { lazyOAuth } from "../auth/helpers.ts";
+import { loadOpenAICodexOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { OPENAI_CODEX_MODELS } from "./openai-codex.models.ts";
 
-/** Codex has no API-key path. Login is the ChatGPT subscription. */
-export function openaiCodexProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "openai-codex",
-    name: "OpenAI Codex (legacy)",
-    baseUrl: "https://chatgpt.com/backend-api",
-    auth: { oauth: codexOAuth(options.fetch) },
-    models: catalogModels("openai-codex"),
-    api: wires("openai-codex-responses", options),
-  });
+export function openaiCodexProvider(): Provider<"openai-codex-responses"> {
+	return createProvider({
+		id: "openai-codex",
+		name: "OpenAI Codex (legacy)",
+		baseUrl: "https://chatgpt.com/backend-api",
+		auth: {
+			oauth: lazyOAuth({
+				name: "OpenAI (ChatGPT Plus/Pro)",
+				isSubscription: true,
+				load: loadOpenAICodexOAuth,
+			}),
+		},
+		models: Object.values(OPENAI_CODEX_MODELS),
+		api: openAICodexResponsesApi(),
+	});
 }

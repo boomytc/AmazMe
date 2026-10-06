@@ -1,60 +1,47 @@
-import type { ClassifierContext, ClassifierModel, ClassifierResult, SpecialCallOptions } from "../types.ts";
-import { classifierError, interpretClassifier, postClassifier, wireQuestions } from "./system-one.ts";
+import type { ClassifierFunction, ClassifierOptions } from "../types.ts";
+import { classifySystemOne, isRecord, type SystemOneTransport } from "./system-one-shared.ts";
 
 const LABEL = "Cloudflare Workers AI";
 
+function cloudflareErrorMessage(errors: unknown): string {
+	if (Array.isArray(errors)) {
+		const messages = errors
+			.map((error) => (isRecord(error) && typeof error.message === "string" ? error.message : undefined))
+			.filter((message): message is string => message !== undefined);
+		if (messages.length > 0) return `${LABEL} error: ${messages.join("; ")}`;
+	}
+	return `${LABEL} request failed`;
+}
+
 /**
- * System One on the Workers AI REST endpoint.
- * `POST {baseUrl}/run` with `{ model, input }`. Public `bool` questions go out as `noul`.
- * Cloudflare-hosted models return `{ success, result: { answers } }`.
- * Third-party models such as `typesafe/jev` nest a run record:
- * `{ success, result: { state: "Completed", result: { answers } } }`.
- * Answers and usage use the same validation as the TypeSafe channel.
+ * System One models on the Workers AI REST endpoint:
+ * `POST /accounts/{account}/ai/run` with `{ model, input }`. The REST API wraps the model
+ * output in Cloudflare's API envelope. Third-party models such as `typesafe/jev` add a run record:
+ * `{ success, result: { state: "Completed", result: { answers, usage } } }`.
  * https://developers.cloudflare.com/ai/models/typesafe/jev/
+ * Cloudflare-hosted models such as `@cf/cloudflare/clef` return the output directly:
+ * `{ success, result: { model, answers, usage } }`.
  * https://developers.cloudflare.com/workers-ai/models/clef/
  */
-export async function classifyCloudflare(
-  model: ClassifierModel,
-  context: ClassifierContext,
-  options: SpecialCallOptions = {},
-): Promise<ClassifierResult> {
-  if (!options.apiKey) {
-    return { api: model.api, provider: model.provider, model: model.id, answers: {}, stopReason: "error", errorMessage: `No API key for provider: ${model.provider}` };
-  }
-  const url = new URL("run", `${model.baseUrl.replace(/\/+$/u, "")}/`);
-  const posted = await postClassifier(LABEL, model, url, {
-    model: model.id,
-    input: { state: context.state, questions: wireQuestions(context) },
-  }, options);
-  if (!posted.ok) return posted.result;
-  const unwrapped = unwrapCloudflare(posted.payload);
-  if ("errorMessage" in unwrapped) return classifierError(model, unwrapped.errorMessage, posted.text, options.apiKey);
-  return interpretClassifier(LABEL, model, context, unwrapped.payload, posted.text, options.apiKey);
-}
+const transport: SystemOneTransport = {
+	api: "cloudflare-workers-ai-system-one",
+	label: LABEL,
+	url: (model) => new URL("run", `${model.baseUrl.replace(/\/+$/u, "")}/`),
+	payload: (model, request) => ({ model: model.id, input: request }),
+	output: (body) => {
+		if (!isRecord(body)) throw new Error(`${LABEL} returned an unexpected response`);
+		if (body.success === false) throw new Error(cloudflareErrorMessage(body.errors));
+		const result = body.result;
+		if (!isRecord(result)) throw new Error(`${LABEL} returned an unexpected response`);
+		if ("answers" in result) return result;
+		if (result.state !== "Completed") {
+			throw new Error(`${LABEL} run did not complete (state: ${String(result.state)})`);
+		}
+		if (!isRecord(result.result)) throw new Error(`${LABEL} returned an unexpected response`);
+		return result.result;
+	},
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Pull the object that holds `answers` out of the direct envelope or the Completed run record. */
-function unwrapCloudflare(body: unknown): { payload: Record<string, unknown> } | { errorMessage: string } {
-  if (!isRecord(body)) return { errorMessage: `${LABEL} returned an unexpected response` };
-  if (body.success === false) return { errorMessage: cloudflareErrorMessage(body.errors) };
-  const result = body.result;
-  if (!isRecord(result)) return { errorMessage: `${LABEL} returned an unexpected response` };
-  if (isRecord(result.answers)) return { payload: result };
-  if (result.state !== "Completed") return { errorMessage: `${LABEL} run did not complete (state: ${String(result.state)})` };
-  const inner = result.result;
-  if (!isRecord(inner) || !isRecord(inner.answers)) return { errorMessage: `${LABEL} returned an unexpected response` };
-  return { payload: inner };
-}
-
-function cloudflareErrorMessage(errors: unknown): string {
-  if (Array.isArray(errors)) {
-    const messages = errors
-      .map((error) => (isRecord(error) && typeof error.message === "string" ? error.message : undefined))
-      .filter((message): message is string => message !== undefined);
-    if (messages.length > 0) return `${LABEL} error: ${messages.join("; ")}`;
-  }
-  return `${LABEL} request failed`;
-}
+/** Cloudflare Workers AI System One classification with public `bool` values mapped to wire-level `noul`. */
+export const classify: ClassifierFunction<ClassifierOptions> = (model, context, options) =>
+	classifySystemOne(transport, model, context, options);

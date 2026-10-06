@@ -1,34 +1,36 @@
-import { generateOpenRouterImages } from "../api/openrouter-images.ts";
-import { openRouterOAuth } from "../auth/oauth/flows.ts";
+import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { openrouterImagesApi } from "../api/openrouter-images.lazy.ts";
+import { typesafeSystemOneApi } from "../api/typesafe-system-one.lazy.ts";
+import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { loadOpenRouterOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import type { ImageModel } from "../types.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { OPENROUTER_CLASSIFIER_MODELS, OPENROUTER_IMAGE_MODELS, OPENROUTER_MODELS } from "./openrouter.models.ts";
 
-const imageModel: ImageModel = {
-  id: "black-forest-labs/flux.2-pro",
-  name: "FLUX.2 Pro",
-  provider: "openrouter",
-  api: "openrouter-images",
-  baseUrl: "https://openrouter.ai/api/v1",
-};
-
-export function openrouterProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "openrouter",
-    name: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    auth: {
-      apiKey: { env: "OPENROUTER_API_KEY", name: "OpenRouter API key" },
-      oauth: openRouterOAuth(options.fetch),
-    },
-    models: catalogModels("openrouter"),
-    api: wires(["anthropic-messages", "openai-completions"], options),
-    images: {
-      models: [imageModel],
-      run: {
-        "openrouter-images": (model, request, call) => generateOpenRouterImages(model, request, { ...call, ...(options.fetch ? { fetch: options.fetch } : {}) }),
-      },
-    },
-  });
+export function openrouterProvider(): Provider<"anthropic-messages" | "openai-completions"> {
+	return createProvider<"anthropic-messages" | "openai-completions">({
+		id: "openrouter",
+		name: "OpenRouter",
+		baseUrl: "https://openrouter.ai/api/v1",
+		auth: {
+			apiKey: envApiKeyAuth("OpenRouter API key", ["OPENROUTER_API_KEY"]),
+			oauth: lazyOAuth({
+				name: "OpenRouter OAuth",
+				loginLabel: "Sign in with OpenRouter",
+				load: loadOpenRouterOAuth,
+			}),
+		},
+		models: [
+			...Object.values(OPENROUTER_MODELS),
+			...Object.values(OPENROUTER_IMAGE_MODELS),
+			...Object.values(OPENROUTER_CLASSIFIER_MODELS),
+		],
+		api: {
+			"anthropic-messages": anthropicMessagesApi(),
+			"openai-completions": openAICompletionsApi(),
+		},
+		images: { "openrouter-images": openrouterImagesApi() },
+		// OpenRouter serves TypeSafe's System One protocol at /api/v1/systemone.
+		classifiers: { "typesafe-system-one": typesafeSystemOneApi() },
+	});
 }

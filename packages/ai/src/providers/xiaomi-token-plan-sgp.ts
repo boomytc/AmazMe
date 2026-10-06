@@ -1,14 +1,15 @@
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { XIAOMI_TOKEN_PLAN_SGP_MODELS } from "./xiaomi-token-plan-sgp.models.ts";
 
-export function xiaomiTokenPlanSgpProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "xiaomi-token-plan-sgp",
-    name: "Xiaomi Token Plan SGP",
-    baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
-    auth: { apiKey: { env: "XIAOMI_TOKEN_PLAN_SGP_API_KEY", name: "Xiaomi Token Plan SGP API key" } },
-    models: catalogModels("xiaomi-token-plan-sgp"),
-    api: wires("openai-completions", options),
-  });
+export function xiaomiTokenPlanSgpProvider(): Provider<"openai-completions"> {
+	return createProvider({
+		id: "xiaomi-token-plan-sgp",
+		name: "Xiaomi Token Plan SGP",
+		baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
+		auth: { apiKey: envApiKeyAuth("Xiaomi Token Plan SGP API key", ["XIAOMI_TOKEN_PLAN_SGP_API_KEY"]) },
+		models: Object.values(XIAOMI_TOKEN_PLAN_SGP_MODELS),
+		api: openAICompletionsApi(),
+	});
 }

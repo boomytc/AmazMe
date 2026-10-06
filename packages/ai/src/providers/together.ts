@@ -1,14 +1,15 @@
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { TOGETHER_MODELS } from "./together.models.ts";
 
-export function togetherProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "together",
-    name: "Together",
-    baseUrl: "https://api.together.ai/v1",
-    auth: { apiKey: { env: "TOGETHER_API_KEY", name: "Together API key" } },
-    models: catalogModels("together"),
-    api: wires("openai-completions", options),
-  });
+export function togetherProvider(): Provider<"openai-completions"> {
+	return createProvider({
+		id: "together",
+		name: "Together",
+		baseUrl: "https://api.together.ai/v1",
+		auth: { apiKey: envApiKeyAuth("Together API key", ["TOGETHER_API_KEY"]) },
+		models: Object.values(TOGETHER_MODELS),
+		api: openAICompletionsApi(),
+	});
 }

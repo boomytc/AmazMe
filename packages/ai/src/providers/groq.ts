@@ -1,14 +1,15 @@
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { GROQ_MODELS } from "./groq.models.ts";
 
-export function groqProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "groq",
-    name: "Groq",
-    baseUrl: "https://api.groq.com/openai/v1",
-    auth: { apiKey: { env: "GROQ_API_KEY", name: "Groq API key" } },
-    models: catalogModels("groq"),
-    api: wires("openai-completions", options),
-  });
+export function groqProvider(): Provider<"openai-completions"> {
+	return createProvider({
+		id: "groq",
+		name: "Groq",
+		baseUrl: "https://api.groq.com/openai/v1",
+		auth: { apiKey: envApiKeyAuth("Groq API key", ["GROQ_API_KEY"]) },
+		models: Object.values(GROQ_MODELS),
+		api: openAICompletionsApi(),
+	});
 }

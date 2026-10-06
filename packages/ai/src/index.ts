@@ -1,109 +1,48 @@
-export {
-  AuthRefreshError,
-  MemoryCredentialStore,
-  OAUTH_REFRESH_SKEW_MS,
-  providerAuth,
-  resolveApiKey,
-  resolveModelAuth,
-  type ApiKeyAuth,
-  type LoginInteraction,
-  type LoginResult,
-  type OAuthAuth,
-  type OAuthLoginHandback,
-  type ProviderAuth,
-} from "./auth.ts";
-export { EventStream } from "./event-stream.ts";
-export { frameFromEvent, messageFromFrames, reduceFrames } from "./frames.ts";
-export { toolDefinition, validateArguments } from "./utils/tool-schema.ts";
-export {
-  contextSafetyMargin,
-  estimateRequestTokens,
-  IMAGE_TOKEN_COST,
-  MESSAGE_OVERHEAD_TOKENS,
-  resolveOutputBudget,
-  type OutputBudget,
-} from "./utils/budget.ts";
-export {
-  classifyTransportFailure,
-  isFilledWindowLength,
-  type TransportClassification,
-  type TransportKind,
-} from "./utils/overflow.ts";
-export { uuidv7 } from "./utils/uuid.ts";
-export {
-  baseAssistant,
-  createAssistantEventStream,
-  createModels,
-  createProvider,
-  hasApi,
-  ModelsError,
-  type AssistantEventStream,
-  type CreateProviderOptions,
-  type Models,
-  type ModelsOptions,
-  type MutableModels,
-  type Provider,
-  type ProviderStreams,
-} from "./models.ts";
-export { isCompletionsThinkingField } from "./types.ts";
-export { imageInputRefusal } from "./image-input.ts";
-export { resolveThinkingLevel, supportedThinkingLevels, type ThinkingResolution } from "./thinking.ts";
-export { aiTelemetrySchema } from "./telemetry.ts";
-export {
-  emptyUsage,
-  estimateTokens,
-  findToolCalls,
-  messageText,
-  normalizeContext,
-  normalizeToolCallId,
-  transformMessages,
-} from "./transform.ts";
-export { cacheHitRate, usageCost } from "./usage.ts";
-export type { UsageCost } from "./usage.ts";
+export type { Static, TSchema } from "typebox";
+export { Type } from "typebox";
+
+// Core only, side-effect free: no generated catalogs, no provider factories,
+// no api-registry, no OAuth implementations, no compat. Provider factories
+// live under "@amazme/ai/providers/*", API implementations under
+// "@amazme/ai/api/*", the old global API under
+// "@amazme/ai/compat".
+export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from "./api/anthropic-messages.ts";
+export type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
+export type { BedrockOptions, BedrockThinkingDisplay } from "./api/bedrock-converse-stream.ts";
+export type { GoogleOptions } from "./api/google-generative-ai.ts";
+export type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./api/google-shared.ts";
+export type { GoogleVertexOptions } from "./api/google-vertex.ts";
+export * from "./api/lazy.ts";
+export type { MistralOptions } from "./api/mistral-conversations.ts";
+export type { OpenAICodexResponsesOptions, OpenAICodexWebSocketDebugStats } from "./api/openai-codex-responses.ts";
+export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
+export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
+export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/amazme-messages.ts";
+export * from "./auth/context.ts";
+export * from "./auth/credential-store.ts";
+export * from "./auth/helpers.ts";
+export * from "./auth/types.ts";
 export type {
-  ApiKeyCredential,
-  OAuthCredential,
-  AssistantContent,
-  AssistantEvent,
-  AssistantFrame,
-  AssistantMessage,
-  AuthResult,
-  CompletionsOutputTokenField,
-  CompletionsThinkingField,
-  Context,
-  Credential,
-  CredentialStore,
-  ImageContent,
-  JsonSchema,
-  JsonSchemaType,
-  Message,
-  Api,
-  ApiOptionsMap,
-  ApiStreamOptions,
-  KnownApi,
-  BoolClassifierAnswer,
-  ChoiceClassifierAnswer,
-  ClassifierAnswer,
-  ClassifierContext,
-  ClassifierModel,
-  ClassifierQuestion,
-  ClassifierResult,
-  ClassifierValue,
-  Model,
-  ScoreClassifierAnswer,
-  OpenAICompletionsOptions,
-  ProviderHeaders,
-  StopReason,
-  StreamOptions,
-  SystemMessage,
-  TextContent,
-  ThinkingContent,
-  ToolResultContent,
-  ThinkingLevel,
-  ToolCall,
-  ToolDefinition,
-  ToolResultMessage,
-  Usage,
-  UserContent,
-  UserMessage,
-} from "./types.ts";
+	OAuthAuthInfo,
+	OAuthDeviceCodeInfo,
+	OAuthLoginCallbacks,
+	OAuthPrompt,
+	OAuthSelectOption,
+	OAuthSelectPrompt,
+} from "./compat/extension-oauth-types.ts";
+export * from "./models.ts";
+export * from "./models-store.ts";
+export * from "./providers/faux.ts";
+export * from "./session-resources.ts";
+export * from "./types.ts";
+export * from "./utils/assistant-message-frame.ts";
+export * from "./utils/diagnostics.ts";
+export * from "./utils/event-stream.ts";
+export * from "./utils/json-parse.ts";
+export * from "./utils/overflow.ts";
+export * from "./utils/retry.ts";
+export { contentText, getSystemMessageText, renderSystemMessageUpdate } from "./utils/text.ts";
+export * from "./utils/transcript.ts";
+export * from "./utils/typebox-helpers.ts";
+export { uuidv7 } from "./utils/uuid.ts";
+export * from "./utils/validation.ts";

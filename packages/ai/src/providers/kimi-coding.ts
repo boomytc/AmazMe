@@ -1,18 +1,24 @@
-import { kimiOAuth } from "../auth/oauth/flows.ts";
+import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
+import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { loadKimiCodingOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { KIMI_CODING_MODELS } from "./kimi-coding.models.ts";
 
-export function kimiCodingProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "kimi-coding",
-    name: "Kimi For Coding",
-    baseUrl: "https://api.kimi.com/coding",
-    auth: {
-      apiKey: { env: "KIMI_API_KEY", name: "Kimi API key" },
-      oauth: kimiOAuth(options.fetch),
-    },
-    models: catalogModels("kimi-coding"),
-    api: wires("anthropic-messages", options),
-  });
+export function kimiCodingProvider(): Provider<"anthropic-messages"> {
+	return createProvider({
+		id: "kimi-coding",
+		name: "Kimi For Coding",
+		baseUrl: "https://api.kimi.com/coding",
+		auth: {
+			apiKey: envApiKeyAuth("Kimi API key", ["KIMI_API_KEY"]),
+			oauth: lazyOAuth({
+				name: "Kimi Code (subscription)",
+				isSubscription: true,
+				loginLabel: "Sign in with Kimi Code",
+				load: loadKimiCodingOAuth,
+			}),
+		},
+		models: Object.values(KIMI_CODING_MODELS),
+		api: anthropicMessagesApi(),
+	});
 }

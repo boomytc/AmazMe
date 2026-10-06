@@ -1,14 +1,15 @@
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { wires } from "./wires.ts";
+import { HUGGINGFACE_MODELS } from "./huggingface.models.ts";
 
-export function huggingfaceProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "huggingface",
-    name: "Hugging Face",
-    baseUrl: "https://router.huggingface.co/v1",
-    auth: { apiKey: { env: "HF_TOKEN", name: "Hugging Face token" } },
-    models: catalogModels("huggingface"),
-    api: wires("openai-completions", options),
-  });
+export function huggingfaceProvider(): Provider<"openai-completions"> {
+	return createProvider({
+		id: "huggingface",
+		name: "Hugging Face",
+		baseUrl: "https://router.huggingface.co/v1",
+		auth: { apiKey: envApiKeyAuth("Hugging Face token", ["HF_TOKEN"]) },
+		models: Object.values(HUGGINGFACE_MODELS),
+		api: openAICompletionsApi(),
+	});
 }

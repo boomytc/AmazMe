@@ -1,23 +1,34 @@
-import { githubCopilotOAuth } from "../auth/oauth/flows.ts";
+import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
+import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
+import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
+import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { loadGitHubCopilotOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { catalogModels } from "./catalog.ts";
-import { withCopilotHeaders } from "./request-headers.ts";
-import { wires } from "./wires.ts";
+import { GITHUB_COPILOT_MODELS } from "./github-copilot.models.ts";
 
-/** One provider id. Each model picks an existing protocol. Copilot headers wrap that request. */
-export function githubCopilotProvider(options: { fetch?: typeof fetch } = {}): Provider {
-  return createProvider({
-    id: "github-copilot",
-    name: "GitHub Copilot",
-    baseUrl: "https://api.individual.githubcopilot.com",
-    auth: {
-      apiKey: { env: "COPILOT_GITHUB_TOKEN", name: "GitHub Copilot token" },
-      oauth: githubCopilotOAuth(options.fetch),
-    },
-    models: catalogModels("github-copilot"),
-    api: wires(["anthropic-messages", "openai-completions", "openai-responses"], {
-      ...options,
-      wrap: withCopilotHeaders,
-    }),
-  });
+export function githubCopilotProvider(): Provider<"anthropic-messages" | "openai-completions" | "openai-responses"> {
+	return createProvider({
+		id: "github-copilot",
+		name: "GitHub Copilot",
+		baseUrl: "https://api.individual.githubcopilot.com",
+		auth: {
+			apiKey: envApiKeyAuth("GitHub Copilot token", ["COPILOT_GITHUB_TOKEN"]),
+			oauth: lazyOAuth({ name: "GitHub Copilot", isSubscription: true, load: loadGitHubCopilotOAuth }),
+		},
+		models: Object.values(GITHUB_COPILOT_MODELS),
+		filterModels: (models, credential) => {
+			if (credential?.type !== "oauth") return models;
+			const availableModelIds = credential.availableModelIds;
+			if (!Array.isArray(availableModelIds) || !availableModelIds.every((id) => typeof id === "string")) {
+				return models;
+			}
+			const available = new Set(availableModelIds);
+			return models.filter((model) => available.has(model.id));
+		},
+		api: {
+			"anthropic-messages": anthropicMessagesApi(),
+			"openai-completions": openAICompletionsApi(),
+			"openai-responses": openAIResponsesApi(),
+		},
+	});
 }
