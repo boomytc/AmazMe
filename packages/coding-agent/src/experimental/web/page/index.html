@@ -18,14 +18,17 @@
 			* {
 				box-sizing: border-box;
 			}
+			html,
+			body {
+				height: 100%;
+			}
 			body {
 				margin: 0;
-				min-height: 100vh;
 				background: var(--bg);
 				color: var(--text);
-				font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-				display: flex;
-				flex-direction: column;
+				font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+				display: grid;
+				grid-template-rows: auto minmax(0, 1fr);
 			}
 			header {
 				display: flex;
@@ -40,34 +43,128 @@
 			header .meta {
 				color: var(--dim);
 			}
-			main {
-				flex: 1;
-				padding: 16px;
-				display: grid;
-				gap: 16px;
-				grid-template-columns: minmax(240px, 320px) 1fr;
-				align-content: start;
-			}
-			section {
-				background: var(--panel);
-				border: 1px solid var(--line);
-				border-radius: 8px;
-				padding: 12px;
-				min-height: 120px;
-			}
-			h2 {
-				margin: 0 0 8px;
-				font-size: 12px;
-				letter-spacing: 0.08em;
-				text-transform: uppercase;
-				color: var(--dim);
-			}
 			.state {
 				color: var(--accent);
 			}
 			.error {
 				color: var(--error);
+			}
+			.muted {
+				color: var(--dim);
+			}
+			main {
+				display: grid;
+				grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+				min-height: 0;
+			}
+			#roster-panel {
+				border-right: 1px solid var(--line);
+				display: grid;
+				grid-template-rows: auto minmax(0, 1fr);
+				min-height: 0;
+			}
+			#roster {
+				overflow: auto;
+				padding: 8px;
+				display: grid;
+				gap: 4px;
+				align-content: start;
+			}
+			.roster-row {
+				display: flex;
+				justify-content: space-between;
+				gap: 8px;
+				width: 100%;
+				padding: 6px 8px;
+				background: var(--panel);
+				border: 1px solid transparent;
+				border-radius: 6px;
+				color: inherit;
+				font: inherit;
+				text-align: left;
+				cursor: pointer;
+			}
+			.roster-row:hover {
+				border-color: var(--line);
+			}
+			.roster-row.attached {
+				border-color: var(--accent);
+			}
+			.roster-row time {
+				color: var(--dim);
+			}
+			#transcript-panel {
+				display: grid;
+				grid-template-rows: auto minmax(0, 1fr) auto;
+				min-height: 0;
+			}
+			#status {
+				padding: 8px 16px;
+				color: var(--dim);
+				border-bottom: 1px solid var(--line);
+				min-height: 33px;
+			}
+			#status.busy {
+				color: var(--accent);
+			}
+			#queue {
+				padding: 0 16px;
+			}
+			#queue:not(:empty) {
+				padding-bottom: 8px;
+			}
+			#transcript {
+				overflow: auto;
+				padding: 8px 16px 16px;
+				display: grid;
+				gap: 10px;
+				align-content: start;
+			}
+			.block {
+				border: 1px solid var(--line);
+				border-radius: 8px;
+				background: var(--panel);
+				padding: 8px 10px;
+			}
+			.block.user {
+				border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+			}
+			.block.thinking,
+			.block.notice {
+				background: transparent;
+			}
+			.block.error {
+				border-color: var(--error);
+			}
+			.block h3,
+			.block h4 {
+				margin: 0 0 6px;
+				font-size: 11px;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				color: var(--dim);
+			}
+			.block pre {
+				margin: 0;
 				white-space: pre-wrap;
+				word-break: break-word;
+				font: inherit;
+			}
+			.block.muted,
+			.block.notice h4 {
+				color: var(--dim);
+			}
+			.block.running h3,
+			.block.running h4 {
+				color: var(--accent);
+			}
+			.panel-title {
+				margin: 0;
+				padding: 10px 16px 0;
+				font-size: 11px;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				color: var(--dim);
 			}
 		</style>
 		<!--amazme-boot-->
@@ -76,16 +173,17 @@
 		<header>
 			<span class="name">AmazMe</span>
 			<span class="meta" id="mode"></span>
-			<span class="meta" id="connection"></span>
+			<span class="meta" id="connection">starting…</span>
 		</header>
 		<main>
-			<section id="sessions">
-				<h2>Sessions</h2>
-				<p class="state" id="sessions-state">Waiting for the host…</p>
+			<section id="roster-panel">
+				<h2 class="panel-title">Sessions</h2>
+				<div id="roster"><p class="state">Waiting for the host…</p></div>
 			</section>
-			<section id="transcript">
-				<h2>Transcript</h2>
-				<p class="state" id="transcript-state">No session attached.</p>
+			<section id="transcript-panel">
+				<div id="status"></div>
+				<div id="transcript"><p class="state">No session attached.</p></div>
+				<div id="queue"></div>
 			</section>
 		</main>
 		<script type="module" src="/page.js"></script>

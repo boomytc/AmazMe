@@ -1,0 +1,319 @@
+/**
+ * The page's view model: a pure projection of the host's replicated state into blocks the DOM
+ * renderer can drop in. It reads the same durable `ConversationView` the TUI presentation renders
+ * and keeps no state of its own, so there is one transcript model and two renderers.
+ */
+import type { AssistantMessage, Message, ToolCall, ToolResultMessage, UserMessage } from "@amazme/ai";
+import {
+	AssistantEntry,
+	CompactionEntry,
+	type ConversationView,
+	ResetEntry,
+	ToolResultEntry,
+	UserEntry,
+	type EntryId,
+	type EntryRecord,
+} from "@amazme/durable";
+import type { InboxState, LiveState } from "@amazme/durable";
+import type { SessionDirectoryState, SessionSummary } from "../services/sessions.ts";
+
+const LIVE_DOC = "amazme.live";
+const INBOX_DOC = "amazme.inbox";
+
+export type BlockTone = "plain" | "muted" | "error";
+
+export interface TranscriptBlock {
+	/** Stable key: entry id, or the live marker for a provisional block. */
+	readonly id: EntryId | string;
+	readonly kind: "user" | "assistant" | "thinking" | "tool" | "notice";
+	readonly title: string;
+	readonly text: string;
+	readonly tone: BlockTone;
+	readonly running: boolean;
+}
+
+export interface RosterItem {
+	readonly id: string;
+	readonly label: string;
+	readonly age: string;
+	readonly ageIso: string;
+	readonly attached: boolean;
+}
+
+export interface WebView {
+	readonly roster: readonly RosterItem[];
+	readonly blocks: readonly TranscriptBlock[];
+	readonly status: string;
+	readonly queue: readonly string[];
+	readonly attachedId: string | undefined;
+	readonly empty: string | undefined;
+}
+
+export interface WebViewInput {
+	readonly directory: SessionDirectoryState | undefined;
+	readonly transcript: ConversationView | undefined;
+	readonly attachedId: string | undefined;
+	readonly now: number;
+}
+
+/** The `amazme.live` document of a view: the active run, the streaming answer, and running tools. */
+export function liveOf(view: ConversationView): LiveState {
+	return (view.docs[LIVE_DOC] ?? {}) as LiveState;
+}
+
+export function formatAge(createdAt: number, now: number): string {
+	const seconds = Math.max(0, Math.floor((now - createdAt) / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 48) return `${hours}h`;
+	return `${Math.floor(hours / 24)}d`;
+}
+
+export function rosterItems(
+	state: SessionDirectoryState | undefined,
+	attachedId: string | undefined,
+	now: number,
+): RosterItem[] {
+	const sessions = state?.sessions ?? [];
+	return [...sessions]
+		.sort(
+			(left: SessionSummary, right: SessionSummary) =>
+				right.createdAt - left.createdAt ||
+				left.serverId.localeCompare(right.serverId) ||
+				left.sessionId.localeCompare(right.sessionId),
+		)
+		.map((session) => ({
+			id: session.sessionId,
+			label: session.sessionId,
+			age: formatAge(session.createdAt, now),
+			ageIso: new Date(session.createdAt).toISOString(),
+			attached: attachedId === session.sessionId,
+		}));
+}
+
+function messageText(content: Message["content"], separator: string): string {
+	if (typeof content === "string") return content;
+	return content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join(separator);
+}
+
+function userText(content: UserMessage["content"]): string {
+	return messageText(content, "");
+}
+
+function assistantText(content: AssistantMessage["content"]): string {
+	return messageText(content, "\n\n");
+}
+
+function thinkingText(content: AssistantMessage["content"]): string {
+	return content
+		.filter((block) => block.type === "thinking")
+		.map((block) => block.thinking)
+		.join("\n\n");
+}
+
+function toolCallText(message: AssistantMessage): ToolCall[] {
+	return message.content.filter((block): block is ToolCall => block.type === "toolCall");
+}
+
+function toolResultText(message: ToolResultMessage): string {
+	const text = messageText(message.content, "\n\n").trim();
+	if (text.length > 0) return text;
+	return message.isError ? "Tool reported an error" : "(no output)";
+}
+
+function queuedItemText(item: InboxState["items"][number]): string {
+	const body =
+		item.mode === "write"
+			? `<${String(item.entry.kind)}>`
+			: userText(item.content as UserMessage["content"]).replace(/\s+/g, " ");
+	return `[${item.mode}] ${body}`;
+}
+
+function textOf(entry: EntryRecord): Message | undefined {
+	return entry.model?.[0];
+}
+
+/** Entry ids the current context still shows, plus the live partial and running calls. */
+export function transcriptBlocks(view: ConversationView | undefined): TranscriptBlock[] {
+	if (view === undefined) return [];
+	const results = new Map<string, ToolResultMessage>();
+	for (const entry of view.entries) {
+		if (entry.kind !== ToolResultEntry.kind) continue;
+		const message = textOf(entry);
+		if (message?.role !== "toolResult") continue;
+		results.set(message.toolCallId, message);
+	}
+
+	const live = liveOf(view);
+	const runningCalls = new Set((live.tools ?? []).filter((slot) => slot.status === "running").map((slot) => slot.callId));
+	const blocks: TranscriptBlock[] = [];
+	const pushTool = (call: ToolCall, ran: boolean, streaming: boolean): void => {
+		const result = results.get(call.id);
+		const running = result === undefined && (streaming || runningCalls.has(call.id));
+		const slot = (live.tools ?? []).find((candidate) => candidate.callId === call.id);
+		const text =
+			result !== undefined
+				? toolResultText(result)
+				: running
+					? (slot?.output ?? "")
+					: ran
+						? ""
+						: "Not run: the answer was interrupted.";
+		blocks.push({
+			id: `tool:${call.id}`,
+			kind: "tool",
+			title: call.name,
+			text,
+			tone: result?.isError === true ? "error" : "plain",
+			running,
+		});
+	};
+
+	for (const entry of view.entries) {
+		const message = textOf(entry);
+		switch (entry.kind) {
+			case UserEntry.kind:
+				if (message?.role === "user") {
+					blocks.push({
+						id: entry.id,
+						kind: "user",
+						title: "You",
+						text: userText(message.content),
+						tone: "plain",
+						running: false,
+					});
+				}
+				break;
+			case AssistantEntry.kind:
+				if (message?.role === "assistant") {
+					const thinking = thinkingText(message.content);
+					if (thinking.length > 0) {
+						blocks.push({
+							id: `${entry.id}:thinking`,
+							kind: "thinking",
+							title: "Thinking",
+							text: thinking,
+							tone: "muted",
+							running: false,
+						});
+					}
+					blocks.push({
+						id: entry.id,
+						kind: "assistant",
+						title: "AmazMe",
+						text: assistantText(message.content),
+						tone: "plain",
+						running: false,
+					});
+					// Only a tool-calling answer runs its calls; an aborted, failed, or truncated one never does.
+					for (const call of toolCallText(message)) pushTool(call, message.stopReason === "toolUse", false);
+				}
+				break;
+			case CompactionEntry.kind:
+				blocks.push({
+					id: entry.id,
+					kind: "notice",
+					title: "Compaction",
+					text: message?.role === "user" ? userText(message.content) : "",
+					tone: "muted",
+					running: false,
+				});
+				break;
+			case ResetEntry.kind:
+				blocks.push({
+					id: entry.id,
+					kind: "notice",
+					title: "New context",
+					text: "",
+					tone: "muted",
+					running: false,
+				});
+				break;
+			default:
+				break;
+		}
+	}
+
+	const partial = live.generation?.message as AssistantMessage | undefined;
+	if (partial !== undefined) {
+		blocks.push({
+			id: "live:generation",
+			kind: "assistant",
+			title: "AmazMe",
+			text: assistantText(partial.content),
+			tone: "plain",
+			running: true,
+		});
+		for (const call of toolCallText(partial)) {
+			if (blocks.some((block) => block.id === `tool:${call.id}`)) continue;
+			pushTool(call, true, true);
+		}
+	}
+	for (const slot of live.tools ?? []) {
+		if (slot.status !== "running") continue;
+		if (blocks.some((block) => block.id === `tool:${slot.callId}`)) continue;
+		blocks.push({
+			id: `tool:${slot.callId}`,
+			kind: "tool",
+			title: slot.name,
+			text: slot.output ?? "",
+			tone: "plain",
+			running: true,
+		});
+	}
+	return blocks;
+}
+
+/** The one live status line, with the same precedence the TUI status indicator uses. */
+export function sessionStatus(view: ConversationView | undefined): string {
+	if (view === undefined) return "";
+	const live = liveOf(view);
+	const generation = live.generation;
+	const compaction = live.compactions?.[0];
+	const runningTool = live.tools?.find((slot) => slot.status === "running");
+	if (generation?.retry !== undefined) return `Retrying (attempt ${generation.attempt + 1}): ${generation.retry.error}`;
+	if (generation?.deferred !== undefined) return "Waiting for deferred response…";
+	if (compaction !== undefined) {
+		return compaction.retry
+			? `Retrying ${compaction.reason} compaction (attempt ${compaction.attempt + 1})…`
+			: `Compacting (${compaction.reason})…`;
+	}
+	if (runningTool !== undefined) return `Running ${runningTool.name}…`;
+	if (live.run !== undefined) return "Working…";
+	return "";
+}
+
+/** Inputs the session has accepted but not started yet. */
+export function queuedInputs(view: ConversationView | undefined): string[] {
+	const inbox = (view?.docs[INBOX_DOC] ?? { items: [] }) as InboxState;
+	return inbox.items.map(queuedItemText);
+}
+
+/** The view a page shows when it cannot reach or trust the host. */
+export function failureView(text: string): WebView {
+	return { roster: [], blocks: [], status: "", queue: [], attachedId: undefined, empty: text };
+}
+
+export function buildWebView(input: WebViewInput): WebView {
+	const blocks = transcriptBlocks(input.transcript);
+	const roster = rosterItems(input.directory, input.attachedId, input.now);
+	const empty =
+		input.directory === undefined
+			? "Connecting to the host…"
+			: roster.length === 0
+				? "No sessions on this host yet."
+				: undefined;
+	return {
+		roster,
+		blocks,
+		status: sessionStatus(input.transcript),
+		queue: queuedInputs(input.transcript),
+		attachedId: input.attachedId,
+		empty,
+	};
+}
