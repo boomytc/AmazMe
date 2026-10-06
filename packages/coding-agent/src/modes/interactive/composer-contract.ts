@@ -50,33 +50,26 @@ export function detectTerminalClass(env: NodeJS.ProcessEnv = process.env): Termi
 	return "default";
 }
 
-/** One hint under the prompt. It names only the keys that do something in this state. */
+/** Compact prompt hints for non-obvious entry points and state-specific actions. */
 export function promptShortcutLine(
 	state: ComposerState & { terminalClass: TerminalClass; autocompleteOpen: boolean },
 ): string {
 	const trimmed = state.draft.trim();
 	const top = state.queue[0]?.replace(/\s+/g, " ").trim();
 	const chip = (key: string, action: string) => `\x1b[1m${key}\x1b[22m:${action}`;
-	const enter =
-		state.multiline && !(trimmed.length === 0 && state.turnRunning && top !== undefined)
-			? "newline"
-			: state.turnRunning && trimmed.length > 0
-				? "queue"
-				: state.turnRunning && top === undefined
-					? "queue"
-					: "send";
-	const parts = [chip("Ctrl+\\", "dashboard"), chip("Enter", enter)];
-	if (state.multiline) parts.push(chip("Shift+Enter", "send"));
-	else parts.push(chip("Shift+Enter/Alt+Enter", "newline"));
-	if (state.turnRunning) {
+	const parts = [chip("Ctrl+\\", "dashboard")];
+	const enter = decideComposerAction(state, "enter");
+	if (enter.type === "insert-newline") parts.push(chip("Enter", "newline"));
+	else if (enter.type === "queue") parts.push(chip("Enter", "queue"));
+	else if (enter.type === "send-queued") parts.push(chip("Enter", "send"));
+	if (state.multiline && trimmed.length > 0) parts.push(chip("Shift+Enter/Alt+Enter", "send"));
+	if (state.turnRunning && (trimmed.length > 0 || top !== undefined)) {
 		const sendNow =
 			state.terminalClass === "apple-terminal" ? "Ctrl+O" : state.terminalClass === "vscode" ? "Ctrl+L" : "Ctrl+Enter";
 		parts.push(chip(sendNow, "now"));
 	}
-	parts.push(chip("Tab", state.autocompleteOpen ? "complete" : "scrollback"));
-	if (trimmed.length > 0) parts.push(chip("Ctrl+c", "clear"));
-	else if (state.turnRunning) parts.push(chip("Ctrl+c", "cancel"));
-	parts.push(chip("Ctrl+U", "line"));
+	if (state.autocompleteOpen) parts.push(chip("Tab", "complete"));
+	if (trimmed.length === 0 && state.turnRunning) parts.push(chip("Ctrl+C", "cancel"));
 	if (top !== undefined) {
 		const extra = state.queue.length > 1 ? ` +${state.queue.length - 1}` : "";
 		parts.push(`Queued: ${top}${extra}`);

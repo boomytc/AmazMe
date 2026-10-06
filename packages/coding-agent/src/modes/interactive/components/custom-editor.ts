@@ -9,6 +9,7 @@ import {
 	visibleWidth,
 } from "@amazme/tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
+import { promptShortcutLine } from "../composer-contract.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
 export type CustomEditorOptions = EditorOptions & {
@@ -194,14 +195,14 @@ export class CustomEditor extends Editor {
 	private shortcutBar(): string {
 		const supplied = this.shortcutLine?.();
 		if (supplied) return supplied;
-		const chip = (key: string, action: string) => `\x1b[1m${key}\x1b[22m:${action}`;
-		return [
-			chip("Ctrl+\\", "dashboard"),
-			chip("Enter", "send"),
-			chip("Shift+Enter/Alt+Enter", "newline"),
-			chip("Tab", "scrollback"),
-			chip("Ctrl+U", "line"),
-		].join(" │ ");
+		return promptShortcutLine({
+			draft: this.getText(),
+			queue: [],
+			turnRunning: false,
+			multiline: false,
+			terminalClass: "default",
+			autocompleteOpen: this.isShowingAutocomplete(),
+		});
 	}
 
 	handleInput(data: string): void {

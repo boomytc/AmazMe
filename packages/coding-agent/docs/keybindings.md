@@ -4,6 +4,19 @@ Pi exposes named actions, such as `app.session.new`, that can be assigned keybin
 
 Run `/hotkeys` to see the active shortcuts for the main editor and application.
 
+## Main composer
+
+The main editor handles these controls before the configurable actions listed below:
+
+| Key | Behavior |
+|---|---|
+| `Enter` | Send when idle; queue during a turn. With an empty draft during a turn, send the oldest queued message. In multiline mode, insert a new line unless sending a queued message. |
+| `Shift+Enter`, `Alt+Enter` | Insert a new line; in multiline mode, send the draft. |
+| `Ctrl+C` | Clear the draft; when the draft is empty, cancel the running turn. |
+| `Tab` | Accept autocomplete while the menu is open; otherwise switch between the prompt and scrollback. |
+
+The prompt's shortcut bar stays compact: ordinary send, newline, clear, scrollback, and line-deletion controls are not permanent hints. Multiline mode, open completion menus, and active turns reveal the relevant shortcuts; queued messages retain their summary. Use `/hotkeys` for the full reference, including `Ctrl+U` and other editing shortcuts.
+
 ## Assign keybindings
 
 Create `<agent-dir>/keybindings.json`. The agent directory defaults to `~/.amazme/agent` and is described in [Agent directory](configuration.md#agent-directory).

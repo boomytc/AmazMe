@@ -7253,6 +7253,16 @@ export class InteractiveMode {
 		const pasteImage = this.getAppKeyDisplay("app.clipboard.pasteImage");
 
 		let hotkeys = `
+**Composer**
+These main-editor controls take precedence over the configured bindings below.
+
+| Key | Action |
+|-----|--------|
+| \`Enter\` | Send when idle; queue during a turn; with an empty draft during a turn, send the oldest queued message. In multiline mode, insert a new line unless sending a queued message |
+| \`Shift+Enter\` / \`Alt+Enter\` | Insert a new line; in multiline mode, send the draft |
+| \`Ctrl+C\` | Clear the draft; when the draft is empty, cancel the running turn |
+| \`Tab\` | Accept autocomplete while the menu is open; otherwise switch between the prompt and scrollback |
+
 **Navigation**
 | Key | Action |
 |-----|--------|
