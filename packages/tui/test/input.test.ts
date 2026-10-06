@@ -25,6 +25,17 @@ describe("Input component", () => {
 		assert.strictEqual(submitted, "hello\\");
 	});
 
+	it("moves to line boundaries with Command arrows", () => {
+		const input = new Input();
+		input.setValue("hello world");
+		input.handleInput("\x1b[1;9C");
+		input.handleInput("]");
+		input.handleInput("\x1b[1;9D");
+		input.handleInput("[");
+
+		assert.strictEqual(input.getValue(), "[hello world]");
+	});
+
 	it("inserts backslash as regular character", () => {
 		const input = new Input();
 

@@ -6,7 +6,7 @@ import { defaultEditorTheme } from "../../tui/test/test-themes.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
 import { promptOwnsKey } from "../src/modes/interactive/interactive-input.ts";
-import { promptShortcutLine } from "../src/modes/interactive/composer-contract.ts";
+import { InteractiveComposer, promptShortcutLine } from "../src/modes/interactive/composer-contract.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { getEditorTheme, getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -183,6 +183,38 @@ describe("prompt chrome", () => {
 		expect(lines[0]).not.toContain("→");
 		expect(lines[1]).toContain("/goal");
 		expect(lines[1]).not.toContain("\x1b[7m");
+	});
+
+	test("cmd+arrows reach the current line boundaries through the active composer", () => {
+		const previous = getKeybindings();
+		const keybindings = new KeybindingsManager();
+		setKeybindings(keybindings);
+		try {
+			const editor = new CustomEditor(new TuiMainScreen(new VirtualTerminal()), getEditorTheme(), keybindings);
+			const unexpectedEffect = () => {
+				throw new Error("Cursor movement must not send, queue, or cancel a turn");
+			};
+			const composer = new InteractiveComposer(editor, {
+				isTurnRunning: () => true,
+				send: unexpectedEffect,
+				queue: unexpectedEffect,
+				sendQueued: unexpectedEffect,
+				cancelAndSend: unexpectedEffect,
+				cancelTurn: unexpectedEffect,
+				showEscHint: unexpectedEffect,
+			});
+			editor.onBeforeInput = (data) => composer.handleInput(data);
+			editor.setText("first\nmiddle\nlast");
+			editor.handleInput("\x1b[A");
+			editor.handleInput("\x1b[1;9D");
+			expect(editor.getCursor()).toEqual({ line: 1, col: 0 });
+			editor.handleInput("\x1b[1;9C");
+			expect(editor.getCursor()).toEqual({ line: 1, col: 6 });
+			expect(editor.getText()).toBe("first\nmiddle\nlast");
+			expect(composer.queue).toEqual([]);
+		} finally {
+			setKeybindings(previous);
+		}
 	});
 
 	test("cmd+backspace deletes the whole line and a selection is copied", () => {

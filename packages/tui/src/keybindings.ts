@@ -96,11 +96,11 @@ export const TUI_KEYBINDINGS = {
 		description: "Move cursor word right",
 	},
 	"tui.editor.cursorLineStart": {
-		defaultKeys: ["home", "ctrl+a"],
+		defaultKeys: ["home", "ctrl+a", "super+left"],
 		description: "Move to line start",
 	},
 	"tui.editor.cursorLineEnd": {
-		defaultKeys: ["end", "ctrl+e"],
+		defaultKeys: ["end", "ctrl+e", "super+right"],
 		description: "Move to line end",
 	},
 	"tui.editor.jumpForward": {

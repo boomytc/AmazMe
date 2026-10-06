@@ -14,10 +14,42 @@ describe("KeybindingsManager", () => {
 	it("binds modified and unmodified editor viewport navigation", () => {
 		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
 
-		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineStart"), ["home", "ctrl+a"]);
-		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineEnd"), ["end", "ctrl+e"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineStart"), ["home", "ctrl+a", "super+left"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineEnd"), ["end", "ctrl+e", "super+right"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.editor.pageUp"), ["pageUp", "ctrl+pageUp"]);
 		assert.deepStrictEqual(keybindings.getKeys("tui.editor.pageDown"), ["pageDown", "ctrl+pageDown"]);
+	});
+
+	it("matches Command arrows for line boundaries without matching ordinary or word navigation", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+
+		for (const sequence of ["\x1b[1;9D", "\x1b[1;9:2D", "\x1b[57417;9u"]) {
+			assert.strictEqual(keybindings.matches(sequence, "tui.editor.cursorLineStart"), true);
+			assert.strictEqual(keybindings.matches(sequence, "tui.editor.cursorLeft"), false);
+			assert.strictEqual(keybindings.matches(sequence, "tui.editor.cursorWordLeft"), false);
+		}
+		for (const sequence of ["\x1b[1;9C", "\x1b[1;9:2C", "\x1b[57418;9u"]) {
+			assert.strictEqual(keybindings.matches(sequence, "tui.editor.cursorLineEnd"), true);
+			assert.strictEqual(keybindings.matches(sequence, "tui.editor.cursorRight"), false);
+			assert.strictEqual(keybindings.matches(sequence, "tui.editor.cursorWordRight"), false);
+		}
+		assert.strictEqual(keybindings.matches("\x1b[D", "tui.editor.cursorLineStart"), false);
+		assert.strictEqual(keybindings.matches("\x1b[1;5D", "tui.editor.cursorLineStart"), false);
+		assert.strictEqual(keybindings.matches("\x1b[C", "tui.editor.cursorLineEnd"), false);
+		assert.strictEqual(keybindings.matches("\x1b[1;3C", "tui.editor.cursorLineEnd"), false);
+	});
+
+	it("lets user bindings replace or disable Command-arrow defaults", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.editor.cursorLineStart": "home",
+			"tui.editor.cursorLineEnd": [],
+		});
+
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineStart"), ["home"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineEnd"), []);
+		assert.strictEqual(keybindings.matches("\x1b[H", "tui.editor.cursorLineStart"), true);
+		assert.strictEqual(keybindings.matches("\x1b[1;9D", "tui.editor.cursorLineStart"), false);
+		assert.strictEqual(keybindings.matches("\x1b[1;9C", "tui.editor.cursorLineEnd"), false);
 	});
 
 	it("leaves dedicated prompt history navigation unbound by default", () => {

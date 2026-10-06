@@ -52,7 +52,9 @@ Write a key as `modifier+key`. Modifiers are `ctrl`, `shift`, `alt`, and `super`
 
 Examples: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `super+k`, `ctrl+super+k`, and `ctrl+1`.
 
-`super` bindings require a terminal that reports the modifier separately, typically through the Kitty keyboard protocol. They may not work in terminals without that support.
+On macOS, `super` is the Command key. The default `Cmd+Left` and `Cmd+Right` shortcuts move to the start and end of the current logical line, including when that line wraps across terminal rows.
+
+`super` bindings require a terminal that reports the modifier separately, typically through the Kitty keyboard protocol. They may not work in terminals without that support; `Home`/`End` and `Ctrl+A`/`Ctrl+E` remain available.
 
 ## Actions
 
@@ -70,8 +72,8 @@ Examples: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `super+k`, `ctrl+sup
 | `tui.editor.cursorRight` | `right`, `ctrl+f` | Move cursor right |
 | `tui.editor.cursorWordLeft` | `alt+left`, `ctrl+left`, `alt+b` | Move cursor word left |
 | `tui.editor.cursorWordRight` | `alt+right`, `ctrl+right`, `alt+f` | Move cursor word right |
-| `tui.editor.cursorLineStart` | `home`, `ctrl+a` | Move to line start |
-| `tui.editor.cursorLineEnd` | `end`, `ctrl+e` | Move to line end |
+| `tui.editor.cursorLineStart` | `home`, `ctrl+a`, `super+left` | Move to current line start |
+| `tui.editor.cursorLineEnd` | `end`, `ctrl+e`, `super+right` | Move to current line end |
 | `tui.editor.jumpForward` | `ctrl+]` | Jump forward to character |
 | `tui.editor.jumpBackward` | `ctrl+alt+]` | Jump backward to character |
 | `tui.editor.pageUp` | `pageUp`, `ctrl+pageUp` | Scroll up by page |

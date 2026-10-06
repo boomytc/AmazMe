@@ -3296,6 +3296,65 @@ describe("Editor component", () => {
 		});
 	});
 
+	describe("Command-arrow line navigation", () => {
+		for (const { name, left, right } of [
+			{ name: "modified arrows", left: "\x1b[1;9D", right: "\x1b[1;9C" },
+			{ name: "Kitty repeat events", left: "\x1b[1;9:2D", right: "\x1b[1;9:2C" },
+			{ name: "Kitty keypad arrows", left: "\x1b[57417;9u", right: "\x1b[57418;9u" },
+		]) {
+			it(`moves to the current line boundaries with ${name}`, () => {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				const middle = "中间这一行";
+				const text = `first line\n${middle}\nlast line`;
+				editor.setText(text);
+				editor.handleInput("\x1b[A");
+				editor.handleInput("\x1b[D");
+				assert.deepStrictEqual(editor.getCursor(), { line: 1, col: middle.length - 1 });
+
+				editor.handleInput(left);
+				assert.deepStrictEqual(editor.getCursor(), { line: 1, col: 0 });
+				editor.handleInput(right);
+				assert.deepStrictEqual(editor.getCursor(), { line: 1, col: middle.length });
+				assert.strictEqual(editor.getText(), text);
+
+				editor.handleInput(left);
+				editor.handleInput("[");
+				editor.handleInput(right);
+				editor.handleInput("]");
+				assert.strictEqual(editor.getText(), `first line\n[${middle}]\nlast line`);
+			});
+		}
+
+		it("uses logical line boundaries even when the current line is visually wrapped", () => {
+			const editor = new Editor(createTestTUI(12), defaultEditorTheme);
+			const text = "a logical line that wraps across several terminal rows";
+			editor.setText(text);
+			editor.render(12);
+			editor.handleInput("\x1b[A");
+			assert.strictEqual(editor.getCursor().line, 0);
+			assert.ok(editor.getCursor().col > 0 && editor.getCursor().col < text.length);
+
+			editor.handleInput("\x1b[1;9D");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+			editor.handleInput("\x1b[1;9C");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: text.length });
+			assert.strictEqual(editor.getText(), text);
+		});
+
+		it("stays on an empty line without browsing history or crossing a newline", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.addToHistory("older prompt");
+			editor.setText("first\n\nlast");
+			editor.handleInput("\x1b[A");
+			assert.deepStrictEqual(editor.getCursor(), { line: 1, col: 0 });
+
+			editor.handleInput("\x1b[1;9D");
+			editor.handleInput("\x1b[1;9C");
+			assert.deepStrictEqual(editor.getCursor(), { line: 1, col: 0 });
+			assert.strictEqual(editor.getText(), "first\n\nlast");
+		});
+	});
+
 	describe("Sticky column", () => {
 		// Helper: position cursor at a specific line and column
 		function positionCursor(editor: Editor, line: number, col: number): void {
