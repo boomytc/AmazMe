@@ -227,6 +227,7 @@ class SessionPainter {
 		const conversations = this.#conversations;
 		if (conversations === undefined) return undefined;
 		const state = conversations.state.value;
+		if (state === undefined) return undefined;
 		const root = state.conversations.find((entry) => entry.root)?.id;
 		if (root === undefined || conversationId === root) return undefined;
 		return { id: conversationId, view: state.view ?? undefined };

@@ -531,7 +531,7 @@ export class ExperimentalClientTui implements Component {
 		}
 		if (name === "fork") {
 			const conversations = this.#conversations;
-			const id = conversations?.state.value.selected;
+			const id = conversations?.state.value?.selected;
 			if (conversations === undefined || id === undefined) {
 				this.#status = "No conversation to fork.";
 				this.#rebuild();
@@ -679,14 +679,16 @@ export class ExperimentalClientTui implements Component {
 	async #switchConversation(): Promise<void> {
 		const conversations = this.#conversations;
 		if (conversations === undefined) return;
+		const listed = conversations.state.value;
+		if (listed === undefined) return;
 		const value = await this.#select(
 			"Switch conversation",
-			conversations.state.value.conversations.map((summary) => ({
+			listed.conversations.map((summary) => ({
 				value: summary.id,
 				label: `${"  ".repeat(summary.depth)}${summary.label}`,
 				description: summary.role,
 			})),
-			conversations.state.value.selected,
+			listed.selected,
 		);
 		if (value === undefined) return;
 		this.#history = [];
@@ -697,7 +699,7 @@ export class ExperimentalClientTui implements Component {
 
 	async #loadOlder(): Promise<void> {
 		const conversations = this.#conversations;
-		const target = conversations?.state.value.selected;
+		const target = conversations?.state.value?.selected;
 		if (conversations === undefined || target === undefined) return;
 		const shown = this.#conversationView();
 		const oldest = shown?.entries[0]?.id;
@@ -714,7 +716,7 @@ export class ExperimentalClientTui implements Component {
 
 	#footer(): string {
 		const view = this.#conversationView();
-		const lane = this.#conversations?.state.value.lane;
+		const lane = this.#conversations?.state.value?.lane;
 		const commands = "/tree · /fork · /older · /model · /thinking · /compact · /reload";
 		if (lane !== undefined) {
 			const count = view === undefined ? "" : ` · ${view.entries.length} entries`;

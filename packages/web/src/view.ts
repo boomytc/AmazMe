@@ -939,7 +939,6 @@ export function historyPageBlocks(locale: Locale, entries: readonly EntryRecord[
 	return blocks;
 }
 
-/** The one live status line, with the same precedence the TUI status indicator uses. */
 /** One line of chrome: which conversation, which model, which thinking level, and whether it is running. */
 export function laneLine(locale: Locale, lane: LaneLike): string {
 	const role = translate(locale, `lane.${lane.role}`);
