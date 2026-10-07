@@ -34,6 +34,7 @@ import {
 	type TranscriptBlock,
 	type WebView,
 	type WelcomeCard,
+	windowTitle,
 } from "./view.ts";
 
 export interface PageElements {
@@ -518,7 +519,17 @@ function panelButton(action: PanelButton, report: (action: PanelAction) => void,
 	return node;
 }
 
-export function createRenderer(elements: PageElements, onSelect: (sessionId: string) => void = () => {}): PageRenderer {
+/** Product name and version for the window title when no session is attached. */
+export interface WindowApp {
+	readonly name: string;
+	readonly version: string;
+}
+
+export function createRenderer(
+	elements: PageElements,
+	onSelect: (sessionId: string) => void = () => {},
+	app?: WindowApp,
+): PageRenderer {
 	let lastView: WebView | undefined;
 	/** Reader disclosure choices, keyed by block id so a rebuild keeps them. */
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
@@ -1416,6 +1427,14 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 		},
 		render(view: WebView): void {
 			lastView = view;
+			if (app !== undefined) {
+				document.title = windowTitle({
+					appName: app.name,
+					version: app.version,
+					sessionName: view.sessionLabel,
+					pendingCount: view.approvalIndicator?.count ?? 0,
+				});
+			}
 			const stick = atBottom(elements.transcript);
 
 			elements.newSession.disabled = !view.newSession.enabled;

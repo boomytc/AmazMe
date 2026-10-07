@@ -693,6 +693,28 @@ export function attachedSessionLabel(directory: SessionDirectoryLike | undefined
 	return session === undefined ? attachedId : (displayName(session) ?? attachedId);
 }
 
+/**
+ * The window title. No attached session keeps the product and its version. An attached session
+ * uses the display name the roster already shows: `(n) <name> — <app>` while the header's
+ * approval indicator reports n > 0, and `<name> — <app>` once that count is back to none.
+ */
+export function windowTitle(input: {
+	readonly appName: string;
+	readonly version: string;
+	/** `sessionLabel`: the display name, or the session id when `/name` has not set one. */
+	readonly sessionName: string | undefined;
+	/** `approvalIndicator.count`, or 0 when the indicator is absent. */
+	readonly pendingCount: number;
+}): string {
+	if (input.sessionName === undefined || input.sessionName.length === 0) {
+		return `${input.appName} ${input.version}`;
+	}
+	if (Number.isInteger(input.pendingCount) && input.pendingCount > 0) {
+		return `(${input.pendingCount}) ${input.sessionName} — ${input.appName}`;
+	}
+	return `${input.sessionName} — ${input.appName}`;
+}
+
 /** Token counts in the same widths the TUI top bar uses. */
 export function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();

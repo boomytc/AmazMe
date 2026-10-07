@@ -22,6 +22,7 @@ import {
 	attachmentRejection,
 	BOOT_GLOBAL,
 	buildWebView,
+	windowTitle,
 	CHAT_VIEW,
 	COMPACT_ACTION,
 	COMPACT_MODAL,
@@ -600,7 +601,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		fail(renderer, new Error(translate(FALLBACK_LOCALE, "page.noManifest")), FALLBACK_LOCALE);
 		return undefined;
 	}
-	document.title = `${manifest.app.name} ${manifest.app.version}`;
+	const applyWindowTitle = (sessionName: string | undefined, pendingCount: number): void => {
+		document.title = windowTitle({
+			appName: manifest.app.name,
+			version: manifest.app.version,
+			sessionName,
+			pendingCount,
+		});
+	};
+	// Before the first paint there is no session. The desktop smoke reads this title as soon as the document loads.
+	applyWindowTitle(undefined, 0);
 	const client = new Client({
 		serverId: manifest.server.id,
 		transportFactory: createWebSocketTransportFactory({
@@ -813,7 +823,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						...(modalNotice === undefined ? {} : { modalNotice }),
 					},
 				});
-		paintSafely(() => renderer.render(withReturnPoints(built, returnPoints, painter.conversations?.branchSummarySkipPrompt === true)));
+		paintSafely(() => {
+			applyWindowTitle(built.sessionLabel, built.approvalIndicator?.count ?? 0);
+			renderer.render(withReturnPoints(built, returnPoints, painter.conversations?.branchSummarySkipPrompt === true));
+		});
 		refreshReturnPoints();
 	};
 
@@ -1823,7 +1836,11 @@ export async function main(): Promise<void> {
 		followSystemTheme();
 		applyTheme(resolveThemePreference(manifest?.preferences?.appearance));
 		elements = collectPageElements();
-		renderer = createRenderer(elements);
+		renderer = createRenderer(
+			elements,
+			() => {},
+			manifest === undefined ? undefined : { name: manifest.app.name, version: manifest.app.version },
+		);
 	} catch (error) {
 		document.body.textContent = translate(locale, "page.cannotBoot", {
 			error: message(error),
