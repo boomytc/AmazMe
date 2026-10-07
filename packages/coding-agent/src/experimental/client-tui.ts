@@ -1,25 +1,8 @@
 import { resolve } from "node:path";
-import {
-	combineFacetLoaders,
-	createFacetHost,
-	defineFacet,
-	type FacetHost,
-	type FacetLoader,
-	type JsonValue,
-	type LoadedFacets,
-} from "@amazme/chord";
+import { combineFacetLoaders, createFacetHost, defineFacet, type FacetHost, type FacetLoader, type JsonValue, type LoadedFacets } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import type { AgentState, ConversationView } from "@amazme/durable";
-import {
-	CombinedAutocompleteProvider,
-	type Component,
-	Container,
-	type SelectItem,
-	SelectList,
-	setKeybindings,
-	Text,
-	type TUI,
-} from "@amazme/tui";
+import type { AgentState, ConversationView, EntryRecord } from "@amazme/durable";
+import { CombinedAutocompleteProvider, type Component, Container, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
 import type { ClientCommand } from "../cli/experimental/commands/client.ts";
 import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
@@ -34,21 +17,15 @@ import { type OpenClientRuntimeOptions, openClientRuntime } from "./client-runti
 import { ExperimentalChatView } from "./client-tui-chat.ts";
 import { createPresentationFacetLoaders } from "./plugins/bundled.ts";
 import { AgentController, type AgentOperationResponse, type AgentQueueResponse } from "./services/agent-controller.ts";
-import type {
-	ServerConnectionState,
-	ServerServiceSource,
-	SessionAttachmentState,
-	SessionServiceSource,
-} from "./services/connection.ts";
+import type { ServerConnectionState, ServerServiceSource, SessionAttachmentState, SessionServiceSource } from "./services/connection.ts";
+import { Conversations, type Conversations as ConversationsService } from "./services/conversations.ts";
 import { PresentationPlugins } from "./services/plugins.ts";
 import { PresentationUI } from "./services/presentation-ui.ts";
 import { SessionDirectory, SessionManagement, type SessionSummary } from "./services/sessions.ts";
 import { SlashCommands } from "./services/slash-commands.ts";
-import {
-	createBuiltInSlashCommandsFacet,
-	createSlashCommandsRuntimeFacet,
-} from "./services/slash-commands-provider.ts";
+import { createBuiltInSlashCommandsFacet, createSlashCommandsRuntimeFacet } from "./services/slash-commands-provider.ts";
 import { liveOf, Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
+import { formatLane } from "./session-surface.ts";
 
 export interface RunClientTuiOptions extends OpenClientRuntimeOptions {
 	readonly facetLoader?: FacetLoader;
@@ -108,6 +85,10 @@ export class ExperimentalClientTui implements Component {
 	#session: SessionFeature | undefined;
 	#slashCommands: SlashCommands | undefined;
 	#controller: AgentController | undefined;
+	#conversations: ConversationsService | undefined;
+	#history: readonly EntryRecord[] = [];
+	#historyCursor: string | null = null;
+	#historyLoaded = false;
 	readonly #chatInput: CustomEditor;
 	#selectList: SelectList | undefined;
 	#selection: PendingSelection | undefined;
@@ -162,9 +143,7 @@ export class ExperimentalClientTui implements Component {
 		finish(): void;
 	}): Promise<ExperimentalClientTui> {
 		const prepared = await prepareClientSession(options.command, options.servers);
-		const loadedFacets = await combineFacetLoaders(
-			options.facetLoader === undefined ? [] : [options.facetLoader],
-		).load();
+		const loadedFacets = await combineFacetLoaders(options.facetLoader === undefined ? [] : [options.facetLoader]).load();
 		const component = new ExperimentalClientTui(options.ui, options.requestRender, options.finish, loadedFacets);
 		try {
 			await component.#start(prepared);
@@ -196,10 +175,7 @@ export class ExperimentalClientTui implements Component {
 
 	handleInput(data: string): void {
 		if (this.#busy) {
-			if (
-				this.#keybindings.matches(data, "app.clear") ||
-				(this.#chatInput.getText().length === 0 && this.#keybindings.matches(data, "app.exit"))
-			) {
+			if (this.#keybindings.matches(data, "app.clear") || (this.#chatInput.getText().length === 0 && this.#keybindings.matches(data, "app.exit"))) {
 				this.#finish();
 			}
 			return;
@@ -238,9 +214,7 @@ export class ExperimentalClientTui implements Component {
 
 	async #start(prepared: PreparedClientSession): Promise<void> {
 		const server = prepared.server;
-		let presentationFacets = await combineFacetLoaders(
-			createPresentationFacetLoaders(prepared.presentationPlugins),
-		).load();
+		let presentationFacets = await combineFacetLoaders(createPresentationFacetLoaders(prepared.presentationPlugins)).load();
 		this.#presentationFacets = presentationFacets;
 		let facetHost!: FacetHost;
 		const reloadPresentationPlugins = (data: JsonValue): Promise<void> => {
@@ -282,6 +256,7 @@ export class ExperimentalClientTui implements Component {
 				const commands = env.use(SlashCommands);
 				const controller = env.use(AgentController);
 				const transcript = env.use(Transcript);
+				const conversations = env.use(Conversations);
 				const sessionFeature: SessionFeature = {
 					serverId: server.serverId,
 					session: server.session,
@@ -294,19 +269,24 @@ export class ExperimentalClientTui implements Component {
 					this.#session = sessionFeature;
 					this.#slashCommands = commands;
 					this.#controller = controller;
+					this.#conversations = conversations;
 					env.own(() => {
 						if (this.#session === sessionFeature) this.#session = undefined;
 						if (this.#slashCommands === commands) this.#slashCommands = undefined;
 						if (this.#controller === controller) this.#controller = undefined;
+						if (this.#conversations === conversations) this.#conversations = undefined;
 					});
+					env.own(
+						conversations.state.subscribe(() => {
+							const shown = this.#conversationView();
+							if (shown !== undefined) this.#chatView?.apply(this.#withHistory(shown));
+							this.#rebuild();
+						}),
+					);
 					env.own(commands.subscribe(() => this.#updateAutocomplete()));
 					if (server.radius) {
-						env.own(
-							server.server.connection.subscribe((state) => this.#handleConnectionState(server.serverId, state)),
-						);
-						env.own(
-							server.session.attachment.subscribe((state) => this.#handleAttachmentState(sessionFeature, state)),
-						);
+						env.own(server.server.connection.subscribe((state) => this.#handleConnectionState(server.serverId, state)));
+						env.own(server.session.attachment.subscribe((state) => this.#handleAttachmentState(sessionFeature, state)));
 					}
 				});
 			},
@@ -356,9 +336,7 @@ export class ExperimentalClientTui implements Component {
 			}
 			this.#facetHost = undefined;
 		}
-		const generations = [this.#presentationFacets, this.#sharedFacets].filter(
-			(generation): generation is LoadedFacets => generation !== undefined,
-		);
+		const generations = [this.#presentationFacets, this.#sharedFacets].filter((generation): generation is LoadedFacets => generation !== undefined);
 		this.#presentationFacets = undefined;
 		const results = await Promise.allSettled(generations.map((generation) => generation.dispose()));
 		errors.push(...results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])));
@@ -403,7 +381,12 @@ export class ExperimentalClientTui implements Component {
 	#select(title: string, items: readonly SelectItem[], selectedValue?: string): Promise<string | undefined> {
 		if (this.#selection !== undefined) throw new Error("A slash command selector is already active");
 		return new Promise((resolve) => {
-			this.#selection = { title, items, ...(selectedValue === undefined ? {} : { selectedValue }), resolve };
+			this.#selection = {
+				title,
+				items,
+				...(selectedValue === undefined ? {} : { selectedValue }),
+				resolve,
+			};
 			this.#screen = "select";
 			this.#rebuild();
 		});
@@ -499,8 +482,9 @@ export class ExperimentalClientTui implements Component {
 		this.#documentContainer.addChild(this.#sessionHeading);
 		this.#documentContainer.addChild(view.transcript);
 		this.#pendingMessagesContainer.addChild(view.pendingMessages);
-		this.#laneUnsubscribe = feature.transcript.state.subscribe((value) => {
-			view.apply(value);
+		this.#laneUnsubscribe = feature.transcript.state.subscribe(() => {
+			const shown = this.#conversationView();
+			if (shown !== undefined) view.apply(this.#withHistory(shown));
 			this.#rebuild();
 		});
 		if (feature.transcript.state.value === undefined) {
@@ -539,6 +523,38 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	async #executeSlashCommand(name: string, args: string): Promise<void> {
+		const local = name === "tree" || name === "agents" || name === "fork" || name === "older" || (name === "compact" && this.#focusedId() !== undefined);
+		if (local) this.#chatInput.setText("");
+		if (name === "tree" || name === "agents") {
+			await this.#switchConversation();
+			return;
+		}
+		if (name === "fork") {
+			const conversations = this.#conversations;
+			const id = conversations?.state.value.selected;
+			if (conversations === undefined || id === undefined) {
+				this.#status = "No conversation to fork.";
+				this.#rebuild();
+				return;
+			}
+			this.#history = [];
+			this.#historyCursor = null;
+			this.#historyLoaded = false;
+			const result = await conversations.fork(id, null, BACKGROUND_CONTEXT);
+			this.#status = result.error === null ? `Forked ${result.conversationId}.` : result.error.message;
+			this.#rebuild();
+			return;
+		}
+		if (name === "older") {
+			await this.#loadOlder();
+			return;
+		}
+		const focused = this.#focusedId();
+		if (name === "compact" && focused !== undefined && this.#conversations !== undefined) {
+			const result = await this.#conversations.compact(focused, { customInstructions: args.length === 0 ? null : args }, BACKGROUND_CONTEXT);
+			this.#reportOperation(result);
+			return;
+		}
 		const command = this.#selectedSlashCommands()
 			?.list()
 			.find((candidate) => candidate.name === name);
@@ -561,23 +577,38 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	async #submitPrompt(prompt: string): Promise<void> {
-		const controller = this.#selectedController();
-		if (controller === undefined) throw new Error("No Session AgentController service is available");
+		const request = { message: prompt, images: null };
 		const view = this.#conversationView();
 		const running = view !== undefined && liveOf(view).run !== undefined;
 		this.#status = running ? "Queueing steering message…" : "Running turn…";
 		this.#rebuild();
-		if (running) this.#reportQueue(await controller.steer({ message: prompt, images: null }, BACKGROUND_CONTEXT));
-		else this.#reportOperation(await controller.prompt({ message: prompt, images: null }, BACKGROUND_CONTEXT));
+		const focused = this.#focusedId();
+		const conversations = this.#conversations;
+		if (focused !== undefined && conversations !== undefined) {
+			if (running) this.#reportQueue(await conversations.steer(focused, request, BACKGROUND_CONTEXT));
+			else this.#reportOperation(await conversations.prompt(focused, request, BACKGROUND_CONTEXT));
+			return;
+		}
+		const controller = this.#selectedController();
+		if (controller === undefined) throw new Error("No Session AgentController service is available");
+		if (running) this.#reportQueue(await controller.steer(request, BACKGROUND_CONTEXT));
+		else this.#reportOperation(await controller.prompt(request, BACKGROUND_CONTEXT));
 	}
 
 	async #queueFollowUp(text: string): Promise<void> {
-		const controller = this.#selectedController();
-		if (controller === undefined) return;
+		const request = { message: text, images: null };
 		try {
 			this.#status = "Queueing follow-up…";
 			this.#rebuild();
-			this.#reportQueue(await controller.followUp({ message: text, images: null }, BACKGROUND_CONTEXT));
+			const focused = this.#focusedId();
+			const conversations = this.#conversations;
+			if (focused !== undefined && conversations !== undefined) {
+				this.#reportQueue(await conversations.followUp(focused, request, BACKGROUND_CONTEXT));
+				return;
+			}
+			const controller = this.#selectedController();
+			if (controller === undefined) return;
+			this.#reportQueue(await controller.followUp(request, BACKGROUND_CONTEXT));
 		} catch (error) {
 			this.#status = `Error: ${message(error)}`;
 			this.#rebuild();
@@ -596,11 +627,16 @@ export class ExperimentalClientTui implements Component {
 
 	#interrupt(): void {
 		const view = this.#conversationView();
+		const focused = this.#focusedId();
+		const conversations = this.#conversations;
 		const controller = this.#selectedController();
-		if (view === undefined || liveOf(view).run === undefined || controller === undefined) return;
+		if (view === undefined || liveOf(view).run === undefined) return;
+		const aborting =
+			focused !== undefined && conversations !== undefined ? conversations.abort(focused, BACKGROUND_CONTEXT) : controller?.abort(BACKGROUND_CONTEXT);
+		if (aborting === undefined) return;
 		this.#status = "Aborting…";
 		this.#rebuild();
-		void controller.abort(BACKGROUND_CONTEXT).then(
+		void aborting.then(
 			() => {
 				if (this.#status !== "Aborting…") return;
 				this.#status = "";
@@ -617,23 +653,81 @@ export class ExperimentalClientTui implements Component {
 		return this.#controller;
 	}
 
+	/** The focused conversation when it is not the root. The root stays on `AgentController`. */
+	#focusedId(): string | undefined {
+		const state = this.#conversations?.state.value;
+		if (state === undefined) return undefined;
+		const root = state.conversations.find((entry) => entry.root)?.id;
+		if (root === undefined || state.selected === root) return undefined;
+		return state.selected;
+	}
+
 	#conversationView(): ConversationView | undefined {
+		const conversations = this.#conversations?.state.value;
+		const root = conversations?.conversations.find((entry) => entry.root)?.id;
+		if (conversations !== undefined && root !== undefined && conversations.selected !== root && conversations.view !== null) {
+			return conversations.view;
+		}
 		return this.#session?.transcript.state.value;
+	}
+
+	#withHistory(view: ConversationView): ConversationView {
+		if (this.#history.length === 0) return view;
+		return { ...view, entries: [...this.#history, ...view.entries] };
+	}
+
+	async #switchConversation(): Promise<void> {
+		const conversations = this.#conversations;
+		if (conversations === undefined) return;
+		const value = await this.#select(
+			"Switch conversation",
+			conversations.state.value.conversations.map((summary) => ({
+				value: summary.id,
+				label: `${"  ".repeat(summary.depth)}${summary.label}`,
+				description: summary.role,
+			})),
+			conversations.state.value.selected,
+		);
+		if (value === undefined) return;
+		this.#history = [];
+		this.#historyCursor = null;
+		this.#historyLoaded = false;
+		await conversations.select(value, BACKGROUND_CONTEXT);
+	}
+
+	async #loadOlder(): Promise<void> {
+		const conversations = this.#conversations;
+		const target = conversations?.state.value.selected;
+		if (conversations === undefined || target === undefined) return;
+		const shown = this.#conversationView();
+		const oldest = shown?.entries[0]?.id;
+		const before = this.#historyLoaded || oldest === undefined ? null : String(oldest);
+		const page = await conversations.older(target, before, this.#historyCursor, 20, BACKGROUND_CONTEXT);
+		this.#historyLoaded = true;
+		this.#history = [...page.entries, ...this.#history];
+		this.#historyCursor = page.cursor ?? null;
+		const view = this.#conversationView();
+		if (view !== undefined) this.#chatView?.apply(this.#withHistory(view));
+		this.#status = page.entries.length === 0 ? "Start of this conversation." : "";
+		this.#rebuild();
 	}
 
 	#footer(): string {
 		const view = this.#conversationView();
-		if (!view) return "/model · /thinking · /compact · /reload";
+		const lane = this.#conversations?.state.value.lane;
+		const commands = "/tree · /fork · /older · /model · /thinking · /compact · /reload";
+		if (lane !== undefined) {
+			const count = view === undefined ? "" : ` · ${view.entries.length} entries`;
+			return `${formatLane(lane)}${count} · ${commands}`;
+		}
+		if (!view) return commands;
 		const agent = (view.docs["amazme.agent"] ?? {}) as AgentState;
 		const model = agent.model === undefined ? "no model" : `${agent.model.provider}/${agent.model.modelId}`;
-		return `${model} · thinking:${agent.thinkingLevel ?? "off"} · ${view.entries.length} entries · /model · /thinking · /compact · /reload`;
+		return `${model} · thinking ${agent.thinkingLevel ?? "off"} · ${view.entries.length} entries · ${commands}`;
 	}
 }
 
-async function prepareClientSession(
-	command: ClientCommand,
-	servers: readonly ClientTuiServer[],
-): Promise<PreparedClientSession> {
+async function prepareClientSession(command: ClientCommand, servers: readonly ClientTuiServer[]): Promise<PreparedClientSession> {
 	const opened = servers.map((server) => ({
 		server,
 		services: server.server.open({

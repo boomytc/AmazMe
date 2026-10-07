@@ -1,17 +1,16 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@amazme/ai";
-import { createModels } from "@amazme/ai";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@amazme/ai";
 import { replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
 import { createRegistry, Harness } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
-import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
-import { createConversationsService } from "../src/experimental/services/conversations-provider.ts";
-import type { ConversationsState } from "../src/experimental/services/conversations.ts";
 import { Subagent } from "../src/experimental/durable/subagent.ts";
+import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
+import { type ConversationsState, IDLE_LANE } from "../src/experimental/services/conversations.ts";
+import { createConversationsService } from "../src/experimental/services/conversations-provider.ts";
 
 /**
  * The conversation list, the live task graph, and stored history, over a real Harness driven by the
@@ -42,30 +41,33 @@ async function waitFor(check: () => boolean | Promise<boolean>, label: string, t
 }
 
 /** A harness with the subagent tool and a scripted provider, and the conversations service on top. */
-async function openConversations(): Promise<{
+async function openConversations(existing?: string): Promise<{
 	readonly harness: Harness;
+	readonly directory: string;
 	readonly rootId: string;
 	readonly state: ReturnType<typeof replicatedState<ConversationsState>>;
 	readonly service: ReturnType<typeof createConversationsService>;
 	readonly faux: ReturnType<typeof fauxProvider>;
 	close(): Promise<void>;
 }> {
+	const directory = existing ?? (await makeDirectory("web-conversations-"));
+	if (existing !== undefined) directories.add(existing);
 	const faux = fauxProvider();
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const registry = createRegistry();
 	registry.install(Subagent);
-	const harness = await Harness.open(
-		await openNodeSqliteStorage(join(await makeDirectory("web-conversations-"), "session.sqlite")),
-		{ models, registry },
-		TODO_CONTEXT,
-	);
+	const harness = await Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")), { models, registry }, TODO_CONTEXT);
 	const root = await harness.root(TODO_CONTEXT, {
-		agent: { cwd: process.cwd(), model: { provider: "faux", modelId: "faux-1" } },
+		agent: {
+			cwd: process.cwd(),
+			model: { provider: "faux", modelId: "faux-1" },
+		},
 	});
 	const state = replicatedState<ConversationsState>({
 		revision: 0,
 		selected: String(root.id),
+		lane: IDLE_LANE,
 		conversations: [],
 		tasks: [],
 		view: null,
@@ -74,6 +76,7 @@ async function openConversations(): Promise<{
 	await service.activate(BACKGROUND_CONTEXT);
 	return {
 		harness,
+		directory,
 		rootId: String(root.id),
 		state,
 		service,
@@ -101,7 +104,11 @@ describe("the session's conversation list", () => {
 		const setup = await openConversations();
 		try {
 			await waitFor(() => setup.state.value.conversations.length === 1, "the root in the list");
-			expect(setup.state.value.conversations[0]).toMatchObject({ id: setup.rootId, label: "main", root: true });
+			expect(setup.state.value.conversations[0]).toMatchObject({
+				id: setup.rootId,
+				label: "main",
+				root: true,
+			});
 
 			// The live task graph while the call runs: the child belongs to the tool task that made it.
 			const owners = new Map<string, string[]>();
@@ -147,10 +154,7 @@ describe("the session's conversation list", () => {
 			expect(await controller.compact({ customInstructions: null }, BACKGROUND_CONTEXT)).toMatchObject({
 				accepted: true,
 			});
-			await waitFor(
-				() => (setup.state.value.view ?? undefined) === undefined || true,
-				"the compaction to settle",
-			);
+			await waitFor(() => (setup.state.value.view ?? undefined) === undefined || true, "the compaction to settle");
 			const afterCompaction = await (async () => {
 				for (let attempt = 0; attempt < 200; attempt++) {
 					const page = await handle.entries({}, 1, undefined, TODO_CONTEXT);
@@ -161,13 +165,7 @@ describe("the session's conversation list", () => {
 				throw new Error("the compaction never committed");
 			})();
 			const summaryId = afterCompaction.items[0]!.id;
-			const replaced = await setup.service.service.older(
-				setup.rootId,
-				String(summaryId),
-				null,
-				10,
-				BACKGROUND_CONTEXT,
-			);
+			const replaced = await setup.service.service.older(setup.rootId, String(summaryId), null, 10, BACKGROUND_CONTEXT);
 			expect(replaced.entries.length).toBeGreaterThan(0);
 			expect(replaced.entries.every((entry) => entry.id < summaryId)).toBe(true);
 
@@ -199,23 +197,53 @@ describe("the session's conversation list", () => {
 
 			// Talking to a conversation through the service is the same durable submission.
 			setup.faux.setResponses([fauxAssistantMessage("answered through the service")]);
-			const accepted = await setup.service.service.prompt(
-				setup.rootId,
-				{ message: "through the service", images: null },
-				BACKGROUND_CONTEXT,
-			);
+			const accepted = await setup.service.service.prompt(setup.rootId, { message: "through the service", images: null }, BACKGROUND_CONTEXT);
 			expect(accepted).toMatchObject({ accepted: true });
 			const root = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
 			const submitted = async (): Promise<boolean> => {
 				const page = await root.entries({}, 10, undefined, TODO_CONTEXT);
-				return page.items.some((entry) =>
-					(entry.model ?? []).some((message) => JSON.stringify(message.content).includes("through the service")),
-				);
+				return page.items.some((entry) => (entry.model ?? []).some((message) => JSON.stringify(message.content).includes("through the service")));
 			};
 			await waitFor(submitted, "the prompt to settle");
 			expect(await submitted()).toBe(true);
 		} finally {
 			await setup.close();
+		}
+	}, 60_000);
+
+	test("forks the newest entry, focuses the fork, and restores that focus from the same sqlite file", async () => {
+		const setup = await openConversations();
+		let forkId = "";
+		try {
+			await askRoot(setup, "first input", [fauxAssistantMessage("first answer")]);
+			const created = await setup.service.service.fork(setup.rootId, null, BACKGROUND_CONTEXT);
+			expect(created.error).toBeNull();
+			expect(created.conversationId).not.toBeNull();
+			forkId = created.conversationId ?? "";
+			await waitFor(() => setup.state.value.conversations.some((summary) => summary.id === forkId && summary.role === "fork"), "the fork in the list");
+			const fork = setup.state.value.conversations.find((summary) => summary.id === forkId);
+			expect(fork).toMatchObject({
+				role: "fork",
+				parentConversationId: setup.rootId,
+				depth: 1,
+				root: false,
+			});
+			expect(setup.state.value.selected).toBe(forkId);
+			expect(setup.state.value.view).not.toBeNull();
+			expect(setup.state.value.lane.role).toBe("fork");
+			expect(setup.state.value.lane.model).toBe("faux/faux-1");
+			expect(setup.state.value.conversations.find((summary) => summary.root)?.children).toBe(1);
+		} finally {
+			await setup.close();
+		}
+
+		const again = await openConversations(setup.directory);
+		try {
+			await waitFor(() => again.state.value.selected === forkId, "the stored focus");
+			expect(again.state.value.lane.role).toBe("fork");
+			expect(again.state.value.conversations.find((summary) => summary.id === forkId)?.parentConversationId).toBe(again.rootId);
+		} finally {
+			await again.close();
 		}
 	}, 60_000);
 });

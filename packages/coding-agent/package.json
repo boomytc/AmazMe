@@ -49,6 +49,7 @@
 	},
 	"dependencies": {
 		"@amazme/chord": "^1.0.4",
+		"@amazme/durable": "^1.0.4",
 		"@amazme/agent": "^1.0.4",
 		"@amazme/ai": "^1.0.4",
 		"@amazme/codemode": "^1.0.4",

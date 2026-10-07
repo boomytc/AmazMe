@@ -6,48 +6,52 @@
  * failure states.
  */
 import type { ModelThinkingLevel } from "@amazme/ai";
+import type { ReplicatedState } from "@amazme/chord";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { Client, type ClientOptions } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import type { ReplicatedState } from "@amazme/chord";
 import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
+	APPROVAL_APPROVE_ACTION,
+	APPROVAL_DENY_ACTION,
+	ATTACHMENT_REMOVE_ACTION,
 	addMcpServerModal,
 	addPackageModal,
 	addScheduleModal,
 	applyTheme,
-	APPROVAL_APPROVE_ACTION,
-	APPROVAL_DENY_ACTION,
-	ATTACHMENT_REMOVE_ACTION,
 	attachmentRejection,
-	FEEDBACK_DOWN_ACTION,
-	FEEDBACK_UP_ACTION,
-	WELCOME_DISMISS_ACTION,
-	WELCOME_FILES_ACTION,
-	WELCOME_SESSION_ACTION,
-	WELCOME_SETTINGS_ACTION,
 	BOOT_GLOBAL,
-	COMPACT_ACTION,
-	COMPACT_MODAL,
-	commandPalette,
-	compactModal,
 	buildWebView,
 	CHAT_VIEW,
-	collectPageElements,
-	composeSkill,
+	COMPACT_ACTION,
+	COMPACT_MODAL,
+	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
+	collectPageElements,
+	commandPalette,
+	compactModal,
+	composeSkill,
 	createRenderer,
 	DOCK_TAB_ACTION,
 	DOCK_TOGGLE_ACTION,
 	documentLanguage,
-	HISTORY_MORE_ACTION,
-	failureView,
 	FALLBACK_LOCALE,
+	FEEDBACK_DOWN_ACTION,
+	FEEDBACK_UP_ACTION,
+	failureView,
 	followSystemTheme,
+	HISTORY_MORE_ACTION,
 	importSkillModal,
 	isBusy,
+	type Locale,
+	type MessageKey,
 	newSkillModal,
+	type PageElements,
+	type PageRenderer,
+	type PanelAction,
+	type PanelModal,
+	type PanelNotice,
 	PLUGIN_MCP_ADD_ACTION,
 	PLUGIN_MCP_ENABLED_ACTION,
 	PLUGIN_MCP_EXPOSURE_ACTION,
@@ -56,13 +60,13 @@ import {
 	PLUGIN_PACKAGE_ADD_ACTION,
 	PLUGIN_PACKAGE_MODAL,
 	PLUGIN_PACKAGE_REMOVE_ACTION,
-	QUEUE_CANCEL_ACTION,
-	REFRESH_MODELS_ACTION,
 	panelNav,
 	parseCommandLine,
+	QUEUE_CANCEL_ACTION,
+	REFRESH_MODELS_ACTION,
+	removeScheduleModal,
 	removeSessionModal,
 	removeSkillModal,
-	removeScheduleModal,
 	resolveLocale,
 	resolveThemePreference,
 	rosterItems,
@@ -72,8 +76,12 @@ import {
 	SCHEDULE_REMOVE_ACTION,
 	SCHEDULE_REMOVE_MODAL,
 	SCHEDULE_RUN_ACTION,
+	SESSION_REMOVE_ACTION,
+	SESSION_REMOVE_MODAL,
 	SETTINGS_FIELD_ACTION,
 	SETTINGS_RELOAD_ACTION,
+	SETTINGS_VIEW,
+	type ShortcutId,
 	SKILL_CREATE_MODAL,
 	SKILL_EDIT_ACTION,
 	SKILL_EDIT_MODAL,
@@ -81,50 +89,39 @@ import {
 	SKILL_IMPORT_MODAL,
 	SKILL_NEW_ACTION,
 	SKILL_REMOVE_ACTION,
-	SESSION_REMOVE_ACTION,
-	SETTINGS_VIEW,
+	SKILL_REMOVE_MODAL,
+	SUBMIT_MODE_ACTION,
+	type SubmitMode,
+	skillModal,
 	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
+	type ThemePreference,
+	translate,
+	WELCOME_DISMISS_ACTION,
+	WELCOME_FILES_ACTION,
+	WELCOME_SESSION_ACTION,
+	WELCOME_SETTINGS_ACTION,
+	type WebBootManifest,
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
 	WORKSPACE_RELOAD_ACTION,
-	SESSION_REMOVE_MODAL,
-	SKILL_REMOVE_MODAL,
-	skillModal,
-	SUBMIT_MODE_ACTION,
-	translate,
 	type CommandLike,
-	type Locale,
-	type MessageKey,
-	type PageElements,
-	type PageRenderer,
-	type ShortcutId,
-	type SubmitMode,
-	type PanelAction,
-	type PanelModal,
-	type PanelNotice,
-	type ThemePreference,
-	type WebBootManifest,
 } from "@amazme/web";
 import { AgentController, type AgentPromptImage } from "../services/agent-controller.ts";
-import {
-	createServerServiceSource,
-	createSessionServiceSource,
-	type SessionServiceSource,
-} from "../services/connection.ts";
 import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
-import { Feedback, type Feedback as FeedbackService, type FeedbackState } from "../services/feedback.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
+import { createServerServiceSource, createSessionServiceSource, type SessionServiceSource } from "../services/connection.ts";
 import { Conversations, type Conversations as ConversationsService } from "../services/conversations.ts";
-import { Terminal, type Terminal as TerminalService, type TerminalState } from "../services/terminal.ts";
-import { Workspace, type Workspace as WorkspaceService, type WorkspaceState } from "../services/workspace.ts";
+import { Feedback, type Feedback as FeedbackService, type FeedbackState } from "../services/feedback.ts";
 import { Models, type ModelsState } from "../services/models.ts";
 import { Plugins } from "../services/plugins.ts";
-import { Schedules, type ScheduleResult } from "../services/schedules.ts";
+import { type ScheduleResult, Schedules } from "../services/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
 import { Skills } from "../services/skills.ts";
+import { Terminal, type Terminal as TerminalService, type TerminalState } from "../services/terminal.ts";
 import { Transcript } from "../services/transcript.ts";
+import { Workspace, type Workspace as WorkspaceService, type WorkspaceState } from "../services/workspace.ts";
 
 function readManifest(): WebBootManifest | undefined {
 	const candidate = (globalThis as Record<string, unknown>)[BOOT_GLOBAL];
@@ -221,6 +218,20 @@ class SessionPainter {
 		return this.#transcript?.value;
 	}
 
+	/**
+	 * A non-root conversation the page is driving. The root stays on `AgentController`; a fork or
+	 * subagent goes through the conversations service, which owns that conversation's controller.
+	 */
+	#focused(conversationId: string | undefined): { readonly id: string; readonly view: ConversationView | undefined } | undefined {
+		if (conversationId === undefined) return undefined;
+		const conversations = this.#conversations;
+		if (conversations === undefined) return undefined;
+		const state = conversations.state.value;
+		const root = state.conversations.find((entry) => entry.root)?.id;
+		if (root === undefined || conversationId === root) return undefined;
+		return { id: conversationId, view: state.view ?? undefined };
+	}
+
 	get modelsValue(): ModelsState | undefined {
 		return this.#models?.state.value;
 	}
@@ -251,7 +262,12 @@ class SessionPainter {
 	async runTerminal(command: string): Promise<void> {
 		const result = await this.#terminal?.run(command, BACKGROUND_CONTEXT);
 		if (result !== undefined && !result.ok) {
-			this.#renderer.setConnection(translate(this.locale, "dock.terminalFailed", { error: result.problem }), "error");
+			this.#renderer.setConnection(
+				translate(this.locale, "dock.terminalFailed", {
+					error: result.problem,
+				}),
+				"error",
+			);
 		}
 	}
 
@@ -291,7 +307,11 @@ class SessionPainter {
 	/** Run one of the host's commands; the result carries the note or the problem to show. */
 	async runCommand(name: string, args: string): Promise<{ readonly ok: boolean; readonly message: string }> {
 		const commands = this.#commands;
-		if (commands === undefined) return { ok: false, message: translate(this.locale, "page.commandUnknown", { name }) };
+		if (commands === undefined)
+			return {
+				ok: false,
+				message: translate(this.locale, "page.commandUnknown", { name }),
+			};
 		const result = await commands.run(name, args, BACKGROUND_CONTEXT);
 		return result.ok ? { ok: true, message: result.note } : { ok: false, message: result.problem };
 	}
@@ -325,10 +345,31 @@ class SessionPainter {
 	 * Send input to the attached session: an image prompt, a new run when idle, or — while a turn
 	 * runs — the mode the composer asks for, so a mid-turn message is a steer or a queued follow-up.
 	 */
-	async submit(text: string, mode: SubmitMode, images: readonly AgentPromptImage[] = []): Promise<void> {
+	async submit(text: string, mode: SubmitMode, images: readonly AgentPromptImage[] = [], conversationId?: string): Promise<void> {
+		const request = {
+			message: text,
+			images: images.length === 0 ? null : [...images],
+		};
+		const focused = this.#focused(conversationId);
+		const conversations = this.#conversations;
+		if (focused !== undefined && conversations !== undefined) {
+			const response = !isBusy(focused.view)
+				? await conversations.prompt(focused.id, request, BACKGROUND_CONTEXT)
+				: mode === "steer"
+					? await conversations.steer(focused.id, request, BACKGROUND_CONTEXT)
+					: await conversations.followUp(focused.id, request, BACKGROUND_CONTEXT);
+			if (!response.accepted) {
+				this.#renderer.setConnection(
+					translate(this.locale, "page.promptRejected", {
+						error: response.error.message,
+					}),
+					"error",
+				);
+			}
+			return;
+		}
 		const controller = this.#controller;
 		if (controller === undefined) return;
-		const request = { message: text, images: images.length === 0 ? null : [...images] };
 		const response = !isBusy(this.transcriptValue)
 			? await controller.prompt(request, BACKGROUND_CONTEXT)
 			: mode === "steer"
@@ -337,35 +378,52 @@ class SessionPainter {
 		// A rejection must be visible; an accepted prompt shows itself in the transcript.
 		if (!response.accepted) {
 			this.#renderer.setConnection(
-				translate(this.locale, "page.promptRejected", { error: response.error.message }),
+				translate(this.locale, "page.promptRejected", {
+					error: response.error.message,
+				}),
 				"error",
 			);
 		}
 	}
 
 	/** Withdraw queued input and abort the running turn and compaction. */
-	async abort(): Promise<void> {
+	async abort(conversationId?: string): Promise<void> {
+		const focused = this.#focused(conversationId);
+		if (focused !== undefined && this.#conversations !== undefined) {
+			await this.#conversations.abort(focused.id, BACKGROUND_CONTEXT);
+			return;
+		}
 		await this.#controller?.abort(BACKGROUND_CONTEXT);
 	}
 
 	/** Withdraw one queued input by its inbox submission id; the rest stay queued. */
-	async cancelQueued(entryId: string): Promise<void> {
-		const outcome = await this.#controller?.cancelQueued(entryId, BACKGROUND_CONTEXT);
+	async cancelQueued(entryId: string, conversationId?: string): Promise<void> {
+		const focused = this.#focused(conversationId);
+		const outcome =
+			focused !== undefined && this.#conversations !== undefined
+				? await this.#conversations.cancelQueued(focused.id, entryId, BACKGROUND_CONTEXT)
+				: await this.#controller?.cancelQueued(entryId, BACKGROUND_CONTEXT);
 		if (outcome !== undefined && outcome.outcome !== "cancelled") {
 			this.#renderer.setConnection(translate(this.locale, "page.queueGone"), "error");
 		}
 	}
 
 	/** Summarize the conversation so far; an empty instruction asks the host for its own summary. */
-	async compact(instructions: string): Promise<void> {
+	async compact(instructions: string, conversationId?: string): Promise<void> {
 		const trimmed = instructions.trim();
-		const response = await this.#controller?.compact(
-			{ customInstructions: trimmed.length === 0 ? null : trimmed },
-			BACKGROUND_CONTEXT,
-		);
+		const request = {
+			customInstructions: trimmed.length === 0 ? null : trimmed,
+		};
+		const focused = this.#focused(conversationId);
+		const response =
+			focused !== undefined && this.#conversations !== undefined
+				? await this.#conversations.compact(focused.id, request, BACKGROUND_CONTEXT)
+				: await this.#controller?.compact(request, BACKGROUND_CONTEXT);
 		if (response !== undefined && !response.accepted) {
 			this.#renderer.setConnection(
-				translate(this.locale, "page.compactFailed", { error: response.error.message }),
+				translate(this.locale, "page.compactFailed", {
+					error: response.error.message,
+				}),
 				"error",
 			);
 		}
@@ -401,10 +459,7 @@ class SessionPainter {
 	async #refreshLevels(paint: () => void): Promise<void> {
 		const service = this.#models;
 		const configuration = service?.state.value?.configuration.model;
-		const model =
-			configuration === undefined || configuration === null
-				? ""
-				: `${configuration.provider}/${configuration.modelId}`;
+		const model = configuration === undefined || configuration === null ? "" : `${configuration.provider}/${configuration.modelId}`;
 		if (service === undefined || model === this.#levelsModel) return;
 		this.#levelsModel = model;
 		this.#levels = await service.getThinkingLevels(BACKGROUND_CONTEXT);
@@ -422,21 +477,13 @@ class SessionPainter {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
 		const services = this.#sessionSource.open({
-			services: [
-				Transcript,
-				AgentController,
-				Models,
-				SessionSettings,
-				Commands,
-				Workspace,
-				Terminal,
-				Conversations,
-				Approvals,
-			],
+			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals],
 			assertAccess(): void {},
 			onError: (error: Error) =>
 				this.#renderer.setConnection(
-					translate(this.locale, "page.streamFailed", { error: message(error) }),
+					translate(this.locale, "page.streamFailed", {
+						error: message(error),
+					}),
 					"error",
 				),
 		});
@@ -466,7 +513,9 @@ class SessionPainter {
 			paint();
 			void this.#refreshLevels(paint).catch((error: unknown) => {
 				this.#renderer.setConnection(
-					translate(this.locale, "page.modelStateFailed", { error: message(error) }),
+					translate(this.locale, "page.modelStateFailed", {
+						error: message(error),
+					}),
 					"error",
 				);
 			});
@@ -509,7 +558,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	document.title = `${manifest.app.name} ${manifest.app.version}`;
 	const client = new Client({
 		serverId: manifest.server.id,
-		transportFactory: createWebSocketTransportFactory({ url: manifest.transport.url }),
+		transportFactory: createWebSocketTransportFactory({
+			url: manifest.transport.url,
+		}),
 	} satisfies ClientOptions);
 
 	const report = (error: Error): void => renderer.setConnection(error.message, "error");
@@ -556,7 +607,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The composer's draft, mirrored here so the command palette can be projected from it. */
 	let draft = "";
 	/** The host's argument completions for the command line being typed. */
-	let completions: readonly { readonly value: string; readonly label: string; readonly description?: string }[] = [];
+	let completions: readonly {
+		readonly value: string;
+		readonly label: string;
+		readonly description?: string;
+	}[] = [];
 	let paletteSelection = 0;
 	/** The completion request in flight, so a stale answer never lands on a newer draft. */
 	let completionSequence = 0;
@@ -586,8 +641,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	/** The session's root conversation id, as the host's conversation list reports it. */
-	const rootId = (): string | undefined =>
-		painter.conversations?.conversations.find((entry) => entry.root)?.id;
+	const rootId = (): string | undefined => painter.conversations?.conversations.find((entry) => entry.root)?.id;
 
 	/** Whether the page is showing a conversation other than the root. */
 	const focusing = (): boolean => {
@@ -619,8 +673,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * restart, so the host re-reads them whenever those inputs move. Templates follow their files:
 	 * `/reload` picks up a new one, exactly as the terminal documents it.
 	 */
-	const catalogInputs = (): string =>
-		`${skills.state.value?.revision ?? 0}:${settingValue("enableSkillCommands") ?? ""}`;
+	const catalogInputs = (): string => `${skills.state.value?.revision ?? 0}:${settingValue("enableSkillCommands") ?? ""}`;
 	let catalogRead = catalogInputs();
 	const refreshCommandResources = (): void => {
 		const inputs = catalogInputs();
@@ -649,6 +702,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					directory: directory.state.value,
 					transcript: shownTranscript(),
 					focus: focusedLabel(),
+					...(painter.conversations?.lane === undefined ? {} : { lane: painter.conversations.lane }),
 					history,
 					historyMore: !historyLoaded || historyCursor !== null,
 					historyLoading,
@@ -688,7 +742,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						settings: { state: settings.state.value },
 						skills: { state: skills.state.value },
 						plugins: { state: plugins.state.value },
-						automation: { state: schedules.state.value, sessionId: painter.sessionId, now: Date.now() },
+						automation: {
+							state: schedules.state.value,
+							sessionId: painter.sessionId,
+							now: Date.now(),
+						},
 						// The page's own management state: what is in flight, and what it last said.
 						...(panelPending === undefined ? {} : { pending: panelPending }),
 						...(panelNotice === undefined ? {} : { notice: panelNotice }),
@@ -827,10 +885,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		void (async () => {
 			const added: PendingImage[] = [];
 			for (const file of files) {
-				const rejection = attachmentRejection({ mediaType: file.type, bytes: file.size });
+				const rejection = attachmentRejection({
+					mediaType: file.type,
+					bytes: file.size,
+				});
 				if (rejection !== undefined) {
 					renderer.setConnection(
-						copy(rejection, { name: file.name, limit: copy("composer.attachmentLimit") }),
+						copy(rejection, {
+							name: file.name,
+							limit: copy("composer.attachmentLimit"),
+						}),
 						"error",
 					);
 					continue;
@@ -869,7 +933,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						renderer.setConnection(expansion.message, "error");
 						return;
 					}
-					return painter.submit(expansion.message, submitMode, []);
+					const target = targetConversation();
+					const focused = target !== undefined && target !== rootConversationId ? target : undefined;
+					return painter.submit(expansion.message, submitMode, [], focused);
 				},
 				(error: unknown) => {
 					renderer.setConnection(copy("page.commandFailed", { error: message(error) }), "error");
@@ -911,19 +977,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		pending = [];
 		const target = targetConversation();
 		const focused = target !== undefined && target !== rootConversationId ? target : undefined;
-		// Input goes to the conversation the page shows: the root's own controller, or the focused
-		// conversation's through the conversations service.
-		const submission =
-			focused === undefined || painter.conversationsService === undefined
-				? painter.submit(text, submitMode, images)
-				: painter.conversationsService
-						.prompt(focused, { message: text, images: images.length === 0 ? null : images }, BACKGROUND_CONTEXT)
-						.then((response) => {
-							if (!response.accepted) {
-								throw new Error(response.error.message);
-							}
-						});
-		void submission.catch((error: unknown) => {
+		// Input goes to the conversation the page shows. A busy fork steers or queues; it does not reject.
+		void painter.submit(text, submitMode, images, focused).catch((error: unknown) => {
 			// The prompt never reached the session, so the images stay attached for another try.
 			pending = sent;
 			paint();
@@ -933,11 +988,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	renderer.onAbort = () => {
 		const target = targetConversation();
 		const focused = target !== undefined && target !== rootConversationId ? target : undefined;
-		const stop =
-			focused === undefined || painter.conversationsService === undefined
-				? painter.abort()
-				: painter.conversationsService.abort(focused, BACKGROUND_CONTEXT);
-		void stop.catch((error: unknown) => {
+		void painter.abort(focused).catch((error: unknown) => {
 			renderer.setConnection(copy("page.abortFailed", { error: message(error) }), "error");
 		});
 	};
@@ -970,10 +1021,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		modalOpener = undefined;
 		paint();
 		if (opener === undefined) return;
-		const attribute =
-			opener.data === undefined
-				? `[data-action="${opener.id}"]`
-				: `[data-action="${opener.id}"][data-action-data="${opener.data}"]`;
+		const attribute = opener.data === undefined ? `[data-action="${opener.id}"]` : `[data-action="${opener.id}"][data-action-data="${opener.data}"]`;
 		try {
 			const node = document.querySelector(attribute);
 			if (node instanceof HTMLElement) node.focus();
@@ -1065,8 +1113,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	const pluginPackages = (): readonly string[] => plugins.state.value?.packages ?? [];
-	const skillOf = (name: string): { readonly editable: boolean } | undefined =>
-		skills.state.value?.skills.find((candidate) => candidate.name === name);
+	const skillOf = (name: string): { readonly editable: boolean } | undefined => skills.state.value?.skills.find((candidate) => candidate.name === name);
 
 	renderer.onPanelAction = (action: PanelAction): void => {
 		switch (action.kind) {
@@ -1146,7 +1193,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						closeModal();
 						return;
 					case WELCOME_DISMISS_ACTION:
-						runPanelCall({ id: WELCOME_DISMISS_ACTION, call: () => settings.set("showWelcome", "false", BACKGROUND_CONTEXT).then(done) });
+						runPanelCall({
+							id: WELCOME_DISMISS_ACTION,
+							call: () => settings.set("showWelcome", "false", BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					case FEEDBACK_UP_ACTION:
 					case FEEDBACK_DOWN_ACTION: {
@@ -1155,10 +1205,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						const sessionId = painter.sessionId ?? "";
 						const conversationId = targetConversation() ?? "";
 						const existing = feedback.state.value?.records.find(
-							(record) =>
-								record.sessionId === sessionId &&
-								record.conversationId === conversationId &&
-								record.entryId === entryId,
+							(record) => record.sessionId === sessionId && record.conversationId === conversationId && record.entryId === entryId,
 						);
 						if (entryId.length === 0 || sessionId.length === 0) return;
 						const operation =
@@ -1181,6 +1228,22 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								if (!known) {
 									renderer.setConnection(copy("page.queueGone"), "error");
 								}
+							}),
+						);
+						return;
+					}
+					case CONVERSATION_FORK_ACTION: {
+						const id = action.data ?? targetConversation();
+						const service = painter.conversationsService;
+						if (id === undefined || service === undefined) return;
+						history = [];
+						historyCursor = null;
+						historyLoaded = false;
+						dockOpen = true;
+						dockTab = "conversations";
+						settle(
+							service.fork(id, null, BACKGROUND_CONTEXT).then((result) => {
+								if (result.error !== null) throw new Error(result.error.message);
 							}),
 						);
 						return;
@@ -1258,7 +1321,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						const sessionId = painter.sessionId;
 						// The panel's own footer says what to do; the button is inert without a session.
 						if (sessionId === undefined) {
-							panelNotice = { tone: "error", text: copy("panel.automation.noSession") };
+							panelNotice = {
+								tone: "error",
+								text: copy("panel.automation.noSession"),
+							};
 							paint();
 							return;
 						}
@@ -1270,7 +1336,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					case SCHEDULE_RUN_ACTION: {
 						const id = action.data ?? "";
-						runPanelCall({ id: action.id, data: id, call: () => schedules.runNow(id, BACKGROUND_CONTEXT) });
+						runPanelCall({
+							id: action.id,
+							data: id,
+							call: () => schedules.runNow(id, BACKGROUND_CONTEXT),
+						});
 						return;
 					}
 					case ATTACHMENT_REMOVE_ACTION: {
@@ -1280,7 +1350,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					}
 					case QUEUE_CANCEL_ACTION: {
 						const entryId = action.data ?? "";
-						settle(painter.cancelQueued(entryId));
+						const target = targetConversation();
+						const focused = target !== undefined && target !== rootConversationId ? target : undefined;
+						settle(painter.cancelQueued(entryId, focused));
 						return;
 					}
 					case SETTINGS_RELOAD_ACTION:
@@ -1368,7 +1440,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({
 							id: action.id,
 							inModal: true,
-							call: () => painter.compact(fields.instructions ?? "").then(done),
+							call: () => {
+								const target = targetConversation();
+								const focused = target !== undefined && target !== rootConversationId ? target : undefined;
+								return painter.compact(fields.instructions ?? "", focused).then(done);
+							},
 						});
 						return;
 					case SKILL_CREATE_MODAL: {
@@ -1383,7 +1459,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							call: () =>
 								skills
 									.write(
-										{ name, content: composeSkill(name, fields.description ?? "", fields.body ?? "") },
+										{
+											name,
+											content: composeSkill(name, fields.description ?? "", fields.body ?? ""),
+										},
 										BACKGROUND_CONTEXT,
 									)
 									.then(done),
@@ -1394,8 +1473,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({
 							id: action.id,
 							inModal: true,
-							call: () =>
-								skills.write({ name: action.data ?? "", content: fields.content ?? "" }, BACKGROUND_CONTEXT).then(done),
+							call: () => skills.write({ name: action.data ?? "", content: fields.content ?? "" }, BACKGROUND_CONTEXT).then(done),
 						});
 						return;
 					case SKILL_REMOVE_MODAL:
@@ -1430,8 +1508,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({
 							id: action.id,
 							inModal: true,
-							call: () =>
-								plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT).then(done),
+							call: () => plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT).then(done),
 						});
 						return;
 					case SCHEDULE_ADD_MODAL: {
@@ -1584,7 +1661,9 @@ export async function main(): Promise<void> {
 		elements = collectPageElements();
 		renderer = createRenderer(elements);
 	} catch (error) {
-		document.body.textContent = translate(locale, "page.cannotBoot", { error: message(error) });
+		document.body.textContent = translate(locale, "page.cannotBoot", {
+			error: message(error),
+		});
 		return;
 	}
 	if (manifest !== undefined) elements.mode.textContent = `${manifest.mode} · ${manifest.transport.url}`;

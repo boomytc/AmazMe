@@ -23,28 +23,23 @@ import {
 import {
 	APPROVAL_APPROVE_ACTION,
 	APPROVAL_DENY_ACTION,
+	ATTACHMENT_REMOVE_ACTION,
+	COMPACT_ACTION,
+	CONVERSATION_FORK_ACTION,
 	FEEDBACK_DOWN_ACTION,
 	FEEDBACK_UP_ACTION,
+	QUEUE_CANCEL_ACTION,
+	SESSION_REMOVE_ACTION,
 	WELCOME_DISMISS_ACTION,
 	WELCOME_FILES_ACTION,
 	WELCOME_SESSION_ACTION,
 	WELCOME_SETTINGS_ACTION,
-	ATTACHMENT_REMOVE_ACTION,
-	COMPACT_ACTION,
-	QUEUE_CANCEL_ACTION,
-	SESSION_REMOVE_ACTION,
 } from "./actions.ts";
-import {
-	commandPalette,
-	parseCommandLine,
-	type CommandLike,
-	type CommandCompletionLike,
-	type CommandPalette,
-} from "./commands.ts";
-import { type Shortcut, shortcuts } from "./shortcuts.ts";
-import { dockView, type DockView, type DockViewInput } from "./dock.ts";
+import { type CommandCompletionLike, type CommandLike, type CommandPalette, commandPalette, parseCommandLine } from "./commands.ts";
+import { type DockView, type DockViewInput, dockView } from "./dock.ts";
 import type { Locale } from "./locale.ts";
-import { CHAT_VIEW, panelView, type PanelButton, type PanelView, type PanelViewInput } from "./panels.ts";
+import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panelView } from "./panels.ts";
+import { type Shortcut, shortcuts } from "./shortcuts.ts";
 import { thinkingLevelCopy, translate } from "./strings.ts";
 
 export type BlockTone = "plain" | "muted" | "error";
@@ -56,7 +51,10 @@ export interface TranscriptBlock {
 	readonly title: string;
 	readonly text: string;
 	/** Images the entry carries, as data URLs the reader sees. */
-	readonly images?: readonly { readonly dataUrl: string; readonly alt: string }[];
+	readonly images?: readonly {
+		readonly dataUrl: string;
+		readonly alt: string;
+	}[];
 	/** An answer's rating controls, and the rating it already carries. */
 	readonly feedback?: FeedbackControls;
 	readonly tone: BlockTone;
@@ -133,10 +131,7 @@ export const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 export type AttachmentRejection = "composer.attachmentUnsupported" | "composer.attachmentTooLarge";
 
 /** Whether one picked image can be sent, and if not, why. */
-export function attachmentRejection(image: {
-	readonly mediaType: string;
-	readonly bytes: number;
-}): AttachmentRejection | undefined {
+export function attachmentRejection(image: { readonly mediaType: string; readonly bytes: number }): AttachmentRejection | undefined {
 	if (!ATTACHMENT_TYPES.includes(image.mediaType)) return "composer.attachmentUnsupported";
 	if (image.bytes > ATTACHMENT_MAX_BYTES) return "composer.attachmentTooLarge";
 	return undefined;
@@ -171,11 +166,27 @@ export function welcomeCard(locale: Locale, input: { readonly show: boolean }): 
 		title: translate(locale, "welcome.title"),
 		body: translate(locale, "welcome.body"),
 		steps: [
-			{ id: WELCOME_SESSION_ACTION, label: translate(locale, "welcome.step.session"), tone: "primary" },
-			{ id: WELCOME_FILES_ACTION, label: translate(locale, "welcome.step.files"), tone: "default" },
-			{ id: WELCOME_SETTINGS_ACTION, label: translate(locale, "welcome.step.settings"), tone: "default" },
+			{
+				id: WELCOME_SESSION_ACTION,
+				label: translate(locale, "welcome.step.session"),
+				tone: "primary",
+			},
+			{
+				id: WELCOME_FILES_ACTION,
+				label: translate(locale, "welcome.step.files"),
+				tone: "default",
+			},
+			{
+				id: WELCOME_SETTINGS_ACTION,
+				label: translate(locale, "welcome.step.settings"),
+				tone: "default",
+			},
 		],
-		dismiss: { id: WELCOME_DISMISS_ACTION, label: translate(locale, "welcome.dismiss"), tone: "default" },
+		dismiss: {
+			id: WELCOME_DISMISS_ACTION,
+			label: translate(locale, "welcome.dismiss"),
+			tone: "default",
+		},
 		note: translate(locale, "welcome.note"),
 	};
 }
@@ -213,8 +224,18 @@ export interface FeedbackScope {
 function feedbackControls(locale: Locale, entryId: string, rating: MessageRatingLike | null): FeedbackControls {
 	return {
 		rating,
-		up: { id: FEEDBACK_UP_ACTION, label: translate(locale, "feedback.up"), tone: "default", data: entryId },
-		down: { id: FEEDBACK_DOWN_ACTION, label: translate(locale, "feedback.down"), tone: "default", data: entryId },
+		up: {
+			id: FEEDBACK_UP_ACTION,
+			label: translate(locale, "feedback.up"),
+			tone: "default",
+			data: entryId,
+		},
+		down: {
+			id: FEEDBACK_DOWN_ACTION,
+			label: translate(locale, "feedback.down"),
+			tone: "default",
+			data: entryId,
+		},
 	};
 }
 
@@ -252,7 +273,12 @@ export function approvalCards(locale: Locale, state: ApprovalsStateLike | undefi
 			tone: "primary",
 			data: request.id,
 		},
-		deny: { id: APPROVAL_DENY_ACTION, label: translate(locale, "approval.deny"), tone: "danger", data: request.id },
+		deny: {
+			id: APPROVAL_DENY_ACTION,
+			label: translate(locale, "approval.deny"),
+			tone: "danger",
+			data: request.id,
+		},
 	}));
 }
 
@@ -310,10 +336,22 @@ export interface SubmitModeOption {
 	readonly selected: boolean;
 }
 
-/** The controls around the conversation: compaction, and how a busy turn takes input. */
+/** The focused conversation's lane. The same fields the host publishes. */
+export interface LaneLike {
+	readonly role: "main" | "fork" | "subagent";
+	readonly label: string;
+	readonly model: string;
+	readonly thinking: string;
+	readonly run: "idle" | "working" | "retrying" | "deferred" | "compacting" | "tool";
+	readonly detail: string;
+}
+
+/** The controls around the conversation: compaction, fork, and how a busy turn takes input. */
 export interface RunControls {
 	/** The header's compaction control. */
 	readonly compact: PanelButton;
+	/** Fork the shown conversation at its newest entry. */
+	readonly fork: PanelButton;
 	/** The composer's mode toggle, offered while a turn runs. */
 	readonly submitModes: readonly SubmitModeOption[];
 }
@@ -349,6 +387,8 @@ export interface WebView {
 	readonly commandLine: boolean;
 	/** The focused conversation's label, and the history the reader paged in above the transcript. */
 	readonly focus: string | undefined;
+	/** Lane, model, thinking, and run. Empty until a session is attached. */
+	readonly lane: string;
 	readonly history: {
 		readonly blocks: readonly TranscriptBlock[];
 		readonly more: boolean;
@@ -402,14 +442,23 @@ export interface ModelSummaryLike {
 
 /** The host's replicated `amazme.models` state, as this package reads it. */
 export interface ModelsStateLike {
-	readonly catalog: { readonly revision: number; readonly availableModels: readonly ModelSummaryLike[] };
+	readonly catalog: {
+		readonly revision: number;
+		readonly availableModels: readonly ModelSummaryLike[];
+	};
 	readonly configuration: {
-		readonly model: { readonly provider: string; readonly modelId: string } | null;
+		readonly model: {
+			readonly provider: string;
+			readonly modelId: string;
+		} | null;
 		readonly thinkingLevel: string;
 	};
 	readonly refresh:
 		| { readonly status: "idle" | "refreshing" | "done" }
-		| { readonly status: "warning"; readonly errors: Readonly<Record<string, string>> };
+		| {
+				readonly status: "warning";
+				readonly errors: Readonly<Record<string, string>>;
+		  };
 }
 
 export interface WebViewInput {
@@ -453,6 +502,8 @@ export interface WebViewInput {
 	readonly platform: string;
 	/** The focused conversation's label; only a conversation that is not the root names one. */
 	readonly focus: string | undefined;
+	/** The host's lane for the shown conversation. */
+	readonly lane?: LaneLike;
 	/** The pages of stored history the reader asked for. */
 	readonly history: readonly EntryRecord[];
 	/** Whether the page offers to load more, and whether it is already loading. */
@@ -474,7 +525,11 @@ export function modelPickerEmpty(locale: Locale): ModelPicker {
 		empty: undefined,
 		levelsEmpty: undefined,
 		disabled: true,
-		refresh: { label: translate(locale, "model.refresh"), status: undefined, busy: false },
+		refresh: {
+			label: translate(locale, "model.refresh"),
+			status: undefined,
+			busy: false,
+		},
 	};
 }
 
@@ -498,12 +553,7 @@ function refreshStatus(locale: Locale, refresh: ModelsStateLike["refresh"]): str
  * The picker the composer chip opens: the host's catalog grouped by provider, the levels the
  * attached model reports, and the two empty states that keep the control explainable.
  */
-export function modelPicker(
-	locale: Locale,
-	models: ModelsStateLike | undefined,
-	levels: readonly string[] | undefined,
-	attached: boolean,
-): ModelPicker {
+export function modelPicker(locale: Locale, models: ModelsStateLike | undefined, levels: readonly string[] | undefined, attached: boolean): ModelPicker {
 	if (models === undefined || !attached) return modelPickerEmpty(locale);
 	const configured = models.configuration.model;
 	const byProvider = new Map<string, ModelOption[]>();
@@ -520,14 +570,9 @@ export function modelPicker(
 	const groups: ModelGroup[] = [...byProvider]
 		.map(([provider, options]) => ({ provider, options }))
 		.sort((left, right) => left.provider.localeCompare(right.provider));
-	const current = models.catalog.availableModels.find(
-		(model) => model.provider === configured?.provider && model.modelId === configured?.modelId,
-	);
+	const current = models.catalog.availableModels.find((model) => model.provider === configured?.provider && model.modelId === configured?.modelId);
 	const label =
-		current?.name ??
-		(configured === null || configured === undefined
-			? translate(locale, "model.none")
-			: `${configured.provider}/${configured.modelId}`);
+		current?.name ?? (configured === null || configured === undefined ? translate(locale, "model.none") : `${configured.provider}/${configured.modelId}`);
 	// Levels read as `undefined` until the page has asked the host: no chip, and no verdict yet.
 	const reasoned = levels !== undefined && levels.length > 1;
 	return {
@@ -540,8 +585,7 @@ export function modelPicker(
 			selected: level === models.configuration.thinkingLevel,
 		})),
 		empty: groups.length === 0 ? translate(locale, "model.empty") : undefined,
-		levelsEmpty:
-			levels === undefined || reasoned ? undefined : translate(locale, "model.levelsEmpty"),
+		levelsEmpty: levels === undefined || reasoned ? undefined : translate(locale, "model.levelsEmpty"),
 		disabled: false,
 		refresh: {
 			label: translate(locale, "model.refresh"),
@@ -565,27 +609,14 @@ export function formatAge(createdAt: number, now: number): string {
  * The roster, newest first, narrowed by the reader's filter. A filter matches the session's id or
  * its working directory, so a path is as good a handle as the id.
  */
-export function rosterItems(
-	locale: Locale,
-	state: SessionDirectoryLike | undefined,
-	attachedId: string | undefined,
-	now: number,
-	filter = "",
-): RosterItem[] {
+export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefined, attachedId: string | undefined, now: number, filter = ""): RosterItem[] {
 	const sessions = state?.sessions ?? [];
 	const needle = filter.trim().toLowerCase();
 	return [...sessions]
-		.filter(
-			(session) =>
-				needle.length === 0 ||
-				session.sessionId.toLowerCase().includes(needle) ||
-				(session.cwd ?? "").toLowerCase().includes(needle),
-		)
+		.filter((session) => needle.length === 0 || session.sessionId.toLowerCase().includes(needle) || (session.cwd ?? "").toLowerCase().includes(needle))
 		.sort(
 			(left: SessionSummaryLike, right: SessionSummaryLike) =>
-				right.createdAt - left.createdAt ||
-				(left.serverId ?? "").localeCompare(right.serverId ?? "") ||
-				left.sessionId.localeCompare(right.sessionId),
+				right.createdAt - left.createdAt || (left.serverId ?? "").localeCompare(right.serverId ?? "") || left.sessionId.localeCompare(right.sessionId),
 		)
 		.map((session) => ({
 			id: session.sessionId,
@@ -621,7 +652,12 @@ function userImages(content: UserMessage["content"]): { readonly dataUrl: string
 	if (typeof content === "string") return [];
 	return content.flatMap((block) =>
 		block.type === "image"
-			? [{ dataUrl: `data:${block.mimeType};base64,${block.data}`, alt: block.mimeType }]
+			? [
+					{
+						dataUrl: `data:${block.mimeType};base64,${block.data}`,
+						alt: block.mimeType,
+					},
+				]
 			: [],
 	);
 }
@@ -644,7 +680,10 @@ function toolCallText(message: AssistantMessage): ToolCall[] {
 /** The failure notice the TUI shows for a committed answer that never completed, if any. */
 function failureNotice(locale: Locale, message: AssistantMessage): { title: string; text: string } | undefined {
 	if (message.stopReason === "length") {
-		return { title: translate(locale, "block.truncated"), text: translate(locale, "block.truncatedText") };
+		return {
+			title: translate(locale, "block.truncated"),
+			text: translate(locale, "block.truncatedText"),
+		};
 	}
 	// A tool-calling answer shows the failure on its cards instead.
 	if (message.content.some((block) => block.type === "toolCall")) return undefined;
@@ -652,10 +691,7 @@ function failureNotice(locale: Locale, message: AssistantMessage): { title: stri
 		const detail = message.errorMessage;
 		return {
 			title: translate(locale, "block.aborted"),
-			text:
-				detail !== undefined && detail !== "Request was aborted"
-					? detail
-					: translate(locale, "block.abortedText"),
+			text: detail !== undefined && detail !== "Request was aborted" ? detail : translate(locale, "block.abortedText"),
 		};
 	}
 	if (message.stopReason === "error") {
@@ -674,10 +710,7 @@ function toolResultText(locale: Locale, message: ToolResultMessage): string {
 }
 
 function queuedItemText(locale: Locale, item: InboxState["items"][number]): string {
-	const body =
-		item.mode === "write"
-			? `<${String(item.entry.kind)}>`
-			: userText(item.content as UserMessage["content"]).replace(/\s+/g, " ");
+	const body = item.mode === "write" ? `<${String(item.entry.kind)}>` : userText(item.content as UserMessage["content"]).replace(/\s+/g, " ");
 	const mode =
 		item.mode === "steer"
 			? translate(locale, "queue.steer")
@@ -755,8 +788,7 @@ function entryBlocks(
 						const rated = feedback?.find(
 							(record) =>
 								record.entryId === String(entry.id) &&
-								(scope === undefined ||
-									(record.sessionId === scope.sessionId && record.conversationId === scope.conversationId)),
+								(scope === undefined || (record.sessionId === scope.sessionId && record.conversationId === scope.conversationId)),
 						);
 						blocks.push({
 							id: entry.id,
@@ -768,7 +800,9 @@ function entryBlocks(
 							running: false,
 							...(feedback === undefined
 								? {}
-								: { feedback: feedbackControls(locale, String(entry.id), rated?.rating ?? null) }),
+								: {
+										feedback: feedbackControls(locale, String(entry.id), rated?.rating ?? null),
+									}),
 						});
 					}
 					if (failure !== undefined) {
@@ -833,14 +867,7 @@ function pushToolBlock(
 ): void {
 	const result = results.get(call.id);
 	const running = result === undefined && (streaming || live.running.has(call.id));
-	const text =
-		result !== undefined
-			? toolResultText(locale, result)
-			: running
-				? (live.output.get(call.id) ?? "")
-				: ran
-					? ""
-					: translate(locale, "tool.notRun");
+	const text = result !== undefined ? toolResultText(locale, result) : running ? (live.output.get(call.id) ?? "") : ran ? "" : translate(locale, "tool.notRun");
 	blocks.push({
 		id: `tool:${call.id}`,
 		kind: "tool",
@@ -912,8 +939,27 @@ export function historyPageBlocks(locale: Locale, entries: readonly EntryRecord[
 	return blocks;
 }
 
-
 /** The one live status line, with the same precedence the TUI status indicator uses. */
+/** One line of chrome: which conversation, which model, which thinking level, and whether it is running. */
+export function laneLine(locale: Locale, lane: LaneLike): string {
+	const role = translate(locale, `lane.${lane.role}`);
+	const name = lane.role === "main" ? role : `${role} · ${lane.label}`;
+	const model = lane.model.length === 0 ? translate(locale, "lane.noModel") : lane.model;
+	const run =
+		lane.run === "retrying"
+			? translate(locale, "lane.retrying", { detail: lane.detail })
+			: lane.run === "compacting"
+				? translate(locale, "lane.compacting", { detail: lane.detail })
+				: lane.run === "tool"
+					? translate(locale, "lane.tool", { detail: lane.detail })
+					: lane.run === "deferred"
+						? translate(locale, "lane.deferred")
+						: lane.run === "working"
+							? translate(locale, "lane.working")
+							: translate(locale, "lane.idle");
+	return `${name} · ${model} · ${translate(locale, "lane.thinking", { level: lane.thinking })} · ${run}`;
+}
+
 export function sessionStatus(locale: Locale, view: ConversationView | undefined): string {
 	if (view === undefined) return "";
 	const live = liveOf(view);
@@ -947,9 +993,7 @@ export function isBusy(view: ConversationView | undefined): boolean {
 
 /** The composer's placeholder names what the next submit will do. */
 export function composerPlaceholder(locale: Locale, attachedId: string | undefined): string {
-	return attachedId === undefined
-		? translate(locale, "composer.placeholderDetached")
-		: translate(locale, "composer.placeholder", { id: attachedId });
+	return attachedId === undefined ? translate(locale, "composer.placeholderDetached") : translate(locale, "composer.placeholder", { id: attachedId });
 }
 
 /** Inputs the session has accepted but not started yet, each with its own withdraw. */
@@ -979,9 +1023,23 @@ export function runControls(locale: Locale, mode: SubmitMode, attached: boolean)
 			tone: "default",
 			disabled: !attached,
 		},
+		fork: {
+			id: CONVERSATION_FORK_ACTION,
+			label: translate(locale, "header.fork"),
+			tone: "default",
+			disabled: !attached,
+		},
 		submitModes: [
-			{ mode: "steer", label: translate(locale, "composer.steer"), selected: mode === "steer" },
-			{ mode: "followUp", label: translate(locale, "composer.queue"), selected: mode === "followUp" },
+			{
+				mode: "steer",
+				label: translate(locale, "composer.steer"),
+				selected: mode === "steer",
+			},
+			{
+				mode: "followUp",
+				label: translate(locale, "composer.queue"),
+				selected: mode === "followUp",
+			},
 		],
 	};
 }
@@ -993,6 +1051,7 @@ export function failureView(locale: Locale, text: string): WebView {
 		roster: [],
 		rosterFilter: "",
 		focus: undefined,
+		lane: "",
 		history: { blocks: [], more: false, loading: false },
 		palette: commandPalette(locale, { draft: "", commands: [] }),
 		shortcuts: shortcuts(locale, ""),
@@ -1028,16 +1087,17 @@ export function buildWebView(input: WebViewInput): WebView {
 	const empty =
 		input.directory === undefined
 			? translate(locale, "header.connecting")
-			: (input.directory.sessions.length === 0
-					? translate(locale, "header.rosterEmpty")
-					: roster.length === 0
-						? translate(locale, "header.rosterNoMatch")
-						: undefined);
+			: input.directory.sessions.length === 0
+				? translate(locale, "header.rosterEmpty")
+				: roster.length === 0
+					? translate(locale, "header.rosterNoMatch")
+					: undefined;
 	return {
 		locale,
 		roster,
 		rosterFilter: input.rosterFilter,
 		focus: input.focus,
+		lane: input.lane === undefined ? "" : laneLine(locale, input.lane),
 		history: {
 			blocks: historyPageBlocks(locale, input.history),
 			more: input.historyMore,

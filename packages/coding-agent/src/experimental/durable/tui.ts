@@ -1,13 +1,5 @@
 import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@amazme/ai";
-import type {
-	ConversationId,
-	EntryRecord,
-	InboxState,
-	LiveState,
-	TaskGraph,
-	TaskGraphNode,
-	UsageState,
-} from "@amazme/durable";
+import type { ConversationId, EntryRecord, InboxState, LiveState, TaskGraph, TaskGraphNode, UsageState } from "@amazme/durable";
 import {
 	Box,
 	type Component,
@@ -44,7 +36,7 @@ import { ToolExecutionComponent, type ToolRenderers } from "../../modes/interact
 import { UserMessageComponent } from "../../modes/interactive/components/user-message.ts";
 import { getEditorTheme, getMarkdownTheme, initTheme, theme } from "../../modes/interactive/theme/theme.ts";
 import { InteractiveThemeController } from "../../modes/interactive/theme/theme-controller.ts";
-import { agentOf, type DurableController, type DurableView, type DurableViewSource } from "./runtime.ts";
+import { agentOf, type DurableController, type DurableView, type DurableViewSource, formatLane } from "./runtime.ts";
 
 const SELECT_THEME: SelectListTheme = {
 	selectedPrefix: (text) => theme.fg("accent", text),
@@ -96,8 +88,7 @@ class ListSelector extends Container implements Focusable {
 		}
 		this.#input.handleInput(data);
 		const query = this.#input.getValue();
-		const filtered =
-			query.length === 0 ? this.#items : fuzzyFilter(this.#items, query, (item) => `${item.label} ${item.value}`);
+		const filtered = query.length === 0 ? this.#items : fuzzyFilter(this.#items, query, (item) => `${item.label} ${item.value}`);
 		this.#list = this.#build(filtered);
 	}
 
@@ -214,7 +205,11 @@ class DurableTui {
 		const content = new Container();
 		content.addChild(this.#chat);
 		content.addChild(new Spacer(1));
-		const transcript = new ScrollView(content, { follow: "end", primary: true, overscroll: "chain" });
+		const transcript = new ScrollView(content, {
+			follow: "end",
+			primary: true,
+			overscroll: "chain",
+		});
 		this.#transcript = transcript;
 		const dock = new VStack([
 			{ component: this.#tasks, shrink: 1, minSize: 0 },
@@ -223,14 +218,7 @@ class DurableTui {
 			{ component: this.#editorContainer, shrink: 1, minSize: 3 },
 			{ component: this.#footer, shrink: 1, minSize: 0 },
 		]);
-		for (const component of [
-			this.#chat,
-			this.#tasks,
-			this.#queue,
-			this.#notices,
-			this.#editorContainer,
-			this.#footer,
-		]) {
+		for (const component of [this.#chat, this.#tasks, this.#queue, this.#notices, this.#editorContainer, this.#footer]) {
 			this.#ui.addChild(component);
 		}
 		this.#ui.setLayoutRoot(
@@ -277,10 +265,11 @@ class DurableTui {
 
 	apply(view: DurableView): void {
 		const live = (view.conversation.docs["amazme.live"] ?? {}) as LiveState;
-		this.#syncTranscript(view.conversation.entries);
+		const shown = [...view.history, ...view.conversation.entries];
+		this.#syncTranscript(shown);
 		const message = live.generation?.message as AssistantMessage | undefined;
 		// A partial without its entry was dropped, for example by a retry: render the transcript again.
-		if (message === undefined && this.#streaming !== undefined) this.#rebuild(view.conversation.entries);
+		if (message === undefined && this.#streaming !== undefined) this.#rebuild(shown);
 		if (message !== undefined) this.#syncStreaming(message);
 		for (const slot of live.tools ?? []) {
 			if (slot.status === "pending") continue;
@@ -290,11 +279,22 @@ class DurableTui {
 			component.markExecutionStarted();
 			const child = (slot.details as { conversationId?: number } | undefined)?.conversationId;
 			if (slot.output === undefined && child !== undefined) {
-				const text = `Subagent ${child} is working. /agents switches to it.`;
-				component.updateResult({ content: [{ type: "text", text }], details: slot.details, isError: false }, true);
+				const text = `Subagent ${child} is working. /tree switches to it.`;
+				component.updateResult(
+					{
+						content: [{ type: "text", text }],
+						details: slot.details,
+						isError: false,
+					},
+					true,
+				);
 			} else if (slot.output !== undefined) {
 				component.updateResult(
-					{ content: [{ type: "text", text: slot.output }], details: slot.details, isError: false },
+					{
+						content: [{ type: "text", text: slot.output }],
+						details: slot.details,
+						isError: false,
+					},
 					true,
 				);
 			}
@@ -318,11 +318,7 @@ class DurableTui {
 		// A conversation-owned task sits under the task that owns its conversation, when that task is live.
 		const owned = new Set(nodes.flatMap((node) => node.conversations));
 		const children = (node: TaskGraphNode) =>
-			nodes.filter(
-				(candidate) =>
-					candidate.owner === node.id ||
-					(candidate.owner === undefined && node.conversations.includes(candidate.conversationId)),
-			);
+			nodes.filter((candidate) => candidate.owner === node.id || (candidate.owner === undefined && node.conversations.includes(candidate.conversationId)));
 		const visit = (node: TaskGraphNode, depth: number): void => {
 			lines.push(`${"  ".repeat(depth + 1)}${describeTask(node)}`);
 			for (const child of children(node)) visit(child, depth + 1);
@@ -336,8 +332,7 @@ class DurableTui {
 	#syncQueue(inbox: InboxState): void {
 		this.#queue.clear();
 		for (const item of inbox.items) {
-			const text =
-				item.mode === "write" ? `<${String(item.entry.kind)}>` : userText(item.content as UserMessage["content"]);
+			const text = item.mode === "write" ? `<${String(item.entry.kind)}>` : userText(item.content as UserMessage["content"]);
 			this.#queue.addChild(new TruncatedText(theme.fg("muted", `[${item.mode}] ${text}`), 1, 0));
 		}
 	}
@@ -359,47 +354,46 @@ class DurableTui {
 			text = `Retrying (attempt ${generation.attempt + 1}): ${generation.retry.error}`;
 		} else if (generation?.deferred !== undefined) text = "Waiting for deferred response...";
 		else if (compaction !== undefined) {
-			text = compaction.retry
-				? `Retrying ${compaction.reason} compaction (attempt ${compaction.attempt + 1})...`
-				: `Compacting (${compaction.reason})...`;
+			text = compaction.retry ? `Retrying ${compaction.reason} compaction (attempt ${compaction.attempt + 1})...` : `Compacting (${compaction.reason})...`;
 		} else if (runningTool !== undefined) text = `Running ${runningTool.name}... (esc to abort)`;
 		else if (live.run !== undefined) text = "Working... (esc to abort)";
 		if (text === this.#statusText) return;
 		this.#statusText = text;
 		this.#indicator?.dispose();
-		this.#indicator = text
-			? new WorkingStatusIndicator(this.#ui, text, undefined, (part) => this.#editor.borderColor(part))
-			: undefined;
+		this.#indicator = text ? new WorkingStatusIndicator(this.#ui, text, undefined, (part) => this.#editor.borderColor(part)) : undefined;
 		this.#editor.setWorkingStatusIndicator(this.#indicator);
 	}
 
 	#syncFooter(view: DurableView): void {
 		const agent = agentOf(view.conversation);
-		const usage = totalUsage((view.conversation.docs["amazme.usage"] ?? { models: {}, tools: {} }) as UsageState);
+		const usage = totalUsage(
+			(view.conversation.docs["amazme.usage"] ?? {
+				models: {},
+				tools: {},
+			}) as UsageState,
+		);
 		const stats: string[] = [];
 		if (usage.input) stats.push(`↑${formatTokens(usage.input)}`);
 		if (usage.output) stats.push(`↓${formatTokens(usage.output)}`);
 		if (usage.cacheRead) stats.push(`R${formatTokens(usage.cacheRead)}`);
 		if (usage.cacheWrite) stats.push(`W${formatTokens(usage.cacheWrite)}`);
 		stats.push(`$${usage.cost.total.toFixed(3)}`);
-		const contextWindow =
-			view.models.find((model) => model.provider === agent.model?.provider && model.modelId === agent.model.modelId)
-				?.contextWindow ?? 0;
+		const contextWindow = view.models.find((model) => model.provider === agent.model?.provider && model.modelId === agent.model.modelId)?.contextWindow ?? 0;
 		if (contextWindow > 0) {
 			const tokens = contextTokens(view.conversation.entries);
 			const percent = tokens === undefined ? undefined : (tokens / contextWindow) * 100;
 			const text = `${percent === undefined ? "?" : percent.toFixed(1)}%/${formatTokens(contextWindow)}`;
 			stats.push(percent !== undefined && percent > 90 ? theme.fg("error", text) : text);
 		}
-		this.#footerStats.setText(theme.fg("dim", `${stats.join(" ")}  ${view.session.cwd}`));
-		const model = agent.model === undefined ? "no model" : `${agent.model.provider}/${agent.model.modelId}`;
-		const shown = view.conversations.find((candidate) => candidate.id === view.conversation.conversation.id);
-		const label = shown?.label ?? `conversation ${view.conversation.conversation.id}`;
+		const historyCue = view.history.length === 0 ? "" : view.historyMore ? " · older above" : " · start of history";
+		this.#footerStats.setText(
+			`${theme.fg(view.lane.role === "main" ? "dim" : "accent", formatLane(view.lane))}${theme.fg("dim", `${historyCue}  ${stats.join(" ")}  ${view.session.cwd}`)}`,
+		);
 		this.#footerHints.setText(
-			`${theme.fg(label === "main" ? "dim" : "accent", label)}${theme.fg(
+			theme.fg(
 				"dim",
-				` · ${model} · thinking:${agent.thinkingLevel ?? "off"} (${keyText("app.thinking.cycle")}) · ${keyText("app.model.select")} or /model · /agents · /compact · /tasks · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
-			)}`,
+				`/tree  /fork  /older  /agents  /model  /compact  /tasks  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
+			),
 		);
 	}
 
@@ -454,10 +448,7 @@ class DurableTui {
 			const result = message as ToolResultMessage;
 			this.#tool(result.toolName, result.toolCallId).updateResult(result);
 		} else if (entry.kind === "amazme.compaction") {
-			const summary = new CompactionComponent(
-				message?.role === "user" ? userText(message.content) : "",
-				this.#expanded,
-			);
+			const summary = new CompactionComponent(message?.role === "user" ? userText(message.content) : "", this.#expanded);
 			this.#summaries.push(summary);
 			this.#chat.addChild(new Spacer(1));
 			this.#chat.addChild(summary);
@@ -489,15 +480,7 @@ class DurableTui {
 			if (args !== undefined) existing.updateArgs(args);
 			return existing;
 		}
-		const component = new ToolExecutionComponent(
-			name,
-			callId,
-			args ?? {},
-			{},
-			DurableTui.#renderers[name],
-			this.#ui,
-			this.#cwd,
-		);
+		const component = new ToolExecutionComponent(name, callId, args ?? {}, {}, DurableTui.#renderers[name], this.#ui, this.#cwd);
 		component.setExpanded(this.#expanded);
 		this.#chat.addChild(component);
 		this.#cards.push(component);
@@ -560,11 +543,7 @@ function contextTokens(entries: readonly EntryRecord[]): number | undefined {
 	return undefined;
 }
 
-export async function runDurableTui(
-	source: DurableViewSource,
-	controller: DurableController,
-	settings: SettingsManager,
-): Promise<void> {
+export async function runDurableTui(source: DurableViewSource, controller: DurableController, settings: SettingsManager): Promise<void> {
 	setCapabilityOverrides(settings.getTerminalCapabilityOverrides());
 	// The system theme until the controller resolves the user's theme against the terminal's colors.
 	initTheme();
@@ -577,8 +556,7 @@ export async function runDurableTui(
 	const selectModel = (): void => {
 		const snapshot = source.current();
 		const current = agentOf(snapshot.conversation).model;
-		const isCurrent = (model: { provider: string; modelId: string }) =>
-			model.provider === current?.provider && model.modelId === current.modelId;
+		const isCurrent = (model: { provider: string; modelId: string }) => model.provider === current?.provider && model.modelId === current.modelId;
 		const items: SelectItem[] = [...snapshot.models]
 			.sort((left, right) => Number(isCurrent(right)) - Number(isCurrent(left)))
 			.map((model) => ({
@@ -592,7 +570,10 @@ export async function runDurableTui(
 			(value) => {
 				view.restoreEditor();
 				const separator = value.indexOf("/");
-				void controller.setModel({ provider: value.slice(0, separator), modelId: value.slice(separator + 1) });
+				void controller.setModel({
+					provider: value.slice(0, separator),
+					modelId: value.slice(separator + 1),
+				});
 			},
 			() => view.restoreEditor(),
 		);
@@ -601,10 +582,10 @@ export async function runDurableTui(
 
 	const selectConversation = (): void => {
 		const snapshot = source.current();
-		const items: SelectItem[] = [...snapshot.conversations].reverse().map((candidate) => ({
+		const items: SelectItem[] = snapshot.conversations.map((candidate) => ({
 			value: String(candidate.id),
-			label: candidate.label,
-			description: `${candidate.id === snapshot.conversation.conversation.id ? "(shown) " : ""}${candidate.title ?? ""}`,
+			label: `${"  ".repeat(candidate.depth)}${candidate.label}`,
+			description: `${String(candidate.id) === String(snapshot.conversation.conversation.id) ? "shown · " : ""}${candidate.role}`,
 		}));
 		const selector = new ListSelector(
 			"Switch to:",
@@ -624,7 +605,9 @@ export async function runDurableTui(
 			if (!trimmed) return;
 			if (trimmed === "/model") return selectModel();
 			if (trimmed === "/tasks") return void controller.toggleTasks();
-			if (trimmed === "/agents") return selectConversation();
+			if (trimmed === "/agents" || trimmed === "/tree") return selectConversation();
+			if (trimmed === "/fork") return void controller.fork();
+			if (trimmed === "/older") return void controller.loadOlder();
 			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);

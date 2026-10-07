@@ -10,6 +10,8 @@
 			"@amazme/agent/*": ["../agent/dist/*.d.ts"],
 			"@amazme/ai": ["../ai/dist/index.d.ts"],
 			"@amazme/ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"],
+			"@amazme/durable": ["../durable/dist/index.d.ts"],
+			"@amazme/durable/*": ["../durable/dist/*.d.ts", "../durable/dist/*"],
 			"@amazme/tui": ["../tui/dist/index.d.ts"],
 			"@amazme/tui/*": ["../tui/dist/*.d.ts", "../tui/dist/components/*.d.ts"]
 		},

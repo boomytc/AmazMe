@@ -47,7 +47,7 @@ page take effect after the host restarts.
 | session | `Workspace` | the Session's working directory as a listing and a text reader, with paths confined to that directory | add file writing, git status, and a diff view |
 | session | `Terminal` | one shell per Session over the same execution path as the bash tool, with streamed output in replicated state and a stop control | add a persistent shell session and per-command timeouts |
 | session | `Approvals` | the tool calls paused at the boundary by the `toolApproval` policy, with a decision that releases each one (approve runs it, deny blocks it) | add per-tool rules and remembered decisions |
-| session | `Conversations` | the Session's conversation list with its ownership edges, the live task graph projected to a plain list, stored-history paging, and per-conversation prompt/steer/abort | add conversation creation and forking from the presentation |
+| session | `Conversations` | the Session's conversation list with fork and subagent edges, the focused conversation (restored from `amazme.session.focus`), its lane, stored-history paging, and per-conversation prompt/steer/follow-up/abort/compact | a branch-summary entry on navigate is a Durable gap: see TODO |
 | session | `Models` | state, default-persisting selection, thinking, refresh implemented | move provider/auth composition behind plugin facets |
 | session | `AgentController` | presentation-safe facade over the root durable conversation for prompting, steering, follow-ups, queue cancellation, abort, compaction, and waiting for a prompt's answer | add new conversation operations only when a presentation requires them |
 | session | `Transcript` | the root conversation's durable `ConversationView` as replicated state | add projections only when another presentation needs them |
@@ -76,7 +76,5 @@ A facet always calls unqualified `env.use()` or `env.observe()`. The host resolv
 
 Deferred while the worker moves from the removed `AgentHarness` to `@amazme/durable`:
 
-- Tree navigation: `AgentController.navigate()` is dropped. Durable branches by forking into a new conversation, so navigation needs a fork, a summary entry that starts the new context, and a pointer to the Session's current conversation.
+- Branch summary on navigate. Pi's `navigateTree` writes a branch-summary entry and moves a leaf pointer inside one transcript. Durable has `Conversation.fork(at)` and no leaf pointer and no branch-summary entry kind. This slice forks at an entry, then stores the focused conversation id in the session document `amazme.session.focus` and selects it. A branch-summary entry written as part of navigation is a Durable contract gap (`Conversation.fork` would need to admit that entry, or a new entry kind would).
 - Next-run queue: `AgentController.nextRun()` is dropped. Durable queues only steering and follow-up input. `resume()` is dropped as well: the worker resumes interrupted work when it opens the Session.
-- Subagents: the services cover only the root conversation. Exposing subagent conversations needs keyed service instances per conversation.
-- Transcript history: the `Transcript` state is the conversation's view, which holds only the active context since the newest reset or compaction. Older entries need a paging method over `Conversation.entries()`.
