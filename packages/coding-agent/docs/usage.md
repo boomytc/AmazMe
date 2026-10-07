@@ -135,6 +135,16 @@ for a model that reasons, its thinking level; it opens a card listing the host's
 provider and the levels that model supports, and either choice lands in that session's configuration on the host,
 so the next turn resolves its model and level from it.
 
+A draft that starts with `/` opens the command palette. It lists the session's own commands (`model`, `thinking`,
+`compact`, `reload`), the prompt templates that session loaded, and its skills as `/skill:<name>` — the same three
+sources the TUI's menu carries, with a `template` or `skill` tag beside the rows that came from a resource, and the
+argument hint from the resource's frontmatter. `Tab` completes the highlighted row and `Enter` runs it. The session's own
+commands run on the host and report their note or problem on the connection line; a template or a skill is expanded
+there too, with the same code the TUI expands it with (`$1`/`$ARGUMENTS` substitution, or a `<skill>` block plus the
+arguments), and the page then sends that prompt on its normal path, so a focused conversation and the composer's
+Steer/Queue mode still apply. A skill written, imported, or removed in **Skills**, or the **Skills as commands** switch
+in there, reaches the palette at once; a template file added on disk arrives with `/reload`.
+
 Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
 served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of
 rendering an empty shell. A document request that arrives before the host runtime exists waits for its manifest

@@ -107,11 +107,15 @@ task 与会话 id），钩子在那里等；页面在 composer 上方给出卡�
 
 ## 命令、快捷键与复制
 
-- 命令：composer 里以 `/` 开头的草稿打开命令面板。面板先按前缀过滤会话自己发布的命令目录（`amazme.commands`：
-  model／thinking／compact／reload），补上空格后改为请求宿主的参数补全（模型 id、推理档）；Tab 补全高亮的行，
-  Enter 运行。`enableSkillCommands` 打开时，页面把已加载技能追加成 `/skill:<name>`，运行它时按 CLI 的
-  `_expandSkillCommand` 形状（`<skill name location>` 块 + 参数）展开成一次 prompt。执行结果显示在连接行：
-  成功是宿主的 note，失败是 problem（命令结果因此是值而不是异常，避免 RPC 把信息抹成一句话）。
+- 命令：composer 里以 `/` 开头的草稿打开命令面板。目录全部来自宿主 `amazme.commands` 的会话目录，三类：
+  宿主自己的四条（model／thinking／compact／reload）、会话加载的 prompt 模板、以及技能（`/skill:<name>`，
+  `enableSkillCommands` 关闭时不列出）。面板按前缀过滤，每行的来源以「模板／技能」标出（宿主自己的命令不带标），
+  补上空格后改为请求宿主的参数补全（模型 id、推理档）；Tab 补全高亮的行，Enter 运行。
+  运行分两条路：宿主自己的命令走 `Commands.run`，结果是 note 或 problem（命令结果因此是值而不是异常，避免 RPC
+  把信息抹成一句话）；模板与技能走 `Commands.expand` 取回 prompt 文本，再由页面按自己的发送路径发给当前聚焦的
+  对话。展开与终端同一份实现（模板用 `expandPromptTemplate`，技能用 `core/skill-command.ts` 的
+  `<skill name location>` 块 + 参数），所以同一条命令在网页与终端给模型的文本一致。目录会随技能面板的改动与
+  `enableSkillCommands` 开关自动重读，新写的技能不必重启 worker；新增模板文件按终端的老规矩走 `/reload`。
 - 快捷键：`shortcuts.ts` 是一张表，同时用于读者可见的说明和按键匹配。产品键沿用 DSH 网页端的约定
   （`primary`＋Alt：⌘⌥N 新建会话、⌘⌥M 轮换管理视图）；`/` 在不处于输入框时聚焦 composer；回合运行中连按两次
   Esc 停止（阈值 500ms，与 TUI、DSH 的 stopSequence 一致）。`Escape` 仍然优先关闭模态框、视图卡片与模型卡片。

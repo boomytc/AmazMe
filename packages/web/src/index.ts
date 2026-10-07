@@ -51,15 +51,13 @@ export {
 } from "./locale.ts";
 export {
 	commandPalette,
-	expandSkillCommand,
 	parseCommandLine,
-	skillCommands,
-	stripFrontmatter,
 	type CommandCompletionLike,
 	type CommandLike,
 	type CommandLine,
 	type CommandPalette,
 	type CommandRow,
+	type CommandSource,
 } from "./commands.ts";
 export {
 	conversationsPanel,

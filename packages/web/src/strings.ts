@@ -163,6 +163,8 @@ export const EN = {
 	"welcome.note": "The guide comes back through Settings → Interface → Welcome guide.",
 
 	"palette.title": "Commands",
+	"palette.tagTemplate": "template",
+	"palette.tagSkill": "skill",
 	"palette.noCommands": "No command starts with that.",
 	"palette.noCompletions": "Nothing to complete here.",
 	"palette.hint": "Tab completes, Enter runs.",
@@ -488,6 +490,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"welcome.note": "引导可以在「设置 → 界面 → 欢迎引导」里重新打开。",
 
 	"palette.title": "命令",
+	"palette.tagTemplate": "模板",
+	"palette.tagSkill": "技能",
 	"palette.noCommands": "没有以它开头的命令。",
 	"palette.noCompletions": "这里没有可补全的取值。",
 	"palette.hint": "Tab 补全，Enter 运行。",

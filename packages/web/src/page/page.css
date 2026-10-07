@@ -1368,6 +1368,14 @@ summary.disclosure-row {
 	background: var(--dsw-alias-interactive-bg-hover);
 }
 
+.palette-tag {
+	flex: none;
+	width: 48px;
+	color: var(--dsw-alias-label-caption);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
 .palette-name {
 	font-weight: 500;
 	white-space: nowrap;

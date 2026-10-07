@@ -1,18 +1,21 @@
 /**
  * The composer's command palette, as a projection: a draft line parsed into a command and its
- * argument, the host's catalogue filtered by it, the argument completions, and the `/skill:<name>`
- * commands the loaded skills offer. The expansion of a skill command mirrors the CLI's
- * `_expandSkillCommand`, so a skill invoked from the page reaches the model in the same shape it
- * would from the terminal.
+ * argument, the host's catalogue filtered by it, and the argument completions the host offers. The
+ * catalogue carries where each command came from, so a row can say whether it is the host's own
+ * command, a prompt template, or a skill — the same three sources the terminal lists.
  */
 import type { Locale } from "./locale.ts";
 import { translate } from "./strings.ts";
+
+/** Where a command comes from, as the host reports it. */
+export type CommandSource = "builtin" | "template" | "skill";
 
 /** One command the host offers, as the page reads it from the session's catalogue. */
 export interface CommandLike {
 	readonly name: string;
 	readonly description: string;
 	readonly argumentHint?: string;
+	readonly source?: CommandSource;
 }
 
 /** One completion the host offers for a command's argument. */
@@ -58,6 +61,8 @@ export interface CommandRow {
 	readonly description: string;
 	/** The command's argument shape, shown beside a command row. */
 	readonly hint?: string;
+	/** Where the command came from, when the host said. */
+	readonly tag?: string;
 	readonly selected: boolean;
 }
 
@@ -76,10 +81,17 @@ const CLOSED: (locale: Locale) => CommandPalette = (locale) => ({
 	rows: [],
 });
 
+/** The row tag for one source. The host's own commands carry none. */
+function sourceTag(locale: Locale, source: CommandSource | undefined): string | undefined {
+	if (source === "template") return translate(locale, "palette.tagTemplate");
+	if (source === "skill") return translate(locale, "palette.tagSkill");
+	return undefined;
+}
+
 /**
  * The palette for one draft. While the draft is still a bare name, the rows are the host's commands
- * (and the skill commands) that start with it; once a space follows a known command, the rows are
- * that command's argument completions. `selected` marks the row the renderer highlights.
+ * that start with it; once a space follows a known command, the rows are that command's argument
+ * completions. `selected` marks the row the renderer highlights.
  */
 export function commandPalette(
 	locale: Locale,
@@ -110,46 +122,21 @@ export function commandPalette(
 	}
 	const rows = options.commands
 		.filter((command) => command.name.startsWith(line.name))
-		.map((command, index) => ({
-			value: command.name,
-			label: `/${command.name}`,
-			description: command.description,
-			...(command.argumentHint === undefined ? {} : { hint: command.argumentHint }),
-			selected: index === selected,
-		}));
+		.map((command, index) => {
+			const tag = sourceTag(locale, command.source);
+			return {
+				value: command.name,
+				label: `/${command.name}`,
+				description: command.description,
+				...(command.argumentHint === undefined ? {} : { hint: command.argumentHint }),
+				...(tag === undefined ? {} : { tag }),
+				selected: index === selected,
+			};
+		});
 	return {
 		open: true,
 		title,
 		rows,
 		...(rows.length === 0 ? { empty: translate(locale, "palette.noCommands") } : {}),
 	};
-}
-
-/** The `/skill:<name>` commands the loaded skills offer, once the agent registers them. */
-export function skillCommands(skills: readonly { readonly name: string; readonly description: string }[]): CommandLike[] {
-	return skills.map((skill) => ({ name: `skill:${skill.name}`, description: skill.description, argumentHint: "[args]" }));
-}
-
-/** The file's frontmatter removed, the way the CLI's skill expansion strips it. */
-export function stripFrontmatter(content: string): string {
-	if (!content.startsWith("---")) return content;
-	const end = content.indexOf("\n---", 3);
-	if (end === -1) return content;
-	const after = content.indexOf("\n", end + 1);
-	return after === -1 ? "" : content.slice(after + 1);
-}
-
-/**
- * The prompt one skill command expands to: the skill's own body in a `<skill>` block, then the
- * reader's arguments. This is the CLI's shape, so the model sees the same thing either way.
- */
-export function expandSkillCommand(
-	skill: { readonly name: string; readonly filePath: string; readonly content: string },
-	args: string,
-): string {
-	const baseDir = skill.filePath.slice(0, Math.max(0, skill.filePath.lastIndexOf("/")));
-	const body = stripFrontmatter(skill.content).trim();
-	const block = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`;
-	const trimmed = args.trim();
-	return trimmed.length === 0 ? block : `${block}\n\n${trimmed}`;
 }

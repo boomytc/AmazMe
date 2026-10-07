@@ -13,7 +13,6 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import {
 	type AfterToolCallContext,
@@ -56,7 +55,6 @@ import {
 	streamSimple,
 } from "@amazme/ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
-import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { processImage } from "../utils/image-process.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
@@ -134,6 +132,7 @@ import {
 } from "./session-manager.ts";
 import { type CacheWarmingMode, DEFAULT_TOOL_NAMES, type SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
+import { skillCommandPrompt } from "./skill-command.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, isSyntheticPath, type SourceInfo } from "./source-info.ts";
 import {
 	buildSystemPrompt,
@@ -2158,10 +2157,7 @@ export class AgentSession {
 		if (!skill) return text; // Unknown skill, pass through
 
 		try {
-			const content = readFileSync(skill.filePath, "utf-8");
-			const body = stripFrontmatter(content).trim();
-			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
-			return args ? `${skillBlock}\n\n${args}` : skillBlock;
+			return skillCommandPrompt(skill, args);
 		} catch (err) {
 			// Emit error like extension commands do
 			this._extensionRunner.emitError({

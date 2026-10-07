@@ -1107,6 +1107,9 @@ export function createRenderer(
 		view.palette.rows.forEach((row, index) => {
 			const node = button(row.selected ? "palette-row selected" : "palette-row");
 			node.dataset.value = row.value;
+			// Every row carries the tag slot, so the names keep one left edge whether or not the
+			// command came from a resource.
+			node.append(element("span", "palette-tag", row.tag ?? ""));
 			node.append(element("span", "palette-name", row.label));
 			if (row.hint !== undefined) node.append(element("span", "palette-hint", row.hint));
 			node.append(element("span", "palette-desc", row.description));

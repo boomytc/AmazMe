@@ -1,17 +1,11 @@
 import { describe, expect, test } from "vitest";
-import {
-	commandPalette,
-	expandSkillCommand,
-	parseCommandLine,
-	skillCommands,
-	stripFrontmatter,
-} from "../src/commands.ts";
+import { commandPalette, parseCommandLine } from "../src/commands.ts";
 import { gestureKeys, isApplePlatform, matchShortcut, shortcuts, STOP_SEQUENCE_MS } from "../src/shortcuts.ts";
 
 const COMMANDS = [
-	{ name: "model", description: "Select the model", argumentHint: "<provider/model>" },
-	{ name: "thinking", description: "Set the reasoning level", argumentHint: "<level>" },
-	{ name: "compact", description: "Summarize the conversation so far", argumentHint: "[instructions]" },
+	{ name: "model", description: "Select the model", argumentHint: "<provider/model>", source: "builtin" as const },
+	{ name: "thinking", description: "Set the reasoning level", argumentHint: "<level>", source: "builtin" as const },
+	{ name: "compact", description: "Summarize the conversation so far", argumentHint: "[instructions]", source: "builtin" as const },
 ];
 
 describe("command lines", () => {
@@ -71,30 +65,30 @@ describe("command lines", () => {
 		expect(commandPalette("zh", { draft: "/mo", commands: COMMANDS }).title).toBe("命令");
 	});
 
-	test("offers the loaded skills as /skill: commands", () => {
-		expect(skillCommands([{ name: "weekly-report", description: "Draft the report" }])).toEqual([
-			{ name: "skill:weekly-report", description: "Draft the report", argumentHint: "[args]" },
+	test("offers the session's resource commands, each tagged with where it came from", () => {
+		const commands = [
+			...COMMANDS,
+			{ name: "weekly-report", description: "Draft the report", source: "template" as const },
+			{ name: "skill:draft-brief", description: "Draft a brief", argumentHint: "[args]", source: "skill" as const },
+		];
+		const palette = commandPalette("en", { draft: "/", commands });
+		expect(palette.rows.map((row) => [row.label, row.tag])).toEqual([
+			["/model", undefined],
+			["/thinking", undefined],
+			["/compact", undefined],
+			["/weekly-report", "template"],
+			["/skill:draft-brief", "skill"],
 		]);
-		const palette = commandPalette("en", {
-			draft: "/skill:w",
-			commands: skillCommands([{ name: "weekly-report", description: "Draft the report" }]),
-		});
-		expect(palette.rows.map((row) => row.label)).toEqual(["/skill:weekly-report"]);
-	});
-});
-
-describe("skill expansion", () => {
-	test("strips the frontmatter and wraps the body the way the CLI does", () => {
-		const content = "---\nname: weekly-report\ndescription: Draft\n---\n\n# Steps\n\nDo it.\n";
-		expect(stripFrontmatter(content)).toBe("\n# Steps\n\nDo it.\n");
-		expect(expandSkillCommand({ name: "weekly-report", filePath: "/agent/skills/weekly-report/SKILL.md", content }, "")).toBe(
-			'<skill name="weekly-report" location="/agent/skills/weekly-report/SKILL.md">\nReferences are relative to /agent/skills/weekly-report.\n\n# Steps\n\nDo it.\n</skill>',
-		);
-		expect(
-			expandSkillCommand({ name: "weekly-report", filePath: "/agent/skills/weekly-report/SKILL.md", content }, "  this week  "),
-		).toContain("</skill>\n\nthis week");
-		// A file without frontmatter is used as it is.
-		expect(stripFrontmatter("# Body\n")).toBe("# Body\n");
+		const skills = commandPalette("en", { draft: "/skill:d", commands });
+		expect(skills.rows.map((row) => row.label)).toEqual(["/skill:draft-brief"]);
+		// The tags are the reader's language.
+		expect(commandPalette("zh", { draft: "/", commands }).rows.map((row) => row.tag)).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			"模板",
+			"技能",
+		]);
 	});
 });
 

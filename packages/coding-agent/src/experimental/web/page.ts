@@ -31,7 +31,6 @@ import {
 	COMPACT_MODAL,
 	commandPalette,
 	compactModal,
-	expandSkillCommand,
 	buildWebView,
 	CHAT_VIEW,
 	collectPageElements,
@@ -84,7 +83,6 @@ import {
 	SKILL_REMOVE_ACTION,
 	SESSION_REMOVE_ACTION,
 	SETTINGS_VIEW,
-	skillCommands,
 	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
 	WORKSPACE_OPEN_ACTION,
@@ -95,6 +93,7 @@ import {
 	skillModal,
 	SUBMIT_MODE_ACTION,
 	translate,
+	type CommandLike,
 	type Locale,
 	type MessageKey,
 	type PageElements,
@@ -269,6 +268,11 @@ class SessionPainter {
 		return this.#commands?.state.value?.commands ?? [];
 	}
 
+	/** That catalogue's replicated state, so a page repaints when the host revises it. */
+	get commandsState(): ReplicatedState<CommandsState> | undefined {
+		return this.#commands?.state;
+	}
+
 	/** Run one of the host's commands; the result carries the note or the problem to show. */
 	async runCommand(name: string, args: string): Promise<{ readonly ok: boolean; readonly message: string }> {
 		const commands = this.#commands;
@@ -280,6 +284,26 @@ class SessionPainter {
 	/** The host's completions for one command's argument. */
 	async complete(name: string, prefix: string): Promise<readonly { value: string; label: string; description?: string }[]> {
 		return (await this.#commands?.complete(name, prefix, BACKGROUND_CONTEXT)) ?? [];
+	}
+
+	/**
+	 * The prompt a resource command stands for — a prompt template or a skill. The host expands it
+	 * with the same code the terminal uses, so both clients send the model the same text; the page
+	 * sends it, so a focused conversation and the composer's submit mode still apply.
+	 */
+	async expandCommand(
+		name: string,
+		args: string,
+	): Promise<{ readonly ok: boolean; readonly message: string }> {
+		const commands = this.#commands;
+		if (commands === undefined) return { ok: false, message: translate(this.locale, "page.commandUnknown", { name }) };
+		const expansion = await commands.expand(name, args, BACKGROUND_CONTEXT);
+		return expansion.ok ? { ok: true, message: expansion.prompt } : { ok: false, message: expansion.problem };
+	}
+
+	/** Have the host re-read the session's templates and skills after their files changed. */
+	async refreshCommands(): Promise<void> {
+		await this.#commands?.refresh(BACKGROUND_CONTEXT);
 	}
 
 	/**
@@ -527,18 +551,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	/**
-	 * The commands the composer offers: the session's own catalogue, and — when the agent registers
-	 * skills as commands — one `/skill:<name>` per loaded skill.
+	 * The commands the composer offers, as the host published them: its own four, the session's
+	 * prompt templates, and its skills. `enableSkillCommands` still decides whether skill rows show,
+	 * so the switch reaches this page without a worker restart.
 	 */
-	const composerCommands = (): readonly { name: string; description: string; argumentHint?: string }[] => {
-		const host = painter.commands.map((command) => ({
-			name: command.name,
-			description: command.description,
-			...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
-		}));
+	const composerCommands = (): readonly CommandLike[] => {
+		const host = painter.commands;
 		const skillsEnabled = settingValue("enableSkillCommands") !== "false";
-		if (!skillsEnabled) return host;
-		return [...host, ...skillCommands(skills.state.value?.skills ?? [])];
+		if (skillsEnabled) return host;
+		return host.filter((command) => command.source !== "skill");
 	};
 
 	/** The session's root conversation id, as the host's conversation list reports it. */
@@ -568,6 +589,23 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The catalogue's value for one field, once the host has published it. */
 	const settingValue = (id: string): string | undefined =>
 		settings.state.value?.descriptors.find((descriptor) => descriptor.id === id)?.value;
+
+	/**
+	 * The host read the session's command resources when it attached. A skill written, removed, or
+	 * imported in the panel, or the skill-command switch, must reach the palette without a worker
+	 * restart, so the host re-reads them whenever those inputs move. Templates follow their files:
+	 * `/reload` picks up a new one, exactly as the terminal documents it.
+	 */
+	const catalogInputs = (): string =>
+		`${skills.state.value?.revision ?? 0}:${settingValue("enableSkillCommands") ?? ""}`;
+	let catalogRead = catalogInputs();
+	const refreshCommandResources = (): void => {
+		const inputs = catalogInputs();
+		if (inputs === catalogRead) return;
+		catalogRead = inputs;
+		void painter.refreshCommands().catch(() => {});
+	};
+
 	/**
 	 * A switch made in the panel reaches this page through the replicated settings: the resolved
 	 * language and palette follow the host's value, so both tabs agree without a reload.
@@ -580,6 +618,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		painter.locale = locale;
 		applyTheme(appearance);
 		document.documentElement.lang = documentLanguage(locale);
+		refreshCommandResources();
 		paintSafely(() =>
 			renderer.render(
 				buildWebView({
@@ -642,6 +681,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	feedback.state.subscribe(() => paint());
 	settings.state.subscribe(() => paint());
 	skills.state.subscribe(() => paint());
+	// The catalogue itself moves when the host re-reads the session's templates and skills.
+	painter.commandsState?.subscribe(() => paint());
 	plugins.state.subscribe(() => paint());
 	// A schedule added, run, or paused here — or in another tab — repaints the automation panel.
 	schedules.state.subscribe(() => paint());
@@ -787,22 +828,21 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		})();
 	};
 	/**
-	 * Run one command line. A skill command expands here, the way the CLI expands it, and becomes a
-	 * prompt; anything else is the host's to run, and its note or problem reaches the connection line.
+	 * Run one command line. A resource command — a prompt template or a skill — is expanded by the
+	 * host and sent on this page's own prompt path, so the focused conversation and the submit mode
+	 * still apply; the host's own commands run on the host, and their note or problem reaches the
+	 * connection line.
 	 */
 	const runCommandLine = (name: string, args: string): void => {
-		if (name.startsWith("skill:")) {
-			const skillName = name.slice("skill:".length);
-			const summary = skills.state.value?.skills.find((skill) => skill.name === skillName);
-			if (summary === undefined) {
-				renderer.setConnection(copy("page.commandUnknown", { name }), "error");
-				return;
-			}
-			void skills.read(skillName, BACKGROUND_CONTEXT).then(
-				(content) => {
-					// The skill becomes a prompt, so the model sees the same block the CLI sends.
-					const expanded = expandSkillCommand({ name: summary.name, filePath: summary.filePath, content }, args);
-					return painter.submit(expanded, submitMode, []);
+		const command = composerCommands().find((candidate) => candidate.name === name);
+		if (command !== undefined && command.source !== "builtin") {
+			void painter.expandCommand(name, args).then(
+				(expansion) => {
+					if (!expansion.ok) {
+						renderer.setConnection(expansion.message, "error");
+						return;
+					}
+					return painter.submit(expansion.message, submitMode, []);
 				},
 				(error: unknown) => {
 					renderer.setConnection(copy("page.commandFailed", { error: message(error) }), "error");

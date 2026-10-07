@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@amazme/client";
@@ -688,12 +688,46 @@ describe("web client interactive loop", () => {
 			const host = await startLoopHost();
 			const presentation = await openPresentation(host);
 			const created = await presentation.management.create({ id: "web-loop-commands" }, BACKGROUND_CONTEXT);
+			// A template and a skill in the agent directory become commands of the session the reader
+			// attaches: the same two resources the terminal lists, read by the host's own loaders.
+			const agentDir = process.env.AMAZME_CODING_AGENT_DIR!;
+			await mkdir(join(agentDir, "prompts"), { recursive: true });
+			await writeFile(
+				join(agentDir, "prompts", "web-loop-report.md"),
+				"---\ndescription: Draft the loop report\n---\n\nReport for $1.\n",
+				"utf8",
+			);
+			await mkdir(join(agentDir, "skills", "web-loop-brief"), { recursive: true });
+			await writeFile(
+				join(agentDir, "skills", "web-loop-brief", "SKILL.md"),
+				"---\nname: web-loop-brief\ndescription: Draft a brief\n---\n\n# Steps\n\nWrite it.\n",
+				"utf8",
+			);
 			const attached = await attachSession(presentation, created.sessionId);
 
-			await waitFor(() => (attached.commands.state.value?.commands ?? []).length > 0, "the command catalogue");
+			await waitFor(() => (attached.commands.state.value?.commands ?? []).length > 4, "the command catalogue");
 			const catalogue = attached.commands.state.value?.commands ?? [];
-			expect(catalogue.map((command) => command.name)).toEqual(["model", "thinking", "compact", "reload"]);
+			expect(catalogue.map((command) => [command.name, command.source])).toEqual([
+				["model", "builtin"],
+				["thinking", "builtin"],
+				["compact", "builtin"],
+				["reload", "builtin"],
+				["web-loop-report", "template"],
+				["skill:web-loop-brief", "skill"],
+			]);
 			expect(catalogue.find((command) => command.name === "model")?.argumentHint).toBe("<provider/model>");
+			// The host expands a resource command with the same code the terminal uses, and the
+			// presentation sends the prompt on its own path.
+			expect(await attached.commands.expand("web-loop-report", "w34", BACKGROUND_CONTEXT)).toEqual({
+				ok: true,
+				prompt: "Report for w34.",
+			});
+			const skillPrompt = await attached.commands.expand("skill:web-loop-brief", "", BACKGROUND_CONTEXT);
+			expect(skillPrompt.ok && skillPrompt.prompt).toContain("<skill name=\"web-loop-brief\"");
+			expect(skillPrompt.ok && skillPrompt.prompt).toContain("# Steps\n\nWrite it.");
+			expect(await attached.commands.expand("nope", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
+			// A built-in is not a prompt; the presentation runs it instead.
+			expect(await attached.commands.expand("model", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
 
 			await waitFor(() => attached.models.state.value !== undefined, "the models state");
 			// /thinking takes a level the attached model reports, and says so when it does not.
@@ -739,10 +773,11 @@ describe("web client interactive loop", () => {
 				ok: true,
 				note: "Compacting the conversation.",
 			});
-			// /reload rebuilds this session's plugin generation, and an unknown name is a problem.
+			// /reload rebuilds this session's plugin generation and re-reads its command resources,
+			// and an unknown name is a problem.
 			expect(await attached.commands.run("reload", "", BACKGROUND_CONTEXT)).toEqual({
 				ok: true,
-				note: "Reloaded this session's plugins.",
+				note: "Reloaded this session's plugins and command resources.",
 			});
 			expect(await attached.commands.run("nope", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
 

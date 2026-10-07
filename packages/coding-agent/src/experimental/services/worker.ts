@@ -106,7 +106,7 @@ export async function createSessionWorkerServices(options: {
 		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
 		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
-		createCommandsFacet(),
+		createCommandsFacet({ cwd: options.cwd, settings: options.settingsManager }),
 		createConversationsFacet({ harness: options.harness, root: options.conversation }),
 		...(options.approvalGate === undefined ? [] : [createApprovalsFacet(options.approvalGate)]),
 		createWorkspaceFacet({ cwd: options.cwd }),
