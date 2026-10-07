@@ -525,11 +525,22 @@ export interface WindowApp {
 	readonly version: string;
 }
 
+function writeWindowTitle(app: WindowApp, view: Pick<WebView, "sessionLabel" | "approvalIndicator">): void {
+	document.title = windowTitle({
+		appName: app.name,
+		version: app.version,
+		sessionName: view.sessionLabel,
+		pendingCount: view.approvalIndicator?.count ?? 0,
+	});
+}
+
 export function createRenderer(
 	elements: PageElements,
 	onSelect: (sessionId: string) => void = () => {},
 	app?: WindowApp,
 ): PageRenderer {
+	// Before the first paint there is no session. The desktop smoke reads this as soon as the document loads.
+	if (app !== undefined) writeWindowTitle(app, { sessionLabel: undefined, approvalIndicator: undefined });
 	let lastView: WebView | undefined;
 	/** Reader disclosure choices, keyed by block id so a rebuild keeps them. */
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
@@ -1427,14 +1438,7 @@ export function createRenderer(
 		},
 		render(view: WebView): void {
 			lastView = view;
-			if (app !== undefined) {
-				document.title = windowTitle({
-					appName: app.name,
-					version: app.version,
-					sessionName: view.sessionLabel,
-					pendingCount: view.approvalIndicator?.count ?? 0,
-				});
-			}
+			if (app !== undefined) writeWindowTitle(app, view);
 			const stick = atBottom(elements.transcript);
 
 			elements.newSession.disabled = !view.newSession.enabled;

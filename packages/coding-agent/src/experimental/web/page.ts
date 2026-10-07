@@ -22,7 +22,6 @@ import {
 	attachmentRejection,
 	BOOT_GLOBAL,
 	buildWebView,
-	windowTitle,
 	CHAT_VIEW,
 	COMPACT_ACTION,
 	COMPACT_MODAL,
@@ -601,16 +600,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		fail(renderer, new Error(translate(FALLBACK_LOCALE, "page.noManifest")), FALLBACK_LOCALE);
 		return undefined;
 	}
-	const applyWindowTitle = (sessionName: string | undefined, pendingCount: number): void => {
-		document.title = windowTitle({
-			appName: manifest.app.name,
-			version: manifest.app.version,
-			sessionName,
-			pendingCount,
-		});
-	};
-	// Before the first paint there is no session. The desktop smoke reads this title as soon as the document loads.
-	applyWindowTitle(undefined, 0);
 	const client = new Client({
 		serverId: manifest.server.id,
 		transportFactory: createWebSocketTransportFactory({
@@ -823,10 +812,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						...(modalNotice === undefined ? {} : { modalNotice }),
 					},
 				});
-		paintSafely(() => {
-			applyWindowTitle(built.sessionLabel, built.approvalIndicator?.count ?? 0);
-			renderer.render(withReturnPoints(built, returnPoints, painter.conversations?.branchSummarySkipPrompt === true));
-		});
+		paintSafely(() => renderer.render(withReturnPoints(built, returnPoints, painter.conversations?.branchSummarySkipPrompt === true)));
 		refreshReturnPoints();
 	};
 

@@ -93,6 +93,30 @@ describe("windowTitle", () => {
 		);
 	});
 
+	test("escapes a session name that starts with a count so only pending approvals prefix the title", () => {
+		expect(windowTitle({ appName: "AmazMe", version: "1.0.4", sessionName: "(3) x", pendingCount: 0 })).toBe(
+			"\uFF083\uFF09 x — AmazMe",
+		);
+		expect(windowTitle({ appName: "AmazMe", version: "1.0.4", sessionName: "(3) x", pendingCount: 1 })).toBe(
+			"(1) \uFF083\uFF09 x — AmazMe",
+		);
+		expect(windowTitle({ appName: "AmazMe", version: "1.0.4", sessionName: "(03) draft", pendingCount: 0 })).toBe(
+			"\uFF0803\uFF09 draft — AmazMe",
+		);
+		expect(windowTitle({ appName: "AmazMe", version: "1.0.4", sessionName: "Plan (3) x", pendingCount: 0 })).toBe(
+			"Plan (3) x — AmazMe",
+		);
+
+		const named = buildWebView(
+			input({
+				directory: { sessions: [{ sessionId: "alpha-1", createdAt: 1, name: "(3) x" }] },
+			}),
+		);
+		expect(named.sessionLabel).toBe("(3) x");
+		expect(named.approvalIndicator).toBeUndefined();
+		expect(titleFromView(named)).toBe("\uFF083\uFF09 x — AmazMe");
+	});
+
 	test("reads the roster display name and the header indicator, including a cleared queue", () => {
 		const named = buildWebView(input());
 		expect(named.sessionLabel).toBe("Weekly report");
@@ -169,5 +193,25 @@ describe("document title on each render", () => {
 
 		renderer.render(buildWebView(input({ attachedId: undefined, directory: undefined })));
 		expect(document.title).toBe("AmazMe 1.0.4");
+
+		renderer.render(
+			buildWebView(
+				input({
+					directory: { sessions: [{ sessionId: "alpha-1", createdAt: 1, name: "(3) x" }] },
+					approvals: undefined,
+				}),
+			),
+		);
+		expect(document.title).toBe("\uFF083\uFF09 x — AmazMe");
+
+		renderer.render(
+			buildWebView(
+				input({
+					directory: { sessions: [{ sessionId: "alpha-1", createdAt: 1, name: "(3) x" }] },
+					approvals: { pending: [{ id: "a", tool: "bash", detail: "ls" }] },
+				}),
+			),
+		);
+		expect(document.title).toBe("(1) \uFF083\uFF09 x — AmazMe");
 	});
 });
