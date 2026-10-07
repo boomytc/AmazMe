@@ -428,6 +428,44 @@ describe("tool results", () => {
 		await harness.close(context);
 	});
 
+	// #10549
+	it("records how long execute() took, excluding hooks, and nothing for calls that did not run", async () => {
+		const setup = chatSetup();
+		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+		addTool(
+			setup.registry,
+			tool("slow", async () => {
+				await sleep(30);
+				return { content: [] };
+			}),
+		);
+		addTool(
+			setup.registry,
+			tool("thrower", async () => {
+				await sleep(30);
+				throw new Error("boom");
+			}),
+		);
+		addHooks(setup.registry, ToolTask, {
+			beforeTool: async (call) => {
+				await sleep(100);
+				return call.id === "blocked" ? { block: "no" } : undefined;
+			},
+		});
+		const { harness, entries } = await run(setup, [
+			calls(["slow", {}, "slow"], ["thrower", {}, "thrower"], ["slow", {}, "blocked"]),
+			DONE,
+		]);
+		const byId = new Map(results(entries).map((result) => [result.toolCallId, result]));
+		for (const id of ["slow", "thrower"]) {
+			expect(byId.get(id)?.durationMs).toBeGreaterThanOrEqual(25);
+			expect(byId.get(id)?.durationMs).toBeLessThan(100);
+		}
+		expect(byId.get("thrower")?.isError).toBe(true);
+		expect(byId.get("blocked")).not.toHaveProperty("durationMs");
+		await harness.close(context);
+	});
+
 	it("validates arguments before and after beforeTool and applies blocks and replacements", async () => {
 		const setup = chatSetup();
 		const seen: { text?: string }[] = [];

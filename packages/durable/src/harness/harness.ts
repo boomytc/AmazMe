@@ -134,6 +134,7 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 			conversationId: this.id,
 			...(query.minEntryId === undefined ? {} : { minEntryId: query.minEntryId }),
 			...(query.maxEntryId === undefined ? {} : { maxEntryId: query.maxEntryId }),
+			...(query.order === undefined ? {} : { order: query.order }),
 		};
 		return this.#host.harness.readOnLine(() => this.#host.storage.scanEntries(bounded, limit, cursor, context));
 	}
@@ -173,7 +174,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	#closed = false;
 
 	constructor(storage: Storage, options: HarnessOptions<Tool>, context: Context) {
-		super(storage);
+		super(storage, options.now);
 		this.#storage = storage;
 		this.#options = options;
 		this.#report = options.onReport ?? (() => {});
