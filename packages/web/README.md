@@ -51,14 +51,14 @@
 - 代码块没有语言栏以外的装饰：DSH 的 `CodeBlock` 还有粘性语言栏、复制按钮和 shiki 高亮，这里只有语言栏与代码，
   没有高亮和复制。
 - 状态行不带鲸鱼图标与流光动画，只保留 deep-diving 墨色。
-- 管理面是主区面板，不是 DSH 的插槽式桌面外壳：DSH 的插件面板、自动化任务、工作区树、右侧 dock 与首启说明来自
-  它自己的宿主能力（工作区、定时任务、上传端点、槽位注册），AmazMe 的切片没有这些服务，所以这里只有插件、技能、
-  配置三块，并且都是面板列而不是并排的附栏。
+- 管理面是主区面板，不是 DSH 的插槽式桌面外壳：DSH 的插件面板、工作区树、右侧 dock 与首启说明来自它自己的宿主能力
+  （工作区、上传端点、槽位注册），AmazMe 的切片没有这些插槽，所以这里的管理面是插件、技能、自动化、配置四块面板列，
+  会话范围的工作区／终端／会话／任务则放在主区右侧的坞里；两者都不与 conversation 并排成插槽布局。
 
 这个包不打开会话存储、不执行工具、也不调用模型；这些都在宿主里。浏览器侧入口在
-`packages/coding-agent/src/experimental/web/page.ts`，它绑定宿主的服务（transcript、agent-controller、models、
-session-settings，以及服务端范围的 settings、skills、plugins），驱动 composer、侧栏的新建会话、模型／推理档切换，
-以及三个管理面板的动作分发。
+`packages/coding-agent/src/experimental/web/page.ts`，它绑定宿主的服务（会话范围的 transcript、agent-controller、models、
+session-settings、commands、workspace、terminal、conversations、approvals，以及服务端范围的 settings、skills、plugins、
+feedback、schedules），驱动 composer、侧栏的新建会话、模型／推理档切换，以及四个管理面板的动作分发。
 
 ## 运行控制、图片与会话面
 
@@ -105,6 +105,30 @@ task 与会话 id），钩子在那里等；页面在 composer 上方给出卡�
   Esc 停止（阈值 500ms，与 TUI、DSH 的 stopSequence 一致）。`Escape` 仍然优先关闭模态框、视图卡片与模型卡片。
 - 复制：围栏代码块的 banner 上带复制控件，写进剪贴板的就是代码本身，成功/失败在控件文字上显示。
 
+## 消息反馈与首启引导
+
+- 消息反馈：每条已提交的助手回答下面有一对拇指控件（`feedback:up`／`feedback:down`，`data` 是条目 id）。
+  评分存在宿主 agent 目录的 `feedback.json`（服务端范围的 `amazme.feedback`），CLI 也能读到同一份文件；
+  同一条回答再评一次是替换而不是追加，再点同一个拇指是撤回。控件只在“这条回答存在且已结算”时出现，
+  正在流式输出的回合没有控件；没有反馈服务时整排控件不渲染。
+- 首启引导：宿主的会话名册为空（且已连上、有工作目录）时，主区显示一张欢迎卡片：三步入口（新建会话、
+  打开文件与终端、看看设置）各带一个动作，以及“不再显示”。“不再显示”把 `showWelcome` 写成 `false`
+  （写进 agent 的 `settings.json`），之后不再出现；在设置面板的「界面 → 欢迎引导」里可以重新打开。
+
+## 自动化：宿主自己跑的定时任务
+
+侧栏的 Automation 是服务端范围的 `amazme.schedules` 的投影：每个任务写明提示、间隔（最少 1 分钟）、
+归属会话、下次到点时间与上次运行的结果，行上有「立即运行」、启停开关与删除（先弹确认）。
+
+- 存储：`<agentDir>/schedules.json`，原子写入（临时文件＋改名），激活时读回，`reload` 可丢弃别处的改动；
+  文件本身是 CLI 也能读的形状。
+- 运行：宿主自己每 5 秒查一次到期任务并顺序执行；每次运行是“附加该会话的 worker → `AgentController.prompt`
+  → `waitForPrompt`”这条真实路径，所以回答会出现在那个会话的 transcript 里，`lastOutcome` 记的是这次运行的
+  结局（`Answered.` / `No answer: …` / `failed: …`），不是“已提交”。任务在页面关着时照跑。
+- 一次运行可能长达几分钟，所以它不占宿主那条共享的串行变更队列；文件自己的读写在这个服务内部排队，
+  并且同一时刻只有一趟到期检查。
+- 「立即运行」对暂停中的任务也有效，且不会改动它的周期；暂停只影响宿主自己的到期检查。
+
 ## 语言与外观
 
 界面语言（中／英）与外观（浅色／深色／跟随系统）是两个存在 agent 的 `settings.json` 里的偏好
@@ -120,7 +144,7 @@ task 与会话 id），钩子在那里等；页面在 composer 上方给出卡�
 
 ## 管理面
 
-侧栏里的 Plugins、Skills 与底部的 Settings 切换主区：打开面板时 conversation 与 composer 让位给面板列，标题带上返回箭头。
+侧栏里的 Plugins、Skills、Automation 与底部的 Settings 切换主区：打开面板时 conversation 与 composer 让位给面板列，标题带上返回箭头。
 面板的行、控件与按钮全部来自 `src/panels.ts` 的纯映射，动作只是 id 加对象，由入口解释成宿主调用。
 
 - Plugins：插件包（宿主按 server 默认选择构建并写入 server profile，对之后打开的会话生效）与 MCP 服务器
@@ -131,3 +155,5 @@ task 与会话 id），钩子在那里等；页面在 composer 上方给出卡�
   标签与说明由页面按 id 给出；第一组“界面”就是语言与外观。改动写进全局 `settings.json`；面板同时列出文件路径与
   解析错误，并提供“重新读取文件”。数字控件在本地按宿主的范围校验（超范围的草稿留在输入框里并标出，不发出请求），
   其余校验仍由宿主负责。已连接的会话会被要求重读设置，因此压缩、重试、steering 这类逐轮读取的字段立即生效。
+- Automation：宿主自己跑的定时任务（见上），每行给出下次到点时间与上次运行的结果；新建走一个模态框（提示 + 间隔分钟数），
+  间隔不是不少于 1 的整数、或提示为空时在本地就拒绝并给出原因。未附加会话时“新建”不可用，面板顶部说明原因。

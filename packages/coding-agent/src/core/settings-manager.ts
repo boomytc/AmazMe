@@ -206,6 +206,7 @@ export interface Settings {
 	locale?: LocalePreference; // default: "auto" - interface language of graphical presentations; global setting only
 	appearance?: AppearancePreference; // default: "system" - palette of graphical presentations; global setting only
 	toolApproval?: ToolApprovalMode; // default: "off" - which tool calls wait for a confirmation; global setting only
+	showWelcome?: boolean; // default: true - show the first-run guide while the host has no sessions; global only
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -893,6 +894,17 @@ export class SettingsManager {
 	setLocalePreference(locale: LocalePreference): void {
 		this.globalSettings.locale = locale;
 		this.markModified("locale");
+		this.save();
+	}
+
+	/** Whether the first-run guide is offered; an unset value offers it. */
+	getShowWelcome(): boolean {
+		return this.globalSettings.showWelcome ?? true;
+	}
+
+	setShowWelcome(show: boolean): void {
+		this.globalSettings.showWelcome = show;
+		this.markModified("showWelcome");
 		this.save();
 	}
 

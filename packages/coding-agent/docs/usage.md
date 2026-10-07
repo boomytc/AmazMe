@@ -162,13 +162,25 @@ host's session directory while the working directory itself is left alone. A dra
 the filter text, and the open management view survive attaching, creating, and removing sessions.
 
 ### Confirming tool calls
-
 **Settings → Approvals → Tool confirmation** decides which tool calls wait for you: `Run without asking`,
 `Ask before changes` (bash, powershell, write, edit), or `Ask before every call`. A call that the policy
 covers appears as a card above the composer with the tool's own arguments; **Approve** lets it run and
 **Deny** settles it as a failed tool result — *Denied by the reader: …* — which the turn continues from.
 Aborting a turn denies whatever it was waiting on. This is a pause at the tool boundary, not a rule
 engine: nothing about network or filesystem scope is enforced by it.
+
+### Rating an answer, and the first-run guide
+
+Every committed answer carries a thumbs up and a thumbs down under it. Rating writes to
+`feedback.json` in the agent directory, so the same file the CLI can read holds the reader's verdict;
+rating the same answer again replaces the record, and pressing the same thumb again withdraws it.
+The controls only appear on an answer that has already settled, and only when the host offers the
+service.
+
+A host with no sessions yet shows a welcome card instead of an empty conversation: **New session**,
+**Session tools**, and **Settings** each jump to the thing they name, and **Don't show this again**
+writes `showWelcome: false` to the agent's `settings.json`. Turn it back on any time under
+**Settings → Interface → Welcome guide**.
 
 ### Watching a long run, and older history
 
@@ -215,12 +227,12 @@ runs, two `Escape` presses within half a second stop it, the same double-escape 
 single `Escape` still closes the open modal, view card, or model card. Every fenced code block in an
 answer carries a copy control whose clipboard content is exactly that code.
 
-### Manage plugins, skills, and settings
+### Manage plugins, skills, settings, and automation
 
-The sidebar's **Plugins** and **Skills** rows and the **Settings** entry at the sidebar's bottom switch the main
-area to a management panel; the header then carries the panel's name and a back arrow, and the conversation and
-composer return with it. Every panel is a list of groups built from the host's own state, so the page never shows
-a field the host cannot read or write.
+The sidebar's **Plugins**, **Skills**, and **Automation** rows and the **Settings** entry at the sidebar's bottom
+switch the main area to a management panel; the header then carries the panel's name and a back arrow, and the
+conversation and composer return with it. Every panel is a list of groups built from the host's own state, so the
+page never shows a field the host cannot read or write.
 
 **Plugins** lists the plugin packages the host builds into a Session's facet generation. **Add package…** takes an
 absolute path to a package with `src/session.ts`; the host builds it before the selection lands, and a package that
@@ -249,6 +261,14 @@ names the global and project settings paths, shows a parse error the files carry
 List-valued settings such as `defaultTools` stay in the settings file; the panel edits the scalar surface. The labels,
 headings, and option names come from the page's own dictionaries keyed by the catalogue's ids and tokens, so a field the
 dictionaries do not know is still listed, under its id, rather than hidden.
+
+**Automation** lists the prompts the host runs on its own. Each row names the prompt, its cadence (at least one
+minute), the session it belongs to, when it is next due, and what its last run produced; **Run now** runs it
+immediately, the switch pauses or resumes the host's own timer, and **Remove** deletes it behind a confirmation.
+**Plan a prompt…** asks for the text and the gap in minutes and attaches the schedule to the session the page has
+open, so a tab has to be attached to plan one. The schedules live in `schedules.json` in the agent directory, and
+each run goes through the real session — the answer lands in that session's transcript whether or not a browser is
+open. A run that the model cannot answer records why instead of a false success.
 
 ## Run a terminal command
 

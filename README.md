@@ -35,9 +35,12 @@ AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/sou
 （没有偏好时按浏览器语言）在响应文档时就把静态外壳本地化，所以首帧不会闪英文。它会打印回环 URL、服务模式、
 WebSocket 地址与 server id，随后在浏览器里打开该 URL 即可看到会话名册、transcript、
 实时状态与输入框：侧栏可以新建会话，输入框右侧的模型档可以切换当前会话的模型与推理档，助手回答按 markdown 排版呈现。
-侧栏的 **Plugins**、**Skills** 与底部的 **Settings** 把主区切成管理面板：插件包与 `mcp.json` 里的 MCP 服务器、
-宿主加载的技能（agent 目录下的可新建／编辑／删除／导入）、以及宿主发布字段目录的配置编辑（写入全局
-`settings.json`，并让已连接的会话重读设置）。
+侧栏的 **Plugins**、**Skills**、**Automation** 与底部的 **Settings** 把主区切成管理面板：插件包与 `mcp.json` 里的 MCP 服务器、
+宿主加载的技能（agent 目录下的可新建／编辑／删除／导入）、宿主自己按间隔运行的定时提示（存在 `schedules.json`，
+关掉页面也照跑，回答落进对应会话），以及宿主发布字段目录的配置编辑（写入全局
+`settings.json`，并让已连接的会话重读设置）。主区右侧的坞里是会话范围的四个面：工作目录文件、终端、会话清单
+（含子代理的子会话）与实时任务图；命中审批策略的工具调用会在输入框上方等你通过或拒绝，每条已提交的助手回答
+带一对评分控件（写进 agent 目录的 `feedback.json`），名册为空时主区给出一张首启引导卡片。
 细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。这一入口依赖
 源码切片，尚未进入打包产物。
 

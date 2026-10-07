@@ -28,13 +28,21 @@ import {
 	runControls,
 	sessionStatus,
 	transcriptBlocks,
+	welcomeCard,
 	type ModelsStateLike,
 	type SessionDirectoryLike,
 	type WebView,
+	type WebViewInput,
 } from "../src/view.ts";
 import {
 	APPROVAL_APPROVE_ACTION,
 	APPROVAL_DENY_ACTION,
+	FEEDBACK_DOWN_ACTION,
+	FEEDBACK_UP_ACTION,
+	WELCOME_DISMISS_ACTION,
+	WELCOME_FILES_ACTION,
+	WELCOME_SESSION_ACTION,
+	WELCOME_SETTINGS_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
 	COMPACT_ACTION,
 	QUEUE_CANCEL_ACTION,
@@ -177,6 +185,8 @@ describe("web view model", () => {
 				attachments: [],
 				rosterFilter,
 				approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 				focus: undefined,
 				history: [],
 				historyMore: false,
@@ -369,6 +379,8 @@ describe("web view model", () => {
 			attachments: [],
 			rosterFilter: "",
 			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 			focus: undefined,
 			history: [],
 			historyMore: false,
@@ -393,6 +405,8 @@ describe("web view model", () => {
 			attachments: [],
 			rosterFilter: "",
 			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 			focus: undefined,
 			history: [],
 			historyMore: false,
@@ -418,6 +432,8 @@ describe("web view model", () => {
 			attachments: [],
 			rosterFilter: "",
 			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 			focus: undefined,
 			history: [],
 			historyMore: false,
@@ -454,6 +470,8 @@ describe("web view model", () => {
 			attachments: [],
 			rosterFilter: "",
 			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 			focus: undefined,
 			history: [],
 			historyMore: false,
@@ -480,7 +498,7 @@ describe("web view model", () => {
 			thinkingLevels: [],
 		});
 		expect(zhConnecting.empty).toBe("正在连接宿主…");
-		expect(zhConnecting.panel.nav.map((item) => item.label)).toEqual(["插件", "技能", "设置"]);
+		expect(zhConnecting.panel.nav.map((item) => item.label)).toEqual(["插件", "技能", "自动化", "设置"]);
 	});
 
 	test("marks a view busy only while a run is in flight", () => {
@@ -491,6 +509,8 @@ describe("web view model", () => {
 			attachments: [],
 			rosterFilter: "",
 			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 			focus: undefined,
 			history: [],
 			historyMore: false,
@@ -527,6 +547,8 @@ describe("web view model", () => {
 			attachments: [],
 			rosterFilter: "",
 			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 			focus: undefined,
 			history: [],
 			historyMore: false,
@@ -629,6 +651,8 @@ describe("web view model", () => {
 			attachments: [],
 			rosterFilter: "",
 			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 			focus: undefined,
 			history: [],
 			historyMore: false,
@@ -663,6 +687,8 @@ describe("web view model", () => {
 			attachments: [],
 			rosterFilter: "",
 			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
 			focus: undefined,
 			history: [],
 			historyMore: false,
@@ -693,6 +719,100 @@ describe("web view model", () => {
 		});
 		expect(view.model).toMatchObject({ label: "Model M", effort: "Low", disabled: false });
 		expect(failureView("en", "cannot boot: x").model).toEqual(modelPickerEmpty("en"));
+	});
+
+	test("offers the first-run guide only while the host has no sessions", () => {
+		const empty = directoryOf([]);
+		const input = (options: { showWelcome: boolean; directory: SessionDirectoryLike }): WebViewInput => ({
+			locale: "en",
+			submitMode: "followUp",
+			attachments: [],
+			approvals: undefined,
+			feedback: undefined,
+			rosterFilter: "",
+			showWelcome: options.showWelcome,
+			focus: undefined,
+			history: [],
+			historyMore: false,
+			historyLoading: false,
+			draft: "",
+			commands: [],
+			completions: [],
+			paletteSelection: 0,
+			platform: "MacIntel",
+			dock: {
+				open: false,
+				tab: "files",
+				cwd: "/w",
+				workspace: undefined,
+				terminal: undefined,
+				conversations: undefined,
+			},
+			directory: options.directory,
+			transcript: undefined,
+			attachedId: undefined,
+			now: NOW,
+			models: undefined,
+			thinkingLevels: [],
+			panel: CHAT_PANEL,
+		});
+		const offered = buildWebView(input({ showWelcome: true, directory: empty })).welcome;
+		expect(offered?.title).toContain("Welcome");
+		expect(offered?.steps.map((step) => [step.id, step.tone])).toEqual([
+			[WELCOME_SESSION_ACTION, "primary"],
+			[WELCOME_FILES_ACTION, "default"],
+			[WELCOME_SETTINGS_ACTION, "default"],
+		]);
+		expect(offered?.dismiss.id).toBe(WELCOME_DISMISS_ACTION);
+		// A session means the reader is past the guide, and so does the setting.
+		expect(buildWebView(input({ showWelcome: true, directory: directoryOf([{ sessionId: "s", createdAt: NOW }]) })).welcome).toBeUndefined();
+		expect(buildWebView(input({ showWelcome: false, directory: empty })).welcome).toBeUndefined();
+		// A host that has not answered yet shows no guide either.
+		expect(buildWebView({ ...input({ showWelcome: true, directory: empty }), directory: undefined }).welcome).toBeUndefined();
+		expect(welcomeCard("zh", { show: true })?.dismiss.label).toBe("不再显示");
+	});
+
+	test("gives every committed answer a rating, and shows the one it carries", () => {
+		const view = viewOf([
+			userEntry(1, "did it work?"),
+			assistantEntry(2, [{ type: "text", text: "It did." }]),
+			userEntry(3, "and now?"),
+		]);
+		const rated = transcriptBlocks("en", view, [], [
+			{ sessionId: "s", conversationId: "1", entryId: "2", rating: "up" },
+		]);
+		const answer = rated.find((block) => block.kind === "assistant");
+		expect(answer?.feedback).toEqual({
+			rating: "up",
+			up: { id: FEEDBACK_UP_ACTION, label: "Helpful", tone: "default", data: "2" },
+			down: { id: FEEDBACK_DOWN_ACTION, label: "Not helpful", tone: "default", data: "2" },
+		});
+		// A user turn carries no rating, and a host that offers the surface shows it unrated.
+		expect(rated.find((block) => block.kind === "user")?.feedback).toBeUndefined();
+		const fresh = transcriptBlocks("en", view, [], []);
+		expect(fresh.find((block) => block.kind === "assistant")?.feedback?.rating).toBeNull();
+		// A host with no feedback service leaves the answers bare.
+		expect(transcriptBlocks("en", view)[0]?.feedback).toBeUndefined();
+		expect(transcriptBlocks("en", view).find((block) => block.kind === "assistant")?.feedback).toBeUndefined();
+	});
+
+	test("marks an answer only with the rating that belongs to its own conversation", () => {
+		const view = viewOf([userEntry(1, "did it work?"), assistantEntry(2, [{ type: "text", text: "It did." }])]);
+		const records = [
+			{ sessionId: "other-session", conversationId: "1", entryId: "2", rating: "down" as const },
+			{ sessionId: "s", conversationId: "9", entryId: "2", rating: "down" as const },
+			{ sessionId: "s", conversationId: "1", entryId: "2", rating: "up" as const },
+		];
+		const scoped = transcriptBlocks("en", view, [], records, { sessionId: "s", conversationId: "1" });
+		expect(scoped.find((block) => block.kind === "assistant")?.feedback?.rating).toBe("up");
+		// Entry ids repeat across sessions, so another session's rating of entry 2 is not this one's.
+		const elsewhere = transcriptBlocks("en", view, [], records, { sessionId: "s2", conversationId: "1" });
+		expect(elsewhere.find((block) => block.kind === "assistant")?.feedback?.rating).toBeNull();
+		const otherConversation = transcriptBlocks("en", view, [], records, {
+			sessionId: "s",
+			conversationId: "2",
+		});
+		expect(otherConversation.find((block) => block.kind === "assistant")?.feedback?.rating).toBeNull();
 	});
 
 	test("gives every waiting tool call an approve and a deny", () => {

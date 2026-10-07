@@ -14,11 +14,18 @@ import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
 	addMcpServerModal,
 	addPackageModal,
+	addScheduleModal,
 	applyTheme,
 	APPROVAL_APPROVE_ACTION,
 	APPROVAL_DENY_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
 	attachmentRejection,
+	FEEDBACK_DOWN_ACTION,
+	FEEDBACK_UP_ACTION,
+	WELCOME_DISMISS_ACTION,
+	WELCOME_FILES_ACTION,
+	WELCOME_SESSION_ACTION,
+	WELCOME_SETTINGS_ACTION,
 	BOOT_GLOBAL,
 	COMPACT_ACTION,
 	COMPACT_MODAL,
@@ -56,9 +63,16 @@ import {
 	parseCommandLine,
 	removeSessionModal,
 	removeSkillModal,
+	removeScheduleModal,
 	resolveLocale,
 	resolveThemePreference,
 	rosterItems,
+	SCHEDULE_ADD_ACTION,
+	SCHEDULE_ADD_MODAL,
+	SCHEDULE_ENABLED_ACTION,
+	SCHEDULE_REMOVE_ACTION,
+	SCHEDULE_REMOVE_MODAL,
+	SCHEDULE_RUN_ACTION,
 	SETTINGS_FIELD_ACTION,
 	SETTINGS_RELOAD_ACTION,
 	SKILL_CREATE_MODAL,
@@ -69,6 +83,7 @@ import {
 	SKILL_NEW_ACTION,
 	SKILL_REMOVE_ACTION,
 	SESSION_REMOVE_ACTION,
+	SETTINGS_VIEW,
 	skillCommands,
 	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
@@ -98,12 +113,14 @@ import {
 	type SessionServiceSource,
 } from "../services/connection.ts";
 import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
+import { Feedback, type Feedback as FeedbackService, type FeedbackState } from "../services/feedback.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
 import { Conversations, type Conversations as ConversationsService } from "../services/conversations.ts";
 import { Terminal, type Terminal as TerminalService, type TerminalState } from "../services/terminal.ts";
 import { Workspace, type Workspace as WorkspaceService, type WorkspaceState } from "../services/workspace.ts";
 import { Models, type ModelsState } from "../services/models.ts";
 import { Plugins } from "../services/plugins.ts";
+import { Schedules, type ScheduleResult } from "../services/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
 import { Skills } from "../services/skills.ts";
@@ -456,7 +473,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let appearance: ThemePreference = resolveThemePreference(manifest.preferences?.appearance);
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(locale, key, values);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins],
+		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, Feedback, Schedules],
 		assertAccess(): void {},
 		onError: report,
 	});
@@ -466,6 +483,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const settings = serverServices.use(Settings);
 	const skills = serverServices.use(Skills);
 	const plugins = serverServices.use(Plugins);
+	const feedback = serverServices.use(Feedback);
+	const schedules = serverServices.use(Schedules);
 	let view = CHAT_VIEW;
 	let modal: PanelModal | undefined;
 	/** How the composer submits while a turn runs; the reader picks it in the composer itself. */
@@ -577,6 +596,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					submitMode,
 					attachments: pending,
 					approvals: painter.approvals,
+					feedback: feedback.state.value,
+					// Durable entry ids are per conversation, so the ratings are scoped to the one shown.
+					feedbackScope: {
+						sessionId: painter.sessionId ?? "",
+						conversationId: painter.conversations?.selected ?? rootConversationId,
+					},
+					showWelcome: settingValue("showWelcome") !== "false",
 					rosterFilter,
 					draft,
 					commands: composerCommands(),
@@ -599,15 +625,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						settings: { state: settings.state.value },
 						skills: { state: skills.state.value },
 						plugins: { state: plugins.state.value },
+						automation: { state: schedules.state.value, sessionId: painter.sessionId, now: Date.now() },
 					},
 				}),
 			),
 		);
 	};
 	directory.state.subscribe(() => paint());
+	// A rating given here, or by another tab, repaints the transcript's controls.
+	feedback.state.subscribe(() => paint());
 	settings.state.subscribe(() => paint());
 	skills.state.subscribe(() => paint());
 	plugins.state.subscribe(() => paint());
+	// A schedule added, run, or paused here — or in another tab — repaints the automation panel.
+	schedules.state.subscribe(() => paint());
 
 	/**
 	 * Attach another session. The painter lets go of the previous one first: the host has already
@@ -857,6 +888,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		);
 	};
 
+	/** Run one schedule call; a refused input is reported instead of closing the modal. */
+	const settleSchedule = (operation: Promise<ScheduleResult>, closeModal = true): void =>
+		settle(
+			operation.then((result) => {
+				if (!result.ok) throw new Error(result.problem);
+			}),
+			closeModal,
+		);
+
 	const pluginPackages = (): readonly string[] => plugins.state.value?.packages ?? [];
 	const skillOf = (name: string): { readonly editable: boolean } | undefined =>
 		skills.state.value?.skills.find((candidate) => candidate.name === name);
@@ -897,6 +937,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				if (action.id === PLUGIN_MCP_EXPOSURE_ACTION && action.data !== undefined) {
 					const name = action.data;
 					settle(plugins.setMcpServer(name, { exposure: action.value }, BACKGROUND_CONTEXT), false);
+					return;
+				}
+				if (action.id === SCHEDULE_ENABLED_ACTION && action.data !== undefined) {
+					settleSchedule(schedules.setEnabled(action.data, action.value === "true", BACKGROUND_CONTEXT), false);
 				}
 				return;
 			case "command":
@@ -912,6 +956,47 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						submitMode = action.data === "steer" ? "steer" : "followUp";
 						paint();
 						return;
+					case WELCOME_SESSION_ACTION:
+						createSession();
+						return;
+					case WELCOME_FILES_ACTION:
+						dockOpen = true;
+						dockTab = "files";
+						paint();
+						return;
+					case WELCOME_SETTINGS_ACTION:
+						view = SETTINGS_VIEW;
+						modal = undefined;
+						paint();
+						return;
+					case WELCOME_DISMISS_ACTION:
+						settle(settings.set("showWelcome", "false", BACKGROUND_CONTEXT), false);
+						return;
+					case FEEDBACK_UP_ACTION:
+					case FEEDBACK_DOWN_ACTION: {
+						const entryId = action.data ?? "";
+						const rating = action.id === FEEDBACK_UP_ACTION ? "up" : "down";
+						const sessionId = painter.sessionId ?? "";
+						const conversationId = targetConversation() ?? "";
+						const existing = feedback.state.value?.records.find(
+							(record) =>
+								record.sessionId === sessionId &&
+								record.conversationId === conversationId &&
+								record.entryId === entryId,
+						);
+						if (entryId.length === 0 || sessionId.length === 0) return;
+						const operation =
+							existing?.rating === rating
+								? feedback.retract({ sessionId, conversationId, entryId }, BACKGROUND_CONTEXT)
+								: feedback.rate({ sessionId, conversationId, entryId, rating }, BACKGROUND_CONTEXT);
+						settle(
+							operation.then((result) => {
+								if (!result.ok) renderer.setConnection(result.problem, "error");
+							}),
+							false,
+						);
+						return;
+					}
 					case APPROVAL_APPROVE_ACTION:
 					case APPROVAL_DENY_ACTION: {
 						const id = action.data ?? "";
@@ -995,6 +1080,24 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case SESSION_REMOVE_ACTION:
 						modal = removeSessionModal(locale, action.data ?? "");
 						paint();
+						return;
+					case SCHEDULE_ADD_ACTION: {
+						const sessionId = painter.sessionId;
+						// The panel's own footer says what to do; the button is inert without a session.
+						if (sessionId === undefined) {
+							renderer.setConnection(copy("panel.automation.noSession"), "error");
+							return;
+						}
+						modal = addScheduleModal(locale, sessionId);
+						paint();
+						return;
+					}
+					case SCHEDULE_REMOVE_ACTION:
+						modal = removeScheduleModal(locale, action.data ?? "");
+						paint();
+						return;
+					case SCHEDULE_RUN_ACTION:
+						settleSchedule(schedules.runNow(action.data ?? "", BACKGROUND_CONTEXT), false);
 						return;
 					case ATTACHMENT_REMOVE_ACTION: {
 						pending = pending.filter((image) => image.id !== action.data);
@@ -1111,6 +1214,28 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					}
 					case PLUGIN_MCP_MODAL:
 						settle(plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT));
+						return;
+					case SCHEDULE_ADD_MODAL: {
+						const sessionId = painter.sessionId;
+						const prompt = (fields.prompt ?? "").trim();
+						const minutes = Number((fields.everyMinutes ?? "").trim());
+						if (sessionId === undefined) {
+							failPanel(new Error(copy("panel.automation.noSession")));
+							return;
+						}
+						if (prompt.length === 0) {
+							failPanel(new Error(copy("page.scheduleNeedsPrompt")));
+							return;
+						}
+						if (!Number.isFinite(minutes) || minutes < 1) {
+							failPanel(new Error(copy("page.scheduleNeedsMinutes")));
+							return;
+						}
+						settleSchedule(schedules.add({ sessionId, prompt, everyMinutes: minutes }, BACKGROUND_CONTEXT));
+						return;
+					}
+					case SCHEDULE_REMOVE_MODAL:
+						settle(schedules.remove(action.data ?? "", BACKGROUND_CONTEXT));
 						return;
 					default:
 						// A read-only view submits to close, which is what removing the modal does.

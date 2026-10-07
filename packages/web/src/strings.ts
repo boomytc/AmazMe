@@ -17,6 +17,7 @@ export const EN = {
 	"nav.chat": "Chat",
 	"nav.plugins": "Plugins",
 	"nav.skills": "Skills",
+	"nav.automation": "Automation",
 	"nav.settings": "Settings",
 
 	"sidebar.newSession": "New session",
@@ -138,6 +139,10 @@ export const EN = {
 	"dock.terminalCancelled": "Stopped",
 	"dock.terminalFailed": "Could not run it: {error}",
 
+	"feedback.up": "Helpful",
+	"feedback.down": "Not helpful",
+	"feedback.rated": "Rated {rating}",
+
 	"history.more": "Load older",
 	"history.loading": "Loading older entries…",
 	"history.start": "Older entries",
@@ -147,6 +152,15 @@ export const EN = {
 	"approval.deny": "Deny",
 	"approval.tool": "{tool} wants to run",
 	"approval.hint": "Denying settles the call as a failed tool result and the turn continues.",
+
+	"welcome.title": "Welcome to the AmazMe web client",
+	"welcome.body":
+		"This page drives a running AmazMe host: sessions, their conversations, the files of the working directory, and a shell. Nothing is set up yet, so start with a session.",
+	"welcome.step.session": "Create a session",
+	"welcome.step.files": "Open the session tools",
+	"welcome.step.settings": "Open the settings",
+	"welcome.dismiss": "Dismiss",
+	"welcome.note": "The guide comes back through Settings → Interface → Welcome guide.",
 
 	"palette.title": "Commands",
 	"palette.noCommands": "No command starts with that.",
@@ -217,6 +231,27 @@ export const EN = {
 		"These entries are read by the CLI and the TUI; the experimental web host does not connect MCP servers yet.",
 	"panel.plugins.fromExtension": "From extension",
 
+	"panel.automation.title": "Automation",
+	"panel.automation.description":
+		"Prompts the host sends to a session on their own, whether or not this page is open.",
+	"panel.automation.schedules": "Planned prompts",
+	"panel.automation.add": "Plan a prompt…",
+	"panel.automation.empty":
+		"No planned prompts. A schedule sends its prompt to one session on its own and records what that run produced.",
+	"panel.automation.noSession": "Attach a session to plan a prompt for it.",
+	"panel.automation.everyMinute": "Every minute",
+	"panel.automation.everyMinutes": "Every {count} minutes",
+	"panel.automation.next": "Next run {when}",
+	"panel.automation.dueNow": "now",
+	"panel.automation.soon": "in under a minute",
+	"panel.automation.inMinutes": "in {count} minutes",
+	"panel.automation.inHours": "in {count} hours",
+	"panel.automation.paused": "paused",
+	"panel.automation.run": "Run now",
+	"panel.automation.remove": "Remove",
+	"panel.automation.footnote":
+		"Stored in {path}. The host runs a due prompt against its session; the answer appears in that session's transcript.",
+
 	"modal.skillNew.title": "New skill",
 	"modal.skillNew.description": "The description decides when the agent loads the skill.",
 	"modal.skillNew.name": "Name",
@@ -262,6 +297,16 @@ export const EN = {
 	"modal.mcp.name": "Name",
 	"modal.mcp.namePlaceholder": "filesystem",
 	"modal.mcp.entry": "Entry",
+	"modal.scheduleAdd.title": "Plan a prompt",
+	"modal.scheduleAdd.description": "The host sends this prompt to {session} on its own schedule.",
+	"modal.scheduleAdd.prompt": "Prompt",
+	"modal.scheduleAdd.promptPlaceholder": "Summarize what changed since the last run",
+	"modal.scheduleAdd.every": "Every (minutes)",
+	"modal.scheduleAdd.submit": "Add",
+	"modal.scheduleRemove.title": "Remove this planned prompt?",
+	"modal.scheduleRemove.description":
+		"The schedule is deleted from the host's file. What it already ran stays in the session.",
+	"modal.scheduleRemove.submit": "Remove",
 
 	"page.cannotBoot": "cannot boot: {error}",
 	"page.noManifest": "the host served this document without its boot manifest",
@@ -286,6 +331,9 @@ export const EN = {
 	"page.refreshFailed": "model refresh failed: {error}",
 	"page.skillNeedsName": "a skill needs a name",
 	"page.packageNeedsPath": "a plugin package needs a path",
+	"page.scheduleFailed": "schedule failed: {error}",
+	"page.scheduleNeedsMinutes": "the gap must be a whole number of minutes, at least one",
+	"page.scheduleNeedsPrompt": "a planned prompt needs its text",
 } as const;
 
 export type MessageKey = keyof typeof EN;
@@ -294,6 +342,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"nav.chat": "对话",
 	"nav.plugins": "插件",
 	"nav.skills": "技能",
+	"nav.automation": "自动化",
 	"nav.settings": "设置",
 
 	"sidebar.newSession": "新建会话",
@@ -415,6 +464,10 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"dock.terminalCancelled": "已停止",
 	"dock.terminalFailed": "无法运行：{error}",
 
+	"feedback.up": "有帮助",
+	"feedback.down": "没帮助",
+	"feedback.rated": "已评：{rating}",
+
 	"history.more": "加载更早",
 	"history.loading": "正在加载更早的内容…",
 	"history.start": "更早的内容",
@@ -424,6 +477,15 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"approval.deny": "拒绝",
 	"approval.tool": "{tool} 想要运行",
 	"approval.hint": "拒绝会把这次调用结算成失败的工具结果，回合继续往下走。",
+
+	"welcome.title": "欢迎使用 AmazMe 网页客户端",
+	"welcome.body":
+		"这个页面驱动一个正在运行的 AmazMe 宿主：会话、它们的对话、工作目录里的文件，以及一个 shell。现在什么都还没有，先建一个会话吧。",
+	"welcome.step.session": "新建会话",
+	"welcome.step.files": "打开会话工具",
+	"welcome.step.settings": "打开设置",
+	"welcome.dismiss": "不再显示",
+	"welcome.note": "引导可以在「设置 → 界面 → 欢迎引导」里重新打开。",
 
 	"palette.title": "命令",
 	"palette.noCommands": "没有以它开头的命令。",
@@ -485,6 +547,24 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.plugins.mcpFootnote": "这些条目由 CLI 和 TUI 读取；实验性 web 宿主尚未连接 MCP 服务。",
 	"panel.plugins.fromExtension": "来自扩展",
 
+	"panel.automation.title": "自动化",
+	"panel.automation.description": "宿主按设定自行发给会话的提示，不需要打开页面。",
+	"panel.automation.schedules": "定时任务",
+	"panel.automation.add": "新建定时任务…",
+	"panel.automation.empty": "还没有定时任务。每个任务会自行把提示发给一个会话，并记录这次运行的结果。",
+	"panel.automation.noSession": "先附加一个会话，才能为它新建定时任务。",
+	"panel.automation.everyMinute": "每分钟",
+	"panel.automation.everyMinutes": "每 {count} 分钟",
+	"panel.automation.next": "下次运行 {when}",
+	"panel.automation.dueNow": "就在现在",
+	"panel.automation.soon": "不到一分钟后",
+	"panel.automation.inMinutes": "{count} 分钟后",
+	"panel.automation.inHours": "{count} 小时后",
+	"panel.automation.paused": "已暂停",
+	"panel.automation.run": "立即运行",
+	"panel.automation.remove": "删除",
+	"panel.automation.footnote": "保存在 {path}。到点的任务由宿主发给它的会话，回答会出现在该会话的记录里。",
+
 	"modal.skillNew.title": "新建技能",
 	"modal.skillNew.description": "描述决定智能体何时加载这个技能。",
 	"modal.skillNew.name": "名称",
@@ -524,6 +604,15 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"modal.mcp.name": "名称",
 	"modal.mcp.namePlaceholder": "filesystem",
 	"modal.mcp.entry": "条目",
+	"modal.scheduleAdd.title": "新建定时任务",
+	"modal.scheduleAdd.description": "宿主会按设定自行把这条提示发给 {session}。",
+	"modal.scheduleAdd.prompt": "提示",
+	"modal.scheduleAdd.promptPlaceholder": "总结上次运行以来的变化",
+	"modal.scheduleAdd.every": "间隔（分钟）",
+	"modal.scheduleAdd.submit": "添加",
+	"modal.scheduleRemove.title": "删除这个定时任务？",
+	"modal.scheduleRemove.description": "任务会从宿主的文件里删除；它已经运行过的内容仍留在会话里。",
+	"modal.scheduleRemove.submit": "删除",
 
 	"page.cannotBoot": "无法启动：{error}",
 	"page.noManifest": "宿主提供的文档缺少启动清单",
@@ -548,6 +637,9 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"page.refreshFailed": "刷新模型失败：{error}",
 	"page.skillNeedsName": "技能需要名称",
 	"page.packageNeedsPath": "插件包需要路径",
+	"page.scheduleFailed": "定时任务操作失败：{error}",
+	"page.scheduleNeedsMinutes": "间隔必须是不少于 1 分钟的整数",
+	"page.scheduleNeedsPrompt": "定时任务需要提示内容",
 };
 
 /** One settings field's copy: the row's title, its one-line explanation, and a control placeholder. */
@@ -621,6 +713,10 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	enableSkillCommands: {
 		label: "Skills as commands",
 		description: "Register every loaded skill as a slash command.",
+	},
+	showWelcome: {
+		label: "Welcome guide",
+		description: "Show the short first-run guide while this host has no sessions.",
 	},
 	toolApproval: {
 		label: "Tool confirmation",
@@ -710,6 +806,10 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	enableSkillCommands: {
 		label: "技能作为命令",
 		description: "把每个已加载的技能注册为斜杠命令。",
+	},
+	showWelcome: {
+		label: "欢迎引导",
+		description: "在这台宿主还没有会话时，显示简短的上手引导。",
 	},
 	toolApproval: {
 		label: "工具确认",
@@ -887,6 +987,24 @@ export function mcpScopeCopy(locale: Locale, scope: string): string {
 export function mcpExposureCopy(locale: Locale, exposure: string): string {
 	const table = locale === "zh" ? ZH_MCP_EXPOSURES : EN_MCP_EXPOSURES;
 	return table[exposure] ?? exposure;
+}
+
+/** A schedule's cadence in the reader's language, such as "Every 15 minutes". */
+export function scheduleCadenceCopy(locale: Locale, everyMs: number): string {
+	const minutes = Math.max(1, Math.round(everyMs / 60_000));
+	return minutes === 1
+		? translate(locale, "panel.automation.everyMinute")
+		: translate(locale, "panel.automation.everyMinutes", { count: String(minutes) });
+}
+
+/** When a schedule is next due, as the reader's language expresses it, such as "in 12 minutes". */
+export function scheduleDueCopy(locale: Locale, nextRunAt: number, now: number): string {
+	const seconds = Math.floor((nextRunAt - now) / 1000);
+	if (seconds <= 0) return translate(locale, "panel.automation.dueNow");
+	if (seconds < 60) return translate(locale, "panel.automation.soon");
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return translate(locale, "panel.automation.inMinutes", { count: String(minutes) });
+	return translate(locale, "panel.automation.inHours", { count: String(Math.floor(minutes / 60)) });
 }
 
 /** A reasoning effort's name; a level the dictionaries do not know is shown capitalized. */

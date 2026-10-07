@@ -42,8 +42,33 @@ export const APPROVAL_APPROVE_ACTION = "approval:approve";
 /** Deny one pending tool call: `data` is the approval id. */
 export const APPROVAL_DENY_ACTION = "approval:deny";
 
+/** The first-run guide's steps: open a session, the session tools, or the settings. */
+export const WELCOME_SESSION_ACTION = "welcome:session";
+export const WELCOME_FILES_ACTION = "welcome:files";
+export const WELCOME_SETTINGS_ACTION = "welcome:settings";
+/** Stop offering the guide until the reader turns it back on in the settings. */
+export const WELCOME_DISMISS_ACTION = "welcome:dismiss";
+
+/** Rate one answer as helpful: `data` is the entry id the answer belongs to. */
+export const FEEDBACK_UP_ACTION = "feedback:up";
+/** Rate one answer as not helpful; rating it again withdraws the rating. */
+export const FEEDBACK_DOWN_ACTION = "feedback:down";
+
 /** Page in older stored history above the transcript. */
 export const HISTORY_MORE_ACTION = "history:more";
+
+/** Plan a prompt for the attached session: the page opens the add modal under `SCHEDULE_ADD_MODAL`. */
+export const SCHEDULE_ADD_ACTION = "schedule:add";
+/** The add modal's submit: `fields.prompt` and `fields.everyMinutes` describe the schedule. */
+export const SCHEDULE_ADD_MODAL = "schedule:add-submit";
+/** Remove one planned prompt: `data` is the schedule id; the page confirms first. */
+export const SCHEDULE_REMOVE_ACTION = "schedule:remove";
+/** The confirmation a schedule's remove opens; `data` is the schedule id. */
+export const SCHEDULE_REMOVE_MODAL = "schedule:remove-confirm";
+/** Run one planned prompt now, whether or not it is due: `data` is the schedule id. */
+export const SCHEDULE_RUN_ACTION = "schedule:run";
+/** Pause or resume one planned prompt: `data` is the schedule id, the control's value the state. */
+export const SCHEDULE_ENABLED_ACTION = "schedule:enabled";
 
 /** Drop one pending image before it is sent: `data` is the attachment id. */
 export const ATTACHMENT_REMOVE_ACTION = "composer:attachment-remove";

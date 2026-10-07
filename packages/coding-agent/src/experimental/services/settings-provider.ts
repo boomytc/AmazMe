@@ -69,6 +69,14 @@ const SPECS: readonly SettingSpec[] = [
 		write: (manager, value) => manager.setAppearancePreference(value as AppearancePreference),
 	},
 	{
+		id: "showWelcome",
+		group: "interface",
+		kind: "boolean",
+		field: "showWelcome",
+		read: (manager) => String(manager.getShowWelcome()),
+		write: (manager, value) => manager.setShowWelcome(value === "true"),
+	},
+	{
 		id: "toolApproval",
 		group: "approvals",
 		kind: "enum",

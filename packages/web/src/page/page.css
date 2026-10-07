@@ -445,6 +445,96 @@ body.dock-open {
 	outline-offset: 1px;
 }
 
+/* The first-run guide: the empty transcript's one useful thing. */
+.welcome-card {
+	max-width: 560px;
+	margin: 24px auto;
+	padding: 20px 22px 16px;
+	border: 0.5px solid var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-panel);
+	background: var(--dsw-specific-input-major);
+	box-shadow: var(--dsw-elevation-soft);
+}
+
+.welcome-title {
+	margin: 0 0 8px;
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.welcome-body {
+	margin: 0 0 14px;
+	color: var(--dsw-alias-label-secondary);
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.welcome-steps {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.welcome-note {
+	margin: 14px 0 0;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 11px;
+}
+
+.welcome-dismiss {
+	height: 22px;
+	margin-top: 6px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.welcome-dismiss:hover {
+	color: var(--dsw-alias-label-primary);
+}
+
+/* An answer's rating row: quiet until the reader points at it. */
+.feedback-row {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-top: 4px;
+	opacity: 0.45;
+	transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.turn-response:hover .feedback-row,
+.feedback-row:focus-within {
+	opacity: 1;
+}
+
+.feedback-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	cursor: pointer;
+}
+
+.feedback-button:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+.feedback-button.selected {
+	background: var(--dsw-alias-markdown-tag);
+	color: var(--dsw-alias-label-primary);
+}
+
 /* The pages of stored history, above the live transcript and set off from it. */
 .history-pages {
 	padding-bottom: 12px;

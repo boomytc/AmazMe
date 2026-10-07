@@ -26,11 +26,13 @@ import {
 } from "../src/experimental/services/connection.ts";
 import { Commands, type Commands as CommandsService } from "../src/experimental/services/commands.ts";
 import { Approvals, type Approvals as ApprovalsService } from "../src/experimental/services/approvals.ts";
+import { Feedback, type Feedback as FeedbackService } from "../src/experimental/services/feedback.ts";
 import { Conversations, type Conversations as ConversationsService } from "../src/experimental/services/conversations.ts";
 import { Terminal, type Terminal as TerminalService } from "../src/experimental/services/terminal.ts";
 import { Workspace, type Workspace as WorkspaceService } from "../src/experimental/services/workspace.ts";
 import { Models, type Models as ModelsService } from "../src/experimental/services/models.ts";
 import { Plugins, type Plugins as PluginsService } from "../src/experimental/services/plugins.ts";
+import { Schedules, type Schedules as SchedulesService } from "../src/experimental/services/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
 import { Settings, type Settings as SettingsService } from "../src/experimental/services/settings.ts";
 import { Skills, type Skills as SkillsService } from "../src/experimental/services/skills.ts";
@@ -40,6 +42,10 @@ import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 interface Presentation {
 	readonly management: SessionManagement;
 	readonly directory: SessionDirectory;
+	/** The server-scoped surfaces the page binds: the reader's ratings live here. */
+	readonly feedback: FeedbackService;
+	/** The planned prompts the host runs on their own. */
+	readonly schedules: SchedulesService;
 	readonly sessionSource: SessionServiceSource;
 	dispose(): Promise<void>;
 }
@@ -96,7 +102,7 @@ async function openPresentation(host: WebHost): Promise<Presentation> {
 	const serverSource = createServerServiceSource(client);
 	const sessionSource = createSessionServiceSource(client);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement],
+		services: [SessionDirectory, SessionManagement, Feedback, Schedules],
 		assertAccess(): void {},
 		onError(): void {},
 	});
@@ -104,6 +110,8 @@ async function openPresentation(host: WebHost): Promise<Presentation> {
 	return {
 		management: serverServices.use(SessionManagement),
 		directory: serverServices.use(SessionDirectory),
+		feedback: serverServices.use(Feedback),
+		schedules: serverServices.use(Schedules),
 		sessionSource,
 		async dispose() {
 			await serverServices.dispose(BACKGROUND_CONTEXT);
@@ -354,6 +362,112 @@ describe("web client interactive loop", () => {
 
 			await second.dispose();
 			await first.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"plans a prompt, runs it against its session on demand, and records the outcome",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "web-loop-schedule" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+			await waitFor(() => presentation.schedules.state.value !== undefined, "the schedules state");
+			expect(presentation.schedules.state.value?.schedules).toEqual([]);
+			const path = presentation.schedules.state.value?.path ?? "";
+			expect(path.endsWith("schedules.json")).toBe(true);
+
+			// The page's add modal sends the attached session, the prompt, and the gap.
+			const marker = `web-loop-schedule-${Date.now()}`;
+			expect(
+				await presentation.schedules.add(
+					{ sessionId: created.sessionId, prompt: marker, everyMinutes: 60 },
+					BACKGROUND_CONTEXT,
+				),
+			).toEqual({ ok: true, note: "Added. It runs on its own from now on." });
+			await waitFor(() => presentation.schedules.state.value?.schedules.length === 1, "the planned prompt");
+			const planned = presentation.schedules.state.value?.schedules[0];
+			expect(planned).toMatchObject({ sessionId: created.sessionId, prompt: marker, everyMs: 3_600_000, enabled: true });
+			// The file the CLI would read carries it.
+			const file = JSON.parse(await readFile(path, "utf8")) as { schedules: readonly { prompt: string }[] };
+			expect(file.schedules.map((schedule) => schedule.prompt)).toEqual([marker]);
+
+			// Run now goes through the host's own runner: the prompt reaches the session's transcript.
+			const run = await presentation.schedules.runNow(planned?.id ?? "", BACKGROUND_CONTEXT);
+			// The scratch agent directory has no credentials, so the turn settles without an answer;
+			// what matters is that the run happened, was reported, and reached the real session.
+			expect(run.ok).toBe(true);
+			await waitFor(
+				() => sawUserText(attached.transcript.state.value, marker),
+				"the planned prompt in the session's transcript",
+			);
+			await waitFor(
+				() => presentation.schedules.state.value?.schedules[0]?.lastOutcome !== null,
+				"the recorded outcome",
+			);
+			const recorded = presentation.schedules.state.value?.schedules[0];
+			expect(recorded?.lastRunAt).toBeGreaterThan(0);
+			expect(recorded?.lastOutcome).toBe(run.ok ? run.note : "");
+			expect(JSON.parse(await readFile(path, "utf8")).schedules[0].lastOutcome).toBe(recorded?.lastOutcome);
+
+			// Pausing is replicated, and it keeps the outcome the run recorded.
+			expect(await presentation.schedules.setEnabled(planned?.id ?? "", false, BACKGROUND_CONTEXT)).toEqual({
+				ok: true,
+				note: "Paused.",
+			});
+			await waitFor(() => presentation.schedules.state.value?.schedules[0]?.enabled === false, "the paused schedule");
+			await presentation.schedules.remove(planned?.id ?? "", BACKGROUND_CONTEXT);
+			await waitFor(() => presentation.schedules.state.value?.schedules.length === 0, "the removed schedule");
+			expect(JSON.parse(await readFile(path, "utf8")).schedules).toEqual([]);
+			// A schedule the host does not have is refused rather than silently accepted.
+			expect(
+				await presentation.schedules.add({ sessionId: "", prompt: "x", everyMinutes: 5 }, BACKGROUND_CONTEXT),
+			).toMatchObject({ ok: false });
+			expect(await presentation.schedules.add({ sessionId: created.sessionId, prompt: "  ", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
+				ok: false,
+			});
+
+			await attached.dispose();
+			await presentation.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"rates an answer through the server catalogue and writes it to the agent directory",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "web-loop-feedback" }, BACKGROUND_CONTEXT);
+			await presentation.management.attach(created.sessionId, BACKGROUND_CONTEXT);
+			await waitFor(() => presentation.feedback.state.value !== undefined, "the feedback state");
+
+			const request = { sessionId: created.sessionId, conversationId: "1", entryId: "7" };
+			expect(presentation.feedback.state.value?.path.endsWith("feedback.json")).toBe(true);
+			expect(await presentation.feedback.rate({ ...request, rating: "up" }, BACKGROUND_CONTEXT)).toEqual({ ok: true });
+			await waitFor(
+				() => (presentation.feedback.state.value?.records ?? []).some((record) => record.entryId === "7"),
+				"the rating to replicate",
+			);
+			// The same answer rated again replaces the record rather than adding one.
+			expect(await presentation.feedback.rate({ ...request, rating: "down" }, BACKGROUND_CONTEXT)).toEqual({ ok: true });
+			await waitFor(
+				() => presentation.feedback.state.value?.records.find((record) => record.entryId === "7")?.rating === "down",
+				"the replaced rating",
+			);
+			expect(presentation.feedback.state.value?.records.filter((record) => record.entryId === "7")).toHaveLength(1);
+			// The file the CLI would read carries it.
+			const path = presentation.feedback.state.value?.path ?? "";
+			const file = JSON.parse(await readFile(path, "utf8")) as { records: readonly { entryId: string }[] };
+			expect(file.records.map((record) => record.entryId)).toContain("7");
+			expect(await presentation.feedback.retract(request, BACKGROUND_CONTEXT)).toEqual({ ok: true });
+			await waitFor(
+				() => !(presentation.feedback.state.value?.records ?? []).some((record) => record.entryId === "7"),
+				"the withdrawn rating",
+			);
+
+			await presentation.dispose();
 		},
 		240_000,
 	);

@@ -1,6 +1,17 @@
 import { describe, expect, test } from "vitest";
-import { COMPACT_MODAL, SESSION_REMOVE_MODAL } from "../src/actions.ts";
 import {
+	COMPACT_MODAL,
+	SCHEDULE_ADD_MODAL,
+	SCHEDULE_ENABLED_ACTION,
+	SCHEDULE_REMOVE_ACTION,
+	SCHEDULE_REMOVE_MODAL,
+	SCHEDULE_RUN_ACTION,
+	SESSION_REMOVE_MODAL,
+} from "../src/actions.ts";
+import {
+	addScheduleModal,
+	AUTOMATION_VIEW,
+	automationPanel,
 	CHAT_VIEW,
 	compactModal,
 	composeSkill,
@@ -13,6 +24,7 @@ import {
 	PLUGIN_MCP_EXPOSURE_ACTION,
 	PLUGIN_PACKAGE_REMOVE_ACTION,
 	pluginsPanel,
+	removeScheduleModal,
 	removeSessionModal,
 	removeSkillModal,
 	SETTINGS_FIELD_ACTION,
@@ -28,6 +40,7 @@ import {
 	SKILL_REMOVE_MODAL,
 	SKILL_VIEW_MODAL,
 	type PluginsStateLike,
+	type SchedulesStateLike,
 	type SettingDescriptorLike,
 	type SettingsStateLike,
 	type SkillsStateLike,
@@ -111,14 +124,14 @@ const PLUGINS: PluginsStateLike = {
 describe("panel navigation", () => {
 	test("marks the open view and always carries the settings entry", () => {
 		const nav = panelNav("en", "skills");
-		expect(nav.map((item) => item.id)).toEqual(["plugins", "skills", SETTINGS_VIEW]);
+		expect(nav.map((item) => item.id)).toEqual(["plugins", "skills", "automation", SETTINGS_VIEW]);
 		expect(nav.filter((item) => item.active)).toEqual([{ id: "skills", label: "Skills", glyph: "skills", active: true }]);
 		expect(panelNav("en", CHAT_VIEW).every((item) => !item.active)).toBe(true);
 	});
 
 	test("names the management rows in the reader's language", () => {
-		expect(panelNav("zh", "plugins").map((item) => item.label)).toEqual(["插件", "技能", "设置"]);
-		expect(panelNav("en", "plugins").map((item) => item.label)).toEqual(["Plugins", "Skills", "Settings"]);
+		expect(panelNav("zh", "plugins").map((item) => item.label)).toEqual(["插件", "技能", "自动化", "设置"]);
+		expect(panelNav("en", "plugins").map((item) => item.label)).toEqual(["Plugins", "Skills", "Automation", "Settings"]);
 	});
 
 	test("shows no panel for the conversation and one for each management view", () => {
@@ -127,6 +140,7 @@ describe("panel navigation", () => {
 		expect(panelView({ locale: "en", current: "plugins" }).panel?.id).toBe("plugins");
 		expect(panelView({ locale: "en", current: SETTINGS_VIEW }).panel?.id).toBe(SETTINGS_VIEW);
 		expect(panelSpec({ locale: "en", current: "skills" })?.id).toBe("skills");
+		expect(panelSpec({ locale: "en", current: AUTOMATION_VIEW })?.id).toBe(AUTOMATION_VIEW);
 		// An unknown view falls back to the conversation instead of a broken panel.
 		expect(panelView({ locale: "en", current: "nope" }).current).toBe(CHAT_VIEW);
 		expect(panelView({ locale: "en", current: "nope", modal: newSkillModal("en") }).modal?.id).toBe(SKILL_CREATE_MODAL);
@@ -382,5 +396,99 @@ describe("plugins panel", () => {
 
 	test("explains itself while the host offers no service", () => {
 		expect(pluginsPanel("en", { state: undefined }).notices[0]?.text).toBe(UNAVAILABLE_EN);
+	});
+});
+
+const SCHEDULES: SchedulesStateLike = {
+	path: "/agent/schedules.json",
+	tickMs: 5_000,
+	schedules: [
+		{
+			id: "s1",
+			sessionId: "web-loop",
+			prompt: "Summarize what changed\nsince the last run",
+			everyMs: 900_000,
+			enabled: true,
+			createdAt: 1_000,
+			lastRunAt: 1_000,
+			lastOutcome: "Answered.",
+			nextRunAt: 2_300_000,
+		},
+		{
+			id: "s2",
+			sessionId: "other",
+			prompt: "Drain the queue",
+			everyMs: 60_000,
+			enabled: false,
+			createdAt: 2_000,
+			lastRunAt: null,
+			lastOutcome: null,
+			nextRunAt: 2_060_000,
+		},
+	],
+};
+
+describe("automation panel", () => {
+	test("gives every planned prompt its cadence, its next run, and its own controls", () => {
+		const panel = automationPanel("en", { state: SCHEDULES, sessionId: "web-loop", now: 1_100_000 });
+		expect(panel.id).toBe(AUTOMATION_VIEW);
+		expect(panel.groups[0]?.title).toBe("Planned prompts");
+		expect(panel.groups[0]?.actions?.[0]).toEqual({
+			id: "schedule:add",
+			label: "Plan a prompt…",
+			tone: "primary",
+		});
+		const [first, second] = panel.groups[0]?.rows ?? [];
+		// A prompt that spans lines is one row title, and the last run is beside the next one.
+		expect(first).toMatchObject({
+			id: "schedule:s1",
+			title: "Summarize what changed since the last run",
+			description: "Every 15 minutes",
+			badges: ["web-loop"],
+			value: "Next run in 20 minutes · Answered.",
+		});
+		expect(first?.controls).toEqual([{ id: SCHEDULE_ENABLED_ACTION, kind: "switch", data: "s1", value: "true" }]);
+		expect(first?.actions).toEqual([
+			{ id: SCHEDULE_RUN_ACTION, label: "Run now", data: "s1", tone: "default" },
+			{ id: SCHEDULE_REMOVE_ACTION, label: "Remove", data: "s1", tone: "danger" },
+		]);
+		expect(second).toMatchObject({ badges: ["other", "paused"], value: "Next run in 16 minutes" });
+		expect(panel.groups[0]?.footnote).toContain("/agent/schedules.json");
+	});
+
+	test("names the cadence and the next run in the reader's language", () => {
+		// The clock is past every due time here, so the rows say the runs are due.
+		const zh = automationPanel("zh", { state: SCHEDULES, sessionId: "web-loop", now: 2_400_000 });
+		expect(zh.groups[0]?.rows[0]?.description).toBe("每 15 分钟");
+		expect(zh.groups[0]?.rows[0]?.value).toContain("就在现在");
+		// A one-minute schedule reads as a single minute rather than "1 分钟".
+		expect(zh.groups[0]?.rows[1]?.description).toBe("每分钟");
+		expect(automationPanel("en", { state: SCHEDULES, now: 2_400_000 }).groups[0]?.rows[1]?.description).toBe(
+			"Every minute",
+		);
+	});
+
+	test("asks for a session, and explains the empty state and a missing service", () => {
+		const withoutSession = automationPanel("en", { state: SCHEDULES, now: 1_000 });
+		expect(withoutSession.notices).toEqual([
+			{ tone: "info", text: "Attach a session to plan a prompt for it." },
+		]);
+		expect(withoutSession.groups[0]?.actions?.[0]?.disabled).toBe(true);
+		const empty = automationPanel("en", { state: { ...SCHEDULES, schedules: [] }, sessionId: "web-loop" });
+		expect(empty.groups[0]?.rows).toEqual([]);
+		expect(empty.groups[0]?.empty).toContain("No planned prompts");
+		expect(automationPanel("en", { state: undefined }).notices[0]?.text).toBe(UNAVAILABLE_EN);
+	});
+
+	test("opens a modal that carries the prompt, the cadence, and the subject", () => {
+		const add = addScheduleModal("en", "web-loop");
+		expect(add).toMatchObject({ id: SCHEDULE_ADD_MODAL, submit: "Add" });
+		expect(add.description).toContain("web-loop");
+		expect(add.fields.map((field) => field.id)).toEqual(["prompt", "everyMinutes"]);
+		expect(add.fields[0]?.kind).toBe("textarea");
+		expect(add.fields[1]?.value).toBe("15");
+		const remove = removeScheduleModal("en", "s1");
+		expect(remove).toMatchObject({ id: SCHEDULE_REMOVE_MODAL, data: "s1", danger: true, fields: [] });
+		expect(removeScheduleModal("zh", "s1").submit).toBe("删除");
 	});
 });

@@ -41,6 +41,7 @@ import { RadiusRelayAuthResolver } from "./radius-auth.ts";
 import { RadiusRelayHost, type RadiusRelayHostStatus } from "./radius-relay.ts";
 import { createExperimentalServerServices } from "./services/server.ts";
 import type { ServerAdministrationOptions } from "./services/server.ts";
+import { AgentController } from "./services/agent-controller.ts";
 import type { SessionCreateOptions, SessionSummary } from "./services/sessions.ts";
 import {
 	createSession as createCatalogSession,
@@ -409,6 +410,34 @@ async function startServerBackend(
 		createdAt: metadata.createdAt,
 		cwd: metadata.cwd,
 	});
+	/**
+	 * Run one planned prompt against its session: attach a client to the session's worker, submit
+	 * the prompt, wait for the turn to settle, and release the attachment. The returned note is the
+	 * schedule's last outcome, so it reports how the run ended rather than only that it started.
+	 */
+	const runScheduledPrompt = async (sessionId: string, prompt: string, context: Context): Promise<string> => {
+		const metadata = await resolveSession(sessionId, context);
+		const selected = await options.resolveSessionPlugins(metadata, undefined, context);
+		const handle = await workers.openSession(metadata, context, selected.manifestPaths);
+		const attachment = await handle.attachClient(context);
+		try {
+			const submitted: unknown = await attachment.invokeService(
+				{ serviceId: AgentController.id, member: "prompt", args: [{ message: prompt, images: null }] },
+				() => {},
+				context,
+			);
+			const submission = readSubmission(submitted);
+			if ("refusal" in submission) throw new Error(submission.refusal);
+			const settled: unknown = await attachment.invokeService(
+				{ serviceId: AgentController.id, member: "waitForPrompt", args: [submission.operationId] },
+				() => {},
+				context,
+			);
+			return readSettlement(settled) ?? "Answered.";
+		} finally {
+			await attachment.release(context);
+		}
+	};
 	// The administration surfaces read and write the agent directory the CLI uses, plus the
 	// checkout's project settings: one Settings, Skills, and Plugins instance per server.
 	const administrationCwd = process.cwd();
@@ -422,6 +451,8 @@ async function startServerBackend(
 				project: join(administrationCwd, CONFIG_DIR_NAME, "settings.json"),
 			},
 		},
+		feedback: { agentDir: getAgentDir() },
+		schedules: { agentDir: getAgentDir(), run: runScheduledPrompt },
 		pluginPackages: {
 			list: () => options.listServerPluginPackages(),
 			set: (packagePaths) => options.setServerPluginPackages(packagePaths),
@@ -797,6 +828,25 @@ export async function runServerProcess(args: readonly string[]): Promise<void> {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
 	return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/** The accepted prompt's operation, or why the session refused it. */
+function readSubmission(value: unknown): { readonly operationId: string } | { readonly refusal: string } {
+	if (typeof value !== "object" || value === null) return { refusal: "The session did not answer the prompt." };
+	const response = value as { accepted?: unknown; operationId?: unknown; error?: { message?: unknown } | null };
+	if (response.accepted === true && typeof response.operationId === "string") {
+		return { operationId: response.operationId };
+	}
+	const message = response.error?.message;
+	return { refusal: typeof message === "string" ? message : "The session refused the prompt." };
+}
+
+/** Why the turn produced no answer, or undefined when it answered. */
+function readSettlement(value: unknown): string | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const settled = value as { status?: unknown; reason?: unknown };
+	if (settled.status !== "unanswered") return undefined;
+	return `No answer: ${typeof settled.reason === "string" ? settled.reason : "the host did not say why"}`;
 }
 
 if (isDirectInternalProcessEntry(import.meta.url)) {

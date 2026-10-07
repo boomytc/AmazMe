@@ -14,10 +14,12 @@ import * as processRuntime from "../src/experimental/process.ts";
 import { type RunningServer, startServer } from "../src/experimental/server.ts";
 import { AgentController } from "../src/experimental/services/agent-controller.ts";
 import { createSessionServiceSource, type SessionAttachmentState } from "../src/experimental/services/connection.ts";
+import { Feedback } from "../src/experimental/services/feedback.ts";
 import { Models } from "../src/experimental/services/models.ts";
 import { Plugins, PresentationPlugins, SessionPlugins } from "../src/experimental/services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
 import { Settings } from "../src/experimental/services/settings.ts";
+import { Schedules } from "../src/experimental/services/schedules.ts";
 import { Skills } from "../src/experimental/services/skills.ts";
 import { Transcript } from "../src/experimental/services/transcript.ts";
 import { createServerServiceBinding, createSessionServiceBinding } from "./experimental-service-binding.ts";
@@ -314,6 +316,8 @@ describe("experimental durable server composition", () => {
 			{ serviceId: Settings.id, mode: "singleton" },
 			{ serviceId: Skills.id, mode: "singleton" },
 			{ serviceId: Plugins.id, mode: "singleton" },
+			{ serviceId: Feedback.id, mode: "singleton" },
+			{ serviceId: Schedules.id, mode: "singleton" },
 		]);
 		const firstDirectory = firstServices.use(SessionDirectory);
 		const secondDirectory = secondServices.use(SessionDirectory);

@@ -9,6 +9,8 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { RoutedServerServiceAttachment, RoutedServerServiceHost } from "@amazme/server";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { Plugins, PresentationPlugins, type Plugins as PluginsService } from "./plugins.ts";
+import { createFeedbackService } from "./feedback-provider.ts";
+import { Feedback } from "./feedback.ts";
 import { createPluginsService } from "./plugins-provider.ts";
 import {
 	Settings,
@@ -16,6 +18,8 @@ import {
 	type Settings as SettingsService,
 	type SettingsState,
 } from "./settings.ts";
+import { createSchedulesService } from "./schedules-provider.ts";
+import { Schedules } from "./schedules.ts";
 import { applySetting, describeSettings, publishSettings, settingsErrors } from "./settings-provider.ts";
 import { Skills, type Skills as SkillsService } from "./skills.ts";
 import { createSkillsService } from "./skills-provider.ts";
@@ -35,6 +39,15 @@ export interface ServerAdministrationOptions {
 		readonly agentDir: string;
 		readonly cwd: string;
 		readonly paths: { readonly global: string; readonly project?: string };
+	};
+	/** The agent directory the reader's ratings file lives in. */
+	readonly feedback: {
+		readonly agentDir: string;
+	};
+	/** The agent directory the planned prompts live in, and the run one of them performs. */
+	readonly schedules: {
+		readonly agentDir: string;
+		run(sessionId: string, prompt: string, context: Context): Promise<string>;
 	};
 	/** The server's default plugin package selection, as the plugin profile stores it. */
 	readonly pluginPackages: {
@@ -97,6 +110,19 @@ export async function createExperimentalServerServices(options: {
 		replicatedState,
 	);
 	plugins.reload(BACKGROUND_CONTEXT);
+	// The reader's ratings of individual answers, in one file beside the settings.
+	const feedback = createFeedbackService(
+		{ agentDir: options.administration.feedback.agentDir },
+		replicatedState,
+	);
+	void feedback.activate(BACKGROUND_CONTEXT);
+	// The planned prompts: the reader's own file, and the timer that runs them.
+	const schedules = createSchedulesService(
+		{ agentDir: options.administration.schedules.agentDir, run: options.administration.schedules.run },
+		replicatedState,
+	);
+	await schedules.activate(BACKGROUND_CONTEXT);
+	schedules.start();
 
 	const refreshNow = async (context: Context): Promise<void> => {
 		const sessions = await options.list(context);
@@ -126,6 +152,8 @@ export async function createExperimentalServerServices(options: {
 					{ service: Settings, mode: "singleton" },
 					{ service: Skills, mode: "singleton" },
 					{ service: Plugins, mode: "singleton" },
+					{ service: Feedback, mode: "singleton" },
+					{ service: Schedules, mode: "singleton" },
 				]);
 				provider.provide(SessionDirectory, { state: directory });
 				provider.provide(Settings, {
@@ -143,6 +171,22 @@ export async function createExperimentalServerServices(options: {
 						}),
 				});
 				provider.provide(Skills, skills.service);
+				provider.provide(Feedback, {
+					state: feedback.service.state,
+					rate: (request, context) => serialize(() => feedback.service.rate(request, context)),
+					retract: (request, context) => serialize(() => feedback.service.retract(request, context)),
+					reload: (context) => serialize(() => feedback.service.reload(context)),
+				});
+				// The schedule store keeps its own write queue: a manual run awaits a whole turn, so
+				// it must not hold the server's shared mutation tail while it does.
+				provider.provide(Schedules, {
+					state: schedules.service.state,
+					add: (input, context) => schedules.service.add(input, context),
+					remove: (id, context) => schedules.service.remove(id, context),
+					setEnabled: (id, enabled, context) => schedules.service.setEnabled(id, enabled, context),
+					runNow: (id, context) => schedules.service.runNow(id, context),
+					reload: (context) => schedules.service.reload(context),
+				});
 				const pluginsService: PluginsService = {
 					state: plugins.service.state,
 					setPackages: (packagePaths, context) =>
@@ -203,6 +247,7 @@ export async function createExperimentalServerServices(options: {
 		},
 		refresh: (context = BACKGROUND_CONTEXT) => serialize(() => refreshNow(context)),
 		async dispose() {
+			schedules.stop();
 			const releases = await Promise.allSettled(
 				[...attachments].map((attachment) => attachment.release(BACKGROUND_CONTEXT)),
 			);

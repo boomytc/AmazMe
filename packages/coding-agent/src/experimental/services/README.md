@@ -34,6 +34,8 @@ page take effect after the host restarts.
 | server | `Settings` | the editable field catalogue over the host's `SettingsManager` — field ids, heading tokens, kinds, and stored enum values, plus the interface `locale` and `appearance` preferences — with a write per field and a reload of the files | add project-scoped writes and a typed editor for list fields |
 | server | `Skills` | the agent's loaded skills, with read, write, remove, and import for the agent directory's own | add skill-path settings and prompt-template management |
 | server | `Plugins` | the server's default plugin package selection and the `mcp.json` entries the CLI and TUI read | connect MCP servers from this host and report their status |
+| server | `Feedback` | the reader's rating of one committed answer, stored in `<agentDir>/feedback.json` so the CLI can read it too, with rate, replace, and retract | attach a note or a diff-scoped rating, and aggregate them into review reports |
+| server | `Schedules` | planned prompts the host runs on their own: one JSON file (`<agentDir>/schedules.json`), a periodic due check, and an on-demand run that reports the answer's outcome | add per-schedule models, retries, and a run history rather than only the last outcome |
 | server | `PresentationPlugins` | prepares the selected Session branch's matching TUI artifacts and reloads that branch | add authenticated plugin policy |
 | session | `SessionPlugins` | reloads the configured Session facet generation | add coordinated multi-worker reload reporting |
 | session | `SessionSettings` | asks the worker to re-read the settings files, so a change made elsewhere reaches the running Session | invalidate the per-directory prompt cache so newly written skills apply to a running Session |

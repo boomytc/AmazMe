@@ -34,6 +34,8 @@ import { type MessageKey, translate } from "./strings.ts";
 import {
 	composerPlaceholder,
 	type Attachment,
+	type FeedbackControls,
+	type WelcomeCard,
 	type QueueItem,
 	type RosterItem,
 	type TranscriptBlock,
@@ -349,7 +351,7 @@ function fitPrompt(prompt: HTMLTextAreaElement): void {
 }
 
 /** One 16px outline glyph per navigation row; the page ships its own shapes, not an icon set. */
-function navGlyph(name: "chat" | "plugins" | "skills" | "settings"): SVGSVGElement {
+function navGlyph(name: "chat" | "plugins" | "skills" | "automation" | "settings"): SVGSVGElement {
 	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
 	svg.setAttribute("viewBox", "0 0 16 16");
 	svg.setAttribute("width", "16");
@@ -359,6 +361,8 @@ function navGlyph(name: "chat" | "plugins" | "skills" | "settings"): SVGSVGEleme
 		chat: ["M3.2 4.2h9.6v6.4H7.6L4.6 13v-2.4H3.2Z"],
 		plugins: ["M3.6 3.6h3.6v3.6H3.6zM8.8 3.6h3.6v3.6H8.8zM3.6 8.8h3.6v3.6H3.6zM8.8 8.8h3.6v3.6H8.8z"],
 		skills: ["M8 2.6 9.6 6.4 13.4 8 9.6 9.6 8 13.4 6.4 9.6 2.6 8 6.4 6.4Z"],
+		// A clock: the dial, then the two hands from its centre.
+		automation: ["M8 2.8a5.2 5.2 0 1 0 0 10.4A5.2 5.2 0 0 0 8 2.8Z", "M8 5.6v2.7l1.9 1.1"],
 		settings: ["M2.6 5.2h10.8M2.6 10.8h10.8"],
 	};
 	for (const definition of shapes[name]) {
@@ -387,6 +391,29 @@ function navGlyph(name: "chat" | "plugins" | "skills" | "settings"): SVGSVGEleme
 			svg.append(knob);
 		}
 	}
+	return svg;
+}
+
+/** The thumb a rating control carries, up or down. */
+function thumbGlyph(direction: "up" | "down"): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("width", "14");
+	svg.setAttribute("height", "14");
+	svg.setAttribute("aria-hidden", "true");
+	const shape = document.createElementNS(SVG_NAMESPACE, "path");
+	shape.setAttribute(
+		"d",
+		direction === "up"
+			? "M5.6 13.4V7.2l2.6-4.6h1.1l-.6 3.5h3a1.2 1.2 0 0 1 1.2 1.4l-.7 4.1a1.2 1.2 0 0 1-1.2 1H5.6Zm0 0H3.4V7.2h2.2"
+			: "M10.4 2.6v6.2L7.8 13.4H6.7l.6-3.5h-3A1.2 1.2 0 0 1 3.1 8.5l.7-4.1a1.2 1.2 0 0 1 1.2-1h4.1Zm0 0h2.2v6.2h-2.2",
+	);
+	shape.setAttribute("fill", "none");
+	shape.setAttribute("stroke", "currentColor");
+	shape.setAttribute("stroke-width", "1.3");
+	shape.setAttribute("stroke-linecap", "round");
+	shape.setAttribute("stroke-linejoin", "round");
+	svg.append(shape);
 	return svg;
 }
 
@@ -778,6 +805,37 @@ export function createRenderer(
 		return details;
 	};
 
+	/** An answer's rating row: both ratings, the set one marked, each a control of its own. */
+	const feedbackRow = (feedback: FeedbackControls): HTMLElement => {
+		const row = element("div", "feedback-row");
+		row.setAttribute("role", "group");
+		const control = (button: PanelButton, direction: "up" | "down", selected: boolean): HTMLElement => {
+			const node = panelButton(button, report);
+			node.className = selected ? `feedback-button selected ${direction}` : `feedback-button ${direction}`;
+			node.replaceChildren(thumbGlyph(direction));
+			node.title = button.label;
+			node.setAttribute("aria-label", button.label);
+			node.setAttribute("aria-pressed", String(selected));
+			return node;
+		};
+		row.append(control(feedback.up, "up", feedback.rating === "up"));
+		row.append(control(feedback.down, "down", feedback.rating === "down"));
+		return row;
+	};
+
+	/** The first-run guide: what the page is, and the three steps that make it useful. */
+	const welcomeElement = (welcome: WelcomeCard): HTMLElement => {
+		const card = element("div", "welcome-card");
+		card.append(element("h2", "welcome-title", welcome.title), element("p", "welcome-body", welcome.body));
+		const steps = element("div", "welcome-steps");
+		for (const step of welcome.steps) steps.append(panelButton(step, report));
+		card.append(steps, element("p", "welcome-note", welcome.note));
+		const dismiss = panelButton(welcome.dismiss, report);
+		dismiss.className = "welcome-dismiss";
+		card.append(dismiss);
+		return card;
+	};
+
 	/** A user turn: the images the entry carries, then its text. */
 	const userBubble = (block: TranscriptBlock): HTMLElement => {
 		const bubble = element("div", "bubble");
@@ -1085,7 +1143,11 @@ export function createRenderer(
 			}
 			process = undefined;
 			if (block.kind === "user") flow.push(wrap("turn-user", userBubble(block)));
-			else if (block.kind === "assistant") flow.push(wrap("turn-response", markdownElement(block.text, markdown)));
+			else if (block.kind === "assistant") {
+				const answer = wrap("turn-response", markdownElement(block.text, markdown));
+				if (block.feedback !== undefined) answer.append(feedbackRow(block.feedback));
+				flow.push(answer);
+			}
 			else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
 		}
 		return flow;
@@ -1236,13 +1298,17 @@ export function createRenderer(
 				flow.unshift(more);
 			}
 			if (view.blocks.length === 0) {
-				const empty = element(
-					"p",
-					"empty-state",
-					copy(view.attachedId === undefined ? "header.noSessionAttached" : "header.noEntries"),
-				);
-				empty.id = "transcript-empty";
-				flow.push(empty);
+				if (view.welcome !== undefined) {
+					flow.push(welcomeElement(view.welcome));
+				} else {
+					const empty = element(
+						"p",
+						"empty-state",
+						copy(view.attachedId === undefined ? "header.noSessionAttached" : "header.noEntries"),
+					);
+					empty.id = "transcript-empty";
+					flow.push(empty);
+				}
 			}
 			if (view.status.length > 0) flow.push(runningElement(view.status));
 			elements.column.replaceChildren(...flow);

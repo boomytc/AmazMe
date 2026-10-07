@@ -23,6 +23,12 @@ import {
 import {
 	APPROVAL_APPROVE_ACTION,
 	APPROVAL_DENY_ACTION,
+	FEEDBACK_DOWN_ACTION,
+	FEEDBACK_UP_ACTION,
+	WELCOME_DISMISS_ACTION,
+	WELCOME_FILES_ACTION,
+	WELCOME_SESSION_ACTION,
+	WELCOME_SETTINGS_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
 	COMPACT_ACTION,
 	QUEUE_CANCEL_ACTION,
@@ -51,6 +57,8 @@ export interface TranscriptBlock {
 	readonly text: string;
 	/** Images the entry carries, as data URLs the reader sees. */
 	readonly images?: readonly { readonly dataUrl: string; readonly alt: string }[];
+	/** An answer's rating controls, and the rating it already carries. */
+	readonly feedback?: FeedbackControls;
 	readonly tone: BlockTone;
 	readonly running: boolean;
 }
@@ -137,6 +145,75 @@ export function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** How the reader rated one answer, as the transcript shows it. */
+export type MessageRatingLike = "up" | "down";
+
+/**
+ * The first-run guide: what the page is, and the three steps that make it useful. It is offered
+ * while the host has no sessions and the reader has not dismissed it.
+ */
+export interface WelcomeCard {
+	readonly title: string;
+	readonly body: string;
+	readonly steps: readonly PanelButton[];
+	readonly dismiss: PanelButton;
+	readonly note: string;
+}
+
+/** The guide, or undefined when it should not be shown. */
+export function welcomeCard(locale: Locale, input: { readonly show: boolean }): WelcomeCard | undefined {
+	if (!input.show) return undefined;
+	return {
+		title: translate(locale, "welcome.title"),
+		body: translate(locale, "welcome.body"),
+		steps: [
+			{ id: WELCOME_SESSION_ACTION, label: translate(locale, "welcome.step.session"), tone: "primary" },
+			{ id: WELCOME_FILES_ACTION, label: translate(locale, "welcome.step.files"), tone: "default" },
+			{ id: WELCOME_SETTINGS_ACTION, label: translate(locale, "welcome.step.settings"), tone: "default" },
+		],
+		dismiss: { id: WELCOME_DISMISS_ACTION, label: translate(locale, "welcome.dismiss"), tone: "default" },
+		note: translate(locale, "welcome.note"),
+	};
+}
+
+/** The controls under one answer: both ratings, and which one is already set. */
+export interface FeedbackControls {
+	readonly rating: MessageRatingLike | null;
+	readonly up: PanelButton;
+	readonly down: PanelButton;
+}
+
+/** One rating as the host publishes it. */
+export interface FeedbackRecordLike {
+	readonly sessionId: string;
+	readonly conversationId: string;
+	readonly entryId: string;
+	readonly rating: MessageRatingLike;
+}
+
+/** What the host's feedback state carries, as this package reads it. */
+export interface FeedbackStateLike {
+	readonly path: string;
+	readonly records: readonly FeedbackRecordLike[];
+}
+
+/**
+ * Which conversation's answers a rating list belongs to. Durable entry ids are per conversation, so
+ * without this an answer in one session could show a rating given to the same id in another.
+ */
+export interface FeedbackScope {
+	readonly sessionId: string;
+	readonly conversationId: string;
+}
+
+function feedbackControls(locale: Locale, entryId: string, rating: MessageRatingLike | null): FeedbackControls {
+	return {
+		rating,
+		up: { id: FEEDBACK_UP_ACTION, label: translate(locale, "feedback.up"), tone: "default", data: entryId },
+		down: { id: FEEDBACK_DOWN_ACTION, label: translate(locale, "feedback.down"), tone: "default", data: entryId },
+	};
 }
 
 /** One tool call waiting for the reader's decision. */
@@ -259,6 +336,8 @@ export interface WebView {
 	readonly attachments: readonly Attachment[];
 	/** The session's pending tool approvals. */
 	readonly approvals: readonly ApprovalCard[];
+	/** The first-run guide, while the host has no sessions and it is not dismissed. */
+	readonly welcome: WelcomeCard | undefined;
 	readonly run: RunControls;
 	/** The command palette for the current draft. */
 	readonly palette: CommandPalette;
@@ -343,6 +422,12 @@ export interface WebViewInput {
 	readonly submitMode: SubmitMode;
 	/** The session's pending tool approvals, when the host offers the service. */
 	readonly approvals: ApprovalsStateLike | undefined;
+	/** The ratings the host carries, when it offers the surface. */
+	readonly feedback: FeedbackStateLike | undefined;
+	/** Which conversation those ratings belong to, so another session's answer is not marked. */
+	readonly feedbackScope?: FeedbackScope;
+	/** Whether the reader has dismissed the first-run guide (`showWelcome` in the settings). */
+	readonly showWelcome: boolean;
 	/** The images the reader attached and has not sent. */
 	readonly attachments: readonly {
 		readonly id: string;
@@ -623,6 +708,8 @@ function entryBlocks(
 	results: Map<string, ToolResultMessage>,
 	blocks: TranscriptBlock[],
 	live: LiveCalls = EMPTY_LIVE_CALLS,
+	feedback: readonly FeedbackRecordLike[] | undefined = undefined,
+	scope: FeedbackScope | undefined = undefined,
 ): void {
 	for (const entry of entries) {
 		const message = textOf(entry);
@@ -658,6 +745,14 @@ function entryBlocks(
 					const failure = failureNotice(locale, message);
 					// A failed answer with no text is the failure notice alone, not an empty card above it.
 					if (answer.length > 0 || failure === undefined) {
+						// A committed answer can be rated; a provisional one (the live partial) cannot,
+						// and a host with no feedback service leaves the answers bare.
+						const rated = feedback?.find(
+							(record) =>
+								record.entryId === String(entry.id) &&
+								(scope === undefined ||
+									(record.sessionId === scope.sessionId && record.conversationId === scope.conversationId)),
+						);
 						blocks.push({
 							id: entry.id,
 							kind: "assistant",
@@ -666,6 +761,9 @@ function entryBlocks(
 							text: answer,
 							tone: "plain",
 							running: false,
+							...(feedback === undefined
+								? {}
+								: { feedback: feedbackControls(locale, String(entry.id), rated?.rating ?? null) }),
 						});
 					}
 					if (failure !== undefined) {
@@ -756,6 +854,10 @@ export function transcriptBlocks(
 	locale: Locale,
 	view: ConversationView | undefined,
 	history: readonly EntryRecord[] = [],
+	/** The ratings the host carries for this session, when it offers the surface at all. */
+	feedback: readonly FeedbackRecordLike[] | undefined = undefined,
+	/** The conversation those ratings belong to; without it only the entry id is compared. */
+	scope: FeedbackScope | undefined = undefined,
 ): TranscriptBlock[] {
 	const blocks = historyPageBlocks(locale, history);
 	if (view === undefined) return blocks;
@@ -765,7 +867,7 @@ export function transcriptBlocks(
 		running: new Set((live.tools ?? []).filter((slot) => slot.status === "running").map((slot) => slot.callId)),
 		output: new Map((live.tools ?? []).map((slot) => [slot.callId, slot.output ?? ""])),
 	};
-	entryBlocks(locale, view.entries, results, blocks, calls);
+	entryBlocks(locale, view.entries, results, blocks, calls, feedback, scope);
 
 	const partial = live.generation?.message as AssistantMessage | undefined;
 	if (partial !== undefined) {
@@ -895,6 +997,7 @@ export function failureView(locale: Locale, text: string): WebView {
 		queue: [],
 		attachments: [],
 		approvals: [],
+		welcome: undefined,
 		run: runControls(locale, "followUp", false),
 		attachedId: undefined,
 		empty: text,
@@ -915,7 +1018,7 @@ export function failureView(locale: Locale, text: string): WebView {
 
 export function buildWebView(input: WebViewInput): WebView {
 	const { locale } = input;
-	const blocks = transcriptBlocks(locale, input.transcript);
+	const blocks = transcriptBlocks(locale, input.transcript, [], input.feedback?.records, input.feedbackScope);
 	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter);
 	const empty =
 		input.directory === undefined
@@ -948,6 +1051,10 @@ export function buildWebView(input: WebViewInput): WebView {
 		queue: queuedInputs(locale, input.transcript),
 		attachments: attachments(locale, input.attachments),
 		approvals: approvalCards(locale, input.approvals),
+		welcome: welcomeCard(locale, {
+			// Only a host that answered offers the guide, and a session means the reader is past it.
+			show: input.showWelcome && input.directory !== undefined && (input.directory.sessions.length ?? 0) === 0,
+		}),
 		run: runControls(locale, input.submitMode, input.attachedId !== undefined),
 		attachedId: input.attachedId,
 		empty,

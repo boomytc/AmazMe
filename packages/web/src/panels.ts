@@ -8,11 +8,22 @@
  * catalogue publishes field ids, heading tokens, and stored enum values, and `strings.ts` names
  * them. Copy therefore has one home, and the host never ships a sentence.
  */
-import { COMPACT_MODAL, SESSION_REMOVE_MODAL } from "./actions.ts";
+import {
+	COMPACT_MODAL,
+	SCHEDULE_ADD_ACTION,
+	SCHEDULE_ADD_MODAL,
+	SCHEDULE_ENABLED_ACTION,
+	SCHEDULE_REMOVE_ACTION,
+	SCHEDULE_REMOVE_MODAL,
+	SCHEDULE_RUN_ACTION,
+	SESSION_REMOVE_MODAL,
+} from "./actions.ts";
 import type { Locale } from "./locale.ts";
 import {
 	mcpExposureCopy,
 	mcpScopeCopy,
+	scheduleCadenceCopy,
+	scheduleDueCopy,
 	settingFieldCopy,
 	settingGroupCopy,
 	settingOptionCopy,
@@ -23,13 +34,13 @@ import {
 } from "./strings.ts";
 
 /** The main area's views: the conversation, or one management panel. */
-export type PanelId = "plugins" | "skills" | "settings";
+export type PanelId = "plugins" | "skills" | "automation" | "settings";
 
 export interface NavItem {
 	/** "chat" or a panel id. */
 	readonly id: string;
 	readonly label: string;
-	readonly glyph: "chat" | "plugins" | "skills" | "settings";
+	readonly glyph: "chat" | "plugins" | "skills" | "automation" | "settings";
 	readonly active: boolean;
 }
 
@@ -166,11 +177,13 @@ export type PanelAction =
 /** The view id of the conversation, and the three management rows. */
 export const CHAT_VIEW = "chat";
 export const SETTINGS_VIEW = "settings";
+export const AUTOMATION_VIEW = "automation";
 
 const NAV_ITEMS: readonly { readonly id: string; readonly message: Parameters<typeof translate>[1]; readonly glyph: NavItem["glyph"] }[] =
 	[
 		{ id: "plugins", message: "nav.plugins", glyph: "plugins" },
 		{ id: "skills", message: "nav.skills", glyph: "skills" },
+		{ id: AUTOMATION_VIEW, message: "nav.automation", glyph: "automation" },
 		{ id: SETTINGS_VIEW, message: "nav.settings", glyph: "settings" },
 	];
 
@@ -254,6 +267,34 @@ export interface PluginsPanelInput {
 	readonly state: PluginsStateLike | undefined;
 }
 
+/** One planned prompt, as the host stores and publishes it. */
+export interface ScheduleRecordLike {
+	readonly id: string;
+	readonly sessionId: string;
+	readonly prompt: string;
+	readonly everyMs: number;
+	readonly enabled: boolean;
+	readonly createdAt: number;
+	readonly lastRunAt: number | null;
+	readonly lastOutcome: string | null;
+	readonly nextRunAt: number;
+}
+
+export interface SchedulesStateLike {
+	/** The file the host keeps the schedules in. */
+	readonly path: string;
+	readonly tickMs: number;
+	readonly schedules: readonly ScheduleRecordLike[];
+}
+
+export interface AutomationPanelInput {
+	readonly state: SchedulesStateLike | undefined;
+	/** The session a new schedule would belong to: the one the page has attached. */
+	readonly sessionId?: string;
+	/** The reader's clock, so the next-run line is an input rather than a hidden read. */
+	readonly now?: number;
+}
+
 export interface PanelViewInput {
 	/** The reader's language: every label, heading, and sentence the panel shows. */
 	readonly locale: Locale;
@@ -263,6 +304,7 @@ export interface PanelViewInput {
 	readonly settings?: SettingsPanelInput;
 	readonly skills?: SkillsPanelInput;
 	readonly plugins?: PluginsPanelInput;
+	readonly automation?: AutomationPanelInput;
 }
 
 export const SETTINGS_FIELD_ACTION = "settings:set";
@@ -545,6 +587,85 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 	};
 }
 
+/** One line for a prompt too long to be a row title. */
+function summarize(text: string, max: number): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
+}
+
+/**
+ * The automation panel: the prompts the host runs on their own, for the attached session and for
+ * every other session on the host. A row carries the cadence, the session it belongs to, when it is
+ * next due, and what its last run produced; Add plans one for the attached session.
+ */
+export function automationPanel(locale: Locale, input: AutomationPanelInput): PanelSpec {
+	const { state, sessionId } = input;
+	const now = input.now ?? Date.now();
+	const title = translate(locale, "panel.automation.title");
+	if (state === undefined) {
+		return unavailablePanel(locale, AUTOMATION_VIEW, title, translate(locale, "panel.automation.description"));
+	}
+	return {
+		id: AUTOMATION_VIEW,
+		title,
+		description: translate(locale, "panel.automation.description"),
+		notices:
+			sessionId === undefined
+				? [{ tone: "info" as const, text: translate(locale, "panel.automation.noSession") }]
+				: [],
+		groups: [
+			{
+				id: "automation:schedules",
+				title: translate(locale, "panel.automation.schedules"),
+				actions: [
+					{
+						id: SCHEDULE_ADD_ACTION,
+						label: translate(locale, "panel.automation.add"),
+						tone: "primary" as const,
+						...(sessionId === undefined ? { disabled: true } : {}),
+					},
+				],
+				rows: state.schedules.map((schedule) => ({
+					id: `schedule:${schedule.id}`,
+					title: summarize(schedule.prompt, 90),
+					description: scheduleCadenceCopy(locale, schedule.everyMs),
+					badges: [schedule.sessionId, ...(schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
+					value: [
+						translate(locale, "panel.automation.next", {
+							when: scheduleDueCopy(locale, schedule.nextRunAt, now),
+						}),
+						...(schedule.lastOutcome === null ? [] : [schedule.lastOutcome]),
+					].join(" · "),
+					controls: [
+						{
+							id: SCHEDULE_ENABLED_ACTION,
+							kind: "switch" as const,
+							data: schedule.id,
+							value: String(schedule.enabled),
+						},
+					],
+					actions: [
+						{
+							id: SCHEDULE_RUN_ACTION,
+							label: translate(locale, "panel.automation.run"),
+							data: schedule.id,
+							tone: "default" as const,
+						},
+						{
+							id: SCHEDULE_REMOVE_ACTION,
+							label: translate(locale, "panel.automation.remove"),
+							data: schedule.id,
+							tone: "danger" as const,
+						},
+					],
+				})),
+				empty: translate(locale, "panel.automation.empty"),
+				footnote: translate(locale, "panel.automation.footnote", { path: state.path }),
+			},
+		],
+	};
+}
+
 /** The exposure names the MCP configuration accepts, with the reader's names for them. */
 export function mcpExposures(locale: Locale): PanelOption[] {
 	return ["codemode", "deferred", "direct", "hidden"].map((value) => ({
@@ -562,6 +683,8 @@ export function panelSpec(input: PanelViewInput): PanelSpec | undefined {
 			return skillsPanel(input.locale, input.skills ?? { state: undefined });
 		case "plugins":
 			return pluginsPanel(input.locale, input.plugins ?? { state: undefined });
+		case AUTOMATION_VIEW:
+			return automationPanel(input.locale, input.automation ?? { state: undefined });
 		default:
 			return undefined;
 	}
@@ -729,6 +852,46 @@ export function addMcpServerModal(locale: Locale): PanelModal {
 			},
 		],
 		submit: translate(locale, "modal.add"),
+	};
+}
+
+/**
+ * The modal a plan-a-prompt action opens: the text the host will send, and the gap between runs.
+ */
+export function addScheduleModal(locale: Locale, sessionId: string): PanelModal {
+	return {
+		id: SCHEDULE_ADD_MODAL,
+		title: translate(locale, "modal.scheduleAdd.title"),
+		description: translate(locale, "modal.scheduleAdd.description", { session: sessionId }),
+		fields: [
+			{
+				id: "prompt",
+				label: translate(locale, "modal.scheduleAdd.prompt"),
+				kind: "textarea",
+				value: "",
+				placeholder: translate(locale, "modal.scheduleAdd.promptPlaceholder"),
+			},
+			{
+				id: "everyMinutes",
+				label: translate(locale, "modal.scheduleAdd.every"),
+				kind: "text",
+				value: "15",
+			},
+		],
+		submit: translate(locale, "modal.scheduleAdd.submit"),
+	};
+}
+
+/** The confirmation a schedule's remove control opens; its id is what a submit acts on. */
+export function removeScheduleModal(locale: Locale, id: string): PanelModal {
+	return {
+		id: SCHEDULE_REMOVE_MODAL,
+		title: translate(locale, "modal.scheduleRemove.title"),
+		description: translate(locale, "modal.scheduleRemove.description"),
+		fields: [],
+		submit: translate(locale, "modal.scheduleRemove.submit"),
+		data: id,
+		danger: true,
 	};
 }
 
