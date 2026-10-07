@@ -109,6 +109,13 @@ launch and the terminal client show one session list and one live state. Prompts
 the other without a reload; `amazme client <prompt>` needs the conversation to be idle, where the page steers or
 queues instead.
 
+The roster lists the Sessions this host owns, plus the terminal sessions of the host's own working
+directory, tagged `terminal` on the row. Attaching a terminal session adopts it: the host stores it under the same
+id, seeds its transcript from that session's JSONL file (user prompts, replies, and tool results carry over; the
+session's model, thinking level, and labels do not), and from then on keeps that file current, so the terminal's own
+list shows the same session with everything committed on the host. What a projection cannot carry is counted in the
+host's log rather than dropped quietly.
+
 The page lists the host's sessions on the left and the attached session's transcript on the right. The roster
 shows each session's age and marks the attached one; click a row to attach another session, or use the sidebar's
 **New session** bar to have the host create one — it appears in the roster, attaches at once, and accepts input.

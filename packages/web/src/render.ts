@@ -1009,7 +1009,10 @@ export function createRenderer(
 		const chip = button(item.attached ? "session-row attached" : "session-row");
 		chip.dataset.sessionId = item.id;
 		const text = element("span", "session-text");
-		text.append(element("span", "session-name", item.label));
+		const name = element("span", "session-name", item.label);
+		// A terminal session a host has not adopted yet is worth naming: attaching it adopts it.
+		if (item.source === "local") name.append(element("span", "session-source", copy("sidebar.localSession")));
+		text.append(name);
 		if (item.cwd !== undefined && item.cwd.length > 0) {
 			text.append(element("span", "session-cwd", item.cwd));
 		}

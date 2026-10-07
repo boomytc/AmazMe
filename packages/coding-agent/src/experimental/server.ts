@@ -42,7 +42,7 @@ import { RadiusRelayHost, type RadiusRelayHostStatus } from "./radius-relay.ts";
 import { createExperimentalServerServices } from "./services/server.ts";
 import type { ServerAdministrationOptions } from "./services/server.ts";
 import { AgentController } from "./services/agent-controller.ts";
-import type { SessionCreateOptions, SessionSummary } from "./services/sessions.ts";
+import type { SessionCreateOptions, SessionSource, SessionSummary } from "./services/sessions.ts";
 import {
 	createSession as createCatalogSession,
 	deleteSession,
@@ -51,6 +51,7 @@ import {
 	type SessionCatalogMetadata,
 } from "./session-catalog.ts";
 import { SessionPluginSelectionConflictError, SessionWorkerManager } from "./session-worker-manager.ts";
+import { listLocalSessions } from "./session-store.ts";
 
 export const ENV_SERVER_DIR = "AMAZME_SERVER_DIR";
 export const ENV_SERVER_ID = "AMAZME_SERVER_ID";
@@ -399,17 +400,49 @@ async function startServerBackend(
 		const metadata =
 			workers.trackedSessions.find((candidate) => candidate.id === sessionId) ??
 			(await readSession(sessionDir, sessionId));
-		if (metadata === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-		return metadata;
+		if (metadata !== undefined) return metadata;
+		// A terminal session the host has not opened yet: adopting it stores it under its own id with
+		// the working directory its header records, and its worker seeds the transcript from the file.
+		const local = (await listLocalSessions(process.cwd())).find((session) => session.id === sessionId);
+		if (local === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
+		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd });
+		return adopted;
 	};
 	const createSession = (createOptions: SessionCreateOptions): Promise<SessionCatalogMetadata> =>
 		createCatalogSession(sessionDir, { ...createOptions, cwd: process.cwd() });
-	const summarize = (metadata: SessionCatalogMetadata): SessionSummary => ({
+	const summarize = (metadata: SessionCatalogMetadata, source: SessionSource = "host"): SessionSummary => ({
 		serverId,
 		sessionId: metadata.id,
 		createdAt: metadata.createdAt,
 		cwd: metadata.cwd,
+		source,
 	});
+
+	/**
+	 * The session list one client reads: the Sessions this host owns, plus the terminal sessions it
+	 * could adopt. A Session that a host owns shadows the terminal file it mirrors, so one session is
+	 * one row whichever side made it.
+	 */
+	const listSummaries = async (): Promise<SessionSummary[]> => {
+		const hosted = (await listSessions()).map((metadata) => summarize(metadata));
+		const owned = new Set(hosted.map((summary) => summary.sessionId));
+		const locals = (await listLocalSessions(process.cwd()))
+			.filter((session) => !owned.has(session.id))
+			.map((session) =>
+				summarize(
+					{
+						id: session.id,
+						createdAt: session.createdAt,
+						cwd: session.cwd,
+						path: session.path,
+					},
+					"local",
+				),
+			);
+		return [...hosted, ...locals].sort(
+			(left, right) => left.sessionId.localeCompare(right.sessionId) || left.createdAt - right.createdAt,
+		);
+	};
 	/**
 	 * Run one planned prompt against its session: attach a client to the session's worker, submit
 	 * the prompt, wait for the turn to settle, and release the attachment. The returned note is the
@@ -460,10 +493,7 @@ async function startServerBackend(
 	};
 	const serverServices = await createExperimentalServerServices({
 		administration,
-		list: async () =>
-			(await listSessions())
-				.map(summarize)
-				.sort((left, right) => left.sessionId.localeCompare(right.sessionId) || left.createdAt - right.createdAt),
+		list: () => listSummaries(),
 		create: async (createOptions) => summarize(await createSession(createOptions)),
 		remove: async (sessionId, context) => {
 			const metadata = await resolveSession(sessionId, context);

@@ -39,6 +39,8 @@ export interface SessionWorkerRuntime {
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
+	/** The terminal handoff: the mirror of this session in the terminal's store. */
+	readonly handoff?: { dispose(): Promise<void> };
 	/** Release resources the Harness does not own, such as execution environments, after it closed. */
 	cleanup?(context: Context): Promise<void>;
 }

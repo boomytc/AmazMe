@@ -145,6 +145,9 @@ export async function createExperimentalServerServices(options: {
 		host: {
 			attachClient(presentation) {
 				let preparedPluginPackagePaths: readonly string[] | undefined;
+				// A client that just arrived sees the sessions that exist now, including terminal ones
+				// created while this host was running.
+				void refreshNow(BACKGROUND_CONTEXT).catch(() => undefined);
 				const provider = new RemoteServiceProvider([
 					{ service: SessionDirectory, mode: "singleton" },
 					{ service: SessionManagement, mode: "singleton" },
@@ -233,6 +236,9 @@ export async function createExperimentalServerServices(options: {
 					attach: (sessionId, context) =>
 						serialize(async () => {
 							await presentation.attachSession(sessionId, context);
+							// Attaching can adopt a terminal session, which moves it into the host's own
+							// list: the roster reports what a session is now, not what it was at startup.
+							await refreshNow(context);
 						}),
 					detach: (context) =>
 						serialize(async () => {

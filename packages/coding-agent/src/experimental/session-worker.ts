@@ -43,6 +43,7 @@ import {
 	type WorkerServiceScope,
 } from "./services/worker.ts";
 import { sessionStoragePath } from "./session-catalog.ts";
+import { startSessionHandoff } from "./session-handoff.ts";
 
 export type { SessionWorkerRuntime } from "./services/worker.ts";
 
@@ -819,6 +820,14 @@ async function createCodingAgentHarness(
 				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
 			},
 		});
+		// The terminal's copy of this session: seeded from it when the hosted transcript is empty,
+		// and refreshed with every committed revision, so one session is visible from either client.
+		const handoff = await startSessionHandoff({
+			conversation,
+			sessionId: options.metadata.id,
+			cwd,
+			createdAt: options.metadata.createdAt,
+		});
 		return {
 			cwd,
 			approvalGate,
@@ -827,7 +836,11 @@ async function createCodingAgentHarness(
 			modelRuntime,
 			settingsManager,
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
-			cleanup: (context) => envs.cleanup(context),
+			handoff,
+			cleanup: async (context) => {
+				await handoff.dispose();
+				await envs.cleanup(context);
+			},
 		};
 	} catch (error) {
 		try {

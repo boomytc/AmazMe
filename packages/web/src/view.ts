@@ -71,6 +71,8 @@ export interface RosterItem {
 	readonly age: string;
 	readonly ageIso: string;
 	readonly attached: boolean;
+	/** Where the session lives: one this host owns, or a terminal session it can adopt. */
+	readonly source: "host" | "local";
 	/** The control that asks to remove this session; the page confirms first. */
 	readonly remove: PanelButton;
 }
@@ -381,6 +383,8 @@ export interface SessionSummaryLike {
 	readonly sessionId: string;
 	readonly createdAt: number;
 	readonly cwd?: string;
+	/** Where the session lives; a host that does not say is taken to own it. */
+	readonly source?: "host" | "local";
 }
 
 /** The host's replicated session directory, as this package reads it. */
@@ -590,6 +594,7 @@ export function rosterItems(
 			age: formatAge(session.createdAt, now),
 			ageIso: new Date(session.createdAt).toISOString(),
 			attached: attachedId === session.sessionId,
+			source: session.source ?? "host",
 			remove: {
 				id: SESSION_REMOVE_ACTION,
 				label: translate(locale, "sidebar.remove"),

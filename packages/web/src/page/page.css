@@ -338,6 +338,13 @@ body.dock-open {
 	white-space: nowrap;
 }
 
+/* A terminal session's tag sits after its id, in the caption size, so it never competes with it. */
+.session-source {
+	margin-left: 6px;
+	color: var(--dsw-alias-label-caption);
+	font-size: 11px;
+}
+
 .session-age {
 	flex: none;
 	align-self: flex-start;

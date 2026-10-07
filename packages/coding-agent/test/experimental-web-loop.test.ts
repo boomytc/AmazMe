@@ -38,6 +38,7 @@ import { Settings, type Settings as SettingsService } from "../src/experimental/
 import { Skills, type Skills as SkillsService } from "../src/experimental/services/skills.ts";
 import { Transcript } from "../src/experimental/services/transcript.ts";
 import { runClient } from "../src/experimental/client.ts";
+import { SessionManager } from "../src/core/session-manager.ts";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 
 interface Presentation {
@@ -357,6 +358,113 @@ describe("web client interactive loop", () => {
 		240_000,
 	);
 
+	describe("session handoff", () => {
+		test(
+			"a terminal session appears in the host's roster and continues there",
+			async () => {
+				const { host } = await startHostWithDirectories();
+				// The terminal's own writer makes the session, the way the TUI would: a user prompt, a
+				// reply, and a tool result. A host lists the terminal sessions of its own working
+				// directory, so this session is made in the host's.
+				const manager = SessionManager.create(process.cwd(), undefined, { id: "terminal-made" });
+				manager.appendMessage({ role: "user", content: "from the terminal session", timestamp: Date.now() });
+				manager.appendMessage({
+					role: "assistant",
+					content: [
+						{ type: "text", text: "terminal reply" },
+						{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "notes.md" } },
+					],
+					provider: "test",
+					model: "test",
+					usage: {
+						input: 1,
+						output: 1,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 2,
+						cost: { input: 0, output: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: Date.now(),
+				});
+				manager.appendMessage({
+					role: "toolResult",
+					toolCallId: "call-1",
+					toolName: "read",
+					content: [{ type: "text", text: "tool output" }],
+					isError: false,
+					timestamp: Date.now(),
+				});
+				const file = manager.getSessionFile();
+				expect(file).toBeDefined();
+
+				const tab = await openPresentation(host);
+				await waitFor(() => listedSessions(tab).includes("terminal-made"), "the terminal session in the roster");
+				const listed = (tab.directory.state.value?.sessions ?? []).find(
+					(session) => session.sessionId === "terminal-made",
+				);
+				expect(listed?.source).toBe("local");
+
+				// Attaching it adopts it: the host stores the session and seeds it from the transcript.
+				const attached = await attachSession(tab, "terminal-made");
+				await waitFor(
+					() => sawUserText(attached.transcript.state.value, "from the terminal session"),
+					"the terminal prompt in the hosted transcript",
+				);
+				const blocks = transcriptBlocks("en", attached.transcript.state.value);
+				expect(blocks.map((block) => block.text).join("\n")).toContain("terminal reply");
+				// The tool result travels as its own entry, so the hosted transcript has a tool row
+				// whose result is the terminal's.
+				expect(blocks.some((block) => block.kind === "tool")).toBe(true);
+				expect(JSON.stringify(attached.transcript.state.value)).toContain("tool output");
+
+				// The host owns it now, and the terminal's file is the mirror of that same session.
+				await waitFor(
+					() =>
+						(tab.directory.state.value?.sessions ?? []).find((session) => session.sessionId === "terminal-made")
+							?.source === "host",
+					"the adopted session in the roster",
+				);
+				await waitFor(() => existsSync(file ?? ""), "the terminal file the host mirrors into");
+
+				await attached.dispose();
+				await tab.dispose();
+			},
+			240_000,
+		);
+
+		test(
+			"a session made on the host lands in the terminal's store and reads back",
+			async () => {
+				const { host } = await startHostWithDirectories();
+				const tab = await openPresentation(host);
+				const created = await tab.management.create({ id: "host-made" }, BACKGROUND_CONTEXT);
+				const attached = await attachSession(tab, created.sessionId);
+
+				const marker = `host-made-${Date.now()}`;
+				const accepted = await attached.controller.prompt({ message: marker, images: null }, BACKGROUND_CONTEXT);
+				expect(accepted).toMatchObject({ accepted: true });
+				await waitFor(() => sawUserText(attached.transcript.state.value, marker), "the prompt in the transcript");
+
+				// The mirror appears where the terminal lists its sessions, under the same id, and the
+				// terminal's own reader reads the prompt back from it.
+				let found = (await SessionManager.listAll()).find((session) => session.id === "host-made");
+				const deadline = Date.now() + 90_000;
+				while (found === undefined && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					found = (await SessionManager.listAll()).find((session) => session.id === "host-made");
+				}
+				expect(found).toBeDefined();
+				expect(JSON.stringify(SessionManager.open(found!.path).getEntries())).toContain(marker);
+
+				await attached.controller.abort(BACKGROUND_CONTEXT);
+				await attached.dispose();
+				await tab.dispose();
+			},
+			240_000,
+		);
+	});
+
 	test(
 		"creates sessions from the presentation and keeps two attachments isolated",
 		async () => {
@@ -564,6 +672,8 @@ describe("web client interactive loop", () => {
 	test(
 		"removes the session a presentation is attached to, for that tab and for another",
 		async () => {
+			// A host reads the terminal store of its agent directory, so this test pins one.
+			process.env.AMAZME_CODING_AGENT_DIR = await makeDirectory("web-loop-selfremove-agent-");
 			const sessionDir = await makeDirectory("web-loop-selfremove-sessions-");
 			const host = await startWebHost({
 				port: 0,

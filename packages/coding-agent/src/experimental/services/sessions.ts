@@ -6,10 +6,18 @@ export interface SessionAddress {
 	sessionId: string;
 }
 
+/** Where a listed session lives: a Session this host owns, or a terminal session it can adopt. */
+export type SessionSource = "host" | "local";
+
 export interface SessionSummary extends SessionAddress {
 	createdAt: number;
 	/** The working directory the Session's agent runs in, as its catalog metadata records it. */
 	cwd: string;
+	/**
+	 * `host` for a Session this server owns, `local` for a terminal session that no host has opened
+	 * yet. Attaching a `local` one adopts it: the host stores it and seeds it from its transcript.
+	 */
+	source: SessionSource;
 }
 
 export interface SessionCreateOptions {
