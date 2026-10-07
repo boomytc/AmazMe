@@ -28,6 +28,7 @@ import {
 	findInitialAgentModel,
 } from "./durable/harness-setup.ts";
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
+import { createApprovalGate } from "./services/approvals-provider.ts";
 import { Subagent } from "./durable/subagent.ts";
 import {
 	consumeInternalProcessRole,
@@ -533,6 +534,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			conversation: runtime.conversation,
 			modelRuntime: runtime.modelRuntime,
 			settingsManager: runtime.settingsManager,
+			approvalGate: runtime.approvalGate,
 			facetLoader: runtime.facetLoader,
 			publish: (scope, subscriptionId, update) =>
 				control.send({
@@ -785,6 +787,9 @@ async function createCodingAgentHarness(
 	// The durable runtime installs this tool beside its registry; the Session worker is the same
 	// agent, so a session opened here can delegate to a subagent the way the TUI's does.
 	registry.install(Subagent);
+	// The approval gate is a tool hook, so it belongs to the registry the Harness takes.
+	const approvalGate = createApprovalGate({ mode: () => settingsManager.getToolApprovalMode() });
+	registry.install(approvalGate.extension);
 	let harness: Harness | undefined;
 	try {
 		harness = await Harness.open(
@@ -816,6 +821,7 @@ async function createCodingAgentHarness(
 		});
 		return {
 			cwd,
+			approvalGate,
 			harness,
 			conversation,
 			modelRuntime,

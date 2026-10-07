@@ -142,6 +142,12 @@ export const EN = {
 	"history.loading": "Loading older entries…",
 	"history.start": "Older entries",
 
+	"approval.title": "Waiting for your decision",
+	"approval.approve": "Approve",
+	"approval.deny": "Deny",
+	"approval.tool": "{tool} wants to run",
+	"approval.hint": "Denying settles the call as a failed tool result and the turn continues.",
+
 	"palette.title": "Commands",
 	"palette.noCommands": "No command starts with that.",
 	"palette.noCompletions": "Nothing to complete here.",
@@ -413,6 +419,12 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"history.loading": "正在加载更早的内容…",
 	"history.start": "更早的内容",
 
+	"approval.title": "等待你的决定",
+	"approval.approve": "通过",
+	"approval.deny": "拒绝",
+	"approval.tool": "{tool} 想要运行",
+	"approval.hint": "拒绝会把这次调用结算成失败的工具结果，回合继续往下走。",
+
 	"palette.title": "命令",
 	"palette.noCommands": "没有以它开头的命令。",
 	"palette.noCompletions": "这里没有可补全的取值。",
@@ -550,6 +562,7 @@ const EN_SETTING_GROUPS: Readonly<Record<string, string>> = {
 	conversation: "Conversation",
 	"models-reasoning": "Models & reasoning",
 	"skills-tools": "Skills & tools",
+	approvals: "Approvals",
 	"network-retries": "Network & retries",
 	"images-rendering": "Images & rendering",
 	projects: "Projects",
@@ -561,6 +574,7 @@ const ZH_SETTING_GROUPS: Readonly<Record<string, string>> = {
 	conversation: "对话",
 	"models-reasoning": "模型与推理",
 	"skills-tools": "技能与工具",
+	approvals: "审批",
 	"network-retries": "网络与重试",
 	"images-rendering": "图片与渲染",
 	projects: "项目",
@@ -607,6 +621,10 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	enableSkillCommands: {
 		label: "Skills as commands",
 		description: "Register every loaded skill as a slash command.",
+	},
+	toolApproval: {
+		label: "Tool confirmation",
+		description: "Which tool calls wait for a decision before they run.",
 	},
 	transport: {
 		label: "Transport",
@@ -693,6 +711,10 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 		label: "技能作为命令",
 		description: "把每个已加载的技能注册为斜杠命令。",
 	},
+	toolApproval: {
+		label: "工具确认",
+		description: "哪些工具调用在运行前等待确认。",
+	},
 	transport: {
 		label: "传输方式",
 		description: "供应商请求的承载方式。",
@@ -747,6 +769,7 @@ const EN_SETTING_OPTIONS: Readonly<Record<string, Readonly<Record<string, string
 	mermaidRenderingMode: { off: "Off", final: "Settled answers", streaming: "While streaming" },
 	transport: { auto: "Auto", websocket: "WebSocket", sse: "SSE" },
 	defaultProjectTrust: { ask: "Ask", always: "Always trust", never: "Never trust" },
+	toolApproval: { off: "Run without asking", dangerous: "Ask before changes", all: "Ask before every call" },
 	quietStartup: { false: "Show startup output", header: "Header only", true: "Hide startup output" },
 };
 
@@ -759,6 +782,7 @@ const ZH_SETTING_OPTIONS: Readonly<Record<string, Readonly<Record<string, string
 	mermaidRenderingMode: { off: "关闭", final: "回答结束后", streaming: "流式过程中" },
 	transport: { auto: "自动", websocket: "WebSocket", sse: "SSE" },
 	defaultProjectTrust: { ask: "询问", always: "始终信任", never: "从不信任" },
+	toolApproval: { off: "直接运行", dangerous: "改动前询问", all: "每次调用都询问" },
 	quietStartup: { false: "显示启动输出", header: "只显示标题", true: "隐藏启动输出" },
 };
 

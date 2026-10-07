@@ -83,6 +83,16 @@ session-settings，以及服务端范围的 settings、skills、plugins），驱
 - 坞的输入行在重绘时复用同一个 DOM 节点，正在敲的命令与焦点不会被下方到来的输出冲掉。
 - 会话 worker 现在也装上了 `subagent` 工具（TUI 的 durable runtime 一直有），所以网页里的一次真实运行可以派生子会话，并在列表与任务图里被正确归属。
 
+## 工具审批
+
+设置里的「审批 → 工具确认」有三档：`off`（直接运行）、`dangerous`（bash／powershell／write／edit 前询问）、
+`all`（每次调用都询问）。会话 worker 在 Harness 打开前把 `beforeTool` 钩子装进自己的 registry（worker 的
+approvals facet 提供 `amazme.approvals` 的状态）：命中策略的调用会被发布成一条待批请求（工具名、参数摘要、
+task 与会话 id），钩子在那里等；页面在 composer 上方给出卡片，「通过」让调用照常运行，「拒绝」把这次调用
+结算成失败的工具结果（`Denied by the reader: …`），回合继续往下走。这是工具边界上最小的一段暂停／恢复，
+没有额外的策略引擎；回合被中止时待批请求按拒绝结算。`state` 是远程服务成员，所以服务对象上的 `state`
+必须是数据属性而不是 getter。
+
 ## 命令、快捷键与复制
 
 - 命令：composer 里以 `/` 开头的草稿打开命令面板。面板先按前缀过滤会话自己发布的命令目录（`amazme.commands`：

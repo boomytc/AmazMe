@@ -15,6 +15,8 @@ import {
 	addMcpServerModal,
 	addPackageModal,
 	applyTheme,
+	APPROVAL_APPROVE_ACTION,
+	APPROVAL_DENY_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
 	attachmentRejection,
 	BOOT_GLOBAL,
@@ -95,6 +97,7 @@ import {
 	createSessionServiceSource,
 	type SessionServiceSource,
 } from "../services/connection.ts";
+import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
 import { Conversations, type Conversations as ConversationsService } from "../services/conversations.ts";
 import { Terminal, type Terminal as TerminalService, type TerminalState } from "../services/terminal.ts";
@@ -167,6 +170,7 @@ class SessionPainter {
 	#workspace: WorkspaceService | undefined;
 	#terminal: TerminalService | undefined;
 	#conversations: ConversationsService | undefined;
+	#approvals: ApprovalsService | undefined;
 	#levels: readonly string[] | undefined;
 	#levelsModel: string | undefined;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
@@ -221,6 +225,16 @@ class SessionPainter {
 
 	async stopTerminal(): Promise<void> {
 		await this.#terminal?.stop(BACKGROUND_CONTEXT);
+	}
+
+	/** The tool calls waiting for the reader's decision. */
+	get approvals(): ApprovalsState | undefined {
+		return this.#approvals?.state.value;
+	}
+
+	/** The approvals service itself, for the decisions the page reports. */
+	get approvalsService(): ApprovalsService | undefined {
+		return this.#approvals;
 	}
 
 	/** The session's conversations, live tasks, and the focused conversation's view. */
@@ -358,6 +372,7 @@ class SessionPainter {
 				Workspace,
 				Terminal,
 				Conversations,
+				Approvals,
 			],
 			assertAccess(): void {},
 			onError: (error: Error) =>
@@ -377,11 +392,14 @@ class SessionPainter {
 		this.#workspace = services.use(Workspace);
 		this.#terminal = services.use(Terminal);
 		this.#conversations = services.use(Conversations);
+		this.#approvals = services.use(Approvals);
 		// A listing, a file, or terminal output lands here; the page repaints the dock from it.
 		this.#workspace.state.subscribe(() => paint());
 		this.#terminal.state.subscribe(() => paint());
 		// The conversation list, the task graph, and the focused view arrive here.
 		this.#conversations.state.subscribe(() => paint());
+		// A tool call waiting for a decision arrives here.
+		this.#approvals.state.subscribe(() => paint());
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		// A model switch made anywhere repaints the chip and re-reads the levels of the new model.
@@ -410,6 +428,7 @@ class SessionPainter {
 		this.#workspace = undefined;
 		this.#terminal = undefined;
 		this.#conversations = undefined;
+		this.#approvals = undefined;
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		this.#sessionId = undefined;
@@ -545,6 +564,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					thinkingLevels: painter.levels,
 					submitMode,
 					attachments: pending,
+					approvals: painter.approvals,
 					rosterFilter,
 					draft,
 					commands: composerCommands(),
@@ -880,6 +900,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						submitMode = action.data === "steer" ? "steer" : "followUp";
 						paint();
 						return;
+					case APPROVAL_APPROVE_ACTION:
+					case APPROVAL_DENY_ACTION: {
+						const id = action.data ?? "";
+						const service = painter.approvalsService;
+						settle(
+							service?.decide(id, action.id === APPROVAL_APPROVE_ACTION, BACKGROUND_CONTEXT).then((known) => {
+								if (!known) {
+									renderer.setConnection(copy("page.queueGone"), "error");
+								}
+							}),
+							false,
+						);
+						return;
+					}
 					case CONVERSATION_SELECT_ACTION: {
 						const id = action.data ?? "";
 						// A page of history belongs to the conversation it was paged from.

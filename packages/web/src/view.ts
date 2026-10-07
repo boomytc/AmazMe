@@ -20,7 +20,14 @@ import {
 	ToolResultEntry,
 	UserEntry,
 } from "@amazme/durable";
-import { ATTACHMENT_REMOVE_ACTION, COMPACT_ACTION, QUEUE_CANCEL_ACTION, SESSION_REMOVE_ACTION } from "./actions.ts";
+import {
+	APPROVAL_APPROVE_ACTION,
+	APPROVAL_DENY_ACTION,
+	ATTACHMENT_REMOVE_ACTION,
+	COMPACT_ACTION,
+	QUEUE_CANCEL_ACTION,
+	SESSION_REMOVE_ACTION,
+} from "./actions.ts";
 import {
 	commandPalette,
 	parseCommandLine,
@@ -132,6 +139,44 @@ export function formatBytes(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** One tool call waiting for the reader's decision. */
+export interface ApprovalCard {
+	readonly id: string;
+	readonly tool: string;
+	/** A one-line digest of the call. */
+	readonly detail: string;
+	readonly approve: PanelButton;
+	readonly deny: PanelButton;
+}
+
+/** What the host's approvals state carries, as this package reads it. */
+export interface ApprovalsStateLike {
+	readonly pending: readonly {
+		readonly id: string;
+		readonly tool: string;
+		readonly detail: string;
+	}[];
+}
+
+/**
+ * The pending tool calls, each with its own approve and deny. A decision is the only thing that
+ * releases the call, so the card names the tool and what it would do.
+ */
+export function approvalCards(locale: Locale, state: ApprovalsStateLike | undefined): ApprovalCard[] {
+	return (state?.pending ?? []).map((request) => ({
+		id: request.id,
+		tool: request.tool,
+		detail: request.detail,
+		approve: {
+			id: APPROVAL_APPROVE_ACTION,
+			label: translate(locale, "approval.approve"),
+			tone: "primary",
+			data: request.id,
+		},
+		deny: { id: APPROVAL_DENY_ACTION, label: translate(locale, "approval.deny"), tone: "danger", data: request.id },
+	}));
+}
+
 /** One image the reader attached and has not sent yet, as the composer shows it. */
 export interface Attachment {
 	readonly id: string;
@@ -212,6 +257,8 @@ export interface WebView {
 	readonly queue: readonly QueueItem[];
 	/** Images attached but not sent yet. */
 	readonly attachments: readonly Attachment[];
+	/** The session's pending tool approvals. */
+	readonly approvals: readonly ApprovalCard[];
 	readonly run: RunControls;
 	/** The command palette for the current draft. */
 	readonly palette: CommandPalette;
@@ -294,6 +341,8 @@ export interface WebViewInput {
 	readonly thinkingLevels: readonly string[] | undefined;
 	/** How the page would submit while a turn runs; the page owns this choice. */
 	readonly submitMode: SubmitMode;
+	/** The session's pending tool approvals, when the host offers the service. */
+	readonly approvals: ApprovalsStateLike | undefined;
 	/** The images the reader attached and has not sent. */
 	readonly attachments: readonly {
 		readonly id: string;
@@ -844,6 +893,7 @@ export function failureView(locale: Locale, text: string): WebView {
 		status: "",
 		queue: [],
 		attachments: [],
+		approvals: [],
 		run: runControls(locale, "followUp", false),
 		attachedId: undefined,
 		empty: text,
@@ -896,6 +946,7 @@ export function buildWebView(input: WebViewInput): WebView {
 		status: sessionStatus(locale, input.transcript),
 		queue: queuedInputs(locale, input.transcript),
 		attachments: attachments(locale, input.attachments),
+		approvals: approvalCards(locale, input.approvals),
 		run: runControls(locale, input.submitMode, input.attachedId !== undefined),
 		attachedId: input.attachedId,
 		empty,

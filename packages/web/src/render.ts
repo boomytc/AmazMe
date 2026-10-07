@@ -70,6 +70,8 @@ export interface PageElements {
 	readonly dock: HTMLElement;
 	readonly dockTabs: HTMLElement;
 	readonly dockBody: HTMLElement;
+	/** The tool calls waiting for a decision, filled by the renderer. */
+	readonly approvals: HTMLElement;
 	/** The composer's command palette, filled by the renderer. */
 	readonly palette: HTMLElement;
 	/** The header's run controls (compaction), filled by the renderer. */
@@ -136,6 +138,7 @@ export function collectPageElements(): PageElements {
 		viewBack: pickElement("view-back", HTMLButtonElement),
 		runActions: pick("run-actions"),
 		palette: pick("command-palette"),
+		approvals: pick("approvals"),
 		dock: pick("dock"),
 		dockTabs: pick("dock-tabs"),
 		dockBody: pick("dock-body"),
@@ -882,6 +885,32 @@ export function createRenderer(
 	/** What the markdown adapter borrows from the renderer. */
 	const markdown: MarkdownContext = { copy, codeBlock: codeBlockElement };
 
+	/** The tool calls waiting for a decision: what wants to run, and the two ways to answer. */
+	const renderApprovals = (view: WebView): void => {
+		elements.approvals.replaceChildren();
+		if (view.approvals.length === 0) {
+			elements.approvals.hidden = true;
+			return;
+		}
+		for (const card of view.approvals) {
+			const node = element("div", "approval-card");
+			node.dataset.approvalId = card.id;
+			const head = element("div", "approval-head");
+			head.append(
+				element("p", "approval-title", copy("approval.title")),
+				element("p", "approval-tool", copy("approval.tool", { tool: card.tool })),
+			);
+			node.append(head);
+			node.append(element("pre", "approval-detail", card.detail));
+			const actions = element("div", "approval-actions");
+			actions.append(panelButton(card.deny, report), panelButton(card.approve, report));
+			node.append(actions);
+			node.append(element("p", "approval-hint", copy("approval.hint")));
+			elements.approvals.append(node);
+		}
+		elements.approvals.hidden = false;
+	};
+
 	/** The command palette: the host's commands (or their argument completions) for this draft. */
 	const renderPalette = (view: WebView): void => {
 		if (!view.palette.open || (lastView?.attachedId === undefined && view.palette.rows.length === 0)) {
@@ -1224,6 +1253,7 @@ export function createRenderer(
 			renderModelChip(view);
 			renderAttachments(view);
 			renderPalette(view);
+			renderApprovals(view);
 			renderRunActions(view);
 			renderDock(view);
 			renderSubmitModes(view);

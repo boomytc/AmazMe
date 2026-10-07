@@ -37,6 +37,11 @@ export const TERMINAL_STOP_ACTION = "terminal:stop";
 export const CONVERSATION_SELECT_ACTION = "conversation:select";
 /** Re-read the conversation list, the task graph, and the focused view. */
 export const CONVERSATIONS_REFRESH_ACTION = "conversation:refresh";
+/** Approve one pending tool call: `data` is the approval id. */
+export const APPROVAL_APPROVE_ACTION = "approval:approve";
+/** Deny one pending tool call: `data` is the approval id. */
+export const APPROVAL_DENY_ACTION = "approval:deny";
+
 /** Page in older stored history above the transcript. */
 export const HISTORY_MORE_ACTION = "history:more";
 

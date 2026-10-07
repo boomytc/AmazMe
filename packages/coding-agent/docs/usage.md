@@ -161,6 +161,15 @@ its id, and removes one from a hover control behind a confirmation: its storage 
 host's session directory while the working directory itself is left alone. A draft in the composer,
 the filter text, and the open management view survive attaching, creating, and removing sessions.
 
+### Confirming tool calls
+
+**Settings → Approvals → Tool confirmation** decides which tool calls wait for you: `Run without asking`,
+`Ask before changes` (bash, powershell, write, edit), or `Ask before every call`. A call that the policy
+covers appears as a card above the composer with the tool's own arguments; **Approve** lets it run and
+**Deny** settles it as a failed tool result — *Denied by the reader: …* — which the turn continues from.
+Aborting a turn denies whatever it was waiting on. This is a pause at the tool boundary, not a rule
+engine: nothing about network or filesystem scope is enforced by it.
+
 ### Watching a long run, and older history
 
 The dock's **Conversations** tab lists every conversation of the session: `main`, and each subagent

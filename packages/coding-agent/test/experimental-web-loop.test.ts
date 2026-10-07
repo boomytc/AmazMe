@@ -25,6 +25,7 @@ import {
 	type SessionServiceSource,
 } from "../src/experimental/services/connection.ts";
 import { Commands, type Commands as CommandsService } from "../src/experimental/services/commands.ts";
+import { Approvals, type Approvals as ApprovalsService } from "../src/experimental/services/approvals.ts";
 import { Conversations, type Conversations as ConversationsService } from "../src/experimental/services/conversations.ts";
 import { Terminal, type Terminal as TerminalService } from "../src/experimental/services/terminal.ts";
 import { Workspace, type Workspace as WorkspaceService } from "../src/experimental/services/workspace.ts";
@@ -50,6 +51,7 @@ interface Attached {
 	readonly commands: CommandsService;
 	readonly workspace: WorkspaceService;
 	readonly conversations: ConversationsService;
+	readonly approvals: ApprovalsService;
 	readonly terminal: TerminalService;
 	dispose(): Promise<void>;
 }
@@ -115,7 +117,7 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 	await presentation.management.attach(sessionId, BACKGROUND_CONTEXT);
 	await presentation.sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
 	const services = presentation.sessionSource.open({
-		services: [Transcript, AgentController, Models, Commands, Workspace, Terminal, Conversations],
+		services: [Transcript, AgentController, Models, Commands, Workspace, Terminal, Conversations, Approvals],
 		assertAccess(): void {},
 		onError(): void {},
 	});
@@ -127,6 +129,7 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 		commands: services.use(Commands),
 		workspace: services.use(Workspace),
 		conversations: services.use(Conversations),
+		approvals: services.use(Approvals),
 		terminal: services.use(Terminal),
 		async dispose() {
 			await services.dispose(BACKGROUND_CONTEXT);
@@ -351,6 +354,26 @@ describe("web client interactive loop", () => {
 
 			await second.dispose();
 			await first.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"publishes the approvals surface: nothing pending, and an unknown decision is refused",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "web-loop-approvals" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+
+			// The service's state reaches the client, and its list starts empty.
+			await waitFor(() => attached.approvals.state.value !== undefined, "the approvals state");
+			expect(attached.approvals.state.value?.pending).toEqual([]);
+			// A decision for a request that is not pending reports that nothing was waiting.
+			expect(await attached.approvals.decide("approval-none", true, BACKGROUND_CONTEXT)).toBe(false);
+
+			await attached.dispose();
+			await presentation.dispose();
 		},
 		240_000,
 	);

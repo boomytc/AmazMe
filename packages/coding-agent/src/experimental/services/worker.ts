@@ -19,6 +19,7 @@ import { configureHarnessHttp } from "../durable/harness-setup.ts";
 import { AgentController } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
 import { createCommandsFacet } from "./commands-provider.ts";
+import { createApprovalsFacet, type ApprovalGate } from "./approvals-provider.ts";
 import { createConversationsFacet } from "./conversations-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
@@ -35,6 +36,8 @@ export interface SessionWorkerRuntime {
 	readonly conversation: Conversation;
 	readonly modelRuntime?: ModelRuntime;
 	readonly settingsManager?: SettingsManager;
+	/** The tool boundary's approval gate, when the worker installed one. */
+	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
 	/** Release resources the Harness does not own, such as execution environments, after it closed. */
 	cleanup?(context: Context): Promise<void>;
@@ -62,6 +65,8 @@ export async function createSessionWorkerServices(options: {
 	readonly conversation: Conversation;
 	readonly modelRuntime: ModelRuntime | undefined;
 	readonly settingsManager?: SettingsManager;
+	/** The tool boundary's approval gate, when the worker installed one. */
+	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
 	publish(scope: WorkerServiceScope, subscriptionId: string, update: ServiceProviderUpdate): Promise<void>;
 }): Promise<SessionWorkerServices> {
@@ -103,6 +108,7 @@ export async function createSessionWorkerServices(options: {
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 		createCommandsFacet(),
 		createConversationsFacet({ harness: options.harness, root: options.conversation }),
+		...(options.approvalGate === undefined ? [] : [createApprovalsFacet(options.approvalGate)]),
 		createWorkspaceFacet({ cwd: options.cwd }),
 		...(options.settingsManager === undefined
 			? []

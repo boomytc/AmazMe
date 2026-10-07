@@ -15,6 +15,7 @@ import { describe, expect, test } from "vitest";
 import {
 	ATTACHMENT_MAX_BYTES,
 	attachmentRejection,
+	approvalCards,
 	attachments,
 	buildWebView,
 	failureView,
@@ -32,6 +33,8 @@ import {
 	type WebView,
 } from "../src/view.ts";
 import {
+	APPROVAL_APPROVE_ACTION,
+	APPROVAL_DENY_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
 	COMPACT_ACTION,
 	QUEUE_CANCEL_ACTION,
@@ -173,6 +176,7 @@ describe("web view model", () => {
 				submitMode: "followUp",
 				attachments: [],
 				rosterFilter,
+				approvals: undefined,
 				focus: undefined,
 				history: [],
 				historyCursor: null,
@@ -364,6 +368,7 @@ describe("web view model", () => {
 		const connecting = buildWebView({ locale: "en",			submitMode: "followUp",
 			attachments: [],
 			rosterFilter: "",
+			approvals: undefined,
 			focus: undefined,
 			history: [],
 			historyCursor: null,
@@ -387,6 +392,7 @@ describe("web view model", () => {
 		const none = buildWebView({ locale: "en",			submitMode: "followUp",
 			attachments: [],
 			rosterFilter: "",
+			approvals: undefined,
 			focus: undefined,
 			history: [],
 			historyCursor: null,
@@ -411,6 +417,7 @@ describe("web view model", () => {
 			submitMode: "followUp",
 			attachments: [],
 			rosterFilter: "",
+			approvals: undefined,
 			focus: undefined,
 			history: [],
 			historyCursor: null,
@@ -446,6 +453,7 @@ describe("web view model", () => {
 			submitMode: "followUp",
 			attachments: [],
 			rosterFilter: "",
+			approvals: undefined,
 			focus: undefined,
 			history: [],
 			historyCursor: null,
@@ -482,6 +490,7 @@ describe("web view model", () => {
 			submitMode: "followUp",
 			attachments: [],
 			rosterFilter: "",
+			approvals: undefined,
 			focus: undefined,
 			history: [],
 			historyCursor: null,
@@ -517,6 +526,7 @@ describe("web view model", () => {
 			buildWebView({ locale: "en",			submitMode: "followUp",
 			attachments: [],
 			rosterFilter: "",
+			approvals: undefined,
 			focus: undefined,
 			history: [],
 			historyCursor: null,
@@ -618,6 +628,7 @@ describe("web view model", () => {
 			submitMode: "followUp",
 			attachments: [],
 			rosterFilter: "",
+			approvals: undefined,
 			focus: undefined,
 			history: [],
 			historyCursor: null,
@@ -651,6 +662,7 @@ describe("web view model", () => {
 			submitMode: "followUp",
 			attachments: [],
 			rosterFilter: "",
+			approvals: undefined,
 			focus: undefined,
 			history: [],
 			historyCursor: null,
@@ -681,6 +693,33 @@ describe("web view model", () => {
 		});
 		expect(view.model).toMatchObject({ label: "Model M", effort: "Low", disabled: false });
 		expect(failureView("en", "cannot boot: x").model).toEqual(modelPickerEmpty("en"));
+	});
+
+	test("gives every waiting tool call an approve and a deny", () => {
+		const cards = approvalCards("en", {
+			pending: [
+				{ id: "approval-1", tool: "bash", detail: '{"command":"rm -rf build"}' },
+				{ id: "approval-2", tool: "write", detail: '{"path":"notes.md"}' },
+			],
+		});
+		expect(cards.map((card) => [card.id, card.tool, card.detail])).toEqual([
+			["approval-1", "bash", '{"command":"rm -rf build"}'],
+			["approval-2", "write", '{"path":"notes.md"}'],
+		]);
+		expect(cards[0]?.approve).toEqual({
+			id: APPROVAL_APPROVE_ACTION,
+			label: "Approve",
+			tone: "primary",
+			data: "approval-1",
+		});
+		expect(cards[0]?.deny).toEqual({
+			id: APPROVAL_DENY_ACTION,
+			label: "Deny",
+			tone: "danger",
+			data: "approval-1",
+		});
+		expect(approvalCards("zh", { pending: [] })).toEqual([]);
+		expect(approvalCards("zh", undefined)).toEqual([]);
 	});
 
 	test("offers the run controls: compaction, and how a busy turn takes input", () => {

@@ -1,4 +1,6 @@
 export {
+	APPROVAL_APPROVE_ACTION,
+	APPROVAL_DENY_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
 	COMPACT_ACTION,
 	CONVERSATION_SELECT_ACTION,
@@ -171,6 +173,7 @@ export {
 	attachmentRejection,
 	attachments,
 	buildWebView,
+	approvalCards,
 	composerPlaceholder,
 	formatBytes,
 	failureView,
@@ -186,6 +189,8 @@ export {
 	runControls,
 	sessionStatus,
 	transcriptBlocks,
+	type ApprovalCard,
+	type ApprovalsStateLike,
 	type Attachment,
 	type AttachmentRejection,
 	type BlockTone,

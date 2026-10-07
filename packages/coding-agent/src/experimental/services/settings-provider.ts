@@ -4,6 +4,8 @@ import type { Transport } from "@amazme/ai";
 import {
 	APPEARANCE_PREFERENCES,
 	type AppearancePreference,
+	TOOL_APPROVAL_MODES,
+	type ToolApprovalMode,
 	LOCALE_PREFERENCES,
 	type LocalePreference,
 	type SettingsManager,
@@ -65,6 +67,15 @@ const SPECS: readonly SettingSpec[] = [
 		options: APPEARANCE_PREFERENCES,
 		read: (manager) => manager.getAppearancePreference(),
 		write: (manager, value) => manager.setAppearancePreference(value as AppearancePreference),
+	},
+	{
+		id: "toolApproval",
+		group: "approvals",
+		kind: "enum",
+		field: "toolApproval",
+		options: TOOL_APPROVAL_MODES,
+		read: (manager) => manager.getToolApprovalMode(),
+		write: (manager, value) => manager.setToolApprovalMode(value as ToolApprovalMode),
 	},
 	{
 		id: "compactionEnabled",

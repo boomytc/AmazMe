@@ -40,6 +40,7 @@ page take effect after the host restarts.
 | session | `Commands` | the session's own command catalogue (model, thinking, compact, reload) with textual arguments, argument completions, and a value-shaped result | add skill and prompt-template commands to this catalogue |
 | session | `Workspace` | the Session's working directory as a listing and a text reader, with paths confined to that directory | add file writing, git status, and a diff view |
 | session | `Terminal` | one shell per Session over the same execution path as the bash tool, with streamed output in replicated state and a stop control | add a persistent shell session and per-command timeouts |
+| session | `Approvals` | the tool calls paused at the boundary by the `toolApproval` policy, with a decision that releases each one (approve runs it, deny blocks it) | add per-tool rules and remembered decisions |
 | session | `Conversations` | the Session's conversation list with its ownership edges, the live task graph projected to a plain list, stored-history paging, and per-conversation prompt/steer/abort | add conversation creation and forking from the presentation |
 | session | `Models` | state, default-persisting selection, thinking, refresh implemented | move provider/auth composition behind plugin facets |
 | session | `AgentController` | presentation-safe facade over the root durable conversation for prompting, steering, follow-ups, queue cancellation, abort, compaction, and waiting for a prompt's answer | add new conversation operations only when a presentation requires them |

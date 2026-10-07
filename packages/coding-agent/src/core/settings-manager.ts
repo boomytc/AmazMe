@@ -111,6 +111,15 @@ export interface CodemodeSettings {
 export const LOCALE_PREFERENCES = ["auto", "zh", "en"] as const;
 export type LocalePreference = (typeof LOCALE_PREFERENCES)[number];
 
+/**
+ * How a tool call is confirmed before it runs, for presentations that can ask.
+ * - `off`: no confirmation.
+ * - `dangerous`: the tools that change the machine — bash, powershell, write, edit.
+ * - `all`: every tool call.
+ */
+export const TOOL_APPROVAL_MODES = ["off", "dangerous", "all"] as const;
+export type ToolApprovalMode = (typeof TOOL_APPROVAL_MODES)[number];
+
 /** Palette preferences for graphical presentations. The TUI keeps its own `theme` setting. */
 export const APPEARANCE_PREFERENCES = ["system", "light", "dark"] as const;
 export type AppearancePreference = (typeof APPEARANCE_PREFERENCES)[number];
@@ -196,6 +205,7 @@ export interface Settings {
 	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
 	locale?: LocalePreference; // default: "auto" - interface language of graphical presentations; global setting only
 	appearance?: AppearancePreference; // default: "system" - palette of graphical presentations; global setting only
+	toolApproval?: ToolApprovalMode; // default: "off" - which tool calls wait for a confirmation; global setting only
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -883,6 +893,18 @@ export class SettingsManager {
 	setLocalePreference(locale: LocalePreference): void {
 		this.globalSettings.locale = locale;
 		this.markModified("locale");
+		this.save();
+	}
+
+	/** Which tool calls wait for a confirmation; an unset or unknown value runs everything. */
+	getToolApprovalMode(): ToolApprovalMode {
+		const mode = this.globalSettings.toolApproval;
+		return mode !== undefined && TOOL_APPROVAL_MODES.includes(mode) ? mode : "off";
+	}
+
+	setToolApprovalMode(mode: ToolApprovalMode): void {
+		this.globalSettings.toolApproval = mode;
+		this.markModified("toolApproval");
 		this.save();
 	}
 

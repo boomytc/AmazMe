@@ -132,6 +132,8 @@
 				<div class="column" id="column"><p class="empty-state">{{header.noSessionAttached}}</p></div>
 			</div>
 			<div class="composer-dock" id="composer-dock">
+				<!-- Tool calls waiting for a decision, above everything the composer sends. -->
+				<div class="approvals" id="approvals" hidden></div>
 				<div id="queue"></div>
 				<!-- The command palette: the host's commands for the draft. -->
 				<div class="command-palette" id="command-palette" hidden></div>
