@@ -179,9 +179,10 @@ composer then talks to whichever conversation is focused. **Tasks** shows the li
 task's kind, its phase, its status, what it waits on, and the conversations it owns, which is what
 makes a long delegation legible while it runs.
 
-**Load older** at the top of the transcript pages stored history in, twenty entries at a time, walking
-back from the oldest entry the conversation still shows; the pages read exactly like the transcript
-above them.
+**Load older** at the top of the transcript pages stored history in, twenty entries at a time. The
+first page starts strictly below the oldest entry the transcript still shows (so a page never repeats
+what is above it — after a compaction, the entries the summary replaced), and later pages ride the
+host's cursor. The pages read exactly like the transcript above them.
 
 ### The session's files and a shell
 

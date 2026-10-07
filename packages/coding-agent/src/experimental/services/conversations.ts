@@ -61,8 +61,17 @@ export interface Conversations {
 	select(conversationId: string, context: Context): Promise<void>;
 	/** Re-read the conversation list, the task graph, and the focused view. */
 	refresh(context: Context): Promise<void>;
-	/** A page of stored history older than the cursor (the newest page when it is null). */
-	older(conversationId: string, cursor: string | null, limit: number, context: Context): Promise<HistoryPage>;
+	/**
+	 * One page of stored history. The first page (`cursor` null) starts below `before`, the oldest
+	 * entry the presentation already shows, so a page never repeats what the transcript carries.
+	 */
+	older(
+		conversationId: string,
+		before: string | null,
+		cursor: string | null,
+		limit: number,
+		context: Context,
+	): Promise<HistoryPage>;
 	/** Send input to any conversation: a run of its own, the way the root's controller does. */
 	prompt(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentOperationResponse>;
 	steer(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentQueueResponse>;

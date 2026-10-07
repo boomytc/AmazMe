@@ -79,7 +79,7 @@ session-settings，以及服务端范围的 settings、skills、plugins），驱
   （本地 shell 操作、设置里的 shell 路径与前缀、同一个执行器做二进制清理与截断），所以网页与模型跑的是同一条路。
 - Conversations：宿主 `amazme.conversations` 的投影。列出会话里的每个对话——主线标 `main`，子代理的子会话标出「由哪条 task 在哪条会话里创建」，当前聚焦的一条标 `selected`；点「打开」把主区切到那条对话。根对话仍用 Transcript 的实时视图，其他对话由服务发布一份（250ms 合并的）聚焦视图，宿主的 commit 流只用于给列表补标签。
 - Tasks：同一服务的实时任务图，每条 task 给出 kind 与 id、阶段、状态、它等待哪些 task、拥有哪些会话，长跑时因此可读。
-- 历史分页：transcript 顶部有「加载更早」，按每条对话的存储历史游标往回翻页（每页 20 条，游标用完即止），翻出来的条目按与实时 transcript 相同的投影排在上面，读法一致。
+- 历史分页：transcript 顶部有「加载更早」。第一页以当前 transcript 最旧的条目为上界（`maxEntryId`），所以翻出来的内容一定在已显示内容之下、不会重复；之后按游标继续往回（每页 20 条，游标用完即止）。翻出来的条目按与实时 transcript 相同的投影排在 `.history-pages` 里，读法一致。
 - 坞的输入行在重绘时复用同一个 DOM 节点，正在敲的命令与焦点不会被下方到来的输出冲掉。
 - 会话 worker 现在也装上了 `subagent` 工具（TUI 的 durable runtime 一直有），所以网页里的一次真实运行可以派生子会话，并在列表与任务图里被正确归属。
 

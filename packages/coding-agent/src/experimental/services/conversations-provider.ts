@@ -4,6 +4,7 @@ import {
 	type Conversation,
 	type ConversationId,
 	type Cursor,
+	type EntryId,
 	type EntryRecord,
 	type Harness,
 	type TaskGraph,
@@ -235,6 +236,7 @@ export function createConversationsService(
 
 	const older = async (
 		conversationId: string,
+		before: string | null,
 		cursor: string | null,
 		limit: number,
 		context: Context,
@@ -242,7 +244,11 @@ export function createConversationsService(
 		const conversation = await conversationOf(conversationId);
 		if (conversation === undefined) return { entries: [] };
 		const parsed: Cursor | undefined = cursor === null ? undefined : (JSON.parse(cursor) as Cursor);
-		const page = await conversation.entries({}, Math.max(1, limit), parsed, context);
+		// The first page starts strictly below what the presentation already shows; later pages ride
+		// the cursor, which carries its own position.
+		const query =
+			before === null || parsed !== undefined ? {} : { maxEntryId: (Number(before) - 1) as EntryId };
+		const page = await conversation.entries(query, Math.max(1, limit), parsed, context);
 		// The scan is newest first; a presentation appends a page above what it shows, so reverse it.
 		return {
 			entries: [...page.items].reverse(),

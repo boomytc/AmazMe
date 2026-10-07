@@ -1071,10 +1071,10 @@ export function createRenderer(
 	const isProcess = (block: TranscriptBlock): boolean => block.kind === "thinking" || block.kind === "tool";
 
 	/** The flow: user and assistant turns, one group per run of process rows, notices, the status. */
-	const flowElements = (view: WebView): HTMLElement[] => {
+	const flowElements = (blocks: readonly TranscriptBlock[]): HTMLElement[] => {
 		const flow: HTMLElement[] = [];
 		let process: HTMLElement | undefined;
-		for (const block of view.blocks) {
+		for (const block of blocks) {
 			if (isProcess(block)) {
 				if (process === undefined) {
 					process = element("div", "turn-process");
@@ -1216,7 +1216,13 @@ export function createRenderer(
 				elements.roster.append(empty);
 			}
 
-			const flow = flowElements(view);
+			const flow = flowElements(view.blocks);
+			// The pages the reader asked for sit above the live transcript, in their own group.
+			if (view.history.blocks.length > 0) {
+				const pages = element("div", "history-pages");
+				pages.append(...flowElements(view.history.blocks));
+				flow.unshift(pages);
+			}
 			if (view.history.loading || view.history.more) {
 				const more = element("div", "history-more");
 				const control = button(view.history.loading ? "history-more-button loading" : "history-more-button");

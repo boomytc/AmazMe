@@ -8,6 +8,7 @@ import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
 import { createRegistry, Harness } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
+import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
 import { createConversationsService } from "../src/experimental/services/conversations-provider.ts";
 import type { ConversationsState } from "../src/experimental/services/conversations.ts";
 import { Subagent } from "../src/experimental/durable/subagent.ts";
@@ -139,18 +140,56 @@ describe("the session's conversation list", () => {
 			await askRoot(setup, "first input", [fauxAssistantMessage("first answer")]);
 			await askRoot(setup, "second input", [fauxAssistantMessage("second answer")]);
 
+			const handle = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
+			// A compaction moves the head; what it replaced is still reachable below the view.
+			setup.faux.setResponses([fauxAssistantMessage("a summary of the first inputs")]);
+			const controller = createAgentController(setup.harness, handle);
+			expect(await controller.compact({ customInstructions: null }, BACKGROUND_CONTEXT)).toMatchObject({
+				accepted: true,
+			});
+			await waitFor(
+				() => (setup.state.value.view ?? undefined) === undefined || true,
+				"the compaction to settle",
+			);
+			const afterCompaction = await (async () => {
+				for (let attempt = 0; attempt < 200; attempt++) {
+					const page = await handle.entries({}, 1, undefined, TODO_CONTEXT);
+					const head = page.items[0];
+					if (head !== undefined && head.kind !== "amazme.user") return page;
+					await new Promise((resolve) => setTimeout(resolve, 25));
+				}
+				throw new Error("the compaction never committed");
+			})();
+			const summaryId = afterCompaction.items[0]!.id;
+			const replaced = await setup.service.service.older(
+				setup.rootId,
+				String(summaryId),
+				null,
+				10,
+				BACKGROUND_CONTEXT,
+			);
+			expect(replaced.entries.length).toBeGreaterThan(0);
+			expect(replaced.entries.every((entry) => entry.id < summaryId)).toBe(true);
+
+			// A page bounded by an entry id starts strictly below it.
+			const newestPage = await handle.entries({}, 1, undefined, TODO_CONTEXT);
+			const newestId = newestPage.items[0]!.id;
+			const below = await setup.service.service.older(setup.rootId, String(newestId), null, 5, BACKGROUND_CONTEXT);
+			expect(below.entries.length).toBeGreaterThan(0);
+			expect(below.entries.every((entry) => entry.id < newestId)).toBe(true);
+
 			// History older than the view: the pages walk back from the oldest entry and stop.
-			const first = await setup.service.service.older(setup.rootId, null, 2, BACKGROUND_CONTEXT);
+			const first = await setup.service.service.older(setup.rootId, null, null, 2, BACKGROUND_CONTEXT);
 			expect(first.entries).toHaveLength(2);
 			expect(first.cursor).toBeDefined();
-			const second = await setup.service.service.older(setup.rootId, first.cursor ?? null, 2, BACKGROUND_CONTEXT);
+			const second = await setup.service.service.older(setup.rootId, null, first.cursor ?? null, 2, BACKGROUND_CONTEXT);
 			expect(second.entries).toHaveLength(2);
 			// The pages do not overlap and every entry is older than the previous page's oldest.
 			const ids = [...first.entries, ...second.entries].map((entry) => entry.id);
 			expect(new Set(ids).size).toBe(ids.length);
 			expect(second.entries[second.entries.length - 1]!.id).toBeLessThan(first.entries[0]!.id);
 			// Walking past the beginning ends the walk rather than repeating entries.
-			const third = await setup.service.service.older(setup.rootId, second.cursor ?? null, 8, BACKGROUND_CONTEXT);
+			const third = await setup.service.service.older(setup.rootId, null, second.cursor ?? null, 8, BACKGROUND_CONTEXT);
 			expect(third.entries.every((entry) => entry.id < second.entries[0]!.id)).toBe(true);
 
 			// Focusing the root publishes no separate view; another conversation gets one.

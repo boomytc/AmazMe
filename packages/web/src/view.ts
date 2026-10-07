@@ -364,9 +364,10 @@ export interface WebViewInput {
 	readonly platform: string;
 	/** The focused conversation's label; only a conversation that is not the root names one. */
 	readonly focus: string | undefined;
-	/** The pages of stored history the reader asked for, and where the next one starts. */
+	/** The pages of stored history the reader asked for. */
 	readonly history: readonly EntryRecord[];
-	readonly historyCursor: string | null;
+	/** Whether the page offers to load more, and whether it is already loading. */
+	readonly historyMore: boolean;
 	readonly historyLoading: boolean;
 	/** The management view the page is showing, with the state of that area's services. */
 	readonly panel: PanelViewInput;
@@ -931,7 +932,7 @@ export function buildWebView(input: WebViewInput): WebView {
 		focus: input.focus,
 		history: {
 			blocks: historyPageBlocks(locale, input.history),
-			more: input.historyCursor !== null,
+			more: input.historyMore,
 			loading: input.historyLoading,
 		},
 		palette: commandPalette(locale, {

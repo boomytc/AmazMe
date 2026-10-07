@@ -445,6 +445,14 @@ body.dock-open {
 	outline-offset: 1px;
 }
 
+/* The pages of stored history, above the live transcript and set off from it. */
+.history-pages {
+	padding-bottom: 12px;
+	border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+	margin-bottom: 12px;
+	opacity: 0.86;
+}
+
 /* The control that pages stored history in above the transcript. */
 .history-more {
 	display: flex;

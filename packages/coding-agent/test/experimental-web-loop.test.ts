@@ -405,18 +405,22 @@ describe("web client interactive loop", () => {
 				await waitFor(() => sawUserText(attached.transcript.state.value, marker), `the ${marker} to commit`);
 				await waitFor(() => !isBusy(attached.transcript.state.value), "the turn to settle");
 			}
-			const first = await attached.conversations.older(rootId, null, 1, BACKGROUND_CONTEXT);
-			expect(first.entries).toHaveLength(1);
-			expect(first.cursor).toBeDefined();
-			const second = await attached.conversations.older(rootId, first.cursor ?? null, 1, BACKGROUND_CONTEXT);
-			expect(second.entries).toHaveLength(1);
-			// The pages walk older without repeating, and the oldest page ends the walk.
-			expect(second.entries[0]!.id).toBeLessThan(first.entries[0]!.id);
-			const exhausted = await attached.conversations.older(rootId, second.cursor ?? null, 5, BACKGROUND_CONTEXT);
-			expect(exhausted.entries.every((entry) => entry.id < second.entries[0]!.id)).toBe(true);
+			// A page that starts below what the transcript shows is empty at the start of a
+			// conversation: the oldest entry it shows is the oldest entry there is.
+			const shownOldest = attached.transcript.state.value?.entries[0]?.id ?? 0;
+			const older = await attached.conversations.older(rootId, String(shownOldest), null, 5, BACKGROUND_CONTEXT);
+			expect(older.entries).toEqual([]);
+			expect(older.cursor).toBeUndefined();
 
-			// What a page returns is what the transcript itself carries: the user entries are the same.
-			const page = await attached.conversations.older(rootId, null, 10, BACKGROUND_CONTEXT);
+			// Without that bound a page is the newest slice of the stored history, and it carries what
+			// the transcript itself carries: the user entries are the same.
+			const page = await attached.conversations.older(rootId, null, null, 10, BACKGROUND_CONTEXT);
+			// A page small enough to leave history behind carries a cursor, and the next page walks older.
+			const newest = await attached.conversations.older(rootId, null, null, 2, BACKGROUND_CONTEXT);
+			expect(newest.entries).toHaveLength(2);
+			expect(newest.cursor).toBeDefined();
+			const next = await attached.conversations.older(rootId, null, newest.cursor ?? null, 2, BACKGROUND_CONTEXT);
+			expect(next.entries.every((entry) => entry.id < newest.entries[0]!.id)).toBe(true);
 			const texts = page.entries
 				.flatMap((entry) => entry.model ?? [])
 				.filter((message) => message.role === "user")

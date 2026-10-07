@@ -482,6 +482,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let history: readonly EntryRecord[] = [];
 	let historyCursor: string | null = null;
 	let historyLoading = false;
+	/** Whether a page has been asked for; until then "load older" is offered for any history. */
+	let historyLoaded = false;
 	/** The session's root conversation, once the conversation list has published it. */
 	let rootConversationId = "";
 	/** The composer's draft, mirrored here so the command palette can be projected from it. */
@@ -519,19 +521,27 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		return [...host, ...skillCommands(skills.state.value?.skills ?? [])];
 	};
 
+	/** The session's root conversation id, as the host's conversation list reports it. */
+	const rootId = (): string | undefined =>
+		painter.conversations?.conversations.find((entry) => entry.root)?.id;
+
+	/** Whether the page is showing a conversation other than the root. */
+	const focusing = (): boolean => {
+		const conversations = painter.conversations;
+		const root = rootId();
+		return conversations !== undefined && root !== undefined && conversations.selected !== root;
+	};
+
 	/** The conversation the page shows: the root's live transcript, or a focused one's view. */
 	const shownTranscript = (): ConversationView | undefined => {
-		const conversations = painter.conversations;
-		if (conversations === undefined || conversations.selected === rootConversationId) {
-			return painter.transcriptValue;
-		}
-		return conversations.view ?? undefined;
+		if (!focusing()) return painter.transcriptValue;
+		return painter.conversations?.view ?? undefined;
 	};
 
 	/** The focused conversation's label, when it is not the root. */
 	const focusedLabel = (): string | undefined => {
 		const conversations = painter.conversations;
-		if (conversations === undefined || conversations.selected === rootConversationId) return undefined;
+		if (conversations === undefined || !focusing()) return undefined;
 		return conversations.conversations.find((entry) => entry.id === conversations.selected)?.label;
 	};
 
@@ -543,6 +553,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * language and palette follow the host's value, so both tabs agree without a reload.
 	 */
 	const paint = (): void => {
+		// The root id comes from the host's list; the cache keeps submit routing stable across paints.
+		rootConversationId = rootId() ?? rootConversationId;
 		locale = resolveLocale(settingValue("locale") ?? manifest.preferences?.locale, navigator.languages);
 		appearance = resolveThemePreference(settingValue("appearance") ?? manifest.preferences?.appearance);
 		painter.locale = locale;
@@ -556,7 +568,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					transcript: shownTranscript(),
 					focus: focusedLabel(),
 					history,
-					historyCursor,
+					historyMore: !historyLoaded || historyCursor !== null,
 					historyLoading,
 					attachedId: painter.sessionId,
 					now: Date.now(),
@@ -775,7 +787,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const targetConversation = (): string | undefined => {
 		const conversations = painter.conversations;
 		if (conversations === undefined) return undefined;
-		rootConversationId = conversations.conversations.find((entry) => entry.root)?.id ?? rootConversationId;
+		rootConversationId = rootId() ?? rootConversationId;
 		return conversations.selected;
 	};
 
@@ -919,6 +931,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						// A page of history belongs to the conversation it was paged from.
 						history = [];
 						historyCursor = null;
+						historyLoaded = false;
 						dockOpen = true;
 						dockTab = "conversations";
 						settle(painter.conversationsService?.select(id, BACKGROUND_CONTEXT), false);
@@ -931,11 +944,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						const target = targetConversation();
 						const service = painter.conversationsService;
 						if (target === undefined || service === undefined) return;
+						// The first page starts below the oldest entry the transcript shows.
+						const shown = shownTranscript();
+						const oldest = shown?.entries[0]?.id;
+						const before = historyLoaded ? null : oldest === undefined ? null : String(oldest);
 						historyLoading = true;
 						paint();
-						void service.older(target, historyCursor, 20, BACKGROUND_CONTEXT).then(
+						void service.older(target, before, historyCursor, 20, BACKGROUND_CONTEXT).then(
 							(page) => {
 								historyLoading = false;
+								historyLoaded = true;
 								history = [...page.entries, ...history];
 								historyCursor = page.cursor ?? null;
 								paint();
