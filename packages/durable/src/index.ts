@@ -1,6 +1,10 @@
 export { defineDoc, defineDocFamily } from "./documents.ts";
 export {
 	AssistantEntry,
+	BRANCH_SUMMARY_PREFIX,
+	BRANCH_SUMMARY_SUFFIX,
+	BranchSummaryEntry,
+	branchSummaryModelText,
 	CompactionEntry,
 	defineEntry,
 	ResetEntry,
@@ -8,6 +12,7 @@ export {
 	ToolResultEntry,
 	UserEntry,
 } from "./entries.ts";
+export type { AbandonedBranchSource, BranchSummaryData, BranchSummaryUsage } from "./entries.ts";
 export { ConversationBusy, ReadAfterWrite, StorageRejected } from "./errors.ts";
 export {
 	AgentDoc,
@@ -48,6 +53,7 @@ export type {
 	AgentChange,
 	AgentState,
 	AnyTask,
+	BranchSummaryInput,
 	CompactionHooks,
 	CompactionPolicy,
 	CompactionReason,

@@ -411,6 +411,19 @@ const fork = await root.fork(entryId, { ownership: { kind: "ownerless" } }, cont
 
 A fork sees its parent's entries up to `entryId` and continues independently. It keeps the parent's agent as of that entry but receives a fresh provider session identity. Both take `agent` and `init`, applied in the creating commit.
 
+Leaving a branch writes `amazme.branch-summary` on the continuation, in the same commit as the fork:
+
+```typescript
+const continued = await root.branchSummary(
+	entryId,
+	{ summary: "We tried the other approach and stopped." },
+	{ ownership: { kind: "ownerless" } },
+	context,
+);
+```
+
+`continued` inherits history through `entryId`. Later entries stay on `root`. The summary is a user message in `continued.context()` and `continued.viewState()`, the same projection a compaction summary's text uses. It does not replace a compaction head. `data.from` records `root` and the entry that was its tip. `usage` and `details` are optional and are not sent as their own model messages. A later `fork` of `continued` keeps the entry.
+
 ## Abort and Subagents
 
 `await root.abort(context)` stops a conversation: queued inputs are withdrawn (queued writes stay), every task of its current work is aborted, and the call resolves once the conversation is idle.

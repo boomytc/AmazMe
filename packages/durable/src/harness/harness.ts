@@ -21,6 +21,7 @@ import type {
 } from "../types.ts";
 import { ROOT_CONVERSATION_ID } from "../types.ts";
 import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts";
+import { assertBranchSummaryInput, placeBranchSummary } from "./branch-summary.ts";
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts";
@@ -33,6 +34,7 @@ import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph
 import type {
 	Agent,
 	AgentChange,
+	BranchSummaryInput,
 	CompactionResult,
 	ContextView,
 	Conversation,
@@ -141,6 +143,32 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 
 	fork(at: EntryId, options: ConversationCreateOptions, context: Context): Promise<Conversation> {
 		return this.#host.create({ kind: "fork", parentId: this.id, at, ownership: options.ownership }, options, context);
+	}
+
+	async branchSummary(
+		at: EntryId,
+		summary: BranchSummaryInput,
+		options: ConversationCreateOptions,
+		context: Context,
+	): Promise<Conversation> {
+		const id = await this.#host.harness.commitWith(async (tx) => {
+			// Before the fork, so a bad body or an empty transcript never stages a conversation.
+			assertBranchSummaryInput(summary);
+			const tip = (await tx.scanEntries({ conversationId: this.id }, 1)).items[0];
+			if (tip === undefined) throw new Error(`Conversation ${this.id} has no entries to abandon`);
+			const record = await tx.forkConversation(this.id, at, { ownership: options.ownership });
+			if (options.agent !== undefined) await configure(tx, record.id, options.agent);
+			if (options.init !== undefined) await options.init(tx, record.id);
+			await placeBranchSummary(
+				tx,
+				record.id,
+				{ conversationId: this.id, entryId: tip.id },
+				summary,
+				this.#host.now(),
+			);
+			return record.id;
+		}, context);
+		return new ConversationImpl(id, this.#host);
 	}
 
 	abort(context: Context, options?: ConversationAbortOptions): Promise<void> {
