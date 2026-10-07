@@ -15,7 +15,12 @@ import {
 	addMcpServerModal,
 	addPackageModal,
 	applyTheme,
+	ATTACHMENT_REMOVE_ACTION,
+	attachmentRejection,
 	BOOT_GLOBAL,
+	COMPACT_ACTION,
+	COMPACT_MODAL,
+	compactModal,
 	buildWebView,
 	CHAT_VIEW,
 	collectPageElements,
@@ -36,6 +41,9 @@ import {
 	PLUGIN_PACKAGE_ADD_ACTION,
 	PLUGIN_PACKAGE_MODAL,
 	PLUGIN_PACKAGE_REMOVE_ACTION,
+	QUEUE_CANCEL_ACTION,
+	REFRESH_MODELS_ACTION,
+	removeSessionModal,
 	removeSkillModal,
 	resolveLocale,
 	resolveThemePreference,
@@ -49,19 +57,23 @@ import {
 	SKILL_IMPORT_MODAL,
 	SKILL_NEW_ACTION,
 	SKILL_REMOVE_ACTION,
+	SESSION_REMOVE_ACTION,
+	SESSION_REMOVE_MODAL,
 	SKILL_REMOVE_MODAL,
 	skillModal,
+	SUBMIT_MODE_ACTION,
 	translate,
 	type Locale,
 	type MessageKey,
 	type PageElements,
 	type PageRenderer,
+	type SubmitMode,
 	type PanelAction,
 	type PanelModal,
 	type ThemePreference,
 	type WebBootManifest,
 } from "@amazme/web";
-import { AgentController } from "../services/agent-controller.ts";
+import { AgentController, type AgentPromptImage } from "../services/agent-controller.ts";
 import {
 	createServerServiceSource,
 	createSessionServiceSource,
@@ -84,6 +96,41 @@ function readManifest(): WebBootManifest | undefined {
 
 function message(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** One image the reader attached and has not sent yet, kept as the prompt will carry it. */
+interface PendingImage {
+	readonly id: string;
+	readonly name: string;
+	readonly mediaType: string;
+	readonly bytes: number;
+	/** The thumbnail, and the source the base64 payload is cut from. */
+	readonly dataUrl: string;
+	readonly data: string;
+}
+
+/**
+ * A connection or attachment transition replaces a service binding, and a call that was in flight
+ * on the old one fails with a disposed binding. Attaching is idempotent, so the page tries once
+ * more instead of handing the reader a failure that a moment later would not happen.
+ */
+async function retryOnRebind<T>(run: () => Promise<T>): Promise<T> {
+	try {
+		return await run();
+	} catch (error) {
+		if (!message(error).toLowerCase().includes("binding is disposed")) throw error;
+		return await run();
+	}
+}
+
+/** Read one picked file as a data URL; the browser does the decoding. */
+function readAsDataUrl(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result));
+		reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+		reader.readAsDataURL(file);
+	});
 }
 
 /** Attach one session and keep its transcript subscribed until the attachment changes. */
@@ -123,14 +170,19 @@ class SessionPainter {
 		return this.#levels;
 	}
 
-	/** Send input to the attached session: a new run when idle, queued input while one runs. */
-	async submit(text: string): Promise<void> {
+	/**
+	 * Send input to the attached session: an image prompt, a new run when idle, or — while a turn
+	 * runs — the mode the composer asks for, so a mid-turn message is a steer or a queued follow-up.
+	 */
+	async submit(text: string, mode: SubmitMode, images: readonly AgentPromptImage[] = []): Promise<void> {
 		const controller = this.#controller;
 		if (controller === undefined) return;
-		const request = { message: text, images: null };
-		const response = isBusy(this.transcriptValue)
-			? await controller.followUp(request, BACKGROUND_CONTEXT)
-			: await controller.prompt(request, BACKGROUND_CONTEXT);
+		const request = { message: text, images: images.length === 0 ? null : [...images] };
+		const response = !isBusy(this.transcriptValue)
+			? await controller.prompt(request, BACKGROUND_CONTEXT)
+			: mode === "steer"
+				? await controller.steer(request, BACKGROUND_CONTEXT)
+				: await controller.followUp(request, BACKGROUND_CONTEXT);
 		// A rejection must be visible; an accepted prompt shows itself in the transcript.
 		if (!response.accepted) {
 			this.#renderer.setConnection(
@@ -143,6 +195,34 @@ class SessionPainter {
 	/** Withdraw queued input and abort the running turn and compaction. */
 	async abort(): Promise<void> {
 		await this.#controller?.abort(BACKGROUND_CONTEXT);
+	}
+
+	/** Withdraw one queued input by its inbox submission id; the rest stay queued. */
+	async cancelQueued(entryId: string): Promise<void> {
+		const outcome = await this.#controller?.cancelQueued(entryId, BACKGROUND_CONTEXT);
+		if (outcome !== undefined && outcome.outcome !== "cancelled") {
+			this.#renderer.setConnection(translate(this.locale, "page.queueGone"), "error");
+		}
+	}
+
+	/** Summarize the conversation so far; an empty instruction asks the host for its own summary. */
+	async compact(instructions: string): Promise<void> {
+		const trimmed = instructions.trim();
+		const response = await this.#controller?.compact(
+			{ customInstructions: trimmed.length === 0 ? null : trimmed },
+			BACKGROUND_CONTEXT,
+		);
+		if (response !== undefined && !response.accepted) {
+			this.#renderer.setConnection(
+				translate(this.locale, "page.compactFailed", { error: response.error.message }),
+				"error",
+			);
+		}
+	}
+
+	/** Ask the host to re-read the provider catalog; the state reports the outcome. */
+	async refreshModels(): Promise<void> {
+		await this.#models?.refresh(BACKGROUND_CONTEXT);
 	}
 
 	/** Switch the attached session's model; the host owns which ids exist. */
@@ -267,6 +347,25 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const plugins = serverServices.use(Plugins);
 	let view = CHAT_VIEW;
 	let modal: PanelModal | undefined;
+	/** How the composer submits while a turn runs; the reader picks it in the composer itself. */
+	let submitMode: SubmitMode = "followUp";
+	/** Images attached but not sent yet, in the order the reader added them. */
+	let pending: readonly PendingImage[] = [];
+	let attachmentSequence = 0;
+	/** The roster's filter text; the page owns it so creating or attaching never clears it. */
+	let rosterFilter = "";
+
+	/**
+	 * Paint, and never let a paint escape: a binding that a transition replaced is a line the reader
+	 * can see, where an exception out of a subscription callback would be invisible and fatal.
+	 */
+	const paintSafely = (render: () => void): void => {
+		try {
+			render();
+		} catch (error) {
+			renderer.setConnection(copy("page.paintFailed", { error: message(error) }), "error");
+		}
+	};
 
 	/** The catalogue's value for one field, once the host has published it. */
 	const settingValue = (id: string): string | undefined =>
@@ -281,25 +380,30 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		painter.locale = locale;
 		applyTheme(appearance);
 		document.documentElement.lang = documentLanguage(locale);
-		renderer.render(
-			buildWebView({
-				locale,
-				directory: directory.state.value,
-				transcript: painter.transcriptValue,
-				attachedId: painter.sessionId,
-				now: Date.now(),
-				models: painter.modelsValue,
-				thinkingLevels: painter.levels,
-				// The panel inherits this view's language, so one resolution serves the whole page.
-				panel: {
+		paintSafely(() =>
+			renderer.render(
+				buildWebView({
 					locale,
-					current: view,
-					...(modal === undefined ? {} : { modal }),
-					settings: { state: settings.state.value },
-					skills: { state: skills.state.value },
-					plugins: { state: plugins.state.value },
-				},
-			}),
+					directory: directory.state.value,
+					transcript: painter.transcriptValue,
+					attachedId: painter.sessionId,
+					now: Date.now(),
+					models: painter.modelsValue,
+					thinkingLevels: painter.levels,
+					submitMode,
+					attachments: pending,
+					rosterFilter,
+					// The panel inherits this view's language, so one resolution serves the whole page.
+					panel: {
+						locale,
+						current: view,
+						...(modal === undefined ? {} : { modal }),
+						settings: { state: settings.state.value },
+						skills: { state: skills.state.value },
+						plugins: { state: plugins.state.value },
+					},
+				}),
+			),
 		);
 	};
 	directory.state.subscribe(() => paint());
@@ -307,10 +411,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	skills.state.subscribe(() => paint());
 	plugins.state.subscribe(() => paint());
 
+	/**
+	 * Attach another session. The painter lets go of the previous one first: the host has already
+	 * moved this connection's attachment by the time the new services bind, so a send in that window
+	 * would reach a session this client no longer has. The composer is inert until the new one lands.
+	 */
 	const selectSession = async (sessionId: string): Promise<void> => {
-		await management.attach(sessionId, BACKGROUND_CONTEXT);
-		await sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
-		await painter.attach(sessionId, paint);
+		if (painter.sessionId === sessionId) return;
+		await painter.detach();
+		paint();
+		await retryOnRebind(async () => {
+			await management.attach(sessionId, BACKGROUND_CONTEXT);
+			await sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
+			await painter.attach(sessionId, paint);
+		});
 	};
 	renderer.onSelect = (sessionId) => {
 		void selectSession(sessionId).catch((error: unknown) => {
@@ -343,8 +457,57 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			renderer.setConnection(copy("page.thinkingFailed", { error: message(error) }), "error");
 		});
 	};
+	/**
+	 * Add picked, pasted, or dropped images. An image the page cannot send is refused with the
+	 * reason instead of being dropped silently, and the rest of the batch still arrives.
+	 */
+	renderer.onFilterRoster = (text) => {
+		rosterFilter = text;
+		paint();
+	};
+	renderer.onAttachFiles = (files) => {
+		void (async () => {
+			const added: PendingImage[] = [];
+			for (const file of files) {
+				const rejection = attachmentRejection({ mediaType: file.type, bytes: file.size });
+				if (rejection !== undefined) {
+					renderer.setConnection(
+						copy(rejection, { name: file.name, limit: copy("composer.attachmentLimit") }),
+						"error",
+					);
+					continue;
+				}
+				try {
+					const dataUrl = await readAsDataUrl(file);
+					added.push({
+						id: `image-${++attachmentSequence}`,
+						name: file.name.length === 0 ? "image" : file.name,
+						mediaType: file.type,
+						bytes: file.size,
+						dataUrl,
+						data: dataUrl.slice(dataUrl.indexOf(",") + 1),
+					});
+				} catch {
+					renderer.setConnection(copy("page.attachmentFailed", { name: file.name }), "error");
+				}
+			}
+			if (added.length === 0) return;
+			pending = [...pending, ...added];
+			paint();
+		})();
+	};
 	renderer.onSubmit = (text) => {
-		void painter.submit(text).catch((error: unknown) => {
+		const sent = pending;
+		const images: AgentPromptImage[] = sent.map((image) => ({
+			type: "image",
+			data: image.data,
+			mimeType: image.mediaType,
+		}));
+		pending = [];
+		void painter.submit(text, submitMode, images).catch((error: unknown) => {
+			// The prompt never reached the session, so the images stay attached for another try.
+			pending = sent;
+			paint();
 			renderer.setConnection(copy("page.sendFailed", { error: message(error) }), "error");
 		});
 	};
@@ -417,6 +580,31 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			case "command":
 				switch (action.id) {
+					case COMPACT_ACTION:
+						modal = compactModal(locale);
+						paint();
+						return;
+					case REFRESH_MODELS_ACTION:
+						settle(painter.refreshModels(), false);
+						return;
+					case SUBMIT_MODE_ACTION:
+						submitMode = action.data === "steer" ? "steer" : "followUp";
+						paint();
+						return;
+					case SESSION_REMOVE_ACTION:
+						modal = removeSessionModal(locale, action.data ?? "");
+						paint();
+						return;
+					case ATTACHMENT_REMOVE_ACTION: {
+						pending = pending.filter((image) => image.id !== action.data);
+						paint();
+						return;
+					}
+					case QUEUE_CANCEL_ACTION: {
+						const entryId = action.data ?? "";
+						settle(painter.cancelQueued(entryId), false);
+						return;
+					}
 					case SETTINGS_RELOAD_ACTION:
 						settle(settings.reload(BACKGROUND_CONTEXT), false);
 						return;
@@ -472,6 +660,22 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "modal-submit": {
 				const fields = action.fields;
 				switch (action.id) {
+					case SESSION_REMOVE_MODAL: {
+						const sessionId = action.data ?? "";
+						// A session that was just attached is detached before its storage goes away.
+						if (painter.sessionId === sessionId) {
+							void painter.detach().then(() => paint(), () => paint());
+						}
+						settle(
+							management.remove(sessionId, BACKGROUND_CONTEXT).catch((error: unknown) => {
+								renderer.setConnection(copy("page.removeFailed", { error: message(error) }), "error");
+							}),
+						);
+						return;
+					}
+					case COMPACT_MODAL:
+						settle(painter.compact(fields.instructions ?? ""));
+						return;
 					case SKILL_CREATE_MODAL: {
 						const name = (fields.name ?? "").trim();
 						if (name.length === 0) {
@@ -543,7 +747,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	}
 	await serverServices.ready(BACKGROUND_CONTEXT);
 	// Attach the session the sidebar lists first: the page's own ordering, not the host's array order.
-	const newest = rosterItems(directory.state.value, undefined, Date.now())[0];
+	const newest = rosterItems(locale, directory.state.value, undefined, Date.now())[0];
 	if (newest !== undefined) {
 		await selectSession(newest.id).catch((error: unknown) => {
 			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");

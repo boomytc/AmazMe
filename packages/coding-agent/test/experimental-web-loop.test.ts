@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,7 +6,17 @@ import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ConversationView } from "@amazme/durable";
-import { isBusy, modelPicker, queuedInputs, transcriptBlocks } from "@amazme/web";
+import {
+	inboxOf,
+	isBusy,
+	liveOf,
+	modelPicker,
+	QUEUE_CANCEL_ACTION,
+	queuedInputs,
+	rosterItems,
+	SESSION_REMOVE_ACTION,
+	transcriptBlocks,
+} from "@amazme/web";
 import { afterEach, describe, expect, test } from "vitest";
 import { AgentController } from "../src/experimental/services/agent-controller.ts";
 import {
@@ -261,7 +272,8 @@ describe("web client interactive loop", () => {
 			const queued = await attached.controller.followUp({ message: queuedMarker, images: null }, BACKGROUND_CONTEXT);
 			expect(queued).toMatchObject({ accepted: true });
 			await waitFor(
-				() => queuedInputs("en", attached.transcript.state.value).some((item) => item.includes(queuedMarker)),
+				() =>
+					queuedInputs("en", attached.transcript.state.value).some((item) => item.text.includes(queuedMarker)),
 				"the follow-up in the queue",
 			);
 
@@ -275,6 +287,188 @@ describe("web client interactive loop", () => {
 			// The aborted turn is still a committed user entry: the input was not lost.
 			expect(sawUserText(attached.transcript.state.value, marker)).toBe(true);
 
+			await attached.dispose();
+			await presentation.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"shows each session's working directory, and removes one behind a confirmation",
+		async () => {
+			const sessionDir = await makeDirectory("web-loop-remove-sessions-");
+			const host = await startWebHost({
+				port: 0,
+				directory: await makeDirectory("web-loop-remove-server-"),
+				sessionDir,
+			});
+			hosts.add(host);
+			const first = await openPresentation(host);
+			// A second presentation is the other browser tab: it must see the removal too.
+			const second = await openPresentation(host);
+
+			const created = await first.management.create({ id: "web-loop-remove" }, BACKGROUND_CONTEXT);
+			const onDisk = join(sessionDir, created.sessionId);
+			expect(existsSync(onDisk)).toBe(true);
+			await waitFor(
+				() => (second.directory.state.value?.sessions ?? []).some((session) => session.sessionId === created.sessionId),
+				"the session in the second roster",
+			);
+
+			// The directory the host publishes carries the working directory the roster shows.
+			const summary = first.directory.state.value?.sessions.find((session) => session.sessionId === created.sessionId);
+			expect(summary).toMatchObject({ cwd: process.cwd() });
+
+			// The page confirms before it asks: the row it renders names the session it would remove.
+			expect(rosterItems("en", first.directory.state.value, created.sessionId, Date.now())[0]?.remove).toMatchObject({
+				id: SESSION_REMOVE_ACTION,
+				data: created.sessionId,
+			});
+
+			await first.management.remove(created.sessionId, BACKGROUND_CONTEXT);
+			await waitFor(
+				() => !(first.directory.state.value?.sessions ?? []).some((session) => session.sessionId === created.sessionId),
+				"the session to leave the first roster",
+			);
+			await waitFor(
+				() => !(second.directory.state.value?.sessions ?? []).some((session) => session.sessionId === created.sessionId),
+				"the session to leave the second roster",
+			);
+			// Its storage is gone from the host's session directory.
+			expect(existsSync(onDisk)).toBe(false);
+
+			await second.dispose();
+			await first.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"sends an image with a prompt, commits it in the entry, and reads it back",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "web-loop-images" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+
+			// A real 1x1 PNG: the bytes the page would read out of a picked file.
+			const png =
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+			expect(Buffer.from(png, "base64").subarray(0, 4).toString("hex")).toBe("89504e47");
+
+			const marker = `web-loop-image-${Date.now()}`;
+			const accepted = await attached.controller.prompt(
+				{ message: marker, images: [{ type: "image", data: png, mimeType: "image/png" }] },
+				BACKGROUND_CONTEXT,
+			);
+			expect(accepted).toMatchObject({ accepted: true });
+
+			// The committed entry carries the image with its media type, and the projection shows it.
+			const blockOf = (): ReturnType<typeof transcriptBlocks>[number] | undefined =>
+				transcriptBlocks("en", attached.transcript.state.value).find(
+					(block) => block.kind === "user" && block.text.includes(marker),
+				);
+			await waitFor(() => blockOf() !== undefined, "the image prompt to commit");
+			expect(blockOf()?.images).toEqual([{ dataUrl: `data:image/png;base64,${png}`, alt: "image/png" }]);
+			// The committed entry itself carries the bytes the page sent, not a re-encoding.
+			const committed = attached.transcript.state.value?.entries.find((candidate) => {
+				const message = candidate.model?.[0];
+				return message?.role === "user" && JSON.stringify(message.content).includes(marker);
+			});
+			const content = committed?.model?.[0]?.role === "user" ? committed.model[0].content : undefined;
+			const image =
+				typeof content === "string" ? undefined : content?.find((block) => block.type === "image");
+			expect(image).toEqual({ type: "image", data: png, mimeType: "image/png" });
+
+			// A second presentation sees the same image: it is the durable entry, not page state.
+			const second = await attachSession(presentation, created.sessionId);
+			await waitFor(
+				() =>
+					transcriptBlocks("en", second.transcript.state.value).some(
+						(block) => block.kind === "user" && (block.images ?? []).length === 1,
+					),
+				"the image in a second presentation",
+			);
+			expect(
+				transcriptBlocks("en", second.transcript.state.value).find((block) => block.kind === "user")?.images,
+			).toEqual([{ dataUrl: `data:image/png;base64,${png}`, alt: "image/png" }]);
+
+			await attached.controller.abort(BACKGROUND_CONTEXT);
+			await second.dispose();
+			await attached.dispose();
+			await presentation.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"withdraws one queued input, steers another, compacts, and refreshes the catalog",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "web-loop-run-control" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+
+			const marker = `web-loop-run-control-${Date.now()}`;
+			const accepted = await attached.controller.prompt({ message: marker, images: null }, BACKGROUND_CONTEXT);
+			expect(accepted).toMatchObject({ accepted: true });
+			await waitFor(() => isBusy(attached.transcript.state.value), "the run to be in flight");
+
+			// Two queued inputs, then withdraw exactly the one whose strip the page rendered.
+			const withdrawnMarker = `web-loop-withdraw-${Date.now()}`;
+			const keptMarker = `web-loop-keep-${Date.now()}`;
+			await attached.controller.followUp({ message: withdrawnMarker, images: null }, BACKGROUND_CONTEXT);
+			await attached.controller.followUp({ message: keptMarker, images: null }, BACKGROUND_CONTEXT);
+			await waitFor(
+				() => queuedInputs("en", attached.transcript.state.value).length === 2,
+				"both follow-ups in the queue",
+			);
+
+			const strip = queuedInputs("en", attached.transcript.state.value).find((item) =>
+				item.text.includes(withdrawnMarker),
+			);
+			expect(strip).toBeDefined();
+			// The strip's own control names its submission, which is what the page sends back.
+			expect(strip?.cancel).toMatchObject({ id: QUEUE_CANCEL_ACTION, data: strip?.id });
+			expect(await attached.controller.cancelQueued(strip?.id ?? "", BACKGROUND_CONTEXT)).toMatchObject({
+				outcome: "cancelled",
+			});
+			await waitFor(
+				() => queuedInputs("en", attached.transcript.state.value).length === 1,
+				"the withdrawn input to leave the queue",
+			);
+			expect(queuedInputs("en", attached.transcript.state.value)[0]?.text).toContain(keptMarker);
+
+			// A steer is an admission of its own: the durable inbox records its mode.
+			const steerMarker = `web-loop-steer-${Date.now()}`;
+			expect(
+				await attached.controller.steer({ message: steerMarker, images: null }, BACKGROUND_CONTEXT),
+			).toMatchObject({ accepted: true });
+			await waitFor(
+				() =>
+					inboxOf(attached.transcript.state.value as ConversationView).items.some((item) => item.mode === "steer"),
+				"the steer in the durable inbox",
+			);
+
+			// Compaction on demand: the request reaches the durable task the live document shows.
+			expect(
+				await attached.controller.compact({ customInstructions: "keep the marker" }, BACKGROUND_CONTEXT),
+			).toMatchObject({ accepted: true });
+			await waitFor(
+				() => (liveOf(attached.transcript.state.value as ConversationView).compactions ?? []).length > 0,
+				"the compaction task in the live document",
+			);
+
+			// A catalog refresh settles instead of staying in flight.
+			await attached.models.refresh(BACKGROUND_CONTEXT);
+			await waitFor(
+				() => attached.models.state.value?.refresh.status !== "refreshing",
+				"the catalog refresh to settle",
+			);
+			expect(["done", "warning"]).toContain(attached.models.state.value?.refresh.status);
+
+			await attached.controller.abort(BACKGROUND_CONTEXT);
+			await waitFor(() => !isBusy(attached.transcript.state.value), "the aborted run to settle");
 			await attached.dispose();
 			await presentation.dispose();
 		},

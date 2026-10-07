@@ -142,6 +142,25 @@ reused, so a fresh load shows the committed entries again. Page changes take eff
 (the bundle is built in memory when the host starts), and this slice is not part of the packaged `amazme`
 binary yet, so it always runs from the repository.
 
+### Run the conversation
+
+The header carries **Compact context** (an optional instruction steers the summary; the host compacts
+in the background and appends the summary entry to the transcript), and the model chip's card ends
+with **Refresh models** plus the host's last refresh outcome. While a turn runs, the composer shows a
+**Steer / Queue** toggle: a message sent in steer mode joins the running turn at its next boundary, and
+one sent in queue mode waits for the turn to finish. Each queued input is one strip above the composer
+with its own **Withdraw**, which cancels exactly that submission and leaves the others.
+
+Images can be attached with the paperclip, pasted, or dropped onto the composer; each one shows its
+name and size with its own remove, and the prompt carries them as image content, so they are part of
+the durable entry and come back after a reload. PNG, JPEG, WebP, and GIF up to 8 MB are accepted; an
+unsupported or oversized file is refused with the reason.
+
+The sidebar filters sessions by id or working directory, names each session's working directory under
+its id, and removes one from a hover control behind a confirmation: its storage is deleted from the
+host's session directory while the working directory itself is left alone. A draft in the composer,
+the filter text, and the open management view survive attaching, creating, and removing sessions.
+
 ### Manage plugins, skills, and settings
 
 The sidebar's **Plugins** and **Skills** rows and the **Settings** entry at the sidebar's bottom switch the main

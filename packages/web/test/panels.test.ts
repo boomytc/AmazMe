@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
+import { COMPACT_MODAL, SESSION_REMOVE_MODAL } from "../src/actions.ts";
 import {
 	CHAT_VIEW,
+	compactModal,
 	composeSkill,
 	mcpExposures,
 	newSkillModal,
@@ -11,6 +13,7 @@ import {
 	PLUGIN_MCP_EXPOSURE_ACTION,
 	PLUGIN_PACKAGE_REMOVE_ACTION,
 	pluginsPanel,
+	removeSessionModal,
 	removeSkillModal,
 	SETTINGS_FIELD_ACTION,
 	SETTINGS_RELOAD_ACTION,
@@ -293,6 +296,28 @@ describe("skills panel", () => {
 		expect(zh.submit).toBe("保存");
 		expect(newSkillModal("zh").fields.map((field) => field.label)).toEqual(["名称", "描述", "指令"]);
 		expect(removeSkillModal("zh", "weekly-report").title).toBe("删除 weekly-report？");
+	});
+
+	test("confirms a session's removal with the session it would delete", () => {
+		const modal = removeSessionModal("en", "alpha-1");
+		expect(modal).toMatchObject({
+			id: SESSION_REMOVE_MODAL,
+			title: "Remove session alpha-1?",
+			submit: "Remove",
+			data: "alpha-1",
+			danger: true,
+			fields: [],
+		});
+		expect(removeSessionModal("zh", "alpha-1").title).toBe("删除会话 alpha-1？");
+	});
+
+	test("opens a compaction form whose instructions are optional", () => {
+		const modal = compactModal("en");
+		expect(modal).toMatchObject({ id: COMPACT_MODAL, title: "Compact context", submit: "Compact" });
+		expect(modal.danger).toBeUndefined();
+		expect(modal.fields).toHaveLength(1);
+		expect(modal.fields[0]).toMatchObject({ id: "instructions", kind: "textarea", value: "" });
+		expect(compactModal("zh").submit).toBe("压缩");
 	});
 
 	test("composes the SKILL.md a create submits", () => {

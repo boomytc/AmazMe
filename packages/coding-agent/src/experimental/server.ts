@@ -407,6 +407,7 @@ async function startServerBackend(
 		serverId,
 		sessionId: metadata.id,
 		createdAt: metadata.createdAt,
+		cwd: metadata.cwd,
 	});
 	// The administration surfaces read and write the agent directory the CLI uses, plus the
 	// checkout's project settings: one Settings, Skills, and Plugins instance per server.

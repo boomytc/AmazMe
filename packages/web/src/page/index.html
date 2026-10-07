@@ -68,6 +68,15 @@
 			     settings entry sits in the footer, DSH's sidebar.footer.action slot. -->
 			<nav class="sidebar-nav" id="nav" aria-label="{{sidebar.management}}"></nav>
 			<p class="sidebar-label">{{sidebar.sessions}}</p>
+			<input
+				class="roster-filter"
+				id="roster-filter"
+				type="search"
+				autocomplete="off"
+				spellcheck="false"
+				placeholder="{{sidebar.filter}}"
+				aria-label="{{sidebar.filter}}"
+			/>
 			<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
 			<div class="sidebar-footer">
 				<button class="sidebar-footer-btn" type="button" id="settings-button">
@@ -93,6 +102,8 @@
 					<span class="crumb" id="session-title">{{header.noSession}}</span>
 				</div>
 				<div class="header-utilities">
+					<!-- The session's run controls (compaction); the renderer fills this. -->
+					<div class="header-actions" id="run-actions"></div>
 					<span class="connection" id="connection">{{connection.starting}}</span>
 					<!-- Below 1024px the sidebar column is dropped, so the management views need an
 					     entry in the header; the renderer fills this card from the same nav model. -->
@@ -123,6 +134,8 @@
 			<div class="composer-dock" id="composer-dock">
 				<div id="queue"></div>
 				<form class="composer" id="composer">
+					<!-- The images attached but not sent yet; the renderer fills this. -->
+					<div class="attachments" id="attachments" hidden></div>
 					<textarea
 						class="composer-input"
 						id="prompt"
@@ -131,7 +144,23 @@
 						disabled
 					></textarea>
 					<div class="composer-row">
+						<!-- How the next message is applied while a turn runs; the renderer fills this. -->
+						<div class="submit-modes" id="submit-modes" hidden></div>
 						<div class="composer-trailing">
+							<!-- The attach control and its hidden picker: an image can also be pasted or dropped. -->
+							<input type="file" id="file-input" accept="image/*" multiple hidden />
+							<button class="composer-attach" type="button" id="attach" aria-label="{{composer.attach}}" title="{{composer.attach}}">
+								<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+									<path
+										d="M9.8 3.4a2.6 2.6 0 0 1 3.7 3.7l-5.3 5.3a3.9 3.9 0 0 1-5.5-5.5l5-5"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.4"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
+								</svg>
+							</button>
 							<!-- The attached session's model and reasoning level (InputBar's trailing
 							     ModelSelect). The renderer fills the chip and the card it opens. -->
 							<button

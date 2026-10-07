@@ -13,19 +13,32 @@ import {
 } from "@amazme/durable";
 import { describe, expect, test } from "vitest";
 import {
+	ATTACHMENT_MAX_BYTES,
+	attachmentRejection,
+	attachments,
 	buildWebView,
 	failureView,
+	formatBytes,
 	formatAge,
 	modelPicker,
 	modelPickerEmpty,
 	queuedInputs,
 	rosterItems,
+	runControls,
 	sessionStatus,
 	transcriptBlocks,
 	type ModelsStateLike,
 	type SessionDirectoryLike,
 	type WebView,
 } from "../src/view.ts";
+import {
+	ATTACHMENT_REMOVE_ACTION,
+	COMPACT_ACTION,
+	QUEUE_CANCEL_ACTION,
+	REFRESH_MODELS_ACTION,
+	SESSION_REMOVE_ACTION,
+	SUBMIT_MODE_ACTION,
+} from "../src/actions.ts";
 import { thinkingLevelCopy } from "../src/strings.ts";
 
 const CONVERSATION = 1 as ConversationId;
@@ -94,12 +107,15 @@ function viewOf(entries: EntryRecord[], docs: Record<string, JsonObject> = {}): 
 	};
 }
 
-function directoryOf(sessions: readonly { sessionId: string; createdAt: number }[]): SessionDirectoryLike {
+function directoryOf(
+	sessions: readonly { sessionId: string; createdAt: number; cwd?: string }[],
+): SessionDirectoryLike {
 	return {
 		sessions: sessions.map((session) => ({
 			serverId: "00000000-0000-4000-8000-000000000001",
 			sessionId: session.sessionId,
 			createdAt: session.createdAt,
+			cwd: session.cwd ?? "/workspace/AmazMe",
 		})),
 	};
 }
@@ -115,10 +131,11 @@ describe("web view model", () => {
 
 	test("lists sessions newest first and marks the attached one", () => {
 		const roster = rosterItems(
+			"en",
 			directoryOf([
-				{ sessionId: "older", createdAt: NOW - 7_200_000 },
-				{ sessionId: "newest", createdAt: NOW - 1_000 },
-				{ sessionId: "middle", createdAt: NOW - 60_000 },
+				{ sessionId: "older", createdAt: NOW - 7_200_000, cwd: "/w/older" },
+				{ sessionId: "newest", createdAt: NOW - 1_000, cwd: "/w/newest" },
+				{ sessionId: "middle", createdAt: NOW - 60_000, cwd: "/w/middle" },
 			]),
 			"middle",
 			NOW,
@@ -126,7 +143,47 @@ describe("web view model", () => {
 		expect(roster.map((item) => item.id)).toEqual(["newest", "middle", "older"]);
 		expect(roster.map((item) => item.attached)).toEqual([false, true, false]);
 		expect(roster.map((item) => item.age)).toEqual(["1s", "1m", "2h"]);
-		expect(rosterItems(undefined, undefined, NOW)).toEqual([]);
+		// Each row names its working directory and carries the control that asks to remove it.
+		expect(roster.map((item) => item.cwd)).toEqual(["/w/newest", "/w/middle", "/w/older"]);
+		expect(roster[1]?.remove).toEqual({
+			id: SESSION_REMOVE_ACTION,
+			label: "Remove",
+			tone: "danger",
+			data: "middle",
+		});
+		expect(rosterItems("en", undefined, undefined, NOW)).toEqual([]);
+	});
+
+	test("narrows the roster by id or by working directory", () => {
+		const directory = directoryOf([
+			{ sessionId: "alpha-1", createdAt: NOW, cwd: "/w/alpha" },
+			{ sessionId: "beta-2", createdAt: NOW - 1_000, cwd: "/w/beta" },
+		]);
+		expect(rosterItems("en", directory, undefined, NOW, "alpha").map((item) => item.id)).toEqual(["alpha-1"]);
+		expect(rosterItems("en", directory, undefined, NOW, "/w/beta").map((item) => item.id)).toEqual(["beta-2"]);
+		// The filter is case-insensitive, and the whole roster comes back when it is empty.
+		expect(rosterItems("en", directory, undefined, NOW, "ALPHA").map((item) => item.id)).toEqual(["alpha-1"]);
+		expect(rosterItems("en", directory, undefined, NOW, "  ").map((item) => item.id)).toEqual(["alpha-1", "beta-2"]);
+		expect(rosterItems("en", directory, undefined, NOW, "nothing")).toEqual([]);
+
+		// The reader is told which empty state they are looking at.
+		const view = (rosterFilter: string): WebView =>
+			buildWebView({
+				locale: "en",
+				submitMode: "followUp",
+				attachments: [],
+				rosterFilter,
+				panel: CHAT_PANEL,
+				directory,
+				transcript: undefined,
+				attachedId: undefined,
+				now: NOW,
+				models: undefined,
+				thinkingLevels: [],
+			});
+		expect(view("").empty).toBeUndefined();
+		expect(view("nothing").empty).toBe("No session matches that filter.");
+		expect(view("nothing").roster).toEqual([]);
 	});
 
 	test("projects committed entries into user, assistant, thinking, tool, and notice blocks", () => {
@@ -236,8 +293,8 @@ describe("web view model", () => {
 			} as unknown as JsonObject,
 			"amazme.inbox": {
 				items: [
-					{ mode: "steer", content: "also do this", submissionId: 1, requestId: "r1" },
-					{ mode: "write", entry: { kind: "amazme.note" }, submissionId: 2, requestId: "r2" },
+					{ id: 7, mode: "steer", content: "also do this" },
+					{ id: 8, mode: "write", entry: { kind: "amazme.note" } },
 				],
 			} as unknown as JsonObject,
 		});
@@ -247,7 +304,15 @@ describe("web view model", () => {
 		expect(blocks[1]).toMatchObject({ text: "streamed so far", running: true });
 		expect(blocks[2]).toMatchObject({ title: "read", text: "partial output", running: true });
 		expect(sessionStatus("en", view)).toBe("Running read…");
-		expect(queuedInputs("en", view)).toEqual(["[steer] also do this", "[write] <amazme.note>"]);
+		// Every strip carries its own withdraw, addressed by the inbox submission id.
+		expect(queuedInputs("en", view).map((item) => item.text)).toEqual([
+			"[steer] also do this",
+			"[write] <amazme.note>",
+		]);
+		expect(queuedInputs("en", view).map((item) => [item.id, item.cancel.id, item.cancel.data])).toEqual([
+			["7", QUEUE_CANCEL_ACTION, "7"],
+			["8", QUEUE_CANCEL_ACTION, "8"],
+		]);
 	});
 
 	test("keeps the status precedence the TUI indicator uses", () => {
@@ -279,13 +344,22 @@ describe("web view model", () => {
 	});
 
 	test("reports the empty states the roster and transcript show", () => {
-		const connecting = buildWebView({ locale: "en", panel: CHAT_PANEL, directory: undefined, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+		const connecting = buildWebView({ locale: "en",			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
+ panel: CHAT_PANEL, directory: undefined, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(connecting.empty).toBe("Connecting to the host…");
 		expect(connecting.blocks).toEqual([]);
-		const none = buildWebView({ locale: "en", panel: CHAT_PANEL, directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+		const none = buildWebView({ locale: "en",			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
+ panel: CHAT_PANEL, directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(none.empty).toBe("No sessions on this host yet.");
 		const attached = buildWebView({
 			locale: "en",
+			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
 			panel: CHAT_PANEL,
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),
@@ -301,6 +375,9 @@ describe("web view model", () => {
 		expect(failureView("zh", "无法启动：x")).toMatchObject({ locale: "zh", empty: "无法启动：x" });
 		const zhConnecting = buildWebView({
 			locale: "zh",
+			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
 			panel: { locale: "zh", current: "chat" },
 			directory: undefined,
 			transcript: undefined,
@@ -317,6 +394,9 @@ describe("web view model", () => {
 		const view = (live: JsonObject | undefined): WebView =>
 			buildWebView({
 			locale: "en",
+			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
 			panel: CHAT_PANEL,
 				directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 				transcript: viewOf([], live === undefined ? {} : { "amazme.live": live }),
@@ -332,7 +412,10 @@ describe("web view model", () => {
 
 	test("enables the new-session bar only while the host's directory is reachable", () => {
 		const view = (directory: SessionDirectoryLike | undefined): WebView =>
-			buildWebView({ locale: "en", panel: CHAT_PANEL, directory, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+			buildWebView({ locale: "en",			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
+ panel: CHAT_PANEL, directory, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(view(undefined).newSession).toEqual({ enabled: false });
 		expect(view(directoryOf([])).newSession).toEqual({ enabled: true });
 		expect(failureView("en", "cannot boot: x").newSession).toEqual({ enabled: false });
@@ -348,7 +431,7 @@ describe("web view model", () => {
 					{ provider: "deepseek", modelId: "flash", name: "DeepSeek Flash", reasoning: false },
 				],
 			},
-			configuration: { model: { provider: "deepseek", modelId: "v41" }, thinkingLevel: "high" },
+			configuration: { model: { provider: "deepseek", modelId: "v41" }, thinkingLevel: "high" }, refresh: { status: "idle" },
 		};
 
 		const picker = modelPicker("en", models, ["off", "low", "high"], true);
@@ -371,7 +454,7 @@ describe("web view model", () => {
 
 	test("keeps the picker explainable when the catalog, the levels, or the session are missing", () => {
 		const emptyCatalog = modelPicker("en", 
-			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
+			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
 			["off"],
 			true,
 		);
@@ -387,7 +470,7 @@ describe("web view model", () => {
 					revision: 1,
 					availableModels: [{ provider: "kimi", modelId: "k2", name: "Kimi K2", reasoning: false }],
 				},
-				configuration: { model: { provider: "kimi", modelId: "k2" }, thinkingLevel: "off" },
+				configuration: { model: { provider: "kimi", modelId: "k2" }, thinkingLevel: "off" }, refresh: { status: "idle" },
 			},
 			["off"],
 			true,
@@ -397,7 +480,7 @@ describe("web view model", () => {
 
 		// A configured model the catalog no longer carries is still named as configured.
 		const missing = modelPicker("en", 
-			{ catalog: { revision: 2, availableModels: [] }, configuration: { model: { provider: "x", modelId: "y" }, thinkingLevel: "off" } },
+			{ catalog: { revision: 2, availableModels: [] }, configuration: { model: { provider: "x", modelId: "y" }, thinkingLevel: "off" }, refresh: { status: "idle" } },
 			["off"],
 			true,
 		);
@@ -406,19 +489,22 @@ describe("web view model", () => {
 		expect(modelPicker("en", undefined, [], true)).toEqual(modelPickerEmpty("en"));
 		expect(modelPicker("en", undefined, [], false)).toEqual(modelPickerEmpty("en"));
 		const detached = modelPicker("en", 
-			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
+			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
 			["off"],
 			false,
 		);
 		expect(detached).toEqual(modelPickerEmpty("en"));
 		expect(buildWebView({
 			locale: "en",
+			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
 			panel: CHAT_PANEL,
 			directory: directoryOf([]),
 			transcript: undefined,
 			attachedId: undefined,
 			now: NOW,
-			models: { catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
+			models: { catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
 			thinkingLevels: ["off"],
 		}).model).toEqual(modelPickerEmpty("en"));
 	});
@@ -426,6 +512,9 @@ describe("web view model", () => {
 	test("builds the picker from the attached session's models state and levels", () => {
 		const view = buildWebView({
 			locale: "en",
+			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
 			panel: CHAT_PANEL,
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),
@@ -433,12 +522,109 @@ describe("web view model", () => {
 			now: NOW,
 			models: {
 				catalog: { revision: 1, availableModels: [{ provider: "p", modelId: "m", name: "Model M", reasoning: true }] },
-				configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "low" },
+				configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "low" }, refresh: { status: "idle" },
 			},
 			thinkingLevels: ["off", "low"],
 		});
 		expect(view.model).toMatchObject({ label: "Model M", effort: "Low", disabled: false });
 		expect(failureView("en", "cannot boot: x").model).toEqual(modelPickerEmpty("en"));
+	});
+
+	test("offers the run controls: compaction, and how a busy turn takes input", () => {
+		const attached = runControls("en", "steer", true);
+		expect(attached.compact).toMatchObject({ id: COMPACT_ACTION, label: "Compact context", disabled: false });
+		expect(attached.submitModes).toEqual([
+			{ mode: "steer", label: "Steer", selected: true },
+			{ mode: "followUp", label: "Queue", selected: false },
+		]);
+		// A detached page has nothing to compact, and the toggle follows the page's own choice.
+		expect(runControls("en", "followUp", false).compact.disabled).toBe(true);
+		expect(runControls("zh", "followUp", true).submitModes).toEqual([
+			{ mode: "steer", label: "介入", selected: false },
+			{ mode: "followUp", label: "排队", selected: true },
+		]);
+	});
+
+	test("refuses an image the page cannot send and sizes the ones it can", () => {
+		expect(attachmentRejection({ mediaType: "image/png", bytes: 1024 })).toBeUndefined();
+		expect(attachmentRejection({ mediaType: "image/webp", bytes: ATTACHMENT_MAX_BYTES })).toBeUndefined();
+		expect(attachmentRejection({ mediaType: "image/svg+xml", bytes: 10 })).toBe("composer.attachmentUnsupported");
+		expect(attachmentRejection({ mediaType: "application/pdf", bytes: 10 })).toBe("composer.attachmentUnsupported");
+		expect(attachmentRejection({ mediaType: "image/png", bytes: ATTACHMENT_MAX_BYTES + 1 })).toBe(
+			"composer.attachmentTooLarge",
+		);
+		expect(formatBytes(512)).toBe("512 B");
+		expect(formatBytes(2048)).toBe("2 KB");
+		expect(formatBytes(1_572_864)).toBe("1.5 MB");
+	});
+
+	test("gives every pending image its thumbnail and its own remove", () => {
+		const strip = attachments("en", [
+			{ id: "image-1", name: "shot.png", dataUrl: "data:image/png;base64,AAA", bytes: 2048 },
+			{ id: "image-2", name: "diagram.jpg", dataUrl: "data:image/jpeg;base64,BBB", bytes: 1_048_576 },
+		]);
+		expect(strip.map((image) => [image.id, image.name, image.size, image.dataUrl])).toEqual([
+			["image-1", "shot.png", "2 KB", "data:image/png;base64,AAA"],
+			["image-2", "diagram.jpg", "1.0 MB", "data:image/jpeg;base64,BBB"],
+		]);
+		expect(strip.map((image) => [image.remove.id, image.remove.data, image.remove.label])).toEqual([
+			[ATTACHMENT_REMOVE_ACTION, "image-1", "Remove this image"],
+			[ATTACHMENT_REMOVE_ACTION, "image-2", "Remove this image"],
+		]);
+		expect(attachments("en", [])).toEqual([]);
+	});
+
+	test("renders a user entry's images beside its text", () => {
+		const entry = userEntry(1, "look at this");
+		const message = entry.model?.[0];
+		if (message?.role !== "user") throw new Error("fixture is not a user entry");
+		const withImage = {
+			...entry,
+			model: [
+				{
+					...message,
+					content: [
+						{ type: "image" as const, data: "QUJD", mimeType: "image/png" },
+						{ type: "text" as const, text: "look at this" },
+					],
+				},
+			],
+		};
+		const blocks = transcriptBlocks("en", viewOf([withImage]));
+		expect(blocks[0]).toMatchObject({
+			kind: "user",
+			text: "look at this",
+			images: [{ dataUrl: "data:image/png;base64,QUJD", alt: "image/png" }],
+		});
+		// A text-only entry carries no images key at all, so the renderer adds no element.
+		expect(transcriptBlocks("en", viewOf([userEntry(2, "plain")]))[0]?.images).toBeUndefined();
+	});
+
+	test("projects the catalog's refresh state as one line", () => {
+		const models = (refresh: ModelsStateLike["refresh"]): ModelsStateLike => ({
+			catalog: { revision: 1, availableModels: [] },
+			configuration: { model: null, thinkingLevel: "off" },
+			refresh,
+		});
+		expect(modelPicker("en", models({ status: "idle" }), ["off"], true).refresh).toEqual({
+			label: "Refresh models",
+			status: undefined,
+			busy: false,
+		});
+		expect(modelPicker("en", models({ status: "refreshing" }), ["off"], true).refresh).toMatchObject({
+			status: "Refreshing models…",
+			busy: true,
+		});
+		expect(modelPicker("en", models({ status: "done" }), ["off"], true).refresh).toMatchObject({
+			status: "Models refreshed.",
+			busy: false,
+		});
+		expect(
+			modelPicker("zh", models({ status: "warning", errors: { kimi: "timeout", deepseek: "401" } }), ["off"], true)
+				.refresh,
+		).toMatchObject({ status: "kimi, deepseek 刷新失败。", busy: false });
+		// The detached picker offers nothing to refresh.
+		expect(modelPickerEmpty("en").refresh).toEqual({ label: "Refresh models", status: undefined, busy: false });
 	});
 
 	test("names thinking levels in the reader's language, capitalizing an unknown one", () => {
@@ -469,9 +655,11 @@ describe("web view model", () => {
 
 		const live = viewOf([], {
 			"amazme.live": { run: { taskId: 1, inputs: [] }, tools: [{ callId: "c", name: "bash", status: "running" }] } as unknown as JsonObject,
-			"amazme.inbox": { items: [{ mode: "steer", content: "再改一下", submissionId: 1, requestId: "r1" }] } as unknown as JsonObject,
+			"amazme.inbox": { items: [{ id: 3, mode: "steer", content: "再改一下" }] } as unknown as JsonObject,
 		});
 		expect(sessionStatus("zh", live)).toBe("正在运行 bash…");
-		expect(queuedInputs("zh", live)).toEqual(["[介入] 再改一下"]);
+		expect(queuedInputs("zh", live).map((item) => [item.text, item.cancel.label])).toEqual([
+			["[介入] 再改一下", "撤回"],
+		]);
 	});
 });

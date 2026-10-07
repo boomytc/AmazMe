@@ -20,8 +20,9 @@ import {
 	ToolResultEntry,
 	UserEntry,
 } from "@amazme/durable";
+import { ATTACHMENT_REMOVE_ACTION, COMPACT_ACTION, QUEUE_CANCEL_ACTION, SESSION_REMOVE_ACTION } from "./actions.ts";
 import type { Locale } from "./locale.ts";
-import { CHAT_VIEW, panelView, type PanelView, type PanelViewInput } from "./panels.ts";
+import { CHAT_VIEW, panelView, type PanelButton, type PanelView, type PanelViewInput } from "./panels.ts";
 import { thinkingLevelCopy, translate } from "./strings.ts";
 
 export type BlockTone = "plain" | "muted" | "error";
@@ -32,6 +33,8 @@ export interface TranscriptBlock {
 	readonly kind: "user" | "assistant" | "thinking" | "tool" | "notice";
 	readonly title: string;
 	readonly text: string;
+	/** Images the entry carries, as data URLs the reader sees. */
+	readonly images?: readonly { readonly dataUrl: string; readonly alt: string }[];
 	readonly tone: BlockTone;
 	readonly running: boolean;
 }
@@ -39,9 +42,13 @@ export interface TranscriptBlock {
 export interface RosterItem {
 	readonly id: string;
 	readonly label: string;
+	/** The session's working directory, shown so two sessions are tellable apart. */
+	readonly cwd: string | undefined;
 	readonly age: string;
 	readonly ageIso: string;
 	readonly attached: boolean;
+	/** The control that asks to remove this session; the page confirms first. */
+	readonly remove: PanelButton;
 }
 
 /** One catalog entry the picker offers. */
@@ -79,6 +86,103 @@ export interface ModelPicker {
 	readonly levelsEmpty: string | undefined;
 	/** No attached session or no models service: the trigger is inert. */
 	readonly disabled: boolean;
+	/** The catalog's refresh state: the control to ask for one, and the host's last word. */
+	readonly refresh: ModelRefresh;
+}
+
+/** The model card's refresh row: a button plus the status the host's state reports. */
+export interface ModelRefresh {
+	readonly label: string;
+	/** The host's last refresh outcome, or undefined while it has never refreshed. */
+	readonly status: string | undefined;
+	/** A refresh is in flight, so the control waits for it. */
+	readonly busy: boolean;
+}
+
+/** The image types the page sends, and how large one may be. */
+export const ATTACHMENT_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+export const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Why one picked image cannot be sent: the copy key that explains it. */
+export type AttachmentRejection = "composer.attachmentUnsupported" | "composer.attachmentTooLarge";
+
+/** Whether one picked image can be sent, and if not, why. */
+export function attachmentRejection(image: {
+	readonly mediaType: string;
+	readonly bytes: number;
+}): AttachmentRejection | undefined {
+	if (!ATTACHMENT_TYPES.includes(image.mediaType)) return "composer.attachmentUnsupported";
+	if (image.bytes > ATTACHMENT_MAX_BYTES) return "composer.attachmentTooLarge";
+	return undefined;
+}
+
+/** A size a reader can compare at a glance: `340 KB`, `1.2 MB`. */
+export function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** One image the reader attached and has not sent yet, as the composer shows it. */
+export interface Attachment {
+	readonly id: string;
+	readonly name: string;
+	/** The thumbnail: the image itself as a data URL. */
+	readonly dataUrl: string;
+	/** Its size, so the row says what the prompt is about to carry. */
+	readonly size: string;
+	/** The control that drops only this image. */
+	readonly remove: PanelButton;
+}
+
+/** The reader's pending images, ready for the composer's strip. */
+export function attachments(
+	locale: Locale,
+	images: readonly {
+		readonly id: string;
+		readonly name: string;
+		readonly dataUrl: string;
+		readonly bytes: number;
+	}[],
+): Attachment[] {
+	return images.map((image) => ({
+		id: image.id,
+		name: image.name,
+		dataUrl: image.dataUrl,
+		size: formatBytes(image.bytes),
+		remove: {
+			id: ATTACHMENT_REMOVE_ACTION,
+			label: translate(locale, "composer.removeAttachment"),
+			tone: "default",
+			data: image.id,
+		},
+	}));
+}
+
+/** One queued input the session accepted but has not started. */
+export interface QueueItem {
+	/** The inbox submission id, the subject of a withdraw. */
+	readonly id: string;
+	readonly text: string;
+	/** The withdraw control, so the row carries its own cancel. */
+	readonly cancel: PanelButton;
+}
+
+/** How the next submit is applied while a turn runs. */
+export type SubmitMode = "steer" | "followUp";
+
+export interface SubmitModeOption {
+	readonly mode: SubmitMode;
+	readonly label: string;
+	readonly selected: boolean;
+}
+
+/** The controls around the conversation: compaction, and how a busy turn takes input. */
+export interface RunControls {
+	/** The header's compaction control. */
+	readonly compact: PanelButton;
+	/** The composer's mode toggle, offered while a turn runs. */
+	readonly submitModes: readonly SubmitModeOption[];
 }
 
 /** The sidebar's new-session control. Its label is page copy; only its state is projected. */
@@ -90,10 +194,16 @@ export interface NewSessionAffordance {
 export interface WebView {
 	/** The language this view's copy is in; the renderer reads it for its own chrome too. */
 	readonly locale: Locale;
+	/** The roster, narrowed by the reader's filter. */
 	readonly roster: readonly RosterItem[];
+	/** The filter text itself, so the input keeps what the reader typed. */
+	readonly rosterFilter: string;
 	readonly blocks: readonly TranscriptBlock[];
 	readonly status: string;
-	readonly queue: readonly string[];
+	readonly queue: readonly QueueItem[];
+	/** Images attached but not sent yet. */
+	readonly attachments: readonly Attachment[];
+	readonly run: RunControls;
 	readonly attachedId: string | undefined;
 	readonly empty: string | undefined;
 	/** Whether a turn is in flight: the composer's primary action becomes the stop control. */
@@ -119,6 +229,7 @@ export interface SessionSummaryLike {
 	readonly serverId?: string;
 	readonly sessionId: string;
 	readonly createdAt: number;
+	readonly cwd?: string;
 }
 
 /** The host's replicated session directory, as this package reads it. */
@@ -141,6 +252,9 @@ export interface ModelsStateLike {
 		readonly model: { readonly provider: string; readonly modelId: string } | null;
 		readonly thinkingLevel: string;
 	};
+	readonly refresh:
+		| { readonly status: "idle" | "refreshing" | "done" }
+		| { readonly status: "warning"; readonly errors: Readonly<Record<string, string>> };
 }
 
 export interface WebViewInput {
@@ -153,6 +267,17 @@ export interface WebViewInput {
 	readonly models: ModelsStateLike | undefined;
 	/** The levels the host reports for the attached model; `undefined` until the page has read them. */
 	readonly thinkingLevels: readonly string[] | undefined;
+	/** How the page would submit while a turn runs; the page owns this choice. */
+	readonly submitMode: SubmitMode;
+	/** The images the reader attached and has not sent. */
+	readonly attachments: readonly {
+		readonly id: string;
+		readonly name: string;
+		readonly dataUrl: string;
+		readonly bytes: number;
+	}[];
+	/** The roster's filter text; the page owns it so a repaint never clears it. */
+	readonly rosterFilter: string;
 	/** The management view the page is showing, with the state of that area's services. */
 	readonly panel: PanelViewInput;
 }
@@ -167,7 +292,24 @@ export function modelPickerEmpty(locale: Locale): ModelPicker {
 		empty: undefined,
 		levelsEmpty: undefined,
 		disabled: true,
+		refresh: { label: translate(locale, "model.refresh"), status: undefined, busy: false },
 	};
+}
+
+/** The host's refresh state as one line, or undefined when it has never refreshed. */
+function refreshStatus(locale: Locale, refresh: ModelsStateLike["refresh"]): string | undefined {
+	switch (refresh.status) {
+		case "idle":
+			return undefined;
+		case "refreshing":
+			return translate(locale, "model.refreshing");
+		case "done":
+			return translate(locale, "model.refreshDone");
+		case "warning": {
+			const providers = Object.keys(refresh.errors).join(", ");
+			return translate(locale, "model.refreshWarning", { providers });
+		}
+	}
 }
 
 /**
@@ -219,6 +361,11 @@ export function modelPicker(
 		levelsEmpty:
 			levels === undefined || reasoned ? undefined : translate(locale, "model.levelsEmpty"),
 		disabled: false,
+		refresh: {
+			label: translate(locale, "model.refresh"),
+			status: refreshStatus(locale, models.refresh),
+			busy: models.refresh.status === "refreshing",
+		},
 	};
 }
 
@@ -232,13 +379,26 @@ export function formatAge(createdAt: number, now: number): string {
 	return `${Math.floor(hours / 24)}d`;
 }
 
+/**
+ * The roster, newest first, narrowed by the reader's filter. A filter matches the session's id or
+ * its working directory, so a path is as good a handle as the id.
+ */
 export function rosterItems(
+	locale: Locale,
 	state: SessionDirectoryLike | undefined,
 	attachedId: string | undefined,
 	now: number,
+	filter = "",
 ): RosterItem[] {
 	const sessions = state?.sessions ?? [];
+	const needle = filter.trim().toLowerCase();
 	return [...sessions]
+		.filter(
+			(session) =>
+				needle.length === 0 ||
+				session.sessionId.toLowerCase().includes(needle) ||
+				(session.cwd ?? "").toLowerCase().includes(needle),
+		)
 		.sort(
 			(left: SessionSummaryLike, right: SessionSummaryLike) =>
 				right.createdAt - left.createdAt ||
@@ -248,9 +408,16 @@ export function rosterItems(
 		.map((session) => ({
 			id: session.sessionId,
 			label: session.sessionId,
+			cwd: session.cwd,
 			age: formatAge(session.createdAt, now),
 			ageIso: new Date(session.createdAt).toISOString(),
 			attached: attachedId === session.sessionId,
+			remove: {
+				id: SESSION_REMOVE_ACTION,
+				label: translate(locale, "sidebar.remove"),
+				tone: "danger",
+				data: session.sessionId,
+			},
 		}));
 }
 
@@ -264,6 +431,16 @@ function messageText(content: Message["content"], separator: string): string {
 
 function userText(content: UserMessage["content"]): string {
 	return messageText(content, "");
+}
+
+/** The images one user message carries, as data URLs a browser can render. */
+function userImages(content: UserMessage["content"]): { readonly dataUrl: string; readonly alt: string }[] {
+	if (typeof content === "string") return [];
+	return content.flatMap((block) =>
+		block.type === "image"
+			? [{ dataUrl: `data:${block.mimeType};base64,${block.data}`, alt: block.mimeType }]
+			: [],
+	);
 }
 
 function assistantText(content: AssistantMessage["content"]): string {
@@ -372,11 +549,13 @@ export function transcriptBlocks(locale: Locale, view: ConversationView | undefi
 		switch (entry.kind) {
 			case UserEntry.kind:
 				if (message?.role === "user") {
+					const images = userImages(message.content);
 					blocks.push({
 						id: entry.id,
 						kind: "user",
 						title: translate(locale, "block.you"),
 						text: userText(message.content),
+						...(images.length === 0 ? {} : { images }),
 						tone: "plain",
 						running: false,
 					});
@@ -517,10 +696,38 @@ export function composerPlaceholder(locale: Locale, attachedId: string | undefin
 		: translate(locale, "composer.placeholder", { id: attachedId });
 }
 
-/** Inputs the session has accepted but not started yet. */
-export function queuedInputs(locale: Locale, view: ConversationView | undefined): string[] {
+/** Inputs the session has accepted but not started yet, each with its own withdraw. */
+export function queuedInputs(locale: Locale, view: ConversationView | undefined): QueueItem[] {
 	const inbox = view === undefined ? { items: [] } : inboxOf(view);
-	return inbox.items.map((item) => queuedItemText(locale, item));
+	return inbox.items.map((item) => ({
+		id: String(item.id),
+		text: queuedItemText(locale, item),
+		cancel: {
+			id: QUEUE_CANCEL_ACTION,
+			label: translate(locale, "queue.cancel"),
+			tone: "default",
+			data: String(item.id),
+		},
+	}));
+}
+
+/**
+ * The run controls: compaction for the attached session, and the composer's mode toggle. The mode
+ * is the page's own choice, so it arrives with the view rather than being decided here.
+ */
+export function runControls(locale: Locale, mode: SubmitMode, attached: boolean): RunControls {
+	return {
+		compact: {
+			id: COMPACT_ACTION,
+			label: translate(locale, "header.compact"),
+			tone: "default",
+			disabled: !attached,
+		},
+		submitModes: [
+			{ mode: "steer", label: translate(locale, "composer.steer"), selected: mode === "steer" },
+			{ mode: "followUp", label: translate(locale, "composer.queue"), selected: mode === "followUp" },
+		],
+	};
 }
 
 /** The view a page shows when it cannot reach or trust the host. */
@@ -528,9 +735,12 @@ export function failureView(locale: Locale, text: string): WebView {
 	return {
 		locale,
 		roster: [],
+		rosterFilter: "",
 		blocks: [],
 		status: "",
 		queue: [],
+		attachments: [],
+		run: runControls(locale, "followUp", false),
 		attachedId: undefined,
 		empty: text,
 		busy: false,
@@ -543,19 +753,24 @@ export function failureView(locale: Locale, text: string): WebView {
 export function buildWebView(input: WebViewInput): WebView {
 	const { locale } = input;
 	const blocks = transcriptBlocks(locale, input.transcript);
-	const roster = rosterItems(input.directory, input.attachedId, input.now);
+	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter);
 	const empty =
 		input.directory === undefined
 			? translate(locale, "header.connecting")
-			: roster.length === 0
-				? translate(locale, "header.rosterEmpty")
-				: undefined;
+			: (input.directory.sessions.length === 0
+					? translate(locale, "header.rosterEmpty")
+					: roster.length === 0
+						? translate(locale, "header.rosterNoMatch")
+						: undefined);
 	return {
 		locale,
 		roster,
+		rosterFilter: input.rosterFilter,
 		blocks,
 		status: sessionStatus(locale, input.transcript),
 		queue: queuedInputs(locale, input.transcript),
+		attachments: attachments(locale, input.attachments),
+		run: runControls(locale, input.submitMode, input.attachedId !== undefined),
 		attachedId: input.attachedId,
 		empty,
 		busy: isBusy(input.transcript),

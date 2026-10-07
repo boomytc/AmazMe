@@ -8,6 +8,8 @@ export interface SessionAddress {
 
 export interface SessionSummary extends SessionAddress {
 	createdAt: number;
+	/** The working directory the Session's agent runs in, as its catalog metadata records it. */
+	cwd: string;
 }
 
 export interface SessionCreateOptions {

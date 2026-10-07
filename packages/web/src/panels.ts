@@ -8,6 +8,7 @@
  * catalogue publishes field ids, heading tokens, and stored enum values, and `strings.ts` names
  * them. Copy therefore has one home, and the host never ships a sentence.
  */
+import { COMPACT_MODAL, SESSION_REMOVE_MODAL } from "./actions.ts";
 import type { Locale } from "./locale.ts";
 import {
 	mcpExposureCopy,
@@ -610,6 +611,41 @@ export function removeSkillModal(locale: Locale, name: string): PanelModal {
 		submit: translate(locale, "panel.skills.remove"),
 		data: name,
 		danger: true,
+	};
+}
+
+/** The confirmation a session's remove control opens; the page sends its id with the submit. */
+export function removeSessionModal(locale: Locale, sessionId: string): PanelModal {
+	return {
+		id: SESSION_REMOVE_MODAL,
+		title: translate(locale, "modal.sessionRemove.title", { id: sessionId }),
+		description: translate(locale, "modal.sessionRemove.description"),
+		fields: [],
+		submit: translate(locale, "modal.sessionRemove.submit"),
+		data: sessionId,
+		danger: true,
+	};
+}
+
+/**
+ * The modal the header's compaction control opens. Instructions are optional: an empty field asks
+ * the host for its own summary, exactly as the CLI's `/compact` does.
+ */
+export function compactModal(locale: Locale): PanelModal {
+	return {
+		id: COMPACT_MODAL,
+		title: translate(locale, "modal.compact.title"),
+		description: translate(locale, "modal.compact.description"),
+		fields: [
+			{
+				id: "instructions",
+				label: translate(locale, "modal.compact.instructions"),
+				kind: "textarea",
+				value: "",
+				placeholder: translate(locale, "modal.compact.placeholder"),
+			},
+		],
+		submit: translate(locale, "modal.compact.submit"),
 	};
 }
 

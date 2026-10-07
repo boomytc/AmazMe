@@ -137,14 +137,58 @@ body {
 
 /* Session chip (ui-dockkit .tab): 28px row, sm radius, secondary ink, hover fill; the attached
    session is the filled tab. */
+.session-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	flex: 1 1 auto;
+	gap: 1px;
+}
+
+.session-cwd {
+	overflow: hidden;
+	color: var(--dsw-alias-label-caption);
+	font-size: 11px;
+	line-height: 14px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+}
+
+.session-remove {
+	display: none;
+	flex: none;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	cursor: pointer;
+}
+
+.session-row:hover .session-remove,
+.session-row:focus-within .session-remove {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.session-remove:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-state-error-primary);
+}
+
 .session-row {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
 	width: 100%;
-	height: 28px;
-	padding: 0 10px;
+	min-height: 28px;
+	padding: 4px 10px;
 	border: none;
 	border-radius: var(--dsw-radius-sm);
 	background: transparent;
@@ -175,6 +219,8 @@ body {
 
 .session-age {
 	flex: none;
+	align-self: flex-start;
+	margin-top: 2px;
 	color: var(--dsw-alias-label-caption);
 	font-size: 12px;
 }
@@ -269,6 +315,29 @@ body {
 	color: var(--dsw-alias-state-error-primary);
 }
 
+/* The roster's filter: one quiet line above the list. */
+.roster-filter {
+	width: calc(100% - 24px);
+	height: 26px;
+	margin: 0 12px 6px;
+	padding: 0 8px;
+	border: 0.5px solid var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-sm);
+	background: var(--dsw-specific-input-major);
+	color: var(--dsw-alias-label-primary);
+	font: inherit;
+	font-size: 12px;
+}
+
+.roster-filter::placeholder {
+	color: var(--dsw-alias-label-tertiary);
+}
+
+.roster-filter:focus-visible {
+	outline: 2px solid var(--dsw-alias-state-business-primary);
+	outline-offset: 1px;
+}
+
 /* --------------------------------------------------------------- transcript */
 
 /* Transcript scroller (ChatView .scroll): full-bleed, padded by the composer clearance + 16px so
@@ -314,11 +383,30 @@ body {
 }
 
 .bubble {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 6px;
 	max-width: min(calc(var(--dsh-chat-content-width) * 0.702), 82%);
 	padding: 10px 16px;
 	border-radius: var(--dsw-radius-xl);
 	background: var(--dsw-specific-bubble);
 	color: var(--dsw-alias-label-primary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* An image the user's entry carries: the thumbnail the browser renders from the stored bytes. */
+.bubble-image {
+	display: block;
+	max-width: 220px;
+	max-height: 220px;
+	border-radius: var(--dsw-radius-md);
+	object-fit: contain;
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.bubble-text {
 	white-space: pre-wrap;
 	word-break: break-word;
 }
@@ -698,17 +786,19 @@ summary.disclosure-row {
 
 /* Queued input (InputBar .notice): one caption strip above the card. */
 .queue-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	width: 100%;
 	max-width: var(--dsh-composer-card-max-width);
 	margin-bottom: 6px;
-	padding: 4px 8px;
+	padding: 4px 4px 4px 8px;
 	border-radius: var(--dsw-radius-md);
 	background: var(--dsw-alias-interactive-bg-hover);
 	color: var(--dsw-alias-label-secondary);
 	font-size: 12px;
 	line-height: 18px;
 	overflow: hidden;
-	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
@@ -757,6 +847,204 @@ summary.disclosure-row {
 
 /* Control row (InputBar .row): the model chip and the primary action trail the draft. The row is a
    size container so the chip's cap can read its width, and it wraps rather than overlapping. */
+/* The queued input's own line, so a long one is what gives way, never the withdraw. */
+.queue-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.queue-cancel {
+	flex: none;
+	height: 20px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-caption);
+	font: inherit;
+	cursor: pointer;
+}
+
+.queue-cancel:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+/* The header's run controls (compaction), DSH's header action seat. */
+.header-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.header-action {
+	height: 24px;
+	padding: 0 10px;
+	border: 0.5px solid var(--dsw-alias-border-l3);
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-secondary);
+	font-size: var(--dsh-content-font-size-secondary);
+	cursor: pointer;
+}
+
+.header-action:hover:not(:disabled) {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+.header-action:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* The pending images, above the draft: the host carries them with the next prompt. */
+.attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 0 12px;
+}
+
+.attachment {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	padding: 6px 8px;
+	border: 0.5px solid var(--dsw-alias-border-l3);
+	border-radius: var(--dsw-radius-md);
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.attachment img {
+	width: 32px;
+	height: 32px;
+	border-radius: var(--dsw-radius-sm);
+	object-fit: cover;
+}
+
+.attachment-meta {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	font-size: 12px;
+	line-height: 16px;
+}
+
+.attachment-name {
+	max-width: 180px;
+	overflow: hidden;
+	color: var(--dsw-alias-label-secondary);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.attachment-size {
+	color: var(--dsw-alias-label-caption);
+}
+
+.attachment-remove {
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 14px;
+	line-height: 18px;
+	cursor: pointer;
+}
+
+.attachment-remove:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+/* The attach control (InputBar's leading action). */
+.composer-attach {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	cursor: pointer;
+}
+
+.composer-attach:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+/* A drop target says so while a file is over it. */
+.composer.dropping {
+	outline: 2px dashed var(--dsw-alias-state-business-primary);
+	outline-offset: -2px;
+}
+
+/* The submit-mode toggle: how the next message lands while a turn runs. */
+.submit-modes {
+	display: flex;
+	align-items: center;
+	margin-right: auto;
+	min-width: 0;
+}
+
+.mode-group {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 2px;
+	border-radius: var(--dsw-radius-md);
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mode-option {
+	height: 22px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 12px;
+	line-height: 22px;
+	cursor: pointer;
+}
+
+.mode-option.selected {
+	background: var(--dsw-alias-bg-base);
+	color: var(--dsw-alias-label-primary);
+}
+
+/* The model card's refresh row: the host's last word, then the control. */
+.menu-refresh {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 2px;
+}
+
+.menu-refresh .menu-empty {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 4px 6px;
+}
+
+.menu-refresh-action {
+	flex: none;
+}
+
 .composer-row {
 	display: flex;
 	flex-wrap: wrap;

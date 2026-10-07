@@ -6,6 +6,7 @@
  * updates is the reader's own disclosure choices, keyed by block id, because a rebuild would
  * otherwise reset them.
  */
+import { COMPACT_ACTION, REFRESH_MODELS_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode } from "./markdown.ts";
 import {
@@ -20,7 +21,14 @@ import {
 	type PanelSpec,
 } from "./panels.ts";
 import { type MessageKey, translate } from "./strings.ts";
-import { composerPlaceholder, type TranscriptBlock, type WebView } from "./view.ts";
+import {
+	composerPlaceholder,
+	type Attachment,
+	type QueueItem,
+	type RosterItem,
+	type TranscriptBlock,
+	type WebView,
+} from "./view.ts";
 
 export interface PageElements {
 	readonly connection: HTMLElement;
@@ -48,6 +56,15 @@ export interface PageElements {
 	readonly prompt: HTMLTextAreaElement;
 	/** The composer's one action: send, or stop while a turn runs on an empty draft. */
 	readonly primary: HTMLButtonElement;
+	/** The header's run controls (compaction), filled by the renderer. */
+	readonly runActions: HTMLElement;
+	/** The composer's submit-mode toggle, filled while a turn runs. */
+	readonly submitModes: HTMLElement;
+	/** The roster's filter, and the images attached but not sent yet, with the controls that add them. */
+	readonly rosterFilter: HTMLInputElement;
+	readonly attachments: HTMLElement;
+	readonly attach: HTMLButtonElement;
+	readonly fileInput: HTMLInputElement;
 	/** The model and effort chip, and the card it opens. */
 	readonly modelTrigger: HTMLButtonElement;
 	readonly modelLabel: HTMLElement;
@@ -65,6 +82,10 @@ export interface PageRenderer {
 	onAbort: () => void;
 	onSelectModel: (provider: string, modelId: string) => void;
 	onSelectThinking: (level: string) => void;
+	/** Images the reader picked, pasted, or dropped; reading them is the page's job. */
+	onAttachFiles: (files: readonly File[]) => void;
+	/** The roster's filter text; the page owns it so it survives a repaint. */
+	onFilterRoster: (text: string) => void;
 	/** Every navigation, control, and modal report from the management surface. */
 	onPanelAction: (action: PanelAction) => void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
@@ -87,12 +108,18 @@ export function collectPageElements(): PageElements {
 		view: pick("view"),
 		viewBody: pick("view-body"),
 		viewBack: pickElement("view-back", HTMLButtonElement),
+		runActions: pick("run-actions"),
+		rosterFilter: pickElement("roster-filter", HTMLInputElement),
+		attachments: pick("attachments"),
+		attach: pickElement("attach", HTMLButtonElement),
+		fileInput: pickElement("file-input", HTMLInputElement),
 		composerDock: pick("composer-dock"),
 		modalRoot: pick("modal-root"),
 		queue: pick("queue"),
 		composer: pickElement("composer", HTMLFormElement),
 		prompt: pickElement("prompt", HTMLTextAreaElement),
 		primary: pickElement("primary", HTMLButtonElement),
+		submitModes: pick("submit-modes"),
 		modelTrigger: pickElement("model-trigger", HTMLButtonElement),
 		modelLabel: pick("model-label"),
 		modelEffort: pick("model-effort"),
@@ -637,7 +664,8 @@ export function createRenderer(
 	 * rule InputBar uses — and Send is disabled with nothing to send.
 	 */
 	const renderPrimary = (): void => {
-		const stop = lastView?.busy === true && draft().length === 0;
+		const pending = lastView?.attachments.length ?? 0;
+		const stop = lastView?.busy === true && draft().length === 0 && pending === 0;
 		if (stop !== stops) {
 			stops = stop;
 			elements.primary.replaceChildren(primaryGlyph(stop));
@@ -645,7 +673,8 @@ export function createRenderer(
 			elements.primary.setAttribute("aria-label", label);
 			elements.primary.title = label;
 		}
-		elements.primary.disabled = lastView?.attachedId === undefined || (!stop && draft().length === 0);
+		elements.primary.disabled =
+			lastView?.attachedId === undefined || (!stop && draft().length === 0 && pending === 0);
 	};
 
 	/** A disclosure whose open state is the reader's, falling back to a per-block default. */
@@ -656,6 +685,20 @@ export function createRenderer(
 		// The click handler runs before the browser toggles, so the intent is the flipped value.
 		details.addEventListener("click", () => expanded.set(block.id, !details.open));
 		return details;
+	};
+
+	/** A user turn: the images the entry carries, then its text. */
+	const userBubble = (block: TranscriptBlock): HTMLElement => {
+		const bubble = element("div", "bubble");
+		for (const image of block.images ?? []) {
+			const node = document.createElement("img");
+			node.className = "bubble-image";
+			node.src = image.dataUrl;
+			node.alt = image.alt;
+			bubble.append(node);
+		}
+		if (block.text.length > 0) bubble.append(element("span", "bubble-text", block.text));
+		return bubble;
 	};
 
 	/** A row: the leading glyph, the title, and — when a summary is given — the dot and one line of it. */
@@ -686,6 +729,107 @@ export function createRenderer(
 		const details = disclosure(block, "", false);
 		details.append(rowElement(block, "summary"), element("div", "reasoning-body", block.text));
 		return details;
+	};
+
+	/** One roster row: the session's id and working directory, its age, and its remove control. */
+	const sessionRow = (item: RosterItem): HTMLElement => {
+		const chip = button(item.attached ? "session-row attached" : "session-row");
+		chip.dataset.sessionId = item.id;
+		const text = element("span", "session-text");
+		text.append(element("span", "session-name", item.label));
+		if (item.cwd !== undefined && item.cwd.length > 0) {
+			text.append(element("span", "session-cwd", item.cwd));
+		}
+		chip.append(text);
+		const age = element("time", "session-age", item.age);
+		age.setAttribute("datetime", item.ageIso);
+		chip.append(age);
+		const remove = panelButton(item.remove, report);
+		remove.className = "session-remove";
+		remove.replaceChildren(closeGlyph());
+		remove.title = copy("sidebar.removeAria");
+		remove.setAttribute("aria-label", copy("sidebar.removeAria"));
+		remove.addEventListener("click", (event) => event.stopPropagation());
+		chip.append(remove);
+		chip.addEventListener("click", () => renderer.onSelect(item.id));
+		return chip;
+	};
+
+	/** The pending images: each thumbnail carries its own remove, and none is sent until submit. */
+	const renderAttachments = (view: WebView): void => {
+		elements.attachments.replaceChildren();
+		if (view.attachments.length === 0) {
+			elements.attachments.hidden = true;
+			return;
+		}
+		for (const attachment of view.attachments) elements.attachments.append(attachmentElement(attachment));
+		elements.attachments.hidden = false;
+	};
+
+	const attachmentElement = (attachment: Attachment): HTMLElement => {
+		const card = element("figure", "attachment");
+		card.dataset.attachmentId = attachment.id;
+		const image = document.createElement("img");
+		image.src = attachment.dataUrl;
+		image.alt = attachment.name;
+		card.append(image);
+		const meta = element("figcaption", "attachment-meta");
+		meta.append(element("span", "attachment-name", attachment.name), element("span", "attachment-size", attachment.size));
+		card.append(meta);
+		const remove = panelButton(attachment.remove, report);
+		remove.className = "attachment-remove";
+		// The strip shows a mark; the control's name is the accessible one.
+		remove.replaceChildren(closeGlyph());
+		remove.title = attachment.remove.label;
+		remove.setAttribute("aria-label", attachment.remove.label);
+		card.append(remove);
+		return card;
+	};
+
+	/** One queued input: what it is, and the withdraw that names only this submission. */
+	const queueElement = (item: QueueItem): HTMLElement => {
+		const row = element("p", "queue-item");
+		row.dataset.submissionId = item.id;
+		row.append(element("span", "queue-text", item.text));
+		const cancel = panelButton(item.cancel, report);
+		cancel.className = "queue-cancel";
+		cancel.title = copy("queue.cancelAria");
+		cancel.setAttribute("aria-label", copy("queue.cancelAria"));
+		row.append(cancel);
+		return row;
+	};
+
+	/** The header's run controls: one control per action the view offers. */
+	const renderRunActions = (view: WebView): void => {
+		const compact = panelButton(view.run.compact, report);
+		compact.className = "header-action";
+		compact.dataset.action = COMPACT_ACTION;
+		elements.runActions.replaceChildren(compact);
+	};
+
+	/** The composer's submit mode, offered only while a turn runs and can take input. */
+	const renderSubmitModes = (view: WebView): void => {
+		if (!view.busy) {
+			elements.submitModes.replaceChildren();
+			elements.submitModes.hidden = true;
+			return;
+		}
+		const group = element("div", "mode-group");
+		group.setAttribute("role", "radiogroup");
+		group.setAttribute("aria-label", copy("composer.modesAria"));
+		for (const option of view.run.submitModes) {
+			const node = button(option.selected ? "mode-option selected" : "mode-option");
+			node.dataset.mode = option.mode;
+			node.setAttribute("role", "radio");
+			node.setAttribute("aria-checked", String(option.selected));
+			node.textContent = option.label;
+			node.addEventListener("click", () =>
+				report({ kind: "command", id: SUBMIT_MODE_ACTION, data: option.mode }),
+			);
+			group.append(node);
+		}
+		elements.submitModes.replaceChildren(group);
+		elements.submitModes.hidden = false;
 	};
 
 	/** A flow notice (compaction, new context): one 24px row, with its summary indented below. */
@@ -728,7 +872,7 @@ export function createRenderer(
 				continue;
 			}
 			process = undefined;
-			if (block.kind === "user") flow.push(wrap("turn-user", element("div", "bubble", block.text)));
+			if (block.kind === "user") flow.push(wrap("turn-user", userBubble(block)));
 			else if (block.kind === "assistant") flow.push(wrap("turn-response", markdownElement(block.text)));
 			else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
 		}
@@ -779,6 +923,22 @@ export function createRenderer(
 				}
 			}
 		}
+		if (picker.refresh.status !== undefined || !picker.disabled) {
+			rows.push(element("div", "menu-separator"));
+			const row = element("div", "menu-refresh");
+			if (picker.refresh.status !== undefined) {
+				row.append(element("p", "menu-empty", picker.refresh.status));
+			}
+			const refresh = button("panel-button default menu-refresh-action");
+			refresh.dataset.action = REFRESH_MODELS_ACTION;
+			refresh.textContent = picker.refresh.label;
+			refresh.disabled = picker.refresh.busy;
+			refresh.addEventListener("click", () =>
+				report({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined }),
+			);
+			row.append(refresh);
+			rows.push(row);
+		}
 		const scroll = element("div", "menu-scroll");
 		scroll.append(...rows);
 		elements.modelMenu.replaceChildren(scroll);
@@ -818,6 +978,8 @@ export function createRenderer(
 		onAbort: () => {},
 		onSelectModel: () => {},
 		onSelectThinking: () => {},
+		onAttachFiles: () => {},
+		onFilterRoster: () => {},
 		onPanelAction: () => {},
 		get view(): WebView | undefined {
 			return lastView;
@@ -829,16 +991,9 @@ export function createRenderer(
 			elements.newSession.disabled = !view.newSession.enabled;
 
 			elements.roster.replaceChildren();
-			for (const item of view.roster) {
-				const chip = button(item.attached ? "session-row attached" : "session-row");
-				chip.dataset.sessionId = item.id;
-				chip.append(element("span", "session-name", item.label));
-				const age = element("time", "session-age", item.age);
-				age.setAttribute("datetime", item.ageIso);
-				chip.append(age);
-				chip.addEventListener("click", () => renderer.onSelect(item.id));
-				elements.roster.append(chip);
-			}
+			for (const item of view.roster) elements.roster.append(sessionRow(item));
+			// The filter keeps what the reader typed; only its value is ever set from the view.
+			if (document.activeElement !== elements.rosterFilter) elements.rosterFilter.value = view.rosterFilter;
 			if (view.roster.length === 0) {
 				const empty = element("p", "empty-state", view.empty ?? copy("header.rosterEmpty"));
 				empty.id = "roster-empty";
@@ -865,9 +1020,12 @@ export function createRenderer(
 			renderPrimary();
 
 			elements.queue.replaceChildren();
-			for (const item of view.queue) elements.queue.append(element("p", "queue-item", item));
+			for (const item of view.queue) elements.queue.append(queueElement(item));
 
 			renderModelChip(view);
+			renderAttachments(view);
+			renderRunActions(view);
+			renderSubmitModes(view);
 			renderNav(view);
 			renderPanelView(view);
 			renderModal(view.panel.modal);
@@ -882,7 +1040,7 @@ export function createRenderer(
 		event.preventDefault();
 		if (lastView?.attachedId === undefined) return;
 		const text = draft();
-		if (text.length === 0) {
+		if (text.length === 0 && (lastView?.attachments.length ?? 0) === 0) {
 			// An empty draft leaves the primary as the stop control; `Enter` on it must not no-op.
 			if (stops) renderer.onAbort();
 			return;
@@ -902,6 +1060,33 @@ export function createRenderer(
 		if (event.key !== "Enter" || event.shiftKey) return;
 		event.preventDefault();
 		elements.composer.requestSubmit();
+	});
+	elements.rosterFilter.addEventListener("input", () => renderer.onFilterRoster(elements.rosterFilter.value));
+	elements.attach.addEventListener("click", () => elements.fileInput.click());
+	elements.fileInput.addEventListener("change", () => {
+		const files = [...(elements.fileInput.files ?? [])];
+		// Clearing lets the same file be picked again after a remove.
+		elements.fileInput.value = "";
+		if (files.length > 0) renderer.onAttachFiles(files);
+	});
+	elements.prompt.addEventListener("paste", (event) => {
+		const files = [...(event.clipboardData?.files ?? [])];
+		if (files.length === 0) return;
+		event.preventDefault();
+		renderer.onAttachFiles(files);
+	});
+	elements.composer.addEventListener("dragover", (event) => {
+		if (!event.dataTransfer?.types.includes("Files")) return;
+		event.preventDefault();
+		elements.composer.classList.add("dropping");
+	});
+	elements.composer.addEventListener("dragleave", () => elements.composer.classList.remove("dropping"));
+	elements.composer.addEventListener("drop", (event) => {
+		const files = [...(event.dataTransfer?.files ?? [])];
+		elements.composer.classList.remove("dropping");
+		if (files.length === 0) return;
+		event.preventDefault();
+		renderer.onAttachFiles(files);
 	});
 	elements.newSession.addEventListener("click", () => renderer.onCreateSession());
 	// The footer entry toggles the settings panel, the same way its sidebar row does.
