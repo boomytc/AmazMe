@@ -37,7 +37,7 @@ describe("session display names", () => {
 		}
 	});
 
-	test("a catalog name wins, and a worker name is only a fallback when the catalog has none", () => {
+	test("the roster name is the catalog name, and a name on the worker row is ignored", () => {
 		const catalog: SessionCatalogMetadata = {
 			id: "s1",
 			createdAt: 1,
@@ -49,8 +49,8 @@ describe("session display names", () => {
 		expect(mergeTrackedSession(catalog, nameless).name).toBe("weekly report");
 		expect(mergeTrackedSession(catalog, { ...nameless, name: "  " }).name).toBe("weekly report");
 		expect(mergeTrackedSession(catalog, { ...nameless, name: "shipped" }).name).toBe("weekly report");
-		expect(mergeTrackedSession(undefined, { ...nameless, name: "shipped" }).name).toBe("shipped");
-		expect(mergeTrackedSession({ ...catalog, name: undefined }, { ...nameless, name: "shipped" }).name).toBe("shipped");
+		expect(mergeTrackedSession(undefined, { ...nameless, name: "shipped" }).name).toBeUndefined();
+		expect(mergeTrackedSession({ ...catalog, name: undefined }, { ...nameless, name: "shipped" }).name).toBeUndefined();
 		expect(mergeTrackedSession(undefined, nameless).name).toBeUndefined();
 		expect(mergeTrackedSession({ ...catalog, name: undefined }, nameless).name).toBeUndefined();
 	});

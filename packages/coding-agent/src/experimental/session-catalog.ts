@@ -26,24 +26,18 @@ export function normalizeSessionName(name: string): string {
 }
 
 /**
- * Overlay a running worker's metadata on the catalog row. The display name lives in `meta.json`.
- * A non-empty catalog name wins, including over a name the worker still remembers from launch, so
- * a replaced host does not put that old name back on the roster. A worker name is only a fallback
- * when the catalog has none. An empty name is not a rename.
+ * Overlay a running worker's metadata on the catalog row. The roster name is the catalog's.
+ * The worker protocol has no name, so nothing on the worker row fills one in.
  */
 export function mergeTrackedSession(
 	catalog: SessionCatalogMetadata | undefined,
 	worker: SessionCatalogMetadata,
 ): SessionCatalogMetadata {
-	const catalogName = normalizeSessionName(catalog?.name ?? "");
-	const workerName = normalizeSessionName(worker.name ?? "");
-	const name = catalogName.length > 0 ? catalogName : workerName;
+	const name = normalizeSessionName(catalog?.name ?? "");
 	if (name.length === 0) {
-		if (worker.name === undefined) return worker;
 		const { name: _name, ...rest } = worker;
 		return rest;
 	}
-	if (worker.name === name) return worker;
 	return { ...worker, name };
 }
 

@@ -268,6 +268,10 @@ describe("lane status", () => {
 		const mark = document.getElementById("approval-status");
 		expect(mark?.hidden).toBe(false);
 		expect(mark?.textContent).toBe("Waiting for approval 1");
+		const actions = [...document.querySelectorAll("#run-actions .header-action")];
+		expect(actions.map((node) => node.getAttribute("aria-label"))).toEqual(["Compact context", "Fork", "Session tools"]);
+		expect(actions.map((node) => node.getAttribute("title"))).toEqual(["Compact context", "Fork", "Session tools"]);
+		expect(actions.every((node) => node.querySelector(".header-action-label")?.textContent === node.getAttribute("aria-label"))).toBe(true);
 
 		renderer.render(buildWebView(input()));
 		expect(document.getElementById("lane-status")?.hidden).toBe(true);

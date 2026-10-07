@@ -508,6 +508,33 @@ function markPending(node: HTMLElement, pending: PanelPending | undefined, actio
 	}
 }
 
+/** Words stay available when a narrow header shows only the icon. */
+function placeHeaderAction(node: HTMLButtonElement, label: string): void {
+	node.title = label;
+	node.setAttribute("aria-label", label);
+	const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+	icon.setAttribute("class", "header-action-icon");
+	icon.setAttribute("viewBox", "0 0 16 16");
+	icon.setAttribute("width", "14");
+	icon.setAttribute("height", "14");
+	icon.setAttribute("aria-hidden", "true");
+	const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+	path.setAttribute("d", headerActionIconPath(node.dataset.action ?? ""));
+	path.setAttribute("fill", "none");
+	path.setAttribute("stroke", "currentColor");
+	path.setAttribute("stroke-width", "1.4");
+	path.setAttribute("stroke-linecap", "round");
+	path.setAttribute("stroke-linejoin", "round");
+	icon.append(path);
+	node.replaceChildren(icon, element("span", "header-action-label", label));
+}
+
+function headerActionIconPath(action: string): string {
+	if (action === COMPACT_ACTION) return "M3 6h4V3M13 6H9V3M3 10h4v3M13 10H9v3";
+	if (action === DOCK_TOGGLE_ACTION) return "M3 4h10M3 8h10M3 12h10";
+	return "M5 3.5v9M11 3.5v3.2c0 2.2-2.2 3.2-3.4 3.8S5 12.2 5 12.5";
+}
+
 function panelButton(action: PanelButton, report: (action: PanelAction) => void, pending?: PanelPending): HTMLButtonElement {
 	const node = button(`panel-button tone-${action.tone}`);
 	node.dataset.action = action.id;
@@ -954,14 +981,13 @@ export function createRenderer(
 		elements.meterTokens.textContent = view.meter.tokens;
 		elements.meterCost.textContent = view.meter.cost;
 		elements.meter.dataset.tone = view.meter.tone;
-		elements.meter.setAttribute(
-			"aria-label",
-			copy("header.meter", {
-				context: view.meter.context,
-				tokens: view.meter.tokens,
-				cost: view.meter.cost,
-			}),
-		);
+		const meterLabel = copy("header.meter", {
+			context: view.meter.context,
+			tokens: view.meter.tokens,
+			cost: view.meter.cost,
+		});
+		elements.meter.setAttribute("aria-label", meterLabel);
+		elements.meter.title = meterLabel;
 	};
 
 	/** A disclosure whose open state is the reader's, falling back to a per-block default. */
@@ -1252,13 +1278,15 @@ export function createRenderer(
 		const compact = panelButton(view.run.compact, report);
 		compact.className = "header-action";
 		compact.dataset.action = COMPACT_ACTION;
+		placeHeaderAction(compact, view.run.compact.label);
 		const fork = panelButton(view.run.fork, report);
 		fork.className = "header-action";
 		fork.dataset.action = "conversation:fork";
+		placeHeaderAction(fork, view.run.fork.label);
 		const dock = button(view.dock.toggle.pressed ? "header-action pressed" : "header-action");
 		dock.dataset.action = DOCK_TOGGLE_ACTION;
-		dock.textContent = view.dock.toggle.label;
 		dock.setAttribute("aria-pressed", String(view.dock.toggle.pressed));
+		placeHeaderAction(dock, view.dock.toggle.label);
 		dock.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
 		elements.runActions.replaceChildren(compact, fork, dock);
 		elements.laneStatus.textContent = view.lane;
@@ -1523,6 +1551,7 @@ export function createRenderer(
 		},
 		setConnection(text: string, kind: "state" | "error"): void {
 			elements.connection.textContent = text;
+			elements.connection.title = text;
 			elements.connection.className = `connection ${kind}`;
 		},
 	};

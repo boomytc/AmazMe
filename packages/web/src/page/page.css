@@ -390,22 +390,26 @@ body.dock-open {
 
 /* Header (ConversationRoot .header, the variant without the view tab strip). */
 .header {
-	display: grid;
-	/* The name track keeps a readable slice and ellipsizes. The utilities track sizes to its content,
-	   then yields the meter and the connection; the approval count and the menu stay whole. */
-	grid-template-columns: minmax(4em, 1fr) minmax(min-content, max-content);
+	display: flex;
+	align-items: center;
 	flex: none;
 	min-width: 0;
 	min-height: 0;
 	padding: 10px 28px 10px 20px;
 	border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+	/* A 1024 viewport still has the 280px sidebar, so this box is narrower than an 800 viewport.
+	   The icon step keys off the header, not the viewport. */
+	container-type: inline-size;
 }
 
 .crumbs {
 	display: flex;
 	align-items: center;
+	/* Shrinks ahead of the usage figures, down to 6em, so a long English connection keeps its text
+	   and the meter keeps whatever is left. The crumb ellipsizes inside that floor. */
+	flex: 0 1000 240px;
 	gap: 4px;
-	min-width: 0;
+	min-width: 6em;
 	overflow: hidden;
 	white-space: nowrap;
 }
@@ -429,8 +433,8 @@ body.dock-open {
 
 .crumb {
 	display: inline-block;
-	flex: 0 1 auto;
-	min-width: 3em;
+	flex: 1 1 auto;
+	min-width: 4em;
 	max-width: 220px;
 	overflow: hidden;
 	padding: 4px 8px;
@@ -443,16 +447,17 @@ body.dock-open {
 	white-space: nowrap;
 }
 
-/* Utilities size to content, then the meter and the connection shrink. min-content is the approval
-   count plus the menu, so a narrow header cannot clip those or push the menu off screen. */
+/* min-width 0 lets this row shrink below the usage text. The meter is the only flexible child, so
+   the approval count, the actions, the connection, and the menu keep their width. safe flex-end
+   packs them to the right when they fit, and refuses to paint them back over the session name. */
 .header-utilities {
 	display: flex;
-	flex: none;
+	flex: 1 1 auto;
 	align-items: center;
-	justify-content: flex-end;
+	justify-content: safe flex-end;
 	gap: 8px;
 	margin-left: 20px;
-	min-width: min-content;
+	min-width: 0;
 	/* The seat of the management card, which opens below the entry. */
 	position: relative;
 }
@@ -467,10 +472,11 @@ body.dock-open {
 	white-space: nowrap;
 }
 
-/* Context %, tokens, and cost. Always in the header, tabular so the figures do not jump. */
+/* Context %, tokens, and cost. Shrinks after the session name, and ellipsizes before the approval
+   count, the actions, the connection, or the menu give up width. */
 .status-meter {
 	display: flex;
-	flex: 0 1 auto;
+	flex: 1 1 auto;
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
@@ -479,6 +485,23 @@ body.dock-open {
 	font: var(--dsw-font-xs-13);
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
+}
+
+#meter-context,
+#meter-cost,
+#meter-tokens {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+#meter-context,
+#meter-cost {
+	flex: 0 1 auto;
+}
+
+#meter-tokens {
+	flex: 1 100 auto;
 }
 
 .status-meter[data-tone="warning"] #meter-context {
@@ -490,12 +513,10 @@ body.dock-open {
 }
 
 .connection {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
+	flex: none;
+	flex-shrink: 0;
 	color: var(--dsw-alias-label-caption);
 	font: var(--dsw-font-xs-13);
-	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
@@ -1293,6 +1314,9 @@ summary.disclosure-row {
 }
 
 .header-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	height: 24px;
 	padding: 0 10px;
 	border: 0.5px solid var(--dsw-alias-border-l3);
@@ -1304,6 +1328,10 @@ summary.disclosure-row {
 	   transcript's first row, which the header sits above. */
 	white-space: nowrap;
 	cursor: pointer;
+}
+
+.header-action-icon {
+	display: none;
 }
 
 .header-action:hover:not(:disabled) {
@@ -2544,5 +2572,43 @@ summary.disclosure-row {
 @media (max-width: 640px) {
 	.connection:not(.error) {
 		display: none;
+	}
+
+	/* The token pair is the long figure. Percent and cost stay; the full line remains on the meter's
+	   aria-label. */
+	#meter-tokens {
+		display: none;
+	}
+
+	/* The full labels (Compact context, Fork, Session tools) no longer fit beside the approval
+	   count. The icon stays; the words remain on the button's title and aria-label. */
+	.header-action {
+		width: 24px;
+		padding: 0;
+	}
+
+	.header-action-label {
+		display: none;
+	}
+
+	.header-action-icon {
+		display: block;
+	}
+}
+
+/* Full action labels plus the approval count and the connection no longer fit once the sidebar has
+   narrowed this header (a 1024 viewport) or the viewport itself is around 800. 1280 stays labeled. */
+@container (max-width: 840px) {
+	.header-action {
+		width: 24px;
+		padding: 0;
+	}
+
+	.header-action-label {
+		display: none;
+	}
+
+	.header-action-icon {
+		display: block;
 	}
 }
