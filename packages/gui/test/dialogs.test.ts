@@ -3,6 +3,7 @@ import {
 	HOST_DIALOG_TAIL_LINES,
 	hostFailureCopy,
 	isIntentionalLoadAbort,
+	renderDialogRecovery,
 	renderFailureCopy,
 	shouldPresentRenderFailure,
 	visibleOutputTail,
@@ -58,6 +59,15 @@ describe("render failure dialog", () => {
 		const failed = { ...aborted, errorCode: -105, errorDescription: "ERR_NAME_NOT_RESOLVED" };
 		expect(shouldPresentRenderFailure(false, failed)).toBe(true);
 		expect(shouldPresentRenderFailure(true, failed)).toBe(false);
+	});
+
+	test("reload loads the host address again", () => {
+		const host = "http://127.0.0.1:4310/";
+		expect(renderDialogRecovery(0, false, host)).toEqual({ kind: "load", url: host });
+		expect(renderDialogRecovery(0, true, host)).toEqual({ kind: "quit" });
+		expect(renderDialogRecovery(1, false, host)).toEqual({ kind: "quit" });
+		expect(renderDialogRecovery(0, false, undefined)).toEqual({ kind: "quit" });
+		expect(renderDialogRecovery(0, false, "")).toEqual({ kind: "quit" });
 	});
 });
 

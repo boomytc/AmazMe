@@ -7,9 +7,12 @@ Electron 窗口。它拉起仓库里已经有的网页宿主，再把那个回�
 宿主入口与 `scripts/dev-web.mjs` 相同（实验切片的 `web` 命令，经 source resolver 跑源码）。就绪行是宿主打印的 `Web: http://127.0.0.1:<port>/`。端口用 `0`，避免和已经开着的 `dev:web` 抢 4310；同一目录里若已有宿主，这条命令会附着上去，窗口看到的仍是那一份会话。子进程用系统 Node，不用 Electron 当 Node：宿主的会话 worker 会再执行 `process.execPath`，并且存储用 `node:sqlite`。
 
 ```bash
+npm run build --workspace @amazme/web
 npm run build --workspace @amazme/gui
 npm start --workspace @amazme/gui
 ```
+
+壳的 typecheck 和构建解析 `@amazme/web/locale` 与 `@amazme/web/strings` 的 dist。根 `build` / `build:offline` 在 durable 之后会先建 web 再建 gui。单独构建这个包之前，web 的 dist 要已经在。
 
 需要 Node.js 22.19 或更新版本，以及 `dev:web` 同样依赖的模型目录数据（`npm run build` 会生成）。`npm start` 由 npm 把当前目录改到这个包，所以宿主的工作目录默认是仓库根，与 `npm run dev:web` 一致。要打开别的项目目录时设置 `AMAZME_GUI_CWD`。`AMAZME_GUI_NODE` 可指定跑宿主的 Node。
 

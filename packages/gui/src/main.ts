@@ -8,7 +8,7 @@ import {
 	type MessageBoxOptions,
 } from "electron";
 import { resolveLocale } from "@amazme/web/locale";
-import { hostFailureCopy, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
+import { hostFailureCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
 import { createHostSupervisor, spawnWebHost, type HostStartupFailure, type HostSupervisor } from "./host.ts";
 import {
 	hostWorkingDirectory,
@@ -35,6 +35,7 @@ const SMOKE_EXPRESSION = `({
 })`;
 
 let host: HostSupervisor | undefined;
+let hostPageUrl: string | undefined;
 let window: BrowserWindow | undefined;
 let shutdownPromise: Promise<void> | undefined;
 let quitReleased = false;
@@ -162,10 +163,13 @@ function finishRenderDialog(response: number): void {
 		beginHostDialog(deferred);
 		return;
 	}
-	if (response === 0 && !notices.quitting) {
+	const recovery = renderDialogRecovery(response, notices.quitting, hostPageUrl);
+	if (recovery.kind === "load") {
 		const current = liveWindow();
 		if (current !== undefined) {
-			current.webContents.reload();
+			void current.loadURL(recovery.url).catch((error: unknown) => {
+				console.error(error instanceof Error ? error.message : String(error));
+			});
 			return;
 		}
 	}
@@ -208,6 +212,7 @@ function watchPendingApprovals(target: BrowserWindow): void {
 }
 
 async function openWindow(pageUrl: string): Promise<void> {
+	hostPageUrl = pageUrl;
 	const origin = new URL(pageUrl).origin;
 	const created = new BrowserWindow({
 		width: 1440,

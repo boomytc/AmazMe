@@ -2,7 +2,8 @@
  * Failure dialogs for the page process and the web-host child.
  *
  * Titles, bodies, and button labels are assembled here from the page catalog (`desktop.*`). The
- * main process only shows the result and maps the button index back to reload or quit.
+ * main process only shows the result. The reload button loads the host address again; the other
+ * button quits.
  */
 import type { Locale } from "@amazme/web/locale";
 import { translate, type MessageKey } from "@amazme/web/strings";
@@ -69,7 +70,7 @@ export interface RenderDialogCopy {
 	readonly title: string;
 	readonly message: string;
 	readonly detail: string;
-	/** Index 0 reloads the page. Index 1 quits the app. */
+	/** Index 0 loads the host address again. Index 1 quits the app. */
 	readonly buttons: readonly [string, string];
 }
 
@@ -79,6 +80,24 @@ export interface HostDialogCopy {
 	readonly detail: string;
 	/** The only button quits the app. The dialog has already decided the host is gone. */
 	readonly buttons: readonly [string];
+}
+
+export type RenderDialogRecovery = { readonly kind: "load"; readonly url: string } | { readonly kind: "quit" };
+
+/**
+ * What the reload button does. Index 0 loads `hostUrl` with `loadURL`. `webContents.reload()` is
+ * not used: a first load that never committed has no document to reload, so it would not come
+ * back to the host. Any other button, a quit already in progress, or a missing host address leaves.
+ */
+export function renderDialogRecovery(
+	response: number,
+	quitting: boolean,
+	hostUrl: string | undefined,
+): RenderDialogRecovery {
+	if (response === 0 && !quitting && hostUrl !== undefined && hostUrl.length > 0) {
+		return { kind: "load", url: hostUrl };
+	}
+	return { kind: "quit" };
 }
 
 /** A load the user or the page aborted, not a failure worth a dialog. */
