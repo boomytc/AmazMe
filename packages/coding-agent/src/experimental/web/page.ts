@@ -20,7 +20,9 @@ import {
 	BOOT_GLOBAL,
 	COMPACT_ACTION,
 	COMPACT_MODAL,
+	commandPalette,
 	compactModal,
+	expandSkillCommand,
 	buildWebView,
 	CHAT_VIEW,
 	collectPageElements,
@@ -43,6 +45,8 @@ import {
 	PLUGIN_PACKAGE_REMOVE_ACTION,
 	QUEUE_CANCEL_ACTION,
 	REFRESH_MODELS_ACTION,
+	panelNav,
+	parseCommandLine,
 	removeSessionModal,
 	removeSkillModal,
 	resolveLocale,
@@ -58,6 +62,7 @@ import {
 	SKILL_NEW_ACTION,
 	SKILL_REMOVE_ACTION,
 	SESSION_REMOVE_ACTION,
+	skillCommands,
 	SESSION_REMOVE_MODAL,
 	SKILL_REMOVE_MODAL,
 	skillModal,
@@ -67,6 +72,7 @@ import {
 	type MessageKey,
 	type PageElements,
 	type PageRenderer,
+	type ShortcutId,
 	type SubmitMode,
 	type PanelAction,
 	type PanelModal,
@@ -79,6 +85,7 @@ import {
 	createSessionServiceSource,
 	type SessionServiceSource,
 } from "../services/connection.ts";
+import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
 import { Models, type ModelsState } from "../services/models.ts";
 import { Plugins } from "../services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
@@ -143,6 +150,7 @@ class SessionPainter {
 	#controller: AgentController | undefined;
 	#models: Models | undefined;
 	#sessionSettings: SessionSettings | undefined;
+	#commands: CommandsService | undefined;
 	#levels: readonly string[] | undefined;
 	#levelsModel: string | undefined;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
@@ -168,6 +176,24 @@ class SessionPainter {
 	/** The attached model's levels; `undefined` until the host has answered for this model. */
 	get levels(): readonly string[] | undefined {
 		return this.#levels;
+	}
+
+	/** The session's command catalogue, as the host published it. */
+	get commands(): CommandsState["commands"] {
+		return this.#commands?.state.value?.commands ?? [];
+	}
+
+	/** Run one of the host's commands; the result carries the note or the problem to show. */
+	async runCommand(name: string, args: string): Promise<{ readonly ok: boolean; readonly message: string }> {
+		const commands = this.#commands;
+		if (commands === undefined) return { ok: false, message: translate(this.locale, "page.commandUnknown", { name }) };
+		const result = await commands.run(name, args, BACKGROUND_CONTEXT);
+		return result.ok ? { ok: true, message: result.note } : { ok: false, message: result.problem };
+	}
+
+	/** The host's completions for one command's argument. */
+	async complete(name: string, prefix: string): Promise<readonly { value: string; label: string; description?: string }[]> {
+		return (await this.#commands?.complete(name, prefix, BACKGROUND_CONTEXT)) ?? [];
 	}
 
 	/**
@@ -269,7 +295,7 @@ class SessionPainter {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
 		const services = this.#sessionSource.open({
-			services: [Transcript, AgentController, Models, SessionSettings],
+			services: [Transcript, AgentController, Models, SessionSettings, Commands],
 			assertAccess(): void {},
 			onError: (error: Error) =>
 				this.#renderer.setConnection(
@@ -284,6 +310,7 @@ class SessionPainter {
 		this.#controller = services.use(AgentController);
 		this.#models = services.use(Models);
 		this.#sessionSettings = services.use(SessionSettings);
+		this.#commands = services.use(Commands);
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		// A model switch made anywhere repaints the chip and re-reads the levels of the new model.
@@ -308,6 +335,7 @@ class SessionPainter {
 		this.#controller = undefined;
 		this.#models = undefined;
 		this.#sessionSettings = undefined;
+		this.#commands = undefined;
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		this.#sessionId = undefined;
@@ -354,6 +382,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let attachmentSequence = 0;
 	/** The roster's filter text; the page owns it so creating or attaching never clears it. */
 	let rosterFilter = "";
+	/** The composer's draft, mirrored here so the command palette can be projected from it. */
+	let draft = "";
+	/** The host's argument completions for the command line being typed. */
+	let completions: readonly { readonly value: string; readonly label: string; readonly description?: string }[] = [];
+	let paletteSelection = 0;
+	/** The completion request in flight, so a stale answer never lands on a newer draft. */
+	let completionSequence = 0;
 
 	/**
 	 * Paint, and never let a paint escape: a binding that a transition replaced is a line the reader
@@ -365,6 +400,21 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		} catch (error) {
 			renderer.setConnection(copy("page.paintFailed", { error: message(error) }), "error");
 		}
+	};
+
+	/**
+	 * The commands the composer offers: the session's own catalogue, and — when the agent registers
+	 * skills as commands — one `/skill:<name>` per loaded skill.
+	 */
+	const composerCommands = (): readonly { name: string; description: string; argumentHint?: string }[] => {
+		const host = painter.commands.map((command) => ({
+			name: command.name,
+			description: command.description,
+			...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
+		}));
+		const skillsEnabled = settingValue("enableSkillCommands") !== "false";
+		if (!skillsEnabled) return host;
+		return [...host, ...skillCommands(skills.state.value?.skills ?? [])];
 	};
 
 	/** The catalogue's value for one field, once the host has published it. */
@@ -393,6 +443,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					submitMode,
 					attachments: pending,
 					rosterFilter,
+					draft,
+					commands: composerCommands(),
+					completions,
+					paletteSelection,
+					platform: navigator.platform,
 					// The panel inherits this view's language, so one resolution serves the whole page.
 					panel: {
 						locale,
@@ -434,7 +489,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	// The host creates the session; the roster shows it from the replicated directory. A second
 	// click while the first create is in flight would make a second session, so this one is one-shot.
 	let creating = false;
-	renderer.onCreateSession = () => {
+	/** Create a session and attach it; one path serves the sidebar's bar and the shortcut. */
+	const createSession = (): void => {
 		if (creating) return;
 		creating = true;
 		void management
@@ -446,6 +502,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			.finally(() => {
 				creating = false;
 			});
+	};
+	renderer.onCreateSession = createSession;
+	renderer.onShortcut = (id: ShortcutId) => {
+		if (id === "session.new") {
+			createSession();
+			return;
+		}
+		if (id === "composer.focus") return;
+		// Cycle the main area through the conversation and every management view.
+		const views = [CHAT_VIEW, ...panelNav(locale, CHAT_VIEW).map((item) => item.id)];
+		const index = views.indexOf(view);
+		view = views[(index + 1) % views.length] ?? CHAT_VIEW;
+		modal = undefined;
+		paint();
 	};
 	renderer.onSelectModel = (provider, modelId) => {
 		void painter.selectModel(provider, modelId).catch((error: unknown) => {
@@ -461,6 +531,46 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * Add picked, pasted, or dropped images. An image the page cannot send is refused with the
 	 * reason instead of being dropped silently, and the rest of the batch still arrives.
 	 */
+	/**
+	 * Follow the draft: a bare `/name` is filtered from the catalogue locally, and an argument is
+	 * completed by the host. Answers are sequenced so a slow one cannot land on a newer draft.
+	 */
+	renderer.onDraftChange = (text) => {
+		draft = text;
+		paletteSelection = 0;
+		const line = parseCommandLine(text);
+		const sequence = ++completionSequence;
+		if (line === undefined || !text.includes(" ") || !composerCommands().some((command) => command.name === line.name)) {
+			completions = [];
+			paint();
+			return;
+		}
+		void painter.complete(line.name, line.args).then(
+			(answered) => {
+				if (sequence !== completionSequence) return;
+				completions = answered;
+				paint();
+			},
+			() => {
+				if (sequence !== completionSequence) return;
+				completions = [];
+				paint();
+			},
+		);
+	};
+	renderer.onPaletteSelection = (index) => {
+		paletteSelection = index;
+		paint();
+	};
+	renderer.onCommandPick = (value) => {
+		const line = parseCommandLine(draft);
+		// A name pick leaves a space for the argument; an argument pick replaces the rest of the line.
+		if (line === undefined || !draft.includes(" ")) {
+			renderer.setDraft(`/${value} `);
+			return;
+		}
+		renderer.setDraft(`/${line.name} ${value}`);
+	};
 	renderer.onFilterRoster = (text) => {
 		rosterFilter = text;
 		paint();
@@ -496,7 +606,47 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			paint();
 		})();
 	};
+	/**
+	 * Run one command line. A skill command expands here, the way the CLI expands it, and becomes a
+	 * prompt; anything else is the host's to run, and its note or problem reaches the connection line.
+	 */
+	const runCommandLine = (name: string, args: string): void => {
+		if (name.startsWith("skill:")) {
+			const skillName = name.slice("skill:".length);
+			const summary = skills.state.value?.skills.find((skill) => skill.name === skillName);
+			if (summary === undefined) {
+				renderer.setConnection(copy("page.commandUnknown", { name }), "error");
+				return;
+			}
+			void skills.read(skillName, BACKGROUND_CONTEXT).then(
+				(content) => {
+					// The skill becomes a prompt, so the model sees the same block the CLI sends.
+					const expanded = expandSkillCommand({ name: summary.name, filePath: summary.filePath, content }, args);
+					return painter.submit(expanded, submitMode, []);
+				},
+				(error: unknown) => {
+					renderer.setConnection(copy("page.commandFailed", { error: message(error) }), "error");
+				},
+			);
+			return;
+		}
+		void painter.runCommand(name, args).then(
+			(result) => {
+				renderer.setConnection(result.message, result.ok ? "state" : "error");
+			},
+			(error: unknown) => {
+				renderer.setConnection(copy("page.commandFailed", { error: message(error) }), "error");
+			},
+		);
+	};
+
 	renderer.onSubmit = (text) => {
+		const line = parseCommandLine(text);
+		if (line !== undefined && composerCommands().some((command) => command.name === line.name)) {
+			renderer.setDraft("");
+			runCommandLine(line.name, line.args);
+			return;
+		}
 		const sent = pending;
 		const images: AgentPromptImage[] = sent.map((image) => ({
 			type: "image",

@@ -7,6 +7,7 @@
  * otherwise reset them.
  */
 import { COMPACT_ACTION, REFRESH_MODELS_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import { STOP_SEQUENCE_MS, isApplePlatform, matchShortcut, type ShortcutId } from "./shortcuts.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode } from "./markdown.ts";
 import {
@@ -56,6 +57,8 @@ export interface PageElements {
 	readonly prompt: HTMLTextAreaElement;
 	/** The composer's one action: send, or stop while a turn runs on an empty draft. */
 	readonly primary: HTMLButtonElement;
+	/** The composer's command palette, filled by the renderer. */
+	readonly palette: HTMLElement;
 	/** The header's run controls (compaction), filled by the renderer. */
 	readonly runActions: HTMLElement;
 	/** The composer's submit-mode toggle, filled while a turn runs. */
@@ -86,6 +89,16 @@ export interface PageRenderer {
 	onAttachFiles: (files: readonly File[]) => void;
 	/** The roster's filter text; the page owns it so it survives a repaint. */
 	onFilterRoster: (text: string) => void;
+	/** A shortcut fired: the page turns it into its action. */
+	onShortcut: (id: ShortcutId) => void;
+	/** The palette's highlighted row changed, so the page can re-render it. */
+	onPaletteSelection: (index: number) => void;
+	/** The composer's draft, so the page can project the command palette from it. */
+	onDraftChange: (draft: string) => void;
+	/** The reader picked a palette row: the composer takes its text. */
+	onCommandPick: (value: string) => void;
+	/** Put text in the composer, the way a completion does. */
+	setDraft(text: string): void;
 	/** Every navigation, control, and modal report from the management surface. */
 	onPanelAction: (action: PanelAction) => void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
@@ -109,6 +122,7 @@ export function collectPageElements(): PageElements {
 		viewBody: pick("view-body"),
 		viewBack: pickElement("view-back", HTMLButtonElement),
 		runActions: pick("run-actions"),
+		palette: pick("command-palette"),
 		rosterFilter: pickElement("roster-filter", HTMLInputElement),
 		attachments: pick("attachments"),
 		attach: pickElement("attach", HTMLButtonElement),
@@ -202,7 +216,13 @@ function inlineFragment(nodes: readonly InlineNode[]): DocumentFragment {
 	return fragment;
 }
 
-function markdownNode(node: MarkdownNode): HTMLElement {
+/** What the markdown adapter needs from the renderer: a code block's copy control. */
+interface MarkdownContext {
+	readonly copy: (key: MessageKey) => string;
+	readonly codeBlock: (text: string, language: string | undefined) => HTMLElement;
+}
+
+function markdownNode(node: MarkdownNode, context: MarkdownContext): HTMLElement {
 	switch (node.kind) {
 		case "paragraph": {
 			const paragraph = document.createElement("p");
@@ -224,23 +244,15 @@ function markdownNode(node: MarkdownNode): HTMLElement {
 			}
 			return list;
 		}
-		case "code": {
-			const block = element("div", "code-block");
-			if (node.language !== undefined) block.append(element("div", "code-language", node.language));
-			const pre = document.createElement("pre");
-			const code = document.createElement("code");
-			code.textContent = node.text;
-			pre.append(code);
-			block.append(pre);
-			return block;
-		}
+		case "code":
+			return context.codeBlock(node.text, node.language);
 	}
 }
 
 /** An answer as DSH's markdown sheet expects it: one `.markdown` root per assistant block. */
-function markdownElement(text: string): HTMLElement {
+function markdownElement(text: string, context: MarkdownContext): HTMLElement {
 	const root = element("div", "markdown");
-	for (const node of formatMarkdown(text)) root.append(markdownNode(node));
+	for (const node of formatMarkdown(text)) root.append(markdownNode(node, context));
 	return root;
 }
 
@@ -755,6 +767,73 @@ export function createRenderer(
 		return chip;
 	};
 
+	/** A fenced code block: the language, the code, and a copy control whose text is the code. */
+	const codeBlockElement = (text: string, language: string | undefined): HTMLElement => {
+		const block = element("div", "code-block");
+		const head = element("div", "code-head");
+		if (language !== undefined) head.append(element("span", "code-language", language));
+		const control = button("code-copy");
+		control.dataset.action = "copy";
+		control.textContent = copy("copy.copy");
+		control.addEventListener("click", () => {
+			const written = navigator.clipboard?.writeText(text);
+			if (written === undefined) {
+				control.textContent = copy("copy.failed");
+				return;
+			}
+			void written.then(
+				() => {
+					control.textContent = copy("copy.copied");
+					window.setTimeout(() => {
+						control.textContent = copy("copy.copy");
+					}, 1200);
+				},
+				() => {
+					control.textContent = copy("copy.failed");
+				},
+			);
+		});
+		head.append(control);
+		block.append(head);
+		const pre = document.createElement("pre");
+		const code = document.createElement("code");
+		code.textContent = text;
+		pre.append(code);
+		block.append(pre);
+		return block;
+	};
+
+	/** What the markdown adapter borrows from the renderer. */
+	const markdown: MarkdownContext = { copy, codeBlock: codeBlockElement };
+
+	/** The command palette: the host's commands (or their argument completions) for this draft. */
+	const renderPalette = (view: WebView): void => {
+		if (!view.palette.open || (lastView?.attachedId === undefined && view.palette.rows.length === 0)) {
+			elements.palette.replaceChildren();
+			elements.palette.hidden = true;
+			return;
+		}
+		const card = element("div", "palette-card");
+		card.append(element("p", "palette-title", view.palette.title));
+		if (view.palette.empty !== undefined) card.append(element("p", "palette-empty", view.palette.empty));
+		const rows = element("div", "palette-rows");
+		view.palette.rows.forEach((row, index) => {
+			const node = button(row.selected ? "palette-row selected" : "palette-row");
+			node.dataset.value = row.value;
+			node.append(element("span", "palette-name", row.label));
+			if (row.hint !== undefined) node.append(element("span", "palette-hint", row.hint));
+			node.append(element("span", "palette-desc", row.description));
+			// Hovering moves the highlight, so the reader's next Enter takes what they point at.
+			node.addEventListener("pointerenter", () => renderer.onPaletteSelection(index));
+			node.addEventListener("click", () => renderer.onCommandPick(row.value));
+			rows.append(node);
+		});
+		card.append(rows);
+		card.append(element("p", "palette-foot", copy("palette.hint")));
+		elements.palette.replaceChildren(card);
+		elements.palette.hidden = false;
+	};
+
 	/** The pending images: each thumbnail carries its own remove, and none is sent until submit. */
 	const renderAttachments = (view: WebView): void => {
 		elements.attachments.replaceChildren();
@@ -873,7 +952,7 @@ export function createRenderer(
 			}
 			process = undefined;
 			if (block.kind === "user") flow.push(wrap("turn-user", userBubble(block)));
-			else if (block.kind === "assistant") flow.push(wrap("turn-response", markdownElement(block.text)));
+			else if (block.kind === "assistant") flow.push(wrap("turn-response", markdownElement(block.text, markdown)));
 			else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
 		}
 		return flow;
@@ -980,6 +1059,10 @@ export function createRenderer(
 		onSelectThinking: () => {},
 		onAttachFiles: () => {},
 		onFilterRoster: () => {},
+		onShortcut: () => {},
+		onPaletteSelection: () => {},
+		onDraftChange: () => {},
+		onCommandPick: () => {},
 		onPanelAction: () => {},
 		get view(): WebView | undefined {
 			return lastView;
@@ -1024,11 +1107,19 @@ export function createRenderer(
 
 			renderModelChip(view);
 			renderAttachments(view);
+			renderPalette(view);
 			renderRunActions(view);
 			renderSubmitModes(view);
 			renderNav(view);
 			renderPanelView(view);
 			renderModal(view.panel.modal);
+		},
+		setDraft(text: string): void {
+			elements.prompt.value = text;
+			fitPrompt(elements.prompt);
+			renderPrimary();
+			renderer.onDraftChange(text);
+			elements.prompt.focus();
 		},
 		setConnection(text: string, kind: "state" | "error"): void {
 			elements.connection.textContent = text;
@@ -1040,6 +1131,15 @@ export function createRenderer(
 		event.preventDefault();
 		if (lastView?.attachedId === undefined) return;
 		const text = draft();
+		if (text.startsWith("/") && lastView?.palette.open === true) {
+			const selected = lastView.palette.rows.find((row) => row.selected);
+			const line = lastView.commandLine;
+			// A bare `/name` completes to the highlighted command; a full line runs as typed.
+			if (!line && selected !== undefined) {
+				renderer.onCommandPick(selected.value);
+				return;
+			}
+		}
 		if (text.length === 0 && (lastView?.attachments.length ?? 0) === 0) {
 			// An empty draft leaves the primary as the stop control; `Enter` on it must not no-op.
 			if (stops) renderer.onAbort();
@@ -1048,14 +1148,35 @@ export function createRenderer(
 		elements.prompt.value = "";
 		fitPrompt(elements.prompt);
 		renderPrimary();
+		renderer.onDraftChange("");
 		renderer.onSubmit(text);
 	});
 	elements.prompt.addEventListener("input", () => {
 		fitPrompt(elements.prompt);
-		// The draft's emptiness decides whether the primary sends or stops.
+		// The draft's emptiness decides whether the primary sends or stops, and its text decides
+		// whether the command palette is open.
 		renderPrimary();
+		renderer.onDraftChange(elements.prompt.value);
 	});
 	elements.prompt.addEventListener("keydown", (event) => {
+		const palette = lastView?.palette;
+		if (palette?.open === true && palette.rows.length > 0) {
+			// The palette owns the arrows, Tab, and a bare `/`'s Enter while it is open.
+			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+				event.preventDefault();
+				const step = event.key === "ArrowDown" ? 1 : -1;
+				const current = palette.rows.findIndex((row) => row.selected);
+				const next = (current + step + palette.rows.length) % palette.rows.length;
+				renderer.onPaletteSelection(next);
+				return;
+			}
+			if (event.key === "Tab") {
+				event.preventDefault();
+				const selected = palette.rows.find((row) => row.selected) ?? palette.rows[0];
+				if (selected !== undefined) renderer.onCommandPick(selected.value);
+				return;
+			}
+		}
 		// Enter submits, Shift+Enter keeps the newline: the same contract the TUI composer uses.
 		if (event.key !== "Enter" || event.shiftKey) return;
 		event.preventDefault();
@@ -1116,6 +1237,22 @@ export function createRenderer(
 		if (target instanceof Node && (elements.modelMenu.contains(target) || elements.modelTrigger.contains(target))) return;
 		closeModelMenu();
 	});
+	/** The first Escape of a stop sequence; a second inside the window stops the turn. */
+	let stopArmedAt = 0;
+	document.addEventListener("keydown", (event) => {
+		if (event.defaultPrevented || event.isComposing) return;
+		const target = event.target;
+		if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+			// A field owns the unmodified keys; the product shortcuts below still apply.
+			if (!(event.altKey && (event.metaKey || event.ctrlKey))) return;
+		}
+		const primary = isApplePlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+		const id = matchShortcut({ code: event.code, primary, alt: event.altKey, shift: event.shiftKey });
+		if (id === undefined || id === "run.stop") return;
+		event.preventDefault();
+		if (id === "composer.focus") elements.prompt.focus();
+		renderer.onShortcut(id);
+	});
 	document.addEventListener("keydown", (event) => {
 		if (event.key !== "Escape") return;
 		if (elements.modalRoot.hidden === false) {
@@ -1128,9 +1265,19 @@ export function createRenderer(
 			elements.viewMenuTrigger.focus();
 			return;
 		}
-		if (elements.modelMenu.hidden) return;
-		closeModelMenu();
-		elements.modelTrigger.focus();
+		if (!elements.modelMenu.hidden) {
+			closeModelMenu();
+			elements.modelTrigger.focus();
+			return;
+		}
+		// Nothing to dismiss: the first Escape arms the stop, a second one inside the window stops.
+		const now = Date.now();
+		if (lastView?.busy === true && now - stopArmedAt <= STOP_SEQUENCE_MS) {
+			stopArmedAt = 0;
+			renderer.onAbort();
+			return;
+		}
+		stopArmedAt = now;
 	});
 	return renderer;
 }

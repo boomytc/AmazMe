@@ -21,6 +21,14 @@ import {
 	UserEntry,
 } from "@amazme/durable";
 import { ATTACHMENT_REMOVE_ACTION, COMPACT_ACTION, QUEUE_CANCEL_ACTION, SESSION_REMOVE_ACTION } from "./actions.ts";
+import {
+	commandPalette,
+	parseCommandLine,
+	type CommandLike,
+	type CommandCompletionLike,
+	type CommandPalette,
+} from "./commands.ts";
+import { type Shortcut, shortcuts } from "./shortcuts.ts";
 import type { Locale } from "./locale.ts";
 import { CHAT_VIEW, panelView, type PanelButton, type PanelView, type PanelViewInput } from "./panels.ts";
 import { thinkingLevelCopy, translate } from "./strings.ts";
@@ -204,6 +212,12 @@ export interface WebView {
 	/** Images attached but not sent yet. */
 	readonly attachments: readonly Attachment[];
 	readonly run: RunControls;
+	/** The command palette for the current draft. */
+	readonly palette: CommandPalette;
+	/** The keyboard shortcuts, with this platform's key names. */
+	readonly shortcuts: readonly Shortcut[];
+	/** Whether the draft is a command line the page runs instead of prompting. */
+	readonly commandLine: boolean;
 	readonly attachedId: string | undefined;
 	readonly empty: string | undefined;
 	/** Whether a turn is in flight: the composer's primary action becomes the stop control. */
@@ -278,6 +292,16 @@ export interface WebViewInput {
 	}[];
 	/** The roster's filter text; the page owns it so a repaint never clears it. */
 	readonly rosterFilter: string;
+	/** The composer's draft, so the palette follows what is being typed. */
+	readonly draft: string;
+	/** The host's command catalogue, plus the skill commands the page adds. */
+	readonly commands: readonly CommandLike[];
+	/** The host's completions for the argument being typed, when there is one. */
+	readonly completions: readonly CommandCompletionLike[];
+	/** The palette row the reader moved to. */
+	readonly paletteSelection: number;
+	/** The platform the shortcut reference is written for. */
+	readonly platform: string;
 	/** The management view the page is showing, with the state of that area's services. */
 	readonly panel: PanelViewInput;
 }
@@ -736,6 +760,9 @@ export function failureView(locale: Locale, text: string): WebView {
 		locale,
 		roster: [],
 		rosterFilter: "",
+		palette: commandPalette(locale, { draft: "", commands: [] }),
+		shortcuts: shortcuts(locale, ""),
+		commandLine: false,
 		blocks: [],
 		status: "",
 		queue: [],
@@ -766,6 +793,14 @@ export function buildWebView(input: WebViewInput): WebView {
 		locale,
 		roster,
 		rosterFilter: input.rosterFilter,
+		palette: commandPalette(locale, {
+			draft: input.draft,
+			commands: input.commands,
+			completions: input.completions,
+			selected: input.paletteSelection,
+		}),
+		shortcuts: shortcuts(locale, input.platform),
+		commandLine: parseCommandLine(input.draft) !== undefined,
 		blocks,
 		status: sessionStatus(locale, input.transcript),
 		queue: queuedInputs(locale, input.transcript),

@@ -18,6 +18,7 @@ import type { SettingsManager } from "../../core/settings-manager.ts";
 import { configureHarnessHttp } from "../durable/harness-setup.ts";
 import { AgentController } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
+import { createCommandsFacet } from "./commands-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { SessionSettings } from "./settings.ts";
@@ -94,6 +95,7 @@ export async function createSessionWorkerServices(options: {
 		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
 		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
+		createCommandsFacet(),
 	]).load();
 	const pluginLoader = options.facetLoader ?? createStaticFacetLoader([]);
 	let loadedPlugins = await pluginLoader.load();

@@ -25,7 +25,29 @@ export {
 	type Locale,
 	type LocalePreference,
 } from "./locale.ts";
+export {
+	commandPalette,
+	expandSkillCommand,
+	parseCommandLine,
+	skillCommands,
+	stripFrontmatter,
+	type CommandCompletionLike,
+	type CommandLike,
+	type CommandLine,
+	type CommandPalette,
+	type CommandRow,
+} from "./commands.ts";
 export { formatMarkdown, safeHref, type InlineNode, type MarkdownNode } from "./markdown.ts";
+export {
+	gestureKeys,
+	isApplePlatform,
+	matchShortcut,
+	shortcuts,
+	STOP_SEQUENCE_MS,
+	type Shortcut,
+	type ShortcutGesture,
+	type ShortcutId,
+} from "./shortcuts.ts";
 export {
 	addMcpServerModal,
 	addPackageModal,

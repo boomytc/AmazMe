@@ -24,6 +24,7 @@ import {
 	createSessionServiceSource,
 	type SessionServiceSource,
 } from "../src/experimental/services/connection.ts";
+import { Commands, type Commands as CommandsService } from "../src/experimental/services/commands.ts";
 import { Models, type Models as ModelsService } from "../src/experimental/services/models.ts";
 import { Plugins, type Plugins as PluginsService } from "../src/experimental/services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
@@ -43,6 +44,7 @@ interface Attached {
 	readonly transcript: { readonly state: { readonly value: ConversationView | undefined } };
 	readonly controller: AgentController;
 	readonly models: ModelsService;
+	readonly commands: CommandsService;
 	dispose(): Promise<void>;
 }
 
@@ -107,7 +109,7 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 	await presentation.management.attach(sessionId, BACKGROUND_CONTEXT);
 	await presentation.sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
 	const services = presentation.sessionSource.open({
-		services: [Transcript, AgentController, Models],
+		services: [Transcript, AgentController, Models, Commands],
 		assertAccess(): void {},
 		onError(): void {},
 	});
@@ -116,6 +118,7 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 		transcript: services.use(Transcript),
 		controller: services.use(AgentController),
 		models: services.use(Models),
+		commands: services.use(Commands),
 		async dispose() {
 			await services.dispose(BACKGROUND_CONTEXT);
 		},
@@ -339,6 +342,77 @@ describe("web client interactive loop", () => {
 
 			await second.dispose();
 			await first.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"runs the session's own commands through the real client",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "web-loop-commands" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+
+			await waitFor(() => (attached.commands.state.value?.commands ?? []).length > 0, "the command catalogue");
+			const catalogue = attached.commands.state.value?.commands ?? [];
+			expect(catalogue.map((command) => command.name)).toEqual(["model", "thinking", "compact", "reload"]);
+			expect(catalogue.find((command) => command.name === "model")?.argumentHint).toBe("<provider/model>");
+
+			await waitFor(() => attached.models.state.value !== undefined, "the models state");
+			// /thinking takes a level the attached model reports, and says so when it does not.
+			const levels = await attached.models.getThinkingLevels(BACKGROUND_CONTEXT);
+			const level = levels[levels.length - 1] ?? "low";
+			expect(await attached.commands.run("thinking", level, BACKGROUND_CONTEXT)).toEqual({
+				ok: true,
+				note: `Thinking level: ${level}.`,
+			});
+			await waitFor(
+				() => attached.models.state.value?.configuration.thinkingLevel === level,
+				"the level the command selected",
+			);
+			const rejected = await attached.commands.run("thinking", "nonsense", BACKGROUND_CONTEXT);
+			expect(rejected.ok).toBe(false);
+			expect(rejected.ok ? "" : rejected.problem).toContain("Unknown thinking level");
+
+			// /model selects a catalogue entry and completes from the same catalogue.
+			const catalog = attached.models.state.value?.catalog.availableModels ?? [];
+			if (catalog.length === 0) {
+				// Without the repository's model data there is nothing to select; the problem is the answer.
+				expect(await attached.commands.run("model", "provider/model", BACKGROUND_CONTEXT)).toMatchObject({
+					ok: false,
+				});
+				expect(await attached.commands.run("model", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
+			} else {
+				const target = catalog[0]!;
+				expect(
+					await attached.commands.run("model", `${target.provider}/${target.modelId}`, BACKGROUND_CONTEXT),
+				).toEqual({ ok: true, note: `Selected ${target.provider}/${target.modelId}.` });
+				await waitFor(
+					() => attached.models.state.value?.configuration.model?.modelId === target.modelId,
+					"the model the command selected",
+				);
+				const completions = await attached.commands.complete("model", target.modelId, BACKGROUND_CONTEXT);
+				expect(completions.some((completion) => completion.value === `${target.provider}/${target.modelId}`)).toBe(
+					true,
+				);
+			}
+
+			// /compact is the same durable task the header's control reaches.
+			expect(await attached.commands.run("compact", "keep the markers", BACKGROUND_CONTEXT)).toEqual({
+				ok: true,
+				note: "Compacting the conversation.",
+			});
+			// /reload rebuilds this session's plugin generation, and an unknown name is a problem.
+			expect(await attached.commands.run("reload", "", BACKGROUND_CONTEXT)).toEqual({
+				ok: true,
+				note: "Reloaded this session's plugins.",
+			});
+			expect(await attached.commands.run("nope", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
+
+			await attached.controller.abort(BACKGROUND_CONTEXT);
+			await attached.dispose();
+			await presentation.dispose();
 		},
 		240_000,
 	);

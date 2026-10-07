@@ -67,6 +67,18 @@ session-settings，以及服务端范围的 settings、skills、plugins），驱
 - 会话面：名册每行显示会话 id、工作目录与年龄，悬停出现删除控件（先弹确认，再调 `SessionManagement.remove`）；名册上方是过滤框，按 id 或工作目录匹配，并区分“还没有会话”与“没有匹配”。切换视图、创建、附加、删除都不会清掉 composer 草稿、过滤文字或当前打开的管理视图。
 - 连接抖动：附着与首次绘制都不会因为一次连接／附着重绑定把页面变成不可启动——附着失败会在连接行给出原因，绘制异常也在那里报告，页面继续可用。
 
+## 命令、快捷键与复制
+
+- 命令：composer 里以 `/` 开头的草稿打开命令面板。面板先按前缀过滤会话自己发布的命令目录（`amazme.commands`：
+  model／thinking／compact／reload），补上空格后改为请求宿主的参数补全（模型 id、推理档）；Tab 补全高亮的行，
+  Enter 运行。`enableSkillCommands` 打开时，页面把已加载技能追加成 `/skill:<name>`，运行它时按 CLI 的
+  `_expandSkillCommand` 形状（`<skill name location>` 块 + 参数）展开成一次 prompt。执行结果显示在连接行：
+  成功是宿主的 note，失败是 problem（命令结果因此是值而不是异常，避免 RPC 把信息抹成一句话）。
+- 快捷键：`shortcuts.ts` 是一张表，同时用于读者可见的说明和按键匹配。产品键沿用 DSH 网页端的约定
+  （`primary`＋Alt：⌘⌥N 新建会话、⌘⌥M 轮换管理视图）；`/` 在不处于输入框时聚焦 composer；回合运行中连按两次
+  Esc 停止（阈值 500ms，与 TUI、DSH 的 stopSequence 一致）。`Escape` 仍然优先关闭模态框、视图卡片与模型卡片。
+- 复制：围栏代码块的 banner 上带复制控件，写进剪贴板的就是代码本身，成功/失败在控件文字上显示。
+
 ## 语言与外观
 
 界面语言（中／英）与外观（浅色／深色／跟随系统）是两个存在 agent 的 `settings.json` 里的偏好

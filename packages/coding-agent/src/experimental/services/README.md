@@ -37,6 +37,7 @@ page take effect after the host restarts.
 | server | `PresentationPlugins` | prepares the selected Session branch's matching TUI artifacts and reloads that branch | add authenticated plugin policy |
 | session | `SessionPlugins` | reloads the configured Session facet generation | add coordinated multi-worker reload reporting |
 | session | `SessionSettings` | asks the worker to re-read the settings files, so a change made elsewhere reaches the running Session | invalidate the per-directory prompt cache so newly written skills apply to a running Session |
+| session | `Commands` | the session's own command catalogue (model, thinking, compact, reload) with textual arguments, argument completions, and a value-shaped result | add skill and prompt-template commands to this catalogue |
 | session | `Models` | state, default-persisting selection, thinking, refresh implemented | move provider/auth composition behind plugin facets |
 | session | `AgentController` | presentation-safe facade over the root durable conversation for prompting, steering, follow-ups, queue cancellation, abort, compaction, and waiting for a prompt's answer | add new conversation operations only when a presentation requires them |
 | session | `Transcript` | the root conversation's durable `ConversationView` as replicated state | add projections only when another presentation needs them |

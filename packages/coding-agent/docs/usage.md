@@ -161,6 +161,23 @@ its id, and removes one from a hover control behind a confirmation: its storage 
 host's session directory while the working directory itself is left alone. A draft in the composer,
 the filter text, and the open management view survive attaching, creating, and removing sessions.
 
+### Commands, shortcuts, and copying
+
+Type `/` in the composer to open the command palette. It lists the session's own commands — `model`,
+`thinking`, `compact`, and `reload` — and narrows as you type; after a space it lists the host's
+completions for that argument (model ids, reasoning levels). `Tab` completes the highlighted row and
+`Enter` runs the line. When the agent registers skills as commands (the **Skills as commands**
+setting), each loaded skill appears as `/skill:<name>`; running it expands the skill's own file the
+way the CLI does and sends it as the prompt. A command's outcome appears on the header's connection
+line.
+
+The product shortcuts follow the same convention DSH uses on the web: `⌘⌥N` (`Ctrl+Alt+N`) creates
+and attaches a session, `⌘⌥M` (`Ctrl+Alt+M`) cycles the main area through the conversation and the
+management views, and `/` with the focus outside a text field moves it to the composer. While a turn
+runs, two `Escape` presses within half a second stop it, the same double-escape the TUI uses; a
+single `Escape` still closes the open modal, view card, or model card. Every fenced code block in an
+answer carries a copy control whose clipboard content is exactly that code.
+
 ### Manage plugins, skills, and settings
 
 The sidebar's **Plugins** and **Skills** rows and the **Settings** entry at the sidebar's bottom switch the main

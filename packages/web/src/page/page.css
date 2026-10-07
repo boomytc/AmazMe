@@ -536,13 +536,39 @@ body {
 	margin-bottom: 11px;
 }
 
-.markdown .code-language {
-	padding: 9px 14px;
+.markdown .code-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 0 8px 0 14px;
 	border-radius: var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;
 	background: var(--dsw-alias-markdown-code-block-banner);
+	color: var(--dsw-alias-label-tertiary);
 	font-family: var(--ds-font-family-code);
 	font-size: 11px;
 	line-height: 18px;
+}
+
+.markdown .code-language {
+	padding: 9px 0;
+	color: inherit;
+	font: inherit;
+}
+
+.markdown .code-copy {
+	padding: 2px 8px;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	font: inherit;
+	cursor: pointer;
+}
+
+.markdown .code-copy:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-primary);
 }
 
 .markdown .code-block pre {
@@ -898,6 +924,92 @@ summary.disclosure-row {
 .header-action:disabled {
 	opacity: 0.5;
 	cursor: default;
+}
+
+/* The command palette, above the draft: the host's commands for what has been typed. */
+.command-palette {
+	width: 100%;
+	max-width: var(--dsh-composer-card-max-width);
+	margin-bottom: 6px;
+}
+
+.palette-card {
+	overflow: hidden;
+	border: 0.5px solid var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-lg);
+	background: var(--dsw-specific-menu);
+	box-shadow: var(--dsw-elevation-prominent);
+	backdrop-filter: var(--dsw-menu-backdrop-filter);
+}
+
+.palette-title {
+	margin: 0;
+	padding: 8px 12px 4px;
+	color: var(--dsw-alias-label-caption);
+	font-size: 11px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.palette-rows {
+	display: flex;
+	flex-direction: column;
+	padding: 0 4px;
+	max-height: 240px;
+	overflow-y: auto;
+}
+
+.palette-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 8px;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-primary);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.palette-row.selected {
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.palette-name {
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.palette-hint {
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.palette-desc {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.palette-empty,
+.palette-foot {
+	margin: 0;
+	padding: 4px 12px;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 12px;
+}
+
+.palette-foot {
+	padding-bottom: 8px;
 }
 
 /* The pending images, above the draft: the host carries them with the next prompt. */

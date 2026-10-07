@@ -97,6 +97,20 @@ export const EN = {
 	"status.runningTool": "Running {name}…",
 	"status.working": "Working…",
 
+	"palette.title": "Commands",
+	"palette.noCommands": "No command starts with that.",
+	"palette.noCompletions": "Nothing to complete here.",
+	"palette.hint": "Tab completes, Enter runs.",
+
+	"shortcut.newSession": "New session",
+	"shortcut.cycleView": "Switch management view",
+	"shortcut.focusComposer": "Focus the composer",
+	"shortcut.stop": "Press Escape twice to stop the turn",
+
+	"copy.copy": "Copy",
+	"copy.copied": "Copied",
+	"copy.failed": "Copy failed",
+
 	"panel.unavailable": "The host did not offer this service.",
 	"panel.empty": "Nothing here yet.",
 	"panel.cancel": "Cancel",
@@ -202,6 +216,8 @@ export const EN = {
 	"page.noManifest": "the host served this document without its boot manifest",
 	"page.attachFailed": "attach failed: {error}",
 	"page.paintFailed": "could not render the host's state: {error}",
+	"page.commandFailed": "command failed: {error}",
+	"page.commandUnknown": "no such command: /{name}",
 	"page.removeFailed": "remove failed: {error}",
 	"page.newSessionFailed": "new session failed: {error}",
 	"page.modelChangeFailed": "model change failed: {error}",
@@ -307,6 +323,20 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"status.runningTool": "正在运行 {name}…",
 	"status.working": "处理中…",
 
+	"palette.title": "命令",
+	"palette.noCommands": "没有以它开头的命令。",
+	"palette.noCompletions": "这里没有可补全的取值。",
+	"palette.hint": "Tab 补全，Enter 运行。",
+
+	"shortcut.newSession": "新建会话",
+	"shortcut.cycleView": "切换管理视图",
+	"shortcut.focusComposer": "聚焦输入框",
+	"shortcut.stop": "连按两次 Esc 停止回合",
+
+	"copy.copy": "复制",
+	"copy.copied": "已复制",
+	"copy.failed": "复制失败",
+
 	"panel.unavailable": "宿主未提供该服务。",
 	"panel.empty": "这里暂时没有内容。",
 	"panel.cancel": "取消",
@@ -397,6 +427,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"page.noManifest": "宿主提供的文档缺少启动清单",
 	"page.attachFailed": "附加失败：{error}",
 	"page.paintFailed": "无法渲染宿主状态：{error}",
+	"page.commandFailed": "命令失败：{error}",
+	"page.commandUnknown": "没有这个命令：/{name}",
 	"page.removeFailed": "删除失败：{error}",
 	"page.newSessionFailed": "新建会话失败：{error}",
 	"page.modelChangeFailed": "切换模型失败：{error}",
