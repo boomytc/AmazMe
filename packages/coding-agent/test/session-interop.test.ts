@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
+import type { AgentMessage } from "@amazme/agent";
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "@amazme/ai";
 import {
 	COMPACTION_SUMMARY_PREFIX,
 	COMPACTION_SUMMARY_SUFFIX,
+	createCustomMessage,
 } from "../src/core/messages.ts";
 import { durableEntriesToSessionFile, sessionEntriesToDurableDrafts } from "../src/core/session-interop.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
@@ -13,7 +15,8 @@ const reply: AssistantMessage = {
 	content: [{ type: "text", text: "hi there" }],
 	provider: "test",
 	model: "test",
-	usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, total: 0 } },
+	api: "test",
+	usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 	stopReason: "stop",
 	timestamp: 2,
 };
@@ -26,7 +29,7 @@ const tool: ToolResultMessage = {
 	timestamp: 3,
 };
 
-function messageEntry(id: string, message: SessionEntry extends { message: infer M } ? M : never): SessionEntry {
+function messageEntry(id: string, message: AgentMessage): SessionEntry {
 	return { type: "message", id, parentId: null, timestamp: "2026-10-07T00:00:00.000Z", message };
 }
 
@@ -83,7 +86,7 @@ describe("a terminal transcript as durable writes", () => {
 				id: "5",
 				parentId: "4",
 				timestamp: "2026-10-07T00:00:00.000Z",
-				message: { role: "custom", customType: "note", content: "from an extension", display: true },
+				message: createCustomMessage("note", "from an extension", true, undefined, new Date().toISOString()),
 			},
 		]);
 		expect(drafts).toHaveLength(1);

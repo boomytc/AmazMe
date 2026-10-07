@@ -77,7 +77,7 @@ class BridgedConnection {
 		this.#closed = true;
 		this.#pending = [];
 		this.#upstream?.close();
-		void this.#page.close().catch(() => undefined);
+		void Promise.resolve(this.#page.close()).catch(() => undefined);
 	}
 }
 
@@ -88,8 +88,7 @@ class BridgedConnection {
 export interface ServerBridge {
 	/** The acceptor the page host starts its WebSocket listener with. */
 	readonly accept: ByteConnectionAcceptor;
-	/** How many page connections are being forwarded right now. */
-	open(): number;
+	/** Stop forwarding: every page connection this bridge holds is closed. */
 	close(): Promise<void>;
 }
 
@@ -109,13 +108,12 @@ export function createServerBridge(route: UnixServerRoute): ServerBridge {
 					bridged.handler.onClose();
 					drop(bridged);
 				},
-				onError: () => {
-					bridged.handler.onError();
+				onError: (error) => {
+					bridged.handler.onError(error);
 					drop(bridged);
 				},
 			};
 		},
-		open: () => connections.size,
 		async close(): Promise<void> {
 			for (const connection of [...connections]) connection.end();
 			connections.clear();

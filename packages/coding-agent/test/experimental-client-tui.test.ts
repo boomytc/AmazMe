@@ -41,7 +41,7 @@ import { openFauxConversation } from "./experimental-durable-support.ts";
 const serverId = "00000000-0000-4000-8000-000000000001";
 
 function session(sessionId: string, createdAt: number, cwd = "/tmp/session-cwd"): SessionSummary {
-	return { serverId, sessionId, createdAt, cwd };
+	return { serverId, sessionId, createdAt, cwd, source: "host" };
 }
 
 function createLoopbackServiceTransport(provider: RemoteServiceProvider): RemoteServiceTransport {

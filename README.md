@@ -33,14 +33,19 @@ AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/sou
 
 界面语言（中／英）与外观（浅色／深色／跟随系统）在网页的设置面板里切换、存进 agent 的 `settings.json`，宿主按偏好
 （没有偏好时按浏览器语言）在响应文档时就把静态外壳本地化，所以首帧不会闪英文。它会打印回环 URL、服务模式、
-WebSocket 地址与 server id，随后在浏览器里打开该 URL 即可看到会话名册、transcript、
+WebSocket 地址与 server id（`started` 表示这次启动自己起了宿主，`already running` 表示接上了已运行的宿主——
+终端客户端与第二个网页从此共用同一个宿主的会话与实时状态），随后在浏览器里打开该 URL 即可看到会话名册、transcript、
 实时状态与输入框：侧栏可以新建会话，输入框右侧的模型档可以切换当前会话的模型与推理档，助手回答按 markdown 排版呈现。
 侧栏的 **Plugins**、**Skills**、**Automation** 与底部的 **Settings** 把主区切成管理面板：插件包与 `mcp.json` 里的 MCP 服务器、
 宿主加载的技能（agent 目录下的可新建／编辑／删除／导入）、宿主自己按间隔运行的定时提示（存在 `schedules.json`，
 关掉页面也照跑，回答落进对应会话），以及宿主发布字段目录的配置编辑（写入全局
 `settings.json`，并让已连接的会话重读设置）。主区右侧的坞里是会话范围的四个面：工作目录文件、终端、会话清单
 （含子代理的子会话）与实时任务图；命中审批策略的工具调用会在输入框上方等你通过或拒绝，每条已提交的助手回答
-带一对评分控件（写进 agent 目录的 `feedback.json`），名册为空时主区给出一张首启引导卡片。
+带一对评分控件（写进 agent 目录的 `feedback.json`），名册为空时主区给出一张首启引导卡片。名册里还会出现宿主工作目录下的终端会话（标 `terminal`）：附着即认领它，
+宿主按同一 id 建档并从它的 JSONL 种入 transcript，之后把每个已提交的版本写回同一个文件，终端那边因此看到同一会话；
+命令面板同样只有一份目录（宿主自己的命令、插件注册的命令、prompt 模板、技能，外加标 `terminal only` 的终端专属
+命令），客户端执行不了的名字会被如实拒绝而不是当 prompt 发给模型。宿主断开后页面按退避自行重连并重新附着会话，
+重连前后的状态一致。
 细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。这一入口依赖
 源码切片，尚未进入打包产物。
 

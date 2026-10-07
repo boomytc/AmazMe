@@ -68,23 +68,23 @@ async function openCommands(registry: SlashCommandRegistry) {
 				setup(env) {
 					const service: AgentControllerService = {
 						async prompt() {
-							return { accepted: true, operationId: "op" };
+							return { accepted: true, operationId: "op", error: null };
 						},
 						async steer() {
-							return { accepted: true, operationId: "op" };
+							return { accepted: true, entryId: "entry", error: null };
 						},
 						async followUp() {
-							return { accepted: true, operationId: "op" };
+							return { accepted: true, entryId: "entry", error: null };
 						},
 						async cancelQueued() {
 							return { outcome: "not_found" };
 						},
 						async abort() {},
 						async compact() {
-							return { accepted: true, operationId: "op" };
+							return { accepted: true, operationId: "op", error: null };
 						},
 						async waitForPrompt() {
-							return { status: "unanswered", reason: "not used" };
+							return { status: "unanswered", text: null, reason: "not used" };
 						},
 					};
 					env.provide(AgentController, service);
@@ -109,7 +109,7 @@ async function openCommands(registry: SlashCommandRegistry) {
 	return {
 		commands: binding.use(Commands),
 		async dispose() {
-			await binding.dispose();
+			await binding.dispose(BACKGROUND_CONTEXT);
 			await host.dispose();
 		},
 	};

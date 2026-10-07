@@ -9,7 +9,7 @@
  * transcript: a refresh cannot leave a half-written session behind, and the ids it writes are the
  * same every time.
  */
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { durableEntriesToSessionFile, type SessionInteropReport } from "../core/session-interop.ts";
 import {
@@ -100,11 +100,6 @@ export async function writeSessionMirror(input: {
 	await writeFile(temporary, `${projection.entries.map(line).join("\n")}\n`, "utf8");
 	await rename(temporary, input.path);
 	return projection.report;
-}
-
-/** Drop one mirrored file the host wrote for a session it created itself. */
-export async function removeSessionMirror(path: string): Promise<void> {
-	await rm(path, { force: true });
 }
 
 function line(entry: SessionHeader | SessionEntry): string {
