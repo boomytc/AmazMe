@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-对齐到 pi 提交 `0cf65d2bf`（2026-10-06），包含 v1.0.4 的全部内容。该基线之后的提交已逐条核对到 pi `7fb59f995`（origin/main 顶端，2026-10-07），处置见下表。
+对齐到 pi 提交 `0cf65d2bf`（2026-10-06），包含 v1.0.4 的全部内容。该基线之后的提交已逐条核对到 pi `592fb57b7`（origin/main 顶端，2026-10-07），处置见下表。
 
 基线之后已处理的提交（按 pi 提交顺序）：
 
@@ -48,6 +48,9 @@
 | `ea6fa125a` | 更新 Nix 模型目录 pin | 跳过，本仓库未保留 `nix/` |
 | `b2363841a` | Herdr 终端按支持 OSC 8 超链接识别 | 吸收 |
 | `7fb59f995` | Mistral 以 `finish_reason: "error"` 结束的响应改为可重试（错误信息带 `server error`） | 吸收 |
+| `b30a6dd77` | 图片压缩的 worker 回复加 `type` 标记，忽略 Node 自己在 worker 通道发的消息（`node --watch` 下图片曾被当作「无法压缩」丢弃） | 吸收 |
+| `adae82464` | `docs/providers.md` 记录 azure provider id、Foundry 模型与 deployment 映射 | 吸收 |
+| `592fb57b7` | Termux 报告的平台是 `android`，剪贴板读写与 Termux:API 提示按此识别 | 吸收 |
 
 ## 刻意偏离
 
