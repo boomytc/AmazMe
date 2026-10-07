@@ -1474,6 +1474,54 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		}
 	};
 
+	/** Set by the page's unload handler, so a retry loop stops with the page. */
+	let leaving = false;
+	/**
+	 * A host can go away and come back: a restart, a crash, a machine waking up. The page keeps the
+	 * session the reader was on, retries the connection with backoff, re-attaches that session, and
+	 * repaints. Each step is stated on the connection line, so a page that cannot get through says
+	 * so rather than looking attached.
+	 */
+	let retrying: Promise<void> | undefined;
+	const retryConnection = (): void => {
+		if (leaving || retrying !== undefined) return;
+		const wanted = painter.sessionId;
+		retrying = (async () => {
+			let waitMs = 500;
+			while (!leaving && !client.connected) {
+				await new Promise((resolve) => setTimeout(resolve, waitMs));
+				if (leaving) return;
+				try {
+					await client.reconnect();
+				} catch (error: unknown) {
+					renderer.setConnection(copy("connection.retrying", { error: message(error) }), "error");
+					waitMs = Math.min(waitMs * 2, 10_000);
+				}
+			}
+			if (!client.connected || wanted === undefined) return;
+			// An attachment lives with the connection, so the reader's session is bound again. The
+			// bindings of the old connection are released first: their handles are gone with it.
+			await painter.detach();
+			paint();
+			for (let attempt = 0; !leaving; attempt += 1) {
+				try {
+					await selectSession(wanted);
+					paint();
+					return;
+				} catch (error: unknown) {
+					if (attempt >= 4) {
+						renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
+						return;
+					}
+					renderer.setConnection(copy("connection.retrying", { error: message(error) }), "error");
+					await new Promise((resolve) => setTimeout(resolve, waitMs));
+					waitMs = Math.min(waitMs * 2, 10_000);
+				}
+			}
+		})().finally(() => {
+			retrying = undefined;
+		});
+	};
 	client.onConnectionStateChange((change) => {
 		if (change.state === "connected") {
 			renderer.setConnection(copy("connection.connected", { id: manifest.server.id }), "state");
@@ -1486,6 +1534,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				}),
 				"error",
 			);
+			retryConnection();
 			return;
 		}
 		// Any other state the client reports is its own word for an unfinished connection.
@@ -1509,6 +1558,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	paint();
 
 	globalThis.addEventListener("pagehide", () => {
+		leaving = true;
 		void painter.detach();
 		void serverServices.dispose(BACKGROUND_CONTEXT).then(() => client.dispose());
 	});

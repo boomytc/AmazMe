@@ -42,6 +42,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 
 interface Presentation {
+	readonly client: Client;
 	readonly management: SessionManagement;
 	readonly directory: SessionDirectory;
 	/** The server-scoped surfaces the page binds: the reader's ratings live here. */
@@ -120,6 +121,7 @@ async function openPresentation(host: WebHost): Promise<Presentation> {
 	});
 	await serverServices.ready(BACKGROUND_CONTEXT);
 	return {
+		client,
 		management: serverServices.use(SessionManagement),
 		directory: serverServices.use(SessionDirectory),
 		feedback: serverServices.use(Feedback),
@@ -429,6 +431,63 @@ describe("web client interactive loop", () => {
 
 				await attached.dispose();
 				await tab.dispose();
+			},
+			240_000,
+		);
+
+		test(
+			"a client reconnects to a restarted host and finds the same session",
+			async () => {
+				// A host that owns the server can be closed and started again on the same port and
+				// directories, which is what a restart looks like to a page that stayed open.
+				const directory = await makeDirectory("web-loop-restart-server-");
+				const sessionDir = await makeDirectory("web-loop-restart-sessions-");
+				process.env.AMAZME_CODING_AGENT_DIR = await makeDirectory("web-loop-restart-agent-");
+				const first = await startWebHost({ port: 0, directory, sessionDir });
+				hosts.add(first);
+				const port = Number(new URL(first.url).port);
+
+				const before = await openPresentation(first);
+				const created = await before.management.create({ id: "restart-me" }, BACKGROUND_CONTEXT);
+				const attached = await attachSession(before, created.sessionId);
+				const marker = `before-restart-${Date.now()}`;
+				await attached.controller.prompt({ message: marker, images: null }, BACKGROUND_CONTEXT);
+				await waitFor(() => sawUserText(attached.transcript.state.value, marker), "the prompt before the restart");
+				await attached.dispose();
+
+				// The host goes away: the client says so, and the page's own loop keeps the session.
+				await first.close();
+				await waitFor(() => before.client.connectionState === "disconnected", "the client to notice the host left");
+				await before.dispose();
+
+				const second = await startWebHost({ port, directory, sessionDir });
+				hosts.add(second);
+				expect(second.serverId).toBe(first.serverId);
+
+				// A fresh page on the restarted host sees the committed transcript, and going on from
+				// there commits into the same session.
+				const after = await openPresentation(second);
+				await waitFor(() => listedSessions(after).includes("restart-me"), "the session after the restart");
+				const reattached = await attachSession(after, "restart-me");
+				await waitFor(
+					() => sawUserText(reattached.transcript.state.value, marker),
+					"the prompt to survive the restart",
+				);
+				const next = `after-restart-${Date.now()}`;
+				// The interrupted turn is recovered by the durable runtime, so the session stays busy
+				// until it settles; a prompt during that window is refused, and taken once it is free.
+				let accepted = await reattached.controller.prompt({ message: next, images: null }, BACKGROUND_CONTEXT);
+				const deadline = Date.now() + 60_000;
+				while (!accepted.accepted && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 500));
+					accepted = await reattached.controller.prompt({ message: next, images: null }, BACKGROUND_CONTEXT);
+				}
+				expect(accepted, JSON.stringify(accepted)).toMatchObject({ accepted: true });
+				await waitFor(() => sawUserText(reattached.transcript.state.value, next), "the prompt after the restart");
+
+				await reattached.controller.abort(BACKGROUND_CONTEXT);
+				await reattached.dispose();
+				await after.dispose();
 			},
 			240_000,
 		);

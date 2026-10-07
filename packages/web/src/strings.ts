@@ -42,6 +42,7 @@ export const EN = {
 	"connection.connecting": "connecting…",
 	"connection.connected": "connected · {id}",
 	"connection.disconnected": "disconnected: {error}",
+	"connection.retrying": "disconnected: {error} — retrying",
 	"connection.hostGone": "host went away",
 
 	"composer.placeholder": "Send a task to {id}",
@@ -372,6 +373,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"connection.connecting": "连接中…",
 	"connection.connected": "已连接 · {id}",
 	"connection.disconnected": "连接断开：{error}",
+	"connection.retrying": "连接已断开：{error} — 正在重试",
 	"connection.hostGone": "宿主已退出",
 
 	"composer.placeholder": "给 {id} 发送任务",

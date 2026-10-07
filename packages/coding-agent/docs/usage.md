@@ -164,7 +164,11 @@ in there, reaches the palette at once; a template file added on disk arrives wit
 
 Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
 served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of
-rendering an empty shell. A document request that arrives before the host runtime exists waits for its manifest
+rendering an empty shell. A page that lost its host keeps the session it was on and retries the connection with
+backoff, saying `disconnected: … — retrying` while it does; when the host answers again — a restart on the same port
+and server directory — it attaches that session again and repaints, so two tabs on one session pick up where they
+were. An interrupted turn is recovered by the host's own runtime, so the session stays busy until that settles and a
+prompt sent in the meantime is refused with the reason rather than queued silently. A document request that arrives before the host runtime exists waits for its manifest
 instead of serving an unbootable page. Restarting the host keeps sessions: the same server ID and the durable
 storage are
 reused, so a fresh load shows the committed entries again. Page changes take effect after the host restarts
