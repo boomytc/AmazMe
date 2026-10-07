@@ -8,7 +8,7 @@ import {
 	webHostLaunch,
 } from "./launch.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
-import { pendingApprovalCount, shouldFlashFrame } from "./title.ts";
+import { attentionOnTitle } from "./title.ts";
 
 const APP_NAME = "AmazMe";
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
@@ -40,8 +40,9 @@ function shutdownHost(): Promise<void> {
 }
 
 /**
- * The page title is the only signal. Electron still applies it; a rise from no pending approvals
- * to some, while this window is in the background, flashes the frame until it is focused.
+ * The page title is the only signal. Electron still applies it. A rise from no pending approvals
+ * to some, while this window is in the background, flashes the frame. The flash stops on focus,
+ * and also when the count returns to none before then.
  */
 function watchPendingApprovals(target: BrowserWindow): void {
 	let pending = 0;
@@ -49,9 +50,9 @@ function watchPendingApprovals(target: BrowserWindow): void {
 		target.flashFrame(false);
 	});
 	target.webContents.on("page-title-updated", (_event, title: string) => {
-		const next = pendingApprovalCount(title);
-		if (shouldFlashFrame(pending, next, target.isFocused())) target.flashFrame(true);
-		pending = next;
+		const attention = attentionOnTitle(pending, title, target.isFocused());
+		if (attention.flash !== undefined) target.flashFrame(attention.flash);
+		pending = attention.pending;
 	});
 }
 

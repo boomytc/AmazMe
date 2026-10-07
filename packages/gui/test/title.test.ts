@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { pendingApprovalCount, shouldFlashFrame } from "../src/title.ts";
+import { attentionOnTitle, pendingApprovalCount, shouldFlashFrame } from "../src/title.ts";
 
 describe("pendingApprovalCount", () => {
 	test("reads a leading canonical count and ignores the rest of the title", () => {
@@ -54,5 +54,30 @@ describe("shouldFlashFrame", () => {
 		expect(shouldFlashFrame(2, 2, false)).toBe(false);
 		expect(shouldFlashFrame(2, 0, false)).toBe(false);
 		expect(shouldFlashFrame(0, 0, false)).toBe(false);
+	});
+});
+
+describe("attentionOnTitle", () => {
+	test("a session renamed to look like a count does not flash, and a later real approval does", () => {
+		const renamed = "\uFF083\uFF09 x — AmazMe";
+		expect(pendingApprovalCount(renamed)).toBe(0);
+		expect(pendingApprovalCount("(3) x — AmazMe")).toBe(3);
+
+		const idle = attentionOnTitle(0, renamed, false);
+		expect(idle).toEqual({ pending: 0, flash: undefined });
+
+		const waiting = attentionOnTitle(idle.pending, "(1) \uFF083\uFF09 x — AmazMe", false);
+		expect(waiting).toEqual({ pending: 1, flash: true });
+	});
+
+	test("stops the flash when the count returns to 0 before focus", () => {
+		const started = attentionOnTitle(0, "(2) Weekly report — AmazMe", false);
+		expect(started).toEqual({ pending: 2, flash: true });
+
+		const cleared = attentionOnTitle(started.pending, "Weekly report — AmazMe", false);
+		expect(cleared).toEqual({ pending: 0, flash: false });
+
+		const again = attentionOnTitle(cleared.pending, "(1) Weekly report — AmazMe", false);
+		expect(again).toEqual({ pending: 1, flash: true });
 	});
 });
