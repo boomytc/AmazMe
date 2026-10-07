@@ -31,7 +31,9 @@ AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/sou
   ./packages/coding-agent/src/experimental/cli.ts web
 ```
 
-它会打印回环 URL、服务模式、WebSocket 地址与 server id，随后在浏览器里打开该 URL 即可看到会话名册、transcript、
+界面语言（中／英）与外观（浅色／深色／跟随系统）在网页的设置面板里切换、存进 agent 的 `settings.json`，宿主按偏好
+（没有偏好时按浏览器语言）在响应文档时就把静态外壳本地化，所以首帧不会闪英文。它会打印回环 URL、服务模式、
+WebSocket 地址与 server id，随后在浏览器里打开该 URL 即可看到会话名册、transcript、
 实时状态与输入框：侧栏可以新建会话，输入框右侧的模型档可以切换当前会话的模型与推理档，助手回答按 markdown 排版呈现。
 侧栏的 **Plugins**、**Skills** 与底部的 **Settings** 把主区切成管理面板：插件包与 `mcp.json` 里的 MCP 服务器、
 宿主加载的技能（agent 目录下的可新建／编辑／删除／导入）、以及宿主发布字段目录的配置编辑（写入全局

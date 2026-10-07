@@ -2,12 +2,13 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 import { webLaunchLines } from "../src/experimental/commands.ts";
-import { buildBootManifest, injectBootManifest } from "../src/experimental/web/boot.ts";
+import { buildBootManifest, injectBootManifest, requestLanguages } from "../src/experimental/web/boot.ts";
 import type { WebBootManifest } from "@amazme/web";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 
@@ -56,14 +57,22 @@ describe("web boot manifest", () => {
 		transportPath: "/amazme",
 	});
 
-	test("carries the app identity, mode, protocol version, and transport", () => {
+	test("carries the app identity, mode, protocol version, transport, and preferences", () => {
 		expect(manifest).toMatchObject({
 			app: { name: "AmazMe", version: "1.0.4" },
 			mode: "source",
 			server: { id: "00000000-0000-4000-8000-000000000001" },
 			transport: { url: "ws://127.0.0.1:1234/amazme", path: "/amazme" },
+			// A host with no stored choice follows the browser and the system.
+			preferences: { locale: "auto", appearance: "system" },
 		});
 		expect(typeof manifest.protocolVersion).toBe("number");
+	});
+
+	test("reads the languages one request asks for, most preferred first", () => {
+		expect(requestLanguages("zh-CN,zh;q=0.9,en;q=0.8")).toEqual(["zh-CN", "zh", "en"]);
+		expect(requestLanguages(undefined)).toEqual([]);
+		expect(requestLanguages("")).toEqual([]);
 	});
 
 	test("injects the manifest into the document and escapes markup", () => {
@@ -110,11 +119,12 @@ describe("web host", () => {
 			expect(html).toContain(host.webSocketUrl);
 			expect(html).toContain(host.serverId);
 
-			// The raw document is served as-is, so a page loaded without the host's injection
-			// has no manifest to read: that is the visible "cannot boot" path, not a blank page.
+			// The raw document is served as-is, so a page loaded without the host's injection has
+			// no manifest to read: that is the visible "cannot boot" path, not a blank page. The
+			// shell's own script reads the global for its palette, so look for the assignment.
 			const raw = await fetch(new URL("/index.html", host.url));
 			expect(raw.status).toBe(200);
-			expect((await raw.text()).includes("__AMAZME_BOOT__")).toBe(false);
+			expect((await raw.text()).includes("globalThis.__AMAZME_BOOT__={")).toBe(false);
 
 			const script = await fetch(new URL("/page.js", host.url));
 			expect(script.status).toBe(200);
@@ -139,6 +149,54 @@ describe("web host", () => {
 			expect(launched[0]).toBe(`Web: ${host.url}`);
 			expect(launched[1]).toBe("Mode: source");
 			expect(launched.join("\n")).toContain(host.webSocketUrl);
+		},
+		60_000,
+	);
+
+	test(
+		"serves the document in the stored language and palette, re-read for every request",
+		async () => {
+			const previousAgentDir = process.env.AMAZME_CODING_AGENT_DIR;
+			const agentDir = await makeDirectory("web-host-agent-");
+			process.env.AMAZME_CODING_AGENT_DIR = agentDir;
+			try {
+				const host = await startHost();
+				// No stored choice: the page follows the browser's languages and the system palette.
+				const plain = await fetch(host.url, { headers: { "accept-language": "en-US" } });
+				const plainHtml = await plain.text();
+				expect(plainHtml).toContain('<html lang="en">');
+				expect(plainHtml).toContain("globalThis.__AMAZME_BOOT__=");
+				expect(plainHtml).toContain('"preferences":{"locale":"auto","appearance":"system"}');
+				expect(plainHtml).toContain("New session");
+				expect(plainHtml).not.toContain("{{");
+
+				// A browser asking in Chinese gets the Chinese shell even while the preference is auto.
+				const asked = await fetch(host.url, { headers: { "accept-language": "zh-CN,zh;q=0.9" } });
+				const askedHtml = await asked.text();
+				expect(askedHtml).toContain('<html lang="zh-Hans">');
+				expect(askedHtml).toContain("新建会话");
+				expect(askedHtml).toContain('"preferences":{"locale":"auto","appearance":"system"}');
+
+				// A stored choice overrides the request and reaches the palette script.
+				await writeFile(
+					join(agentDir, "settings.json"),
+					JSON.stringify({ locale: "zh", appearance: "dark" }),
+					"utf8",
+				);
+				const stored = await fetch(host.url, { headers: { "accept-language": "en-US" } });
+				const storedHtml = await stored.text();
+				expect(storedHtml).toContain('<html lang="zh-Hans">');
+				expect(storedHtml).toContain('"preferences":{"locale":"zh","appearance":"dark"}');
+				expect(storedHtml).toContain("正在等待宿主…");
+				expect(storedHtml).toContain('preference === "dark"');
+
+				// The raw document keeps its markers: it is the unbootable page, not the served one.
+				const raw = await fetch(new URL("/index.html", host.url));
+				expect(await raw.text()).toContain("{{sidebar.newSession}}");
+			} finally {
+				if (previousAgentDir === undefined) delete process.env.AMAZME_CODING_AGENT_DIR;
+				else process.env.AMAZME_CODING_AGENT_DIR = previousAgentDir;
+			}
 		},
 		60_000,
 	);

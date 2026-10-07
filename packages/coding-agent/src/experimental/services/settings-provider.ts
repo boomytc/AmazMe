@@ -1,80 +1,74 @@
 import { type Context, type MutableReplicatedState } from "@amazme/chord";
 import type { ThinkingLevel } from "@amazme/agent";
 import type { Transport } from "@amazme/ai";
-import type { SettingsManager } from "../../core/settings-manager.ts";
+import {
+	APPEARANCE_PREFERENCES,
+	type AppearancePreference,
+	LOCALE_PREFERENCES,
+	type LocalePreference,
+	type SettingsManager,
+} from "../../core/settings-manager.ts";
 import type { SettingDescriptor, SettingsError, SettingsState } from "./settings.ts";
 
 /**
  * The settings catalogue: one entry per field the web client may edit, with the getter and setter
- * that define it. The host publishes these descriptors so the page renders exactly the editable
- * surface, and a write is a call to a typed setter rather than an arbitrary JSON edit.
+ * that define it. The host publishes the catalogue's identities, so the page renders exactly the
+ * editable surface and a write is a call to a typed setter rather than an arbitrary JSON edit. The
+ * page owns the labels, descriptions, and option names for those identities in both languages.
  */
 interface SettingSpec {
+	/** Stable catalogue id, and the page's key for this field's copy. */
 	readonly id: string;
-	readonly label: string;
-	readonly description: string;
+	/** The canonical heading token the field is listed under. */
 	readonly group: string;
 	readonly kind: SettingDescriptor["kind"];
 	/** The settings.json key this field lives under. */
 	readonly field: string;
 	/** The nested key, for a field inside an object such as `compaction`. */
 	readonly nested?: string;
-	readonly options?: { value: string; label: string }[];
+	/** An enum's stored values, in presentation order. */
+	readonly options?: readonly string[];
 	readonly min?: number;
 	readonly step?: number;
-	readonly placeholder?: string;
 	read(manager: SettingsManager): string;
 	write(manager: SettingsManager, value: string): void;
 }
 
-function toggle(values: readonly (readonly [string, string])[]): { value: string; label: string }[] {
-	return values.map(([value, label]) => ({ value, label }));
-}
-
 const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const TRANSPORTS: readonly Transport[] = ["auto", "websocket", "sse"];
+const STEERING_MODES = ["one-at-a-time", "all"] as const;
+const FOLLOW_UP_MODES = ["one-at-a-time", "all"] as const;
+const CACHE_WARMING_MODES = ["off", "streaming", "idle"] as const;
+const MERMAID_MODES = ["off", "final", "streaming"] as const;
+const TRUST_MODES = ["ask", "always", "never"] as const;
+const QUIET_MODES = ["false", "header", "true"] as const;
 
-function enumValue<T extends string>(options: readonly { readonly value: string }[], value: T): string {
-	return options.some((option) => option.value === value) ? value : (options[0]?.value ?? "");
+function enumValue(options: readonly string[], value: string): string {
+	return options.includes(value) ? value : (options[0] ?? "");
 }
-
-const STEERING_OPTIONS = toggle([
-	["one-at-a-time", "One at a time"],
-	["all", "All at once"],
-]);
-const FOLLOW_UP_OPTIONS = toggle([
-	["one-at-a-time", "One at a time"],
-	["all", "All at once"],
-]);
-const THINKING_OPTIONS = toggle(THINKING_LEVELS.map((level) => [level, level] as [string, string]));
-const TRANSPORT_OPTIONS = toggle(TRANSPORTS.map((transport) => [transport, transport] as [string, string]));
-const CACHE_WARMING_OPTIONS = toggle([
-	["off", "Off"],
-	["streaming", "While streaming"],
-	["idle", "Between runs too"],
-]);
-const MERMAID_OPTIONS = toggle([
-	["off", "Off"],
-	["final", "Settled answers"],
-	["streaming", "While streaming"],
-]);
-const TRUST_OPTIONS = toggle([
-	["ask", "Ask"],
-	["always", "Always trust"],
-	["never", "Never trust"],
-]);
-const QUIET_OPTIONS = toggle([
-	["false", "Show startup output"],
-	["header", "Header only"],
-	["true", "Hide startup output"],
-]);
 
 const SPECS: readonly SettingSpec[] = [
 	{
+		id: "locale",
+		group: "interface",
+		kind: "enum",
+		field: "locale",
+		options: LOCALE_PREFERENCES,
+		read: (manager) => manager.getLocalePreference(),
+		write: (manager, value) => manager.setLocalePreference(value as LocalePreference),
+	},
+	{
+		id: "appearance",
+		group: "interface",
+		kind: "enum",
+		field: "appearance",
+		options: APPEARANCE_PREFERENCES,
+		read: (manager) => manager.getAppearancePreference(),
+		write: (manager, value) => manager.setAppearancePreference(value as AppearancePreference),
+	},
+	{
 		id: "compactionEnabled",
-		label: "Auto-compact",
-		description: "Summarize the context when a conversation outgrows the model window.",
-		group: "Conversation",
+		group: "conversation",
 		kind: "boolean",
 		field: "compaction",
 		nested: "enabled",
@@ -83,31 +77,25 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "steeringMode",
-		label: "Steering mode",
-		description: "How messages sent while a turn runs are applied.",
-		group: "Conversation",
+		group: "conversation",
 		kind: "enum",
 		field: "steeringMode",
-		options: STEERING_OPTIONS,
-		read: (manager) => enumValue(STEERING_OPTIONS, manager.getSteeringMode()),
+		options: STEERING_MODES,
+		read: (manager) => enumValue(STEERING_MODES, manager.getSteeringMode()),
 		write: (manager, value) => manager.setSteeringMode(value as "all" | "one-at-a-time"),
 	},
 	{
 		id: "followUpMode",
-		label: "Follow-up mode",
-		description: "How a message is queued when the turn would otherwise finish.",
-		group: "Conversation",
+		group: "conversation",
 		kind: "enum",
 		field: "followUpMode",
-		options: FOLLOW_UP_OPTIONS,
-		read: (manager) => enumValue(FOLLOW_UP_OPTIONS, manager.getFollowUpMode()),
+		options: FOLLOW_UP_MODES,
+		read: (manager) => enumValue(FOLLOW_UP_MODES, manager.getFollowUpMode()),
 		write: (manager, value) => manager.setFollowUpMode(value as "all" | "one-at-a-time"),
 	},
 	{
 		id: "hideThinkingBlock",
-		label: "Hide thinking blocks",
-		description: "Fold the model's reasoning away wherever it is rendered.",
-		group: "Conversation",
+		group: "conversation",
 		kind: "boolean",
 		field: "hideThinkingBlock",
 		read: (manager) => String(manager.getHideThinkingBlock()),
@@ -115,31 +103,25 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "defaultThinkingLevel",
-		label: "Default thinking level",
-		description: "The reasoning effort a conversation starts with.",
-		group: "Models & reasoning",
+		group: "models-reasoning",
 		kind: "enum",
 		field: "defaultThinkingLevel",
-		options: THINKING_OPTIONS,
-		read: (manager) => enumValue(THINKING_OPTIONS, manager.getDefaultThinkingLevel() ?? "off"),
+		options: THINKING_LEVELS,
+		read: (manager) => enumValue(THINKING_LEVELS, manager.getDefaultThinkingLevel() ?? "off"),
 		write: (manager, value) => manager.setDefaultThinkingLevel(value as ThinkingLevel),
 	},
 	{
 		id: "cacheWarming",
-		label: "Cache warming",
-		description: "Pre-warm the prompt cache, which costs a call each time it runs.",
-		group: "Models & reasoning",
+		group: "models-reasoning",
 		kind: "enum",
 		field: "cacheWarming",
-		options: CACHE_WARMING_OPTIONS,
-		read: (manager) => enumValue(CACHE_WARMING_OPTIONS, manager.getCacheWarmingMode()),
+		options: CACHE_WARMING_MODES,
+		read: (manager) => enumValue(CACHE_WARMING_MODES, manager.getCacheWarmingMode()),
 		write: (manager, value) => manager.setCacheWarmingMode(value as "off" | "streaming" | "idle"),
 	},
 	{
 		id: "showCacheMissNotices",
-		label: "Cache miss notices",
-		description: "Show the cost and provider recovery notices a cache miss produces.",
-		group: "Models & reasoning",
+		group: "models-reasoning",
 		kind: "boolean",
 		field: "showCacheMissNotices",
 		read: (manager) => String(manager.getShowCacheMissNotices()),
@@ -147,9 +129,7 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "enableSkillCommands",
-		label: "Skills as commands",
-		description: "Register every loaded skill as a slash command.",
-		group: "Skills & tools",
+		group: "skills-tools",
 		kind: "boolean",
 		field: "enableSkillCommands",
 		read: (manager) => String(manager.getEnableSkillCommands()),
@@ -157,20 +137,16 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "transport",
-		label: "Transport",
-		description: "How provider requests are carried.",
-		group: "Network & retries",
+		group: "network-retries",
 		kind: "enum",
 		field: "transport",
-		options: TRANSPORT_OPTIONS,
-		read: (manager) => enumValue(TRANSPORT_OPTIONS, manager.getTransport()),
+		options: TRANSPORTS,
+		read: (manager) => enumValue(TRANSPORTS, manager.getTransport()),
 		write: (manager, value) => manager.setTransport(value as Transport),
 	},
 	{
 		id: "httpIdleTimeoutMs",
-		label: "HTTP idle timeout (ms)",
-		description: "Header and body idle timeout for provider requests; 0 disables it.",
-		group: "Network & retries",
+		group: "network-retries",
 		kind: "number",
 		field: "httpIdleTimeoutMs",
 		min: 0,
@@ -180,9 +156,7 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "retryEnabled",
-		label: "Provider retries",
-		description: "Retry a provider request that failed with a retryable error.",
-		group: "Network & retries",
+		group: "network-retries",
 		kind: "boolean",
 		field: "retry",
 		nested: "enabled",
@@ -191,9 +165,7 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "imageAutoResize",
-		label: "Auto-resize images",
-		description: "Scale attached images down for provider compatibility.",
-		group: "Images & rendering",
+		group: "images-rendering",
 		kind: "boolean",
 		field: "images",
 		nested: "autoResize",
@@ -202,9 +174,7 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "blockImages",
-		label: "Block images",
-		description: "Keep every image out of provider requests.",
-		group: "Images & rendering",
+		group: "images-rendering",
 		kind: "boolean",
 		field: "images",
 		nested: "blockImages",
@@ -213,35 +183,29 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "mermaidRenderingMode",
-		label: "Mermaid diagrams",
-		description: "When mermaid blocks in an answer are rendered as diagrams.",
-		group: "Images & rendering",
+		group: "images-rendering",
 		kind: "enum",
 		field: "markdown",
 		nested: "mermaid",
-		options: MERMAID_OPTIONS,
-		read: (manager) => enumValue(MERMAID_OPTIONS, manager.getMermaidRenderingMode()),
+		options: MERMAID_MODES,
+		read: (manager) => enumValue(MERMAID_MODES, manager.getMermaidRenderingMode()),
 		write: (manager, value) => manager.setMermaidRenderingMode(value as "off" | "final" | "streaming"),
 	},
 	{
 		id: "defaultProjectTrust",
-		label: "Default project trust",
-		description: "Whether a project's settings, extensions, and MCP servers load without being asked.",
-		group: "Projects",
+		group: "projects",
 		kind: "enum",
 		field: "defaultProjectTrust",
-		options: TRUST_OPTIONS,
-		read: (manager) => enumValue(TRUST_OPTIONS, manager.getDefaultProjectTrust()),
+		options: TRUST_MODES,
+		read: (manager) => enumValue(TRUST_MODES, manager.getDefaultProjectTrust()),
 		write: (manager, value) => manager.setDefaultProjectTrust(value as "ask" | "always" | "never"),
 	},
 	{
 		id: "quietStartup",
-		label: "Startup output",
-		description: "How much the CLI prints when a session starts.",
-		group: "Projects",
+		group: "projects",
 		kind: "enum",
 		field: "quietStartup",
-		options: QUIET_OPTIONS,
+		options: QUIET_MODES,
 		read: (manager) => {
 			const quiet = manager.getQuietStartup();
 			return quiet === "header" ? "header" : String(quiet);
@@ -251,23 +215,17 @@ const SPECS: readonly SettingSpec[] = [
 	},
 	{
 		id: "shellPath",
-		label: "Shell path",
-		description: "Shell used for the bash tool; empty uses the platform default.",
-		group: "Shell",
+		group: "shell",
 		kind: "string",
 		field: "shellPath",
-		placeholder: "System default",
 		read: (manager) => manager.getShellPath() ?? "",
 		write: (manager, value) => manager.setShellPath(value.length === 0 ? undefined : value),
 	},
 	{
 		id: "shellCommandPrefix",
-		label: "Shell command prefix",
-		description: "Prepended to every bash command, for example to enable aliases.",
-		group: "Shell",
+		group: "shell",
 		kind: "string",
 		field: "shellCommandPrefix",
-		placeholder: "None",
 		read: (manager) => manager.getShellCommandPrefix() ?? "",
 		write: (manager, value) => manager.setShellCommandPrefix(value.length === 0 ? undefined : value),
 	},
@@ -287,14 +245,11 @@ export function describeSettings(manager: SettingsManager): SettingDescriptor[] 
 	const projectSettings = manager.getProjectSettings() as Record<string, unknown>;
 	return SPECS.map((spec) => ({
 		id: spec.id,
-		label: spec.label,
-		description: spec.description,
 		group: spec.group,
 		kind: spec.kind,
-		...(spec.options === undefined ? {} : { options: spec.options }),
+		...(spec.options === undefined ? {} : { options: [...spec.options] }),
 		...(spec.min === undefined ? {} : { min: spec.min }),
 		...(spec.step === undefined ? {} : { step: spec.step }),
-		...(spec.placeholder === undefined ? {} : { placeholder: spec.placeholder }),
 		field: spec.nested === undefined ? spec.field : `${spec.field}.${spec.nested}`,
 		explicit: hasField(globalSettings, spec) || hasField(projectSettings, spec),
 		value: spec.read(manager),
@@ -304,18 +259,18 @@ export function describeSettings(manager: SettingsManager): SettingDescriptor[] 
 function coerce(spec: SettingSpec, value: string): string {
 	switch (spec.kind) {
 		case "boolean":
-			if (value !== "true" && value !== "false") throw new Error(`${spec.label} takes true or false`);
+			if (value !== "true" && value !== "false") throw new Error(`${spec.id} takes true or false`);
 			return value;
 		case "number": {
 			const parsed = Number(value);
 			if (!Number.isSafeInteger(parsed) || parsed < (spec.min ?? Number.NEGATIVE_INFINITY)) {
-				throw new Error(`${spec.label} takes a whole number${spec.min === undefined ? "" : ` ≥ ${spec.min}`}`);
+				throw new Error(`${spec.id} takes a whole number${spec.min === undefined ? "" : ` ≥ ${spec.min}`}`);
 			}
 			return String(parsed);
 		}
 		case "enum":
-			if (!spec.options?.some((option) => option.value === value)) {
-				throw new Error(`${spec.label} takes one of: ${(spec.options ?? []).map((o) => o.value).join(", ")}`);
+			if (!spec.options?.includes(value)) {
+				throw new Error(`${spec.id} takes one of: ${(spec.options ?? []).join(", ")}`);
 			}
 			return value;
 		case "string":

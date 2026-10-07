@@ -3,7 +3,23 @@
  * management area. A panel is described as groups of rows — a title, an optional value, controls,
  * and buttons — so the renderer needs no feature knowledge and a management area added later is
  * another pure builder here.
+ *
+ * A builder takes the reader's language and turns the host's identities into prose: the settings
+ * catalogue publishes field ids, heading tokens, and stored enum values, and `strings.ts` names
+ * them. Copy therefore has one home, and the host never ships a sentence.
  */
+import type { Locale } from "./locale.ts";
+import {
+	mcpExposureCopy,
+	mcpScopeCopy,
+	settingFieldCopy,
+	settingGroupCopy,
+	settingOptionCopy,
+	settingScopeCopy,
+	skillScopeCopy,
+	thinkingLevelCopy,
+	translate,
+} from "./strings.ts";
 
 /** The main area's views: the conversation, or one management panel. */
 export type PanelId = "plugins" | "skills" | "settings";
@@ -123,32 +139,37 @@ export type PanelAction =
 	  }
 	| { readonly kind: "modal-close" };
 
-/** The view id of the conversation, and the four navigation rows. */
+/** The view id of the conversation, and the three management rows. */
 export const CHAT_VIEW = "chat";
 export const SETTINGS_VIEW = "settings";
 
-const NAV_ITEMS: readonly { readonly id: string; readonly label: string; readonly glyph: NavItem["glyph"] }[] = [
-	{ id: "plugins", label: "Plugins", glyph: "plugins" },
-	{ id: "skills", label: "Skills", glyph: "skills" },
-	{ id: SETTINGS_VIEW, label: "Settings", glyph: "settings" },
-];
+const NAV_ITEMS: readonly { readonly id: string; readonly message: Parameters<typeof translate>[1]; readonly glyph: NavItem["glyph"] }[] =
+	[
+		{ id: "plugins", message: "nav.plugins", glyph: "plugins" },
+		{ id: "skills", message: "nav.skills", glyph: "skills" },
+		{ id: SETTINGS_VIEW, message: "nav.settings", glyph: "settings" },
+	];
 
 /** The sidebar's panel rows and the settings entry, marked with the view the page shows. */
-export function panelNav(current: string): NavItem[] {
-	return NAV_ITEMS.map((item) => ({ ...item, active: current === item.id }));
+export function panelNav(locale: Locale, current: string): NavItem[] {
+	return NAV_ITEMS.map((item) => ({
+		id: item.id,
+		label: translate(locale, item.message),
+		glyph: item.glyph,
+		active: current === item.id,
+	}));
 }
 
 /** Settings panel input: the host's descriptor catalogue and where it writes. */
 export interface SettingDescriptorLike {
 	readonly id: string;
-	readonly label: string;
-	readonly description: string;
+	/** The catalogue's heading token; the panel names it. */
 	readonly group: string;
 	readonly kind: "boolean" | "enum" | "number" | "string";
-	readonly options?: readonly PanelOption[];
+	/** An enum's stored values, in the host's order. */
+	readonly options?: readonly string[];
 	readonly min?: number;
 	readonly step?: number;
-	readonly placeholder?: string;
 	readonly field: string;
 	readonly explicit: boolean;
 	readonly value: string;
@@ -210,6 +231,8 @@ export interface PluginsPanelInput {
 }
 
 export interface PanelViewInput {
+	/** The reader's language: every label, heading, and sentence the panel shows. */
+	readonly locale: Locale;
 	/** The view the main area shows; defaults to the conversation. */
 	readonly current?: string;
 	readonly modal?: PanelModal;
@@ -217,17 +240,6 @@ export interface PanelViewInput {
 	readonly skills?: SkillsPanelInput;
 	readonly plugins?: PluginsPanelInput;
 }
-
-/** The line a panel shows while its service is not bound. */
-export const PANEL_UNAVAILABLE = "The host did not offer this service.";
-
-/** The exposure names the MCP configuration accepts, with their labels. */
-export const MCP_EXPOSURES: readonly PanelOption[] = [
-	{ value: "codemode", label: "Codemode" },
-	{ value: "deferred", label: "Deferred" },
-	{ value: "direct", label: "Direct" },
-	{ value: "hidden", label: "Hidden" },
-];
 
 export const SETTINGS_FIELD_ACTION = "settings:set";
 export const SETTINGS_RELOAD_ACTION = "settings:reload";
@@ -249,13 +261,26 @@ export const PLUGIN_MCP_EXPOSURE_ACTION = "plugins:mcp-exposure";
 export const PLUGIN_PACKAGE_MODAL = "plugins:package-path";
 export const PLUGIN_MCP_MODAL = "plugins:mcp-entry";
 
-function settingsControls(descriptor: SettingDescriptorLike): PanelControl[] {
+function settingsControls(locale: Locale, descriptor: SettingDescriptorLike): PanelControl[] {
 	const base = { id: SETTINGS_FIELD_ACTION, data: descriptor.id, value: descriptor.value };
 	switch (descriptor.kind) {
 		case "boolean":
 			return [{ ...base, kind: "switch" }];
 		case "enum":
-			return [{ ...base, kind: "select", options: descriptor.options ?? [] }];
+			return [
+				{
+					...base,
+					kind: "select",
+					options: (descriptor.options ?? []).map((value) => ({
+						value,
+						// Reasoning levels use the shared effort names; every other enum is per field.
+						label:
+							descriptor.id === "defaultThinkingLevel"
+								? thinkingLevelCopy(locale, value)
+								: settingOptionCopy(locale, descriptor.id, value),
+					})),
+				},
+			];
 		case "number":
 			return [
 				{
@@ -265,24 +290,33 @@ function settingsControls(descriptor: SettingDescriptorLike): PanelControl[] {
 					...(descriptor.step === undefined ? {} : { step: descriptor.step }),
 				},
 			];
-		case "string":
-			return [
-				{
-					...base,
-					kind: "text",
-					...(descriptor.placeholder === undefined ? {} : { placeholder: descriptor.placeholder }),
-				},
-			];
+		case "string": {
+			const placeholder = settingFieldCopy(locale, descriptor.id).placeholder;
+			return [{ ...base, kind: "text", ...(placeholder === undefined ? {} : { placeholder }) }];
+		}
 	}
 }
 
-function unavailablePanel(id: PanelId, title: string, description: string): PanelSpec {
+function unavailablePanel(locale: Locale, id: PanelId, title: string, description: string): PanelSpec {
 	return {
 		id,
 		title,
 		description,
-		notices: [{ tone: "info", text: PANEL_UNAVAILABLE }],
+		notices: [{ tone: "info", text: translate(locale, "panel.unavailable") }],
 		groups: [],
+	};
+}
+
+/** One settings row: the field's name, its explanation, and the control the host's kind implies. */
+function settingRow(locale: Locale, descriptor: SettingDescriptorLike): PanelRow {
+	const copy = settingFieldCopy(locale, descriptor.id);
+	return {
+		id: `setting:${descriptor.id}`,
+		title: copy.label,
+		...(copy.description.length === 0 ? {} : { description: copy.description }),
+		...(descriptor.explicit ? {} : { badges: [translate(locale, "panel.settings.badgeDefault")] }),
+		value: descriptor.field,
+		controls: settingsControls(locale, descriptor),
 	};
 }
 
@@ -290,67 +324,72 @@ function unavailablePanel(id: PanelId, title: string, description: string): Pane
  * The settings panel: the host's catalogue under its own headings, then the files it reads. A row's
  * value line is the settings key, so the file stays discoverable from the panel.
  */
-export function settingsPanel(input: SettingsPanelInput): PanelSpec {
-	const state = input.state;
+export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelSpec {
+	const { state } = input;
+	const title = translate(locale, "panel.settings.title");
 	if (state === undefined) {
-		return unavailablePanel("settings", "Settings", "The agent's settings files.");
+		return unavailablePanel(locale, "settings", title, translate(locale, "panel.settings.description"));
 	}
 	const groups: PanelGroup[] = [];
 	const rowsByGroup = new Map<string, PanelRow[]>();
 	for (const descriptor of state.descriptors) {
 		const rows = rowsByGroup.get(descriptor.group) ?? [];
 		if (!rowsByGroup.has(descriptor.group)) rowsByGroup.set(descriptor.group, rows);
-		rows.push({
-			id: `setting:${descriptor.id}`,
-			title: descriptor.label,
-			description: descriptor.description,
-			...(descriptor.explicit ? {} : { badges: ["default"] }),
-			value: descriptor.field,
-			controls: settingsControls(descriptor),
-		});
+		rows.push(settingRow(locale, descriptor));
 	}
 	for (const [group, rows] of rowsByGroup) {
-		groups.push({ id: `settings:${group}`, title: group, rows });
+		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), rows });
 	}
 	groups.push({
 		id: "settings:files",
-		title: "Files",
-		description: "Where the values above are read from and written to.",
-		actions: [{ id: SETTINGS_RELOAD_ACTION, label: "Re-read files", tone: "default" }],
+		title: translate(locale, "panel.settings.filesTitle"),
+		description: translate(locale, "panel.settings.filesDescription"),
+		actions: [{ id: SETTINGS_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), tone: "default" }],
 		rows: [
-			{ id: "settings:global-path", title: "Global settings", value: state.paths.global },
+			{
+				id: "settings:global-path",
+				title: translate(locale, "panel.settings.globalPath"),
+				value: state.paths.global,
+			},
 			{
 				id: "settings:project-path",
-				title: "Project settings",
+				title: translate(locale, "panel.settings.projectPath"),
 				...(state.paths.project === undefined
-					? { description: "The project is not trusted, so its settings are not read." }
+					? { description: translate(locale, "panel.settings.untrusted") }
 					: { value: state.paths.project }),
 			},
 		],
-		footnote: "A write goes to the global settings file. Other processes pick it up at their next start.",
+		footnote: translate(locale, "panel.settings.footnote"),
 	});
 	return {
 		id: "settings",
-		title: "Settings",
-		description: "The agent's settings: provider behaviour, reasoning, tools, and the shell.",
-		notices: state.errors.map((error) => ({
-			tone: "error" as const,
-			text: `${error.scope} settings${error.path === undefined ? "" : ` (${error.path})`}: ${error.message}`,
-		})),
+		title,
+		description: translate(locale, "panel.settings.description"),
+		notices: state.errors.map((error) => {
+			const scope = settingScopeCopy(locale, error.scope);
+			return {
+				tone: "error" as const,
+				text:
+					error.path === undefined
+						? translate(locale, "panel.settings.noticePlain", { scope, message: error.message })
+						: translate(locale, "panel.settings.notice", { scope, path: error.path, message: error.message }),
+			};
+		}),
 		groups,
 	};
 }
 
 /** The skills panel: what the agent loads, and the editing surface for the agent directory's own. */
-export function skillsPanel(input: SkillsPanelInput): PanelSpec {
-	const state = input.state;
+export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec {
+	const { state } = input;
+	const title = translate(locale, "panel.skills.title");
 	if (state === undefined) {
-		return unavailablePanel("skills", "Skills", "Instructions the agent loads for a matching task.");
+		return unavailablePanel(locale, "skills", title, translate(locale, "panel.skills.description"));
 	}
 	return {
 		id: "skills",
-		title: "Skills",
-		description: "One folder per skill, each with a SKILL.md that carries a name and a description.",
+		title,
+		description: translate(locale, "panel.skills.description"),
 		notices: state.diagnostics.map((diagnostic) => ({
 			tone: "error" as const,
 			text: `${diagnostic.path === undefined ? "" : `${diagnostic.path}: `}${diagnostic.message}`,
@@ -358,72 +397,94 @@ export function skillsPanel(input: SkillsPanelInput): PanelSpec {
 		groups: [
 			{
 				id: "skills:list",
-				title: "Loaded skills",
+				title: translate(locale, "panel.skills.loaded"),
 				actions: [
-					{ id: SKILL_NEW_ACTION, label: "New skill", tone: "primary" },
-					{ id: SKILL_IMPORT_ACTION, label: "Import…", tone: "default" },
+					{ id: SKILL_NEW_ACTION, label: translate(locale, "panel.skills.new"), tone: "primary" },
+					{ id: SKILL_IMPORT_ACTION, label: translate(locale, "panel.skills.import"), tone: "default" },
 				],
 				rows: state.skills.map((skill) => ({
 					id: `skill:${skill.name}`,
 					title: skill.name,
 					description: skill.description,
-					badges: [skill.scope, ...(skill.disableModelInvocation ? ["command only"] : [])],
+					badges: [
+						skillScopeCopy(locale, skill.scope),
+						...(skill.disableModelInvocation ? [translate(locale, "panel.skills.commandOnly")] : []),
+					],
 					value: skill.filePath,
 					actions: [
 						{
 							id: SKILL_EDIT_ACTION,
-							label: skill.editable ? "Edit" : "View",
+							label: translate(locale, skill.editable ? "panel.skills.edit" : "panel.skills.view"),
 							data: skill.name,
 							tone: "default",
 						},
 						...(skill.editable
-							? [{ id: SKILL_REMOVE_ACTION, label: "Remove", data: skill.name, tone: "danger" as const }]
+							? [
+									{
+										id: SKILL_REMOVE_ACTION,
+										label: translate(locale, "panel.skills.remove"),
+										data: skill.name,
+										tone: "danger" as const,
+									},
+								]
 							: []),
 					],
 				})),
-				empty: "No skills yet. New skills live in the agent directory and load when a session starts.",
-				footnote: `New and edited skills are written to ${state.directory}. The agent loads skills when a session starts, like the CLI.`,
+				empty: translate(locale, "panel.skills.empty"),
+				footnote: translate(locale, "panel.skills.footnote", { directory: state.directory }),
 			},
 		],
 	};
 }
 
 /** The plugins panel: the plugin packages a session loads, and the MCP configuration files. */
-export function pluginsPanel(input: PluginsPanelInput): PanelSpec {
-	const state = input.state;
+export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpec {
+	const { state } = input;
+	const title = translate(locale, "panel.plugins.title");
 	if (state === undefined) {
-		return unavailablePanel("plugins", "Plugins", "Plugin packages and MCP servers.");
+		return unavailablePanel(locale, "plugins", title, translate(locale, "panel.plugins.description"));
 	}
+	const remove = translate(locale, "panel.plugins.fromExtension");
 	return {
 		id: "plugins",
-		title: "Plugins",
-		description: "Plugin packages the host builds, and the MCP servers the coding agent's tools read.",
+		title,
+		description: translate(locale, "panel.plugins.description"),
 		notices: state.mcp.errors.map((error) => ({ tone: "error" as const, text: error })),
 		groups: [
 			{
 				id: "plugins:packages",
-				title: "Plugin packages",
-				description: "A package is built into the Session's facet generation when a worker starts.",
-				actions: [{ id: PLUGIN_PACKAGE_ADD_ACTION, label: "Add package…", tone: "primary" }],
+				title: translate(locale, "panel.plugins.packages"),
+				description: translate(locale, "panel.plugins.packagesDescription"),
+				actions: [
+					{ id: PLUGIN_PACKAGE_ADD_ACTION, label: translate(locale, "panel.plugins.addPackage"), tone: "primary" },
+				],
 				rows: state.packages.map((path) => ({
 					id: `package:${path}`,
 					title: path,
-					actions: [{ id: PLUGIN_PACKAGE_REMOVE_ACTION, label: "Remove", data: path, tone: "danger" }],
+					actions: [
+						{
+							id: PLUGIN_PACKAGE_REMOVE_ACTION,
+							label: translate(locale, "panel.plugins.remove"),
+							data: path,
+							tone: "danger",
+						},
+					],
 				})),
-				empty: "No plugin packages: sessions load the built-in facets only.",
-				footnote:
-					"The server default applies to sessions opened after the change. A running session keeps the generation it started with.",
+				empty: translate(locale, "panel.plugins.packagesEmpty"),
+				footnote: translate(locale, "panel.plugins.packagesFootnote"),
 			},
 			{
 				id: "plugins:mcp",
-				title: "MCP servers",
-				description: "Servers the coding agent's MCP extension connects, from mcp.json.",
-				actions: [{ id: PLUGIN_MCP_ADD_ACTION, label: "Add server…", tone: "primary" }],
+				title: translate(locale, "panel.plugins.mcp"),
+				description: translate(locale, "panel.plugins.mcpDescription"),
+				actions: [
+					{ id: PLUGIN_MCP_ADD_ACTION, label: translate(locale, "panel.plugins.addServer"), tone: "primary" },
+				],
 				rows: state.mcp.servers.map((server) => ({
 					id: `mcp:${server.name}`,
 					title: server.name,
 					description: server.detail,
-					badges: [server.scope, server.exposure],
+					badges: [mcpScopeCopy(locale, server.scope), mcpExposureCopy(locale, server.exposure)],
 					...(server.editable
 						? {
 								controls: [
@@ -438,7 +499,7 @@ export function pluginsPanel(input: PluginsPanelInput): PanelSpec {
 										kind: "select" as const,
 										data: server.name,
 										value: server.exposure,
-										options: MCP_EXPOSURES,
+										options: mcpExposures(locale),
 									},
 								],
 							}
@@ -446,30 +507,37 @@ export function pluginsPanel(input: PluginsPanelInput): PanelSpec {
 					actions: [
 						{
 							id: PLUGIN_MCP_REMOVE_ACTION,
-							label: server.editable ? "Remove" : "From extension",
+							label: server.editable ? translate(locale, "panel.plugins.remove") : remove,
 							data: server.name,
 							tone: server.editable ? ("danger" as const) : ("default" as const),
 							...(server.editable ? {} : { disabled: true }),
 						},
 					],
 				})),
-				empty: `No MCP servers configured in ${state.mcp.globalPath}.`,
-				footnote:
-					"These entries are read by the CLI and the TUI; the experimental web host does not connect MCP servers yet.",
+				empty: translate(locale, "panel.plugins.mcpEmpty", { path: state.mcp.globalPath }),
+				footnote: translate(locale, "panel.plugins.mcpFootnote"),
 			},
 		],
 	};
+}
+
+/** The exposure names the MCP configuration accepts, with the reader's names for them. */
+export function mcpExposures(locale: Locale): PanelOption[] {
+	return ["codemode", "deferred", "direct", "hidden"].map((value) => ({
+		value,
+		label: mcpExposureCopy(locale, value),
+	}));
 }
 
 /** The panel the main area shows, or undefined for the conversation. */
 export function panelSpec(input: PanelViewInput): PanelSpec | undefined {
 	switch (input.current ?? CHAT_VIEW) {
 		case "settings":
-			return settingsPanel(input.settings ?? { state: undefined });
+			return settingsPanel(input.locale, input.settings ?? { state: undefined });
 		case "skills":
-			return skillsPanel(input.skills ?? { state: undefined });
+			return skillsPanel(input.locale, input.skills ?? { state: undefined });
 		case "plugins":
-			return pluginsPanel(input.plugins ?? { state: undefined });
+			return pluginsPanel(input.locale, input.plugins ?? { state: undefined });
 		default:
 			return undefined;
 	}
@@ -479,7 +547,7 @@ export function panelView(input: PanelViewInput): PanelView {
 	const spec = panelSpec(input);
 	const current = input.current ?? CHAT_VIEW;
 	return {
-		nav: panelNav(current),
+		nav: panelNav(input.locale, current),
 		current: spec === undefined ? CHAT_VIEW : current,
 		...(spec === undefined ? {} : { panel: spec }),
 		...(input.modal === undefined ? {} : { modal: input.modal }),
@@ -487,82 +555,121 @@ export function panelView(input: PanelViewInput): PanelView {
 }
 
 /** The modal a skill's create action opens. */
-export function newSkillModal(): PanelModal {
+export function newSkillModal(locale: Locale): PanelModal {
 	return {
 		id: SKILL_CREATE_MODAL,
-		title: "New skill",
-		description: "The description decides when the agent loads the skill.",
+		title: translate(locale, "modal.skillNew.title"),
+		description: translate(locale, "modal.skillNew.description"),
 		fields: [
-			{ id: "name", label: "Name", kind: "text", value: "", placeholder: "weekly-report" },
-			{ id: "description", label: "Description", kind: "text", value: "", placeholder: "When to use this skill" },
-			{ id: "body", label: "Instructions", kind: "textarea", value: "" },
+			{
+				id: "name",
+				label: translate(locale, "modal.skillNew.name"),
+				kind: "text",
+				value: "",
+				placeholder: translate(locale, "modal.skillNew.namePlaceholder"),
+			},
+			{
+				id: "description",
+				label: translate(locale, "modal.skillNew.descriptionLabel"),
+				kind: "text",
+				value: "",
+				placeholder: translate(locale, "modal.skillNew.descriptionPlaceholder"),
+			},
+			{
+				id: "body",
+				label: translate(locale, "modal.skillNew.body"),
+				kind: "textarea",
+				value: "",
+			},
 		],
-		submit: "Create",
+		submit: translate(locale, "modal.create"),
 	};
 }
 
 /** The modal a skill opens: the file itself, so editing loses nothing the loader reads. */
-export function skillModal(name: string, content: string, editable: boolean): PanelModal {
+export function skillModal(locale: Locale, name: string, content: string, editable: boolean): PanelModal {
 	return {
 		id: editable ? SKILL_EDIT_MODAL : SKILL_VIEW_MODAL,
-		title: editable ? `Edit ${name}` : name,
-		description: editable
-			? "The whole SKILL.md. The frontmatter must keep the skill's name and a description."
-			: "This skill lives outside the agent directory, so it is read-only here.",
-		fields: [{ id: "content", label: "SKILL.md", kind: "textarea", value: content }],
-		submit: editable ? "Save" : "Close",
+		title: editable ? translate(locale, "modal.skillEdit.title", { name }) : name,
+		description: translate(locale, editable ? "modal.skillEdit.description" : "modal.skillView.description"),
+		fields: [
+			{ id: "content", label: translate(locale, "modal.skillFile"), kind: "textarea", value: content },
+		],
+		submit: translate(locale, editable ? "modal.save" : "modal.close"),
 		data: name,
 	};
 }
 
 /** The confirmation a skill's remove action opens. */
-export function removeSkillModal(name: string): PanelModal {
+export function removeSkillModal(locale: Locale, name: string): PanelModal {
 	return {
 		id: SKILL_REMOVE_MODAL,
-		title: `Remove ${name}?`,
-		description: "The skill's folder is deleted from the agent directory.",
+		title: translate(locale, "modal.skillRemove.title", { name }),
+		description: translate(locale, "modal.skillRemove.description"),
 		fields: [],
-		submit: "Remove",
+		submit: translate(locale, "panel.skills.remove"),
 		data: name,
 		danger: true,
 	};
 }
 
-export function importSkillModal(): PanelModal {
+export function importSkillModal(locale: Locale): PanelModal {
 	return {
 		id: SKILL_IMPORT_MODAL,
-		title: "Import a skill",
-		description: "Copies a skill folder or markdown file into the agent's skills directory.",
-		fields: [{ id: "path", label: "Path", kind: "text", value: "", placeholder: "~/skills/weekly-report" }],
-		submit: "Import",
+		title: translate(locale, "modal.import.title"),
+		description: translate(locale, "modal.import.description"),
+		fields: [
+			{
+				id: "path",
+				label: translate(locale, "modal.import.path"),
+				kind: "text",
+				value: "",
+				placeholder: translate(locale, "modal.import.pathPlaceholder"),
+			},
+		],
+		submit: translate(locale, "modal.import.submit"),
 	};
 }
 
-export function addPackageModal(): PanelModal {
+export function addPackageModal(locale: Locale): PanelModal {
 	return {
 		id: PLUGIN_PACKAGE_MODAL,
-		title: "Add a plugin package",
-		description: "An absolute path to a package with src/session.ts, built when a session starts.",
-		fields: [{ id: "path", label: "Package path", kind: "text", value: "", placeholder: "/path/to/plugin" }],
-		submit: "Add",
+		title: translate(locale, "modal.package.title"),
+		description: translate(locale, "modal.package.description"),
+		fields: [
+			{
+				id: "path",
+				label: translate(locale, "modal.package.path"),
+				kind: "text",
+				value: "",
+				placeholder: translate(locale, "modal.package.pathPlaceholder"),
+			},
+		],
+		submit: translate(locale, "modal.add"),
 	};
 }
 
-export function addMcpServerModal(): PanelModal {
+export function addMcpServerModal(locale: Locale): PanelModal {
 	return {
 		id: PLUGIN_MCP_MODAL,
-		title: "Add an MCP server",
-		description: "The server entry as JSON: a command for stdio, or a url for HTTP.",
+		title: translate(locale, "modal.mcp.title"),
+		description: translate(locale, "modal.mcp.description"),
 		fields: [
-			{ id: "name", label: "Name", kind: "text", value: "", placeholder: "filesystem" },
+			{
+				id: "name",
+				label: translate(locale, "modal.mcp.name"),
+				kind: "text",
+				value: "",
+				placeholder: translate(locale, "modal.mcp.namePlaceholder"),
+			},
 			{
 				id: "entry",
-				label: "Entry",
+				label: translate(locale, "modal.mcp.entry"),
 				kind: "textarea",
 				value: '{\n  "command": "npx",\n  "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]\n}',
 			},
 		],
-		submit: "Add",
+		submit: translate(locale, "modal.add"),
 	};
 }
 

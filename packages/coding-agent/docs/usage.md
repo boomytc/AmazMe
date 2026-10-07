@@ -112,7 +112,16 @@ compacting) as the transcript's last row, and the inputs the session has queued 
 strip each above the composer. Assistant answers are formatted: headings, lists, emphasis, links, and fenced code
 blocks become elements, while anything the model writes that looks like markup stays text. The theme is the one
 `deepseek-harness` ships — the same palette, type,
-radii, elevation, and frame geometry — and it follows the system's light and dark appearance.
+radii, elevation, and frame geometry — and its appearance follows the stored preference (see below), defaulting to the
+system's light and dark appearance.
+
+The page's language is a stored preference too. With no choice made, a browser asking for Chinese gets Chinese and any
+other browser gets English; the host resolves that from the request and serves the document already localized, so the
+first paint is not English. Switch it in **Settings → Interface → Language**, or set `locale` in `settings.json` to
+`auto`, `zh`, or `en`. The switch and the appearance switch apply without a reload, and both persist for the next load
+and for other browsers on the same agent directory. What the page cannot translate is text the host itself writes —
+skill loader diagnostics, `mcp.json` validation, settings parse errors — which stays as the host wrote it, and the
+TUI's own interface stays English.
 
 Type in the composer and press `Enter` to submit: while the session is idle the text starts a run, and while a
 turn is running it queues as the next input. `Shift+Enter` inserts a newline; the draft grows with its content
@@ -157,12 +166,16 @@ open read-only. Like the CLI, the agent loads skills when a session starts, so a
 the sessions started afterwards.
 
 **Settings** is the host's own field catalogue: each row is a field the host can read and write, grouped under its
-own heading, with the settings key it maps to, a `default` marker when no settings file sets it, and a control
-that matches its kind — a switch, a select, a number, or a text field. A change writes the global
+own heading (the first group, **Interface**, holds **Language** and **Appearance**), with the settings key it maps to,
+a `default` marker when no settings file sets it, and a control
+that matches its kind — a switch, a select, a number, or a text field. A number outside the host's range is refused in
+the page, keeping what was typed. A change writes the global
 `settings.json` with the same merge semantics the CLI uses, and the attached session is asked to re-read its
 settings, so fields read per turn (compaction, retries, steering, follow-up) apply immediately. The **Files** group
 names the global and project settings paths, shows a parse error the files carry, and offers **Re-read files**.
-List-valued settings such as `defaultTools` stay in the settings file; the panel edits the scalar surface.
+List-valued settings such as `defaultTools` stay in the settings file; the panel edits the scalar surface. The labels,
+headings, and option names come from the page's own dictionaries keyed by the catalogue's ids and tokens, so a field the
+dictionaries do not know is still listed, under its id, rather than hidden.
 
 ## Run a terminal command
 

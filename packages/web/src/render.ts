@@ -6,6 +6,7 @@
  * updates is the reader's own disclosure choices, keyed by block id, because a rebuild would
  * otherwise reset them.
  */
+import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode } from "./markdown.ts";
 import {
 	CHAT_VIEW,
@@ -18,6 +19,7 @@ import {
 	type PanelRow,
 	type PanelSpec,
 } from "./panels.ts";
+import { type MessageKey, translate } from "./strings.ts";
 import { composerPlaceholder, type TranscriptBlock, type WebView } from "./view.ts";
 
 export interface PageElements {
@@ -274,6 +276,13 @@ function atBottom(target: HTMLElement): boolean {
 	return target.scrollHeight - target.scrollTop - target.clientHeight < 24;
 }
 
+/** Whether a number control's value is a whole number inside the range the host accepts. */
+function inRange(control: PanelControl, value: string): boolean {
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed)) return false;
+	return parsed >= (control.min ?? Number.NEGATIVE_INFINITY);
+}
+
 function fitPrompt(prompt: HTMLTextAreaElement): void {
 	prompt.style.height = "auto";
 	// The draft grows with its content; the sheet caps it at `--dsh-composer-text-max-height` and
@@ -365,6 +374,10 @@ export function createRenderer(
 
 	const draft = (): string => elements.prompt.value.trim();
 
+	/** The language of the view being painted; the fallback only applies before the first paint. */
+	const copy = (key: MessageKey, values?: Record<string, string>): string =>
+		translate(lastView?.locale ?? FALLBACK_LOCALE, key, values);
+
 	const report = (action: PanelAction): void => renderer.onPanelAction(action);
 
 	const controlKey = (control: PanelControl): string => `${control.id}\u0000${control.data ?? ""}`;
@@ -409,7 +422,20 @@ export function createRenderer(
 		if (control.step !== undefined) input.step = String(control.step);
 		input.disabled = control.disabled === true;
 		input.addEventListener("input", () => drafts.set(key, input.value));
-		input.addEventListener("change", () => emit(input.value));
+		input.addEventListener("change", () => {
+			// A number outside the host's range is answered here, in the reader's language, and
+			// keeps the draft so the reader can correct it instead of losing what they typed.
+			if (control.kind === "number" && !inRange(control, input.value)) {
+				input.title = copy("panel.settings.invalidNumber", { min: String(control.min ?? 0) });
+				input.classList.add("invalid");
+				input.setAttribute("aria-invalid", "true");
+				return;
+			}
+			input.title = "";
+			input.classList.remove("invalid");
+			input.removeAttribute("aria-invalid");
+			emit(input.value);
+		});
 		return input;
 	};
 
@@ -450,7 +476,7 @@ export function createRenderer(
 		}
 		node.append(head);
 		const rows = element("div", "panel-rows");
-		if (group.rows.length === 0) rows.append(element("p", "panel-empty", group.empty ?? "Nothing here yet."));
+		if (group.rows.length === 0) rows.append(element("p", "panel-empty", group.empty ?? copy("panel.empty")));
 		else for (const row of group.rows) rows.append(rowElementOf(row));
 		node.append(rows);
 		if (group.footnote !== undefined) node.append(element("p", "panel-footnote", group.footnote));
@@ -494,7 +520,7 @@ export function createRenderer(
 		titles.append(element("h2", "modal-title", modal.title));
 		if (modal.description !== undefined) titles.append(element("p", "modal-desc", modal.description));
 		const close = button("modal-close");
-		close.setAttribute("aria-label", "Close");
+		close.setAttribute("aria-label", copy("panel.dismiss"));
 		close.append(closeGlyph());
 		close.addEventListener("click", () => report({ kind: "modal-close" }));
 		head.append(titles, close);
@@ -518,7 +544,7 @@ export function createRenderer(
 		}
 		const foot = element("footer", "modal-foot");
 		const cancel = button("panel-button default");
-		cancel.textContent = "Cancel";
+		cancel.textContent = copy("panel.cancel");
 		cancel.addEventListener("click", () => report({ kind: "modal-close" }));
 		const submit = button(`panel-button ${modal.danger === true ? "tone-danger" : "tone-primary"}`);
 		submit.textContent = modal.submit;
@@ -546,7 +572,7 @@ export function createRenderer(
 			row.addEventListener("click", () => report({ kind: "open", panel: item.id }));
 			elements.nav.append(row);
 		}
-		elements.settingsButton.replaceChildren(navGlyph("settings"), element("span", "nav-label", "Settings"));
+		elements.settingsButton.replaceChildren(navGlyph("settings"), element("span", "nav-label", copy("nav.settings")));
 		elements.settingsButton.classList.toggle("active", view.panel.current === SETTINGS_VIEW);
 		// The header entry carries the same rows, for the width where the sidebar column is dropped.
 		if (!elements.viewMenu.hidden) renderViewMenu(view);
@@ -599,7 +625,7 @@ export function createRenderer(
 		elements.viewBack.hidden = !open;
 		if (panel === undefined) {
 			elements.viewBody.replaceChildren();
-			elements.sessionTitle.textContent = view.attachedId ?? "No session";
+			elements.sessionTitle.textContent = view.attachedId ?? copy("header.noSession");
 			return;
 		}
 		elements.sessionTitle.textContent = panel.title;
@@ -615,7 +641,7 @@ export function createRenderer(
 		if (stop !== stops) {
 			stops = stop;
 			elements.primary.replaceChildren(primaryGlyph(stop));
-			const label = stop ? "Stop" : "Send";
+			const label = copy(stop ? "composer.stop" : "composer.send");
 			elements.primary.setAttribute("aria-label", label);
 			elements.primary.title = label;
 		}
@@ -650,7 +676,7 @@ export function createRenderer(
 		if (block.text.length > 0) {
 			details.append(element("div", "tool-output", block.text));
 		} else if (!block.running) {
-			details.append(element("div", "tool-output empty", "(no output)"));
+			details.append(element("div", "tool-output empty", copy("tool.noOutput")));
 		}
 		return details;
 	};
@@ -733,7 +759,7 @@ export function createRenderer(
 		const rows: HTMLElement[] = [];
 		if (picker.empty !== undefined) rows.push(element("p", "menu-empty", picker.empty));
 		if (picker.groups.length > 0) {
-			rows.push(element("p", "menu-heading", "Model"));
+			rows.push(element("p", "menu-heading", copy("model.heading")));
 			for (const group of picker.groups) {
 				rows.push(element("p", "menu-heading", group.provider));
 				for (const option of group.options) {
@@ -743,7 +769,7 @@ export function createRenderer(
 				}
 			}
 			if (picker.levels.length > 0 || picker.levelsEmpty !== undefined) {
-				rows.push(element("div", "menu-separator"), element("p", "menu-heading", "Effort"));
+				rows.push(element("div", "menu-separator"), element("p", "menu-heading", copy("model.effort")));
 				if (picker.levels.length > 0) {
 					for (const level of picker.levels) {
 						rows.push(pickerRow(level.label, level.selected, () => renderer.onSelectThinking(level.level)));
@@ -780,7 +806,7 @@ export function createRenderer(
 		elements.modelEffort.hidden = picker.effort === undefined;
 		const name = picker.effort === undefined ? picker.label : `${picker.label} · ${picker.effort}`;
 		elements.modelTrigger.title = name;
-		elements.modelTrigger.setAttribute("aria-label", `Model and reasoning effort: ${name}`);
+		elements.modelTrigger.setAttribute("aria-label", copy("model.chipAria", { name }));
 		if (picker.disabled) closeModelMenu();
 		else if (!elements.modelMenu.hidden) renderModelMenu(view);
 	};
@@ -814,7 +840,7 @@ export function createRenderer(
 				elements.roster.append(chip);
 			}
 			if (view.roster.length === 0) {
-				const empty = element("p", "empty-state", view.empty ?? "No sessions on this host yet.");
+				const empty = element("p", "empty-state", view.empty ?? copy("header.rosterEmpty"));
 				empty.id = "roster-empty";
 				elements.roster.append(empty);
 			}
@@ -824,7 +850,7 @@ export function createRenderer(
 				const empty = element(
 					"p",
 					"empty-state",
-					view.attachedId === undefined ? "No session attached." : "No entries in this session yet.",
+					copy(view.attachedId === undefined ? "header.noSessionAttached" : "header.noEntries"),
 				);
 				empty.id = "transcript-empty";
 				flow.push(empty);
@@ -835,7 +861,7 @@ export function createRenderer(
 
 			const detached = view.attachedId === undefined;
 			elements.prompt.disabled = detached;
-			elements.prompt.placeholder = composerPlaceholder(view.attachedId);
+			elements.prompt.placeholder = composerPlaceholder(view.locale, view.attachedId);
 			renderPrimary();
 
 			elements.queue.replaceChildren();

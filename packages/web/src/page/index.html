@@ -14,10 +14,10 @@
 				margin: 0;
 				background-color: #fff;
 			}
-			@media (prefers-color-scheme: dark) {
-				body {
-					background-color: #151517;
-				}
+			/* The dark canvas, keyed off the attribute the body script sets from the stored
+			   preference. A media query here would ignore a fixed light or dark choice. */
+			body[data-ds-dark-theme] {
+				background-color: #151517;
 			}
 		</style>
 		<link rel="stylesheet" href="/tokens.css" />
@@ -26,10 +26,20 @@
 	</head>
 	<body>
 		<!-- Palette before the first paint. DSH boots the same attribute from a body script: without it
-		     the shell would paint in the light palette until the page bundle runs. The entry re-applies
-		     it and follows later appearance changes. -->
+		     the shell would paint in the light palette until the page bundle runs. The host writes the
+		     stored preference into the boot manifest above; the entry re-applies it and follows later
+		     appearance changes. A document without a manifest falls back to the system. -->
 		<script>
-			document.body.toggleAttribute("data-ds-dark-theme", matchMedia("(prefers-color-scheme: dark)").matches);
+			(function () {
+				var preferences = (globalThis.__AMAZME_BOOT__ || {}).preferences || {};
+				var preference = preferences.appearance;
+				var fixed = preference === "light" || preference === "dark";
+				document.body.toggleAttribute(
+					"data-ds-dark-theme",
+					preference === "dark" || (!fixed && matchMedia("(prefers-color-scheme: dark)").matches),
+				);
+				document.documentElement.style.colorScheme = fixed ? preference : "light dark";
+			})();
 		</script>
 		<aside class="sidebar">
 			<div class="logo-row">
@@ -38,7 +48,7 @@
 			</div>
 			<!-- DSH's sidebar new-session bar (SidebarRoot .newSession): the host creates the session,
 			     the page attaches it as soon as the directory carries it. -->
-			<button class="new-session" type="button" id="new-session" aria-label="New session" disabled>
+			<button class="new-session" type="button" id="new-session" aria-label="{{sidebar.newSession}}" disabled>
 				<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
 					<rect
 						x="2.6"
@@ -52,23 +62,23 @@
 					/>
 					<path d="M8 6.4v3.2M6.4 8h3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
 				</svg>
-				<span class="new-session-label">New session</span>
+				<span class="new-session-label">{{sidebar.newSession}}</span>
 			</button>
 			<!-- The management views. The renderer fills this from the host's panel model; the
 			     settings entry sits in the footer, DSH's sidebar.footer.action slot. -->
-			<nav class="sidebar-nav" id="nav" aria-label="Management"></nav>
-			<p class="sidebar-label">Sessions</p>
-			<div class="session-list" id="roster"><p class="empty-state">Waiting for the host…</p></div>
+			<nav class="sidebar-nav" id="nav" aria-label="{{sidebar.management}}"></nav>
+			<p class="sidebar-label">{{sidebar.sessions}}</p>
+			<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
 			<div class="sidebar-footer">
 				<button class="sidebar-footer-btn" type="button" id="settings-button">
-					<span class="nav-label">Settings</span>
+					<span class="nav-label">{{nav.settings}}</span>
 				</button>
 			</div>
 		</aside>
 		<main class="center" id="center">
 			<header class="header">
 				<div class="crumbs">
-					<button class="crumb-back" type="button" id="view-back" aria-label="Back to the conversation" hidden>
+					<button class="crumb-back" type="button" id="view-back" aria-label="{{header.back}}" hidden>
 						<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 							<path
 								d="M9.6 3.6 5.2 8l4.4 4.4"
@@ -80,10 +90,10 @@
 							/>
 						</svg>
 					</button>
-					<span class="crumb" id="session-title">No session</span>
+					<span class="crumb" id="session-title">{{header.noSession}}</span>
 				</div>
 				<div class="header-utilities">
-					<span class="connection" id="connection">starting…</span>
+					<span class="connection" id="connection">{{connection.starting}}</span>
 					<!-- Below 1024px the sidebar column is dropped, so the management views need an
 					     entry in the header; the renderer fills this card from the same nav model. -->
 					<button
@@ -92,7 +102,7 @@
 						id="view-menu-trigger"
 						aria-haspopup="menu"
 						aria-expanded="false"
-						aria-label="Management"
+						aria-label="{{sidebar.management}}"
 					>
 						<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
 							<circle cx="3.4" cy="8" r="1.2" fill="currentColor" />
@@ -100,7 +110,7 @@
 							<circle cx="12.6" cy="8" r="1.2" fill="currentColor" />
 						</svg>
 					</button>
-					<div class="view-menu" id="view-menu" role="menu" aria-label="Management" hidden></div>
+					<div class="view-menu" id="view-menu" role="menu" aria-label="{{sidebar.management}}" hidden></div>
 				</div>
 			</header>
 			<!-- The management panel: it replaces the conversation while a view other than chat is open. -->
@@ -108,7 +118,7 @@
 				<div class="view-body" id="view-body"></div>
 			</section>
 			<div class="transcript" id="transcript">
-				<div class="column" id="column"><p class="empty-state">No session attached.</p></div>
+				<div class="column" id="column"><p class="empty-state">{{header.noSessionAttached}}</p></div>
 			</div>
 			<div class="composer-dock" id="composer-dock">
 				<div id="queue"></div>
@@ -117,7 +127,7 @@
 						class="composer-input"
 						id="prompt"
 						rows="1"
-						placeholder="No session attached"
+						placeholder="{{composer.placeholderDetached}}"
 						disabled
 					></textarea>
 					<div class="composer-row">
@@ -130,10 +140,10 @@
 								id="model-trigger"
 								aria-haspopup="menu"
 								aria-expanded="false"
-								aria-label="Model and reasoning effort: No model"
+								aria-label="{{model.menuAria}}"
 								disabled
 							>
-								<span class="model-label" id="model-label">No model</span>
+								<span class="model-label" id="model-label">{{model.none}}</span>
 								<span class="model-effort" id="model-effort" hidden></span>
 								<svg class="model-chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
 									<path
@@ -147,7 +157,7 @@
 								</svg>
 							</button>
 							<!-- The renderer swaps this Send glyph for the stop square while a turn runs. -->
-							<button class="primary" type="submit" id="primary" aria-label="Send" disabled>
+							<button class="primary" type="submit" id="primary" aria-label="{{composer.send}}" disabled>
 								<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
 									<path
 										d="M8 13.4V3.4M3.6 7.4 8 3l4.4 4.4"
@@ -159,7 +169,7 @@
 									/>
 								</svg>
 							</button>
-							<div class="model-menu" id="model-menu" role="menu" aria-label="Model and reasoning effort" hidden></div>
+							<div class="model-menu" id="model-menu" role="menu" aria-label="{{model.menuAria}}" hidden></div>
 						</div>
 					</div>
 				</form>

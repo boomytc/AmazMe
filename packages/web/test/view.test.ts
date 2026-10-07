@@ -16,22 +16,22 @@ import {
 	buildWebView,
 	failureView,
 	formatAge,
-	MODEL_PICKER_EMPTY,
 	modelPicker,
+	modelPickerEmpty,
 	queuedInputs,
 	rosterItems,
 	sessionStatus,
-	thinkingLevelLabel,
 	transcriptBlocks,
 	type ModelsStateLike,
 	type SessionDirectoryLike,
 	type WebView,
 } from "../src/view.ts";
+import { thinkingLevelCopy } from "../src/strings.ts";
 
 const CONVERSATION = 1 as ConversationId;
 const NOW = 1_700_000_000_000;
 /** The conversation view: the panel input every case here shares. */
-const CHAT_PANEL = { current: "chat" };
+const CHAT_PANEL = { locale: "en", current: "chat" } as const;
 
 function entryId(value: number): EntryId {
 	return value as EntryId;
@@ -130,7 +130,7 @@ describe("web view model", () => {
 	});
 
 	test("projects committed entries into user, assistant, thinking, tool, and notice blocks", () => {
-		const blocks = transcriptBlocks(
+		const blocks = transcriptBlocks("en", 
 			viewOf([
 				userEntry(1, "does this work?"),
 				assistantEntry(2, [
@@ -165,7 +165,7 @@ describe("web view model", () => {
 	});
 
 	test("marks a tool call the answer never ran, and one whose result failed", () => {
-		const interrupted = transcriptBlocks(
+		const interrupted = transcriptBlocks("en", 
 			viewOf([assistantEntry(1, [{ type: "text", text: "…" }, toolCall("call-1")], "aborted")]),
 		);
 		expect(interrupted.find((block) => block.kind === "tool")).toMatchObject({
@@ -175,7 +175,7 @@ describe("web view model", () => {
 			running: false,
 		});
 
-		const failed = transcriptBlocks(
+		const failed = transcriptBlocks("en", 
 			viewOf([
 				assistantEntry(1, [{ type: "text", text: "…" }, toolCall("call-1")], "toolUse"),
 				toolResultEntry(2, "call-1", "boom", true),
@@ -186,27 +186,27 @@ describe("web view model", () => {
 
 	test("surfaces a committed answer that failed instead of leaving an empty block", () => {
 		// A failed answer with no text is the notice alone: no empty card above it.
-		const failed = transcriptBlocks(viewOf([assistantEntry(1, [], "error")]));
+		const failed = transcriptBlocks("en", viewOf([assistantEntry(1, [], "error")]));
 		expect(failed.map((block) => [block.kind, block.title, block.tone])).toEqual([["notice", "Error", "error"]]);
 		expect(failed[0]?.text).toBe("Unknown error");
-		const withText = transcriptBlocks(viewOf([assistantEntry(1, [{ type: "text", text: "partial" }], "error", "no credentials")]));
+		const withText = transcriptBlocks("en", viewOf([assistantEntry(1, [{ type: "text", text: "partial" }], "error", "no credentials")]));
 		expect(withText.map((block) => [block.kind, block.title])).toEqual([
 			["assistant", "AmazMe"],
 			["notice", "Error"],
 		]);
 
-		const withReason = transcriptBlocks(viewOf([assistantEntry(1, [], "error", "no credentials")]));
+		const withReason = transcriptBlocks("en", viewOf([assistantEntry(1, [], "error", "no credentials")]));
 		expect(withReason).toHaveLength(1);
 		expect(withReason[0]).toMatchObject({ title: "Error", text: "no credentials", tone: "error" });
 
-		const aborted = transcriptBlocks(viewOf([assistantEntry(1, [{ type: "text", text: "half" }], "aborted")]));
+		const aborted = transcriptBlocks("en", viewOf([assistantEntry(1, [{ type: "text", text: "half" }], "aborted")]));
 		expect(aborted[1]).toMatchObject({ title: "Aborted", text: "Operation aborted", tone: "error" });
 
-		const truncated = transcriptBlocks(viewOf([assistantEntry(1, [{ type: "text", text: "cut" }], "length")]));
+		const truncated = transcriptBlocks("en", viewOf([assistantEntry(1, [{ type: "text", text: "cut" }], "length")]));
 		expect(truncated[1]).toMatchObject({ title: "Truncated", tone: "error" });
 
 		// A tool-calling answer reports the failure on its cards, not as a notice.
-		const withTool = transcriptBlocks(viewOf([assistantEntry(1, [toolCall("call-1")], "aborted")]));
+		const withTool = transcriptBlocks("en", viewOf([assistantEntry(1, [toolCall("call-1")], "aborted")]));
 		expect(withTool.some((block) => block.kind === "notice")).toBe(false);
 	});
 
@@ -242,49 +242,51 @@ describe("web view model", () => {
 			} as unknown as JsonObject,
 		});
 
-		const blocks = transcriptBlocks(view);
+		const blocks = transcriptBlocks("en", view);
 		expect(blocks.map((block) => block.kind)).toEqual(["user", "assistant", "tool"]);
 		expect(blocks[1]).toMatchObject({ text: "streamed so far", running: true });
 		expect(blocks[2]).toMatchObject({ title: "read", text: "partial output", running: true });
-		expect(sessionStatus(view)).toBe("Running read…");
-		expect(queuedInputs(view)).toEqual(["[steer] also do this", "[write] <amazme.note>"]);
+		expect(sessionStatus("en", view)).toBe("Running read…");
+		expect(queuedInputs("en", view)).toEqual(["[steer] also do this", "[write] <amazme.note>"]);
 	});
 
 	test("keeps the status precedence the TUI indicator uses", () => {
 		const withLive = (live: JsonObject): ConversationView => viewOf([], { "amazme.live": live });
-		expect(sessionStatus(undefined)).toBe("");
-		expect(sessionStatus(viewOf([]))).toBe("");
-		expect(sessionStatus(withLive({ run: { taskId: 1, inputs: [] } }))).toBe("Working…");
-		expect(sessionStatus(withLive({ generation: { attempt: 0, retry: { at: 1, error: "overloaded" } } }))).toBe(
+		expect(sessionStatus("en", undefined)).toBe("");
+		expect(sessionStatus("en", viewOf([]))).toBe("");
+		expect(sessionStatus("en", withLive({ run: { taskId: 1, inputs: [] } }))).toBe("Working…");
+		expect(sessionStatus("en", withLive({ generation: { attempt: 0, retry: { at: 1, error: "overloaded" } } }))).toBe(
 			"Retrying (attempt 1): overloaded",
 		);
-		expect(sessionStatus(withLive({ generation: { attempt: 0, deferred: { pollAt: 1 } } }))).toBe(
+		expect(sessionStatus("en", withLive({ generation: { attempt: 0, deferred: { pollAt: 1 } } }))).toBe(
 			"Waiting for deferred response…",
 		);
-		expect(sessionStatus(withLive({ compactions: [{ taskId: 1, reason: "manual", attempt: 0 }] }))).toBe(
+		expect(sessionStatus("en", withLive({ compactions: [{ taskId: 1, reason: "manual", attempt: 0 }] }))).toBe(
 			"Compacting (manual)…",
 		);
 		expect(
-			sessionStatus(withLive({ compactions: [{ taskId: 1, reason: "manual", attempt: 1, retry: { at: 1, error: "x" } }] })),
+			sessionStatus("en", withLive({ compactions: [{ taskId: 1, reason: "manual", attempt: 1, retry: { at: 1, error: "x" } }] })),
 		).toBe("Retrying manual compaction (attempt 2)…");
 		expect(
-			sessionStatus(
+			sessionStatus("en", 
 				withLive({
 					run: { taskId: 1, inputs: [] },
 					tools: [{ callId: "c", name: "bash", status: "running" }],
 				}),
 			),
 		).toBe("Running bash…");
-		expect(sessionStatus(withLive({ tools: [{ callId: "c", name: "bash", status: "pending" }] }))).toBe("");
+		expect(sessionStatus("en", withLive({ tools: [{ callId: "c", name: "bash", status: "pending" }] }))).toBe("");
 	});
 
 	test("reports the empty states the roster and transcript show", () => {
-		const connecting = buildWebView({ panel: CHAT_PANEL, directory: undefined, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+		const connecting = buildWebView({ locale: "en", panel: CHAT_PANEL, directory: undefined, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(connecting.empty).toBe("Connecting to the host…");
 		expect(connecting.blocks).toEqual([]);
-		const none = buildWebView({ panel: CHAT_PANEL, directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+		const none = buildWebView({ locale: "en", panel: CHAT_PANEL, directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(none.empty).toBe("No sessions on this host yet.");
-		const attached = buildWebView({ panel: CHAT_PANEL,
+		const attached = buildWebView({
+			locale: "en",
+			panel: CHAT_PANEL,
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),
 			attachedId: "s",
@@ -295,12 +297,27 @@ describe("web view model", () => {
 		expect(attached.empty).toBeUndefined();
 		expect(attached.attachedId).toBe("s");
 		expect(attached.roster[0]?.attached).toBe(true);
-		expect(failureView("cannot boot: x")).toMatchObject({ empty: "cannot boot: x", blocks: [], roster: [] });
+		expect(failureView("en", "cannot boot: x")).toMatchObject({ empty: "cannot boot: x", blocks: [], roster: [] });
+		expect(failureView("zh", "无法启动：x")).toMatchObject({ locale: "zh", empty: "无法启动：x" });
+		const zhConnecting = buildWebView({
+			locale: "zh",
+			panel: { locale: "zh", current: "chat" },
+			directory: undefined,
+			transcript: undefined,
+			attachedId: undefined,
+			now: NOW,
+			models: undefined,
+			thinkingLevels: [],
+		});
+		expect(zhConnecting.empty).toBe("正在连接宿主…");
+		expect(zhConnecting.panel.nav.map((item) => item.label)).toEqual(["插件", "技能", "设置"]);
 	});
 
 	test("marks a view busy only while a run is in flight", () => {
 		const view = (live: JsonObject | undefined): WebView =>
-			buildWebView({ panel: CHAT_PANEL,
+			buildWebView({
+			locale: "en",
+			panel: CHAT_PANEL,
 				directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 				transcript: viewOf([], live === undefined ? {} : { "amazme.live": live }),
 				attachedId: "s",
@@ -315,10 +332,10 @@ describe("web view model", () => {
 
 	test("enables the new-session bar only while the host's directory is reachable", () => {
 		const view = (directory: SessionDirectoryLike | undefined): WebView =>
-			buildWebView({ panel: CHAT_PANEL, directory, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+			buildWebView({ locale: "en", panel: CHAT_PANEL, directory, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(view(undefined).newSession).toEqual({ enabled: false });
 		expect(view(directoryOf([])).newSession).toEqual({ enabled: true });
-		expect(failureView("cannot boot: x").newSession).toEqual({ enabled: false });
+		expect(failureView("en", "cannot boot: x").newSession).toEqual({ enabled: false });
 	});
 
 	test("projects the model picker from the host's catalog and configuration", () => {
@@ -334,7 +351,7 @@ describe("web view model", () => {
 			configuration: { model: { provider: "deepseek", modelId: "v41" }, thinkingLevel: "high" },
 		};
 
-		const picker = modelPicker(models, ["off", "low", "high"], true);
+		const picker = modelPicker("en", models, ["off", "low", "high"], true);
 		expect(picker.label).toBe("DeepSeek V4.1");
 		expect(picker.effort).toBe("High");
 		expect(picker.disabled).toBe(false);
@@ -353,7 +370,7 @@ describe("web view model", () => {
 	});
 
 	test("keeps the picker explainable when the catalog, the levels, or the session are missing", () => {
-		const emptyCatalog = modelPicker(
+		const emptyCatalog = modelPicker("en", 
 			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
 			["off"],
 			true,
@@ -364,7 +381,7 @@ describe("web view model", () => {
 		// A model with nothing above `off` still says so instead of showing an empty group.
 		expect(emptyCatalog.levelsEmpty).toBe("This model provides no reasoning effort levels.");
 
-		const notReasoning = modelPicker(
+		const notReasoning = modelPicker("en", 
 			{
 				catalog: {
 					revision: 1,
@@ -379,33 +396,37 @@ describe("web view model", () => {
 		expect(notReasoning.label).toBe("Kimi K2");
 
 		// A configured model the catalog no longer carries is still named as configured.
-		const missing = modelPicker(
+		const missing = modelPicker("en", 
 			{ catalog: { revision: 2, availableModels: [] }, configuration: { model: { provider: "x", modelId: "y" }, thinkingLevel: "off" } },
 			["off"],
 			true,
 		);
 		expect(missing.label).toBe("x/y");
 
-		expect(modelPicker(undefined, [], true)).toEqual(MODEL_PICKER_EMPTY);
-		expect(modelPicker(undefined, [], false)).toEqual(MODEL_PICKER_EMPTY);
-		const detached = modelPicker(
+		expect(modelPicker("en", undefined, [], true)).toEqual(modelPickerEmpty("en"));
+		expect(modelPicker("en", undefined, [], false)).toEqual(modelPickerEmpty("en"));
+		const detached = modelPicker("en", 
 			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
 			["off"],
 			false,
 		);
-		expect(detached).toEqual(MODEL_PICKER_EMPTY);
-		expect(buildWebView({ panel: CHAT_PANEL,
+		expect(detached).toEqual(modelPickerEmpty("en"));
+		expect(buildWebView({
+			locale: "en",
+			panel: CHAT_PANEL,
 			directory: directoryOf([]),
 			transcript: undefined,
 			attachedId: undefined,
 			now: NOW,
 			models: { catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
 			thinkingLevels: ["off"],
-		}).model).toEqual(MODEL_PICKER_EMPTY);
+		}).model).toEqual(modelPickerEmpty("en"));
 	});
 
 	test("builds the picker from the attached session's models state and levels", () => {
-		const view = buildWebView({ panel: CHAT_PANEL,
+		const view = buildWebView({
+			locale: "en",
+			panel: CHAT_PANEL,
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),
 			attachedId: "s",
@@ -417,13 +438,40 @@ describe("web view model", () => {
 			thinkingLevels: ["off", "low"],
 		});
 		expect(view.model).toMatchObject({ label: "Model M", effort: "Low", disabled: false });
-		expect(failureView("cannot boot: x").model).toEqual(MODEL_PICKER_EMPTY);
+		expect(failureView("en", "cannot boot: x").model).toEqual(modelPickerEmpty("en"));
 	});
 
-	test("labels thinking levels in the platform's vocabulary", () => {
-		expect(thinkingLevelLabel("off")).toBe("Off");
-		expect(thinkingLevelLabel("medium")).toBe("Medium");
-		expect(thinkingLevelLabel("high")).toBe("High");
-		expect(thinkingLevelLabel("")).toBe("");
+	test("names thinking levels in the reader's language, capitalizing an unknown one", () => {
+		expect(thinkingLevelCopy("en", "off")).toBe("Off");
+		expect(thinkingLevelCopy("en", "medium")).toBe("Medium");
+		expect(thinkingLevelCopy("en", "xhigh")).toBe("XHigh");
+		expect(thinkingLevelCopy("zh", "medium")).toBe("中");
+		expect(thinkingLevelCopy("zh", "")).toBe("");
+		expect(thinkingLevelCopy("zh", "future-level")).toBe("Future-level");
+	});
+
+	test("projects the conversation in the reader's language", () => {
+		const blocks = transcriptBlocks(
+			"zh",
+			viewOf([
+				userEntry(1, "这样行吗？"),
+				assistantEntry(2, [
+					{ type: "thinking", thinking: "先想一下。" },
+					{ type: "text", text: "试一下。" },
+					toolCall("call-1"),
+				]),
+				toolResultEntry(3, "call-1", ""),
+			]),
+		);
+		expect(blocks.map((block) => block.title)).toEqual(["你", "思考", "AmazMe", "bash"]);
+		expect(blocks[2]?.text).toBe("试一下。");
+		expect(blocks[3]?.text).toBe("（无输出）");
+
+		const live = viewOf([], {
+			"amazme.live": { run: { taskId: 1, inputs: [] }, tools: [{ callId: "c", name: "bash", status: "running" }] } as unknown as JsonObject,
+			"amazme.inbox": { items: [{ mode: "steer", content: "再改一下", submissionId: 1, requestId: "r1" }] } as unknown as JsonObject,
+		});
+		expect(sessionStatus("zh", live)).toBe("正在运行 bash…");
+		expect(queuedInputs("zh", live)).toEqual(["[介入] 再改一下"]);
 	});
 });

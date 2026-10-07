@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { replicatedState } from "@amazme/chord";
+import { copyIdentities, settingFieldCopy, settingOptionCopy } from "@amazme/web";
 import { afterEach, describe, expect, test } from "vitest";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createPluginsService } from "../src/experimental/services/plugins-provider.ts";
@@ -34,15 +35,15 @@ describe("settings catalogue", () => {
 		const manager = SettingsManager.inMemory({ steeringMode: "all", compaction: { enabled: false } });
 		const descriptors = describeSettings(manager);
 		const steering = descriptors.find((descriptor) => descriptor.id === "steeringMode");
+		// The catalogue publishes identities and tokens; the page owns the copy for them.
 		expect(steering).toMatchObject({
-			label: "Steering mode",
-			group: "Conversation",
+			group: "conversation",
 			kind: "enum",
 			field: "steeringMode",
 			value: "all",
 			explicit: true,
 		});
-		expect(steering?.options?.map((option) => option.value)).toEqual(["one-at-a-time", "all"]);
+		expect(steering?.options).toEqual(["one-at-a-time", "all"]);
 		const compaction = descriptors.find((descriptor) => descriptor.id === "compactionEnabled");
 		expect(compaction).toMatchObject({ field: "compaction.enabled", value: "false", kind: "boolean" });
 		const followUp = descriptors.find((descriptor) => descriptor.id === "followUpMode");
@@ -76,6 +77,57 @@ describe("settings catalogue", () => {
 		await expect(applySetting(manager, "httpIdleTimeoutMs", "-1")).rejects.toThrow(/whole number/);
 		await expect(applySetting(manager, "compactionEnabled", "yes")).rejects.toThrow(/true or false/);
 		await expect(applySetting(manager, "nope", "1")).rejects.toThrow(/Unknown setting/);
+	});
+
+	test("writes the interface language and palette preferences, and rejects an unshipped one", async () => {
+		const manager = SettingsManager.inMemory({});
+		await applySetting(manager, "locale", "zh");
+		await applySetting(manager, "appearance", "dark");
+		expect(manager.getLocalePreference()).toBe("zh");
+		expect(manager.getAppearancePreference()).toBe("dark");
+		expect(describeSettings(manager).find((descriptor) => descriptor.id === "locale")).toMatchObject({
+			group: "interface",
+			field: "locale",
+			kind: "enum",
+			options: ["auto", "zh", "en"],
+			value: "zh",
+			explicit: true,
+		});
+		expect(SettingsManager.inMemory({}).getAppearancePreference()).toBe("system");
+		// A hand-edited file is not validated: a value this build does not ship falls back.
+		const agentDir = await makeDirectory("prefs-agent-");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ locale: "ja", appearance: "sepia" }), "utf8");
+		const edited = SettingsManager.create(await makeDirectory("prefs-project-"), agentDir);
+		expect(edited.getLocalePreference()).toBe("auto");
+		expect(edited.getAppearancePreference()).toBe("system");
+		await expect(applySetting(manager, "locale", "ja")).rejects.toThrow(/locale takes one of/);
+		await expect(applySetting(manager, "appearance", "sepia")).rejects.toThrow(/appearance takes one of/);
+	});
+
+	test("names every catalogue identity the host publishes in both languages", () => {
+		const descriptors = describeSettings(SettingsManager.inMemory({}));
+		const en = copyIdentities("en");
+		const zh = copyIdentities("zh");
+		for (const descriptor of descriptors) {
+			expect(zh.settingFields, descriptor.id).toContain(descriptor.id);
+			expect(en.settingFields, descriptor.id).toContain(descriptor.id);
+			expect(zh.settingGroups, descriptor.group).toContain(descriptor.group);
+			expect(en.settingGroups, descriptor.group).toContain(descriptor.group);
+			const copy = settingFieldCopy("zh", descriptor.id);
+			expect(copy.label, descriptor.id).not.toBe(descriptor.id);
+			expect(copy.description.length, descriptor.id).toBeGreaterThan(0);
+			// Every stored enum value has a name of its own, so a control never shows a bare token.
+			// The reasoning levels are the exception: they share the effort names the picker uses.
+			if (descriptor.kind !== "enum" || descriptor.id === "defaultThinkingLevel") continue;
+			expect(zh.settingOptions[descriptor.id], descriptor.id).toBeDefined();
+			for (const option of descriptor.options ?? []) {
+				expect(settingOptionCopy("zh", descriptor.id, option), `${descriptor.id}=${option}`).not.toBe(option);
+				expect(settingOptionCopy("en", descriptor.id, option), `${descriptor.id}=${option}`).not.toBe(option);
+			}
+		}
+		expect(descriptors.map((descriptor) => descriptor.id)).toEqual(
+			expect.arrayContaining(["locale", "appearance"]),
+		);
 	});
 
 	test("carries the settings files and the project's trust through the state", () => {

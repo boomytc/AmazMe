@@ -31,7 +31,7 @@ page take effect after the host restarts.
 |---|---|---|---|
 | server | `SessionDirectory` | replicated state implemented | add authenticated per-client projection when identity lands |
 | server | `SessionManagement` | create, remove, attach, detach implemented | add authenticated workspace authorization |
-| server | `Settings` | the editable field catalogue over the host's `SettingsManager`, with a write per field and a reload of the files | add project-scoped writes and a typed editor for list fields |
+| server | `Settings` | the editable field catalogue over the host's `SettingsManager` — field ids, heading tokens, kinds, and stored enum values, plus the interface `locale` and `appearance` preferences — with a write per field and a reload of the files | add project-scoped writes and a typed editor for list fields |
 | server | `Skills` | the agent's loaded skills, with read, write, remove, and import for the agent directory's own | add skill-path settings and prompt-template management |
 | server | `Plugins` | the server's default plugin package selection and the `mcp.json` entries the CLI and TUI read | connect MCP servers from this host and report their status |
 | server | `PresentationPlugins` | prepares the selected Session branch's matching TUI artifacts and reloads that branch | add authenticated plugin policy |
@@ -42,6 +42,12 @@ page take effect after the host restarts.
 | session | `Transcript` | the root conversation's durable `ConversationView` as replicated state | add projections only when another presentation needs them |
 | presentation | `SlashCommands` | process-local contribution registry with model, thinking, compact, reload, and example hello commands | add more presentation hookpoints only as concrete plugin slices require them |
 | presentation | `PresentationUI` | process-local selection and status capabilities | add narrowly scoped UI capabilities only when commands require them |
+
+The settings catalogue publishes identities, not copy: a field's `id`, its heading `group` token, and an enum's stored
+values. Each presentation names them in its own language, the way the TUI's settings selector keeps its own English
+labels, so the host never ships a sentence and a second language costs it nothing. `locale` and `appearance` are part of
+the same catalogue: the web host reads them per document to serve the page in the stored language and palette, and the
+TUI ignores them.
 
 `ServerServiceSource.connection` and `SessionServiceSource.attachment` are implemented local control states. Session directory, creation, and address DTOs are owned by these coding-agent service contracts rather than `pi-protocol`; the transport treats their payloads as opaque service data.
 

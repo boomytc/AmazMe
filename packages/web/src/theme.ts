@@ -1,18 +1,59 @@
 /// <reference lib="dom" />
 /**
- * Palette selector. DSH keys its dark overrides off `body[data-ds-dark-theme]` and resolves that
- * attribute from the theme preference (ui-theme boot-theme.ts); the preference it reads first is
- * `system`, so with no host-backed preference the system is the page's only source and later
- * changes to it have to be followed. The document boots the attribute for the first paint and this
- * re-applies it, so the two always agree.
+ * Palette preference. DSH keys its dark overrides off `body[data-ds-dark-theme]` and resolves that
+ * attribute from a host-backed theme preference (ui-theme boot-theme.ts); the page follows the same
+ * shape: the served document boots the attribute from the stored preference for the first paint and
+ * this re-applies it, so the document and the page always agree. `system` is the default, so a page
+ * with no host preference still follows the operating system live.
  */
+
+/** What the agent's settings store: the system's palette, or one fixed choice. */
+export type ThemePreference = "system" | "light" | "dark";
+
+export const THEME_PREFERENCES: readonly ThemePreference[] = ["system", "light", "dark"];
+
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
+/** The palette this page last applied; the media listener repaints with it when the system flips. */
+let preference: ThemePreference = "system";
+let installed = false;
+let media: MediaQueryList | undefined;
+
+export function isThemePreference(value: string): value is ThemePreference {
+	return (THEME_PREFERENCES as readonly string[]).includes(value);
+}
+
+/** The stored value as a preference: an unset or unknown value follows the system. */
+export function resolveThemePreference(value: string | undefined): ThemePreference {
+	return value !== undefined && isThemePreference(value) ? value : "system";
+}
+
+/** Whether a preference paints dark given what the system reports. */
+export function isDarkTheme(chosen: ThemePreference, systemDark: boolean): boolean {
+	return chosen === "dark" || (chosen === "system" && systemDark);
+}
+
+function paint(): void {
+	const dark = isDarkTheme(preference, media?.matches ?? false);
+	document.body.toggleAttribute("data-ds-dark-theme", dark);
+	// Native controls and scrollbars follow the same choice as the palette.
+	document.documentElement.style.colorScheme = preference === "system" ? "light dark" : preference;
+}
+
+/** Apply a preference now; every render calls this, so a switch lands without a reload. */
+export function applyTheme(next: ThemePreference): void {
+	preference = next;
+	paint();
+}
+
+/**
+ * Follow the system's palette changes for the lifetime of the page. Called once at boot, before the
+ * first paint the document's own script already made.
+ */
 export function followSystemTheme(): void {
-	const query = window.matchMedia(DARK_QUERY);
-	const apply = (): void => {
-		document.body.toggleAttribute("data-ds-dark-theme", query.matches);
-	};
-	apply();
-	query.addEventListener("change", apply);
+	if (installed || typeof window === "undefined") return;
+	installed = true;
+	media = window.matchMedia(DARK_QUERY);
+	media.addEventListener("change", paint);
+	paint();
 }

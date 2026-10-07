@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { ServerId } from "@amazme/protocol";
 import { WebSocketListener } from "@amazme/server/websocket";
-import type { WebBootManifest, WebMode } from "@amazme/web";
+import type { WebBootManifest, WebBootPreferences, WebMode } from "@amazme/web";
 import { contentTypeFor, PAGE_DOCUMENT, PAGE_SCRIPT, readPageDocument, resolvePageAsset } from "@amazme/web/assets";
 import { APP_NAME, VERSION } from "../../config.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
 import { startForegroundServer, type RunningServer } from "../server.ts";
-import { buildBootManifest, injectBootManifest } from "./boot.ts";
+import { buildBootManifest, DEFAULT_BOOT_PREFERENCES, serveDocument } from "./boot.ts";
 import { bundlePageEntry } from "./bundle.ts";
 /** Canonical loopback address the page and the WebSocket endpoint are served on. */
 const WEB_HOST = "127.0.0.1";
@@ -43,6 +44,22 @@ export interface WebHost {
 const repositoryRootFromModule = fileURLToPath(new URL("../../../../../", import.meta.url));
 
 /**
+ * The stored interface preferences, read fresh for every document: the page's language and palette
+ * are written by the settings service, so a host that cached them would serve the previous answer.
+ * A manager of its own keeps the HTTP server independent of the runtime's lifetime.
+ */
+async function readPreferences(): Promise<WebBootPreferences> {
+	try {
+		const manager = SettingsManager.create(process.cwd());
+		await manager.reload();
+		return { locale: manager.getLocalePreference(), appearance: manager.getAppearancePreference() };
+	} catch {
+		// An unreadable settings file leaves the page on the browser's language and the system's palette.
+		return DEFAULT_BOOT_PREFERENCES;
+	}
+}
+
+/**
  * Start the AmazMe host for the web client: the same server, sessions, and services the TUI
  * uses, plus a loopback HTTP document that carries the boot manifest and a WebSocket endpoint
  * that speaks the byte protocol. The page keeps no business logic; the host owns sessions,
@@ -60,7 +77,13 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 		releaseReady = resolve;
 	});
 	const httpServer = createServer((request, response) => {
-		void serveRequest(request, response, { document, script: bundle.code, manifest: () => manifest, ready });
+		void serveRequest(request, response, {
+			document,
+			script: bundle.code,
+			manifest: () => manifest,
+			ready,
+			preferences: () => readPreferences(),
+		});
 	});
 	let manifest: WebBootManifest | undefined;
 	const listener = new WebSocketListener({ server: httpServer, path });
@@ -116,6 +139,8 @@ interface PageAssets {
 	readonly manifest: () => WebBootManifest | undefined;
 	/** Resolves once the runtime that provides the manifest exists. */
 	readonly ready: Promise<void>;
+	/** The stored interface preferences, read per document so a change lands on the next load. */
+	readonly preferences: () => Promise<WebBootPreferences>;
 }
 
 async function serveRequest(request: IncomingMessage, response: ServerResponse, assets: PageAssets): Promise<void> {
@@ -128,7 +153,16 @@ async function serveRequest(request: IncomingMessage, response: ServerResponse, 
 		}
 		const urlPath = (request.url ?? "/").split("?")[0] ?? "/";
 		if (urlPath === "/") {
-			respond(response, 200, contentTypeFor(PAGE_DOCUMENT), injectBootManifest(assets.document, assets.manifest()));
+			// The identity comes from the runtime; the preferences are read per document, so a
+			// language or palette switch lands on the next load along with the shell's copy.
+			const manifest = assets.manifest();
+			const preferences = await assets.preferences();
+			const document = serveDocument(
+				assets.document,
+				manifest === undefined ? undefined : { ...manifest, preferences },
+				request.headers["accept-language"],
+			);
+			respond(response, 200, contentTypeFor(PAGE_DOCUMENT), document);
 			return;
 		}
 		if (urlPath === PAGE_SCRIPT) {

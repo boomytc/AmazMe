@@ -3,19 +3,20 @@ import { type Context, defineService, type ReplicatedState } from "@amazme/chord
 /**
  * One editable field of the agent's settings. The host publishes the catalogue, so a presentation
  * renders exactly the fields the host can read and write; it never invents one.
+ *
+ * The catalogue carries identities and tokens, not copy: `id` and `group` name the field and its
+ * heading, and an enum's `options` are its stored values. A presentation owns the labels and
+ * descriptions for those identities in its own language, the way the TUI's settings selector does.
  */
 export interface SettingDescriptor {
 	id: string;
-	label: string;
-	/** One line explaining what the field changes. */
-	description: string;
-	/** The heading the field is listed under. */
+	/** The canonical heading token the field is listed under, e.g. `conversation`. */
 	group: string;
 	kind: "boolean" | "enum" | "number" | "string";
-	options?: { value: string; label: string }[];
+	/** An enum's stored values, in presentation order. */
+	options?: string[];
 	min?: number;
 	step?: number;
-	placeholder?: string;
 	/** The settings.json key the value lands in, shown so the file stays discoverable. */
 	field: string;
 	/** The settings file sets this key itself; an unset field shows the built-in default. */

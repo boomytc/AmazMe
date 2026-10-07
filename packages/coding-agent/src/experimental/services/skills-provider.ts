@@ -87,7 +87,7 @@ export function createSkillsService(
 	return {
 		service: {
 			state: service.state,
-			async read(name: string): Promise<string> {
+			async read(name: string, _context: Context): Promise<string> {
 				return readFile(found(name).filePath, "utf8");
 			},
 			async write(request: { readonly name: string; readonly content: string }, context: Context): Promise<void> {

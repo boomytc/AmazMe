@@ -107,6 +107,14 @@ export interface CodemodeSettings {
 	inlineBudget?: number;
 }
 
+/** Interface languages the product ships. `auto` follows the browser or terminal locale. */
+export const LOCALE_PREFERENCES = ["auto", "zh", "en"] as const;
+export type LocalePreference = (typeof LOCALE_PREFERENCES)[number];
+
+/** Palette preferences for graphical presentations. The TUI keeps its own `theme` setting. */
+export const APPEARANCE_PREFERENCES = ["system", "light", "dark"] as const;
+export type AppearancePreference = (typeof APPEARANCE_PREFERENCES)[number];
+
 export type DefaultProjectTrust = "ask" | "always" | "never";
 /** true hides all startup output, "header" keeps only the startup header. */
 export type QuietStartup = boolean | "header";
@@ -186,6 +194,8 @@ export interface Settings {
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
+	locale?: LocalePreference; // default: "auto" - interface language of graphical presentations; global setting only
+	appearance?: AppearancePreference; // default: "system" - palette of graphical presentations; global setting only
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -861,6 +871,30 @@ export class SettingsManager {
 	setTheme(theme: string): void {
 		this.globalSettings.theme = theme;
 		this.markModified("theme");
+		this.save();
+	}
+
+	/** The interface language a graphical presentation shows; an unset or unknown value follows the locale. */
+	getLocalePreference(): LocalePreference {
+		const locale = this.globalSettings.locale;
+		return locale !== undefined && LOCALE_PREFERENCES.includes(locale) ? locale : "auto";
+	}
+
+	setLocalePreference(locale: LocalePreference): void {
+		this.globalSettings.locale = locale;
+		this.markModified("locale");
+		this.save();
+	}
+
+	/** The palette a graphical presentation applies; an unset or unknown value follows the system. */
+	getAppearancePreference(): AppearancePreference {
+		const appearance = this.globalSettings.appearance;
+		return appearance !== undefined && APPEARANCE_PREFERENCES.includes(appearance) ? appearance : "system";
+	}
+
+	setAppearancePreference(appearance: AppearancePreference): void {
+		this.globalSettings.appearance = appearance;
+		this.markModified("appearance");
 		this.save();
 	}
 

@@ -14,13 +14,16 @@ import type { ConversationView } from "@amazme/durable";
 import {
 	addMcpServerModal,
 	addPackageModal,
+	applyTheme,
 	BOOT_GLOBAL,
 	buildWebView,
 	CHAT_VIEW,
 	collectPageElements,
 	composeSkill,
 	createRenderer,
+	documentLanguage,
 	failureView,
+	FALLBACK_LOCALE,
 	followSystemTheme,
 	importSkillModal,
 	isBusy,
@@ -34,6 +37,8 @@ import {
 	PLUGIN_PACKAGE_MODAL,
 	PLUGIN_PACKAGE_REMOVE_ACTION,
 	removeSkillModal,
+	resolveLocale,
+	resolveThemePreference,
 	rosterItems,
 	SETTINGS_FIELD_ACTION,
 	SETTINGS_RELOAD_ACTION,
@@ -46,10 +51,14 @@ import {
 	SKILL_REMOVE_ACTION,
 	SKILL_REMOVE_MODAL,
 	skillModal,
+	translate,
+	type Locale,
+	type MessageKey,
 	type PageElements,
 	type PageRenderer,
 	type PanelAction,
 	type PanelModal,
+	type ThemePreference,
 	type WebBootManifest,
 } from "@amazme/web";
 import { AgentController } from "../services/agent-controller.ts";
@@ -79,6 +88,8 @@ function message(error: unknown): string {
 
 /** Attach one session and keep its transcript subscribed until the attachment changes. */
 class SessionPainter {
+	/** The language of the view this page paints; the page sets it before every paint. */
+	locale: Locale = "en";
 	readonly #sessionSource: SessionServiceSource;
 	readonly #renderer: PageRenderer;
 	#transcript: ReplicatedState<ConversationView> | undefined;
@@ -121,7 +132,12 @@ class SessionPainter {
 			? await controller.followUp(request, BACKGROUND_CONTEXT)
 			: await controller.prompt(request, BACKGROUND_CONTEXT);
 		// A rejection must be visible; an accepted prompt shows itself in the transcript.
-		if (!response.accepted) this.#renderer.setConnection(`prompt rejected: ${response.error.message}`, "error");
+		if (!response.accepted) {
+			this.#renderer.setConnection(
+				translate(this.locale, "page.promptRejected", { error: response.error.message }),
+				"error",
+			);
+		}
 	}
 
 	/** Withdraw queued input and abort the running turn and compaction. */
@@ -175,7 +191,11 @@ class SessionPainter {
 		const services = this.#sessionSource.open({
 			services: [Transcript, AgentController, Models, SessionSettings],
 			assertAccess(): void {},
-			onError: (error: Error) => this.#renderer.setConnection(`stream error: ${message(error)}`, "error"),
+			onError: (error: Error) =>
+				this.#renderer.setConnection(
+					translate(this.locale, "page.streamFailed", { error: message(error) }),
+					"error",
+				),
 		});
 		await services.ready(BACKGROUND_CONTEXT);
 		const transcript = services.use(Transcript);
@@ -190,7 +210,10 @@ class SessionPainter {
 		this.#models.state.subscribe(() => {
 			paint();
 			void this.#refreshLevels(paint).catch((error: unknown) => {
-				this.#renderer.setConnection(`model state failed: ${message(error)}`, "error");
+				this.#renderer.setConnection(
+					translate(this.locale, "page.modelStateFailed", { error: message(error) }),
+					"error",
+				);
 			});
 		});
 		transcript.state.subscribe(() => paint());
@@ -214,7 +237,7 @@ class SessionPainter {
 export async function startPage(renderer: PageRenderer): Promise<Client | undefined> {
 	const manifest = readManifest();
 	if (manifest === undefined) {
-		fail(renderer, new Error("the host served this document without its boot manifest"));
+		fail(renderer, new Error(translate(FALLBACK_LOCALE, "page.noManifest")), FALLBACK_LOCALE);
 		return undefined;
 	}
 	document.title = `${manifest.app.name} ${manifest.app.version}`;
@@ -227,6 +250,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const serverSource = createServerServiceSource(client, { onError: report });
 	const sessionSource = createSessionServiceSource(client, { onError: report });
 	const painter = new SessionPainter(sessionSource, renderer);
+	/** The reader's language and palette: the stored preference, or what this browser asks for. */
+	let locale: Locale = resolveLocale(manifest.preferences?.locale, navigator.languages);
+	let appearance: ThemePreference = resolveThemePreference(manifest.preferences?.appearance);
+	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(locale, key, values);
 	const serverServices = serverSource.open({
 		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins],
 		assertAccess(): void {},
@@ -240,16 +267,32 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const plugins = serverServices.use(Plugins);
 	let view = CHAT_VIEW;
 	let modal: PanelModal | undefined;
-	const paint = (): void =>
+
+	/** The catalogue's value for one field, once the host has published it. */
+	const settingValue = (id: string): string | undefined =>
+		settings.state.value?.descriptors.find((descriptor) => descriptor.id === id)?.value;
+	/**
+	 * A switch made in the panel reaches this page through the replicated settings: the resolved
+	 * language and palette follow the host's value, so both tabs agree without a reload.
+	 */
+	const paint = (): void => {
+		locale = resolveLocale(settingValue("locale") ?? manifest.preferences?.locale, navigator.languages);
+		appearance = resolveThemePreference(settingValue("appearance") ?? manifest.preferences?.appearance);
+		painter.locale = locale;
+		applyTheme(appearance);
+		document.documentElement.lang = documentLanguage(locale);
 		renderer.render(
 			buildWebView({
+				locale,
 				directory: directory.state.value,
 				transcript: painter.transcriptValue,
 				attachedId: painter.sessionId,
 				now: Date.now(),
 				models: painter.modelsValue,
 				thinkingLevels: painter.levels,
+				// The panel inherits this view's language, so one resolution serves the whole page.
 				panel: {
+					locale,
 					current: view,
 					...(modal === undefined ? {} : { modal }),
 					settings: { state: settings.state.value },
@@ -258,6 +301,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				},
 			}),
 		);
+	};
 	directory.state.subscribe(() => paint());
 	settings.state.subscribe(() => paint());
 	skills.state.subscribe(() => paint());
@@ -270,7 +314,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	renderer.onSelect = (sessionId) => {
 		void selectSession(sessionId).catch((error: unknown) => {
-			renderer.setConnection(`attach failed: ${message(error)}`, "error");
+			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
 		});
 	};
 	// The host creates the session; the roster shows it from the replicated directory. A second
@@ -283,7 +327,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			.create({}, BACKGROUND_CONTEXT)
 			.then((created) => selectSession(created.sessionId))
 			.catch((error: unknown) => {
-				renderer.setConnection(`new session failed: ${message(error)}`, "error");
+				renderer.setConnection(copy("page.newSessionFailed", { error: message(error) }), "error");
 			})
 			.finally(() => {
 				creating = false;
@@ -291,28 +335,28 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	renderer.onSelectModel = (provider, modelId) => {
 		void painter.selectModel(provider, modelId).catch((error: unknown) => {
-			renderer.setConnection(`model change failed: ${message(error)}`, "error");
+			renderer.setConnection(copy("page.modelChangeFailed", { error: message(error) }), "error");
 		});
 	};
 	renderer.onSelectThinking = (level) => {
 		void painter.selectThinking(level).catch((error: unknown) => {
-			renderer.setConnection(`thinking level failed: ${message(error)}`, "error");
+			renderer.setConnection(copy("page.thinkingFailed", { error: message(error) }), "error");
 		});
 	};
 	renderer.onSubmit = (text) => {
 		void painter.submit(text).catch((error: unknown) => {
-			renderer.setConnection(`send failed: ${message(error)}`, "error");
+			renderer.setConnection(copy("page.sendFailed", { error: message(error) }), "error");
 		});
 	};
 	renderer.onAbort = () => {
 		void painter.abort().catch((error: unknown) => {
-			renderer.setConnection(`abort failed: ${message(error)}`, "error");
+			renderer.setConnection(copy("page.abortFailed", { error: message(error) }), "error");
 		});
 	};
 
 	/** Report a failed management call; the panel keeps its state and the reader keeps their text. */
 	const failPanel = (error: unknown): void =>
-		renderer.setConnection(`panel action failed: ${message(error)}`, "error");
+		renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error");
 
 	/** Run one host call from the management surface, closing the modal once it succeeded. */
 	const settle = (operation: Promise<void> | undefined, closeModal = true): void => {
@@ -377,29 +421,29 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						settle(settings.reload(BACKGROUND_CONTEXT), false);
 						return;
 					case SKILL_NEW_ACTION:
-						modal = newSkillModal();
+						modal = newSkillModal(locale);
 						paint();
 						return;
 					case SKILL_IMPORT_ACTION:
-						modal = importSkillModal();
+						modal = importSkillModal(locale);
 						paint();
 						return;
 					case SKILL_REMOVE_ACTION:
-						modal = removeSkillModal(action.data ?? "");
+						modal = removeSkillModal(locale, action.data ?? "");
 						paint();
 						return;
 					case SKILL_EDIT_ACTION: {
 						const name = action.data ?? "";
 						settle(
 							skills.read(name, BACKGROUND_CONTEXT).then((content) => {
-								modal = skillModal(name, content, skillOf(name)?.editable === true);
+								modal = skillModal(locale, name, content, skillOf(name)?.editable === true);
 							}),
 							false,
 						);
 						return;
 					}
 					case PLUGIN_PACKAGE_ADD_ACTION:
-						modal = addPackageModal();
+						modal = addPackageModal(locale);
 						paint();
 						return;
 					case PLUGIN_PACKAGE_REMOVE_ACTION: {
@@ -414,7 +458,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					}
 					case PLUGIN_MCP_ADD_ACTION:
-						modal = addMcpServerModal();
+						modal = addMcpServerModal(locale);
 						paint();
 						return;
 					case PLUGIN_MCP_REMOVE_ACTION: {
@@ -431,7 +475,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case SKILL_CREATE_MODAL: {
 						const name = (fields.name ?? "").trim();
 						if (name.length === 0) {
-							failPanel(new Error("a skill needs a name"));
+							failPanel(new Error(copy("page.skillNeedsName")));
 							return;
 						}
 						settle(
@@ -454,7 +498,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case PLUGIN_PACKAGE_MODAL: {
 						const path = (fields.path ?? "").trim();
 						if (path.length === 0) {
-							failPanel(new Error("a plugin package needs a path"));
+							failPanel(new Error(copy("page.packageNeedsPath")));
 							return;
 						}
 						settle(plugins.setPackages([...pluginPackages(), path], BACKGROUND_CONTEXT));
@@ -475,19 +519,25 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	client.onConnectionStateChange((change) => {
 		if (change.state === "connected") {
-			renderer.setConnection(`connected · ${manifest.server.id}`, "state");
+			renderer.setConnection(copy("connection.connected", { id: manifest.server.id }), "state");
 			return;
 		}
 		if (change.state === "disconnected") {
-			renderer.setConnection(`disconnected: ${change.error?.message ?? "host went away"}`, "error");
+			renderer.setConnection(
+				copy("connection.disconnected", {
+					error: change.error?.message ?? copy("connection.hostGone"),
+				}),
+				"error",
+			);
 			return;
 		}
-		renderer.setConnection(change.state, "state");
+		// Any other state the client reports is its own word for an unfinished connection.
+		renderer.setConnection(copy("connection.connecting"), "state");
 	});
 	try {
 		await client.connect();
 	} catch (error) {
-		fail(renderer, error);
+		fail(renderer, error, locale);
 		await client.dispose();
 		return undefined;
 	}
@@ -496,7 +546,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const newest = rosterItems(directory.state.value, undefined, Date.now())[0];
 	if (newest !== undefined) {
 		await selectSession(newest.id).catch((error: unknown) => {
-			renderer.setConnection(`attach failed: ${message(error)}`, "error");
+			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
 		});
 	}
 	paint();
@@ -508,30 +558,33 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	return client;
 }
 
-function fail(renderer: PageRenderer, error: unknown): void {
-	const text = `cannot boot: ${message(error)}`;
+function fail(renderer: PageRenderer, error: unknown, locale: Locale): void {
+	const text = translate(locale, "page.cannotBoot", { error: message(error) });
 	renderer.setConnection(text, "error");
-	renderer.render(failureView(text));
+	renderer.render(failureView(locale, text));
 }
 
 /** Entry point referenced by the served document. */
 export async function main(): Promise<void> {
 	let elements: PageElements;
 	let renderer: PageRenderer;
+	// The document carries the stored preference; without one this browser's languages decide.
+	const manifest = readManifest();
+	const locale = resolveLocale(manifest?.preferences?.locale, navigator.languages);
 	try {
 		followSystemTheme();
+		applyTheme(resolveThemePreference(manifest?.preferences?.appearance));
 		elements = collectPageElements();
 		renderer = createRenderer(elements);
 	} catch (error) {
-		document.body.textContent = `cannot boot: ${message(error)}`;
+		document.body.textContent = translate(locale, "page.cannotBoot", { error: message(error) });
 		return;
 	}
-	const manifest = readManifest();
 	if (manifest !== undefined) elements.mode.textContent = `${manifest.mode} · ${manifest.transport.url}`;
 	try {
 		await startPage(renderer);
 	} catch (error) {
-		fail(renderer, error);
+		fail(renderer, error, locale);
 	}
 }
 

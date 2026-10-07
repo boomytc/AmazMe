@@ -1338,6 +1338,11 @@ summary.disclosure-row {
 	width: 96px;
 }
 
+/* A number outside the host's range: the draft stays and the border says why (its title does too). */
+.panel-input.invalid {
+	border-color: var(--dsw-alias-state-error-primary);
+}
+
 .panel-input:focus-visible,
 .panel-select:focus-visible {
 	outline: 2px solid var(--dsw-alias-state-business-primary);

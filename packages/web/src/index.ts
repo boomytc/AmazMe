@@ -2,8 +2,19 @@ export {
 	BOOT_GLOBAL,
 	BOOT_PLACEHOLDER,
 	type WebBootManifest,
+	type WebBootPreferences,
 	type WebMode,
 } from "./contract.ts";
+export {
+	documentLanguage,
+	FALLBACK_LOCALE,
+	isLocale,
+	LOCALES,
+	matchLocale,
+	resolveLocale,
+	type Locale,
+	type LocalePreference,
+} from "./locale.ts";
 export { formatMarkdown, safeHref, type InlineNode, type MarkdownNode } from "./markdown.ts";
 export {
 	addMcpServerModal,
@@ -11,9 +22,8 @@ export {
 	CHAT_VIEW,
 	composeSkill,
 	importSkillModal,
-	MCP_EXPOSURES,
+	mcpExposures,
 	newSkillModal,
-	PANEL_UNAVAILABLE,
 	panelNav,
 	panelSpec,
 	panelView,
@@ -66,7 +76,29 @@ export {
 	type SkillsStateLike,
 } from "./panels.ts";
 export { collectPageElements, createRenderer, type PageElements, type PageRenderer } from "./render.ts";
-export { followSystemTheme } from "./theme.ts";
+export {
+	copyIdentities,
+	localizeDocument,
+	mcpExposureCopy,
+	mcpScopeCopy,
+	settingFieldCopy,
+	settingGroupCopy,
+	settingOptionCopy,
+	settingScopeCopy,
+	skillScopeCopy,
+	thinkingLevelCopy,
+	translate,
+	EN,
+	ZH,
+	type MessageKey,
+	type SettingCopy,
+} from "./strings.ts";
+export {
+	applyTheme,
+	followSystemTheme,
+	resolveThemePreference,
+	type ThemePreference,
+} from "./theme.ts";
 export {
 	buildWebView,
 	composerPlaceholder,
@@ -75,12 +107,11 @@ export {
 	inboxOf,
 	isBusy,
 	liveOf,
-	MODEL_PICKER_EMPTY,
 	modelPicker,
+	modelPickerEmpty,
 	queuedInputs,
 	rosterItems,
 	sessionStatus,
-	thinkingLevelLabel,
 	transcriptBlocks,
 	type BlockTone,
 	type ModelGroup,

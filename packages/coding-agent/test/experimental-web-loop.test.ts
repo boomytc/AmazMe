@@ -112,7 +112,7 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 }
 
 function sawUserText(view: ConversationView | undefined, marker: string): boolean {
-	return transcriptBlocks(view).some((block) => block.kind === "user" && block.text.includes(marker));
+	return transcriptBlocks("en", view).some((block) => block.kind === "user" && block.text.includes(marker));
 }
 
 function listedSessions(presentation: Presentation): readonly string[] {
@@ -232,7 +232,7 @@ describe("web client interactive loop", () => {
 			expect(sawUserText(attachedAlpha.transcript.state.value, betaMarker)).toBe(false);
 			expect(sawUserText(attachedBeta.transcript.state.value, alphaMarker)).toBe(false);
 			expect(
-				transcriptBlocks(attachedAlpha.transcript.state.value).filter((block) => block.kind === "user"),
+				transcriptBlocks("en", attachedAlpha.transcript.state.value).filter((block) => block.kind === "user"),
 			).toHaveLength(1);
 
 			await attachedBeta.dispose();
@@ -261,7 +261,7 @@ describe("web client interactive loop", () => {
 			const queued = await attached.controller.followUp({ message: queuedMarker, images: null }, BACKGROUND_CONTEXT);
 			expect(queued).toMatchObject({ accepted: true });
 			await waitFor(
-				() => queuedInputs(attached.transcript.state.value).some((item) => item.includes(queuedMarker)),
+				() => queuedInputs("en", attached.transcript.state.value).some((item) => item.includes(queuedMarker)),
 				"the follow-up in the queue",
 			);
 
@@ -269,7 +269,7 @@ describe("web client interactive loop", () => {
 			await waitFor(
 				() =>
 					!isBusy(attached.transcript.state.value) &&
-					queuedInputs(attached.transcript.state.value).length === 0,
+					queuedInputs("en", attached.transcript.state.value).length === 0,
 				"the aborted run to settle and the queue to empty",
 			);
 			// The aborted turn is still a committed user entry: the input was not lost.
@@ -294,7 +294,7 @@ describe("web client interactive loop", () => {
 			// The model data ships with the repository; without it the picker's empty state is the
 			// observable and the round trip cannot be driven (recorded under Risks in the plan).
 			if (catalog.length === 0) {
-				expect(modelPicker(attachedAlpha.models.state.value, [], true).empty).toBe("No models available.");
+				expect(modelPicker("en", attachedAlpha.models.state.value, [], true).empty).toBe("No models available.");
 				return;
 			}
 
@@ -322,7 +322,7 @@ describe("web client interactive loop", () => {
 			}
 
 			// The projection the page renders reads exactly that configuration.
-			const picker = modelPicker(attachedAlpha.models.state.value, levels, true);
+			const picker = modelPicker("en", attachedAlpha.models.state.value, levels, true);
 			expect(picker.label).toBe(target.name);
 			expect(picker.groups.flatMap((group) => group.options).filter((option) => option.selected)).toEqual([
 				{ provider: target.provider, modelId: target.modelId, label: target.name, selected: true },
