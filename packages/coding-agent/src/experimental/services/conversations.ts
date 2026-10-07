@@ -75,6 +75,10 @@ export interface ConversationsState {
 	/** The live tasks, in id order. */
 	tasks: TaskSummary[];
 	/**
+	 * Pi `branchSummary.skipPrompt`. When true, leaving a branch does not ask and does not summarize.
+	 */
+	branchSummarySkipPrompt: boolean;
+	/**
 	 * The focused conversation's view, for a presentation that shows one that is not the root. The
 	 * root's view is the Transcript service's; this stays null while the root is selected.
 	 */
@@ -83,6 +87,21 @@ export interface ConversationsState {
 
 /** `conversationId` is the new fork. `error` is set when there is nothing to fork from. */
 export type ForkResult = { conversationId: string; error: null } | { conversationId: null; error: { code: string; message: string } };
+
+/** One earlier user entry the reader can leave back to. */
+export interface ReturnPoint {
+	readonly id: string;
+	readonly label: string;
+}
+
+/**
+ * Leaving a branch. `conversationId` is the continuation now in focus. `summarized` is true when that
+ * continuation carries an `amazme.branch-summary` entry. `cancelled` is a summary the reader aborted.
+ */
+export type LeaveResult =
+	| { conversationId: string; summarized: boolean; cancelled: false; error: null }
+	| { conversationId: null; summarized: false; cancelled: true; error: null }
+	| { conversationId: null; summarized: false; cancelled: false; error: { code: string; message: string } };
 
 /** One page of a conversation's stored history, older than the entries the view carries. */
 export interface HistoryPage {
@@ -102,6 +121,20 @@ export interface Conversations {
 	 * conversation, then focus it. The fork and the focus are both in `session.sqlite`.
 	 */
 	fork(conversationId: string, at: string | null, context: Context): Promise<ForkResult>;
+	/** User entries before the tip of `conversationId`. Selecting one leaves that branch. */
+	returnPoints(conversationId: string, context: Context): Promise<readonly ReturnPoint[]>;
+	/**
+	 * Leave `conversationId` back to ancestor entry `at`, then focus the continuation.
+	 * A summary forks via `Conversation.branchSummary` and writes the entry on that continuation.
+	 * No summary forks at `at` without a branch-summary entry. `branchSummary.skipPrompt` forces no summary.
+	 * Focusing a conversation that already exists is `select`, not this.
+	 */
+	leave(
+		conversationId: string,
+		at: string,
+		choice: { readonly summarize: boolean; readonly customInstructions?: string | null },
+		context: Context,
+	): Promise<LeaveResult>;
 	/** Re-read the conversation list, the task graph, and the focused view. */
 	refresh(context: Context): Promise<void>;
 	/**

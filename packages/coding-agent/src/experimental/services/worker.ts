@@ -20,7 +20,7 @@ import { AgentController } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
 import { createCommandsFacet } from "./commands-provider.ts";
 import { createApprovalsFacet, type ApprovalGate } from "./approvals-provider.ts";
-import { createConversationsFacet } from "./conversations-provider.ts";
+import { createConversationsFacet, summaryModelFromRuntime } from "./conversations-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { createSlashCommandsRuntimeFacet } from "./slash-commands-provider.ts";
@@ -113,7 +113,14 @@ export async function createSessionWorkerServices(options: {
 		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 		createCommandsFacet({ cwd: options.cwd, settings: options.settingsManager }),
-		createConversationsFacet({ harness: options.harness, root: options.conversation }),
+		createConversationsFacet({
+			harness: options.harness,
+			root: options.conversation,
+			...(options.settingsManager === undefined ? {} : { settings: options.settingsManager }),
+			...(options.modelRuntime === undefined
+				? {}
+				: { summaryModel: summaryModelFromRuntime(options.harness, options.modelRuntime) }),
+		}),
 		...(options.approvalGate === undefined ? [] : [createApprovalsFacet(options.approvalGate)]),
 		createWorkspaceFacet({ cwd: options.cwd }),
 		...(options.settingsManager === undefined

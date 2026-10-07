@@ -1,16 +1,18 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@amazme/ai";
+import type { StreamFn } from "@amazme/agent";
+import { createAssistantMessageEventStream, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Model } from "@amazme/ai";
 import { replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
-import { createRegistry, Harness } from "@amazme/durable";
+import { BranchSummaryEntry, createRegistry, Harness, type Conversation, type EntryRecord, UserEntry } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
 import { Subagent } from "../src/experimental/durable/subagent.ts";
 import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
 import { type ConversationsState, IDLE_LANE } from "../src/experimental/services/conversations.ts";
 import { createConversationsService } from "../src/experimental/services/conversations-provider.ts";
+import { navigateTree, readReturnPoints, readSummaries } from "../src/experimental/session-surface.ts";
 
 /**
  * The conversation list, the live task graph, and stored history, over a real Harness driven by the
@@ -40,8 +42,40 @@ async function waitFor(check: () => boolean | Promise<boolean>, label: string, t
 	throw new Error(`Timed out waiting for ${label}`);
 }
 
+const summaryModel: Model<"anthropic-messages"> = {
+	id: "test-model",
+	name: "Test Model",
+	api: "anthropic-messages",
+	provider: "anthropic",
+	baseUrl: "https://api.anthropic.com",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 200000,
+	maxTokens: 8192,
+};
+
+function summaryStream(text: string): StreamFn {
+	const message: AssistantMessage = {
+		...fauxAssistantMessage(""),
+		content: [{ type: "text", text }],
+		api: summaryModel.api,
+		provider: summaryModel.provider,
+		model: summaryModel.id,
+		stopReason: "stop",
+	};
+	return () => {
+		const stream = createAssistantMessageEventStream();
+		queueMicrotask(() => stream.push({ type: "done", reason: "stop", message }));
+		return stream;
+	};
+}
+
 /** A harness with the subagent tool and a scripted provider, and the conversations service on top. */
-async function openConversations(existing?: string): Promise<{
+async function openConversations(
+	existing?: string,
+	branch?: { readonly skipPrompt?: boolean; readonly streamFn?: StreamFn },
+): Promise<{
 	readonly harness: Harness;
 	readonly directory: string;
 	readonly rootId: string;
@@ -70,9 +104,28 @@ async function openConversations(existing?: string): Promise<{
 		lane: IDLE_LANE,
 		conversations: [],
 		tasks: [],
+		branchSummarySkipPrompt: false,
 		view: null,
 	});
-	const service = createConversationsService({ harness, root }, () => state);
+	const service = createConversationsService(
+		{
+			harness,
+			root,
+			...(branch === undefined
+				? {}
+				: {
+						settings: {
+							getBranchSummarySettings: () => ({ reserveTokens: 16384, skipPrompt: branch.skipPrompt === true }),
+							getRetrySettings: () => ({ enabled: false, maxRetries: 0, baseDelayMs: 1 }),
+						},
+						summaryModel: async () => ({
+							model: summaryModel,
+							...(branch.streamFn === undefined ? {} : { streamFn: branch.streamFn }),
+						}),
+					}),
+		},
+		() => state,
+	);
 	await service.activate(BACKGROUND_CONTEXT);
 	return {
 		harness,
@@ -246,4 +299,172 @@ describe("the session's conversation list", () => {
 			await again.close();
 		}
 	}, 60_000);
+});
+
+async function writeUsers(conversation: Conversation, ...texts: string[]): Promise<EntryRecord[]> {
+	const written: EntryRecord[] = [];
+	for (const text of texts) {
+		written.push(
+			await conversation.commit(
+				(tx) =>
+					tx.appendEntry(UserEntry, conversation.id, {
+						model: [{ role: "user", content: [{ type: "text", text }], timestamp: 1 }],
+					}),
+				TODO_CONTEXT,
+			),
+		);
+	}
+	return written;
+}
+
+async function entryKinds(conversation: Conversation): Promise<string[]> {
+	const kinds: string[] = [];
+	let cursor: Parameters<Conversation["entries"]>[2];
+	do {
+		const page = await conversation.entries({}, 64, cursor, TODO_CONTEXT);
+		kinds.push(...page.items.map((entry) => entry.kind));
+		cursor = page.next;
+	} while (cursor !== undefined);
+	return kinds;
+}
+
+describe("tree navigation on the session surface", () => {
+	test("focuses an existing conversation without a summary or a new conversation", async () => {
+		const setup = await openConversations();
+		try {
+			const root = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
+			await writeUsers(root, "u1", "u2");
+			const created = await setup.service.service.fork(setup.rootId, null, BACKGROUND_CONTEXT);
+			expect(created.error).toBeNull();
+			const siblingId = created.conversationId ?? "";
+			const before = await readSummaries(setup.harness, setup.rootId);
+
+			const focused = await navigateTree(setup.harness, { kind: "focus", conversationId: siblingId }, TODO_CONTEXT);
+			expect(String(focused.conversation.id)).toBe(siblingId);
+			expect(focused.created).toBe(false);
+			expect(focused.summarized).toBe(false);
+
+			await setup.service.service.select(setup.rootId, BACKGROUND_CONTEXT);
+			const after = await readSummaries(setup.harness, setup.rootId);
+			expect(after.map((summary) => summary.id)).toEqual(before.map((summary) => summary.id));
+			expect(setup.state.value.selected).toBe(setup.rootId);
+			expect(await entryKinds(root)).not.toContain("amazme.branch-summary");
+			const sibling = (await setup.harness.conversation(Number(siblingId) as never, TODO_CONTEXT))!;
+			expect(await entryKinds(sibling)).not.toContain("amazme.branch-summary");
+		} finally {
+			await setup.close();
+		}
+	});
+
+	test("leaves with a summary on the continuation branchSummary returns, and focuses that continuation", async () => {
+		let summarized = false;
+		const setup = await openConversations(undefined, {
+			streamFn: (model, context, options) => {
+				summarized = true;
+				return summaryStream("LEFT THE BRANCH")(model, context, options);
+			},
+		});
+		try {
+			const root = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
+			const [first] = await writeUsers(root, "keep", "abandoned tail");
+			const sibling = await setup.service.service.fork(setup.rootId, null, BACKGROUND_CONTEXT);
+			expect(sibling.error).toBeNull();
+			const siblingId = sibling.conversationId ?? "";
+			await setup.service.service.select(setup.rootId, BACKGROUND_CONTEXT);
+
+			const left = await setup.service.service.leave(setup.rootId, String(first!.id), { summarize: true, customInstructions: null }, BACKGROUND_CONTEXT);
+			expect(left.error).toBeNull();
+			expect(left.cancelled).toBe(false);
+			expect(left.summarized).toBe(true);
+			expect(summarized).toBe(true);
+			expect(left.conversationId).not.toBe(setup.rootId);
+			expect(left.conversationId).not.toBe(siblingId);
+			expect(setup.state.value.selected).toBe(left.conversationId);
+
+			const continued = (await setup.harness.conversation(Number(left.conversationId) as never, TODO_CONTEXT))!;
+			const page = await continued.entries({}, 10, undefined, TODO_CONTEXT);
+			const summary = page.items.find((entry) => entry.kind === "amazme.branch-summary");
+			expect(BranchSummaryEntry.is(summary)).toBe(true);
+			if (!BranchSummaryEntry.is(summary)) throw new Error("unreachable");
+			expect(summary.data.summary).toContain("LEFT THE BRANCH");
+			expect(summary.conversationId).toBe(continued.id);
+			expect(await entryKinds(root)).not.toContain("amazme.branch-summary");
+			const siblingConversation = (await setup.harness.conversation(Number(siblingId) as never, TODO_CONTEXT))!;
+			expect(await entryKinds(siblingConversation)).not.toContain("amazme.branch-summary");
+		} finally {
+			await setup.close();
+		}
+	});
+
+	test("a branch summary already in the tail keeps its body and file lists for the next summary", async () => {
+		let prompt = "";
+		const setup = await openConversations(undefined, {
+			streamFn: (model, context, options) => {
+				prompt = JSON.stringify(context);
+				return summaryStream("NEXT")(model, context, options);
+			},
+		});
+		try {
+			const root = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
+			const [first] = await writeUsers(root, "keep");
+			await root.commit(
+				(tx) =>
+					tx.appendEntry(BranchSummaryEntry, root.id, {
+						model: [{ role: "user", content: [{ type: "text", text: "WRAPPED ONLY" }], timestamp: 1 }],
+						data: {
+							summary: "PRIOR SUMMARY",
+							from: { conversationId: root.id, entryId: first!.id },
+							details: { readFiles: ["src/kept.ts"], modifiedFiles: ["src/edited.ts"] },
+						},
+					}),
+				TODO_CONTEXT,
+			);
+			await writeUsers(root, "later tail");
+			const points = await readReturnPoints(root, TODO_CONTEXT);
+			expect(points.map((point) => point.label)).toEqual(["keep"]);
+
+			const left = await setup.service.service.leave(setup.rootId, String(first!.id), { summarize: true, customInstructions: null }, BACKGROUND_CONTEXT);
+			expect(left.error).toBeNull();
+			expect(left.summarized).toBe(true);
+			expect(prompt).toContain("PRIOR SUMMARY");
+			expect(prompt).toContain("later tail");
+			expect(prompt).not.toContain("WRAPPED ONLY");
+
+			const continued = (await setup.harness.conversation(Number(left.conversationId) as never, TODO_CONTEXT))!;
+			const page = await continued.entries({}, 10, undefined, TODO_CONTEXT);
+			const summary = page.items.find((entry) => entry.kind === "amazme.branch-summary");
+			expect(BranchSummaryEntry.is(summary)).toBe(true);
+			if (!BranchSummaryEntry.is(summary)) throw new Error("unreachable");
+			expect(summary.data.summary).toContain("NEXT");
+			expect(summary.data.summary).toContain("src/kept.ts");
+			expect(summary.data.summary).toContain("src/edited.ts");
+		} finally {
+			await setup.close();
+		}
+	});
+
+	test("skipPrompt leaves without asking the summarizer and without a branch-summary entry", async () => {
+		const setup = await openConversations(undefined, {
+			skipPrompt: true,
+			streamFn: () => {
+				throw new Error("summarizer should not run");
+			},
+		});
+		try {
+			const root = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
+			const [first] = await writeUsers(root, "keep", "tail");
+			const before = (await readSummaries(setup.harness, setup.rootId)).length;
+			const left = await setup.service.service.leave(setup.rootId, String(first!.id), { summarize: true, customInstructions: null }, BACKGROUND_CONTEXT);
+			expect(left.error).toBeNull();
+			expect(left.summarized).toBe(false);
+			expect(left.conversationId).not.toBe(setup.rootId);
+			expect(setup.state.value.selected).toBe(left.conversationId);
+			expect((await readSummaries(setup.harness, setup.rootId)).length).toBe(before + 1);
+			const continued = (await setup.harness.conversation(Number(left.conversationId) as never, TODO_CONTEXT))!;
+			expect(await entryKinds(continued)).not.toContain("amazme.branch-summary");
+			expect(await entryKinds(root)).not.toContain("amazme.branch-summary");
+		} finally {
+			await setup.close();
+		}
+	});
 });

@@ -89,6 +89,8 @@ export class ExperimentalClientTui implements Component {
 	#history: readonly EntryRecord[] = [];
 	#historyCursor: string | null = null;
 	#historyLoaded = false;
+	/** The next submitted line is custom branch-summary instructions, not a prompt. */
+	#pendingSummary: { readonly conversationId: string; readonly at: string } | undefined;
 	readonly #chatInput: CustomEditor;
 	#selectList: SelectList | undefined;
 	#selection: PendingSelection | undefined;
@@ -505,6 +507,14 @@ export class ExperimentalClientTui implements Component {
 
 	async #runPrompt(messageText: string): Promise<void> {
 		const prompt = messageText.trim();
+		const pending = this.#pendingSummary;
+		if (pending !== undefined && !prompt.startsWith("/")) {
+			this.#pendingSummary = undefined;
+			this.#chatInput.setText("");
+			await this.#finishLeave(pending.conversationId, pending.at, true, prompt.length === 0 ? null : prompt);
+			return;
+		}
+		if (pending !== undefined) this.#pendingSummary = undefined;
 		if (prompt.length === 0) return;
 		if (prompt.startsWith("/")) {
 			const separator = prompt.indexOf(" ");
@@ -681,20 +691,71 @@ export class ExperimentalClientTui implements Component {
 		if (conversations === undefined) return;
 		const listed = conversations.state.value;
 		if (listed === undefined) return;
+		const points = await conversations.returnPoints(listed.selected, BACKGROUND_CONTEXT);
 		const value = await this.#select(
 			"Switch conversation",
-			listed.conversations.map((summary) => ({
-				value: summary.id,
-				label: `${"  ".repeat(summary.depth)}${summary.label}`,
-				description: summary.role,
-			})),
-			listed.selected,
+			[
+				...listed.conversations.map((summary) => ({
+					value: `focus:${summary.id}`,
+					label: `${"  ".repeat(summary.depth)}${summary.label}`,
+					description: summary.role,
+				})),
+				...points.map((point) => ({
+					value: `leave:${point.id}`,
+					label: point.label,
+					description: "return",
+				})),
+			],
+			`focus:${listed.selected}`,
 		);
 		if (value === undefined) return;
 		this.#history = [];
 		this.#historyCursor = null;
 		this.#historyLoaded = false;
-		await conversations.select(value, BACKGROUND_CONTEXT);
+		if (value.startsWith("leave:")) {
+			await this.#leaveConversation(listed.selected, value.slice("leave:".length));
+			return;
+		}
+		const id = value.startsWith("focus:") ? value.slice("focus:".length) : value;
+		await conversations.select(id, BACKGROUND_CONTEXT);
+	}
+
+	/** Leave the shown conversation back to `at`. skipPrompt does not ask and does not summarize. */
+	async #leaveConversation(conversationId: string, at: string): Promise<void> {
+		const conversations = this.#conversations;
+		if (conversations === undefined) return;
+		const skip = conversations.state.value?.branchSummarySkipPrompt === true;
+		let summarize = false;
+		let customInstructions: string | null = null;
+		if (!skip) {
+			const choice = await this.#select("Summarize branch?", [
+				{ value: "no", label: "No summary" },
+				{ value: "yes", label: "Summarize" },
+				{ value: "custom", label: "Summarize with custom prompt" },
+			]);
+			if (choice === undefined) {
+				await this.#switchConversation();
+				return;
+			}
+			summarize = choice !== "no";
+			if (choice === "custom") {
+				this.#pendingSummary = { conversationId, at };
+				this.#status = "Custom summarization instructions. Submit a line, or submit empty for the default summary.";
+				this.#rebuild();
+				return;
+			}
+		}
+		await this.#finishLeave(conversationId, at, summarize, customInstructions);
+	}
+
+	async #finishLeave(conversationId: string, at: string, summarize: boolean, customInstructions: string | null): Promise<void> {
+		const conversations = this.#conversations;
+		if (conversations === undefined) return;
+		const result = await conversations.leave(conversationId, at, { summarize, customInstructions }, BACKGROUND_CONTEXT);
+		if (result.cancelled) this.#status = "Branch summarization cancelled";
+		else if (result.error !== null) this.#status = result.error.message;
+		else this.#status = result.summarized ? "Left the branch with a summary." : "Left the branch.";
+		this.#rebuild();
 	}
 
 	async #loadOlder(): Promise<void> {
