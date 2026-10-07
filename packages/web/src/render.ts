@@ -65,6 +65,8 @@ export interface PageElements {
 	readonly primary: HTMLButtonElement;
 	/** Stops the running turn. Hidden while the session is idle. */
 	readonly stop: HTMLButtonElement;
+	/** Pending approvals. Always in the header, beside the usage figures. */
+	readonly approvalStatus: HTMLElement;
 	/** Context %, tokens, and cost. Always in the header. */
 	readonly meter: HTMLElement;
 	readonly meterContext: HTMLElement;
@@ -158,6 +160,7 @@ export function collectPageElements(): PageElements {
 		prompt: pickElement("prompt", HTMLTextAreaElement),
 		primary: pickElement("primary", HTMLButtonElement),
 		stop: pickElement("stop", HTMLButtonElement),
+		approvalStatus: pick("approval-status"),
 		meter: pick("status-meter"),
 		meterContext: pick("meter-context"),
 		meterTokens: pick("meter-tokens"),
@@ -899,6 +902,23 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 		elements.stop.title = keys === undefined ? copy("composer.stop") : `${copy("composer.stop")} (${keys})`;
 	};
 
+	/**
+	 * Pending approvals in the header. The cards above the composer stay the place to answer;
+	 * this mark remains when the transcript is empty or those cards are scrolled out of view.
+	 */
+	const renderApprovalStatus = (view: WebView): void => {
+		const indicator = view.approvalIndicator;
+		if (indicator === undefined) {
+			elements.approvalStatus.hidden = true;
+			elements.approvalStatus.textContent = "";
+			elements.approvalStatus.removeAttribute("aria-label");
+			return;
+		}
+		elements.approvalStatus.hidden = false;
+		elements.approvalStatus.textContent = indicator.label;
+		elements.approvalStatus.setAttribute("aria-label", indicator.label);
+	};
+
 	/** Context %, tokens, and cost. Painted on every view, including before a session is attached. */
 	const renderMeter = (view: WebView): void => {
 		elements.meterContext.textContent = view.meter.context;
@@ -1445,6 +1465,7 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 			elements.prompt.placeholder = composerPlaceholder(view.locale, view.attachedId);
 			renderPrimary();
 			renderStop();
+			renderApprovalStatus(view);
 			renderMeter(view);
 
 			elements.queue.replaceChildren();

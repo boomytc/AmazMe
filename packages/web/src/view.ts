@@ -293,6 +293,26 @@ export function approvalCards(locale: Locale, state: ApprovalsStateLike | undefi
 	}));
 }
 
+/** The header's pending-approval mark. Absent when nothing is waiting, so the strip stays quiet. */
+export interface ApprovalIndicator {
+	readonly count: number;
+	readonly label: string;
+}
+
+/**
+ * The short mark the header keeps on screen while tool calls wait. The cards above the composer
+ * are still where a call is approved or denied; this only says how many are waiting, including
+ * when the transcript is empty or those cards are off screen.
+ */
+export function approvalIndicator(locale: Locale, state: ApprovalsStateLike | undefined): ApprovalIndicator | undefined {
+	const count = state?.pending.length ?? 0;
+	if (count === 0) return undefined;
+	return {
+		count,
+		label: translate(locale, "header.pendingApprovals", { count: String(count) }),
+	};
+}
+
 /** One image the reader attached and has not sent yet, as the composer shows it. */
 export interface Attachment {
 	readonly id: string;
@@ -387,6 +407,8 @@ export interface WebView {
 	readonly attachments: readonly Attachment[];
 	/** The session's pending tool approvals. */
 	readonly approvals: readonly ApprovalCard[];
+	/** Pending approvals the header keeps visible. Absent when the queue is empty. */
+	readonly approvalIndicator: ApprovalIndicator | undefined;
 	/** The first-run guide, while the host has no sessions and it is not dismissed. */
 	readonly welcome: WelcomeCard | undefined;
 	readonly run: RunControls;
@@ -1184,6 +1206,7 @@ export function failureView(locale: Locale, text: string): WebView {
 		queue: [],
 		attachments: [],
 		approvals: [],
+		approvalIndicator: undefined,
 		welcome: undefined,
 		run: runControls(locale, "followUp", false),
 		attachedId: undefined,
@@ -1241,6 +1264,7 @@ export function buildWebView(input: WebViewInput): WebView {
 		queue: queuedInputs(locale, input.transcript),
 		attachments: attachments(locale, input.attachments),
 		approvals: approvalCards(locale, input.approvals),
+		approvalIndicator: approvalIndicator(locale, input.approvals),
 		welcome: welcomeCard(locale, {
 			// Only a host that answered offers the guide, and a session means the reader is past it.
 			show: input.showWelcome && input.directory !== undefined && (input.directory.sessions.length ?? 0) === 0,
