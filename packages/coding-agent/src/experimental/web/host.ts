@@ -3,17 +3,12 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { ServerId } from "@amazme/protocol";
 import { WebSocketListener } from "@amazme/server/websocket";
+import type { WebBootManifest, WebMode } from "@amazme/web";
+import { contentTypeFor, PAGE_SCRIPT, readPageDocument, resolvePageAsset } from "@amazme/web/assets";
 import { APP_NAME, VERSION } from "../../config.ts";
 import { startForegroundServer, type RunningServer } from "../server.ts";
 import { buildBootManifest, injectBootManifest } from "./boot.ts";
-import type { WebBootManifest, WebMode } from "./contract.ts";
-import {
-	bundlePageEntry,
-	contentTypeFor,
-	readPageDocument,
-	resolvePageAsset,
-	WEB_PAGE_SCRIPT,
-} from "./bundle.ts";
+import { bundlePageEntry } from "./bundle.ts";
 /** Canonical loopback address the page and the WebSocket endpoint are served on. */
 const WEB_HOST = "127.0.0.1";
 const WEB_SOCKET_PATH = "/amazme";
@@ -123,7 +118,7 @@ async function serveRequest(request: IncomingMessage, response: ServerResponse, 
 			respond(response, 200, contentTypeFor(DEFAULT_INDEX), injectBootManifest(assets.document, assets.manifest()));
 			return;
 		}
-		if (urlPath === WEB_PAGE_SCRIPT) {
+		if (urlPath === PAGE_SCRIPT) {
 			respond(response, 200, "text/javascript; charset=utf-8", assets.script);
 			return;
 		}

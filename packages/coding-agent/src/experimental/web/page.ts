@@ -9,17 +9,23 @@ import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ReplicatedState } from "@amazme/chord";
 import type { ConversationView } from "@amazme/durable";
-import { BOOT_GLOBAL, type WebBootManifest } from "../contract.ts";
+import { BOOT_GLOBAL, type WebBootManifest } from "@amazme/web";
+import {
+	buildWebView,
+	collectPageElements,
+	createRenderer,
+	failureView,
+	isBusy,
+	type PageRenderer,
+} from "@amazme/web";
+import { AgentController } from "../services/agent-controller.ts";
 import {
 	createServerServiceSource,
 	createSessionServiceSource,
 	type SessionServiceSource,
-} from "../../services/connection.ts";
-import { AgentController } from "../../services/agent-controller.ts";
-import { SessionDirectory, SessionManagement } from "../../services/sessions.ts";
-import { Transcript } from "../../services/transcript.ts";
-import { buildWebView, failureView, isBusy } from "../view.ts";
-import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
+} from "../services/connection.ts";
+import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
+import { Transcript } from "../services/transcript.ts";
 
 function readManifest(): WebBootManifest | undefined {
 	const candidate = (globalThis as Record<string, unknown>)[BOOT_GLOBAL];

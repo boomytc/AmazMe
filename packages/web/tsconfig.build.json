@@ -1,0 +1,11 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": "./src",
+		"paths": {
+			"@amazme/durable": ["../durable/dist/index.d.ts"]
+		}
+	},
+	"include": ["src/**/*.ts"]
+}

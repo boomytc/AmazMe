@@ -22,6 +22,8 @@ export default mergeConfig(
 		resolve: {
 			alias: [
 				{ find: /^@amazme\/ai$/, replacement: workspaceSourcePaths.aiIndex },
+			{ find: /^@amazme\/web$/, replacement: workspaceSourcePaths.webIndex },
+			{ find: /^@amazme\/web\/assets$/, replacement: workspaceSourcePaths.webAssets },
 				{ find: /^@amazme\/agent$/, replacement: workspaceSourcePaths.agentIndex },
 				{ find: /^@mariozechner\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
 				{ find: /^@mariozechner\/pi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },

@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 import { webLaunchLines } from "../src/experimental/commands.ts";
 import { buildBootManifest, injectBootManifest } from "../src/experimental/web/boot.ts";
-import type { WebBootManifest } from "../src/experimental/web/contract.ts";
+import type { WebBootManifest } from "@amazme/web";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 
 const hosts = new Set<WebHost>();

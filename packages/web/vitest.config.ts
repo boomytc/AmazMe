@@ -1,0 +1,20 @@
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+	test: {
+		globals: true,
+		environment: "node",
+		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
+	},
+	resolve: {
+		conditions: ["source"],
+		alias: [
+			{
+				find: /^@amazme\/durable$/,
+				replacement: fileURLToPath(new URL("../durable/src/index.ts", import.meta.url)),
+			},
+		],
+	},
+	ssr: { resolve: { conditions: ["source"] } },
+});

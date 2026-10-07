@@ -1,0 +1,27 @@
+{
+	"name": "@amazme/web",
+	"version": "1.0.4",
+	"private": true,
+	"type": "module",
+	"sideEffects": false,
+	"description": "Loopback page for a running AmazMe host: document, boot contract, and the projection the browser renders",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./assets": {
+			"types": "./dist/assets.d.ts",
+			"import": "./dist/assets.js"
+		}
+	},
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json && shx cp src/index.html dist/index.html",
+		"test": "vitest --run",
+		"typecheck": "tsc -p tsconfig.test.json"
+	},
+	"devDependencies": {
+		"@amazme/durable": "^1.0.4"
+	}
+}

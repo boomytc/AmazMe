@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION } from "@amazme/protocol";
-import { BOOT_GLOBAL, BOOT_PLACEHOLDER, type WebBootManifest, type WebMode } from "./contract.ts";
+import { BOOT_GLOBAL, BOOT_PLACEHOLDER, type WebBootManifest, type WebMode } from "@amazme/web";
 
 export interface WebBootOptions {
 	/** Product name shown by the page. Defaults to AmazMe. */

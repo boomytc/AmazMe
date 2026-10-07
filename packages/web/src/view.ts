@@ -8,15 +8,14 @@ import {
 	AssistantEntry,
 	CompactionEntry,
 	type ConversationView,
+	type EntryId,
+	type EntryRecord,
+	type InboxState,
+	type LiveState,
 	ResetEntry,
 	ToolResultEntry,
 	UserEntry,
-	type EntryId,
-	type EntryRecord,
 } from "@amazme/durable";
-import type { InboxState } from "@amazme/durable";
-import type { SessionDirectoryState, SessionSummary } from "../services/sessions.ts";
-import { inboxOf, liveOf } from "../services/transcript.ts";
 
 export type BlockTone = "plain" | "muted" | "error";
 
@@ -47,8 +46,30 @@ export interface WebView {
 	readonly empty: string | undefined;
 }
 
+/** The `amazme.live` document of a view: the active run, the streaming answer, and running tools. */
+export function liveOf(view: ConversationView): LiveState {
+	return (view.docs["amazme.live"] ?? {}) as LiveState;
+}
+
+/** The `amazme.inbox` document of a view: inputs the session accepted but has not started yet. */
+export function inboxOf(view: ConversationView): InboxState {
+	return (view.docs["amazme.inbox"] ?? { items: [] }) as InboxState;
+}
+
+/** One hosted Session as the host publishes it; only the fields the roster shows. */
+export interface SessionSummaryLike {
+	readonly serverId?: string;
+	readonly sessionId: string;
+	readonly createdAt: number;
+}
+
+/** The host's replicated session directory, as this package reads it. */
+export interface SessionDirectoryLike {
+	readonly sessions: readonly SessionSummaryLike[];
+}
+
 export interface WebViewInput {
-	readonly directory: SessionDirectoryState | undefined;
+	readonly directory: SessionDirectoryLike | undefined;
 	readonly transcript: ConversationView | undefined;
 	readonly attachedId: string | undefined;
 	readonly now: number;
@@ -65,16 +86,16 @@ export function formatAge(createdAt: number, now: number): string {
 }
 
 export function rosterItems(
-	state: SessionDirectoryState | undefined,
+	state: SessionDirectoryLike | undefined,
 	attachedId: string | undefined,
 	now: number,
 ): RosterItem[] {
 	const sessions = state?.sessions ?? [];
 	return [...sessions]
 		.sort(
-			(left: SessionSummary, right: SessionSummary) =>
+			(left: SessionSummaryLike, right: SessionSummaryLike) =>
 				right.createdAt - left.createdAt ||
-				left.serverId.localeCompare(right.serverId) ||
+				(left.serverId ?? "").localeCompare(right.serverId ?? "") ||
 				left.sessionId.localeCompare(right.sessionId),
 		)
 		.map((session) => ({

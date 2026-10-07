@@ -4,7 +4,7 @@
  * Every update rebuilds the panels, then restores the transcript's scroll position so streaming
  * does not yank the reader around.
  */
-import { composerPlaceholder, type TranscriptBlock, type WebView } from "../view.ts";
+import { composerPlaceholder, type TranscriptBlock, type WebView } from "./view.ts";
 
 export interface PageElements {
 	readonly connection: HTMLElement;

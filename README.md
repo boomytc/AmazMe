@@ -54,6 +54,7 @@ AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/sou
 | [@amazme/server](packages/server) | 远程会话服务端，依赖 chord 和 protocol |
 | [@amazme/durable](packages/durable) | 持久的对话、任务和文档，依赖 chord 和 ai |
 | [@amazme/env](packages/env) | 经 SSH 部署的远程执行环境，依赖 chord 和 durable |
+| [@amazme/web](packages/web) | 回环网页客户端的文档、启动契约与视图投影（实验切片） |
 | [@amazme/coding-agent](packages/coding-agent) | 交互式编码代理命令行 |
 | [@amazme/evals](packages/evals) | 文档和宿主评测，依赖 ai 和 coding-agent |
 

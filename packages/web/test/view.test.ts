@@ -12,7 +12,7 @@ import {
 	UserEntry,
 } from "@amazme/durable";
 import { describe, expect, test } from "vitest";
-import type { SessionDirectoryState } from "../src/experimental/services/sessions.ts";
+import type { SessionDirectoryLike } from "../src/view.ts";
 import {
 	buildWebView,
 	failureView,
@@ -21,7 +21,7 @@ import {
 	rosterItems,
 	sessionStatus,
 	transcriptBlocks,
-} from "../src/experimental/web/view.ts";
+} from "../src/view.ts";
 
 const CONVERSATION = 1 as ConversationId;
 const NOW = 1_700_000_000_000;
@@ -87,9 +87,8 @@ function viewOf(entries: EntryRecord[], docs: Record<string, JsonObject> = {}): 
 	};
 }
 
-function directoryOf(sessions: readonly { sessionId: string; createdAt: number }[]): SessionDirectoryState {
+function directoryOf(sessions: readonly { sessionId: string; createdAt: number }[]): SessionDirectoryLike {
 	return {
-		revision: 1,
 		sessions: sessions.map((session) => ({
 			serverId: "00000000-0000-4000-8000-000000000001",
 			sessionId: session.sessionId,

@@ -15,7 +15,7 @@ import {
 import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
 import { Transcript } from "../src/experimental/services/transcript.ts";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
-import { transcriptBlocks } from "../src/experimental/web/view.ts";
+import { transcriptBlocks } from "@amazme/web";
 
 interface Presentation {
 	readonly management: SessionManagement;
