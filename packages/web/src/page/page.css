@@ -1,11 +1,11 @@
 /*
  * Page shell: the DeepSeek Harness web layout, composed from DSH's own component values.
- * Two frame columns (ui-layout AppFrame: sidebar fill + 0.5px rule, bg-base center); a header row
- * over the Transcript (ui-conversation ConversationRoot, the no-tabs variant); a full-bleed
- * transcript scroller around a centred column (ui-chat ChatView); a right-aligned user bubble
- * (MessageItem); assistant flow (AssistantMarkdown); 24px disclosure rows for reasoning and tool
- * calls (ui-primitives DisclosureRow, ui-tool ToolRow); a tool result card (ToolDetails); and the
- * composer card docked at the bottom (ui-conversation InputBar).
+ * Two frame columns (ui-layout AppFrame: sidebar fill + 0.5px rule); a header row over the
+ * transcript (ui-conversation ConversationRoot, the no-tabs variant); a full-bleed transcript
+ * scroller around a centred column (ui-chat ChatView); a right-aligned user bubble (MessageItem);
+ * assistant flow (AssistantMarkdown); 24px disclosure rows for reasoning and tool calls
+ * (ui-primitives DisclosureRow, ui-tool ToolRow) with a tool result card (ToolDetails); and the
+ * composer card with the circular primary action (ui-conversation InputBar).
  */
 
 * {
@@ -45,11 +45,11 @@ body {
 	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
-/* Brand row (ui-sidebar SidebarRoot .logoRow): 60px, 4px leading inset. */
+/* Brand row (ui-sidebar SidebarRoot .logoRow): 60px, centred, 4px leading inset. */
 .logo-row {
 	flex: none;
 	display: flex;
-	align-items: baseline;
+	align-items: center;
 	gap: 8px;
 	height: 60px;
 	padding: 8px 0 8px 4px;
@@ -156,9 +156,8 @@ body {
 	flex-direction: column;
 	min-width: 0;
 	overflow: hidden;
-	background: var(--dsw-alias-bg-base);
-	/* DSH publishes the conversation column's width to its components as a length; here the
-	   column itself is the query container, so the shared width axis is read from it in cqi. */
+	/* DSH publishes the conversation column's width to its components as a length; here the center
+	   column is the query container, so components read that axis as 64cqi against it. */
 	container-type: inline-size;
 	--dsh-chat-content-width: clamp(680px, 64cqi, 920px);
 	--dsh-composer-card-max-width: calc(var(--dsh-chat-content-width) + 32px);
@@ -279,21 +278,18 @@ body {
 	word-break: break-word;
 }
 
-/* Turn process: reasoning and tool rows, one flow item with 6px internal gaps. */
+/* Turn process: a run of reasoning and tool rows is one flow item. Its rows sit the default 6px
+   apart — the value DSH's process seat resets to inside its own body (ChatGroupSeat .body) —
+   written out because this group is also the item that raises the column's gap above itself. */
 .turn-process {
 	display: flex;
 	flex-direction: column;
-	gap: var(--dsh-chat-flow-gap, 6px);
+	gap: 6px;
 }
 
-/* Assistant response (AssistantMarkdown): plain flow, no bubble. */
+/* Assistant response (AssistantMarkdown). DSH holds the markdown type on its root and a flex column
+   of blocks in `.body`; this page's answer is one pre-wrap text run, so the flow item is both. */
 .turn-response {
-	display: flex;
-	flex-direction: column;
-	gap: 16px;
-}
-
-.turn-response .body {
 	white-space: pre-wrap;
 	word-break: break-word;
 }
@@ -328,8 +324,8 @@ summary.disclosure-row {
 	display: none;
 }
 
-/* Leading glyph box; the page has no icon set, so the mark is the 6px status dot of the state
-   family rather than a tool's own icon. */
+/* Leading glyph box. The page ships no icon set, so a row's mark is its own 6px state dot in the
+   row's ink — tertiary at rest, deep-diving while running, error when failed. */
 .disclosure-leading {
 	flex: none;
 	display: inline-flex;
@@ -345,6 +341,7 @@ summary.disclosure-row {
 	width: 6px;
 	height: 6px;
 	border-radius: 50%;
+	corner-shape: round;
 	background: currentcolor;
 }
 
@@ -375,11 +372,12 @@ summary.disclosure-row {
 	white-space: nowrap;
 }
 
-/* Reasoning body (ui-chat ReasoningRow .thinkBody): indented under the title, secondary type. */
+/* Reasoning body (ui-chat ReasoningRow .thinkBody): indented under the title, compact markdown
+   type in the tertiary ink (ui-primitives MarkdownText .compact). */
 .reasoning-body {
 	padding: 4px 0 4px calc(22px + var(--dsh-content-font-delta));
 	min-width: 0;
-	color: var(--dsw-alias-label-secondary);
+	color: var(--dsw-alias-label-tertiary);
 	font-size: var(--dsh-content-font-size-secondary);
 	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
 	white-space: pre-wrap;
@@ -396,7 +394,8 @@ summary.disclosure-row {
 	color: var(--dsw-alias-state-error-primary);
 }
 
-/* Tool result card (ui-tool ToolDetails): hairline card on the code-block fill. */
+/* Tool result card (ui-tool ToolDetails): hairline card on the code-block fill, secondary ink at
+   the component's own type tier. */
 .tool-output {
 	margin: 4px 0 4px 4px;
 	padding: 10px 14px;
@@ -404,7 +403,7 @@ summary.disclosure-row {
 	border-radius: var(--dsw-radius-lg);
 	background: var(--dsw-alias-markdown-code-block);
 	color: var(--dsw-alias-label-secondary);
-	font: var(--dsw-font-markdown-code);
+	font: var(--dsw-font-xs-13);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 	max-height: 320px;
@@ -415,18 +414,19 @@ summary.disclosure-row {
 	color: var(--dsw-alias-label-caption);
 }
 
-/* A flow notice's body (compaction summary), indented under its row like DSH's. */
+/* A flow notice's body (compaction summary), indented under its row by the same 22px the
+   compaction marker's body uses (MessageItem .compactionBody). */
 .notice-body {
 	display: block;
 	padding: 4px 0 4px calc(22px + var(--dsh-content-font-delta));
 	color: var(--dsw-alias-label-tertiary);
 	font-size: var(--dsh-content-font-size-secondary);
-	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
+	line-height: calc(24px + var(--dsh-content-font-delta));
 	white-space: pre-wrap;
 	word-break: break-word;
 }
 
-/* Failed turn (MessageItem .turnErrorRow): a status dot, a title in the error colour, the message. */
+/* Failed turn (MessageItem .turnErrorRow): a state dot, a title in the error colour, the message. */
 .error-row {
 	display: grid;
 	grid-template-columns: 10px minmax(0, 1fr);
@@ -437,12 +437,22 @@ summary.disclosure-row {
 	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
 }
 
+/* The error dot is StateDot's solid form: a 10px layout slot painting one 6px currentColor core. */
 .error-dot {
-	width: 8px;
-	height: 8px;
-	margin-top: 6px;
+	position: relative;
+	width: 10px;
+	height: 10px;
+	margin-top: 5px;
+	color: var(--dsw-alias-state-error-primary);
+}
+
+.error-dot::after {
+	content: "";
+	position: absolute;
+	inset: 20%;
 	border-radius: 50%;
-	background: var(--dsw-alias-state-error-primary);
+	corner-shape: round;
+	background: currentcolor;
 }
 
 .error-copy {
@@ -555,55 +565,42 @@ summary.disclosure-row {
 	color: var(--dsw-alias-label-caption);
 }
 
-/* Control row (InputBar .row): secondary controls leading, the action trailing. */
+/* Control row (InputBar .row): the primary action trails the draft. */
 .composer-row {
 	display: flex;
-	flex-wrap: wrap;
 	align-items: center;
-	justify-content: space-between;
+	justify-content: flex-end;
 	gap: 12px;
 	min-width: 0;
 	padding: 2px 8px 6px;
 }
 
-/* Button (ui-primitives Button), at the compact size the composer uses. */
-.button {
-	box-sizing: border-box;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 4px;
-	height: 28px;
-	padding: 0 10px;
+/* Primary action (InputBar .primary): 34px circle in the info fill, white glyph, and the row's 2px
+   downward shift cancelled by a transform. The glyph is Send, or Stop while a turn runs and the
+   draft is empty — the page's own 16px arrow and square stand in for DSH's icon set. */
+.primary {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 34px;
+	height: 34px;
+	padding: 0;
 	border: none;
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
-	color: var(--dsw-alias-label-primary);
-	font: inherit;
-	font-size: 12px;
-	line-height: 18px;
+	border-radius: 999px;
+	corner-shape: round;
+	background: var(--dsw-alias-button-info-fill);
+	/* Static white, not the foreground token: the glyph stays white on the blue fill in both themes. */
+	color: #fff;
 	cursor: pointer;
-	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+	transform: translateY(-2px);
+	transition: background-color 100ms ease;
 }
 
-.button:disabled {
-	cursor: not-allowed;
+.primary:hover:not(:disabled) {
+	background: var(--dsw-alias-button-info-hover);
+}
+
+.primary:disabled {
 	opacity: 0.4;
-}
-
-.button.ghost:hover:not(:disabled) {
-	background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.button.ghost:active:not(:disabled) {
-	background: var(--dsw-alias-interactive-bg-active);
-}
-
-.button.primary {
-	background: var(--dsw-alias-button-primary-fill);
-	color: var(--dsw-alias-label-primary-foreground);
-}
-
-.button.primary:hover:not(:disabled) {
-	background: var(--dsw-alias-button-primary-hover);
+	cursor: default;
 }

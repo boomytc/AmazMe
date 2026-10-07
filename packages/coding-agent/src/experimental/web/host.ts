@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { ServerId } from "@amazme/protocol";
 import { WebSocketListener } from "@amazme/server/websocket";
 import type { WebBootManifest, WebMode } from "@amazme/web";
-import { contentTypeFor, PAGE_SCRIPT, readPageDocument, resolvePageAsset } from "@amazme/web/assets";
+import { contentTypeFor, PAGE_DOCUMENT, PAGE_SCRIPT, readPageDocument, resolvePageAsset } from "@amazme/web/assets";
 import { APP_NAME, VERSION } from "../../config.ts";
 import { startForegroundServer, type RunningServer } from "../server.ts";
 import { buildBootManifest, injectBootManifest } from "./boot.ts";
@@ -12,7 +12,6 @@ import { bundlePageEntry } from "./bundle.ts";
 /** Canonical loopback address the page and the WebSocket endpoint are served on. */
 const WEB_HOST = "127.0.0.1";
 const WEB_SOCKET_PATH = "/amazme";
-const DEFAULT_INDEX = "index.html";
 const NOT_FOUND = "Not found\n";
 
 export interface WebHostOptions {
@@ -52,7 +51,7 @@ const repositoryRootFromModule = fileURLToPath(new URL("../../../../../", import
 export async function startWebHost(options: WebHostOptions = {}): Promise<WebHost> {
 	const repositoryRoot = options.repositoryRoot ?? repositoryRootFromModule;
 	const path = options.path ?? WEB_SOCKET_PATH;
-	const [document, bundle] = await Promise.all([readPageDocument(DEFAULT_INDEX), bundlePageEntry(repositoryRoot)]);
+	const [document, bundle] = await Promise.all([readPageDocument(), bundlePageEntry(repositoryRoot)]);
 	const httpServer = createServer((request, response) => {
 		void serveRequest(request, response, { document, script: bundle.code, manifest: () => manifest });
 	});
@@ -115,7 +114,7 @@ async function serveRequest(request: IncomingMessage, response: ServerResponse, 
 		}
 		const urlPath = (request.url ?? "/").split("?")[0] ?? "/";
 		if (urlPath === "/") {
-			respond(response, 200, contentTypeFor(DEFAULT_INDEX), injectBootManifest(assets.document, assets.manifest()));
+			respond(response, 200, contentTypeFor(PAGE_DOCUMENT), injectBootManifest(assets.document, assets.manifest()));
 			return;
 		}
 		if (urlPath === PAGE_SCRIPT) {

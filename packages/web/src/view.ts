@@ -44,6 +44,8 @@ export interface WebView {
 	readonly queue: readonly string[];
 	readonly attachedId: string | undefined;
 	readonly empty: string | undefined;
+	/** Whether a turn is in flight: the composer's primary action becomes the stop control. */
+	readonly busy: boolean;
 }
 
 /** The `amazme.live` document of a view: the active run, the streaming answer, and running tools. */
@@ -350,7 +352,7 @@ export function queuedInputs(view: ConversationView | undefined): string[] {
 
 /** The view a page shows when it cannot reach or trust the host. */
 export function failureView(text: string): WebView {
-	return { roster: [], blocks: [], status: "", queue: [], attachedId: undefined, empty: text };
+	return { roster: [], blocks: [], status: "", queue: [], attachedId: undefined, empty: text, busy: false };
 }
 
 export function buildWebView(input: WebViewInput): WebView {
@@ -369,5 +371,6 @@ export function buildWebView(input: WebViewInput): WebView {
 		queue: queuedInputs(input.transcript),
 		attachedId: input.attachedId,
 		empty,
+		busy: isBusy(input.transcript),
 	};
 }

@@ -31,8 +31,9 @@ AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/sou
   ./packages/coding-agent/src/experimental/cli.ts web
 ```
 
-它会打印回环 URL、模式和 server id，随后在浏览器里打开该 URL 即可看到会话名册、transcript、实时状态与输入框；
-细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。这一入口依赖源码切片，尚未进入打包产物。
+它会打印回环 URL、服务模式、WebSocket 地址与 server id，随后在浏览器里打开该 URL 即可看到会话名册、transcript、
+实时状态与输入框；细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。这一入口依赖
+源码切片，尚未进入打包产物。
 
 项目配置在当前目录的 `.amazme`，用户配置在 `~/.amazme/agent`。命令名是 `amazme`。`@amazme/coding-agent` 的 bin 指向 `dist/bundle/cli.js`，所以要先构建，再从本仓库运行或做 `npm link`。
 
@@ -54,7 +55,7 @@ AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/sou
 | [@amazme/server](packages/server) | 远程会话服务端，依赖 chord 和 protocol |
 | [@amazme/durable](packages/durable) | 持久的对话、任务和文档，依赖 chord 和 ai |
 | [@amazme/env](packages/env) | 经 SSH 部署的远程执行环境，依赖 chord 和 durable |
-| [@amazme/web](packages/web) | 回环网页客户端的文档、启动契约与视图投影（实验切片） |
+| [@amazme/web](packages/web) | 回环网页客户端的文档与样式、启动契约与视图投影（实验切片） |
 | [@amazme/coding-agent](packages/coding-agent) | 交互式编码代理命令行 |
 | [@amazme/evals](packages/evals) | 文档和宿主评测，依赖 ai 和 coding-agent |
 

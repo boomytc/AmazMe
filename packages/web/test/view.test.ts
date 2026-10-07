@@ -12,7 +12,7 @@ import {
 	UserEntry,
 } from "@amazme/durable";
 import { describe, expect, test } from "vitest";
-import type { SessionDirectoryLike } from "../src/view.ts";
+import type { SessionDirectoryLike, WebView } from "../src/view.ts";
 import {
 	buildWebView,
 	failureView,
@@ -287,5 +287,18 @@ describe("web view model", () => {
 		expect(attached.attachedId).toBe("s");
 		expect(attached.roster[0]?.attached).toBe(true);
 		expect(failureView("cannot boot: x")).toMatchObject({ empty: "cannot boot: x", blocks: [], roster: [] });
+	});
+
+	test("marks a view busy only while a run is in flight", () => {
+		const view = (live: JsonObject | undefined): WebView =>
+			buildWebView({
+				directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
+				transcript: viewOf([], live === undefined ? {} : { "amazme.live": live }),
+				attachedId: "s",
+				now: NOW,
+			});
+		expect(view(undefined).busy).toBe(false);
+		expect(view({ tools: [{ callId: "c", name: "bash", status: "running" }] }).busy).toBe(false);
+		expect(view({ run: { taskId: 1, inputs: [] } }).busy).toBe(true);
 	});
 });

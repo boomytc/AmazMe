@@ -4,7 +4,8 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>AmazMe</title>
-		<!-- Canvas colour before the first paint, the two base fills of the palette. -->
+		<!-- Canvas colour before the first paint, the two base fills of the palette
+		     (`--dsw-static-neutral-bluish-00` and `-950` in tokens.css). -->
 		<style>
 			:root {
 				color-scheme: light dark;
@@ -24,6 +25,12 @@
 		<!--amazme-boot-->
 	</head>
 	<body>
+		<!-- Palette before the first paint. DSH boots the same attribute from a body script: without it
+		     the shell would paint in the light palette until the page bundle runs. The entry re-applies
+		     it and follows later appearance changes. -->
+		<script>
+			document.body.toggleAttribute("data-ds-dark-theme", matchMedia("(prefers-color-scheme: dark)").matches);
+		</script>
 		<aside class="sidebar">
 			<div class="logo-row">
 				<span class="brand-name">AmazMe</span>
@@ -55,8 +62,19 @@
 						disabled
 					></textarea>
 					<div class="composer-row">
-						<button class="button ghost" type="button" id="abort" disabled>Stop</button>
-						<button class="button primary" type="submit" id="send" disabled>Send</button>
+						<!-- The renderer swaps this Send glyph for the stop square while a turn runs. -->
+						<button class="primary" type="submit" id="primary" aria-label="Send" disabled>
+							<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+								<path
+									d="M8 13.4V3.4M3.6 7.4 8 3l4.4 4.4"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.8"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								/>
+							</svg>
+						</button>
 					</div>
 				</form>
 			</div>

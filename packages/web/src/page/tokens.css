@@ -1,23 +1,20 @@
 /*
  * Theme layer: the DeepSeek Harness design platform, mirrored from
- * /Users/boom/workspace/deepseek-harness/packages/client/ui-theme/src/styles
+ * deepseek-harness/packages/client/ui-theme/src/styles
  * (base.css, design-platform.css, gradient-shadow-text.css, scrollbar.css, corner-shape.css,
  * focus.css). Names and values are DSH's, trimmed to what this page reads.
  * Light is the default; `body[data-ds-dark-theme]` carries DSH's dark overrides, and the page
  * entry sets that attribute from the system preference.
- * DSH's Montserrat brand face is its own brand asset and is not shipped here, so the brand stack
+ * DSH's Montserrat brand face is its own brand asset and is not shipped here, so `--dsw-font-family-brand`
  * falls back to the system family DSH mixes under it.
  */
 
 :root {
-	/* Stacks, motion curve, and the radius rungs the page reads. */
+	/* Font stacks and motion curve. */
 	--dsw-font-family:
 		-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
 		"Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
 	--dsw-font-family-brand: var(--dsw-font-family);
-	--ds-font-family-code:
-		"SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, Courier,
-		"PingFang SC", "Microsoft YaHei";
 	--ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 	--ds-transition-duration-fast: 0.1s;
 	--dsw-radius-sm: 8px;
@@ -28,7 +25,6 @@
 
 	/* Type ladder entries this page reads. */
 	--dsw-font-xs-13: 13px/20px var(--dsw-font-family);
-	--dsw-font-markdown-code: 12px/19px var(--ds-font-family-code);
 
 	--dsw-focus-ring-width: 2px;
 
@@ -60,12 +56,10 @@ body {
 	--dsw-static-neutral-bluish-00: rgb(255, 255, 255);
 	--dsw-static-neutral-bluish-50: rgb(249, 250, 251);
 	--dsw-static-neutral-bluish-75: rgb(241, 243, 245);
-	--dsw-static-neutral-bluish-100: rgb(235, 238, 242);
 	--dsw-static-neutral-bluish-300: rgb(207, 211, 214);
 	--dsw-static-neutral-bluish-400: rgb(173, 178, 184);
 	--dsw-static-neutral-bluish-600: rgb(129, 133, 140);
 	--dsw-static-neutral-bluish-700: rgb(97, 102, 107);
-	--dsw-static-neutral-bluish-750: rgb(67, 69, 74);
 	--dsw-static-neutral-bluish-850: rgb(44, 44, 46);
 	--dsw-static-neutral-bluish-900: rgb(27, 27, 28);
 	--dsw-static-neutral-bluish-950: rgb(21, 21, 23);
@@ -83,13 +77,10 @@ body {
 	--dsw-alias-label-secondary: var(--dsw-static-neutral-bluish-700);
 	--dsw-alias-label-tertiary: var(--dsw-static-neutral-bluish-600);
 	--dsw-alias-label-caption: var(--dsw-static-neutral-bluish-400);
-	--dsw-alias-label-primary-foreground: var(--dsw-static-neutral-bluish-00);
 	--dsw-alias-label-deep-diving: color-mix(in srgb, var(--dsw-static-deepseek-500) 70%, var(--dsw-static-blue-950));
 	--dsw-alias-interactive-bg-hover: rgba(38, 49, 72, 0.06);
-	--dsw-alias-interactive-bg-active: rgba(38, 49, 72, 0.1);
-	--dsw-alias-brand-primary: var(--dsw-static-neutral-bluish-1000);
-	--dsw-alias-button-primary-fill: var(--dsw-alias-brand-primary);
-	--dsw-alias-button-primary-hover: var(--dsw-static-neutral-bluish-750);
+	--dsw-alias-button-info-fill: var(--dsw-static-deepseek-500);
+	--dsw-alias-button-info-hover: var(--dsw-static-deepseek-400);
 	--dsw-alias-markdown-code-block: var(--dsw-static-neutral-bluish-50);
 	--dsw-alias-markdown-tag: var(--dsw-static-neutral-bluish-75);
 	--dsw-alias-state-business-primary: var(--dsw-static-deepseek-500);
@@ -119,12 +110,10 @@ body[data-ds-dark-theme] {
 	--dsw-alias-label-secondary: var(--dsw-static-neutral-bluish-300);
 	--dsw-alias-label-tertiary: var(--dsw-static-neutral-bluish-400);
 	--dsw-alias-label-caption: var(--dsw-static-neutral-bluish-600);
-	--dsw-alias-label-primary-foreground: var(--dsw-static-neutral-bluish-1000);
 	--dsw-alias-label-deep-diving: color-mix(in srgb, var(--dsw-static-deepseek-450) 55%, var(--dsw-static-neutral-bluish-400));
 	--dsw-alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
-	--dsw-alias-interactive-bg-active: rgba(255, 255, 255, 0.14);
-	--dsw-alias-brand-primary: var(--dsw-static-neutral-bluish-50);
-	--dsw-alias-button-primary-hover: var(--dsw-static-neutral-bluish-100);
+	--dsw-alias-button-info-fill: var(--dsw-static-deepseek-400);
+	--dsw-alias-button-info-hover: var(--dsw-static-deepseek-500);
 	--dsw-alias-markdown-code-block: var(--dsw-static-neutral-bluish-900);
 	--dsw-alias-markdown-tag: var(--dsw-static-neutral-bluish-850);
 	--dsw-alias-state-business-primary: var(--dsw-static-deepseek-400);
@@ -163,7 +152,7 @@ body * {
 }
 
 :focus-visible {
-	outline-color: var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+	outline-color: var(--dsw-alias-state-business-primary);
 	outline-width: var(--dsw-focus-ring-width);
 }
 
@@ -191,6 +180,7 @@ body * {
 ::-webkit-scrollbar-thumb {
 	border: var(--dsh-scrollbar-thumb-border) solid transparent;
 	border-radius: 999px;
+	corner-shape: round;
 	background: var(--dsh-scrollbar-thumb);
 	background-clip: content-box;
 }

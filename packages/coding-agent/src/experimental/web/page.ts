@@ -10,8 +10,8 @@ import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ReplicatedState } from "@amazme/chord";
 import type { ConversationView } from "@amazme/durable";
-import { BOOT_GLOBAL, type WebBootManifest } from "@amazme/web";
 import {
+	BOOT_GLOBAL,
 	buildWebView,
 	collectPageElements,
 	createRenderer,
@@ -20,6 +20,7 @@ import {
 	isBusy,
 	type PageElements,
 	type PageRenderer,
+	type WebBootManifest,
 } from "@amazme/web";
 import { AgentController } from "../services/agent-controller.ts";
 import {

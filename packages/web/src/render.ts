@@ -18,8 +18,8 @@ export interface PageElements {
 	readonly queue: HTMLElement;
 	readonly composer: HTMLFormElement;
 	readonly prompt: HTMLTextAreaElement;
-	readonly send: HTMLButtonElement;
-	readonly abort: HTMLButtonElement;
+	/** The composer's one action: send, or stop while a turn runs on an empty draft. */
+	readonly primary: HTMLButtonElement;
 }
 
 export interface PageRenderer {
@@ -44,8 +44,7 @@ export function collectPageElements(): PageElements {
 		queue: pick("queue"),
 		composer: pickElement("composer", HTMLFormElement),
 		prompt: pickElement("prompt", HTMLTextAreaElement),
-		send: pickElement("send", HTMLButtonElement),
-		abort: pickElement("abort", HTMLButtonElement),
+		primary: pickElement("primary", HTMLButtonElement),
 	};
 }
 
@@ -82,6 +81,34 @@ function wrap(className: string, child: HTMLElement): HTMLElement {
 	return group;
 }
 
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+/** The primary action's glyph: an arrow to send, a rounded square to stop (InputBar's icon slots). */
+function primaryGlyph(stop: boolean): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("width", "16");
+	svg.setAttribute("height", "16");
+	svg.setAttribute("aria-hidden", "true");
+	const shape = document.createElementNS(SVG_NAMESPACE, stop ? "rect" : "path");
+	shape.setAttribute("fill", stop ? "currentColor" : "none");
+	if (stop) {
+		shape.setAttribute("x", "3");
+		shape.setAttribute("y", "3");
+		shape.setAttribute("width", "10");
+		shape.setAttribute("height", "10");
+		shape.setAttribute("rx", "3");
+	} else {
+		shape.setAttribute("d", "M8 13.4V3.4M3.6 7.4 8 3l4.4 4.4");
+		shape.setAttribute("stroke", "currentColor");
+		shape.setAttribute("stroke-width", "1.8");
+		shape.setAttribute("stroke-linecap", "round");
+		shape.setAttribute("stroke-linejoin", "round");
+	}
+	svg.append(shape);
+	return svg;
+}
+
 /** The leading 16px glyph box every disclosure row and notice row carries. */
 function leading(): HTMLElement {
 	return element("span", "disclosure-leading");
@@ -111,6 +138,26 @@ export function createRenderer(
 	let lastView: WebView | undefined;
 	/** Reader disclosure choices, keyed by block id so a rebuild keeps them. */
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
+	/** The primary action's current role, so the glyph is only rebuilt when it flips. */
+	let stops = false;
+
+	const draft = (): string => elements.prompt.value.trim();
+
+	/**
+	 * The primary action is Stop while a turn runs on an empty draft, and Send otherwise — the same
+	 * rule InputBar uses — and Send is disabled with nothing to send.
+	 */
+	const renderPrimary = (): void => {
+		const stop = lastView?.busy === true && draft().length === 0;
+		if (stop !== stops) {
+			stops = stop;
+			elements.primary.replaceChildren(primaryGlyph(stop));
+			const label = stop ? "Stop" : "Send";
+			elements.primary.setAttribute("aria-label", label);
+			elements.primary.title = label;
+		}
+		elements.primary.disabled = lastView?.attachedId === undefined || (!stop && draft().length === 0);
+	};
 
 	/** A disclosure whose open state is the reader's, falling back to a per-block default. */
 	const disclosure = (block: TranscriptBlock, className: string, defaultOpen: boolean): HTMLDetailsElement => {
@@ -122,8 +169,9 @@ export function createRenderer(
 		return details;
 	};
 
-	const disclosureRow = (block: TranscriptBlock, summary?: string): HTMLElement => {
-		const line = element("summary", "disclosure-row");
+	/** A row: the leading glyph, the title, and — when a summary is given — the dot and one line of it. */
+	const rowElement = (block: TranscriptBlock, tag: "summary" | "div", summary?: string): HTMLElement => {
+		const line = element(tag, "disclosure-row");
 		line.append(leading(), element("span", "disclosure-title", block.title));
 		if (summary !== undefined && summary.length > 0) {
 			line.append(element("span", "disclosure-sep"), element("span", "disclosure-summary", summary));
@@ -135,7 +183,7 @@ export function createRenderer(
 	const toolElement = (block: TranscriptBlock): HTMLElement => {
 		const tone = block.running ? "running" : block.tone === "error" ? "error" : "";
 		const details = disclosure(block, tone, block.running);
-		details.append(disclosureRow(block, firstLine(block.text)));
+		details.append(rowElement(block, "summary", firstLine(block.text)));
 		if (block.text.length > 0) {
 			details.append(element("div", "tool-output", block.text));
 		} else if (!block.running) {
@@ -147,16 +195,14 @@ export function createRenderer(
 	/** Assistant reasoning: the Think row, collapsed until the reader opens it. */
 	const reasoningElement = (block: TranscriptBlock): HTMLElement => {
 		const details = disclosure(block, "", false);
-		details.append(disclosureRow(block), element("div", "reasoning-body", block.text));
+		details.append(rowElement(block, "summary"), element("div", "reasoning-body", block.text));
 		return details;
 	};
 
 	/** A flow notice (compaction, new context): one 24px row, with its summary indented below. */
 	const noticeElement = (block: TranscriptBlock): HTMLElement => {
 		const group = element("div", "disclosure");
-		const line = element("div", "disclosure-row");
-		line.append(leading(), element("span", "disclosure-title", block.title));
-		group.append(line);
+		group.append(rowElement(block, "div"));
 		if (block.text.length > 0) group.append(element("div", "notice-body", block.text));
 		return group;
 	};
@@ -194,7 +240,7 @@ export function createRenderer(
 			}
 			process = undefined;
 			if (block.kind === "user") flow.push(wrap("turn-user", element("div", "bubble", block.text)));
-			else if (block.kind === "assistant") flow.push(wrap("turn-response", element("div", "body", block.text)));
+			else if (block.kind === "assistant") flow.push(element("div", "turn-response", block.text));
 			else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
 		}
 		return flow;
@@ -247,8 +293,7 @@ export function createRenderer(
 			const detached = view.attachedId === undefined;
 			elements.prompt.disabled = detached;
 			elements.prompt.placeholder = composerPlaceholder(view.attachedId);
-			elements.send.disabled = detached;
-			elements.abort.disabled = detached;
+			renderPrimary();
 
 			elements.queue.replaceChildren();
 			for (const item of view.queue) elements.queue.append(element("p", "queue-item", item));
@@ -261,19 +306,28 @@ export function createRenderer(
 
 	elements.composer.addEventListener("submit", (event) => {
 		event.preventDefault();
-		const text = elements.prompt.value.trim();
-		if (text.length === 0 || lastView?.attachedId === undefined) return;
+		if (lastView?.attachedId === undefined) return;
+		const text = draft();
+		if (text.length === 0) {
+			// An empty draft leaves the primary as the stop control; `Enter` on it must not no-op.
+			if (stops) renderer.onAbort();
+			return;
+		}
 		elements.prompt.value = "";
 		fitPrompt(elements.prompt);
+		renderPrimary();
 		renderer.onSubmit(text);
 	});
-	elements.prompt.addEventListener("input", () => fitPrompt(elements.prompt));
+	elements.prompt.addEventListener("input", () => {
+		fitPrompt(elements.prompt);
+		// The draft's emptiness decides whether the primary sends or stops.
+		renderPrimary();
+	});
 	elements.prompt.addEventListener("keydown", (event) => {
 		// Enter submits, Shift+Enter keeps the newline: the same contract the TUI composer uses.
 		if (event.key !== "Enter" || event.shiftKey) return;
 		event.preventDefault();
 		elements.composer.requestSubmit();
 	});
-	elements.abort.addEventListener("click", () => renderer.onAbort());
 	return renderer;
 }
