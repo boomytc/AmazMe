@@ -5,6 +5,7 @@
  * `@amazme/web`; this module owns the client lifecycle, session attachment, and the visible
  * failure states.
  */
+import type { ModelThinkingLevel } from "@amazme/ai";
 import { Client, type ClientOptions } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -18,6 +19,7 @@ import {
 	failureView,
 	followSystemTheme,
 	isBusy,
+	rosterItems,
 	type PageElements,
 	type PageRenderer,
 	type WebBootManifest,
@@ -28,6 +30,7 @@ import {
 	createSessionServiceSource,
 	type SessionServiceSource,
 } from "../services/connection.ts";
+import { Models, type ModelsState } from "../services/models.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { Transcript } from "../services/transcript.ts";
 
@@ -49,6 +52,9 @@ class SessionPainter {
 	readonly #renderer: PageRenderer;
 	#transcript: ReplicatedState<ConversationView> | undefined;
 	#controller: AgentController | undefined;
+	#models: Models | undefined;
+	#levels: readonly string[] | undefined;
+	#levelsModel: string | undefined;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
 	#sessionId: string | undefined;
 
@@ -63,6 +69,15 @@ class SessionPainter {
 
 	get transcriptValue(): ConversationView | undefined {
 		return this.#transcript?.value;
+	}
+
+	get modelsValue(): ModelsState | undefined {
+		return this.#models?.state.value;
+	}
+
+	/** The attached model's levels; `undefined` until the host has answered for this model. */
+	get levels(): readonly string[] | undefined {
+		return this.#levels;
 	}
 
 	/** Send input to the attached session: a new run when idle, queued input while one runs. */
@@ -82,6 +97,33 @@ class SessionPainter {
 		await this.#controller?.abort(BACKGROUND_CONTEXT);
 	}
 
+	/** Switch the attached session's model; the host owns which ids exist. */
+	async selectModel(provider: string, modelId: string): Promise<void> {
+		await this.#models?.select({ provider, modelId }, BACKGROUND_CONTEXT);
+	}
+
+	/** Switch the attached model's thinking level; the host validates the level. */
+	async selectThinking(level: string): Promise<void> {
+		await this.#models?.selectThinking(level as ModelThinkingLevel, BACKGROUND_CONTEXT);
+	}
+
+	/**
+	 * Read the levels the host supports for the attached model, once per model. The models state is
+	 * replicated, so a switch made anywhere — this page, the TUI, another tab — lands here.
+	 */
+	async #refreshLevels(paint: () => void): Promise<void> {
+		const service = this.#models;
+		const configuration = service?.state.value?.configuration.model;
+		const model =
+			configuration === undefined || configuration === null
+				? ""
+				: `${configuration.provider}/${configuration.modelId}`;
+		if (service === undefined || model === this.#levelsModel) return;
+		this.#levelsModel = model;
+		this.#levels = await service.getThinkingLevels(BACKGROUND_CONTEXT);
+		paint();
+	}
+
 	async attach(sessionId: string, paint: () => void): Promise<void> {
 		if (this.#sessionId === sessionId) return;
 		await this.detach();
@@ -91,7 +133,7 @@ class SessionPainter {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
 		const services = this.#sessionSource.open({
-			services: [Transcript, AgentController],
+			services: [Transcript, AgentController, Models],
 			assertAccess(): void {},
 			onError: (error: Error) => this.#renderer.setConnection(`stream error: ${message(error)}`, "error"),
 		});
@@ -100,7 +142,18 @@ class SessionPainter {
 		this.#services = services;
 		this.#transcript = transcript.state;
 		this.#controller = services.use(AgentController);
+		this.#models = services.use(Models);
+		this.#levels = undefined;
+		this.#levelsModel = undefined;
+		// A model switch made anywhere repaints the chip and re-reads the levels of the new model.
+		this.#models.state.subscribe(() => {
+			paint();
+			void this.#refreshLevels(paint).catch((error: unknown) => {
+				this.#renderer.setConnection(`model state failed: ${message(error)}`, "error");
+			});
+		});
 		transcript.state.subscribe(() => paint());
+		await this.#refreshLevels(paint);
 		paint();
 	}
 
@@ -109,6 +162,9 @@ class SessionPainter {
 		this.#services = undefined;
 		this.#transcript = undefined;
 		this.#controller = undefined;
+		this.#models = undefined;
+		this.#levels = undefined;
+		this.#levelsModel = undefined;
 		this.#sessionId = undefined;
 	}
 }
@@ -143,6 +199,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				transcript: painter.transcriptValue,
 				attachedId: painter.sessionId,
 				now: Date.now(),
+				models: painter.modelsValue,
+				thinkingLevels: painter.levels,
 			}),
 		);
 	directory.state.subscribe(() => paint());
@@ -155,6 +213,32 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	renderer.onSelect = (sessionId) => {
 		void selectSession(sessionId).catch((error: unknown) => {
 			renderer.setConnection(`attach failed: ${message(error)}`, "error");
+		});
+	};
+	// The host creates the session; the roster shows it from the replicated directory. A second
+	// click while the first create is in flight would make a second session, so this one is one-shot.
+	let creating = false;
+	renderer.onCreateSession = () => {
+		if (creating) return;
+		creating = true;
+		void management
+			.create({}, BACKGROUND_CONTEXT)
+			.then((created) => selectSession(created.sessionId))
+			.catch((error: unknown) => {
+				renderer.setConnection(`new session failed: ${message(error)}`, "error");
+			})
+			.finally(() => {
+				creating = false;
+			});
+	};
+	renderer.onSelectModel = (provider, modelId) => {
+		void painter.selectModel(provider, modelId).catch((error: unknown) => {
+			renderer.setConnection(`model change failed: ${message(error)}`, "error");
+		});
+	};
+	renderer.onSelectThinking = (level) => {
+		void painter.selectThinking(level).catch((error: unknown) => {
+			renderer.setConnection(`thinking level failed: ${message(error)}`, "error");
 		});
 	};
 	renderer.onSubmit = (text) => {
@@ -187,9 +271,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		return undefined;
 	}
 	await serverServices.ready(BACKGROUND_CONTEXT);
-	const newest = directory.state.value?.sessions[0];
+	// Attach the session the sidebar lists first: the page's own ordering, not the host's array order.
+	const newest = rosterItems(directory.state.value, undefined, Date.now())[0];
 	if (newest !== undefined) {
-		await selectSession(newest.sessionId).catch((error: unknown) => {
+		await selectSession(newest.id).catch((error: unknown) => {
 			renderer.setConnection(`attach failed: ${message(error)}`, "error");
 		});
 	}

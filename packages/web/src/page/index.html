@@ -36,6 +36,24 @@
 				<span class="brand-name">AmazMe</span>
 				<span class="brand-mode" id="mode"></span>
 			</div>
+			<!-- DSH's sidebar new-session bar (SidebarRoot .newSession): the host creates the session,
+			     the page attaches it as soon as the directory carries it. -->
+			<button class="new-session" type="button" id="new-session" aria-label="New session" disabled>
+				<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+					<rect
+						x="2.6"
+						y="3.4"
+						width="10.8"
+						height="9.2"
+						rx="2.6"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.4"
+					/>
+					<path d="M8 6.4v3.2M6.4 8h3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+				</svg>
+				<span class="new-session-label">New session</span>
+			</button>
 			<p class="sidebar-label">Sessions</p>
 			<div class="session-list" id="roster"><p class="empty-state">Waiting for the host…</p></div>
 		</aside>
@@ -62,19 +80,46 @@
 						disabled
 					></textarea>
 					<div class="composer-row">
-						<!-- The renderer swaps this Send glyph for the stop square while a turn runs. -->
-						<button class="primary" type="submit" id="primary" aria-label="Send" disabled>
-							<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-								<path
-									d="M8 13.4V3.4M3.6 7.4 8 3l4.4 4.4"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="1.8"
-									stroke-linecap="round"
-									stroke-linejoin="round"
-								/>
-							</svg>
-						</button>
+						<div class="composer-trailing">
+							<!-- The attached session's model and reasoning level (InputBar's trailing
+							     ModelSelect). The renderer fills the chip and the card it opens. -->
+							<button
+								class="model-trigger"
+								type="button"
+								id="model-trigger"
+								aria-haspopup="menu"
+								aria-expanded="false"
+								aria-label="Model and reasoning effort: No model"
+								disabled
+							>
+								<span class="model-label" id="model-label">No model</span>
+								<span class="model-effort" id="model-effort" hidden></span>
+								<svg class="model-chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+									<path
+										d="M4.2 6.4 8 10.2l3.8-3.8"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.5"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
+								</svg>
+							</button>
+							<!-- The renderer swaps this Send glyph for the stop square while a turn runs. -->
+							<button class="primary" type="submit" id="primary" aria-label="Send" disabled>
+								<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+									<path
+										d="M8 13.4V3.4M3.6 7.4 8 3l4.4 4.4"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
+								</svg>
+							</button>
+							<div class="model-menu" id="model-menu" role="menu" aria-label="Model and reasoning effort" hidden></div>
+						</div>
 					</div>
 				</form>
 			</div>

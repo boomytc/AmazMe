@@ -83,6 +83,47 @@ body {
 	line-height: 18px;
 }
 
+/* New-session bar (ui-sidebar SidebarRoot .newSession): 38px, md radius, elevated fill over an l3
+   hairline, glyph and label centred with a 6px gap. The page's own 16px glyph stands in for DSH's
+   icon set. It stays inert until the host's directory arrives. */
+.new-session {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	flex: none;
+	box-sizing: border-box;
+	height: 38px;
+	padding: 8px 12px;
+	margin: 0 2px 12px;
+	border: 0.5px solid var(--dsw-alias-border-l3);
+	border-radius: var(--dsw-radius-md);
+	background: var(--dsw-alias-button-elevated-fill);
+	color: var(--dsw-alias-label-primary);
+	font-family: var(--dsw-font-family);
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 22px;
+	cursor: pointer;
+	overflow: hidden;
+	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.new-session:hover:not(:disabled) {
+	background: var(--dsw-alias-button-floating-hover);
+}
+
+.new-session:disabled {
+	color: var(--dsw-alias-label-dimmed);
+	cursor: default;
+}
+
+.new-session-label {
+	max-width: 200px;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
 .session-list {
 	display: flex;
 	flex-direction: column;
@@ -287,11 +328,156 @@ body {
 	gap: 6px;
 }
 
-/* Assistant response (AssistantMarkdown). DSH holds the markdown type on its root and a flex column
-   of blocks in `.body`; this page's answer is one pre-wrap text run, so the flow item is both. */
+/* Assistant response (AssistantMarkdown): the flow item is the seat of the markdown root, which
+   carries DSH's markdown sheet's type and block rhythm (ui-primitives MarkdownText.module.css). */
 .turn-response {
+	min-width: 0;
+}
+
+.markdown {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	font: var(--dsw-font-markdown-base);
+	color: var(--dsw-alias-label-primary);
+}
+
+.markdown strong {
+	font-weight: 600;
+}
+
+.markdown h1 {
+	font: var(--dsw-font-markdown-h1);
+	margin: 32px 0 16px;
+}
+
+.markdown h2 {
+	font: var(--dsw-font-markdown-h2);
+	margin: 32px 0 16px;
+}
+
+.markdown h3 {
+	font: var(--dsw-font-markdown-h3);
+	margin: 32px 0 16px;
+}
+
+.markdown h4 {
+	font: var(--dsw-font-markdown-h4);
+	margin: 16px 0;
+}
+
+.markdown :where(h5, h6) {
+	font: var(--dsw-font-markdown-base-strong);
+	margin: 16px 0;
+}
+
+.markdown :where(h1, h2, h3, h4, h5, h6) strong {
+	font-weight: inherit;
+}
+
+.markdown p {
+	margin: 16px 0;
+}
+
+/* Tighten h4-h6 against a following list (design: 8px gap). */
+.markdown :where(h4, h5, h6) + :where(ul, ol) {
+	margin-top: 8px;
+}
+
+.markdown :where(h4, h5, h6):has(+ :where(ul, ol)) {
+	margin-bottom: 8px;
+}
+
+.markdown a {
+	color: var(--dsw-alias-link);
+	font-weight: 500;
+	text-decoration: none;
+}
+
+.markdown a:hover,
+.markdown a:focus {
+	outline: none;
+	text-decoration: underline dotted var(--dsw-alias-link);
+	text-underline-offset: 3px;
+}
+
+.markdown a:focus-visible {
+	box-shadow: 0 0 0 2px var(--dsw-alias-state-business-primary);
+}
+
+.markdown :where(ul, ol) {
+	margin: 16px 0;
+	padding-left: 18px;
+}
+
+.markdown li:not(:first-child) {
+	margin-top: 6px;
+}
+
+.markdown li::marker {
+	line-height: 24px;
+	color: var(--dsw-alias-label-secondary);
+}
+
+.markdown :not(pre) > code {
+	display: inline-flex;
+	align-items: center;
+	box-sizing: border-box;
+	font: var(--dsw-font-markdown-code);
+	font-family: var(--ds-font-family-code);
+	font-size: 0.875em;
+	background-color: var(--dsw-alias-markdown-inline-code);
+	border: 0.5px solid var(--dsw-alias-border-l1);
+	border-radius: var(--dsw-radius-sm);
+	padding: 0 5px;
+}
+
+/* Fenced code (ui-primitives CodeBlock): lg-radius card on the code-block fill, an 11/18
+   language banner in the banner fill, and a 16px-padded pre that scrolls wide lines. */
+.markdown .code-block {
+	margin: 16px 0;
+	color: var(--dsw-alias-label-primary);
+	background: var(--dsw-alias-markdown-code-block);
+	border-radius: var(--dsw-radius-lg);
+}
+
+.markdown .code-block:not(:last-child) {
+	margin-bottom: 11px;
+}
+
+.markdown .code-language {
+	padding: 9px 14px;
+	border-radius: var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;
+	background: var(--dsw-alias-markdown-code-block-banner);
+	font-family: var(--ds-font-family-code);
+	font-size: 11px;
+	line-height: 18px;
+}
+
+.markdown .code-block pre {
+	margin: 0;
+	padding: 16px;
+	border-bottom-left-radius: var(--dsw-radius-lg);
+	border-bottom-right-radius: var(--dsw-radius-lg);
+	font: var(--dsw-font-markdown-code-block);
+	overflow-x: auto;
 	white-space: pre-wrap;
-	word-break: break-word;
+	word-break: break-all;
+}
+
+.markdown .code-block pre code {
+	font: inherit;
+	background: none;
+	padding: 0;
+}
+
+.markdown > *:first-child,
+.markdown p:first-child {
+	margin-top: 0;
+}
+
+.markdown > *:last-child,
+.markdown p:last-child {
+	margin-bottom: 0;
 }
 
 /* Disclosure row (ui-primitives DisclosureRow): [16px leading] gap 6 [title 13/24]. */
@@ -565,14 +751,199 @@ summary.disclosure-row {
 	color: var(--dsw-alias-label-caption);
 }
 
-/* Control row (InputBar .row): the primary action trails the draft. */
+/* Control row (InputBar .row): the model chip and the primary action trail the draft. The row is a
+   size container so the chip's cap can read its width, and it wraps rather than overlapping. */
 .composer-row {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: flex-end;
 	gap: 12px;
 	min-width: 0;
 	padding: 2px 8px 6px;
+	container-type: inline-size;
+}
+
+/* The trailing cluster (InputBar .trailing): model chip + send, pinned right, and the seat the
+   picker card anchors to. */
+.composer-trailing {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex: none;
+	gap: 12px;
+	margin-left: auto;
+	min-width: 0;
+}
+
+@container (max-width: 560px) {
+	.composer-trailing {
+		gap: 8px;
+	}
+}
+
+/* Model and effort chip (ModelSelect .trigger): 28px, sm radius, 13/20 in the secondary ink, the
+   effort in the caption tone, and a 12px chevron that flips while the card is open. */
+.model-trigger {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	max-width: min(360px, 45cqw);
+	height: 28px;
+	padding: 0 4px 0 8px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-secondary);
+	font-family: var(--dsw-font-family);
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 400;
+	cursor: pointer;
+}
+
+.model-trigger:hover:not(:disabled) {
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.model-trigger:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--dsw-alias-state-business-primary);
+}
+
+.model-trigger:disabled {
+	color: var(--dsw-alias-label-dimmed);
+	cursor: default;
+}
+
+.model-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.model-effort {
+	flex-shrink: 1000;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dsw-alias-label-caption);
+}
+
+.model-chevron {
+	flex: 0 0 auto;
+	color: var(--dsw-alias-label-caption);
+	transition: transform 120ms ease;
+}
+
+.model-trigger[aria-expanded="true"] .model-chevron {
+	transform: rotate(180deg);
+}
+
+/* The picker card (ModelSelect .menu over MenuSurface): 4px padding, lg radius, the translucent
+   menu material with the prominent elevation, l1 hairline, and the l2 scrollbar pair. It opens
+   upward from the composer and stays inside the viewport on both axes. */
+.model-menu {
+	position: absolute;
+	right: 0;
+	bottom: calc(100% + 4px);
+	z-index: 1100;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	width: max-content;
+	min-width: min(240px, calc(100vw - 32px));
+	max-width: min(420px, calc(100vw - 32px));
+	max-height: min(360px, calc(100vh - 96px));
+	overflow: hidden;
+	padding: 4px;
+	border-radius: var(--dsw-radius-lg);
+	background: var(--dsw-specific-menu);
+	backdrop-filter: var(--dsw-menu-backdrop-filter);
+	--dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+	box-shadow: var(--dsw-elevation-prominent);
+	color: var(--dsw-alias-label-primary);
+	font-family: var(--dsw-font-family);
+	font-size: 13px;
+	line-height: 20px;
+	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+.model-menu[hidden] {
+	display: none;
+}
+
+.model-menu .menu-scroll {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+/* Heading row (Menu .label): non-interactive small grey text, padding aligned with the items. */
+.menu-heading {
+	padding: 6px 8px;
+	font-size: 11px;
+	line-height: 15px;
+	color: var(--dsw-alias-label-tertiary);
+}
+
+/* Row (Menu .item): 34px, md radius, primary ink; the fill is both the hover and the focus mark,
+   and the selected row carries the trailing check instead of a fill. */
+.menu-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 34px;
+	padding: 6px 8px;
+	border: none;
+	border-radius: var(--dsw-radius-md);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+	background: var(--dsw-alias-interactive-bg-hover);
+	outline: none;
+}
+
+.menu-item-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.menu-check {
+	display: grid;
+	place-items: center;
+	flex: 0 0 14px;
+	color: var(--dsw-alias-label-primary);
+}
+
+.menu-empty {
+	padding: 8px;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+/* Separator cell (Menu .separator): l2, because l1 is invisible on this surface. */
+.menu-separator {
+	height: 0.5px;
+	margin: 3px 2px;
+	background: var(--dsw-alias-border-l2);
 }
 
 /* Primary action (InputBar .primary): 34px circle in the info fill, white glyph, and the row's 2px

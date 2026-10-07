@@ -6,12 +6,15 @@
  * updates is the reader's own disclosure choices, keyed by block id, because a rebuild would
  * otherwise reset them.
  */
+import { formatMarkdown, type InlineNode, type MarkdownNode } from "./markdown.ts";
 import { composerPlaceholder, type TranscriptBlock, type WebView } from "./view.ts";
 
 export interface PageElements {
 	readonly connection: HTMLElement;
 	readonly mode: HTMLElement;
 	readonly sessionTitle: HTMLElement;
+	/** The sidebar's new-session bar. */
+	readonly newSession: HTMLButtonElement;
 	readonly roster: HTMLElement;
 	readonly transcript: HTMLElement;
 	readonly column: HTMLElement;
@@ -20,6 +23,11 @@ export interface PageElements {
 	readonly prompt: HTMLTextAreaElement;
 	/** The composer's one action: send, or stop while a turn runs on an empty draft. */
 	readonly primary: HTMLButtonElement;
+	/** The model and effort chip, and the card it opens. */
+	readonly modelTrigger: HTMLButtonElement;
+	readonly modelLabel: HTMLElement;
+	readonly modelEffort: HTMLElement;
+	readonly modelMenu: HTMLElement;
 }
 
 export interface PageRenderer {
@@ -27,8 +35,11 @@ export interface PageRenderer {
 	setConnection(text: string, kind: "state" | "error"): void;
 	/** Handlers the page entry fills in once it can drive the host. */
 	onSelect: (sessionId: string) => void;
+	onCreateSession: () => void;
 	onSubmit: (text: string) => void;
 	onAbort: () => void;
+	onSelectModel: (provider: string, modelId: string) => void;
+	onSelectThinking: (level: string) => void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
 	readonly view: WebView | undefined;
 }
@@ -38,6 +49,7 @@ export function collectPageElements(): PageElements {
 		connection: pick("connection"),
 		mode: pick("mode"),
 		sessionTitle: pick("session-title"),
+		newSession: pickElement("new-session", HTMLButtonElement),
 		roster: pick("roster"),
 		transcript: pick("transcript"),
 		column: pick("column"),
@@ -45,6 +57,10 @@ export function collectPageElements(): PageElements {
 		composer: pickElement("composer", HTMLFormElement),
 		prompt: pickElement("prompt", HTMLTextAreaElement),
 		primary: pickElement("primary", HTMLButtonElement),
+		modelTrigger: pickElement("model-trigger", HTMLButtonElement),
+		modelLabel: pick("model-label"),
+		modelEffort: pick("model-effort"),
+		modelMenu: pick("model-menu"),
 	};
 }
 
@@ -82,6 +98,106 @@ function wrap(className: string, child: HTMLElement): HTMLElement {
 }
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+/**
+ * The formatted-answer adapter: the pure markdown nodes become DOM, and model text reaches the
+ * document only through `textContent` / text nodes. No model string is ever markup.
+ */
+function inlineFragment(nodes: readonly InlineNode[]): DocumentFragment {
+	const fragment = document.createDocumentFragment();
+	for (const node of nodes) {
+		switch (node.kind) {
+			case "text":
+				fragment.append(document.createTextNode(node.text));
+				break;
+			case "code":
+				fragment.append(element("code", "md-inline-code", node.text));
+				break;
+			case "strong": {
+				const strong = document.createElement("strong");
+				strong.append(inlineFragment(node.children));
+				fragment.append(strong);
+				break;
+			}
+			case "em": {
+				const em = document.createElement("em");
+				em.append(inlineFragment(node.children));
+				fragment.append(em);
+				break;
+			}
+			case "link": {
+				const link = document.createElement("a");
+				link.setAttribute("href", node.href);
+				link.setAttribute("target", "_blank");
+				link.setAttribute("rel", "noreferrer noopener");
+				link.append(inlineFragment(node.children));
+				fragment.append(link);
+				break;
+			}
+		}
+	}
+	return fragment;
+}
+
+function markdownNode(node: MarkdownNode): HTMLElement {
+	switch (node.kind) {
+		case "paragraph": {
+			const paragraph = document.createElement("p");
+			paragraph.append(inlineFragment(node.children));
+			return paragraph;
+		}
+		case "heading": {
+			const heading = document.createElement(`h${Math.min(Math.max(node.level, 1), 6)}`);
+			heading.append(inlineFragment(node.children));
+			return heading;
+		}
+		case "list": {
+			const list = node.ordered ? document.createElement("ol") : document.createElement("ul");
+			if (node.ordered && list instanceof HTMLOListElement && node.start !== 1) list.start = node.start;
+			for (const item of node.items) {
+				const entry = document.createElement("li");
+				entry.append(inlineFragment(item));
+				list.append(entry);
+			}
+			return list;
+		}
+		case "code": {
+			const block = element("div", "code-block");
+			if (node.language !== undefined) block.append(element("div", "code-language", node.language));
+			const pre = document.createElement("pre");
+			const code = document.createElement("code");
+			code.textContent = node.text;
+			pre.append(code);
+			block.append(pre);
+			return block;
+		}
+	}
+}
+
+/** An answer as DSH's markdown sheet expects it: one `.markdown` root per assistant block. */
+function markdownElement(text: string): HTMLElement {
+	const root = element("div", "markdown");
+	for (const node of formatMarkdown(text)) root.append(markdownNode(node));
+	return root;
+}
+
+/** The 14px trailing check a selected picker row carries (ModelSelect's `.check`). */
+function checkGlyph(): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("width", "14");
+	svg.setAttribute("height", "14");
+	svg.setAttribute("aria-hidden", "true");
+	const shape = document.createElementNS(SVG_NAMESPACE, "path");
+	shape.setAttribute("d", "M3.4 8.6 6.6 11.8 12.6 5.2");
+	shape.setAttribute("fill", "none");
+	shape.setAttribute("stroke", "currentColor");
+	shape.setAttribute("stroke-width", "1.6");
+	shape.setAttribute("stroke-linecap", "round");
+	shape.setAttribute("stroke-linejoin", "round");
+	svg.append(shape);
+	return svg;
+}
 
 /** The primary action's glyph: an arrow to send, a rounded square to stop (InputBar's icon slots). */
 function primaryGlyph(stop: boolean): SVGSVGElement {
@@ -240,22 +356,103 @@ export function createRenderer(
 			}
 			process = undefined;
 			if (block.kind === "user") flow.push(wrap("turn-user", element("div", "bubble", block.text)));
-			else if (block.kind === "assistant") flow.push(element("div", "turn-response", block.text));
+			else if (block.kind === "assistant") flow.push(wrap("turn-response", markdownElement(block.text)));
 			else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
 		}
 		return flow;
 	};
 
+	/** One picker row; the selected one carries the trailing check, DSH's selection marker. */
+	const pickerRow = (label: string, selected: boolean, choose: () => void): HTMLButtonElement => {
+		const row = button(selected ? "menu-item selected" : "menu-item");
+		row.setAttribute("role", "menuitemradio");
+		row.setAttribute("aria-checked", String(selected));
+		row.append(element("span", "menu-item-name", label));
+		if (selected) {
+			const check = element("span", "menu-check");
+			check.append(checkGlyph());
+			row.append(check);
+		}
+		row.addEventListener("click", () => {
+			closeModelMenu();
+			choose();
+		});
+		return row;
+	};
+
+	/** The card the chip opens: the host's catalog under its providers, then the effort group. */
+	const renderModelMenu = (view: WebView): void => {
+		const picker = view.model;
+		const rows: HTMLElement[] = [];
+		if (picker.empty !== undefined) rows.push(element("p", "menu-empty", picker.empty));
+		if (picker.groups.length > 0) {
+			rows.push(element("p", "menu-heading", "Model"));
+			for (const group of picker.groups) {
+				rows.push(element("p", "menu-heading", group.provider));
+				for (const option of group.options) {
+					rows.push(
+						pickerRow(option.label, option.selected, () => renderer.onSelectModel(option.provider, option.modelId)),
+					);
+				}
+			}
+			if (picker.levels.length > 0 || picker.levelsEmpty !== undefined) {
+				rows.push(element("div", "menu-separator"), element("p", "menu-heading", "Effort"));
+				if (picker.levels.length > 0) {
+					for (const level of picker.levels) {
+						rows.push(pickerRow(level.label, level.selected, () => renderer.onSelectThinking(level.level)));
+					}
+				} else if (picker.levelsEmpty !== undefined) {
+					rows.push(element("p", "menu-empty", picker.levelsEmpty));
+				}
+			}
+		}
+		const scroll = element("div", "menu-scroll");
+		scroll.append(...rows);
+		elements.modelMenu.replaceChildren(scroll);
+	};
+
+	const closeModelMenu = (): void => {
+		if (elements.modelMenu.hidden) return;
+		elements.modelMenu.hidden = true;
+		elements.modelTrigger.setAttribute("aria-expanded", "false");
+	};
+
+	const openModelMenu = (): void => {
+		if (lastView === undefined || lastView.model.disabled) return;
+		renderModelMenu(lastView);
+		elements.modelMenu.hidden = false;
+		elements.modelTrigger.setAttribute("aria-expanded", "true");
+	};
+
+	/** The chip's text follows the host's replicated configuration on every render. */
+	const renderModelChip = (view: WebView): void => {
+		const picker = view.model;
+		elements.modelTrigger.disabled = picker.disabled;
+		elements.modelLabel.textContent = picker.label;
+		elements.modelEffort.textContent = picker.effort ?? "";
+		elements.modelEffort.hidden = picker.effort === undefined;
+		const name = picker.effort === undefined ? picker.label : `${picker.label} · ${picker.effort}`;
+		elements.modelTrigger.title = name;
+		elements.modelTrigger.setAttribute("aria-label", `Model and reasoning effort: ${name}`);
+		if (picker.disabled) closeModelMenu();
+		else if (!elements.modelMenu.hidden) renderModelMenu(view);
+	};
+
 	const renderer: PageRenderer = {
 		onSelect,
+		onCreateSession: () => {},
 		onSubmit: () => {},
 		onAbort: () => {},
+		onSelectModel: () => {},
+		onSelectThinking: () => {},
 		get view(): WebView | undefined {
 			return lastView;
 		},
 		render(view: WebView): void {
 			lastView = view;
 			const stick = atBottom(elements.transcript);
+
+			elements.newSession.disabled = !view.newSession.enabled;
 
 			elements.roster.replaceChildren();
 			for (const item of view.roster) {
@@ -297,6 +494,8 @@ export function createRenderer(
 
 			elements.queue.replaceChildren();
 			for (const item of view.queue) elements.queue.append(element("p", "queue-item", item));
+
+			renderModelChip(view);
 		},
 		setConnection(text: string, kind: "state" | "error"): void {
 			elements.connection.textContent = text;
@@ -328,6 +527,23 @@ export function createRenderer(
 		if (event.key !== "Enter" || event.shiftKey) return;
 		event.preventDefault();
 		elements.composer.requestSubmit();
+	});
+	elements.newSession.addEventListener("click", () => renderer.onCreateSession());
+	elements.modelTrigger.addEventListener("click", () => {
+		if (elements.modelMenu.hidden) openModelMenu();
+		else closeModelMenu();
+	});
+	// The card closes on a click elsewhere and on Escape, so it can never strand the pointer.
+	document.addEventListener("pointerdown", (event) => {
+		if (elements.modelMenu.hidden) return;
+		const target = event.target;
+		if (target instanceof Node && (elements.modelMenu.contains(target) || elements.modelTrigger.contains(target))) return;
+		closeModelMenu();
+	});
+	document.addEventListener("keydown", (event) => {
+		if (event.key !== "Escape" || elements.modelMenu.hidden) return;
+		closeModelMenu();
+		elements.modelTrigger.focus();
 	});
 	return renderer;
 }

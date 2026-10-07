@@ -12,15 +12,20 @@ import {
 	UserEntry,
 } from "@amazme/durable";
 import { describe, expect, test } from "vitest";
-import type { SessionDirectoryLike, WebView } from "../src/view.ts";
 import {
 	buildWebView,
 	failureView,
 	formatAge,
+	MODEL_PICKER_EMPTY,
+	modelPicker,
 	queuedInputs,
 	rosterItems,
 	sessionStatus,
+	thinkingLevelLabel,
 	transcriptBlocks,
+	type ModelsStateLike,
+	type SessionDirectoryLike,
+	type WebView,
 } from "../src/view.ts";
 
 const CONVERSATION = 1 as ConversationId;
@@ -272,16 +277,18 @@ describe("web view model", () => {
 	});
 
 	test("reports the empty states the roster and transcript show", () => {
-		const connecting = buildWebView({ directory: undefined, transcript: undefined, attachedId: undefined, now: NOW });
+		const connecting = buildWebView({ directory: undefined, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(connecting.empty).toBe("Connecting to the host…");
 		expect(connecting.blocks).toEqual([]);
-		const none = buildWebView({ directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW });
+		const none = buildWebView({ directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(none.empty).toBe("No sessions on this host yet.");
 		const attached = buildWebView({
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),
 			attachedId: "s",
 			now: NOW,
+			models: undefined,
+			thinkingLevels: [],
 		});
 		expect(attached.empty).toBeUndefined();
 		expect(attached.attachedId).toBe("s");
@@ -296,9 +303,125 @@ describe("web view model", () => {
 				transcript: viewOf([], live === undefined ? {} : { "amazme.live": live }),
 				attachedId: "s",
 				now: NOW,
+				models: undefined,
+				thinkingLevels: [],
 			});
 		expect(view(undefined).busy).toBe(false);
 		expect(view({ tools: [{ callId: "c", name: "bash", status: "running" }] }).busy).toBe(false);
 		expect(view({ run: { taskId: 1, inputs: [] } }).busy).toBe(true);
+	});
+
+	test("enables the new-session bar only while the host's directory is reachable", () => {
+		const view = (directory: SessionDirectoryLike | undefined): WebView =>
+			buildWebView({ directory, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+		expect(view(undefined).newSession).toEqual({ enabled: false });
+		expect(view(directoryOf([])).newSession).toEqual({ enabled: true });
+		expect(failureView("cannot boot: x").newSession).toEqual({ enabled: false });
+	});
+
+	test("projects the model picker from the host's catalog and configuration", () => {
+		const models: ModelsStateLike = {
+			catalog: {
+				revision: 3,
+				availableModels: [
+					{ provider: "kimi", modelId: "k2", name: "Kimi K2", reasoning: false },
+					{ provider: "deepseek", modelId: "v41", name: "DeepSeek V4.1", reasoning: true },
+					{ provider: "deepseek", modelId: "flash", name: "DeepSeek Flash", reasoning: false },
+				],
+			},
+			configuration: { model: { provider: "deepseek", modelId: "v41" }, thinkingLevel: "high" },
+		};
+
+		const picker = modelPicker(models, ["off", "low", "high"], true);
+		expect(picker.label).toBe("DeepSeek V4.1");
+		expect(picker.effort).toBe("High");
+		expect(picker.disabled).toBe(false);
+		expect(picker.empty).toBeUndefined();
+		expect(picker.groups.map((group) => group.provider)).toEqual(["deepseek", "kimi"]);
+		expect(picker.groups[0]?.options.map((option) => [option.label, option.selected])).toEqual([
+			["DeepSeek V4.1", true],
+			["DeepSeek Flash", false],
+		]);
+		expect(picker.levels.map((level) => [level.label, level.selected])).toEqual([
+			["Off", false],
+			["Low", false],
+			["High", true],
+		]);
+		expect(picker.levelsEmpty).toBeUndefined();
+	});
+
+	test("keeps the picker explainable when the catalog, the levels, or the session are missing", () => {
+		const emptyCatalog = modelPicker(
+			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
+			["off"],
+			true,
+		);
+		expect(emptyCatalog.label).toBe("No model");
+		expect(emptyCatalog.groups).toEqual([]);
+		expect(emptyCatalog.empty).toBe("No models available.");
+		// A model with nothing above `off` still says so instead of showing an empty group.
+		expect(emptyCatalog.levelsEmpty).toBe("This model provides no reasoning effort levels.");
+
+		const notReasoning = modelPicker(
+			{
+				catalog: {
+					revision: 1,
+					availableModels: [{ provider: "kimi", modelId: "k2", name: "Kimi K2", reasoning: false }],
+				},
+				configuration: { model: { provider: "kimi", modelId: "k2" }, thinkingLevel: "off" },
+			},
+			["off"],
+			true,
+		);
+		expect(notReasoning.effort).toBeUndefined();
+		expect(notReasoning.label).toBe("Kimi K2");
+
+		// A configured model the catalog no longer carries is still named as configured.
+		const missing = modelPicker(
+			{ catalog: { revision: 2, availableModels: [] }, configuration: { model: { provider: "x", modelId: "y" }, thinkingLevel: "off" } },
+			["off"],
+			true,
+		);
+		expect(missing.label).toBe("x/y");
+
+		expect(modelPicker(undefined, [], true)).toEqual(MODEL_PICKER_EMPTY);
+		expect(modelPicker(undefined, [], false)).toEqual(MODEL_PICKER_EMPTY);
+		const detached = modelPicker(
+			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
+			["off"],
+			false,
+		);
+		expect(detached).toEqual(MODEL_PICKER_EMPTY);
+		expect(buildWebView({
+			directory: directoryOf([]),
+			transcript: undefined,
+			attachedId: undefined,
+			now: NOW,
+			models: { catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" } },
+			thinkingLevels: ["off"],
+		}).model).toEqual(MODEL_PICKER_EMPTY);
+	});
+
+	test("builds the picker from the attached session's models state and levels", () => {
+		const view = buildWebView({
+			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
+			transcript: viewOf([]),
+			attachedId: "s",
+			now: NOW,
+			models: {
+				catalog: { revision: 1, availableModels: [{ provider: "p", modelId: "m", name: "Model M", reasoning: true }] },
+				configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "low" },
+			},
+			thinkingLevels: ["off", "low"],
+		});
+		expect(view.model).toMatchObject({ label: "Model M", effort: "Low", disabled: false });
+		expect(failureView("cannot boot: x").model).toEqual(MODEL_PICKER_EMPTY);
+	});
+
+	test("labels thinking levels in the platform's vocabulary", () => {
+		expect(thinkingLevelLabel("off")).toBe("Off");
+		expect(thinkingLevelLabel("medium")).toBe("Medium");
+		expect(thinkingLevelLabel("high")).toBe("High");
+		expect(thinkingLevelLabel("")).toBe("");
 	});
 });

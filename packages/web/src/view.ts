@@ -37,6 +37,49 @@ export interface RosterItem {
 	readonly attached: boolean;
 }
 
+/** One catalog entry the picker offers. */
+export interface ModelOption {
+	readonly provider: string;
+	readonly modelId: string;
+	readonly label: string;
+	readonly selected: boolean;
+}
+
+/** Catalog entries under their provider, the way the picker's card lists them. */
+export interface ModelGroup {
+	readonly provider: string;
+	readonly options: readonly ModelOption[];
+}
+
+/** One thinking level the attached model reports. */
+export interface ThinkingOption {
+	readonly level: string;
+	readonly label: string;
+	readonly selected: boolean;
+}
+
+/** The composer's model and effort control: the chip's text plus the card it opens. */
+export interface ModelPicker {
+	/** The chip's primary text: the configured model's name. */
+	readonly label: string;
+	/** The chip's secondary text: the configured level, for a model that reports levels. */
+	readonly effort: string | undefined;
+	readonly groups: readonly ModelGroup[];
+	readonly levels: readonly ThinkingOption[];
+	/** The card's line when the host's catalog is empty, so the control never looks broken. */
+	readonly empty: string | undefined;
+	/** The effort group's line when the attached model reports nothing above `off`. */
+	readonly levelsEmpty: string | undefined;
+	/** No attached session or no models service: the trigger is inert. */
+	readonly disabled: boolean;
+}
+
+/** The sidebar's new-session control. Its label is page copy; only its state is projected. */
+export interface NewSessionAffordance {
+	/** The host is reachable, so it can take a create. */
+	readonly enabled: boolean;
+}
+
 export interface WebView {
 	readonly roster: readonly RosterItem[];
 	readonly blocks: readonly TranscriptBlock[];
@@ -46,6 +89,8 @@ export interface WebView {
 	readonly empty: string | undefined;
 	/** Whether a turn is in flight: the composer's primary action becomes the stop control. */
 	readonly busy: boolean;
+	readonly newSession: NewSessionAffordance;
+	readonly model: ModelPicker;
 }
 
 /** The `amazme.live` document of a view: the active run, the streaming answer, and running tools. */
@@ -70,11 +115,95 @@ export interface SessionDirectoryLike {
 	readonly sessions: readonly SessionSummaryLike[];
 }
 
+/** One catalog entry of the host's `amazme.models` state; only the fields the picker shows. */
+export interface ModelSummaryLike {
+	readonly provider: string;
+	readonly modelId: string;
+	readonly name: string;
+	readonly reasoning: boolean;
+}
+
+/** The host's replicated `amazme.models` state, as this package reads it. */
+export interface ModelsStateLike {
+	readonly catalog: { readonly revision: number; readonly availableModels: readonly ModelSummaryLike[] };
+	readonly configuration: {
+		readonly model: { readonly provider: string; readonly modelId: string } | null;
+		readonly thinkingLevel: string;
+	};
+}
+
 export interface WebViewInput {
 	readonly directory: SessionDirectoryLike | undefined;
 	readonly transcript: ConversationView | undefined;
 	readonly attachedId: string | undefined;
 	readonly now: number;
+	readonly models: ModelsStateLike | undefined;
+	/** The levels the host reports for the attached model; `undefined` until the page has read them. */
+	readonly thinkingLevels: readonly string[] | undefined;
+}
+
+/** The host has no session attached yet, so the picker's trigger stays inert. */
+export const MODEL_PICKER_EMPTY: ModelPicker = {
+	label: "No model",
+	effort: undefined,
+	groups: [],
+	levels: [],
+	empty: undefined,
+	levelsEmpty: undefined,
+	disabled: true,
+};
+
+/** The level names DSH's model catalog publishes; the platform's own vocabulary. */
+export function thinkingLevelLabel(level: string): string {
+	return level.length === 0 ? level : `${level[0]?.toUpperCase() ?? ""}${level.slice(1)}`;
+}
+/**
+ * The picker the composer chip opens: the host's catalog grouped by provider, the levels the
+ * attached model reports, and the two empty states that keep the control explainable.
+ */
+export function modelPicker(
+	models: ModelsStateLike | undefined,
+	levels: readonly string[] | undefined,
+	attached: boolean,
+): ModelPicker {
+	if (models === undefined || !attached) return MODEL_PICKER_EMPTY;
+	const configured = models.configuration.model;
+	const byProvider = new Map<string, ModelOption[]>();
+	for (const model of models.catalog.availableModels) {
+		const options = byProvider.get(model.provider) ?? [];
+		if (!byProvider.has(model.provider)) byProvider.set(model.provider, options);
+		options.push({
+			provider: model.provider,
+			modelId: model.modelId,
+			label: model.name,
+			selected: configured?.provider === model.provider && configured.modelId === model.modelId,
+		});
+	}
+	const groups: ModelGroup[] = [...byProvider]
+		.map(([provider, options]) => ({ provider, options }))
+		.sort((left, right) => left.provider.localeCompare(right.provider));
+	const current = models.catalog.availableModels.find(
+		(model) => model.provider === configured?.provider && model.modelId === configured?.modelId,
+	);
+	const label =
+		current?.name ??
+		(configured === null || configured === undefined ? "No model" : `${configured.provider}/${configured.modelId}`);
+	// Levels read as `undefined` until the page has asked the host: no chip, and no verdict yet.
+	const reasoned = levels !== undefined && levels.length > 1;
+	return {
+		label,
+		effort: reasoned ? thinkingLevelLabel(models.configuration.thinkingLevel) : undefined,
+		groups,
+		levels: (levels ?? []).map((level) => ({
+			level,
+			label: thinkingLevelLabel(level),
+			selected: level === models.configuration.thinkingLevel,
+		})),
+		empty: groups.length === 0 ? "No models available." : undefined,
+		levelsEmpty:
+			levels === undefined || reasoned ? undefined : "This model provides no reasoning effort levels.",
+		disabled: false,
+	};
 }
 
 export function formatAge(createdAt: number, now: number): string {
@@ -352,7 +481,17 @@ export function queuedInputs(view: ConversationView | undefined): string[] {
 
 /** The view a page shows when it cannot reach or trust the host. */
 export function failureView(text: string): WebView {
-	return { roster: [], blocks: [], status: "", queue: [], attachedId: undefined, empty: text, busy: false };
+	return {
+		roster: [],
+		blocks: [],
+		status: "",
+		queue: [],
+		attachedId: undefined,
+		empty: text,
+		busy: false,
+		newSession: { enabled: false },
+		model: MODEL_PICKER_EMPTY,
+	};
 }
 
 export function buildWebView(input: WebViewInput): WebView {
@@ -372,5 +511,8 @@ export function buildWebView(input: WebViewInput): WebView {
 		attachedId: input.attachedId,
 		empty,
 		busy: isBusy(input.transcript),
+		// Only a reachable host can take a create; the roster appears with the same state.
+		newSession: { enabled: input.directory !== undefined },
+		model: modelPicker(input.models, input.thinkingLevels, input.attachedId !== undefined),
 	};
 }

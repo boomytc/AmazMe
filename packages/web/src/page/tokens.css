@@ -15,6 +15,9 @@
 		-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
 		"Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
 	--dsw-font-family-brand: var(--dsw-font-family);
+	--ds-font-family-code:
+		"SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, Courier, "PingFang SC",
+		"Microsoft YaHei";
 	--ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 	--ds-transition-duration-fast: 0.1s;
 	--dsw-radius-sm: 8px;
@@ -25,6 +28,20 @@
 
 	/* Type ladder entries this page reads. */
 	--dsw-font-xs-13: 13px/20px var(--dsw-font-family);
+	--dsw-font-markdown-h1: 700 calc(21px + var(--dsh-content-font-delta)) / calc(30px + var(--dsh-content-font-delta))
+		var(--dsw-font-family);
+	--dsw-font-markdown-h2: 700 calc(19px + var(--dsh-content-font-delta)) / calc(28px + var(--dsh-content-font-delta))
+		var(--dsw-font-family);
+	--dsw-font-markdown-h3: 700 calc(18px + var(--dsh-content-font-delta)) / calc(26px + var(--dsh-content-font-delta))
+		var(--dsw-font-family);
+	--dsw-font-markdown-h4: 600 var(--dsh-content-font-size, 14px) / calc(24px + var(--dsh-content-font-delta))
+		var(--dsw-font-family);
+	--dsw-font-markdown-base: var(--dsh-content-font-size, 14px) / calc(24px + var(--dsh-content-font-delta))
+		var(--dsw-font-family);
+	--dsw-font-markdown-base-strong: 600 var(--dsh-content-font-size, 14px) /
+		calc(24px + var(--dsh-content-font-delta)) var(--dsw-font-family);
+	--dsw-font-markdown-code: 12px/19px var(--ds-font-family-code);
+	--dsw-font-markdown-code-block: 11px/19px var(--ds-font-family-code);
 
 	--dsw-focus-ring-width: 2px;
 
@@ -48,18 +65,24 @@ body {
 	--dsw-static-deepseek-400: rgb(122, 170, 255);
 	--dsw-static-deepseek-450: rgb(86, 134, 254);
 	--dsw-static-deepseek-500: rgb(65, 118, 230);
+	--dsw-static-neutral-50: rgb(250, 250, 250);
 	--dsw-static-neutral-200: rgb(229, 229, 229);
 	--dsw-static-neutral-300: rgb(212, 212, 212);
 	--dsw-static-neutral-550: rgb(101, 103, 107);
 	--dsw-static-neutral-600: rgb(84, 85, 87);
 	--dsw-static-neutral-700: rgb(60, 60, 61);
+	--dsw-static-neutral-800: rgb(41, 41, 41);
 	--dsw-static-neutral-bluish-00: rgb(255, 255, 255);
 	--dsw-static-neutral-bluish-50: rgb(249, 250, 251);
 	--dsw-static-neutral-bluish-75: rgb(241, 243, 245);
+	--dsw-static-neutral-bluish-100: rgb(235, 238, 242);
+	--dsw-static-neutral-bluish-200: rgb(225, 229, 238);
 	--dsw-static-neutral-bluish-300: rgb(207, 211, 214);
 	--dsw-static-neutral-bluish-400: rgb(173, 178, 184);
 	--dsw-static-neutral-bluish-600: rgb(129, 133, 140);
 	--dsw-static-neutral-bluish-700: rgb(97, 102, 107);
+	--dsw-static-neutral-bluish-750: rgb(67, 69, 74);
+	--dsw-static-neutral-bluish-800: rgb(53, 54, 56);
 	--dsw-static-neutral-bluish-850: rgb(44, 44, 46);
 	--dsw-static-neutral-bluish-900: rgb(27, 27, 28);
 	--dsw-static-neutral-bluish-950: rgb(21, 21, 23);
@@ -74,14 +97,22 @@ body {
 	--dsw-alias-border-l3: rgba(0, 0, 0, 0.12);
 	--dsw-alias-border-l4: rgba(0, 0, 0, 0.16);
 	--dsw-alias-label-primary: var(--dsw-static-neutral-bluish-1000);
+	--dsw-alias-label-primary-dimmed: var(--dsw-static-neutral-bluish-950);
 	--dsw-alias-label-secondary: var(--dsw-static-neutral-bluish-700);
 	--dsw-alias-label-tertiary: var(--dsw-static-neutral-bluish-600);
 	--dsw-alias-label-caption: var(--dsw-static-neutral-bluish-400);
+	--dsw-alias-label-dimmed: var(--dsw-static-neutral-bluish-200);
 	--dsw-alias-label-deep-diving: color-mix(in srgb, var(--dsw-static-deepseek-500) 70%, var(--dsw-static-blue-950));
+	--dsw-alias-link: var(--dsw-static-deepseek-500);
+	--dsw-alias-menu-icon: var(--dsw-static-neutral-bluish-800);
 	--dsw-alias-interactive-bg-hover: rgba(38, 49, 72, 0.06);
+	--dsw-alias-button-elevated-fill: var(--dsw-static-neutral-bluish-00);
+	--dsw-alias-button-floating-hover: var(--dsw-static-neutral-bluish-75);
 	--dsw-alias-button-info-fill: var(--dsw-static-deepseek-500);
 	--dsw-alias-button-info-hover: var(--dsw-static-deepseek-400);
 	--dsw-alias-markdown-code-block: var(--dsw-static-neutral-bluish-50);
+	--dsw-alias-markdown-code-block-banner: var(--dsw-static-neutral-bluish-50);
+	--dsw-alias-markdown-inline-code: var(--dsw-static-neutral-50);
 	--dsw-alias-markdown-tag: var(--dsw-static-neutral-bluish-75);
 	--dsw-alias-state-business-primary: var(--dsw-static-deepseek-500);
 	--dsw-alias-state-error-primary: var(--dsw-static-red-600);
@@ -92,6 +123,9 @@ body {
 	--dsw-specific-bubble: var(--dsw-static-deepseek-50);
 	--dsw-specific-input-major: var(--dsw-static-neutral-bluish-00);
 	--dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-50);
+	--dsw-menu-surface-fill: rgba(248, 249, 250, 0.58);
+	--dsw-specific-menu: var(--dsw-menu-surface-fill);
+	--dsw-menu-backdrop-filter: blur(40px) saturate(150%);
 
 	/* Elevation stroke default; a surface rebinds it (the composer card takes l2). */
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l4);
@@ -107,14 +141,22 @@ body[data-ds-dark-theme] {
 	--dsw-alias-border-l3: rgba(255, 255, 255, 0.16);
 	--dsw-alias-border-l4: rgba(255, 255, 255, 0.2);
 	--dsw-alias-label-primary: var(--dsw-static-neutral-bluish-50);
+	--dsw-alias-label-primary-dimmed: var(--dsw-static-neutral-bluish-100);
 	--dsw-alias-label-secondary: var(--dsw-static-neutral-bluish-300);
 	--dsw-alias-label-tertiary: var(--dsw-static-neutral-bluish-400);
 	--dsw-alias-label-caption: var(--dsw-static-neutral-bluish-600);
+	--dsw-alias-label-dimmed: var(--dsw-static-neutral-bluish-750);
 	--dsw-alias-label-deep-diving: color-mix(in srgb, var(--dsw-static-deepseek-450) 55%, var(--dsw-static-neutral-bluish-400));
+	--dsw-alias-link: var(--dsw-static-deepseek-400);
+	--dsw-alias-menu-icon: var(--dsw-alias-label-primary-dimmed);
 	--dsw-alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
+	--dsw-alias-button-elevated-fill: var(--dsw-static-neutral-bluish-750);
+	--dsw-alias-button-floating-hover: var(--dsw-static-neutral-bluish-800);
 	--dsw-alias-button-info-fill: var(--dsw-static-deepseek-400);
 	--dsw-alias-button-info-hover: var(--dsw-static-deepseek-500);
 	--dsw-alias-markdown-code-block: var(--dsw-static-neutral-bluish-900);
+	--dsw-alias-markdown-code-block-banner: var(--dsw-static-neutral-bluish-850);
+	--dsw-alias-markdown-inline-code: var(--dsw-static-neutral-800);
 	--dsw-alias-markdown-tag: var(--dsw-static-neutral-bluish-850);
 	--dsw-alias-state-business-primary: var(--dsw-static-deepseek-400);
 	--dsw-alias-state-error-primary: var(--dsw-static-red-400);
@@ -125,6 +167,7 @@ body[data-ds-dark-theme] {
 	--dsw-specific-bubble: var(--dsw-static-neutral-bluish-850);
 	--dsw-specific-input-major: var(--dsw-static-neutral-bluish-850);
 	--dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-900);
+	--dsw-menu-surface-fill: rgba(67, 69, 74, 0.45);
 }
 
 /* The derived elevation values are declared per element, not inherited from the body: an
@@ -133,6 +176,8 @@ body[data-ds-dark-theme] {
 body,
 body * {
 	--dsw-elevation-stroke: 0 0 0 0.5px var(--dsw-elevation-stroke-color);
+	--dsw-elevation-prominent:
+		var(--dsw-elevation-stroke), 0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05);
 	--dsw-elevation-soft:
 		var(--dsw-elevation-stroke), 0 4px 16px 0 rgba(0, 0, 0, 0.03), 0 0 24px 0 rgba(0, 0, 0, 0.03);
 }

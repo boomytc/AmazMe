@@ -102,12 +102,16 @@ the host accepts connections, and it binds loopback only: a connection to anothe
 refused. Open the printed `http://127.0.0.1:<port>/` URL.
 
 The page lists the host's sessions on the left and the attached session's transcript on the right. The roster
-shows each session's age and marks the attached one; click a row to attach another session. The transcript
+shows each session's age and marks the attached one; click a row to attach another session, or use the sidebar's
+**New session** bar to have the host create one — it appears in the roster, attaches at once, and accepts input.
+The transcript
 renders the same durable state the TUI shows: user and assistant blocks, thinking, tool calls with their
 results or a "Not run" notice, compaction and reset notices, and an error notice for an answer that failed,
 was aborted, or was truncated. A turn in flight adds its live status (working, running a tool, retrying,
 compacting) as the transcript's last row, and the inputs the session has queued but not started sit as one
-strip each above the composer. The theme is the one `deepseek-harness` ships — the same palette, type,
+strip each above the composer. Assistant answers are formatted: headings, lists, emphasis, links, and fenced code
+blocks become elements, while anything the model writes that looks like markup stays text. The theme is the one
+`deepseek-harness` ships — the same palette, type,
 radii, elevation, and frame geometry — and it follows the system's light and dark appearance.
 
 Type in the composer and press `Enter` to submit: while the session is idle the text starts a run, and while a
@@ -115,7 +119,10 @@ turn is running it queues as the next input. `Shift+Enter` inserts a newline; th
 up to the composer's cap and scrolls after that. The circular action on the right sends the draft, and becomes
 `Stop` — withdrawing queued input and stopping the running turn — while a turn runs with an empty draft.
 Committed entries appear without reloading, and any other attached presentation — a second browser tab or the
-client TUI — sees the same committed state.
+client TUI — sees the same committed state. The chip beside that action carries the attached session's model and,
+for a model that reasons, its thinking level; it opens a card listing the host's model catalog grouped by
+provider and the levels that model supports, and either choice lands in that session's configuration on the host,
+so the next turn resolves its model and level from it.
 
 Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
 served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of
