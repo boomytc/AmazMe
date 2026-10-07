@@ -2,10 +2,10 @@
  * Edit actions for a right-click inside the page.
  *
  * The template is data. Electron turns each `role` into the real undo/cut/copy action.
- * Labels come from the shell catalog so they follow the same language as the dialogs.
+ * Labels come from the page catalog (`desktop.menu.*`) so they follow the same language as the dialogs.
  */
-import type { Locale } from "./locale.ts";
-import { translate, type MessageKey } from "./strings.ts";
+import type { Locale } from "@amazme/web/locale";
+import { translate, type MessageKey } from "@amazme/web/strings";
 
 /** Built-in edit roles the template is allowed to ask Electron for. */
 export type EditRole = "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll";
@@ -37,12 +37,12 @@ export interface EditMenuItem {
 }
 
 const EDIT_ACTIONS = [
-	["undo", "menu.undo", "canUndo"],
-	["redo", "menu.redo", "canRedo"],
-	["cut", "menu.cut", "canCut"],
-	["copy", "menu.copy", "canCopy"],
-	["paste", "menu.paste", "canPaste"],
-	["selectAll", "menu.selectAll", "canSelectAll"],
+	["undo", "desktop.menu.undo", "canUndo"],
+	["redo", "desktop.menu.redo", "canRedo"],
+	["cut", "desktop.menu.cut", "canCut"],
+	["copy", "desktop.menu.copy", "canCopy"],
+	["paste", "desktop.menu.paste", "canPaste"],
+	["selectAll", "desktop.menu.selectAll", "canSelectAll"],
 ] as const satisfies readonly (readonly [EditRole, MessageKey, keyof EditFlags])[];
 
 function item(locale: Locale, role: EditRole, key: MessageKey, enabled: boolean): EditMenuItem {
@@ -59,5 +59,5 @@ export function editMenuTemplate(params: EditMenuParams, locale: Locale): readon
 		return EDIT_ACTIONS.map(([role, key, flag]) => item(locale, role, key, params.editFlags[flag]));
 	}
 	if (params.selectionText.length === 0) return [];
-	return [item(locale, "copy", "menu.copy", params.editFlags.canCopy)];
+	return [item(locale, "copy", "desktop.menu.copy", params.editFlags.canCopy)];
 }

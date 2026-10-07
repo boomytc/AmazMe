@@ -45,6 +45,8 @@
 			"@amazme/client/websocket": ["./packages/client/src/websocket.ts"],
 			"@amazme/web": ["./packages/web/src/index.ts"],
 			"@amazme/web/assets": ["./packages/web/src/assets.ts"],
+			"@amazme/web/locale": ["./packages/web/src/locale.ts"],
+			"@amazme/web/strings": ["./packages/web/src/strings.ts"],
 			"@amazme/client/*": ["./packages/client/src/*"],
 			"@amazme/server": ["./packages/server/src/index.ts"],
 			"@amazme/server/unix": ["./packages/server/src/transports/unix/index.ts"],

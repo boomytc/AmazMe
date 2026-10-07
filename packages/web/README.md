@@ -5,9 +5,10 @@
 
 - `src/contract.ts`：启动清单（产品名与版本、mode、协议版本、server id、传输 URL，以及宿主读到的语言与外观偏好）与注入标记。
 - `src/locale.ts`：页面支持的语言（中／英）、存进设置里的偏好（`auto` 表示随浏览器），以及“偏好优先、否则按浏览器语言匹配”的解析。
-- `src/strings.ts`：两种语言的文案字典。页面自己的界面文案是平铺的消息键（`zh` 被声明为 `en` 的完整 Record，漏一条就编译不过），
-  宿主设置目录的 id、分组 token 与枚举取值则在这里被命名成词；`localizeDocument` 把宿主送来的静态外壳里的 `{{消息键}}` 标记
-  换成本次请求的语言，并写上 `<html lang>`。
+  包导出 `./locale`，只含匹配函数，不读 DOM。
+- `src/strings.ts`：两种语言的文案字典，全仓只这一份。页面自己的界面文案是平铺的消息键（`zh` 被声明为 `en` 的完整 Record，漏一条就编译不过），
+  宿主设置目录的 id、分组 token 与枚举取值则在这里被命名成词；桌面壳的菜单和弹框用 `desktop.*` 键。`localizeDocument` 把宿主送来的静态外壳里的 `{{消息键}}` 标记
+  换成本次请求的语言，并写上 `<html lang>`。包导出 `./strings`，同样不读 DOM，Electron 主进程直接 import。
 - `src/view.ts`：纯投影，把宿主的 `ConversationView`、名册状态与 `amazme.models` 配置映射成名册项、transcript 块
   （含“是否正在跑”）、新建会话控件与 composer 的模型／推理档选择器，TUI 与网页共用同一份 durable 视图数据，
   只有渲染器不同。

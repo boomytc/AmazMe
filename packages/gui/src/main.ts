@@ -7,6 +7,7 @@ import {
 	type Event as ElectronEvent,
 	type MessageBoxOptions,
 } from "electron";
+import { resolveLocale } from "@amazme/web/locale";
 import { hostFailureCopy, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
 import { createHostSupervisor, spawnWebHost, type HostStartupFailure, type HostSupervisor } from "./host.ts";
 import {
@@ -16,7 +17,6 @@ import {
 	resolveNodeExecutable,
 	webHostLaunch,
 } from "./launch.ts";
-import { shellLocale } from "./locale.ts";
 import { editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
@@ -58,9 +58,9 @@ function shutdownHost(): Promise<void> {
 
 function currentLocale() {
 	const preferred = app.getPreferredSystemLanguages();
-	if (preferred.length > 0) return shellLocale(preferred);
+	if (preferred.length > 0) return resolveLocale(undefined, preferred);
 	const locale = app.getLocale();
-	return shellLocale(locale.length > 0 ? [locale] : []);
+	return resolveLocale(undefined, locale.length > 0 ? [locale] : []);
 }
 
 function liveWindow(): BrowserWindow | undefined {

@@ -1,11 +1,11 @@
 /**
  * Failure dialogs for the page process and the web-host child.
  *
- * Titles, bodies, and button labels are assembled here from the shell catalog. The main
- * process only shows the result and maps the button index back to reload or quit.
+ * Titles, bodies, and button labels are assembled here from the page catalog (`desktop.*`). The
+ * main process only shows the result and maps the button index back to reload or quit.
  */
-import type { Locale } from "./locale.ts";
-import { translate, type MessageKey } from "./strings.ts";
+import type { Locale } from "@amazme/web/locale";
+import { translate, type MessageKey } from "@amazme/web/strings";
 
 /** Chromium `net::ERR_ABORTED`. A load the page itself replaced, or a window tearing down. */
 const ERR_ABORTED = -3;
@@ -17,14 +17,14 @@ export const HOST_DIALOG_TAIL_LINES = 12;
 export const HOST_DIALOG_TAIL_CHARS = 4_000;
 
 const RENDER_REASONS = {
-	"clean-exit": "render.reason.clean-exit",
-	"abnormal-exit": "render.reason.abnormal-exit",
-	killed: "render.reason.killed",
-	crashed: "render.reason.crashed",
-	oom: "render.reason.oom",
-	"launch-failed": "render.reason.launch-failed",
-	"integrity-failure": "render.reason.integrity-failure",
-	"memory-eviction": "render.reason.memory-eviction",
+	"clean-exit": "desktop.render.reason.clean-exit",
+	"abnormal-exit": "desktop.render.reason.abnormal-exit",
+	killed: "desktop.render.reason.killed",
+	crashed: "desktop.render.reason.crashed",
+	oom: "desktop.render.reason.oom",
+	"launch-failed": "desktop.render.reason.launch-failed",
+	"integrity-failure": "desktop.render.reason.integrity-failure",
+	"memory-eviction": "desktop.render.reason.memory-eviction",
 } as const satisfies Record<string, MessageKey>;
 
 export type RenderFailure =
@@ -119,20 +119,20 @@ function renderReason(locale: Locale, reason: string): string {
 }
 
 function shownCode(locale: Locale, code: number | null): string {
-	return code === null ? translate(locale, "host.none") : String(code);
+	return code === null ? translate(locale, "desktop.host.none") : String(code);
 }
 
 function shownSignal(locale: Locale, signal: string | null): string {
-	return signal === null || signal.length === 0 ? translate(locale, "host.none") : signal;
+	return signal === null || signal.length === 0 ? translate(locale, "desktop.host.none") : signal;
 }
 
 /** Reload / quit copy for a page-process failure. `detail` is the URL, or empty. */
 export function renderFailureCopy(locale: Locale, failure: RenderFailure): RenderDialogCopy {
-	const buttons = [translate(locale, "dialog.reload"), translate(locale, "dialog.quit")] as const;
+	const buttons = [translate(locale, "desktop.dialog.reload"), translate(locale, "desktop.dialog.quit")] as const;
 	if (failure.kind === "render-process-gone") {
 		return {
-			title: translate(locale, "render.gone.title"),
-			message: translate(locale, "render.gone.message", {
+			title: translate(locale, "desktop.render.gone.title"),
+			message: translate(locale, "desktop.render.gone.message", {
 				reason: renderReason(locale, failure.reason),
 				exitCode: String(failure.exitCode),
 			}),
@@ -141,8 +141,8 @@ export function renderFailureCopy(locale: Locale, failure: RenderFailure): Rende
 		};
 	}
 	return {
-		title: translate(locale, "render.load.title"),
-		message: translate(locale, "render.load.message", {
+		title: translate(locale, "desktop.render.load.title"),
+		message: translate(locale, "desktop.render.load.message", {
 			errorCode: String(failure.errorCode),
 			errorDescription: failure.errorDescription,
 		}),
@@ -162,8 +162,8 @@ function hostCopy(
 	return {
 		title: translate(locale, titleKey),
 		message: translate(locale, messageKey, values),
-		detail: visible.length > 0 ? visible : translate(locale, "host.noOutput"),
-		buttons: [translate(locale, "dialog.quit")],
+		detail: visible.length > 0 ? visible : translate(locale, "desktop.host.noOutput"),
+		buttons: [translate(locale, "desktop.dialog.quit")],
 	};
 }
 
@@ -171,25 +171,43 @@ function hostCopy(
 export function hostFailureCopy(locale: Locale, failure: HostFailure): HostDialogCopy {
 	switch (failure.kind) {
 		case "spawn-error":
-			return hostCopy(locale, "host.spawn.title", "host.spawn.message", { message: failure.message }, failure.tail);
+			return hostCopy(
+				locale,
+				"desktop.host.spawn.title",
+				"desktop.host.spawn.message",
+				{ message: failure.message },
+				failure.tail,
+			);
 		case "exit-before-ready":
 			return hostCopy(
 				locale,
-				"host.early.title",
-				"host.early.message",
+				"desktop.host.early.title",
+				"desktop.host.early.message",
 				{ code: shownCode(locale, failure.code), signal: shownSignal(locale, failure.signal) },
 				failure.tail,
 			);
 		case "readiness-timeout":
-			return hostCopy(locale, "host.timeout.title", "host.timeout.message", { message: failure.message }, failure.tail);
+			return hostCopy(
+				locale,
+				"desktop.host.timeout.title",
+				"desktop.host.timeout.message",
+				{ message: failure.message },
+				failure.tail,
+			);
 		case "invalid-output":
 		case "startup-error":
-			return hostCopy(locale, "host.invalid.title", "host.invalid.message", { message: failure.message }, failure.tail);
+			return hostCopy(
+				locale,
+				"desktop.host.invalid.title",
+				"desktop.host.invalid.message",
+				{ message: failure.message },
+				failure.tail,
+			);
 		case "unexpected-exit":
 			return hostCopy(
 				locale,
-				"host.crashed.title",
-				"host.crashed.message",
+				"desktop.host.crashed.title",
+				"desktop.host.crashed.message",
 				{ code: shownCode(locale, failure.code), signal: shownSignal(locale, failure.signal) },
 				failure.tail,
 			);
