@@ -162,7 +162,7 @@ export {
 	type SkillsPanelInput,
 	type SkillsStateLike,
 } from "./panels.ts";
-export { collectPageElements, createRenderer, type PageElements, type PageRenderer } from "./render.ts";
+export { collectPageElements, createRenderer, type PageElements, type PageRenderer, type WindowApp } from "./render.ts";
 export {
 	copyIdentities,
 	localizeDocument,
@@ -202,6 +202,7 @@ export {
 	formatAge,
 	formatTokens,
 	attachedSessionLabel,
+	windowTitle,
 	statusMeter,
 	historyPageBlocks,
 	inboxOf,

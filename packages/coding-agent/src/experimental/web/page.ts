@@ -600,7 +600,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		fail(renderer, new Error(translate(FALLBACK_LOCALE, "page.noManifest")), FALLBACK_LOCALE);
 		return undefined;
 	}
-	document.title = `${manifest.app.name} ${manifest.app.version}`;
 	const client = new Client({
 		serverId: manifest.server.id,
 		transportFactory: createWebSocketTransportFactory({
@@ -1823,7 +1822,11 @@ export async function main(): Promise<void> {
 		followSystemTheme();
 		applyTheme(resolveThemePreference(manifest?.preferences?.appearance));
 		elements = collectPageElements();
-		renderer = createRenderer(elements);
+		renderer = createRenderer(
+			elements,
+			() => {},
+			manifest === undefined ? undefined : { name: manifest.app.name, version: manifest.app.version },
+		);
 	} catch (error) {
 		document.body.textContent = translate(locale, "page.cannotBoot", {
 			error: message(error),

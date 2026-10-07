@@ -8,6 +8,7 @@ import {
 	webHostLaunch,
 } from "./launch.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
+import { attentionOnTitle } from "./title.ts";
 
 const APP_NAME = "AmazMe";
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
@@ -38,6 +39,23 @@ function shutdownHost(): Promise<void> {
 	return shutdownPromise;
 }
 
+/**
+ * The page title is the only signal. Electron still applies it. A rise from no pending approvals
+ * to some, while this window is in the background, flashes the frame. The flash stops on focus,
+ * and also when the count returns to none before then.
+ */
+function watchPendingApprovals(target: BrowserWindow): void {
+	let pending = 0;
+	target.on("focus", () => {
+		target.flashFrame(false);
+	});
+	target.webContents.on("page-title-updated", (_event, title: string) => {
+		const attention = attentionOnTitle(pending, title, target.isFocused());
+		if (attention.flash !== undefined) target.flashFrame(attention.flash);
+		pending = attention.pending;
+	});
+}
+
 async function openWindow(pageUrl: string): Promise<void> {
 	const origin = new URL(pageUrl).origin;
 	const created = new BrowserWindow({
@@ -59,6 +77,7 @@ async function openWindow(pageUrl: string): Promise<void> {
 	created.on("closed", () => {
 		if (window === created) window = undefined;
 	});
+	watchPendingApprovals(created);
 	created.webContents.on("will-navigate", (event, target) => {
 		if (isAllowedNavigation(target, origin)) return;
 		event.preventDefault();

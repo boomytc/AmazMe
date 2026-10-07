@@ -693,6 +693,39 @@ export function attachedSessionLabel(directory: SessionDirectoryLike | undefined
 	return session === undefined ? attachedId : (displayName(session) ?? attachedId);
 }
 
+/**
+ * A leading `(digits) ` is the desktop shell's pending-count prefix. A session name that starts
+ * that way is rewritten with full-width parentheses so only a real pending count produces the prefix.
+ */
+const TITLE_COUNT_PREFIX = /^\((\d+)\) /u;
+
+function titleSessionName(name: string): string {
+	return name.replace(TITLE_COUNT_PREFIX, "（$1） ");
+}
+
+/**
+ * The window title. No attached session keeps the product and its version. An attached session
+ * uses the display name the roster already shows: `(n) <name> — <app>` while the header's
+ * approval indicator reports n > 0, and `<name> — <app>` once that count is back to none.
+ */
+export function windowTitle(input: {
+	readonly appName: string;
+	readonly version: string;
+	/** `sessionLabel`: the display name, or the session id when `/name` has not set one. */
+	readonly sessionName: string | undefined;
+	/** `approvalIndicator.count`, or 0 when the indicator is absent. */
+	readonly pendingCount: number;
+}): string {
+	if (input.sessionName === undefined || input.sessionName.length === 0) {
+		return `${input.appName} ${input.version}`;
+	}
+	const sessionName = titleSessionName(input.sessionName);
+	if (Number.isInteger(input.pendingCount) && input.pendingCount > 0) {
+		return `(${input.pendingCount}) ${sessionName} — ${input.appName}`;
+	}
+	return `${sessionName} — ${input.appName}`;
+}
+
 /** Token counts in the same widths the TUI top bar uses. */
 export function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
