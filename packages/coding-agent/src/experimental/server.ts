@@ -47,6 +47,7 @@ import {
 	createSession as createCatalogSession,
 	deleteSession,
 	listSessions as listCatalogSessions,
+	mergeTrackedSession,
 	normalizeSessionName,
 	readSession,
 	type SessionCatalogMetadata,
@@ -395,7 +396,10 @@ async function startServerBackend(
 	const sessionDir = resolveSessionDirectory(options.sessionDir);
 	const listSessions = async (): Promise<SessionCatalogMetadata[]> => {
 		const sessions = new Map((await listCatalogSessions(sessionDir)).map((metadata) => [metadata.path, metadata]));
-		for (const metadata of workers.trackedSessions) sessions.set(metadata.path, metadata);
+		// A running worker replaces its catalog row. The display name stays the catalog's.
+		for (const metadata of workers.trackedSessions) {
+			sessions.set(metadata.path, mergeTrackedSession(sessions.get(metadata.path), metadata));
+		}
 		return [...sessions.values()];
 	};
 	const resolveSession = async (sessionId: string, _context: Context): Promise<SessionCatalogMetadata> => {

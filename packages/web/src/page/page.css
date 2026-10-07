@@ -391,8 +391,11 @@ body.dock-open {
 /* Header (ConversationRoot .header, the variant without the view tab strip). */
 .header {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr);
+	/* The name track keeps a readable slice and ellipsizes. The utilities track sizes to its content,
+	   then yields the meter and the connection; the approval count and the menu stay whole. */
+	grid-template-columns: minmax(4em, 1fr) minmax(min-content, max-content);
 	flex: none;
+	min-width: 0;
 	min-height: 0;
 	padding: 10px 28px 10px 20px;
 	border-bottom: 0.5px solid var(--dsw-alias-border-l3);
@@ -409,6 +412,7 @@ body.dock-open {
 
 /* Current crumb (ConversationRoot .crumbCurrent): the session this page is attached to. */
 .lane-status {
+	flex: 1 1 0;
 	min-width: 0;
 	overflow: hidden;
 	color: var(--dsw-alias-label-secondary);
@@ -425,6 +429,8 @@ body.dock-open {
 
 .crumb {
 	display: inline-block;
+	flex: 0 1 auto;
+	min-width: 3em;
 	max-width: 220px;
 	overflow: hidden;
 	padding: 4px 8px;
@@ -437,8 +443,8 @@ body.dock-open {
 	white-space: nowrap;
 }
 
-/* The utilities column stretches and right-aligns its content, so a long value ellipsizes inside
-   the track instead of overflowing it and colliding with the title. */
+/* Utilities size to content, then the meter and the connection shrink. min-content is the approval
+   count plus the menu, so a narrow header cannot clip those or push the menu off screen. */
 .header-utilities {
 	display: flex;
 	flex: none;
@@ -446,7 +452,7 @@ body.dock-open {
 	justify-content: flex-end;
 	gap: 8px;
 	margin-left: 20px;
-	min-width: 0;
+	min-width: min-content;
 	/* The seat of the management card, which opens below the entry. */
 	position: relative;
 }
@@ -454,6 +460,7 @@ body.dock-open {
 /* Pending approvals. Beside the usage figures, and outside the meter's overflow so a narrow header cannot clip it. */
 .approval-status {
 	flex: none;
+	flex-shrink: 0;
 	color: var(--dsw-alias-state-business-primary);
 	font: var(--dsw-font-xs-13);
 	font-weight: 600;
@@ -1279,6 +1286,8 @@ summary.disclosure-row {
 /* The header's run controls (compaction), DSH's header action seat. */
 .header-actions {
 	display: flex;
+	flex: none;
+	flex-shrink: 0;
 	align-items: center;
 	gap: 4px;
 }
@@ -1973,6 +1982,7 @@ summary.disclosure-row {
 	align-items: center;
 	justify-content: center;
 	flex: none;
+	flex-shrink: 0;
 	width: 24px;
 	height: 24px;
 	padding: 0;

@@ -49,7 +49,7 @@ export const EN = {
 	"connection.retrying": "disconnected: {error} — retrying",
 	"connection.hostGone": "host went away",
 
-	"composer.placeholder": "Send a task to {id}",
+	"composer.placeholder": "Send a task to {name}",
 	"composer.placeholderDetached": "No session attached",
 	"composer.send": "Send",
 	"composer.stop": "Stop",
@@ -435,7 +435,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"connection.retrying": "连接已断开：{error} — 正在重试",
 	"connection.hostGone": "宿主已退出",
 
-	"composer.placeholder": "给 {id} 发送任务",
+	"composer.placeholder": "给 {name} 发送任务",
 	"composer.placeholderDetached": "尚未附加会话",
 	"composer.send": "发送",
 	"composer.stop": "停止",

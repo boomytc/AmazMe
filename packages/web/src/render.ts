@@ -885,6 +885,12 @@ export function createRenderer(
 		elements.viewMenuTrigger.setAttribute("aria-expanded", "true");
 	};
 
+	/** The crumb ellipsizes when the header is narrow. The title keeps the full text. */
+	const writeSessionTitle = (text: string): void => {
+		elements.sessionTitle.textContent = text;
+		elements.sessionTitle.title = text;
+	};
+
 	/** Switch the main area between the conversation and one panel, and paint the panel. */
 	const renderPanelView = (view: WebView): void => {
 		const panel = view.panel.panel;
@@ -896,16 +902,17 @@ export function createRenderer(
 		if (panel === undefined) {
 			elements.viewBody.replaceChildren();
 			const label = view.sessionLabel ?? copy("header.noSession");
-			elements.sessionTitle.textContent =
+			writeSessionTitle(
 				view.focus === undefined
 					? label
 					: copy("header.conversation", {
 							session: label,
 							conversation: view.focus,
-						});
+						}),
+			);
 			return;
 		}
-		elements.sessionTitle.textContent = panel.title;
+		writeSessionTitle(panel.title);
 		elements.viewBody.replaceChildren(panelElement(panel));
 	};
 
@@ -1256,6 +1263,8 @@ export function createRenderer(
 		elements.runActions.replaceChildren(compact, fork, dock);
 		elements.laneStatus.textContent = view.lane;
 		elements.laneStatus.hidden = view.lane.length === 0;
+		if (view.lane.length === 0) elements.laneStatus.removeAttribute("title");
+		else elements.laneStatus.title = view.lane;
 	};
 
 	/** The composer's submit mode, offered only while a turn runs and can take input. */
@@ -1485,7 +1494,7 @@ export function createRenderer(
 
 			const detached = view.attachedId === undefined;
 			elements.prompt.disabled = detached;
-			elements.prompt.placeholder = composerPlaceholder(view.locale, view.attachedId);
+			elements.prompt.placeholder = composerPlaceholder(view.locale, view.sessionLabel);
 			renderPrimary();
 			renderStop();
 			renderApprovalStatus(view);

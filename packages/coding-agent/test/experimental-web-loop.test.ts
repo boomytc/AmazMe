@@ -39,6 +39,7 @@ import { Skills, type Skills as SkillsService } from "../src/experimental/servic
 import { Transcript } from "../src/experimental/services/transcript.ts";
 import { runClient } from "../src/experimental/client.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { writeSessionName } from "../src/experimental/session-catalog.ts";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 
 interface Presentation {
@@ -226,6 +227,95 @@ describe("web client interactive loop", () => {
 			await presentation.dispose();
 		},
 		120_000,
+	);
+
+	test(
+		"a name set before the first turn is what listSessions returns, including after refresh",
+		async () => {
+			const { host } = await startHostWithDirectories();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "pre-turn-name" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+			const renamed = await presentation.management.rename(created.sessionId, "foo", BACKGROUND_CONTEXT);
+			expect(renamed.name).toBe("foo");
+			await waitFor(
+				() =>
+					presentation.directory.state.value?.sessions.some(
+						(session) => session.sessionId === "pre-turn-name" && session.name === "foo",
+					) === true,
+				"the name on the roster before the first turn",
+			);
+			const refreshed = await openPresentation(host);
+			await waitFor(
+				() =>
+					refreshed.directory.state.value?.sessions.some(
+						(session) => session.sessionId === "pre-turn-name" && session.name === "foo",
+					) === true,
+				"the name after refresh",
+			);
+			await attached.dispose();
+			await refreshed.dispose();
+			await presentation.dispose();
+		},
+		180_000,
+	);
+
+	test(
+		"an empty worker meta does not cover a catalog name",
+		async () => {
+			const { host, sessionDir } = await startHostWithDirectories();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "kept-name" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+			// The catalog gains a name the running worker was not told about.
+			await writeSessionName(sessionDir, created.sessionId, "kept");
+			await presentation.management.create({ id: "other-session" }, BACKGROUND_CONTEXT);
+			await waitFor(
+				() =>
+					presentation.directory.state.value?.sessions.some(
+						(session) => session.sessionId === "kept-name" && session.name === "kept",
+					) === true,
+				"the catalog name beside an unnamed worker",
+			);
+			await attached.dispose();
+			await presentation.dispose();
+		},
+		180_000,
+	);
+
+	test(
+		"a later catalog write wins over the name the worker was started with",
+		async () => {
+			const { host, sessionDir } = await startHostWithDirectories();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "carried-name" }, BACKGROUND_CONTEXT);
+			await presentation.management.rename(created.sessionId, "early", BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+			await writeSessionName(sessionDir, created.sessionId, "sneaky");
+			await presentation.management.create({ id: "other-carried" }, BACKGROUND_CONTEXT);
+			await waitFor(
+				() => {
+					const sessions = presentation.directory.state.value?.sessions ?? [];
+					return (
+						sessions.some((session) => session.sessionId === "other-carried") &&
+						sessions.some((session) => session.sessionId === "carried-name" && session.name === "sneaky")
+					);
+				},
+				"the catalog name over the name from launch",
+			);
+			const renamed = await presentation.management.rename(created.sessionId, "later", BACKGROUND_CONTEXT);
+			expect(renamed.name).toBe("later");
+			await waitFor(
+				() =>
+					presentation.directory.state.value?.sessions.some(
+						(session) => session.sessionId === "carried-name" && session.name === "later",
+					) === true,
+				"the rename after the worker was already running",
+			);
+			await attached.dispose();
+			await presentation.dispose();
+		},
+		180_000,
 	);
 
 	test(
