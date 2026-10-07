@@ -6,20 +6,11 @@
  * updates is the reader's own disclosure choices, keyed by block id, because a rebuild would
  * otherwise reset them.
  */
-import {
-	COMPACT_ACTION,
-	DOCK_TAB_ACTION,
-	DOCK_TOGGLE_ACTION,
-	HISTORY_MORE_ACTION,
-	REFRESH_MODELS_ACTION,
-	SUBMIT_MODE_ACTION,
-} from "./actions.ts";
-import { STOP_SEQUENCE_MS, isApplePlatform, matchShortcut, type ShortcutId } from "./shortcuts.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, REFRESH_MODELS_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
 	CHAT_VIEW,
-	SETTINGS_VIEW,
 	type PanelAction,
 	type PanelButton,
 	type PanelControl,
@@ -30,23 +21,26 @@ import {
 	type PanelRow,
 	type PanelSpec,
 	type PanelText,
+	SETTINGS_VIEW,
 } from "./panels.ts";
+import { isApplePlatform, matchShortcut, type ShortcutId, STOP_SEQUENCE_MS } from "./shortcuts.ts";
 import { type MessageKey, translate } from "./strings.ts";
 import {
-	composerPlaceholder,
 	type Attachment,
+	composerPlaceholder,
 	type FeedbackControls,
-	type WelcomeCard,
 	type QueueItem,
 	type RosterItem,
 	type TranscriptBlock,
 	type WebView,
+	type WelcomeCard,
 } from "./view.ts";
 
 export interface PageElements {
 	readonly connection: HTMLElement;
 	readonly mode: HTMLElement;
 	readonly sessionTitle: HTMLElement;
+	readonly laneStatus: HTMLElement;
 	/** The sidebar's new-session bar. */
 	readonly newSession: HTMLButtonElement;
 	/** The sidebar's panel rows, and the settings entry in its footer. */
@@ -128,6 +122,7 @@ export function collectPageElements(): PageElements {
 		connection: pick("connection"),
 		mode: pick("mode"),
 		sessionTitle: pick("session-title"),
+		laneStatus: laneStatusElement(),
 		newSession: pickElement("new-session", HTMLButtonElement),
 		nav: pick("nav"),
 		settingsButton: pickElement("settings-button", HTMLButtonElement),
@@ -161,6 +156,17 @@ export function collectPageElements(): PageElements {
 		modelEffort: pick("model-effort"),
 		modelMenu: pick("model-menu"),
 	};
+}
+
+function laneStatusElement(): HTMLElement {
+	const existing = document.getElementById("lane-status");
+	if (existing !== null) return existing;
+	const lane = document.createElement("span");
+	lane.id = "lane-status";
+	lane.className = "lane-status";
+	lane.hidden = true;
+	pick("session-title").insertAdjacentElement("afterend", lane);
+	return lane;
 }
 
 function pick(id: string): HTMLElement {
@@ -512,11 +518,7 @@ function markPending(node: HTMLElement, pending: PanelPending | undefined, actio
 	}
 }
 
-function panelButton(
-	action: PanelButton,
-	report: (action: PanelAction) => void,
-	pending?: PanelPending,
-): HTMLButtonElement {
+function panelButton(action: PanelButton, report: (action: PanelAction) => void, pending?: PanelPending): HTMLButtonElement {
 	const node = button(`panel-button tone-${action.tone}`);
 	node.dataset.action = action.id;
 	if (action.data !== undefined) node.dataset.actionData = action.data;
@@ -527,10 +529,7 @@ function panelButton(
 	return node;
 }
 
-export function createRenderer(
-	elements: PageElements,
-	onSelect: (sessionId: string) => void = () => {},
-): PageRenderer {
+export function createRenderer(elements: PageElements, onSelect: (sessionId: string) => void = () => {}): PageRenderer {
 	let lastView: WebView | undefined;
 	/** Reader disclosure choices, keyed by block id so a rebuild keeps them. */
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
@@ -547,8 +546,7 @@ export function createRenderer(
 	const draft = (): string => elements.prompt.value.trim();
 
 	/** The language of the view being painted; the fallback only applies before the first paint. */
-	const copy = (key: MessageKey, values?: Record<string, string>): string =>
-		translate(lastView?.locale ?? FALLBACK_LOCALE, key, values);
+	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(lastView?.locale ?? FALLBACK_LOCALE, key, values);
 
 	const report = (action: PanelAction): void => renderer.onPanelAction(action);
 
@@ -607,7 +605,9 @@ export function createRenderer(
 			// A number outside the host's range is answered here, in the reader's language, and
 			// keeps the draft so the reader can correct it instead of losing what they typed.
 			if (control.kind === "number" && !inRange(control, input.value)) {
-				input.title = copy("panel.settings.invalidNumber", { min: String(control.min ?? 0) });
+				input.title = copy("panel.settings.invalidNumber", {
+					min: String(control.min ?? 0),
+				});
 				input.classList.add("invalid");
 				input.setAttribute("aria-invalid", "true");
 				return;
@@ -754,9 +754,7 @@ export function createRenderer(
 
 	const renderModal = (modal: PanelModal | undefined): void => {
 		const key =
-			modal === undefined
-				? undefined
-				: `${modal.id}\u0000${modal.data ?? ""}\u0000${modal.fields.map((field) => `${field.id}=${field.value}`).join("\u0001")}`;
+			modal === undefined ? undefined : `${modal.id}\u0000${modal.data ?? ""}\u0000${modal.fields.map((field) => `${field.id}=${field.value}`).join("\u0001")}`;
 		if (key === modalKey) {
 			if (modal !== undefined) applyModalState(modal);
 			return;
@@ -788,13 +786,11 @@ export function createRenderer(
 		for (const field of modal.fields) {
 			const label = element("label", "modal-field");
 			label.append(element("span", "modal-field-label", field.label));
-			const input =
-				field.kind === "textarea" ? document.createElement("textarea") : document.createElement("input");
+			const input = field.kind === "textarea" ? document.createElement("textarea") : document.createElement("input");
 			if (input instanceof HTMLInputElement) input.type = "text";
 			// The file and JSON fields are code; prose instructions keep the text face.
 			const code = field.id === "content" || field.id === "entry";
-			input.className =
-				field.kind === "textarea" ? `modal-textarea${code ? " code" : ""}` : "modal-input";
+			input.className = field.kind === "textarea" ? `modal-textarea${code ? " code" : ""}` : "modal-input";
 			input.value = field.value;
 			if (field.placeholder !== undefined) input.placeholder = field.placeholder;
 			inputs.set(field.id, input);
@@ -894,7 +890,10 @@ export function createRenderer(
 			elements.sessionTitle.textContent =
 				view.focus === undefined
 					? label
-					: copy("header.conversation", { session: label, conversation: view.focus });
+					: copy("header.conversation", {
+							session: label,
+							conversation: view.focus,
+						});
 			return;
 		}
 		elements.sessionTitle.textContent = panel.title;
@@ -915,8 +914,7 @@ export function createRenderer(
 			elements.primary.setAttribute("aria-label", label);
 			elements.primary.title = label;
 		}
-		elements.primary.disabled =
-			lastView?.attachedId === undefined || (!stop && draft().length === 0 && pending === 0);
+		elements.primary.disabled = lastView?.attachedId === undefined || (!stop && draft().length === 0 && pending === 0);
 	};
 
 	/** A disclosure whose open state is the reader's, falling back to a per-block default. */
@@ -1081,10 +1079,7 @@ export function createRenderer(
 			const node = element("div", "approval-card");
 			node.dataset.approvalId = card.id;
 			const head = element("div", "approval-head");
-			head.append(
-				element("p", "approval-title", copy("approval.title")),
-				element("p", "approval-tool", copy("approval.tool", { tool: card.tool })),
-			);
+			head.append(element("p", "approval-title", copy("approval.title")), element("p", "approval-tool", copy("approval.tool", { tool: card.tool })));
 			node.append(head);
 			node.append(element("pre", "approval-detail", card.detail));
 			const actions = element("div", "approval-actions");
@@ -1204,12 +1199,17 @@ export function createRenderer(
 		const compact = panelButton(view.run.compact, report);
 		compact.className = "header-action";
 		compact.dataset.action = COMPACT_ACTION;
+		const fork = panelButton(view.run.fork, report);
+		fork.className = "header-action";
+		fork.dataset.action = "conversation:fork";
 		const dock = button(view.dock.toggle.pressed ? "header-action pressed" : "header-action");
 		dock.dataset.action = DOCK_TOGGLE_ACTION;
 		dock.textContent = view.dock.toggle.label;
 		dock.setAttribute("aria-pressed", String(view.dock.toggle.pressed));
 		dock.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
-		elements.runActions.replaceChildren(compact, dock);
+		elements.runActions.replaceChildren(compact, fork, dock);
+		elements.laneStatus.textContent = view.lane;
+		elements.laneStatus.hidden = view.lane.length === 0;
 	};
 
 	/** The composer's submit mode, offered only while a turn runs and can take input. */
@@ -1228,9 +1228,7 @@ export function createRenderer(
 			node.setAttribute("role", "radio");
 			node.setAttribute("aria-checked", String(option.selected));
 			node.textContent = option.label;
-			node.addEventListener("click", () =>
-				report({ kind: "command", id: SUBMIT_MODE_ACTION, data: option.mode }),
-			);
+			node.addEventListener("click", () => report({ kind: "command", id: SUBMIT_MODE_ACTION, data: option.mode }));
 			group.append(node);
 		}
 		elements.submitModes.replaceChildren(group);
@@ -1282,8 +1280,7 @@ export function createRenderer(
 				const answer = wrap("turn-response", markdownElement(block.text, markdown));
 				if (block.feedback !== undefined) answer.append(feedbackRow(block.feedback));
 				flow.push(answer);
-			}
-			else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
+			} else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
 		}
 		return flow;
 	};
@@ -1316,9 +1313,7 @@ export function createRenderer(
 			for (const group of picker.groups) {
 				rows.push(element("p", "menu-heading", group.provider));
 				for (const option of group.options) {
-					rows.push(
-						pickerRow(option.label, option.selected, () => renderer.onSelectModel(option.provider, option.modelId)),
-					);
+					rows.push(pickerRow(option.label, option.selected, () => renderer.onSelectModel(option.provider, option.modelId)));
 				}
 			}
 			if (picker.levels.length > 0 || picker.levelsEmpty !== undefined) {
@@ -1342,9 +1337,7 @@ export function createRenderer(
 			refresh.dataset.action = REFRESH_MODELS_ACTION;
 			refresh.textContent = picker.refresh.label;
 			refresh.disabled = picker.refresh.busy;
-			refresh.addEventListener("click", () =>
-				report({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined }),
-			);
+			refresh.addEventListener("click", () => report({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined }));
 			row.append(refresh);
 			rows.push(row);
 		}
@@ -1426,9 +1419,7 @@ export function createRenderer(
 				control.dataset.action = HISTORY_MORE_ACTION;
 				control.disabled = view.history.loading;
 				control.textContent = copy(view.history.loading ? "history.loading" : "history.more");
-				control.addEventListener("click", () =>
-					report({ kind: "command", id: HISTORY_MORE_ACTION, data: undefined }),
-				);
+				control.addEventListener("click", () => report({ kind: "command", id: HISTORY_MORE_ACTION, data: undefined }));
 				more.append(control);
 				flow.unshift(more);
 			}
@@ -1436,11 +1427,7 @@ export function createRenderer(
 				if (view.welcome !== undefined) {
 					flow.push(welcomeElement(view.welcome));
 				} else {
-					const empty = element(
-						"p",
-						"empty-state",
-						copy(view.attachedId === undefined ? "header.noSessionAttached" : "header.noEntries"),
-					);
+					const empty = element("p", "empty-state", copy(view.attachedId === undefined ? "header.noSessionAttached" : "header.noEntries"));
 					empty.id = "transcript-empty";
 					flow.push(empty);
 				}
@@ -1566,7 +1553,10 @@ export function createRenderer(
 	elements.newSession.addEventListener("click", () => renderer.onCreateSession());
 	// The footer entry toggles the settings panel, the same way its sidebar row does.
 	elements.settingsButton.addEventListener("click", () =>
-		report({ kind: "open", panel: lastView?.panel.current === SETTINGS_VIEW ? CHAT_VIEW : SETTINGS_VIEW }),
+		report({
+			kind: "open",
+			panel: lastView?.panel.current === SETTINGS_VIEW ? CHAT_VIEW : SETTINGS_VIEW,
+		}),
 	);
 	elements.viewBack.addEventListener("click", () => report({ kind: "open", panel: CHAT_VIEW }));
 	elements.viewMenuTrigger.addEventListener("click", () => {
@@ -1601,7 +1591,12 @@ export function createRenderer(
 			if (!(event.altKey && (event.metaKey || event.ctrlKey))) return;
 		}
 		const primary = isApplePlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
-		const id = matchShortcut({ code: event.code, primary, alt: event.altKey, shift: event.shiftKey });
+		const id = matchShortcut({
+			code: event.code,
+			primary,
+			alt: event.altKey,
+			shift: event.shiftKey,
+		});
 		if (id === undefined || id === "run.stop") return;
 		event.preventDefault();
 		if (id === "composer.focus") elements.prompt.focus();

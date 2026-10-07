@@ -408,6 +408,21 @@ body.dock-open {
 }
 
 /* Current crumb (ConversationRoot .crumbCurrent): the session this page is attached to. */
+.lane-status {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--dsw-alias-label-secondary);
+	font-size: 13px;
+	font-variant-numeric: tabular-nums;
+	line-height: 20px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.lane-status[hidden] {
+	display: none;
+}
+
 .crumb {
 	display: inline-block;
 	max-width: 220px;

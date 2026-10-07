@@ -1,29 +1,24 @@
+import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
 import type { AttachedReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
 import {
 	type AgentState,
 	type Conversation,
 	type ConversationId,
 	type ConversationView,
-	type Cursor,
 	type EntryRecord,
 	Harness,
 	type ModelRef,
-	ROOT_CONVERSATION_ID,
 	type Submission,
 	type TaskGraph,
 } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../../core/model-runtime.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import {
-	configureHarnessHttp,
-	createCodingRegistry,
-	createHarnessSettings,
-	ExecutionEnvs,
-	findInitialAgentModel,
-} from "./harness-setup.ts";
+import type { ConversationSummary, LaneStatus } from "../services/conversations.ts";
+import { IDLE_LANE } from "../services/conversations.ts";
+import { forkAt, formatLane, laneFrom, pageOlder, readFocus, readSummaries, writeFocus } from "../session-surface.ts";
+import { configureHarnessHttp, createCodingRegistry, createHarnessSettings, ExecutionEnvs, findInitialAgentModel } from "./harness-setup.ts";
 import { selectSession } from "./sessions.ts";
 import { Subagent } from "./subagent.ts";
 
@@ -40,25 +35,29 @@ export interface Notice {
 	readonly message: string;
 }
 
-/** A conversation the user can switch to: the main one, or a subagent's. */
-export interface ConversationSummary {
-	readonly id: ConversationId;
-	readonly label: string;
-	/** The first user message, for a subagent its task. */
-	readonly title?: string;
-}
-
 /** Everything the TUI renders. Plain values; no Harness objects cross this boundary. */
 export interface DurableView {
-	readonly session: { readonly id: string; readonly directory: string; readonly cwd: string };
+	readonly session: {
+		readonly id: string;
+		readonly directory: string;
+		readonly cwd: string;
+	};
 	/** The conversation shown and talked to. */
 	readonly conversation: ConversationView;
 	readonly conversations: readonly ConversationSummary[];
+	/** Lane, model, thinking, and run of the shown conversation. */
+	readonly lane: LaneStatus;
+	/** Stored history paged in above the active transcript, oldest first. */
+	readonly history: readonly EntryRecord[];
+	/** Another older page exists. */
+	readonly historyMore: boolean;
 	readonly models: readonly ModelSummary[];
 	readonly notices: readonly Notice[];
 	/** The live task graph while the task panel is open. */
 	readonly tasks?: TaskGraph;
 }
+
+export { formatLane };
 
 export interface DurableViewSource {
 	current(): DurableView;
@@ -74,8 +73,12 @@ export interface DurableController {
 	cycleThinking(): Promise<void>;
 	setModel(model: ModelRef): Promise<void>;
 	toggleTasks(): Promise<void>;
-	/** Show and talk to another conversation. */
+	/** Show and talk to another conversation. The choice is stored in the session. */
 	switchConversation(id: ConversationId): Promise<void>;
+	/** Fork the shown conversation at its newest entry and switch to the fork. */
+	fork(): Promise<void>;
+	/** Page one older slice of stored history above the transcript. */
+	loadOlder(): Promise<void>;
 }
 
 export interface OpenDurableOptions {
@@ -94,31 +97,6 @@ export interface OpenDurableResult {
 /** The agent document of a view; absent while the conversation has none. */
 export function agentOf(view: ConversationView): AgentState {
 	return (view.docs["amazme.agent"] ?? {}) as AgentState;
-}
-
-/** A subagent's task: the oldest user message of its conversation. The main conversation needs no title. */
-async function firstInput(harness: Harness, id: ConversationId): Promise<{ title?: string }> {
-	if (id === ROOT_CONVERSATION_ID) return {};
-	const conversation = (await harness.conversation(id, context))!;
-	let first: EntryRecord | undefined;
-	let cursor: Cursor | undefined;
-	do {
-		const page = await conversation.entries({}, 256, cursor, context);
-		first = page.items.findLast((entry) => entry.kind === "amazme.user") ?? first;
-		cursor = page.next;
-	} while (cursor !== undefined);
-	return titleOf(first);
-}
-
-/** The text of a user entry, as a one-line title. */
-function titleOf(entry: EntryRecord | undefined): { title?: string } {
-	const message = entry?.model?.[0];
-	if (message?.role !== "user") return {};
-	const text =
-		typeof message.content === "string"
-			? message.content
-			: message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(" ");
-	return { title: text.replace(/\s+/g, " ").trim() };
 }
 
 export async function openDurable(options: OpenDurableOptions = {}): Promise<OpenDurableResult> {
@@ -154,17 +132,13 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
 			},
 		});
-		const label = (id: ConversationId): string => (id === root.id ? "main" : `subagent ${id}`);
 		const opened = harness;
-		const summaries: ConversationSummary[] = [];
-		let cursor: Cursor | undefined;
-		do {
-			const page = await opened.commit((tx) => tx.scanConversations({}, 256, cursor), context);
-			for (const { id } of page.items) summaries.push({ id, label: label(id), ...(await firstInput(opened, id)) });
-			cursor = page.next;
-		} while (cursor !== undefined);
+		const summaries = await readSummaries(opened, String(root.id));
 		let current: Conversation = root;
 		let conversation: AttachedReplicatedState<ConversationView> = await root.viewState(context);
+		let history: EntryRecord[] = [];
+		let historyCursor: string | null = null;
+		let historyLoaded = false;
 		const models = (): ModelSummary[] =>
 			modelRuntime.getAvailableSnapshot().map((model) => ({
 				provider: model.provider,
@@ -173,10 +147,25 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				contextWindow: model.contextWindow,
 			}));
 
+		const laneNow = (value: ConversationView = conversation.value): LaneStatus =>
+			laneFrom(
+				value,
+				state.conversations.find((summary) => String(summary.id) === String(current.id)) ?? {
+					role: current.id === root.id ? "main" : "fork",
+					label: String(current.id),
+				},
+			);
 		let state: DurableView = {
-			session: { id: location.id, directory: location.directory, cwd: location.cwd },
+			session: {
+				id: location.id,
+				directory: location.directory,
+				cwd: location.cwd,
+			},
 			conversation: conversation.value,
 			conversations: summaries,
+			lane: laneFrom(conversation.value, summaries.find((summary) => summary.root) ?? IDLE_LANE),
+			history: [],
+			historyMore: true,
 			models: models(),
 			notices: [],
 		};
@@ -194,26 +183,34 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		};
 		let nextNotice = 1;
 		const notice = (level: Notice["level"], message: string): void => {
-			update({ notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20) });
+			update({
+				notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20),
+			});
 		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
 		report = (error) => notice("warning", error instanceof Error ? error.message : String(error));
 		for (const error of pendingReports) report(error);
-		let unsubscribe = conversation.subscribe((value) => update({ conversation: value }));
-		// Subagents appear as their conversations are created. A commit listener only records; it calls no Session API.
+		let unsubscribe = conversation.subscribe((value) => update({ conversation: value, lane: laneNow(value) }));
+		let listTimer: NodeJS.Timeout | undefined;
+		const refreshList = (): void => {
+			if (listTimer !== undefined) return;
+			listTimer = setTimeout(() => {
+				listTimer = undefined;
+				void readSummaries(opened, String(root.id)).then(
+					(conversations) => update({ conversations, lane: laneNow() }),
+					() => {},
+				);
+			}, 200);
+			listTimer.unref?.();
+		};
+		// A commit only schedules a re-read; no Session API is called from the listener.
 		const unsubscribeCommits = harness.subscribeCommits((publication) => {
-			let conversations = state.conversations;
 			for (const change of publication.changes) {
-				if (change.type === "conversation") {
-					conversations = [...conversations, { id: change.value.id, label: label(change.value.id) }];
-				} else if (change.type === "entry" && change.value.kind === "amazme.user") {
-					const id = change.value.conversationId;
-					conversations = conversations.map((summary) =>
-						summary.id === id && summary.title === undefined ? { ...summary, ...titleOf(change.value) } : summary,
-					);
+				if (change.type === "conversation" || change.type === "entry") {
+					refreshList();
+					return;
 				}
 			}
-			if (conversations !== state.conversations) update({ conversations });
 		});
 
 		let tasks: AttachedReplicatedState<TaskGraph> | undefined;
@@ -233,23 +230,38 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		const watchAnswer = (submission: Submission): void => {
 			void submission.wait(context).then((settled) => {
 				if (settled.status === "unanswered" && settled.reason !== "aborted") {
-					notice(
-						"error",
-						`No answer: ${settled.reason}${settled.detail === undefined ? "" : ` ${JSON.stringify(settled.detail)}`}`,
-					);
+					notice("error", `No answer: ${settled.reason}${settled.detail === undefined ? "" : ` ${JSON.stringify(settled.detail)}`}`);
 				}
 			}, fail);
 		};
 		const agentModel = () => {
 			const ref = agentOf(state.conversation).model;
 			const model = ref === undefined ? undefined : modelRuntime.getModel(ref.provider, ref.modelId);
-			if (model === undefined)
-				throw new Error(ref === undefined ? "No model selected" : "Current model is unavailable");
+			if (model === undefined) throw new Error(ref === undefined ? "No model selected" : "Current model is unavailable");
 			return model;
 		};
+		const show = async (id: ConversationId): Promise<void> => {
+			const next = await opened.conversation(id, context);
+			if (next === undefined) throw new Error(`Conversation ${id} does not exist`);
+			const nextState = await next.viewState(context);
+			unsubscribe();
+			conversation.dispose();
+			current = next;
+			conversation = nextState;
+			history = [];
+			historyCursor = null;
+			historyLoaded = false;
+			unsubscribe = nextState.subscribe((value) => update({ conversation: value, lane: laneNow(value) }));
+			await writeFocus(opened, String(next.id), context);
+			update({
+				conversation: nextState.value,
+				history: [],
+				historyMore: true,
+				lane: laneNow(),
+			});
+		};
 		const controller: DurableController = {
-			submit: (text, whenBusy) =>
-				command(async () => watchAnswer(await current.submit({ type: "input", content: text, whenBusy }, context))),
+			submit: (text, whenBusy) => command(async () => watchAnswer(await current.submit({ type: "input", content: text, whenBusy }, context))),
 			compact: (instructions) =>
 				command(async () => {
 					const id = await current.compact(instructions, context);
@@ -259,10 +271,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 						if (outcome.status === "completed") {
 							const { entryId, submissionId } = outcome.result;
 							// A summary written while busy is a submission: placed now, queued, or dropped as stale.
-							const status =
-								submissionId === undefined
-									? undefined
-									: (await (await opened.submission(submissionId, context))?.status(context))?.status;
+							const status = submissionId === undefined ? undefined : (await (await opened.submission(submissionId, context))?.status(context))?.status;
 							notice(
 								"info",
 								entryId !== undefined || status === "done"
@@ -274,8 +283,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 											: "Nothing to compact: the context fits in the recent window that is kept verbatim.",
 							);
 						} else if (outcome.status === "aborted") notice("info", "Compaction aborted.");
-						else
-							notice("error", `Compaction ${outcome.status}: ${outcome.error?.message ?? outcome.reason ?? ""}`);
+						else notice("error", `Compaction ${outcome.status}: ${outcome.error?.message ?? outcome.reason ?? ""}`);
 					}, fail);
 				}),
 			// Not queued: it waits until the conversation is idle.
@@ -307,16 +315,28 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 					tasks = graph;
 					unsubscribeTasks = graph.subscribe((value) => update({ tasks: value }));
 				}),
-			switchConversation: (id) =>
+			switchConversation: (id) => command(() => show(id)),
+			fork: () =>
 				command(async () => {
-					const next = await opened.conversation(id, context);
-					if (next === undefined) throw new Error(`Conversation ${id} does not exist`);
-					const nextState = await next.viewState(context);
-					unsubscribe();
-					conversation.dispose();
-					current = next;
-					conversation = nextState;
-					unsubscribe = nextState.subscribe((value) => update({ conversation: value }));
+					const created = await forkAt(opened, String(current.id), null, context);
+					await show(created.id);
+				}),
+			loadOlder: () =>
+				command(async () => {
+					if (historyLoaded && historyCursor === null) {
+						update({ historyMore: false });
+						return;
+					}
+					const oldest = history[0]?.id ?? conversation.value.entries[0]?.id;
+					const before = historyLoaded || oldest === undefined ? null : String(oldest);
+					const page = await pageOlder(current, before, historyCursor, 20, context);
+					historyLoaded = true;
+					history = [...page.entries, ...history];
+					historyCursor = page.cursor ?? null;
+					update({
+						history: [...history],
+						historyMore: historyCursor !== null,
+					});
 				}),
 		};
 
@@ -328,6 +348,10 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		if (initial?.fallbackMessage !== undefined) notice("info", initial.fallbackMessage);
 		// The task panel starts open; /tasks hides it.
 		await controller.toggleTasks();
+		const savedFocus = await readFocus(opened, context);
+		if (savedFocus.length > 0 && savedFocus !== String(root.id)) {
+			await controller.switchConversation(Number(savedFocus) as ConversationId);
+		}
 		// Recovered work from an interrupted turn continues now.
 		harness.resume();
 
@@ -346,6 +370,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				closing ??= (async () => {
 					unsubscribe();
 					unsubscribeCommits();
+					if (listTimer !== undefined) clearTimeout(listTimer);
 					conversation.dispose();
 					closeTasks();
 					try {

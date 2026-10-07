@@ -19,6 +19,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type ClientTuiServer, ExperimentalClientTui } from "../src/experimental/client-tui.ts";
 import { createPresentationFacetData } from "../src/experimental/plugins/bundled.ts";
 import { AgentController } from "../src/experimental/services/agent-controller.ts";
+import { Conversations, IDLE_LANE } from "../src/experimental/services/conversations.ts";
 import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
 import type {
 	ServerConnectionState,
@@ -155,7 +156,31 @@ describe("experimental client TUI", () => {
 					publishReplacement(attachment, { status: "detached" });
 				},
 			});
-			const sessionProvider = new RemoteServiceProvider([Models, AgentController, SessionPlugins, Transcript]);
+			const rootConversationId = String(durable.conversation.id);
+			const conversationsState = replicatedState({
+				revision: 1,
+				selected: rootConversationId,
+				lane: { ...IDLE_LANE, model: "faux/faux-1" },
+				conversations: [
+					{
+						id: rootConversationId,
+						label: "main",
+						root: true,
+						role: "main" as const,
+						depth: 0,
+						children: 0,
+					},
+				],
+				tasks: [],
+				view: null,
+			});
+			const sessionProvider = new RemoteServiceProvider([
+				Models,
+				AgentController,
+				SessionPlugins,
+				Transcript,
+				Conversations,
+			]);
 			sessionProvider.provide(SessionPlugins, { reload: reloadSessionPlugins });
 			sessionProvider.provide(Models, {
 				state: modelsState,
@@ -169,6 +194,33 @@ describe("experimental client TUI", () => {
 			});
 			sessionProvider.provide(AgentController, createAgentController(durable.harness, durable.conversation));
 			sessionProvider.provide(Transcript, { state: transcriptState });
+			sessionProvider.provide(Conversations, {
+				state: conversationsState,
+				async select() {},
+				async fork() {
+					return { conversationId: null, error: { code: "fork", message: "unused" } };
+				},
+				async refresh() {},
+				async older() {
+					return { entries: [] };
+				},
+				async prompt() {
+					return { accepted: false, operationId: null, error: { code: "unused", message: "unused" } };
+				},
+				async steer() {
+					return { accepted: false, entryId: null, error: { code: "unused", message: "unused" } };
+				},
+				async followUp() {
+					return { accepted: false, entryId: null, error: { code: "unused", message: "unused" } };
+				},
+				async abort() {},
+				async cancelQueued() {
+					return { outcome: "not_found" as const };
+				},
+				async compact() {
+					return { accepted: false, operationId: null, error: { code: "unused", message: "unused" } };
+				},
+			});
 
 			const serverNamespace = createRemoteServiceBinding({
 				services: [SessionDirectory, SessionManagement, PresentationPlugins],
@@ -199,7 +251,7 @@ describe("experimental client TUI", () => {
 				},
 			});
 			const sessionNamespace = createRemoteServiceBinding({
-				services: [Models, AgentController, SessionPlugins, Transcript],
+				services: [Models, AgentController, SessionPlugins, Transcript, Conversations],
 				transport: createLoopbackServiceTransport(sessionProvider),
 				bound: false,
 			});

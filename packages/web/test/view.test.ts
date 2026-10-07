@@ -25,6 +25,7 @@ import {
 	modelPickerEmpty,
 	queuedInputs,
 	rosterItems,
+	laneLine,
 	runControls,
 	sessionStatus,
 	transcriptBlocks,
@@ -845,12 +846,34 @@ describe("web view model", () => {
 	test("offers the run controls: compaction, and how a busy turn takes input", () => {
 		const attached = runControls("en", "steer", true);
 		expect(attached.compact).toMatchObject({ id: COMPACT_ACTION, label: "Compact context", disabled: false });
+		expect(attached.fork).toMatchObject({ label: "Fork", disabled: false });
 		expect(attached.submitModes).toEqual([
 			{ mode: "steer", label: "Steer", selected: true },
 			{ mode: "followUp", label: "Queue", selected: false },
 		]);
 		// A detached page has nothing to compact, and the toggle follows the page's own choice.
 		expect(runControls("en", "followUp", false).compact.disabled).toBe(true);
+		expect(runControls("en", "followUp", false).fork.disabled).toBe(true);
+		expect(
+			laneLine("en", {
+				role: "fork",
+				label: "plan",
+				model: "faux/faux-1",
+				thinking: "high",
+				run: "working",
+				detail: "",
+			}),
+		).toBe("Fork · plan · faux/faux-1 · thinking high · working");
+		expect(
+			laneLine("zh", {
+				role: "subagent",
+				label: "child",
+				model: "",
+				thinking: "off",
+				run: "tool",
+				detail: "bash",
+			}),
+		).toBe("子代理 · child · 未选模型 · 推理 off · 正在运行 bash");
 		expect(runControls("zh", "followUp", true).submitModes).toEqual([
 			{ mode: "steer", label: "介入", selected: false },
 			{ mode: "followUp", label: "排队", selected: true },

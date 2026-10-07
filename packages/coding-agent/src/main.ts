@@ -680,6 +680,31 @@ export async function main(args: string[], options?: MainOptions) {
 		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
 	}
 
+	// The interactive TUI is the durable session. Print and RPC still use the JSONL agent session.
+	if (
+		appMode === "interactive" &&
+		!parsed.help &&
+		parsed.listModels === undefined &&
+		!isTruthyEnvFlag(process.env.AMAZME_STARTUP_BENCHMARK)
+	) {
+		if (parsed.fork !== undefined || parsed.session !== undefined || parsed.sessionId !== undefined) {
+			console.error(
+				chalk.red(
+					"Error: the interactive TUI stores conversations in the durable session. Use /tree and /fork inside it. --fork, --session, and --session-id select the JSONL session, which print and RPC still use.",
+				),
+			);
+			process.exit(1);
+		}
+		const { initialMessage } = await prepareInitialMessage(parsed);
+		const { runDurableInteractive } = await import("./experimental/durable/interactive.ts");
+		await runDurableInteractive({
+			cwd,
+			continueSession: parsed.continue === true || parsed.resume === true,
+			...(initialMessage === undefined ? {} : { initialMessage }),
+		});
+		return;
+	}
+
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
 	// --session and --resume may select a session from another project, so project-local
 	// settings, resources, provider registrations, and models must be resolved only after

@@ -1,27 +1,11 @@
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
-import {
-	type Conversation,
-	type ConversationId,
-	type Cursor,
-	type EntryId,
-	type EntryRecord,
-	type Harness,
-	type TaskGraph,
-	type TaskId,
-} from "@amazme/durable";
+import type { Conversation, ConversationId, Harness, TaskGraph } from "@amazme/durable";
+import { forkAt, laneFrom, pageOlder, readFocus, readSummaries, writeFocus } from "../session-surface.ts";
+import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest, AgentQueueResponse } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
-import type { AgentOperationResponse, AgentPromptRequest, AgentQueueResponse } from "./agent-controller.ts";
-import {
-	Conversations,
-	type ConversationSummary,
-	type ConversationsState,
-	type HistoryPage,
-	type TaskSummary,
-} from "./conversations.ts";
+import { Conversations, type ConversationsState, type HistoryPage, IDLE_LANE, type LaneStatus, type TaskSummary } from "./conversations.ts";
 
-/** How many conversations one scan page holds; the scan loops until it is exhausted. */
-const SCAN_PAGE = 256;
 /** The gap between two publications while a focused conversation streams. */
 const FOCUS_PUBLISH_MS = 250;
 
@@ -29,18 +13,6 @@ export interface ConversationsServiceOptions {
 	readonly harness: Harness;
 	/** The Session's root conversation: the one a presentation shows without focusing another. */
 	readonly root: Conversation;
-}
-
-/** The text of a user entry as a one-line label. */
-function labelOf(entry: EntryRecord | undefined): string | undefined {
-	const message = entry?.model?.[0];
-	if (message?.role !== "user") return undefined;
-	const text =
-		typeof message.content === "string"
-			? message.content
-			: message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(" ");
-	const trimmed = text.replace(/\s+/g, " ").trim();
-	return trimmed.length === 0 ? undefined : trimmed;
 }
 
 /**
@@ -56,12 +28,20 @@ export function createConversationsService(
 	const state = createState({
 		revision: 0,
 		selected: rootId,
+		lane: IDLE_LANE,
 		conversations: [],
 		tasks: [],
 		view: null,
 	});
 	const controllers = new Map<string, ReturnType<typeof createAgentController>>();
-	let focus: { readonly id: string; readonly state: Awaited<ReturnType<Conversation["viewState"]>> } | undefined;
+	let focus:
+		| {
+				readonly id: string;
+				readonly state: Awaited<ReturnType<Conversation["viewState"]>>;
+		  }
+		| undefined;
+	/** The root's view, kept so the lane stays current while the transcript service owns the root display. */
+	let rootView: Awaited<ReturnType<Conversation["viewState"]>> | undefined;
 	let focusTimer: NodeJS.Timeout | undefined;
 	let focusContext: Context = BACKGROUND_CONTEXT;
 	let commitUnsubscribe: (() => void) | undefined;
@@ -69,8 +49,7 @@ export function createConversationsService(
 	let graphUnsubscribe: (() => void) | undefined;
 	let listTimer: NodeJS.Timeout | undefined;
 
-	const conversationOf = (id: string): Promise<Conversation | undefined> =>
-		options.harness.conversation(Number(id) as ConversationId, TODO_CONTEXT);
+	const conversationOf = (id: string): Promise<Conversation | undefined> => options.harness.conversation(Number(id) as ConversationId, TODO_CONTEXT);
 
 	/** The controller of one conversation, created on first use. */
 	const controllerOf = async (id: string): Promise<ReturnType<typeof createAgentController> | undefined> => {
@@ -83,56 +62,9 @@ export function createConversationsService(
 		return created;
 	};
 
-	/** Read every conversation of the Session with its label and its ownership edges. */
-	const readList = async (): Promise<ConversationSummary[]> => {
-		const records: {
-			readonly id: ConversationId;
-			readonly owner?: { readonly conversationId: ConversationId; readonly taskId: TaskId };
-		}[] = [];
-		let cursor: Cursor | undefined;
-		do {
-			const page = await options.harness.commit((tx) => tx.scanConversations({}, SCAN_PAGE, cursor), TODO_CONTEXT);
-			for (const record of page.items) {
-				records.push({ id: record.id, ...(record.owner === undefined ? {} : { owner: record.owner }) });
-			}
-			cursor = page.next;
-		} while (cursor !== undefined);
-		const children = new Map<string, number>();
-		for (const record of records) {
-			if (record.owner === undefined) continue;
-			const owner = String(record.owner.conversationId);
-			children.set(owner, (children.get(owner) ?? 0) + 1);
-		}
-		const summaries: ConversationSummary[] = [];
-		for (const record of records) {
-			const id = String(record.id);
-			summaries.push({
-				id,
-				label: id === rootId ? "main" : await labelFor(id),
-				root: id === rootId,
-				...(record.owner === undefined
-					? {}
-					: { ownerConversationId: String(record.owner.conversationId), ownerTaskId: String(record.owner.taskId) }),
-				children: children.get(id) ?? 0,
-			});
-		}
-		summaries.sort((left, right) => Number(left.id) - Number(right.id));
-		return summaries;
-	};
+	const readList = (): Promise<ConversationsState["conversations"]> => readSummaries(options.harness, rootId);
 
-	/** A conversation's label: its earliest user input, else its id. */
-	const labelFor = async (id: string): Promise<string> => {
-		const conversation = await conversationOf(id);
-		if (conversation === undefined) return id;
-		let first: EntryRecord | undefined;
-		let cursor: Cursor | undefined;
-		do {
-			const page = await conversation.entries({}, SCAN_PAGE, cursor, TODO_CONTEXT);
-			first = page.items.findLast((entry) => entry.kind === "amazme.user") ?? first;
-			cursor = page.next;
-		} while (cursor !== undefined);
-		return labelOf(first) ?? id;
-	};
+	const summaryOf = (id: string): { role: LaneStatus["role"]; label: string } | undefined => state.value.conversations.find((summary) => summary.id === id);
 
 	/** The task graph as a plain list: every live task with what it waits on and owns. */
 	const readTasks = (value: TaskGraph): TaskSummary[] =>
@@ -167,6 +99,10 @@ export function createConversationsService(
 			const value = focus.state.value;
 			publish((draft) => {
 				draft.view = value;
+				draft.lane = laneFrom(
+					value,
+					draft.conversations.find((summary) => summary.id === focus?.id),
+				);
 			});
 		}, FOCUS_PUBLISH_MS);
 		focusTimer.unref?.();
@@ -187,9 +123,13 @@ export function createConversationsService(
 		listTimer = setTimeout(() => {
 			listTimer = undefined;
 			void readList().then(
-				(conversations) => publish((draft) => {
-					draft.conversations = conversations;
-				}),
+				(conversations) =>
+					publish((draft) => {
+						draft.conversations = conversations;
+						const summary = conversations.find((item) => item.id === draft.selected);
+						const view = draft.selected === rootId ? rootView?.value : (draft.view ?? undefined);
+						draft.lane = laneFrom(view ?? undefined, summary);
+					}),
 				() => {},
 			);
 		}, 200);
@@ -200,9 +140,16 @@ export function createConversationsService(
 		const conversation = await conversationOf(conversationId);
 		if (conversation === undefined) return;
 		closeFocus();
+		await writeFocus(options.harness, conversationId, context);
+		const known = (id: string) =>
+			state.value.conversations.find((summary) => summary.id === id) ?? {
+				role: id === rootId ? ("main" as const) : ("fork" as const),
+				label: id,
+			};
 		publish((draft) => {
 			draft.selected = conversationId;
 			draft.view = null;
+			draft.lane = laneFrom(conversationId === rootId ? rootView?.value : undefined, known(conversationId));
 		});
 		// The root's view is the Transcript service's; only another conversation needs one here.
 		if (conversationId === rootId) return;
@@ -212,7 +159,19 @@ export function createConversationsService(
 		focus.state.subscribe(() => publishFocus());
 		publish((draft) => {
 			draft.view = attached.value;
+			draft.lane = laneFrom(attached.value, draft.conversations.find((summary) => summary.id === conversationId) ?? known(conversationId));
 		});
+	};
+
+	const fork = async (conversationId: string, at: string | null, context: Context): Promise<Awaited<ReturnType<Conversations["fork"]>>> => {
+		try {
+			const created = await forkAt(options.harness, conversationId, at, context);
+			await select(String(created.id), context);
+			return { conversationId: String(created.id), error: null };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { conversationId: null, error: { code: "fork", message } };
+		}
 	};
 
 	const refresh = async (context: Context): Promise<void> => {
@@ -234,37 +193,36 @@ export function createConversationsService(
 		}
 	};
 
-	const older = async (
-		conversationId: string,
-		before: string | null,
-		cursor: string | null,
-		limit: number,
-		context: Context,
-	): Promise<HistoryPage> => {
+	const older = async (conversationId: string, before: string | null, cursor: string | null, limit: number, context: Context): Promise<HistoryPage> => {
 		const conversation = await conversationOf(conversationId);
 		if (conversation === undefined) return { entries: [] };
-		const parsed: Cursor | undefined = cursor === null ? undefined : (JSON.parse(cursor) as Cursor);
-		// The first page starts strictly below what the presentation already shows; later pages ride
-		// the cursor, which carries its own position.
-		const query =
-			before === null || parsed !== undefined ? {} : { maxEntryId: (Number(before) - 1) as EntryId };
-		const page = await conversation.entries(query, Math.max(1, limit), parsed, context);
-		// The scan is newest first; a presentation appends a page above what it shows, so reverse it.
-		return {
-			entries: [...page.items].reverse(),
-			...(page.next === undefined ? {} : { cursor: JSON.stringify(page.next) }),
-		};
+		return pageOlder(conversation, before, cursor, limit, context);
 	};
 
 	/** Wire the harness's commit stream and task graph into this state. */
 	const activate = async (context: Context): Promise<void> => {
+		rootView?.dispose();
+		rootView = await options.root.viewState(context);
+		rootView.subscribe(() => {
+			if (state.value.selected !== rootId) return;
+			const lane = laneFrom(rootView?.value, summaryOf(rootId));
+			publish((draft) => {
+				draft.lane = lane;
+			});
+		});
+		const conversations = await readList();
 		publish((draft) => {
+			draft.conversations = conversations;
 			draft.selected = rootId;
+			draft.lane = laneFrom(
+				rootView?.value,
+				conversations.find((summary) => summary.id === rootId),
+			);
 		});
-		publish((draft) => {
-			draft.conversations = [];
-		});
-		scheduleListRefresh();
+		const saved = await readFocus(options.harness, context);
+		if (saved.length > 0 && saved !== rootId && conversations.some((summary) => summary.id === saved)) {
+			await select(saved, context);
+		}
 		commitUnsubscribe = options.harness.subscribeCommits((publication) => {
 			// A commit only schedules a re-read; no Session API is called from the listener.
 			for (const change of publication.changes) {
@@ -293,31 +251,72 @@ export function createConversationsService(
 		service: {
 			state,
 			select,
+			fork,
 			refresh,
 			older,
 			async prompt(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentOperationResponse> {
 				const controller = await controllerOf(conversationId);
 				if (controller === undefined) {
-					return { accepted: false, operationId: null, error: { code: "unknown", message: `Unknown conversation: ${conversationId}` } };
+					return {
+						accepted: false,
+						operationId: null,
+						error: {
+							code: "unknown",
+							message: `Unknown conversation: ${conversationId}`,
+						},
+					};
 				}
 				return controller.prompt(request, context);
 			},
 			async steer(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentQueueResponse> {
 				const controller = await controllerOf(conversationId);
 				if (controller === undefined) {
-					return { accepted: false, entryId: null, error: { code: "unknown", message: `Unknown conversation: ${conversationId}` } };
+					return {
+						accepted: false,
+						entryId: null,
+						error: {
+							code: "unknown",
+							message: `Unknown conversation: ${conversationId}`,
+						},
+					};
 				}
 				return controller.steer(request, context);
 			},
 			async followUp(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentQueueResponse> {
 				const controller = await controllerOf(conversationId);
 				if (controller === undefined) {
-					return { accepted: false, entryId: null, error: { code: "unknown", message: `Unknown conversation: ${conversationId}` } };
+					return {
+						accepted: false,
+						entryId: null,
+						error: {
+							code: "unknown",
+							message: `Unknown conversation: ${conversationId}`,
+						},
+					};
 				}
 				return controller.followUp(request, context);
 			},
 			async abort(conversationId: string, context: Context): Promise<void> {
 				await (await controllerOf(conversationId))?.abort(context);
+			},
+			async cancelQueued(conversationId: string, entryId: string, context: Context) {
+				const controller = await controllerOf(conversationId);
+				if (controller === undefined) return { outcome: "not_found" as const };
+				return controller.cancelQueued(entryId, context);
+			},
+			async compact(conversationId: string, request: AgentCompactionRequest, context: Context): Promise<AgentOperationResponse> {
+				const controller = await controllerOf(conversationId);
+				if (controller === undefined) {
+					return {
+						accepted: false as const,
+						operationId: null,
+						error: {
+							code: "unknown",
+							message: `Unknown conversation: ${conversationId}`,
+						},
+					};
+				}
+				return controller.compact(request, context);
 			},
 		} satisfies Conversations,
 		activate,
@@ -331,6 +330,8 @@ export function createConversationsService(
 			if (listTimer !== undefined) clearTimeout(listTimer);
 			listTimer = undefined;
 			closeFocus();
+			rootView?.dispose();
+			rootView = undefined;
 		},
 	};
 }

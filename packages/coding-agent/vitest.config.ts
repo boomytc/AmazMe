@@ -22,6 +22,13 @@ export default mergeConfig(
 		resolve: {
 			alias: [
 				{ find: /^@amazme\/ai$/, replacement: workspaceSourcePaths.aiIndex },
+				{ find: /^@amazme\/durable$/, replacement: workspaceSourcePaths.durableIndex },
+				{ find: /^@amazme\/durable\/env\/node$/, replacement: workspaceSourcePaths.durableEnvNode },
+				{ find: /^@amazme\/durable\/tools$/, replacement: workspaceSourcePaths.durableTools },
+				{
+					find: /^@amazme\/durable\/storage\/sqlite\/node$/,
+					replacement: workspaceSourcePaths.durableSqliteNode,
+				},
 			{ find: /^@amazme\/web$/, replacement: workspaceSourcePaths.webIndex },
 			{ find: /^@amazme\/web\/assets$/, replacement: workspaceSourcePaths.webAssets },
 				{ find: /^@amazme\/agent$/, replacement: workspaceSourcePaths.agentIndex },

@@ -8,6 +8,7 @@
  * and a shell in that directory (run a command, watch its output, stop it).
  */
 import {
+	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
 	TERMINAL_RUN_ACTION,
@@ -17,8 +18,8 @@ import {
 	WORKSPACE_RELOAD_ACTION,
 } from "./actions.ts";
 import type { Locale } from "./locale.ts";
-import type { MessageKey } from "./strings.ts";
 import type { PanelGroup, PanelRow, PanelSpec } from "./panels.ts";
+import type { MessageKey } from "./strings.ts";
 import { translate } from "./strings.ts";
 
 /** The dock's tabs, in the order it shows them. */
@@ -67,7 +68,12 @@ export type WorkspaceViewLike =
 			readonly parent: string | null;
 			readonly entries: readonly WorkspaceEntryLike[];
 	  }
-	| { readonly kind: "text"; readonly path: string; readonly text: string; readonly truncated: boolean }
+	| {
+			readonly kind: "text";
+			readonly path: string;
+			readonly text: string;
+			readonly truncated: boolean;
+	  }
 	| { readonly kind: "binary"; readonly path: string }
 	| { readonly kind: "missing"; readonly path: string }
 	| { readonly kind: "denied"; readonly path: string; readonly reason: string };
@@ -87,6 +93,10 @@ export interface ConversationSummaryLike {
 	readonly id: string;
 	readonly label: string;
 	readonly root: boolean;
+	readonly role?: "main" | "fork" | "subagent";
+	readonly depth?: number;
+	readonly parentConversationId?: string;
+	readonly parentEntryId?: string;
 	readonly ownerConversationId?: string;
 	readonly ownerTaskId?: string;
 	readonly children: number;
@@ -130,18 +140,27 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 	if (state === undefined) return { id: "conversations", title, notices: [], groups: [] };
 	const rows: PanelRow[] = state.conversations.map((conversation) => ({
 		id: `conversation:${conversation.id}`,
-		title: conversation.label,
+		title: `${"  ".repeat(conversation.depth ?? 0)}${conversation.label}`,
 		description:
-			conversation.ownerConversationId === undefined || conversation.ownerTaskId === undefined
-				? conversation.id
-				: translate(locale, "dock.owner", {
+			conversation.ownerConversationId !== undefined && conversation.ownerTaskId !== undefined
+				? translate(locale, "dock.owner", {
 						task: `task ${conversation.ownerTaskId}`,
 						conversation: `conversation ${conversation.ownerConversationId}`,
-					}),
+					})
+				: conversation.parentConversationId !== undefined
+					? translate(locale, "dock.forkedFrom", {
+							conversation: conversation.parentConversationId,
+							entry: conversation.parentEntryId ?? "",
+						})
+					: conversation.id,
 		badges: [
-			...(conversation.root ? [translate(locale, "dock.main")] : [translate(locale, "dock.child")]),
+			translate(locale, conversation.role === "fork" ? "dock.fork" : conversation.role === "subagent" || !conversation.root ? "dock.child" : "dock.main"),
 			...(conversation.children > 0
-				? [translate(locale, "dock.children", { count: String(conversation.children) })]
+				? [
+						translate(locale, "dock.children", {
+							count: String(conversation.children),
+						}),
+					]
 				: []),
 			...(conversation.id === state.selected ? [translate(locale, "dock.selected")] : []),
 		],
@@ -149,6 +168,12 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 			{
 				id: CONVERSATION_SELECT_ACTION,
 				label: translate(locale, "dock.select"),
+				tone: "default",
+				data: conversation.id,
+			},
+			{
+				id: CONVERSATION_FORK_ACTION,
+				label: translate(locale, "header.fork"),
 				tone: "default",
 				data: conversation.id,
 			},
@@ -191,10 +216,18 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 			task.status,
 			...(task.background ? [translate(locale, "dock.background")] : []),
 			...(task.waitsOn.length > 0
-				? [translate(locale, "dock.taskWaitsOn", { tasks: task.waitsOn.join(", ") })]
+				? [
+						translate(locale, "dock.taskWaitsOn", {
+							tasks: task.waitsOn.join(", "),
+						}),
+					]
 				: []),
 			...(task.conversations.length > 0
-				? [translate(locale, "dock.taskOwns", { conversations: task.conversations.join(", ") })]
+				? [
+						translate(locale, "dock.taskOwns", {
+							conversations: task.conversations.join(", "),
+						}),
+					]
 				: []),
 		],
 	}));
@@ -206,7 +239,13 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 			{
 				id: "tasks:list",
 				title: translate(locale, "dock.tasks"),
-				actions: [{ id: CONVERSATIONS_REFRESH_ACTION, label: translate(locale, "dock.reload"), tone: "default" }],
+				actions: [
+					{
+						id: CONVERSATIONS_REFRESH_ACTION,
+						label: translate(locale, "dock.reload"),
+						tone: "default",
+					},
+				],
 				rows,
 				empty: translate(locale, "dock.noTasks"),
 			},
@@ -215,7 +254,11 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 }
 
 export function dockTabs(locale: Locale, current: string): DockTab[] {
-	return TAB_IDS.map((id) => ({ id, label: translate(locale, TAB_MESSAGES[id]), active: id === current }));
+	return TAB_IDS.map((id) => ({
+		id,
+		label: translate(locale, TAB_MESSAGES[id]),
+		active: id === current,
+	}));
 }
 
 /** The size a file row shows, in the units a listing uses. */
@@ -226,16 +269,30 @@ export function workspaceSize(bytes: number): string {
 }
 
 function reloadAction(locale: Locale) {
-	return { id: WORKSPACE_RELOAD_ACTION, label: translate(locale, "dock.reload"), tone: "default" as const };
+	return {
+		id: WORKSPACE_RELOAD_ACTION,
+		label: translate(locale, "dock.reload"),
+		tone: "default" as const,
+	};
 }
 
 function openAction(locale: Locale, path: string) {
-	return { id: WORKSPACE_OPEN_ACTION, label: translate(locale, "dock.open"), tone: "default" as const, data: path };
+	return {
+		id: WORKSPACE_OPEN_ACTION,
+		label: translate(locale, "dock.open"),
+		tone: "default" as const,
+		data: path,
+	};
 }
 
 /** The row that walks back out of a file's directory to the directory itself. */
 function rootRow(locale: Locale, title: string, path: string): PanelRow {
-	return { id: "files:root", title, description: path, actions: [openAction(locale, path)] };
+	return {
+		id: "files:root",
+		title,
+		description: path,
+		actions: [openAction(locale, path)],
+	};
 }
 
 /**
@@ -269,12 +326,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		};
 	}
 	if (view.kind !== "listing") {
-		const notice =
-			view.kind === "denied"
-				? view.reason
-				: view.kind === "binary"
-					? translate(locale, "dock.binary")
-					: translate(locale, "dock.missing");
+		const notice = view.kind === "denied" ? view.reason : view.kind === "binary" ? translate(locale, "dock.binary") : translate(locale, "dock.missing");
 		return {
 			id: "files",
 			title: view.path,
@@ -324,7 +376,13 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		rows,
 		empty: translate(locale, "dock.emptyDirectory"),
 	};
-	return { id: "files", title, description: state.cwd, notices: [], groups: [group] };
+	return {
+		id: "files",
+		title,
+		description: state.cwd,
+		notices: [],
+		groups: [group],
+	};
 }
 
 /** One line naming what the terminal's buffer shows. */
@@ -334,23 +392,37 @@ function terminalStatus(locale: Locale, state: TerminalStateLike): string {
 		case "idle":
 			return translate(locale, "dock.terminalIdle");
 		case "running":
-			return translate(locale, "dock.terminalRunning", { command: state.command ?? "" });
+			return translate(locale, "dock.terminalRunning", {
+				command: state.command ?? "",
+			});
 		case "cancelled":
 			return translate(locale, "dock.terminalCancelled");
 		case "done":
-			return translate(locale, "dock.terminalDone", { code: String(state.exitCode ?? 0) });
+			return translate(locale, "dock.terminalDone", {
+				code: String(state.exitCode ?? 0),
+			});
 	}
 }
 
 /** The terminal panel: one command line, the run and stop controls, and the output below. */
 export function terminalPanel(
 	locale: Locale,
-	input: { readonly cwd: string; readonly state: TerminalStateLike | undefined },
+	input: {
+		readonly cwd: string;
+		readonly state: TerminalStateLike | undefined;
+	},
 ): PanelSpec {
 	const title = translate(locale, "dock.terminal");
 	const state = input.state;
 	if (state === undefined) {
-		return { id: "terminal", title, description: input.cwd, notices: [], groups: [], texts: [] };
+		return {
+			id: "terminal",
+			title,
+			description: input.cwd,
+			notices: [],
+			groups: [],
+			texts: [],
+		};
 	}
 	const running = state.status === "running";
 	return {
@@ -364,7 +436,12 @@ export function terminalPanel(
 				title: translate(locale, "dock.command"),
 				rows: [],
 				actions: [
-					{ id: TERMINAL_STOP_ACTION, label: translate(locale, "dock.stop"), tone: "danger", disabled: !running },
+					{
+						id: TERMINAL_STOP_ACTION,
+						label: translate(locale, "dock.stop"),
+						tone: "danger",
+						disabled: !running,
+					},
 				],
 			},
 		],

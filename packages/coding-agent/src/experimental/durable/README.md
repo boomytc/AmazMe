@@ -39,7 +39,9 @@ credentials are shared.
 - thinking key (Shift+Tab): cycle thinking levels
 - `/compact [instructions]`: summarize older context; reports "Nothing to compact" when the context fits in
   `compaction.keepRecentTokens`
-- `/agents`: switch conversations
+- `/tree` or `/agents`: switch conversations. Rows are indented by fork or subagent depth, and the footer names the lane, model, thinking level, and run.
+- `/fork`: fork the shown conversation at its newest entry and switch to it. The choice is stored in the session, so the next open of this sqlite file returns to it.
+- `/older`: page stored history above the active transcript
 - `/tasks`: hide or show the task panel
 - tools expand key (Ctrl+O): expand tool output and compaction summaries
 - clear key (Ctrl+C) or Ctrl+D: exit at once, unlike pi's clear-first Ctrl+C; work in flight resumes with
@@ -63,4 +65,4 @@ early.
 A turn that ends without an answer shows a notice; one recovered after a restart does not, since only submissions
 made by this process are watched.
 
-Not here: sessions list and resume picker, forks and tree navigation, extensions, prompt templates, images, `/login`.
+Not here: sessions list and resume picker, extensions, prompt templates, images, `/login`. Forks are `Conversation.fork`; there is no leaf pointer and no branch-summary entry. The focused conversation is the session document `amazme.session.focus`.

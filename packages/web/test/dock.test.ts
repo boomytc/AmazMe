@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
 	TERMINAL_RUN_ACTION,
@@ -209,7 +210,30 @@ describe("the session dock", () => {
 			tone: "default",
 			data: "2",
 		});
+		expect(rows[1]?.actions?.[1]).toMatchObject({ id: CONVERSATION_FORK_ACTION, label: "Fork", data: "2" });
 		expect(panel.groups[0]?.actions?.[0]?.id).toBe(CONVERSATIONS_REFRESH_ACTION);
+		const fork = conversationsPanel("en", {
+			selected: "3",
+			conversations: [
+				{ id: "1", label: "main", root: true, role: "main", depth: 0, children: 1 },
+				{
+					id: "3",
+					label: "try another plan",
+					root: false,
+					role: "fork",
+					depth: 1,
+					parentConversationId: "1",
+					parentEntryId: "4",
+					children: 0,
+				},
+			],
+			tasks: [],
+		});
+		expect(fork.groups[0]?.rows[1]).toMatchObject({
+			title: "  try another plan",
+			description: "forked from conversation 1 at entry 4",
+			badges: ["fork", "selected"],
+		});
 		// The Chinese labels reach the same rows.
 		expect(conversationsPanel("zh", CONVERSATIONS).groups[0]?.rows[0]?.badges).toEqual([
 			"主线",
