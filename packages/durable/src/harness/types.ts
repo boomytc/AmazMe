@@ -405,6 +405,19 @@ export type ProgressPolicy = {
 export type CompactionReason = "manual" | "threshold" | "overflow";
 
 /**
+ * What to persist when leaving a branch. `summary` is the body. `usage` and `details` are optional bookkeeping and
+ * are not sent as their own model messages.
+ */
+export type BranchSummaryInput = {
+	/** Summary of the path being left. */
+	readonly summary: string;
+	/** Usage of the call that produced `summary`, when the host has it. */
+	readonly usage?: Usage;
+	/** Host payload stored on the entry. Not sent to the model. */
+	readonly details?: JsonValue;
+};
+
+/**
  * `entryId` of a blocking compaction's summary, or the `submissionId` of a conversation-owned compaction's summary
  * write; both absent when nothing was compacted.
  */
@@ -550,6 +563,35 @@ export interface Conversation {
 		context: Context,
 	): Promise<Page<EntryRecord, Cursor>>;
 	fork(at: EntryId, options: ConversationCreateOptions, context: Context): Promise<Conversation>;
+	/**
+	 * Abandon this conversation and continue from `at` on a new fork, writing an `amazme.branch-summary` in that same
+	 * commit.
+	 *
+	 * Durable has no JSONL leaf. Pi's `branchWithSummary` records the old leaf as `fromId`, points the leaf at
+	 * `branchFromId`, and appends the summary as the new leaf. Here that is one commit: fork this conversation at
+	 * `at`, then append the summary as the fork's last entry. History through `at` is inherited. Entries after `at`
+	 * stay on this conversation and are not visible from the fork, which is what drops the abandoned tail. This
+	 * conversation's entries are not modified. The returned conversation is the continuation to focus; the summary
+	 * is not inserted into some other sibling that already moved past `at`.
+	 *
+	 * `data.from` is this conversation plus its newest visible entry at the commit (the abandoned leaf; it may live
+	 * on an ancestor). `data.summary` is the body. `usage` and `details` are stored only when passed.
+	 *
+	 * The body enters `context()` and `viewState()` the way a compaction summary's text does: `model` is one user
+	 * message, projected by the existing context derivation. The entry is not a head marker. A head marker would
+	 * become the newest context head and drop a compaction or reset that already heads the path. A later `fork` of
+	 * the returned conversation still sees the entry, with the same body and `from`, through ordinary parent
+	 * visibility.
+	 *
+	 * `options` matches `fork`: ownership is required; `agent` and `init` run before the summary, so the summary
+	 * stays the leaf. An empty body throws `TypeError` and writes nothing. `at` must be visible, as for `fork()`.
+	 */
+	branchSummary(
+		at: EntryId,
+		summary: BranchSummaryInput,
+		options: ConversationCreateOptions,
+		context: Context,
+	): Promise<Conversation>;
 	/**
 	 * Withdraw queued inputs (queued writes stay), mark every live non-background task of the ordinary ownership scope,
 	 * signal them, and resolve once the scope is idle. Background subtrees survive unless `background` is set.

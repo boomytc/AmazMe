@@ -538,6 +538,12 @@ type HooksOf<K> = K extends Task<infer _I, infer _S, infer _R, infer H>
   ? H
   : never;
 
+type BranchSummaryInput = {
+  readonly summary: string;
+  readonly usage?: Usage;
+  readonly details?: JsonValue;
+};
+
 interface Conversation {
   readonly id: ConversationId;
   submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
@@ -560,6 +566,13 @@ interface Conversation {
   ): Promise<Page<EntryRecord, Cursor>>;
   fork(
     at: EntryId,
+    options: ConversationCreateOptions,
+    context: Context,
+  ): Promise<Conversation>;
+  /** Fork at `at` and append `amazme.branch-summary` on the child in that same commit. */
+  branchSummary(
+    at: EntryId,
+    summary: BranchSummaryInput,
     options: ConversationCreateOptions,
     context: Context,
   ): Promise<Conversation>;
@@ -864,6 +877,19 @@ because `Harness extends Session`.
 
 `fork()` requires a concrete visible parent entry and explicit ownership, then
 applies section 3.7.
+`branchSummary(at, summary, options)` is that fork plus one `amazme.branch-summary`
+entry, in the same commit. It is how a host leaves a branch without a JSONL leaf
+pointer: the returned conversation is the continuation, history through `at` is
+inherited, and entries after `at` stay on the caller and are not visible from the
+fork. The caller's transcript is not rewritten. `data.summary` is the body.
+`data.from` is the caller and its newest visible entry at the commit (the
+abandoned leaf). `usage` and `details` are stored only when passed, and are not
+model messages. `model` is one user message with the wrapped body, so `context()`
+and `viewState()` project it the same way they project a compaction summary's
+text. The entry has no `head`; a head marker would replace the newest compaction
+or reset. A later `fork` of the continuation still sees the entry, with the same
+body and `from`. `agent` and `init` run before the summary, so the summary stays
+the leaf. An empty body throws `TypeError` and writes nothing.
 `compact()` admits a manual compaction task in one commit and returns its ID,
 not its future summary entry. The task is conversation-owned and not background,
 so `Conversation.abort()` cancels it and idle waits include it. It does not take
