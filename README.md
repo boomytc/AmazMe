@@ -62,7 +62,7 @@ npm run dev:desktop  # Electron 窗口，加载与 dev:web 同一个宿主
 改完要重启这条命令。两个入口都经 `source-resolver.ts` 走 `packages/*/src`；`packages/ai/src/providers/data/` 的模型
 目录数据不入库，`npm run build` 会先刷新它。
 
-`dev:desktop` 先构建 `@amazme/gui`，再用 Electron 打开同一个宿主：窗口加载的就是上面这条 `web` 命令印出的回环页面，会话仍是那一套 durable。
+`dev:desktop` 先构建 `@amazme/web`，再构建 `@amazme/gui`，然后用 Electron 打开同一个宿主：窗口加载的就是上面这条 `web` 命令印出的回环页面，会话仍是那一套 durable。根 `build` 和 `build:offline` 也在 durable 之后构建这两个包，壳才能解析到网页的 locale 与文案。
 
 项目配置在当前目录的 `.amazme`，用户配置在 `~/.amazme/agent`。命令名是 `amazme`。`@amazme/coding-agent` 的 bin 指向 `dist/bundle/cli.js`，所以要先构建，再从本仓库运行或做 `npm link`。
 

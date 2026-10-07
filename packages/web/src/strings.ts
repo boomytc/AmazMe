@@ -3,7 +3,9 @@
  * conversation, the composer, and the management panels, plus the labels for the host's settings
  * catalogue, whose ids and tokens this module turns into prose. Product copy lives in the client
  * the way the TUI's selectors keep their own, so the host publishes data and the presentation
- * publishes words.
+ * publishes words. Desktop shell chrome (menus and dialogs) is the `desktop.*` keys in the same
+ * dictionaries. `locale.ts` and this module are the subpath exports an Electron main process
+ * imports; neither reads the DOM.
  *
  * `en` is the source of truth: `zh` is typed as a complete record of its keys, so a missing
  * translation is a compile error. The identity maps (settings fields, groups, options, scopes)
@@ -12,7 +14,7 @@
  */
 import { type Locale, documentLanguage } from "./locale.ts";
 
-/** Message keys for the page's own copy: flat, dotted, and complete in both languages. */
+/** Message keys for the page and the desktop shell: flat, dotted, and complete in both languages. */
 export const EN = {
 	"nav.chat": "Chat",
 	"nav.plugins": "Plugins",
@@ -362,6 +364,39 @@ export const EN = {
 	"page.scheduleFailed": "schedule failed: {error}",
 	"page.scheduleNeedsMinutes": "the gap must be a whole number of minutes, at least one",
 	"page.scheduleNeedsPrompt": "a planned prompt needs its text",
+
+	"desktop.menu.undo": "Undo",
+	"desktop.menu.redo": "Redo",
+	"desktop.menu.cut": "Cut",
+	"desktop.menu.copy": "Copy",
+	"desktop.menu.paste": "Paste",
+	"desktop.menu.selectAll": "Select All",
+	"desktop.dialog.reload": "Reload",
+	"desktop.dialog.quit": "Quit",
+	"desktop.render.gone.title": "Page error",
+	"desktop.render.gone.message": "The page process exited ({reason}, exit code {exitCode}).",
+	"desktop.render.load.title": "Page failed to load",
+	"desktop.render.load.message": "The page did not load ({errorCode} {errorDescription}).",
+	"desktop.render.reason.clean-exit": "clean exit",
+	"desktop.render.reason.abnormal-exit": "abnormal exit",
+	"desktop.render.reason.killed": "killed",
+	"desktop.render.reason.crashed": "crashed",
+	"desktop.render.reason.oom": "out of memory",
+	"desktop.render.reason.launch-failed": "launch failed",
+	"desktop.render.reason.integrity-failure": "integrity failure",
+	"desktop.render.reason.memory-eviction": "memory eviction",
+	"desktop.host.spawn.title": "Host failed to start",
+	"desktop.host.spawn.message": "Could not start the web host: {message}",
+	"desktop.host.early.title": "Host failed to start",
+	"desktop.host.early.message": "The web host exited before it was ready (exit code {code}, signal {signal}).",
+	"desktop.host.timeout.title": "Host failed to start",
+	"desktop.host.timeout.message": "The web host was not ready in time: {message}",
+	"desktop.host.invalid.title": "Host failed to start",
+	"desktop.host.invalid.message": "The web host failed while starting: {message}",
+	"desktop.host.crashed.title": "Host exited",
+	"desktop.host.crashed.message": "The web host exited unexpectedly (exit code {code}, signal {signal}).",
+	"desktop.host.none": "none",
+	"desktop.host.noOutput": "(no output)",
 } as const;
 
 export type MessageKey = keyof typeof EN;
@@ -696,6 +731,39 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"page.scheduleFailed": "定时任务操作失败：{error}",
 	"page.scheduleNeedsMinutes": "间隔必须是不少于 1 分钟的整数",
 	"page.scheduleNeedsPrompt": "定时任务需要提示内容",
+
+	"desktop.menu.undo": "撤销",
+	"desktop.menu.redo": "重做",
+	"desktop.menu.cut": "剪切",
+	"desktop.menu.copy": "复制",
+	"desktop.menu.paste": "粘贴",
+	"desktop.menu.selectAll": "全选",
+	"desktop.dialog.reload": "重新加载",
+	"desktop.dialog.quit": "退出",
+	"desktop.render.gone.title": "页面出错",
+	"desktop.render.gone.message": "页面进程已退出（{reason}，退出码 {exitCode}）。",
+	"desktop.render.load.title": "页面加载失败",
+	"desktop.render.load.message": "页面没有加载成功（{errorCode} {errorDescription}）。",
+	"desktop.render.reason.clean-exit": "正常退出",
+	"desktop.render.reason.abnormal-exit": "异常退出",
+	"desktop.render.reason.killed": "被终止",
+	"desktop.render.reason.crashed": "崩溃",
+	"desktop.render.reason.oom": "内存不足",
+	"desktop.render.reason.launch-failed": "启动失败",
+	"desktop.render.reason.integrity-failure": "完整性校验失败",
+	"desktop.render.reason.memory-eviction": "内存被回收",
+	"desktop.host.spawn.title": "宿主启动失败",
+	"desktop.host.spawn.message": "无法启动网页宿主：{message}",
+	"desktop.host.early.title": "宿主启动失败",
+	"desktop.host.early.message": "网页宿主尚未就绪就退出了（退出码 {code}，信号 {signal}）。",
+	"desktop.host.timeout.title": "宿主启动失败",
+	"desktop.host.timeout.message": "网页宿主没有在时限内就绪：{message}",
+	"desktop.host.invalid.title": "宿主启动失败",
+	"desktop.host.invalid.message": "网页宿主启动失败：{message}",
+	"desktop.host.crashed.title": "宿主已退出",
+	"desktop.host.crashed.message": "网页宿主意外退出了（退出码 {code}，信号 {signal}）。",
+	"desktop.host.none": "无",
+	"desktop.host.noOutput": "（无输出）",
 };
 
 /** One settings field's copy: the row's title, its one-line explanation, and a control placeholder. */

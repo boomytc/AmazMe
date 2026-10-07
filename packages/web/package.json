@@ -13,6 +13,14 @@
 		"./assets": {
 			"types": "./dist/assets.d.ts",
 			"import": "./dist/assets.js"
+		},
+		"./locale": {
+			"types": "./dist/locale.d.ts",
+			"import": "./dist/locale.js"
+		},
+		"./strings": {
+			"types": "./dist/strings.d.ts",
+			"import": "./dist/strings.js"
 		}
 	},
 	"scripts": {
