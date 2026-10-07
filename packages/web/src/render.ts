@@ -99,7 +99,8 @@ export interface PageElements {
 
 export interface PageRenderer {
 	render(view: WebView): void;
-	setConnection(text: string, kind: "state" | "error"): void;
+	/** `text` is the full status (title and aria-label). `label`, when set, is the visible state. */
+	setConnection(text: string, kind: "state" | "error", label?: string): void;
 	/** Handlers the page entry fills in once it can drive the host. */
 	onSelect: (sessionId: string) => void;
 	onCreateSession: () => void;
@@ -1549,11 +1550,17 @@ export function createRenderer(
 			renderer.onDraftChange(text);
 			elements.prompt.focus();
 		},
-		setConnection(text: string, kind: "state" | "error"): void {
-			elements.connection.textContent = text;
+		setConnection(text: string, kind: "state" | "error", label?: string): void {
+			elements.connection.className = `connection ${kind}`;
 			elements.connection.title = text;
 			elements.connection.setAttribute("aria-label", text);
-			elements.connection.className = `connection ${kind}`;
+			if (label === undefined) {
+				elements.connection.textContent = text;
+				return;
+			}
+			const dot = element("span", "connection-dot");
+			dot.setAttribute("aria-hidden", "true");
+			elements.connection.replaceChildren(dot, document.createTextNode(label));
 		},
 	};
 

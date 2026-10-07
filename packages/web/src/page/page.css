@@ -447,13 +447,11 @@ body.dock-open {
 	white-space: nowrap;
 }
 
-/* min-width 0 lets this row shrink below the usage text. The meter shrinks first, then the
-   connection. The approval count and the menu do not shrink. safe flex-end packs the row to the
-   right when it fits, and does not paint it back over the session name. */
+/* The connection is a short state, so this row's minimum is that label plus the approval count,
+   the actions, and the menu. The meter shrinks before the session name. safe flex-end packs the
+   row to the right when it fits, and does not paint it back over the session name. */
 .header-utilities {
 	display: flex;
-	/* High shrink so this row yields before the session name. min-content is the approval count,
-	   the actions, and the menu: the meter and the connection are definite 0-width until they grow. */
 	flex: 1 100 auto;
 	align-items: center;
 	justify-content: safe flex-end;
@@ -474,11 +472,11 @@ body.dock-open {
 	white-space: nowrap;
 }
 
-/* Context %, tokens, and cost. First to shrink: the figures ellipsize before the connection or
-   the session name give up width. */
+/* Context %, tokens, and cost. The token pair ellipsizes first; percent and cost stay whole as
+   long as the row can hold them. */
 .status-meter {
 	display: flex;
-	flex: 1 1000 auto;
+	flex: 1 1 auto;
 	align-items: center;
 	gap: 8px;
 	width: 0;
@@ -492,20 +490,20 @@ body.dock-open {
 }
 
 #meter-context,
-#meter-cost,
-#meter-tokens {
+#meter-cost {
+	flex: 0 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
-}
-
-#meter-context,
-#meter-cost {
-	flex: 0 1 auto;
+	white-space: nowrap;
 }
 
 #meter-tokens {
 	flex: 1 100 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .status-meter[data-tone="warning"] #meter-context {
@@ -517,17 +515,23 @@ body.dock-open {
 }
 
 .connection {
-	/* After the meter, before the session name. Width 0 keeps it out of the row's minimum; it grows
-	   back toward the full string, which stays on title and aria-label. */
-	flex: 4 100 auto;
-	width: 0;
-	min-width: 0;
-	max-width: max-content;
-	overflow: hidden;
+	/* Always the short state. The server id and any error detail stay on title and aria-label. */
+	display: inline-flex;
+	flex: none;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 6px;
 	color: var(--dsw-alias-label-caption);
 	font: var(--dsw-font-xs-13);
-	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.connection-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
 }
 
 .connection.error {
@@ -2580,12 +2584,8 @@ summary.disclosure-row {
    it is the same server for the whole session — so it steps aside rather than squeezing the title
    into an ellipsis, and only a problem still speaks. */
 @media (max-width: 640px) {
-	.connection:not(.error) {
-		display: none;
-	}
-
 	/* The token pair is the long figure. Percent and cost stay; the full line remains on the meter's
-	   aria-label. */
+	   aria-label. The connection stays: it is only a dot and a short state. */
 	#meter-tokens {
 		display: none;
 	}
