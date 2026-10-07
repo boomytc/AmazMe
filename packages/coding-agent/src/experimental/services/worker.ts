@@ -15,10 +15,12 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { Conversation, Harness } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
+import { configureHarnessHttp } from "../durable/harness-setup.ts";
 import { AgentController } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
+import { SessionSettings } from "./settings.ts";
 import { createTranscriptServiceFacet } from "./transcript-provider.ts";
 
 export interface SessionWorkerRuntime {
@@ -69,9 +71,27 @@ export async function createSessionWorkerServices(options: {
 			env.provide(SessionPlugins, { reload: () => reloadPlugins() });
 		},
 	});
+	// A settings change made by another process (the web client, another CLI) reaches this Session
+	// through a reload; the worker otherwise keeps the copy it loaded when it started.
+	const settingsManager = options.settingsManager;
+	const settingsRuntimeFacet =
+		settingsManager === undefined
+			? undefined
+			: defineFacet({
+					id: "@pi/session-settings-runtime",
+					setup(env) {
+						env.provide(SessionSettings, {
+							reload: async () => {
+								await settingsManager.reload();
+								configureHarnessHttp(settingsManager);
+							},
+						});
+					},
+				});
 	const builtins = await createStaticFacetLoader([
 		agentControllerRuntimeFacet,
 		pluginRuntimeFacet,
+		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
 		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 	]).load();

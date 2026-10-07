@@ -12,16 +12,44 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ReplicatedState } from "@amazme/chord";
 import type { ConversationView } from "@amazme/durable";
 import {
+	addMcpServerModal,
+	addPackageModal,
 	BOOT_GLOBAL,
 	buildWebView,
+	CHAT_VIEW,
 	collectPageElements,
+	composeSkill,
 	createRenderer,
 	failureView,
 	followSystemTheme,
+	importSkillModal,
 	isBusy,
+	newSkillModal,
+	PLUGIN_MCP_ADD_ACTION,
+	PLUGIN_MCP_ENABLED_ACTION,
+	PLUGIN_MCP_EXPOSURE_ACTION,
+	PLUGIN_MCP_MODAL,
+	PLUGIN_MCP_REMOVE_ACTION,
+	PLUGIN_PACKAGE_ADD_ACTION,
+	PLUGIN_PACKAGE_MODAL,
+	PLUGIN_PACKAGE_REMOVE_ACTION,
+	removeSkillModal,
 	rosterItems,
+	SETTINGS_FIELD_ACTION,
+	SETTINGS_RELOAD_ACTION,
+	SKILL_CREATE_MODAL,
+	SKILL_EDIT_ACTION,
+	SKILL_EDIT_MODAL,
+	SKILL_IMPORT_ACTION,
+	SKILL_IMPORT_MODAL,
+	SKILL_NEW_ACTION,
+	SKILL_REMOVE_ACTION,
+	SKILL_REMOVE_MODAL,
+	skillModal,
 	type PageElements,
 	type PageRenderer,
+	type PanelAction,
+	type PanelModal,
 	type WebBootManifest,
 } from "@amazme/web";
 import { AgentController } from "../services/agent-controller.ts";
@@ -31,7 +59,10 @@ import {
 	type SessionServiceSource,
 } from "../services/connection.ts";
 import { Models, type ModelsState } from "../services/models.ts";
+import { Plugins } from "../services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
+import { SessionSettings, Settings } from "../services/settings.ts";
+import { Skills } from "../services/skills.ts";
 import { Transcript } from "../services/transcript.ts";
 
 function readManifest(): WebBootManifest | undefined {
@@ -53,6 +84,7 @@ class SessionPainter {
 	#transcript: ReplicatedState<ConversationView> | undefined;
 	#controller: AgentController | undefined;
 	#models: Models | undefined;
+	#sessionSettings: SessionSettings | undefined;
 	#levels: readonly string[] | undefined;
 	#levelsModel: string | undefined;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
@@ -108,6 +140,14 @@ class SessionPainter {
 	}
 
 	/**
+	 * Make the attached session re-read the settings files, so a change made from the management
+	 * panel reaches this running session instead of waiting for its worker to restart.
+	 */
+	async reloadSettings(): Promise<void> {
+		await this.#sessionSettings?.reload(BACKGROUND_CONTEXT);
+	}
+
+	/**
 	 * Read the levels the host supports for the attached model, once per model. The models state is
 	 * replicated, so a switch made anywhere — this page, the TUI, another tab — lands here.
 	 */
@@ -133,7 +173,7 @@ class SessionPainter {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
 		const services = this.#sessionSource.open({
-			services: [Transcript, AgentController, Models],
+			services: [Transcript, AgentController, Models, SessionSettings],
 			assertAccess(): void {},
 			onError: (error: Error) => this.#renderer.setConnection(`stream error: ${message(error)}`, "error"),
 		});
@@ -143,6 +183,7 @@ class SessionPainter {
 		this.#transcript = transcript.state;
 		this.#controller = services.use(AgentController);
 		this.#models = services.use(Models);
+		this.#sessionSettings = services.use(SessionSettings);
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		// A model switch made anywhere repaints the chip and re-reads the levels of the new model.
@@ -163,6 +204,7 @@ class SessionPainter {
 		this.#transcript = undefined;
 		this.#controller = undefined;
 		this.#models = undefined;
+		this.#sessionSettings = undefined;
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		this.#sessionId = undefined;
@@ -186,12 +228,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const sessionSource = createSessionServiceSource(client, { onError: report });
 	const painter = new SessionPainter(sessionSource, renderer);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement],
+		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins],
 		assertAccess(): void {},
 		onError: report,
 	});
 	const directory = serverServices.use(SessionDirectory);
 	const management = serverServices.use(SessionManagement);
+	/** The management surface's own services, and the view the main area shows. */
+	const settings = serverServices.use(Settings);
+	const skills = serverServices.use(Skills);
+	const plugins = serverServices.use(Plugins);
+	let view = CHAT_VIEW;
+	let modal: PanelModal | undefined;
 	const paint = (): void =>
 		renderer.render(
 			buildWebView({
@@ -201,9 +249,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				now: Date.now(),
 				models: painter.modelsValue,
 				thinkingLevels: painter.levels,
+				panel: {
+					current: view,
+					...(modal === undefined ? {} : { modal }),
+					settings: { state: settings.state.value },
+					skills: { state: skills.state.value },
+					plugins: { state: plugins.state.value },
+				},
 			}),
 		);
 	directory.state.subscribe(() => paint());
+	settings.state.subscribe(() => paint());
+	skills.state.subscribe(() => paint());
+	plugins.state.subscribe(() => paint());
 
 	const selectSession = async (sessionId: string): Promise<void> => {
 		await management.attach(sessionId, BACKGROUND_CONTEXT);
@@ -250,6 +308,169 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		void painter.abort().catch((error: unknown) => {
 			renderer.setConnection(`abort failed: ${message(error)}`, "error");
 		});
+	};
+
+	/** Report a failed management call; the panel keeps its state and the reader keeps their text. */
+	const failPanel = (error: unknown): void =>
+		renderer.setConnection(`panel action failed: ${message(error)}`, "error");
+
+	/** Run one host call from the management surface, closing the modal once it succeeded. */
+	const settle = (operation: Promise<void> | undefined, closeModal = true): void => {
+		if (operation === undefined) return;
+		void operation.then(
+			() => {
+				if (closeModal) modal = undefined;
+				paint();
+			},
+			(error: unknown) => {
+				failPanel(error);
+				paint();
+			},
+		);
+	};
+
+	const pluginPackages = (): readonly string[] => plugins.state.value?.packages ?? [];
+	const skillOf = (name: string): { readonly editable: boolean } | undefined =>
+		skills.state.value?.skills.find((candidate) => candidate.name === name);
+
+	renderer.onPanelAction = (action: PanelAction): void => {
+		switch (action.kind) {
+			case "open":
+				// The row of the view already open returns to the conversation.
+				view = action.panel === view ? CHAT_VIEW : action.panel;
+				modal = undefined;
+				paint();
+				return;
+			case "modal-close":
+				modal = undefined;
+				paint();
+				return;
+			case "control":
+				if (action.id === SETTINGS_FIELD_ACTION && action.data !== undefined) {
+					const id = action.data;
+					// A running session holds the settings it loaded, so ask it to re-read them.
+					settle(
+						settings
+							.set(id, action.value, BACKGROUND_CONTEXT)
+							.then(() => painter.reloadSettings())
+							.catch((error: unknown) => {
+								// A session that is already gone is not a settings failure.
+								failPanel(error);
+							}),
+						false,
+					);
+					return;
+				}
+				if (action.id === PLUGIN_MCP_ENABLED_ACTION && action.data !== undefined) {
+					const name = action.data;
+					settle(plugins.setMcpServer(name, { enabled: action.value === "true" }, BACKGROUND_CONTEXT), false);
+					return;
+				}
+				if (action.id === PLUGIN_MCP_EXPOSURE_ACTION && action.data !== undefined) {
+					const name = action.data;
+					settle(plugins.setMcpServer(name, { exposure: action.value }, BACKGROUND_CONTEXT), false);
+				}
+				return;
+			case "command":
+				switch (action.id) {
+					case SETTINGS_RELOAD_ACTION:
+						settle(settings.reload(BACKGROUND_CONTEXT), false);
+						return;
+					case SKILL_NEW_ACTION:
+						modal = newSkillModal();
+						paint();
+						return;
+					case SKILL_IMPORT_ACTION:
+						modal = importSkillModal();
+						paint();
+						return;
+					case SKILL_REMOVE_ACTION:
+						modal = removeSkillModal(action.data ?? "");
+						paint();
+						return;
+					case SKILL_EDIT_ACTION: {
+						const name = action.data ?? "";
+						settle(
+							skills.read(name, BACKGROUND_CONTEXT).then((content) => {
+								modal = skillModal(name, content, skillOf(name)?.editable === true);
+							}),
+							false,
+						);
+						return;
+					}
+					case PLUGIN_PACKAGE_ADD_ACTION:
+						modal = addPackageModal();
+						paint();
+						return;
+					case PLUGIN_PACKAGE_REMOVE_ACTION: {
+						const path = action.data ?? "";
+						settle(
+							plugins.setPackages(
+								pluginPackages().filter((candidate) => candidate !== path),
+								BACKGROUND_CONTEXT,
+							),
+							false,
+						);
+						return;
+					}
+					case PLUGIN_MCP_ADD_ACTION:
+						modal = addMcpServerModal();
+						paint();
+						return;
+					case PLUGIN_MCP_REMOVE_ACTION: {
+						const name = action.data ?? "";
+						settle(plugins.removeMcpServer(name, BACKGROUND_CONTEXT), false);
+						return;
+					}
+					default:
+						return;
+				}
+			case "modal-submit": {
+				const fields = action.fields;
+				switch (action.id) {
+					case SKILL_CREATE_MODAL: {
+						const name = (fields.name ?? "").trim();
+						if (name.length === 0) {
+							failPanel(new Error("a skill needs a name"));
+							return;
+						}
+						settle(
+							skills.write(
+								{ name, content: composeSkill(name, fields.description ?? "", fields.body ?? "") },
+								BACKGROUND_CONTEXT,
+							),
+						);
+						return;
+					}
+					case SKILL_EDIT_MODAL:
+						settle(skills.write({ name: action.data ?? "", content: fields.content ?? "" }, BACKGROUND_CONTEXT));
+						return;
+					case SKILL_REMOVE_MODAL:
+						settle(skills.remove(action.data ?? "", BACKGROUND_CONTEXT));
+						return;
+					case SKILL_IMPORT_MODAL:
+						settle(skills.importSkill(fields.path ?? "", BACKGROUND_CONTEXT));
+						return;
+					case PLUGIN_PACKAGE_MODAL: {
+						const path = (fields.path ?? "").trim();
+						if (path.length === 0) {
+							failPanel(new Error("a plugin package needs a path"));
+							return;
+						}
+						settle(plugins.setPackages([...pluginPackages(), path], BACKGROUND_CONTEXT));
+						return;
+					}
+					case PLUGIN_MCP_MODAL:
+						settle(plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT));
+						return;
+					default:
+						// A read-only view submits to close, which is what removing the modal does.
+						modal = undefined;
+						paint();
+						return;
+				}
+			}
+		}
 	};
 
 	client.onConnectionStateChange((change) => {

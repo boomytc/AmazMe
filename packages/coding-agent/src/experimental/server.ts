@@ -18,7 +18,8 @@ import type { ServerListener } from "@amazme/server";
 import { createUnixListener, getUnixSocketPath } from "@amazme/server/unix";
 import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
-import { getAgentDir } from "../config.ts";
+import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "../config.ts";
+import { SettingsManager } from "../core/settings-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import { createPresentationFacetData } from "./plugins/bundled.ts";
@@ -39,6 +40,7 @@ import {
 import { RadiusRelayAuthResolver } from "./radius-auth.ts";
 import { RadiusRelayHost, type RadiusRelayHostStatus } from "./radius-relay.ts";
 import { createExperimentalServerServices } from "./services/server.ts";
+import type { ServerAdministrationOptions } from "./services/server.ts";
 import type { SessionCreateOptions, SessionSummary } from "./services/sessions.ts";
 import {
 	createSession as createCatalogSession,
@@ -371,6 +373,9 @@ interface StartServerBackendOptions {
 	): Promise<ResolvedSessionPlugins>;
 	removeSessionPlugins(metadata: SessionCatalogMetadata): Promise<void>;
 	reloadPresentationFacetBundles(packagePaths: readonly string[]): Promise<readonly FacetBundleArtifact[]>;
+	/** The server's default plugin selection, and the write that replaces it. */
+	listServerPluginPackages(): readonly string[];
+	setServerPluginPackages(packagePaths: readonly string[]): Promise<readonly string[]>;
 }
 
 interface RunningServerBackend extends RunningServer {
@@ -403,7 +408,26 @@ async function startServerBackend(
 		sessionId: metadata.id,
 		createdAt: metadata.createdAt,
 	});
+	// The administration surfaces read and write the agent directory the CLI uses, plus the
+	// checkout's project settings: one Settings, Skills, and Plugins instance per server.
+	const administrationCwd = process.cwd();
+	const administration: ServerAdministrationOptions = {
+		settings: {
+			manager: SettingsManager.create(administrationCwd),
+			agentDir: getAgentDir(),
+			cwd: administrationCwd,
+			paths: {
+				global: getSettingsPath(),
+				project: join(administrationCwd, CONFIG_DIR_NAME, "settings.json"),
+			},
+		},
+		pluginPackages: {
+			list: () => options.listServerPluginPackages(),
+			set: (packagePaths) => options.setServerPluginPackages(packagePaths),
+		},
+	};
 	const serverServices = await createExperimentalServerServices({
+		administration,
 		list: async () =>
 			(await listSessions())
 				.map(summarize)
@@ -582,6 +606,14 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			}
 			return reloaded.presentationArtifacts;
 		};
+		// The plugin management surface writes the server's default selection, so Sessions opened
+		// afterwards load the new packages. A running worker keeps the generation it started with.
+		const setServerPluginPackages = async (packagePaths: readonly string[]): Promise<readonly string[]> => {
+			const selected = await buildPluginSelection(packagePaths);
+			await restoreServerPluginPackageProfile(directory, serverId, selected.packagePaths);
+			defaultPluginSelection = selected;
+			return selected.packagePaths;
+		};
 		const socketPath = getUnixSocketPath(serverId, directory);
 		const controlPath = join(directory, `control-${serverId}.sock`);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
@@ -601,6 +633,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 				resolveSessionPlugins,
 				removeSessionPlugins,
 				reloadPresentationFacetBundles,
+				listServerPluginPackages: () => defaultPluginSelection.packagePaths,
+				setServerPluginPackages,
 			},
 			workers,
 			(count) => lifetime.setConnectionCount(count),

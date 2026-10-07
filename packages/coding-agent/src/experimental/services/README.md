@@ -31,8 +31,12 @@ page take effect after the host restarts.
 |---|---|---|---|
 | server | `SessionDirectory` | replicated state implemented | add authenticated per-client projection when identity lands |
 | server | `SessionManagement` | create, remove, attach, detach implemented | add authenticated workspace authorization |
+| server | `Settings` | the editable field catalogue over the host's `SettingsManager`, with a write per field and a reload of the files | add project-scoped writes and a typed editor for list fields |
+| server | `Skills` | the agent's loaded skills, with read, write, remove, and import for the agent directory's own | add skill-path settings and prompt-template management |
+| server | `Plugins` | the server's default plugin package selection and the `mcp.json` entries the CLI and TUI read | connect MCP servers from this host and report their status |
 | server | `PresentationPlugins` | prepares the selected Session branch's matching TUI artifacts and reloads that branch | add authenticated plugin policy |
 | session | `SessionPlugins` | reloads the configured Session facet generation | add coordinated multi-worker reload reporting |
+| session | `SessionSettings` | asks the worker to re-read the settings files, so a change made elsewhere reaches the running Session | invalidate the per-directory prompt cache so newly written skills apply to a running Session |
 | session | `Models` | state, default-persisting selection, thinking, refresh implemented | move provider/auth composition behind plugin facets |
 | session | `AgentController` | presentation-safe facade over the root durable conversation for prompting, steering, follow-ups, queue cancellation, abort, compaction, and waiting for a prompt's answer | add new conversation operations only when a presentation requires them |
 | session | `Transcript` | the root conversation's durable `ConversationView` as replicated state | add projections only when another presentation needs them |

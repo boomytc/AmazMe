@@ -7,6 +7,17 @@
  * otherwise reset them.
  */
 import { formatMarkdown, type InlineNode, type MarkdownNode } from "./markdown.ts";
+import {
+	CHAT_VIEW,
+	SETTINGS_VIEW,
+	type PanelAction,
+	type PanelButton,
+	type PanelControl,
+	type PanelGroup,
+	type PanelModal,
+	type PanelRow,
+	type PanelSpec,
+} from "./panels.ts";
 import { composerPlaceholder, type TranscriptBlock, type WebView } from "./view.ts";
 
 export interface PageElements {
@@ -15,9 +26,21 @@ export interface PageElements {
 	readonly sessionTitle: HTMLElement;
 	/** The sidebar's new-session bar. */
 	readonly newSession: HTMLButtonElement;
+	/** The sidebar's panel rows, and the settings entry in its footer. */
+	readonly nav: HTMLElement;
+	readonly settingsButton: HTMLButtonElement;
+	/** The header's management entry, shown where the sidebar column is dropped. */
+	readonly viewMenuTrigger: HTMLButtonElement;
+	readonly viewMenu: HTMLElement;
 	readonly roster: HTMLElement;
 	readonly transcript: HTMLElement;
 	readonly column: HTMLElement;
+	/** The management panel's host, its back control, and the composer the panel replaces. */
+	readonly view: HTMLElement;
+	readonly viewBody: HTMLElement;
+	readonly viewBack: HTMLButtonElement;
+	readonly composerDock: HTMLElement;
+	readonly modalRoot: HTMLElement;
 	readonly queue: HTMLElement;
 	readonly composer: HTMLFormElement;
 	readonly prompt: HTMLTextAreaElement;
@@ -40,6 +63,8 @@ export interface PageRenderer {
 	onAbort: () => void;
 	onSelectModel: (provider: string, modelId: string) => void;
 	onSelectThinking: (level: string) => void;
+	/** Every navigation, control, and modal report from the management surface. */
+	onPanelAction: (action: PanelAction) => void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
 	readonly view: WebView | undefined;
 }
@@ -50,9 +75,18 @@ export function collectPageElements(): PageElements {
 		mode: pick("mode"),
 		sessionTitle: pick("session-title"),
 		newSession: pickElement("new-session", HTMLButtonElement),
+		nav: pick("nav"),
+		settingsButton: pickElement("settings-button", HTMLButtonElement),
+		viewMenuTrigger: pickElement("view-menu-trigger", HTMLButtonElement),
+		viewMenu: pick("view-menu"),
 		roster: pick("roster"),
 		transcript: pick("transcript"),
 		column: pick("column"),
+		view: pick("view"),
+		viewBody: pick("view-body"),
+		viewBack: pickElement("view-back", HTMLButtonElement),
+		composerDock: pick("composer-dock"),
+		modalRoot: pick("modal-root"),
 		queue: pick("queue"),
 		composer: pickElement("composer", HTMLFormElement),
 		prompt: pickElement("prompt", HTMLTextAreaElement),
@@ -247,6 +281,74 @@ function fitPrompt(prompt: HTMLTextAreaElement): void {
 	prompt.style.height = `${prompt.scrollHeight}px`;
 }
 
+/** One 16px outline glyph per navigation row; the page ships its own shapes, not an icon set. */
+function navGlyph(name: "chat" | "plugins" | "skills" | "settings"): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("width", "16");
+	svg.setAttribute("height", "16");
+	svg.setAttribute("aria-hidden", "true");
+	const shapes: Record<typeof name, string[]> = {
+		chat: ["M3.2 4.2h9.6v6.4H7.6L4.6 13v-2.4H3.2Z"],
+		plugins: ["M3.6 3.6h3.6v3.6H3.6zM8.8 3.6h3.6v3.6H8.8zM3.6 8.8h3.6v3.6H3.6zM8.8 8.8h3.6v3.6H8.8z"],
+		skills: ["M8 2.6 9.6 6.4 13.4 8 9.6 9.6 8 13.4 6.4 9.6 2.6 8 6.4 6.4Z"],
+		settings: ["M2.6 5.2h10.8M2.6 10.8h10.8"],
+	};
+	for (const definition of shapes[name]) {
+		const shape = document.createElementNS(SVG_NAMESPACE, "path");
+		shape.setAttribute("d", definition);
+		shape.setAttribute("fill", "none");
+		shape.setAttribute("stroke", "currentColor");
+		shape.setAttribute("stroke-width", "1.4");
+		shape.setAttribute("stroke-linecap", "round");
+		shape.setAttribute("stroke-linejoin", "round");
+		svg.append(shape);
+	}
+	if (name === "settings") {
+		// Two knobs on the sliders, painted in the surface colour so the line reads through them.
+		for (const [cx, cy] of [
+			["6.2", "5.2"],
+			["9.8", "10.8"],
+		] as const) {
+			const knob = document.createElementNS(SVG_NAMESPACE, "circle");
+			knob.setAttribute("cx", cx);
+			knob.setAttribute("cy", cy);
+			knob.setAttribute("r", "1.5");
+			knob.setAttribute("fill", "var(--dsw-alias-bg-base)");
+			knob.setAttribute("stroke", "currentColor");
+			knob.setAttribute("stroke-width", "1.4");
+			svg.append(knob);
+		}
+	}
+	return svg;
+}
+
+/** The modal's close mark: two strokes, the same 16px box the other glyphs use. */
+function closeGlyph(): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("width", "16");
+	svg.setAttribute("height", "16");
+	svg.setAttribute("aria-hidden", "true");
+	const shape = document.createElementNS(SVG_NAMESPACE, "path");
+	shape.setAttribute("d", "M4.6 4.6 11.4 11.4M11.4 4.6 4.6 11.4");
+	shape.setAttribute("fill", "none");
+	shape.setAttribute("stroke", "currentColor");
+	shape.setAttribute("stroke-width", "1.5");
+	shape.setAttribute("stroke-linecap", "round");
+	svg.append(shape);
+	return svg;
+}
+
+/** One row's buttons: the group header's and a row's actions share one shape. */
+function panelButton(action: PanelButton, report: (action: PanelAction) => void): HTMLButtonElement {
+	const node = button(`panel-button tone-${action.tone}`);
+	node.textContent = action.label;
+	node.disabled = action.disabled === true;
+	node.addEventListener("click", () => report({ kind: "command", id: action.id, data: action.data }));
+	return node;
+}
+
 export function createRenderer(
 	elements: PageElements,
 	onSelect: (sessionId: string) => void = () => {},
@@ -256,8 +358,253 @@ export function createRenderer(
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
 	/** The primary action's current role, so the glyph is only rebuilt when it flips. */
 	let stops = false;
+	/** Text a reader is typing into a panel control, keyed by action id and target. */
+	const drafts = new Map<string, string>();
+	/** The modal already in the DOM; a rebuild would drop what the reader typed into it. */
+	let modalKey: string | undefined;
 
 	const draft = (): string => elements.prompt.value.trim();
+
+	const report = (action: PanelAction): void => renderer.onPanelAction(action);
+
+	const controlKey = (control: PanelControl): string => `${control.id}\u0000${control.data ?? ""}`;
+
+	/** One control: a switch applies at once, a select at once, text and numbers on commit. */
+	const controlElement = (control: PanelControl): HTMLElement => {
+		const key = controlKey(control);
+		const emit = (value: string): void => {
+			drafts.delete(key);
+			report({ kind: "control", id: control.id, data: control.data, value });
+		};
+		if (control.kind === "switch") {
+			const label = element("label", "panel-switch");
+			const input = document.createElement("input");
+			input.type = "checkbox";
+			input.checked = control.value === "true";
+			input.disabled = control.disabled === true;
+			input.addEventListener("change", () => emit(String(input.checked)));
+			label.append(input, element("span", "panel-switch-track"));
+			return label;
+		}
+		if (control.kind === "select") {
+			const select = document.createElement("select");
+			select.className = "panel-select";
+			for (const option of control.options ?? []) {
+				const node = document.createElement("option");
+				node.value = option.value;
+				node.textContent = option.label;
+				node.selected = option.value === control.value;
+				select.append(node);
+			}
+			select.disabled = control.disabled === true;
+			select.addEventListener("change", () => emit(select.value));
+			return select;
+		}
+		const input = document.createElement("input");
+		input.className = control.kind === "number" ? "panel-input panel-number" : "panel-input";
+		input.type = control.kind === "number" ? "number" : "text";
+		input.value = drafts.get(key) ?? control.value;
+		if (control.placeholder !== undefined) input.placeholder = control.placeholder;
+		if (control.min !== undefined) input.min = String(control.min);
+		if (control.step !== undefined) input.step = String(control.step);
+		input.disabled = control.disabled === true;
+		input.addEventListener("input", () => drafts.set(key, input.value));
+		input.addEventListener("change", () => emit(input.value));
+		return input;
+	};
+
+	const rowElementOf = (row: PanelRow): HTMLElement => {
+		const node = element("div", "panel-row");
+		const text = element("div", "panel-row-text");
+		const head = element("div", "panel-row-head");
+		head.append(element("span", "panel-row-title", row.title));
+		for (const badge of row.badges ?? []) head.append(element("span", "panel-badge", badge));
+		text.append(head);
+		if (row.description !== undefined) text.append(element("p", "panel-row-desc", row.description));
+		if (row.value !== undefined) text.append(element("code", "panel-row-value", row.value));
+		node.append(text);
+		if (row.controls !== undefined && row.controls.length > 0) {
+			const controls = element("div", "panel-controls");
+			for (const control of row.controls) controls.append(controlElement(control));
+			node.append(controls);
+		}
+		if (row.actions !== undefined && row.actions.length > 0) {
+			const actions = element("div", "panel-actions");
+			for (const action of row.actions) actions.append(panelButton(action, report));
+			node.append(actions);
+		}
+		return node;
+	};
+
+	const groupElement = (group: PanelGroup): HTMLElement => {
+		const node = element("section", "panel-group");
+		const head = element("header", "panel-group-head");
+		const titles = element("div", "panel-group-titles");
+		titles.append(element("h2", "panel-group-title", group.title));
+		if (group.description !== undefined) titles.append(element("p", "panel-group-desc", group.description));
+		head.append(titles);
+		if (group.actions !== undefined && group.actions.length > 0) {
+			const actions = element("div", "panel-actions");
+			for (const action of group.actions) actions.append(panelButton(action, report));
+			head.append(actions);
+		}
+		node.append(head);
+		const rows = element("div", "panel-rows");
+		if (group.rows.length === 0) rows.append(element("p", "panel-empty", group.empty ?? "Nothing here yet."));
+		else for (const row of group.rows) rows.append(rowElementOf(row));
+		node.append(rows);
+		if (group.footnote !== undefined) node.append(element("p", "panel-footnote", group.footnote));
+		return node;
+	};
+
+	const panelElement = (panel: PanelSpec): HTMLElement => {
+		const node = element("div", "panel");
+		const head = element("header", "panel-head");
+		head.append(element("h1", "panel-title", panel.title));
+		if (panel.description !== undefined) head.append(element("p", "panel-desc", panel.description));
+		node.append(head);
+		for (const notice of panel.notices) node.append(element("p", `panel-notice ${notice.tone}`, notice.text));
+		for (const group of panel.groups) node.append(groupElement(group));
+		return node;
+	};
+
+	/**
+	 * The modal's fields are read on submit, and the modal is only rebuilt when its identity or
+	 * default values change, so a rebuild elsewhere in the view never drops a half-typed field.
+	 */
+	const renderModal = (modal: PanelModal | undefined): void => {
+		const key =
+			modal === undefined
+				? undefined
+				: `${modal.id}\u0000${modal.data ?? ""}\u0000${modal.fields.map((field) => `${field.id}=${field.value}`).join("\u0001")}`;
+		if (key === modalKey) return;
+		modalKey = key;
+		if (modal === undefined) {
+			elements.modalRoot.replaceChildren();
+			elements.modalRoot.hidden = true;
+			return;
+		}
+		const backdrop = element("div", "modal-backdrop");
+		backdrop.addEventListener("click", () => report({ kind: "modal-close" }));
+		const card = element("div", "modal-card");
+		card.setAttribute("role", "dialog");
+		card.setAttribute("aria-modal", "true");
+		const head = element("header", "modal-head");
+		const titles = element("div", "modal-titles");
+		titles.append(element("h2", "modal-title", modal.title));
+		if (modal.description !== undefined) titles.append(element("p", "modal-desc", modal.description));
+		const close = button("modal-close");
+		close.setAttribute("aria-label", "Close");
+		close.append(closeGlyph());
+		close.addEventListener("click", () => report({ kind: "modal-close" }));
+		head.append(titles, close);
+		const body = element("div", "modal-body");
+		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
+		for (const field of modal.fields) {
+			const label = element("label", "modal-field");
+			label.append(element("span", "modal-field-label", field.label));
+			const input =
+				field.kind === "textarea" ? document.createElement("textarea") : document.createElement("input");
+			if (input instanceof HTMLInputElement) input.type = "text";
+			// The file and JSON fields are code; prose instructions keep the text face.
+			const code = field.id === "content" || field.id === "entry";
+			input.className =
+				field.kind === "textarea" ? `modal-textarea${code ? " code" : ""}` : "modal-input";
+			input.value = field.value;
+			if (field.placeholder !== undefined) input.placeholder = field.placeholder;
+			inputs.set(field.id, input);
+			label.append(input);
+			body.append(label);
+		}
+		const foot = element("footer", "modal-foot");
+		const cancel = button("panel-button default");
+		cancel.textContent = "Cancel";
+		cancel.addEventListener("click", () => report({ kind: "modal-close" }));
+		const submit = button(`panel-button ${modal.danger === true ? "tone-danger" : "tone-primary"}`);
+		submit.textContent = modal.submit;
+		submit.addEventListener("click", () => {
+			const fields: Record<string, string> = {};
+			for (const [id, input] of inputs) fields[id] = input.value;
+			report({ kind: "modal-submit", id: modal.id, data: modal.data, fields });
+		});
+		foot.append(cancel, submit);
+		card.append(head, body, foot);
+		elements.modalRoot.replaceChildren(backdrop, card);
+		elements.modalRoot.hidden = false;
+		const first = modal.fields[0] === undefined ? undefined : inputs.get(modal.fields[0].id);
+		first?.focus();
+	};
+
+	/** The sidebar's navigation and the settings entry: one row per management view. */
+	const renderNav = (view: WebView): void => {
+		elements.nav.replaceChildren();
+		for (const item of view.panel.nav) {
+			if (item.id === SETTINGS_VIEW) continue; // The settings row lives in the sidebar footer.
+			const row = button(item.active ? "nav-row active" : "nav-row");
+			row.dataset.view = item.id;
+			row.append(navGlyph(item.glyph), element("span", "nav-label", item.label));
+			row.addEventListener("click", () => report({ kind: "open", panel: item.id }));
+			elements.nav.append(row);
+		}
+		elements.settingsButton.replaceChildren(navGlyph("settings"), element("span", "nav-label", "Settings"));
+		elements.settingsButton.classList.toggle("active", view.panel.current === SETTINGS_VIEW);
+		// The header entry carries the same rows, for the width where the sidebar column is dropped.
+		if (!elements.viewMenu.hidden) renderViewMenu(view);
+	};
+
+	/** The header's management card: the same rows as the sidebar, marked with the open view. */
+	const renderViewMenu = (view: WebView): void => {
+		const rows: HTMLElement[] = [];
+		for (const item of view.panel.nav) {
+			const row = button(item.active ? "menu-item selected" : "menu-item");
+			row.setAttribute("role", "menuitemradio");
+			row.setAttribute("aria-checked", String(item.active));
+			row.append(element("span", "menu-item-name", item.label));
+			if (item.active) {
+				const check = element("span", "menu-check");
+				check.append(checkGlyph());
+				row.append(check);
+			}
+			row.addEventListener("click", () => {
+				closeViewMenu();
+				report({ kind: "open", panel: item.id });
+			});
+			rows.push(row);
+		}
+		const scroll = element("div", "menu-scroll");
+		scroll.append(...rows);
+		elements.viewMenu.replaceChildren(scroll);
+	};
+
+	const closeViewMenu = (): void => {
+		if (elements.viewMenu.hidden) return;
+		elements.viewMenu.hidden = true;
+		elements.viewMenuTrigger.setAttribute("aria-expanded", "false");
+	};
+
+	const openViewMenu = (): void => {
+		if (lastView === undefined) return;
+		renderViewMenu(lastView);
+		elements.viewMenu.hidden = false;
+		elements.viewMenuTrigger.setAttribute("aria-expanded", "true");
+	};
+
+	/** Switch the main area between the conversation and one panel, and paint the panel. */
+	const renderPanelView = (view: WebView): void => {
+		const panel = view.panel.panel;
+		const open = panel !== undefined;
+		elements.view.hidden = !open;
+		elements.transcript.hidden = open;
+		elements.composerDock.hidden = open;
+		elements.viewBack.hidden = !open;
+		if (panel === undefined) {
+			elements.viewBody.replaceChildren();
+			elements.sessionTitle.textContent = view.attachedId ?? "No session";
+			return;
+		}
+		elements.sessionTitle.textContent = panel.title;
+		elements.viewBody.replaceChildren(panelElement(panel));
+	};
 
 	/**
 	 * The primary action is Stop while a turn runs on an empty draft, and Send otherwise — the same
@@ -445,6 +792,7 @@ export function createRenderer(
 		onAbort: () => {},
 		onSelectModel: () => {},
 		onSelectThinking: () => {},
+		onPanelAction: () => {},
 		get view(): WebView | undefined {
 			return lastView;
 		},
@@ -485,8 +833,6 @@ export function createRenderer(
 			elements.column.replaceChildren(...flow);
 			if (stick) elements.transcript.scrollTop = elements.transcript.scrollHeight;
 
-			elements.sessionTitle.textContent = view.attachedId ?? "No session";
-
 			const detached = view.attachedId === undefined;
 			elements.prompt.disabled = detached;
 			elements.prompt.placeholder = composerPlaceholder(view.attachedId);
@@ -496,6 +842,9 @@ export function createRenderer(
 			for (const item of view.queue) elements.queue.append(element("p", "queue-item", item));
 
 			renderModelChip(view);
+			renderNav(view);
+			renderPanelView(view);
+			renderModal(view.panel.modal);
 		},
 		setConnection(text: string, kind: "state" | "error"): void {
 			elements.connection.textContent = text;
@@ -529,6 +878,22 @@ export function createRenderer(
 		elements.composer.requestSubmit();
 	});
 	elements.newSession.addEventListener("click", () => renderer.onCreateSession());
+	// The footer entry toggles the settings panel, the same way its sidebar row does.
+	elements.settingsButton.addEventListener("click", () =>
+		report({ kind: "open", panel: lastView?.panel.current === SETTINGS_VIEW ? CHAT_VIEW : SETTINGS_VIEW }),
+	);
+	elements.viewBack.addEventListener("click", () => report({ kind: "open", panel: CHAT_VIEW }));
+	elements.viewMenuTrigger.addEventListener("click", () => {
+		if (elements.viewMenu.hidden) openViewMenu();
+		else closeViewMenu();
+	});
+	// The management card closes on a click elsewhere and on Escape, like the model card.
+	document.addEventListener("pointerdown", (event) => {
+		if (elements.viewMenu.hidden) return;
+		const target = event.target;
+		if (target instanceof Node && (elements.viewMenu.contains(target) || elements.viewMenuTrigger.contains(target))) return;
+		closeViewMenu();
+	});
 	elements.modelTrigger.addEventListener("click", () => {
 		if (elements.modelMenu.hidden) openModelMenu();
 		else closeModelMenu();
@@ -541,7 +906,18 @@ export function createRenderer(
 		closeModelMenu();
 	});
 	document.addEventListener("keydown", (event) => {
-		if (event.key !== "Escape" || elements.modelMenu.hidden) return;
+		if (event.key !== "Escape") return;
+		if (elements.modalRoot.hidden === false) {
+			event.preventDefault();
+			report({ kind: "modal-close" });
+			return;
+		}
+		if (!elements.viewMenu.hidden) {
+			closeViewMenu();
+			elements.viewMenuTrigger.focus();
+			return;
+		}
+		if (elements.modelMenu.hidden) return;
 		closeModelMenu();
 		elements.modelTrigger.focus();
 	});

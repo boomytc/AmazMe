@@ -52,8 +52,15 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 	const repositoryRoot = options.repositoryRoot ?? repositoryRootFromModule;
 	const path = options.path ?? WEB_SOCKET_PATH;
 	const [document, bundle] = await Promise.all([readPageDocument(), bundlePageEntry(repositoryRoot)]);
+	// The HTTP socket binds before the server runtime exists, and the document carries the boot
+	// manifest the runtime provides. A request answered in that window would serve an unbootable
+	// page, so responses wait for the manifest the way a browser reload would.
+	let releaseReady!: () => void;
+	const ready = new Promise<void>((resolve) => {
+		releaseReady = resolve;
+	});
 	const httpServer = createServer((request, response) => {
-		void serveRequest(request, response, { document, script: bundle.code, manifest: () => manifest });
+		void serveRequest(request, response, { document, script: bundle.code, manifest: () => manifest, ready });
 	});
 	let manifest: WebBootManifest | undefined;
 	const listener = new WebSocketListener({ server: httpServer, path });
@@ -73,6 +80,7 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 			transportUrl: `ws://${WEB_HOST}:${port}${path}`,
 			transportPath: path,
 		});
+		releaseReady();
 		const url = `http://${WEB_HOST}:${port}/`;
 		let closePromise: Promise<void> | undefined;
 		return {
@@ -89,6 +97,8 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 			},
 		};
 	} catch (error) {
+		// Nothing will ever carry a manifest now; let the waiting responses through and close.
+		releaseReady();
 		await Promise.allSettled([listener.close(), closeServer(httpServer)]);
 		throw error;
 	}
@@ -104,10 +114,14 @@ interface PageAssets {
 	readonly document: string;
 	readonly script: string;
 	readonly manifest: () => WebBootManifest | undefined;
+	/** Resolves once the runtime that provides the manifest exists. */
+	readonly ready: Promise<void>;
 }
 
 async function serveRequest(request: IncomingMessage, response: ServerResponse, assets: PageAssets): Promise<void> {
 	try {
+		// The document and its script are only meaningful with the manifest, so they wait for it.
+		await assets.ready;
 		if (request.method !== "GET" && request.method !== "HEAD") {
 			respond(response, 405, "text/plain; charset=utf-8", "Method not allowed\n");
 			return;

@@ -7,7 +7,18 @@ import {
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { RoutedServerServiceAttachment, RoutedServerServiceHost } from "@amazme/server";
-import { PresentationPlugins } from "./plugins.ts";
+import type { SettingsManager } from "../../core/settings-manager.ts";
+import { Plugins, PresentationPlugins, type Plugins as PluginsService } from "./plugins.ts";
+import { createPluginsService } from "./plugins-provider.ts";
+import {
+	Settings,
+	type SettingsError,
+	type Settings as SettingsService,
+	type SettingsState,
+} from "./settings.ts";
+import { applySetting, describeSettings, publishSettings, settingsErrors } from "./settings-provider.ts";
+import { Skills, type Skills as SkillsService } from "./skills.ts";
+import { createSkillsService } from "./skills-provider.ts";
 import {
 	type SessionCreateOptions,
 	SessionDirectory,
@@ -15,6 +26,22 @@ import {
 	SessionManagement,
 	type SessionSummary,
 } from "./sessions.ts";
+
+/** What the server administration surface reads and writes. */
+export interface ServerAdministrationOptions {
+	readonly settings: {
+		/** The host's own settings manager: the same files the CLI and the Session workers read. */
+		readonly manager: SettingsManager;
+		readonly agentDir: string;
+		readonly cwd: string;
+		readonly paths: { readonly global: string; readonly project?: string };
+	};
+	/** The server's default plugin package selection, as the plugin profile stores it. */
+	readonly pluginPackages: {
+		readonly list: () => readonly string[];
+		readonly set: (paths: readonly string[]) => Promise<readonly string[]>;
+	};
+}
 
 export interface ExperimentalServerServices {
 	readonly host: RoutedServerServiceHost;
@@ -32,6 +59,7 @@ export async function createExperimentalServerServices(options: {
 		context: Context,
 	): Promise<{ readonly packagePaths: readonly string[]; readonly presentationPlugins: JsonValue }>;
 	reloadPresentationPlugins(packagePaths: readonly string[], context: Context): Promise<JsonValue>;
+	administration: ServerAdministrationOptions;
 }): Promise<ExperimentalServerServices> {
 	let revision = 1;
 	const directory = replicatedState<SessionDirectoryState>({
@@ -40,6 +68,35 @@ export async function createExperimentalServerServices(options: {
 	});
 	const attachments = new Set<RoutedServerServiceAttachment>();
 	let mutationTail = Promise.resolve();
+
+	// The administration surfaces: one Settings/Skills/Plugins instance per server, shared with every
+	// attached client, so two tabs see the same catalogue and the same files.
+	const { manager, agentDir, cwd, paths } = options.administration.settings;
+	let settingsErrorList: SettingsError[] = settingsErrors(manager);
+	const settingsState = replicatedState<SettingsState>({
+		revision: 1,
+		agentDir,
+		cwd,
+		paths,
+		projectTrusted: manager.isProjectTrusted(),
+		descriptors: describeSettings(manager),
+		errors: [...settingsErrorList],
+	});
+	const skills = createSkillsService(
+		{ agentDir, cwd, skillPaths: () => manager.getSkillPaths() },
+		replicatedState,
+	);
+	skills.refresh(BACKGROUND_CONTEXT);
+	const plugins = createPluginsService(
+		{
+			agentDir,
+			cwd,
+			projectTrusted: manager.isProjectTrusted(),
+			packages: options.administration.pluginPackages,
+		},
+		replicatedState,
+	);
+	plugins.reload(BACKGROUND_CONTEXT);
 
 	const refreshNow = async (context: Context): Promise<void> => {
 		const sessions = await options.list(context);
@@ -66,8 +123,37 @@ export async function createExperimentalServerServices(options: {
 					{ service: SessionDirectory, mode: "singleton" },
 					{ service: SessionManagement, mode: "singleton" },
 					{ service: PresentationPlugins, mode: "singleton" },
+					{ service: Settings, mode: "singleton" },
+					{ service: Skills, mode: "singleton" },
+					{ service: Plugins, mode: "singleton" },
 				]);
 				provider.provide(SessionDirectory, { state: directory });
+				provider.provide(Settings, {
+					state: settingsState,
+					set: (id, value, context) =>
+						serialize(async () => {
+							settingsErrorList = await applySetting(manager, id, value);
+							publishSettings(settingsState, context, { manager, agentDir, cwd, paths, errors: settingsErrorList });
+						}),
+					reload: (context) =>
+						serialize(async () => {
+							await manager.reload();
+							settingsErrorList = settingsErrors(manager);
+							publishSettings(settingsState, context, { manager, agentDir, cwd, paths, errors: settingsErrorList });
+						}),
+				});
+				provider.provide(Skills, skills.service);
+				const pluginsService: PluginsService = {
+					state: plugins.service.state,
+					setPackages: (packagePaths, context) =>
+						serialize(() => plugins.service.setPackages(packagePaths, context)),
+					setMcpServer: (name, patch, context) =>
+						serialize(() => plugins.service.setMcpServer(name, patch, context)),
+					addMcpServer: (name, json, context) => serialize(() => plugins.service.addMcpServer(name, json, context)),
+					removeMcpServer: (name, context) => serialize(() => plugins.service.removeMcpServer(name, context)),
+					reload: (context) => serialize(() => plugins.service.reload(context)),
+				};
+				provider.provide(Plugins, pluginsService);
 				provider.provide(PresentationPlugins, {
 					prepareSession: ({ sessionId, packagePaths }, context) =>
 						serialize(async () => {

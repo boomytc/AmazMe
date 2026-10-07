@@ -54,22 +54,63 @@
 				</svg>
 				<span class="new-session-label">New session</span>
 			</button>
+			<!-- The management views. The renderer fills this from the host's panel model; the
+			     settings entry sits in the footer, DSH's sidebar.footer.action slot. -->
+			<nav class="sidebar-nav" id="nav" aria-label="Management"></nav>
 			<p class="sidebar-label">Sessions</p>
 			<div class="session-list" id="roster"><p class="empty-state">Waiting for the host…</p></div>
+			<div class="sidebar-footer">
+				<button class="sidebar-footer-btn" type="button" id="settings-button">
+					<span class="nav-label">Settings</span>
+				</button>
+			</div>
 		</aside>
-		<main class="center">
+		<main class="center" id="center">
 			<header class="header">
 				<div class="crumbs">
+					<button class="crumb-back" type="button" id="view-back" aria-label="Back to the conversation" hidden>
+						<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+							<path
+								d="M9.6 3.6 5.2 8l4.4 4.4"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.6"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							/>
+						</svg>
+					</button>
 					<span class="crumb" id="session-title">No session</span>
 				</div>
 				<div class="header-utilities">
 					<span class="connection" id="connection">starting…</span>
+					<!-- Below 1024px the sidebar column is dropped, so the management views need an
+					     entry in the header; the renderer fills this card from the same nav model. -->
+					<button
+						class="view-menu-trigger"
+						type="button"
+						id="view-menu-trigger"
+						aria-haspopup="menu"
+						aria-expanded="false"
+						aria-label="Management"
+					>
+						<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+							<circle cx="3.4" cy="8" r="1.2" fill="currentColor" />
+							<circle cx="8" cy="8" r="1.2" fill="currentColor" />
+							<circle cx="12.6" cy="8" r="1.2" fill="currentColor" />
+						</svg>
+					</button>
+					<div class="view-menu" id="view-menu" role="menu" aria-label="Management" hidden></div>
 				</div>
 			</header>
+			<!-- The management panel: it replaces the conversation while a view other than chat is open. -->
+			<section class="view" id="view" hidden>
+				<div class="view-body" id="view-body"></div>
+			</section>
 			<div class="transcript" id="transcript">
 				<div class="column" id="column"><p class="empty-state">No session attached.</p></div>
 			</div>
-			<div class="composer-dock">
+			<div class="composer-dock" id="composer-dock">
 				<div id="queue"></div>
 				<form class="composer" id="composer">
 					<textarea
@@ -124,6 +165,8 @@
 				</form>
 			</div>
 		</main>
+		<!-- The one modal host: editors and prompts render here, over the main area. -->
+		<div class="modal-root" id="modal-root" hidden></div>
 		<script type="module" src="/page.js"></script>
 	</body>
 </html>

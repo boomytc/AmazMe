@@ -16,6 +16,7 @@ import {
 	ToolResultEntry,
 	UserEntry,
 } from "@amazme/durable";
+import { CHAT_VIEW, panelView, type PanelView, type PanelViewInput } from "./panels.ts";
 
 export type BlockTone = "plain" | "muted" | "error";
 
@@ -91,6 +92,8 @@ export interface WebView {
 	readonly busy: boolean;
 	readonly newSession: NewSessionAffordance;
 	readonly model: ModelPicker;
+	/** The sidebar's navigation and the management panel the main area shows. */
+	readonly panel: PanelView;
 }
 
 /** The `amazme.live` document of a view: the active run, the streaming answer, and running tools. */
@@ -140,6 +143,8 @@ export interface WebViewInput {
 	readonly models: ModelsStateLike | undefined;
 	/** The levels the host reports for the attached model; `undefined` until the page has read them. */
 	readonly thinkingLevels: readonly string[] | undefined;
+	/** The management view the page is showing, with the state of that area's services. */
+	readonly panel: PanelViewInput;
 }
 
 /** The host has no session attached yet, so the picker's trigger stays inert. */
@@ -491,6 +496,7 @@ export function failureView(text: string): WebView {
 		busy: false,
 		newSession: { enabled: false },
 		model: MODEL_PICKER_EMPTY,
+		panel: panelView({ current: CHAT_VIEW }),
 	};
 }
 
@@ -514,5 +520,6 @@ export function buildWebView(input: WebViewInput): WebView {
 		// Only a reachable host can take a create; the roster appears with the same state.
 		newSession: { enabled: input.directory !== undefined },
 		model: modelPicker(input.models, input.thinkingLevels, input.attachedId !== undefined),
+		panel: panelView(input.panel),
 	};
 }

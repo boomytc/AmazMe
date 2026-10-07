@@ -126,10 +126,43 @@ so the next turn resolves its model and level from it.
 
 Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
 served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of
-rendering an empty shell. Restarting the host keeps sessions: the same server ID and the durable storage are
+rendering an empty shell. A document request that arrives before the host runtime exists waits for its manifest
+instead of serving an unbootable page. Restarting the host keeps sessions: the same server ID and the durable
+storage are
 reused, so a fresh load shows the committed entries again. Page changes take effect after the host restarts
 (the bundle is built in memory when the host starts), and this slice is not part of the packaged `amazme`
 binary yet, so it always runs from the repository.
+
+### Manage plugins, skills, and settings
+
+The sidebar's **Plugins** and **Skills** rows and the **Settings** entry at the sidebar's bottom switch the main
+area to a management panel; the header then carries the panel's name and a back arrow, and the conversation and
+composer return with it. Every panel is a list of groups built from the host's own state, so the page never shows
+a field the host cannot read or write.
+
+**Plugins** lists the plugin packages the host builds into a Session's facet generation. **Add package…** takes an
+absolute path to a package with `src/session.ts`; the host builds it before the selection lands, and a package that
+cannot build is rejected with the panel's error notice. The selection is the server default, so sessions opened
+after the change load it while a running session keeps the generation it started with. The **MCP servers** group
+shows the effective `mcp.json` entries with their scope, enabled state, and exposure; a row's switch and exposure
+select write the same files the CLI and the TUI read, and **Add server…** takes a name plus the server entry as
+JSON (a `command` for stdio, a `url` for HTTP). Entries an extension registered are read-only here, and this host
+does not connect MCP servers itself, so the panel says so.
+
+**Skills** lists what the agent loads: the agent directory's own skills (scope `user`), the workspace's
+`.amazme/skills`, and configured skill paths. A user skill can be created, edited, removed, or imported from a
+folder or markdown file; **Edit** opens the whole `SKILL.md` so nothing the loader reads is lost, and the host
+rejects a name outside the Agent Skills spec or a file without a description. Project and configured-path skills
+open read-only. Like the CLI, the agent loads skills when a session starts, so a new or edited skill applies to
+the sessions started afterwards.
+
+**Settings** is the host's own field catalogue: each row is a field the host can read and write, grouped under its
+own heading, with the settings key it maps to, a `default` marker when no settings file sets it, and a control
+that matches its kind — a switch, a select, a number, or a text field. A change writes the global
+`settings.json` with the same merge semantics the CLI uses, and the attached session is asked to re-read its
+settings, so fields read per turn (compaction, retries, steering, follow-up) apply immediately. The **Files** group
+names the global and project settings paths, shows a parse error the files carry, and offers **Re-read files**.
+List-valued settings such as `defaultTools` stay in the settings file; the panel edits the scalar surface.
 
 ## Run a terminal command
 

@@ -71,12 +71,13 @@ export class WebSocketByteConnection implements ByteConnection {
 					}
 					break;
 				case OPCODE_PING:
-					void this.writeFrame(OPCODE_PONG, frame.payload);
+					// A peer that vanished cannot take the answer; the write failure closes the connection.
+					void this.writeFrame(OPCODE_PONG, frame.payload).catch(() => {});
 					break;
 				case OPCODE_PONG:
 					break;
 				case OPCODE_CLOSE:
-					void this.finishClose();
+					void this.finishClose().catch(() => {});
 					break;
 				default:
 					void this.closeWithCode(CLOSE_UNSUPPORTED_DATA);
@@ -139,10 +140,13 @@ export class WebSocketByteConnection implements ByteConnection {
 		this.resolveClose = undefined;
 	}
 
-	/** Answer the peer's close frame and stop writing. */
+	/**
+	 * Answer the peer's close frame and stop writing. The answer is best-effort: a peer that closed
+	 * the socket first, or that goes away while the frame is written, has nothing to receive.
+	 */
 	private async finishClose(): Promise<void> {
 		if (!this.closing) {
-			await this.writeFrame(OPCODE_CLOSE, new Uint8Array(0));
+			await this.writeFrame(OPCODE_CLOSE, new Uint8Array(0)).catch(() => {});
 		}
 		this.closing = true;
 		if (!this.socket.destroyed) this.socket.end();
@@ -200,8 +204,13 @@ export class WebSocketByteConnection implements ByteConnection {
 				if (settled) return;
 				settled = true;
 				this.socket.off("close", onClose);
-				if (error) reject(error);
-				else resolve();
+				if (error) {
+					// A write that failed means the peer is gone: take the connection down here, so later
+					// writes fail against a closed connection instead of each one repeating the error.
+					this.markClosed();
+					if (!this.socket.destroyed) this.socket.destroy();
+					reject(error);
+				} else resolve();
 			};
 			this.socket.once("close", onClose);
 			try {

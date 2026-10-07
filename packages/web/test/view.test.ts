@@ -30,6 +30,8 @@ import {
 
 const CONVERSATION = 1 as ConversationId;
 const NOW = 1_700_000_000_000;
+/** The conversation view: the panel input every case here shares. */
+const CHAT_PANEL = { current: "chat" };
 
 function entryId(value: number): EntryId {
 	return value as EntryId;
@@ -277,12 +279,12 @@ describe("web view model", () => {
 	});
 
 	test("reports the empty states the roster and transcript show", () => {
-		const connecting = buildWebView({ directory: undefined, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+		const connecting = buildWebView({ panel: CHAT_PANEL, directory: undefined, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(connecting.empty).toBe("Connecting to the host…");
 		expect(connecting.blocks).toEqual([]);
-		const none = buildWebView({ directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+		const none = buildWebView({ panel: CHAT_PANEL, directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(none.empty).toBe("No sessions on this host yet.");
-		const attached = buildWebView({
+		const attached = buildWebView({ panel: CHAT_PANEL,
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),
 			attachedId: "s",
@@ -298,7 +300,7 @@ describe("web view model", () => {
 
 	test("marks a view busy only while a run is in flight", () => {
 		const view = (live: JsonObject | undefined): WebView =>
-			buildWebView({
+			buildWebView({ panel: CHAT_PANEL,
 				directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 				transcript: viewOf([], live === undefined ? {} : { "amazme.live": live }),
 				attachedId: "s",
@@ -313,7 +315,7 @@ describe("web view model", () => {
 
 	test("enables the new-session bar only while the host's directory is reachable", () => {
 		const view = (directory: SessionDirectoryLike | undefined): WebView =>
-			buildWebView({ directory, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
+			buildWebView({ panel: CHAT_PANEL, directory, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(view(undefined).newSession).toEqual({ enabled: false });
 		expect(view(directoryOf([])).newSession).toEqual({ enabled: true });
 		expect(failureView("cannot boot: x").newSession).toEqual({ enabled: false });
@@ -392,7 +394,7 @@ describe("web view model", () => {
 			false,
 		);
 		expect(detached).toEqual(MODEL_PICKER_EMPTY);
-		expect(buildWebView({
+		expect(buildWebView({ panel: CHAT_PANEL,
 			directory: directoryOf([]),
 			transcript: undefined,
 			attachedId: undefined,
@@ -403,7 +405,7 @@ describe("web view model", () => {
 	});
 
 	test("builds the picker from the attached session's models state and levels", () => {
-		const view = buildWebView({
+		const view = buildWebView({ panel: CHAT_PANEL,
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),
 			attachedId: "s",

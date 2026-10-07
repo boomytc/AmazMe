@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@amazme/client";
@@ -14,7 +14,10 @@ import {
 	type SessionServiceSource,
 } from "../src/experimental/services/connection.ts";
 import { Models, type Models as ModelsService } from "../src/experimental/services/models.ts";
+import { Plugins, type Plugins as PluginsService } from "../src/experimental/services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
+import { Settings, type Settings as SettingsService } from "../src/experimental/services/settings.ts";
+import { Skills, type Skills as SkillsService } from "../src/experimental/services/skills.ts";
 import { Transcript } from "../src/experimental/services/transcript.ts";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 
@@ -114,6 +117,37 @@ function sawUserText(view: ConversationView | undefined, marker: string): boolea
 
 function listedSessions(presentation: Presentation): readonly string[] {
 	return (presentation.directory.state.value?.sessions ?? []).map((session) => session.sessionId);
+}
+
+interface Administration {
+	readonly settings: SettingsService;
+	readonly skills: SkillsService;
+	readonly plugins: PluginsService;
+	dispose(): Promise<void>;
+}
+
+/** The management surface's bindings: the three server services the page's panels read. */
+async function openAdministration(host: WebHost): Promise<Administration> {
+	const client = await Client.connect({
+		serverId: host.serverId,
+		transportFactory: createWebSocketTransportFactory({ url: host.webSocketUrl }),
+	});
+	const serverSource = createServerServiceSource(client);
+	const services = serverSource.open({
+		services: [Settings, Skills, Plugins],
+		assertAccess(): void {},
+		onError(): void {},
+	});
+	await services.ready(BACKGROUND_CONTEXT);
+	return {
+		settings: services.use(Settings),
+		skills: services.use(Skills),
+		plugins: services.use(Plugins),
+		async dispose() {
+			await services.dispose(BACKGROUND_CONTEXT);
+			await client.dispose();
+		},
+	};
 }
 
 afterEach(async () => {
@@ -324,4 +358,77 @@ describe("web client interactive loop", () => {
 		},
 		240_000,
 	);
+});
+
+describe("web client management surfaces", () => {
+	test("edits settings, skills, and MCP servers through the host's service catalogue", async () => {
+		const host = await startLoopHost();
+		const administration = await openAdministration(host);
+		const agentDir = process.env.AMAZME_CODING_AGENT_DIR!;
+
+		// Settings: the host publishes its catalogue, and a write lands in the agent directory.
+		await waitFor(
+			() => (administration.settings.state.value?.descriptors.length ?? 0) > 0,
+			"the settings catalogue to hydrate",
+		);
+		const steering = administration.settings.state.value?.descriptors.find(
+			(descriptor) => descriptor.id === "steeringMode",
+		);
+		expect(steering).toBeDefined();
+		await administration.settings.set("steeringMode", "all", BACKGROUND_CONTEXT);
+		await waitFor(
+			() =>
+				administration.settings.state.value?.descriptors.find((d) => d.id === "steeringMode")?.value === "all",
+			"the steering mode in the settings state",
+		);
+		expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toMatchObject({ steeringMode: "all" });
+		// A value the field cannot take is rejected over the wire too, and the file keeps the old one.
+		// (The remote boundary reports its own message; the field's own wording is not what crosses it.)
+		await expect(administration.settings.set("steeringMode", "sometimes", BACKGROUND_CONTEXT)).rejects.toThrow();
+		expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toMatchObject({ steeringMode: "all" });
+
+		// Skills: a created skill is listed by the host's own loader and readable back.
+		await administration.skills.write(
+			{ name: "web-turn-report", content: "---\nname: web-turn-report\ndescription: Report a turn\n---\n\nBody.\n" },
+			BACKGROUND_CONTEXT,
+		);
+		await waitFor(
+			() => administration.skills.state.value?.skills.some((skill) => skill.name === "web-turn-report") === true,
+			"the created skill in the skills state",
+		);
+		expect(administration.skills.state.value?.directory).toBe(join(agentDir, "skills"));
+		await expect(administration.skills.read("web-turn-report", BACKGROUND_CONTEXT)).resolves.toContain("Body.");
+		await administration.skills.remove("web-turn-report", BACKGROUND_CONTEXT);
+		await waitFor(
+			() => administration.skills.state.value?.skills.length === 0,
+			"the removed skill to leave the skills state",
+		);
+
+		// Plugins: an MCP server lands in the agent directory's mcp.json and comes back with its patch.
+		await administration.plugins.addMcpServer(
+			"web-loop-mcp",
+			JSON.stringify({ url: "https://mcp.example/mcp" }),
+			BACKGROUND_CONTEXT,
+		);
+		await waitFor(
+			() => administration.plugins.state.value?.mcp.servers.some((server) => server.name === "web-loop-mcp") === true,
+			"the added MCP server in the plugins state",
+		);
+		expect(administration.plugins.state.value?.mcp.globalPath).toBe(join(agentDir, "mcp.json"));
+		await administration.plugins.setMcpServer("web-loop-mcp", { enabled: false }, BACKGROUND_CONTEXT);
+		await waitFor(
+			() =>
+				administration.plugins.state.value?.mcp.servers.find((server) => server.name === "web-loop-mcp")?.enabled ===
+				false,
+			"the disabled MCP server",
+		);
+		await administration.plugins.removeMcpServer("web-loop-mcp", BACKGROUND_CONTEXT);
+		await waitFor(
+			() => administration.plugins.state.value?.mcp.servers.length === 0,
+			"the removed MCP server to leave the plugins state",
+		);
+
+		await administration.dispose();
+		await host.close();
+	}, 240_000);
 });
