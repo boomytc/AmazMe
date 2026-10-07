@@ -41,6 +41,7 @@ import type { Locale } from "./locale.ts";
 import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panelView } from "./panels.ts";
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
 import { thinkingLevelCopy, translate } from "./strings.ts";
+import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
 
 export type BlockTone = "plain" | "muted" | "error";
 
@@ -50,6 +51,15 @@ export interface TranscriptBlock {
 	readonly kind: "user" | "assistant" | "thinking" | "tool" | "notice";
 	readonly title: string;
 	readonly text: string;
+	/**
+	 * A tool call's arguments, in the shapes the TUI's `formatToolCallWithArgs` uses. The collapsed
+	 * form is the row digest (`key=value…`); the expanded form is `key: value` lines above the
+	 * result. Absent when the call has no arguments.
+	 */
+	readonly toolArgs?: {
+		readonly collapsed: string;
+		readonly expanded: string;
+	};
 	/** Images the entry carries, as data URLs the reader sees. */
 	readonly images?: readonly {
 		readonly dataUrl: string;
@@ -973,14 +983,23 @@ function pushToolBlock(
 	const result = results.get(call.id);
 	const running = result === undefined && (streaming || live.running.has(call.id));
 	const text = result !== undefined ? toolResultText(locale, result) : running ? (live.output.get(call.id) ?? "") : ran ? "" : translate(locale, "tool.notRun");
+	const toolArgs = toolArgsView(call.arguments);
 	blocks.push({
 		id: `tool:${call.id}`,
 		kind: "tool",
 		title: call.name,
 		text,
+		...(toolArgs === undefined ? {} : { toolArgs }),
 		tone: result?.isError === true ? "error" : "plain",
 		running,
 	});
+}
+
+/** The short args digest, or nothing when the call has no arguments to show. */
+function toolArgsView(args: ToolCall["arguments"]): TranscriptBlock["toolArgs"] {
+	const collapsed = collapsedToolArgs(args);
+	if (collapsed.length === 0) return undefined;
+	return { collapsed, expanded: expandedToolArgs(args) };
 }
 
 /**

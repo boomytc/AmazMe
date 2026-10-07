@@ -96,8 +96,8 @@ function assistantEntry(
 	return { id: entryId(id), conversationId: CONVERSATION, kind: AssistantEntry.kind, model: [message] };
 }
 
-function toolCall(id: string, name = "bash"): ToolCall {
-	return { type: "toolCall", id, name, arguments: {} };
+function toolCall(id: string, name = "bash", args: ToolCall["arguments"] = {}): ToolCall {
+	return { type: "toolCall", id, name, arguments: args };
 }
 
 function toolResultEntry(id: number, callId: string, text: string, isError = false): EntryRecord {
@@ -356,6 +356,75 @@ describe("web view model", () => {
 			]),
 		);
 		expect(failed.find((block) => block.kind === "tool")).toMatchObject({ text: "boom", tone: "error" });
+	});
+
+	test("puts a short args digest on a tool call without a JSON wall", () => {
+		const withArgs = transcriptBlocks(
+			"en",
+			viewOf([
+				assistantEntry(1, [toolCall("call-1", "bash", { command: "ls", cwd: "/tmp" })], "toolUse"),
+				toolResultEntry(2, "call-1", "exit 0"),
+			]),
+		);
+		const tool = withArgs.find((block) => block.kind === "tool");
+		expect(tool?.toolArgs).toEqual({ collapsed: 'command="ls" cwd="/tmp"', expanded: "command: ls\ncwd: /tmp" });
+		expect(tool).toMatchObject({ title: "bash", text: "exit 0", tone: "plain", running: false });
+		expect(tool?.toolArgs?.collapsed.startsWith("{")).toBe(false);
+
+		const huge = "x".repeat(400);
+		const wall = transcriptBlocks(
+			"en",
+			viewOf([
+				assistantEntry(1, [toolCall("call-1", "bash", { command: huge, path: "/tmp/a" })], "toolUse"),
+				toolResultEntry(2, "call-1", "ok"),
+			]),
+		);
+		const digest = wall.find((block) => block.kind === "tool")?.toolArgs?.collapsed ?? "";
+		expect(digest).toHaveLength(100);
+		expect(digest.endsWith("...")).toBe(true);
+		expect(digest).not.toContain(huge);
+		expect(digest).not.toContain("path=");
+
+		const noArgs = transcriptBlocks(
+			"en",
+			viewOf([
+				assistantEntry(1, [toolCall("call-1")], "toolUse"),
+				toolResultEntry(2, "call-1", "exit 0"),
+			]),
+		);
+		expect(noArgs.find((block) => block.kind === "tool")).toMatchObject({
+			title: "bash",
+			text: "exit 0",
+			tone: "plain",
+			running: false,
+		});
+		expect(noArgs.find((block) => block.kind === "tool")?.toolArgs).toBeUndefined();
+
+		const interrupted = transcriptBlocks(
+			"en",
+			viewOf([assistantEntry(1, [toolCall("call-1", "bash", { command: "ls" })], "aborted")]),
+		);
+		expect(interrupted.find((block) => block.kind === "tool")).toMatchObject({
+			title: "bash",
+			text: "Not run: the answer was interrupted.",
+			tone: "plain",
+			running: false,
+			toolArgs: { collapsed: 'command="ls"', expanded: "command: ls" },
+		});
+
+		const failedWithArgs = transcriptBlocks(
+			"en",
+			viewOf([
+				assistantEntry(1, [toolCall("call-1", "bash", { command: "ls" })], "toolUse"),
+				toolResultEntry(2, "call-1", "boom", true),
+			]),
+		);
+		expect(failedWithArgs.find((block) => block.kind === "tool")).toMatchObject({
+			text: "boom",
+			tone: "error",
+			running: false,
+			toolArgs: { collapsed: 'command="ls"', expanded: "command: ls" },
+		});
 	});
 
 	test("surfaces a committed answer that failed instead of leaving an empty block", () => {

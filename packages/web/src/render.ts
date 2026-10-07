@@ -980,11 +980,16 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 		return line;
 	};
 
-	/** A settled or running tool call: DSH shows a running row open and collapses a settled one. */
+	/** A tool call: running starts open, settled starts folded. The row is the short args digest; the body keeps those args and the result. */
 	const toolElement = (block: TranscriptBlock): HTMLElement => {
 		const tone = block.running ? "running" : block.tone === "error" ? "error" : "";
 		const details = disclosure(block, tone, block.running);
-		details.append(rowElement(block, "summary", firstLine(block.text)));
+		const digest = block.toolArgs?.collapsed;
+		const summary = digest !== undefined && digest.length > 0 ? digest : firstLine(block.text);
+		details.append(rowElement(block, "summary", summary));
+		if (block.toolArgs !== undefined && block.toolArgs.expanded.length > 0) {
+			details.append(element("div", "tool-args", block.toolArgs.expanded));
+		}
 		if (block.text.length > 0) {
 			details.append(element("div", "tool-output", block.text));
 		} else if (!block.running) {
