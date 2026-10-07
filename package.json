@@ -19,6 +19,7 @@
 		"build:native:win32": "npm --prefix packages/tui run build:native:win32",
 		"dev:tui": "node --import ./packages/coding-agent/src/experimental/source-resolver.ts ./packages/coding-agent/src/cli.ts",
 		"dev:web": "node scripts/dev-web.mjs",
+		"dev:desktop": "npm run build --workspace @amazme/gui && npm start --workspace @amazme/gui",
 		"generate:models": "npm --prefix packages/ai run generate-models",
 		"hydrate:model-data": "npm --prefix packages/ai run hydrate-model-data",
 		"check:model-data": "npm --prefix packages/ai run check:model-data",

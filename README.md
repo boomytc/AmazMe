@@ -49,17 +49,20 @@ WebSocket 地址与 server id（`started` 表示这次启动自己起了宿主�
 细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。这一入口依赖
 源码切片，尚未进入打包产物。
 
-开发阶段不用先构建，直接跑源码：
+开发阶段，终端和网页不用先构建，直接跑源码；桌面窗口会先构建壳再打开：
 
 ```bash
-npm run dev:tui   # 交互界面，源码入口 packages/coding-agent/src/cli.ts
-npm run dev:web   # 网页客户端，源码入口 experimental/cli.ts web
+npm run dev:tui      # 交互界面，源码入口 packages/coding-agent/src/cli.ts
+npm run dev:web      # 网页客户端，源码入口 experimental/cli.ts web
+npm run dev:desktop  # Electron 窗口，加载与 dev:web 同一个宿主
 ```
 
 `dev:web`（[scripts/dev-web.mjs](scripts/dev-web.mjs)）默认端口 4310，打开它打印的 URL 即可，`--port`、`--server-id`、
 `--session-dir` 与 `web` 命令一致；样式表按请求读盘，改完刷新页面就能看到，`index.html` 和 `page.ts` 在宿主启动时读取，
 改完要重启这条命令。两个入口都经 `source-resolver.ts` 走 `packages/*/src`；`packages/ai/src/providers/data/` 的模型
 目录数据不入库，`npm run build` 会先刷新它。
+
+`dev:desktop` 先构建 `@amazme/gui`，再用 Electron 打开同一个宿主：窗口加载的就是上面这条 `web` 命令印出的回环页面，会话仍是那一套 durable。
 
 项目配置在当前目录的 `.amazme`，用户配置在 `~/.amazme/agent`。命令名是 `amazme`。`@amazme/coding-agent` 的 bin 指向 `dist/bundle/cli.js`，所以要先构建，再从本仓库运行或做 `npm link`。
 
@@ -82,6 +85,7 @@ npm run dev:web   # 网页客户端，源码入口 experimental/cli.ts web
 | [@amazme/durable](packages/durable) | 持久的对话、任务和文档，依赖 chord 和 ai |
 | [@amazme/env](packages/env) | 经 SSH 部署的远程执行环境，依赖 chord 和 durable |
 | [@amazme/web](packages/web) | 回环网页客户端的文档与样式、启动契约与视图投影（实验切片） |
+| [@amazme/gui](packages/gui) | Electron 窗口，加载同一套回环网页宿主（实验切片） |
 | [@amazme/coding-agent](packages/coding-agent) | 交互式编码代理命令行 |
 | [@amazme/evals](packages/evals) | 文档和宿主评测，依赖 ai 和 coding-agent |
 

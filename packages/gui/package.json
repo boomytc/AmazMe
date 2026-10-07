@@ -1,0 +1,24 @@
+{
+	"name": "@amazme/gui",
+	"version": "1.0.4",
+	"private": true,
+	"type": "module",
+	"description": "Electron window that loads the existing AmazMe web host",
+	"main": "./dist/main.js",
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json",
+		"start": "electron .",
+		"test": "vitest --run --exclude test/smoke.test.ts",
+		"test:smoke": "vitest --run test/smoke.test.ts",
+		"typecheck": "tsc -p tsconfig.test.json"
+	},
+	"devDependencies": {
+		"electron": "44.6.0",
+		"shx": "0.4.0",
+		"vitest": "4.1.11"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}
