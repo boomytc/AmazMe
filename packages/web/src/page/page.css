@@ -268,7 +268,9 @@ body.dock-open {
 }
 
 .session-remove {
-	display: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	flex: none;
 	width: 20px;
 	height: 20px;
@@ -278,13 +280,15 @@ body.dock-open {
 	background: transparent;
 	color: var(--dsw-alias-label-tertiary);
 	cursor: pointer;
+	/* The slot is reserved whether or not the pointer is here, so the ages keep one right edge and
+	   the row does not shift under the pointer. */
+	visibility: hidden;
 }
 
 .session-row:hover .session-remove,
-.session-row:focus-within .session-remove {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
+.session-row:focus-within .session-remove,
+.session-remove:focus-visible {
+	visibility: visible;
 }
 
 .session-remove:hover {
@@ -340,13 +344,19 @@ body.dock-open {
 	margin-top: 2px;
 	color: var(--dsw-alias-label-caption);
 	font-size: 12px;
+	/* One right edge for the ages, with figures of one width, so the column reads as a column. */
+	font-variant-numeric: tabular-nums;
 }
 
 /* DSH collapses the sidebar column into a 56px rail below this breakpoint (ui-layout columns.ts).
    A rail here would hold nothing: the page has no rail icons, and a session chip needs its name and
    age to be identifiable. The column is dropped instead, so the conversation keeps its geometry. */
 @media (max-width: 1023px) {
-	body {
+	/* `body.dock-open` also states three tracks and outranks a bare `body` selector, so the narrow
+	   layout has to name it: otherwise the conversation keeps the first (sidebar) track — 280px of a
+	   390px viewport — and the dock's empty track keeps the rest of the width reserved. */
+	body,
+	body.dock-open {
 		grid-template-columns: minmax(0, 1fr);
 	}
 
@@ -846,6 +856,47 @@ body.dock-open {
 	margin-bottom: 0;
 }
 
+/* Tables: a hairline grid in a scroller, so a wide table scrolls sideways instead of pushing the
+   transcript column out of its axis. A number column keeps one right edge with tabular figures, or
+   the digits cannot be compared down the column and the decimal points wander (LightUI 数位). */
+.markdown .table-scroll {
+	margin: 16px 0;
+	overflow-x: auto;
+}
+
+.markdown-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--dsh-content-font-size-secondary);
+}
+
+.markdown-table th,
+.markdown-table td {
+	padding: 8px 12px;
+	border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+	text-align: left;
+	vertical-align: top;
+}
+
+.markdown-table th {
+	border-bottom-color: var(--dsw-alias-border-l3);
+	color: var(--dsw-alias-label-secondary);
+	font-weight: 500;
+}
+
+.markdown-table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.markdown-table .align-center {
+	text-align: center;
+}
+
+.markdown-table .align-right {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
 /* Disclosure row (ui-primitives DisclosureRow): [16px leading] gap 6 [title 13/24]. */
 .disclosure {
 	display: flex;
@@ -1173,6 +1224,9 @@ summary.disclosure-row {
 	background: transparent;
 	color: var(--dsw-alias-label-secondary);
 	font-size: var(--dsh-content-font-size-secondary);
+	/* The label stays on one line: a wrapped label grows past the button's 24px box and covers the
+	   transcript's first row, which the header sits above. */
+	white-space: nowrap;
 	cursor: pointer;
 }
 
@@ -1392,6 +1446,7 @@ summary.disclosure-row {
 
 .attachment-size {
 	color: var(--dsw-alias-label-caption);
+	font-variant-numeric: tabular-nums;
 }
 
 .attachment-remove {
@@ -1864,10 +1919,17 @@ summary.disclosure-row {
 	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l1);
 }
 
+/* A rule with an author `display` wins over the UA sheet's `[hidden]`, so every element the page
+   hides with the attribute states it here: an element that is hidden and still in the layout keeps
+   its box, its margins, and its grid track. */
 .view[hidden],
 .transcript[hidden],
 .composer-dock[hidden],
-.crumb-back[hidden] {
+.crumb-back[hidden],
+.dock[hidden],
+.approvals[hidden],
+.attachments[hidden],
+.submit-modes[hidden] {
 	display: none;
 }
 
@@ -2358,5 +2420,14 @@ summary.disclosure-row {
 @media (max-width: 1023px) {
 	.view-menu-trigger {
 		display: inline-flex;
+	}
+}
+
+/* On a phone the header keeps the title and the run controls. The connection label is ambient —
+   it is the same server for the whole session — so it steps aside rather than squeezing the title
+   into an ellipsis, and only a problem still speaks. */
+@media (max-width: 640px) {
+	.connection:not(.error) {
+		display: none;
 	}
 }

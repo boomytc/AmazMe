@@ -164,4 +164,63 @@ describe("assistant markdown", () => {
 		expect(formatMarkdown("")).toEqual([]);
 		expect(formatMarkdown("   \n\n")).toEqual([]);
 	});
+
+	test("reads a pipe table into a header, its alignments, and its rows", () => {
+		const table = formatMarkdown(
+			["| 包 | 文件 | 用时 |", "| --- | :---: | ---: |", "| web | 12 | 1.5s |", "| ai | 3 | 0.25s |", "", "after"].join(
+				"\n",
+			),
+		);
+		expect(table[0]).toMatchObject({
+			kind: "table",
+			align: [undefined, "center", "right"],
+			head: [[{ kind: "text", text: "包" }], [{ kind: "text", text: "文件" }], [{ kind: "text", text: "用时" }]],
+			rows: [
+				[
+					[{ kind: "text", text: "web" }],
+					[{ kind: "text", text: "12" }],
+					[{ kind: "text", text: "1.5s" }],
+				],
+				[
+					[{ kind: "text", text: "ai" }],
+					[{ kind: "text", text: "3" }],
+					[{ kind: "text", text: "0.25s" }],
+				],
+			],
+		});
+		expect(table[1]).toMatchObject({ kind: "paragraph" });
+		// The outer pipes are optional, inline runs keep their markup, and `\|` is a literal pipe.
+		const loose = formatMarkdown("a | b\n--- | ---\n**1** | a \\| b");
+		expect(loose).toMatchObject([
+			{
+				kind: "table",
+				align: [undefined, undefined],
+				rows: [
+					[[{ kind: "strong", children: [{ kind: "text", text: "1" }] }], [{ kind: "text", text: "a | b" }]],
+				],
+			},
+		]);
+	});
+
+	test("leaves a pipe line that is not a table as prose", () => {
+		// No delimiter row: a sentence with pipes stays one paragraph.
+		expect(formatMarkdown("either | or")).toMatchObject([{ kind: "paragraph" }]);
+		// A delimiter row with a different column count does not delimit the table, so the lines stay
+		// one paragraph.
+		expect(formatMarkdown("| a | b |\n| --- |\n| 1 | 2 |")).toMatchObject([
+			{ kind: "paragraph", children: [{ kind: "text", text: "| a | b |\n| --- |\n| 1 | 2 |" }] },
+		]);
+		// A cell that is not dashes does not delimit one either.
+		expect(formatMarkdown("| a | b |\n| --- | nope |\n")).toMatchObject([
+			{ kind: "paragraph", children: [{ kind: "text", text: "| a | b |\n| --- | nope |" }] },
+		]);
+		// A body row with too few cells is padded with an empty cell, so every row has one entry per
+		// column.
+		expect(formatMarkdown("| a | b |\n| --- | --- |\n| 1 |")).toMatchObject([
+			{ kind: "table", rows: [[[{ kind: "text", text: "1" }], []]] },
+		]);
+		// A heading and a list item outrank a table: their own construct wins when the line has pipes.
+		expect(formatMarkdown("# 标题 | 说明\n--- | ---")[0]).toMatchObject({ kind: "heading", level: 1 });
+		expect(formatMarkdown("- 一项 | 说明\n--- | ---")[0]).toMatchObject({ kind: "list", ordered: false });
+	});
 });

@@ -16,7 +16,7 @@ import {
 } from "./actions.ts";
 import { STOP_SEQUENCE_MS, isApplePlatform, matchShortcut, type ShortcutId } from "./shortcuts.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
-import { formatMarkdown, type InlineNode, type MarkdownNode } from "./markdown.ts";
+import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
 	CHAT_VIEW,
 	SETTINGS_VIEW,
@@ -268,7 +268,69 @@ function markdownNode(node: MarkdownNode, context: MarkdownContext): HTMLElement
 		}
 		case "code":
 			return context.codeBlock(node.text, node.language);
+		case "table":
+			return tableElement(node);
 	}
+}
+
+/** A cell whose whole content is one number; a run with markup in it is never a number. */
+const numericCell = /^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?$/;
+
+function numericText(nodes: readonly InlineNode[]): string | undefined {
+	if (nodes.length !== 1) return undefined;
+	const only = nodes[0];
+	if (only === undefined) return undefined;
+	return only.kind === "text" || only.kind === "code" ? only.text.trim() : undefined;
+}
+
+/**
+ * A column's alignment: the delimiter row's, else the right edge when every body cell is a number.
+ * Numbers in one column need one right edge with tabular figures, or the digits cannot be compared
+ * down the column (LightUI 数位).
+ */
+function columnAlignment(node: TableNode, column: number): TableAlignment | undefined {
+	const declared = node.align[column];
+	if (declared !== undefined) return declared;
+	if (node.rows.length === 0) return undefined;
+	const everyCellIsANumber = node.rows.every((row) => {
+		const value = numericText(row[column] ?? []);
+		return value !== undefined && numericCell.test(value);
+	});
+	return everyCellIsANumber ? "right" : undefined;
+}
+
+/** A table inside a scroller, so a wide one scrolls instead of pushing the column sideways. */
+function tableElement(node: TableNode): HTMLElement {
+	const scroll = element("div", "table-scroll");
+	const table = document.createElement("table");
+	table.className = "markdown-table";
+	const head = document.createElement("thead");
+	const headRow = document.createElement("tr");
+	node.head.forEach((cell, column) => {
+		const th = document.createElement("th");
+		th.scope = "col";
+		const align = columnAlignment(node, column);
+		if (align !== undefined) th.className = `align-${align}`;
+		th.append(inlineFragment(cell));
+		headRow.append(th);
+	});
+	head.append(headRow);
+	table.append(head);
+	const body = document.createElement("tbody");
+	for (const row of node.rows) {
+		const rowElement = document.createElement("tr");
+		row.forEach((cell, column) => {
+			const td = document.createElement("td");
+			const align = columnAlignment(node, column);
+			if (align !== undefined) td.className = `align-${align}`;
+			td.append(inlineFragment(cell));
+			rowElement.append(td);
+		});
+		body.append(rowElement);
+	}
+	table.append(body);
+	scroll.append(table);
+	return scroll;
 }
 
 /** An answer as DSH's markdown sheet expects it: one `.markdown` root per assistant block. */

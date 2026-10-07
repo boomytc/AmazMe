@@ -1,8 +1,8 @@
 /**
  * Assistant formatting: an answer's text into the structure the renderer turns into DOM. The unit
- * stays small on purpose — headings, lists, emphasis, links, fenced code — and it never parses
- * HTML, so model-produced markup stays text. A construct that does not parse stays literal text:
- * the answer is always shown, never dropped.
+ * stays small on purpose — headings, lists, emphasis, links, fenced code, tables — and it never
+ * parses HTML, so model-produced markup stays text. A construct that does not parse stays literal
+ * text: the answer is always shown, never dropped.
  */
 
 export type InlineNode =
@@ -36,7 +36,18 @@ export interface CodeNode {
 	readonly text: string;
 }
 
-export type MarkdownNode = ParagraphNode | HeadingNode | ListNode | CodeNode;
+export type MarkdownNode = ParagraphNode | HeadingNode | ListNode | CodeNode | TableNode;
+
+/** Where a table column's cells sit. Absent means the renderer decides (numbers go right). */
+export type TableAlignment = "left" | "center" | "right";
+
+export interface TableNode {
+	readonly kind: "table";
+	/** One entry per column, from the delimiter row. */
+	readonly align: readonly (TableAlignment | undefined)[];
+	readonly head: readonly (readonly InlineNode[])[];
+	readonly rows: readonly (readonly (readonly InlineNode[])[])[];
+}
 
 /** Schemes a model-supplied link may carry; everything else stays text `safeHref` rejects. */
 const allowedLinkSchemes = new Set(["http", "https", "mailto"]);
@@ -72,6 +83,48 @@ function closesFence(line: string, marker: string): boolean {
 	const trimmed = line.trim();
 	if (trimmed.length < marker.length) return false;
 	return [...trimmed].every((candidate) => candidate === character);
+}
+
+/**
+ * One table row's cells, or `undefined` when the line is not a table row. A cell boundary is an
+ * unescaped `|`; the outer pipes are optional, and `\|` is a literal pipe inside a cell.
+ */
+function tableCells(line: string): string[] | undefined {
+	const trimmed = line.trim();
+	if (!trimmed.includes("|")) return undefined;
+	const body = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+	const cells: string[] = [];
+	let current = "";
+	for (let index = 0; index < body.length; index += 1) {
+		const character = body[index] ?? "";
+		if (character === "\\" && body[index + 1] === "|") {
+			current += "|";
+			index += 1;
+			continue;
+		}
+		if (character === "|") {
+			cells.push(current.trim());
+			current = "";
+			continue;
+		}
+		current += character;
+	}
+	cells.push(current.trim());
+	return cells;
+}
+
+/** The alignments a delimiter row declares, or `undefined` when the line does not delimit a table. */
+function tableAlignments(line: string): (TableAlignment | undefined)[] | undefined {
+	const cells = tableCells(line);
+	if (cells === undefined) return undefined;
+	const align: (TableAlignment | undefined)[] = [];
+	for (const cell of cells) {
+		if (!/^:?-+:?$/.test(cell)) return undefined;
+		const left = cell.startsWith(":");
+		const right = cell.endsWith(":");
+		align.push(left && right ? "center" : right ? "right" : left ? "left" : undefined);
+	}
+	return align;
 }
 
 /** The index of the delimiter that closes an emphasis run, or -1. */
@@ -224,6 +277,30 @@ export function formatMarkdown(text: string): MarkdownNode[] {
 			}
 			list.items.push((bullet?.[1] ?? ordered?.[2] ?? "").trim());
 			index += 1;
+			continue;
+		}
+		// A table: a header row whose next line delimits the same number of columns. Everything that
+		// does not match stays text, so a stray `|` in prose is still prose.
+		const headerCells = tableCells(line);
+		const align = tableAlignments(lines[index + 1] ?? "");
+		if (headerCells !== undefined && align !== undefined && align.length === headerCells.length) {
+			flushParagraph();
+			flushList();
+			const rows: string[][] = [];
+			let cursor = index + 2;
+			while (cursor < lines.length) {
+				const cells = tableCells(lines[cursor] ?? "");
+				if (cells === undefined) break;
+				rows.push(Array.from({ length: headerCells.length }, (_, column) => cells[column] ?? ""));
+				cursor += 1;
+			}
+			nodes.push({
+				kind: "table",
+				align,
+				head: headerCells.map((cell) => inline(cell)),
+				rows: rows.map((row) => row.map((cell) => inline(cell))),
+			});
+			index = cursor;
 			continue;
 		}
 		// A plain line continues the open item (markdown's lazy continuation), else the paragraph.

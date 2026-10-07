@@ -109,8 +109,10 @@ renders the same durable state the TUI shows: user and assistant blocks, thinkin
 results or a "Not run" notice, compaction and reset notices, and an error notice for an answer that failed,
 was aborted, or was truncated. A turn in flight adds its live status (working, running a tool, retrying,
 compacting) as the transcript's last row, and the inputs the session has queued but not started sit as one
-strip each above the composer. Assistant answers are formatted: headings, lists, emphasis, links, and fenced code
-blocks become elements, while anything the model writes that looks like markup stays text. The theme is the one
+strip each above the composer. Assistant answers are formatted: headings, lists, emphasis, links, fenced code
+blocks, and pipe tables become elements — a table column that holds only numbers is right-aligned with figures of
+one width, so the numbers can be compared down the column — while anything the model writes that looks like markup
+stays text. The theme is the one
 `deepseek-harness` ships — the same palette, type,
 radii, elevation, and frame geometry — and its appearance follows the stored preference (see below), defaulting to the
 system's light and dark appearance.
