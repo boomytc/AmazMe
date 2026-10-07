@@ -219,6 +219,14 @@ export interface WebView {
 	readonly shortcuts: readonly Shortcut[];
 	/** Whether the draft is a command line the page runs instead of prompting. */
 	readonly commandLine: boolean;
+	/** The focused conversation's label, and the history the reader paged in above the transcript. */
+	readonly focus: string | undefined;
+	readonly history: {
+		readonly blocks: readonly TranscriptBlock[];
+		readonly more: boolean;
+		readonly loading: boolean;
+	};
+
 	readonly attachedId: string | undefined;
 	readonly empty: string | undefined;
 	/** Whether a turn is in flight: the composer's primary action becomes the stop control. */
@@ -305,6 +313,12 @@ export interface WebViewInput {
 	readonly paletteSelection: number;
 	/** The platform the shortcut reference is written for. */
 	readonly platform: string;
+	/** The focused conversation's label; only a conversation that is not the root names one. */
+	readonly focus: string | undefined;
+	/** The pages of stored history the reader asked for, and where the next one starts. */
+	readonly history: readonly EntryRecord[];
+	readonly historyCursor: string | null;
+	readonly historyLoading: boolean;
 	/** The management view the page is showing, with the state of that area's services. */
 	readonly panel: PanelViewInput;
 	/** The dock's tab and its surfaces' state. */
@@ -537,43 +551,30 @@ function textOf(entry: EntryRecord): Message | undefined {
 	return entry.model?.[0];
 }
 
-/** Entry ids the current context still shows, plus the live partial and running calls. */
-export function transcriptBlocks(locale: Locale, view: ConversationView | undefined): TranscriptBlock[] {
-	if (view === undefined) return [];
+/** The tool results one set of entries carries, so a call can find what it answered with. */
+function toolResults(entries: readonly EntryRecord[]): Map<string, ToolResultMessage> {
 	const results = new Map<string, ToolResultMessage>();
-	for (const entry of view.entries) {
+	for (const entry of entries) {
 		if (entry.kind !== ToolResultEntry.kind) continue;
 		const message = textOf(entry);
 		if (message?.role !== "toolResult") continue;
 		results.set(message.toolCallId, message);
 	}
+	return results;
+}
 
-	const live = liveOf(view);
-	const runningCalls = new Set((live.tools ?? []).filter((slot) => slot.status === "running").map((slot) => slot.callId));
-	const blocks: TranscriptBlock[] = [];
-	const pushTool = (call: ToolCall, ran: boolean, streaming: boolean): void => {
-		const result = results.get(call.id);
-		const running = result === undefined && (streaming || runningCalls.has(call.id));
-		const slot = (live.tools ?? []).find((candidate) => candidate.callId === call.id);
-		const text =
-			result !== undefined
-				? toolResultText(locale, result)
-				: running
-					? (slot?.output ?? "")
-					: ran
-						? ""
-						: translate(locale, "tool.notRun");
-		blocks.push({
-			id: `tool:${call.id}`,
-			kind: "tool",
-			title: call.name,
-			text,
-			tone: result?.isError === true ? "error" : "plain",
-			running,
-		});
-	};
-
-	for (const entry of view.entries) {
+/**
+ * The per-entry projection: one block per user, assistant, thinking, tool, and notice entry. Both
+ * the live transcript and a page of stored history run this, so the two read the same.
+ */
+function entryBlocks(
+	locale: Locale,
+	entries: readonly EntryRecord[],
+	results: Map<string, ToolResultMessage>,
+	blocks: TranscriptBlock[],
+	live: LiveCalls = EMPTY_LIVE_CALLS,
+): void {
+	for (const entry of entries) {
 		const message = textOf(entry);
 		switch (entry.kind) {
 			case UserEntry.kind:
@@ -628,7 +629,9 @@ export function transcriptBlocks(locale: Locale, view: ConversationView | undefi
 						});
 					}
 					// Only a tool-calling answer runs its calls; an aborted, failed, or truncated one never does.
-					for (const call of toolCallText(message)) pushTool(call, message.stopReason === "toolUse", false);
+					for (const call of toolCallText(message)) {
+						pushToolBlock(locale, call, message.stopReason === "toolUse", false, results, blocks, live);
+					}
 				}
 				break;
 			case CompactionEntry.kind:
@@ -655,6 +658,64 @@ export function transcriptBlocks(locale: Locale, view: ConversationView | undefi
 				break;
 		}
 	}
+}
+
+/** What the live document says about the calls that have no result yet. */
+interface LiveCalls {
+	readonly running: ReadonlySet<string>;
+	readonly output: ReadonlyMap<string, string>;
+}
+
+const EMPTY_LIVE_CALLS: LiveCalls = { running: new Set(), output: new Map() };
+
+/** One tool call's card: what it answered with, what it is printing now, or that it never ran. */
+function pushToolBlock(
+	locale: Locale,
+	call: ToolCall,
+	ran: boolean,
+	streaming: boolean,
+	results: Map<string, ToolResultMessage>,
+	blocks: TranscriptBlock[],
+	live: LiveCalls = EMPTY_LIVE_CALLS,
+): void {
+	const result = results.get(call.id);
+	const running = result === undefined && (streaming || live.running.has(call.id));
+	const text =
+		result !== undefined
+			? toolResultText(locale, result)
+			: running
+				? (live.output.get(call.id) ?? "")
+				: ran
+					? ""
+					: translate(locale, "tool.notRun");
+	blocks.push({
+		id: `tool:${call.id}`,
+		kind: "tool",
+		title: call.name,
+		text,
+		tone: result?.isError === true ? "error" : "plain",
+		running,
+	});
+}
+
+/**
+ * The transcript: the pages of older history the reader asked for, the stored entries the current
+ * context shows, then the live partial answer, its running calls, and any status line.
+ */
+export function transcriptBlocks(
+	locale: Locale,
+	view: ConversationView | undefined,
+	history: readonly EntryRecord[] = [],
+): TranscriptBlock[] {
+	const blocks = historyPageBlocks(locale, history);
+	if (view === undefined) return blocks;
+	const results = toolResults(view.entries);
+	const live = liveOf(view);
+	const calls: LiveCalls = {
+		running: new Set((live.tools ?? []).filter((slot) => slot.status === "running").map((slot) => slot.callId)),
+		output: new Map((live.tools ?? []).map((slot) => [slot.callId, slot.output ?? ""])),
+	};
+	entryBlocks(locale, view.entries, results, blocks, calls);
 
 	const partial = live.generation?.message as AssistantMessage | undefined;
 	if (partial !== undefined) {
@@ -668,7 +729,7 @@ export function transcriptBlocks(locale: Locale, view: ConversationView | undefi
 		});
 		for (const call of toolCallText(partial)) {
 			if (blocks.some((block) => block.id === `tool:${call.id}`)) continue;
-			pushTool(call, true, true);
+			pushToolBlock(locale, call, true, true, results, blocks, calls);
 		}
 	}
 	for (const slot of live.tools ?? []) {
@@ -685,6 +746,15 @@ export function transcriptBlocks(locale: Locale, view: ConversationView | undefi
 	}
 	return blocks;
 }
+
+/** One page of stored history, projected the way the live transcript is. */
+export function historyPageBlocks(locale: Locale, entries: readonly EntryRecord[]): TranscriptBlock[] {
+	if (entries.length === 0) return [];
+	const blocks: TranscriptBlock[] = [];
+	entryBlocks(locale, entries, toolResults(entries), blocks);
+	return blocks;
+}
+
 
 /** The one live status line, with the same precedence the TUI status indicator uses. */
 export function sessionStatus(locale: Locale, view: ConversationView | undefined): string {
@@ -765,6 +835,8 @@ export function failureView(locale: Locale, text: string): WebView {
 		locale,
 		roster: [],
 		rosterFilter: "",
+		focus: undefined,
+		history: { blocks: [], more: false, loading: false },
 		palette: commandPalette(locale, { draft: "", commands: [] }),
 		shortcuts: shortcuts(locale, ""),
 		commandLine: false,
@@ -779,7 +851,14 @@ export function failureView(locale: Locale, text: string): WebView {
 		newSession: { enabled: false },
 		model: modelPickerEmpty(locale),
 		panel: panelView({ locale, current: CHAT_VIEW }),
-		dock: dockView(locale, { open: false, tab: "files", cwd: "", workspace: undefined, terminal: undefined }),
+		dock: dockView(locale, {
+			open: false,
+			tab: "files",
+			cwd: "",
+			workspace: undefined,
+			terminal: undefined,
+			conversations: undefined,
+		}),
 	};
 }
 
@@ -799,6 +878,12 @@ export function buildWebView(input: WebViewInput): WebView {
 		locale,
 		roster,
 		rosterFilter: input.rosterFilter,
+		focus: input.focus,
+		history: {
+			blocks: historyPageBlocks(locale, input.history),
+			more: input.historyCursor !== null,
+			loading: input.historyLoading,
+		},
 		palette: commandPalette(locale, {
 			draft: input.draft,
 			commands: input.commands,

@@ -19,6 +19,7 @@ import { configureHarnessHttp } from "../durable/harness-setup.ts";
 import { AgentController } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
 import { createCommandsFacet } from "./commands-provider.ts";
+import { createConversationsFacet } from "./conversations-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { SessionSettings } from "./settings.ts";
@@ -101,6 +102,7 @@ export async function createSessionWorkerServices(options: {
 		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 		createCommandsFacet(),
+		createConversationsFacet({ harness: options.harness, root: options.conversation }),
 		createWorkspaceFacet({ cwd: options.cwd }),
 		...(options.settingsManager === undefined
 			? []

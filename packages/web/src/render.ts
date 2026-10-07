@@ -6,7 +6,14 @@
  * updates is the reader's own disclosure choices, keyed by block id, because a rebuild would
  * otherwise reset them.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, REFRESH_MODELS_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import {
+	COMPACT_ACTION,
+	DOCK_TAB_ACTION,
+	DOCK_TOGGLE_ACTION,
+	HISTORY_MORE_ACTION,
+	REFRESH_MODELS_ACTION,
+	SUBMIT_MODE_ACTION,
+} from "./actions.ts";
 import { STOP_SEQUENCE_MS, isApplePlatform, matchShortcut, type ShortcutId } from "./shortcuts.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode } from "./markdown.ts";
@@ -729,7 +736,11 @@ export function createRenderer(
 		elements.viewBack.hidden = !open;
 		if (panel === undefined) {
 			elements.viewBody.replaceChildren();
-			elements.sessionTitle.textContent = view.attachedId ?? copy("header.noSession");
+			const label = view.attachedId ?? copy("header.noSession");
+			elements.sessionTitle.textContent =
+				view.focus === undefined
+					? label
+					: copy("header.conversation", { session: label, conversation: view.focus });
 			return;
 		}
 		elements.sessionTitle.textContent = panel.title;
@@ -1177,6 +1188,18 @@ export function createRenderer(
 			}
 
 			const flow = flowElements(view);
+			if (view.history.loading || view.history.more) {
+				const more = element("div", "history-more");
+				const control = button(view.history.loading ? "history-more-button loading" : "history-more-button");
+				control.dataset.action = HISTORY_MORE_ACTION;
+				control.disabled = view.history.loading;
+				control.textContent = copy(view.history.loading ? "history.loading" : "history.more");
+				control.addEventListener("click", () =>
+					report({ kind: "command", id: HISTORY_MORE_ACTION, data: undefined }),
+				);
+				more.append(control);
+				flow.unshift(more);
+			}
 			if (view.blocks.length === 0) {
 				const empty = element(
 					"p",

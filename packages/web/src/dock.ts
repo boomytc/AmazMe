@@ -8,6 +8,8 @@
  * and a shell in that directory (run a command, watch its output, stop it).
  */
 import {
+	CONVERSATION_SELECT_ACTION,
+	CONVERSATIONS_REFRESH_ACTION,
 	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
 	WORKSPACE_OPEN_ACTION,
@@ -20,10 +22,15 @@ import type { PanelGroup, PanelRow, PanelSpec } from "./panels.ts";
 import { translate } from "./strings.ts";
 
 /** The dock's tabs, in the order it shows them. */
-export type DockTabId = "files" | "terminal";
+export type DockTabId = "files" | "terminal" | "conversations" | "tasks";
 
-const TAB_IDS: readonly DockTabId[] = ["files", "terminal"];
-const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = { files: "dock.files", terminal: "dock.terminal" };
+const TAB_IDS: readonly DockTabId[] = ["files", "terminal", "conversations", "tasks"];
+const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = {
+	files: "dock.files",
+	terminal: "dock.terminal",
+	conversations: "dock.conversations",
+	tasks: "dock.tasks",
+};
 
 export interface DockTab {
 	readonly id: DockTabId;
@@ -75,6 +82,35 @@ export interface TerminalStateLike {
 	readonly error: string | null;
 }
 
+/** One conversation of the session, as the host publishes it. */
+export interface ConversationSummaryLike {
+	readonly id: string;
+	readonly label: string;
+	readonly root: boolean;
+	readonly ownerConversationId?: string;
+	readonly ownerTaskId?: string;
+	readonly children: number;
+}
+
+/** One live task of the session's task graph, as the host publishes it. */
+export interface TaskSummaryLike {
+	readonly id: string;
+	readonly kind: string;
+	readonly conversationId: string;
+	readonly ownerTaskId?: string;
+	readonly background: boolean;
+	readonly status: string;
+	readonly phase: string;
+	readonly waitsOn: readonly string[];
+	readonly conversations: readonly string[];
+}
+
+export interface ConversationsStateLike {
+	readonly conversations: readonly ConversationSummaryLike[];
+	readonly tasks: readonly TaskSummaryLike[];
+	readonly selected: string;
+}
+
 export interface DockViewInput {
 	readonly open: boolean;
 	readonly tab: string;
@@ -82,6 +118,100 @@ export interface DockViewInput {
 	readonly cwd: string;
 	readonly workspace: WorkspaceStateLike | undefined;
 	readonly terminal: TerminalStateLike | undefined;
+	readonly conversations: ConversationsStateLike | undefined;
+}
+
+/**
+ * The conversations panel: every conversation of the session, the root marked as `main`, a subagent's
+ * child naming the task and conversation that made it, and the focused one marked as selected.
+ */
+export function conversationsPanel(locale: Locale, state: ConversationsStateLike | undefined): PanelSpec {
+	const title = translate(locale, "dock.conversations");
+	if (state === undefined) return { id: "conversations", title, notices: [], groups: [] };
+	const rows: PanelRow[] = state.conversations.map((conversation) => ({
+		id: `conversation:${conversation.id}`,
+		title: conversation.label,
+		description:
+			conversation.ownerConversationId === undefined || conversation.ownerTaskId === undefined
+				? conversation.id
+				: translate(locale, "dock.owner", {
+						task: `task ${conversation.ownerTaskId}`,
+						conversation: `conversation ${conversation.ownerConversationId}`,
+					}),
+		badges: [
+			...(conversation.root ? [translate(locale, "dock.main")] : [translate(locale, "dock.child")]),
+			...(conversation.children > 0
+				? [translate(locale, "dock.children", { count: String(conversation.children) })]
+				: []),
+			...(conversation.id === state.selected ? [translate(locale, "dock.selected")] : []),
+		],
+		actions: [
+			{
+				id: CONVERSATION_SELECT_ACTION,
+				label: translate(locale, "dock.select"),
+				tone: "default",
+				data: conversation.id,
+			},
+		],
+	}));
+	return {
+		id: "conversations",
+		title,
+		notices: [],
+		groups: [
+			{
+				id: "conversations:list",
+				title: translate(locale, "dock.conversations"),
+				actions: [
+					{
+						id: CONVERSATIONS_REFRESH_ACTION,
+						label: translate(locale, "dock.reload"),
+						tone: "default",
+					},
+				],
+				rows,
+				empty: translate(locale, "dock.noConversations"),
+			},
+		],
+	};
+}
+
+/**
+ * The task graph panel: every live task with its phase, what it waits on, and the conversations it
+ * owns, so a long run is legible while it happens.
+ */
+export function tasksPanel(locale: Locale, state: ConversationsStateLike | undefined): PanelSpec {
+	const title = translate(locale, "dock.tasks");
+	if (state === undefined) return { id: "tasks", title, notices: [], groups: [] };
+	const rows: PanelRow[] = state.tasks.map((task) => ({
+		id: `task:${task.id}`,
+		title: `${task.kind} ${task.id}`,
+		description: `${translate(locale, "dock.taskPhase", { phase: task.phase })} · ${task.conversationId}`,
+		badges: [
+			task.status,
+			...(task.background ? [translate(locale, "dock.background")] : []),
+			...(task.waitsOn.length > 0
+				? [translate(locale, "dock.taskWaitsOn", { tasks: task.waitsOn.join(", ") })]
+				: []),
+			...(task.conversations.length > 0
+				? [translate(locale, "dock.taskOwns", { conversations: task.conversations.join(", ") })]
+				: []),
+		],
+	}));
+	return {
+		id: "tasks",
+		title,
+		notices: [],
+		groups: [
+			{
+				id: "tasks:list",
+				title: translate(locale, "dock.tasks"),
+				actions: [{ id: CONVERSATIONS_REFRESH_ACTION, label: translate(locale, "dock.reload"), tone: "default" }],
+				rows,
+				empty: translate(locale, "dock.noTasks"),
+			},
+		],
+	};
 }
 
 export function dockTabs(locale: Locale, current: string): DockTab[] {
@@ -264,13 +394,18 @@ export function terminalPanel(
 /** The dock the main area shows beside the conversation. */
 export function dockView(locale: Locale, input: DockViewInput): DockView {
 	const tab = (TAB_IDS as readonly string[]).includes(input.tab) ? (input.tab as DockTabId) : "files";
+	const panel =
+		tab === "files"
+			? filesPanel(locale, input.workspace)
+			: tab === "terminal"
+				? terminalPanel(locale, { cwd: input.cwd, state: input.terminal })
+				: tab === "conversations"
+					? conversationsPanel(locale, input.conversations)
+					: tasksPanel(locale, input.conversations);
 	return {
 		open: input.open,
 		tabs: dockTabs(locale, tab),
-		panel:
-			tab === "files"
-				? filesPanel(locale, input.workspace)
-				: terminalPanel(locale, { cwd: input.cwd, state: input.terminal }),
+		panel,
 		toggle: { label: translate(locale, "dock.toggle"), pressed: input.open },
 	};
 }

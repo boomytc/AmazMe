@@ -10,7 +10,7 @@ import { Client, type ClientOptions } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ReplicatedState } from "@amazme/chord";
-import type { ConversationView } from "@amazme/durable";
+import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
 	addMcpServerModal,
 	addPackageModal,
@@ -27,10 +27,13 @@ import {
 	CHAT_VIEW,
 	collectPageElements,
 	composeSkill,
+	CONVERSATION_SELECT_ACTION,
+	CONVERSATIONS_REFRESH_ACTION,
 	createRenderer,
 	DOCK_TAB_ACTION,
 	DOCK_TOGGLE_ACTION,
 	documentLanguage,
+	HISTORY_MORE_ACTION,
 	failureView,
 	FALLBACK_LOCALE,
 	followSystemTheme,
@@ -93,6 +96,7 @@ import {
 	type SessionServiceSource,
 } from "../services/connection.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
+import { Conversations, type Conversations as ConversationsService } from "../services/conversations.ts";
 import { Terminal, type Terminal as TerminalService, type TerminalState } from "../services/terminal.ts";
 import { Workspace, type Workspace as WorkspaceService, type WorkspaceState } from "../services/workspace.ts";
 import { Models, type ModelsState } from "../services/models.ts";
@@ -162,6 +166,7 @@ class SessionPainter {
 	#commands: CommandsService | undefined;
 	#workspace: WorkspaceService | undefined;
 	#terminal: TerminalService | undefined;
+	#conversations: ConversationsService | undefined;
 	#levels: readonly string[] | undefined;
 	#levelsModel: string | undefined;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
@@ -216,6 +221,15 @@ class SessionPainter {
 
 	async stopTerminal(): Promise<void> {
 		await this.#terminal?.stop(BACKGROUND_CONTEXT);
+	}
+
+	/** The session's conversations, live tasks, and the focused conversation's view. */
+	get conversations(): ConversationsService["state"]["value"] | undefined {
+		return this.#conversations?.state.value;
+	}
+
+	get conversationsService(): ConversationsService | undefined {
+		return this.#conversations;
 	}
 
 	/** The session's command catalogue, as the host published it. */
@@ -335,7 +349,16 @@ class SessionPainter {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
 		const services = this.#sessionSource.open({
-			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal],
+			services: [
+				Transcript,
+				AgentController,
+				Models,
+				SessionSettings,
+				Commands,
+				Workspace,
+				Terminal,
+				Conversations,
+			],
 			assertAccess(): void {},
 			onError: (error: Error) =>
 				this.#renderer.setConnection(
@@ -353,9 +376,12 @@ class SessionPainter {
 		this.#commands = services.use(Commands);
 		this.#workspace = services.use(Workspace);
 		this.#terminal = services.use(Terminal);
+		this.#conversations = services.use(Conversations);
 		// A listing, a file, or terminal output lands here; the page repaints the dock from it.
 		this.#workspace.state.subscribe(() => paint());
 		this.#terminal.state.subscribe(() => paint());
+		// The conversation list, the task graph, and the focused view arrive here.
+		this.#conversations.state.subscribe(() => paint());
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		// A model switch made anywhere repaints the chip and re-reads the levels of the new model.
@@ -383,6 +409,7 @@ class SessionPainter {
 		this.#commands = undefined;
 		this.#workspace = undefined;
 		this.#terminal = undefined;
+		this.#conversations = undefined;
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		this.#sessionId = undefined;
@@ -432,6 +459,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The dock: whether it is open, and which tab it shows. Both belong to this page. */
 	let dockOpen = false;
 	let dockTab = "files";
+	/** The stored history the reader paged in, oldest first, above the transcript. */
+	let history: readonly EntryRecord[] = [];
+	let historyCursor: string | null = null;
+	let historyLoading = false;
+	/** The session's root conversation, once the conversation list has published it. */
+	let rootConversationId = "";
 	/** The composer's draft, mirrored here so the command palette can be projected from it. */
 	let draft = "";
 	/** The host's argument completions for the command line being typed. */
@@ -467,6 +500,22 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		return [...host, ...skillCommands(skills.state.value?.skills ?? [])];
 	};
 
+	/** The conversation the page shows: the root's live transcript, or a focused one's view. */
+	const shownTranscript = (): ConversationView | undefined => {
+		const conversations = painter.conversations;
+		if (conversations === undefined || conversations.selected === rootConversationId) {
+			return painter.transcriptValue;
+		}
+		return conversations.view ?? undefined;
+	};
+
+	/** The focused conversation's label, when it is not the root. */
+	const focusedLabel = (): string | undefined => {
+		const conversations = painter.conversations;
+		if (conversations === undefined || conversations.selected === rootConversationId) return undefined;
+		return conversations.conversations.find((entry) => entry.id === conversations.selected)?.label;
+	};
+
 	/** The catalogue's value for one field, once the host has published it. */
 	const settingValue = (id: string): string | undefined =>
 		settings.state.value?.descriptors.find((descriptor) => descriptor.id === id)?.value;
@@ -485,7 +534,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				buildWebView({
 					locale,
 					directory: directory.state.value,
-					transcript: painter.transcriptValue,
+					transcript: shownTranscript(),
+					focus: focusedLabel(),
+					history,
+					historyCursor,
+					historyLoading,
 					attachedId: painter.sessionId,
 					now: Date.now(),
 					models: painter.modelsValue,
@@ -504,6 +557,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						cwd: painter.workspace?.cwd ?? "",
 						workspace: painter.workspace,
 						terminal: painter.terminal,
+						conversations: painter.conversations,
 					},
 					// The panel inherits this view's language, so one resolution serves the whole page.
 					panel: {
@@ -697,6 +751,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		);
 	};
 
+	/** The conversation the composer talks to: the focused one, or the root. */
+	const targetConversation = (): string | undefined => {
+		const conversations = painter.conversations;
+		if (conversations === undefined) return undefined;
+		rootConversationId = conversations.conversations.find((entry) => entry.root)?.id ?? rootConversationId;
+		return conversations.selected;
+	};
+
 	renderer.onSubmit = (text) => {
 		const line = parseCommandLine(text);
 		if (line !== undefined && composerCommands().some((command) => command.name === line.name)) {
@@ -711,7 +773,21 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			mimeType: image.mediaType,
 		}));
 		pending = [];
-		void painter.submit(text, submitMode, images).catch((error: unknown) => {
+		const target = targetConversation();
+		const focused = target !== undefined && target !== rootConversationId ? target : undefined;
+		// Input goes to the conversation the page shows: the root's own controller, or the focused
+		// conversation's through the conversations service.
+		const submission =
+			focused === undefined || painter.conversationsService === undefined
+				? painter.submit(text, submitMode, images)
+				: painter.conversationsService
+						.prompt(focused, { message: text, images: images.length === 0 ? null : images }, BACKGROUND_CONTEXT)
+						.then((response) => {
+							if (!response.accepted) {
+								throw new Error(response.error.message);
+							}
+						});
+		void submission.catch((error: unknown) => {
 			// The prompt never reached the session, so the images stay attached for another try.
 			pending = sent;
 			paint();
@@ -719,7 +795,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		});
 	};
 	renderer.onAbort = () => {
-		void painter.abort().catch((error: unknown) => {
+		const target = targetConversation();
+		const focused = target !== undefined && target !== rootConversationId ? target : undefined;
+		const stop =
+			focused === undefined || painter.conversationsService === undefined
+				? painter.abort()
+				: painter.conversationsService.abort(focused, BACKGROUND_CONTEXT);
+		void stop.catch((error: unknown) => {
 			renderer.setConnection(copy("page.abortFailed", { error: message(error) }), "error");
 		});
 	};
@@ -798,6 +880,40 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						submitMode = action.data === "steer" ? "steer" : "followUp";
 						paint();
 						return;
+					case CONVERSATION_SELECT_ACTION: {
+						const id = action.data ?? "";
+						// A page of history belongs to the conversation it was paged from.
+						history = [];
+						historyCursor = null;
+						dockOpen = true;
+						dockTab = "conversations";
+						settle(painter.conversationsService?.select(id, BACKGROUND_CONTEXT), false);
+						return;
+					}
+					case CONVERSATIONS_REFRESH_ACTION:
+						settle(painter.conversationsService?.refresh(BACKGROUND_CONTEXT), false);
+						return;
+					case HISTORY_MORE_ACTION: {
+						const target = targetConversation();
+						const service = painter.conversationsService;
+						if (target === undefined || service === undefined) return;
+						historyLoading = true;
+						paint();
+						void service.older(target, historyCursor, 20, BACKGROUND_CONTEXT).then(
+							(page) => {
+								historyLoading = false;
+								history = [...page.entries, ...history];
+								historyCursor = page.cursor ?? null;
+								paint();
+							},
+							(error: unknown) => {
+								historyLoading = false;
+								paint();
+								renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error");
+							},
+						);
+						return;
+					}
 					case DOCK_TOGGLE_ACTION:
 						dockOpen = !dockOpen;
 						paint();

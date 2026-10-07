@@ -25,6 +25,7 @@ import {
 	type SessionServiceSource,
 } from "../src/experimental/services/connection.ts";
 import { Commands, type Commands as CommandsService } from "../src/experimental/services/commands.ts";
+import { Conversations, type Conversations as ConversationsService } from "../src/experimental/services/conversations.ts";
 import { Terminal, type Terminal as TerminalService } from "../src/experimental/services/terminal.ts";
 import { Workspace, type Workspace as WorkspaceService } from "../src/experimental/services/workspace.ts";
 import { Models, type Models as ModelsService } from "../src/experimental/services/models.ts";
@@ -48,6 +49,7 @@ interface Attached {
 	readonly models: ModelsService;
 	readonly commands: CommandsService;
 	readonly workspace: WorkspaceService;
+	readonly conversations: ConversationsService;
 	readonly terminal: TerminalService;
 	dispose(): Promise<void>;
 }
@@ -113,7 +115,7 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 	await presentation.management.attach(sessionId, BACKGROUND_CONTEXT);
 	await presentation.sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
 	const services = presentation.sessionSource.open({
-		services: [Transcript, AgentController, Models, Commands, Workspace, Terminal],
+		services: [Transcript, AgentController, Models, Commands, Workspace, Terminal, Conversations],
 		assertAccess(): void {},
 		onError(): void {},
 	});
@@ -124,6 +126,7 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 		models: services.use(Models),
 		commands: services.use(Commands),
 		workspace: services.use(Workspace),
+		conversations: services.use(Conversations),
 		terminal: services.use(Terminal),
 		async dispose() {
 			await services.dispose(BACKGROUND_CONTEXT);
@@ -348,6 +351,68 @@ describe("web client interactive loop", () => {
 
 			await second.dispose();
 			await first.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"lists the session's conversations, pages its history, and talks to it",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "web-loop-conversations" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+
+			// The root is the only conversation at first, and it is marked as such.
+			await waitFor(
+				() => (attached.conversations.state.value?.conversations ?? []).length > 0,
+				"the conversation list",
+			);
+			const list = attached.conversations.state.value?.conversations ?? [];
+			expect(list).toHaveLength(1);
+			expect(list[0]).toMatchObject({ root: true, label: "main" });
+			expect(attached.conversations.state.value?.selected).toBe(list[0]?.id);
+			const rootId = list[0]?.id ?? "";
+
+			// Two prompts, one after the other settles: a prompt while one runs is rejected as busy.
+			for (const marker of ["first marker", "second marker"]) {
+				expect(
+					await attached.conversations.prompt(rootId, { message: marker, images: null }, BACKGROUND_CONTEXT),
+				).toMatchObject({ accepted: true });
+				await waitFor(() => sawUserText(attached.transcript.state.value, marker), `the ${marker} to commit`);
+				await waitFor(() => !isBusy(attached.transcript.state.value), "the turn to settle");
+			}
+			const first = await attached.conversations.older(rootId, null, 1, BACKGROUND_CONTEXT);
+			expect(first.entries).toHaveLength(1);
+			expect(first.cursor).toBeDefined();
+			const second = await attached.conversations.older(rootId, first.cursor ?? null, 1, BACKGROUND_CONTEXT);
+			expect(second.entries).toHaveLength(1);
+			// The pages walk older without repeating, and the oldest page ends the walk.
+			expect(second.entries[0]!.id).toBeLessThan(first.entries[0]!.id);
+			const exhausted = await attached.conversations.older(rootId, second.cursor ?? null, 5, BACKGROUND_CONTEXT);
+			expect(exhausted.entries.every((entry) => entry.id < second.entries[0]!.id)).toBe(true);
+
+			// What a page returns is what the transcript itself carries: the user entries are the same.
+			const page = await attached.conversations.older(rootId, null, 10, BACKGROUND_CONTEXT);
+			const texts = page.entries
+				.flatMap((entry) => entry.model ?? [])
+				.filter((message) => message.role === "user")
+				.map((message) => JSON.stringify(message.content));
+			expect(texts.some((text) => text.includes("first marker"))).toBe(true);
+			expect(texts.some((text) => text.includes("second marker"))).toBe(true);
+
+			// Focusing the root keeps its own live transcript rather than a second view.
+			await attached.conversations.select(rootId, BACKGROUND_CONTEXT);
+			expect(attached.conversations.state.value?.selected).toBe(rootId);
+			expect(attached.conversations.state.value?.view).toBeNull();
+
+			// The live task graph is published alongside, and asking for a refresh settles.
+			expect(Array.isArray(attached.conversations.state.value?.tasks)).toBe(true);
+			await attached.conversations.refresh(BACKGROUND_CONTEXT);
+			expect((attached.conversations.state.value?.conversations ?? []).length).toBe(1);
+
+			await attached.dispose();
+			await presentation.dispose();
 		},
 		240_000,
 	);

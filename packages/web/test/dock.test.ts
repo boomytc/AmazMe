@@ -1,12 +1,22 @@
 import { describe, expect, test } from "vitest";
 import {
+	CONVERSATION_SELECT_ACTION,
+	CONVERSATIONS_REFRESH_ACTION,
 	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
 	WORKSPACE_RELOAD_ACTION,
 } from "../src/actions.ts";
-import { dockTabs, dockView, filesPanel, terminalPanel, workspaceSize } from "../src/dock.ts";
+import {
+	conversationsPanel,
+	dockTabs,
+	dockView,
+	filesPanel,
+	tasksPanel,
+	terminalPanel,
+	workspaceSize,
+} from "../src/dock.ts";
 import type { TerminalStateLike, WorkspaceStateLike } from "../src/dock.ts";
 
 const LISTING: WorkspaceStateLike = {
@@ -32,20 +42,68 @@ const TERMINAL: TerminalStateLike = {
 	error: null,
 };
 
+const CONVERSATIONS = {
+	selected: "1",
+	conversations: [
+		{ id: "1", label: "main", root: true, children: 1 },
+		{ id: "2", label: "child task marker", root: false, ownerConversationId: "1", ownerTaskId: "9", children: 0 },
+	],
+	tasks: [
+		{
+			id: "7",
+			kind: "amazme.generation",
+			conversationId: "1",
+			background: true,
+			status: "running",
+			phase: "running",
+			waitsOn: [],
+			conversations: ["1"],
+		},
+		{
+			id: "9",
+			kind: "amazme.tool",
+			conversationId: "2",
+			background: false,
+			status: "waiting",
+			phase: "waiting",
+			waitsOn: ["7"],
+			conversations: ["2"],
+		},
+	],
+};
+
 describe("the session dock", () => {
 	test("offers its tabs and remembers which one is open", () => {
 		expect(dockTabs("en", "terminal")).toEqual([
 			{ id: "files", label: "Files", active: false },
 			{ id: "terminal", label: "Terminal", active: true },
+			{ id: "conversations", label: "Conversations", active: false },
+			{ id: "tasks", label: "Tasks", active: false },
 		]);
-		expect(dockView("zh", { open: true, tab: "terminal", cwd: "/w", workspace: undefined, terminal: undefined })).toMatchObject({
+		expect(
+			dockView("zh", {
+				open: true,
+				tab: "terminal",
+				cwd: "/w",
+				workspace: undefined,
+				terminal: undefined,
+				conversations: undefined,
+			}),
+		).toMatchObject({
 			open: true,
 			toggle: { label: "会话工具", pressed: true },
 		});
 		// An unknown tab falls back to the first one rather than showing nothing.
-		expect(dockView("en", { open: true, tab: "nope", cwd: "/w", workspace: LISTING, terminal: TERMINAL }).panel.id).toBe(
-			"files",
-		);
+		expect(
+			dockView("en", {
+				open: true,
+				tab: "nope",
+				cwd: "/w",
+				workspace: LISTING,
+				terminal: TERMINAL,
+				conversations: undefined,
+			}).panel.id,
+		).toBe("files");
 	});
 
 	test("lists a directory with an action per entry and the way back up", () => {
@@ -133,6 +191,46 @@ describe("the session dock", () => {
 				state: { status: "done", command: "x", exitCode: 2, output: "", truncated: true, error: "boom" },
 			}).notices[0]?.text,
 		).toContain("only the beginning".replace("only", "Only"));
+	});
+
+	test("lists the conversations with their ownership and the focused one", () => {
+		const panel = conversationsPanel("en", CONVERSATIONS);
+		const rows = panel.groups[0]?.rows ?? [];
+		expect(rows.map((row) => [row.title, row.badges])).toEqual([
+			["main", ["main", "1 children", "selected"]],
+			["child task marker", ["subagent"]],
+		]);
+		// A child names the task and the conversation that made it.
+		expect(rows[1]?.description).toBe("owned by task 9 in conversation 1");
+		expect(rows[0]?.description).toBe("1");
+		expect(rows[1]?.actions?.[0]).toEqual({
+			id: CONVERSATION_SELECT_ACTION,
+			label: "Open",
+			tone: "default",
+			data: "2",
+		});
+		expect(panel.groups[0]?.actions?.[0]?.id).toBe(CONVERSATIONS_REFRESH_ACTION);
+		// The Chinese labels reach the same rows.
+		expect(conversationsPanel("zh", CONVERSATIONS).groups[0]?.rows[0]?.badges).toEqual([
+			"主线",
+			"1 个子会话",
+			"当前",
+		]);
+	});
+
+	test("lists the live tasks with what they wait on and own", () => {
+		const panel = tasksPanel("en", CONVERSATIONS);
+		const rows = panel.groups[0]?.rows ?? [];
+		expect(rows.map((row) => [row.title, row.description])).toEqual([
+			["amazme.generation 7", "phase running · 1"],
+			["amazme.tool 9", "phase waiting · 2"],
+		]);
+		expect(rows[1]?.badges).toEqual(["waiting", "waits on 7", "owns 2"]);
+		expect(rows[0]?.badges).toEqual(["running", "background", "owns 1"]);
+		// With nothing live the panel says so instead of looking broken.
+		expect(
+			tasksPanel("en", { conversations: [], tasks: [], selected: "1" }).groups[0]?.empty,
+		).toBe("No task is running.");
 	});
 
 	test("sizes a file the way a listing does", () => {

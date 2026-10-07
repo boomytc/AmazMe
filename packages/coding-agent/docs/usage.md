@@ -161,6 +161,19 @@ its id, and removes one from a hover control behind a confirmation: its storage 
 host's session directory while the working directory itself is left alone. A draft in the composer,
 the filter text, and the open management view survive attaching, creating, and removing sessions.
 
+### Watching a long run, and older history
+
+The dock's **Conversations** tab lists every conversation of the session: `main`, and each subagent
+child with the task and conversation that created it. **Open** switches the main area to that
+conversation — the root keeps its live transcript, another one is read from the host — and the
+composer then talks to whichever conversation is focused. **Tasks** shows the live task graph: each
+task's kind, its phase, its status, what it waits on, and the conversations it owns, which is what
+makes a long delegation legible while it runs.
+
+**Load older** at the top of the transcript pages stored history in, twenty entries at a time, walking
+back from the oldest entry the conversation still shows; the pages read exactly like the transcript
+above them.
+
 ### The session's files and a shell
 
 The **Session tools** control in the header opens a dock beside the conversation with two tabs. **Files**

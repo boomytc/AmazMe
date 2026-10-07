@@ -28,6 +28,7 @@ import {
 	findInitialAgentModel,
 } from "./durable/harness-setup.ts";
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
+import { Subagent } from "./durable/subagent.ts";
 import {
 	consumeInternalProcessRole,
 	encodeControlLine,
@@ -780,13 +781,17 @@ async function createCodingAgentHarness(
 	const settingsManager = SettingsManager.create(cwd);
 	configureHarnessHttp(settingsManager);
 	const envs = new ExecutionEnvs(cwd);
+	const registry = createCodingRegistry(settingsManager, cwd);
+	// The durable runtime installs this tool beside its registry; the Session worker is the same
+	// agent, so a session opened here can delegate to a subagent the way the TUI's does.
+	registry.install(Subagent);
 	let harness: Harness | undefined;
 	try {
 		harness = await Harness.open(
 			await openNodeSqliteStorage(databasePath),
 			{
 				models: modelRuntime,
-				registry: createCodingRegistry(settingsManager, cwd),
+				registry,
 				settings: createHarnessSettings(settingsManager),
 				env: envs.env,
 				onReport: (error) => console.error(error),

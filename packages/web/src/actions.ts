@@ -33,6 +33,13 @@ export const TERMINAL_RUN_ACTION = "terminal:run";
 /** Stop the running terminal command. */
 export const TERMINAL_STOP_ACTION = "terminal:stop";
 
+/** Focus one conversation in the dock: `data` is the conversation id. */
+export const CONVERSATION_SELECT_ACTION = "conversation:select";
+/** Re-read the conversation list, the task graph, and the focused view. */
+export const CONVERSATIONS_REFRESH_ACTION = "conversation:refresh";
+/** Page in older stored history above the transcript. */
+export const HISTORY_MORE_ACTION = "history:more";
+
 /** Drop one pending image before it is sent: `data` is the attachment id. */
 export const ATTACHMENT_REMOVE_ACTION = "composer:attachment-remove";
 /** Remove one session: `data` is the session id; the page confirms before the host call. */
