@@ -103,6 +103,7 @@ import {
 	type SubmitMode,
 	type PanelAction,
 	type PanelModal,
+	type PanelNotice,
 	type ThemePreference,
 	type WebBootManifest,
 } from "@amazme/web";
@@ -626,6 +627,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						skills: { state: skills.state.value },
 						plugins: { state: plugins.state.value },
 						automation: { state: schedules.state.value, sessionId: painter.sessionId, now: Date.now() },
+						// The page's own management state: what is in flight, and what it last said.
+						...(panelPending === undefined ? {} : { pending: panelPending }),
+						...(panelNotice === undefined ? {} : { notice: panelNotice }),
+						modalPending,
+						...(modalNotice === undefined ? {} : { modalNotice }),
 					},
 				}),
 			),
@@ -869,33 +875,127 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		});
 	};
 
-	/** Report a failed management call; the panel keeps its state and the reader keeps their text. */
-	const failPanel = (error: unknown): void =>
-		renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error");
+	/**
+	 * The control that opened the open modal, so closing it hands the focus back: the element is
+	 * looked up again by its action, because a repaint replaces the node the click landed on.
+	 */
+	let modalOpener: { readonly id: string; readonly data?: string } | undefined;
+	/** The management call in flight, and what it last said; a repaint carries both to its panel. */
+	let panelPending: { readonly id: string; readonly data?: string } | undefined;
+	let panelNotice: PanelNotice | undefined;
+	let modalPending = false;
+	let modalNotice: PanelNotice | undefined;
 
-	/** Run one host call from the management surface, closing the modal once it succeeded. */
-	const settle = (operation: Promise<void> | undefined, closeModal = true): void => {
-		if (operation === undefined) return;
-		void operation.then(
-			() => {
-				if (closeModal) modal = undefined;
+	const openModal = (spec: PanelModal, opener?: { readonly id: string; readonly data?: string }): void => {
+		modal = spec;
+		modalOpener = opener;
+		modalPending = false;
+		modalNotice = undefined;
+		panelNotice = undefined;
+		paint();
+	};
+
+	const closeModal = (): void => {
+		modal = undefined;
+		modalPending = false;
+		modalNotice = undefined;
+		const opener = modalOpener;
+		modalOpener = undefined;
+		paint();
+		if (opener === undefined) return;
+		const attribute =
+			opener.data === undefined
+				? `[data-action="${opener.id}"]`
+				: `[data-action="${opener.id}"][data-action-data="${opener.data}"]`;
+		try {
+			const node = document.querySelector(attribute);
+			if (node instanceof HTMLElement) node.focus();
+		} catch {
+			// A selector the page cannot express leaves the focus where it is.
+		}
+	};
+
+	/** Report a refused input inside the modal that submitted it, keeping what was typed. */
+	const refuseInModal = (text: string): void => {
+		modalNotice = { tone: "error", text };
+		paint();
+	};
+
+	/** What one management call answers: the schedule store's shape, or a plain success. */
+	type PanelCallResult = ScheduleResult | { readonly ok: true; readonly note?: string };
+
+	/**
+	 * Run one management call: the control that started it reports itself in flight and refuses a
+	 * second activation, the surface it changed repaints from the host's state, and a refusal or a
+	 * failure lands beside that control instead of only on the header's connection line.
+	 */
+	const runPanelCall = (request: {
+		readonly id: string;
+		readonly data?: string;
+		readonly inModal?: boolean;
+		readonly closeOnSuccess?: boolean;
+		readonly call: () => Promise<PanelCallResult | void>;
+	}): void => {
+		const inModal = request.inModal === true;
+		panelPending = request.data === undefined ? { id: request.id } : { id: request.id, data: request.data };
+		if (inModal) {
+			modalPending = true;
+			modalNotice = undefined;
+		} else {
+			panelNotice = undefined;
+		}
+		paint();
+		void retryOnRebind(request.call).then(
+			(result) => {
+				panelPending = undefined;
+				modalPending = false;
+				if (result !== undefined && result.ok === false) {
+					const notice: PanelNotice = { tone: "error", text: result.problem };
+					if (inModal) modalNotice = notice;
+					else panelNotice = notice;
+					paint();
+					return;
+				}
+				if (inModal && request.closeOnSuccess !== false) {
+					closeModal();
+					return;
+				}
+				if (result !== undefined && result.ok && result.note !== undefined) {
+					const notice: PanelNotice = { tone: "info", text: result.note };
+					if (inModal) modalNotice = notice;
+					else panelNotice = notice;
+				}
 				paint();
 			},
 			(error: unknown) => {
-				failPanel(error);
+				panelPending = undefined;
+				modalPending = false;
+				const notice: PanelNotice = { tone: "error", text: message(error) };
+				if (inModal) modalNotice = notice;
+				else panelNotice = notice;
 				paint();
 			},
 		);
 	};
 
-	/** Run one schedule call; a refused input is reported instead of closing the modal. */
-	const settleSchedule = (operation: Promise<ScheduleResult>, closeModal = true): void =>
-		settle(
-			operation.then((result) => {
-				if (!result.ok) throw new Error(result.problem);
-			}),
-			closeModal,
+	/** The call answers nothing but its own completion. */
+	const done = (): Promise<{ readonly ok: true }> => Promise.resolve({ ok: true });
+
+	/**
+	 * Run one host call that has no control of its own — the dock's surfaces, the transcript's
+	 * ratings, the header's model refresh — reporting a failure on the connection line. A panel row
+	 * action or a modal submit goes through `runPanelCall` instead, so its own control answers.
+	 */
+	const settle = (operation: Promise<unknown> | undefined): void => {
+		if (operation === undefined) return;
+		void operation.then(
+			() => paint(),
+			(error: unknown) => {
+				renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error");
+				paint();
+			},
 		);
+	};
 
 	const pluginPackages = (): readonly string[] => plugins.state.value?.packages ?? [];
 	const skillOf = (name: string): { readonly editable: boolean } | undefined =>
@@ -906,51 +1006,61 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "open":
 				// The row of the view already open returns to the conversation.
 				view = action.panel === view ? CHAT_VIEW : action.panel;
-				modal = undefined;
-				paint();
+				closeModal();
 				return;
 			case "modal-close":
-				modal = undefined;
-				paint();
+				closeModal();
 				return;
 			case "control":
 				if (action.id === SETTINGS_FIELD_ACTION && action.data !== undefined) {
 					const id = action.data;
-					// A running session holds the settings it loaded, so ask it to re-read them.
-					settle(
-						settings
-							.set(id, action.value, BACKGROUND_CONTEXT)
-							.then(() => painter.reloadSettings())
-							.catch((error: unknown) => {
-								// A session that is already gone is not a settings failure.
-								failPanel(error);
-							}),
-						false,
-					);
+					runPanelCall({
+						id: action.id,
+						data: id,
+						call: () =>
+							settings
+								.set(id, action.value, BACKGROUND_CONTEXT)
+								// A running session holds the settings it loaded, so ask it to re-read them;
+								// a session that is already gone is not a settings failure.
+								.then(() => painter.reloadSettings().catch(() => undefined))
+								.then(() => ({ ok: true as const })),
+					});
 					return;
 				}
 				if (action.id === PLUGIN_MCP_ENABLED_ACTION && action.data !== undefined) {
 					const name = action.data;
-					settle(plugins.setMcpServer(name, { enabled: action.value === "true" }, BACKGROUND_CONTEXT), false);
+					runPanelCall({
+						id: action.id,
+						data: name,
+						call: () => plugins.setMcpServer(name, { enabled: action.value === "true" }, BACKGROUND_CONTEXT).then(done),
+					});
 					return;
 				}
 				if (action.id === PLUGIN_MCP_EXPOSURE_ACTION && action.data !== undefined) {
 					const name = action.data;
-					settle(plugins.setMcpServer(name, { exposure: action.value }, BACKGROUND_CONTEXT), false);
+					runPanelCall({
+						id: action.id,
+						data: name,
+						call: () => plugins.setMcpServer(name, { exposure: action.value }, BACKGROUND_CONTEXT).then(done),
+					});
 					return;
 				}
 				if (action.id === SCHEDULE_ENABLED_ACTION && action.data !== undefined) {
-					settleSchedule(schedules.setEnabled(action.data, action.value === "true", BACKGROUND_CONTEXT), false);
+					const id = action.data;
+					runPanelCall({
+						id: action.id,
+						data: id,
+						call: () => schedules.setEnabled(id, action.value === "true", BACKGROUND_CONTEXT),
+					});
 				}
 				return;
 			case "command":
 				switch (action.id) {
 					case COMPACT_ACTION:
-						modal = compactModal(locale);
-						paint();
+						openModal(compactModal(locale), action);
 						return;
 					case REFRESH_MODELS_ACTION:
-						settle(painter.refreshModels(), false);
+						settle(painter.refreshModels());
 						return;
 					case SUBMIT_MODE_ACTION:
 						submitMode = action.data === "steer" ? "steer" : "followUp";
@@ -966,11 +1076,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					case WELCOME_SETTINGS_ACTION:
 						view = SETTINGS_VIEW;
-						modal = undefined;
-						paint();
+						closeModal();
 						return;
 					case WELCOME_DISMISS_ACTION:
-						settle(settings.set("showWelcome", "false", BACKGROUND_CONTEXT), false);
+						runPanelCall({ id: WELCOME_DISMISS_ACTION, call: () => settings.set("showWelcome", "false", BACKGROUND_CONTEXT).then(done) });
 						return;
 					case FEEDBACK_UP_ACTION:
 					case FEEDBACK_DOWN_ACTION: {
@@ -993,7 +1102,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							operation.then((result) => {
 								if (!result.ok) renderer.setConnection(result.problem, "error");
 							}),
-							false,
 						);
 						return;
 					}
@@ -1007,7 +1115,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 									renderer.setConnection(copy("page.queueGone"), "error");
 								}
 							}),
-							false,
 						);
 						return;
 					}
@@ -1019,11 +1126,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						historyLoaded = false;
 						dockOpen = true;
 						dockTab = "conversations";
-						settle(painter.conversationsService?.select(id, BACKGROUND_CONTEXT), false);
+						settle(painter.conversationsService?.select(id, BACKGROUND_CONTEXT));
 						return;
 					}
 					case CONVERSATIONS_REFRESH_ACTION:
-						settle(painter.conversationsService?.refresh(BACKGROUND_CONTEXT), false);
+						settle(painter.conversationsService?.refresh(BACKGROUND_CONTEXT));
 						return;
 					case HISTORY_MORE_ACTION: {
 						const target = targetConversation();
@@ -1062,43 +1169,43 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					case WORKSPACE_RELOAD_ACTION: {
 						const view = painter.workspace?.view;
-						settle(painter.workspaceOpen(view !== undefined && view.kind === "text" ? view.path : (view?.path ?? ".")), false);
+						settle(painter.workspaceOpen(view !== undefined && view.kind === "text" ? view.path : (view?.path ?? ".")));
 						return;
 					}
 					case WORKSPACE_OPEN_ACTION:
-						settle(painter.workspaceOpen(action.data ?? "."), false);
+						settle(painter.workspaceOpen(action.data ?? "."));
 						return;
 					case WORKSPACE_READ_ACTION:
-						settle(painter.workspaceRead(action.data ?? ""), false);
+						settle(painter.workspaceRead(action.data ?? ""));
 						return;
 					case TERMINAL_RUN_ACTION:
-						settle(painter.runTerminal(action.data ?? ""), false);
+						settle(painter.runTerminal(action.data ?? ""));
 						return;
 					case TERMINAL_STOP_ACTION:
-						settle(painter.stopTerminal(), false);
+						settle(painter.stopTerminal());
 						return;
 					case SESSION_REMOVE_ACTION:
-						modal = removeSessionModal(locale, action.data ?? "");
-						paint();
+						openModal(removeSessionModal(locale, action.data ?? ""), action);
 						return;
 					case SCHEDULE_ADD_ACTION: {
 						const sessionId = painter.sessionId;
 						// The panel's own footer says what to do; the button is inert without a session.
 						if (sessionId === undefined) {
-							renderer.setConnection(copy("panel.automation.noSession"), "error");
+							panelNotice = { tone: "error", text: copy("panel.automation.noSession") };
+							paint();
 							return;
 						}
-						modal = addScheduleModal(locale, sessionId);
-						paint();
+						openModal(addScheduleModal(locale, sessionId), action);
 						return;
 					}
 					case SCHEDULE_REMOVE_ACTION:
-						modal = removeScheduleModal(locale, action.data ?? "");
-						paint();
+						openModal(removeScheduleModal(locale, action.data ?? ""), action);
 						return;
-					case SCHEDULE_RUN_ACTION:
-						settleSchedule(schedules.runNow(action.data ?? "", BACKGROUND_CONTEXT), false);
+					case SCHEDULE_RUN_ACTION: {
+						const id = action.data ?? "";
+						runPanelCall({ id: action.id, data: id, call: () => schedules.runNow(id, BACKGROUND_CONTEXT) });
 						return;
+					}
 					case ATTACHMENT_REMOVE_ACTION: {
 						pending = pending.filter((image) => image.id !== action.data);
 						paint();
@@ -1106,56 +1213,65 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					}
 					case QUEUE_CANCEL_ACTION: {
 						const entryId = action.data ?? "";
-						settle(painter.cancelQueued(entryId), false);
+						settle(painter.cancelQueued(entryId));
 						return;
 					}
 					case SETTINGS_RELOAD_ACTION:
-						settle(settings.reload(BACKGROUND_CONTEXT), false);
+						runPanelCall({
+							id: action.id,
+							call: () => settings.reload(BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					case SKILL_NEW_ACTION:
-						modal = newSkillModal(locale);
-						paint();
+						openModal(newSkillModal(locale), action);
 						return;
 					case SKILL_IMPORT_ACTION:
-						modal = importSkillModal(locale);
-						paint();
+						openModal(importSkillModal(locale), action);
 						return;
 					case SKILL_REMOVE_ACTION:
-						modal = removeSkillModal(locale, action.data ?? "");
-						paint();
+						openModal(removeSkillModal(locale, action.data ?? ""), action);
 						return;
 					case SKILL_EDIT_ACTION: {
 						const name = action.data ?? "";
-						settle(
-							skills.read(name, BACKGROUND_CONTEXT).then((content) => {
-								modal = skillModal(locale, name, content, skillOf(name)?.editable === true);
-							}),
-							false,
-						);
+						// The file is read first; the modal opens with it, and the opener's own row is
+						// what takes the focus back when it closes.
+						void skills
+							.read(name, BACKGROUND_CONTEXT)
+							.then((content) => openModal(skillModal(locale, name, content, skillOf(name)?.editable === true), action))
+							.catch((error: unknown) => {
+								panelNotice = { tone: "error", text: message(error) };
+								paint();
+							});
 						return;
 					}
 					case PLUGIN_PACKAGE_ADD_ACTION:
-						modal = addPackageModal(locale);
-						paint();
+						openModal(addPackageModal(locale), action);
 						return;
 					case PLUGIN_PACKAGE_REMOVE_ACTION: {
 						const path = action.data ?? "";
-						settle(
-							plugins.setPackages(
-								pluginPackages().filter((candidate) => candidate !== path),
-								BACKGROUND_CONTEXT,
-							),
-							false,
-						);
+						runPanelCall({
+							id: action.id,
+							data: path,
+							call: () =>
+								plugins
+									.setPackages(
+										pluginPackages().filter((candidate) => candidate !== path),
+										BACKGROUND_CONTEXT,
+									)
+									.then(done),
+						});
 						return;
 					}
 					case PLUGIN_MCP_ADD_ACTION:
-						modal = addMcpServerModal(locale);
-						paint();
+						openModal(addMcpServerModal(locale), action);
 						return;
 					case PLUGIN_MCP_REMOVE_ACTION: {
 						const name = action.data ?? "";
-						settle(plugins.removeMcpServer(name, BACKGROUND_CONTEXT), false);
+						runPanelCall({
+							id: action.id,
+							data: name,
+							call: () => plugins.removeMcpServer(name, BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					}
 					default:
@@ -1166,81 +1282,125 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				switch (action.id) {
 					case SESSION_REMOVE_MODAL: {
 						const sessionId = action.data ?? "";
-						// A session that was just attached is detached before its storage goes away.
-						if (painter.sessionId === sessionId) {
-							void painter.detach().then(() => paint(), () => paint());
-						}
-						settle(
-							management.remove(sessionId, BACKGROUND_CONTEXT).catch((error: unknown) => {
-								renderer.setConnection(copy("page.removeFailed", { error: message(error) }), "error");
-							}),
-						);
+						runPanelCall({
+							id: action.id,
+							data: sessionId,
+							inModal: true,
+							call: async () => {
+								// A session that was just attached is let go of first, and the removal waits
+								// for that to settle: the host releases this attachment either way, and a call
+								// in flight across the transition would lose its binding.
+								if (painter.sessionId === sessionId) await painter.detach();
+								await management.remove(sessionId, BACKGROUND_CONTEXT);
+								return { ok: true as const };
+							},
+						});
 						return;
 					}
 					case COMPACT_MODAL:
-						settle(painter.compact(fields.instructions ?? ""));
+						runPanelCall({
+							id: action.id,
+							inModal: true,
+							call: () => painter.compact(fields.instructions ?? "").then(done),
+						});
 						return;
 					case SKILL_CREATE_MODAL: {
 						const name = (fields.name ?? "").trim();
 						if (name.length === 0) {
-							failPanel(new Error(copy("page.skillNeedsName")));
+							refuseInModal(copy("page.skillNeedsName"));
 							return;
 						}
-						settle(
-							skills.write(
-								{ name, content: composeSkill(name, fields.description ?? "", fields.body ?? "") },
-								BACKGROUND_CONTEXT,
-							),
-						);
+						runPanelCall({
+							id: action.id,
+							inModal: true,
+							call: () =>
+								skills
+									.write(
+										{ name, content: composeSkill(name, fields.description ?? "", fields.body ?? "") },
+										BACKGROUND_CONTEXT,
+									)
+									.then(done),
+						});
 						return;
 					}
 					case SKILL_EDIT_MODAL:
-						settle(skills.write({ name: action.data ?? "", content: fields.content ?? "" }, BACKGROUND_CONTEXT));
+						runPanelCall({
+							id: action.id,
+							inModal: true,
+							call: () =>
+								skills.write({ name: action.data ?? "", content: fields.content ?? "" }, BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					case SKILL_REMOVE_MODAL:
-						settle(skills.remove(action.data ?? "", BACKGROUND_CONTEXT));
+						runPanelCall({
+							id: action.id,
+							data: action.data,
+							inModal: true,
+							call: () => skills.remove(action.data ?? "", BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					case SKILL_IMPORT_MODAL:
-						settle(skills.importSkill(fields.path ?? "", BACKGROUND_CONTEXT));
+						runPanelCall({
+							id: action.id,
+							inModal: true,
+							call: () => skills.importSkill(fields.path ?? "", BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					case PLUGIN_PACKAGE_MODAL: {
 						const path = (fields.path ?? "").trim();
 						if (path.length === 0) {
-							failPanel(new Error(copy("page.packageNeedsPath")));
+							refuseInModal(copy("page.packageNeedsPath"));
 							return;
 						}
-						settle(plugins.setPackages([...pluginPackages(), path], BACKGROUND_CONTEXT));
+						runPanelCall({
+							id: action.id,
+							inModal: true,
+							call: () => plugins.setPackages([...pluginPackages(), path], BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					}
 					case PLUGIN_MCP_MODAL:
-						settle(plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT));
+						runPanelCall({
+							id: action.id,
+							inModal: true,
+							call: () =>
+								plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					case SCHEDULE_ADD_MODAL: {
 						const sessionId = painter.sessionId;
 						const prompt = (fields.prompt ?? "").trim();
 						const minutes = Number((fields.everyMinutes ?? "").trim());
 						if (sessionId === undefined) {
-							failPanel(new Error(copy("panel.automation.noSession")));
+							refuseInModal(copy("panel.automation.noSession"));
 							return;
 						}
 						if (prompt.length === 0) {
-							failPanel(new Error(copy("page.scheduleNeedsPrompt")));
+							refuseInModal(copy("page.scheduleNeedsPrompt"));
 							return;
 						}
 						if (!Number.isFinite(minutes) || minutes < 1) {
-							failPanel(new Error(copy("page.scheduleNeedsMinutes")));
+							refuseInModal(copy("page.scheduleNeedsMinutes"));
 							return;
 						}
-						settleSchedule(schedules.add({ sessionId, prompt, everyMinutes: minutes }, BACKGROUND_CONTEXT));
+						runPanelCall({
+							id: action.id,
+							inModal: true,
+							call: () => schedules.add({ sessionId, prompt, everyMinutes: minutes }, BACKGROUND_CONTEXT),
+						});
 						return;
 					}
 					case SCHEDULE_REMOVE_MODAL:
-						settle(schedules.remove(action.data ?? "", BACKGROUND_CONTEXT));
+						runPanelCall({
+							id: action.id,
+							data: action.data,
+							inModal: true,
+							call: () => schedules.remove(action.data ?? "", BACKGROUND_CONTEXT).then(done),
+						});
 						return;
 					default:
 						// A read-only view submits to close, which is what removing the modal does.
-						modal = undefined;
-						paint();
+						closeModal();
 						return;
 				}
 			}

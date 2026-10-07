@@ -435,6 +435,53 @@ describe("web client interactive loop", () => {
 	);
 
 	test(
+		"removes the session a presentation is attached to, for that tab and for another",
+		async () => {
+			const sessionDir = await makeDirectory("web-loop-selfremove-sessions-");
+			const host = await startWebHost({
+				port: 0,
+				directory: await makeDirectory("web-loop-selfremove-server-"),
+				sessionDir,
+			});
+			hosts.add(host);
+			const first = await openPresentation(host);
+			// The other tab attaches a different session, so only the first one is removing its own.
+			const keeper = await first.management.create({ id: "web-loop-keeper" }, BACKGROUND_CONTEXT);
+			const second = await openPresentation(host);
+			const attachedKeeper = await attachSession(second, keeper.sessionId);
+
+			const created = await first.management.create({ id: "web-loop-self" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(first, created.sessionId);
+			expect(existsSync(join(sessionDir, created.sessionId))).toBe(true);
+			await waitFor(
+				() => (second.directory.state.value?.sessions ?? []).some((session) => session.sessionId === created.sessionId),
+				"the session in the second roster",
+			);
+
+			// The page detaches the session it is about to delete while it asks the host to remove it,
+			// so the two calls are in flight together, the way the page runs them.
+			await attached.dispose();
+			void first.management.detach(BACKGROUND_CONTEXT);
+			await first.management.remove(created.sessionId, BACKGROUND_CONTEXT);
+			await waitFor(
+				() => !(first.directory.state.value?.sessions ?? []).some((session) => session.sessionId === created.sessionId),
+				"the removed session to leave the removing tab's roster",
+			);
+			expect(first.directory.state.value?.sessions.map((session) => session.sessionId)).toEqual([keeper.sessionId]);
+			await waitFor(
+				() => !(second.directory.state.value?.sessions ?? []).some((session) => session.sessionId === created.sessionId),
+				"the removed session to leave the other tab's roster",
+			);
+			expect(existsSync(join(sessionDir, created.sessionId))).toBe(false);
+
+			await attachedKeeper.dispose();
+			await second.dispose();
+			await first.dispose();
+		},
+		240_000,
+	);
+
+	test(
 		"rates an answer through the server catalogue and writes it to the agent directory",
 		async () => {
 			const host = await startLoopHost();

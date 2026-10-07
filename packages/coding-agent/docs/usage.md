@@ -262,6 +262,13 @@ List-valued settings such as `defaultTools` stay in the settings file; the panel
 headings, and option names come from the page's own dictionaries keyed by the catalogue's ids and tokens, so a field the
 dictionaries do not know is still listed, under its id, rather than hidden.
 
+A control that started a host call reports itself busy and refuses a second press until the call
+settles. When a call is refused or fails, the reason appears next to that control — inside the panel
+row or the modal — instead of only on the header's connection line, and a modal that failed keeps
+what you typed. Closing a modal with `Esc` or its close control returns the focus to the control that
+opened it. Hovering any control paints a state from the design tokens, and every control the page
+renders can be reached with `Tab` and shows a focus ring.
+
 **Automation** lists the prompts the host runs on its own. Each row names the prompt, its cadence (at least one
 minute), the session it belongs to, when it is next due, and what its last run produced; **Run now** runs it
 immediately, the switch pauses or resumes the host's own timer, and **Remove** deletes it behind a confirmation.

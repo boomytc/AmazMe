@@ -126,6 +126,8 @@ export interface PanelSpec {
 	readonly description?: string;
 	readonly notices: readonly PanelNotice[];
 	readonly groups: readonly PanelGroup[];
+	/** The action whose call is in flight, so its own control reports itself busy. */
+	readonly pending?: PanelPending;
 	/** Input lines the panel offers, above its groups. */
 	readonly inputs?: readonly PanelInput[];
 	/** Text blocks the panel shows, below its groups. */
@@ -140,6 +142,12 @@ export interface PanelField {
 	readonly placeholder?: string;
 }
 
+/** The control whose host call is in flight: the action id, and the subject it acts on. */
+export interface PanelPending {
+	readonly id: string;
+	readonly data?: string;
+}
+
 export interface PanelModal {
 	/** The action id a submit reports. */
 	readonly id: string;
@@ -151,6 +159,10 @@ export interface PanelModal {
 	readonly data?: string;
 	/** A destructive submit, such as a remove confirmation. */
 	readonly danger?: boolean;
+	/** Whether the submit's call is in flight: the submit is disabled until it settles. */
+	readonly pending?: boolean;
+	/** What the last submit said; a refused input is reported here, inside the modal. */
+	readonly notice?: PanelNotice;
 }
 
 export interface PanelView {
@@ -305,6 +317,12 @@ export interface PanelViewInput {
 	readonly skills?: SkillsPanelInput;
 	readonly plugins?: PluginsPanelInput;
 	readonly automation?: AutomationPanelInput;
+	/** The management call the page has in flight, and what it last said. */
+	readonly pending?: PanelPending;
+	readonly notice?: PanelNotice;
+	/** The open modal's own in-flight and notice state. */
+	readonly modalPending?: boolean;
+	readonly modalNotice?: PanelNotice;
 }
 
 export const SETTINGS_FIELD_ACTION = "settings:set";
@@ -693,11 +711,29 @@ export function panelSpec(input: PanelViewInput): PanelSpec | undefined {
 export function panelView(input: PanelViewInput): PanelView {
 	const spec = panelSpec(input);
 	const current = input.current ?? CHAT_VIEW;
+	// The page's own in-flight action and message ride on the panel it belongs to, so the renderer
+	// reads one description of the panel and never looks for feature state of its own.
+	const withState =
+		spec === undefined
+			? undefined
+			: {
+					...spec,
+					...(input.pending === undefined ? {} : { pending: input.pending }),
+					notices: input.notice === undefined ? spec.notices : [input.notice, ...spec.notices],
+				};
+	const modal =
+		input.modal === undefined
+			? undefined
+			: {
+					...input.modal,
+					...(input.modalPending === undefined ? {} : { pending: input.modalPending }),
+					...(input.modalNotice === undefined ? {} : { notice: input.modalNotice }),
+				};
 	return {
 		nav: panelNav(input.locale, current),
 		current: spec === undefined ? CHAT_VIEW : current,
-		...(spec === undefined ? {} : { panel: spec }),
-		...(input.modal === undefined ? {} : { modal: input.modal }),
+		...(withState === undefined ? {} : { panel: withState }),
+		...(modal === undefined ? {} : { modal }),
 	};
 }
 

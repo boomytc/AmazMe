@@ -480,6 +480,33 @@ describe("automation panel", () => {
 		expect(automationPanel("en", { state: undefined }).notices[0]?.text).toBe(UNAVAILABLE_EN);
 	});
 
+	test("carries the page's in-flight action and its message into the panel and the modal", () => {
+		const idle = panelView({ locale: "en", current: AUTOMATION_VIEW, automation: { state: SCHEDULES } });
+		expect(idle.panel?.pending).toBeUndefined();
+		const working = panelView({
+			locale: "en",
+			current: AUTOMATION_VIEW,
+			automation: { state: SCHEDULES },
+			pending: { id: SCHEDULE_RUN_ACTION, data: "s1" },
+			notice: { tone: "error", text: "the host refused that" },
+		});
+		expect(working.panel?.pending).toEqual({ id: SCHEDULE_RUN_ACTION, data: "s1" });
+		// The page's own message rides ahead of whatever the panel says about the host's state.
+		expect(working.panel?.notices[0]).toEqual({ tone: "error", text: "the host refused that" });
+		const modal = panelView({
+			locale: "en",
+			modal: addScheduleModal("en", "web-loop"),
+			modalPending: true,
+			modalNotice: { tone: "error", text: "a prompt is empty" },
+		}).modal;
+		expect(modal?.pending).toBe(true);
+		expect(modal?.notice).toEqual({ tone: "error", text: "a prompt is empty" });
+		// A modal with neither stays exactly as its builder made it.
+		const plain = panelView({ locale: "en", modal: addScheduleModal("en", "web-loop") }).modal;
+		expect(plain?.pending).toBeUndefined();
+		expect(plain?.notice).toBeUndefined();
+	});
+
 	test("opens a modal that carries the prompt, the cadence, and the subject", () => {
 		const add = addScheduleModal("en", "web-loop");
 		expect(add).toMatchObject({ id: SCHEDULE_ADD_MODAL, submit: "Add" });

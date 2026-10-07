@@ -105,6 +105,24 @@ task 与会话 id），钩子在那里等；页面在 composer 上方给出卡�
   Esc 停止（阈值 500ms，与 TUI、DSH 的 stopSequence 一致）。`Escape` 仍然优先关闭模态框、视图卡片与模型卡片。
 - 复制：围栏代码块的 banner 上带复制控件，写进剪贴板的就是代码本身，成功/失败在控件文字上显示。
 
+## 交互状态：进行中、失败与焦点
+
+管理面的一次调用有它自己的状态，页面对此只有一处描述：`panels.ts` 的 `PanelSpec.pending` 与
+`PanelModal.pending`／`notice`。页面把「正在进行的动作（动作 id + 对象）」和「它上一次说的话」交给
+`panelView`，纯层把进行中的那个控件标成 busy（渲染器据此禁用并加 `.pending`），把消息排在面板通知之前、
+或放进模态框卡片里自己的一行。因此：
+
+- 面板行按钮或模态框提交在调用进行中会变灰并拒绝第二次点击；成功后回到常态，面板按宿主发布的新状态重绘。
+- 调用被拒或失败时，原因出现在**发起它的那个控件旁边**（面板的 `.panel-notice.error` 或模态框的
+  `.modal-notice.error`），模态框保持打开并保留已输入的内容，成功后再关闭。
+- 用 Esc 或关闭控件关掉模态框时，焦点回到打开它的那个控件（按动作 id + 对象重新查找，因为重绘会换掉节点）。
+- 这些调用都经过与附着同样的重绑定重试：删除当前附着的会话本身会释放本连接的附着，调用因此在其后发出并在
+  绑定被替换时重试一次。
+
+组件状态一律取自 token：`:hover` 用 `--dsw-alias-interactive-bg-hover`、输入类用 `--dsw-alias-border-l4`
+加强边框、主按钮用 `--dsw-alias-button-info-hover`、开关悬停用同一填充做 2px 光晕；`:focus-visible` 的
+2px 环来自 `tokens.css` 的全局规则（DSH 的 focus.css 镜像），`page.css` 不新增颜色字面量。
+
 ## 消息反馈与首启引导
 
 - 消息反馈：每条已提交的助手回答下面有一对拇指控件（`feedback:up`／`feedback:down`，`data` 是条目 id）。

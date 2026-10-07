@@ -26,6 +26,7 @@ import {
 	type PanelGroup,
 	type PanelInput,
 	type PanelModal,
+	type PanelPending,
 	type PanelRow,
 	type PanelSpec,
 	type PanelText,
@@ -435,12 +436,32 @@ function closeGlyph(): SVGSVGElement {
 }
 
 /** One row's buttons: the group header's and a row's actions share one shape. */
-function panelButton(action: PanelButton, report: (action: PanelAction) => void): HTMLButtonElement {
+/** Whether this control is the one whose call the page has in flight. */
+function isPending(pending: PanelPending | undefined, action: { readonly id: string; readonly data?: string }): boolean {
+	return pending !== undefined && pending.id === action.id && (pending.data ?? "") === (action.data ?? "");
+}
+
+/** A control whose call is in flight: it reports itself busy and refuses a second activation. */
+function markPending(node: HTMLElement, pending: PanelPending | undefined, action: { readonly id: string; readonly data?: string }): void {
+	if (!isPending(pending, action)) return;
+	node.classList.add("pending");
+	node.setAttribute("aria-busy", "true");
+	if (node instanceof HTMLButtonElement || node instanceof HTMLInputElement || node instanceof HTMLSelectElement) {
+		node.disabled = true;
+	}
+}
+
+function panelButton(
+	action: PanelButton,
+	report: (action: PanelAction) => void,
+	pending?: PanelPending,
+): HTMLButtonElement {
 	const node = button(`panel-button tone-${action.tone}`);
 	node.dataset.action = action.id;
 	if (action.data !== undefined) node.dataset.actionData = action.data;
 	node.textContent = action.label;
 	node.disabled = action.disabled === true;
+	markPending(node, pending, action);
 	node.addEventListener("click", () => report({ kind: "command", id: action.id, data: action.data }));
 	return node;
 }
@@ -458,6 +479,9 @@ export function createRenderer(
 	const drafts = new Map<string, string>();
 	/** The modal already in the DOM; a rebuild would drop what the reader typed into it. */
 	let modalKey: string | undefined;
+	/** The open modal's submit and message line, so a state flip updates them without a rebuild. */
+	let modalSubmit: HTMLButtonElement | undefined;
+	let modalMessage: HTMLParagraphElement | undefined;
 
 	const draft = (): string => elements.prompt.value.trim();
 
@@ -470,7 +494,7 @@ export function createRenderer(
 	const controlKey = (control: PanelControl): string => `${control.id}\u0000${control.data ?? ""}`;
 
 	/** One control: a switch applies at once, a select at once, text and numbers on commit. */
-	const controlElement = (control: PanelControl): HTMLElement => {
+	const controlElement = (control: PanelControl, pending?: PanelPending): HTMLElement => {
 		const key = controlKey(control);
 		const emit = (value: string): void => {
 			drafts.delete(key);
@@ -484,6 +508,7 @@ export function createRenderer(
 			input.disabled = control.disabled === true;
 			input.addEventListener("change", () => emit(String(input.checked)));
 			label.append(input, element("span", "panel-switch-track"));
+			markPending(label, pending, control);
 			return label;
 		}
 		if (control.kind === "select") {
@@ -498,6 +523,7 @@ export function createRenderer(
 			}
 			select.disabled = control.disabled === true;
 			select.addEventListener("change", () => emit(select.value));
+			markPending(select, pending, control);
 			return select;
 		}
 		const input = document.createElement("input");
@@ -509,6 +535,7 @@ export function createRenderer(
 		if (control.step !== undefined) input.step = String(control.step);
 		input.disabled = control.disabled === true;
 		input.addEventListener("input", () => drafts.set(key, input.value));
+		markPending(input, pending, control);
 		input.addEventListener("change", () => {
 			// A number outside the host's range is answered here, in the reader's language, and
 			// keeps the draft so the reader can correct it instead of losing what they typed.
@@ -526,7 +553,7 @@ export function createRenderer(
 		return input;
 	};
 
-	const rowElementOf = (row: PanelRow): HTMLElement => {
+	const rowElementOf = (row: PanelRow, pending?: PanelPending): HTMLElement => {
 		const node = element("div", "panel-row");
 		node.dataset.rowId = row.id;
 		const text = element("div", "panel-row-text");
@@ -539,18 +566,18 @@ export function createRenderer(
 		node.append(text);
 		if (row.controls !== undefined && row.controls.length > 0) {
 			const controls = element("div", "panel-controls");
-			for (const control of row.controls) controls.append(controlElement(control));
+			for (const control of row.controls) controls.append(controlElement(control, pending));
 			node.append(controls);
 		}
 		if (row.actions !== undefined && row.actions.length > 0) {
 			const actions = element("div", "panel-actions");
-			for (const action of row.actions) actions.append(panelButton(action, report));
+			for (const action of row.actions) actions.append(panelButton(action, report, pending));
 			node.append(actions);
 		}
 		return node;
 	};
 
-	const groupElement = (group: PanelGroup): HTMLElement => {
+	const groupElement = (group: PanelGroup, pending?: PanelPending): HTMLElement => {
 		const node = element("section", "panel-group");
 		const head = element("header", "panel-group-head");
 		const titles = element("div", "panel-group-titles");
@@ -559,13 +586,13 @@ export function createRenderer(
 		head.append(titles);
 		if (group.actions !== undefined && group.actions.length > 0) {
 			const actions = element("div", "panel-actions");
-			for (const action of group.actions) actions.append(panelButton(action, report));
+			for (const action of group.actions) actions.append(panelButton(action, report, pending));
 			head.append(actions);
 		}
 		node.append(head);
 		const rows = element("div", "panel-rows");
 		if (group.rows.length === 0) rows.append(element("p", "panel-empty", group.empty ?? copy("panel.empty")));
-		else for (const row of group.rows) rows.append(rowElementOf(row));
+		else for (const row of group.rows) rows.append(rowElementOf(row, pending));
 		node.append(rows);
 		if (group.footnote !== undefined) node.append(element("p", "panel-footnote", group.footnote));
 		return node;
@@ -630,7 +657,7 @@ export function createRenderer(
 		for (const notice of panel.notices) node.append(element("p", `panel-notice ${notice.tone}`, notice.text));
 		const previousInput = container?.querySelector<HTMLElement>("form[data-input-row]") ?? undefined;
 		for (const input of panel.inputs ?? []) node.append(inputElement(input, previousInput));
-		for (const group of panel.groups) node.append(groupElement(group));
+		for (const group of panel.groups) node.append(groupElement(group, panel.pending));
 		for (const text of panel.texts ?? []) node.append(textElement(text));
 		return node;
 	};
@@ -639,14 +666,38 @@ export function createRenderer(
 	 * The modal's fields are read on submit, and the modal is only rebuilt when its identity or
 	 * default values change, so a rebuild elsewhere in the view never drops a half-typed field.
 	 */
+	/**
+	 * The modal's in-flight and message state, applied on every render: a rebuild would drop what the
+	 * reader typed, so the submit and the message line are updated in place instead.
+	 */
+	const applyModalState = (modal: PanelModal): void => {
+		if (modalSubmit !== undefined) {
+			modalSubmit.disabled = modal.pending === true;
+			modalSubmit.classList.toggle("pending", modal.pending === true);
+			if (modal.pending === true) modalSubmit.setAttribute("aria-busy", "true");
+			else modalSubmit.removeAttribute("aria-busy");
+		}
+		if (modalMessage !== undefined) {
+			const notice = modal.notice;
+			modalMessage.textContent = notice?.text ?? "";
+			modalMessage.className = notice === undefined ? "modal-notice" : `modal-notice ${notice.tone}`;
+			modalMessage.hidden = notice === undefined;
+		}
+	};
+
 	const renderModal = (modal: PanelModal | undefined): void => {
 		const key =
 			modal === undefined
 				? undefined
 				: `${modal.id}\u0000${modal.data ?? ""}\u0000${modal.fields.map((field) => `${field.id}=${field.value}`).join("\u0001")}`;
-		if (key === modalKey) return;
+		if (key === modalKey) {
+			if (modal !== undefined) applyModalState(modal);
+			return;
+		}
 		modalKey = key;
 		if (modal === undefined) {
+			modalSubmit = undefined;
+			modalMessage = undefined;
 			elements.modalRoot.replaceChildren();
 			elements.modalRoot.hidden = true;
 			return;
@@ -695,9 +746,15 @@ export function createRenderer(
 			report({ kind: "modal-submit", id: modal.id, data: modal.data, fields });
 		});
 		foot.append(cancel, submit);
-		card.append(head, body, foot);
+		const message = document.createElement("p");
+		message.className = "modal-notice";
+		message.hidden = true;
+		card.append(head, body, message, foot);
 		elements.modalRoot.replaceChildren(backdrop, card);
 		elements.modalRoot.hidden = false;
+		modalSubmit = submit;
+		modalMessage = message;
+		applyModalState(modal);
 		const first = modal.fields[0] === undefined ? undefined : inputs.get(modal.fields[0].id);
 		first?.focus();
 	};

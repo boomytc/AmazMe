@@ -147,6 +147,7 @@ export {
 	type PanelModal,
 	type PanelNotice,
 	type PanelOption,
+	type PanelPending,
 	type PanelRow,
 	type PanelSpec,
 	type PanelText,

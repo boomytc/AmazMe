@@ -70,6 +70,11 @@ body.dock-open {
 	cursor: pointer;
 }
 
+.dock-tab:hover:not(.active) {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-secondary);
+}
+
 .dock-tab.active {
 	background: var(--dsw-alias-markdown-tag);
 	color: var(--dsw-alias-label-primary);
@@ -316,6 +321,12 @@ body.dock-open {
 	background: var(--dsw-alias-markdown-tag);
 }
 
+/* The selected row keeps its own hover fill: it reacts like every other row instead of sitting
+   inert under the pointer. */
+.session-row.attached:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
 .session-name {
 	min-width: 0;
 	overflow: hidden;
@@ -438,6 +449,10 @@ body.dock-open {
 
 .roster-filter::placeholder {
 	color: var(--dsw-alias-label-tertiary);
+}
+
+.roster-filter:hover:not(:focus) {
+	border-color: var(--dsw-alias-border-l4);
 }
 
 .roster-filter:focus-visible {
@@ -1043,13 +1058,25 @@ summary.disclosure-row {
 	--dsh-composer-text-max-height: 336px;
 }
 
+/* The queued-input stack: the composer card's width, centred, never wider than the dock. Without
+   its own width a block in a centred flex column is sized by its content, which a long unbroken
+   token makes wider than the column. */
+.queue {
+	width: 100%;
+	min-width: 0;
+	max-width: var(--dsh-composer-card-max-width);
+}
+
 /* Queued input (InputBar .notice): one caption strip above the card. */
 .queue-item {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	width: 100%;
-	max-width: var(--dsh-composer-card-max-width);
+	/* `min-width: 0` beats the flex item's automatic minimum size, which is the content's and would
+	   let an unbroken token push the strip past the dock at a narrow width. */
+	min-width: 0;
+	max-width: min(100%, var(--dsh-composer-card-max-width));
 	margin-bottom: 6px;
 	padding: 4px 4px 4px 8px;
 	border-radius: var(--dsw-radius-md);
@@ -1165,8 +1192,14 @@ summary.disclosure-row {
 	flex-direction: column;
 	gap: 8px;
 	width: 100%;
+	min-width: 0;
 	max-width: var(--dsh-composer-card-max-width);
 	margin-bottom: 8px;
+}
+
+.approval-card:hover {
+	border-color: var(--dsw-alias-border-l4);
+	border-left-color: var(--dsw-alias-state-business-primary);
 }
 
 .approval-card {
@@ -1205,14 +1238,15 @@ summary.disclosure-row {
 	padding: 8px 10px;
 	max-height: 120px;
 	overflow: auto;
+	/* A tool's arguments can be one long unbroken token; the detail wraps it instead of widening. */
+	white-space: pre-wrap;
+	word-break: break-all;
 	border-radius: var(--dsw-radius-sm);
 	background: var(--dsw-alias-markdown-code-block);
 	color: var(--dsw-alias-label-secondary);
 	font-family: var(--ds-font-family-code);
 	font-size: 12px;
 	line-height: 18px;
-	white-space: pre-wrap;
-	word-break: break-all;
 }
 
 .approval-actions {
@@ -1432,6 +1466,16 @@ summary.disclosure-row {
 	font-size: 12px;
 	line-height: 22px;
 	cursor: pointer;
+}
+
+.mode-option:hover:not(.selected) {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-secondary);
+}
+
+.mode-option:disabled {
+	color: var(--dsw-alias-label-dimmed);
+	cursor: default;
 }
 
 .mode-option.selected {
@@ -1677,7 +1721,9 @@ summary.disclosure-row {
 }
 
 .primary:disabled {
-	opacity: 0.4;
+	background: var(--dsw-alias-border-l4);
+	color: var(--dsw-alias-label-dimmed);
+	opacity: 0.6;
 	cursor: default;
 }
 
@@ -2004,6 +2050,8 @@ summary.disclosure-row {
 }
 
 .panel-button:disabled {
+	background: var(--dsw-alias-interactive-bg-hover);
+	border-color: var(--dsw-alias-border-l2);
 	color: var(--dsw-alias-label-dimmed);
 	cursor: default;
 }
@@ -2035,6 +2083,14 @@ summary.disclosure-row {
 	font-size: var(--dsh-content-font-size-secondary);
 }
 
+.panel-input:hover:not(:disabled) {
+	border-color: var(--dsw-alias-border-l4);
+}
+
+.panel-input:disabled {
+	color: var(--dsw-alias-label-dimmed);
+}
+
 .panel-number {
 	width: 96px;
 }
@@ -2045,6 +2101,14 @@ summary.disclosure-row {
 }
 
 .panel-input:focus-visible,
+.panel-select:hover:not(:disabled) {
+	border-color: var(--dsw-alias-border-l4);
+}
+
+.panel-select:disabled {
+	color: var(--dsw-alias-label-dimmed);
+}
+
 .panel-select:focus-visible {
 	outline: 2px solid var(--dsw-alias-state-business-primary);
 	outline-offset: 1px;
@@ -2098,6 +2162,14 @@ summary.disclosure-row {
 	border-radius: 999px;
 	background: var(--dsw-alias-bg-base);
 	transition: transform var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.panel-switch:hover .panel-switch-track {
+	box-shadow: 0 0 0 2px var(--dsw-alias-interactive-bg-hover);
+}
+
+.panel-switch input:disabled + .panel-switch-track {
+	opacity: 0.5;
 }
 
 .panel-switch input:checked + .panel-switch-track {
@@ -2235,6 +2307,11 @@ summary.disclosure-row {
 	resize: vertical;
 }
 
+.modal-input:hover,
+.modal-textarea:hover {
+	border-color: var(--dsw-alias-border-l4);
+}
+
 /* A field that holds a file or a JSON entry reads as code. */
 .modal-textarea.code {
 	font-family: var(--ds-font-family-code);
@@ -2246,6 +2323,24 @@ summary.disclosure-row {
 .modal-textarea:focus-visible {
 	outline: 2px solid var(--dsw-alias-state-business-primary);
 	outline-offset: 1px;
+}
+
+/* A control whose host call is in flight: it dims and refuses a second activation. */
+.pending {
+	opacity: 0.55;
+	cursor: progress;
+}
+
+/* What the last submit of an open modal said, inside the card. */
+.modal-notice {
+	margin: 0 14px;
+	color: var(--dsw-alias-label-secondary);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.modal-notice.error {
+	color: var(--dsw-alias-state-error-primary);
 }
 
 .modal-foot {
