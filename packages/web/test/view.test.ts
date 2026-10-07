@@ -16,6 +16,7 @@ import {
 	ATTACHMENT_MAX_BYTES,
 	attachmentRejection,
 	approvalCards,
+	approvalIndicator,
 	attachments,
 	buildWebView,
 	failureView,
@@ -995,6 +996,70 @@ describe("web view model", () => {
 		});
 		expect(approvalCards("zh", { pending: [] })).toEqual([]);
 		expect(approvalCards("zh", undefined)).toEqual([]);
+	});
+
+	test("keeps a header mark while approvals are pending, and drops it once they are decided", () => {
+		const pending = [
+			{ id: "approval-1", tool: "bash", detail: '{"command":"rm -rf build"}' },
+			{ id: "approval-2", tool: "write", detail: '{"path":"notes.md"}' },
+		];
+		const base = {
+			locale: "en" as const,
+			submitMode: "followUp" as const,
+			attachments: [],
+			rosterFilter: "",
+			feedback: undefined,
+			showWelcome: false,
+			focus: undefined,
+			history: [],
+			historyMore: false,
+			historyLoading: false,
+			draft: "",
+			commands: [],
+			completions: [],
+			paletteSelection: 0,
+			platform: "",
+			dock: {
+				open: false as const,
+				tab: "files" as const,
+				cwd: "",
+				workspace: undefined,
+				terminal: undefined,
+				conversations: undefined,
+			},
+			panel: CHAT_PANEL,
+			directory: undefined,
+			transcript: undefined,
+			attachedId: "s",
+			now: NOW,
+			models: undefined,
+			thinkingLevels: [],
+		};
+		const waiting = buildWebView({ ...base, approvals: { pending } });
+		// An empty transcript still carries the mark, and the cards stay the place to answer.
+		expect(waiting.blocks).toEqual([]);
+		expect(waiting.approvalIndicator).toEqual({ count: 2, label: "Waiting for approval 2" });
+		expect(waiting.approvals.map((card) => card.id)).toEqual(["approval-1", "approval-2"]);
+		expect(approvalIndicator("zh", { pending: pending.slice(0, 1) })).toEqual({ count: 1, label: "等待审批 1" });
+
+		const approvedId = waiting.approvals[0]?.approve.data;
+		const afterApprove = buildWebView({
+			...base,
+			approvals: { pending: pending.filter((request) => request.id !== approvedId) },
+		});
+		expect(afterApprove.approvalIndicator).toEqual({ count: 1, label: "Waiting for approval 1" });
+		expect(afterApprove.approvals.map((card) => card.id)).toEqual(["approval-2"]);
+
+		const deniedId = afterApprove.approvals[0]?.deny.data;
+		const afterDeny = buildWebView({
+			...base,
+			approvals: { pending: pending.filter((request) => request.id !== approvedId && request.id !== deniedId) },
+		});
+		expect(afterDeny.approvalIndicator).toBeUndefined();
+		expect(afterDeny.approvals).toEqual([]);
+		expect(approvalIndicator("en", { pending: [] })).toBeUndefined();
+		expect(approvalIndicator("en", undefined)).toBeUndefined();
+		expect(failureView("en", "cannot boot: x").approvalIndicator).toBeUndefined();
 	});
 
 	test("offers the run controls: compaction, and how a busy turn takes input", () => {

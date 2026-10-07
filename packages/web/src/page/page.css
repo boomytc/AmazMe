@@ -451,6 +451,15 @@ body.dock-open {
 	position: relative;
 }
 
+/* Pending approvals. Beside the usage figures, and outside the meter's overflow so a narrow header cannot clip it. */
+.approval-status {
+	flex: none;
+	color: var(--dsw-alias-state-business-primary);
+	font: var(--dsw-font-xs-13);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
 /* Context %, tokens, and cost. Always in the header, tabular so the figures do not jump. */
 .status-meter {
 	display: flex;
@@ -2021,6 +2030,7 @@ summary.disclosure-row {
 .composer-dock[hidden],
 .crumb-back[hidden],
 .dock[hidden],
+.approval-status[hidden],
 .approvals[hidden],
 .attachments[hidden],
 .submit-modes[hidden],

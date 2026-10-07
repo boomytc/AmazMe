@@ -102,6 +102,8 @@
 					<span class="crumb" id="session-title">{{header.noSession}}</span>
 				</div>
 				<div class="header-utilities">
+					<!-- Pending tool approvals. Stays in the header when the transcript is empty or the cards are off screen. -->
+					<span class="approval-status" id="approval-status" hidden></span>
 					<!-- Context occupancy, tokens, and cost. Always visible, the same three figures as the TUI top bar. -->
 					<div class="status-meter" id="status-meter">
 						<span id="meter-context">?</span>
