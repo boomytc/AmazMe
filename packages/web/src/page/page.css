@@ -405,9 +405,9 @@ body.dock-open {
 .crumbs {
 	display: flex;
 	align-items: center;
-	/* Shrinks ahead of the usage figures, down to 6em, so a long English connection keeps its text
-	   and the meter keeps whatever is left. The crumb ellipsizes inside that floor. */
-	flex: 0 1000 240px;
+	/* Shrinks last. The meter gives up its width first, then the connection. 6em is only the floor
+	   for viewports below 1024; at desktop widths the name stays much wider than that. */
+	flex: 0 1 240px;
 	gap: 4px;
 	min-width: 6em;
 	overflow: hidden;
@@ -447,17 +447,19 @@ body.dock-open {
 	white-space: nowrap;
 }
 
-/* min-width 0 lets this row shrink below the usage text. The meter is the only flexible child, so
-   the approval count, the actions, the connection, and the menu keep their width. safe flex-end
-   packs them to the right when they fit, and refuses to paint them back over the session name. */
+/* min-width 0 lets this row shrink below the usage text. The meter shrinks first, then the
+   connection. The approval count and the menu do not shrink. safe flex-end packs the row to the
+   right when it fits, and does not paint it back over the session name. */
 .header-utilities {
 	display: flex;
-	flex: 1 1 auto;
+	/* High shrink so this row yields before the session name. min-content is the approval count,
+	   the actions, and the menu: the meter and the connection are definite 0-width until they grow. */
+	flex: 1 100 auto;
 	align-items: center;
 	justify-content: safe flex-end;
 	gap: 8px;
 	margin-left: 20px;
-	min-width: 0;
+	min-width: min-content;
 	/* The seat of the management card, which opens below the entry. */
 	position: relative;
 }
@@ -472,14 +474,16 @@ body.dock-open {
 	white-space: nowrap;
 }
 
-/* Context %, tokens, and cost. Shrinks after the session name, and ellipsizes before the approval
-   count, the actions, the connection, or the menu give up width. */
+/* Context %, tokens, and cost. First to shrink: the figures ellipsize before the connection or
+   the session name give up width. */
 .status-meter {
 	display: flex;
-	flex: 1 1 auto;
+	flex: 1 1000 auto;
 	align-items: center;
 	gap: 8px;
+	width: 0;
 	min-width: 0;
+	max-width: max-content;
 	overflow: hidden;
 	color: var(--dsw-alias-label-caption);
 	font: var(--dsw-font-xs-13);
@@ -513,10 +517,16 @@ body.dock-open {
 }
 
 .connection {
-	flex: none;
-	flex-shrink: 0;
+	/* After the meter, before the session name. Width 0 keeps it out of the row's minimum; it grows
+	   back toward the full string, which stays on title and aria-label. */
+	flex: 4 100 auto;
+	width: 0;
+	min-width: 0;
+	max-width: max-content;
+	overflow: hidden;
 	color: var(--dsw-alias-label-caption);
 	font: var(--dsw-font-xs-13);
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
@@ -2593,6 +2603,14 @@ summary.disclosure-row {
 
 	.header-action-icon {
 		display: block;
+	}
+}
+
+/* Desktop widths keep the session name well above the 6em floor. The meter and the connection
+   absorb the squeeze first. */
+@media (min-width: 1024px) {
+	.crumbs {
+		min-width: 12em;
 	}
 }
 

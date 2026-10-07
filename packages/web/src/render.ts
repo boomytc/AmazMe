@@ -1552,6 +1552,7 @@ export function createRenderer(
 		setConnection(text: string, kind: "state" | "error"): void {
 			elements.connection.textContent = text;
 			elements.connection.title = text;
+			elements.connection.setAttribute("aria-label", text);
 			elements.connection.className = `connection ${kind}`;
 		},
 	};
