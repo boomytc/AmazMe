@@ -15,9 +15,18 @@ import {
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../../core/model-runtime.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import type { ConversationSummary, LaneStatus } from "../services/conversations.ts";
-import { IDLE_LANE } from "../services/conversations.ts";
-import { forkAt, formatLane, laneFrom, pageOlder, readFocus, readSummaries, writeFocus } from "../session-surface.ts";
+import { IDLE_LANE, type ConversationSummary, type LaneStatus, type ReturnPoint } from "../services/conversations.ts";
+import {
+	forkAt,
+	formatLane,
+	laneFrom,
+	navigateTree,
+	pageOlder,
+	readFocus,
+	readReturnPoints,
+	readSummaries,
+	type TreeNavigationDeps,
+} from "../session-surface.ts";
 import { configureHarnessHttp, createCodingRegistry, createHarnessSettings, ExecutionEnvs, findInitialAgentModel } from "./harness-setup.ts";
 import { selectSession } from "./sessions.ts";
 import { Subagent } from "./subagent.ts";
@@ -75,6 +84,17 @@ export interface DurableController {
 	toggleTasks(): Promise<void>;
 	/** Show and talk to another conversation. The choice is stored in the session. */
 	switchConversation(id: ConversationId): Promise<void>;
+	/** User entries before the tip of the shown conversation. */
+	returnPoints(): Promise<readonly ReturnPoint[]>;
+	/** Pi `branchSummary.skipPrompt`: leaving does not ask and does not summarize. */
+	skipBranchSummaryPrompt(): boolean;
+	/**
+	 * Leave the shown conversation back to ancestor entry `at` and focus the continuation.
+	 * A summary calls `Conversation.branchSummary`. No summary forks at `at` without that entry.
+	 */
+	leave(at: string, choice: { readonly summarize: boolean; readonly customInstructions?: string }): Promise<void>;
+	/** Abort an in-flight branch summary. The shown conversation stays put. */
+	cancelLeave(): void;
 	/** Fork the shown conversation at its newest entry and switch to the fork. */
 	fork(): Promise<void>;
 	/** Page one older slice of stored history above the transcript. */
@@ -240,9 +260,31 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			if (model === undefined) throw new Error(ref === undefined ? "No model selected" : "Current model is unavailable");
 			return model;
 		};
+		const summaryDeps = async (signal: AbortSignal): Promise<TreeNavigationDeps> => {
+			const branch = settingsManager.getBranchSummarySettings();
+			const ref = agentOf(state.conversation).model;
+			const model = ref === undefined ? undefined : modelRuntime.getModel(ref.provider, ref.modelId);
+			const auth = model === undefined ? undefined : await modelRuntime.getAuth(model, { signal });
+			const headers =
+				auth?.auth.headers === undefined
+					? undefined
+					: Object.fromEntries(Object.entries(auth.auth.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+			return {
+				skipPrompt: branch.skipPrompt,
+				reserveTokens: branch.reserveTokens,
+				signal,
+				retry: settingsManager.getRetrySettings(),
+				...(model === undefined ? {} : { model: auth?.auth.baseUrl === undefined ? model : { ...model, baseUrl: auth.auth.baseUrl } }),
+				...(auth?.auth.apiKey === undefined ? {} : { apiKey: auth.auth.apiKey }),
+				...(headers === undefined || Object.keys(headers).length === 0 ? {} : { headers }),
+				...(auth?.env === undefined ? {} : { env: auth.env }),
+			};
+		};
+		let leaveAbort: AbortController | undefined;
 		const show = async (id: ConversationId): Promise<void> => {
-			const next = await opened.conversation(id, context);
-			if (next === undefined) throw new Error(`Conversation ${id} does not exist`);
+			// Focus-only. An existing conversation: no summary, no new conversation.
+			const focused = await navigateTree(opened, { kind: "focus", conversationId: String(id) }, context);
+			const next = focused.conversation;
 			const nextState = await next.viewState(context);
 			unsubscribe();
 			conversation.dispose();
@@ -252,7 +294,6 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			historyCursor = null;
 			historyLoaded = false;
 			unsubscribe = nextState.subscribe((value) => update({ conversation: value, lane: laneNow(value) }));
-			await writeFocus(opened, String(next.id), context);
 			update({
 				conversation: nextState.value,
 				history: [],
@@ -316,6 +357,36 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 					unsubscribeTasks = graph.subscribe((value) => update({ tasks: value }));
 				}),
 			switchConversation: (id) => command(() => show(id)),
+			returnPoints: () => readReturnPoints(current, context),
+			skipBranchSummaryPrompt: () => settingsManager.getBranchSummarySkipPrompt(),
+			leave: (at, choice) =>
+				command(async () => {
+					leaveAbort = new AbortController();
+					try {
+						const result = await navigateTree(
+							opened,
+							{
+								kind: "leave",
+								conversationId: String(current.id),
+								at,
+								summarize: choice.summarize,
+								...(choice.customInstructions === undefined ? {} : { customInstructions: choice.customInstructions }),
+							},
+							context,
+							await summaryDeps(leaveAbort.signal),
+						);
+						if (result.cancelled) {
+							notice("info", "Branch summarization cancelled");
+							return;
+						}
+						await show(result.conversation.id);
+					} finally {
+						leaveAbort = undefined;
+					}
+				}),
+			cancelLeave: () => {
+				leaveAbort?.abort();
+			},
 			fork: () =>
 				command(async () => {
 					const created = await forkAt(opened, String(current.id), null, context);

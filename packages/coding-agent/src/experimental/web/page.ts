@@ -50,8 +50,11 @@ import {
 	type PageElements,
 	type PageRenderer,
 	type PanelAction,
+	type PanelGroup,
 	type PanelModal,
 	type PanelNotice,
+	type PanelRow,
+	type WebView,
 	PLUGIN_MCP_ADD_ACTION,
 	PLUGIN_MCP_ENABLED_ACTION,
 	PLUGIN_MCP_EXPOSURE_ACTION,
@@ -172,6 +175,47 @@ export function sessionTransitions(): <T>(run: () => Promise<T>) => Promise<T> {
 		const next = tail.then(run, run);
 		tail = next.catch(() => undefined);
 		return next;
+	};
+}
+
+/** Dock actions for leaving the focused conversation back to an earlier entry. The host performs them. */
+const LEAVE_ACTION = "conversation:leave";
+const LEAVE_SUMMARY_ACTION = "conversation:leave-summary";
+const LEAVE_CUSTOM_ACTION = "conversation:leave-custom";
+const LEAVE_CUSTOM_MODAL = "conversation:leave-custom-submit";
+
+/** Return-point rows on the conversations dock, sharing the host's leave path with `/tree`. */
+function withReturnPoints(view: WebView, points: readonly { readonly id: string; readonly label: string }[], skipPrompt: boolean): WebView {
+	if (view.dock.panel.id !== "conversations" || points.length === 0) return view;
+	const actions = (id: string): PanelRow["actions"] =>
+		skipPrompt
+			? [{ id: LEAVE_ACTION, label: "Return", tone: "default", data: id }]
+			: [
+					{ id: LEAVE_ACTION, label: "No summary", tone: "default", data: id },
+					{ id: LEAVE_SUMMARY_ACTION, label: "Summarize", tone: "default", data: id },
+					{ id: LEAVE_CUSTOM_ACTION, label: "Custom", tone: "default", data: id },
+				];
+	const rows: PanelRow[] = points.map((point) => ({
+		id: `return:${point.id}`,
+		title: point.label,
+		description: "Continue from here",
+		actions: actions(point.id),
+	}));
+	const group: PanelGroup = {
+		id: "conversations:return",
+		title: "Return to",
+		rows,
+		empty: "",
+	};
+	return {
+		...view,
+		dock: {
+			...view.dock,
+			panel: {
+				...view.dock.panel,
+				groups: [...view.dock.panel.groups, group],
+			},
+		},
 	};
 }
 
@@ -605,6 +649,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let historyLoaded = false;
 	/** The session's root conversation, once the conversation list has published it. */
 	let rootConversationId = "";
+	/** Earlier user entries of the focused conversation, so the dock can leave back to one. */
+	let returnPoints: readonly { readonly id: string; readonly label: string }[] = [];
+	let returnPointsKey = "";
+	let returnPointsRequest = 0;
 	/** The composer's draft, mirrored here so the command palette can be projected from it. */
 	let draft = "";
 	/** The host's argument completions for the command line being typed. */
@@ -696,9 +744,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		applyTheme(appearance);
 		document.documentElement.lang = documentLanguage(locale);
 		refreshCommandResources();
-		paintSafely(() =>
-			renderer.render(
-				buildWebView({
+		const built = buildWebView({
 					locale,
 					directory: directory.state.value,
 					transcript: shownTranscript(),
@@ -754,8 +800,34 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						modalPending,
 						...(modalNotice === undefined ? {} : { modalNotice }),
 					},
-				}),
-			),
+				});
+		paintSafely(() => renderer.render(withReturnPoints(built, returnPoints, painter.conversations?.branchSummarySkipPrompt === true)));
+		refreshReturnPoints();
+	};
+
+	const refreshReturnPoints = (): void => {
+		const selected = painter.conversations?.selected;
+		const service = painter.conversationsService;
+		if (selected === undefined || service === undefined) {
+			returnPoints = [];
+			returnPointsKey = "";
+			return;
+		}
+		const key = `${selected}:${painter.conversations?.revision ?? 0}`;
+		if (key === returnPointsKey) return;
+		returnPointsKey = key;
+		const request = ++returnPointsRequest;
+		void service.returnPoints(selected, BACKGROUND_CONTEXT).then(
+			(points) => {
+				if (request !== returnPointsRequest) return;
+				const same = points.length === returnPoints.length && points.every((point, index) => point.id === returnPoints[index]?.id && point.label === returnPoints[index]?.label);
+				returnPoints = points;
+				if (!same) paint();
+			},
+			() => {
+				if (request !== returnPointsRequest) return;
+				returnPoints = [];
+			},
 		);
 	};
 	directory.state.subscribe(() => paint());
@@ -1102,6 +1174,23 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * ratings, the header's model refresh — reporting a failure on the connection line. A panel row
 	 * action or a modal submit goes through `runPanelCall` instead, so its own control answers.
 	 */
+	const leaveAt = (at: string, summarize: boolean, customInstructions: string | null): void => {
+		const service = painter.conversationsService;
+		const id = painter.conversations?.selected;
+		if (service === undefined || id === undefined || at.length === 0) return;
+		history = [];
+		historyCursor = null;
+		historyLoaded = false;
+		dockOpen = true;
+		dockTab = "conversations";
+		settle(
+			service.leave(id, at, { summarize, customInstructions }, BACKGROUND_CONTEXT).then((result) => {
+				if (result.error !== null) throw new Error(result.error.message);
+				if (result.cancelled) renderer.setConnection("Branch summarization cancelled", "state");
+			}),
+		);
+	};
+
 	const settle = (operation: Promise<unknown> | undefined): void => {
 		if (operation === undefined) return;
 		void operation.then(
@@ -1257,9 +1346,35 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						historyLoaded = false;
 						dockOpen = true;
 						dockTab = "conversations";
+						// An existing conversation: focus only. No summary, no new conversation.
 						settle(painter.conversationsService?.select(id, BACKGROUND_CONTEXT));
 						return;
 					}
+					case LEAVE_ACTION:
+					case LEAVE_SUMMARY_ACTION: {
+						leaveAt(action.data ?? "", action.id === LEAVE_SUMMARY_ACTION, null);
+						return;
+					}
+					case LEAVE_CUSTOM_ACTION:
+						openModal(
+							{
+								id: LEAVE_CUSTOM_MODAL,
+								title: "Summarize branch?",
+								description: "Custom instructions are added to the default summary. Leave them empty for the default.",
+								data: action.data,
+								fields: [
+									{
+										id: "instructions",
+										label: "Custom instructions",
+										kind: "textarea",
+										value: "",
+									},
+								],
+								submit: "Summarize",
+							},
+							action,
+						);
+						return;
 					case CONVERSATIONS_REFRESH_ACTION:
 						settle(painter.conversationsService?.refresh(BACKGROUND_CONTEXT));
 						return;
@@ -1437,6 +1552,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						});
 						return;
 					}
+					case LEAVE_CUSTOM_MODAL:
+						closeModal();
+						leaveAt(action.data ?? "", true, fields.instructions ?? "");
+						return;
 					case COMPACT_MODAL:
 						runPanelCall({
 							id: action.id,

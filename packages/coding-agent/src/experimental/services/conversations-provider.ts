@@ -1,18 +1,90 @@
+import type { StreamFn } from "@amazme/agent";
+import type { RetryPolicy } from "@amazme/ai";
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
-import type { Conversation, ConversationId, Harness, TaskGraph } from "@amazme/durable";
-import { forkAt, laneFrom, pageOlder, readFocus, readSummaries, writeFocus } from "../session-surface.ts";
+import type { AgentState, Conversation, ConversationId, Harness, TaskGraph } from "@amazme/durable";
+import type { ModelRuntime } from "../../core/model-runtime.ts";
+import type { GenerateBranchSummaryOptions } from "../../core/compaction/branch-summarization.ts";
+import {
+	forkAt,
+	focusConversation,
+	laneFrom,
+	navigateTree,
+	pageOlder,
+	readFocus,
+	readReturnPoints,
+	readSummaries,
+	type TreeNavigationDeps,
+} from "../session-surface.ts";
 import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest, AgentQueueResponse } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
-import { Conversations, type ConversationsState, type HistoryPage, IDLE_LANE, type LaneStatus, type TaskSummary } from "./conversations.ts";
+import {
+	Conversations,
+	type ConversationsState,
+	type HistoryPage,
+	IDLE_LANE,
+	type LaneStatus,
+	type LeaveResult,
+	type ReturnPoint,
+	type TaskSummary,
+} from "./conversations.ts";
 
 /** The gap between two publications while a focused conversation streams. */
 const FOCUS_PUBLISH_MS = 250;
+
+export interface BranchSummarySettingsSource {
+	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean };
+	getRetrySettings(): RetryPolicy;
+}
+
+function definedHeaders(headers: Readonly<Record<string, string | null>>): Record<string, string> | undefined {
+	const entries = Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+	return entries.length === 0 ? undefined : Object.fromEntries(entries);
+}
+
+/** The conversation's saved model, with the runtime's auth, for `generateBranchSummary`. */
+export function summaryModelFromRuntime(harness: Harness, modelRuntime: ModelRuntime): NonNullable<ConversationsServiceOptions["summaryModel"]> {
+	return async (conversationId, signal) => {
+		const conversation = await harness.conversation(Number(conversationId) as ConversationId, TODO_CONTEXT);
+		if (conversation === undefined) return undefined;
+		const view = await conversation.viewState(TODO_CONTEXT);
+		try {
+			const agent = (view.value.docs["amazme.agent"] ?? {}) as AgentState;
+			const ref = agent.model;
+			if (ref === undefined) return undefined;
+			const model = modelRuntime.getModel(ref.provider, ref.modelId);
+			if (model === undefined) return undefined;
+			const auth = await modelRuntime.getAuth(model, { signal });
+			const headers = auth?.auth.headers === undefined ? undefined : definedHeaders(auth.auth.headers);
+			return {
+				model: auth?.auth.baseUrl === undefined ? model : { ...model, baseUrl: auth.auth.baseUrl },
+				...(auth?.auth.apiKey === undefined ? {} : { apiKey: auth.auth.apiKey }),
+				...(headers === undefined ? {} : { headers }),
+				...(auth?.env === undefined ? {} : { env: auth.env }),
+			};
+		} finally {
+			view.dispose();
+		}
+	};
+}
+
+/** Model and request auth for `generateBranchSummary`. Absent when the conversation has no model. */
+export interface BranchSummaryModelRequest {
+	readonly model: GenerateBranchSummaryOptions["model"];
+	readonly apiKey?: string;
+	readonly headers?: Record<string, string>;
+	readonly env?: Record<string, string>;
+	readonly streamFn?: StreamFn;
+}
 
 export interface ConversationsServiceOptions {
 	readonly harness: Harness;
 	/** The Session's root conversation: the one a presentation shows without focusing another. */
 	readonly root: Conversation;
+	/** Pi `branchSummary` settings. Absent means ask, and reserve 16384 tokens. */
+	readonly settings?: BranchSummarySettingsSource;
+	/** Resolves the model a leave-with-summary call summarizes with. */
+	readonly summaryModel?: (conversationId: string, signal: AbortSignal) => Promise<BranchSummaryModelRequest | undefined>;
 }
 
 /**
@@ -31,6 +103,7 @@ export function createConversationsService(
 		lane: IDLE_LANE,
 		conversations: [],
 		tasks: [],
+		branchSummarySkipPrompt: false,
 		view: null,
 	});
 	const controllers = new Map<string, ReturnType<typeof createAgentController>>();
@@ -136,11 +209,35 @@ export function createConversationsService(
 		listTimer.unref?.();
 	};
 
+	const skipPrompt = (): boolean => options.settings?.getBranchSummarySettings().skipPrompt ?? false;
+
+	const summaryDeps = async (conversationId: string, signal: AbortSignal): Promise<TreeNavigationDeps> => {
+		const settings = options.settings?.getBranchSummarySettings();
+		const request = await options.summaryModel?.(conversationId, signal);
+		return {
+			skipPrompt: settings?.skipPrompt ?? false,
+			reserveTokens: settings?.reserveTokens ?? 16384,
+			signal,
+			retry: options.settings?.getRetrySettings(),
+			...(request === undefined
+				? {}
+				: {
+						model: request.model,
+						...(request.apiKey === undefined ? {} : { apiKey: request.apiKey }),
+						...(request.headers === undefined ? {} : { headers: request.headers }),
+						...(request.env === undefined ? {} : { env: request.env }),
+						...(request.streamFn === undefined ? {} : { streamFn: request.streamFn }),
+					}),
+		};
+	};
+
 	const select = async (conversationId: string, context: Context): Promise<void> => {
-		const conversation = await conversationOf(conversationId);
-		if (conversation === undefined) return;
+		const existing = await conversationOf(conversationId);
+		if (existing === undefined) return;
 		closeFocus();
-		await writeFocus(options.harness, conversationId, context);
+		// Focus-only: an existing conversation, no summary, no new conversation.
+		const focused = await focusConversation(options.harness, conversationId, context);
+		if (focused === undefined) return;
 		const known = (id: string) =>
 			state.value.conversations.find((summary) => summary.id === id) ?? {
 				role: id === rootId ? ("main" as const) : ("fork" as const),
@@ -154,13 +251,54 @@ export function createConversationsService(
 		// The root's view is the Transcript service's; only another conversation needs one here.
 		if (conversationId === rootId) return;
 		focusContext = context;
-		const attached = await conversation.viewState(context);
+		const attached = await focused.viewState(context);
 		focus = { id: conversationId, state: attached };
 		focus.state.subscribe(() => publishFocus());
 		publish((draft) => {
 			draft.view = attached.value;
 			draft.lane = laneFrom(attached.value, draft.conversations.find((summary) => summary.id === conversationId) ?? known(conversationId));
 		});
+	};
+
+	const returnPoints = async (conversationId: string, context: Context): Promise<readonly ReturnPoint[]> => {
+		const conversation = await conversationOf(conversationId);
+		if (conversation === undefined) return [];
+		return readReturnPoints(conversation, context);
+	};
+
+	const leave = async (
+		conversationId: string,
+		at: string,
+		choice: { readonly summarize: boolean; readonly customInstructions?: string | null },
+		context: Context,
+	): Promise<LeaveResult> => {
+		const signal = new AbortController();
+		try {
+			const custom = choice.customInstructions?.trim();
+			const result = await navigateTree(
+				options.harness,
+				{
+					kind: "leave",
+					conversationId,
+					at,
+					summarize: choice.summarize,
+					...(custom === undefined || custom.length === 0 ? {} : { customInstructions: custom }),
+				},
+				context,
+				await summaryDeps(conversationId, signal.signal),
+			);
+			if (result.cancelled) return { conversationId: null, summarized: false, cancelled: true, error: null };
+			await select(String(result.conversation.id), context);
+			return {
+				conversationId: String(result.conversation.id),
+				summarized: result.summarized,
+				cancelled: false,
+				error: null,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { conversationId: null, summarized: false, cancelled: false, error: { code: "leave", message } };
+		}
 	};
 
 	const fork = async (conversationId: string, at: string | null, context: Context): Promise<Awaited<ReturnType<Conversations["fork"]>>> => {
@@ -178,6 +316,7 @@ export function createConversationsService(
 		const conversations = await readList();
 		publish((draft) => {
 			draft.conversations = conversations;
+			draft.branchSummarySkipPrompt = skipPrompt();
 		});
 		if (focus !== undefined && focus.id !== rootId) {
 			const attached = await (await conversationOf(focus.id))?.viewState(context);
@@ -214,6 +353,7 @@ export function createConversationsService(
 		publish((draft) => {
 			draft.conversations = conversations;
 			draft.selected = rootId;
+			draft.branchSummarySkipPrompt = skipPrompt();
 			draft.lane = laneFrom(
 				rootView?.value,
 				conversations.find((summary) => summary.id === rootId),
@@ -252,6 +392,8 @@ export function createConversationsService(
 			state,
 			select,
 			fork,
+			returnPoints,
+			leave,
 			refresh,
 			older,
 			async prompt(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentOperationResponse> {

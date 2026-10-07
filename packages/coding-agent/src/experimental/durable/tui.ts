@@ -102,6 +102,35 @@ class ListSelector extends Container implements Focusable {
 	}
 }
 
+/** One line of text, for custom branch-summary instructions. */
+class LinePrompt extends Container implements Focusable {
+	readonly #input = new Input();
+	#focused = false;
+
+	constructor(title: string, onSubmit: (value: string) => void, onCancel: () => void) {
+		super();
+		this.#input.onSubmit = onSubmit;
+		this.#input.onEscape = onCancel;
+		this.addChild(new DynamicBorder());
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
+		this.addChild(this.#input);
+		this.addChild(new DynamicBorder());
+	}
+
+	get focused(): boolean {
+		return this.#focused;
+	}
+	set focused(value: boolean) {
+		this.#focused = value;
+		this.#input.focused = value;
+	}
+
+	handleInput(data: string): void {
+		this.#input.handleInput(data);
+	}
+}
+
 /** The summary that replaced earlier context: collapsed to one line until expanded. */
 class CompactionComponent extends Box {
 	readonly #summary: string;
@@ -261,6 +290,11 @@ class DurableTui {
 
 	restoreEditor(): void {
 		this.mount(this.#editor);
+	}
+
+	/** Escape during a branch summary cancels that summary; otherwise it aborts the turn. */
+	setEscape(handler: () => void): void {
+		this.#editor.onEscape = handler;
 	}
 
 	apply(view: DurableView): void {
@@ -581,20 +615,84 @@ export async function runDurableTui(source: DurableViewSource, controller: Durab
 	};
 
 	const selectConversation = (): void => {
-		const snapshot = source.current();
-		const items: SelectItem[] = snapshot.conversations.map((candidate) => ({
-			value: String(candidate.id),
-			label: `${"  ".repeat(candidate.depth)}${candidate.label}`,
-			description: `${String(candidate.id) === String(snapshot.conversation.conversation.id) ? "shown · " : ""}${candidate.role}`,
-		}));
+		void (async () => {
+			const snapshot = source.current();
+			const points = await controller.returnPoints();
+			const items: SelectItem[] = [
+				...snapshot.conversations.map((candidate) => ({
+					value: `focus:${String(candidate.id)}`,
+					label: `${"  ".repeat(candidate.depth)}${candidate.label}`,
+					description: `${String(candidate.id) === String(snapshot.conversation.conversation.id) ? "shown · " : ""}${candidate.role}`,
+				})),
+				...points.map((point) => ({
+					value: `leave:${point.id}`,
+					label: point.label,
+					description: "return",
+				})),
+			];
+			const selector = new ListSelector(
+				"Switch to:",
+				items,
+				(value) => {
+					view.restoreEditor();
+					if (value.startsWith("leave:")) {
+						leaveFrom(value.slice("leave:".length));
+						return;
+					}
+					const id = value.startsWith("focus:") ? value.slice("focus:".length) : value;
+					void controller.switchConversation(Number(id) as ConversationId);
+				},
+				() => view.restoreEditor(),
+			);
+			view.mount(selector);
+		})();
+	};
+
+	const runLeave = (at: string, summarize: boolean, customInstructions?: string): void => {
+		if (summarize) view.setEscape(() => controller.cancelLeave());
+		void controller
+			.leave(at, {
+				summarize,
+				...(customInstructions === undefined ? {} : { customInstructions }),
+			})
+			.finally(() => view.setEscape(() => void controller.abort()));
+	};
+
+	const leaveFrom = (at: string): void => {
+		if (controller.skipBranchSummaryPrompt()) {
+			runLeave(at, false);
+			return;
+		}
 		const selector = new ListSelector(
-			"Switch to:",
-			items,
-			(value) => {
+			"Summarize branch?",
+			[
+				{ value: "no", label: "No summary" },
+				{ value: "yes", label: "Summarize" },
+				{ value: "custom", label: "Summarize with custom prompt" },
+			],
+			(choice) => {
 				view.restoreEditor();
-				void controller.switchConversation(Number(value) as ConversationId);
+				if (choice === "custom") {
+					const prompt = new LinePrompt(
+						"Custom summarization instructions",
+						(text) => {
+							view.restoreEditor();
+							runLeave(at, true, text);
+						},
+						() => {
+							view.restoreEditor();
+							selectConversation();
+						},
+					);
+					view.mount(prompt);
+					return;
+				}
+				runLeave(at, choice === "yes");
 			},
-			() => view.restoreEditor(),
+			() => {
+				view.restoreEditor();
+				selectConversation();
+			},
 		);
 		view.mount(selector);
 	};

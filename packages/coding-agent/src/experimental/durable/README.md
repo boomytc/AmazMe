@@ -39,7 +39,7 @@ credentials are shared.
 - thinking key (Shift+Tab): cycle thinking levels
 - `/compact [instructions]`: summarize older context; reports "Nothing to compact" when the context fits in
   `compaction.keepRecentTokens`
-- `/tree` or `/agents`: switch conversations. Rows are indented by fork or subagent depth, and the footer names the lane, model, thinking level, and run.
+- `/tree` or `/agents`: switch to a conversation that already exists, or return to an earlier user entry of the one shown. Returning asks whether to summarize unless `branchSummary.skipPrompt` is set. A summary calls `Conversation.branchSummary` and focuses the continuation. Switching does not write a summary and does not create a conversation. Rows are indented by fork or subagent depth, and the footer names the lane, model, thinking level, and run.
 - `/fork`: fork the shown conversation at its newest entry and switch to it. The choice is stored in the session, so the next open of this sqlite file returns to it.
 - `/older`: page stored history above the active transcript
 - `/tasks`: hide or show the task panel
@@ -65,4 +65,4 @@ early.
 A turn that ends without an answer shows a notice; one recovered after a restart does not, since only submissions
 made by this process are watched.
 
-Not here: sessions list and resume picker, extensions, prompt templates, images, `/login`. Forks are `Conversation.fork`; there is no leaf pointer and no branch-summary entry. The focused conversation is the session document `amazme.session.focus`.
+Not here: sessions list and resume picker, extensions, prompt templates, images, `/login`. Forks at the tip are `Conversation.fork`. Leaving an earlier entry with a summary is `Conversation.branchSummary`; there is no leaf pointer. The focused conversation is the session document `amazme.session.focus`.
