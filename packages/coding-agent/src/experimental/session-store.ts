@@ -84,6 +84,8 @@ export async function writeSessionMirror(input: {
 	readonly sessionId: string;
 	readonly cwd: string;
 	readonly createdAt: number;
+	/** The display name `/name` reads. Written as `session_info` so the terminal's own reader sees it. */
+	readonly name?: string;
 	readonly entries: readonly {
 		readonly id: unknown;
 		readonly kind: string;
@@ -95,11 +97,43 @@ export async function writeSessionMirror(input: {
 		cwd: input.cwd,
 		timestamp: new Date(input.createdAt).toISOString(),
 	});
+	const entries = withSessionName(projection.entries, input.name);
 	await mkdir(dirname(input.path), { recursive: true });
 	const temporary = `${input.path}.tmp-${process.pid}`;
-	await writeFile(temporary, `${projection.entries.map(line).join("\n")}\n`, "utf8");
+	await writeFile(temporary, `${entries.map(line).join("\n")}\n`, "utf8");
 	await rename(temporary, input.path);
 	return projection.report;
+}
+
+/**
+ * Record a display name on a terminal session file, the way `/name` does. An empty name clears it.
+ * Returns the name the file now reports.
+ */
+export async function writeLocalSessionName(path: string, name: string): Promise<string | undefined> {
+	const manager = SessionManager.open(path);
+	manager.appendSessionInfo(name);
+	return manager.getSessionName();
+}
+
+/** Append the name the terminal's `/name` reads. A blank name leaves the file without one. */
+function withSessionName(
+	entries: readonly (SessionHeader | SessionEntry)[],
+	name: string | undefined,
+): readonly (SessionHeader | SessionEntry)[] {
+	const display = name?.trim() ?? "";
+	if (display.length === 0) return entries;
+	const parent = [...entries].reverse().find((entry) => entry.type !== "session");
+	const header = entries.find((entry) => entry.type === "session");
+	return [
+		...entries,
+		{
+			type: "session_info",
+			id: "session-name",
+			parentId: parent?.id ?? null,
+			timestamp: header?.timestamp ?? new Date(0).toISOString(),
+			name: display,
+		},
+	];
 }
 
 function line(entry: SessionHeader | SessionEntry): string {

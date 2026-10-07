@@ -21,6 +21,8 @@ import {
 	failureView,
 	formatBytes,
 	formatAge,
+	attachedSessionLabel,
+	statusMeter,
 	modelPicker,
 	modelPickerEmpty,
 	queuedInputs,
@@ -120,7 +122,7 @@ function viewOf(entries: EntryRecord[], docs: Record<string, JsonObject> = {}): 
 }
 
 function directoryOf(
-	sessions: readonly { sessionId: string; createdAt: number; cwd?: string }[],
+	sessions: readonly { sessionId: string; createdAt: number; cwd?: string; name?: string }[],
 ): SessionDirectoryLike {
 	return {
 		sessions: sessions.map((session) => ({
@@ -128,6 +130,7 @@ function directoryOf(
 			sessionId: session.sessionId,
 			createdAt: session.createdAt,
 			cwd: session.cwd ?? "/workspace/AmazMe",
+			...(session.name === undefined ? {} : { name: session.name }),
 		})),
 	};
 }
@@ -216,6 +219,88 @@ describe("web view model", () => {
 		expect(view("").empty).toBeUndefined();
 		expect(view("nothing").empty).toBe("No session matches that filter.");
 		expect(view("nothing").roster).toEqual([]);
+	});
+
+	test("shows the name /name stored and matches the roster on it", () => {
+		const directory = directoryOf([
+			{ sessionId: "alpha-1", createdAt: NOW, cwd: "/w/alpha", name: "Weekly report" },
+			{ sessionId: "beta-2", createdAt: NOW - 1_000, cwd: "/w/beta" },
+		]);
+		const named = rosterItems("en", directory, "alpha-1", NOW, "week");
+		expect(named.map((item) => [item.id, item.label, item.attached])).toEqual([["alpha-1", "Weekly report", true]]);
+		expect(rosterItems("en", directory, undefined, NOW).map((item) => item.label)).toEqual(["Weekly report", "beta-2"]);
+		expect(attachedSessionLabel(directory, "alpha-1")).toBe("Weekly report");
+		expect(attachedSessionLabel(directory, "beta-2")).toBe("beta-2");
+		expect(buildWebView({
+			locale: "en",
+			submitMode: "followUp",
+			attachments: [],
+			rosterFilter: "",
+			approvals: undefined,
+			feedback: undefined,
+			showWelcome: false,
+			draft: "",
+			commands: [],
+			completions: [],
+			paletteSelection: 0,
+			platform: "",
+			focus: undefined,
+			history: [],
+			historyMore: false,
+			historyLoading: false,
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined, conversations: undefined },
+			panel: CHAT_PANEL,
+			directory,
+			transcript: undefined,
+			attachedId: "alpha-1",
+			now: NOW,
+			models: undefined,
+			thinkingLevels: [],
+		}).sessionLabel).toBe("Weekly report");
+	});
+
+	test("keeps context percent, tokens, and cost on the meter", () => {
+		expect(statusMeter(undefined, undefined)).toEqual({ context: "?", tokens: "? / ?", cost: "$0.000", tone: "neutral" });
+		const answer = assistantEntry(2, [{ type: "text", text: "ok" }]);
+		const message = answer.model?.[0];
+		if (message?.role !== "assistant") throw new Error("expected an assistant message");
+		message.usage = {
+			input: 8000,
+			output: 1500,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 9500,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		const transcript = viewOf([answer], {
+			"amazme.usage": {
+				models: {
+					"test/test": {
+						input: 8000,
+						output: 1500,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 9500,
+						cost: { input: 1, output: 0.5, cacheRead: 0, cacheWrite: 0, total: 1.5 },
+					},
+				},
+				tools: {},
+			},
+		});
+		const models: ModelsStateLike = {
+			catalog: {
+				revision: 1,
+				availableModels: [{ provider: "test", modelId: "test", name: "Test", reasoning: false, contextWindow: 10_000 }],
+			},
+			configuration: { model: { provider: "test", modelId: "test" }, thinkingLevel: "off" },
+			refresh: { status: "idle" },
+		};
+		expect(statusMeter(transcript, models)).toEqual({
+			context: "95.0%",
+			tokens: "9.5k / 10k",
+			cost: "$1.500",
+			tone: "error",
+		});
 	});
 
 	test("projects committed entries into user, assistant, thinking, tool, and notice blocks", () => {

@@ -35,7 +35,7 @@ function loopback(provider: RemoteServiceProvider): RemoteServiceTransport {
 }
 
 const models: ModelsState = {
-	catalog: { revision: 1, availableModels: [{ provider: "p", modelId: "m", name: "M", reasoning: false }] },
+	catalog: { revision: 1, availableModels: [{ provider: "p", modelId: "m", name: "M", reasoning: false, contextWindow: 1000 }] },
 	configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "low" },
 	refresh: { status: "idle" },
 };

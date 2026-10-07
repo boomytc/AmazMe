@@ -213,6 +213,7 @@ export async function activateBuiltinClientServices(
 			await remoteManagement.detach(context);
 			await server.session.whenDetached(context);
 		},
+		rename: (sessionId, name, context) => remoteManagement.rename(sessionId, name, context),
 	};
 	const plugins = serverServices.use(PresentationPlugins);
 	const models = sessionServices.use(Models);

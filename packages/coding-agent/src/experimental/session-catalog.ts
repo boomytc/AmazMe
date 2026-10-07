@@ -10,6 +10,19 @@ export interface SessionCatalogMetadata {
 	readonly cwd: string;
 	/** The Session directory. Workers lock it and own the storage inside it. */
 	readonly path: string;
+	/**
+	 * The display name `/name` reads. Absent until someone sets one. Stored beside the transcript so
+	 * the roster can show it without opening the durable session.
+	 */
+	readonly name?: string;
+}
+
+/**
+ * The same normalization the terminal applies before it stores a session name: newlines become
+ * spaces, and a blank name clears the title.
+ */
+export function normalizeSessionName(name: string): string {
+	return name.replace(/[\r\n]+/g, " ").trim();
 }
 
 const METADATA_FILE = "meta.json";
@@ -49,15 +62,16 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 		return undefined;
 	}
 	if (typeof value !== "object" || value === null) return undefined;
-	const { createdAt, cwd } = value as { createdAt?: unknown; cwd?: unknown };
+	const { createdAt, cwd, name } = value as { createdAt?: unknown; cwd?: unknown; name?: unknown };
 	if (typeof createdAt !== "number" || typeof cwd !== "string") return undefined;
-	return { id, createdAt, cwd, path };
+	const display = typeof name === "string" ? normalizeSessionName(name) : "";
+	return { id, createdAt, cwd, path, ...(display.length === 0 ? {} : { name: display }) };
 }
 
 /** Create an empty Session. Its worker creates the storage on first open. */
 export async function createSession(
 	sessionDir: string,
-	options: { readonly id?: string; readonly cwd: string },
+	options: { readonly id?: string; readonly cwd: string; readonly name?: string },
 ): Promise<SessionCatalogMetadata> {
 	const id = options.id ?? randomUUID();
 	if (!isSessionId(id)) throw new Error(`Invalid session ID: ${id}`);
@@ -69,12 +83,43 @@ export async function createSession(
 		if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`Session ${id} already exists`);
 		throw error;
 	}
-	const metadata: SessionCatalogMetadata = { id, createdAt: Date.now(), cwd: options.cwd, path };
-	await writeFile(
-		join(path, METADATA_FILE),
-		`${JSON.stringify({ createdAt: metadata.createdAt, cwd: metadata.cwd }, null, "\t")}\n`,
-	);
+	const display = options.name === undefined ? "" : normalizeSessionName(options.name);
+	const metadata: SessionCatalogMetadata = {
+		id,
+		createdAt: Date.now(),
+		cwd: options.cwd,
+		path,
+		...(display.length === 0 ? {} : { name: display }),
+	};
+	await writeFile(join(path, METADATA_FILE), `${JSON.stringify(metadataFile(metadata), null, "\t")}\n`);
 	return metadata;
+}
+
+/**
+ * Set or clear the display name `/name` reads. An empty name removes it. The transcript is left
+ * alone: the roster reads this file, and the terminal mirror copies the name when it is rewritten.
+ */
+export async function writeSessionName(sessionDir: string, id: string, name: string): Promise<SessionCatalogMetadata> {
+	const current = await readSession(sessionDir, id);
+	if (current === undefined) throw new Error(`Unknown session: ${id}`);
+	const display = normalizeSessionName(name);
+	const metadata: SessionCatalogMetadata = {
+		id: current.id,
+		createdAt: current.createdAt,
+		cwd: current.cwd,
+		path: current.path,
+		...(display.length === 0 ? {} : { name: display }),
+	};
+	await writeFile(join(current.path, METADATA_FILE), `${JSON.stringify(metadataFile(metadata), null, "\t")}\n`);
+	return metadata;
+}
+
+function metadataFile(metadata: SessionCatalogMetadata): { createdAt: number; cwd: string; name?: string } {
+	return {
+		createdAt: metadata.createdAt,
+		cwd: metadata.cwd,
+		...(metadata.name === undefined ? {} : { name: metadata.name }),
+	};
 }
 
 /** Delete a Session directory. Its worker must be closed first. */

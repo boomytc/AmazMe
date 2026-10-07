@@ -47,11 +47,13 @@ import {
 	createSession as createCatalogSession,
 	deleteSession,
 	listSessions as listCatalogSessions,
+	normalizeSessionName,
 	readSession,
 	type SessionCatalogMetadata,
+	writeSessionName,
 } from "./session-catalog.ts";
 import { SessionPluginSelectionConflictError, SessionWorkerManager } from "./session-worker-manager.ts";
-import { listLocalSessions } from "./session-store.ts";
+import { findLocalSessionPath, listLocalSessions, writeLocalSessionName } from "./session-store.ts";
 
 export const ENV_SERVER_DIR = "AMAZME_SERVER_DIR";
 export const ENV_SERVER_ID = "AMAZME_SERVER_ID";
@@ -405,18 +407,22 @@ async function startServerBackend(
 		// the working directory its header records, and its worker seeds the transcript from the file.
 		const local = (await listLocalSessions(process.cwd())).find((session) => session.id === sessionId);
 		if (local === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd });
+		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd, name: local.name });
 		return adopted;
 	};
 	const createSession = (createOptions: SessionCreateOptions): Promise<SessionCatalogMetadata> =>
 		createCatalogSession(sessionDir, { ...createOptions, cwd: process.cwd() });
-	const summarize = (metadata: SessionCatalogMetadata, source: SessionSource = "host"): SessionSummary => ({
-		serverId,
-		sessionId: metadata.id,
-		createdAt: metadata.createdAt,
-		cwd: metadata.cwd,
-		source,
-	});
+	const summarize = (metadata: SessionCatalogMetadata, source: SessionSource = "host", name?: string): SessionSummary => {
+		const display = (name ?? metadata.name)?.trim() ?? "";
+		return {
+			serverId,
+			sessionId: metadata.id,
+			createdAt: metadata.createdAt,
+			cwd: metadata.cwd,
+			source,
+			...(display.length === 0 ? {} : { name: display }),
+		};
+	};
 
 	/**
 	 * The session list one client reads: the Sessions this host owns, plus the terminal sessions it
@@ -424,9 +430,13 @@ async function startServerBackend(
 	 * one row whichever side made it.
 	 */
 	const listSummaries = async (): Promise<SessionSummary[]> => {
-		const hosted = (await listSessions()).map((metadata) => summarize(metadata));
+		const locals = await listLocalSessions(process.cwd());
+		const localName = new Map(locals.map((session) => [session.id, session.name]));
+		// A hosted session keeps the name in its catalog. Until that is set, the terminal file's
+		// `/name` is what the roster shows, so a session named in the terminal stays readable.
+		const hosted = (await listSessions()).map((metadata) => summarize(metadata, "host", metadata.name ?? localName.get(metadata.id)));
 		const owned = new Set(hosted.map((summary) => summary.sessionId));
-		const locals = (await listLocalSessions(process.cwd()))
+		const unowned = locals
 			.filter((session) => !owned.has(session.id))
 			.map((session) =>
 				summarize(
@@ -435,12 +445,38 @@ async function startServerBackend(
 						createdAt: session.createdAt,
 						cwd: session.cwd,
 						path: session.path,
+						...(session.name === undefined ? {} : { name: session.name }),
 					},
 					"local",
 				),
 			);
-		return [...hosted, ...locals].sort(
+		return [...hosted, ...unowned].sort(
 			(left, right) => left.sessionId.localeCompare(right.sessionId) || left.createdAt - right.createdAt,
+		);
+	};
+	const renameSession = async (sessionId: string, name: string): Promise<SessionSummary> => {
+		const normalized = normalizeSessionName(name);
+		const hosted = await readSession(sessionDir, sessionId);
+		if (hosted !== undefined) {
+			const updated = await writeSessionName(sessionDir, sessionId, normalized);
+			// The terminal reads the name from the mirror. Update it when the file already exists;
+			// the next mirror rewrite copies the catalog name again.
+			const mirror = await findLocalSessionPath(updated.cwd, sessionId).catch(() => undefined);
+			if (mirror !== undefined) await writeLocalSessionName(mirror, normalized);
+			return summarize(updated);
+		}
+		const local = (await listLocalSessions(process.cwd())).find((session) => session.id === sessionId);
+		if (local === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
+		const stored = await writeLocalSessionName(local.path, normalized);
+		return summarize(
+			{
+				id: local.id,
+				createdAt: local.createdAt,
+				cwd: local.cwd,
+				path: local.path,
+				...(stored === undefined ? {} : { name: stored }),
+			},
+			"local",
 		);
 	};
 	/**
@@ -495,6 +531,7 @@ async function startServerBackend(
 		administration,
 		list: () => listSummaries(),
 		create: async (createOptions) => summarize(await createSession(createOptions)),
+		rename: (sessionId, name) => renameSession(sessionId, name),
 		remove: async (sessionId, context) => {
 			const metadata = await resolveSession(sessionId, context);
 			await workers.closeSession(metadata, context);

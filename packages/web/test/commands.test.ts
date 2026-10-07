@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { commandPalette, parseCommandLine } from "../src/commands.ts";
-import { gestureKeys, isApplePlatform, matchShortcut, shortcuts, STOP_SEQUENCE_MS } from "../src/shortcuts.ts";
+import { gestureKeys, isApplePlatform, isStopChord, matchShortcut, shortcuts } from "../src/shortcuts.ts";
 
 const COMMANDS = [
 	{ name: "model", description: "Select the model", argumentHint: "<provider/model>", source: "builtin" as const },
@@ -115,7 +115,11 @@ describe("keyboard shortcuts", () => {
 		expect(matchShortcut({ code: "KeyN", primary: true, alt: true, shift: false })).toBe("session.new");
 		expect(matchShortcut({ code: "KeyM", primary: true, alt: true, shift: false })).toBe("view.cycle");
 		expect(matchShortcut({ code: "Slash", primary: false, alt: false, shift: false })).toBe("composer.focus");
-		expect(matchShortcut({ code: "Escape", primary: false, alt: false, shift: false })).toBe("run.stop");
+		expect(matchShortcut({ code: "KeyC", primary: false, alt: false, shift: false, control: true })).toBe("run.stop");
+		expect(matchShortcut({ code: "Escape", primary: false, alt: false, shift: false })).toBeUndefined();
+		expect(matchShortcut({ code: "KeyC", primary: true, alt: false, shift: false })).toBeUndefined();
+		expect(isStopChord({ code: "KeyC", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false })).toBe(true);
+		expect(isStopChord({ code: "KeyC", ctrlKey: true, metaKey: true, altKey: false, shiftKey: false })).toBe(false);
 		// A browser combination that only looks similar is left to the browser.
 		expect(matchShortcut({ code: "KeyN", primary: true, alt: false, shift: false })).toBeUndefined();
 		expect(matchShortcut({ code: "KeyM", primary: true, alt: true, shift: true })).toBeUndefined();
@@ -128,18 +132,17 @@ describe("keyboard shortcuts", () => {
 			["session.new", "\u2318\u2325N"],
 			["view.cycle", "\u2318\u2325M"],
 			["composer.focus", "/"],
-			["run.stop", "Esc"],
+			["run.stop", "Ctrl+C"],
 		]);
-		expect(shortcuts("en", "Win32").map((row) => row.keys)).toEqual(["Ctrl+Alt+N", "Ctrl+Alt+M", "/", "Esc"]);
+		expect(shortcuts("en", "Win32").map((row) => row.keys)).toEqual(["Ctrl+Alt+N", "Ctrl+Alt+M", "/", "Ctrl+C"]);
 		expect(shortcuts("zh", "MacIntel").map((row) => row.label)).toEqual([
 			"新建会话",
 			"切换管理视图",
 			"聚焦输入框",
-			"连按两次 Esc 停止回合",
+			"停止回合",
 		]);
 		expect(gestureKeys({ code: "KeyN", primary: true, alt: true, shift: true }, "Win32")).toBe("Ctrl+Alt+Shift+N");
 		expect(isApplePlatform("MacIntel")).toBe(true);
 		expect(isApplePlatform("Linux x86_64")).toBe(false);
-		expect(STOP_SEQUENCE_MS).toBe(500);
 	});
 });

@@ -18,6 +18,8 @@ export interface SessionSummary extends SessionAddress {
 	 * yet. Attaching a `local` one adopts it: the host stores it and seeds it from its transcript.
 	 */
 	source: SessionSource;
+	/** The display name `/name` reads, when the session has one. */
+	name?: string;
 }
 
 export interface SessionCreateOptions {
@@ -40,6 +42,11 @@ export interface SessionManagement {
 	remove(sessionId: string, context: Context): Promise<void>;
 	attach(sessionId: string, context: Context): Promise<void>;
 	detach(context: Context): Promise<void>;
+	/**
+	 * Set the display name `/name` reads, or clear it when `name` is blank. The returned summary is
+	 * the session as the roster now lists it.
+	 */
+	rename(sessionId: string, name: string, context: Context): Promise<SessionSummary>;
 }
 
 export const SessionManagement = defineService<SessionManagement>("amazme.session-management");

@@ -685,8 +685,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const composerCommands = (): readonly CommandLike[] => {
 		const host = painter.commands;
 		const skillsEnabled = settingValue("enableSkillCommands") !== "false";
-		if (skillsEnabled) return host;
-		return host.filter((command) => command.source !== "skill");
+		const listed = skillsEnabled ? host : host.filter((command) => command.source !== "skill");
+		// `/name` is a terminal command in the shared catalogue. This page runs it: the roster reads
+		// the name it stores, so the row is runnable here instead of marked terminal-only.
+		const rest = listed.filter((command) => command.name !== "name");
+		const insertAt = rest.findIndex((command) => command.source !== undefined && command.source !== "builtin");
+		const nameCommand: CommandLike = {
+			name: "name",
+			description: "Set the session display name",
+			argumentHint: "[name]",
+			source: "builtin",
+			availability: "all",
+		};
+		const index = insertAt === -1 ? rest.length : insertAt;
+		return [...rest.slice(0, index), nameCommand, ...rest.slice(index)];
 	};
 
 	/** The session's root conversation id, as the host's conversation list reports it. */
@@ -997,7 +1009,39 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * still apply; the host's own commands run on the host, and their note or problem reaches the
 	 * connection line.
 	 */
+	const runNameCommand = (args: string): void => {
+		const sessionId = painter.sessionId;
+		if (sessionId === undefined) {
+			renderer.setConnection(copy("page.nameNeedsSession"), "error");
+			return;
+		}
+		const requested = args.trim();
+		if (requested.length === 0) {
+			const current = directory.state.value?.sessions.find((session) => session.sessionId === sessionId)?.name;
+			const named = current !== undefined && current.length > 0;
+			renderer.setConnection(named ? copy("page.sessionName", { name: current }) : copy("page.nameUsage"), named ? "state" : "error");
+			return;
+		}
+		void management.rename(sessionId, requested, BACKGROUND_CONTEXT).then(
+			(summary) => {
+				const stored = summary.name ?? "";
+				renderer.setConnection(
+					stored === requested
+						? copy("page.sessionNameSet", { name: stored })
+						: copy("page.sessionNameNormalized", { from: requested, name: stored }),
+					"state",
+				);
+			},
+			(error: unknown) => {
+				renderer.setConnection(copy("page.commandFailed", { error: message(error) }), "error");
+			},
+		);
+	};
 	const runCommandLine = (name: string, args: string): void => {
+		if (name === "name") {
+			runNameCommand(args);
+			return;
+		}
 		const command = composerCommands().find((candidate) => candidate.name === name);
 		if (command !== undefined && command.source !== "builtin") {
 			void painter.expandCommand(name, args).then(

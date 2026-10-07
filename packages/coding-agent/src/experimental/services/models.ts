@@ -9,6 +9,8 @@ export interface ModelRef {
 export interface ModelSummary extends ModelRef {
 	name: string;
 	reasoning: boolean;
+	/** The model's context window, so a presentation can show occupancy without a second catalog. */
+	contextWindow: number;
 }
 
 export interface ModelsState {

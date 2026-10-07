@@ -61,6 +61,7 @@ export function createModelsService(
 				modelId: model.id,
 				name: model.name,
 				reasoning: model.reasoning,
+				contextWindow: model.contextWindow,
 			})),
 		};
 	};

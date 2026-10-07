@@ -23,7 +23,7 @@ import {
 	type PanelText,
 	SETTINGS_VIEW,
 } from "./panels.ts";
-import { isApplePlatform, matchShortcut, type ShortcutId, STOP_SEQUENCE_MS } from "./shortcuts.ts";
+import { isApplePlatform, isStopChord, matchShortcut, type ShortcutGesture, type ShortcutId } from "./shortcuts.ts";
 import { type MessageKey, translate } from "./strings.ts";
 import {
 	type Attachment,
@@ -61,8 +61,15 @@ export interface PageElements {
 	readonly queue: HTMLElement;
 	readonly composer: HTMLFormElement;
 	readonly prompt: HTMLTextAreaElement;
-	/** The composer's one action: send, or stop while a turn runs on an empty draft. */
+	/** Send. Stopping a turn is the separate stop control, not this button. */
 	readonly primary: HTMLButtonElement;
+	/** Stops the running turn. Hidden while the session is idle. */
+	readonly stop: HTMLButtonElement;
+	/** Context %, tokens, and cost. Always in the header. */
+	readonly meter: HTMLElement;
+	readonly meterContext: HTMLElement;
+	readonly meterTokens: HTMLElement;
+	readonly meterCost: HTMLElement;
 	/** The session dock: its tabs and the panel the open tab shows. */
 	readonly dock: HTMLElement;
 	readonly dockTabs: HTMLElement;
@@ -150,6 +157,11 @@ export function collectPageElements(): PageElements {
 		composer: pickElement("composer", HTMLFormElement),
 		prompt: pickElement("prompt", HTMLTextAreaElement),
 		primary: pickElement("primary", HTMLButtonElement),
+		stop: pickElement("stop", HTMLButtonElement),
+		meter: pick("status-meter"),
+		meterContext: pick("meter-context"),
+		meterTokens: pick("meter-tokens"),
+		meterCost: pick("meter-cost"),
 		submitModes: pick("submit-modes"),
 		modelTrigger: pickElement("model-trigger", HTMLButtonElement),
 		modelLabel: pick("model-label"),
@@ -364,32 +376,6 @@ function checkGlyph(): SVGSVGElement {
 	return svg;
 }
 
-/** The primary action's glyph: an arrow to send, a rounded square to stop (InputBar's icon slots). */
-function primaryGlyph(stop: boolean): SVGSVGElement {
-	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
-	svg.setAttribute("viewBox", "0 0 16 16");
-	svg.setAttribute("width", "16");
-	svg.setAttribute("height", "16");
-	svg.setAttribute("aria-hidden", "true");
-	const shape = document.createElementNS(SVG_NAMESPACE, stop ? "rect" : "path");
-	shape.setAttribute("fill", stop ? "currentColor" : "none");
-	if (stop) {
-		shape.setAttribute("x", "3");
-		shape.setAttribute("y", "3");
-		shape.setAttribute("width", "10");
-		shape.setAttribute("height", "10");
-		shape.setAttribute("rx", "3");
-	} else {
-		shape.setAttribute("d", "M8 13.4V3.4M3.6 7.4 8 3l4.4 4.4");
-		shape.setAttribute("stroke", "currentColor");
-		shape.setAttribute("stroke-width", "1.8");
-		shape.setAttribute("stroke-linecap", "round");
-		shape.setAttribute("stroke-linejoin", "round");
-	}
-	svg.append(shape);
-	return svg;
-}
-
 /** The leading 16px glyph box every disclosure row and notice row carries. */
 function leading(): HTMLElement {
 	return element("span", "disclosure-leading");
@@ -533,8 +519,6 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 	let lastView: WebView | undefined;
 	/** Reader disclosure choices, keyed by block id so a rebuild keeps them. */
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
-	/** The primary action's current role, so the glyph is only rebuilt when it flips. */
-	let stops = false;
 	/** Text a reader is typing into a panel control, keyed by action id and target. */
 	const drafts = new Map<string, string>();
 	/** The modal already in the DOM; a rebuild would drop what the reader typed into it. */
@@ -886,7 +870,7 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 		elements.viewBack.hidden = !open;
 		if (panel === undefined) {
 			elements.viewBody.replaceChildren();
-			const label = view.attachedId ?? copy("header.noSession");
+			const label = view.sessionLabel ?? copy("header.noSession");
 			elements.sessionTitle.textContent =
 				view.focus === undefined
 					? label
@@ -900,21 +884,35 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 		elements.viewBody.replaceChildren(panelElement(panel));
 	};
 
-	/**
-	 * The primary action is Stop while a turn runs on an empty draft, and Send otherwise — the same
-	 * rule InputBar uses — and Send is disabled with nothing to send.
-	 */
+	/** Send stays send. It is disabled when there is nothing to send. */
 	const renderPrimary = (): void => {
 		const pending = lastView?.attachments.length ?? 0;
-		const stop = lastView?.busy === true && draft().length === 0 && pending === 0;
-		if (stop !== stops) {
-			stops = stop;
-			elements.primary.replaceChildren(primaryGlyph(stop));
-			const label = copy(stop ? "composer.stop" : "composer.send");
-			elements.primary.setAttribute("aria-label", label);
-			elements.primary.title = label;
-		}
-		elements.primary.disabled = lastView?.attachedId === undefined || (!stop && draft().length === 0 && pending === 0);
+		elements.primary.disabled = lastView?.attachedId === undefined || (draft().length === 0 && pending === 0);
+	};
+
+	/** The stop control is on screen for the whole turn, whether or not the draft is empty. */
+	const renderStop = (): void => {
+		const busy = lastView?.busy === true && lastView.attachedId !== undefined;
+		elements.stop.hidden = !busy;
+		elements.stop.disabled = !busy;
+		const keys = lastView?.shortcuts.find((row) => row.id === "run.stop")?.keys;
+		elements.stop.title = keys === undefined ? copy("composer.stop") : `${copy("composer.stop")} (${keys})`;
+	};
+
+	/** Context %, tokens, and cost. Painted on every view, including before a session is attached. */
+	const renderMeter = (view: WebView): void => {
+		elements.meterContext.textContent = view.meter.context;
+		elements.meterTokens.textContent = view.meter.tokens;
+		elements.meterCost.textContent = view.meter.cost;
+		elements.meter.dataset.tone = view.meter.tone;
+		elements.meter.setAttribute(
+			"aria-label",
+			copy("header.meter", {
+				context: view.meter.context,
+				tokens: view.meter.tokens,
+				cost: view.meter.cost,
+			}),
+		);
 	};
 
 	/** A disclosure whose open state is the reader's, falling back to a per-block default. */
@@ -1006,6 +1004,7 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 	const sessionRow = (item: RosterItem): HTMLElement => {
 		const chip = button(item.attached ? "session-row attached" : "session-row");
 		chip.dataset.sessionId = item.id;
+		if (item.label !== item.id) chip.title = item.id;
 		const text = element("span", "session-text");
 		const name = element("span", "session-name", item.label);
 		// A terminal session a host has not adopted yet is worth naming: attaching it adopts it.
@@ -1440,6 +1439,8 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 			elements.prompt.disabled = detached;
 			elements.prompt.placeholder = composerPlaceholder(view.locale, view.attachedId);
 			renderPrimary();
+			renderStop();
+			renderMeter(view);
 
 			elements.queue.replaceChildren();
 			for (const item of view.queue) elements.queue.append(queueElement(item));
@@ -1481,11 +1482,7 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 				return;
 			}
 		}
-		if (text.length === 0 && (lastView?.attachments.length ?? 0) === 0) {
-			// An empty draft leaves the primary as the stop control; `Enter` on it must not no-op.
-			if (stops) renderer.onAbort();
-			return;
-		}
+		if (text.length === 0 && (lastView?.attachments.length ?? 0) === 0) return;
 		elements.prompt.value = "";
 		fitPrompt(elements.prompt);
 		renderPrimary();
@@ -1494,8 +1491,7 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 	});
 	elements.prompt.addEventListener("input", () => {
 		fitPrompt(elements.prompt);
-		// The draft's emptiness decides whether the primary sends or stops, and its text decides
-		// whether the command palette is open.
+		// An empty draft disables send. The text decides whether the command palette is open.
 		renderPrimary();
 		renderer.onDraftChange(elements.prompt.value);
 	});
@@ -1581,23 +1577,33 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 		if (target instanceof Node && (elements.modelMenu.contains(target) || elements.modelTrigger.contains(target))) return;
 		closeModelMenu();
 	});
-	/** The first Escape of a stop sequence; a second inside the window stops the turn. */
-	let stopArmedAt = 0;
+	const gestureOf = (event: KeyboardEvent): ShortcutGesture => {
+		if (isStopChord(event)) return { code: event.code, primary: false, alt: false, shift: false, control: true };
+		const primary = isApplePlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+		return { code: event.code, primary, alt: event.altKey, shift: event.shiftKey };
+	};
+	/** The composer or another field is copying a selection, so Ctrl+C stays copy. */
+	const copying = (event: KeyboardEvent): boolean => {
+		const target = event.target;
+		if ((target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) && target.selectionStart !== target.selectionEnd) return true;
+		const selected = document.getSelection()?.toString() ?? "";
+		return selected.length > 0;
+	};
 	document.addEventListener("keydown", (event) => {
 		if (event.defaultPrevented || event.isComposing) return;
+		const id = matchShortcut(gestureOf(event));
+		if (id === "run.stop") {
+			if (copying(event) || lastView?.busy !== true) return;
+			event.preventDefault();
+			renderer.onAbort();
+			return;
+		}
 		const target = event.target;
 		if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
 			// A field owns the unmodified keys; the product shortcuts below still apply.
 			if (!(event.altKey && (event.metaKey || event.ctrlKey))) return;
 		}
-		const primary = isApplePlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
-		const id = matchShortcut({
-			code: event.code,
-			primary,
-			alt: event.altKey,
-			shift: event.shiftKey,
-		});
-		if (id === undefined || id === "run.stop") return;
+		if (id === undefined) return;
 		event.preventDefault();
 		if (id === "composer.focus") elements.prompt.focus();
 		renderer.onShortcut(id);
@@ -1619,14 +1625,12 @@ export function createRenderer(elements: PageElements, onSelect: (sessionId: str
 			elements.modelTrigger.focus();
 			return;
 		}
-		// Nothing to dismiss: the first Escape arms the stop, a second one inside the window stops.
-		const now = Date.now();
-		if (lastView?.busy === true && now - stopArmedAt <= STOP_SEQUENCE_MS) {
-			stopArmedAt = 0;
-			renderer.onAbort();
-			return;
-		}
-		stopArmedAt = now;
+		// Escape never cancels a turn. While one is running it points at the stop control.
+		if (lastView?.busy === true) elements.stop.focus();
+	});
+	elements.stop.addEventListener("click", () => {
+		if (lastView?.busy !== true) return;
+		renderer.onAbort();
 	});
 	return renderer;
 }
