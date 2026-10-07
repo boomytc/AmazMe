@@ -1,71 +1,6 @@
-import { EventEmitter } from "node:events";
 import { describe, expect, test, vi } from "vitest";
-import { createHostSupervisor, spawnNodeChild, type HostChild } from "../src/host.ts";
-
-interface FakeHost {
-	readonly child: HostChild;
-	emitStdout(chunk: string): void;
-	emitStderr(chunk: string): void;
-	emitExit(code: number | null, signal: NodeJS.Signals | null): void;
-	emitError(error: Error): void;
-	readonly kills: string[];
-}
-
-function fakeHost(): FakeHost {
-	const stdout = new EventEmitter();
-	const stderr = new EventEmitter();
-	const events = new EventEmitter();
-	const kills: string[] = [];
-	const child: HostChild = {
-		stdout: {
-			onData(listener) {
-				stdout.on("data", listener);
-				return () => {
-					stdout.off("data", listener);
-				};
-			},
-		},
-		stderr: {
-			onData(listener) {
-				stderr.on("data", listener);
-				return () => {
-					stderr.off("data", listener);
-				};
-			},
-		},
-		onExit(listener) {
-			events.on("exit", listener);
-			return () => {
-				events.off("exit", listener);
-			};
-		},
-		onError(listener) {
-			events.on("error", listener);
-			return () => {
-				events.off("error", listener);
-			};
-		},
-		kill(signal) {
-			kills.push(signal);
-		},
-	};
-	return {
-		child,
-		emitStdout: (chunk) => {
-			stdout.emit("data", chunk);
-		},
-		emitStderr: (chunk) => {
-			stderr.emit("data", chunk);
-		},
-		emitExit: (code, signal) => {
-			events.emit("exit", code, signal);
-		},
-		emitError: (error) => {
-			events.emit("error", error);
-		},
-		kills,
-	};
-}
+import { createHostSupervisor, MAX_HOST_OUTPUT_CHARS, spawnNodeChild, type HostStartupFailure } from "../src/host.ts";
+import { fakeHost } from "./fake-host.ts";
 
 describe("host supervisor", () => {
 	test("resolves the page URL and stops the child", async () => {
@@ -167,11 +102,80 @@ describe("host supervisor", () => {
 
 	test("reports a spawn error", async () => {
 		const fake = fakeHost();
-		const supervisor = createHostSupervisor({ spawnHost: () => fake.child });
+		const seen: HostStartupFailure[] = [];
+		const supervisor = createHostSupervisor({
+			spawnHost: () => fake.child,
+			onStartupFailure: (failure) => {
+				seen.push(failure);
+			},
+		});
 		const pending = supervisor.start();
 		const assertion = expect(pending).rejects.toThrow(/failed to spawn: missing/);
+		fake.emitStderr("no such file\n");
 		fake.emitError(new Error("missing"));
 		await assertion;
+		expect(seen).toEqual([
+			{ kind: "spawn-error", message: "desktop host failed to spawn: missing", tail: "no such file\n" },
+		]);
+	});
+
+	test("keeps a bounded tail of stdout and stderr after the launch line", async () => {
+		const fake = fakeHost();
+		const supervisor = createHostSupervisor({ spawnHost: () => fake.child });
+		const pending = supervisor.start();
+		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		await pending;
+		fake.emitStdout("x".repeat(MAX_HOST_OUTPUT_CHARS));
+		fake.emitStderr("TAIL");
+		expect(supervisor.tail().length).toBe(MAX_HOST_OUTPUT_CHARS);
+		expect(supervisor.tail().endsWith("TAIL")).toBe(true);
+	});
+
+	test("reports an unexpected exit with the output tail", async () => {
+		const fake = fakeHost();
+		const seen: Array<{ code: number | null; signal: NodeJS.Signals | null; tail: string }> = [];
+		const supervisor = createHostSupervisor({
+			spawnHost: () => fake.child,
+			onUnexpectedExit: (detail) => {
+				seen.push(detail);
+			},
+		});
+		const pending = supervisor.start();
+		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		await pending;
+		fake.emitStderr("boom\n");
+		fake.emitExit(1, null);
+		expect(seen).toEqual([{ code: 1, signal: null, tail: "Web: http://127.0.0.1:1/\nboom\n" }]);
+	});
+
+	test("names an exit before readiness and keeps the output on that failure", async () => {
+		const fake = fakeHost();
+		const seen: HostStartupFailure[] = [];
+		const unexpected: unknown[] = [];
+		const supervisor = createHostSupervisor({
+			spawnHost: () => fake.child,
+			onStartupFailure: (failure) => {
+				seen.push(failure);
+			},
+			onUnexpectedExit: (detail) => {
+				unexpected.push(detail);
+			},
+		});
+		const pending = supervisor.start();
+		const assertion = expect(pending).rejects.toThrow(/exited before readiness \(code 1, signal null\)\nError: boom\n/);
+		fake.emitStdout("Error: boom\n");
+		fake.emitExit(1, null);
+		await assertion;
+		expect(seen).toEqual([
+			{
+				kind: "exit-before-ready",
+				message: "desktop host exited before readiness (code 1, signal null)",
+				code: 1,
+				signal: null,
+				tail: "Error: boom\n",
+			},
+		]);
+		expect(unexpected).toEqual([]);
 	});
 
 	test("reads a real process's launch line and stops it", async () => {

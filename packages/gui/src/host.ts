@@ -5,7 +5,34 @@ import { createReadinessParser } from "./readiness.ts";
 
 const DEFAULT_READINESS_TIMEOUT_MS = 60_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
-const MAX_STARTUP_OUTPUT_CHARS = 32_768;
+
+/**
+ * Stdout and stderr retained for a failure dialog, including output after the launch line.
+ * Older bytes are dropped. The dialog then shows the last few lines of this buffer.
+ */
+export const MAX_HOST_OUTPUT_CHARS = 32_768;
+
+/** Why `start` rejected. `message` is the sentence the rejection Error carries, without the tail. */
+export type HostStartupFailure =
+	| {
+			readonly kind: "spawn-error" | "readiness-timeout" | "invalid-output";
+			readonly message: string;
+			readonly tail: string;
+	  }
+	| {
+			readonly kind: "exit-before-ready";
+			readonly message: string;
+			readonly code: number | null;
+			readonly signal: NodeJS.Signals | null;
+			readonly tail: string;
+	  };
+
+/** A host that was ready and then left while the shell was not shutting it down. */
+export interface HostExitDetail {
+	readonly code: number | null;
+	readonly signal: NodeJS.Signals | null;
+	readonly tail: string;
+}
 
 /** Child the supervisor owns. Tests substitute a fake; the app uses a Node process. */
 export interface HostChild {
@@ -21,7 +48,10 @@ export interface HostSupervisorOptions {
 	readonly readinessTimeoutMs?: number;
 	readonly shutdownTimeoutMs?: number;
 	readonly log?: (chunk: string) => void;
-	readonly onUnexpectedExit?: (detail: { code: number | null; signal: NodeJS.Signals | null }) => void;
+	/** Structured cause when `start` rejects: spawn error, exit before ready, timeout, or bad output. */
+	readonly onStartupFailure?: (failure: HostStartupFailure) => void;
+	/** The child was ready, then exited while shutdown had not started. */
+	readonly onUnexpectedExit?: (detail: HostExitDetail) => void;
 }
 
 export interface HostSupervisor {
@@ -29,6 +59,8 @@ export interface HostSupervisor {
 	start(): Promise<string>;
 	/** Stop once. SIGTERM, then SIGKILL after the grace period. */
 	shutdown(): Promise<void>;
+	/** Bounded tail of stdout and stderr. Still grows after the launch line, then drops the head. */
+	tail(): string;
 }
 
 interface NodeChildOptions {
@@ -123,7 +155,7 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 	let readinessTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const note = (chunk: string): void => {
-		if (!ready) output = `${output}${chunk}`.slice(-MAX_STARTUP_OUTPUT_CHARS);
+		output = `${output}${chunk}`.slice(-MAX_HOST_OUTPUT_CHARS);
 		options.log?.(chunk);
 	};
 
@@ -146,17 +178,21 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 				clearTimeout(readinessTimer);
 				readinessTimer = undefined;
 			};
-			const fail = (error: unknown): void => {
+			const fail = (failure: HostStartupFailure): void => {
 				if (settled) return;
 				settled = true;
 				stopTimer();
-				const message = error instanceof Error ? error.message : String(error);
-				const diagnostic = output === "" ? "" : `\n${output}`;
-				reject(new Error(`${message}${diagnostic}`));
+				options.onStartupFailure?.(failure);
+				const diagnostic = failure.tail === "" ? "" : `\n${failure.tail}`;
+				reject(new Error(`${failure.message}${diagnostic}`));
 			};
 
 			readinessTimer = setTimeout(() => {
-				fail(new Error(`desktop host readiness timed out after ${String(readinessTimeoutMs)}ms`));
+				fail({
+					kind: "readiness-timeout",
+					message: `desktop host readiness timed out after ${String(readinessTimeoutMs)}ms`,
+					tail: output,
+				});
 				spawned.kill("SIGTERM");
 			}, readinessTimeoutMs);
 
@@ -171,19 +207,24 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 					stopTimer();
 					resolve(url);
 				} catch (error) {
-					fail(error);
+					const message = error instanceof Error ? error.message : String(error);
+					fail({ kind: "invalid-output", message, tail: output });
 					spawned.kill("SIGTERM");
 				}
 			});
 			spawned.stderr.onData(note);
 			spawned.onError((error) => {
-				fail(new Error(`desktop host failed to spawn: ${error.message}`));
+				fail({
+					kind: "spawn-error",
+					message: `desktop host failed to spawn: ${error.message}`,
+					tail: output,
+				});
 				exitResolve?.();
 			});
 			spawned.onExit((code, signal) => {
 				exitResolve?.();
 				if (ready) {
-					if (!shuttingDown) options.onUnexpectedExit?.({ code, signal });
+					if (!shuttingDown) options.onUnexpectedExit?.({ code, signal, tail: output });
 					return;
 				}
 				try {
@@ -194,11 +235,13 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 					stopTimer();
 					resolve(url);
 				} catch {
-					fail(
-						new Error(
-							`desktop host exited before readiness (code ${String(code)}, signal ${String(signal)})`,
-						),
-					);
+					fail({
+						kind: "exit-before-ready",
+						message: `desktop host exited before readiness (code ${String(code)}, signal ${String(signal)})`,
+						code,
+						signal,
+						tail: output,
+					});
 				}
 			});
 		});
@@ -234,5 +277,5 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 		return shutdownPromise;
 	};
 
-	return { start, shutdown };
+	return { start, shutdown, tail: () => output };
 }
