@@ -18,6 +18,21 @@ export const COMPACT_MODAL = "run:compact-submit";
 export const REFRESH_MODELS_ACTION = "run:model-refresh";
 /** How the next submit is applied while a turn runs: `data` is `steer` or `followUp`. */
 export const SUBMIT_MODE_ACTION = "run:submit-mode";
+/** Show or hide the session dock; the page owns whether it is open. */
+export const DOCK_TOGGLE_ACTION = "dock:toggle";
+/** Switch the dock to one tab: `data` is the tab id. */
+export const DOCK_TAB_ACTION = "dock:tab";
+/** List a directory in the workspace: `data` is the path relative to the working directory. */
+export const WORKSPACE_OPEN_ACTION = "workspace:open";
+/** Re-list the workspace's current directory. */
+export const WORKSPACE_RELOAD_ACTION = "workspace:reload";
+/** Read one file as text: `data` is the path relative to the working directory. */
+export const WORKSPACE_READ_ACTION = "workspace:read";
+/** Run a terminal command: `data` is the command line. */
+export const TERMINAL_RUN_ACTION = "terminal:run";
+/** Stop the running terminal command. */
+export const TERMINAL_STOP_ACTION = "terminal:stop";
+
 /** Drop one pending image before it is sent: `data` is the attachment id. */
 export const ATTACHMENT_REMOVE_ACTION = "composer:attachment-remove";
 /** Remove one session: `data` is the session id; the page confirms before the host call. */

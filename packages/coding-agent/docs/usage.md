@@ -161,6 +161,20 @@ its id, and removes one from a hover control behind a confirmation: its storage 
 host's session directory while the working directory itself is left alone. A draft in the composer,
 the filter text, and the open management view survive attaching, creating, and removing sessions.
 
+### The session's files and a shell
+
+The **Session tools** control in the header opens a dock beside the conversation with two tabs. **Files**
+browses the attached session's working directory: directories open, files read, **Up** steps back out,
+and a text file's content is shown whole (a large file says it is truncated). A binary file, a path that
+is not there any more, and a path above the working directory each say so — the workspace never resolves
+outside the session's directory.
+
+**Terminal** runs a command in that same directory with the shell path and command prefix from settings,
+streams its output into the panel, and reports the exit code. **Stop** cancels the running command and
+keeps what it printed. One command runs at a time, and the dock answers a second one instead of queueing
+it. The terminal uses the same execution path as the agent's own bash tool, so what you run by hand
+behaves like what the model runs.
+
 ### Commands, shortcuts, and copying
 
 Type `/` in the composer to open the command palette. It lists the session's own commands — `model`,

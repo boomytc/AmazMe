@@ -1,11 +1,18 @@
 export {
 	ATTACHMENT_REMOVE_ACTION,
 	COMPACT_ACTION,
+	DOCK_TAB_ACTION,
+	DOCK_TOGGLE_ACTION,
 	COMPACT_MODAL,
 	QUEUE_CANCEL_ACTION,
 	REFRESH_MODELS_ACTION,
 	SESSION_REMOVE_ACTION,
 	SESSION_REMOVE_MODAL,
+	TERMINAL_RUN_ACTION,
+	TERMINAL_STOP_ACTION,
+	WORKSPACE_OPEN_ACTION,
+	WORKSPACE_READ_ACTION,
+	WORKSPACE_RELOAD_ACTION,
 	SUBMIT_MODE_ACTION,
 } from "./actions.ts";
 export {
@@ -37,6 +44,21 @@ export {
 	type CommandPalette,
 	type CommandRow,
 } from "./commands.ts";
+export {
+	dockTabs,
+	dockView,
+	filesPanel,
+	terminalPanel,
+	workspaceSize,
+	type DockTab,
+	type DockTabId,
+	type DockView,
+	type DockViewInput,
+	type TerminalStateLike,
+	type WorkspaceEntryLike,
+	type WorkspaceStateLike,
+	type WorkspaceViewLike,
+} from "./dock.ts";
 export { formatMarkdown, safeHref, type InlineNode, type MarkdownNode } from "./markdown.ts";
 export {
 	gestureKeys,
@@ -94,11 +116,13 @@ export {
 	type PanelField,
 	type PanelGroup,
 	type PanelId,
+	type PanelInput,
 	type PanelModal,
 	type PanelNotice,
 	type PanelOption,
 	type PanelRow,
 	type PanelSpec,
+	type PanelText,
 	type PanelView,
 	type PanelViewInput,
 	type PluginsPanelInput,

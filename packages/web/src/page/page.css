@@ -30,6 +30,112 @@ body {
 	overflow: hidden;
 }
 
+/* The dock opens a third column (DSH's rightbar, 300px and up): the conversation keeps its centre
+   column and the dock takes the width it needs, so opening it never re-flows the transcript. */
+body.dock-open {
+	grid-template-columns: 280px minmax(0, 1fr) minmax(320px, 380px);
+}
+
+.dock {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	overflow: hidden;
+	border-left: 0.5px solid var(--dsw-alias-border-l2);
+	background: var(--dsw-specific-sidebar-fill);
+}
+
+.dock-head {
+	display: flex;
+	flex: none;
+	gap: 2px;
+	padding: 6px 8px;
+	border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.dock-tab-row {
+	display: flex;
+	gap: 2px;
+}
+
+.dock-tab {
+	height: 24px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	font: inherit;
+	font-size: var(--dsh-content-font-size-secondary);
+	cursor: pointer;
+}
+
+.dock-tab.active {
+	background: var(--dsw-alias-markdown-tag);
+	color: var(--dsw-alias-label-primary);
+}
+
+.dock-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.dock-body .panel {
+	padding: 12px 12px 24px;
+}
+
+.dock-body .panel-head {
+	padding-bottom: 8px;
+}
+
+.dock-body .panel-title {
+	font-size: 13px;
+}
+
+/* A panel's input line and its text blocks (the workspace's file, the terminal's buffer). */
+.panel-input-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 0 10px;
+}
+
+.panel-input-wide {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+	height: 28px;
+}
+
+.panel-text-block {
+	padding-top: 4px;
+}
+
+.panel-text-title {
+	margin: 0 0 4px;
+	color: var(--dsw-alias-label-caption);
+	font-size: 11px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.panel-text {
+	margin: 0;
+	padding: 10px 12px;
+	max-height: 60vh;
+	overflow: auto;
+	border: 0.5px solid var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-md);
+	background: var(--dsw-alias-markdown-code-block);
+	color: var(--dsw-alias-label-primary);
+	font-family: var(--ds-font-family-code);
+	font-size: 12px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
 /* ------------------------------------------------------------------ sidebar */
 
 .sidebar {
@@ -233,7 +339,8 @@ body {
 		grid-template-columns: minmax(0, 1fr);
 	}
 
-	.sidebar {
+	.sidebar,
+	.dock {
 		display: none;
 	}
 }

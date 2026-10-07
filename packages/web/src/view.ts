@@ -29,6 +29,7 @@ import {
 	type CommandPalette,
 } from "./commands.ts";
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
+import { dockView, type DockView, type DockViewInput } from "./dock.ts";
 import type { Locale } from "./locale.ts";
 import { CHAT_VIEW, panelView, type PanelButton, type PanelView, type PanelViewInput } from "./panels.ts";
 import { thinkingLevelCopy, translate } from "./strings.ts";
@@ -226,6 +227,8 @@ export interface WebView {
 	readonly model: ModelPicker;
 	/** The sidebar's navigation and the management panel the main area shows. */
 	readonly panel: PanelView;
+	/** The session dock beside the conversation. */
+	readonly dock: DockView;
 }
 
 /** The `amazme.live` document of a view: the active run, the streaming answer, and running tools. */
@@ -304,6 +307,8 @@ export interface WebViewInput {
 	readonly platform: string;
 	/** The management view the page is showing, with the state of that area's services. */
 	readonly panel: PanelViewInput;
+	/** The dock's tab and its surfaces' state. */
+	readonly dock: DockViewInput;
 }
 
 /** The host has no session attached yet, so the picker's trigger stays inert. */
@@ -774,6 +779,7 @@ export function failureView(locale: Locale, text: string): WebView {
 		newSession: { enabled: false },
 		model: modelPickerEmpty(locale),
 		panel: panelView({ locale, current: CHAT_VIEW }),
+		dock: dockView(locale, { open: false, tab: "files", cwd: "", workspace: undefined, terminal: undefined }),
 	};
 }
 
@@ -813,5 +819,6 @@ export function buildWebView(input: WebViewInput): WebView {
 		newSession: { enabled: input.directory !== undefined },
 		model: modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined),
 		panel: panelView({ ...input.panel, locale }),
+		dock: dockView(locale, input.dock),
 	};
 }

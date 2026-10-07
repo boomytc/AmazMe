@@ -6,7 +6,7 @@
  * updates is the reader's own disclosure choices, keyed by block id, because a rebuild would
  * otherwise reset them.
  */
-import { COMPACT_ACTION, REFRESH_MODELS_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, REFRESH_MODELS_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import { STOP_SEQUENCE_MS, isApplePlatform, matchShortcut, type ShortcutId } from "./shortcuts.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode } from "./markdown.ts";
@@ -17,9 +17,11 @@ import {
 	type PanelButton,
 	type PanelControl,
 	type PanelGroup,
+	type PanelInput,
 	type PanelModal,
 	type PanelRow,
 	type PanelSpec,
+	type PanelText,
 } from "./panels.ts";
 import { type MessageKey, translate } from "./strings.ts";
 import {
@@ -57,6 +59,10 @@ export interface PageElements {
 	readonly prompt: HTMLTextAreaElement;
 	/** The composer's one action: send, or stop while a turn runs on an empty draft. */
 	readonly primary: HTMLButtonElement;
+	/** The session dock: its tabs and the panel the open tab shows. */
+	readonly dock: HTMLElement;
+	readonly dockTabs: HTMLElement;
+	readonly dockBody: HTMLElement;
 	/** The composer's command palette, filled by the renderer. */
 	readonly palette: HTMLElement;
 	/** The header's run controls (compaction), filled by the renderer. */
@@ -123,6 +129,9 @@ export function collectPageElements(): PageElements {
 		viewBack: pickElement("view-back", HTMLButtonElement),
 		runActions: pick("run-actions"),
 		palette: pick("command-palette"),
+		dock: pick("dock"),
+		dockTabs: pick("dock-tabs"),
+		dockBody: pick("dock-body"),
 		rosterFilter: pickElement("roster-filter", HTMLInputElement),
 		attachments: pick("attachments"),
 		attach: pickElement("attach", HTMLButtonElement),
@@ -391,6 +400,8 @@ function closeGlyph(): SVGSVGElement {
 /** One row's buttons: the group header's and a row's actions share one shape. */
 function panelButton(action: PanelButton, report: (action: PanelAction) => void): HTMLButtonElement {
 	const node = button(`panel-button tone-${action.tone}`);
+	node.dataset.action = action.id;
+	if (action.data !== undefined) node.dataset.actionData = action.data;
 	node.textContent = action.label;
 	node.disabled = action.disabled === true;
 	node.addEventListener("click", () => report({ kind: "command", id: action.id, data: action.data }));
@@ -480,6 +491,7 @@ export function createRenderer(
 
 	const rowElementOf = (row: PanelRow): HTMLElement => {
 		const node = element("div", "panel-row");
+		node.dataset.rowId = row.id;
 		const text = element("div", "panel-row-text");
 		const head = element("div", "panel-row-head");
 		head.append(element("span", "panel-row-title", row.title));
@@ -522,14 +534,67 @@ export function createRenderer(
 		return node;
 	};
 
-	const panelElement = (panel: PanelSpec): HTMLElement => {
+	/**
+	 * One input line: the reader types, the submit control runs it. A repaint reuses the same row
+	 * for the same input, so a command being typed (or a focused field) survives the dock's output
+	 * landing underneath it.
+	 */
+	const inputElement = (input: PanelInput, existing?: HTMLElement): HTMLElement => {
+		if (existing !== undefined && existing.dataset.inputRow === input.id) {
+			const field = existing.querySelector("input");
+			if (field !== null) field.placeholder = input.placeholder;
+			const submit = existing.querySelector("button");
+			if (submit !== null) submit.disabled = input.submit.disabled === true;
+			return existing;
+		}
+		const form = element("form", "panel-input-row");
+		form.dataset.inputRow = input.id;
+		const field = document.createElement("input");
+		field.type = "text";
+		field.className = "panel-input panel-input-wide";
+		field.placeholder = input.placeholder;
+		field.value = input.value;
+		field.autocomplete = "off";
+		field.spellcheck = false;
+		// The submit control carries what the reader typed, which is why it does not go through
+		// the shared button helper: that one reports a fixed action id and subject.
+		const submit = button(`panel-button tone-${input.submit.tone}`);
+		submit.dataset.action = input.submit.id;
+		submit.textContent = input.submit.label;
+		submit.disabled = input.submit.disabled === true;
+		const run = (): void => report({ kind: "command", id: input.submit.id, data: field.value });
+		submit.addEventListener("click", run);
+		form.addEventListener("submit", (event) => {
+			event.preventDefault();
+			run();
+		});
+		form.append(field, submit);
+		return form;
+	};
+
+	/** One text block: a file's content or a terminal's output, kept as text. */
+	const textElement = (text: PanelText): HTMLElement => {
+		const block = element("div", "panel-text-block");
+		if (text.title !== undefined) block.append(element("p", "panel-text-title", text.title));
+		if (text.text.length === 0 && text.empty !== undefined) {
+			block.append(element("p", "panel-empty", text.empty));
+			return block;
+		}
+		block.append(element("pre", "panel-text", text.text));
+		return block;
+	};
+
+	const panelElement = (panel: PanelSpec, container?: HTMLElement): HTMLElement => {
 		const node = element("div", "panel");
 		const head = element("header", "panel-head");
 		head.append(element("h1", "panel-title", panel.title));
 		if (panel.description !== undefined) head.append(element("p", "panel-desc", panel.description));
 		node.append(head);
 		for (const notice of panel.notices) node.append(element("p", `panel-notice ${notice.tone}`, notice.text));
+		const previousInput = container?.querySelector<HTMLElement>("form[data-input-row]") ?? undefined;
+		for (const input of panel.inputs ?? []) node.append(inputElement(input, previousInput));
 		for (const group of panel.groups) node.append(groupElement(group));
+		for (const text of panel.texts ?? []) node.append(textElement(text));
 		return node;
 	};
 
@@ -878,12 +943,40 @@ export function createRenderer(
 		return row;
 	};
 
+	/** The dock: the tabs, the open tab's panel, and the class that gives it a column. */
+	const renderDock = (view: WebView): void => {
+		elements.dock.hidden = !view.dock.open;
+		document.body.classList.toggle("dock-open", view.dock.open);
+		if (!view.dock.open) {
+			elements.dockTabs.replaceChildren();
+			elements.dockBody.replaceChildren();
+			return;
+		}
+		const tabs = element("div", "dock-tab-row");
+		for (const tab of view.dock.tabs) {
+			const node = button(tab.active ? "dock-tab active" : "dock-tab");
+			node.dataset.tab = tab.id;
+			node.setAttribute("role", "tab");
+			node.setAttribute("aria-selected", String(tab.active));
+			node.textContent = tab.label;
+			node.addEventListener("click", () => report({ kind: "command", id: DOCK_TAB_ACTION, data: tab.id }));
+			tabs.append(node);
+		}
+		elements.dockTabs.replaceChildren(tabs);
+		elements.dockBody.replaceChildren(panelElement(view.dock.panel, elements.dockBody));
+	};
+
 	/** The header's run controls: one control per action the view offers. */
 	const renderRunActions = (view: WebView): void => {
 		const compact = panelButton(view.run.compact, report);
 		compact.className = "header-action";
 		compact.dataset.action = COMPACT_ACTION;
-		elements.runActions.replaceChildren(compact);
+		const dock = button(view.dock.toggle.pressed ? "header-action pressed" : "header-action");
+		dock.dataset.action = DOCK_TOGGLE_ACTION;
+		dock.textContent = view.dock.toggle.label;
+		dock.setAttribute("aria-pressed", String(view.dock.toggle.pressed));
+		dock.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
+		elements.runActions.replaceChildren(compact, dock);
 	};
 
 	/** The composer's submit mode, offered only while a turn runs and can take input. */
@@ -1109,6 +1202,7 @@ export function createRenderer(
 			renderAttachments(view);
 			renderPalette(view);
 			renderRunActions(view);
+			renderDock(view);
 			renderSubmitModes(view);
 			renderNav(view);
 			renderPanelView(view);

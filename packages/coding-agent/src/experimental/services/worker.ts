@@ -22,9 +22,13 @@ import { createCommandsFacet } from "./commands-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { SessionSettings } from "./settings.ts";
+import { createTerminalFacet } from "./terminal-provider.ts";
 import { createTranscriptServiceFacet } from "./transcript-provider.ts";
+import { createWorkspaceFacet } from "./workspace-provider.ts";
 
 export interface SessionWorkerRuntime {
+	/** The working directory the Session's agent runs in: the workspace and terminal root. */
+	readonly cwd: string;
 	readonly harness: Harness;
 	/** The root conversation the services expose. */
 	readonly conversation: Conversation;
@@ -52,6 +56,7 @@ export interface SessionWorkerServices {
 }
 
 export async function createSessionWorkerServices(options: {
+	readonly cwd: string;
 	readonly harness: Harness;
 	readonly conversation: Conversation;
 	readonly modelRuntime: ModelRuntime | undefined;
@@ -96,6 +101,10 @@ export async function createSessionWorkerServices(options: {
 		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 		createCommandsFacet(),
+		createWorkspaceFacet({ cwd: options.cwd }),
+		...(options.settingsManager === undefined
+			? []
+			: [createTerminalFacet({ cwd: options.cwd, settings: options.settingsManager })]),
 	]).load();
 	const pluginLoader = options.facetLoader ?? createStaticFacetLoader([]);
 	let loadedPlugins = await pluginLoader.load();

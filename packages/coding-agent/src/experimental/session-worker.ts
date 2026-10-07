@@ -527,6 +527,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		runtime = await createHarness(sessionStoragePath(metadata), options);
 		taskGraph = await runtime.harness.taskGraph(TODO_CONTEXT);
 		services = await createSessionWorkerServices({
+			cwd: runtime.cwd,
 			harness: runtime.harness,
 			conversation: runtime.conversation,
 			modelRuntime: runtime.modelRuntime,
@@ -809,6 +810,7 @@ async function createCodingAgentHarness(
 			},
 		});
 		return {
+			cwd,
 			harness,
 			conversation,
 			modelRuntime,

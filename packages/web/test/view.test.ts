@@ -178,6 +178,7 @@ describe("web view model", () => {
 				completions: [],
 				paletteSelection: 0,
 				platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
 				panel: CHAT_PANEL,
 				directory,
 				transcript: undefined,
@@ -357,6 +358,7 @@ describe("web view model", () => {
 			completions: [],
 			paletteSelection: 0,
 			platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
  panel: CHAT_PANEL, directory: undefined, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(connecting.empty).toBe("Connecting to the host…");
 		expect(connecting.blocks).toEqual([]);
@@ -368,6 +370,7 @@ describe("web view model", () => {
 			completions: [],
 			paletteSelection: 0,
 			platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
  panel: CHAT_PANEL, directory: directoryOf([]), transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(none.empty).toBe("No sessions on this host yet.");
 		const attached = buildWebView({
@@ -380,6 +383,7 @@ describe("web view model", () => {
 			completions: [],
 			paletteSelection: 0,
 			platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
 			panel: CHAT_PANEL,
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),
@@ -403,6 +407,7 @@ describe("web view model", () => {
 			completions: [],
 			paletteSelection: 0,
 			platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
 			panel: { locale: "zh", current: "chat" },
 			directory: undefined,
 			transcript: undefined,
@@ -427,6 +432,7 @@ describe("web view model", () => {
 			completions: [],
 			paletteSelection: 0,
 			platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
 			panel: CHAT_PANEL,
 				directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 				transcript: viewOf([], live === undefined ? {} : { "amazme.live": live }),
@@ -450,6 +456,7 @@ describe("web view model", () => {
 			completions: [],
 			paletteSelection: 0,
 			platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
  panel: CHAT_PANEL, directory, transcript: undefined, attachedId: undefined, now: NOW, models: undefined, thinkingLevels: [] });
 		expect(view(undefined).newSession).toEqual({ enabled: false });
 		expect(view(directoryOf([])).newSession).toEqual({ enabled: true });
@@ -539,6 +546,7 @@ describe("web view model", () => {
 			completions: [],
 			paletteSelection: 0,
 			platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
 			panel: CHAT_PANEL,
 			directory: directoryOf([]),
 			transcript: undefined,
@@ -560,6 +568,7 @@ describe("web view model", () => {
 			completions: [],
 			paletteSelection: 0,
 			platform: "MacIntel",
+			dock: { open: false, tab: "files", cwd: "/w", workspace: undefined, terminal: undefined },
 			panel: CHAT_PANEL,
 			directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
 			transcript: viewOf([]),

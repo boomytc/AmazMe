@@ -90,12 +90,35 @@ export interface PanelNotice {
 	readonly text: string;
 }
 
+/** A scrollable text block a panel shows: a file's content, or a terminal's output. */
+export interface PanelText {
+	readonly id: string;
+	readonly title?: string;
+	/** The line shown in place of the text when there is none. */
+	readonly empty?: string;
+	readonly text: string;
+}
+
+/** A one-line input a panel needs, such as the terminal's command line. */
+export interface PanelInput {
+	readonly id: string;
+	readonly placeholder: string;
+	readonly value: string;
+	/** The control that submits the line; its id is the action the page receives. */
+	readonly submit: PanelButton;
+}
+
 export interface PanelSpec {
-	readonly id: PanelId;
+	/** The panel's own id; the management views use `PanelId`, the dock uses its tabs. */
+	readonly id: string;
 	readonly title: string;
 	readonly description?: string;
 	readonly notices: readonly PanelNotice[];
 	readonly groups: readonly PanelGroup[];
+	/** Input lines the panel offers, above its groups. */
+	readonly inputs?: readonly PanelInput[];
+	/** Text blocks the panel shows, below its groups. */
+	readonly texts?: readonly PanelText[];
 }
 
 export interface PanelField {

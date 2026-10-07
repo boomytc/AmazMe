@@ -56,7 +56,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 				env.onActivate(() => spawn("first"));
 			},
 		});
-		return { harness, conversation, facetLoader: createStaticFacetLoader([keyedProbeFacet]) };
+		return { cwd: options.metadata.cwd, harness, conversation, facetLoader: createStaticFacetLoader([keyedProbeFacet]) };
 	}).catch((error: unknown) => {
 		console.error(error);
 		process.exit(1);

@@ -32,6 +32,7 @@ describe("experimental plugin reload", () => {
 		};
 		const { harness, conversation, close } = await openFauxConversation();
 		const services = await createSessionWorkerServices({
+			cwd: process.cwd(),
 			harness,
 			conversation,
 			modelRuntime: undefined,

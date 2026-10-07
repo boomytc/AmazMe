@@ -28,6 +28,8 @@ import {
 	collectPageElements,
 	composeSkill,
 	createRenderer,
+	DOCK_TAB_ACTION,
+	DOCK_TOGGLE_ACTION,
 	documentLanguage,
 	failureView,
 	FALLBACK_LOCALE,
@@ -63,6 +65,11 @@ import {
 	SKILL_REMOVE_ACTION,
 	SESSION_REMOVE_ACTION,
 	skillCommands,
+	TERMINAL_RUN_ACTION,
+	TERMINAL_STOP_ACTION,
+	WORKSPACE_OPEN_ACTION,
+	WORKSPACE_READ_ACTION,
+	WORKSPACE_RELOAD_ACTION,
 	SESSION_REMOVE_MODAL,
 	SKILL_REMOVE_MODAL,
 	skillModal,
@@ -86,6 +93,8 @@ import {
 	type SessionServiceSource,
 } from "../services/connection.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
+import { Terminal, type Terminal as TerminalService, type TerminalState } from "../services/terminal.ts";
+import { Workspace, type Workspace as WorkspaceService, type WorkspaceState } from "../services/workspace.ts";
 import { Models, type ModelsState } from "../services/models.ts";
 import { Plugins } from "../services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
@@ -151,6 +160,8 @@ class SessionPainter {
 	#models: Models | undefined;
 	#sessionSettings: SessionSettings | undefined;
 	#commands: CommandsService | undefined;
+	#workspace: WorkspaceService | undefined;
+	#terminal: TerminalService | undefined;
 	#levels: readonly string[] | undefined;
 	#levelsModel: string | undefined;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
@@ -176,6 +187,35 @@ class SessionPainter {
 	/** The attached model's levels; `undefined` until the host has answered for this model. */
 	get levels(): readonly string[] | undefined {
 		return this.#levels;
+	}
+
+	/** The attached session's working directory, as the host publishes it. */
+	get workspace(): WorkspaceState | undefined {
+		return this.#workspace?.state.value;
+	}
+
+	/** The attached session's shell buffer. */
+	get terminal(): TerminalState | undefined {
+		return this.#terminal?.state.value;
+	}
+
+	async workspaceOpen(path: string): Promise<void> {
+		await this.#workspace?.open(path, BACKGROUND_CONTEXT);
+	}
+
+	async workspaceRead(path: string): Promise<void> {
+		await this.#workspace?.read(path, BACKGROUND_CONTEXT);
+	}
+
+	async runTerminal(command: string): Promise<void> {
+		const result = await this.#terminal?.run(command, BACKGROUND_CONTEXT);
+		if (result !== undefined && !result.ok) {
+			this.#renderer.setConnection(translate(this.locale, "dock.terminalFailed", { error: result.problem }), "error");
+		}
+	}
+
+	async stopTerminal(): Promise<void> {
+		await this.#terminal?.stop(BACKGROUND_CONTEXT);
 	}
 
 	/** The session's command catalogue, as the host published it. */
@@ -295,7 +335,7 @@ class SessionPainter {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
 		const services = this.#sessionSource.open({
-			services: [Transcript, AgentController, Models, SessionSettings, Commands],
+			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal],
 			assertAccess(): void {},
 			onError: (error: Error) =>
 				this.#renderer.setConnection(
@@ -311,6 +351,11 @@ class SessionPainter {
 		this.#models = services.use(Models);
 		this.#sessionSettings = services.use(SessionSettings);
 		this.#commands = services.use(Commands);
+		this.#workspace = services.use(Workspace);
+		this.#terminal = services.use(Terminal);
+		// A listing, a file, or terminal output lands here; the page repaints the dock from it.
+		this.#workspace.state.subscribe(() => paint());
+		this.#terminal.state.subscribe(() => paint());
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		// A model switch made anywhere repaints the chip and re-reads the levels of the new model.
@@ -336,6 +381,8 @@ class SessionPainter {
 		this.#models = undefined;
 		this.#sessionSettings = undefined;
 		this.#commands = undefined;
+		this.#workspace = undefined;
+		this.#terminal = undefined;
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		this.#sessionId = undefined;
@@ -382,6 +429,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let attachmentSequence = 0;
 	/** The roster's filter text; the page owns it so creating or attaching never clears it. */
 	let rosterFilter = "";
+	/** The dock: whether it is open, and which tab it shows. Both belong to this page. */
+	let dockOpen = false;
+	let dockTab = "files";
 	/** The composer's draft, mirrored here so the command palette can be projected from it. */
 	let draft = "";
 	/** The host's argument completions for the command line being typed. */
@@ -448,6 +498,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					completions,
 					paletteSelection,
 					platform: navigator.platform,
+					dock: {
+						open: dockOpen,
+						tab: dockTab,
+						cwd: painter.workspace?.cwd ?? "",
+						workspace: painter.workspace,
+						terminal: painter.terminal,
+					},
 					// The panel inherits this view's language, so one resolution serves the whole page.
 					panel: {
 						locale,
@@ -740,6 +797,32 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case SUBMIT_MODE_ACTION:
 						submitMode = action.data === "steer" ? "steer" : "followUp";
 						paint();
+						return;
+					case DOCK_TOGGLE_ACTION:
+						dockOpen = !dockOpen;
+						paint();
+						return;
+					case DOCK_TAB_ACTION:
+						dockTab = action.data ?? "files";
+						dockOpen = true;
+						paint();
+						return;
+					case WORKSPACE_RELOAD_ACTION: {
+						const view = painter.workspace?.view;
+						settle(painter.workspaceOpen(view !== undefined && view.kind === "text" ? view.path : (view?.path ?? ".")), false);
+						return;
+					}
+					case WORKSPACE_OPEN_ACTION:
+						settle(painter.workspaceOpen(action.data ?? "."), false);
+						return;
+					case WORKSPACE_READ_ACTION:
+						settle(painter.workspaceRead(action.data ?? ""), false);
+						return;
+					case TERMINAL_RUN_ACTION:
+						settle(painter.runTerminal(action.data ?? ""), false);
+						return;
+					case TERMINAL_STOP_ACTION:
+						settle(painter.stopTerminal(), false);
 						return;
 					case SESSION_REMOVE_ACTION:
 						modal = removeSessionModal(locale, action.data ?? "");

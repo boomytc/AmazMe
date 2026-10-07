@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@amazme/client";
@@ -25,6 +25,8 @@ import {
 	type SessionServiceSource,
 } from "../src/experimental/services/connection.ts";
 import { Commands, type Commands as CommandsService } from "../src/experimental/services/commands.ts";
+import { Terminal, type Terminal as TerminalService } from "../src/experimental/services/terminal.ts";
+import { Workspace, type Workspace as WorkspaceService } from "../src/experimental/services/workspace.ts";
 import { Models, type Models as ModelsService } from "../src/experimental/services/models.ts";
 import { Plugins, type Plugins as PluginsService } from "../src/experimental/services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
@@ -45,6 +47,8 @@ interface Attached {
 	readonly controller: AgentController;
 	readonly models: ModelsService;
 	readonly commands: CommandsService;
+	readonly workspace: WorkspaceService;
+	readonly terminal: TerminalService;
 	dispose(): Promise<void>;
 }
 
@@ -109,7 +113,7 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 	await presentation.management.attach(sessionId, BACKGROUND_CONTEXT);
 	await presentation.sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
 	const services = presentation.sessionSource.open({
-		services: [Transcript, AgentController, Models, Commands],
+		services: [Transcript, AgentController, Models, Commands, Workspace, Terminal],
 		assertAccess(): void {},
 		onError(): void {},
 	});
@@ -119,6 +123,8 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 		controller: services.use(AgentController),
 		models: services.use(Models),
 		commands: services.use(Commands),
+		workspace: services.use(Workspace),
+		terminal: services.use(Terminal),
 		async dispose() {
 			await services.dispose(BACKGROUND_CONTEXT);
 		},
@@ -342,6 +348,83 @@ describe("web client interactive loop", () => {
 
 			await second.dispose();
 			await first.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"browses the session's working directory and runs a command in it",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "web-loop-workspace" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(presentation, created.sessionId);
+
+			// The listing is the Session's working directory, and it activates with real entries.
+			await waitFor(
+				() => (attached.workspace.state.value?.view.kind === "listing" ? attached.workspace.state.value.view.entries.length : 0) > 0,
+				"the working directory listing",
+			);
+			const workspace = attached.workspace.state.value;
+			expect(workspace?.cwd).toBe(process.cwd());
+			const listing = workspace?.view;
+			if (listing?.kind !== "listing") throw new Error("the workspace did not list its directory");
+			// The entries are the real ones on disk, in the directory order the provider sorts.
+			const onDisk = await readdir(process.cwd());
+			const listed = listing.entries.map((entry) => entry.name);
+			expect(listed.length).toBeGreaterThan(0);
+			expect(listed.every((name) => onDisk.includes(name))).toBe(true);
+			expect(listed.length).toBeLessThanOrEqual(onDisk.length);
+
+			// Reading a file returns its real bytes, and walking into a directory lists that one.
+			const target = listing.entries.find((entry) => entry.kind === "file");
+			expect(target).toBeDefined();
+			for (const entry of listing.entries.filter((candidate) => candidate.kind === "dir").slice(0, 1)) {
+				await attached.workspace.open(entry.name, BACKGROUND_CONTEXT);
+				await waitFor(
+					() =>
+						attached.workspace.state.value?.view.kind === "listing" &&
+						attached.workspace.state.value.view.path === entry.name,
+					`the ${entry.name} listing`,
+				);
+				const nested = attached.workspace.state.value?.view;
+				if (nested?.kind === "listing") {
+					expect(nested.parent).toBe(".");
+					await attached.workspace.open(".", BACKGROUND_CONTEXT);
+				}
+			}
+			await attached.workspace.read(target?.name ?? "", BACKGROUND_CONTEXT);
+			await waitFor(() => attached.workspace.state.value?.view.kind === "text", "the file's text");
+			const text = attached.workspace.state.value?.view;
+			if (text?.kind !== "text") throw new Error("the workspace did not read the file");
+			expect(text.path).toBe(target?.name);
+			expect(text.text).toBe(await readFile(join(process.cwd(), target?.name ?? ""), "utf8"));
+
+			// A path above the working directory is refused rather than resolved.
+			await attached.workspace.read("../package.json", BACKGROUND_CONTEXT);
+			await waitFor(() => attached.workspace.state.value?.view.kind === "denied", "the refusal");
+			expect(attached.workspace.state.value?.view).toMatchObject({ kind: "denied", path: "../package.json" });
+			await attached.workspace.read("no-such-file-anywhere.txt", BACKGROUND_CONTEXT);
+			await waitFor(() => attached.workspace.state.value?.view.kind === "missing", "the missing path");
+
+			// The terminal runs in the same directory and streams its real output.
+			const marker = `web-loop-terminal-${Date.now()}`;
+			expect(await attached.terminal.run(`echo ${marker}`, BACKGROUND_CONTEXT)).toEqual({ ok: true });
+			await waitFor(() => attached.terminal.state.value?.status !== "running", "the command to finish");
+			expect(attached.terminal.state.value).toMatchObject({ status: "done", exitCode: 0 });
+			expect(attached.terminal.state.value?.output).toContain(marker);
+
+			// A second command is refused while one runs, and stopping leaves it cancelled.
+			const slow = attached.terminal.run("sleep 30; echo never", BACKGROUND_CONTEXT);
+			await waitFor(() => attached.terminal.state.value?.status === "running", "the slow command");
+			expect(await attached.terminal.run("echo too-soon", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
+			await attached.terminal.stop(BACKGROUND_CONTEXT);
+			expect(await slow).toEqual({ ok: true });
+			await waitFor(() => attached.terminal.state.value?.status === "cancelled", "the cancellation");
+			expect(attached.terminal.state.value?.output ?? "").not.toContain("never");
+
+			await attached.dispose();
+			await presentation.dispose();
 		},
 		240_000,
 	);
