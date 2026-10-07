@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `durationMs` to the tool render context and to `tool_execution_end` extension events: the recorded execution time of a final tool result ([#10549](https://github.com/earendil-works/pi/issues/10549))
 - Added `outputPad` to the tool render context ([#10557](https://github.com/earendil-works/pi/pull/10557))
 - Added a reply preview to the Dashboard: a `Response` panel above the composer shows the latest reply of the session under the cursor, so several sessions can be assigned work without opening them
 
@@ -14,6 +15,8 @@
 
 ### Fixed
 
+- Fixed bash and PowerShell results losing `Took` after reloading a session, and the live `Took` including wall-clock steps; both now show the recorded execution time ([#10549](https://github.com/earendil-works/pi/issues/10549))
+- Fixed codemode output items running together, so models could not tell where one `text()` or `console.log()` output ended and the next began. With several text items, each now starts with a `==> text N/M <==` line, and `console` calls follow the other output in one `<console_output>` block with one line per call
 - Fixed the Dashboard offering a close badge for the current session, which cannot be deleted from there; the close column stays blank so ages keep their alignment, and `Ctrl+X` on it reports that the session stays open
 - Fixed managed installs keeping every old release; `amazme update` now keeps only the new release and the one it updated from
 - Fixed standalone binaries loading `.env`, `.env.local`, and `.env.development` from the launch directory into AmazMe's environment
