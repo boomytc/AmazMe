@@ -1,0 +1,204 @@
+/*
+ * Theme layer: the DeepSeek Harness design platform, mirrored from
+ * /Users/boom/workspace/deepseek-harness/packages/client/ui-theme/src/styles
+ * (base.css, design-platform.css, gradient-shadow-text.css, scrollbar.css, corner-shape.css,
+ * focus.css). Names and values are DSH's, trimmed to what this page reads.
+ * Light is the default; `body[data-ds-dark-theme]` carries DSH's dark overrides, and the page
+ * entry sets that attribute from the system preference.
+ * DSH's Montserrat brand face is its own brand asset and is not shipped here, so the brand stack
+ * falls back to the system family DSH mixes under it.
+ */
+
+:root {
+	/* Stacks, motion curve, and the radius rungs the page reads. */
+	--dsw-font-family:
+		-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+		"Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+	--dsw-font-family-brand: var(--dsw-font-family);
+	--ds-font-family-code:
+		"SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, Courier,
+		"PingFang SC", "Microsoft YaHei";
+	--ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+	--ds-transition-duration-fast: 0.1s;
+	--dsw-radius-sm: 8px;
+	--dsw-radius-md: 12px;
+	--dsw-radius-lg: 16px;
+	--dsw-radius-xl: 20px;
+	--dsw-radius-panel: 28px;
+
+	/* Type ladder entries this page reads. */
+	--dsw-font-xs-13: 13px/20px var(--dsw-font-family);
+	--dsw-font-markdown-code: 12px/19px var(--ds-font-family-code);
+
+	--dsw-focus-ring-width: 2px;
+
+	/* The content size axis DSH publishes on the body from the font-size preference. Without a
+	   preference this page holds the default tier and the -1 secondary tier DSH derives from it. */
+	--dsh-content-font-size: 14px;
+	--dsh-content-font-delta: 0px;
+	--dsh-content-font-size-secondary: 13px;
+	--dsh-content-font-delta-secondary: 0px;
+
+	/* Scrollbar geometry: the skin below mirrors DSH's scrollbar.css. */
+	--dsh-scrollbar-thumb-border: 0px;
+	--dsh-scrollbar-track-margin: 0px;
+	--dsh-scrollbar-width: 5px;
+}
+
+body {
+	/* Static palette, trimmed to the entries the aliases below resolve. */
+	--dsw-static-blue-950: rgb(23, 37, 84);
+	--dsw-static-deepseek-50: rgb(237, 243, 254);
+	--dsw-static-deepseek-400: rgb(122, 170, 255);
+	--dsw-static-deepseek-450: rgb(86, 134, 254);
+	--dsw-static-deepseek-500: rgb(65, 118, 230);
+	--dsw-static-neutral-200: rgb(229, 229, 229);
+	--dsw-static-neutral-300: rgb(212, 212, 212);
+	--dsw-static-neutral-550: rgb(101, 103, 107);
+	--dsw-static-neutral-600: rgb(84, 85, 87);
+	--dsw-static-neutral-700: rgb(60, 60, 61);
+	--dsw-static-neutral-bluish-00: rgb(255, 255, 255);
+	--dsw-static-neutral-bluish-50: rgb(249, 250, 251);
+	--dsw-static-neutral-bluish-75: rgb(241, 243, 245);
+	--dsw-static-neutral-bluish-100: rgb(235, 238, 242);
+	--dsw-static-neutral-bluish-300: rgb(207, 211, 214);
+	--dsw-static-neutral-bluish-400: rgb(173, 178, 184);
+	--dsw-static-neutral-bluish-600: rgb(129, 133, 140);
+	--dsw-static-neutral-bluish-700: rgb(97, 102, 107);
+	--dsw-static-neutral-bluish-750: rgb(67, 69, 74);
+	--dsw-static-neutral-bluish-850: rgb(44, 44, 46);
+	--dsw-static-neutral-bluish-900: rgb(27, 27, 28);
+	--dsw-static-neutral-bluish-950: rgb(21, 21, 23);
+	--dsw-static-neutral-bluish-1000: rgb(15, 17, 21);
+	--dsw-static-red-400: rgb(242, 90, 90);
+	--dsw-static-red-600: rgb(236, 19, 19);
+
+	/* Semantic aliases: light theme. */
+	--dsw-alias-bg-base: var(--dsw-static-neutral-bluish-00);
+	--dsw-alias-border-l1: rgba(0, 0, 0, 0.04);
+	--dsw-alias-border-l2: rgba(0, 0, 0, 0.1);
+	--dsw-alias-border-l3: rgba(0, 0, 0, 0.12);
+	--dsw-alias-border-l4: rgba(0, 0, 0, 0.16);
+	--dsw-alias-label-primary: var(--dsw-static-neutral-bluish-1000);
+	--dsw-alias-label-secondary: var(--dsw-static-neutral-bluish-700);
+	--dsw-alias-label-tertiary: var(--dsw-static-neutral-bluish-600);
+	--dsw-alias-label-caption: var(--dsw-static-neutral-bluish-400);
+	--dsw-alias-label-primary-foreground: var(--dsw-static-neutral-bluish-00);
+	--dsw-alias-label-deep-diving: color-mix(in srgb, var(--dsw-static-deepseek-500) 70%, var(--dsw-static-blue-950));
+	--dsw-alias-interactive-bg-hover: rgba(38, 49, 72, 0.06);
+	--dsw-alias-interactive-bg-active: rgba(38, 49, 72, 0.1);
+	--dsw-alias-brand-primary: var(--dsw-static-neutral-bluish-1000);
+	--dsw-alias-button-primary-fill: var(--dsw-alias-brand-primary);
+	--dsw-alias-button-primary-hover: var(--dsw-static-neutral-bluish-750);
+	--dsw-alias-markdown-code-block: var(--dsw-static-neutral-bluish-50);
+	--dsw-alias-markdown-tag: var(--dsw-static-neutral-bluish-75);
+	--dsw-alias-state-business-primary: var(--dsw-static-deepseek-500);
+	--dsw-alias-state-error-primary: var(--dsw-static-red-600);
+	--dsw-alias-scrollbar-bg-l1: var(--dsw-static-neutral-200);
+	--dsw-alias-scrollbar-bg-l2: var(--dsw-static-neutral-200);
+	--dsw-alias-scrollbar-hover-l1: var(--dsw-static-neutral-300);
+	--dsw-alias-scrollbar-hover-l2: var(--dsw-static-neutral-300);
+	--dsw-specific-bubble: var(--dsw-static-deepseek-50);
+	--dsw-specific-input-major: var(--dsw-static-neutral-bluish-00);
+	--dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-50);
+
+	/* Elevation stroke default; a surface rebinds it (the composer card takes l2). */
+	--dsw-elevation-stroke-color: var(--dsw-alias-border-l4);
+	/* Base-surface scrollbar pair; elevated surfaces below rebind to the l2 pair. */
+	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l1);
+	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l1);
+}
+
+body[data-ds-dark-theme] {
+	--dsw-alias-bg-base: var(--dsw-static-neutral-bluish-950);
+	--dsw-alias-border-l1: rgba(255, 255, 255, 0.06);
+	--dsw-alias-border-l2: rgba(255, 255, 255, 0.12);
+	--dsw-alias-border-l3: rgba(255, 255, 255, 0.16);
+	--dsw-alias-border-l4: rgba(255, 255, 255, 0.2);
+	--dsw-alias-label-primary: var(--dsw-static-neutral-bluish-50);
+	--dsw-alias-label-secondary: var(--dsw-static-neutral-bluish-300);
+	--dsw-alias-label-tertiary: var(--dsw-static-neutral-bluish-400);
+	--dsw-alias-label-caption: var(--dsw-static-neutral-bluish-600);
+	--dsw-alias-label-primary-foreground: var(--dsw-static-neutral-bluish-1000);
+	--dsw-alias-label-deep-diving: color-mix(in srgb, var(--dsw-static-deepseek-450) 55%, var(--dsw-static-neutral-bluish-400));
+	--dsw-alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
+	--dsw-alias-interactive-bg-active: rgba(255, 255, 255, 0.14);
+	--dsw-alias-brand-primary: var(--dsw-static-neutral-bluish-50);
+	--dsw-alias-button-primary-hover: var(--dsw-static-neutral-bluish-100);
+	--dsw-alias-markdown-code-block: var(--dsw-static-neutral-bluish-900);
+	--dsw-alias-markdown-tag: var(--dsw-static-neutral-bluish-850);
+	--dsw-alias-state-business-primary: var(--dsw-static-deepseek-400);
+	--dsw-alias-state-error-primary: var(--dsw-static-red-400);
+	--dsw-alias-scrollbar-bg-l1: var(--dsw-static-neutral-700);
+	--dsw-alias-scrollbar-bg-l2: var(--dsw-static-neutral-600);
+	--dsw-alias-scrollbar-hover-l1: var(--dsw-static-neutral-600);
+	--dsw-alias-scrollbar-hover-l2: var(--dsw-static-neutral-550);
+	--dsw-specific-bubble: var(--dsw-static-neutral-bluish-850);
+	--dsw-specific-input-major: var(--dsw-static-neutral-bluish-850);
+	--dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-900);
+}
+
+/* The derived elevation values are declared per element, not inherited from the body: an
+   inherited value already substituted its var() at the body, so a surface rebinding
+   --dsw-elevation-stroke-color could not reach it. */
+body,
+body * {
+	--dsw-elevation-stroke: 0 0 0 0.5px var(--dsw-elevation-stroke-color);
+	--dsw-elevation-soft:
+		var(--dsw-elevation-stroke), 0 4px 16px 0 rgba(0, 0, 0, 0.03), 0 0 24px 0 rgba(0, 0, 0, 0.03);
+}
+
+/* Smooth corner curvature, inside the support guard so engines without corner-shape keep
+   circular corners. */
+@supports (corner-shape: superellipse(1.5)) {
+	:root {
+		--dsw-corner-shape: superellipse(1.5);
+	}
+
+	*,
+	*::before,
+	*::after {
+		corner-shape: var(--dsw-corner-shape);
+	}
+}
+
+:focus-visible {
+	outline-color: var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+	outline-width: var(--dsw-focus-ring-width);
+}
+
+/* Scrollbar skin. The standard properties and the WebKit pseudo-elements are mutually
+   exclusive: a non-`auto` scrollbar-width makes Chromium and Safari drop every
+   ::-webkit-scrollbar rule, including the hover thumb. */
+@supports not selector(::-webkit-scrollbar) {
+	body,
+	body * {
+		scrollbar-width: thin;
+		scrollbar-color: var(--dsh-scrollbar-thumb) transparent;
+	}
+}
+
+::-webkit-scrollbar {
+	width: var(--dsh-scrollbar-width);
+	height: var(--dsh-scrollbar-width);
+}
+
+::-webkit-scrollbar-track {
+	margin-block: var(--dsh-scrollbar-track-margin);
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	border: var(--dsh-scrollbar-thumb-border) solid transparent;
+	border-radius: 999px;
+	background: var(--dsh-scrollbar-thumb);
+	background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background-color: var(--dsh-scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+	background: transparent;
+}

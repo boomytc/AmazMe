@@ -105,13 +105,16 @@ The page lists the host's sessions on the left and the attached session's transc
 shows each session's age and marks the attached one; click a row to attach another session. The transcript
 renders the same durable state the TUI shows: user and assistant blocks, thinking, tool calls with their
 results or a "Not run" notice, compaction and reset notices, and an error notice for an answer that failed,
-was aborted, or was truncated. The line under the header carries the session's live status (working, running a
-tool, retrying, compacting) and the inputs the session has queued but not started.
+was aborted, or was truncated. The transcript's last row is the session's live status (working, running a
+tool, retrying, compacting); the inputs the session has queued but not started sit as one strip each above
+the composer. The theme is the one `deepseek-harness` ships — the same palette, type, radii, elevation, and
+frame geometry — and it follows the system's light and dark appearance.
 
 Type in the composer and press `Enter` to submit: while the session is idle the text starts a run, and while a
-turn is running it queues as the next input. `Shift+Enter` inserts a newline and `Abort` withdraws queued input
-and stops the running turn. Committed entries appear without reloading, and any other attached presentation —
-a second browser tab or the client TUI — sees the same committed state.
+turn is running it queues as the next input. `Shift+Enter` inserts a newline; the draft grows with its content
+up to the composer's cap and scrolls after that. `Stop` withdraws queued input and stops the running turn.
+Committed entries appear without reloading, and any other attached presentation — a second browser tab or the
+client TUI — sees the same committed state.
 
 Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
 served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of

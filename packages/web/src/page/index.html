@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>AmazMe</title>
+		<!-- Canvas colour before the first paint, the two base fills of the palette. -->
+		<style>
+			:root {
+				color-scheme: light dark;
+			}
+			body {
+				margin: 0;
+				background-color: #fff;
+			}
+			@media (prefers-color-scheme: dark) {
+				body {
+					background-color: #151517;
+				}
+			}
+		</style>
+		<link rel="stylesheet" href="/tokens.css" />
+		<link rel="stylesheet" href="/page.css" />
+		<!--amazme-boot-->
+	</head>
+	<body>
+		<aside class="sidebar">
+			<div class="logo-row">
+				<span class="brand-name">AmazMe</span>
+				<span class="brand-mode" id="mode"></span>
+			</div>
+			<p class="sidebar-label">Sessions</p>
+			<div class="session-list" id="roster"><p class="empty-state">Waiting for the host…</p></div>
+		</aside>
+		<main class="center">
+			<header class="header">
+				<div class="crumbs">
+					<span class="crumb" id="session-title">No session</span>
+				</div>
+				<div class="header-utilities">
+					<span class="connection" id="connection">starting…</span>
+				</div>
+			</header>
+			<div class="transcript" id="transcript">
+				<div class="column" id="column"><p class="empty-state">No session attached.</p></div>
+			</div>
+			<div class="composer-dock">
+				<div id="queue"></div>
+				<form class="composer" id="composer">
+					<textarea
+						class="composer-input"
+						id="prompt"
+						rows="1"
+						placeholder="No session attached"
+						disabled
+					></textarea>
+					<div class="composer-row">
+						<button class="button ghost" type="button" id="abort" disabled>Stop</button>
+						<button class="button primary" type="submit" id="send" disabled>Send</button>
+					</div>
+				</form>
+			</div>
+		</main>
+		<script type="module" src="/page.js"></script>
+	</body>
+</html>

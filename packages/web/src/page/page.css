@@ -1,0 +1,609 @@
+/*
+ * Page shell: the DeepSeek Harness web layout, composed from DSH's own component values.
+ * Two frame columns (ui-layout AppFrame: sidebar fill + 0.5px rule, bg-base center); a header row
+ * over the Transcript (ui-conversation ConversationRoot, the no-tabs variant); a full-bleed
+ * transcript scroller around a centred column (ui-chat ChatView); a right-aligned user bubble
+ * (MessageItem); assistant flow (AssistantMarkdown); 24px disclosure rows for reasoning and tool
+ * calls (ui-primitives DisclosureRow, ui-tool ToolRow); a tool result card (ToolDetails); and the
+ * composer card docked at the bottom (ui-conversation InputBar).
+ */
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--dsw-alias-bg-base);
+	color: var(--dsw-alias-label-primary);
+	font-family: var(--dsw-font-family);
+	font-size: var(--dsh-content-font-size);
+	line-height: calc(24px + var(--dsh-content-font-delta));
+	-webkit-font-smoothing: antialiased;
+	display: grid;
+	grid-template-columns: 280px minmax(0, 1fr);
+	overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ sidebar */
+
+.sidebar {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	overflow: hidden;
+	padding: 6px 12px;
+	background: var(--dsw-specific-sidebar-fill);
+	border-right: 0.5px solid var(--dsw-alias-border-l3);
+	/* Elevated above the conversation surface, so its bars take the l2 pair. */
+	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* Brand row (ui-sidebar SidebarRoot .logoRow): 60px, 4px leading inset. */
+.logo-row {
+	flex: none;
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	height: 60px;
+	padding: 8px 0 8px 4px;
+	margin-bottom: 4px;
+	overflow: hidden;
+}
+
+.brand-name {
+	font-family: var(--dsw-font-family-brand);
+	font-size: 18px;
+	font-weight: 600;
+	line-height: 24px;
+	letter-spacing: 0.04em;
+	white-space: nowrap;
+}
+
+.brand-mode {
+	color: var(--dsw-alias-label-caption);
+	font-size: 12px;
+	line-height: 18px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sidebar-label {
+	flex: none;
+	padding: 6px 4px;
+	color: var(--dsw-alias-label-caption);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.session-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	overflow-y: auto;
+	min-height: 0;
+	padding-bottom: 6px;
+}
+
+/* Session chip (ui-dockkit .tab): 28px row, sm radius, secondary ink, hover fill; the attached
+   session is the filled tab. */
+.session-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	width: 100%;
+	height: 28px;
+	padding: 0 10px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-secondary);
+	font: inherit;
+	font-size: var(--dsh-content-font-size-secondary);
+	line-height: 1;
+	text-align: left;
+	cursor: pointer;
+	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.session-row:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.session-row.attached {
+	color: var(--dsw-alias-label-primary);
+	background: var(--dsw-alias-markdown-tag);
+}
+
+.session-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.session-age {
+	flex: none;
+	color: var(--dsw-alias-label-caption);
+	font-size: 12px;
+}
+
+/* DSH collapses the sidebar column into a 56px rail below this breakpoint (ui-layout columns.ts).
+   A rail here would hold nothing: the page has no rail icons, and a session chip needs its name and
+   age to be identifiable. The column is dropped instead, so the conversation keeps its geometry. */
+@media (max-width: 1023px) {
+	body {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.sidebar {
+		display: none;
+	}
+}
+
+/* ------------------------------------------------------------------- center */
+
+.center {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	overflow: hidden;
+	background: var(--dsw-alias-bg-base);
+	/* DSH publishes the conversation column's width to its components as a length; here the
+	   column itself is the query container, so the shared width axis is read from it in cqi. */
+	container-type: inline-size;
+	--dsh-chat-content-width: clamp(680px, 64cqi, 920px);
+	--dsh-composer-card-max-width: calc(var(--dsh-chat-content-width) + 32px);
+	--dsh-composer-side-clearance: 16px;
+}
+
+/* Header (ConversationRoot .header, the variant without the view tab strip). */
+.header {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	flex: none;
+	min-height: 0;
+	padding: 10px 28px 10px 20px;
+	border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.crumbs {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+/* Current crumb (ConversationRoot .crumbCurrent): the session this page is attached to. */
+.crumb {
+	display: inline-block;
+	max-width: 220px;
+	overflow: hidden;
+	padding: 4px 8px;
+	border-radius: var(--dsw-radius-md);
+	color: var(--dsw-alias-label-primary);
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 20px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The utilities column stretches and right-aligns its content, so a long value ellipsizes inside
+   the track instead of overflowing it and colliding with the title. */
+.header-utilities {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-left: 20px;
+	min-width: 0;
+}
+
+.connection {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xs-13);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.connection.error {
+	color: var(--dsw-alias-state-error-primary);
+}
+
+/* --------------------------------------------------------------- transcript */
+
+/* Transcript scroller (ChatView .scroll): full-bleed, padded by the composer clearance + 16px so
+   the column stays the same axis as the input card. */
+.transcript {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 16px calc(var(--dsh-composer-side-clearance) + 16px);
+}
+
+/* Message column (ChatView .column). */
+.column {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: var(--dsh-chat-content-width);
+	margin: 0 auto;
+}
+
+/* Flow gaps (ChatView): 6px between rows, 12px around a response and above the status, 16px
+   around the turn process. The process rules come last so they win where both apply, as they do in
+   DSH's sheet. */
+.column > * + * {
+	margin-top: var(--dsh-chat-flow-gap, 6px);
+}
+
+.turn-response,
+.turn-response + * {
+	--dsh-chat-flow-gap: 12px;
+}
+
+.turn-process,
+.turn-process + :not(.running) {
+	--dsh-chat-flow-gap: 16px;
+}
+
+/* User turn (MessageItem): bubble right-aligned, at most 525/748 of the column. */
+.turn-user {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+}
+
+.bubble {
+	max-width: min(calc(var(--dsh-chat-content-width) * 0.702), 82%);
+	padding: 10px 16px;
+	border-radius: var(--dsw-radius-xl);
+	background: var(--dsw-specific-bubble);
+	color: var(--dsw-alias-label-primary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* Turn process: reasoning and tool rows, one flow item with 6px internal gaps. */
+.turn-process {
+	display: flex;
+	flex-direction: column;
+	gap: var(--dsh-chat-flow-gap, 6px);
+}
+
+/* Assistant response (AssistantMarkdown): plain flow, no bubble. */
+.turn-response {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.turn-response .body {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* Disclosure row (ui-primitives DisclosureRow): [16px leading] gap 6 [title 13/24]. */
+.disclosure {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.disclosure-row {
+	display: flex;
+	align-items: center;
+	height: calc(24px + var(--dsh-content-font-delta));
+	min-width: 0;
+	color: var(--dsw-alias-label-tertiary);
+	list-style: none;
+	transition: color 100ms ease;
+}
+
+/* Only a disclosure's own row opens it; a notice row is text. */
+summary.disclosure-row {
+	cursor: pointer;
+}
+
+.disclosure-row:hover {
+	color: var(--dsw-alias-label-secondary);
+}
+
+.disclosure-row::-webkit-details-marker {
+	display: none;
+}
+
+/* Leading glyph box; the page has no icon set, so the mark is the 6px status dot of the state
+   family rather than a tool's own icon. */
+.disclosure-leading {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: calc(16px + var(--dsh-content-font-delta));
+	height: calc(16px + var(--dsh-content-font-delta));
+	margin-right: 6px;
+}
+
+.disclosure-leading::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentcolor;
+}
+
+.disclosure-title {
+	flex: none;
+	font-size: var(--dsh-content-font-size-secondary);
+	line-height: calc(24px + var(--dsh-content-font-delta));
+	color: inherit;
+}
+
+.disclosure-sep {
+	flex: none;
+	width: 2px;
+	height: 2px;
+	margin: 0 8px;
+	border-radius: 1px;
+	background: var(--dsw-alias-label-caption);
+}
+
+.disclosure-summary {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	color: inherit;
+	font-size: var(--dsh-content-font-size-secondary);
+	line-height: calc(24px + var(--dsh-content-font-delta));
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Reasoning body (ui-chat ReasoningRow .thinkBody): indented under the title, secondary type. */
+.reasoning-body {
+	padding: 4px 0 4px calc(22px + var(--dsh-content-font-delta));
+	min-width: 0;
+	color: var(--dsw-alias-label-secondary);
+	font-size: var(--dsh-content-font-size-secondary);
+	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* Running tool: the row's ink moves to the deep-diving tone (ChatView .running). */
+.disclosure.running .disclosure-row {
+	color: var(--dsw-alias-label-deep-diving);
+}
+
+/* A failed tool's summary carries the error colour (ToolRow .errorSummary). */
+.disclosure.error .disclosure-summary {
+	color: var(--dsw-alias-state-error-primary);
+}
+
+/* Tool result card (ui-tool ToolDetails): hairline card on the code-block fill. */
+.tool-output {
+	margin: 4px 0 4px 4px;
+	padding: 10px 14px;
+	border: 0.5px solid var(--dsw-alias-border-l1);
+	border-radius: var(--dsw-radius-lg);
+	background: var(--dsw-alias-markdown-code-block);
+	color: var(--dsw-alias-label-secondary);
+	font: var(--dsw-font-markdown-code);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 320px;
+	overflow-y: auto;
+}
+
+.tool-output.empty {
+	color: var(--dsw-alias-label-caption);
+}
+
+/* A flow notice's body (compaction summary), indented under its row like DSH's. */
+.notice-body {
+	display: block;
+	padding: 4px 0 4px calc(22px + var(--dsh-content-font-delta));
+	color: var(--dsw-alias-label-tertiary);
+	font-size: var(--dsh-content-font-size-secondary);
+	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* Failed turn (MessageItem .turnErrorRow): a status dot, a title in the error colour, the message. */
+.error-row {
+	display: grid;
+	grid-template-columns: 10px minmax(0, 1fr);
+	gap: 8px;
+	align-items: start;
+	padding: 2px 0;
+	font-size: var(--dsh-content-font-size-secondary);
+	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
+}
+
+.error-dot {
+	width: 8px;
+	height: 8px;
+	margin-top: 6px;
+	border-radius: 50%;
+	background: var(--dsw-alias-state-error-primary);
+}
+
+.error-copy {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.error-title {
+	margin-right: 6px;
+	color: var(--dsw-alias-state-error-primary);
+	font-weight: 600;
+}
+
+.error-message {
+	color: var(--dsw-alias-label-secondary);
+}
+
+/* Live status row (ChatView .running): the last flow item while a turn is in flight, 12px clear of
+   the row above it — which is why the turn process rule excludes it. */
+.running {
+	--dsh-chat-flow-gap: 12px;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	color: var(--dsw-alias-label-deep-diving);
+	font-size: calc(var(--dsh-content-font-size) - 2px);
+	line-height: calc(22px + var(--dsh-content-font-delta));
+}
+
+.running-text {
+	min-width: 0;
+	font-variant-numeric: tabular-nums;
+}
+
+.empty-state {
+	padding: 8px 0;
+	color: var(--dsw-alias-label-caption);
+	font-size: var(--dsh-content-font-size-secondary);
+}
+
+/* ---------------------------------------------------------------- composer */
+
+/* Composer dock (InputBar .root): card clearance on the sides, 4px below. The draft cap DSH
+   declares on its composer seat lives here too, on the chain's shared ancestor. */
+.composer-dock {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 0 var(--dsh-composer-side-clearance) 4px;
+	--dsh-composer-text-max-height: 336px;
+}
+
+/* Queued input (InputBar .notice): one caption strip above the card. */
+.queue-item {
+	width: 100%;
+	max-width: var(--dsh-composer-card-max-width);
+	margin-bottom: 6px;
+	padding: 4px 8px;
+	border-radius: var(--dsw-radius-md);
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-secondary);
+	font-size: 12px;
+	line-height: 18px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Composer card (InputBar .card): panel radius, input surface, soft elevation, l2 stroke. */
+.composer {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	width: 100%;
+	max-width: var(--dsh-composer-card-max-width);
+	padding-top: 8px;
+	border: 0;
+	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-panel);
+	background: var(--dsw-specific-input-major);
+	box-shadow: var(--dsw-elevation-soft);
+	font-size: var(--dsh-content-font-size);
+	line-height: calc(24px + var(--dsh-content-font-delta));
+	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* Draft scrollport and only scrolling box in the composer (InputBar .scroll + .input). */
+.composer-input {
+	box-sizing: border-box;
+	min-height: 36px;
+	max-height: var(--dsh-composer-text-max-height);
+	margin-right: 4px;
+	padding: 4px 8px 0 14px;
+	border: none;
+	background: transparent;
+	color: var(--dsw-alias-label-primary);
+	font-family: var(--dsw-font-family);
+	font-size: inherit;
+	line-height: inherit;
+	caret-color: var(--dsw-alias-state-business-primary);
+	overflow-y: auto;
+	outline: none;
+	resize: none;
+}
+
+.composer-input::placeholder {
+	color: var(--dsw-alias-label-caption);
+}
+
+/* Control row (InputBar .row): secondary controls leading, the action trailing. */
+.composer-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	min-width: 0;
+	padding: 2px 8px 6px;
+}
+
+/* Button (ui-primitives Button), at the compact size the composer uses. */
+.button {
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	height: 28px;
+	padding: 0 10px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-primary);
+	font: inherit;
+	font-size: 12px;
+	line-height: 18px;
+	cursor: pointer;
+	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.button:disabled {
+	cursor: not-allowed;
+	opacity: 0.4;
+}
+
+.button.ghost:hover:not(:disabled) {
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.button.ghost:active:not(:disabled) {
+	background: var(--dsw-alias-interactive-bg-active);
+}
+
+.button.primary {
+	background: var(--dsw-alias-button-primary-fill);
+	color: var(--dsw-alias-label-primary-foreground);
+}
+
+.button.primary:hover:not(:disabled) {
+	background: var(--dsw-alias-button-primary-hover);
+}

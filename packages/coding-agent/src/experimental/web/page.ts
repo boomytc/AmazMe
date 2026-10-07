@@ -1,8 +1,9 @@
 /// <reference lib="dom" />
 /**
  * Page entry: read the host's boot manifest, dial the loopback byte transport, bind the host's
- * replicated services, and paint them. The view model and DOM renderer live next to this file;
- * this module owns the client lifecycle, session attachment, and the visible failure states.
+ * replicated services, and paint them. The page contract, view model, and DOM renderer come from
+ * `@amazme/web`; this module owns the client lifecycle, session attachment, and the visible
+ * failure states.
  */
 import { Client, type ClientOptions } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
@@ -15,7 +16,9 @@ import {
 	collectPageElements,
 	createRenderer,
 	failureView,
+	followSystemTheme,
 	isBusy,
+	type PageElements,
 	type PageRenderer,
 } from "@amazme/web";
 import { AgentController } from "../services/agent-controller.ts";
@@ -206,19 +209,19 @@ function fail(renderer: PageRenderer, error: unknown): void {
 
 /** Entry point referenced by the served document. */
 export async function main(): Promise<void> {
+	let elements: PageElements;
 	let renderer: PageRenderer;
 	try {
-		renderer = createRenderer(collectPageElements());
+		followSystemTheme();
+		elements = collectPageElements();
+		renderer = createRenderer(elements);
 	} catch (error) {
 		document.body.textContent = `cannot boot: ${message(error)}`;
 		return;
 	}
+	const manifest = readManifest();
+	if (manifest !== undefined) elements.mode.textContent = `${manifest.mode} · ${manifest.transport.url}`;
 	try {
-		const manifest = readManifest();
-		if (manifest !== undefined) {
-			const elements = collectPageElements();
-			elements.mode.textContent = `${manifest.mode} · ${manifest.transport.url}`;
-		}
 		await startPage(renderer);
 	} catch (error) {
 		fail(renderer, error);

@@ -17,7 +17,7 @@
 	},
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsc -p tsconfig.build.json && shx cp src/index.html dist/index.html",
+		"build": "tsc -p tsconfig.build.json && shx cp -r src/page dist/page",
 		"test": "vitest --run",
 		"typecheck": "tsc -p tsconfig.test.json"
 	},

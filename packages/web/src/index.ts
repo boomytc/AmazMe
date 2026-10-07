@@ -5,6 +5,7 @@ export {
 	type WebMode,
 } from "./contract.ts";
 export { collectPageElements, createRenderer, type PageElements, type PageRenderer } from "./render.ts";
+export { followSystemTheme } from "./theme.ts";
 export {
 	buildWebView,
 	composerPlaceholder,
