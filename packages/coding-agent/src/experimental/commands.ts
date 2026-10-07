@@ -113,14 +113,19 @@ await host.close();
 }
 }
 
-/** The launch line the operator (and the model) reads: canonical URL, mode, and transport. */
-export function webLaunchLines(host: Pick<WebHost, "url" | "mode" | "serverId" | "webSocketUrl">): string[] {
-return [
-`Web: ${host.url}`,
-`Mode: ${host.mode}`,
-`WebSocket: ${host.webSocketUrl}`,
-`Server: ${host.serverId}`,
-];
+/**
+ * The launch line the operator (and the model) reads: canonical URL, mode, transport, and whether
+ * this launch started the server or forwards its pages to one that was already running.
+ */
+export function webLaunchLines(
+	host: Pick<WebHost, "url" | "mode" | "serverId" | "webSocketUrl" | "ownsServer">,
+): string[] {
+	return [
+		`Web: ${host.url}`,
+		`Mode: ${host.mode}`,
+		`WebSocket: ${host.webSocketUrl}`,
+		`Server: ${host.serverId} (${host.ownsServer ? "started" : "already running"})`,
+	];
 }
 
 /** Development-only command dispatch. Published entrypoints must not import this module. */

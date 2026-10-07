@@ -19,9 +19,13 @@ AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/sou
 
 `web` serves the same host to a browser: loopback HTTP for the page, the same port's `/amazme` path for the
 byte protocol over WebSocket, and the same Unix socket for the TUI client. It prints `Web: <url>`,
-`Mode: <mode>`, `WebSocket: <url>`, and `Server: <id>` once the host accepts connections, binds loopback only,
+`Mode: <mode>`, `WebSocket: <url>`, and `Server: <id> (started|already running)` once the host accepts
+connections, binds loopback only,
 and injects a boot manifest into the document so a page without one reports an error instead of rendering an
-empty shell. The document, its stylesheets, and the browser-side view come from the `@amazme/web` package; this slice holds the entry
+empty shell. A server already listening in the server directory under the resolved server ID is reused: the
+page's WebSocket endpoint stays this launch's, and every connection is forwarded to that server, so a second
+`web` launch — or a `client` one — shares one session list and one live state. The document, its stylesheets,
+and the browser-side view come from the `@amazme/web` package; this slice holds the entry
 (`experimental/web/page.ts`) that binds the host's services and drives the composer, plus the HTTP/WebSocket
 host. The page bundle is built in memory with the repository's esbuild and the root tsconfig paths, so the
 browser runs the same protocol and client code the TUI does. Changes to the

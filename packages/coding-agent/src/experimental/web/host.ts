@@ -1,14 +1,24 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { discoverUnixServers, type UnixServerRoute } from "@amazme/client/unix";
 import type { ServerId } from "@amazme/protocol";
 import { WebSocketListener } from "@amazme/server/websocket";
 import type { WebBootManifest, WebBootPreferences, WebMode } from "@amazme/web";
 import { contentTypeFor, PAGE_DOCUMENT, PAGE_SCRIPT, readPageDocument, resolvePageAsset } from "@amazme/web/assets";
 import { APP_NAME, VERSION } from "../../config.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import { startForegroundServer, type RunningServer } from "../server.ts";
+import {
+	acquireServerActivation,
+	acquireServerProfile,
+	ENV_SERVER_ID,
+	ensurePrivateServerDirectory,
+	resolveServerDirectory,
+	startServer,
+	type RunningServer,
+} from "../server.ts";
 import { buildBootManifest, DEFAULT_BOOT_PREFERENCES, serveDocument } from "./boot.ts";
+import { createServerBridge, type ServerBridge } from "./bridge.ts";
 import { bundlePageEntry } from "./bundle.ts";
 /** Canonical loopback address the page and the WebSocket endpoint are served on. */
 const WEB_HOST = "127.0.0.1";
@@ -34,9 +44,15 @@ export interface WebHost {
 	readonly webSocketUrl: string;
 	readonly mode: WebMode;
 	readonly serverId: string;
+	/** The Unix socket of the server this host's pages talk to. */
 	readonly socketPath: string;
+	/**
+	 * Whether this host started that server (`true`) or forwards its pages to one that was already
+	 * running in the same server directory (`false`). A second launch attaches to the first.
+	 */
+	readonly ownsServer: boolean;
 	readonly httpServer: HttpServer;
-	/** Undefined for the lifetime of the host unless the server closed on its own. */
+	/** Resolves when the server this host uses closes, for a server this host owns. */
 	readonly closed: Promise<void>;
 	close(): Promise<void>;
 }
@@ -60,10 +76,85 @@ async function readPreferences(): Promise<WebBootPreferences> {
 }
 
 /**
+ * The server this host's pages talk to: one this host started, or one that was already running in
+ * the same server directory.
+ */
+interface HostedServer {
+	readonly serverId: string;
+	readonly socketPath: string;
+	readonly owns: boolean;
+	/** The server this host started; undefined when it forwards to a running one. */
+	readonly runtime: RunningServer | undefined;
+	/** The forwarding bridge; undefined when this host owns the server. */
+	readonly bridge: ServerBridge | undefined;
+	/** Resolves when the server closes, for a server this host started. */
+	readonly closed: Promise<void>;
+}
+
+/** The server already listening in this directory under `serverId`, if any. */
+async function findRunningServer(directory: string, serverId: string): Promise<UnixServerRoute | undefined> {
+	// The same probe a terminal client uses, so a page host finds exactly the servers it finds.
+	const routes = await discoverUnixServers({ directory });
+	return routes.find((route) => route.serverId === serverId);
+}
+
+/**
+ * The server this host's pages talk to. A server already running under this directory's logical
+ * server id is reused: the page's WebSocket endpoint stays this host's, and every connection is
+ * forwarded to that server, so a second launch shares one session list and one live state instead
+ * of starting a second runtime. Holding the activation lock across the decision keeps two
+ * simultaneous launches from racing into two servers.
+ */
+async function hostServer(options: WebHostOptions, listener: WebSocketListener): Promise<HostedServer> {
+	const directory = resolveServerDirectory(options.directory);
+	await ensurePrivateServerDirectory(directory);
+	const profile = await acquireServerProfile(directory, options.serverId ?? process.env[ENV_SERVER_ID]);
+	const serverId = profile.serverId;
+	await profile.release();
+	const release = await acquireServerActivation(directory, serverId);
+	try {
+		const running = await findRunningServer(directory, serverId);
+		if (running !== undefined) {
+			const bridge = createServerBridge(running);
+			await listener.start(bridge.accept);
+			return {
+				serverId,
+				socketPath: running.path,
+				owns: false,
+				runtime: undefined,
+				bridge,
+				// A server in another process closes on its own terms; this host only stops forwarding.
+				closed: new Promise<void>(() => {}),
+			};
+		}
+		const runtime = await startServer({
+			directory,
+			serverId,
+			...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
+			listeners: [listener],
+			keepAlive: true,
+		});
+		return {
+			serverId,
+			socketPath: runtime.socketPath,
+			owns: true,
+			runtime,
+			bridge: undefined,
+			closed: runtime.closed,
+		};
+	} finally {
+		await release();
+	}
+}
+
+/**
  * Start the AmazMe host for the web client: the same server, sessions, and services the TUI
  * uses, plus a loopback HTTP document that carries the boot manifest and a WebSocket endpoint
  * that speaks the byte protocol. The page keeps no business logic; the host owns sessions,
  * tools, and model calls.
+ *
+ * When a server already runs in this directory under the requested (or default) server id, this
+ * host serves its pages against that server instead of starting a second one.
  */
 export async function startWebHost(options: WebHostOptions = {}): Promise<WebHost> {
 	const repositoryRoot = options.repositoryRoot ?? repositoryRootFromModule;
@@ -90,16 +181,11 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 	await listen(httpServer, options.port ?? 0);
 	const port = boundPort(httpServer);
 	try {
-		const runtime = await startForegroundServer({
-			...(options.directory === undefined ? {} : { directory: options.directory }),
-			...(options.serverId === undefined ? {} : { serverId: options.serverId }),
-			...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
-			listeners: [listener],
-		});
+		const hosted = await hostServer(options, listener);
 		manifest = buildBootManifest({
 			appName: APP_NAME,
 			version: VERSION,
-			serverId: runtime.serverId,
+			serverId: hosted.serverId,
 			transportUrl: `ws://${WEB_HOST}:${port}${path}`,
 			transportPath: path,
 		});
@@ -110,12 +196,13 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 			url,
 			webSocketUrl: manifest.transport.url,
 			mode: manifest.mode,
-			serverId: runtime.serverId,
-			socketPath: runtime.socketPath,
+			serverId: hosted.serverId,
+			socketPath: hosted.socketPath,
+			ownsServer: hosted.owns,
 			httpServer,
-			closed: runtime.closed,
+			closed: hosted.closed,
 			close: () => {
-				closePromise ??= closeHost(runtime, listener, httpServer);
+				closePromise ??= closeHost(hosted, listener, httpServer);
 				return closePromise;
 			},
 		};
@@ -127,8 +214,14 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 	}
 }
 
-async function closeHost(runtime: RunningServer, listener: WebSocketListener, httpServer: HttpServer): Promise<void> {
-	const results = await Promise.allSettled([runtime.close(), listener.close(), closeServer(httpServer)]);
+/** Stop serving pages, then hand back the server: close it when owned, drop the bridge when not. */
+async function closeHost(hosted: HostedServer, listener: WebSocketListener, httpServer: HttpServer): Promise<void> {
+	const results = await Promise.allSettled([
+		listener.close(),
+		hosted.bridge?.close(),
+		hosted.runtime?.close(),
+		closeServer(httpServer),
+	]);
 	const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 	if (failures.length > 0) throw new AggregateError(failures, "Web host shutdown failed");
 }

@@ -97,9 +97,17 @@ AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/sou
   ./packages/coding-agent/src/experimental/cli.ts web
 ```
 
-It prints the canonical loopback URL, the mode it serves (`source`), the WebSocket URL, and the server ID once
+It prints the canonical loopback URL, the mode it serves (`source`), the WebSocket URL, and the server ID with
+`started` when this launch began the server or `already running` when it attached to one, once
 the host accepts connections, and it binds loopback only: a connection to another address of this machine is
 refused. Open the printed `http://127.0.0.1:<port>/` URL.
+
+A server already running in the server directory under the resolved server ID — one started by
+`amazme server`, by an earlier `amazme web`, or by `amazme client` activating one — is reused: the page's
+WebSocket endpoint stays this launch's and each page connection is forwarded to that server, so a second web
+launch and the terminal client show one session list and one live state. Prompts from either client appear in
+the other without a reload; `amazme client <prompt>` needs the conversation to be idle, where the page steers or
+queues instead.
 
 The page lists the host's sessions on the left and the attached session's transcript on the right. The roster
 shows each session's age and marks the attached one; click a row to attach another session, or use the sidebar's

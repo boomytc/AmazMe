@@ -37,6 +37,7 @@ import { SessionDirectory, SessionManagement } from "../src/experimental/service
 import { Settings, type Settings as SettingsService } from "../src/experimental/services/settings.ts";
 import { Skills, type Skills as SkillsService } from "../src/experimental/services/skills.ts";
 import { Transcript } from "../src/experimental/services/transcript.ts";
+import { runClient } from "../src/experimental/client.ts";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 
 interface Presentation {
@@ -82,15 +83,25 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 90_0
 }
 
 /** Start a host whose agent directory has no credentials: model turns fail offline and fast. */
-async function startLoopHost(): Promise<WebHost> {
+interface LoopHost {
+	readonly host: WebHost;
+	/** The server directory the host publishes its Unix socket in: what a terminal client discovers. */
+	readonly directory: string;
+	readonly sessionDir: string;
+}
+
+/** A host with its scratch directories in hand, for tests that drive a second client against it. */
+async function startHostWithDirectories(): Promise<LoopHost> {
 	process.env.AMAZME_CODING_AGENT_DIR = await makeDirectory("web-loop-agent-");
-	const host = await startWebHost({
-		port: 0,
-		directory: await makeDirectory("web-loop-server-"),
-		sessionDir: await makeDirectory("web-loop-sessions-"),
-	});
+	const directory = await makeDirectory("web-loop-server-");
+	const sessionDir = await makeDirectory("web-loop-sessions-");
+	const host = await startWebHost({ port: 0, directory, sessionDir });
 	hosts.add(host);
-	return host;
+	return { host, directory, sessionDir };
+}
+
+async function startLoopHost(): Promise<WebHost> {
+	return (await startHostWithDirectories()).host;
 }
 
 /** One page-shaped presentation: two of these against one host are two browser tabs. */
@@ -226,6 +237,122 @@ describe("web client interactive loop", () => {
 			await attached.dispose();
 			await second.dispose();
 			await first.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"a second web launch attaches to the running server instead of starting one",
+		async () => {
+			const { host: first, directory, sessionDir } = await startHostWithDirectories();
+			const second = await startWebHost({ port: 0, directory, sessionDir });
+			hosts.add(second);
+
+			// One server: the second launch forwards its pages to the first host's server.
+			expect(first.ownsServer).toBe(true);
+			expect(second.ownsServer).toBe(false);
+			expect(second.serverId).toBe(first.serverId);
+			expect(second.socketPath).toBe(first.socketPath);
+			// The page endpoint is still per-launch, so a stale document cannot keep a closed host alive.
+			expect(second.webSocketUrl).not.toBe(first.webSocketUrl);
+
+			// A session created through the first launch is in the second launch's roster: both pages
+			// read one session directory from one server.
+			const tabA = await openPresentation(first);
+			const tabB = await openPresentation(second);
+			const created = await tabA.management.create({ id: "shared-host" }, BACKGROUND_CONTEXT);
+			await waitFor(() => listedSessions(tabB).includes(created.sessionId), "the session in the second tab");
+
+			// And one session carries one live state: a prompt from the first tab reaches the second.
+			const attachedA = await attachSession(tabA, created.sessionId);
+			const attachedB = await attachSession(tabB, created.sessionId);
+			const marker = `shared-host-${Date.now()}`;
+			const accepted = await attachedA.controller.prompt({ message: marker, images: null }, BACKGROUND_CONTEXT);
+			expect(accepted).toMatchObject({ accepted: true });
+			await waitFor(() => sawUserText(attachedB.transcript.state.value, marker), "the marker across the bridge");
+
+			await attachedA.controller.abort(BACKGROUND_CONTEXT);
+			await attachedB.dispose();
+			await attachedA.dispose();
+			await tabB.dispose();
+			await tabA.dispose();
+		},
+		240_000,
+	);
+
+	test(
+		"the page's own boot sequence binds against a bridged host",
+		async () => {
+			const { host: first, directory, sessionDir } = await startHostWithDirectories();
+			const second = await startWebHost({ port: 0, directory, sessionDir });
+			hosts.add(second);
+			expect(second.ownsServer).toBe(false);
+
+			// The same client and the same service list the page's entry point opens, against the
+			// bridged endpoint: a binding that fails here is the page's "cannot boot" line.
+			const client = await Client.connect({
+				serverId: second.serverId,
+				transportFactory: createWebSocketTransportFactory({ url: second.webSocketUrl }),
+			});
+			const source = createServerServiceSource(client);
+			const services = source.open({
+				services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, Feedback, Schedules],
+				assertAccess(): void {},
+				onError(): void {},
+			});
+			try {
+				await services.ready(BACKGROUND_CONTEXT);
+				// Each service's state replicates on its own, so wait for the ones the page's panels
+				// read rather than assuming one arrival means all of them.
+				const settings = services.use(Settings);
+				const skills = services.use(Skills);
+				const plugins = services.use(Plugins);
+				const feedback = services.use(Feedback);
+				const schedules = services.use(Schedules);
+				await waitFor(
+					() =>
+						settings.state.value !== undefined &&
+						skills.state.value !== undefined &&
+						plugins.state.value !== undefined &&
+						feedback.state.value !== undefined &&
+						schedules.state.value !== undefined,
+					"the administration state over the bridge",
+					30_000,
+				);
+				expect(settings.state.value?.descriptors.length).toBeGreaterThan(0);
+				// The first host's server is what answered: its directory lists its sessions.
+				const created = await services.use(SessionManagement).create({ id: "bridged-boot" }, BACKGROUND_CONTEXT);
+				expect(created.sessionId).toBe("bridged-boot");
+			} finally {
+				await services.dispose(BACKGROUND_CONTEXT);
+				await client.dispose();
+			}
+			expect(first.ownsServer).toBe(true);
+		},
+		240_000,
+	);
+
+	test(
+		"the terminal client attaches to the same host and its prompt lands in the page",
+		async () => {
+			const { host, directory } = await startHostWithDirectories();
+			const tab = await openPresentation(host);
+			const created = await tab.management.create({ id: "terminal-shared" }, BACKGROUND_CONTEXT);
+			const attached = await attachSession(tab, created.sessionId);
+
+			// The real client command: it discovers the host's server in the server directory and
+			// attaches the page's session. Without credentials the turn fails, so the journey is
+			// accepted either way; the user entry is what the page must show.
+			const marker = `terminal-${Date.now()}`;
+			await runClient(
+				{ command: "client", sessionId: created.sessionId, prompt: marker },
+				{ directory },
+			).catch(() => undefined);
+			await waitFor(() => sawUserText(attached.transcript.state.value, marker), "the terminal client's prompt");
+
+			await attached.controller.abort(BACKGROUND_CONTEXT);
+			await attached.dispose();
+			await tab.dispose();
 		},
 		240_000,
 	);

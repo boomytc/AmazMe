@@ -163,6 +163,21 @@ async function retryOnRebind<T>(run: () => Promise<T>): Promise<T> {
 	}
 }
 
+/**
+ * Queues the page's session transitions, so they run one at a time and in the order they were
+ * asked for. A transition releases the bindings of the attachment before it, so two running at
+ * once would have the later one dispose the bindings the earlier one is still binding — a "binding
+ * is disposed" failure the page brought on itself. The last request is the one that ends attached.
+ */
+export function sessionTransitions(): <T>(run: () => Promise<T>) => Promise<T> {
+	let tail: Promise<unknown> = Promise.resolve();
+	return <T>(run: () => Promise<T>): Promise<T> => {
+		const next = tail.then(run, run);
+		tail = next.catch(() => undefined);
+		return next;
+	};
+}
+
 /** Read one picked file as a data URL; the browser does the decoding. */
 function readAsDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -397,7 +412,9 @@ class SessionPainter {
 	}
 
 	async attach(sessionId: string, paint: () => void): Promise<void> {
-		if (this.#sessionId === sessionId) return;
+		// Bound services are the mark of a live attachment: the same id with nothing bound is a
+		// stale handle from a transition that was interrupted, so it is bound again.
+		if (this.#sessionId === sessionId && this.#services !== undefined) return;
 		await this.detach();
 		this.#sessionId = sessionId;
 		const attached = this.#sessionSource.attachment.value;
@@ -460,7 +477,9 @@ class SessionPainter {
 	}
 
 	async detach(): Promise<void> {
-		await this.#services?.dispose(BACKGROUND_CONTEXT);
+		// The bindings go first, then their release: a paint that lands while the release is in
+		// flight reads an unattached page instead of a disposed handle.
+		const services = this.#services;
 		this.#services = undefined;
 		this.#transcript = undefined;
 		this.#controller = undefined;
@@ -474,6 +493,7 @@ class SessionPainter {
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		this.#sessionId = undefined;
+		await services?.dispose(BACKGROUND_CONTEXT);
 	}
 }
 
@@ -691,17 +711,21 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * Attach another session. The painter lets go of the previous one first: the host has already
 	 * moved this connection's attachment by the time the new services bind, so a send in that window
 	 * would reach a session this client no longer has. The composer is inert until the new one lands.
+	 * Transitions are queued, so a click during the page's own first bind waits its turn instead of
+	 * disposing the bindings that bind is using.
 	 */
-	const selectSession = async (sessionId: string): Promise<void> => {
-		if (painter.sessionId === sessionId) return;
-		await painter.detach();
-		paint();
-		await retryOnRebind(async () => {
-			await management.attach(sessionId, BACKGROUND_CONTEXT);
-			await sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
-			await painter.attach(sessionId, paint);
+	const transition = sessionTransitions();
+	const selectSession = (sessionId: string): Promise<void> =>
+		transition(async () => {
+			if (painter.sessionId === sessionId) return;
+			await painter.detach();
+			paint();
+			await retryOnRebind(async () => {
+				await management.attach(sessionId, BACKGROUND_CONTEXT);
+				await sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
+				await painter.attach(sessionId, paint);
+			});
 		});
-	};
 	renderer.onSelect = (sessionId) => {
 		void selectSession(sessionId).catch((error: unknown) => {
 			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
@@ -1518,4 +1542,6 @@ export async function main(): Promise<void> {
 	}
 }
 
-void main();
+// The page runs when the document loads it. An import outside a document — the transition queue's
+// test — leaves it alone rather than failing on a missing DOM.
+if (typeof document !== "undefined") void main();
