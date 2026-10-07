@@ -102,6 +102,12 @@
 					<span class="crumb" id="session-title">{{header.noSession}}</span>
 				</div>
 				<div class="header-utilities">
+					<!-- Context occupancy, tokens, and cost. Always visible, the same three figures as the TUI top bar. -->
+					<div class="status-meter" id="status-meter">
+						<span id="meter-context">?</span>
+						<span id="meter-tokens">? / ?</span>
+						<span id="meter-cost">$0.000</span>
+					</div>
 					<!-- The session's run controls (compaction); the renderer fills this. -->
 					<div class="header-actions" id="run-actions"></div>
 					<span class="connection" id="connection">{{connection.starting}}</span>
@@ -189,7 +195,12 @@
 									/>
 								</svg>
 							</button>
-							<!-- The renderer swaps this Send glyph for the stop square while a turn runs. -->
+							<!-- One stop control for the whole turn. Ctrl+C does the same thing. -->
+							<button class="stop" type="button" id="stop" aria-label="{{composer.stop}}" title="{{shortcut.stop}}" hidden>
+								<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+									<rect x="3" y="3" width="10" height="10" rx="3" fill="currentColor" />
+								</svg>
+							</button>
 							<button class="primary" type="submit" id="primary" aria-label="{{composer.send}}" disabled>
 								<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
 									<path

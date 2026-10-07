@@ -80,8 +80,8 @@ describe("experimental client TUI", () => {
 				catalog: {
 					revision: 1,
 					availableModels: [
-						{ provider: "test", modelId: "one", name: "Model One", reasoning: false },
-						{ provider: "test", modelId: "two", name: "Model Two", reasoning: true },
+						{ provider: "test", modelId: "one", name: "Model One", reasoning: false, contextWindow: 1000 },
+						{ provider: "test", modelId: "two", name: "Model Two", reasoning: true, contextWindow: 1000 },
 					],
 				},
 				configuration: { model: { provider: "test", modelId: "one" }, thinkingLevel: "off" },
@@ -154,6 +154,11 @@ describe("experimental client TUI", () => {
 				},
 				async detach() {
 					publishReplacement(attachment, { status: "detached" });
+				},
+				async rename(sessionId) {
+					const current = directoryState.value.sessions.find((session) => session.sessionId === sessionId);
+					if (current === undefined) throw new Error(`Unknown session: ${sessionId}`);
+					return current;
 				},
 			});
 			const rootConversationId = String(durable.conversation.id);

@@ -451,6 +451,28 @@ body.dock-open {
 	position: relative;
 }
 
+/* Context %, tokens, and cost. Always in the header, tabular so the figures do not jump. */
+.status-meter {
+	display: flex;
+	flex: 0 1 auto;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xs-13);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.status-meter[data-tone="warning"] #meter-context {
+	color: var(--dsw-alias-label-secondary);
+}
+
+.status-meter[data-tone="error"] #meter-context {
+	color: var(--dsw-alias-state-error-primary);
+}
+
 .connection {
 	flex: 0 1 auto;
 	min-width: 0;
@@ -1787,9 +1809,30 @@ summary.disclosure-row {
 	background: var(--dsw-alias-border-l2);
 }
 
+/* Stop stays its own control for the whole turn. Send does not change into it. */
+.stop {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	border: none;
+	border-radius: 999px;
+	corner-shape: round;
+	background: var(--dsw-alias-state-error-primary);
+	color: #fff;
+	cursor: pointer;
+	transform: translateY(-2px);
+}
+
+.stop:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
 /* Primary action (InputBar .primary): 34px circle in the info fill, white glyph, and the row's 2px
-   downward shift cancelled by a transform. The glyph is Send, or Stop while a turn runs and the
-   draft is empty — the page's own 16px arrow and square stand in for DSH's icon set. */
+   downward shift cancelled by a transform. */
 .primary {
 	display: grid;
 	place-items: center;
@@ -1966,7 +2009,8 @@ summary.disclosure-row {
 .dock[hidden],
 .approvals[hidden],
 .attachments[hidden],
-.submit-modes[hidden] {
+.submit-modes[hidden],
+.stop[hidden] {
 	display: none;
 }
 

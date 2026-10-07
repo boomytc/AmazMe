@@ -63,6 +63,7 @@ export interface TranscriptBlock {
 
 export interface RosterItem {
 	readonly id: string;
+	/** The name `/name` set, or the session id when it has none. */
 	readonly label: string;
 	/** The session's working directory, shown so two sessions are tellable apart. */
 	readonly cwd: string | undefined;
@@ -396,8 +397,12 @@ export interface WebView {
 	};
 
 	readonly attachedId: string | undefined;
+	/** The attached session's readable name, falling back to its id. */
+	readonly sessionLabel: string | undefined;
+	/** Context occupancy, tokens, and cost. Always present, including before the first answer. */
+	readonly meter: StatusMeter;
 	readonly empty: string | undefined;
-	/** Whether a turn is in flight: the composer's primary action becomes the stop control. */
+	/** Whether a turn is in flight: the stop control stays on screen until it settles. */
 	readonly busy: boolean;
 	readonly newSession: NewSessionAffordance;
 	readonly model: ModelPicker;
@@ -423,6 +428,8 @@ export interface SessionSummaryLike {
 	readonly sessionId: string;
 	readonly createdAt: number;
 	readonly cwd?: string;
+	/** The display name `/name` reads, when the session has one. */
+	readonly name?: string;
 	/** Where the session lives; a host that does not say is taken to own it. */
 	readonly source?: "host" | "local";
 }
@@ -438,6 +445,8 @@ export interface ModelSummaryLike {
 	readonly modelId: string;
 	readonly name: string;
 	readonly reasoning: boolean;
+	/** Present when the host publishes the model's context window. */
+	readonly contextWindow?: number;
 }
 
 /** The host's replicated `amazme.models` state, as this package reads it. */
@@ -605,22 +614,32 @@ export function formatAge(createdAt: number, now: number): string {
 	return `${Math.floor(hours / 24)}d`;
 }
 
+/** The display name `/name` reads, when it is non-blank. */
+function displayName(session: SessionSummaryLike): string | undefined {
+	const name = session.name?.trim();
+	return name === undefined || name.length === 0 ? undefined : name;
+}
+
 /**
- * The roster, newest first, narrowed by the reader's filter. A filter matches the session's id or
- * its working directory, so a path is as good a handle as the id.
+ * The roster, newest first, narrowed by the reader's filter. A filter matches the session's name,
+ * its id, or its working directory.
  */
 export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefined, attachedId: string | undefined, now: number, filter = ""): RosterItem[] {
 	const sessions = state?.sessions ?? [];
 	const needle = filter.trim().toLowerCase();
 	return [...sessions]
-		.filter((session) => needle.length === 0 || session.sessionId.toLowerCase().includes(needle) || (session.cwd ?? "").toLowerCase().includes(needle))
+		.filter((session) => {
+			if (needle.length === 0) return true;
+			const name = displayName(session)?.toLowerCase() ?? "";
+			return name.includes(needle) || session.sessionId.toLowerCase().includes(needle) || (session.cwd ?? "").toLowerCase().includes(needle);
+		})
 		.sort(
 			(left: SessionSummaryLike, right: SessionSummaryLike) =>
 				right.createdAt - left.createdAt || (left.serverId ?? "").localeCompare(right.serverId ?? "") || left.sessionId.localeCompare(right.sessionId),
 		)
 		.map((session) => ({
 			id: session.sessionId,
-			label: session.sessionId,
+			label: displayName(session) ?? session.sessionId,
 			cwd: session.cwd,
 			age: formatAge(session.createdAt, now),
 			ageIso: new Date(session.createdAt).toISOString(),
@@ -633,6 +652,92 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 				data: session.sessionId,
 			},
 		}));
+}
+
+/** The attached session's readable name, or its id when `/name` has not set one. */
+export function attachedSessionLabel(directory: SessionDirectoryLike | undefined, attachedId: string | undefined): string | undefined {
+	if (attachedId === undefined) return undefined;
+	const session = directory?.sessions.find((item) => item.sessionId === attachedId);
+	return session === undefined ? attachedId : (displayName(session) ?? attachedId);
+}
+
+/** Token counts in the same widths the TUI top bar uses. */
+export function formatTokens(count: number): string {
+	if (count < 1000) return count.toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
+	if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+	return `${Math.round(count / 1_000_000)}M`;
+}
+
+/** The header's context, tokens, and cost. Unknown measurements stay visible as `?`. */
+export interface StatusMeter {
+	readonly context: string;
+	readonly tokens: string;
+	readonly cost: string;
+	readonly tone: "neutral" | "warning" | "error";
+}
+
+/** Context size from the newest successful answer after the newest compaction; unknown before one. */
+function contextTokens(entries: readonly EntryRecord[]): number | undefined {
+	const compacted = entries.reduce((max, entry) => (entry.kind === CompactionEntry.kind ? Math.max(max, Number(entry.id)) : max), 0);
+	for (const entry of [...entries].reverse()) {
+		if (Number(entry.id) < compacted || entry.kind !== AssistantEntry.kind) continue;
+		const message = entry.model?.[0];
+		if (message?.role !== "assistant") continue;
+		if (message.stopReason === "aborted" || message.stopReason === "error") continue;
+		const usage = message.usage;
+		return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+	}
+	return undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function objectValues(value: unknown): readonly unknown[] {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+	return Object.values(value);
+}
+
+/** Session spend from `amazme.usage`. Missing usage is zero, not a hidden row. */
+function usageCost(docs: ConversationView["docs"]): number {
+	const state = docs["amazme.usage"];
+	if (state === undefined) return 0;
+	let total = 0;
+	for (const bucket of [state.models, state.tools]) {
+		for (const usage of objectValues(bucket)) {
+			if (typeof usage !== "object" || usage === null || Array.isArray(usage)) continue;
+			const cost = "cost" in usage ? usage.cost : undefined;
+			if (typeof cost !== "object" || cost === null || Array.isArray(cost) || !("total" in cost)) continue;
+			const amount = finiteNumber(cost.total);
+			if (amount !== undefined) total += amount;
+		}
+	}
+	return total;
+}
+
+/**
+ * The status bar the header keeps on screen: context occupancy, tokens against the window, and
+ * cost. The widths and the warning thresholds match the TUI top bar.
+ */
+export function statusMeter(transcript: ConversationView | undefined, models: ModelsStateLike | undefined): StatusMeter {
+	const configured = models?.configuration.model;
+	const published =
+		configured === undefined || configured === null
+			? undefined
+			: models?.catalog.availableModels.find((model) => model.provider === configured.provider && model.modelId === configured.modelId)?.contextWindow;
+	const contextWindow = published !== undefined && published > 0 ? published : undefined;
+	const used = transcript === undefined ? undefined : contextTokens(transcript.entries);
+	const percent = used === undefined || contextWindow === undefined ? undefined : (used / contextWindow) * 100;
+	const tone = percent === undefined ? "neutral" : percent > 90 ? "error" : percent > 70 ? "warning" : "neutral";
+	return {
+		context: percent === undefined ? "?" : `${percent.toFixed(1)}%`,
+		tokens: `${used === undefined ? "?" : formatTokens(used)} / ${contextWindow === undefined ? "?" : formatTokens(contextWindow)}`,
+		cost: `$${(transcript === undefined ? 0 : usageCost(transcript.docs)).toFixed(3)}`,
+		tone,
+	};
 }
 
 function messageText(content: Message["content"], separator: string): string {
@@ -1063,6 +1168,8 @@ export function failureView(locale: Locale, text: string): WebView {
 		welcome: undefined,
 		run: runControls(locale, "followUp", false),
 		attachedId: undefined,
+		sessionLabel: undefined,
+		meter: statusMeter(undefined, undefined),
 		empty: text,
 		busy: false,
 		newSession: { enabled: false },
@@ -1121,6 +1228,8 @@ export function buildWebView(input: WebViewInput): WebView {
 		}),
 		run: runControls(locale, input.submitMode, input.attachedId !== undefined),
 		attachedId: input.attachedId,
+		sessionLabel: attachedSessionLabel(input.directory, input.attachedId),
+		meter: statusMeter(input.transcript, input.models),
 		empty,
 		busy: isBusy(input.transcript),
 		// Only a reachable host can take a create; the roster appears with the same state.

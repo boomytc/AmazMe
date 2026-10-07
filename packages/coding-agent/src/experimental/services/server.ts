@@ -66,6 +66,7 @@ export async function createExperimentalServerServices(options: {
 	list(context: Context): Promise<SessionSummary[]>;
 	create(createOptions: SessionCreateOptions, context: Context): Promise<SessionSummary>;
 	remove(sessionId: string, context: Context): Promise<void>;
+	rename(sessionId: string, name: string, context: Context): Promise<SessionSummary>;
 	prepareSessionPlugins(
 		sessionId: string,
 		packagePaths: readonly string[] | undefined,
@@ -244,6 +245,12 @@ export async function createExperimentalServerServices(options: {
 						serialize(async () => {
 							await presentation.detachSession(context);
 							preparedPluginPackagePaths = undefined;
+						}),
+					rename: (sessionId, name, context) =>
+						serialize(async () => {
+							const renamed = await options.rename(sessionId, name, context);
+							await refreshNow(context);
+							return renamed;
 						}),
 				});
 				const attachment = createProviderAttachment(provider, () => attachments.delete(attachment));

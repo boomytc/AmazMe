@@ -209,6 +209,26 @@ afterEach(async () => {
 
 describe("web client interactive loop", () => {
 	test(
+		"publishes the name /name stores onto the roster",
+		async () => {
+			const host = await startLoopHost();
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "named-session" }, BACKGROUND_CONTEXT);
+			const renamed = await presentation.management.rename(created.sessionId, "weekly\nreport", BACKGROUND_CONTEXT);
+			expect(renamed.name).toBe("weekly report");
+			await waitFor(
+				() => presentation.directory.state.value?.sessions.some((session) => session.sessionId === "named-session" && session.name === "weekly report") === true,
+				"the roster name",
+			);
+			expect(rosterItems("en", presentation.directory.state.value, undefined, Date.now(), "weekly").map((item) => item.label)).toEqual(["weekly report"]);
+			const cleared = await presentation.management.rename(created.sessionId, " ", BACKGROUND_CONTEXT);
+			expect(cleared.name).toBeUndefined();
+			await presentation.dispose();
+		},
+		120_000,
+	);
+
+	test(
 		"commits a prompt from one presentation and replicates it to a second one",
 		async () => {
 			// An empty agent directory has no credentials, so the model turn fails fast and offline

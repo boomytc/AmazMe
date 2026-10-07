@@ -23,6 +23,8 @@ export interface SessionHandoffOptions {
 	readonly sessionId: string;
 	readonly cwd: string;
 	readonly createdAt: number;
+	/** The display name `/name` reads, copied into the terminal file on each rewrite. */
+	readonly sessionName?: () => Promise<string | undefined>;
 	/** Where the report goes: the worker's log, and the tests' capture. */
 	readonly report?: (line: string) => void;
 }
@@ -60,11 +62,13 @@ export async function startSessionHandoff(options: SessionHandoffOptions): Promi
 		// Mirrors run one at a time: a slow write must not be overtaken by the next revision.
 		writing = writing
 			.then(async () => {
+				const name = await options.sessionName?.();
 				const projection = await writeSessionMirror({
 					path,
 					sessionId: options.sessionId,
 					cwd: options.cwd,
 					createdAt: options.createdAt,
+					...(name === undefined ? {} : { name }),
 					entries,
 				});
 				if (Object.keys(projection.skipped).length > 0) {

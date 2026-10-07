@@ -42,7 +42,7 @@ import {
 	type SessionWorkerServices,
 	type WorkerServiceScope,
 } from "./services/worker.ts";
-import { sessionStoragePath } from "./session-catalog.ts";
+import { readSession, sessionStoragePath } from "./session-catalog.ts";
 import { startSessionHandoff } from "./session-handoff.ts";
 
 export type { SessionWorkerRuntime } from "./services/worker.ts";
@@ -827,6 +827,7 @@ async function createCodingAgentHarness(
 			sessionId: options.metadata.id,
 			cwd,
 			createdAt: options.metadata.createdAt,
+			sessionName: async () => (await readSession(options.sessionDir, options.metadata.id))?.name,
 		});
 		return {
 			cwd,
