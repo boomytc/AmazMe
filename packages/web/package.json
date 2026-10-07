@@ -22,6 +22,7 @@
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"devDependencies": {
-		"@amazme/durable": "^1.0.4"
+		"@amazme/durable": "^1.0.4",
+		"happy-dom": "^20.10.5"
 	}
 }

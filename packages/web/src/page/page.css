@@ -1041,6 +1041,20 @@ summary.disclosure-row {
 	color: var(--dsw-alias-state-error-primary);
 }
 
+/* Short tool arguments (the TUI's expanded `key: value` lines), above the result card. */
+.tool-args {
+	margin: 2px 0 0;
+	padding: 2px 0 2px calc(22px + var(--dsh-content-font-delta));
+	min-width: 0;
+	max-height: 320px;
+	overflow: auto;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: var(--dsh-content-font-size-secondary);
+	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 /* Tool result card (ui-tool ToolDetails): hairline card on the code-block fill, secondary ink at
    the component's own type tier. */
 .tool-output {
