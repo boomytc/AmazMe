@@ -59,7 +59,8 @@ describe("the session's command catalogue", () => {
 		await writeSkill("draft-brief", "Draft a brief", "Write the brief.");
 
 		const catalog = commandCatalog(loadCommandResources({ cwd, settings }));
-		expect(catalog.map((command) => [command.name, command.source])).toEqual([
+		const runnable = catalog.filter((command) => command.availability === "all");
+		expect(runnable.map((command) => [command.name, command.source])).toEqual([
 			["model", "builtin"],
 			["thinking", "builtin"],
 			["compact", "builtin"],
@@ -74,10 +75,35 @@ describe("the session's command catalogue", () => {
 			description: "Draft the weekly report",
 			argumentHint: "<week>",
 			source: "template",
+			availability: "all",
 		});
 		// Without a description the first line of the body stands in, as the terminal's loader does.
 		expect(catalog.find((command) => command.name === "triage")?.description).toBe("Sort the inbox.");
 		expect(catalog.find((command) => command.name === "skill:draft-brief")?.argumentHint).toBe("[args]");
+	});
+
+	test("marks the terminal's own commands and shadows their names with the host's", () => {
+		const catalog = commandCatalog(loadCommandResources({ cwd, settings }), [
+			{ name: "hello", description: "Say hello", argumentHint: "<who>" },
+		]);
+		// What this host runs, what it expands, and what a plugin registered: runnable everywhere.
+		expect(catalog.find((command) => command.name === "model")).toMatchObject({
+			source: "builtin",
+			availability: "all",
+		});
+		expect(catalog.find((command) => command.name === "hello")).toMatchObject({
+			source: "plugin",
+			availability: "all",
+		});
+		// The terminal's own commands are listed once, after everything runnable, and marked.
+		expect(catalog.find((command) => command.name === "export")).toMatchObject({
+			source: "builtin",
+			availability: "terminal",
+		});
+		expect(catalog.filter((command) => command.name === "model")).toHaveLength(1);
+		const runnable = catalog.filter((command) => command.availability === "all").length;
+		expect(catalog.slice(runnable).every((command) => command.availability === "terminal")).toBe(true);
+		expect(catalog.some((command) => command.name === "quit")).toBe(true);
 	});
 
 	test("leaves skills out when the skill-command switch is off", async () => {

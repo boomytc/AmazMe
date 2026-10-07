@@ -1375,6 +1375,13 @@ summary.disclosure-row {
 	background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* A command only the terminal can run stays legible but reads as unavailable. */
+.palette-row.unavailable .palette-name,
+.palette-row.unavailable .palette-desc,
+.palette-row.unavailable .palette-hint {
+	color: var(--dsw-alias-label-caption);
+}
+
 .palette-tag {
 	flex: none;
 	width: 48px;

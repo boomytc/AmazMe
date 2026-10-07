@@ -1108,7 +1108,12 @@ export function createRenderer(
 		if (view.palette.empty !== undefined) card.append(element("p", "palette-empty", view.palette.empty));
 		const rows = element("div", "palette-rows");
 		view.palette.rows.forEach((row, index) => {
-			const node = button(row.selected ? "palette-row selected" : "palette-row");
+			const classes = ["palette-row"];
+			if (row.selected) classes.push("selected");
+			// A command this client cannot run is shown as such: the row picks its text, and the
+			// host answers with the reason when it is submitted.
+			if (row.disabled === true) classes.push("unavailable");
+			const node = button(classes.join(" "));
 			node.dataset.value = row.value;
 			// Every row carries the tag slot, so the names keep one left edge whether or not the
 			// command came from a resource.

@@ -473,6 +473,9 @@ class SessionPainter {
 		});
 		transcript.state.subscribe(() => paint());
 		await this.#refreshLevels(paint);
+		// The catalogue is re-read once per attachment: a plugin that registered a command while this
+		// session started is in it, without the reader doing anything.
+		await this.refreshCommands().catch(() => undefined);
 		paint();
 	}
 

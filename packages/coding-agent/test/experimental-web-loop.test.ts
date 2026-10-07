@@ -944,7 +944,10 @@ describe("web client interactive loop", () => {
 
 			await waitFor(() => (attached.commands.state.value?.commands ?? []).length > 4, "the command catalogue");
 			const catalogue = attached.commands.state.value?.commands ?? [];
-			expect(catalogue.map((command) => [command.name, command.source])).toEqual([
+			// What this host runs and expands comes first; the terminal's own commands follow, marked
+			// so a client refuses them with a reason instead of sending the text to the model.
+			const runnable = catalogue.filter((command) => command.availability === "all");
+			expect(runnable.map((command) => [command.name, command.source])).toEqual([
 				["model", "builtin"],
 				["thinking", "builtin"],
 				["compact", "builtin"],
@@ -952,6 +955,15 @@ describe("web client interactive loop", () => {
 				["web-loop-report", "template"],
 				["skill:web-loop-brief", "skill"],
 			]);
+			expect(runnable.every((command) => command.source !== "builtin" || command.name !== "export")).toBe(true);
+			expect(catalogue.find((command) => command.name === "export")).toMatchObject({
+				availability: "terminal",
+				source: "builtin",
+			});
+			expect(await attached.commands.run("export", "", BACKGROUND_CONTEXT)).toEqual({
+				ok: false,
+				problem: "/export runs in the terminal only.",
+			});
 			expect(catalogue.find((command) => command.name === "model")?.argumentHint).toBe("<provider/model>");
 			// The host expands a resource command with the same code the terminal uses, and the
 			// presentation sends the prompt on its own path.

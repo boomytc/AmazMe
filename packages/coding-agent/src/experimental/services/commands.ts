@@ -2,13 +2,22 @@ import { type Context, defineService, type ReplicatedState } from "@amazme/chord
 
 /**
  * Where a command comes from. The host's own four are `builtin`; the rest are resources the session
- * loaded — a prompt template, or a skill the reader may invoke as a command.
+ * loaded — a prompt template, a skill the reader may invoke as a command, or a command a plugin
+ * registered with this session.
  */
-export type CommandSource = "builtin" | "template" | "skill";
+export type CommandSource = "builtin" | "template" | "skill" | "plugin";
+
+/**
+ * Which clients can run a command. `all` means any presentation of this session can: the host runs
+ * it, or the presentation expands it into a prompt. `terminal` means the terminal's own screen, which
+ * a page or a desktop client has no counterpart for — listed so a client can say so instead of
+ * sending the text to the model.
+ */
+export type CommandAvailability = "all" | "terminal";
 
 /**
  * One command the session offers. A presentation renders the composer's command palette from these
- * names and descriptions, runs a built-in by name with its argument text, and expands a resource
+ * names and descriptions, runs a runnable one by name with its argument text, and expands a resource
  * command into a prompt of its own.
  */
 export interface CommandSummary {
@@ -18,6 +27,8 @@ export interface CommandSummary {
 	argumentHint?: string;
 	/** What the command is, so the palette can say where it came from. */
 	source: CommandSource;
+	/** Which clients can run it, so a presentation can refuse honestly. */
+	availability: CommandAvailability;
 }
 
 /** One completion for a command's argument, such as a model id or a thinking level. */

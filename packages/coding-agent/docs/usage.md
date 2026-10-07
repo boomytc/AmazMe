@@ -150,10 +150,12 @@ for a model that reasons, its thinking level; it opens a card listing the host's
 provider and the levels that model supports, and either choice lands in that session's configuration on the host,
 so the next turn resolves its model and level from it.
 
-A draft that starts with `/` opens the command palette. It lists the session's own commands (`model`, `thinking`,
-`compact`, `reload`), the prompt templates that session loaded, and its skills as `/skill:<name>` — the same three
-sources the TUI's menu carries, with a `template` or `skill` tag beside the rows that came from a resource, and the
-argument hint from the resource's frontmatter. `Tab` completes the highlighted row and `Enter` runs it. The session's own
+A draft that starts with `/` opens the command palette. It lists, in one order, what this host runs (`model`,
+`thinking`, `compact`, `reload`), what a plugin registered with the session (`plugin`), the prompt templates that
+session loaded (`template`), its skills as `/skill:<name>` (`skill`), and — last — the terminal's own commands
+(`terminal only`), which no other client can carry out. Each row shows its argument hint from the resource's
+frontmatter, and the runnable rows come first. `Tab` completes the highlighted row and `Enter` runs it. A row marked `terminal only` is refused with that reason on
+the connection line, so the text never reaches the model as prose. The session's own
 commands run on the host and report their note or problem on the connection line; a template or a skill is expanded
 there too, with the same code the TUI expands it with (`$1`/`$ARGUMENTS` substitution, or a `<skill>` block plus the
 arguments), and the page then sends that prompt on its normal path, so a focused conversation and the composer's

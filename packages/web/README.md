@@ -112,9 +112,10 @@ task 与会话 id），钩子在那里等；页面在 composer 上方给出卡�
 
 ## 命令、快捷键与复制
 
-- 命令：composer 里以 `/` 开头的草稿打开命令面板。目录全部来自宿主 `amazme.commands` 的会话目录，三类：
-  宿主自己的四条（model／thinking／compact／reload）、会话加载的 prompt 模板、以及技能（`/skill:<name>`，
-  `enableSkillCommands` 关闭时不列出）。面板按前缀过滤，每行的来源以「模板／技能」标出（宿主自己的命令不带标），
+- 命令：composer 里以 `/` 开头的草稿打开命令面板。目录全部来自宿主 `amazme.commands` 的会话目录，按可用性排序：
+  宿主自己的四条（model／thinking／compact／reload）、插件注册的命令（`plugin`）、会话加载的 prompt 模板
+  （`template`）、技能（`/skill:<name>`，`enableSkillCommands` 关闭时不列出），最后是终端自己的命令
+  （`terminal only`，客户端执行不了，因此只列出并标灰；提交时宿主以理由拒绝，不会把文本当 prompt 发给模型）。面板按前缀过滤，每行的来源以「模板／技能」标出（宿主自己的命令不带标），
   补上空格后改为请求宿主的参数补全（模型 id、推理档）；Tab 补全高亮的行，Enter 运行。
   运行分两条路：宿主自己的命令走 `Commands.run`，结果是 note 或 problem（命令结果因此是值而不是异常，避免 RPC
   把信息抹成一句话）；模板与技能走 `Commands.expand` 取回 prompt 文本，再由页面按自己的发送路径发给当前聚焦的

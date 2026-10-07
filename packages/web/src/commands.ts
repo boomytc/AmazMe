@@ -8,7 +8,10 @@ import type { Locale } from "./locale.ts";
 import { translate } from "./strings.ts";
 
 /** Where a command comes from, as the host reports it. */
-export type CommandSource = "builtin" | "template" | "skill";
+export type CommandSource = "builtin" | "template" | "skill" | "plugin";
+
+/** Which clients can run a command: every one, or the terminal's own screen. */
+export type CommandAvailability = "all" | "terminal";
 
 /** One command the host offers, as the page reads it from the session's catalogue. */
 export interface CommandLike {
@@ -16,6 +19,8 @@ export interface CommandLike {
 	readonly description: string;
 	readonly argumentHint?: string;
 	readonly source?: CommandSource;
+	/** Absent means the host did not say, which is taken as runnable everywhere. */
+	readonly availability?: CommandAvailability;
 }
 
 /** One completion the host offers for a command's argument. */
@@ -61,8 +66,10 @@ export interface CommandRow {
 	readonly description: string;
 	/** The command's argument shape, shown beside a command row. */
 	readonly hint?: string;
-	/** Where the command came from, when the host said. */
+	/** Where the command came from, or that only a terminal can run it. */
 	readonly tag?: string;
+	/** True for a command this client cannot run: it is listed so the reader is told, not run. */
+	readonly disabled?: boolean;
 	readonly selected: boolean;
 }
 
@@ -81,10 +88,15 @@ const CLOSED: (locale: Locale) => CommandPalette = (locale) => ({
 	rows: [],
 });
 
-/** The row tag for one source. The host's own commands carry none. */
-function sourceTag(locale: Locale, source: CommandSource | undefined): string | undefined {
-	if (source === "template") return translate(locale, "palette.tagTemplate");
-	if (source === "skill") return translate(locale, "palette.tagSkill");
+/** The row tag for one command: the terminal's own commands first, then where it came from. */
+function sourceTag(
+	locale: Locale,
+	command: { readonly source?: CommandSource; readonly availability?: CommandAvailability },
+): string | undefined {
+	if (command.availability === "terminal") return translate(locale, "palette.tagTerminal");
+	if (command.source === "template") return translate(locale, "palette.tagTemplate");
+	if (command.source === "skill") return translate(locale, "palette.tagSkill");
+	if (command.source === "plugin") return translate(locale, "palette.tagPlugin");
 	return undefined;
 }
 
@@ -123,13 +135,14 @@ export function commandPalette(
 	const rows = options.commands
 		.filter((command) => command.name.startsWith(line.name))
 		.map((command, index) => {
-			const tag = sourceTag(locale, command.source);
+			const tag = sourceTag(locale, command);
 			return {
 				value: command.name,
 				label: `/${command.name}`,
 				description: command.description,
 				...(command.argumentHint === undefined ? {} : { hint: command.argumentHint }),
 				...(tag === undefined ? {} : { tag }),
+				...(command.availability === "terminal" ? { disabled: true } : {}),
 				selected: index === selected,
 			};
 		});

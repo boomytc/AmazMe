@@ -23,6 +23,7 @@ import { createApprovalsFacet, type ApprovalGate } from "./approvals-provider.ts
 import { createConversationsFacet } from "./conversations-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
+import { createSlashCommandsRuntimeFacet } from "./slash-commands-provider.ts";
 import { SessionSettings } from "./settings.ts";
 import { createTerminalFacet } from "./terminal-provider.ts";
 import { createTranscriptServiceFacet } from "./transcript-provider.ts";
@@ -105,6 +106,9 @@ export async function createSessionWorkerServices(options: {
 	const builtins = await createStaticFacetLoader([
 		agentControllerRuntimeFacet,
 		pluginRuntimeFacet,
+		// Plugins register their commands here, and the catalogue lists them: one command surface for
+		// the terminal client, the page, and a desktop client.
+		createSlashCommandsRuntimeFacet(),
 		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
 		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),

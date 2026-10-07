@@ -1,6 +1,7 @@
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import { getAgentDir } from "../../config.ts";
+import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { loadPromptTemplates, expandPromptTemplate, type PromptTemplate } from "../../core/prompt-templates.ts";
 import { skillCommandPrompt } from "../../core/skill-command.ts";
 import { loadSkills, type Skill } from "../../core/skills.ts";
@@ -15,6 +16,7 @@ import {
 } from "./commands.ts";
 import { Models } from "./models.ts";
 import { SessionPlugins } from "./plugins.ts";
+import { SlashCommands } from "./slash-commands.ts";
 
 /**
  * The session's own commands: the built-ins a web presentation needs, with textual arguments
@@ -23,12 +25,22 @@ import { SessionPlugins } from "./plugins.ts";
  * on. Everything else in the catalogue is a resource the session loaded — a prompt template or a
  * skill — which the presentation expands with `expand` and sends on its own prompt path.
  */
-const BUILTIN_COMMANDS: readonly Omit<CommandSummary, "source">[] = [
+const BUILTIN_COMMANDS: readonly Omit<CommandSummary, "source" | "availability">[] = [
 	{ name: "model", description: "Select the conversation's model", argumentHint: "<provider/model>" },
 	{ name: "thinking", description: "Set the reasoning level", argumentHint: "<level>" },
 	{ name: "compact", description: "Summarize the conversation so far", argumentHint: "[instructions]" },
 	{ name: "reload", description: "Rebuild this session's plugin generation" },
 ];
+
+/** The names this host runs itself, so the terminal's own entries of the same name are not listed twice. */
+const HOST_COMMAND_NAMES = new Set(BUILTIN_COMMANDS.map((command) => command.name));
+
+/** One command a plugin registered with this session, as the catalogue lists it. */
+export interface PluginCommandSummary {
+	readonly name: string;
+	readonly description?: string;
+	readonly argumentHint?: string;
+}
 
 const THINKING_DESCRIPTIONS: Readonly<Record<ModelThinkingLevel, string>> = {
 	off: "No reasoning",
@@ -89,22 +101,65 @@ export function loadCommandResources(options: CommandsServiceOptions): CommandRe
 	return { templates, skills };
 }
 
-/** One row per command: the built-ins first, then the templates, then the skills as `/skill:<name>`. */
-export function commandCatalog(resources: CommandResources): CommandSummary[] {
-	const builtins: CommandSummary[] = BUILTIN_COMMANDS.map((command) => ({ ...command, source: "builtin" }));
+/**
+ * The session's catalogue: what this host runs, what it expands, what a plugin registered, and — last,
+ * marked `terminal` — the terminal's own commands that no other client can carry out. A client lists
+ * the whole catalogue so a name it cannot run is refused with a reason instead of reaching the model
+ * as prose.
+ */
+export function commandCatalog(
+	resources: CommandResources,
+	pluginCommands: readonly PluginCommandSummary[] = [],
+): CommandSummary[] {
+	const builtins: CommandSummary[] = BUILTIN_COMMANDS.map((command) => ({
+		...command,
+		source: "builtin",
+		availability: "all",
+	}));
+	const plugins: CommandSummary[] = pluginCommands.map((command) => ({
+		name: command.name,
+		description: command.description ?? "",
+		...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
+		source: "plugin",
+		availability: "all",
+	}));
 	const templates: CommandSummary[] = resources.templates.map((template) => ({
 		name: template.name,
 		description: template.description,
 		...(template.argumentHint === undefined ? {} : { argumentHint: template.argumentHint }),
 		source: "template",
+		availability: "all",
 	}));
 	const skills: CommandSummary[] = resources.skills.map((skill) => ({
 		name: `skill:${skill.name}`,
 		description: skill.description,
 		argumentHint: "[args]",
 		source: "skill",
+		availability: "all",
 	}));
-	return [...builtins, ...templates, ...skills];
+	const taken = new Set([...builtins, ...plugins, ...templates, ...skills].map((command) => command.name));
+	const terminalOnly: CommandSummary[] = BUILTIN_SLASH_COMMANDS.filter(
+		(command) => !HOST_COMMAND_NAMES.has(command.name) && !taken.has(command.name),
+	).map((command) => ({
+		name: command.name,
+		description: command.description,
+		...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
+		source: "builtin",
+		availability: "terminal",
+	}));
+	return [...builtins, ...plugins, ...templates, ...skills, ...terminalOnly];
+}
+
+/** The terminal's own command of this name, when it has one: `undefined` for anything runnable here. */
+function terminalOnlyCommand(name: string): CommandSummary | undefined {
+	return BUILTIN_SLASH_COMMANDS.some((command) => command.name === name) && !HOST_COMMAND_NAMES.has(name)
+		? {
+				name,
+				description: "",
+				source: "builtin",
+				availability: "terminal",
+			}
+		: undefined;
 }
 
 /**
@@ -139,8 +194,17 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 			const models = env.use(Models);
 			const controller = env.use(AgentController);
 			const sessionPlugins = env.use(SessionPlugins);
+			const slashCommands = env.use(SlashCommands);
 			let resources = loadCommandResources(options);
-			// The catalogue is published once and revised whenever the session's resources are re-read.
+			const pluginCommands = (): PluginCommandSummary[] =>
+				slashCommands.list().map((command) => ({
+					name: command.name,
+					...(command.description === undefined ? {} : { description: command.description }),
+					...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
+				}));
+			// The catalogue is published once and revised whenever the session's resources or the
+			// plugin registrations move. Plugin registrations are read after activation: a facet
+			// cannot use another facet's service while it is still starting.
 			const state: MutableReplicatedState<CommandsState> = env.replicatedState<CommandsState>({
 				revision: 1,
 				commands: commandCatalog(resources),
@@ -152,9 +216,12 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 				resources = loadCommandResources(options);
 				state.change(context, (draft) => {
 					draft.revision += 1;
-					draft.commands = commandCatalog(resources);
+					draft.commands = commandCatalog(resources, pluginCommands());
 				});
 			};
+			// Plugin registrations are read when the catalogue is re-read: a session cannot use another
+			// facet's service while it is still starting, and /reload is the documented moment a plugin
+			// change takes effect.
 			env.provide(Commands, {
 				state,
 				async run(name: string, args: string, callContext: Context): Promise<CommandResult> {
@@ -196,8 +263,19 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 							await republish(callContext);
 							return { ok: true, note: "Reloaded this session's plugins and command resources." };
 						}
-						default:
+						default: {
+							// A plugin's command runs here, with the same call the client TUI makes.
+							const contribution = slashCommands.list().find((command) => command.name === name);
+							if (contribution !== undefined) {
+								const outcome = await contribution.run(args, callContext);
+								return { ok: true, note: describeRun(outcome) };
+							}
+							const terminalOnly = terminalOnlyCommand(name);
+							if (terminalOnly !== undefined) {
+								return failure(`/${name} runs in the terminal only.`);
+							}
 							return failure(`Unknown command: /${name}`);
+						}
 					}
 				},
 				async complete(name: string, prefix: string, callContext: Context): Promise<readonly CommandCompletion[]> {
@@ -233,4 +311,17 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 
 function failure(problem: string): CommandResult {
 	return { ok: false, problem };
+}
+
+/** What a plugin command's own result says, so the connection line has something to show. */
+function describeRun(outcome: unknown): string {
+	if (outcome === undefined) return "Done.";
+	if (typeof outcome === "object" && outcome !== null) {
+		const response = outcome as { accepted?: unknown; error?: { message?: unknown } | null };
+		if (response.accepted === false) {
+			const message = response.error?.message;
+			return typeof message === "string" ? message : "The session refused the command.";
+		}
+	}
+	return "Done.";
 }
