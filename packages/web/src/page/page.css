@@ -2100,7 +2100,6 @@ summary.disclosure-row {
 	border-color: var(--dsw-alias-state-error-primary);
 }
 
-.panel-input:focus-visible,
 .panel-select:hover:not(:disabled) {
 	border-color: var(--dsw-alias-border-l4);
 }
@@ -2109,6 +2108,9 @@ summary.disclosure-row {
 	color: var(--dsw-alias-label-dimmed);
 }
 
+/* The panel's own fields carry the ring: the token mirror's global rule declares the colour and the
+   width but no outline-style, so a control that wants a ring has to ask for one. */
+.panel-input:focus-visible,
 .panel-select:focus-visible {
 	outline: 2px solid var(--dsw-alias-state-business-primary);
 	outline-offset: 1px;

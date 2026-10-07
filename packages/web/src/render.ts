@@ -435,7 +435,6 @@ function closeGlyph(): SVGSVGElement {
 	return svg;
 }
 
-/** One row's buttons: the group header's and a row's actions share one shape. */
 /** Whether this control is the one whose call the page has in flight. */
 function isPending(pending: PanelPending | undefined, action: { readonly id: string; readonly data?: string }): boolean {
 	return pending !== undefined && pending.id === action.id && (pending.data ?? "") === (action.data ?? "");
@@ -508,7 +507,13 @@ export function createRenderer(
 			input.disabled = control.disabled === true;
 			input.addEventListener("change", () => emit(String(input.checked)));
 			label.append(input, element("span", "panel-switch-track"));
-			markPending(label, pending, control);
+			if (isPending(pending, control)) {
+				// The track is what the reader sees; the checkbox is what takes the click, so both
+				// carry the state and the control itself refuses a second activation.
+				label.classList.add("pending");
+				label.setAttribute("aria-busy", "true");
+				input.disabled = true;
+			}
 			return label;
 		}
 		if (control.kind === "select") {
