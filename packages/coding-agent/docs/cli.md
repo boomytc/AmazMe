@@ -130,7 +130,7 @@ See [Settings](settings.md#tools) for configuring the default tool selection.
 - `-nt`, `--no-tools`<br>
   Starts with all built-in, extension, custom, and MCP tools disabled.
 
-Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTools` changes them. A plain `--tools` list replaces the selection; a modifier list applies after `defaultTools` or tool suppression. `--no-tools --tools +grep` therefore enables only `grep`. Exclusions apply last. These semantics apply to the SDK and print/RPC execution; default Durable TUI option wiring is tracked in the product implementation plan.
+Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTools` changes them. A plain `--tools` list replaces the selection; a modifier list applies after `defaultTools` or tool suppression. `--no-tools --tools +grep` therefore enables only `grep`. Exclusions apply last and cannot be undone by dynamic tool loading. Selection calculation is shared by the SDK, print/RPC CLI and default Durable TUI. The TUI keeps its selected names and patterns in the focused conversation and restores them on `--continue`; explicit startup options replace that conversation's saved selection. Its built-in registry includes `grep`, `find`, `ls`, and optional PowerShell alongside the default tools; `subagent` is an additional default tool. Native MCP and codemode execution are tracked in the product implementation plan.
 
 <a id="mcp-tools"></a>
 

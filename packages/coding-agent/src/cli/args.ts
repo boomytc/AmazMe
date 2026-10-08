@@ -7,6 +7,7 @@ import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
+import { getToolSelectionError } from "../core/tool-selection.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -162,10 +163,13 @@ export function parseArgs(args: string[]): Args {
 			if (error) result.diagnostics.push({ type: "error", message: `Invalid tools option: ${error}` });
 			else result.tools = tools;
 		} else if ((arg === "--exclude-tools" || arg === "-xt") && i + 1 < args.length) {
-			result.excludeTools = args[++i]
+			const excludeTools = args[++i]
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
+			const error = getToolSelectionError({ excludeTools });
+			if (error) result.diagnostics.push({ type: "error", message: `Invalid tools option: ${error}` });
+			else result.excludeTools = excludeTools;
 		} else if (arg === "--thinking" && i + 1 < args.length) {
 			const level = args[++i];
 			if (isValidThinkingLevel(level)) {

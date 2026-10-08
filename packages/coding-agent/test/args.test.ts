@@ -481,6 +481,12 @@ describe("parseArgs", () => {
 			expect(result.excludeTools).toEqual(["read", "bash"]);
 		});
 
+		test("rejects modifier syntax in exclusion lists", () => {
+			const result = parseArgs(["--exclude-tools", "-read"]);
+			expect(result.excludeTools).toBeUndefined();
+			expect(result.diagnostics).toContainEqual({ type: "error", message: "Invalid tools option: excludeTools accepts only plain names or patterns" });
+		});
+
 		test("parses -xt shorthand", () => {
 			const result = parseArgs(["-xt", "read,bash"]);
 			expect(result.excludeTools).toEqual(["read", "bash"]);

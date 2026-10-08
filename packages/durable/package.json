@@ -30,6 +30,12 @@
 			"import": "./dist/tools/index.js",
 			"default": "./dist/tools/index.js"
 		},
+		"./tool-names": {
+			"source": "./src/tool-names.ts",
+			"types": "./dist/tool-names.d.ts",
+			"import": "./dist/tool-names.js",
+			"default": "./dist/tool-names.js"
+		},
 		"./storage/memory": {
 			"source": "./src/storage/memory.ts",
 			"types": "./dist/storage/memory.d.ts",

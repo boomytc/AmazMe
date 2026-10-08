@@ -134,10 +134,10 @@ import {
 	applyToolModifiers,
 	type CacheWarmingMode,
 	DEFAULT_TOOL_NAMES,
-	isToolModifier,
 	type SettingsManager,
 } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
+import { toolActivationEdits } from "./tool-selection.ts";
 import { skillCommandPrompt } from "./skill-command.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, isSyntheticPath, type SourceInfo } from "./source-info.ts";
 import {
@@ -3507,11 +3507,7 @@ export class AgentSession {
 
 	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
 		const configured = this.settingsManager.getSettings().defaultTools;
-		const edits = new Map(
-			[...(Array.isArray(configured) ? configured : []), ...this._defaultToolModifiers]
-				.filter(isToolModifier)
-				.map((entry) => [entry.slice(1), entry.startsWith("+")] as const),
-		);
+		const edits = toolActivationEdits(configured, this._defaultToolModifiers);
 		const isActivatedOnRegistration = (name: string): boolean =>
 			this._isDeclarable(name) &&
 			edits.get(name) !== false &&

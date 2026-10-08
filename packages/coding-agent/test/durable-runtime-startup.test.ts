@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, type SimpleStreamOptions } from "@amazme/ai";
+import { getCurrentTools } from "@amazme/ai/utils/transcript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
@@ -111,6 +112,77 @@ describe("durable startup over SQLite", () => {
 		await session.controller.submit("question", "steer");
 		await vi.waitFor(() => expect(requested?.reasoning).toBe("low"));
 	});
+
+	it.each([
+		[{}, ["bash", "edit", "read", "subagent", "write"]],
+		[{ tools: ["+grep", "-write"] }, ["bash", "edit", "grep", "read", "subagent"]],
+		[{ tools: ["g*", "read"], excludeTools: ["read"] }, ["grep"]],
+		[{ noTools: "builtin" as const, tools: ["+grep"] }, ["grep", "subagent"]],
+		[{ noTools: "all" as const, tools: ["+grep"] }, ["grep"]],
+		[{ tools: [] }, []],
+		[{ noTools: "all" as const }, []],
+		[{ tools: ["+write"], excludeTools: ["*write*", "subagent"] }, ["bash", "edit", "read"]],
+	])("declares the actual selected tools to the model: %j", async (options, expected) => {
+		const session = await open(options);
+		let declared: string[] | undefined;
+		faux.setResponses([
+			(_context, _options) => {
+				declared = getCurrentTools(_context.messages)
+					.map((tool) => tool.name)
+					.sort();
+				return fauxAssistantMessage("answer");
+			},
+		]);
+		await session.controller.submit("question", "steer");
+		await vi.waitFor(() => expect(declared).toEqual(expected));
+	});
+
+	it("settings tool removals also apply to custom defaults", async () => {
+		settings = SettingsManager.inMemory({
+			defaultTools: ["+ls", "-subagent", "-write"],
+			defaultProvider: "faux",
+			defaultModel: "reason",
+		});
+		const session = await open();
+		let declared: string[] | undefined;
+		faux.setResponses([
+			(transcript) => {
+				declared = getCurrentTools(transcript.messages)
+					.map((tool) => tool.name)
+					.sort();
+				return fauxAssistantMessage("answer");
+			},
+		]);
+		await session.controller.submit("question", "steer");
+		await vi.waitFor(() => expect(declared).toEqual(["bash", "edit", "ls", "read"]));
+	});
+
+	it("persists a focused branch's selection without applying it to its siblings", async () => {
+		const original = await open();
+		const rootId = original.view.current().conversation.conversation.id;
+		await answer(original);
+		await original.controller.fork();
+		const forkId = original.view.current().conversation.conversation.id;
+		await original.close();
+		const restored = await open({ continueSession: true, tools: ["grep", "read"], excludeTools: ["read"] });
+		expect(restored.view.current().conversation.conversation.id).toBe(forkId);
+		const forkTools = agentOf(restored.view.current().conversation).tools;
+		expect(forkTools).toEqual({ allow: ["grep", "read"], exclude: ["read"] });
+		await restored.controller.switchConversation(rootId);
+		expect(agentOf(restored.view.current().conversation).tools).not.toEqual(forkTools);
+		await restored.controller.switchConversation(forkId);
+		await restored.close();
+		const reopened = await open({ continueSession: true });
+		expect(agentOf(reopened.view.current().conversation).tools).toEqual(forkTools);
+	});
+
+	it.each([{ tools: ["read", "+grep"] }, { tools: ["+g*"] }, { excludeTools: ["-read"] }])(
+		"rejects invalid tool selections before session storage: %j",
+		async (options) => {
+			await expect(open(options)).rejects.toThrow("Invalid tools option");
+			expect(existsSync(join(profile, "experimental", "durable-sessions"))).toBe(false);
+		},
+	);
 
 	it("thinking alone overrides the default model and remains clamped", async () => {
 		const session = await open({ thinkingLevel: "max" });

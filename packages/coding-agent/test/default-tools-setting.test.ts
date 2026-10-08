@@ -120,6 +120,29 @@ describe("defaultTools setting", () => {
 		finally { session.dispose(); }
 	});
 
+	it("rejects malformed exclusions before runtime initialization", async () => {
+		const createRuntime = vi.spyOn(ModelRuntime, "create");
+		await expect(createAgentSession({ excludeTools: ["-read"] })).rejects.toThrow("excludeTools accepts only plain names");
+		expect(createRuntime).not.toHaveBeenCalled();
+	});
+
+	it("captures exclusions before asynchronous initialization", async () => {
+		let release = (): void => {};
+		const barrier = new Promise<void>((resolve) => { release = resolve; });
+		const createRuntime = ModelRuntime.create.bind(ModelRuntime);
+		vi.spyOn(ModelRuntime, "create").mockImplementation(async (options) => { await barrier; return createRuntime(options); });
+		const excludes = ["write"];
+		const opening = createAgentSession({
+			cwd: tempDir, agentDir, excludeTools: excludes, model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager: SettingsManager.inMemory({ defaultTools: ["read", "write"] }),
+			sessionManager: SessionManager.inMemory(tempDir),
+		});
+		excludes.splice(0, 1, "read");
+		release();
+		const { session } = await opening;
+		try { expect(session.getActiveToolNames()).toEqual(["read"]); } finally { session.dispose(); }
+	});
+
 	it("activates an edited inactive tool when its extension registers after startup", async () => {
 		const session = await createSession(["read"], { tools: ["+late"] }, [
 			(extension) => extension.on("session_start", () => { extension.registerTool(tool("late", false)); }),

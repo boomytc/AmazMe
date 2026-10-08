@@ -66,6 +66,7 @@ describe("main's default durable TUI startup", () => {
 				thinkingLevel: "low",
 			});
 			expect(settings.getTheme()).toBe("light");
+			expect(agentOf(view.current().conversation).tools).toEqual({ allow: ["grep"] });
 			sessionDirectory = view.current().session.directory;
 		});
 		await main([
@@ -80,6 +81,9 @@ describe("main's default durable TUI startup", () => {
 			"fixture-secret",
 			"--use-theme",
 			"light",
+			"--no-tools",
+			"--tools",
+			"+grep,-write",
 		]);
 		expect(runDurableTui).toHaveBeenCalledOnce();
 		expect(JSON.parse(await readFile(join(profile, "auth.json"), "utf8"))).toEqual({});

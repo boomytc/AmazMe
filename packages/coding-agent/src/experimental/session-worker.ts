@@ -12,13 +12,14 @@ import {
 	type ServiceProviderUpdate,
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT, withCancel } from "@amazme/chord/context";
-import { Harness, ROOT_CONVERSATION_ID, type TaskGraph } from "@amazme/durable";
+import { AgentDoc, Harness, ROOT_CONVERSATION_ID, type TaskGraph } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
+import { durableToolSelection } from "../core/tool-selection.ts";
 import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
 import {
 	configureHarnessHttp,
@@ -860,6 +861,10 @@ async function createCodingAgentHarness(
 				cwd,
 				...(initial?.model === undefined ? {} : { model: initial.model }),
 				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
+			},
+			init: async (tx, id) => {
+				const agent = await tx.doc(AgentDoc, id);
+				agent.tools = durableToolSelection({}, settingsManager.getDefaultTools(), settingsManager.getSettings().defaultTools);
 			},
 		});
 		// The terminal's copy of this session: seeded from it when the hosted transcript is empty,

@@ -240,10 +240,10 @@ export async function checkEntryContracts(repoRoot) {
 			maxFiles: 15,
 			forbid: ["packages/ai/src/providers/", "packages/ai/src/models.generated.ts", "packages/ai/src/index.ts"],
 		},
-		// AmazMe's branch-summary implementation contributes one module beyond Pi's 63-module root budget.
+		// Branch summaries and the shared pure name matcher add two modules to Pi's 63-module root budget.
 		{
 			entry: "packages/durable/src/index.ts",
-			maxFiles: 64,
+			maxFiles: 65,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
 		},
 	]) {

@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Fixed the default Durable TUI ignoring tool selection and suppression options; selections persist on the focused conversation and share SDK calculation
 - Fixed the default Durable TUI ignoring startup model, thinking, temporary API key and theme options; continuation now applies explicit overrides to the restored focused conversation
 - Fixed SDK tool defaults being reactivated by an extension overriding a removed tool name, and retained exact-name activation until delayed tool registration
 - Fixed the web page offering Fork on a conversation that has no entries yet. The header and the conversations panel keep the control and disable it until there is an entry to fork from

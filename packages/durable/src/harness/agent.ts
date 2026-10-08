@@ -1,5 +1,6 @@
 import { copyJson, type Draft } from "@amazme/chord";
 import { defineDoc } from "../documents.ts";
+import { createToolNameMatcher } from "../tool-names.ts";
 import type { ConversationId, ConversationRecord, Tx } from "../types.ts";
 import type {
 	Agent,
@@ -79,20 +80,38 @@ export async function configure(tx: Tx, conversationId: ConversationId, change: 
 }
 
 /**
- * `addTools` of a tool round: an array gets each name it lacks appended, `{ remove }` loses the names, and unset tools
- * already offer every tool, so nothing is written.
+ * A tool round can activate an inactive or newly discovered tool. Explicit lists extend, default selectors gain
+ * additions, and exact-name activation removals are cleared. Pattern removals remain in effect.
  */
 export async function addTools(tx: Tx, conversationId: ConversationId, added: readonly string[]): Promise<void> {
 	const state = await tx.doc(AgentDoc, conversationId);
 	const tools = state.tools;
-	if (tools === undefined) return;
+	const allowed =
+		tools !== undefined && !Array.isArray(tools) && tools.allow !== undefined
+			? createToolNameMatcher(tools.allow)
+			: undefined;
+	const excluded =
+		tools !== undefined && !Array.isArray(tools) && tools.exclude !== undefined
+			? createToolNameMatcher(tools.exclude)
+			: undefined;
+	const permitted = added.filter((name) => (allowed === undefined || allowed(name)) && !excluded?.(name));
+	if (permitted.length === 0) return;
+	if (tools === undefined) {
+		state.tools = { add: permitted };
+		return;
+	}
 	if (Array.isArray(tools)) {
-		for (const name of added) if (!tools.includes(name)) tools.push(name);
+		const active = createToolNameMatcher(tools);
+		for (const name of permitted) if (!active(name)) tools.push(name);
 	} else {
-		const remove = (tools as { remove: string[] }).remove;
-		if (remove.some((name) => added.includes(name))) {
-			state.tools = { remove: remove.filter((name) => !added.includes(name)) };
+		if (tools.only !== undefined || tools.allow === undefined) {
+			if (tools.only === undefined && tools.add === undefined) tools.add = [];
+			// Document assignment adopts a copy; read the mounted array again before mutating it.
+			const selected = tools.only ?? tools.add!;
+			const active = createToolNameMatcher(selected);
+			for (const name of permitted) if (!active(name) && !selected.includes(name)) selected.push(name);
 		}
+		if (tools.remove !== undefined) tools.remove = tools.remove.filter((name) => !permitted.includes(name));
 	}
 }
 
@@ -119,7 +138,17 @@ function applyChange(state: Draft<AgentState>, change: AgentChange): void {
 	const tools = change.tools;
 	set(
 		"tools",
-		tools === undefined || tools === null ? tools : isList(tools) ? names(tools) : { remove: names(tools.remove) },
+		tools === undefined || tools === null
+			? tools
+			: isList(tools)
+				? names(tools)
+				: {
+						...(tools.only === undefined ? {} : { only: names(tools.only) }),
+						...(tools.allow === undefined ? {} : { allow: names(tools.allow) }),
+						...(tools.add === undefined ? {} : { add: names(tools.add) }),
+						...(tools.remove === undefined ? {} : { remove: names(tools.remove) }),
+						...(tools.exclude === undefined ? {} : { exclude: names(tools.exclude) }),
+					},
 	);
 	set("instructions", change.instructions);
 	set("cwd", change.cwd);
@@ -195,17 +224,26 @@ export function resolveAgent<Tool extends ToolRegistration>(
 	}
 
 	const filter = state?.tools;
-	let tools: Tool[];
-	if (filter === undefined) tools = [...composed.values()];
-	else if (Array.isArray(filter)) {
-		tools = [];
-		for (const name of new Set(filter)) {
-			const tool = composed.get(name);
-			if (tool !== undefined) tools.push(tool);
-		}
-	} else {
-		const removed = new Set((filter as { remove: string[] }).remove);
-		tools = [...composed.values()].filter((tool) => !removed.has(tool.name));
+	const selection = Array.isArray(filter) ? { only: filter } : filter;
+	const initial = selection?.only ?? selection?.allow;
+	let tools: Tool[] =
+		initial === undefined ? [...composed.values()].filter((tool) => tool.defaultActive !== false) : [];
+	const selected = new Set(tools.map((tool) => tool.name));
+	for (const pattern of [...(initial ?? []), ...(selection?.add ?? [])]) {
+		const matches = createToolNameMatcher([pattern]);
+		for (const tool of composed.values())
+			if (!selected.has(tool.name) && matches(tool.name)) {
+				selected.add(tool.name);
+				tools.push(tool);
+			}
+	}
+	if (selection?.allow !== undefined) {
+		const allowed = createToolNameMatcher(selection.allow);
+		tools = tools.filter((tool) => allowed(tool.name));
+	}
+	if (selection?.remove !== undefined || selection?.exclude !== undefined) {
+		const removed = createToolNameMatcher([...(selection.remove ?? []), ...(selection.exclude ?? [])]);
+		tools = tools.filter((tool) => !removed(tool.name));
 	}
 
 	const instructions = state?.instructions;

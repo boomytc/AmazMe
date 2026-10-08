@@ -6,6 +6,10 @@ import { loadSkills, type Skill } from "../core/skills.ts";
 import { buildSystemPromptSections } from "../core/system-prompt.ts";
 import { bashToolSystemPromptContribution } from "../core/tools/bash.ts";
 import { editToolSystemPromptContribution } from "../core/tools/edit.ts";
+import { findToolSystemPromptContribution } from "../core/tools/find.ts";
+import { grepToolSystemPromptContribution } from "../core/tools/grep.ts";
+import { lsToolSystemPromptContribution } from "../core/tools/ls.ts";
+import { powershellToolSystemPromptContribution } from "../core/tools/powershell.ts";
 import { readToolSystemPromptContribution } from "../core/tools/read.ts";
 import { writeToolSystemPromptContribution } from "../core/tools/write.ts";
 
@@ -14,6 +18,10 @@ const CONTRIBUTIONS = {
 	bash: bashToolSystemPromptContribution,
 	edit: editToolSystemPromptContribution,
 	write: writeToolSystemPromptContribution,
+	grep: grepToolSystemPromptContribution,
+	find: findToolSystemPromptContribution,
+	ls: lsToolSystemPromptContribution,
+	powershell: powershellToolSystemPromptContribution,
 };
 
 /** pi's section order; `buildSystemPromptSections()` omits the ones without content. */

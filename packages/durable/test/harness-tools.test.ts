@@ -992,9 +992,30 @@ describe("tool progress and lifetime", () => {
 			conversation.configure({ tools: { remove: [extra] } }, context),
 		);
 		expect(status).toBe("done");
-		// addTools deletes the name from a stored `{ remove }` filter.
-		expect((await harness.snapshot(AgentDoc, root.id, context))?.tools).toEqual({ remove: [] });
+		// Loading clears an exact removal and persists activation through changes to the registration's defaults.
+		expect((await harness.snapshot(AgentDoc, root.id, context))?.tools).toEqual({ remove: [], add: ["extra"] });
+		addTool(setup.registry, { ...extra, defaultActive: false });
+		expect((await root.agent(context)).tools.map((tool) => tool.name)).toContain("extra");
 		await harness.close(context);
+	});
+
+	it.each(["allow", "exclude"] as const)("tool loading cannot bypass a stored %s boundary", async (boundary) => {
+		const setup = chatSetup();
+		const grow = tool("grow", async () => ({ content: [], control: { addTools: ["extra"] } }));
+		const extra = tool("extra", async () => ({ content: [] }), { defaultActive: false });
+		addTool(setup.registry, grow);
+		addTool(setup.registry, extra);
+		const selection = boundary === "allow" ? { allow: [grow] } : { exclude: [extra] };
+		const { harness, root, status } = await run(setup, [calls(["grow", {}, "c1"]), DONE], (_harness, conversation) =>
+			conversation.configure({ tools: selection }, context),
+		);
+		try {
+			expect(status).toBe("done");
+			expect((await root.agent(context)).tools.map((tool) => tool.name)).toEqual(["grow"]);
+			expect((await harness.snapshot(AgentDoc, root.id, context))?.tools).toEqual(
+				boundary === "allow" ? { allow: ["grow"] } : { exclude: ["extra"] },
+			);
+		} finally { await harness.close(context); }
 	});
 
 	it("uses explicit null details instead of the last reported value", async () => {

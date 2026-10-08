@@ -213,6 +213,8 @@ export type ToolRegistration<
 	TParameters extends TSchema = TSchema,
 	TDetails extends JsonValue = JsonValue,
 > = Tool<TParameters> & {
+	/** Activated by default unless false; explicit selection or loading can activate it. */
+	readonly defaultActive?: boolean;
 	/** Whether an interrupted execution may rerun on recovery. Default `unsafe`. */
 	readonly replay?: "safe" | "unsafe";
 	/** Default: the settings' `toolExecution`. One sequential call makes its whole round sequential. */
@@ -310,8 +312,14 @@ export type AgentState = {
 	thinkingLevel?: ModelThinkingLevel;
 	/** An array selects exactly these extensions, in order. An object edits the host default selection. */
 	extensions?: string[] | { add?: string[]; remove?: string[] };
-	/** Filters the selected extensions' tools. An array offers exactly these, in order. */
-	tools?: string[] | { remove: string[] };
+	/** Names or `*` patterns. `allow` and `exclude` bound loading; `remove` adjusts activation. */
+	tools?: string[] | {
+		only?: string[];
+		allow?: string[];
+		add?: string[];
+		remove?: string[];
+		exclude?: string[];
+	};
 	/** Rendered after every extension section, as the section `instructions`. */
 	instructions?: string;
 	/** Directory within the environment's file system, passed to `HarnessOptions.env`. */
@@ -326,7 +334,16 @@ export type AgentChange = {
 		| readonly Extension[]
 		| { readonly add?: readonly Extension[]; readonly remove?: readonly Extension[] }
 		| null;
-	readonly tools?: readonly ToolRegistration[] | { readonly remove: readonly ToolRegistration[] } | null;
+	readonly tools?:
+		| readonly ToolRegistration[]
+		| {
+			readonly only?: readonly ToolRegistration[];
+			readonly allow?: readonly ToolRegistration[];
+			readonly add?: readonly ToolRegistration[];
+			readonly remove?: readonly ToolRegistration[];
+			readonly exclude?: readonly ToolRegistration[];
+		}
+		| null;
 	readonly instructions?: string | null;
 	readonly cwd?: string | null;
 };

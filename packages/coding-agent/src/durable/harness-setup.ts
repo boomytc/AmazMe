@@ -1,8 +1,23 @@
 import type { Context } from "@amazme/chord";
 import { clampThinkingLevel, type Model, type ModelThinkingLevel } from "@amazme/ai";
-import { createRegistry, type EnvTarget, type HarnessSettings, type ModelRef, type Registry } from "@amazme/durable";
+import {
+	createRegistry,
+	defineExtension,
+	type EnvTarget,
+	type HarnessSettings,
+	type ModelRef,
+	type Registry,
+} from "@amazme/durable";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
-import { CodingTools } from "@amazme/durable/tools";
+import {
+	CodingTools,
+	createFindTool,
+	createGrepTool,
+	createLsTool,
+	createPowerShellTool,
+	type SearchProgramOptions,
+} from "@amazme/durable/tools";
+import { ensureTool } from "../utils/tools-manager.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "../core/http-dispatcher.ts";
 import { DEFAULT_THINKING_LEVEL } from "../core/defaults.ts";
 import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
@@ -47,6 +62,27 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 export function createCodingRegistry(settingsManager: SettingsManager, cwd: string): Registry {
 	const registry = createRegistry();
 	registry.install(CodingTools);
+	const program =
+		(name: "rg" | "fd"): SearchProgramOptions["program"] =>
+		async (api) => {
+			if (api.env?.id !== "node:local") return name;
+			const path = await ensureTool(name);
+			if (path === undefined) throw new Error(`${name} is unavailable in the execution environment`);
+			return path;
+		};
+	registry.install(
+		defineExtension({
+			name: "file-search-tools",
+			tools: [
+				createGrepTool({ program: program("rg") }),
+				createFindTool({ program: program("fd") }),
+				createLsTool(),
+			].map((tool) => ({ ...tool, defaultActive: false })),
+		}),
+	);
+	registry.install(
+		defineExtension({ name: "powershell", tools: [{ ...createPowerShellTool(), defaultActive: false }] }),
+	);
 	registry.install(createPiPrompt(settingsManager, cwd));
 	return registry;
 }

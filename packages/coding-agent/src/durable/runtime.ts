@@ -9,6 +9,7 @@ import {
 	type ConversationId,
 	type ConversationView,
 	type EntryRecord,
+	AgentDoc,
 	Harness,
 	type ModelRef,
 	type Submission,
@@ -17,6 +18,7 @@ import {
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
+import { durableToolSelection, getToolSelectionError, type ToolSelectionOptions } from "../core/tool-selection.ts";
 import { IDLE_LANE, type ConversationSummary, type LaneStatus, type ReturnPoint } from "./conversation-view.ts";
 import {
 	forkAt,
@@ -110,7 +112,7 @@ export interface DurableController {
 	loadOlder(): Promise<void>;
 }
 
-export interface OpenDurableOptions {
+export interface OpenDurableOptions extends ToolSelectionOptions {
 	readonly cwd?: string;
 	readonly continueSession?: boolean;
 	readonly provider?: string;
@@ -136,7 +138,9 @@ export function agentOf(view: ConversationView): AgentState {
 }
 
 export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenDurableResult> {
-	const options = { ...input };
+	const error = getToolSelectionError(input);
+	if (error !== undefined) throw new Error(`Invalid tools option: ${error}`);
+	const options = { ...input, tools: input.tools?.slice(), excludeTools: input.excludeTools?.slice() };
 	if (options.provider !== undefined && options.model === undefined) throw new Error("--provider requires --model");
 	if (options.apiKey !== undefined && options.model === undefined) throw new Error("--api-key requires --model");
 	const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
@@ -161,6 +165,12 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	const initialThinking = initialModel === undefined
 		? options.thinkingLevel
 		: initialThinkingLevel(settingsManager, initialModel, options.thinkingLevel ?? initial?.thinkingLevel);
+	const toolSelection = durableToolSelection(
+		options,
+		settingsManager.getDefaultTools(),
+		settingsManager.getSettings().defaultTools,
+	);
+	const explicitTools = options.tools !== undefined || options.noTools !== undefined || options.excludeTools !== undefined;
 	const location = await selectSession(cwd, options.continueSession ?? false);
 	const envs = new ExecutionEnvs(location.cwd);
 	let harness: Harness | undefined;
@@ -189,6 +199,10 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				cwd: location.cwd,
 				...(initial?.model === undefined ? {} : { model: initial.model }),
 				...(initialThinking === undefined ? {} : { thinkingLevel: initialThinking }),
+			},
+			init: async (tx, id) => {
+				const agent = await tx.doc(AgentDoc, id);
+				agent.tools = toolSelection;
 			},
 		});
 		const opened = harness;
@@ -461,6 +475,12 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		const savedFocus = await readFocus(opened, context);
 		if (savedFocus.length > 0 && savedFocus !== String(root.id)) {
 			await show(Number(savedFocus) as ConversationId);
+		}
+		if (!location.created && (explicitTools || agentOf(state.conversation).tools === undefined)) {
+			await opened.commit(async (tx) => {
+				const agent = await tx.doc(AgentDoc, current.id);
+				agent.tools = toolSelection;
+			}, context);
 		}
 		if (!location.created && (selected?.model !== undefined || options.thinkingLevel !== undefined)) {
 			const savedAgent = agentOf(state.conversation);

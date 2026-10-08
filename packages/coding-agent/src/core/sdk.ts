@@ -9,7 +9,6 @@ import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { CacheWarmer } from "./cache-warmer.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
-import { createToolNameMatcher } from "./mcp-servers.ts";
 import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
@@ -17,13 +16,8 @@ import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
-import {
-	applyToolModifiers,
-	DEFAULT_TOOL_NAMES,
-	getToolListError,
-	isToolModifier,
-	SettingsManager,
-} from "./settings-manager.ts";
+import { SettingsManager } from "./settings-manager.ts";
+import { getToolSelectionError, resolveToolSelection } from "./tool-selection.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -187,9 +181,13 @@ function getDefaultAgentDir(): string {
  * ```
  */
 export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
-	const toolListError = options.tools === undefined ? undefined : getToolListError(options.tools);
+	const toolListError = getToolSelectionError(options);
 	if (toolListError) throw new Error(`Invalid tools option: ${toolListError}`);
-	const toolNames = options.tools?.slice();
+	const toolOptions = {
+		tools: options.tools?.slice(),
+		excludeTools: options.excludeTools?.slice(),
+		noTools: options.noTools,
+	};
 	const cwd = resolvePath(options.cwd ?? options.sessionManager?.getCwd() ?? process.cwd());
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 	let resourceLoader = options.resourceLoader;
@@ -278,17 +276,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
-	const defaultToolNames = options.noTools ? [] : (settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES);
-	const toolModifiers = toolNames?.some(isToolModifier) ? toolNames : undefined;
-	const selectedToolNames = toolModifiers ? applyToolModifiers(defaultToolNames, toolModifiers) : toolNames;
-	const allowedToolNames = toolModifiers
-		? options.noTools === "all"
-			? selectedToolNames
-			: undefined
-		: (toolNames ?? (options.noTools === "all" ? [] : undefined));
-	const excludedToolNames = options.excludeTools;
-	const isExcludedTool = excludedToolNames ? createToolNameMatcher(excludedToolNames) : undefined;
-	const initialActiveToolNames = (selectedToolNames ?? defaultToolNames).filter((name) => !isExcludedTool?.(name));
+	const { toolModifiers, allowedToolNames, initialActiveToolNames } = resolveToolSelection(
+		toolOptions,
+		settingsManager.getDefaultTools(),
+	);
+	const excludedToolNames = toolOptions.excludeTools;
 
 	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] => {
@@ -466,7 +458,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRuntime,
 		cacheWarmer,
 		initialActiveToolNames,
-		usesDefaultTools: (toolNames === undefined || toolModifiers !== undefined) && !options.noTools,
+		usesDefaultTools: (toolOptions.tools === undefined || toolModifiers !== undefined) && !toolOptions.noTools,
 		defaultToolModifiers: toolModifiers,
 		allowedToolNames,
 		excludedToolNames,

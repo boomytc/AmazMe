@@ -154,6 +154,8 @@ Searches stop at their line or 50KB output bound without cancelling sibling comm
 
 Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `content`:
 
+`defaultActive: false` keeps a tool registered without offering it by default. Stored tool selectors accept names or `*` patterns: `only` starts a selection, `add` extends it and `remove` adjusts default activation. `allow` bounds the selected and dynamically loaded tools; `exclude` always wins and cannot be cleared by a tool-loading result. Loading retains activation intent across registry updates. Hosts can share the pure matcher from `@amazme/durable/tool-names` without importing the runtime.
+
 ```typescript
 import { Type } from "@amazme/ai";
 

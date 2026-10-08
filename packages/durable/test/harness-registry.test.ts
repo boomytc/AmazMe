@@ -147,6 +147,38 @@ describe("settings", () => {
 });
 
 describe("agent resolution", () => {
+	it("keeps inactive tools registered and enables them only through explicit selection", () => {
+		const local = createRegistry<AppTool>();
+		local.install(defineExtension({ name: "tools", tools: [tool("read"), tool("grep", { defaultActive: false })] }));
+		expect(names(resolve(undefined, local.snapshot()).tools)).toEqual(["read"]);
+		expect(names(resolve({ tools: { add: ["grep"] } }, local.snapshot()).tools)).toEqual(["read", "grep"]);
+		expect(names(resolve({ tools: { only: ["grep"] } }, local.snapshot()).tools)).toEqual(["grep"]);
+		expect(names(resolve({ tools: [] }, local.snapshot()).tools)).toEqual([]);
+	});
+
+	it("resolves patterns in requested order, deduplicates and applies removals last", () => {
+		const local = createRegistry<AppTool>();
+		local.install(defineExtension({ name: "tools", tools: [tool("read"), tool("grep"), tool("grep_hidden")] }));
+		expect(names(resolve({ tools: ["grep*", "read", "grep"] }, local.snapshot()).tools)).toEqual(["grep", "grep_hidden", "read"]);
+		expect(names(resolve({ tools: { only: ["*"], add: ["grep"], remove: ["grep_*"] } }, local.snapshot()).tools)).toEqual(["read", "grep"]);
+	});
+
+	it("preserves activation of future exact names and patterns across registration", () => {
+		const local = createRegistry<AppTool>();
+		local.install(defineExtension({ name: "base", tools: [tool("read")] }));
+		const state: AgentState = { tools: { add: ["late", "mcp__allowed__*"], remove: ["mcp__*__private"] } };
+		expect(names(resolve(state, local.snapshot()).tools)).toEqual(["read"]);
+		local.install(defineExtension({ name: "later", tools: [tool("late", { defaultActive: false }),
+			tool("mcp__allowed__run", { defaultActive: false }), tool("mcp__allowed__private", { defaultActive: false })] }));
+		expect(names(resolve(state, local.snapshot()).tools)).toEqual(["read", "late", "mcp__allowed__run"]);
+		expect(state).toEqual({ tools: { add: ["late", "mcp__allowed__*"], remove: ["mcp__*__private"] } });
+	});
+
+	it("matches punctuation literally except for the star wildcard", () => {
+		const local = createRegistry<AppTool>();
+		local.install(defineExtension({ name: "tools", tools: [tool("a.b"), tool("axb"), tool("a+b")] }));
+		expect(names(resolve({ tools: ["a.b", "a+b"] }, local.snapshot()).tools)).toEqual(["a.b", "a+b"]);
+	});
 	const read = tool("read");
 	const bash = tool("bash");
 	const edit = tool("edit");

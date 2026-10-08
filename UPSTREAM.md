@@ -17,7 +17,7 @@
 | `0cf65d2bf` | Codex `originator`/`User-Agent` 允许被调用方覆盖 | 吸收 |
 | `428a12bc7` | 批准贡献者（GitHub Actions bot） | 跳过，仓库治理，AmazMe 无 `.github` |
 | `23cf2b948` | 统一 npm 包产物校验，重写发布与本地安装脚本 | 吸收产物校验和本地安装设计；本仓库的 `scripts/package-artifacts.mjs` 按运行依赖闭包打包、裁剪当前锁文件并用 `npm ci` 安装，eval 安装器已去掉悬空旧脚本引用 |
-| `ddaa0a034` | `--tools` 接受 `+name`/`-name` 条目 | 吸收 SDK、CLI 参数、设置与重载语义；补齐提前校验、动态注册与同名扩展的回归。默认 Durable TUI 实参接线继续实施 |
+| `ddaa0a034` | `--tools` 接受 `+name`/`-name` 条目 | 吸收 SDK、CLI、设置与重载语义；默认 Durable TUI 共用选择计算并持久化激活及调用边界，补齐提前校验、动态注册、分支恢复和同名扩展回归。原生 MCP 与 codemode 按产品计划继续落实 |
 | `56b25ff4e` | 对齐 `docs/message-types.md` | 暂缓，纯文档 |
 | `8b5708dbb` | 重试 `server_busy` 瞬时错误 | 吸收 |
 | `83c9e2645` | 全屏选区在 transcript 重建时清理 | 吸收 |
@@ -56,7 +56,7 @@
 | `503c60552` | 用 OSC 7501 报告程序状态 | 吸收，环境变量记为 `AMAZME_PROGRAM_STATUS` |
 | `f76c1db66` | 增加 Claude Haiku 5.5 | 吸收 |
 | `943a10e74` | 各模型目录保留按提示长度分档的价格 | 吸收 |
-| `dce4ae6f7` | 为 v1.1.0 核对 changelog | 吸收已落地条目；不写入仍暂缓的 `--tools +name`/`-name` 和 Bedrock OpenAI 推理档 |
+| `dce4ae6f7` | 为 v1.1.0 核对 changelog | 吸收已落地条目；工具增减的当前实现与验证见 `ddaa0a034` 及产品计划，Bedrock OpenAI 推理档继续跟进 |
 | `a2eef9eb6` | 固定 Kimi K3 的 Moonshot 价格，并期望 Haiku 5.5 使用自适应思考 | 吸收 |
 | `70759f48b` | 处理 npm audit：`shx` 从 0.4.0 降到 0.3.4 | 吸收，`@amazme/gui` 的同一依赖一并降级 |
 | `e91631070` | 测试改为等待流和 watcher 事件，不再固定 sleep | 吸收 |
@@ -70,7 +70,7 @@
 - 面向供应商的身份字符串维持 pi：运行时请求头（Codex `originator`/`User-Agent`、OpenRouter、opencode client）和登录默认名（ChatGPT `agent_name_hint`、Codex 登录 `originator`）都保持 pi 身份，避免脱离 pi 与供应商的合作关系。`LoginOptions.agentName` 选项保留，调用方需要时可覆盖。
 - `coding-agent` 与 `tui` 已按 AmazMe 方向重做（Dashboard、子会话、前台命令、编辑器选区等），吸收上游时只取功能，不覆盖界面结构。
 - 库包（`agent`、`ai`、`chord`、`durable`、`env`、`mcp`、`protocol`、`server`、`client`、`codemode`、`telemetry`、`evals`）以 Pi 的功能基线同步，AmazMe 的本地扩展按本节保留。本仓库在 `client`/`server` 之上另加了 `websocket` 子路径（回环字节传输，见 `transports/websocket`），并新增了独立的私有包 `@amazme/web`（回环页面的文档与样式、启动契约、视图投影与 DOM 渲染器，浏览器侧入口在 `coding-agent` 的 `experimental/web`）；吸收上游时不要覆盖这些文件。
-- `durable` 的上游改动 `68ccef176`、`b0114ef5f`、`76f6c06da`、`636703a0a` 在 Web 客户端开工前一次性吸收，`runtime.context()` 的 options 对象改动随之落地。本仓库另有通过执行环境运行的 `grep`、`find`、`ls` 与 `FileSearchTools`，保留字面 argv、输出边界、调用取消和目录分页；上游同步时保留这些实现与回归。
+- `durable` 的上游改动 `68ccef176`、`b0114ef5f`、`76f6c06da`、`636703a0a` 在 Web 客户端开工前一次性吸收，`runtime.context()` 的 options 对象改动随之落地。本仓库另有通过执行环境运行的搜索工具、持久名称/模式选择、默认不激活注册、加载边界与轻量共用匹配器；上游同步时保留这些实现与回归。
 
 ## 跟进方法
 
