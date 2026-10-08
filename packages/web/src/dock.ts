@@ -100,6 +100,8 @@ export interface ConversationSummaryLike {
 	readonly ownerConversationId?: string;
 	readonly ownerTaskId?: string;
 	readonly children: number;
+	/** True when this conversation has an entry a fork can start from. */
+	readonly hasEntries: boolean;
 }
 
 /** One live task of the session's task graph, as the host publishes it. */
@@ -176,6 +178,7 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 				label: translate(locale, "header.fork"),
 				tone: "default",
 				data: conversation.id,
+				disabled: !conversation.hasEntries,
 			},
 		],
 	}));

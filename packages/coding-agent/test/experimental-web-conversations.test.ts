@@ -153,6 +153,19 @@ async function askRoot(
 }
 
 describe("the session's conversation list", () => {
+	test("reports whether a conversation has an entry to fork from", async () => {
+		const setup = await openConversations();
+		try {
+			await waitFor(() => setup.state.value.conversations.length === 1, "the root in the list");
+			expect(setup.state.value.conversations[0]).toMatchObject({ id: setup.rootId, hasEntries: false });
+			const root = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
+			await writeUsers(root, "hello");
+			await waitFor(() => setup.state.value.conversations[0]?.hasEntries === true, "the entry to fork from");
+		} finally {
+			await setup.close();
+		}
+	});
+
 	test("lists the root, then a subagent's child, with its ownership edge", async () => {
 		const setup = await openConversations();
 		try {

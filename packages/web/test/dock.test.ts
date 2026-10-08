@@ -46,8 +46,8 @@ const TERMINAL: TerminalStateLike = {
 const CONVERSATIONS = {
 	selected: "1",
 	conversations: [
-		{ id: "1", label: "main", root: true, children: 1 },
-		{ id: "2", label: "child task marker", root: false, ownerConversationId: "1", ownerTaskId: "9", children: 0 },
+		{ id: "1", label: "main", root: true, children: 1, hasEntries: true },
+		{ id: "2", label: "child task marker", root: false, ownerConversationId: "1", ownerTaskId: "9", children: 0, hasEntries: true },
 	],
 	tasks: [
 		{
@@ -210,12 +210,12 @@ describe("the session dock", () => {
 			tone: "default",
 			data: "2",
 		});
-		expect(rows[1]?.actions?.[1]).toMatchObject({ id: CONVERSATION_FORK_ACTION, label: "Fork", data: "2" });
+		expect(rows[1]?.actions?.[1]).toMatchObject({ id: CONVERSATION_FORK_ACTION, label: "Fork", data: "2", disabled: false });
 		expect(panel.groups[0]?.actions?.[0]?.id).toBe(CONVERSATIONS_REFRESH_ACTION);
 		const fork = conversationsPanel("en", {
 			selected: "3",
 			conversations: [
-				{ id: "1", label: "main", root: true, role: "main", depth: 0, children: 1 },
+				{ id: "1", label: "main", root: true, role: "main", depth: 0, children: 1, hasEntries: true },
 				{
 					id: "3",
 					label: "try another plan",
@@ -225,6 +225,7 @@ describe("the session dock", () => {
 					parentConversationId: "1",
 					parentEntryId: "4",
 					children: 0,
+					hasEntries: true,
 				},
 			],
 			tasks: [],
@@ -234,6 +235,18 @@ describe("the session dock", () => {
 			description: "forked from conversation 1 at entry 4",
 			badges: ["fork", "selected"],
 		});
+		const empty = conversationsPanel("en", {
+			selected: "4",
+			conversations: [{ id: "4", label: "4", root: true, role: "main", depth: 0, children: 0, hasEntries: false }],
+			tasks: [],
+		});
+		expect(empty.groups[0]?.rows[0]?.actions?.[1]).toMatchObject({
+			id: CONVERSATION_FORK_ACTION,
+			label: "Fork",
+			data: "4",
+			disabled: true,
+		});
+		expect(empty.groups[0]?.rows[0]?.actions?.[0]?.disabled).toBeUndefined();
 		// The Chinese labels reach the same rows.
 		expect(conversationsPanel("zh", CONVERSATIONS).groups[0]?.rows[0]?.badges).toEqual([
 			"主线",

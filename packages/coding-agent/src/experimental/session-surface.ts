@@ -89,9 +89,10 @@ export async function readSummaries(harness: Harness, rootId: string): Promise<C
 	for (const record of records) {
 		const id = String(record.id);
 		const role = roleOf(id, rootId, record);
+		const described = await describeConversation(harness, id, id === rootId);
 		summaries.push({
 			id,
-			label: id === rootId ? "main" : await labelFor(harness, id),
+			label: described.label,
 			root: id === rootId,
 			role,
 			depth: depthOf(id),
@@ -108,24 +109,35 @@ export async function readSummaries(harness: Harness, rootId: string): Promise<C
 						ownerTaskId: String(record.owner.taskId),
 					}),
 			children: children.get(id) ?? 0,
+			hasEntries: described.hasEntries,
 		});
 	}
 	summaries.sort((left, right) => left.depth - right.depth || Number(left.id) - Number(right.id));
 	return summaries;
 }
 
-/** A conversation's label: its earliest user input, else its id. */
-async function labelFor(harness: Harness, id: string): Promise<string> {
+/**
+ * A conversation's label and whether it has anything to fork. The root is always `main`. Any other
+ * conversation uses its earliest user input, or its id when it has none. `hasEntries` matches
+ * `forkAt`: one stored entry is enough, and an empty conversation is not.
+ */
+async function describeConversation(harness: Harness, id: string, root: boolean): Promise<{ label: string; hasEntries: boolean }> {
 	const conversation = await harness.conversation(Number(id) as ConversationId, TODO_CONTEXT);
-	if (conversation === undefined) return id;
+	if (conversation === undefined) return { label: root ? "main" : id, hasEntries: false };
+	if (root) {
+		const newest = await conversation.entries({}, 1, undefined, TODO_CONTEXT);
+		return { label: "main", hasEntries: newest.items.length > 0 };
+	}
 	let first: EntryRecord | undefined;
+	let hasEntries = false;
 	let cursor: Cursor | undefined;
 	do {
 		const page = await conversation.entries({}, SCAN_PAGE, cursor, TODO_CONTEXT);
+		if (page.items.length > 0) hasEntries = true;
 		first = page.items.findLast((entry) => entry.kind === "amazme.user") ?? first;
 		cursor = page.next;
 	} while (cursor !== undefined);
-	return labelOf(first) ?? id;
+	return { label: labelOf(first) ?? id, hasEntries };
 }
 
 /** One page of stored history, oldest first. */

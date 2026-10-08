@@ -46,6 +46,8 @@ export interface ConversationSummary {
 	ownerTaskId?: string;
 	/** How many conversations fork from this one or are owned by it. */
 	children: number;
+	/** True when this conversation has an entry a fork can start from. */
+	hasEntries: boolean;
 }
 
 /** One live task of the Session's task graph, as a list shows it. */

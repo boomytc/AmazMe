@@ -51,6 +51,7 @@ import {
 	WELCOME_SETTINGS_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
 	COMPACT_ACTION,
+	CONVERSATION_FORK_ACTION,
 	QUEUE_CANCEL_ACTION,
 	REFRESH_MODELS_ACTION,
 	SESSION_REMOVE_ACTION,
@@ -1094,7 +1095,7 @@ describe("web view model", () => {
 	});
 
 	test("offers the run controls: compaction, and how a busy turn takes input", () => {
-		const attached = runControls("en", "steer", true);
+		const attached = runControls("en", "steer", true, true);
 		expect(attached.compact).toMatchObject({ id: COMPACT_ACTION, label: "Compact context", disabled: false });
 		expect(attached.fork).toMatchObject({ label: "Fork", disabled: false });
 		expect(attached.submitModes).toEqual([
@@ -1102,8 +1103,10 @@ describe("web view model", () => {
 			{ mode: "followUp", label: "Queue", selected: false },
 		]);
 		// A detached page has nothing to compact, and the toggle follows the page's own choice.
-		expect(runControls("en", "followUp", false).compact.disabled).toBe(true);
-		expect(runControls("en", "followUp", false).fork.disabled).toBe(true);
+		expect(runControls("en", "followUp", false, true).compact.disabled).toBe(true);
+		expect(runControls("en", "followUp", false, true).fork.disabled).toBe(true);
+		// An attached conversation with no entries keeps Fork visible and refuses the click.
+		expect(runControls("en", "followUp", true, false).fork.disabled).toBe(true);
 		expect(
 			laneLine("en", {
 				role: "fork",
@@ -1124,10 +1127,62 @@ describe("web view model", () => {
 				detail: "bash",
 			}),
 		).toBe("子代理 · child · 未选模型 · 推理 off · 正在运行 bash");
-		expect(runControls("zh", "followUp", true).submitModes).toEqual([
+		expect(runControls("zh", "followUp", true, true).submitModes).toEqual([
 			{ mode: "steer", label: "介入", selected: false },
 			{ mode: "followUp", label: "排队", selected: true },
 		]);
+
+		const page = (transcript: ConversationView | undefined, hasEntries: boolean) =>
+			buildWebView({
+				locale: "en",
+				submitMode: "steer",
+				attachments: [],
+				rosterFilter: "",
+				approvals: undefined,
+				feedback: undefined,
+				showWelcome: false,
+				focus: undefined,
+				history: [],
+				historyMore: false,
+				historyLoading: false,
+				draft: "",
+				commands: [],
+				completions: [],
+				paletteSelection: 0,
+				platform: "MacIntel",
+				dock: {
+					open: true,
+					tab: "conversations",
+					cwd: "/w",
+					workspace: undefined,
+					terminal: undefined,
+					conversations: {
+						selected: "1",
+						tasks: [],
+						conversations: [{ id: "1", label: "main", root: true, children: 0, hasEntries }],
+					},
+				},
+				panel: CHAT_PANEL,
+				directory: directoryOf([{ sessionId: "s", createdAt: NOW }]),
+				transcript,
+				attachedId: "s",
+				now: NOW,
+				models: undefined,
+				thinkingLevels: [],
+			});
+		const forkAction = (view: WebView) => view.dock.panel.groups[0]?.rows[0]?.actions?.[1];
+		const empty = page(viewOf([]), false);
+		expect(empty.run.fork.disabled).toBe(true);
+		expect(empty.run.compact.disabled).toBe(false);
+		expect(forkAction(empty)).toMatchObject({ id: CONVERSATION_FORK_ACTION, disabled: true });
+		// The transcript can show the first entry before the conversation list says so.
+		const filled = page(viewOf([userEntry(1, "hello")]), false);
+		expect(filled.run.fork.disabled).toBe(false);
+		expect(forkAction(filled)?.disabled).toBe(false);
+		// A list that already recorded an entry enables Fork before that transcript arrives.
+		const listed = page(undefined, true);
+		expect(listed.run.fork.disabled).toBe(false);
+		expect(forkAction(listed)?.disabled).toBe(false);
 	});
 
 	test("refuses an image the page cannot send and sizes the ones it can", () => {

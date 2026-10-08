@@ -174,6 +174,7 @@ describe("experimental client TUI", () => {
 						role: "main" as const,
 						depth: 0,
 						children: 0,
+						hasEntries: false,
 					},
 				],
 				tasks: [],

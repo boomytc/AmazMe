@@ -1241,9 +1241,10 @@ export function queuedInputs(locale: Locale, view: ConversationView | undefined)
 
 /**
  * The run controls: compaction for the attached session, and the composer's mode toggle. The mode
- * is the page's own choice, so it arrives with the view rather than being decided here.
+ * is the page's own choice, so it arrives with the view rather than being decided here. Fork stays
+ * visible, and stays disabled until the shown conversation has an entry to fork from.
  */
-export function runControls(locale: Locale, mode: SubmitMode, attached: boolean): RunControls {
+export function runControls(locale: Locale, mode: SubmitMode, attached: boolean, forkable: boolean): RunControls {
 	return {
 		compact: {
 			id: COMPACT_ACTION,
@@ -1255,7 +1256,7 @@ export function runControls(locale: Locale, mode: SubmitMode, attached: boolean)
 			id: CONVERSATION_FORK_ACTION,
 			label: translate(locale, "header.fork"),
 			tone: "default",
-			disabled: !attached,
+			disabled: !attached || !forkable,
 		},
 		submitModes: [
 			{
@@ -1291,7 +1292,7 @@ export function failureView(locale: Locale, text: string): WebView {
 		approvals: [],
 		approvalIndicator: undefined,
 		welcome: undefined,
-		run: runControls(locale, "followUp", false),
+		run: runControls(locale, "followUp", false, false),
 		attachedId: undefined,
 		sessionLabel: undefined,
 		meter: statusMeter(undefined, undefined),
@@ -1311,8 +1312,37 @@ export function failureView(locale: Locale, text: string): WebView {
 	};
 }
 
+/** The shown conversation can be forked once it has a stored entry, or the list already says so. */
+function shownCanFork(input: WebViewInput): boolean {
+	if ((input.transcript?.entries.length ?? 0) > 0) return true;
+	const state = input.dock.conversations;
+	if (state === undefined) return false;
+	return state.conversations.some((conversation) => conversation.id === state.selected && conversation.hasEntries);
+}
+
+/**
+ * The list republishes after the transcript. Until it does, the selected row still says the
+ * conversation is empty, so the panel follows the entries the page is already showing.
+ */
+function dockWithShownEntries(input: WebViewInput, forkable: boolean): DockViewInput {
+	const state = input.dock.conversations;
+	if (!forkable || state === undefined) return input.dock;
+	if ((input.transcript?.entries.length ?? 0) === 0) return input.dock;
+	if (state.conversations.some((conversation) => conversation.id === state.selected && conversation.hasEntries)) return input.dock;
+	return {
+		...input.dock,
+		conversations: {
+			...state,
+			conversations: state.conversations.map((conversation) =>
+				conversation.id === state.selected ? { ...conversation, hasEntries: true } : conversation,
+			),
+		},
+	};
+}
+
 export function buildWebView(input: WebViewInput): WebView {
 	const { locale } = input;
+	const forkable = shownCanFork(input);
 	const blocks = transcriptBlocks(locale, input.transcript, [], input.feedback?.records, input.feedbackScope);
 	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter);
 	const empty =
@@ -1352,7 +1382,7 @@ export function buildWebView(input: WebViewInput): WebView {
 			// Only a host that answered offers the guide, and a session means the reader is past it.
 			show: input.showWelcome && input.directory !== undefined && (input.directory.sessions.length ?? 0) === 0,
 		}),
-		run: runControls(locale, input.submitMode, input.attachedId !== undefined),
+		run: runControls(locale, input.submitMode, input.attachedId !== undefined, forkable),
 		attachedId: input.attachedId,
 		sessionLabel: attachedSessionLabel(input.directory, input.attachedId),
 		meter: statusMeter(input.transcript, input.models),
@@ -1362,6 +1392,6 @@ export function buildWebView(input: WebViewInput): WebView {
 		newSession: { enabled: input.directory !== undefined },
 		model: modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined),
 		panel: panelView({ ...input.panel, locale }),
-		dock: dockView(locale, input.dock),
+		dock: dockView(locale, dockWithShownEntries(input, forkable)),
 	};
 }

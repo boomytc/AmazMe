@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Fixed the web page offering Fork on a conversation that has no entries yet. The header and the conversations panel keep the control and disable it until there is an entry to fork from
 - Fixed the Dashboard offering a close badge for the current session, which cannot be deleted from there; the close column stays blank so ages keep their alignment, and `Ctrl+X` on it reports that the session stays open
 
 ## [1.1.0] - 2026-10-07
