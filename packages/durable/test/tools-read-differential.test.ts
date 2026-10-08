@@ -18,17 +18,9 @@ import { closeFileToolApis, fileToolApi } from "./file-tool-api.ts";
 function referenceRead(bytes: Uint8Array, path: string, offset: number | undefined, limit: number | undefined) {
 	const mimeType = detectSupportedImageMimeType(bytes);
 	if (mimeType) {
-		return {
-			content: [],
-			isError: true,
-			diagnostics: [
-				{
-					severity: "error",
-					code: "unsupported_image",
-					message: `${path} is an image (${mimeType}); reading images is not supported`,
-				},
-			],
-		};
+		const note = `Read image file [${mimeType}]`;
+		const image = { type: "image", mimeType, data: Buffer.from(bytes).toString("base64") };
+		return { content: [{ type: "text", text: note }, image], structuredContent: { ...image, note } };
 	}
 	const textContent = new TextDecoder().decode(bytes);
 	const allLines = textContent.split("\n");

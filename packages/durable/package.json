@@ -24,6 +24,12 @@
 			"import": "./dist/env/node.js",
 			"default": "./dist/env/node.js"
 		},
+		"./tools/read-output": {
+			"source": "./src/tools/read-output.ts",
+			"types": "./dist/tools/read-output.d.ts",
+			"import": "./dist/tools/read-output.js",
+			"default": "./dist/tools/read-output.js"
+		},
 		"./tools": {
 			"source": "./src/tools/index.ts",
 			"types": "./dist/tools/index.d.ts",

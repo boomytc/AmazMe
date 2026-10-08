@@ -11,6 +11,7 @@ import {
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import {
 	CodingTools,
+	createReadTool,
 	createFindTool,
 	createGrepTool,
 	createLsTool,
@@ -74,7 +75,39 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 /** A registry with pi's coding tools and system prompt. */
 export function createCodingRegistry(settingsManager: SettingsManager, cwd: string): Registry {
 	const registry = createRegistry();
-	registry.install(CodingTools);
+	registry.install({
+		...CodingTools,
+		tools: CodingTools.tools?.map((tool) =>
+			tool.name !== "read"
+				? tool
+				: createReadTool({
+						async imageProcessor(bytes, mimeType, api, context) {
+							const ref = (await api.agent(context)).model;
+							const model = ref === undefined ? undefined : api.models.getModel(ref.provider, ref.modelId);
+							const { processImage } = await import("../utils/image-process.ts");
+							const result = await processImage(bytes, mimeType, {
+								autoResizeImages: settingsManager.getSettings().images?.autoResize,
+								resizeOptions: model?.inputLimits?.images?.resize,
+							});
+							context.abortSignal?.throwIfAborted();
+							if (!result.ok) return { content: [{ type: "text", text: result.message }], isError: true };
+							const note = [
+								`Read image file [${result.mimeType}]`,
+								...result.hints,
+								...(model && !model.input.includes("image")
+									? ["[Current model does not support images. The image will be omitted from this request.]"]
+									: []),
+							].join("\n");
+							return {
+								content: [
+									{ type: "text", text: note },
+									{ type: "image", mimeType: result.mimeType, data: result.data },
+								],
+							};
+						},
+					}),
+		),
+	});
 	registry.install(createDurableCodemode(settingsManager));
 	const program =
 		(name: "rg" | "fd"): SearchProgramOptions["program"] =>

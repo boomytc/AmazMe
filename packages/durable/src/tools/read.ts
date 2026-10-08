@@ -1,3 +1,4 @@
+import type { ImagesOutputContent } from "@amazme/ai";
 import type { Context } from "@amazme/chord";
 import { type Static, Type } from "typebox";
 import {
@@ -10,7 +11,7 @@ import {
 } from "../env/index.ts";
 import { defineTool } from "../harness/define.ts";
 import { characterEnd } from "../harness/output.ts";
-import type { ToolDiagnostic, ToolRegistration } from "../harness/types.ts";
+import type { ToolDiagnostic, ToolRegistration, ToolExecutionApi } from "../harness/types.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -24,6 +25,7 @@ import { canonicalFilePath } from "../file-operations.ts";
 import { observeFile, observeRead } from "./file-observations.ts";
 import { detectSupportedImageMimeTypeOf } from "./image.ts";
 import { resolveReadToolPath } from "../file-operations.ts";
+import { readOutputSchema } from "./read-output.ts";
 
 const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
@@ -39,6 +41,55 @@ export type ReadToolDetails = {
 };
 
 const READ_CHUNK = 64 * 1024;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+export interface ReadToolOptions {
+	/** Applications supply their provider-aware conversion and resize pipeline. */
+	imageProcessor?(
+		bytes: Uint8Array,
+		mimeType: string,
+		api: ToolExecutionApi<ReadToolDetails>,
+		context: Context,
+	): Promise<{ content: ImagesOutputContent[]; isError?: boolean }>;
+}
+
+async function imageResult(
+	reader: BinaryReader,
+	size: number,
+	mimeType: string,
+	context: Context,
+	process?: (bytes: Uint8Array) => Promise<{ content: ImagesOutputContent[]; isError?: boolean }>,
+) {
+	if (size > MAX_IMAGE_BYTES) throw new Error(`Image exceeds the ${formatSize(MAX_IMAGE_BYTES)} read limit`);
+	const bytes = new Uint8Array(size);
+	for (let offset = 0; offset < size; ) {
+		const chunk = getOrThrow(await reader.read(offset, Math.min(READ_CHUNK, size - offset), context));
+		if (chunk.length === 0) throw new Error("Image changed while reading");
+		bytes.set(chunk, offset);
+		offset += chunk.length;
+	}
+	const encode = () => {
+		let binary = "";
+		for (let offset = 0; offset < bytes.length; offset += READ_CHUNK)
+			binary += String.fromCharCode(...bytes.subarray(offset, offset + READ_CHUNK));
+		return btoa(binary);
+	};
+	const result = process
+		? await process(bytes)
+		: {
+				content: [
+					{ type: "text" as const, text: `Read image file [${mimeType}]` },
+					{ type: "image" as const, mimeType, data: encode() },
+				],
+			};
+	context.abortSignal?.throwIfAborted();
+	const image = result.content.find((block) => block.type === "image");
+	const note = result.content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("\n");
+	return { ...result, structuredContent: image ? { ...image, note } : note };
+}
 
 /** `Array.prototype.slice`'s conversion of an index: NaN is 0, other values truncate toward zero. */
 function sliceIndex(value: number): number {
@@ -71,12 +122,14 @@ async function readHead(
 	return text + decoder.decode();
 }
 
-/** Reads text files. Remarks about truncation and continuation are diagnostics; the content is only file text. */
-export function createReadTool(): ToolRegistration<typeof readSchema, ReadToolDetails> {
+/** Reads text and images. Text truncation and continuation are reported as diagnostics. */
+export function createReadTool(options?: ReadToolOptions): ToolRegistration<typeof readSchema, ReadToolDetails> {
+	const imageProcessor = options?.imageProcessor;
 	return defineTool({
 		name: "read",
-		description: `Read the contents of a text file. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read text files and images (PNG, JPEG, GIF, WebP, BMP). Images are limited to 10MB before processing. Text output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		parameters: readSchema,
+		outputSchema: readOutputSchema,
 		async execute(args, api, context) {
 			const { path, offset, limit } = args;
 			const env = requireEnv(api);
@@ -94,10 +147,22 @@ export function createReadTool(): ToolRegistration<typeof readSchema, ReadToolDe
 				for (let attempt = 0; ; attempt++) {
 					const version = getOrThrow(await reader.revision(context));
 					const before = getOrThrow(await reader.info(context));
-					const result = await readText(reader, before, path, offset, limit, context);
+					const mimeType = await detectSupportedImageMimeTypeOf({
+						size: before.size,
+						read: async (position, length) => getOrThrow(await reader.read(position, length, context)),
+					});
+					const result = mimeType
+						? await imageResult(
+								reader,
+								before.size,
+								mimeType,
+								context,
+								imageProcessor === undefined ? undefined : (bytes) => imageProcessor(bytes, mimeType, api, context),
+							)
+						: await readText(reader, before, path, offset, limit, context);
 					const after = getOrThrow(await reader.info(context));
 					const unchanged = version === getOrThrow(await reader.revision(context));
-					if (unchanged || after.size > before.size) {
+					if (unchanged || (!mimeType && after.size > before.size)) {
 						if (unchanged && !("isError" in result && result.isError)) {
 							await observeRead(api, env.id, { path: target, version }, context);
 						} else {
@@ -127,25 +192,6 @@ async function readText(
 	limit: number | undefined,
 	context: Context,
 ) {
-	const mimeType = await detectSupportedImageMimeTypeOf({
-		size: info.size,
-		read: async (position, length) => getOrThrow(await reader.read(position, length, context)),
-	});
-	if (mimeType) {
-		// Image content is not supported yet.
-		return {
-			content: [],
-			isError: true,
-			diagnostics: [
-				{
-					severity: "error" as const,
-					code: "unsupported_image",
-					message: `${path} is an image (${mimeType}); reading images is not supported`,
-				},
-			],
-		};
-	}
-
 	const startLine = offset ? Math.max(0, offset - 1) : 0;
 	const startLineDisplay = startLine + 1;
 	// Lines are selected like `allLines.slice(startLine, endLine)`, which truncates fractional indices.

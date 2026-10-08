@@ -82,6 +82,7 @@ async function runCommand(
 	context: Context,
 ): Promise<void> {
 	const env = requireEnv(api);
+	await api.details({ command: execution.command, cwd: execution.cwd }, context);
 	let result: Awaited<ReturnType<typeof env.exec>> | undefined;
 	for (const command of commands) {
 		result = await env.exec(
@@ -102,6 +103,14 @@ async function runCommand(
 		if (result.ok || result.error.code !== "spawn_error") break;
 	}
 	if (result === undefined) throw new Error("No command to run");
+	await api.details(
+		{
+			command: execution.command,
+			cwd: execution.cwd,
+			...(result.ok ? { exit_code: result.value.exitCode } : { interruption: result.error.code }),
+		},
+		context,
+	);
 	const spillPath = result.ok ? result.value.spillPath : result.error.spillPath;
 	if (spillPath !== undefined) {
 		api.diagnostic({ severity: "info", code: "full_output", message: `Full output: ${spillPath}` });

@@ -305,7 +305,7 @@ describe("durable tools", () => {
 			expect(textOutput(result)).toBe("one\ntwo");
 		});
 
-		it("reports images by content as unsupported", async () => {
+		it("reads images by content as inline output", async () => {
 			const env = createEnv();
 			const png = Uint8Array.from(
 				Buffer.from(
@@ -315,8 +315,10 @@ describe("durable tools", () => {
 			);
 			getOrThrow(await env.writeFile("image.txt", png, BACKGROUND_CONTEXT));
 			const result = await run(createReadTool(), { path: "image.txt" }, env);
-			expect(result).toMatchObject({ content: [], isError: true });
-			expect(diagnosticText(result)).toBe("image.txt is an image (image/png); reading images is not supported");
+			expect(result).toMatchObject({
+				content: [{ type: "text", text: "Read image file [image/png]" }, { type: "image", mimeType: "image/png", data: Buffer.from(png).toString("base64") }],
+				structuredContent: { type: "image", mimeType: "image/png", data: Buffer.from(png).toString("base64"), note: "Read image file [image/png]" },
+			});
 		});
 	});
 

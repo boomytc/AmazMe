@@ -1,3 +1,5 @@
+import { readOutputSchema } from "@amazme/durable/tools/read-output";
+import type { ReadToolOutput } from "@amazme/durable/tools/read-output";
 import type { AgentTool } from "@amazme/agent";
 import type { Api, ImageContent, Model, ModelImageResizeOptions, TextContent } from "@amazme/ai";
 import { FileError } from "@amazme/durable/env";
@@ -30,23 +32,7 @@ export const readToolSystemPromptContribution = {
 
 export type ReadToolInput = Static<typeof readSchema>;
 
-/**
- * Result for programmatic callers such as codemode scripts: the text for text files, and an image
- * block for images that codemode's `image()` accepts. `note` is the text that goes with the image,
- * such as resize hints. Property descriptions are left out so the type stays on one line in tool
- * descriptions.
- */
-const readOutputSchema = Type.Union([
-	Type.String(),
-	Type.Object({
-		type: Type.Literal("image"),
-		data: Type.String(),
-		mimeType: Type.String(),
-		note: Type.String(),
-	}),
-]);
-
-export type ReadToolOutput = Static<typeof readOutputSchema>;
+export type { ReadToolOutput } from "@amazme/durable/tools/read-output";
 
 export interface ReadToolDetails {
 	truncation?: TruncationResult;
