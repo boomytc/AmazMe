@@ -12,6 +12,9 @@ import {
 	FileError,
 	type FileInfo,
 	type FileKind,
+	type FileRevision,
+	type FileWriteIntent,
+	type FileWriteOutcome,
 	type FileWatcher,
 	type LineScan,
 	ok,
@@ -58,8 +61,19 @@ export interface RemoteExecutionEnvOptions {
 }
 
 /** An info record from the daemon. */
-type RemoteFileInfo = { name: string; kind: FileKind | "other"; size: number; mtimeSec: number; mtimeNsec: number };
-type RemoteDirEntry = { name: string; raw?: number[]; info?: RemoteFileInfo; error?: Json };
+type RemoteFileInfo = {
+	name: string;
+	kind: FileKind | "other";
+	size: number;
+	mtimeSec: number;
+	mtimeNsec: number;
+};
+type RemoteDirEntry = {
+	name: string;
+	raw?: number[];
+	info?: RemoteFileInfo;
+	error?: Json;
+};
 
 /** Node's path rules of the remote system. */
 export async function remotePath(connection: Connection): Promise<PlatformPath> {
@@ -176,6 +190,17 @@ class RemoteBinaryReader implements BinaryReader {
 		try {
 			const { json } = await this.#handle.request("fstat");
 			return toInfo(this.#path, json as unknown as RemoteFileInfo, await remotePath(this.#handle.env.connection));
+		} catch (error) {
+			return err(toFileError(error, this.#path));
+		}
+	}
+
+	async revision(context: Context): Promise<Result<string, FileError>> {
+		const early = abortResult<string>(context.abortSignal, this.#path) ?? this.#closedResult<string>();
+		if (early) return early;
+		try {
+			const { json } = await this.#handle.request("fileVersion");
+			return abortResult<string>(context.abortSignal, this.#path) ?? ok(json.version as string);
 		} catch (error) {
 			return err(toFileError(error, this.#path));
 		}
@@ -627,6 +652,61 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 
 	writeFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
 		return this.#write(path, content, false, context);
+	}
+
+	fileRevision(path: string, context: Context): Promise<Result<FileRevision, FileError>> {
+		return this.#fileOp(
+			path,
+			context,
+			async (resolved) => {
+				const { json } = await this.connection.request("fileRevision", {
+					path: resolved,
+				});
+				return { path: json.path as string, version: json.version as string };
+			},
+			"both",
+		);
+	}
+
+	writeFileChecked(
+		path: string,
+		content: string | Uint8Array,
+		intent: FileWriteIntent,
+		context: Context,
+	): Promise<Result<FileWriteOutcome, FileError>> {
+		intent = { ...intent };
+		return this.#fileOp(path, context, async (resolved) => {
+			const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : content;
+			const { json, session } = await this.connection.request(
+				"checkedWriteOpen",
+				{ path: resolved, intent },
+				{
+					payload: bytes.subarray(0, WRITE_CHUNK),
+					signal: context.abortSignal,
+				},
+			);
+			const handle = new Handle(this, json.handle as number, session, resolved);
+			try {
+				// Staging is bounded per frame; cancellation never publishes a partial transfer.
+				for (let offset = WRITE_CHUNK; offset < bytes.length; offset += WRITE_CHUNK) {
+					if (context.abortSignal?.aborted) throw new FileError("aborted", "The operation was aborted", resolved);
+					await handle.request(
+						"writeChunk",
+						{},
+						{
+							payload: bytes.subarray(offset, offset + WRITE_CHUNK),
+							signal: context.abortSignal,
+						},
+					);
+				}
+				if (context.abortSignal?.aborted) throw new FileError("aborted", "The operation was aborted", resolved);
+				const reply = await handle.request("checkedPublish", {}, { signal: context.abortSignal });
+				// Cancellation after publication does not turn a completed write into a reported failure.
+				return reply.json as unknown as FileWriteOutcome;
+			} finally {
+				await handle.close();
+			}
+		});
 	}
 
 	appendFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {

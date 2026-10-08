@@ -16,6 +16,9 @@ export function toFileError(error: unknown, fallbackPath?: string): FileError {
 	switch (error.code) {
 		case "aborted":
 			return new FileError("aborted", error.message, path, error);
+		case "not_observed":
+		case "stale_version":
+			return new FileError(error.code, error.message, path, error);
 		case "ENOENT":
 			return new FileError("not_found", error.message, path, error);
 		case "EACCES":

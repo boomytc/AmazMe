@@ -20,10 +20,11 @@ use std::time::UNIX_EPOCH;
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, CREATE_ALWAYS, CreateFileW, FILE_APPEND_DATA,
-    FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    FILE_WRITE_DATA, GetFileInformationByHandle, MOVEFILE_REPLACE_EXISTING, MoveFileExW,
-    OPEN_ALWAYS, OPEN_EXISTING,
+    FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_DATA, FileBasicInfo, GetFileInformationByHandle,
+    GetFileInformationByHandleEx, MOVEFILE_REPLACE_EXISTING, MoveFileExW, OPEN_ALWAYS,
+    OPEN_EXISTING, ReplaceFileW,
 };
 use windows_sys::Win32::System::IO::CancelSynchronousIo;
 use windows_sys::Win32::System::JobObjects::{
@@ -93,6 +94,33 @@ pub fn mtime(metadata: &Metadata) -> (i64, i64) {
 pub fn identity(metadata: &Metadata) -> (u64, u64) {
     use std::os::windows::fs::MetadataExt;
     (0, metadata.creation_time())
+}
+
+/// An opened handle's file index and ChangeTime avoid NTFS tunneling and restored modification timestamps.
+pub fn file_version(file: &File, metadata: &Metadata) -> io::Result<String> {
+    // SAFETY: both buffers match their API's layout; the live File owns the handle throughout both calls.
+    let mut identity: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    let mut basic: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut identity) } == 0
+        || unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileBasicInfo,
+                (&mut basic as *mut FILE_BASIC_INFO).cast(),
+                std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(format!(
+        "{}:{}:{}:{}:{}",
+        identity.dwVolumeSerialNumber,
+        (u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow),
+        metadata.len(),
+        basic.LastWriteTime,
+        basic.ChangeTime
+    ))
 }
 
 /// Node's `os.tmpdir()` on Windows.
@@ -229,6 +257,26 @@ pub fn rename(from: &str, to: &str) -> io::Result<()> {
     let (from, to) = (wide(from)?, wide(to)?);
     // SAFETY: both arguments are NUL-terminated wide strings that outlive the call.
     if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_REPLACE_EXISTING) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Preserve the existing file's ACL and metadata when publishing a checked replacement.
+pub fn checked_replace(from: &str, to: &str) -> io::Result<()> {
+    let (from, to) = (wide(from)?, wide(to)?);
+    // SAFETY: both paths are valid wide strings; no backup or optional parameters are supplied.
+    if unsafe {
+        ReplaceFileW(
+            to.as_ptr(),
+            from.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    } == 0
+    {
         return Err(io::Error::last_os_error());
     }
     Ok(())

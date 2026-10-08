@@ -15,6 +15,8 @@ const PING_INTERVAL_MS = 5000;
 const SILENCE_LIMIT_MS = 30_000;
 /** How long starting the daemon and its `hello` may take. */
 const START_TIMEOUT_MS = 60_000;
+/** EOF lets the daemon discard staged writes; a stuck transport is still bounded. */
+const TERMINATE_GRACE_MS = 1000;
 
 export type Json = Record<string, unknown>;
 
@@ -313,7 +315,9 @@ export class Connection {
 			this.#ready = undefined;
 		}
 		session.child.stdin.end();
-		session.child.kill();
+		const terminate = setTimeout(() => session.child.kill(), TERMINATE_GRACE_MS);
+		terminate.unref();
+		session.child.once("exit", () => clearTimeout(terminate));
 		const pending = [...session.pending.values()];
 		session.pending.clear();
 		for (const request of pending) request.reject(error);

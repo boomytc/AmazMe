@@ -1,6 +1,7 @@
 //! amazme-env: a small daemon that gives an AmazMe Durable host an execution environment on this machine over stdin/stdout
 //! (docs/protocol.md). Started as `amazme-env serve --token <hex>`, usually through `ssh`.
 
+mod checked;
 mod decode;
 mod errors;
 mod exec;
@@ -47,6 +48,7 @@ struct FileHandle {
     failed: AtomicBool,
     /// Chunk writes run one at a time in arrival order, though the client sends several at once.
     serial: Mutex<Serial>,
+    checked: Option<checked::Stage>,
 }
 
 #[derive(Default)]
@@ -74,6 +76,8 @@ struct Server {
     next_handle: AtomicU64,
     controls: Mutex<HashMap<u32, Arc<Control>>>,
     groups: exec::Groups,
+    checked_publish: Mutex<()>,
+    closed: AtomicBool,
 }
 
 fn now_ms() -> u64 {
@@ -100,6 +104,25 @@ fn flag(json: &Value, key: &str) -> bool {
 }
 
 impl Server {
+    fn shutdown(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        for control in self.controls.lock().unwrap().values() {
+            control.cancel(false);
+        }
+        // Wait for any publication already in progress, then discard uncommitted handles.
+        let _publication = self.checked_publish.lock().unwrap();
+        let mut handles = self.handles.lock().unwrap();
+        for handle in handles.values() {
+            if let Handle::File(file) = handle {
+                if let Some(stage) = &file.checked {
+                    stage.cleanup();
+                }
+            }
+        }
+        handles.clear();
+        kill_all(&self.groups);
+    }
+
     fn file(&self, json: &Value) -> Result<Arc<FileHandle>, Failure> {
         match self.handles.lock().unwrap().get(&number(json, "handle")?) {
             Some(Handle::File(file)) => Ok(file.clone()),
@@ -110,6 +133,9 @@ impl Server {
 
     fn insert(&self, handle: Handle) -> Result<u64, Failure> {
         let mut handles = self.handles.lock().unwrap();
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(Failure::new("aborted", "Connection closed"));
+        }
         if handles.len() >= MAX_HANDLES {
             return Err(Failure::new("EMFILE", "EMFILE: too many open files"));
         }
@@ -124,6 +150,7 @@ impl Server {
             path: path.to_string(),
             failed: AtomicBool::new(false),
             serial: Mutex::new(Serial::default()),
+            checked: None,
         })))
     }
 
@@ -154,6 +181,37 @@ impl Server {
             }))),
             "lstat" => plain(fs::lstat(field(json, "path")?)),
             "realpath" => plain(fs::realpath(field(json, "path")?)),
+            "fileRevision" => plain(checked::revision(field(json, "path")?)),
+            "fileVersion" => {
+                let handle = self.file(json)?;
+                plain(Ok(
+                    json!({ "version": checked::version(&handle.file, &handle.path)? }),
+                ))
+            }
+            "checkedWriteOpen" => {
+                let path = field(json, "path")?;
+                let (file, stage) = checked::Stage::open(path, &json["intent"], &payload, control)?;
+                let handle = self.insert(Handle::File(Arc::new(FileHandle {
+                    file,
+                    path: path.to_string(),
+                    failed: AtomicBool::new(false),
+                    serial: Mutex::new(Serial::default()),
+                    checked: Some(stage),
+                })))?;
+                plain(Ok(json!({ "handle": handle })))
+            }
+            "checkedPublish" => {
+                let handle = self.file(json)?;
+                if handle.failed.load(Ordering::SeqCst) {
+                    return Err(Failure::new("EBADF", "An earlier write failed").path(&handle.path));
+                }
+                let stage = handle
+                    .checked
+                    .as_ref()
+                    .ok_or_else(|| Failure::new("EBADF", "Not a staged write"))?;
+                let _publication = self.checked_publish.lock().unwrap();
+                plain(stage.publish(&handle.file, control))
+            }
             "write" => {
                 let path = field(json, "path")?;
                 let parents = json["parents"].as_bool().unwrap_or(true);
@@ -167,6 +225,12 @@ impl Server {
                 let handle = self.file(json)?;
                 if handle.failed.load(Ordering::SeqCst) {
                     return Err(Failure::new("EBADF", "an earlier write failed"));
+                }
+                if let Some(stage) = &handle.checked {
+                    stage.writable(control).map_err(|failure| {
+                        handle.failed.store(true, Ordering::SeqCst);
+                        failure
+                    })?;
                 }
                 (&handle.file).write_all(&payload).map_err(|error| {
                     handle.failed.store(true, Ordering::SeqCst);
@@ -411,7 +475,7 @@ fn serve_frames(server: &Arc<Server>, input: &mut impl Read) -> io::Result<()> {
                 } else {
                     let worker = server.clone();
                     let serial = match request.json["op"].as_str() {
-                        Some("writeChunk") => server.file(&request.json).ok(),
+                        Some("writeChunk" | "checkedPublish") => server.file(&request.json).ok(),
                         _ => None,
                     };
                     let job: Job = Box::new(move || respond(&worker, id, request, control));
@@ -455,19 +519,23 @@ fn serve(token: &str) -> io::Result<()> {
         next_handle: AtomicU64::new(1),
         controls: Mutex::new(HashMap::new()),
         groups: Arc::new(Mutex::new(Default::default())),
+        checked_publish: Mutex::new(()),
+        closed: AtomicBool::new(false),
     });
     let last_seen = Arc::new(AtomicU64::new(now_ms()));
     {
         let output = output.clone();
         let last_seen = last_seen.clone();
-        let groups = server.groups.clone();
+        let server = Arc::downgrade(&server);
         thread::spawn(move || {
             loop {
                 thread::sleep(PING_INTERVAL);
                 output.control(Frame::new(PING, 0, json!({})));
                 // A client that went silent (a phone that lost its network) leaves nothing running.
                 if now_ms().saturating_sub(last_seen.load(Ordering::Relaxed)) > SILENCE_LIMIT_MS {
-                    kill_all(&groups);
+                    if let Some(server) = server.upgrade() {
+                        server.shutdown();
+                    }
                     std::process::exit(0);
                 }
             }
@@ -482,7 +550,7 @@ fn serve(token: &str) -> io::Result<()> {
     );
     let result = serve_frames(&server, &mut input);
     // However input ended, the client is gone: stop everything it started.
-    kill_all(&server.groups);
+    server.shutdown();
     output.close();
     let _ = writer.join();
     result

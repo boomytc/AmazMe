@@ -31,6 +31,9 @@ import {
 	FileError,
 	type FileInfo,
 	type FileKind,
+	type FileRevision,
+	type FileWriteIntent,
+	type FileWriteOutcome,
 	type FileWatcher,
 	type LineScan,
 	ok,
@@ -45,6 +48,7 @@ import {
 	type WatchTarget,
 } from "./index.ts";
 import { LineScanner } from "./line-scan.ts";
+import { fileVersion, readFileRevision, writeFileChecked } from "./node-files.ts";
 import { NodeFileWatcher, type NodeWatchOptions } from "./node-watch.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -460,6 +464,18 @@ class NodeBinaryReader implements BinaryReader {
 	constructor(file: FileHandle, path: string) {
 		this.file = file;
 		this.path = path;
+	}
+
+	async revision(context: Context): Promise<Result<string, FileError>> {
+		const aborted = abortResult<string>(context.abortSignal, this.path);
+		if (aborted) return aborted;
+		if (this.closed) return closedResult("Binary reader", this.path);
+		try {
+			const version = fileVersion(await this.file.stat({ bigint: true }));
+			return abortResult<string>(context.abortSignal, this.path) ?? ok(version);
+		} catch (error) {
+			return err(toFileError(error, this.path));
+		}
 	}
 
 	async info(context: Context): Promise<Result<FileInfo, FileError>> {
@@ -1015,6 +1031,27 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			return ok(undefined);
 		} catch (error) {
 			return err(toFileError(error, resolved));
+		}
+	}
+
+	async fileRevision(path: string, context: Context): Promise<Result<FileRevision, FileError>> {
+		try {
+			return ok(await readFileRevision(resolvePath(this.cwd, path), context));
+		} catch (error) {
+			return abortResult(context.abortSignal, path) ?? err(toFileError(error, path));
+		}
+	}
+
+	async writeFileChecked(
+		path: string,
+		content: string | Uint8Array,
+		intent: FileWriteIntent,
+		context: Context,
+	): Promise<Result<FileWriteOutcome, FileError>> {
+		try {
+			return ok(await writeFileChecked(resolvePath(this.cwd, path), content, intent, context));
+		} catch (error) {
+			return abortResult(context.abortSignal, path) ?? err(toFileError(error, path));
 		}
 	}
 

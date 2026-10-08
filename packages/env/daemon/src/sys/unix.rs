@@ -63,6 +63,19 @@ pub fn identity(metadata: &Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
+pub fn file_version(_file: &File, metadata: &Metadata) -> io::Result<String> {
+    Ok(format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec()
+    ))
+}
+
 /// Node's `os.tmpdir()`; Termux's Node falls back to `$PREFIX/tmp`.
 pub fn tmpdir() -> String {
     let configured = ["TMPDIR", "TMP", "TEMP"]
@@ -142,6 +155,10 @@ pub fn realpath(path: &str) -> io::Result<String> {
 }
 
 pub fn rename(from: &str, to: &str) -> io::Result<()> {
+    std::fs::rename(from, to)
+}
+
+pub fn checked_replace(from: &str, to: &str) -> io::Result<()> {
     std::fs::rename(from, to)
 }
 

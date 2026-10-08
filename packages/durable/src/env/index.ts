@@ -40,6 +40,8 @@ export type FileErrorCode =
 	| "is_directory"
 	| "invalid"
 	| "not_supported"
+	| "not_observed"
+	| "stale_version"
 	| "unknown";
 
 export class FileError extends Error {
@@ -94,6 +96,8 @@ export interface TextLineReader {
 
 /** Positional reads from one opened regular file; all calls see the same file even if its path is renamed. */
 export interface BinaryReader {
+	/** Opaque revision of the opened file, including identity and change metadata. */
+	revision(context: Context): Promise<Result<string, FileError>>;
 	/** Metadata of the opened file, not of whatever its path names now. */
 	info(context: Context): Promise<Result<FileInfo, FileError>>;
 	/** Up to `length` bytes at `offset`; fewer only at end of file. */
@@ -196,6 +200,18 @@ export interface FileSystem {
 		context: Context,
 	): Promise<Result<BinaryReader, FileError>>;
 	writeFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>>;
+	fileRevision(path: string, context: Context): Promise<Result<FileRevision, FileError>>;
+	/**
+	 * Publish complete bytes after checking the current revision. Creation never replaces an existing entry;
+	 * replacement rechecks before publication and serializes cooperating checked writers in the backend.
+	 * This is not a lock against arbitrary external writers.
+	 */
+	writeFileChecked(
+		path: string,
+		content: string | Uint8Array,
+		intent: FileWriteIntent,
+		context: Context,
+	): Promise<Result<FileWriteOutcome, FileError>>;
 	appendFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>>;
 	/** Truncate or extend a file to exactly `size` bytes. */
 	truncateFile(path: string, size: number, context: Context): Promise<Result<void, FileError>>;
@@ -233,6 +249,21 @@ export interface FileSystem {
 		context: Context,
 	): Promise<Result<string, FileError>>;
 	cleanup(context: Context): Promise<void>;
+}
+
+export interface FileRevision {
+	readonly path: string;
+	readonly version: string;
+}
+
+export type FileWriteIntent =
+	| { readonly kind: "createIfAbsent" }
+	| { readonly kind: "replaceIfVersion"; readonly version: string };
+export interface FileWriteOutcome {
+	readonly path: string;
+	/** Absent if publication succeeded but its revision could not be sampled; reread before another replacement. */
+	readonly version?: string;
+	readonly operation: "create" | "replace";
 }
 
 /** Spill the complete output to a temporary file once it exceeds either threshold. */

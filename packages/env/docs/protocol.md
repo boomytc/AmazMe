@@ -38,6 +38,9 @@ Errors are `{ code, message, syscall?, path? }`. `code` is a Node-style error co
 `ERR_FS_EISDIR`, ...) or one of the execution codes `shell_unavailable`, `spawn_error`, `timeout`, `aborted`, `unknown`.
 Messages are diagnostic; only codes are part of the contract.
 
+Checked file publication also reports `not_observed` (an existing target was not observed) or `stale_version`
+(the expected revision or resolved target changed).
+
 Paths are absolute JSON strings; the client resolves relative paths, `~` and `file://` URLs before sending. Strings are
 sent well-formed (lone surrogates become U+FFFD) and encoded as UTF-8, as Node encodes string paths and arguments. File
 contents and output travel as raw payload bytes.
@@ -48,6 +51,11 @@ A cancel names one request. The daemon registers each request before running it,
 request is never lost. `exec` kills the command's process group and finishes with `aborted`; `{ mode: "kill" }` kills
 without aborting, so the command finishes with the killed process's status, as `cleanup()` does. `scanLines` stops
 between chunks with `aborted`. `watch` stops and finishes with `{}`. Other operations are short and finish normally.
+
+Staged writes check cancellation before creating a staging file, before chunk writes and immediately before publication.
+After publication, cancellation does not turn a completed write into failure. Closing a staging handle or gracefully
+ending the connection removes its unpublished bytes. An abrupt process or machine failure can leave a private staging
+directory; it cannot expose partial target contents.
 
 ## Scheduling
 
@@ -77,6 +85,10 @@ File operations take `{ path }` (and the listed fields) and return `{}` unless n
 |---|---|---|
 | `lstat` | | `info` |
 | `realpath` | | `{ path }` |
+| `fileRevision` | | `{ path, version }` of an opened regular file; `path` is canonical |
+| `fileVersion` | `handle` | `{ version }` of the opened file, independent of its current path |
+| `checkedWriteOpen` | `intent`, payload | `{ handle }` for an adjacent private staging file; `intent` is `{ kind: "createIfAbsent" }` or `{ kind: "replaceIfVersion", version }` |
+| `checkedPublish` | `handle` | `{ path, operation, version? }`; flushes, rechecks and publishes staged bytes; `operation` is `create` or `replace` |
 | `write` | `append`, `parents?` (default true), `keep?`, payload | creates missing parents like Node's recursive `mkdir`, opens like `writeFile` (`w`) or `appendFile` (`a`), writes the payload; with `keep`, `{ handle }` for `writeChunk` |
 | `writeChunk` | `handle`, payload | appends to a kept write handle; after a failed chunk, later chunks fail with `EBADF` |
 | `truncate` | `size` | |
@@ -98,6 +110,13 @@ File operations take `{ path }` (and the listed fields) and return `{}` unless n
 decoded as UTF-8 with replacement characters, and lstat'ed under that name, as Node does; `raw` holds the original
 bytes of a name that is not valid UTF-8, for sorting. Handles are numbers, valid until `close` or the end of the
 connection; opening more than 4096 fails with `EMFILE`.
+
+Versions are opaque strings derived from opened file identity, size, modification and change metadata, without losing
+integer precision in JSON. A checked replacement must use a version observed in that file namespace. The daemon
+serializes its checked publications; creation uses a hard link that never overwrites an existing entry. Replacement
+checks again just before the atomic rename (Windows uses `ReplaceFileW` to preserve the existing ACL). This protects
+cooperating writers in one daemon, not an arbitrary external writer between the final check and the OS publication.
+If revision sampling fails after publication, success omits `version`: callers must reread before another replacement.
 
 `exec { command | argv, cwd, env, inheritEnv, shellPath?, timeoutMs?, spill?, window? }` runs a shell string or an
 argv array. While it runs, `event` frames `{ kind: "output", stream, skipped? }` carry decoded output text as UTF-8

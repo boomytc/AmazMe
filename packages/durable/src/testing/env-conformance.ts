@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import {
 	type ExecutionEnv,
 	type FileInfo,
+	type FileWriteOutcome,
 	getOrThrow,
 	type Result,
 	type ShellOutputInfo,
@@ -25,6 +26,11 @@ function abortedContext(): Context {
 
 function errorCode(result: Result<unknown, { code: string }>): string | undefined {
 	return result.ok ? undefined : result.error.code;
+}
+
+function publishedVersion(outcome: FileWriteOutcome): string {
+	if (outcome.version === undefined) throw new Error("Published file revision is unavailable");
+	return outcome.version;
 }
 
 async function readAll(
@@ -122,6 +128,156 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 	};
 
 	const cases: EnvConformanceCase[] = [
+		createCase("checked writes capture their intent before asynchronous initialization", async (env) => {
+			const intent = { kind: "createIfAbsent" as const };
+			const writing = env.writeFileChecked("file.txt", "created", intent, context);
+			Object.assign(intent, { kind: "replaceIfVersion", version: "later mutation" });
+			assert.strictEqual(getOrThrow(await writing).operation, "create");
+			assert.strictEqual(getOrThrow(await env.readTextFile("file.txt", context)), "created");
+		}),
+
+		createCase("checked creation refuses blind replacement and returns its published revision", async (env) => {
+			const created = getOrThrow(
+				await env.writeFileChecked("nested/file.txt", "one", { kind: "createIfAbsent" }, context),
+			);
+			assert.strictEqual(created.operation, "create");
+			assert.deepEqual(getOrThrow(await env.fileRevision("nested/file.txt", context)), {
+				path: created.path,
+				version: created.version,
+			});
+			assert.strictEqual(
+				errorCode(await env.writeFileChecked("nested/file.txt", "lost", { kind: "createIfAbsent" }, context)),
+				"not_observed",
+			);
+			assert.strictEqual(getOrThrow(await env.readTextFile("nested/file.txt", context)), "one");
+			assert.deepEqual(
+				getOrThrow(await env.listDir("nested", context)).map((entry) => entry.name),
+				["file.txt"],
+			);
+		}),
+
+		createCase("checked replacement refreshes the revision and refuses stale external changes", async (env) => {
+			getOrThrow(await env.writeFile("file.txt", "one", context));
+			const observed = getOrThrow(await env.fileRevision("file.txt", context));
+			const replaced = getOrThrow(
+				await env.writeFileChecked("file.txt", "two", { kind: "replaceIfVersion", version: observed.version }, context),
+			);
+			assert.strictEqual(replaced.operation, "replace");
+			assert.ok(replaced.version !== observed.version);
+			assert.deepEqual(getOrThrow(await env.fileRevision("file.txt", context)), {
+				path: replaced.path,
+				version: replaced.version,
+			});
+			getOrThrow(await env.writeFile("file.txt", "external", context));
+			assert.strictEqual(
+				errorCode(
+					await env.writeFileChecked(
+						"file.txt",
+						"lost",
+						{ kind: "replaceIfVersion", version: publishedVersion(replaced) },
+						context,
+					),
+				),
+				"stale_version",
+			);
+			assert.strictEqual(getOrThrow(await env.readTextFile("file.txt", context)), "external");
+		}),
+
+		createCase("concurrent checked replacements have exactly one winner per observed revision", async (env) => {
+			getOrThrow(await env.writeFile("file.txt", "before", context));
+			const observed = getOrThrow(await env.fileRevision("file.txt", context));
+			const results = await Promise.all(
+				["left", "right"].map((content) =>
+					env.writeFileChecked("file.txt", content, { kind: "replaceIfVersion", version: observed.version }, context),
+				),
+			);
+			assert.strictEqual(results.filter((result) => result.ok).length, 1);
+			assert.deepEqual(results.filter((result) => !result.ok).map(errorCode), ["stale_version"]);
+			const actual = getOrThrow(await env.readTextFile("file.txt", context));
+			assert.ok(actual === "left" || actual === "right");
+		}),
+
+		createCase("concurrent checked creators never replace one another", async (env) => {
+			const results = await Promise.all(
+				["left", "right"].map((content) =>
+					env.writeFileChecked("deep/missing/file.txt", content, { kind: "createIfAbsent" }, context),
+				),
+			);
+			assert.strictEqual(results.filter((result) => result.ok).length, 1);
+			assert.deepEqual(results.filter((result) => !result.ok).map(errorCode), ["not_observed"]);
+			assert.strictEqual(getOrThrow(await env.listDir("deep/missing", context)).length, 1);
+		}),
+
+		createCase("checked replacement never recreates a removed observed file", async (env) => {
+			getOrThrow(await env.writeFile("file.txt", "before", context));
+			const observed = getOrThrow(await env.fileRevision("file.txt", context));
+			getOrThrow(await env.remove("file.txt", undefined, context));
+			assert.strictEqual(
+				errorCode(
+					await env.writeFileChecked(
+						"file.txt",
+						"lost",
+						{ kind: "replaceIfVersion", version: observed.version },
+						context,
+					),
+				),
+				"stale_version",
+			);
+			assert.strictEqual(getOrThrow(await env.exists("file.txt", context)), false);
+		}),
+
+		createCase("aborted checked writes have no filesystem side effects", async (env) => {
+			assert.strictEqual(
+				errorCode(
+					await env.writeFileChecked("missing/deep/file.txt", "lost", { kind: "createIfAbsent" }, abortedContext()),
+				),
+				"aborted",
+			);
+			assert.strictEqual(getOrThrow(await env.exists("missing", context)), false);
+			getOrThrow(await env.writeFile("file.txt", "before", context));
+			const observed = getOrThrow(await env.fileRevision("file.txt", context));
+			assert.strictEqual(
+				errorCode(
+					await env.writeFileChecked(
+						"file.txt",
+						"lost",
+						{ kind: "replaceIfVersion", version: observed.version },
+						abortedContext(),
+					),
+				),
+				"aborted",
+			);
+			assert.deepEqual(getOrThrow(await env.fileRevision("file.txt", context)), observed);
+		}),
+
+		createCase("opened reader revisions identify the read file after its path is replaced", async (env) => {
+			getOrThrow(await env.writeFile("file.txt", "old", context));
+			const observed = getOrThrow(await env.fileRevision("file.txt", context));
+			const reader = getOrThrow(await env.openBinaryReader("file.txt", undefined, context));
+			try {
+				assert.strictEqual(getOrThrow(await reader.revision(context)), observed.version);
+				getOrThrow(await env.writeFile("new.txt", "new", context));
+				getOrThrow(await env.renameFile("new.txt", "file.txt", context));
+				assert.strictEqual(decoder.decode(getOrThrow(await reader.read(0, 10, context))), "old");
+				assert.ok(
+					getOrThrow(await reader.revision(context)) !==
+						getOrThrow(await env.fileRevision("file.txt", context)).version,
+				);
+				assert.strictEqual(errorCode(await reader.revision(abortedContext())), "aborted");
+			} finally {
+				await reader.close(context);
+			}
+			assert.strictEqual(errorCode(await reader.revision(context)), "invalid");
+		}),
+
+		createCase("checked writes transfer binary data across multiple wire frames", async (env) => {
+			const bytes = Uint8Array.from({ length: 2_100_003 }, (_, i) => i % 251);
+			getOrThrow(await env.writeFileChecked("data.bin", bytes, { kind: "createIfAbsent" }, context));
+			const actual = getOrThrow(await env.readBinaryFile("data.bin", context));
+			assert.strictEqual(actual.length, bytes.length);
+			assert.ok(bytes.every((value, index) => actual[index] === value));
+		}),
+
 		createCase("binary reader reads byte ranges of the opened file", async (env) => {
 			getOrThrow(await env.writeFile("data.txt", "hello world", context));
 			const reader = getOrThrow(await env.openBinaryReader("data.txt", undefined, context));
@@ -467,6 +623,27 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 
 	if (symlinks) {
 		cases.push(
+			createCase("checked writes share existing and missing targets through directory aliases", async (env) => {
+				getOrThrow(await env.createDir("real", undefined, context));
+				assert.strictEqual(getOrThrow(await env.exec([...shell, "ln -s real alias"], undefined, context)).exitCode, 0);
+				const created = getOrThrow(
+					await env.writeFileChecked("alias/nested/file.txt", "one", { kind: "createIfAbsent" }, context),
+				);
+				assert.strictEqual(created.path, getOrThrow(await env.canonicalPath("real/nested/file.txt", context)));
+				const results = await Promise.all(
+					["alias", "real"].map((prefix) =>
+						env.writeFileChecked(
+							`${prefix}/nested/file.txt`,
+							prefix,
+							{ kind: "replaceIfVersion", version: publishedVersion(created) },
+							context,
+						),
+					),
+				);
+				assert.strictEqual(results.filter((result) => result.ok).length, 1);
+				assert.deepEqual(results.filter((result) => !result.ok).map(errorCode), ["stale_version"]);
+			}),
+
 			createCase("binary reader follows symlinks unless noFollow refuses the final one", async (env) => {
 				getOrThrow(await env.writeFile("target.txt", "target", context));
 				getOrThrow(await env.createDir("sub", undefined, context));
