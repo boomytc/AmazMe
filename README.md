@@ -66,6 +66,15 @@ npm run dev:desktop  # Electron 窗口，加载与 dev:web 同一个宿主
 
 项目配置在当前目录的 `.amazme`，用户配置在 `~/.amazme/agent`。命令名是 `amazme`。`@amazme/coding-agent` 的 bin 指向 `dist/bundle/cli.js`，所以要先构建，再从本仓库运行或做 `npm link`。
 
+## 验证
+
+`npm run check:workspace` 检查源码导入、运行依赖、包依赖方向、浏览器入口和轻量入口的依赖预算。
+`npm run test:engineering` 验证检查器以及真实产物打包与隔离安装。
+
+改动包后先构建、再测试该包，例如 `npm run build --workspace @amazme/coding-agent`，随后
+`npm test --workspace @amazme/coding-agent`。默认离线测试隔离继承的供应商凭据；本机 HTTP 服务和 faux provider 验证协议与状态生命周期。
+只有显式设置 `AMAZME_TEST_LIVE=1` 才允许真实供应商测试读取环境凭据。这些测试的通过与否要单独记录。
+
 ## 包
 
 依赖只向下。

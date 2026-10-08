@@ -36,7 +36,7 @@
 | `3ba22ce17` | AssistantMessageEventStream 恢复对普通事件流可赋值 | 吸收，WeakMap 方案随后被 `f284a2460` 换回私有字段，净效果落在下一行 |
 | `f284a2460` | 响应计时用回私有字段；proxy 与测试改用真实流 | 吸收 |
 | `92216fa15` | 模型上下文由初始系统消息打头 | 吸收 |
-| `4c28a6865` | 提高共享存储扫描模块的根入口预算 | 跳过，根 `scripts/check-entry-graphs.mjs` 未随移植保留 |
+| `4c28a6865` | 提高共享存储扫描模块的根入口预算 | 吸收检查设计到 `scripts/check-workspace.mjs`，校验 AmazMe 的实际入口和源码依赖预算 |
 | `fe11328b0` | faux 提示缓存按消息比较，用量数值不变 | 吸收 |
 | `da866ada1` | 会话上下文在内存中保留；Durable Object SQLite 适配器 | 吸收 |
 | `ae92585d3` | 检查保留上下文时上报设置失败 | 吸收 |

@@ -3,9 +3,19 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
+function execNpmSync(args, options) {
+	const npmCli = process.env.npm_execpath;
+	if (npmCli && existsSync(npmCli)) return execFileSync(process.execPath, [npmCli, ...args], options);
+	if (process.platform === "win32")
+		throw new Error("Run artifact installation through npm so its CLI can be located on Windows");
+	return execFileSync("npm", args, options);
+}
+
 /** Top-level product packages; examples and test fixtures are not install artifacts. */
 export function workspacePackages(repoRoot) {
-	const packages = readdirSync(join(repoRoot, "packages"), { withFileTypes: true })
+	const packages = readdirSync(join(repoRoot, "packages"), {
+		withFileTypes: true,
+	})
 		.filter((entry) => entry.isDirectory() && existsSync(join(repoRoot, "packages", entry.name, "package.json")))
 		.map((entry) => {
 			const directory = join(repoRoot, "packages", entry.name);
@@ -101,8 +111,7 @@ export function createPackageArtifacts({ repoRoot, directory, packageNames }) {
 	mkdirSync(output, { recursive: true });
 	const artifacts = packages.map(({ directory: cwd, manifest }) => {
 		const packed = JSON.parse(
-			execFileSync(
-				"npm",
+			execNpmSync(
 				["pack", "--ignore-scripts", "--json", "--cache", join(output, ".npm-cache"), "--pack-destination", output],
 				{
 					cwd,
@@ -176,7 +185,10 @@ export function installPackageArtifacts({
 	const manifest = {
 		private: true,
 		type: "module",
-		dependencies: { ...dependencies, ...Object.fromEntries(packageNames.map((name) => [name, specifiers[name]])) },
+		dependencies: {
+			...dependencies,
+			...Object.fromEntries(packageNames.map((name) => [name, specifiers[name]])),
+		},
 		overrides: { ...overrides, ...specifiers },
 	};
 	writeFileSync(join(consumer, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`);
@@ -185,8 +197,7 @@ export function installPackageArtifacts({
 			join(consumer, "package-lock.json"),
 			`${JSON.stringify(consumerLock(dependencyLock, artifacts, manifest), null, "\t")}\n`,
 		);
-	execFileSync(
-		"npm",
+	execNpmSync(
 		[
 			dependencyLock ? "ci" : "install",
 			"--ignore-scripts",
@@ -214,7 +225,12 @@ export function consumerLock(source, artifacts, manifest) {
 		const original = source.packages[path];
 		const pkg = original?.link ? source.packages[original.resolved] : original;
 		if (!pkg || pkg.version !== artifact.version) throw new Error(`Source lock does not match artifact: ${name}`);
-		available.set(path, { ...pkg, name, resolved: manifest.overrides[name], integrity: artifact.integrity });
+		available.set(path, {
+			...pkg,
+			name,
+			resolved: manifest.overrides[name],
+			integrity: artifact.integrity,
+		});
 		if (original?.link) {
 			const prefix = `${original.resolved}/node_modules/`;
 			for (const [nestedPath, nested] of Object.entries(source.packages)) {
@@ -259,7 +275,10 @@ export function consumerLock(source, artifacts, manifest) {
 	return {
 		lockfileVersion: 3,
 		requires: true,
-		packages: { "": { dependencies: manifest.dependencies }, ...Object.fromEntries(selected) },
+		packages: {
+			"": { dependencies: manifest.dependencies },
+			...Object.fromEntries(selected),
+		},
 	};
 }
 

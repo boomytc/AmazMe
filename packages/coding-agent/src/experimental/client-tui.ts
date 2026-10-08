@@ -25,7 +25,7 @@ import { SessionDirectory, SessionManagement, type SessionSummary } from "./serv
 import { SlashCommands } from "./services/slash-commands.ts";
 import { createBuiltInSlashCommandsFacet, createSlashCommandsRuntimeFacet } from "./services/slash-commands-provider.ts";
 import { liveOf, Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
-import { formatLane } from "./session-surface.ts";
+import { formatLane } from "../durable/session-surface.ts";
 
 export interface RunClientTuiOptions extends OpenClientRuntimeOptions {
 	readonly facetLoader?: FacetLoader;

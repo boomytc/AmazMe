@@ -15,19 +15,11 @@ import {
 	readReturnPoints,
 	readSummaries,
 	type TreeNavigationDeps,
-} from "../session-surface.ts";
+} from "../../durable/session-surface.ts";
 import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest, AgentQueueResponse } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
-import {
-	Conversations,
-	type ConversationsState,
-	type HistoryPage,
-	IDLE_LANE,
-	type LaneStatus,
-	type LeaveResult,
-	type ReturnPoint,
-	type TaskSummary,
-} from "./conversations.ts";
+import { Conversations } from "./conversations.ts";
+import { type ConversationsState, type HistoryPage, IDLE_LANE, type LaneStatus, type LeaveResult, type ReturnPoint, type TaskSummary } from "../../durable/conversation-view.ts";
 
 /** The gap between two publications while a focused conversation streams. */
 const FOCUS_PUBLISH_MS = 250;

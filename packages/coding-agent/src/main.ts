@@ -696,7 +696,7 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 		const { initialMessage } = await prepareInitialMessage(parsed);
-		const { runDurableInteractive } = await import("./experimental/durable/interactive.ts");
+		const { runDurableInteractive } = await import("./durable/interactive.ts");
 		await runDurableInteractive({
 			cwd,
 			continueSession: parsed.continue === true || parsed.resume === true,

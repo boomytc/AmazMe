@@ -13,9 +13,9 @@ import {
 	type TaskGraph,
 } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
-import { ModelRuntime } from "../../core/model-runtime.ts";
-import { SettingsManager } from "../../core/settings-manager.ts";
-import { IDLE_LANE, type ConversationSummary, type LaneStatus, type ReturnPoint } from "../services/conversations.ts";
+import { ModelRuntime } from "../core/model-runtime.ts";
+import { SettingsManager } from "../core/settings-manager.ts";
+import { IDLE_LANE, type ConversationSummary, type LaneStatus, type ReturnPoint } from "./conversation-view.ts";
 import {
 	forkAt,
 	formatLane,
@@ -26,7 +26,7 @@ import {
 	readReturnPoints,
 	readSummaries,
 	type TreeNavigationDeps,
-} from "../session-surface.ts";
+} from "./session-surface.ts";
 import { configureHarnessHttp, createCodingRegistry, createHarnessSettings, ExecutionEnvs, findInitialAgentModel } from "./harness-setup.ts";
 import { selectSession } from "./sessions.ts";
 import { Subagent } from "./subagent.ts";

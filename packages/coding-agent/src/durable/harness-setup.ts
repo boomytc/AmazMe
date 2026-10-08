@@ -9,10 +9,10 @@ import {
 } from "@amazme/durable";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import { CodingTools } from "@amazme/durable/tools";
-import { applyHttpProxySettings, configureHttpDispatcher } from "../../core/http-dispatcher.ts";
-import { findInitialModel, resolveCliModel } from "../../core/model-resolver.ts";
-import type { ModelRuntime } from "../../core/model-runtime.ts";
-import type { SettingsManager } from "../../core/settings-manager.ts";
+import { applyHttpProxySettings, configureHttpDispatcher } from "../core/http-dispatcher.ts";
+import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
+import type { ModelRuntime } from "../core/model-runtime.ts";
+import type { SettingsManager } from "../core/settings-manager.ts";
 import { createPiPrompt } from "./prompt.ts";
 
 /** pi's HTTP setup: proxy, idle timeouts, and one undici for fetch. Without it, some provider streams break off. */

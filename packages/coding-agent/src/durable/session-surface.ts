@@ -22,7 +22,7 @@ import {
 import { generateBranchSummary, type GenerateBranchSummaryOptions } from "../core/compaction/branch-summarization.ts";
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX } from "../core/messages.ts";
 import type { SessionEntry } from "../core/session-manager.ts";
-import type { ConversationRole, ConversationSummary, HistoryPage, LaneStatus, ReturnPoint } from "./services/conversations.ts";
+import type { ConversationRole, ConversationSummary, HistoryPage, LaneStatus, ReturnPoint } from "./conversation-view.ts";
 
 /** How many conversations or entries one scan page holds. Callers loop until the scan is exhausted. */
 const SCAN_PAGE = 256;

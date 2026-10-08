@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -67,6 +69,7 @@ interface Attached {
 }
 
 const hosts = new Set<WebHost>();
+const modelServers = new Set<Server>();
 const directories = new Set<string>();
 const previousAgentDir = process.env.AMAZME_CODING_AGENT_DIR;
 
@@ -94,8 +97,42 @@ interface LoopHost {
 }
 
 /** A host with its scratch directories in hand, for tests that drive a second client against it. */
-async function startHostWithDirectories(): Promise<LoopHost> {
+async function startHostWithDirectories(holdModel = false): Promise<LoopHost> {
 	process.env.AMAZME_CODING_AGENT_DIR = await makeDirectory("web-loop-agent-");
+	if (holdModel) {
+		// Hold a local OpenAI-compatible request until cancellation. Queue tests must
+		// control the busy interval instead of depending on ambient credentials or remote latency.
+		const modelServer = createServer((request, response) => {
+			if (request.url !== "/v1/chat/completions") response.writeHead(404).end();
+			else request.resume();
+		});
+		await new Promise<void>((resolve, reject) => {
+			modelServer.once("error", reject);
+			modelServer.listen(0, "127.0.0.1", resolve);
+		});
+		modelServers.add(modelServer);
+		await writeFile(
+			join(process.env.AMAZME_CODING_AGENT_DIR, "models.json"),
+			JSON.stringify({
+				providers: {
+					loop: {
+						baseUrl: `http://127.0.0.1:${(modelServer.address() as AddressInfo).port}/v1`,
+						api: "openai-completions",
+						apiKey: "fixture-key",
+						models: [{ id: "held" }],
+					},
+				},
+			}),
+		);
+		await writeFile(
+			join(process.env.AMAZME_CODING_AGENT_DIR, "settings.json"),
+			JSON.stringify({
+				defaultProvider: "loop",
+				defaultModel: "held",
+				compaction: { keepRecentTokens: 1 },
+			}),
+		);
+	}
 	const directory = await makeDirectory("web-loop-server-");
 	const sessionDir = await makeDirectory("web-loop-sessions-");
 	const host = await startWebHost({ port: 0, directory, sessionDir });
@@ -103,8 +140,8 @@ async function startHostWithDirectories(): Promise<LoopHost> {
 	return { host, directory, sessionDir };
 }
 
-async function startLoopHost(): Promise<WebHost> {
-	return (await startHostWithDirectories()).host;
+async function startLoopHost(holdModel = false): Promise<WebHost> {
+	return (await startHostWithDirectories(holdModel)).host;
 }
 
 /** One page-shaped presentation: two of these against one host are two browser tabs. */
@@ -202,6 +239,16 @@ async function openAdministration(host: WebHost): Promise<Administration> {
 afterEach(async () => {
 	await Promise.allSettled([...hosts].map((host) => host.close()));
 	hosts.clear();
+	await Promise.all(
+		[...modelServers].map(
+			(server) =>
+				new Promise<void>((resolve, reject) => {
+					server.closeAllConnections();
+					server.close((error) => (error ? reject(error) : resolve()));
+				}),
+		),
+	);
+	modelServers.clear();
 	await Promise.all([...directories].map((directory) => rm(directory, { recursive: true, force: true })));
 	directories.clear();
 	if (previousAgentDir === undefined) delete process.env.AMAZME_CODING_AGENT_DIR;
@@ -844,7 +891,7 @@ describe("web client interactive loop", () => {
 	test(
 		"accepts a follow-up while a turn runs, lists it as queued, and settles on abort",
 		async () => {
-			const host = await startLoopHost();
+			const host = await startLoopHost(true);
 			const presentation = await openPresentation(host);
 			const created = await presentation.management.create({ id: "web-loop-queue" }, BACKGROUND_CONTEXT);
 			const attached = await attachSession(presentation, created.sessionId);
@@ -1124,8 +1171,8 @@ describe("web client interactive loop", () => {
 			expect(attached.conversations.state.value?.selected).toBe(list[0]?.id);
 			const rootId = list[0]?.id ?? "";
 
-			// Two prompts, one after the other settles: a prompt while one runs is rejected as busy.
-			for (const marker of ["first marker", "second marker"]) {
+			// Three prompts, one after the other settles: a prompt while one runs is rejected as busy.
+			for (const marker of ["first marker", "second marker", "third marker"]) {
 				expect(
 					await attached.conversations.prompt(rootId, { message: marker, images: null }, BACKGROUND_CONTEXT),
 				).toMatchObject({ accepted: true });
@@ -1427,7 +1474,7 @@ describe("web client interactive loop", () => {
 	test(
 		"withdraws one queued input, steers another, compacts, and refreshes the catalog",
 		async () => {
-			const host = await startLoopHost();
+			const host = await startLoopHost(true);
 			const presentation = await openPresentation(host);
 			const created = await presentation.management.create({ id: "web-loop-run-control" }, BACKGROUND_CONTEXT);
 			const attached = await attachSession(presentation, created.sessionId);

@@ -26,10 +26,10 @@ import {
 	createHarnessSettings,
 	ExecutionEnvs,
 	findInitialAgentModel,
-} from "./durable/harness-setup.ts";
+} from "../durable/harness-setup.ts";
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
 import { createApprovalGate } from "./services/approvals-provider.ts";
-import { Subagent } from "./durable/subagent.ts";
+import { Subagent } from "../durable/subagent.ts";
 import {
 	consumeInternalProcessRole,
 	encodeControlLine,

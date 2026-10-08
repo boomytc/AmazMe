@@ -15,7 +15,7 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { Conversation, Harness } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
-import { configureHarnessHttp } from "../durable/harness-setup.ts";
+import { configureHarnessHttp } from "../../durable/harness-setup.ts";
 import { AgentController } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
 import { createCommandsFacet } from "./commands-provider.ts";

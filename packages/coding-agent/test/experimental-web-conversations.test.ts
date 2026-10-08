@@ -8,11 +8,11 @@ import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
 import { BranchSummaryEntry, createRegistry, Harness, type Conversation, type EntryRecord, UserEntry } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
-import { Subagent } from "../src/experimental/durable/subagent.ts";
+import { Subagent } from "../src/durable/subagent.ts";
 import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
-import { type ConversationsState, IDLE_LANE } from "../src/experimental/services/conversations.ts";
+import { type ConversationsState, IDLE_LANE } from "../src/durable/conversation-view.ts";
 import { createConversationsService } from "../src/experimental/services/conversations-provider.ts";
-import { navigateTree, readReturnPoints, readSummaries } from "../src/experimental/session-surface.ts";
+import { navigateTree, readReturnPoints, readSummaries } from "../src/durable/session-surface.ts";
 
 /**
  * The conversation list, the live task graph, and stored history, over a real Harness driven by the

@@ -19,7 +19,8 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type ClientTuiServer, ExperimentalClientTui } from "../src/experimental/client-tui.ts";
 import { createPresentationFacetData } from "../src/experimental/plugins/bundled.ts";
 import { AgentController } from "../src/experimental/services/agent-controller.ts";
-import { Conversations, IDLE_LANE } from "../src/experimental/services/conversations.ts";
+import { Conversations } from "../src/experimental/services/conversations.ts";
+import { IDLE_LANE } from "../src/durable/conversation-view.ts";
 import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
 import type {
 	ServerConnectionState,

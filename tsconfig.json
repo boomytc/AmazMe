@@ -54,11 +54,9 @@
 			"@amazme/server/*": ["./packages/server/src/*"],
 			"typebox": ["./node_modules/typebox"],
 			"@amazme/tui": ["./packages/tui/src/index.ts"],
-			"@amazme/tui/*": ["./packages/tui/src/*"],
-			"@amazme/agent-old": ["./packages/agent-old/src/index.ts"],
-			"@amazme/agent-old/*": ["./packages/agent-old/src/*"]
+			"@amazme/tui/*": ["./packages/tui/src/*"]
 		}
 	},
-	"include": ["scripts/model-catalog-protocol.ts", "scripts/model-catalog-protocol.test.ts", "packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
+	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
 	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
 }
