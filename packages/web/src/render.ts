@@ -230,7 +230,6 @@ const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 /** The icons the page draws. Each names one symbol in the document's sprite (`index.html`). */
 type IconName =
-	| "star"
 	| "square-pen"
 	| "package"
 	| "sparkles"
@@ -258,6 +257,25 @@ type IconName =
 	| "wrench"
 	| "spinner"
 	| "alert";
+
+/** A `use` of one sprite symbol. The class on it sets the colour, which is how the pixel mark's two letters differ. */
+function useOf(symbol: string, className: string): SVGUseElement {
+	const use = document.createElementNS(SVG_NAMESPACE, "use");
+	use.setAttribute("href", `#${symbol}`);
+	use.setAttribute("class", className);
+	return use;
+}
+
+/** The product's pixel AM: a coral A and a yellow M, the mark the terminal header draws too. */
+function pixelLogo(): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+	svg.setAttribute("class", "pixel-logo");
+	svg.setAttribute("viewBox", "0 0 10 4");
+	svg.setAttribute("aria-hidden", "true");
+	svg.setAttribute("focusable", "false");
+	svg.append(useOf("i-logo-a", "pixel-a"), useOf("i-logo-m", "pixel-m"));
+	return svg;
+}
 
 /** One icon: a `use` of its sprite symbol. The stylesheet sets its size and colour. */
 function icon(name: IconName, className = "icon"): SVGSVGElement {
@@ -994,7 +1012,7 @@ export function createRenderer(
 	const welcomeElement = (welcome: WelcomeCard): HTMLElement => {
 		const card = element("div", "welcome-card");
 		const mark = element("span", "brand-mark welcome-mark");
-		mark.append(icon("star"));
+		mark.append(pixelLogo());
 		card.append(mark, element("h2", "welcome-title", welcome.title), element("p", "welcome-body", welcome.body));
 		const steps = element("div", "welcome-steps");
 		for (const step of welcome.steps) steps.append(panelButton(step, report));

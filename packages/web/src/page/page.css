@@ -163,21 +163,30 @@ p {
 	margin-bottom: 4px;
 }
 
+/* The brand mark is the terminal's pixel AM (`components/am-logo.ts`): a ten-by-four grid, a coral A and
+   a yellow M, set straight on the surface with no tile or border. `--unit` is one pixel of the grid; it is
+   a whole number of CSS pixels, so the edges stay sharp, and the mark's cap height matches the wordmark's. */
 .brand-mark {
-	display: inline-grid;
-	place-items: center;
+	--unit: 3px;
+	display: block;
 	flex: none;
-	width: 24px;
-	height: 24px;
-	border-radius: 8px;
-	background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000));
-	color: #fff;
+	width: calc(10 * var(--unit));
+	height: calc(4 * var(--unit));
 }
 
-.brand-mark .icon {
-	width: 14px;
-	height: 14px;
-	stroke: none;
+.pixel-logo {
+	display: block;
+	width: calc(10 * var(--unit));
+	height: calc(4 * var(--unit));
+	overflow: visible;
+}
+
+.pixel-a {
+	color: var(--logo-coral);
+}
+
+.pixel-m {
+	color: var(--logo-yellow);
 }
 
 .brand-name {
@@ -733,15 +742,8 @@ p {
 }
 
 .welcome-mark {
-	width: 44px;
-	height: 44px;
-	margin-bottom: 18px;
-	border-radius: 14px;
-}
-
-.welcome-mark .icon {
-	width: 20px;
-	height: 20px;
+	--unit: 5px;
+	margin-bottom: 24px;
 }
 
 .welcome-title {
@@ -2444,8 +2446,8 @@ p {
 	width: 18px;
 	height: 18px;
 	border-radius: 50%;
-	background: #ffffff;
-	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+	background: var(--knob);
+	box-shadow: var(--shadow-knob);
 	transition: transform var(--dur-fast) var(--ease);
 }
 
