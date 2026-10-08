@@ -54,7 +54,12 @@ import {
 	writeSessionName,
 } from "./session-catalog.ts";
 import { SessionPluginSelectionConflictError, SessionWorkerManager } from "./session-worker-manager.ts";
-import { findLocalSessionPath, listLocalSessions, writeLocalSessionName } from "./session-store.ts";
+import {
+	deleteLocalSessionFiles,
+	findLocalSessionPath,
+	listLocalSessions,
+	writeLocalSessionName,
+} from "./session-store.ts";
 
 export const ENV_SERVER_DIR = "AMAZME_SERVER_DIR";
 export const ENV_SERVER_ID = "AMAZME_SERVER_ID";
@@ -539,6 +544,9 @@ async function startServerBackend(
 		remove: async (sessionId, context) => {
 			const metadata = await resolveSession(sessionId, context);
 			await workers.closeSession(metadata, context);
+			// The terminal's files for this id are the other half of the session's storage. The roster
+			// lists the session from this directory, and the handoff mirrors into the session's own cwd.
+			for (const cwd of new Set([process.cwd(), metadata.cwd])) await deleteLocalSessionFiles(cwd, sessionId);
 			await deleteSession(metadata);
 			await options.removeSessionPlugins(metadata);
 		},

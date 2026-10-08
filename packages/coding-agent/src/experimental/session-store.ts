@@ -1,15 +1,16 @@
 /**
  * The terminal session store, as a host reads and writes it: the JSONL files `SessionManager`
  * lists and resumes under `<agentDir>/sessions/<encoded-cwd>/`. A host never edits a terminal
- * session's meaning — it reads one to seed a hosted session, and writes the mirror of a hosted
- * session so the terminal's own list shows that session.
+ * session's meaning — it reads one to seed a hosted session, writes the mirror of a hosted session
+ * so the terminal's own list shows that session, and deletes a session's files when the host removes
+ * it so the terminal's list drops it too.
  *
  * Reading goes through `SessionManager` itself, so the entries are exactly what the terminal would
  * load. Writing replaces the whole file from a projection that is deterministic for a given
  * transcript: a refresh cannot leave a half-written session behind, and the ids it writes are the
  * same every time.
  */
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { durableEntriesToSessionFile, type SessionInteropReport } from "../core/session-interop.ts";
 import {
@@ -113,6 +114,16 @@ export async function writeLocalSessionName(path: string, name: string): Promise
 	const manager = SessionManager.open(path);
 	manager.appendSessionInfo(name);
 	return manager.getSessionName();
+}
+
+/**
+ * Delete every terminal file of one session in `cwd`'s store. The roster lists a terminal session
+ * from these files, so a session the host removes must lose them too, or it comes back as a
+ * terminal row. The caller stops the session's worker first, so no mirror rewrites a deleted file.
+ */
+export async function deleteLocalSessionFiles(cwd: string, id: string): Promise<void> {
+	const paths = (await listLocalSessions(cwd)).filter((session) => session.id === id).map((session) => session.path);
+	await Promise.all(paths.map((path) => rm(path, { force: true })));
 }
 
 /** Append the name the terminal's `/name` reads. A blank name leaves the file without one. */

@@ -633,6 +633,86 @@ describe("web client interactive loop", () => {
 			},
 			240_000,
 		);
+
+		test(
+			"removes a session the host mirrored into the terminal's store, and the roster does not list it again",
+			async () => {
+				const { host, sessionDir } = await startHostWithDirectories();
+				const tab = await openPresentation(host);
+				const created = await tab.management.create({ id: "host-removed" }, BACKGROUND_CONTEXT);
+				const attached = await attachSession(tab, created.sessionId);
+				const marker = `host-removed-${Date.now()}`;
+				expect(await attached.controller.prompt({ message: marker, images: null }, BACKGROUND_CONTEXT)).toMatchObject({
+					accepted: true,
+				});
+				await waitFor(() => sawUserText(attached.transcript.state.value, marker), "the prompt in the transcript");
+
+				// The committed transcript is mirrored into the terminal's store under the same id.
+				let mirror = (await SessionManager.listAll()).find((session) => session.id === created.sessionId)?.path;
+				const deadline = Date.now() + 90_000;
+				while (mirror === undefined && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					mirror = (await SessionManager.listAll()).find((session) => session.id === created.sessionId)?.path;
+				}
+				expect(mirror).toBeDefined();
+				await attached.dispose();
+
+				await tab.management.remove(created.sessionId, BACKGROUND_CONTEXT);
+				await waitFor(
+					() => !listedSessions(tab).includes(created.sessionId),
+					"the removed session to leave the roster",
+					15_000,
+				);
+				expect(existsSync(join(sessionDir, created.sessionId))).toBe(false);
+				expect(existsSync(mirror!)).toBe(false);
+
+				await tab.dispose();
+			},
+			240_000,
+		);
+
+		test(
+			"removes a terminal session the host has not opened, from the roster and from the terminal's store",
+			async () => {
+				const { host } = await startHostWithDirectories();
+				// The terminal made this session in the host's working directory; no host has opened it yet.
+				const manager = SessionManager.create(process.cwd(), undefined, { id: "terminal-removed" });
+				manager.appendMessage({ role: "user", content: "terminal prompt", timestamp: Date.now() });
+				manager.appendMessage({
+					role: "assistant",
+					content: [{ type: "text", text: "terminal reply" }],
+					provider: "test",
+					model: "test",
+					api: "test",
+					usage: {
+						input: 1,
+						output: 1,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 2,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: Date.now(),
+				});
+				const file = manager.getSessionFile();
+				expect(file).toBeDefined();
+
+				const tab = await openPresentation(host);
+				await waitFor(() => listedSessions(tab).includes("terminal-removed"), "the terminal session in the roster");
+
+				await tab.management.remove("terminal-removed", BACKGROUND_CONTEXT);
+				await waitFor(
+					() => !listedSessions(tab).includes("terminal-removed"),
+					"the removed terminal session to leave the roster",
+					15_000,
+				);
+				expect(existsSync(file!)).toBe(false);
+
+				await tab.dispose();
+			},
+			240_000,
+		);
 	});
 
 	test(
