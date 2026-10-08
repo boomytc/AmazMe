@@ -42,19 +42,30 @@ describe("withFileMutationQueue", () => {
 	it("serializes operations for the same file", async () => {
 		const order: string[] = [];
 		const path = "/tmp/file-mutation-queue-same";
+		let active = 0;
+		let maxActive = 0;
 
 		const first = queued(path, async () => {
+			maxActive = Math.max(maxActive, ++active);
 			order.push("first:start");
 			await delay(30);
 			order.push("first:end");
+			active--;
 		});
 		const second = queued(path, async () => {
+			maxActive = Math.max(maxActive, ++active);
 			order.push("second:start");
+			await delay(30);
 			order.push("second:end");
+			active--;
 		});
 
 		await Promise.all([first, second]);
-		expect(order).toEqual(["first:start", "first:end", "second:start", "second:end"]);
+		// Canonical path resolution can finish in either order; execution must never overlap.
+		expect(maxActive).toBe(1);
+		expect(order).toHaveLength(4);
+		expect(order[1]).toBe(order[0]?.replace(":start", ":end"));
+		expect(order[3]).toBe(order[2]?.replace(":start", ":end"));
 	});
 
 	it("allows different files to proceed in parallel", async () => {
@@ -94,11 +105,14 @@ describe("withFileMutationQueue", () => {
 			}),
 			queued(symlinkPath, async () => {
 				order.push("alias:start");
+				await delay(30);
 				order.push("alias:end");
 			}),
 		]);
 
-		expect(order).toEqual(["target:start", "target:end", "alias:start", "alias:end"]);
+		expect(order).toHaveLength(4);
+		expect(order[1]).toBe(order[0]?.replace(":start", ":end"));
+		expect(order[3]).toBe(order[2]?.replace(":start", ":end"));
 	});
 });
 
