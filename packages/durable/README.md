@@ -173,6 +173,12 @@ registry.install(defineExtension({ name: "count", tools: [count] }));
 
 Each call runs as its own durable task. Its intent is committed before `execute()` runs. If the process dies mid-call, the tool reruns on reopen only when it is declared `replay: "safe"`; otherwise the model gets an `interrupted` error result with the output committed so far. Throwing from `execute()` gives the model an error result. A result can also return `usage`, which is added to the conversation's [usage](#usage-and-cost). It can also return `control: { terminate: true }`: when every result of the round asks for it, the run ends without another model request.
 
+Tools can call `await api.callTool(name, args, context)`. Each nested call uses the same validation, hooks, intent, replay policy and execution environment as a model call, and creates an ordinary task owned by its parent. Cancelling its context marks that child and waits for cleanup. Returning from the parent cancels and drains calls it left unfinished; a cancelled sequential waiter retains the earlier barrier. Calls are limited to 256 per parent and eight nested levels.
+
+`exposure` defaults to `direct`. Active direct tools are callable from other tools. `model-only` tools can be offered to the model but cannot be called by tools. `codemode` and `deferred` tools are callable without activation and can be explicitly loaded into the model's selection. `hidden` tools cannot be selected or called. `agent.tools`, `agent.callableTools`, and `agent.catalog` expose these views after the conversation's hard `allow` and `exclude` limits.
+
+Results may include `structuredContent` for programmatic callers alongside bounded model-facing `content`. It is stored with the result and does not add another model message. An `afterTool` content rewrite must also replace structured data to retain it; keeping the original payload alongside rewritten content drops that payload. Nested calls append `NestedToolResultEntry`, with the call, result and parent ID, without a synthetic provider tool-result message. Live slots and execution events carry `parentCallId` so clients can group child activity. Nested activation controls reach the next model request; handoff and termination remain decisions of the outer call.
+
 A later extension's tool with the same name replaces an earlier one where both are selected, and `wrapTool()` decorates whichever tool won:
 
 ```typescript

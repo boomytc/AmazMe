@@ -3,7 +3,8 @@ import { awaitWithContext } from "@amazme/chord/context";
 import { overlap } from "@amazme/chord/delta";
 import type { ImageContent, TextContent, ToolCall, ToolResultMessage } from "@amazme/ai";
 import { validateToolArguments } from "@amazme/ai/utils/validation";
-import { AssistantEntry, ToolResultEntry } from "../entries.ts";
+import { AssistantEntry, NestedToolResultEntry, ToolResultEntry } from "../entries.ts";
+import type { NestedToolResultData, ToolResultData } from "../entries.ts";
 import { FileError } from "../file-error.ts";
 import { defineTask } from "../tasks.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, utf8ByteLength } from "../truncate.ts";
@@ -18,6 +19,7 @@ import type {
 	Tx,
 	TypedEntry,
 } from "../types.ts";
+import { createNestedTools } from "./nested-tools.ts";
 import { assignJson } from "./json.ts";
 import { clearProgress, finishSlot, LiveDoc, type ToolSlot, toolSlot } from "./live.ts";
 import { boundOutput, OutputBuffer, type OutputLimits, PROGRESS_BYTES_PER_SECOND, Progress } from "./output.ts";
@@ -31,7 +33,9 @@ import type {
 } from "./types.ts";
 import { recordUsage } from "./usage.ts";
 
-export type ToolTaskInput = { assistant: EntryId; callId: string };
+export type ToolTaskInput =
+	| { assistant: EntryId; callId: string }
+	| { nested: { parentCallId: string; depth: number; call: ToolCall } };
 
 export type ToolTaskCheckpoint =
 	| { phase: "call" }
@@ -55,7 +59,8 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 	phases: {
 		call: async (task, runtime, context) => {
 			const call = await readCall(runtime, task.input, context);
-			const tool = (await runtime.agent(context)).tools.find((each) => each.name === call.name);
+			const agent = await runtime.agent(context);
+			const tool = ("nested" in task.input ? agent.callableTools : agent.tools).find((each) => each.name === call.name);
 			if (tool === undefined) {
 				const error = harnessError("tool_unavailable", `Tool ${call.name} is not available`);
 				return settle(runtime, call, COMPLETED, () => error, context);
@@ -89,13 +94,14 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 				const intent = { phase: "execute", arguments: final, replay: tool.replay ?? "unsafe" } as const;
 				return { status: "running", checkpoint: intent };
 			}, context);
-			await run(runtime, call, tool, final, context);
+			await run(runtime, call, tool, final, context, "nested" in task.input ? task.input.nested.depth : 0);
 		},
 		/** Recovery after intent: rerun only when the stored and the current policy both say `safe`. */
 		execute: async (task, runtime, context) => {
 			const { arguments: args, replay } = task.state.checkpoint;
 			const call = await readCall(runtime, task.input, context);
-			const tool = (await runtime.agent(context)).tools.find((each) => each.name === call.name);
+			const agent = await runtime.agent(context);
+			const tool = ("nested" in task.input ? agent.callableTools : agent.tools).find((each) => each.name === call.name);
 			if (replay === "safe" && tool?.replay === "safe") {
 				// The rerun reports from scratch; clear what the interrupted attempt published.
 				await runtime.commit(async (tx) => {
@@ -103,7 +109,7 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 					if (slot !== undefined) clearProgress(slot);
 					return undefined;
 				}, context);
-				return run(runtime, call, tool, args, context);
+				return run(runtime, call, tool, args, context, "nested" in task.input ? task.input.nested.depth : 0);
 			}
 			const message = `Tool ${call.name} was interrupted and may have partially run`;
 			// `failed` records cancellation intent, so the call's owned conversations, left unsupervised, are aborted.
@@ -120,6 +126,7 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 
 /** The tool call `callId` of the assistant entry. */
 async function readCall(runtime: Runtime, input: ToolTaskInput, context: Context): Promise<ToolCall> {
+	if ("nested" in input) return input.nested.call;
 	const entry = await runtime.entry(AssistantEntry, input.assistant, context);
 	const message = entry?.model?.[0];
 	const call =
@@ -173,6 +180,7 @@ async function run(
 	tool: ToolRegistration,
 	args: JsonObject,
 	context: Context,
+	depth: number,
 ): Promise<void> {
 	const limits: OutputLimits = {
 		maxBytes: tool.outputLimits?.maxBytes ?? DEFAULT_MAX_BYTES,
@@ -185,7 +193,16 @@ async function run(
 	const assertLive = (): void => {
 		if (ended) throw new Error(`Tool call ${call.id} has settled`);
 	};
+	const nested = createNestedTools({
+		runtime,
+		task: ToolTask,
+		parent: call,
+		depth,
+		agent: await runtime.agent(context),
+		assertLive,
+	});
 	const api: Omit<ToolExecutionApi, "env"> = {
+		callTool: nested.callTool,
 		taskId: runtime.taskId,
 		conversationId: runtime.conversationId,
 		callId: call.id,
@@ -268,12 +285,23 @@ async function run(
 			for (const waiter of await progress.stop()) waiter.reject(error);
 			throw error;
 		}
-		result = { isError: true, diagnostics: [toolDiagnostic(error instanceof FileError ? error.code : "tool_error", errorText(error))] };
+		result = {
+			isError: true,
+			diagnostics: [toolDiagnostic(error instanceof FileError ? error.code : "tool_error", errorText(error))],
+		};
 		// A throw, from `execute()` or from building the environment, ends the task `failed`, which cancels what the call owned; it no longer supervises it. The error text
 		// is already in the result entry.
 		ending = { status: "failed", message: `Tool ${call.name} threw` };
+	} finally {
+		ended = true;
+		await nested.finish();
 	}
-	ended = true;
+	const added = nested.addTools();
+	if (added.length > 0)
+		result = {
+			...result,
+			control: { ...result.control, addTools: [...new Set([...(result.control?.addTools ?? []), ...added])] },
+		};
 	reported.output.end();
 	// Details still waiting for a progress commit settle with the terminal commit, the final flush.
 	const pending = await progress.stop();
@@ -363,7 +391,13 @@ async function finalResult(
 		diagnostics: [...reported.diagnostics, ...(result.diagnostics ?? [])],
 	};
 	await runtime.hooks.each("afterTool", async (hook) => {
-		final = (await hook(call, final, runtime, context)) ?? final;
+		const changed = await hook(call, final, runtime, context);
+		if (changed === undefined) return;
+		// A content rewrite must not leak the original structured payload to its caller.
+		if (changed.content !== final.content && changed.structuredContent === final.structuredContent) {
+			const { structuredContent: _discarded, ...safe } = changed;
+			final = safe;
+		} else final = changed;
 	});
 	// The retained output's truncation applies only while afterTool kept that content.
 	if (retained !== undefined && retained.droppedBytes > 0 && final.content === content) {
@@ -386,14 +420,16 @@ async function settle(
 	context: Context,
 	durationMs?: number,
 ): Promise<void> {
-	await runtime.commit(async (tx) => {
+	await runtime.commit(async (tx, current) => {
 		const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
 		const result = build(slot);
-		const entry = await appendToolResult(tx, runtime.conversationId, call, result, runtime.now(), durationMs);
+		const entry =
+			"nested" in current.input
+				? await appendNestedResult(tx, runtime.conversationId, current.input.nested.parentCallId, call, result, durationMs)
+				: await appendToolResult(tx, runtime.conversationId, call, result, runtime.now(), durationMs);
 		if (slot !== undefined) finishSlot(slot, entry.id);
 		const entryId = entry.id;
-		if (ending.status === "aborted")
-			return { status: "terminal", outcome: { status: "aborted", result: { entryId } } };
+		if (ending.status === "aborted") return { status: "terminal", outcome: { status: "aborted", result: { entryId } } };
 		if (ending.status === "failed") {
 			const error = { message: ending.message };
 			return { status: "terminal", outcome: { status: "failed", error, result: { entryId } } };
@@ -405,6 +441,22 @@ async function settle(
 				: { control: copyJson(result.control as JsonValue, { omitUndefinedProperties: true }) as ToolControl };
 		return { status: "terminal", outcome: { status: "completed", result: { entryId, ...control } } };
 	}, context);
+}
+
+async function appendNestedResult(
+	tx: Tx,
+	conversationId: ConversationId,
+	parentCallId: string,
+	call: ToolCall,
+	result: ToolExecutionResult,
+	durationMs?: number,
+) {
+	if (result.usage !== undefined) await recordUsage(tx, conversationId, "tools", call.name, result.usage);
+	const data = copyJson(
+		{ parentCallId, call, result, ...(durationMs === undefined ? {} : { durationMs }) },
+		{ omitUndefinedProperties: true },
+	) as NestedToolResultData;
+	return tx.appendEntry(NestedToolResultEntry, conversationId, { data });
 }
 
 /**
@@ -462,7 +514,7 @@ export async function appendToolResult(
 	result: ToolExecutionResult,
 	timestamp: number,
 	durationMs?: number,
-): Promise<TypedEntry<{ diagnostics: ToolDiagnostic[] }>> {
+): Promise<TypedEntry<ToolResultData>> {
 	const diagnostics = [...(result.diagnostics ?? [])];
 	const content: Content = [...(result.content ?? [])];
 	if (diagnostics.length > 0) content.push({ type: "text", text: renderDiagnostics(diagnostics) });
@@ -478,7 +530,9 @@ export async function appendToolResult(
 		timestamp,
 	} as ToolResultMessage;
 	if (result.usage !== undefined) await recordUsage(tx, conversationId, "tools", call.name, result.usage);
-	return tx.appendEntry(ToolResultEntry, conversationId, { model: [message], data: { diagnostics } });
+	const data: ToolResultData = { diagnostics };
+	if (result.structuredContent !== undefined) data.structuredContent = result.structuredContent;
+	return tx.appendEntry(ToolResultEntry, conversationId, { model: [message], data });
 }
 
 function renderDiagnostics(diagnostics: readonly ToolDiagnostic[]): string {

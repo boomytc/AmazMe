@@ -146,6 +146,8 @@ export type ToolExecutionResult<TDetails extends JsonValue = JsonValue> = {
 	readonly isError?: boolean;
 	/** Omitted: the last `details()` value becomes the details. */
 	readonly details?: TDetails;
+	/** Data for programmatic callers; never an additional model message. */
+	readonly structuredContent?: JsonValue;
 	/** Added after those recorded through `api.diagnostic()`. */
 	readonly diagnostics?: readonly ToolDiagnostic[];
 	/** Spend of the execution itself, such as a model call; stored on the result and in `pi.usage.tools`. */
@@ -175,6 +177,8 @@ export interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extend
 	readonly models: Models;
 	/** Built by `HarnessOptions.env` for this call; `undefined` without an environment. */
 	readonly env: ExecutionEnv | undefined;
+	/** Run a nested call through validation, hooks, durable intent and owned task cleanup. */
+	callTool(name: string, args: JsonObject, context: Context): Promise<ToolExecutionResult>;
 	/**
 	 * Append running output; it becomes the result content when the result omits `content`. `skipped` counts output
 	 * omitted before the chunk, as reported by an environment given `outputWindow` (`ShellOutputInfo.skipped`).
@@ -205,14 +209,34 @@ export interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extend
 	conversation(id: ConversationId, context: Context): Promise<ConversationHandle | undefined>;
 }
 
+/** Where a registered tool can be offered or called. Selection cannot reveal hidden tools. */
+export type ToolExposure = "direct" | "model-only" | "codemode" | "deferred" | "hidden";
+
+export type ToolNamespace = { readonly name: string; readonly description?: string; readonly instructions?: string };
+
+/** Source hints for discovery and presentation; they do not grant execution permission. */
+export type ToolAnnotations = {
+	readonly title?: string;
+	readonly readOnlyHint?: boolean;
+	readonly destructiveHint?: boolean;
+	readonly idempotentHint?: boolean;
+	readonly openWorldHint?: boolean;
+};
+
 /**
- * Executable tool registered in a registry. Only pi-ai `Tool` fields enter the transcript. `args` are typed by
- * `parameters`, which the Harness validates them against before `execute()`; `defineTool()` infers both generics.
+ * Executable tool registered in a registry. Only pi-ai `Tool` fields enter model messages. `args` are typed by
+ * `parameters`, which the Harness validates before `execute()`; `defineTool()` infers both generics.
  */
 export type ToolRegistration<
 	TParameters extends TSchema = TSchema,
 	TDetails extends JsonValue = JsonValue,
 > = Tool<TParameters> & {
+	/** Defaults to direct; hidden tools cannot be selected or called. */
+	readonly exposure?: ToolExposure;
+	readonly namespace?: ToolNamespace;
+	readonly annotations?: ToolAnnotations;
+	/** Schema of structuredContent returned to a programmatic caller. */
+	readonly outputSchema?: TSchema;
 	/** Activated by default unless false; explicit selection or loading can activate it. */
 	readonly defaultActive?: boolean;
 	/** Whether an interrupted execution may rerun on recovery. Default `unsafe`. */
@@ -313,13 +337,15 @@ export type AgentState = {
 	/** An array selects exactly these extensions, in order. An object edits the host default selection. */
 	extensions?: string[] | { add?: string[]; remove?: string[] };
 	/** Names or `*` patterns. `allow` and `exclude` bound loading; `remove` adjusts activation. */
-	tools?: string[] | {
-		only?: string[];
-		allow?: string[];
-		add?: string[];
-		remove?: string[];
-		exclude?: string[];
-	};
+	tools?:
+		| string[]
+		| {
+				only?: string[];
+				allow?: string[];
+				add?: string[];
+				remove?: string[];
+				exclude?: string[];
+		  };
 	/** Rendered after every extension section, as the section `instructions`. */
 	instructions?: string;
 	/** Directory within the environment's file system, passed to `HarnessOptions.env`. */
@@ -337,12 +363,12 @@ export type AgentChange = {
 	readonly tools?:
 		| readonly ToolRegistration[]
 		| {
-			readonly only?: readonly ToolRegistration[];
-			readonly allow?: readonly ToolRegistration[];
-			readonly add?: readonly ToolRegistration[];
-			readonly remove?: readonly ToolRegistration[];
-			readonly exclude?: readonly ToolRegistration[];
-		}
+				readonly only?: readonly ToolRegistration[];
+				readonly allow?: readonly ToolRegistration[];
+				readonly add?: readonly ToolRegistration[];
+				readonly remove?: readonly ToolRegistration[];
+				readonly exclude?: readonly ToolRegistration[];
+		  }
 		| null;
 	readonly instructions?: string | null;
 	readonly cwd?: string | null;
@@ -355,6 +381,10 @@ export type Agent<Tool extends ToolRegistration = ToolRegistration> = {
 	readonly extensions: readonly Extension<Tool>[];
 	/** The tools a request offers, in order. */
 	readonly tools: readonly Tool[];
+	/** Active direct tools and permitted codemode/deferred tools, excluding model-only tools. */
+	readonly callableTools: readonly Tool[];
+	/** The selected extensions' permitted, non-hidden tools, including inactive direct tools. */
+	readonly catalog: readonly Tool[];
 	/** Extension sections, then `instructions` when set. */
 	readonly sections: readonly PromptSection<Tool>[];
 	readonly instructions?: string;

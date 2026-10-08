@@ -1,6 +1,7 @@
 import type { Context, JsonValue } from "@amazme/chord";
 import type { Op, Path } from "@amazme/chord/delta";
 import type { AssistantMessage, Message, Usage } from "@amazme/ai";
+import { NestedToolResultEntry } from "../entries.ts";
 import { CommittedWatch } from "../session/observation.ts";
 import type {
 	CommitChange,
@@ -63,18 +64,19 @@ export type AgentEvent =
 	/** `usage` is the partial's current usage, as in the coding agent's JSON mode. */
 	| { type: "message_update"; usage: Usage; changes: readonly MessageChange[] }
 	| { type: "message_end"; entry: EntryRecord }
-	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: JsonObject }
+	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: JsonObject; parentCallId?: string }
 	| {
 			type: "tool_execution_update";
 			toolCallId: string;
 			toolName: string;
+			parentCallId?: string;
 			/** A front trim and then an append of the retained window, or its replacement. */
 			output?: { trimStart?: number; append?: string } | { set: string };
 			details?: JsonValue;
 			diagnostics?: readonly ToolDiagnostic[];
 	  }
 	/** `entry` is absent when the tool task faulted or was orphaned. */
-	| { type: "tool_execution_end"; toolCallId: string; toolName: string; entry?: EntryRecord }
+	| { type: "tool_execution_end"; toolCallId: string; toolName: string; entry?: EntryRecord; parentCallId?: string }
 	| { type: "inbox_update"; items: readonly QueuedItem[] }
 	| { type: "submission"; record: SubmissionRecord }
 	| { type: "auto_retry_start"; attempt: number; at: number; errorMessage: string }
@@ -186,6 +188,7 @@ type TaskChange = Extract<CommitChange, { type: "task" }>;
 /** The tool result for `callId` among `entries`. */
 function resultOf(entries: readonly EntryRecord[], callId: string): EntryRecord | undefined {
 	return entries.find((entry) => {
+		if (NestedToolResultEntry.is(entry)) return entry.data.call.id === callId;
 		const message = entry.model?.[0];
 		return message?.role === "toolResult" && message.toolCallId === callId;
 	});
@@ -225,7 +228,13 @@ function translate(
 		if (slot.status !== "running" || slotsBefore.get(slot.callId)?.status === "running") continue;
 		const checkpoint = slot.taskId === undefined ? undefined : tasks.get(slot.taskId)?.state.checkpoint;
 		const args = (checkpoint as { arguments?: JsonObject } | undefined)?.arguments ?? {};
-		events.push({ type: "tool_execution_start", toolCallId: slot.callId, toolName: slot.name, args });
+		events.push({
+			type: "tool_execution_start",
+			toolCallId: slot.callId,
+			toolName: slot.name,
+			args,
+			...(slot.parentCallId === undefined ? {} : { parentCallId: slot.parentCallId }),
+		});
 	}
 	const partialBefore = was.live.generation?.message as AssistantMessage | undefined;
 	const partial = now.live.generation?.message as AssistantMessage | undefined;
@@ -238,7 +247,13 @@ function translate(
 		if (slot.status !== "running" || previous?.status !== "running") continue;
 		const update = toolUpdate(viewOps, index, slot, previous);
 		if (update === undefined) continue;
-		events.push({ type: "tool_execution_update", toolCallId: slot.callId, toolName: slot.name, ...update });
+		events.push({
+			type: "tool_execution_update",
+			toolCallId: slot.callId,
+			toolName: slot.name,
+			...update,
+			...(slot.parentCallId === undefined ? {} : { parentCallId: slot.parentCallId }),
+		});
 	}
 	const generation = now.live.generation;
 	const generationBefore = was.live.generation;
@@ -256,24 +271,25 @@ function translate(
 	// Tools that end in this commit: a slot that becomes done, one created done (a call not offered), or an unfinished
 	// one that vanishes because its run ended. A done slot that vanishes ended earlier.
 	const toolEnds: Extract<AgentEvent, { type: "tool_execution_end" }>[] = [];
-	const endTool = (callId: string, name: string, entryId: number | undefined): void => {
+	const endTool = (slot: ToolSlot, entryId: number | undefined): void => {
 		const entry = entries.find((candidate) => candidate.id === entryId);
 		toolEnds.push({
 			type: "tool_execution_end",
-			toolCallId: callId,
-			toolName: name,
+			toolCallId: slot.callId,
+			toolName: slot.name,
+			...(slot.parentCallId === undefined ? {} : { parentCallId: slot.parentCallId }),
 			...(entry === undefined ? {} : { entry }),
 		});
 	};
 	for (const previous of slotsBefore.values()) {
 		if (previous.status === "done") continue;
 		const slot = slots.find((candidate) => candidate.callId === previous.callId);
-		if (slot?.status === "done") endTool(previous.callId, previous.name, slot.entry);
+		if (slot?.status === "done") endTool(slot, slot.entry);
 		// A slot whose run ended in this commit may have had its result appended with it, as for unstarted calls.
-		else if (slot === undefined) endTool(previous.callId, previous.name, resultOf(entries, previous.callId)?.id);
+		else if (slot === undefined) endTool(previous, resultOf(entries, previous.callId)?.id);
 	}
 	for (const slot of slots) {
-		if (slot.status === "done" && !slotsBefore.has(slot.callId)) endTool(slot.callId, slot.name, slot.entry);
+		if (slot.status === "done" && !slotsBefore.has(slot.callId)) endTool(slot, slot.entry);
 	}
 
 	// Entries in append order; a tool's end directly precedes its result's message, as in the coding agent.
@@ -406,8 +422,7 @@ function toolUpdate(
 		else set = true;
 	}
 	let output: { trimStart?: number; append?: string } | { set: string } | undefined;
-	if (set || (slot.output !== previous.output && trimStart === 0 && append === ""))
-		output = { set: slot.output ?? "" };
+	if (set || (slot.output !== previous.output && trimStart === 0 && append === "")) output = { set: slot.output ?? "" };
 	else if (trimStart > 0 || append !== "") {
 		output = { ...(trimStart > 0 ? { trimStart } : {}), ...(append === "" ? {} : { append }) };
 	}

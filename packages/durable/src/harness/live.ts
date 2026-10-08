@@ -9,6 +9,8 @@ import type { CompactionReason, CompactionResult, ToolDiagnostic } from "./types
 
 /** Presentation of one tool call of the current round. */
 export type ToolSlot = {
+	/** Present for calls made by another tool; the parent owns their lifecycle. */
+	parentCallId?: string;
 	callId: string;
 	name: string;
 	/**

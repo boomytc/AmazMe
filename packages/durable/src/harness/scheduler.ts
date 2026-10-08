@@ -279,10 +279,13 @@ export class TaskScheduler {
 	 * is live, then join the run invocation seen on the line; the commit listener signalled it. The abort invocation
 	 * starts once the task's ordinary owned work is gone. A `completing` task is only marked.
 	 */
-	async abort(id: TaskId, context: Context): Promise<"marked" | "terminal"> {
+	async abort(id: TaskId, context: Context, owner?: Invocation): Promise<"marked" | "terminal"> {
 		const marked = await this.#session.commitWith(async (tx) => {
+			if (owner?.ended) throw endedError(owner);
 			const current = await tx.task(id);
 			if (current === undefined) throw new Error(`Task ${id} does not exist`);
+			if (owner !== undefined && current.owner !== owner.taskId)
+				throw new Error(`Task ${id} is not owned by ${owner.taskId}`);
 			if (current.state.status === "terminal") return { result: "terminal" as const };
 			const invocation = this.#invocations.get(id);
 			if (invocation === undefined && current.state.status !== "completing") {
@@ -1197,6 +1200,7 @@ export class TaskScheduler {
 				this.#read(invocation, () =>
 					this.#session.readOnLine(() => this.#storage.task(id, context)),
 				)) as ErasedRuntime["getTask"],
+			abortTask: (id, context) => this.#read(invocation, () => this.abort(id, context, invocation)),
 			waitForTask: ((id: TaskId, context: Context) =>
 				this.#read(invocation, () =>
 					this.waitForTask(id, withAbortSignal(invocation.controller.signal, context)),

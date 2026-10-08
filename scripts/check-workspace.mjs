@@ -243,7 +243,7 @@ export async function checkEntryContracts(repoRoot) {
 		// Branch summaries, the name matcher, and the leaf file-error contract add three modules to Pi's 63-module root.
 		{
 			entry: "packages/durable/src/index.ts",
-			maxFiles: 66,
+			maxFiles: 67,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
 		},
 	]) {

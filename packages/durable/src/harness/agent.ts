@@ -226,25 +226,33 @@ export function resolveAgent<Tool extends ToolRegistration>(
 	const filter = state?.tools;
 	const selection = Array.isArray(filter) ? { only: filter } : filter;
 	const initial = selection?.only ?? selection?.allow;
+	const allowed = selection?.allow === undefined ? undefined : createToolNameMatcher(selection.allow);
+	const excluded = selection?.exclude === undefined ? undefined : createToolNameMatcher(selection.exclude);
+	const catalog = [...composed.values()].filter(
+		(tool) => tool.exposure !== "hidden" && (allowed === undefined || allowed(tool.name)) && !excluded?.(tool.name),
+	);
 	let tools: Tool[] =
-		initial === undefined ? [...composed.values()].filter((tool) => tool.defaultActive !== false) : [];
+		initial === undefined
+			? catalog.filter(
+					(tool) =>
+						tool.defaultActive !== false &&
+						(tool.exposure === undefined || tool.exposure === "direct" || tool.exposure === "model-only"),
+				)
+			: [];
 	const selected = new Set(tools.map((tool) => tool.name));
 	for (const pattern of [...(initial ?? []), ...(selection?.add ?? [])]) {
 		const matches = createToolNameMatcher([pattern]);
-		for (const tool of composed.values())
+		for (const tool of catalog)
 			if (!selected.has(tool.name) && matches(tool.name)) {
 				selected.add(tool.name);
 				tools.push(tool);
 			}
 	}
-	if (selection?.allow !== undefined) {
-		const allowed = createToolNameMatcher(selection.allow);
-		tools = tools.filter((tool) => allowed(tool.name));
-	}
-	if (selection?.remove !== undefined || selection?.exclude !== undefined) {
-		const removed = createToolNameMatcher([...(selection.remove ?? []), ...(selection.exclude ?? [])]);
+	if (selection?.remove !== undefined) {
+		const removed = createToolNameMatcher(selection.remove);
 		tools = tools.filter((tool) => !removed(tool.name));
 	}
+	const active = new Set(tools.map((tool) => tool.name));
 
 	const instructions = state?.instructions;
 	const agentSections = [...sections.values()];
@@ -255,6 +263,13 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		thinkingLevel: state?.thinkingLevel ?? "off",
 		extensions,
 		tools,
+		catalog,
+		callableTools: [
+			...tools.filter((tool) => tool.exposure !== "model-only"),
+			...catalog.filter(
+				(tool) => !active.has(tool.name) && (tool.exposure === "codemode" || tool.exposure === "deferred"),
+			),
+		],
 		sections: agentSections,
 		...(instructions === undefined ? {} : { instructions }),
 		...(state?.cwd === undefined ? {} : { cwd: state.cwd }),

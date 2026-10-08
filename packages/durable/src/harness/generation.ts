@@ -607,7 +607,9 @@ async function finishToolRound(
 		const outcome = outcomes[index]!;
 		controls.set(id, outcome.status === "completed" ? outcome.result.control : undefined);
 	});
-	const slots = (await runtime.snapshot(LiveDoc, conversationId, context))?.tools ?? [];
+	const slots = ((await runtime.snapshot(LiveDoc, conversationId, context))?.tools ?? []).filter(
+		(slot) => slot.parentCallId === undefined,
+	);
 	const results = slots.flatMap((slot) => (slot.entry === undefined ? [] : [slot.entry]));
 	await runtime.hooks.each("afterTools", (hook) => hook(assistant, results, runtime, context));
 	// Every call of the round, including those answered without a task, must ask to terminate.

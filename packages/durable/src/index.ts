@@ -10,9 +10,16 @@ export {
 	ResetEntry,
 	SystemEntry,
 	ToolResultEntry,
+	NestedToolResultEntry,
 	UserEntry,
 } from "./entries.ts";
-export type { AbandonedBranchSource, BranchSummaryData, BranchSummaryUsage } from "./entries.ts";
+export type {
+	AbandonedBranchSource,
+	BranchSummaryData,
+	BranchSummaryUsage,
+	NestedToolResultData,
+	ToolResultData,
+} from "./entries.ts";
 export { ConversationBusy, ReadAfterWrite, StorageRejected } from "./errors.ts";
 export {
 	AgentDoc,
@@ -49,6 +56,9 @@ export { createRegistry } from "./harness/registry.ts";
 export type { TaskGraph, TaskGraphNode, TaskGraphState, TaskGraphWatch } from "./harness/task-graph.ts";
 export { ToolTask, type ToolTaskCheckpoint, type ToolTaskInput, type ToolTaskResult } from "./harness/tool.ts";
 export type {
+	ToolExposure,
+	ToolNamespace,
+	ToolAnnotations,
 	Agent,
 	AgentChange,
 	AgentState,

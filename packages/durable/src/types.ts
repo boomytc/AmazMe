@@ -206,6 +206,8 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	memo<T extends JsonValue>(name: string, candidate: T, context: Context): Promise<T>;
 	/** Committed task record. */
 	getTask<T>(id: TaskId<T>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, T> | undefined>;
+	/** Mark a directly owned child for abort and join its run invocation. Rejects unrelated tasks. */
+	abortTask(id: TaskId, context: Context): Promise<"marked" | "terminal">;
 	/** Resolve with the task's terminal receipt; rejects when the invocation ends. */
 	waitForTask<T>(id: TaskId<T>, context: Context): Promise<SettledTask<T>>;
 	/** Outcomes of terminal tasks, in order; rejects when one is missing or not terminal. Used after a wait. */
