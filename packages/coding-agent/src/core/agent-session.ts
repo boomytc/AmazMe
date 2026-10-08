@@ -130,7 +130,13 @@ import {
 	SessionManager,
 	type SessionProjection,
 } from "./session-manager.ts";
-import { type CacheWarmingMode, DEFAULT_TOOL_NAMES, type SettingsManager } from "./settings-manager.ts";
+import {
+	applyToolModifiers,
+	type CacheWarmingMode,
+	DEFAULT_TOOL_NAMES,
+	isToolModifier,
+	type SettingsManager,
+} from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { skillCommandPrompt } from "./skill-command.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, isSyntheticPath, type SourceInfo } from "./source-info.ts";
@@ -267,6 +273,8 @@ export interface AgentSessionConfig {
 	 * tools newly added to the setting. Tools removed from it stay active.
 	 */
 	usesDefaultTools?: boolean;
+	/** CLI/SDK edits applied again when inherited defaults reload. */
+	defaultToolModifiers?: string[];
 	/**
 	 * Optional allowlist of tool names or patterns (`*` matches any characters). When provided, only
 	 * matching tools are exposed. A non-empty list without `mcp__` entries also keeps MCP tools
@@ -440,6 +448,7 @@ export class AgentSession {
 	 */
 	private _pendingToolNames = new Set<string>();
 	private _usesDefaultTools: boolean;
+	private readonly _defaultToolModifiers: readonly string[];
 	/** Matches the `--tools` entries: tool names or patterns. */
 	private _allowedTools?: (name: string) => boolean;
 	/**
@@ -491,6 +500,10 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._usesDefaultTools = config.usesDefaultTools ?? false;
+		this._defaultToolModifiers = [...(config.defaultToolModifiers ?? [])];
+		for (const name of config.initialActiveToolNames ?? []) {
+			if (!name.includes("*")) this._pendingToolNames.add(name);
+		}
 		if (config.allowedToolNames) {
 			this._allowedTools = createToolNameMatcher(config.allowedToolNames);
 			this._allowlistFiltersMcp =
@@ -3493,10 +3506,20 @@ export class AgentSession {
 	}
 
 	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
+		const configured = this.settingsManager.getSettings().defaultTools;
+		const edits = new Map(
+			[...(Array.isArray(configured) ? configured : []), ...this._defaultToolModifiers]
+				.filter(isToolModifier)
+				.map((entry) => [entry.slice(1), entry.startsWith("+")] as const),
+		);
+		const isActivatedOnRegistration = (name: string): boolean =>
+			this._isDeclarable(name) &&
+			edits.get(name) !== false &&
+			this._toolDefinitions.get(name)?.definition.defaultActive !== false;
 		// Tools that were already activated on registration. A tool whose exposure changes to
 		// `direct` or `model-only` (for example from `hidden`) is activated like a new tool.
 		const previousActivatedOnRegistration = new Set(
-			[...this._toolRegistry.keys()].filter((name) => this._isActivatedOnRegistration(name)),
+			[...this._toolRegistry.keys()].filter(isActivatedOnRegistration),
 		);
 		const previousActiveToolNames = this.getActiveToolNames();
 		const allowedTools = this._allowedTools;
@@ -3577,11 +3600,11 @@ export class AgentSession {
 			}
 		} else if (options?.includeAllExtensionTools) {
 			for (const tool of wrappedExtensionTools) {
-				if (this._isActivatedOnRegistration(tool.name)) nextActiveToolNames.push(tool.name);
+				if (isActivatedOnRegistration(tool.name)) nextActiveToolNames.push(tool.name);
 			}
 		} else if (!options?.activeToolNames) {
 			for (const toolName of this._toolRegistry.keys()) {
-				if (!previousActivatedOnRegistration.has(toolName) && this._isActivatedOnRegistration(toolName)) {
+				if (!previousActivatedOnRegistration.has(toolName) && isActivatedOnRegistration(toolName)) {
 					nextActiveToolNames.push(toolName);
 				}
 			}
@@ -3596,11 +3619,6 @@ export class AgentSession {
 	private _isDeclarable(name: string): boolean {
 		const exposure = this._getToolExposure(name);
 		return exposure === "direct" || exposure === "model-only";
-	}
-
-	/** Whether registering the tool activates it, which declares it to the model. */
-	private _isActivatedOnRegistration(name: string): boolean {
-		return this._isDeclarable(name) && this._toolDefinitions.get(name)?.definition.defaultActive !== false;
 	}
 
 	private _buildRuntime(options: {
@@ -3662,20 +3680,18 @@ export class AgentSession {
 		const previousFlagValues = oldRunner.getFlagValues();
 		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
 		oldRunner.invalidate();
-		const previousDefaultTools = new Set(
-			this._usesDefaultTools ? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES) : [],
-		);
+		const getDefaultTools = () =>
+			this._usesDefaultTools
+				? applyToolModifiers(this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES, this._defaultToolModifiers)
+				: [];
+		const previousDefaultTools = new Set(getDefaultTools());
 		await this.settingsManager.reload();
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
 		await this._resourceLoader.reload();
 		// Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
 		// during the session stay disabled unless the setting newly adds them.
-		const addedDefaultTools = this._usesDefaultTools
-			? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES).filter(
-					(name) => !previousDefaultTools.has(name),
-				)
-			: [];
+		const addedDefaultTools = getDefaultTools().filter((name) => !previousDefaultTools.has(name));
 		// Tools the new extensions register later, such as MCP tools, are pending until then.
 		for (const name of this.getActiveToolNames()) this._pendingToolNames.add(name);
 		this._buildRuntime({

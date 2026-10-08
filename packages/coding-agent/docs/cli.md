@@ -111,13 +111,14 @@ Constraints:
 ## Tools
 
 ```sh
-pi --tools read,grep,find,ls --print "Review this project"
+amazme --tools read,grep,find,ls --print "Review this project"
 ```
 
 See [Settings](settings.md#tools) for configuring the default tool selection.
 
 - `-t`, `--tools <list>`<br>
   Replaces the default selection with a comma-separated allowlist of built-in, extension, or custom tools. Entries are tool names or patterns where `*` matches any characters. MCP tools are kept unless an entry starts with `mcp__` (see [MCP tools](#mcp-tools)).
+  A list containing only exact `+name` and `-name` entries edits the inherited default selection in order, for example `--tools +codemode,-write`. Other extension tools retain their default activation. Plain names and modifiers cannot be mixed; modifiers do not accept patterns.
 - `-xt`, `--exclude-tools <list>`<br>
   Disables comma-separated tool names or patterns after all other selection options, MCP tools included.
 - `-nbt`, `--no-builtin-tools`<br>
@@ -125,7 +126,7 @@ See [Settings](settings.md#tools) for configuring the default tool selection.
 - `-nt`, `--no-tools`<br>
   Starts with all built-in, extension, custom, and MCP tools disabled.
 
-Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTools` changes them. `--tools` replaces the whole selection, so name every tool you want; `defaultTools` also accepts `+name` and `-name` to change the defaults instead.
+Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTools` changes them. A plain `--tools` list replaces the selection; a modifier list applies after `defaultTools` or tool suppression. `--no-tools --tools +grep` therefore enables only `grep`. Exclusions apply last. These semantics apply to the SDK and print/RPC execution; default Durable TUI option wiring is tracked in the product implementation plan.
 
 <a id="mcp-tools"></a>
 

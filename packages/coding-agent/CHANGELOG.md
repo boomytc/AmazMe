@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added ordered `+name`/`-name` tool selection to the SDK and print/RPC CLI, with shared validation before runtime creation and preservation across settings reloads
 - Added a reply preview to the Dashboard: a `Response` panel above the composer shows the latest reply of the session under the cursor, so several sessions can be assigned work without opening them
 
 ### Changed
@@ -13,6 +14,7 @@
 
 ### Fixed
 
+- Fixed SDK tool defaults being reactivated by an extension overriding a removed tool name, and retained exact-name activation until delayed tool registration
 - Fixed the web page offering Fork on a conversation that has no entries yet. The header and the conversations panel keep the control and disable it until there is an entry to fork from
 - Fixed the Dashboard offering a close badge for the current session, which cannot be deleted from there; the close column stays blank so ages keep their alignment, and `Ctrl+X` on it reports that the session stays open
 

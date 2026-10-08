@@ -17,7 +17,7 @@
 | `0cf65d2bf` | Codex `originator`/`User-Agent` 允许被调用方覆盖 | 吸收 |
 | `428a12bc7` | 批准贡献者（GitHub Actions bot） | 跳过，仓库治理，AmazMe 无 `.github` |
 | `23cf2b948` | 统一 npm 包产物校验，重写发布与本地安装脚本 | 吸收产物校验和本地安装设计；本仓库的 `scripts/package-artifacts.mjs` 按运行依赖闭包打包、裁剪当前锁文件并用 `npm ci` 安装，eval 安装器已去掉悬空旧脚本引用 |
-| `ddaa0a034` | `--tools` 接受 `+name`/`-name` 条目 | 暂缓，是功能不是缺陷，涉及 sdk、settings-manager、agent-session 的语义分支和文档 |
+| `ddaa0a034` | `--tools` 接受 `+name`/`-name` 条目 | 吸收 SDK、CLI 参数、设置与重载语义；补齐提前校验、动态注册与同名扩展的回归。默认 Durable TUI 实参接线继续实施 |
 | `56b25ff4e` | 对齐 `docs/message-types.md` | 暂缓，纯文档 |
 | `8b5708dbb` | 重试 `server_busy` 瞬时错误 | 吸收 |
 | `83c9e2645` | 全屏选区在 transcript 重建时清理 | 吸收 |

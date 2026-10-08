@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@amazme/ai/compat";
 import { Type } from "typebox";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAgentSessionFromServices, createAgentSessionServices } from "../src/core/agent-session-services.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { type CreateAgentSessionOptions, createAgentSession, type InlineExtension } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
 type ToolOptions = Pick<CreateAgentSessionOptions, "tools" | "excludeTools" | "noTools" | "customTools">;
@@ -23,9 +24,15 @@ describe("defaultTools setting", () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
+	});
+
+	const tool = (name: string, defaultActive = true) => ({
+		name, label: name, description: name, parameters: Type.Object({}), defaultActive,
+		execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
 	});
 
 	async function createSession(
@@ -68,6 +75,82 @@ describe("defaultTools setting", () => {
 		expect(session.systemPrompt).toContain("- grep:");
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
+	});
+
+	it("applies ordered SDK edits to inherited defaults without replacing extension defaults", async () => {
+		const defaults = ["grep"];
+		const session = await createSession(defaults, { tools: ["+ls", "-grep", "+grep"], customTools: [tool("extra")] });
+		expect(session.getActiveToolNames()).toEqual(["ls", "grep", "extra"]);
+		expect(defaults).toEqual(["grep"]);
+		session.dispose();
+	});
+
+	it("removes the default activation of an extension overriding a built-in name", async () => {
+		const session = await createSession(["read", "write"], { tools: ["-write"], customTools: [tool("write")] });
+		expect(session.getAllTools().some((entry) => entry.name === "write")).toBe(true);
+		expect(session.getActiveToolNames()).toEqual(["read"]);
+		expect(session.systemPrompt).not.toContain("- write:");
+		session.dispose();
+	});
+
+	it("applies inherited setting removals to extension default activation", async () => {
+		const session = await createSession(["read", "-write"], { customTools: [tool("write")] });
+		expect(session.getActiveToolNames()).toEqual(["read"]);
+		session.dispose();
+	});
+
+	it("captures validated edits before asynchronous runtime initialization", async () => {
+		let release = () => {};
+		const barrier = new Promise<void>((resolve) => { release = resolve; });
+		const createRuntime = ModelRuntime.create.bind(ModelRuntime);
+		vi.spyOn(ModelRuntime, "create").mockImplementation(async (options) => {
+			await barrier;
+			return createRuntime(options);
+		});
+		const tools = ["+grep"];
+		const opening = createAgentSession({
+			cwd: tempDir, agentDir, tools, model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager: SettingsManager.inMemory({ defaultTools: ["read"] }),
+			sessionManager: SessionManager.inMemory(tempDir),
+		});
+		tools.splice(0, 1, "-read", "+write");
+		release();
+		const { session } = await opening;
+		try { expect(session.getActiveToolNames()).toEqual(["read", "grep"]); }
+		finally { session.dispose(); }
+	});
+
+	it("activates an edited inactive tool when its extension registers after startup", async () => {
+		const session = await createSession(["read"], { tools: ["+late"] }, [
+			(extension) => extension.on("session_start", () => { extension.registerTool(tool("late", false)); }),
+		]);
+		expect(session.getActiveToolNames()).toEqual(["read"]);
+		await session.bindExtensions({});
+		expect(session.getActiveToolNames()).toEqual(["read", "late"]);
+		session.dispose();
+	});
+
+	it.each(["all", "builtin"] as const)("applies edits after noTools=%s suppression", async (noTools) => {
+		const session = await createSession(["read"], { noTools, tools: ["+grep"], customTools: [tool("extra")] });
+		expect(session.getActiveToolNames()).toEqual(noTools === "all" ? ["grep"] : ["grep", "extra"]);
+		session.dispose();
+	});
+
+	it.each([["read", "+grep"], ["-gr*"], ["+"], [" read "]])("rejects invalid SDK edits before runtime creation: %j", async (...tools) => {
+		const createRuntime = vi.spyOn(ModelRuntime, "create").mockRejectedValue(new Error("Runtime creation before tool validation"));
+		await expect(createAgentSession({ cwd: tempDir, agentDir, tools })).rejects.toThrow("Invalid tools option:");
+		expect(createRuntime).not.toHaveBeenCalled();
+	});
+
+	it("keeps MCP tools callable for modifier selection and applies explicit exclusions last", async () => {
+		const mcpTool = { ...tool("mcp__docs__search", false), exposure: "codemode" as const };
+		const retained = await createSession(["read"], { tools: ["+grep"], customTools: [mcpTool] });
+		expect(retained.getActiveToolNames()).toEqual(["read", "grep"]);
+		expect(retained.getCallableToolNames()).toContain(mcpTool.name);
+		retained.dispose();
+		const excluded = await createSession(["read"], { tools: ["+grep"], excludeTools: ["mcp__*"], customTools: [mcpTool] });
+		expect(excluded.getAllTools().map((entry) => entry.name)).not.toContain(mcpTool.name);
+		excluded.dispose();
 	});
 
 	it("can select powershell instead of bash", async () => {
@@ -231,6 +314,16 @@ describe("defaultTools setting", () => {
 			await excluded.reload();
 			expect(excluded.getActiveToolNames().sort()).toEqual(["bash", "edit", "inactive_tool", "read", "write"]);
 			excluded.dispose();
+		});
+
+		it("retains SDK edits while accepting newly inherited defaults on reload", async () => {
+			writeSettings({ defaultTools: ["read"] });
+			const session = await createFileSession({ tools: ["-bash", "+grep"] });
+			expect(session.getActiveToolNames()).toEqual(["read", "grep"]);
+			writeSettings({ defaultTools: ["read", "bash", "inactive_tool"] });
+			await session.reload();
+			expect(session.getActiveToolNames().sort()).toEqual(["grep", "inactive_tool", "read"]);
+			session.dispose();
 		});
 	});
 

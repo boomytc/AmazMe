@@ -106,6 +106,7 @@ Each boundary can be supplied explicitly:
 - `sessionManager` supplies persistent or in-memory conversation history.
 - `resourceLoader` supplies extensions, skills, prompt templates, themes, and context files.
 - `tools`, `noTools`, `excludeTools`, and `customTools` control the active tool set.
+  `tools: ["+grep", "-write"]` edits inherited defaults; plain names form an allowlist. Modifier entries require exact names and cannot mix with plain names. `excludeTools` applies last. Invalid lists reject before runtime creation or resource loading.
 
 Use `DefaultResourceLoader` when you want standard discovery with selected overrides. Supply a custom `ResourceLoader` when the host owns resource storage and discovery completely.
 

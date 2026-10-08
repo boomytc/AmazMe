@@ -2,6 +2,17 @@ import { describe, expect, test } from "vitest";
 import { normalizeSessionName, parseArgs } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
+	test.each(["+grep,-write", "read,bash", "read,*search"])("accepts tool selection %s", (selection) => {
+		const parsed = parseArgs(["--tools", selection]);
+		expect(parsed.tools).toEqual(selection.split(","));
+		expect(parsed.diagnostics).toEqual([]);
+	});
+
+	test.each(["read,+grep", "+grep,read", "-gr*", "+", "-"])("rejects invalid tool selection %s", (selection) => {
+		const parsed = parseArgs(["--tools", selection]);
+		expect(parsed.tools).toBeUndefined();
+		expect(parsed.diagnostics).toEqual([expect.objectContaining({ type: "error", message: expect.stringContaining("Invalid tools option:") })]);
+	});
 	describe("--version flag", () => {
 		test("parses --version flag", () => {
 			const result = parseArgs(["--version"]);

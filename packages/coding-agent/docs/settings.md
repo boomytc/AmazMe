@@ -55,7 +55,7 @@ This replaces `bash` with `powershell` and enables `grep`: `["-bash", "+powershe
 
 `/reload` enables tools newly added to `defaultTools`. It does not disable tools removed from it or re-enable unchanged tools you turned off. `--tools`, `--no-tools`, and `--no-builtin-tools` override `defaultTools`, also on reload.
 
-CLI tool options override this setting for one invocation; `--tools` does not accept `+name` or `-name`. See [Command Line](cli.md#tools).
+CLI tool options override this setting for one invocation. A plain `--tools` list replaces it; a list containing only `+name` and `-name` edits it and reapplies those edits when settings reload. See [Command Line](cli.md#tools).
 
 ## Sessions and context
 

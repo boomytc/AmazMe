@@ -6,7 +6,7 @@ import type { ThinkingLevel } from "@amazme/agent";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
-import type { TuiMode } from "../core/settings-manager.ts";
+import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -154,10 +154,13 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--no-builtin-tools" || arg === "-nbt") {
 			result.noBuiltinTools = true;
 		} else if ((arg === "--tools" || arg === "-t") && i + 1 < args.length) {
-			result.tools = args[++i]
+			const tools = args[++i]
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
+			const error = getToolListError(tools);
+			if (error) result.diagnostics.push({ type: "error", message: `Invalid tools option: ${error}` });
+			else result.tools = tools;
 		} else if ((arg === "--exclude-tools" || arg === "-xt") && i + 1 < args.length) {
 			result.excludeTools = args[++i]
 				.split(",")
@@ -320,6 +323,7 @@ ${chalk.bold("Options:")}
   --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
   --tools, -t <tools>            Comma-separated allowlist of tool names or patterns (*) to enable
                                  Keeps MCP tools unless an entry starts with mcp__
+                                 A list of only +name/-name edits the default selection (exact names)
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names or patterns (*) to disable
                                  Applies to all tools, MCP tools included
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max

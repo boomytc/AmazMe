@@ -235,8 +235,35 @@ function deepMergeObjects(base: Record<string, unknown>, overrides: Record<strin
 /** Tools enabled at startup when `defaultTools` does not change them. */
 export const DEFAULT_TOOL_NAMES: readonly string[] = ["read", "bash", "edit", "write"];
 
-function isToolModifier(entry: unknown): boolean {
+export function isToolModifier(entry: unknown): boolean {
 	return typeof entry === "string" && (entry.startsWith("+") || entry.startsWith("-"));
+}
+
+/** A CLI/SDK list is either plain names/patterns or exact-name modifiers. */
+export function getToolListError(entries: readonly string[]): string | undefined {
+	if (!Array.isArray(entries)) return "tools must be an array of names";
+	if (entries.some((entry) => typeof entry !== "string" || entry.length === 0 || entry.trim() !== entry)) {
+		return "tool names must be non-empty strings without surrounding whitespace";
+	}
+	const modifiers = entries.filter(isToolModifier);
+	if (modifiers.length === 0) return undefined;
+	if (modifiers.length < entries.length) return "tool names cannot be mixed with +name or -name entries";
+	if (modifiers.some((entry) => entry.length === 1)) return "+name and -name entries require a tool name";
+	const pattern = modifiers.find((entry) => entry.includes("*"));
+	return pattern ? `+name and -name entries take exact tool names, not patterns: ${pattern}` : undefined;
+}
+
+/** Apply ordered additions/removals without mutating the inherited selection. */
+export function applyToolModifiers(base: readonly string[], entries: readonly string[]): string[] {
+	const tools = [...base];
+	for (const entry of entries) {
+		if (!isToolModifier(entry)) continue;
+		const name = entry.slice(1);
+		const index = tools.indexOf(name);
+		if (entry.startsWith("+") && index === -1 && name) tools.push(name);
+		else if (entry.startsWith("-") && index !== -1) tools.splice(index, 1);
+	}
+	return tools;
 }
 
 /**
@@ -256,15 +283,7 @@ function mergeDefaultTools(base: string[] | undefined, overrides: string[] | und
  */
 function resolveDefaultTools(entries: string[]): string[] {
 	const plain = entries.filter((entry) => !isToolModifier(entry));
-	const tools = plain.length > 0 || entries.length === 0 ? plain : [...DEFAULT_TOOL_NAMES];
-	for (const entry of entries) {
-		if (!isToolModifier(entry)) continue;
-		const name = entry.slice(1);
-		const index = tools.indexOf(name);
-		if (entry.startsWith("+") && index === -1 && name) tools.push(name);
-		else if (entry.startsWith("-") && index !== -1) tools.splice(index, 1);
-	}
-	return tools;
+	return applyToolModifiers(plain.length > 0 || entries.length === 0 ? plain : DEFAULT_TOOL_NAMES, entries);
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
