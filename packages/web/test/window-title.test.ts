@@ -215,3 +215,66 @@ describe("document title on each render", () => {
 		expect(document.title).toBe("(1) \uFF083\uFF09 x — AmazMe");
 	});
 });
+
+describe("composer placeholder", () => {
+	test("uses the display name, and the session id only when /name has not set one", () => {
+		const renderer = createRenderer(collectPageElements(), () => {}, APP);
+		renderer.render(buildWebView(input()));
+		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Send a task to Weekly report");
+
+		renderer.render(buildWebView(input({ locale: "zh" })));
+		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("给 Weekly report 发送任务");
+
+		renderer.render(
+			buildWebView(
+				input({
+					directory: { sessions: [{ sessionId: "beta-2", createdAt: 1 }] },
+					attachedId: "beta-2",
+				}),
+			),
+		);
+		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Send a task to beta-2");
+
+		renderer.render(buildWebView(input({ attachedId: undefined, directory: undefined })));
+		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("No session attached");
+	});
+});
+
+describe("lane status", () => {
+	test("keeps the full model line on the title so a truncated header can still be read", () => {
+		const renderer = createRenderer(collectPageElements(), () => {}, APP);
+		renderer.render(
+			buildWebView(
+				input({
+					lane: {
+						role: "main",
+						label: "main",
+						model: "claude-sonnet",
+						thinking: "medium",
+						run: "idle",
+						detail: "",
+					},
+					approvals: { pending: [{ id: "a", tool: "bash", detail: "ls" }] },
+				}),
+			),
+		);
+		const lane = document.getElementById("lane-status");
+		expect(lane?.hidden).toBe(false);
+		expect(lane?.textContent).toBe("Main · claude-sonnet · thinking medium · Idle");
+		expect(lane?.getAttribute("title")).toBe("Main · claude-sonnet · thinking medium · Idle");
+		const title = document.getElementById("session-title");
+		expect(title?.textContent).toBe("Weekly report");
+		expect(title?.getAttribute("title")).toBe("Weekly report");
+		const mark = document.getElementById("approval-status");
+		expect(mark?.hidden).toBe(false);
+		expect(mark?.textContent).toBe("Waiting for approval 1");
+		const actions = [...document.querySelectorAll("#run-actions .header-action")];
+		expect(actions.map((node) => node.getAttribute("aria-label"))).toEqual(["Compact context", "Fork", "Session tools"]);
+		expect(actions.map((node) => node.getAttribute("title"))).toEqual(["Compact context", "Fork", "Session tools"]);
+		expect(actions.every((node) => node.querySelector(".header-action-label")?.textContent === node.getAttribute("aria-label"))).toBe(true);
+
+		renderer.render(buildWebView(input()));
+		expect(document.getElementById("lane-status")?.hidden).toBe(true);
+		expect(document.getElementById("lane-status")?.hasAttribute("title")).toBe(false);
+	});
+});

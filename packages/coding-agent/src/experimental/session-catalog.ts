@@ -25,6 +25,22 @@ export function normalizeSessionName(name: string): string {
 	return name.replace(/[\r\n]+/g, " ").trim();
 }
 
+/**
+ * Overlay a running worker's metadata on the catalog row. The roster name is the catalog's.
+ * The worker protocol has no name, so nothing on the worker row fills one in.
+ */
+export function mergeTrackedSession(
+	catalog: SessionCatalogMetadata | undefined,
+	worker: SessionCatalogMetadata,
+): SessionCatalogMetadata {
+	const name = normalizeSessionName(catalog?.name ?? "");
+	if (name.length === 0) {
+		const { name: _name, ...rest } = worker;
+		return rest;
+	}
+	return { ...worker, name };
+}
+
 const METADATA_FILE = "meta.json";
 const STORAGE_FILE = "session.sqlite";
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;

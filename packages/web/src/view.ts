@@ -1169,9 +1169,14 @@ export function isBusy(view: ConversationView | undefined): boolean {
 	return view !== undefined && liveOf(view).run !== undefined;
 }
 
-/** The composer's placeholder names what the next submit will do. */
-export function composerPlaceholder(locale: Locale, attachedId: string | undefined): string {
-	return attachedId === undefined ? translate(locale, "composer.placeholderDetached") : translate(locale, "composer.placeholder", { id: attachedId });
+/**
+ * The composer's placeholder names what the next submit will do. `sessionLabel` is the attached
+ * session's display name (`attachedSessionLabel`): the name `/name` set, or the id when it has none.
+ */
+export function composerPlaceholder(locale: Locale, sessionLabel: string | undefined): string {
+	return sessionLabel === undefined || sessionLabel.length === 0
+		? translate(locale, "composer.placeholderDetached")
+		: translate(locale, "composer.placeholder", { name: sessionLabel });
 }
 
 /** Inputs the session has accepted but not started yet, each with its own withdraw. */

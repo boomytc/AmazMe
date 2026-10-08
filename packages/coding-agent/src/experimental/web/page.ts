@@ -1734,7 +1734,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				try {
 					await client.reconnect();
 				} catch (error: unknown) {
-					renderer.setConnection(copy("connection.retrying", { error: message(error) }), "error");
+					renderer.setConnection(
+						copy("connection.retrying", { error: message(error) }),
+						"error",
+						copy("connection.stateDisconnected"),
+					);
 					waitMs = Math.min(waitMs * 2, 10_000);
 				}
 			}
@@ -1753,7 +1757,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
 						return;
 					}
-					renderer.setConnection(copy("connection.retrying", { error: message(error) }), "error");
+					renderer.setConnection(
+						copy("connection.retrying", { error: message(error) }),
+						"error",
+						copy("connection.stateDisconnected"),
+					);
 					await new Promise((resolve) => setTimeout(resolve, waitMs));
 					waitMs = Math.min(waitMs * 2, 10_000);
 				}
@@ -1764,7 +1772,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	client.onConnectionStateChange((change) => {
 		if (change.state === "connected") {
-			renderer.setConnection(copy("connection.connected", { id: manifest.server.id }), "state");
+			renderer.setConnection(
+				copy("connection.connected", { id: manifest.server.id }),
+				"state",
+				copy("connection.stateConnected"),
+			);
 			return;
 		}
 		if (change.state === "disconnected") {
@@ -1773,6 +1785,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					error: change.error?.message ?? copy("connection.hostGone"),
 				}),
 				"error",
+				copy("connection.stateDisconnected"),
 			);
 			retryConnection();
 			return;

@@ -390,25 +390,33 @@ body.dock-open {
 
 /* Header (ConversationRoot .header, the variant without the view tab strip). */
 .header {
-	display: grid;
-	grid-template-columns: auto minmax(0, 1fr);
+	display: flex;
+	align-items: center;
 	flex: none;
+	min-width: 0;
 	min-height: 0;
 	padding: 10px 28px 10px 20px;
 	border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+	/* A 1024 viewport still has the 280px sidebar, so this box is narrower than an 800 viewport.
+	   The icon step keys off the header, not the viewport. */
+	container-type: inline-size;
 }
 
 .crumbs {
 	display: flex;
 	align-items: center;
+	/* Shrinks last. The meter gives up its width first, then the connection. 6em is only the floor
+	   for viewports below 1024; at desktop widths the name stays much wider than that. */
+	flex: 0 1 240px;
 	gap: 4px;
-	min-width: 0;
+	min-width: 6em;
 	overflow: hidden;
 	white-space: nowrap;
 }
 
 /* Current crumb (ConversationRoot .crumbCurrent): the session this page is attached to. */
 .lane-status {
+	flex: 1 1 0;
 	min-width: 0;
 	overflow: hidden;
 	color: var(--dsw-alias-label-secondary);
@@ -425,6 +433,8 @@ body.dock-open {
 
 .crumb {
 	display: inline-block;
+	flex: 1 1 auto;
+	min-width: 4em;
 	max-width: 220px;
 	overflow: hidden;
 	padding: 4px 8px;
@@ -437,16 +447,17 @@ body.dock-open {
 	white-space: nowrap;
 }
 
-/* The utilities column stretches and right-aligns its content, so a long value ellipsizes inside
-   the track instead of overflowing it and colliding with the title. */
+/* The connection is a short state, so this row's minimum is that label plus the approval count,
+   the actions, and the menu. The meter shrinks before the session name. safe flex-end packs the
+   row to the right when it fits, and does not paint it back over the session name. */
 .header-utilities {
 	display: flex;
-	flex: none;
+	flex: 1 100 auto;
 	align-items: center;
-	justify-content: flex-end;
+	justify-content: safe flex-end;
 	gap: 8px;
 	margin-left: 20px;
-	min-width: 0;
+	min-width: min-content;
 	/* The seat of the management card, which opens below the entry. */
 	position: relative;
 }
@@ -454,23 +465,44 @@ body.dock-open {
 /* Pending approvals. Beside the usage figures, and outside the meter's overflow so a narrow header cannot clip it. */
 .approval-status {
 	flex: none;
+	flex-shrink: 0;
 	color: var(--dsw-alias-state-business-primary);
 	font: var(--dsw-font-xs-13);
 	font-weight: 600;
 	white-space: nowrap;
 }
 
-/* Context %, tokens, and cost. Always in the header, tabular so the figures do not jump. */
+/* Context %, tokens, and cost. The token pair ellipsizes first; percent and cost stay whole as
+   long as the row can hold them. */
 .status-meter {
 	display: flex;
-	flex: 0 1 auto;
+	flex: 1 1 auto;
 	align-items: center;
 	gap: 8px;
+	width: 0;
 	min-width: 0;
+	max-width: max-content;
 	overflow: hidden;
 	color: var(--dsw-alias-label-caption);
 	font: var(--dsw-font-xs-13);
 	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+#meter-context,
+#meter-cost {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+#meter-tokens {
+	flex: 1 100 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
@@ -483,13 +515,23 @@ body.dock-open {
 }
 
 .connection {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
+	/* Always the short state. The server id and any error detail stay on title and aria-label. */
+	display: inline-flex;
+	flex: none;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 6px;
 	color: var(--dsw-alias-label-caption);
 	font: var(--dsw-font-xs-13);
-	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.connection-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
 }
 
 .connection.error {
@@ -1279,11 +1321,16 @@ summary.disclosure-row {
 /* The header's run controls (compaction), DSH's header action seat. */
 .header-actions {
 	display: flex;
+	flex: none;
+	flex-shrink: 0;
 	align-items: center;
 	gap: 4px;
 }
 
 .header-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	height: 24px;
 	padding: 0 10px;
 	border: 0.5px solid var(--dsw-alias-border-l3);
@@ -1295,6 +1342,10 @@ summary.disclosure-row {
 	   transcript's first row, which the header sits above. */
 	white-space: nowrap;
 	cursor: pointer;
+}
+
+.header-action-icon {
+	display: none;
 }
 
 .header-action:hover:not(:disabled) {
@@ -1973,6 +2024,7 @@ summary.disclosure-row {
 	align-items: center;
 	justify-content: center;
 	flex: none;
+	flex-shrink: 0;
 	width: 24px;
 	height: 24px;
 	padding: 0;
@@ -2532,7 +2584,49 @@ summary.disclosure-row {
    it is the same server for the whole session — so it steps aside rather than squeezing the title
    into an ellipsis, and only a problem still speaks. */
 @media (max-width: 640px) {
-	.connection:not(.error) {
+	/* The token pair is the long figure. Percent and cost stay; the full line remains on the meter's
+	   aria-label. The connection stays: it is only a dot and a short state. */
+	#meter-tokens {
 		display: none;
+	}
+
+	/* The full labels (Compact context, Fork, Session tools) no longer fit beside the approval
+	   count. The icon stays; the words remain on the button's title and aria-label. */
+	.header-action {
+		width: 24px;
+		padding: 0;
+	}
+
+	.header-action-label {
+		display: none;
+	}
+
+	.header-action-icon {
+		display: block;
+	}
+}
+
+/* Desktop widths keep the session name well above the 6em floor. The meter and the connection
+   absorb the squeeze first. */
+@media (min-width: 1024px) {
+	.crumbs {
+		min-width: 12em;
+	}
+}
+
+/* Full action labels plus the approval count and the connection no longer fit once the sidebar has
+   narrowed this header (a 1024 viewport) or the viewport itself is around 800. 1280 stays labeled. */
+@container (max-width: 840px) {
+	.header-action {
+		width: 24px;
+		padding: 0;
+	}
+
+	.header-action-label {
+		display: none;
+	}
+
+	.header-action-icon {
+		display: block;
 	}
 }
