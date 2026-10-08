@@ -1,9 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { installCodingAgentConsumer, packReleasePackages } from "../../../scripts/coding-agent-consumer.mjs";
-import { getPublicWorkspacePackages } from "../../../scripts/release-packages.mjs";
+import { createPackageArtifacts, installPackageArtifacts } from "../../../scripts/package-artifacts.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const outputDirectory = process.argv[2];
@@ -12,25 +10,26 @@ if (!outputDirectory || process.argv.length !== 3) {
 }
 
 const evalPackage = JSON.parse(readFileSync(join(repositoryRoot, "packages/evals/package.json"), "utf8"));
-const tarballs = packReleasePackages(getPublicWorkspacePackages(), join(outputDirectory, "tarballs"));
-const evaluatorDependencies = Object.entries(evalPackage.devDependencies).filter(([name]) => !tarballs.has(name));
-const installDirectory = join(outputDirectory, "install");
-installCodingAgentConsumer(installDirectory, tarballs);
-execFileSync(
-	"npm",
-	[
-		"install",
-		"--ignore-scripts",
-		"--omit=dev",
-		"--no-audit",
-		"--no-fund",
-		"--no-save",
-		...evaluatorDependencies.map(([name, version]) => `${name}@${version}`),
-	],
-	{ cwd: installDirectory, stdio: "inherit" },
+const packageNames = ["@amazme/coding-agent"];
+const artifacts = createPackageArtifacts({
+	repoRoot: repositoryRoot,
+	directory: join(outputDirectory, "tarballs"),
+	packageNames,
+});
+const evaluatorDependencies = Object.fromEntries(
+	Object.entries(evalPackage.devDependencies).filter(([name]) => !artifacts.has(name)),
 );
+const installDirectory = join(outputDirectory, "install");
+installPackageArtifacts({
+	artifacts,
+	directory: installDirectory,
+	packageNames,
+	dependencies: evaluatorDependencies,
+	overrides: JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8")).overrides,
+	dependencyLock: JSON.parse(readFileSync(join(repositoryRoot, "package-lock.json"), "utf8")),
+});
 
-for (const packageName of tarballs.keys()) {
+for (const packageName of artifacts.keys()) {
 	if (packageName === "@amazme/coding-agent") continue;
 	const packageDirectory = join(installDirectory, "node_modules", ...packageName.split("/"));
 	if (!existsSync(packageDirectory)) continue;

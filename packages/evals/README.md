@@ -1,6 +1,6 @@
-# Pi evals
+# AmazMe evals
 
-Behavioral evals for Pi's coding agent, built with `vitest-evals`.
+Behavioral evals for AmazMe's coding agent, built with `vitest-evals`.
 
 ## File conventions
 
@@ -70,14 +70,22 @@ npm run eval:docs -w packages/evals -- -t "adds the model"
 
 The runner:
 
-1. Mounts the repository ephemerally for a Docker build, packs the current workspace packages using the repository's consumer-install machinery, then creates separate `without_docs` and `with_docs` images from the staged runtime.
+1. Mounts the repository ephemerally for a Docker build, packs the coding agent's runtime dependency closure with `scripts/package-artifacts.mjs`, verifies packed exports and artifact integrity, and installs those exact tarballs before creating the separate `without_docs` and `with_docs` images.
 2. Discovers the selected cases in both images and requires identical cohorts.
 3. Plans every `(case, variant, model, runNumber)` arm before execution.
 4. Runs each arm in a fresh container. A failed or missing arm is recorded and the planned cohort continues.
 5. Reads native Vitest JSON through `@vitest-evals/core/node` when a report exists.
 6. Pairs exact arms and writes the comparison report. Blocked pairs withhold headline lift; the process exits nonzero.
 
-Repetition order alternates by run number to reduce order bias.
+Repetition order alternates by run number to reduce order bias. Packing and installation disable lifecycle scripts. The installer prunes the repository lockfile to the selected runtime and evaluator dependencies and uses `npm ci`, preserving the tested external dependency versions. Installation verifies local resolutions, versions and integrity in the consumer lockfile; a missing built entry or a registry copy of an internal package fails before model evaluation.
+
+The keyless engineering checks use real npm packing and offline installation of isolated fixture packages:
+
+```bash
+npm run test:engineering
+npm run build --workspace @amazme/evals
+npm test --workspace @amazme/evals
+```
 
 ## Documentation variants
 

@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"clean": "shx rm -rf .eval",
+		"build": "tsc -p tsconfig.json",
 		"eval": "npm run eval:host && npm run eval:docs --",
 		"eval:host": "vitest run --config vitest.evals.config.ts --project host",
 		"eval:docs": "node --experimental-strip-types src/cli.ts",
@@ -13,6 +14,7 @@
 	"devDependencies": {
 		"@amazme/ai": "^1.1.0",
 		"@amazme/coding-agent": "^1.1.0",
+		"@amazme/tui": "^1.1.0",
 		"@types/node": "22.19.19",
 		"@vitest-evals/core": "0.15.0",
 		"autoevals": "0.3.0",

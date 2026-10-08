@@ -10,6 +10,7 @@ import {
 	createAgentSessionFromServices,
 } from "@amazme/coding-agent";
 import { Levenshtein } from "autoevals";
+import type { ProgramStatus, Terminal } from "@amazme/tui";
 import { createJudge, describeEval } from "vitest-evals";
 import { createPiDocumentationEvalHarness, type PiCodingAgentInput } from "../src/harness.ts";
 
@@ -21,7 +22,7 @@ const CONTEXT_FIXTURES = [
 	{ percent: 120, expectedBar: "██████████ 100%" },
 ] as const;
 
-class RecordingTerminal {
+class RecordingTerminal implements Terminal {
 	readonly columns = 100;
 	readonly rows = 30;
 	readonly kittyProtocolActive = true;
@@ -50,6 +51,7 @@ class RecordingTerminal {
 	clearScreen(): void {}
 	setTitle(_title: string): void {}
 	setProgress(_active: boolean): void {}
+	setProgramStatus(_status: ProgramStatus): void {}
 
 	requestResize(): void {
 		this.resizeHandler?.();
