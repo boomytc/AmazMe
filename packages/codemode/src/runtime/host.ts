@@ -197,7 +197,12 @@ class Execution {
 		};
 		let worker: Worker;
 		try {
-			worker = new Worker(options.workerUrl, { workerData });
+			// File workers cannot inherit the parent's string-input mode; retain loaders and source conditions.
+			const execArgv = process.execArgv.filter(
+				(argument, index, args) =>
+					argument !== "--input-type" && !argument.startsWith("--input-type=") && args[index - 1] !== "--input-type",
+			);
+			worker = new Worker(options.workerUrl, { workerData, execArgv });
 		} catch (error) {
 			this.finish({ kind: "sandbox", message: `Failed to start worker: ${errorMessage(error)}` });
 			return;
