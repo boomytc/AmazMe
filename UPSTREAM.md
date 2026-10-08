@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-对齐到 pi 提交 `0cf65d2bf`（2026-10-06），包含 v1.0.4 的全部内容。该基线之后的提交已逐条核对到 pi `592fb57b7`（origin/main 顶端，2026-10-07），处置见下表。
+对齐到 pi 提交 `0cf65d2bf`（2026-10-06），包含 v1.0.4 的全部内容。该基线之后的提交已逐条核对到 pi `1cedd3272`（origin/main 顶端，2026-10-08，发布 v1.1.0），处置见下表。
 
 基线之后已处理的提交（按 pi 提交顺序）：
 
@@ -51,6 +51,19 @@
 | `b30a6dd77` | 图片压缩的 worker 回复加 `type` 标记，忽略 Node 自己在 worker 通道发的消息（`node --watch` 下图片曾被当作「无法压缩」丢弃） | 吸收 |
 | `adae82464` | `docs/providers.md` 记录 azure provider id、Foundry 模型与 deployment 映射 | 吸收 |
 | `592fb57b7` | Termux 报告的平台是 `android`，剪贴板读写与 Termux:API 提示按此识别 | 吸收 |
+| `27c7b6ff4` | 跨输出块切开的 ANSI 序列在 bash 结果里被剥掉 | 吸收，保留本地 `backgrounded` 提前返回 |
+| `f10993bc7` | MCP OAuth 登录可取消，关闭时不再刷新令牌 | 吸收 |
+| `503c60552` | 用 OSC 7501 报告程序状态 | 吸收，环境变量记为 `AMAZME_PROGRAM_STATUS` |
+| `f76c1db66` | 增加 Claude Haiku 5.5 | 吸收 |
+| `943a10e74` | 各模型目录保留按提示长度分档的价格 | 吸收 |
+| `dce4ae6f7` | 为 v1.1.0 核对 changelog | 吸收已落地条目；不写入仍暂缓的 `--tools +name`/`-name` 和 Bedrock OpenAI 推理档 |
+| `a2eef9eb6` | 固定 Kimi K3 的 Moonshot 价格，并期望 Haiku 5.5 使用自适应思考 | 吸收 |
+| `70759f48b` | 处理 npm audit：`shx` 从 0.4.0 降到 0.3.4 | 吸收，`@amazme/gui` 的同一依赖一并降级 |
+| `e91631070` | 测试改为等待流和 watcher 事件，不再固定 sleep | 吸收 |
+| `bf8d9c659` | 发布脚本可以跳过测试 | 跳过，本仓库没有根 `scripts/release.mjs`，也没有 `.pi/skills` |
+| `abe508e1b` | 发布 v1.1.0 | 吸收共享包的版本号和 changelog 分段；`@amazme/web` 与 `@amazme/gui` 仍是 1.0.4 |
+| `75a99721d` | 为下一轮补上 `[Unreleased]` | 吸收 |
+| `1cedd3272` | `showHardwareCursor` 打开时只使用终端光标 | 吸收，不覆盖 tui 里已有的指针离开和行首行尾改动 |
 
 ## 刻意偏离
 
