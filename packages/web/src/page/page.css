@@ -1063,6 +1063,38 @@ p {
 	font-style: italic;
 }
 
+.tool-result-meta, .tool-result-heading {
+	margin: 8px 0 8px 24px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	font-size: 12px;
+	color: var(--text-3);
+}
+.tool-result-tag { padding: 2px 6px; border-radius: var(--radius-xs); background: var(--hover); }
+.tool-result-path { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
+.tool-command, .tool-diff-code {
+	margin: 0 0 8px 24px; padding: 10px 12px; overflow: auto; max-height: 360px;
+	border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--code);
+	font: 12px/1.6 var(--font-mono); white-space: pre; color: var(--text-2);
+}
+.tool-diff-code { padding: 0; }
+.tool-diff-line { display: block; padding: 0 12px; min-width: max-content; }
+.tool-diff-line.addition { color: var(--diff-add); background: var(--diff-add-bg); }
+.tool-diff-line.removal { color: var(--danger); background: var(--danger-soft); }
+.tool-diff-line.context { color: var(--text-3); }
+.tool-diagnostic { margin: 4px 0 8px 24px; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+.tool-diagnostic.error { color: var(--danger); }
+.terminal-output { white-space: pre; overflow: auto; }
+.tool-images { margin: 8px 0 8px 24px; display: flex; flex-wrap: wrap; gap: 12px; }
+.tool-image { max-width: 100%; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; background: var(--code); cursor: zoom-in; }
+.tool-image img { display: block; max-width: 100%; max-height: 300px; object-fit: contain; }
+.tool-image-dialog { max-width: min(96vw, 1400px); max-height: 94vh; padding: 36px 16px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--raised); }
+.tool-image-dialog::backdrop { background: rgba(0,0,0,.65); }
+.tool-image-dialog > img { display: block; max-width: 100%; max-height: 80vh; object-fit: contain; }
+.tool-image-close { position: absolute; top: 8px; right: 8px; border: 0; background: var(--hover); color: var(--text); padding: 4px; border-radius: var(--radius-xs); cursor: pointer; }
+
 /* Reasoning: a quiet block with a rule down its left edge, in the tertiary ink. */
 .reasoning-body {
 	margin: 2px 0 8px 23px;

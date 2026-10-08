@@ -978,14 +978,14 @@ export function createRenderer(
 	};
 
 	/** Writes an answer's text to the clipboard; the control shows the outcome for a moment. */
-	const copyAnswer = (control: HTMLButtonElement, text: string): void => {
+	const copyAnswer = (control: HTMLButtonElement, text: string, label: MessageKey = "copy.copy"): void => {
 		const show = (key: MessageKey, glyph: IconName): void => {
 			control.title = copy(key);
 			control.setAttribute("aria-label", copy(key));
 			control.replaceChildren(icon(glyph));
 			window.setTimeout(() => {
-				control.title = copy("copy.copy");
-				control.setAttribute("aria-label", copy("copy.copy"));
+				control.title = copy(label);
+				control.setAttribute("aria-label", copy(label));
 				control.replaceChildren(icon("copy"));
 			}, 1200);
 		};
@@ -1093,10 +1093,51 @@ export function createRenderer(
 		return line;
 	};
 
-	/** A tool call: running starts open, settled starts folded. The row is the short args digest; the body keeps those args and the result. */
+	const showImage = (source: string, alt: string): void => {
+		const dialog = document.createElement("dialog");
+		dialog.className = "tool-image-dialog";
+		dialog.setAttribute("aria-label", copy("tool.viewImage"));
+		const close = button("tool-image-close");
+		close.setAttribute("aria-label", copy("tool.closeImage"));
+		close.append(icon("x"));
+		close.addEventListener("click", () => dialog.close());
+		const image = document.createElement("img");
+		image.src = source;
+		image.alt = alt;
+		dialog.append(close, image);
+		dialog.addEventListener("close", () => dialog.remove(), { once: true });
+		dialog.addEventListener("click", event => { if (event.target === dialog) dialog.close(); });
+		document.body.append(dialog);
+		dialog.showModal();
+	};
+
+	/** A persisted file change. Line numbers and signs come from the recorded diff, not a preview. */
+	const diffElement = (diff: NonNullable<NonNullable<TranscriptBlock["result"]>["diff"]>): HTMLElement => {
+		const container = element("section", "tool-diff");
+		const header = element("div", "tool-result-heading", diff.label);
+		if (diff.path) header.append(element("span", "tool-result-path", diff.path));
+		if (diff.patch) {
+			const control = button("message-action");
+			control.setAttribute("aria-label", copy("tool.copyPatch"));
+			control.title = copy("tool.copyPatch");
+			control.append(icon("copy"));
+			control.addEventListener("click", () => copyAnswer(control, diff.patch ?? "", "tool.copyPatch"));
+			header.append(control);
+		}
+		const code = element("pre", "tool-diff-code");
+		for (const line of diff.text.split("\n")) {
+			const tone = line.startsWith("+") ? "addition" : line.startsWith("-") ? "removal" : "context";
+			code.append(element("span", `tool-diff-line ${tone}`, line || " "));
+		}
+		container.append(header, code);
+		return container;
+	};
+
+	/** A tool call: the requested arguments and its executed output have separate presentation. */
 	const toolElement = (block: TranscriptBlock): HTMLElement => {
 		const tone = block.running ? "running" : block.tone === "error" ? "error" : "";
 		const details = disclosure(block, tone, block.running);
+		details.dataset.blockId = String(block.id);
 		const digest = block.toolArgs?.collapsed;
 		const summary = digest !== undefined && digest.length > 0 ? digest : firstLine(block.text);
 		const mark = block.running ? icon("spinner", "icon spin") : block.tone === "error" ? icon("alert") : icon("wrench");
@@ -1104,11 +1145,41 @@ export function createRenderer(
 		if (block.toolArgs !== undefined && block.toolArgs.expanded.length > 0) {
 			details.append(element("div", "tool-args", block.toolArgs.expanded));
 		}
+		if (block.result !== undefined) {
+			const meta = element("div", "tool-result-meta");
+			for (const label of [block.result.nested, block.result.status, block.result.duration, block.result.terminal?.exit]) {
+				if (label) meta.append(element("span", "tool-result-tag", label));
+			}
+			details.append(meta);
+			const terminal = block.result.terminal;
+			if (terminal?.command) {
+				const command = element("pre", "tool-command", terminal.command);
+				if (terminal.cwd) command.title = terminal.cwd;
+				details.append(command);
+			}
+			if (block.result.diff) details.append(diffElement(block.result.diff));
+		}
 		if (block.text.length > 0) {
-			details.append(element("div", "tool-output", block.text));
-		} else if (!block.running) {
+			details.append(element("div", block.result?.terminal === undefined ? "tool-output" : "tool-output terminal-output", block.text));
+		} else if (!block.running && (block.images?.length ?? 0) === 0) {
 			details.append(element("div", "tool-output empty", copy("tool.noOutput")));
 		}
+		if (block.images && block.images.length > 0) {
+			const gallery = element("div", "tool-images");
+			for (const item of block.images) {
+				const control = button("tool-image");
+				control.setAttribute("aria-label", copy("tool.viewImage"));
+				const image = document.createElement("img");
+				image.src = item.dataUrl;
+				image.alt = item.alt;
+				image.loading = "lazy";
+				control.append(image);
+				control.addEventListener("click", () => showImage(item.dataUrl, item.alt));
+				gallery.append(control);
+			}
+			details.append(gallery);
+		}
+		for (const diagnostic of block.result?.diagnostics ?? []) details.append(element("p", `tool-diagnostic ${diagnostic.tone}`, diagnostic.text));
 		return details;
 	};
 

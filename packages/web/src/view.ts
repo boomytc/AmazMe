@@ -7,7 +7,7 @@
  * vocabulary: a tool name, a model name, and a reasoning level are data, while a status line or a
  * block title is copy.
  */
-import type { AssistantMessage, Message, ToolCall, ToolResultMessage, UserMessage } from "@amazme/ai";
+import type { AssistantMessage, Message, ToolCall, UserMessage } from "@amazme/ai";
 import {
 	AssistantEntry,
 	CompactionEntry,
@@ -18,6 +18,7 @@ import {
 	type LiveState,
 	ResetEntry,
 	ToolResultEntry,
+	NestedToolResultEntry,
 	UserEntry,
 } from "@amazme/durable";
 import {
@@ -42,6 +43,8 @@ import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panel
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
 import { type MessageKey, thinkingLevelCopy, translate } from "./strings.ts";
 import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
+import { toolImages, toolOutputText, toolResultView } from "./tool-results.ts";
+import type { ToolOutcome, ToolResultView } from "./tool-results.ts";
 
 export type BlockTone = "plain" | "muted" | "error";
 
@@ -65,6 +68,8 @@ export interface TranscriptBlock {
 		readonly dataUrl: string;
 		readonly alt: string;
 	}[];
+	/** Executed output metadata, separate from the requested arguments. */
+	readonly result?: ToolResultView;
 	/** An answer's rating controls, and the rating it already carries. */
 	readonly feedback?: FeedbackControls;
 	readonly tone: BlockTone;
@@ -922,12 +927,6 @@ function failureNotice(locale: Locale, message: AssistantMessage): { title: stri
 	return undefined;
 }
 
-function toolResultText(locale: Locale, message: ToolResultMessage): string {
-	const text = messageText(message.content, "\n\n").trim();
-	if (text.length > 0) return text;
-	return translate(locale, message.isError ? "tool.errorText" : "tool.noOutput");
-}
-
 function queuedItemText(locale: Locale, item: InboxState["items"][number]): string {
 	const body = item.mode === "write" ? `<${String(item.entry.kind)}>` : userText(item.content as UserMessage["content"]).replace(/\s+/g, " ");
 	const mode =
@@ -943,16 +942,36 @@ function textOf(entry: EntryRecord): Message | undefined {
 	return entry.model?.[0];
 }
 
-/** The tool results one set of entries carries, so a call can find what it answered with. */
-function toolResults(entries: readonly EntryRecord[]): Map<string, ToolResultMessage> {
-	const results = new Map<string, ToolResultMessage>();
+function toolKey(entry: EntryRecord, callId: string): string {
+	return `tool:${entry.byTaskId === undefined ? `entry:${entry.id}` : `generation:${entry.byTaskId}`}:${callId}`;
+}
+
+interface ToolResults {
+	readonly outcomes: Map<string, ToolOutcome>;
+	readonly orphans: Set<EntryId>;
+}
+
+/** Match chronological call/result pairs, including providers that reuse IDs in later turns. */
+function toolResults(entries: readonly EntryRecord[]): ToolResults {
+	const outcomes = new Map<string, ToolOutcome>();
+	const orphans = new Set<EntryId>();
+	const pending = new Map<string, string[]>();
 	for (const entry of entries) {
-		if (entry.kind !== ToolResultEntry.kind) continue;
 		const message = textOf(entry);
-		if (message?.role !== "toolResult") continue;
-		results.set(message.toolCallId, message);
+		if (entry.kind === AssistantEntry.kind && message?.role === "assistant") {
+			pending.clear();
+			for (const call of toolCallText(message)) {
+				const queue = pending.get(call.id) ?? [];
+				queue.push(toolKey(entry, call.id));
+				pending.set(call.id, queue);
+			}
+		} else if (ToolResultEntry.is(entry) && message?.role === "toolResult") {
+			const key = pending.get(message.toolCallId)?.shift();
+			if (key === undefined) orphans.add(entry.id);
+			else outcomes.set(key, { ...message, diagnostics: entry.data?.diagnostics ?? [] });
+		}
 	}
-	return results;
+	return { outcomes, orphans };
 }
 
 /**
@@ -962,7 +981,7 @@ function toolResults(entries: readonly EntryRecord[]): Map<string, ToolResultMes
 function entryBlocks(
 	locale: Locale,
 	entries: readonly EntryRecord[],
-	results: Map<string, ToolResultMessage>,
+	results: ToolResults,
 	blocks: TranscriptBlock[],
 	live: LiveCalls = EMPTY_LIVE_CALLS,
 	feedback: readonly FeedbackRecordLike[] | undefined = undefined,
@@ -1034,10 +1053,25 @@ function entryBlocks(
 							running: false,
 						});
 					}
-					// Only a tool-calling answer runs its calls; an aborted, failed, or truncated one never does.
+					// A recorded result proves execution; an unmatched interrupted call was not run.
 					for (const call of toolCallText(message)) {
-						pushToolBlock(locale, call, message.stopReason === "toolUse", false, results, blocks, live);
+						pushToolBlock(locale, call, toolKey(entry, call.id), message.stopReason === "toolUse", false, results.outcomes, blocks, live);
 					}
+				}
+				break;
+			case NestedToolResultEntry.kind:
+				if (NestedToolResultEntry.is(entry)) {
+					const { call, result, durationMs } = entry.data;
+					const outcome: ToolOutcome = { ...result, content: result.content ?? [], durationMs };
+					pushToolBlock(locale, call, `tool:task:${entry.byTaskId ?? `entry:${entry.id}`}:${call.id}`, true, false,
+						new Map(), blocks, EMPTY_LIVE_CALLS, outcome, true);
+				}
+				break;
+			case ToolResultEntry.kind:
+				if (results.orphans.has(entry.id) && message?.role === "toolResult") {
+					const outcome: ToolOutcome = { ...message, diagnostics: ToolResultEntry.is(entry) ? entry.data?.diagnostics ?? [] : [] };
+					pushToolBlock(locale, { type: "toolCall", id: message.toolCallId, name: message.toolName, arguments: {} },
+						`tool:result:${entry.id}`, true, false, new Map(), blocks, EMPTY_LIVE_CALLS, outcome);
 				}
 				break;
 			case CompactionEntry.kind:
@@ -1078,22 +1112,26 @@ const EMPTY_LIVE_CALLS: LiveCalls = { running: new Set(), output: new Map() };
 function pushToolBlock(
 	locale: Locale,
 	call: ToolCall,
+	key: string,
 	ran: boolean,
 	streaming: boolean,
-	results: Map<string, ToolResultMessage>,
+	results: Map<string, ToolOutcome>,
 	blocks: TranscriptBlock[],
 	live: LiveCalls = EMPTY_LIVE_CALLS,
+	outcome?: ToolOutcome,
+	nested = false,
 ): void {
-	const result = results.get(call.id);
-	const running = result === undefined && (streaming || live.running.has(call.id));
-	const text = result !== undefined ? toolResultText(locale, result) : running ? (live.output.get(call.id) ?? "") : ran ? "" : translate(locale, "tool.notRun");
+	const result = outcome ?? results.get(key);
+	const running = result === undefined && (streaming || live.running.has(key));
+	const text = result !== undefined ? toolOutputText(locale, result) : running ? (live.output.get(key) ?? "") : ran ? "" : translate(locale, "tool.notRun");
 	const toolArgs = toolArgsView(call.arguments);
 	blocks.push({
-		id: `tool:${call.id}`,
+		id: key,
 		kind: "tool",
 		title: call.name,
 		text,
 		...(toolArgs === undefined ? {} : { toolArgs }),
+		...(result === undefined ? {} : { result: toolResultView(locale, call.name, call.arguments, result, nested), images: toolImages(result.content) }),
 		tone: result?.isError === true ? "error" : "plain",
 		running,
 	});
@@ -1123,9 +1161,15 @@ export function transcriptBlocks(
 	if (view === undefined) return blocks;
 	const results = toolResults(view.entries);
 	const live = liveOf(view);
+	const current = view.entries.findLast(entry => entry.kind === AssistantEntry.kind &&
+		(live.run?.taskId === undefined ? live.generation === undefined : entry.byTaskId === live.run.taskId));
+	const keyOf = (callId: string): string => current !== undefined ? toolKey(current, callId)
+		: `tool:${live.run?.taskId === undefined ? "live" : `generation:${live.run.taskId}`}:${callId}`;
+	const slotKey = (slot: NonNullable<LiveState["tools"]>[number]): string => slot.parentCallId === undefined
+		? keyOf(slot.callId) : `tool:task:${slot.taskId ?? "live"}:${slot.callId}`;
 	const calls: LiveCalls = {
-		running: new Set((live.tools ?? []).filter((slot) => slot.status === "running").map((slot) => slot.callId)),
-		output: new Map((live.tools ?? []).map((slot) => [slot.callId, slot.output ?? ""])),
+		running: new Set((live.tools ?? []).filter(slot => slot.status === "running").map(slotKey)),
+		output: new Map((live.tools ?? []).map(slot => [slotKey(slot), slot.output ?? ""])),
 	};
 	entryBlocks(locale, view.entries, results, blocks, calls, feedback, scope);
 
@@ -1140,15 +1184,15 @@ export function transcriptBlocks(
 			running: true,
 		});
 		for (const call of toolCallText(partial)) {
-			if (blocks.some((block) => block.id === `tool:${call.id}`)) continue;
-			pushToolBlock(locale, call, true, true, results, blocks, calls);
+			if (blocks.some((block) => block.id === keyOf(call.id))) continue;
+			pushToolBlock(locale, call, keyOf(call.id), true, true, results.outcomes, blocks, calls);
 		}
 	}
 	for (const slot of live.tools ?? []) {
 		if (slot.status !== "running") continue;
-		if (blocks.some((block) => block.id === `tool:${slot.callId}`)) continue;
+		if (blocks.some((block) => block.id === slotKey(slot))) continue;
 		blocks.push({
-			id: `tool:${slot.callId}`,
+			id: slotKey(slot),
 			kind: "tool",
 			title: slot.name,
 			text: slot.output ?? "",
