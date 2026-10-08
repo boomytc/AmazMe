@@ -261,9 +261,10 @@ describe("web view model", () => {
 		]);
 		const named = rosterItems("en", directory, "alpha-1", NOW, "week");
 		expect(named.map((item) => [item.id, item.label, item.attached])).toEqual([["alpha-1", "Weekly report", true]]);
-		expect(rosterItems("en", directory, undefined, NOW).map((item) => item.label)).toEqual(["Weekly report", "beta-2"]);
+		expect(rosterItems("en", directory, undefined, NOW).map((item) => item.label)).toEqual(["Weekly report", "New session"]);
 		expect(attachedSessionLabel(directory, "alpha-1")).toBe("Weekly report");
-		expect(attachedSessionLabel(directory, "beta-2")).toBe("beta-2");
+		expect(attachedSessionLabel(directory, "beta-2")).toBe("New session");
+		expect(attachedSessionLabel(directory, "beta-2", "zh")).toBe("新会话");
 		expect(buildWebView({
 			locale: "en",
 			submitMode: "followUp",

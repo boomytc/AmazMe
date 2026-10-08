@@ -92,6 +92,22 @@ describe("Session worker lifecycle", () => {
 		lifecycle.close();
 	});
 
+	test("server inspection preserves the initial attachment grace without creating demand", () => {
+		vi.useFakeTimers();
+		const { lifecycle, retire } = createLifecycle();
+		expect(() => lifecycle.beginServerRequest("stale")).toThrow(/stale server generation/);
+		const release = lifecycle.beginServerRequest(GENERATION);
+		release();
+		expect(retire).not.toHaveBeenCalled();
+		const hold = lifecycle.beginServerRequest(GENERATION);
+		vi.advanceTimersByTime(100);
+		expect(retire).not.toHaveBeenCalled();
+		hold();
+		expect(retire).toHaveBeenCalledOnce();
+		expect(() => lifecycle.beginServerRequest(GENERATION)).toThrow(/retiring/);
+		lifecycle.close();
+	});
+
 	test("rejects requests from stale generations and attachments", () => {
 		vi.useFakeTimers();
 		const { lifecycle } = createLifecycle();

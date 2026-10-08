@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** One server-hosted Session: a directory holding `meta.json` and the worker-owned `session.sqlite`. */
@@ -15,6 +15,8 @@ export interface SessionCatalogMetadata {
 	 * the roster can show it without opening the durable session.
 	 */
 	readonly name?: string;
+	/** Explicit renames, including clearing a name, must never be overwritten automatically. */
+	readonly nameSource?: "manual" | "automatic";
 }
 
 /**
@@ -34,11 +36,12 @@ export function mergeTrackedSession(
 	worker: SessionCatalogMetadata,
 ): SessionCatalogMetadata {
 	const name = normalizeSessionName(catalog?.name ?? "");
-	if (name.length === 0) {
-		const { name: _name, ...rest } = worker;
-		return rest;
-	}
-	return { ...worker, name };
+	const { name: _name, nameSource: _nameSource, ...rest } = worker;
+	return {
+		...rest,
+		...(name.length === 0 ? {} : { name }),
+		...(catalog?.nameSource === undefined ? {} : { nameSource: catalog.nameSource }),
+	};
 }
 
 const METADATA_FILE = "meta.json";
@@ -78,10 +81,22 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 		return undefined;
 	}
 	if (typeof value !== "object" || value === null) return undefined;
-	const { createdAt, cwd, name } = value as { createdAt?: unknown; cwd?: unknown; name?: unknown };
+	const { createdAt, cwd, name, nameSource } = value as {
+		createdAt?: unknown;
+		cwd?: unknown;
+		name?: unknown;
+		nameSource?: unknown;
+	};
 	if (typeof createdAt !== "number" || typeof cwd !== "string") return undefined;
 	const display = typeof name === "string" ? normalizeSessionName(name) : "";
-	return { id, createdAt, cwd, path, ...(display.length === 0 ? {} : { name: display }) };
+	return {
+		id,
+		createdAt,
+		cwd,
+		path,
+		...(display.length === 0 ? {} : { name: display }),
+		...(nameSource === "manual" || nameSource === "automatic" ? { nameSource } : {}),
+	};
 }
 
 /** Create an empty Session. Its worker creates the storage on first open. */
@@ -115,7 +130,12 @@ export async function createSession(
  * Set or clear the display name `/name` reads. An empty name removes it. The transcript is left
  * alone: the roster reads this file, and the terminal mirror copies the name when it is rewritten.
  */
-export async function writeSessionName(sessionDir: string, id: string, name: string): Promise<SessionCatalogMetadata> {
+export async function writeSessionName(
+	sessionDir: string,
+	id: string,
+	name: string,
+	nameSource: "manual" | "automatic" = "manual",
+): Promise<SessionCatalogMetadata> {
 	const current = await readSession(sessionDir, id);
 	if (current === undefined) throw new Error(`Unknown session: ${id}`);
 	const display = normalizeSessionName(name);
@@ -124,17 +144,30 @@ export async function writeSessionName(sessionDir: string, id: string, name: str
 		createdAt: current.createdAt,
 		cwd: current.cwd,
 		path: current.path,
+		nameSource,
 		...(display.length === 0 ? {} : { name: display }),
 	};
-	await writeFile(join(current.path, METADATA_FILE), `${JSON.stringify(metadataFile(metadata), null, "\t")}\n`);
+	const temporary = join(current.path, `${METADATA_FILE}.${randomUUID()}.tmp`);
+	try {
+		await writeFile(temporary, `${JSON.stringify(metadataFile(metadata), null, "\t")}\n`);
+		await rename(temporary, join(current.path, METADATA_FILE));
+	} finally {
+		await rm(temporary, { force: true });
+	}
 	return metadata;
 }
 
-function metadataFile(metadata: SessionCatalogMetadata): { createdAt: number; cwd: string; name?: string } {
+function metadataFile(metadata: SessionCatalogMetadata): {
+	createdAt: number;
+	cwd: string;
+	name?: string;
+	nameSource?: "manual" | "automatic";
+} {
 	return {
 		createdAt: metadata.createdAt,
 		cwd: metadata.cwd,
 		...(metadata.name === undefined ? {} : { name: metadata.name }),
+		...(metadata.nameSource === undefined ? {} : { nameSource: metadata.nameSource }),
 	};
 }
 

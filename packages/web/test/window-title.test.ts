@@ -146,8 +146,8 @@ describe("windowTitle", () => {
 				attachedId: "beta-2",
 			}),
 		);
-		expect(unnamed.sessionLabel).toBe("beta-2");
-		expect(titleFromView(unnamed)).toBe("beta-2 — AmazMe");
+		expect(unnamed.sessionLabel).toBe("New session");
+		expect(titleFromView(unnamed)).toBe("New session — AmazMe");
 
 		const detached = buildWebView(input({ attachedId: undefined, directory: undefined }));
 		expect(detached.sessionLabel).toBeUndefined();
@@ -233,7 +233,7 @@ describe("composer placeholder", () => {
 				}),
 			),
 		);
-		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Send a task to beta-2");
+		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Send a task to New session");
 
 		renderer.render(buildWebView(input({ attachedId: undefined, directory: undefined })));
 		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("No session attached");

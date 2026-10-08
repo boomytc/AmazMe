@@ -39,7 +39,7 @@ import { Skills, type Skills as SkillsService } from "../src/experimental/servic
 import { Transcript } from "../src/experimental/services/transcript.ts";
 import { runClient } from "../src/experimental/client.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import { writeSessionName } from "../src/experimental/session-catalog.ts";
+import { listSessions, readSession, writeSessionName } from "../src/experimental/session-catalog.ts";
 import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
 
 interface Presentation {
@@ -209,6 +209,85 @@ afterEach(async () => {
 });
 
 describe("web client interactive loop", () => {
+	test("reuses the latest empty session across concurrent tabs and creates after input", async () => {
+		const { host, sessionDir } = await startHostWithDirectories();
+		const first = await openPresentation(host);
+		const second = await openPresentation(host);
+		const initial = await first.management.create({ reuseEmpty: true }, BACKGROUND_CONTEXT);
+		const attached = await attachSession(first, initial.sessionId);
+		await first.management.rename(initial.sessionId, "empty but named", BACKGROUND_CONTEXT);
+		const reused = await Promise.all([
+			first.management.create({ reuseEmpty: true }, BACKGROUND_CONTEXT),
+			second.management.create({ reuseEmpty: true }, BACKGROUND_CONTEXT),
+		]);
+		expect(reused.map((session) => session.sessionId)).toEqual([initial.sessionId, initial.sessionId]);
+		expect(await listSessions(sessionDir)).toHaveLength(1);
+		const submitted = await attached.controller.prompt({ message: "first input", images: null }, BACKGROUND_CONTEXT);
+		expect(submitted.accepted).toBe(true);
+		await waitFor(() => sawUserText(attached.transcript.state.value, "first input"), "committed input before new session");
+		const next = await first.management.create({ reuseEmpty: true }, BACKGROUND_CONTEXT);
+		expect(next.sessionId).not.toBe(initial.sessionId);
+		expect((await second.management.create({ reuseEmpty: true }, BACKGROUND_CONTEXT)).sessionId).toBe(next.sessionId);
+		// Explicit creation remains independent for programmatic callers.
+		const explicit = await first.management.create({ id: "explicit-independent" }, BACKGROUND_CONTEXT);
+		expect(explicit.sessionId).toBe("explicit-independent");
+		await attached.dispose();
+		await first.dispose();
+		await second.dispose();
+	}, 180_000);
+
+	test("automatically names committed first input and preserves manual renames in both tabs", async () => {
+		const { host } = await startHostWithDirectories();
+		const first = await openPresentation(host);
+		const second = await openPresentation(host);
+		const created = await first.management.create({ id: "auto-title" }, BACKGROUND_CONTEXT);
+		const attached = await attachSession(first, created.sessionId);
+		const submitted = await attached.controller.prompt({ message: "修复登录\n  保持会话", images: null }, BACKGROUND_CONTEXT);
+		expect(submitted.accepted).toBe(true);
+		await waitFor(() => second.directory.state.value?.sessions.find((session) => session.sessionId === created.sessionId)?.name === "修复登录 保持会话", "automatic title replicated to another tab");
+		const mirror = (await SessionManager.listAll()).find((session) => session.id === created.sessionId);
+		expect(mirror).toBeDefined();
+		expect(SessionManager.open(mirror!.path).getSessionName()).toBe("修复登录 保持会话");
+		const renamed = await first.management.rename(created.sessionId, "人工名称", BACKGROUND_CONTEXT);
+		expect(renamed.sessionId).toBe(created.sessionId);
+		expect(SessionManager.open(mirror!.path).getSessionName()).toBe("人工名称");
+		expect(JSON.stringify(SessionManager.open(mirror!.path).getEntries())).toContain("修复登录");
+		await attached.controller.abort(BACKGROUND_CONTEXT);
+		await attached.dispose();
+		const reopened = await attachSession(second, created.sessionId);
+		await first.management.create({ id: "refresh-after-reopen" }, BACKGROUND_CONTEXT);
+		await waitFor(() => second.directory.state.value?.sessions.find((session) => session.sessionId === created.sessionId)?.name === "人工名称", "manual title after reopen");
+		await reopened.dispose();
+		await first.dispose();
+		await second.dispose();
+	}, 180_000);
+
+	test("an explicitly cleared name stays cleared after first input and worker restart", async () => {
+		const { host, directory, sessionDir } = await startHostWithDirectories();
+		const first = await openPresentation(host);
+		const created = await first.management.create({ id: "manually-cleared" }, BACKGROUND_CONTEXT);
+		await first.management.rename(created.sessionId, " ", BACKGROUND_CONTEXT);
+		const attached = await attachSession(first, created.sessionId);
+		expect(await attached.controller.prompt({ message: "must not become the title", images: null }, BACKGROUND_CONTEXT))
+			.toMatchObject({ accepted: true });
+		await waitFor(() => sawUserText(attached.transcript.state.value, "must not become the title"), "the first input");
+		await attached.controller.abort(BACKGROUND_CONTEXT);
+		await attached.dispose();
+		await first.dispose();
+		await host.close();
+		hosts.delete(host);
+		const restarted = await startWebHost({ port: 0, directory, sessionDir });
+		hosts.add(restarted);
+		const second = await openPresentation(restarted);
+		const reopened = await attachSession(second, created.sessionId);
+		await waitFor(() => sawUserText(reopened.transcript.state.value, "must not become the title"), "reopened history");
+		expect(second.directory.state.value?.sessions.find((session) => session.sessionId === created.sessionId)?.name).toBeUndefined();
+		expect(await readSession(sessionDir, created.sessionId)).toMatchObject({ nameSource: "manual" });
+		expect((await readSession(sessionDir, created.sessionId))?.name).toBeUndefined();
+		await reopened.dispose();
+		await second.dispose();
+	}, 180_000);
+
 	test(
 		"publishes the name /name stores onto the roster",
 		async () => {

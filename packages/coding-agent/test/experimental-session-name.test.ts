@@ -26,10 +26,12 @@ describe("session display names", () => {
 			expect((await readSession(dir, "s1"))?.name).toBe("first");
 			const renamed = await writeSessionName(dir, "s1", "weekly\nreport");
 			expect(renamed.name).toBe("weekly report");
+			expect((await readSession(dir, "s1"))?.nameSource).toBe("manual");
 			const file = JSON.parse(await readFile(join(created.path, "meta.json"), "utf8")) as { name?: string };
 			expect(file.name).toBe("weekly report");
 			const cleared = await writeSessionName(dir, "s1", "  ");
 			expect(cleared.name).toBeUndefined();
+			expect((await readSession(dir, "s1"))?.nameSource).toBe("manual");
 			const after = JSON.parse(await readFile(join(created.path, "meta.json"), "utf8")) as { name?: string };
 			expect(after.name).toBeUndefined();
 		} finally {
@@ -53,6 +55,8 @@ describe("session display names", () => {
 		expect(mergeTrackedSession({ ...catalog, name: undefined }, { ...nameless, name: "shipped" }).name).toBeUndefined();
 		expect(mergeTrackedSession(undefined, nameless).name).toBeUndefined();
 		expect(mergeTrackedSession({ ...catalog, name: undefined }, nameless).name).toBeUndefined();
+		expect(mergeTrackedSession({ ...nameless, nameSource: "manual" }, { ...catalog, nameSource: "automatic" }))
+			.toEqual({ ...nameless, nameSource: "manual" });
 	});
 
 	test("copies the name into the terminal mirror as session_info", async () => {

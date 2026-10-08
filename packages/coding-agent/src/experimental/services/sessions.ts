@@ -24,6 +24,8 @@ export interface SessionSummary extends SessionAddress {
 
 export interface SessionCreateOptions {
 	id?: string;
+	/** UI new-session intent: reuse the latest empty session in this workspace. Cannot accompany `id`. */
+	reuseEmpty?: boolean;
 }
 
 export interface SessionDirectoryState {

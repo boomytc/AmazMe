@@ -16,8 +16,10 @@ import { Check } from "typebox/value";
 import type { CoordinatorConnection, CoordinatorConnectionEvent } from "./coordinator.ts";
 import { spawnInternalProcess } from "./process.ts";
 import type { SessionCatalogMetadata } from "./session-catalog.ts";
+import { SessionLifecycle } from "./services/session-lifecycle.ts";
 import {
 	SESSION_WORKER_CONTROL_ADDRESS_ENV,
+	SESSION_INSPECTION_ATTACHMENT_ID,
 	SESSION_WORKER_CONTROL_TOKEN_ENV,
 	SESSION_WORKER_PEER_ID_ENV,
 	SESSION_WORKER_SESSION_KEY_ENV,
@@ -106,6 +108,7 @@ export class SessionWorkerManager {
 	readonly #pendingDemand = new Map<string, PendingDemand>();
 	readonly #pendingOperations = new Map<string, PendingWorkerOperation>();
 	readonly #serviceSubscriptions = new Map<string, WorkerServiceSubscription>();
+	readonly #titleListeners = new Set<(metadata: SessionCatalogMetadata, title: string) => void>();
 	readonly #removeListener: () => void;
 	readonly #onWorkerCountChanged: ((count: number) => void) | undefined;
 	#discoveryPeers?: Set<string>;
@@ -127,6 +130,11 @@ export class SessionWorkerManager {
 		this.#model = model;
 		this.#onWorkerCountChanged = onWorkerCountChanged;
 		this.#removeListener = coordinator.onEvent((event) => this.#handleCoordinatorEvent(event));
+	}
+
+	onSessionTitle(listener: (metadata: SessionCatalogMetadata, title: string) => void): () => void {
+		this.#titleListeners.add(listener);
+		return () => this.#titleListeners.delete(listener);
 	}
 
 	get trackedSessions(): readonly SessionCatalogMetadata[] {
@@ -184,6 +192,30 @@ export class SessionWorkerManager {
 		const pending = this.#pending.get(metadata.path);
 		if (pending) return this.#routedHandle(await pending.promise);
 		return this.#routedHandle(await this.#launch(metadata, context, pluginManifestPaths));
+	}
+
+	/** Inspect without a presentation demand: releasing a temporary demand would retire an idle worker. */
+	async isSessionEmpty(
+		metadata: SessionCatalogMetadata,
+		context: Context,
+		pluginManifestPaths: readonly string[],
+	): Promise<boolean> {
+		await this.openSession(metadata, context, pluginManifestPaths);
+		const worker = this.#workersBySession.get(metadata.path);
+		if (worker === undefined) throw new Error("Session worker is unavailable");
+		const scope = { serverConnectionId: this.#coordinator.serverConnectionId, attachmentId: SESSION_INSPECTION_ATTACHMENT_ID };
+		const empty = await this.#invoke(worker, scope, { serviceId: SessionLifecycle.id, member: "isEmpty", args: [] }, context);
+		if (typeof empty !== "boolean") throw new Error("Session worker returned an invalid empty-session status");
+		return empty;
+	}
+
+	/** A running worker owns the mirror; title updates join its transcript write queue. */
+	async refreshSessionMirror(metadata: SessionCatalogMetadata, context: Context): Promise<boolean> {
+		const worker = this.#workersBySession.get(metadata.path);
+		if (worker === undefined) return false;
+		const scope = { serverConnectionId: this.#coordinator.serverConnectionId, attachmentId: SESSION_INSPECTION_ATTACHMENT_ID };
+		await this.#invoke(worker, scope, { serviceId: SessionLifecycle.id, member: "refreshMirror", args: [] }, context);
+		return true;
 	}
 
 	async closeSession(metadata: SessionCatalogMetadata, context: Context): Promise<void> {
@@ -322,7 +354,10 @@ export class SessionWorkerManager {
 		context: Context,
 	): Promise<JsonValue | undefined> {
 		try {
-			this.#operationScope(worker, scope.attachmentId);
+			if (scope.attachmentId !== SESSION_INSPECTION_ATTACHMENT_ID) this.#operationScope(worker, scope.attachmentId);
+			else if (this.#detached || this.#shuttingDown || worker.stopping || this.#workersByPeer.get(worker.peerId) !== worker) {
+				throw new Error("Session worker is unavailable");
+			}
 		} catch (error) {
 			return Promise.reject(error);
 		}
@@ -534,6 +569,12 @@ export class SessionWorkerManager {
 			return;
 		}
 		const message: SessionWorkerEvent = event.payload;
+		if (message.type === "session_title") {
+			const worker = this.#workersByPeer.get(event.from);
+			if (worker?.token !== message.token || worker.metadata.path !== message.sessionKey) return;
+			for (const listener of this.#titleListeners) listener(worker.metadata, message.title);
+			return;
+		}
 		if (message.type === "worker_failed") {
 			const pending = this.#pending.get(message.sessionKey);
 			if (pending?.peerId === event.from && pending.token === message.token) {

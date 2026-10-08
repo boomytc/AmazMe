@@ -73,7 +73,7 @@ export interface TranscriptBlock {
 
 export interface RosterItem {
 	readonly id: string;
-	/** The name `/name` set, or the session id when it has none. */
+	/** The session's title, or the localized new-session label. */
 	readonly label: string;
 	/** The session's working directory, shown so two sessions are tellable apart. */
 	readonly cwd: string | undefined;
@@ -393,6 +393,7 @@ export interface RunControls {
 export interface NewSessionAffordance {
 	/** The host is reachable, so it can take a create. */
 	readonly enabled: boolean;
+	readonly pending?: boolean;
 }
 
 export interface WebView {
@@ -431,7 +432,7 @@ export interface WebView {
 	};
 
 	readonly attachedId: string | undefined;
-	/** The attached session's readable name, falling back to its id. */
+	/** The attached session's readable name, or the localized new-session label. */
 	readonly sessionLabel: string | undefined;
 	/** Context occupancy, tokens, and cost. Always present, including before the first answer. */
 	readonly meter: StatusMeter;
@@ -505,6 +506,7 @@ export interface ModelsStateLike {
 }
 
 export interface WebViewInput {
+	readonly creatingSession?: boolean;
 	/** The reader's language, resolved from the stored preference and the browser. */
 	readonly locale: Locale;
 	readonly directory: SessionDirectoryLike | undefined;
@@ -673,7 +675,7 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 		)
 		.map((session) => ({
 			id: session.sessionId,
-			label: displayName(session) ?? session.sessionId,
+			label: displayName(session) ?? translate(locale, "sidebar.untitled"),
 			cwd: session.cwd,
 			age: formatAge(session.createdAt, now),
 			ageIso: new Date(session.createdAt).toISOString(),
@@ -732,10 +734,10 @@ export function rosterGroups(locale: Locale, items: readonly RosterItem[]): Rost
 }
 
 /** The attached session's readable name, or its id when `/name` has not set one. */
-export function attachedSessionLabel(directory: SessionDirectoryLike | undefined, attachedId: string | undefined): string | undefined {
+export function attachedSessionLabel(directory: SessionDirectoryLike | undefined, attachedId: string | undefined, locale: Locale = "en"): string | undefined {
 	if (attachedId === undefined) return undefined;
 	const session = directory?.sessions.find((item) => item.sessionId === attachedId);
-	return session === undefined ? attachedId : (displayName(session) ?? attachedId);
+	return (session === undefined ? undefined : displayName(session)) ?? translate(locale, "sidebar.untitled");
 }
 
 /**
@@ -1384,12 +1386,12 @@ export function buildWebView(input: WebViewInput): WebView {
 		}),
 		run: runControls(locale, input.submitMode, input.attachedId !== undefined, forkable),
 		attachedId: input.attachedId,
-		sessionLabel: attachedSessionLabel(input.directory, input.attachedId),
+		sessionLabel: attachedSessionLabel(input.directory, input.attachedId, locale),
 		meter: statusMeter(input.transcript, input.models),
 		empty,
 		busy: isBusy(input.transcript),
 		// Only a reachable host can take a create; the roster appears with the same state.
-		newSession: { enabled: input.directory !== undefined },
+		newSession: { enabled: input.directory !== undefined && !input.creatingSession, ...(input.creatingSession ? { pending: true } : {}) },
 		model: modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined),
 		panel: panelView({ ...input.panel, locale }),
 		dock: dockView(locale, dockWithShownEntries(input, forkable)),

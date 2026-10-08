@@ -96,6 +96,23 @@ async function createAttachedWorker(): Promise<{
 }
 
 describe("Session worker lifecycle failures", () => {
+	test("accepts title notifications only from the session's authenticated worker", async () => {
+		const { coordinator, workers } = await createAttachedWorker();
+		const listener = vi.fn();
+		const stop = workers.onSessionTitle(listener);
+		const title = { type: "session_title", token: "worker-token", sessionKey: metadata.path, title: "First input" };
+		coordinator.emit({ type: "message", from: "worker-1", payload: { ...title, token: "wrong-token" } });
+		coordinator.emit({ type: "message", from: "unknown-worker", payload: title });
+		coordinator.emit({ type: "message", from: "worker-1", payload: { ...title, sessionKey: "/other/session" } });
+		expect(listener).not.toHaveBeenCalled();
+		coordinator.emit({ type: "message", from: "worker-1", payload: title });
+		expect(listener).toHaveBeenCalledWith(metadata, "First input");
+		stop();
+		coordinator.emit({ type: "message", from: "worker-1", payload: title });
+		expect(listener).toHaveBeenCalledTimes(1);
+		workers.detach();
+	});
+
 	test("adopts a discovered worker with its existing Session plugin selection", async () => {
 		const coordinator = new FakeCoordinator();
 		const workers = new SessionWorkerManager(coordinator, "/tmp");

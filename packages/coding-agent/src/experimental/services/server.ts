@@ -59,6 +59,7 @@ export interface ServerAdministrationOptions {
 export interface ExperimentalServerServices {
 	readonly host: RoutedServerServiceHost;
 	refresh(context?: Context): Promise<void>;
+	nameAutomatically(sessionId: string, name: string, context?: Context): Promise<void>;
 	dispose(): Promise<void>;
 }
 
@@ -67,6 +68,7 @@ export async function createExperimentalServerServices(options: {
 	create(createOptions: SessionCreateOptions, context: Context): Promise<SessionSummary>;
 	remove(sessionId: string, context: Context): Promise<void>;
 	rename(sessionId: string, name: string, context: Context): Promise<SessionSummary>;
+	nameAutomatically(sessionId: string, name: string, context: Context): Promise<void>;
 	prepareSessionPlugins(
 		sessionId: string,
 		packagePaths: readonly string[] | undefined,
@@ -259,6 +261,10 @@ export async function createExperimentalServerServices(options: {
 			},
 		},
 		refresh: (context = BACKGROUND_CONTEXT) => serialize(() => refreshNow(context)),
+		nameAutomatically: (sessionId, name, context = BACKGROUND_CONTEXT) => serialize(async () => {
+			await options.nameAutomatically(sessionId, name, context);
+			await refreshNow(context);
+		}),
 		async dispose() {
 			schedules.stop();
 			const releases = await Promise.allSettled(

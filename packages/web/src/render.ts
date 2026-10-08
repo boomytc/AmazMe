@@ -6,7 +6,7 @@
  * updates is the reader's own disclosure choices, keyed by block id, because a rebuild would
  * otherwise reset them.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, REFRESH_MODELS_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
@@ -248,6 +248,7 @@ type IconName =
 	| "plus"
 	| "stop"
 	| "copy"
+	| "more"
 	| "check"
 	| "x"
 	| "thumb-up"
@@ -544,6 +545,8 @@ export function createRenderer(
 	/** The open modal's submit and message line, so a state flip updates them without a rebuild. */
 	let modalSubmit: HTMLButtonElement | undefined;
 	let modalMessage: HTMLParagraphElement | undefined;
+	let rosterKey = "";
+	let sessionMenu: { id: string; node: HTMLElement } | undefined;
 
 	const draft = (): string => elements.prompt.value.trim();
 
@@ -775,6 +778,7 @@ export function createRenderer(
 		const card = element("div", "modal-card");
 		card.setAttribute("role", "dialog");
 		card.setAttribute("aria-modal", "true");
+		card.setAttribute("aria-label", modal.title);
 		const head = element("header", "modal-head");
 		const titles = element("div", "modal-titles");
 		titles.append(element("h2", "modal-title", modal.title));
@@ -811,6 +815,23 @@ export function createRenderer(
 			for (const [id, input] of inputs) fields[id] = input.value;
 			report({ kind: "modal-submit", id: modal.id, data: modal.data, fields });
 		});
+		card.addEventListener("keydown", (event) => {
+			if (event.key === "Enter" && !event.isComposing && event.target instanceof HTMLInputElement) {
+				event.preventDefault();
+				submit.click();
+			}
+			if (event.key !== "Tab") return;
+			const controls = [...card.querySelectorAll<HTMLElement>("button:not(:disabled), input, textarea")];
+			const first = controls[0];
+			const last = controls.at(-1);
+			if (event.shiftKey && document.activeElement === first) {
+				event.preventDefault();
+				last?.focus();
+			} else if (!event.shiftKey && document.activeElement === last) {
+				event.preventDefault();
+				first?.focus();
+			}
+		});
 		foot.append(cancel, submit);
 		const message = document.createElement("p");
 		message.className = "modal-notice";
@@ -822,7 +843,7 @@ export function createRenderer(
 		modalMessage = message;
 		applyModalState(modal);
 		const first = modal.fields[0] === undefined ? undefined : inputs.get(modal.fields[0].id);
-		first?.focus();
+		(first ?? cancel).focus();
 	};
 
 	/** The sidebar's navigation and the settings entry: one row per management view. */
@@ -1098,32 +1119,130 @@ export function createRenderer(
 		return details;
 	};
 
-	/** One roster row: the session's name, its age, and the control that removes it, which takes the age's place on hover. */
+	const sessionMenuTrigger = (id: string): HTMLButtonElement | undefined =>
+		[...elements.roster.querySelectorAll<HTMLButtonElement>(".session-more")].find((node) => node.dataset.actionData === id);
+
+	const closeSessionMenu = (restoreFocus = false): void => {
+		const opened = sessionMenu;
+		if (opened === undefined) return;
+		opened.node.remove();
+		sessionMenu = undefined;
+		const trigger = sessionMenuTrigger(opened.id);
+		trigger?.setAttribute("aria-expanded", "false");
+		if (restoreFocus) trigger?.focus();
+	};
+
+	const positionSessionMenu = (): void => {
+		if (sessionMenu === undefined) return;
+		const trigger = sessionMenuTrigger(sessionMenu.id);
+		if (trigger === undefined) {
+			closeSessionMenu();
+			return;
+		}
+		trigger.setAttribute("aria-expanded", "true");
+		const rect = trigger.getBoundingClientRect();
+		const height = sessionMenu.node.offsetHeight;
+		sessionMenu.node.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 220))}px`;
+		sessionMenu.node.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - height - 8))}px`;
+	};
+
+	const openSessionMenu = (item: RosterItem): void => {
+		if (sessionMenu?.id === item.id) {
+			closeSessionMenu(true);
+			return;
+		}
+		closeSessionMenu();
+		const menu = element("div", "session-menu");
+		menu.id = "session-actions";
+		menu.setAttribute("role", "menu");
+		menu.setAttribute("aria-label", copy("sidebar.more"));
+		const actions = [
+			{ id: SESSION_RENAME_ACTION, label: copy("sidebar.rename"), glyph: "square-pen" as const },
+			{ id: SESSION_COPY_ID_ACTION, label: copy("sidebar.copyId"), glyph: "copy" as const },
+			{ id: item.remove.id, label: item.remove.label, glyph: "x" as const },
+		];
+		for (const action of actions) {
+			const control = button(action.id === item.remove.id ? "session-menu-item danger" : "session-menu-item");
+			control.dataset.action = action.id;
+			control.dataset.actionData = item.id;
+			control.setAttribute("role", "menuitem");
+			control.tabIndex = -1;
+			const label = element("span", "", action.label);
+			control.append(icon(action.glyph), label);
+			control.addEventListener("click", () => {
+				if (action.id === SESSION_COPY_ID_ACTION) {
+					const result = navigator.clipboard?.writeText(item.id);
+					label.setAttribute("aria-live", "polite");
+					if (result === undefined) label.textContent = copy("copy.failed");
+					else void result.then(
+						() => { label.textContent = copy("copy.copied"); },
+						() => { label.textContent = copy("copy.failed"); },
+					);
+					return;
+				}
+				closeSessionMenu(true);
+				report({ kind: "command", id: action.id, data: item.id });
+			});
+			menu.append(control);
+		}
+		menu.addEventListener("keydown", (event) => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				event.stopPropagation();
+				closeSessionMenu(true);
+				return;
+			}
+			if (event.key === "Tab") {
+				closeSessionMenu(true);
+				return;
+			}
+			if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+			event.preventDefault();
+			const controls = [...menu.querySelectorAll<HTMLButtonElement>("button")];
+			const index = controls.findIndex((node) => node === document.activeElement);
+			const next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + controls.length) % controls.length;
+			controls[next]?.focus();
+		});
+		sessionMenu = { id: item.id, node: menu };
+		document.body.append(menu);
+		positionSessionMenu();
+		menu.querySelector<HTMLButtonElement>("button")?.focus();
+	};
+
+	/** Selection and the menu are sibling buttons, so neither nests an interactive control. */
 	const sessionRow = (item: RosterItem): HTMLElement => {
-		const chip = button(item.attached ? "session-row attached" : "session-row");
-		chip.dataset.sessionId = item.id;
-		const hints = [item.cwd, item.label !== item.id ? item.id : undefined].filter(
-			(part): part is string => part !== undefined && part.length > 0,
-		);
-		if (hints.length > 0) chip.title = hints.join(" · ");
+		const row = element("div", item.attached ? "session-row attached" : "session-row");
+		row.dataset.sessionId = item.id;
+		const select = button("session-select");
+		select.title = [item.label, item.cwd, item.id].filter(Boolean).join(" · ");
+		if (item.attached) select.setAttribute("aria-current", "true");
 		const name = element("span", "session-name", item.label);
-		// A terminal session a host has not adopted yet is worth naming: attaching it adopts it.
 		if (item.source === "local") name.append(element("span", "session-source", copy("sidebar.localSession")));
 		const age = element("time", "session-age", item.age);
 		age.setAttribute("datetime", item.ageIso);
-		chip.append(name, age);
-		const remove = panelButton(item.remove, report);
-		remove.className = "session-remove";
-		remove.replaceChildren(icon("x"));
-		remove.title = copy("sidebar.removeAria");
-		remove.setAttribute("aria-label", copy("sidebar.removeAria"));
-		remove.addEventListener("click", (event) => event.stopPropagation());
-		chip.append(remove);
-		chip.addEventListener("click", () => {
+		select.append(name, age);
+		select.addEventListener("click", () => {
+			closeSessionMenu();
 			closeSidebarDrawer();
 			renderer.onSelect(item.id);
 		});
-		return chip;
+		const more = button("session-more");
+		more.dataset.action = "session:more";
+		more.dataset.actionData = item.id;
+		more.title = copy("sidebar.more");
+		more.setAttribute("aria-label", `${copy("sidebar.more")}: ${item.label}`);
+		more.setAttribute("aria-haspopup", "menu");
+		more.setAttribute("aria-controls", "session-actions");
+		more.setAttribute("aria-expanded", String(sessionMenu?.id === item.id));
+		more.append(icon("more"));
+		more.addEventListener("click", () => openSessionMenu(item));
+		more.addEventListener("keydown", (event) => {
+			if (event.key !== "ArrowDown") return;
+			event.preventDefault();
+			openSessionMenu(item);
+		});
+		row.append(select, more);
+		return row;
 	};
 
 	/** A fenced code block: the language, the code, and a copy control whose text is the code. */
@@ -1502,21 +1621,38 @@ export function createRenderer(
 			const stick = atBottom(elements.transcript);
 
 			elements.newSession.disabled = !view.newSession.enabled;
+			elements.newSession.setAttribute("aria-busy", String(view.newSession.pending === true));
+			const newLabel = copy(view.newSession.pending ? "sidebar.creating" : "sidebar.newSession");
+			elements.newSession.setAttribute("aria-label", newLabel);
+			const label = elements.newSession.querySelector(".new-session-label");
+			if (label !== null) label.textContent = newLabel;
 
-			elements.roster.replaceChildren();
-			for (const group of rosterGroups(view.locale, view.roster)) {
-				const section = element("div", "session-group");
-				section.append(element("p", "session-group-label", group.label));
-				for (const item of group.items) section.append(sessionRow(item));
-				elements.roster.append(section);
+			// Streaming repaints keep the roster's nodes and keyboard focus when it has not changed.
+			const nextRosterKey = JSON.stringify([view.locale, view.roster, view.empty]);
+			if (rosterKey !== nextRosterKey) {
+				rosterKey = nextRosterKey;
+				const focused = document.activeElement;
+				const focusedRow = focused instanceof HTMLElement ? focused.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId : undefined;
+				const focusedMore = focused instanceof HTMLElement && focused.classList.contains("session-more");
+				elements.roster.replaceChildren();
+				for (const group of rosterGroups(view.locale, view.roster)) {
+					const section = element("div", "session-group");
+					section.append(element("p", "session-group-label", group.label));
+					for (const item of group.items) section.append(sessionRow(item));
+					elements.roster.append(section);
+				}
+				if (view.roster.length === 0) {
+					const empty = element("p", "empty-state", view.empty ?? copy("header.rosterEmpty"));
+					empty.id = "roster-empty";
+					elements.roster.append(empty);
+				}
+				if (focusedRow !== undefined) {
+					const trigger = sessionMenuTrigger(focusedRow);
+					(focusedMore ? trigger : trigger?.parentElement?.querySelector<HTMLButtonElement>(".session-select"))?.focus();
+				}
+				positionSessionMenu();
 			}
-			// The filter keeps what the reader typed; only its value is ever set from the view.
 			if (document.activeElement !== elements.rosterFilter) elements.rosterFilter.value = view.rosterFilter;
-			if (view.roster.length === 0) {
-				const empty = element("p", "empty-state", view.empty ?? copy("header.rosterEmpty"));
-				empty.id = "roster-empty";
-				elements.roster.append(empty);
-			}
 
 			const flow = flowElements(view.blocks);
 			const hasConversation = view.blocks.length > 0 || view.history.blocks.length > 0;
@@ -1694,6 +1830,12 @@ export function createRenderer(
 		else closeModelMenu();
 	});
 	// The card closes on a click elsewhere and on Escape, so it can never strand the pointer.
+	elements.roster.addEventListener("scroll", () => closeSessionMenu());
+	window.addEventListener("resize", () => closeSessionMenu());
+	document.addEventListener("pointerdown", (event) => {
+		const target = event.target;
+		if (sessionMenu !== undefined && target instanceof Node && !sessionMenu.node.contains(target) && !sessionMenuTrigger(sessionMenu.id)?.contains(target)) closeSessionMenu();
+	});
 	document.addEventListener("pointerdown", (event) => {
 		if (elements.modelMenu.hidden) return;
 		const target = event.target;
@@ -1732,7 +1874,12 @@ export function createRenderer(
 		renderer.onShortcut(id);
 	});
 	document.addEventListener("keydown", (event) => {
-		if (event.key !== "Escape") return;
+		if (event.key !== "Escape" || event.defaultPrevented) return;
+		if (sessionMenu !== undefined) {
+			event.preventDefault();
+			closeSessionMenu(true);
+			return;
+		}
 		if (elements.modalRoot.hidden === false) {
 			event.preventDefault();
 			report({ kind: "modal-close" });

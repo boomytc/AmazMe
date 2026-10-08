@@ -14,6 +14,8 @@ import { sessionEntriesToDurableDrafts, type SessionInteropReport } from "../cor
 import { findLocalSessionPath, mirrorPath, readLocalSession, writeSessionMirror } from "./session-store.ts";
 
 export interface SessionHandoff {
+	/** Refresh the catalog title on the same write queue as committed transcript revisions. */
+	refresh(): Promise<void>;
 	/** Seed, mirror and release the subscription; repeated calls are harmless. */
 	dispose(): Promise<void>;
 }
@@ -55,9 +57,9 @@ export async function startSessionHandoff(options: SessionHandoffOptions): Promi
 	let signature = "";
 	let writing: Promise<void> = Promise.resolve();
 
-	const mirror = (entries: readonly EntryRecord[]): void => {
+	const mirror = (entries: readonly EntryRecord[], force = false): void => {
 		const next = entries.map((entry) => String(entry.id)).join(",");
-		if (next === signature) return;
+		if (next === signature && !force) return;
 		signature = next;
 		// Mirrors run one at a time: a slow write must not be overtaken by the next revision.
 		writing = writing
@@ -88,6 +90,10 @@ export async function startSessionHandoff(options: SessionHandoffOptions): Promi
 	mirror(view.value.entries);
 
 	return {
+		refresh(): Promise<void> {
+			if (!disposed) mirror(view.value.entries, true);
+			return writing;
+		},
 		async dispose(): Promise<void> {
 			if (disposed) return;
 			disposed = true;

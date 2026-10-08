@@ -25,6 +25,8 @@ import { createModelsServiceFacet } from "./models-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { createSlashCommandsRuntimeFacet } from "./slash-commands-provider.ts";
 import { SessionSettings } from "./settings.ts";
+import { SessionLifecycle } from "./session-lifecycle.ts";
+import { isSessionEmpty } from "../session-lifecycle.ts";
 import { createTerminalFacet } from "./terminal-provider.ts";
 import { createTranscriptServiceFacet } from "./transcript-provider.ts";
 import { createWorkspaceFacet } from "./workspace-provider.ts";
@@ -41,7 +43,7 @@ export interface SessionWorkerRuntime {
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
 	/** The terminal handoff: the mirror of this session in the terminal's store. */
-	readonly handoff?: { dispose(): Promise<void> };
+	readonly handoff?: { refresh(): Promise<void>; dispose(): Promise<void> };
 	/** Release resources the Harness does not own, such as execution environments, after it closed. */
 	cleanup?(context: Context): Promise<void>;
 }
@@ -71,12 +73,17 @@ export async function createSessionWorkerServices(options: {
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
+	readonly refreshMirror?: () => Promise<void>;
 	publish(scope: WorkerServiceScope, subscriptionId: string, update: ServiceProviderUpdate): Promise<void>;
 }): Promise<SessionWorkerServices> {
 	const agentControllerRuntimeFacet = defineFacet({
 		id: "@pi/agent-controller-runtime",
 		setup(env) {
 			env.provide(AgentController, createAgentController(options.harness, options.conversation));
+			env.provide(SessionLifecycle, {
+				isEmpty: (context) => isSessionEmpty(options.harness, context),
+				refreshMirror: async () => { await options.refreshMirror?.(); },
+			});
 		},
 	});
 	let reloadPlugins = (): Promise<void> => Promise.reject(new Error("Session plugins are not ready"));

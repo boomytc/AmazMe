@@ -78,3 +78,7 @@ export const ATTACHMENT_REMOVE_ACTION = "composer:attachment-remove";
 export const SESSION_REMOVE_ACTION = "session:remove";
 /** The confirmation a session's remove opens; `data` is the session id. */
 export const SESSION_REMOVE_MODAL = "session:remove-confirm";
+/** Session row menu and its rename dialog. */
+export const SESSION_RENAME_ACTION = "session:rename";
+export const SESSION_RENAME_MODAL = "session:rename-submit";
+export const SESSION_COPY_ID_ACTION = "session:copy-id";

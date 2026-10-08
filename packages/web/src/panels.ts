@@ -17,6 +17,7 @@ import {
 	SCHEDULE_REMOVE_MODAL,
 	SCHEDULE_RUN_ACTION,
 	SESSION_REMOVE_MODAL,
+	SESSION_RENAME_MODAL,
 } from "./actions.ts";
 import type { Locale } from "./locale.ts";
 import {
@@ -793,6 +794,16 @@ export function removeSkillModal(locale: Locale, name: string): PanelModal {
 		submit: translate(locale, "panel.skills.remove"),
 		data: name,
 		danger: true,
+	};
+}
+
+export function renameSessionModal(locale: Locale, sessionId: string, name: string): PanelModal {
+	return {
+		id: SESSION_RENAME_MODAL,
+		title: translate(locale, "modal.sessionRename.title"),
+		fields: [{ id: "name", label: translate(locale, "modal.sessionRename.name"), kind: "text", value: name }],
+		submit: translate(locale, "modal.save"),
+		data: sessionId,
 	};
 }
 

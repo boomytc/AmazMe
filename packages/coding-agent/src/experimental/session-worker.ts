@@ -44,6 +44,10 @@ import {
 } from "./services/worker.ts";
 import { readSession, sessionStoragePath } from "./session-catalog.ts";
 import { startSessionHandoff } from "./session-handoff.ts";
+import { firstSessionTitle, isSessionEmpty, watchSessionTitle } from "./session-lifecycle.ts";
+import { SessionLifecycle } from "./services/session-lifecycle.ts";
+
+export const SESSION_INSPECTION_ATTACHMENT_ID = "@amazme/session-inspection";
 
 export type { SessionWorkerRuntime } from "./services/worker.ts";
 
@@ -136,6 +140,12 @@ export const SessionWorkerCommandSchema = Type.Union([
 export type SessionWorkerCommand = Static<typeof SessionWorkerCommandSchema>;
 
 export const SessionWorkerEventSchema = Type.Union([
+	StrictObject({
+		type: Type.Literal("session_title"),
+		token: Type.String(),
+		sessionKey: Type.String(),
+		title: Type.String({ minLength: 1, maxLength: 240 }),
+	}),
 	Type.Object({
 		type: Type.Literal("worker_ready"),
 		token: Type.String(),
@@ -235,6 +245,14 @@ export class WorkerLifecycle {
 			}, this.#orphanDemandGraceMs);
 			demand.timer.unref();
 		}
+	}
+
+	beginServerRequest(serverConnectionId: string): () => void {
+		if (this.#retiring) throw new Error("Session worker is retiring");
+		if (serverConnectionId !== this.#currentServerConnectionId) {
+			throw new Error("Session worker received a request from a stale server generation");
+		}
+		return this.holdRetirement();
 	}
 
 	beginRequest(serverConnectionId: string, attachmentId: string): () => void {
@@ -537,6 +555,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			settingsManager: runtime.settingsManager,
 			approvalGate: runtime.approvalGate,
 			facetLoader: runtime.facetLoader,
+			refreshMirror: () => runtime?.handoff?.refresh() ?? Promise.resolve(),
 			publish: (scope, subscriptionId, update) =>
 				control.send({
 					type: "service_update",
@@ -565,11 +584,15 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 	const activity = taskGraph;
 	let lifecycle: WorkerLifecycle | undefined;
 	let stopActivity = (): void => {};
+	let stopTitle = (): void => {};
+	const imageTitle = runtime.settingsManager?.getLocalePreference() === "zh" ? "图片会话" : "Image conversation";
+	const publishTitle = (title: string): Promise<void> => control.send({ type: "session_title", token, sessionKey, title });
 	let closing: Promise<void> | undefined;
 	const close = (): Promise<void> => {
 		if (closing) return closing;
 		lifecycle?.close();
 		stopActivity();
+		stopTitle();
 		activity.dispose();
 		services.removeSubscriptions(() => true);
 		for (const request of activeRequests.values()) request.cancel(new Error("Session worker is closing"));
@@ -602,9 +625,20 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		let releaseRequest = (): void => {};
 		const cancellable = withCancel(BACKGROUND_CONTEXT);
 		try {
-			releaseRequest = lifecycle!.beginRequest(request.scope.serverConnectionId, request.scope.attachmentId);
+			const inspection =
+				request.scope.attachmentId === SESSION_INSPECTION_ATTACHMENT_ID &&
+				request.call.serviceId === SessionLifecycle.id &&
+				(request.call.member === "isEmpty" || request.call.member === "refreshMirror") &&
+				request.call.args.length === 0;
+			releaseRequest = inspection
+				? lifecycle!.beginServerRequest(request.scope.serverConnectionId)
+				: lifecycle!.beginRequest(request.scope.serverConnectionId, request.scope.attachmentId);
 			activeRequests.set(request.requestId, { scope: request.scope, cancel: cancellable.cancel });
-			const result = await services.invoke(request.call, request.scope, cancellable.context);
+			const result = inspection
+				? request.call.member === "isEmpty"
+					? await isSessionEmpty(harness, cancellable.context)
+					: await runtime.handoff?.refresh()
+				: await services.invoke(request.call, request.scope, cancellable.context);
 			if (result !== undefined && !isJsonValue(result)) throw new Error("Service produced a non-JSON result");
 			await control.send({
 				type: "operation_response",
@@ -658,7 +692,14 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 				metadata,
 				pluginManifestPaths: [...pluginManifestPaths],
 			})
-			.catch(() => closeAndExit());
+			.then(
+				() => {
+					void firstSessionTitle(runtime.conversation, imageTitle)
+						.then((title) => title === undefined ? undefined : publishTitle(title))
+						.catch((error: unknown) => console.error("Session title:", error));
+				},
+				closeAndExit,
+			);
 	};
 	void readCommands(control, {
 		onShutdown: closeAndExit,
@@ -731,6 +772,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			metadata,
 			pluginManifestPaths: [...pluginManifestPaths],
 		});
+		stopTitle = watchSessionTitle(harness, runtime.conversation, imageTitle, publishTitle);
 	} catch (error) {
 		try {
 			await close();

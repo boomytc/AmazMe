@@ -69,6 +69,9 @@ import {
 	REFRESH_MODELS_ACTION,
 	removeScheduleModal,
 	removeSessionModal,
+	renameSessionModal,
+	SESSION_RENAME_ACTION,
+	SESSION_RENAME_MODAL,
 	removeSkillModal,
 	resolveLocale,
 	resolveThemePreference,
@@ -629,6 +632,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const feedback = serverServices.use(Feedback);
 	const schedules = serverServices.use(Schedules);
 	let view = CHAT_VIEW;
+	let creating = false;
 	let modal: PanelModal | undefined;
 	/** How the composer submits while a turn runs; the reader picks it in the composer itself. */
 	let submitMode: SubmitMode = "followUp";
@@ -654,6 +658,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let returnPointsRequest = 0;
 	/** The composer's draft, mirrored here so the command palette can be projected from it. */
 	let draft = "";
+	const sessionDrafts = new Map<string, { readonly text: string; readonly images: readonly PendingImage[] }>();
+	let draftSessionId: string | undefined;
+	const saveDraft = (): void => {
+		if (draftSessionId !== undefined) sessionDrafts.set(draftSessionId, { text: draft, images: pending });
+	};
+	const restoreDraft = (sessionId: string): void => {
+		const saved = sessionDrafts.get(sessionId);
+		draftSessionId = sessionId;
+		pending = saved?.images ?? [];
+		completions = [];
+		completionSequence += 1;
+		renderer.setDraft(saved?.text ?? "");
+	};
 	/** The host's argument completions for the command line being typed. */
 	let completions: readonly {
 		readonly value: string;
@@ -757,6 +774,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		refreshCommandResources();
 		const built = buildWebView({
 					locale,
+					creatingSession: creating,
 					directory: directory.state.value,
 					transcript: shownTranscript(),
 					focus: focusedLabel(),
@@ -862,35 +880,60 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const transition = sessionTransitions();
 	const selectSession = (sessionId: string): Promise<void> =>
 		transition(async () => {
-			if (painter.sessionId === sessionId) return;
+			if (painter.sessionId === sessionId) {
+				paint();
+				return;
+			}
+			saveDraft();
 			await painter.detach();
+			history = [];
+			historyCursor = null;
+			historyLoaded = false;
+			historyLoading = false;
+			rootConversationId = "";
+			returnPoints = [];
+			returnPointsKey = "";
+			returnPointsRequest += 1;
 			paint();
 			await retryOnRebind(async () => {
 				await management.attach(sessionId, BACKGROUND_CONTEXT);
 				await sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
 				await painter.attach(sessionId, paint);
 			});
+			restoreDraft(sessionId);
+			try {
+				sessionStorage.setItem(`amazme.session.${manifest.server.id}`, sessionId);
+			} catch {
+				// Storage may be unavailable in a restricted browser or desktop webview.
+			}
 		});
 	renderer.onSelect = (sessionId) => {
+		view = CHAT_VIEW;
+		modal = undefined;
 		void selectSession(sessionId).catch((error: unknown) => {
 			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
 		});
 	};
 	// The host creates the session; the roster shows it from the replicated directory. A second
 	// click while the first create is in flight would make a second session, so this one is one-shot.
-	let creating = false;
 	/** Create a session and attach it; one path serves the sidebar's bar and the shortcut. */
 	const createSession = (): void => {
 		if (creating) return;
 		creating = true;
+		paint();
 		void management
-			.create({}, BACKGROUND_CONTEXT)
-			.then((created) => selectSession(created.sessionId))
+			.create({ reuseEmpty: true }, BACKGROUND_CONTEXT)
+			.then(async (created) => {
+				await selectSession(created.sessionId);
+				view = CHAT_VIEW;
+				modal = undefined;
+			})
 			.catch((error: unknown) => {
 				renderer.setConnection(copy("page.newSessionFailed", { error: message(error) }), "error");
 			})
 			.finally(() => {
 				creating = false;
+				paint();
 			});
 	};
 	renderer.onCreateSession = createSession;
@@ -927,6 +970,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 */
 	renderer.onDraftChange = (text) => {
 		draft = text;
+		saveDraft();
 		paletteSelection = 0;
 		const line = parseCommandLine(text);
 		const sequence = ++completionSequence;
@@ -966,6 +1010,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		paint();
 	};
 	renderer.onAttachFiles = (files) => {
+		const sessionId = draftSessionId;
 		void (async () => {
 			const added: PendingImage[] = [];
 			for (const file of files) {
@@ -998,7 +1043,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				}
 			}
 			if (added.length === 0) return;
+			if (sessionId !== draftSessionId) {
+				if (sessionId !== undefined) {
+					const saved = sessionDrafts.get(sessionId);
+					sessionDrafts.set(sessionId, { text: saved?.text ?? "", images: [...(saved?.images ?? []), ...added] });
+				}
+				return;
+			}
 			pending = [...pending, ...added];
+			saveDraft();
 			paint();
 		})();
 	};
@@ -1084,6 +1137,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			runCommandLine(line.name, line.args);
 			return;
 		}
+		const submittedSession = draftSessionId;
 		const sent = pending;
 		const images: AgentPromptImage[] = sent.map((image) => ({
 			type: "image",
@@ -1091,13 +1145,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			mimeType: image.mediaType,
 		}));
 		pending = [];
+		saveDraft();
 		const target = targetConversation();
 		const focused = target !== undefined && target !== rootConversationId ? target : undefined;
 		// Input goes to the conversation the page shows. A busy fork steers or queues; it does not reject.
 		void painter.submit(text, submitMode, images, focused).catch((error: unknown) => {
 			// The prompt never reached the session, so the images stay attached for another try.
-			pending = sent;
-			paint();
+			if (submittedSession === draftSessionId) {
+				pending = [...sent, ...pending];
+				renderer.setDraft(draft.length === 0 ? text : `${text}\n${draft}`);
+				paint();
+			} else if (submittedSession !== undefined) {
+				const saved = sessionDrafts.get(submittedSession);
+				sessionDrafts.set(submittedSession, { text: saved?.text ? `${text}\n${saved.text}` : text, images: [...sent, ...(saved?.images ?? [])] });
+			}
 			renderer.setConnection(copy("page.sendFailed", { error: message(error) }), "error");
 		});
 	};
@@ -1137,6 +1198,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		modalOpener = undefined;
 		paint();
 		if (opener === undefined) return;
+		if (opener.id === SESSION_RENAME_ACTION || opener.id === SESSION_REMOVE_ACTION) {
+			const trigger = [...document.querySelectorAll<HTMLButtonElement>(".session-more")].find((node) => node.dataset.actionData === opener.data);
+			trigger?.focus();
+			return;
+		}
 		const attribute = opener.data === undefined ? `[data-action="${opener.id}"]` : `[data-action="${opener.id}"][data-action-data="${opener.data}"]`;
 		try {
 			const node = document.querySelector(attribute);
@@ -1423,6 +1489,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					case HISTORY_MORE_ACTION: {
 						const target = targetConversation();
+						const sessionId = painter.sessionId;
 						const service = painter.conversationsService;
 						if (target === undefined || service === undefined) return;
 						// The first page starts below the oldest entry the transcript shows.
@@ -1433,6 +1500,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						paint();
 						void service.older(target, before, historyCursor, 20, BACKGROUND_CONTEXT).then(
 							(page) => {
+								if (painter.sessionId !== sessionId || targetConversation() !== target) return;
 								historyLoading = false;
 								historyLoaded = true;
 								history = [...page.entries, ...history];
@@ -1440,6 +1508,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								paint();
 							},
 							(error: unknown) => {
+								if (painter.sessionId !== sessionId || targetConversation() !== target) return;
 								historyLoading = false;
 								paint();
 								renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error");
@@ -1473,6 +1542,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case TERMINAL_STOP_ACTION:
 						settle(painter.stopTerminal());
 						return;
+					case SESSION_RENAME_ACTION: {
+						const sessionId = action.data ?? "";
+						const current = directory.state.value?.sessions.find((session) => session.sessionId === sessionId);
+						openModal(renameSessionModal(locale, sessionId, current?.name ?? ""), action);
+						return;
+					}
 					case SESSION_REMOVE_ACTION:
 						openModal(removeSessionModal(locale, action.data ?? ""), action);
 						return;
@@ -1578,6 +1653,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "modal-submit": {
 				const fields = action.fields;
 				switch (action.id) {
+					case SESSION_RENAME_MODAL: {
+						const name = (fields.name ?? "").trim();
+						if (name.length === 0) {
+							refuseInModal(copy("page.nameRequired"));
+							return;
+						}
+						runPanelCall({
+							id: action.id, data: action.data, inModal: true,
+							call: () => management.rename(action.data ?? "", name, BACKGROUND_CONTEXT).then(done),
+						});
+						return;
+					}
 					case SESSION_REMOVE_MODAL: {
 						const sessionId = action.data ?? "";
 						runPanelCall({
@@ -1588,8 +1675,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								// A session that was just attached is let go of first, and the removal waits
 								// for that to settle: the host releases this attachment either way, and a call
 								// in flight across the transition would lose its binding.
-								if (painter.sessionId === sessionId) await painter.detach();
+								const wasCurrent = painter.sessionId === sessionId;
+								if (wasCurrent) {
+									saveDraft();
+									await painter.detach();
+								}
 								await management.remove(sessionId, BACKGROUND_CONTEXT);
+								sessionDrafts.delete(sessionId);
+								if (wasCurrent) {
+									draftSessionId = undefined;
+									pending = [];
+									renderer.setDraft("");
+									const next = rosterItems(locale, directory.state.value, undefined, Date.now()).find((item) => item.id !== sessionId);
+									if (next !== undefined) await selectSession(next.id);
+								}
 								return { ok: true as const };
 							},
 						});
@@ -1801,10 +1900,17 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		return undefined;
 	}
 	await serverServices.ready(BACKGROUND_CONTEXT);
-	// Attach the session the sidebar lists first: the page's own ordering, not the host's array order.
-	const newest = rosterItems(locale, directory.state.value, undefined, Date.now())[0];
-	if (newest !== undefined) {
-		await selectSession(newest.id).catch((error: unknown) => {
+	// Restore this tab's last selection when it still exists; otherwise use the newest session.
+	let remembered: string | null = null;
+	try {
+		remembered = sessionStorage.getItem(`amazme.session.${manifest.server.id}`);
+	} catch {
+		// Fall back to the newest session when this browser cannot retain a selection.
+	}
+	const listed = rosterItems(locale, directory.state.value, undefined, Date.now());
+	const initial = listed.find((item) => item.id === remembered) ?? listed[0];
+	if (initial !== undefined) {
+		await selectSession(initial.id).catch((error: unknown) => {
 			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
 		});
 	}

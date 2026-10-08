@@ -359,36 +359,39 @@ p {
 	font-weight: 500;
 }
 
-/* A session row: the name, the age at the trailing edge, and the remove control that takes the
-   age's place while the pointer or focus is on the row. */
+/* Session selection and its menu share a row without nested buttons or shifting labels. */
 .session-row {
 	position: relative;
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	width: 100%;
-	min-height: 34px;
-	padding: 0 10px;
-	border: 0;
+	min-height: 36px;
 	border-radius: var(--radius-md);
-	background: transparent;
 	color: var(--text-2);
-	font-size: 14px;
-	text-align: left;
-	cursor: pointer;
-	transition: background var(--dur-fast) var(--ease);
 }
-
 .session-row:hover {
 	background: var(--hover);
 	color: var(--text);
 }
-
 .session-row.attached {
 	background: var(--active);
 	color: var(--text);
 }
-
+.session-select {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+	min-height: 36px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: inherit;
+	background: transparent;
+	color: inherit;
+	text-align: left;
+	font-size: 14px;
+	cursor: pointer;
+}
 .session-name {
 	flex: 1 1 auto;
 	min-width: 0;
@@ -396,62 +399,104 @@ p {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-
-.session-row:hover .session-name,
-.session-row:focus-within .session-name {
-	margin-right: 22px;
-}
-
 .session-source {
 	margin-left: 6px;
 	color: var(--text-3);
 	font-size: 11px;
 }
-
 .session-age {
-	flex: none;
+	flex: 0 0 28px;
+	text-align: right;
 	color: var(--text-3);
 	font-size: 12px;
 	font-variant-numeric: tabular-nums;
 }
-
-.session-row:hover .session-age,
-.session-row:focus-within .session-age {
-	visibility: hidden;
-}
-
-.session-remove {
+.session-more {
 	position: absolute;
-	top: 50%;
-	right: 6px;
-	display: none;
+	right: 4px;
+	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 22px;
-	height: 22px;
+	width: 28px;
+	height: 28px;
 	padding: 0;
-	margin-top: -11px;
 	border: 0;
 	border-radius: var(--radius-sm);
 	background: transparent;
-	color: var(--text-3);
+	color: var(--text-2);
+	cursor: pointer;
+	opacity: 0;
+}
+.session-more .icon {
+	width: 18px;
+	height: 18px;
+}
+.session-row:hover .session-more,
+.session-row:focus-within .session-more,
+.session-more[aria-expanded="true"] {
+	opacity: 1;
+}
+.session-row:hover .session-age,
+.session-row:focus-within .session-age,
+.session-row:has(.session-more[aria-expanded="true"]) .session-age {
+	visibility: hidden;
+}
+.session-more:hover,
+.session-more[aria-expanded="true"] {
+	background: var(--hover);
+	color: var(--text);
+}
+.session-menu {
+	position: fixed;
+	z-index: 1150;
+	width: 212px;
+	max-width: calc(100vw - 16px);
+	padding: 5px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--raised);
+	box-shadow: var(--shadow-popover);
+}
+.session-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 36px;
+	padding: 6px 10px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text);
+	text-align: left;
+	font-size: 13px;
 	cursor: pointer;
 }
-
-.session-remove .icon {
-	width: 14px;
-	height: 14px;
+.session-menu-item:hover,
+.session-menu-item:focus-visible {
+	background: var(--hover);
 }
-
-.session-row:hover .session-remove,
-.session-row:focus-within .session-remove,
-.session-remove:focus-visible {
-	display: inline-flex;
-}
-
-.session-remove:hover {
-	background: var(--danger-soft);
+.session-menu-item.danger {
 	color: var(--danger);
+	border-top: 1px solid var(--line);
+	margin-top: 4px;
+}
+@media (hover: none) {
+	.session-more {
+		opacity: 1;
+		width: 44px;
+		height: 44px;
+	}
+	.session-select {
+		min-height: 44px;
+		padding-right: 48px;
+	}
+	.session-age {
+		display: none;
+	}
+	.session-menu-item {
+		min-height: 44px;
+	}
 }
 
 .sidebar-footer {

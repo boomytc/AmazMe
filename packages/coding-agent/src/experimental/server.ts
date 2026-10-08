@@ -42,6 +42,7 @@ import { RadiusRelayHost, type RadiusRelayHostStatus } from "./radius-relay.ts";
 import { createExperimentalServerServices } from "./services/server.ts";
 import type { ServerAdministrationOptions } from "./services/server.ts";
 import { AgentController } from "./services/agent-controller.ts";
+import { automaticSessionName } from "./session-lifecycle.ts";
 import type { SessionCreateOptions, SessionSource, SessionSummary } from "./services/sessions.ts";
 import {
 	createSession as createCatalogSession,
@@ -419,8 +420,19 @@ async function startServerBackend(
 		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd, name: local.name });
 		return adopted;
 	};
-	const createSession = (createOptions: SessionCreateOptions): Promise<SessionCatalogMetadata> =>
-		createCatalogSession(sessionDir, { ...createOptions, cwd: process.cwd() });
+	const createSession = async (createOptions: SessionCreateOptions, context: Context): Promise<SessionCatalogMetadata> => {
+		if (createOptions.reuseEmpty && createOptions.id !== undefined) throw new Error("An explicit session ID cannot reuse an empty session");
+		if (createOptions.reuseEmpty) {
+			const latest = (await listSessions())
+				.filter((metadata) => metadata.cwd === process.cwd())
+				.sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id))[0];
+			if (latest !== undefined) {
+				const selected = await options.resolveSessionPlugins(latest, undefined, context);
+				if (await workers.isSessionEmpty(latest, context, selected.manifestPaths)) return latest;
+			}
+		}
+		return createCatalogSession(sessionDir, { ...(createOptions.id === undefined ? {} : { id: createOptions.id }), cwd: process.cwd() });
+	};
 	const summarize = (metadata: SessionCatalogMetadata, source: SessionSource = "host", name?: string): SessionSummary => {
 		const display = (name ?? metadata.name)?.trim() ?? "";
 		return {
@@ -463,6 +475,11 @@ async function startServerBackend(
 			(left, right) => left.sessionId.localeCompare(right.sessionId) || left.createdAt - right.createdAt,
 		);
 	};
+	const refreshMirror = async (metadata: SessionCatalogMetadata, name: string): Promise<void> => {
+		if (await workers.refreshSessionMirror(metadata, BACKGROUND_CONTEXT)) return;
+		const mirror = await findLocalSessionPath(metadata.cwd, metadata.id);
+		if (mirror !== undefined) await writeLocalSessionName(mirror, name);
+	};
 	const renameSession = async (sessionId: string, name: string): Promise<SessionSummary> => {
 		const normalized = normalizeSessionName(name);
 		const hosted = await readSession(sessionDir, sessionId);
@@ -470,8 +487,7 @@ async function startServerBackend(
 			const updated = await writeSessionName(sessionDir, sessionId, normalized);
 			// The terminal reads the name from the mirror. Update it when the file already exists;
 			// the next mirror rewrite copies the catalog name again.
-			const mirror = await findLocalSessionPath(updated.cwd, sessionId).catch(() => undefined);
-			if (mirror !== undefined) await writeLocalSessionName(mirror, normalized);
+			await refreshMirror(updated, normalized);
 			return summarize(updated);
 		}
 		const local = (await listLocalSessions(process.cwd())).find((session) => session.id === sessionId);
@@ -539,8 +555,17 @@ async function startServerBackend(
 	const serverServices = await createExperimentalServerServices({
 		administration,
 		list: () => listSummaries(),
-		create: async (createOptions) => summarize(await createSession(createOptions)),
+		create: async (createOptions, context) => summarize(await createSession(createOptions, context)),
 		rename: (sessionId, name) => renameSession(sessionId, name),
+		nameAutomatically: async (sessionId, title) => {
+			const metadata = await readSession(sessionDir, sessionId);
+			if (metadata === undefined || metadata.name !== undefined || metadata.nameSource === "manual") return;
+			const local = (await listLocalSessions(metadata.cwd)).find((session) => session.id === sessionId);
+			const name = local?.name ?? automaticSessionName(title);
+			if (name.length === 0) return;
+			await writeSessionName(sessionDir, sessionId, name, local?.name === undefined ? "automatic" : "manual");
+			await refreshMirror(metadata, name);
+		},
 		remove: async (sessionId, context) => {
 			const metadata = await resolveSession(sessionId, context);
 			await workers.closeSession(metadata, context);
@@ -571,6 +596,9 @@ async function startServerBackend(
 			return createPresentationFacetData(await options.reloadPresentationFacetBundles(packagePaths));
 		},
 	});
+	const stopTitles = workers.onSessionTitle((metadata, title) => {
+		void serverServices.nameAutomatically(metadata.id, title).catch((error: unknown) => console.error("Session title:", error));
+	});
 	const host: ServerHost<SessionCatalogMetadata> = {
 		serverServices: serverServices.host,
 		resolveSession,
@@ -580,7 +608,10 @@ async function startServerBackend(
 		},
 	};
 	const socketPath = options.path;
-	const closeCatalog = (): Promise<void> => serverServices.dispose();
+	const closeCatalog = (): Promise<void> => {
+		stopTitles();
+		return serverServices.dispose();
+	};
 	const server = new Server(host, {
 		serverId,
 		listeners: [createUnixListener({ path: socketPath, mode: 0o600 }), ...(options.listeners ?? [])],
