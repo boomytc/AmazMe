@@ -148,6 +148,10 @@ An extension may bring `tools`, `sections`, `hooks`, `wraps` (decorators of a to
 
 `@amazme/durable/tools` provides `read`, `write`, `edit`, and `bash`, and the `CodingTools` extension with all four. They touch files and processes only through the call's environment (see [Environment](#environment)). Reading images is not supported yet.
 
+It also exports `createGrepTool()`, `createFindTool()`, `createLsTool()`, and the separate `FileSearchTools` extension. Install only the capabilities the host selects. `grep` runs ripgrep with literal argv and returns a bounded head of matching lines and requested context; its `limit` counts output lines including context. `find` runs fd for basename or path globs, respects ignore files outside repositories and nested repository boundaries, and excludes `.git` and `node_modules`. `ls` pages the environment's directory reader and retains only the first alphabetically sorted entries, including hidden entries and `/` suffixes for directories.
+
+Searches stop at their line or 50KB output bound without cancelling sibling commands, propagate caller cancellation, and time out after 30 seconds. Diagnostics identify bounded results; narrow the search to read more. The environment must provide `rg` and `fd`, or the host can supply a `program` path/resolver to each factory. No host filesystem access or package download is performed by these tools. Native binary integration tests in `test/search-tools.test.ts` require both programs in `PATH`.
+
 Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `content`:
 
 ```typescript

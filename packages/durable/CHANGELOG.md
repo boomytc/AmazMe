@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added portable `grep`, `find`, and `ls` tools and the separate `FileSearchTools` extension, with bounded output, literal argv, invocation cancellation and paged alphabetical directory listing
+
 ## [1.1.0] - 2026-10-07
 
 ### Breaking Changes
