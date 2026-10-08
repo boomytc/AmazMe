@@ -146,6 +146,44 @@ describe("tool card row", () => {
 		expect(details.querySelector(".tool-output")?.textContent).toBe("boom");
 	});
 
+	test("folds a running call once it settles, and keeps only the choice the reader made", () => {
+		const live = (output: string): ConversationView => ({
+			conversation: { id: CONVERSATION, createdAt: 0 } as unknown as ConversationView["conversation"],
+			entries: [],
+			docs: {
+				"amazme.live": { tools: [{ callId: "call-settle", name: "bash", status: "running", output }] },
+			} as unknown as ConversationView["docs"],
+		});
+		const settled = viewOf([
+			assistantEntry(1, [toolCall("call-settle", "bash", { command: "ls" })], "toolUse"),
+			toolResultEntry(2, "call-settle", "exit 0"),
+		]);
+		const renderer = createRenderer(collectPageElements());
+		const render = (view: ConversationView): void => {
+			renderer.render({ ...failureView("en", ""), attachedId: "session", blocks: transcriptBlocks("en", view) });
+		};
+		const row = (): HTMLDetailsElement => {
+			const node = document.querySelector("details.disclosure");
+			if (!(node instanceof HTMLDetailsElement)) throw new Error("missing tool row");
+			return node;
+		};
+
+		render(live("ls\n"));
+		expect(row().open).toBe(true);
+		// Settled with no choice of the reader's: the row folds.
+		render(settled);
+		expect(row().open).toBe(false);
+		// The reader opens it. The browser flips `open` after the click, so the page sets it here.
+		row().querySelector("summary")?.dispatchEvent(new Event("click", { bubbles: true }));
+		row().open = true;
+		render(settled);
+		expect(row().open).toBe(true);
+		// A click in the open body is not a choice, so the next repaint keeps the reader's open row.
+		row().querySelector(".tool-output")?.dispatchEvent(new Event("click", { bubbles: true }));
+		render(settled);
+		expect(row().open).toBe(true);
+	});
+
 	test("starts a running call open", () => {
 		const partial: AssistantMessage = {
 			role: "assistant",

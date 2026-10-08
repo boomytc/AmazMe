@@ -7,10 +7,12 @@
  * otherwise reset them.
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, REFRESH_MODELS_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import type { DockTabId } from "./dock.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
 	CHAT_VIEW,
+	type NavItem,
 	type PanelAction,
 	type PanelButton,
 	type PanelControl,
@@ -28,9 +30,9 @@ import { type MessageKey, translate } from "./strings.ts";
 import {
 	type Attachment,
 	composerPlaceholder,
-	type FeedbackControls,
 	type QueueItem,
 	type RosterItem,
+	rosterGroups,
 	type TranscriptBlock,
 	type WebView,
 	type WelcomeCard,
@@ -47,9 +49,12 @@ export interface PageElements {
 	/** The sidebar's panel rows, and the settings entry in its footer. */
 	readonly nav: HTMLElement;
 	readonly settingsButton: HTMLButtonElement;
-	/** The header's management entry, shown where the sidebar column is dropped. */
-	readonly viewMenuTrigger: HTMLButtonElement;
-	readonly viewMenu: HTMLElement;
+	/** The sidebar, its toggle in the header, and the scrim behind it while it is a drawer. */
+	readonly sidebar: HTMLElement;
+	readonly sidebarToggle: HTMLButtonElement;
+	readonly scrim: HTMLElement;
+	/** The main column. Its state (`data-state`) drives the empty layout. */
+	readonly center: HTMLElement;
 	readonly roster: HTMLElement;
 	readonly transcript: HTMLElement;
 	readonly column: HTMLElement;
@@ -137,8 +142,10 @@ export function collectPageElements(): PageElements {
 		newSession: pickElement("new-session", HTMLButtonElement),
 		nav: pick("nav"),
 		settingsButton: pickElement("settings-button", HTMLButtonElement),
-		viewMenuTrigger: pickElement("view-menu-trigger", HTMLButtonElement),
-		viewMenu: pick("view-menu"),
+		sidebar: pick("sidebar"),
+		sidebarToggle: pickElement("sidebar-toggle", HTMLButtonElement),
+		scrim: pick("scrim"),
+		center: pick("center"),
 		roster: pick("roster"),
 		transcript: pick("transcript"),
 		column: pick("column"),
@@ -220,6 +227,50 @@ function wrap(className: string, child: HTMLElement): HTMLElement {
 }
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+/** The icons the page draws. Each names one symbol in the document's sprite (`index.html`). */
+type IconName =
+	| "star"
+	| "square-pen"
+	| "package"
+	| "sparkles"
+	| "clock"
+	| "sliders"
+	| "message"
+	| "panel-left"
+	| "panel-right"
+	| "folder"
+	| "terminal"
+	| "activity"
+	| "git-fork"
+	| "minimize"
+	| "arrow-left"
+	| "arrow-up"
+	| "plus"
+	| "stop"
+	| "copy"
+	| "check"
+	| "x"
+	| "thumb-up"
+	| "thumb-down"
+	| "chevron-down"
+	| "search"
+	| "wrench"
+	| "spinner"
+	| "alert";
+
+/** One icon: a `use` of its sprite symbol. The stylesheet sets its size and colour. */
+function icon(name: IconName, className = "icon"): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+	svg.setAttribute("class", className);
+	svg.setAttribute("viewBox", "0 0 24 24");
+	svg.setAttribute("aria-hidden", "true");
+	svg.setAttribute("focusable", "false");
+	const use = document.createElementNS(SVG_NAMESPACE, "use");
+	use.setAttribute("href", `#i-${name}`);
+	svg.append(use);
+	return svg;
+}
 
 /**
  * The formatted-answer adapter: the pure markdown nodes become DOM, and model text reaches the
@@ -356,34 +407,11 @@ function tableElement(node: TableNode): HTMLElement {
 	return scroll;
 }
 
-/** An answer as DSH's markdown sheet expects it: one `.markdown` root per assistant block. */
+/** An answer as the markdown sheet expects it: one `.markdown` root per assistant block. */
 function markdownElement(text: string, context: MarkdownContext): HTMLElement {
 	const root = element("div", "markdown");
 	for (const node of formatMarkdown(text)) root.append(markdownNode(node, context));
 	return root;
-}
-
-/** The 14px trailing check a selected picker row carries (ModelSelect's `.check`). */
-function checkGlyph(): SVGSVGElement {
-	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
-	svg.setAttribute("viewBox", "0 0 16 16");
-	svg.setAttribute("width", "14");
-	svg.setAttribute("height", "14");
-	svg.setAttribute("aria-hidden", "true");
-	const shape = document.createElementNS(SVG_NAMESPACE, "path");
-	shape.setAttribute("d", "M3.4 8.6 6.6 11.8 12.6 5.2");
-	shape.setAttribute("fill", "none");
-	shape.setAttribute("stroke", "currentColor");
-	shape.setAttribute("stroke-width", "1.6");
-	shape.setAttribute("stroke-linecap", "round");
-	shape.setAttribute("stroke-linejoin", "round");
-	svg.append(shape);
-	return svg;
-}
-
-/** The leading 16px glyph box every disclosure row and notice row carries. */
-function leading(): HTMLElement {
-	return element("span", "disclosure-leading");
 }
 
 /** A row's one-line summary: the first non-empty line of a longer text. */
@@ -405,93 +433,32 @@ function inRange(control: PanelControl, value: string): boolean {
 
 function fitPrompt(prompt: HTMLTextAreaElement): void {
 	prompt.style.height = "auto";
-	// The draft grows with its content; the sheet caps it at `--dsh-composer-text-max-height` and
-	// the box scrolls once it is capped.
+	// The draft grows with its content, up to the cap the stylesheet sets; past it the box scrolls.
 	prompt.style.height = `${prompt.scrollHeight}px`;
 }
 
-/** One 16px outline glyph per navigation row; the page ships its own shapes, not an icon set. */
-function navGlyph(name: "chat" | "plugins" | "skills" | "automation" | "settings"): SVGSVGElement {
-	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
-	svg.setAttribute("viewBox", "0 0 16 16");
-	svg.setAttribute("width", "16");
-	svg.setAttribute("height", "16");
-	svg.setAttribute("aria-hidden", "true");
-	const shapes: Record<typeof name, string[]> = {
-		chat: ["M3.2 4.2h9.6v6.4H7.6L4.6 13v-2.4H3.2Z"],
-		plugins: ["M3.6 3.6h3.6v3.6H3.6zM8.8 3.6h3.6v3.6H8.8zM3.6 8.8h3.6v3.6H3.6zM8.8 8.8h3.6v3.6H8.8z"],
-		skills: ["M8 2.6 9.6 6.4 13.4 8 9.6 9.6 8 13.4 6.4 9.6 2.6 8 6.4 6.4Z"],
-		// A clock: the dial, then the two hands from its centre.
-		automation: ["M8 2.8a5.2 5.2 0 1 0 0 10.4A5.2 5.2 0 0 0 8 2.8Z", "M8 5.6v2.7l1.9 1.1"],
-		settings: ["M2.6 5.2h10.8M2.6 10.8h10.8"],
-	};
-	for (const definition of shapes[name]) {
-		const shape = document.createElementNS(SVG_NAMESPACE, "path");
-		shape.setAttribute("d", definition);
-		shape.setAttribute("fill", "none");
-		shape.setAttribute("stroke", "currentColor");
-		shape.setAttribute("stroke-width", "1.4");
-		shape.setAttribute("stroke-linecap", "round");
-		shape.setAttribute("stroke-linejoin", "round");
-		svg.append(shape);
-	}
-	if (name === "settings") {
-		// Two knobs on the sliders, painted in the surface colour so the line reads through them.
-		for (const [cx, cy] of [
-			["6.2", "5.2"],
-			["9.8", "10.8"],
-		] as const) {
-			const knob = document.createElementNS(SVG_NAMESPACE, "circle");
-			knob.setAttribute("cx", cx);
-			knob.setAttribute("cy", cy);
-			knob.setAttribute("r", "1.5");
-			knob.setAttribute("fill", "var(--dsw-alias-bg-base)");
-			knob.setAttribute("stroke", "currentColor");
-			knob.setAttribute("stroke-width", "1.4");
-			svg.append(knob);
-		}
-	}
-	return svg;
-}
+/** The icon each navigation row carries. */
+const NAV_ICONS: Record<NavItem["glyph"], IconName> = {
+	chat: "message",
+	plugins: "package",
+	skills: "sparkles",
+	automation: "clock",
+	settings: "sliders",
+};
 
-/** The thumb a rating control carries, up or down. */
-function thumbGlyph(direction: "up" | "down"): SVGSVGElement {
-	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
-	svg.setAttribute("viewBox", "0 0 16 16");
-	svg.setAttribute("width", "14");
-	svg.setAttribute("height", "14");
-	svg.setAttribute("aria-hidden", "true");
-	const shape = document.createElementNS(SVG_NAMESPACE, "path");
-	shape.setAttribute(
-		"d",
-		direction === "up"
-			? "M5.6 13.4V7.2l2.6-4.6h1.1l-.6 3.5h3a1.2 1.2 0 0 1 1.2 1.4l-.7 4.1a1.2 1.2 0 0 1-1.2 1H5.6Zm0 0H3.4V7.2h2.2"
-			: "M10.4 2.6v6.2L7.8 13.4H6.7l.6-3.5h-3A1.2 1.2 0 0 1 3.1 8.5l.7-4.1a1.2 1.2 0 0 1 1.2-1h4.1Zm0 0h2.2v6.2h-2.2",
-	);
-	shape.setAttribute("fill", "none");
-	shape.setAttribute("stroke", "currentColor");
-	shape.setAttribute("stroke-width", "1.3");
-	shape.setAttribute("stroke-linecap", "round");
-	shape.setAttribute("stroke-linejoin", "round");
-	svg.append(shape);
-	return svg;
-}
+/** The icon each dock tab carries. */
+const DOCK_ICONS: Record<DockTabId, IconName> = {
+	files: "folder",
+	terminal: "terminal",
+	conversations: "message",
+	tasks: "activity",
+};
 
-/** The modal's close mark: two strokes, the same 16px box the other glyphs use. */
-function closeGlyph(): SVGSVGElement {
-	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
-	svg.setAttribute("viewBox", "0 0 16 16");
-	svg.setAttribute("width", "16");
-	svg.setAttribute("height", "16");
-	svg.setAttribute("aria-hidden", "true");
-	const shape = document.createElementNS(SVG_NAMESPACE, "path");
-	shape.setAttribute("d", "M4.6 4.6 11.4 11.4M11.4 4.6 4.6 11.4");
-	shape.setAttribute("fill", "none");
-	shape.setAttribute("stroke", "currentColor");
-	shape.setAttribute("stroke-width", "1.5");
-	shape.setAttribute("stroke-linecap", "round");
-	svg.append(shape);
-	return svg;
+/** Below 1024px the sidebar and the dock are drawers over the conversation, not columns. */
+const NARROW_QUERY = "(max-width: 1023px)";
+
+function isNarrow(): boolean {
+	return typeof window.matchMedia === "function" && window.matchMedia(NARROW_QUERY).matches;
 }
 
 /** Whether this control is the one whose call the page has in flight. */
@@ -509,31 +476,11 @@ function markPending(node: HTMLElement, pending: PanelPending | undefined, actio
 	}
 }
 
-/** Words stay available when a narrow header shows only the icon. */
-function placeHeaderAction(node: HTMLButtonElement, label: string): void {
+/** A header action is an icon; its words stay on the title and in a screen-reader label. */
+function placeHeaderAction(node: HTMLButtonElement, label: string, glyph: IconName): void {
 	node.title = label;
 	node.setAttribute("aria-label", label);
-	const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	icon.setAttribute("class", "header-action-icon");
-	icon.setAttribute("viewBox", "0 0 16 16");
-	icon.setAttribute("width", "14");
-	icon.setAttribute("height", "14");
-	icon.setAttribute("aria-hidden", "true");
-	const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-	path.setAttribute("d", headerActionIconPath(node.dataset.action ?? ""));
-	path.setAttribute("fill", "none");
-	path.setAttribute("stroke", "currentColor");
-	path.setAttribute("stroke-width", "1.4");
-	path.setAttribute("stroke-linecap", "round");
-	path.setAttribute("stroke-linejoin", "round");
-	icon.append(path);
-	node.replaceChildren(icon, element("span", "header-action-label", label));
-}
-
-function headerActionIconPath(action: string): string {
-	if (action === COMPACT_ACTION) return "M3 6h4V3M13 6H9V3M3 10h4v3M13 10H9v3";
-	if (action === DOCK_TOGGLE_ACTION) return "M3 4h10M3 8h10M3 12h10";
-	return "M5 3.5v9M11 3.5v3.2c0 2.2-2.2 3.2-3.4 3.8S5 12.2 5 12.5";
+	node.replaceChildren(icon(glyph), element("span", "sr-only header-action-label", label));
 }
 
 function panelButton(action: PanelButton, report: (action: PanelAction) => void, pending?: PanelPending): HTMLButtonElement {
@@ -770,6 +717,7 @@ export function createRenderer(
 	 * The modal's fields are read on submit, and the modal is only rebuilt when its identity or
 	 * default values change, so a rebuild elsewhere in the view never drops a half-typed field.
 	 */
+
 	/**
 	 * The modal's in-flight and message state, applied on every render: a rebuild would drop what the
 	 * reader typed, so the submit and the message line are updated in place instead.
@@ -815,7 +763,7 @@ export function createRenderer(
 		if (modal.description !== undefined) titles.append(element("p", "modal-desc", modal.description));
 		const close = button("modal-close");
 		close.setAttribute("aria-label", copy("panel.dismiss"));
-		close.append(closeGlyph());
+		close.append(icon("x"));
 		close.addEventListener("click", () => report({ kind: "modal-close" }));
 		head.append(titles, close);
 		const body = element("div", "modal-body");
@@ -866,54 +814,38 @@ export function createRenderer(
 			if (item.id === SETTINGS_VIEW) continue; // The settings row lives in the sidebar footer.
 			const row = button(item.active ? "nav-row active" : "nav-row");
 			row.dataset.view = item.id;
-			row.append(navGlyph(item.glyph), element("span", "nav-label", item.label));
-			row.addEventListener("click", () => report({ kind: "open", panel: item.id }));
-			elements.nav.append(row);
-		}
-		elements.settingsButton.replaceChildren(navGlyph("settings"), element("span", "nav-label", copy("nav.settings")));
-		elements.settingsButton.classList.toggle("active", view.panel.current === SETTINGS_VIEW);
-		// The header entry carries the same rows, for the width where the sidebar column is dropped.
-		if (!elements.viewMenu.hidden) renderViewMenu(view);
-	};
-
-	/** The header's management card: the same rows as the sidebar, marked with the open view. */
-	const renderViewMenu = (view: WebView): void => {
-		const rows: HTMLElement[] = [];
-		for (const item of view.panel.nav) {
-			const row = button(item.active ? "menu-item selected" : "menu-item");
-			row.setAttribute("role", "menuitemradio");
-			row.setAttribute("aria-checked", String(item.active));
-			row.append(element("span", "menu-item-name", item.label));
-			if (item.active) {
-				const check = element("span", "menu-check");
-				check.append(checkGlyph());
-				row.append(check);
-			}
+			row.append(icon(NAV_ICONS[item.glyph]), element("span", "nav-label", item.label));
 			row.addEventListener("click", () => {
-				closeViewMenu();
+				closeSidebarDrawer();
 				report({ kind: "open", panel: item.id });
 			});
-			rows.push(row);
+			elements.nav.append(row);
 		}
-		const scroll = element("div", "menu-scroll");
-		scroll.append(...rows);
-		elements.viewMenu.replaceChildren(scroll);
+		elements.settingsButton.replaceChildren(icon(NAV_ICONS.settings), element("span", "nav-label", copy("nav.settings")));
+		elements.settingsButton.classList.toggle("active", view.panel.current === SETTINGS_VIEW);
 	};
 
-	const closeViewMenu = (): void => {
-		if (elements.viewMenu.hidden) return;
-		elements.viewMenu.hidden = true;
-		elements.viewMenuTrigger.setAttribute("aria-expanded", "false");
+	/** The sidebar is a column on a wide window and a drawer on a narrow one; this reads which. */
+	const sidebarExpanded = (): boolean =>
+		isNarrow() ? document.body.classList.contains("sidebar-open") : !document.body.classList.contains("sidebar-collapsed");
+
+	const syncSidebarToggle = (): void => {
+		elements.sidebarToggle.setAttribute("aria-expanded", String(sidebarExpanded()));
 	};
 
-	const openViewMenu = (): void => {
-		if (lastView === undefined) return;
-		renderViewMenu(lastView);
-		elements.viewMenu.hidden = false;
-		elements.viewMenuTrigger.setAttribute("aria-expanded", "true");
+	/** The header's toggle: a column collapses and expands, a drawer slides in and out. */
+	const toggleSidebar = (): void => {
+		document.body.classList.toggle(isNarrow() ? "sidebar-open" : "sidebar-collapsed");
+		syncSidebarToggle();
 	};
 
-	/** The crumb ellipsizes when the header is narrow. The title keeps the full text. */
+	/** A drawer closes once the reader has used it. On a wide window the sidebar stays where it is. */
+	const closeSidebarDrawer = (): void => {
+		if (!isNarrow()) return;
+		document.body.classList.remove("sidebar-open");
+		syncSidebarToggle();
+	};
+
 	const writeSessionTitle = (text: string): void => {
 		elements.sessionTitle.textContent = text;
 		elements.sessionTitle.title = text;
@@ -996,33 +928,74 @@ export function createRenderer(
 		const details = document.createElement("details");
 		details.className = `disclosure ${className}`.trim();
 		details.open = expanded.get(block.id) ?? defaultOpen;
-		// The click handler runs before the browser toggles, so the intent is the flipped value.
-		details.addEventListener("click", () => expanded.set(block.id, !details.open));
+		// Only the reader's press on the summary is a choice. The click runs before the browser flips
+		// `open`, so the intent is the flipped value. A click in the open body is not a choice, and a
+		// block that starts open (a running tool) is not one either, so neither is recorded.
+		details.addEventListener("click", (event) => {
+			const target = event.target;
+			if (target instanceof Element && target.closest("summary") !== null) expanded.set(block.id, !details.open);
+		});
 		return details;
 	};
 
-	/** An answer's rating row: both ratings, the set one marked, each a control of its own. */
-	const feedbackRow = (feedback: FeedbackControls): HTMLElement => {
-		const row = element("div", "feedback-row");
-		row.setAttribute("role", "group");
-		const control = (button: PanelButton, direction: "up" | "down", selected: boolean): HTMLElement => {
-			const node = panelButton(button, report);
-			node.className = selected ? `feedback-button selected ${direction}` : `feedback-button ${direction}`;
-			node.replaceChildren(thumbGlyph(direction));
-			node.title = button.label;
-			node.setAttribute("aria-label", button.label);
-			node.setAttribute("aria-pressed", String(selected));
-			return node;
+	/** Writes an answer's text to the clipboard; the control shows the outcome for a moment. */
+	const copyAnswer = (control: HTMLButtonElement, text: string): void => {
+		const show = (key: MessageKey, glyph: IconName): void => {
+			control.title = copy(key);
+			control.setAttribute("aria-label", copy(key));
+			control.replaceChildren(icon(glyph));
+			window.setTimeout(() => {
+				control.title = copy("copy.copy");
+				control.setAttribute("aria-label", copy("copy.copy"));
+				control.replaceChildren(icon("copy"));
+			}, 1200);
 		};
-		row.append(control(feedback.up, "up", feedback.rating === "up"));
-		row.append(control(feedback.down, "down", feedback.rating === "down"));
+		const written = navigator.clipboard?.writeText(text);
+		if (written === undefined) {
+			show("copy.failed", "x");
+			return;
+		}
+		void written.then(
+			() => show("copy.copied", "check"),
+			() => show("copy.failed", "x"),
+		);
+	};
+
+	/** One rating control: the thumb, pressed when it is the rating the answer carries. */
+	const feedbackControl = (action: PanelButton, direction: "up" | "down", selected: boolean): HTMLElement => {
+		const node = panelButton(action, report);
+		node.className = selected ? "message-action selected" : "message-action";
+		node.replaceChildren(icon(direction === "up" ? "thumb-up" : "thumb-down"));
+		node.title = action.label;
+		node.setAttribute("aria-label", action.label);
+		node.setAttribute("aria-pressed", String(selected));
+		return node;
+	};
+
+	/** The row under an answer: copy it, then the two ratings when the host keeps them. */
+	const answerActions = (block: TranscriptBlock): HTMLElement => {
+		const row = element("div", "turn-actions");
+		const copyControl = button("message-action");
+		copyControl.title = copy("copy.copy");
+		copyControl.setAttribute("aria-label", copy("copy.copy"));
+		copyControl.append(icon("copy"));
+		copyControl.addEventListener("click", () => copyAnswer(copyControl, block.text));
+		row.append(copyControl);
+		if (block.feedback !== undefined) {
+			row.append(
+				feedbackControl(block.feedback.up, "up", block.feedback.rating === "up"),
+				feedbackControl(block.feedback.down, "down", block.feedback.rating === "down"),
+			);
+		}
 		return row;
 	};
 
 	/** The first-run guide: what the page is, and the three steps that make it useful. */
 	const welcomeElement = (welcome: WelcomeCard): HTMLElement => {
 		const card = element("div", "welcome-card");
-		card.append(element("h2", "welcome-title", welcome.title), element("p", "welcome-body", welcome.body));
+		const mark = element("span", "brand-mark welcome-mark");
+		mark.append(icon("star"));
+		card.append(mark, element("h2", "welcome-title", welcome.title), element("p", "welcome-body", welcome.body));
 		const steps = element("div", "welcome-steps");
 		for (const step of welcome.steps) steps.append(panelButton(step, report));
 		card.append(steps, element("p", "welcome-note", welcome.note));
@@ -1030,6 +1003,32 @@ export function createRenderer(
 		dismiss.className = "welcome-dismiss";
 		card.append(dismiss);
 		return card;
+	};
+
+	/**
+	 * The conversation's empty state. A session with nothing in it greets the reader above the
+	 * composer. With no session attached, the state says how to get one.
+	 */
+	const emptyElement = (view: WebView): HTMLElement => {
+		const block = element("div", "empty-block");
+		block.id = "transcript-empty";
+		if (view.attachedId !== undefined) {
+			block.append(element("h2", "greeting", copy("greeting.title")), element("p", "greeting-hint", copy("greeting.hint")));
+			return block;
+		}
+		const hasSessions = view.roster.length > 0 || view.rosterFilter.length > 0;
+		block.append(
+			element("h2", "greeting", copy(hasSessions ? "greeting.pickTitle" : "greeting.startTitle")),
+			element("p", "greeting-hint", copy(hasSessions ? "greeting.pickHint" : "greeting.startHint")),
+		);
+		const steps = element("div", "welcome-steps");
+		const create = button("panel-button tone-primary");
+		create.textContent = copy("sidebar.newSession");
+		create.disabled = !view.newSession.enabled;
+		create.addEventListener("click", () => renderer.onCreateSession());
+		steps.append(create);
+		block.append(steps);
+		return block;
 	};
 
 	/** A user turn: the images the entry carries, then its text. */
@@ -1046,13 +1045,12 @@ export function createRenderer(
 		return bubble;
 	};
 
-	/** A row: the leading glyph, the title, and — when a summary is given — the dot and one line of it. */
-	const rowElement = (block: TranscriptBlock, tag: "summary" | "div", summary?: string): HTMLElement => {
-		const line = element(tag, "disclosure-row");
-		line.append(leading(), element("span", "disclosure-title", block.title));
-		if (summary !== undefined && summary.length > 0) {
-			line.append(element("span", "disclosure-sep"), element("span", "disclosure-summary", summary));
-		}
+	/** A process row's summary: the leading mark, the title, one line of what it is about, and the chevron. */
+	const disclosureSummary = (mark: SVGSVGElement, title: string, summary: string): HTMLElement => {
+		const line = element("summary", "disclosure-row");
+		const lead = element("span", "disclosure-leading");
+		lead.append(mark);
+		line.append(lead, element("span", "disclosure-title", title), element("span", "disclosure-summary", summary), icon("chevron-down", "icon disclosure-chevron"));
 		return line;
 	};
 
@@ -1062,7 +1060,8 @@ export function createRenderer(
 		const details = disclosure(block, tone, block.running);
 		const digest = block.toolArgs?.collapsed;
 		const summary = digest !== undefined && digest.length > 0 ? digest : firstLine(block.text);
-		details.append(rowElement(block, "summary", summary));
+		const mark = block.running ? icon("spinner", "icon spin") : block.tone === "error" ? icon("alert") : icon("wrench");
+		details.append(disclosureSummary(mark, block.title, summary));
 		if (block.toolArgs !== undefined && block.toolArgs.expanded.length > 0) {
 			details.append(element("div", "tool-args", block.toolArgs.expanded));
 		}
@@ -1074,38 +1073,38 @@ export function createRenderer(
 		return details;
 	};
 
-	/** Assistant reasoning: the Think row, collapsed until the reader opens it. */
+	/** Assistant reasoning: the Thinking row, collapsed until the reader opens it. */
 	const reasoningElement = (block: TranscriptBlock): HTMLElement => {
 		const details = disclosure(block, "", false);
-		details.append(rowElement(block, "summary"), element("div", "reasoning-body", block.text));
+		details.append(disclosureSummary(icon("sparkles"), block.title, ""), element("div", "reasoning-body", block.text));
 		return details;
 	};
 
-	/** One roster row: the session's id and working directory, its age, and its remove control. */
+	/** One roster row: the session's name, its age, and the control that removes it, which takes the age's place on hover. */
 	const sessionRow = (item: RosterItem): HTMLElement => {
 		const chip = button(item.attached ? "session-row attached" : "session-row");
 		chip.dataset.sessionId = item.id;
-		if (item.label !== item.id) chip.title = item.id;
-		const text = element("span", "session-text");
+		const hints = [item.cwd, item.label !== item.id ? item.id : undefined].filter(
+			(part): part is string => part !== undefined && part.length > 0,
+		);
+		if (hints.length > 0) chip.title = hints.join(" · ");
 		const name = element("span", "session-name", item.label);
 		// A terminal session a host has not adopted yet is worth naming: attaching it adopts it.
 		if (item.source === "local") name.append(element("span", "session-source", copy("sidebar.localSession")));
-		text.append(name);
-		if (item.cwd !== undefined && item.cwd.length > 0) {
-			text.append(element("span", "session-cwd", item.cwd));
-		}
-		chip.append(text);
 		const age = element("time", "session-age", item.age);
 		age.setAttribute("datetime", item.ageIso);
-		chip.append(age);
+		chip.append(name, age);
 		const remove = panelButton(item.remove, report);
 		remove.className = "session-remove";
-		remove.replaceChildren(closeGlyph());
+		remove.replaceChildren(icon("x"));
 		remove.title = copy("sidebar.removeAria");
 		remove.setAttribute("aria-label", copy("sidebar.removeAria"));
 		remove.addEventListener("click", (event) => event.stopPropagation());
 		chip.append(remove);
-		chip.addEventListener("click", () => renderer.onSelect(item.id));
+		chip.addEventListener("click", () => {
+			closeSidebarDrawer();
+			renderer.onSelect(item.id);
+		});
 		return chip;
 	};
 
@@ -1231,7 +1230,7 @@ export function createRenderer(
 		const remove = panelButton(attachment.remove, report);
 		remove.className = "attachment-remove";
 		// The strip shows a mark; the control's name is the accessible one.
-		remove.replaceChildren(closeGlyph());
+		remove.replaceChildren(icon("x"));
 		remove.title = attachment.remove.label;
 		remove.setAttribute("aria-label", attachment.remove.label);
 		card.append(remove);
@@ -1266,7 +1265,7 @@ export function createRenderer(
 			node.dataset.tab = tab.id;
 			node.setAttribute("role", "tab");
 			node.setAttribute("aria-selected", String(tab.active));
-			node.textContent = tab.label;
+			node.append(icon(DOCK_ICONS[tab.id]), element("span", "dock-tab-label", tab.label));
 			node.addEventListener("click", () => report({ kind: "command", id: DOCK_TAB_ACTION, data: tab.id }));
 			tabs.append(node);
 		}
@@ -1274,20 +1273,20 @@ export function createRenderer(
 		elements.dockBody.replaceChildren(panelElement(view.dock.panel, elements.dockBody));
 	};
 
-	/** The header's run controls: one control per action the view offers. */
+	/** The header's run controls: one icon per action the view offers, each named on its title and in its label. */
 	const renderRunActions = (view: WebView): void => {
 		const compact = panelButton(view.run.compact, report);
 		compact.className = "header-action";
 		compact.dataset.action = COMPACT_ACTION;
-		placeHeaderAction(compact, view.run.compact.label);
+		placeHeaderAction(compact, view.run.compact.label, "minimize");
 		const fork = panelButton(view.run.fork, report);
 		fork.className = "header-action";
 		fork.dataset.action = "conversation:fork";
-		placeHeaderAction(fork, view.run.fork.label);
+		placeHeaderAction(fork, view.run.fork.label, "git-fork");
 		const dock = button(view.dock.toggle.pressed ? "header-action pressed" : "header-action");
 		dock.dataset.action = DOCK_TOGGLE_ACTION;
 		dock.setAttribute("aria-pressed", String(view.dock.toggle.pressed));
-		placeHeaderAction(dock, view.dock.toggle.label);
+		placeHeaderAction(dock, view.dock.toggle.label, "panel-right");
 		dock.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
 		elements.runActions.replaceChildren(compact, fork, dock);
 		elements.laneStatus.textContent = view.lane;
@@ -1319,27 +1318,29 @@ export function createRenderer(
 		elements.submitModes.hidden = false;
 	};
 
-	/** A flow notice (compaction, new context): one 24px row, with its summary indented below. */
+	/** A flow notice (compaction, new context): a labelled rule, with its summary beneath it. */
 	const noticeElement = (block: TranscriptBlock): HTMLElement => {
-		const group = element("div", "disclosure");
-		group.append(rowElement(block, "div"));
+		const group = element("div", "notice");
+		group.append(element("p", "notice-rule", block.title));
 		if (block.text.length > 0) group.append(element("div", "notice-body", block.text));
 		return group;
 	};
 
-	/** A failed turn: a status dot, the failure's title, and its message. */
+	/** A failed turn: an alert mark, the failure's title, and its message. */
 	const errorElement = (block: TranscriptBlock): HTMLElement => {
 		const line = element("div", "error-row");
-		const copy = element("div", "error-copy");
-		copy.append(element("span", "error-title", block.title), element("span", "error-message", block.text));
-		line.append(element("span", "error-dot"), copy);
+		const body = element("div", "error-copy");
+		body.append(element("span", "error-title", block.title), element("span", "error-message", block.text));
+		line.append(icon("alert", "icon error-icon"), body);
 		return line;
 	};
 
-	/** The live status line (DSH's ChatView `.running`), the flow's last item while a turn runs. */
+	/** The live status line, the flow's last item while a turn runs: a pulsing dot and the status. */
 	const runningElement = (status: string): HTMLElement => {
 		const line = element("div", "running");
-		line.append(element("span", "running-text", status));
+		const dot = element("span", "running-dot");
+		dot.setAttribute("aria-hidden", "true");
+		line.append(dot, element("span", "running-text", status));
 		return line;
 	};
 
@@ -1361,15 +1362,18 @@ export function createRenderer(
 			process = undefined;
 			if (block.kind === "user") flow.push(wrap("turn-user", userBubble(block)));
 			else if (block.kind === "assistant") {
-				const answer = wrap("turn-response", markdownElement(block.text, markdown));
-				if (block.feedback !== undefined) answer.append(feedbackRow(block.feedback));
-				flow.push(answer);
+				// A tool-only answer has no text of its own: its calls are the process rows above it.
+				if (block.text.length > 0) {
+					const answer = wrap("turn-response", markdownElement(block.text, markdown));
+					answer.append(answerActions(block));
+					flow.push(answer);
+				}
 			} else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
 		}
 		return flow;
 	};
 
-	/** One picker row; the selected one carries the trailing check, DSH's selection marker. */
+	/** One picker row; the selected one carries the trailing check. */
 	const pickerRow = (label: string, selected: boolean, choose: () => void): HTMLButtonElement => {
 		const row = button(selected ? "menu-item selected" : "menu-item");
 		row.setAttribute("role", "menuitemradio");
@@ -1377,7 +1381,7 @@ export function createRenderer(
 		row.append(element("span", "menu-item-name", label));
 		if (selected) {
 			const check = element("span", "menu-check");
-			check.append(checkGlyph());
+			check.append(icon("check"));
 			row.append(check);
 		}
 		row.addEventListener("click", () => {
@@ -1482,7 +1486,12 @@ export function createRenderer(
 			elements.newSession.disabled = !view.newSession.enabled;
 
 			elements.roster.replaceChildren();
-			for (const item of view.roster) elements.roster.append(sessionRow(item));
+			for (const group of rosterGroups(view.locale, view.roster)) {
+				const section = element("div", "session-group");
+				section.append(element("p", "session-group-label", group.label));
+				for (const item of group.items) section.append(sessionRow(item));
+				elements.roster.append(section);
+			}
 			// The filter keeps what the reader typed; only its value is ever set from the view.
 			if (document.activeElement !== elements.rosterFilter) elements.rosterFilter.value = view.rosterFilter;
 			if (view.roster.length === 0) {
@@ -1492,13 +1501,15 @@ export function createRenderer(
 			}
 
 			const flow = flowElements(view.blocks);
+			const hasConversation = view.blocks.length > 0 || view.history.blocks.length > 0;
 			// The pages the reader asked for sit above the live transcript, in their own group.
 			if (view.history.blocks.length > 0) {
 				const pages = element("div", "history-pages");
 				pages.append(...flowElements(view.history.blocks));
 				flow.unshift(pages);
 			}
-			if (view.history.loading || view.history.more) {
+			// "Load older" belongs to a conversation that has entries; an empty one has nothing to load.
+			if (hasConversation && (view.history.loading || view.history.more)) {
 				const more = element("div", "history-more");
 				const control = button(view.history.loading ? "history-more-button loading" : "history-more-button");
 				control.dataset.action = HISTORY_MORE_ACTION;
@@ -1508,18 +1519,13 @@ export function createRenderer(
 				more.append(control);
 				flow.unshift(more);
 			}
+			// The empty layout centres the greeting and the composer; anything in the transcript brings the conversation layout.
+			elements.center.dataset.state = hasConversation || view.status.length > 0 ? "chat" : "empty";
 			if (view.blocks.length === 0) {
-				if (view.welcome !== undefined) {
-					flow.push(welcomeElement(view.welcome));
-				} else {
-					const empty = element("p", "empty-state", copy(view.attachedId === undefined ? "header.noSessionAttached" : "header.noEntries"));
-					empty.id = "transcript-empty";
-					flow.push(empty);
-				}
+				flow.push(view.welcome !== undefined ? welcomeElement(view.welcome) : emptyElement(view));
 			}
 			if (view.status.length > 0) flow.push(runningElement(view.status));
 			elements.column.replaceChildren(...flow);
-			if (stick) elements.transcript.scrollTop = elements.transcript.scrollHeight;
 
 			const detached = view.attachedId === undefined;
 			elements.prompt.disabled = detached;
@@ -1542,6 +1548,9 @@ export function createRenderer(
 			renderNav(view);
 			renderPanelView(view);
 			renderModal(view.panel.modal);
+			// The composer's dock may have grown (an approval, a queued input) and shrunk the transcript
+			// under the reader; a reader who was at the bottom stays there.
+			if (stick) elements.transcript.scrollTop = elements.transcript.scrollHeight;
 		},
 		setDraft(text: string): void {
 			elements.prompt.value = text;
@@ -1563,6 +1572,8 @@ export function createRenderer(
 			elements.connection.replaceChildren(dot, document.createTextNode(label));
 		},
 	};
+
+	syncSidebarToggle();
 
 	elements.composer.addEventListener("submit", (event) => {
 		event.preventDefault();
@@ -1641,25 +1652,24 @@ export function createRenderer(
 		event.preventDefault();
 		renderer.onAttachFiles(files);
 	});
-	elements.newSession.addEventListener("click", () => renderer.onCreateSession());
+	elements.newSession.addEventListener("click", () => {
+		closeSidebarDrawer();
+		renderer.onCreateSession();
+	});
 	// The footer entry toggles the settings panel, the same way its sidebar row does.
-	elements.settingsButton.addEventListener("click", () =>
+	elements.settingsButton.addEventListener("click", () => {
+		closeSidebarDrawer();
 		report({
 			kind: "open",
 			panel: lastView?.panel.current === SETTINGS_VIEW ? CHAT_VIEW : SETTINGS_VIEW,
-		}),
-	);
-	elements.viewBack.addEventListener("click", () => report({ kind: "open", panel: CHAT_VIEW }));
-	elements.viewMenuTrigger.addEventListener("click", () => {
-		if (elements.viewMenu.hidden) openViewMenu();
-		else closeViewMenu();
+		});
 	});
-	// The management card closes on a click elsewhere and on Escape, like the model card.
-	document.addEventListener("pointerdown", (event) => {
-		if (elements.viewMenu.hidden) return;
-		const target = event.target;
-		if (target instanceof Node && (elements.viewMenu.contains(target) || elements.viewMenuTrigger.contains(target))) return;
-		closeViewMenu();
+	elements.viewBack.addEventListener("click", () => report({ kind: "open", panel: CHAT_VIEW }));
+	elements.sidebarToggle.addEventListener("click", toggleSidebar);
+	// A click on the scrim closes whichever drawer is open: the sidebar here, the dock through the page.
+	elements.scrim.addEventListener("click", () => {
+		closeSidebarDrawer();
+		if (lastView?.dock.open === true) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
 	});
 	elements.modelTrigger.addEventListener("click", () => {
 		if (elements.modelMenu.hidden) openModelMenu();
@@ -1710,9 +1720,9 @@ export function createRenderer(
 			report({ kind: "modal-close" });
 			return;
 		}
-		if (!elements.viewMenu.hidden) {
-			closeViewMenu();
-			elements.viewMenuTrigger.focus();
+		if (document.body.classList.contains("sidebar-open")) {
+			closeSidebarDrawer();
+			elements.sidebarToggle.focus();
 			return;
 		}
 		if (!elements.modelMenu.hidden) {
@@ -1727,5 +1737,6 @@ export function createRenderer(
 		if (lastView?.busy !== true) return;
 		renderer.onAbort();
 	});
+
 	return renderer;
 }

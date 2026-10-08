@@ -1,10 +1,9 @@
 /// <reference lib="dom" />
 /**
- * Palette preference. DSH keys its dark overrides off `body[data-ds-dark-theme]` and resolves that
- * attribute from a host-backed theme preference (ui-theme boot-theme.ts); the page follows the same
- * shape: the served document boots the attribute from the stored preference for the first paint and
- * this re-applies it, so the document and the page always agree. `system` is the default, so a page
- * with no host preference still follows the operating system live.
+ * Palette preference. The served document's boot script sets `data-theme` on `<html>` from the stored
+ * preference before the first paint, and this module re-applies it on every render, so a switch in
+ * the settings lands without a reload. `tokens.css` keys its dark palette off `:root[data-theme="dark"]`.
+ * `system` is the default, so a page with no host preference still follows the operating system live.
  */
 
 /** What the agent's settings store: the system's palette, or one fixed choice. */
@@ -35,7 +34,7 @@ export function isDarkTheme(chosen: ThemePreference, systemDark: boolean): boole
 
 function paint(): void {
 	const dark = isDarkTheme(preference, media?.matches ?? false);
-	document.body.toggleAttribute("data-ds-dark-theme", dark);
+	document.documentElement.dataset.theme = dark ? "dark" : "light";
 	// Native controls and scrollbars follow the same choice as the palette.
 	document.documentElement.style.colorScheme = preference === "system" ? "light dark" : preference;
 }

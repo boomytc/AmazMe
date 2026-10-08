@@ -30,6 +30,19 @@ export const EN = {
 	"sidebar.removeAria": "Remove this session",
 	"sidebar.management": "Management",
 	"sidebar.waiting": "Waiting for the host…",
+	"sidebar.toggle": "Show or hide the sidebar",
+
+	"roster.today": "Today",
+	"roster.yesterday": "Yesterday",
+	"roster.week": "Previous 7 days",
+	"roster.earlier": "Earlier",
+
+	"greeting.title": "What should we work on?",
+	"greeting.hint": "Type / for commands. Enter sends, Shift+Enter starts a new line.",
+	"greeting.pickTitle": "Pick a session to continue",
+	"greeting.pickHint": "Or start a new one.",
+	"greeting.startTitle": "Start a session",
+	"greeting.startHint": "New sessions appear in the sidebar.",
 
 	"header.noSession": "No session",
 	"header.back": "Back to the conversation",
@@ -418,6 +431,19 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"sidebar.removeAria": "删除这个会话",
 	"sidebar.management": "管理",
 	"sidebar.waiting": "正在等待宿主…",
+	"sidebar.toggle": "显示或隐藏侧栏",
+
+	"roster.today": "今天",
+	"roster.yesterday": "昨天",
+	"roster.week": "最近七天",
+	"roster.earlier": "更早",
+
+	"greeting.title": "今天想做点什么？",
+	"greeting.hint": "输入 / 打开命令。Enter 发送，Shift+Enter 换行。",
+	"greeting.pickTitle": "选一个会话继续",
+	"greeting.pickHint": "也可以新建一个。",
+	"greeting.startTitle": "新建一个会话开始",
+	"greeting.startHint": "新会话会出现在左侧列表里。",
 
 	"header.noSession": "无会话",
 	"header.back": "返回对话",

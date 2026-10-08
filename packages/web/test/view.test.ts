@@ -27,6 +27,8 @@ import {
 	modelPicker,
 	modelPickerEmpty,
 	queuedInputs,
+	rosterGroupOf,
+	rosterGroups,
 	rosterItems,
 	laneLine,
 	runControls,
@@ -168,6 +170,35 @@ describe("web view model", () => {
 			data: "middle",
 		});
 		expect(rosterItems("en", undefined, undefined, NOW)).toEqual([]);
+	});
+
+	test("buckets the roster by the day each session was made, and keeps the buckets in order", () => {
+		// Local time throughout, so the day boundaries are the reader's own midnights.
+		const now = new Date(2026, 9, 8, 12, 0).getTime();
+		const at = (month: number, day: number, hour: number): number => new Date(2026, month, day, hour).getTime();
+		const roster = rosterItems(
+			"en",
+			directoryOf([
+				{ sessionId: "ahead", createdAt: at(9, 8, 13) },
+				{ sessionId: "today-late", createdAt: at(9, 8, 9) },
+				{ sessionId: "yesterday", createdAt: at(9, 7, 23) },
+				{ sessionId: "this-week", createdAt: at(9, 5, 10) },
+				{ sessionId: "earlier", createdAt: at(8, 30, 10) },
+			]),
+			undefined,
+			now,
+		);
+		expect(roster.map((item) => item.group)).toEqual(["today", "today", "yesterday", "week", "earlier"]);
+		expect(rosterGroupOf(at(9, 1, 10), now)).toBe("week");
+		expect(rosterGroups("en", roster).map((group) => [group.id, group.label, group.items.map((item) => item.id)])).toEqual([
+			["today", "Today", ["ahead", "today-late"]],
+			["yesterday", "Yesterday", ["yesterday"]],
+			["week", "Previous 7 days", ["this-week"]],
+			["earlier", "Earlier", ["earlier"]],
+		]);
+		// A bucket with no session is left out, and the labels follow the reader's language.
+		expect(rosterGroups("zh", roster.filter((item) => item.group === "earlier")).map((group) => group.label)).toEqual(["更早"]);
+		expect(rosterGroups("zh", [])).toEqual([]);
 	});
 
 	test("narrows the roster by id or by working directory", () => {

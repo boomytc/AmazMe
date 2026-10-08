@@ -117,7 +117,7 @@ list shows the same session with everything committed on the host. What a projec
 host's log rather than dropped quietly.
 
 The page lists the host's sessions on the left and the attached session's transcript on the right. The roster
-shows each session's age and marks the attached one; click a row to attach another session, or use the sidebar's
+groups the sessions by when they were made (today, yesterday, the previous seven days, earlier), shows each session's age, and marks the attached one; click a row to attach another session, or use the sidebar's
 **New session** bar to have the host create one — it appears in the roster, attaches at once, and accepts input.
 The transcript
 renders the same durable state the TUI shows: user and assistant blocks, thinking, tool calls with their
@@ -127,10 +127,10 @@ compacting) as the transcript's last row, and the inputs the session has queued 
 strip each above the composer. Assistant answers are formatted: headings, lists, emphasis, links, fenced code
 blocks, and pipe tables become elements — a table column that holds only numbers is right-aligned with figures of
 one width, so the numbers can be compared down the column — while anything the model writes that looks like markup
-stays text. The theme is the one
-`deepseek-harness` ships — the same palette, type,
-radii, elevation, and frame geometry — and its appearance follows the stored preference (see below), defaulting to the
-system's light and dark appearance.
+stays text. The page's own design is a neutral grey scale with one accent and the primary action in ink, following the
+conventions of the Claude, ChatGPT, and Grok chat clients: a centred conversation column, a rounded composer card,
+a time-grouped sidebar, and answer actions that show on hover. Its appearance follows the stored preference (see
+below), defaulting to the system's light and dark appearance.
 
 The page's language is a stored preference too. With no choice made, a browser asking for Chinese gets Chinese and any
 other browser gets English; the host resolves that from the request and serves the document already localized, so the
@@ -142,8 +142,8 @@ TUI's own interface stays English.
 
 Type in the composer and press `Enter` to submit: while the session is idle the text starts a run, and while a
 turn is running it queues as the next input. `Shift+Enter` inserts a newline; the draft grows with its content
-up to the composer's cap and scrolls after that. The circular action on the right sends the draft, and becomes
-`Stop` — withdrawing queued input and stopping the running turn — while a turn runs with an empty draft.
+up to the composer's cap and scrolls after that. The circular action on the right sends the draft. While a turn runs, an outlined `Stop` button sits beside it and
+stops the turn, the same as `Ctrl+C`.
 Committed entries appear without reloading, and any other attached presentation — a second browser tab or the
 client TUI — sees the same committed state. The chip beside that action carries the attached session's model and,
 for a model that reasons, its thinking level; it opens a card listing the host's model catalog grouped by

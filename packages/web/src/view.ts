@@ -40,7 +40,7 @@ import { type DockView, type DockViewInput, dockView } from "./dock.ts";
 import type { Locale } from "./locale.ts";
 import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panelView } from "./panels.ts";
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
-import { thinkingLevelCopy, translate } from "./strings.ts";
+import { type MessageKey, thinkingLevelCopy, translate } from "./strings.ts";
 import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
 
 export type BlockTone = "plain" | "muted" | "error";
@@ -82,6 +82,8 @@ export interface RosterItem {
 	readonly attached: boolean;
 	/** Where the session lives: one this host owns, or a terminal session it can adopt. */
 	readonly source: "host" | "local";
+	/** The time bucket the roster lists the session under. */
+	readonly group: RosterGroupId;
 	/** The control that asks to remove this session; the page confirms first. */
 	readonly remove: PanelButton;
 }
@@ -677,6 +679,7 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 			ageIso: new Date(session.createdAt).toISOString(),
 			attached: attachedId === session.sessionId,
 			source: session.source ?? "host",
+			group: rosterGroupOf(session.createdAt, now),
 			remove: {
 				id: SESSION_REMOVE_ACTION,
 				label: translate(locale, "sidebar.remove"),
@@ -684,6 +687,48 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 				data: session.sessionId,
 			},
 		}));
+}
+
+/** The roster's time buckets, newest first. */
+export type RosterGroupId = "today" | "yesterday" | "week" | "earlier";
+
+/** The local midnight `offset` days from the day `now` falls on. */
+function dayStart(now: number, offset: number): number {
+	const day = new Date(now);
+	day.setHours(0, 0, 0, 0);
+	day.setDate(day.getDate() + offset);
+	return day.getTime();
+}
+
+/** The bucket a session made at `createdAt` belongs to. A timestamp ahead of the clock counts as today. */
+export function rosterGroupOf(createdAt: number, now: number): RosterGroupId {
+	if (createdAt >= dayStart(now, 0)) return "today";
+	if (createdAt >= dayStart(now, -1)) return "yesterday";
+	if (createdAt >= dayStart(now, -7)) return "week";
+	return "earlier";
+}
+
+/** One bucket of the roster, with its label in the reader's language. */
+export interface RosterGroup {
+	readonly id: RosterGroupId;
+	readonly label: string;
+	readonly items: readonly RosterItem[];
+}
+
+const ROSTER_GROUP_LABELS: readonly { readonly id: RosterGroupId; readonly message: MessageKey }[] = [
+	{ id: "today", message: "roster.today" },
+	{ id: "yesterday", message: "roster.yesterday" },
+	{ id: "week", message: "roster.week" },
+	{ id: "earlier", message: "roster.earlier" },
+];
+
+/** The roster in its buckets, in bucket order and then newest first. An empty bucket is left out. */
+export function rosterGroups(locale: Locale, items: readonly RosterItem[]): RosterGroup[] {
+	return ROSTER_GROUP_LABELS.map(({ id, message }) => ({
+		id,
+		label: translate(locale, message),
+		items: items.filter((item) => item.group === id),
+	})).filter((group) => group.items.length > 0);
 }
 
 /** The attached session's readable name, or its id when `/name` has not set one. */

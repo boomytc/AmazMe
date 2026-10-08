@@ -1,14 +1,23 @@
 /*
- * Page shell: the DeepSeek Harness web layout, composed from DSH's own component values.
- * Two frame columns (ui-layout AppFrame: sidebar fill + 0.5px rule); a header row over the
- * transcript (ui-conversation ConversationRoot, the no-tabs variant); a full-bleed transcript
- * scroller around a centred column (ui-chat ChatView); a right-aligned user bubble (MessageItem);
- * assistant flow (AssistantMarkdown); 24px disclosure rows for reasoning and tool calls
- * (ui-primitives DisclosureRow, ui-tool ToolRow) with a tool result card (ToolDetails); and the
- * composer card with the circular primary action (ui-conversation InputBar).
+ * Page shell. Three columns on a wide window: the sidebar (sessions and the management views), the
+ * conversation (header, transcript, composer), and the session dock on the right when it is open.
+ * Below 1024px the sidebar and the dock become drawers over the conversation. Colours, radii, and
+ * type sizes come from tokens.css; nothing here names a colour literal.
  */
 
-* {
+:root {
+	--sidebar-width: 268px;
+	--dock-width: 380px;
+	--column-max: 768px;
+}
+
+[hidden] {
+	display: none !important;
+}
+
+*,
+*::before,
+*::after {
 	box-sizing: border-box;
 }
 
@@ -19,126 +28,118 @@ body {
 
 body {
 	margin: 0;
-	background: var(--dsw-alias-bg-base);
-	color: var(--dsw-alias-label-primary);
-	font-family: var(--dsw-font-family);
-	font-size: var(--dsh-content-font-size);
-	line-height: calc(24px + var(--dsh-content-font-delta));
-	-webkit-font-smoothing: antialiased;
 	display: grid;
-	grid-template-columns: 280px minmax(0, 1fr);
+	grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+	height: 100vh;
+	height: 100dvh;
 	overflow: hidden;
+	background: var(--canvas);
+	color: var(--text);
+	font-family: var(--font-sans);
+	font-size: 15px;
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
 }
 
-/* The dock opens a third column (DSH's rightbar, 300px and up): the conversation keeps its centre
-   column and the dock takes the width it needs, so opening it never re-flows the transcript. */
 body.dock-open {
-	grid-template-columns: 280px minmax(0, 1fr) minmax(320px, 380px);
+	grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--dock-width);
 }
 
-.dock {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-	overflow: hidden;
-	border-left: 0.5px solid var(--dsw-alias-border-l2);
-	background: var(--dsw-specific-sidebar-fill);
+body.sidebar-collapsed {
+	grid-template-columns: minmax(0, 1fr);
 }
 
-.dock-head {
-	display: flex;
-	flex: none;
-	gap: 2px;
-	padding: 6px 8px;
-	border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+body.sidebar-collapsed.dock-open {
+	grid-template-columns: minmax(0, 1fr) var(--dock-width);
 }
 
-.dock-tab-row {
-	display: flex;
-	gap: 2px;
+@media (min-width: 1024px) {
+	body.sidebar-collapsed .sidebar {
+		display: none;
+	}
 }
 
-.dock-tab {
-	height: 24px;
-	padding: 0 10px;
-	border: 0;
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
+button,
+input,
+select,
+textarea {
 	font: inherit;
-	font-size: var(--dsh-content-font-size-secondary);
-	cursor: pointer;
+	color: inherit;
 }
 
-.dock-tab:hover:not(.active) {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-secondary);
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
 }
 
-.dock-tab.active {
-	background: var(--dsw-alias-markdown-tag);
-	color: var(--dsw-alias-label-primary);
+::selection {
+	background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.dock-body {
-	flex: 1 1 auto;
-	min-height: 0;
-	overflow-y: auto;
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--line-strong) transparent;
 }
 
-.dock-body .panel {
-	padding: 12px 12px 24px;
+p {
+	text-wrap: pretty;
 }
 
-.dock-body .panel-head {
-	padding-bottom: 8px;
+.sr-only {
+	position: absolute !important;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+	border: 0;
 }
 
-.dock-body .panel-title {
-	font-size: 13px;
+/* Every icon is a `<use>` of a symbol in the document's sprite. The stroke is inherited, so one
+   colour rule on the icon paints the whole glyph; filled parts state their own fill. */
+.sprite {
+	position: absolute;
+	width: 0;
+	height: 0;
+	overflow: hidden;
 }
 
-/* A panel's input line and its text blocks (the workspace's file, the terminal's buffer). */
-.panel-input-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 0 0 10px;
+.icon {
+	display: block;
+	flex: none;
+	width: 18px;
+	height: 18px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.75;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	overflow: visible;
 }
 
-.panel-input-wide {
-	flex: 1 1 auto;
-	width: auto;
-	min-width: 0;
-	height: 28px;
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
-.panel-text-block {
-	padding-top: 4px;
+.spin {
+	animation: spin 900ms linear infinite;
 }
 
-.panel-text-title {
-	margin: 0 0 4px;
-	color: var(--dsw-alias-label-caption);
-	font-size: 11px;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-}
-
-.panel-text {
-	margin: 0;
-	padding: 10px 12px;
-	max-height: 60vh;
-	overflow: auto;
-	border: 0.5px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-markdown-code-block);
-	color: var(--dsw-alias-label-primary);
-	font-family: var(--ds-font-family-code);
-	font-size: 12px;
-	line-height: 18px;
-	white-space: pre-wrap;
-	word-break: break-all;
+@keyframes pulse {
+	0%,
+	100% {
+		transform: scale(0.7);
+		opacity: 0.4;
+	}
+	50% {
+		transform: scale(1);
+		opacity: 1;
+	}
 }
 
 /* ------------------------------------------------------------------ sidebar */
@@ -147,230 +148,327 @@ body.dock-open {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
+	min-height: 0;
 	overflow: hidden;
-	padding: 6px 12px;
-	background: var(--dsw-specific-sidebar-fill);
-	border-right: 0.5px solid var(--dsw-alias-border-l3);
-	/* Elevated above the conversation surface, so its bars take the l2 pair. */
-	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+	padding: 10px 10px 12px;
+	background: var(--sidebar);
 }
 
-/* Brand row (ui-sidebar SidebarRoot .logoRow): 60px, centred, 4px leading inset. */
-.logo-row {
-	flex: none;
+.brand {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	height: 60px;
-	padding: 8px 0 8px 4px;
+	gap: 9px;
+	height: 40px;
+	padding: 0 8px;
 	margin-bottom: 4px;
-	overflow: hidden;
+}
+
+.brand-mark {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	width: 24px;
+	height: 24px;
+	border-radius: 8px;
+	background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000));
+	color: #fff;
+}
+
+.brand-mark .icon {
+	width: 14px;
+	height: 14px;
+	stroke: none;
 }
 
 .brand-name {
-	font-family: var(--dsw-font-family-brand);
-	font-size: 18px;
+	font-size: 15px;
 	font-weight: 600;
-	line-height: 24px;
-	letter-spacing: 0.04em;
+	letter-spacing: -0.01em;
 	white-space: nowrap;
 }
 
-.brand-mode {
-	color: var(--dsw-alias-label-caption);
-	font-size: 12px;
-	line-height: 18px;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.sidebar-label {
-	flex: none;
-	padding: 6px 4px;
-	color: var(--dsw-alias-label-caption);
-	font-size: 12px;
-	line-height: 18px;
-}
-
-/* New-session bar (ui-sidebar SidebarRoot .newSession): 38px, md radius, elevated fill over an l3
-   hairline, glyph and label centred with a 6px gap. The page's own 16px glyph stands in for DSH's
-   icon set. It stays inert until the host's directory arrives. */
+/* The new-session row: the one action the sidebar leads with. */
 .new-session {
 	display: flex;
 	align-items: center;
-	justify-content: center;
-	gap: 6px;
+	gap: 10px;
 	flex: none;
-	box-sizing: border-box;
-	height: 38px;
-	padding: 8px 12px;
-	margin: 0 2px 12px;
-	border: 0.5px solid var(--dsw-alias-border-l3);
-	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-button-elevated-fill);
-	color: var(--dsw-alias-label-primary);
-	font-family: var(--dsw-font-family);
+	width: 100%;
+	height: 36px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--radius-md);
+	background: transparent;
+	color: var(--text);
 	font-size: 14px;
 	font-weight: 500;
-	line-height: 22px;
+	text-align: left;
 	cursor: pointer;
-	overflow: hidden;
-	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+	transition: background var(--dur-fast) var(--ease);
+}
+
+.new-session .icon {
+	width: 18px;
+	height: 18px;
+	color: var(--text-2);
 }
 
 .new-session:hover:not(:disabled) {
-	background: var(--dsw-alias-button-floating-hover);
+	background: var(--hover);
 }
 
 .new-session:disabled {
-	color: var(--dsw-alias-label-dimmed);
+	color: var(--text-3);
 	cursor: default;
 }
 
 .new-session-label {
-	max-width: 200px;
+	min-width: 0;
 	overflow: hidden;
 	white-space: nowrap;
+}
+
+.sidebar-nav {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	flex: none;
+	margin-top: 2px;
+}
+
+.nav-row,
+.sidebar-footer-btn {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	height: 34px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--radius-md);
+	background: transparent;
+	color: var(--text-2);
+	font-size: 14px;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		background var(--dur-fast) var(--ease),
+		color var(--dur-fast) var(--ease);
+}
+
+.nav-row .icon,
+.sidebar-footer-btn .icon {
+	width: 18px;
+	height: 18px;
+}
+
+.nav-row:hover,
+.sidebar-footer-btn:hover {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.nav-row.active,
+.sidebar-footer-btn.active {
+	background: var(--active);
+	color: var(--text);
+}
+
+.nav-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sidebar-label {
+	margin: 18px 10px 6px;
+	color: var(--text-3);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.roster-filter {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex: none;
+	margin: 0 2px 6px;
+}
+
+.roster-filter .icon {
+	position: absolute;
+	left: 10px;
+	width: 14px;
+	height: 14px;
+	color: var(--text-3);
+	pointer-events: none;
+}
+
+.roster-filter-input {
+	width: 100%;
+	height: 30px;
+	padding: 0 10px 0 30px;
+	border: 0;
+	border-radius: var(--radius-md);
+	background: var(--hover);
+	color: var(--text);
+	font-size: 13px;
+}
+
+.roster-filter-input::placeholder {
+	color: var(--text-3);
+}
+
+.roster-filter-input:focus {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .session-list {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
-	/* The roster is the column's one growing region, so the footer entry stays at the bottom. */
+	gap: 14px;
 	flex: 1 1 auto;
-	overflow-y: auto;
 	min-height: 0;
-	padding-bottom: 6px;
+	overflow-y: auto;
+	padding: 0 0 12px;
+	margin-right: -6px;
+	padding-right: 6px;
 }
 
-/* Session chip (ui-dockkit .tab): 28px row, sm radius, secondary ink, hover fill; the attached
-   session is the filled tab. */
-.session-text {
+.session-group {
 	display: flex;
 	flex-direction: column;
-	min-width: 0;
-	flex: 1 1 auto;
 	gap: 1px;
 }
 
-.session-cwd {
-	overflow: hidden;
-	color: var(--dsw-alias-label-caption);
-	font-size: 11px;
-	line-height: 14px;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	direction: rtl;
-	text-align: left;
+.session-group-label {
+	margin: 0 10px 4px;
+	color: var(--text-3);
+	font-size: 12px;
+	font-weight: 500;
 }
 
-.session-remove {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 20px;
-	height: 20px;
-	padding: 0;
-	border: 0;
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	cursor: pointer;
-	/* The slot is reserved whether or not the pointer is here, so the ages keep one right edge and
-	   the row does not shift under the pointer. */
-	visibility: hidden;
-}
-
-.session-row:hover .session-remove,
-.session-row:focus-within .session-remove,
-.session-remove:focus-visible {
-	visibility: visible;
-}
-
-.session-remove:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-state-error-primary);
-}
-
+/* A session row: the name, the age at the trailing edge, and the remove control that takes the
+   age's place while the pointer or focus is on the row. */
 .session-row {
+	position: relative;
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
 	gap: 8px;
 	width: 100%;
-	min-height: 28px;
-	padding: 4px 10px;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
+	min-height: 34px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--radius-md);
 	background: transparent;
-	color: var(--dsw-alias-label-secondary);
-	font: inherit;
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: 1;
+	color: var(--text-2);
+	font-size: 14px;
 	text-align: left;
 	cursor: pointer;
-	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+	transition: background var(--dur-fast) var(--ease);
 }
 
 .session-row:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
+	background: var(--hover);
+	color: var(--text);
 }
 
 .session-row.attached {
-	color: var(--dsw-alias-label-primary);
-	background: var(--dsw-alias-markdown-tag);
-}
-
-/* The selected row keeps its own hover fill: it reacts like every other row instead of sitting
-   inert under the pointer. */
-.session-row.attached:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
+	background: var(--active);
+	color: var(--text);
 }
 
 .session-name {
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-/* A terminal session's tag sits after its id, in the caption size, so it never competes with it. */
+.session-row:hover .session-name,
+.session-row:focus-within .session-name {
+	margin-right: 22px;
+}
+
 .session-source {
 	margin-left: 6px;
-	color: var(--dsw-alias-label-caption);
+	color: var(--text-3);
 	font-size: 11px;
 }
 
 .session-age {
 	flex: none;
-	align-self: flex-start;
-	margin-top: 2px;
-	color: var(--dsw-alias-label-caption);
+	color: var(--text-3);
 	font-size: 12px;
-	/* One right edge for the ages, with figures of one width, so the column reads as a column. */
 	font-variant-numeric: tabular-nums;
 }
 
-/* DSH collapses the sidebar column into a 56px rail below this breakpoint (ui-layout columns.ts).
-   A rail here would hold nothing: the page has no rail icons, and a session chip needs its name and
-   age to be identifiable. The column is dropped instead, so the conversation keeps its geometry. */
-@media (max-width: 1023px) {
-	/* `body.dock-open` also states three tracks and outranks a bare `body` selector, so the narrow
-	   layout has to name it: otherwise the conversation keeps the first (sidebar) track — 280px of a
-	   390px viewport — and the dock's empty track keeps the rest of the width reserved. */
-	body,
-	body.dock-open {
-		grid-template-columns: minmax(0, 1fr);
-	}
+.session-row:hover .session-age,
+.session-row:focus-within .session-age {
+	visibility: hidden;
+}
 
-	.sidebar,
-	.dock {
-		display: none;
-	}
+.session-remove {
+	position: absolute;
+	top: 50%;
+	right: 6px;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	margin-top: -11px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-3);
+	cursor: pointer;
+}
+
+.session-remove .icon {
+	width: 14px;
+	height: 14px;
+}
+
+.session-row:hover .session-remove,
+.session-row:focus-within .session-remove,
+.session-remove:focus-visible {
+	display: inline-flex;
+}
+
+.session-remove:hover {
+	background: var(--danger-soft);
+	color: var(--danger);
+}
+
+.sidebar-footer {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding-top: 8px;
+	margin-top: 6px;
+	border-top: 1px solid var(--line);
+}
+
+.brand-mode {
+	padding: 4px 10px 2px;
+	overflow: hidden;
+	color: var(--text-3);
+	font-size: 11px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.empty-state {
+	margin: 0;
+	padding: 6px 10px;
+	color: var(--text-3);
+	font-size: 13px;
 }
 
 /* ------------------------------------------------------------------- center */
@@ -379,50 +477,99 @@ body.dock-open {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
-	overflow: hidden;
-	/* DSH publishes the conversation column's width to its components as a length; here the center
-	   column is the query container, so components read that axis as 64cqi against it. */
-	container-type: inline-size;
-	--dsh-chat-content-width: clamp(680px, 64cqi, 920px);
-	--dsh-composer-card-max-width: calc(var(--dsh-chat-content-width) + 32px);
-	--dsh-composer-side-clearance: 16px;
-}
-
-/* Header (ConversationRoot .header, the variant without the view tab strip). */
-.header {
-	display: flex;
-	align-items: center;
-	flex: none;
-	min-width: 0;
 	min-height: 0;
-	padding: 10px 28px 10px 20px;
-	border-bottom: 0.5px solid var(--dsw-alias-border-l3);
-	/* A 1024 viewport still has the 280px sidebar, so this box is narrower than an 800 viewport.
-	   The icon step keys off the header, not the viewport. */
+	overflow: hidden;
+	/* The column's width is a share of this container, so the transcript and the composer keep one
+	   centred axis at every width. */
 	container-type: inline-size;
 }
 
-.crumbs {
+.header {
+	flex: none;
 	display: flex;
 	align-items: center;
-	/* Shrinks last. The meter gives up its width first, then the connection. 6em is only the floor
-	   for viewports below 1024; at desktop widths the name stays much wider than that. */
-	flex: 0 1 240px;
+	justify-content: space-between;
+	gap: 12px;
+	min-width: 0;
+	height: 52px;
+	padding: 0 14px 0 10px;
+}
+
+.header-start,
+.header-end {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.header-start {
+	flex: 1 1 auto;
 	gap: 4px;
-	min-width: 6em;
+}
+
+.header-end {
+	flex: none;
+	gap: 4px;
+}
+
+.icon-button,
+.crumb-back,
+.header-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-2);
+	cursor: pointer;
+	transition:
+		background var(--dur-fast) var(--ease),
+		color var(--dur-fast) var(--ease);
+}
+
+.icon-button:hover,
+.crumb-back:hover,
+.header-action:hover:not(:disabled) {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.icon-button[aria-expanded="true"] {
+	color: var(--text);
+}
+
+.header-action.pressed {
+	background: var(--active);
+	color: var(--text);
+}
+
+.header-action:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.crumb {
+	min-width: 0;
+	max-width: 46ch;
+	padding: 0 6px;
 	overflow: hidden;
+	color: var(--text);
+	font-size: 14px;
+	font-weight: 500;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-/* Current crumb (ConversationRoot .crumbCurrent): the session this page is attached to. */
 .lane-status {
-	flex: 1 1 0;
 	min-width: 0;
 	overflow: hidden;
-	color: var(--dsw-alias-label-secondary);
-	font-size: 13px;
-	font-variant-numeric: tabular-nums;
-	line-height: 20px;
+	color: var(--text-3);
+	font-size: 12px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -431,98 +578,64 @@ body.dock-open {
 	display: none;
 }
 
-.crumb {
-	display: inline-block;
-	flex: 1 1 auto;
-	min-width: 4em;
-	max-width: 220px;
-	overflow: hidden;
-	padding: 4px 8px;
-	border-radius: var(--dsw-radius-md);
-	color: var(--dsw-alias-label-primary);
-	font-size: 14px;
-	font-weight: 500;
-	line-height: 20px;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-/* The connection is a short state, so this row's minimum is that label plus the approval count,
-   the actions, and the menu. The meter shrinks before the session name. safe flex-end packs the
-   row to the right when it fits, and does not paint it back over the session name. */
-.header-utilities {
-	display: flex;
-	flex: 1 100 auto;
-	align-items: center;
-	justify-content: safe flex-end;
-	gap: 8px;
-	margin-left: 20px;
-	min-width: min-content;
-	/* The seat of the management card, which opens below the entry. */
-	position: relative;
-}
-
-/* Pending approvals. Beside the usage figures, and outside the meter's overflow so a narrow header cannot clip it. */
 .approval-status {
 	flex: none;
-	flex-shrink: 0;
-	color: var(--dsw-alias-state-business-primary);
-	font: var(--dsw-font-xs-13);
-	font-weight: 600;
+	display: inline-flex;
+	align-items: center;
+	height: 24px;
+	padding: 0 10px;
+	margin-right: 6px;
+	border-radius: var(--radius-pill);
+	background: var(--accent-soft);
+	color: var(--accent-text);
+	font-size: 12px;
+	font-weight: 500;
 	white-space: nowrap;
 }
 
-/* Context %, tokens, and cost. The token pair ellipsizes first; percent and cost stay whole as
-   long as the row can hold them. */
+/* Context, tokens, and cost as one quiet line. The separators are the pseudo-elements between the
+   three figures, so a hidden figure takes its separator with it. */
 .status-meter {
 	display: flex;
-	flex: 1 1 auto;
 	align-items: center;
-	gap: 8px;
-	width: 0;
 	min-width: 0;
-	max-width: max-content;
-	overflow: hidden;
-	color: var(--dsw-alias-label-caption);
-	font: var(--dsw-font-xs-13);
+	margin-right: 8px;
+	color: var(--text-3);
+	font-size: 12px;
+	line-height: 16px;
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
 
-#meter-context,
-#meter-cost {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-#meter-tokens {
-	flex: 1 100 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+.status-meter > span + span::before {
+	content: "·";
+	margin: 0 6px;
+	opacity: 0.6;
 }
 
 .status-meter[data-tone="warning"] #meter-context {
-	color: var(--dsw-alias-label-secondary);
+	color: var(--warn);
 }
 
 .status-meter[data-tone="error"] #meter-context {
-	color: var(--dsw-alias-state-error-primary);
+	color: var(--danger);
+}
+
+.header-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-right: 4px;
 }
 
 .connection {
-	/* Always the short state. The server id and any error detail stay on title and aria-label. */
 	display: inline-flex;
-	flex: none;
-	flex-shrink: 0;
 	align-items: center;
 	gap: 6px;
-	color: var(--dsw-alias-label-caption);
-	font: var(--dsw-font-xs-13);
+	flex: none;
+	margin-left: 4px;
+	color: var(--text-3);
+	font-size: 12px;
 	white-space: nowrap;
 }
 
@@ -535,464 +648,253 @@ body.dock-open {
 }
 
 .connection.error {
-	color: var(--dsw-alias-state-error-primary);
+	color: var(--danger);
 }
 
-/* The roster's filter: one quiet line above the list. */
-.roster-filter {
-	width: calc(100% - 24px);
-	height: 26px;
-	margin: 0 12px 6px;
-	padding: 0 8px;
-	border: 0.5px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-specific-input-major);
-	color: var(--dsw-alias-label-primary);
-	font: inherit;
-	font-size: 12px;
+/* --------------------------------------------------------------- transcript */
+
+.transcript {
+	flex: 1 1 0;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 8px 0 24px;
+	scrollbar-gutter: stable;
 }
 
-.roster-filter::placeholder {
-	color: var(--dsw-alias-label-tertiary);
+.column {
+	display: flex;
+	flex-direction: column;
+	gap: 22px;
+	width: 100%;
+	max-width: min(var(--column-max), calc(100cqi - 48px));
+	margin: 0 auto;
 }
 
-.roster-filter:hover:not(:focus) {
-	border-color: var(--dsw-alias-border-l4);
+/* First-run and new-conversation state: the greeting and the composer share the middle of the
+   window, the greeting above the composer, with the two halves of the free space on either side. */
+.center[data-state="empty"] .transcript {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 0;
+	padding-bottom: 24px;
 }
 
-.roster-filter:focus-visible {
-	outline: 2px solid var(--dsw-alias-state-business-primary);
-	outline-offset: 1px;
+.center[data-state="empty"] .column {
+	flex: 1 1 auto;
+	justify-content: flex-end;
+	margin-top: auto;
 }
 
-/* The first-run guide: the empty transcript's one useful thing. */
+.center[data-state="empty"] .composer-dock {
+	flex: 1 1 0;
+	min-height: 0;
+	justify-content: flex-start;
+	padding-top: 16px;
+}
+
+.empty-block {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 0 0;
+	text-align: center;
+}
+
+.greeting {
+	margin: 0;
+	color: var(--text);
+	font-size: 30px;
+	font-weight: 500;
+	line-height: 38px;
+	letter-spacing: -0.02em;
+}
+
+.greeting-hint {
+	margin: 0;
+	color: var(--text-3);
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.empty-block .welcome-steps {
+	margin-top: 14px;
+}
+
+/* The first-run guide: a mark, one title, the reasons to continue, and the three starting points. */
 .welcome-card {
-	max-width: 560px;
-	margin: 24px auto;
-	padding: 20px 22px 16px;
-	border: 0.5px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-panel);
-	background: var(--dsw-specific-input-major);
-	box-shadow: var(--dsw-elevation-soft);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	max-width: 540px;
+	margin: 0 auto;
+	padding: 8px 0 0;
+	text-align: center;
+}
+
+.welcome-mark {
+	width: 44px;
+	height: 44px;
+	margin-bottom: 18px;
+	border-radius: 14px;
+}
+
+.welcome-mark .icon {
+	width: 20px;
+	height: 20px;
 }
 
 .welcome-title {
-	margin: 0 0 8px;
-	font-size: 16px;
+	margin: 0;
+	font-size: 24px;
 	font-weight: 600;
+	line-height: 32px;
+	letter-spacing: -0.015em;
 }
 
 .welcome-body {
-	margin: 0 0 14px;
-	color: var(--dsw-alias-label-secondary);
-	font-size: 13px;
-	line-height: 20px;
+	margin: 10px 0 0;
+	color: var(--text-2);
+	font-size: 14px;
+	line-height: 1.7;
+	max-width: 46ch;
 }
 
 .welcome-steps {
 	display: flex;
 	flex-wrap: wrap;
+	justify-content: center;
 	gap: 8px;
+	margin-top: 20px;
+}
+
+.welcome-steps .panel-button {
+	height: 34px;
+	padding: 0 16px;
+	border-radius: var(--radius-pill);
+	font-size: 13px;
 }
 
 .welcome-note {
-	margin: 14px 0 0;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 11px;
+	margin: 16px 0 0;
+	color: var(--text-3);
+	font-size: 12px;
 }
 
 .welcome-dismiss {
-	height: 22px;
-	margin-top: 6px;
-	padding: 0;
-	border: 0;
-	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 11px;
-	cursor: pointer;
-}
-
-.welcome-dismiss:hover {
-	color: var(--dsw-alias-label-primary);
-}
-
-/* An answer's rating row: quiet until the reader points at it. */
-.feedback-row {
-	display: flex;
-	align-items: center;
-	gap: 2px;
+	height: 26px;
 	margin-top: 4px;
-	opacity: 0.45;
-	transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.turn-response:hover .feedback-row,
-.feedback-row:focus-within {
-	opacity: 1;
-}
-
-.feedback-button {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 24px;
-	height: 24px;
-	padding: 0;
+	padding: 0 10px;
 	border: 0;
-	border-radius: var(--dsw-radius-sm);
+	border-radius: var(--radius-sm);
 	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	cursor: pointer;
-}
-
-.feedback-button:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
-}
-
-.feedback-button.selected {
-	background: var(--dsw-alias-markdown-tag);
-	color: var(--dsw-alias-label-primary);
-}
-
-/* The pages of stored history, above the live transcript and set off from it. */
-.history-pages {
-	padding-bottom: 12px;
-	border-bottom: 0.5px solid var(--dsw-alias-border-l2);
-	margin-bottom: 12px;
-	opacity: 0.86;
-}
-
-/* The control that pages stored history in above the transcript. */
-.history-more {
-	display: flex;
-	justify-content: center;
-	padding: 0 0 8px;
-}
-
-.history-more-button {
-	height: 24px;
-	padding: 0 12px;
-	border: 0.5px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-md);
-	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	font: inherit;
+	color: var(--text-3);
 	font-size: 12px;
 	cursor: pointer;
 }
 
-.history-more-button:hover:not(:disabled) {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
+.welcome-dismiss:hover {
+	background: var(--hover);
+	color: var(--text);
 }
 
-.history-more-button:disabled {
-	cursor: default;
-}
-
-/* --------------------------------------------------------------- transcript */
-
-/* Transcript scroller (ChatView .scroll): full-bleed, padded by the composer clearance + 16px so
-   the column stays the same axis as the input card. */
-.transcript {
-	flex: 1 1 auto;
-	min-height: 0;
-	overflow-y: auto;
-	padding: 16px calc(var(--dsh-composer-side-clearance) + 16px);
-}
-
-/* Message column (ChatView .column). */
-.column {
-	display: flex;
-	flex-direction: column;
-	width: 100%;
-	max-width: var(--dsh-chat-content-width);
-	margin: 0 auto;
-}
-
-/* Flow gaps (ChatView): 6px between rows, 12px around a response and above the status, 16px
-   around the turn process. The process rules come last so they win where both apply, as they do in
-   DSH's sheet. */
-.column > * + * {
-	margin-top: var(--dsh-chat-flow-gap, 6px);
-}
-
-.turn-response,
-.turn-response + * {
-	--dsh-chat-flow-gap: 12px;
-}
-
-.turn-process,
-.turn-process + :not(.running) {
-	--dsh-chat-flow-gap: 16px;
-}
-
-/* User turn (MessageItem): bubble right-aligned, at most 525/748 of the column. */
+/* A user turn: one bubble at the trailing edge, at most a little past half the column. */
 .turn-user {
 	display: flex;
-	flex-direction: column;
-	align-items: flex-end;
+	justify-content: flex-end;
 }
 
 .bubble {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
-	gap: 6px;
-	max-width: min(calc(var(--dsh-chat-content-width) * 0.702), 82%);
+	gap: 8px;
+	max-width: min(560px, 82%);
 	padding: 10px 16px;
-	border-radius: var(--dsw-radius-xl);
-	background: var(--dsw-specific-bubble);
-	color: var(--dsw-alias-label-primary);
+	border-radius: var(--radius-xl);
+	background: var(--bubble);
+	color: var(--text);
+	font-size: 15px;
+	line-height: 1.6;
 	white-space: pre-wrap;
-	word-break: break-word;
+	overflow-wrap: anywhere;
 }
 
-/* An image the user's entry carries: the thumbnail the browser renders from the stored bytes. */
 .bubble-image {
 	display: block;
-	max-width: 220px;
-	max-height: 220px;
-	border-radius: var(--dsw-radius-md);
+	max-width: 240px;
+	max-height: 240px;
+	border-radius: var(--radius-lg);
 	object-fit: contain;
-	background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .bubble-text {
 	white-space: pre-wrap;
-	word-break: break-word;
+	overflow-wrap: anywhere;
 }
 
-/* Turn process: a run of reasoning and tool rows is one flow item. Its rows sit the default 6px
-   apart — the value DSH's process seat resets to inside its own body (ChatGroupSeat .body) —
-   written out because this group is also the item that raises the column's gap above itself. */
-.turn-process {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-}
-
-/* Assistant response (AssistantMarkdown): the flow item is the seat of the markdown root, which
-   carries DSH's markdown sheet's type and block rhythm (ui-primitives MarkdownText.module.css). */
+/* An answer is flat text on the canvas. Its actions sit under it and show on hover or focus. */
 .turn-response {
 	min-width: 0;
 }
 
-.markdown {
-	min-width: 0;
-	overflow-wrap: anywhere;
-	font: var(--dsw-font-markdown-base);
-	color: var(--dsw-alias-label-primary);
-}
-
-.markdown strong {
-	font-weight: 600;
-}
-
-.markdown h1 {
-	font: var(--dsw-font-markdown-h1);
-	margin: 32px 0 16px;
-}
-
-.markdown h2 {
-	font: var(--dsw-font-markdown-h2);
-	margin: 32px 0 16px;
-}
-
-.markdown h3 {
-	font: var(--dsw-font-markdown-h3);
-	margin: 32px 0 16px;
-}
-
-.markdown h4 {
-	font: var(--dsw-font-markdown-h4);
-	margin: 16px 0;
-}
-
-.markdown :where(h5, h6) {
-	font: var(--dsw-font-markdown-base-strong);
-	margin: 16px 0;
-}
-
-.markdown :where(h1, h2, h3, h4, h5, h6) strong {
-	font-weight: inherit;
-}
-
-.markdown p {
-	margin: 16px 0;
-}
-
-/* Tighten h4-h6 against a following list (design: 8px gap). */
-.markdown :where(h4, h5, h6) + :where(ul, ol) {
-	margin-top: 8px;
-}
-
-.markdown :where(h4, h5, h6):has(+ :where(ul, ol)) {
-	margin-bottom: 8px;
-}
-
-.markdown a {
-	color: var(--dsw-alias-link);
-	font-weight: 500;
-	text-decoration: none;
-}
-
-.markdown a:hover,
-.markdown a:focus {
-	outline: none;
-	text-decoration: underline dotted var(--dsw-alias-link);
-	text-underline-offset: 3px;
-}
-
-.markdown a:focus-visible {
-	box-shadow: 0 0 0 2px var(--dsw-alias-state-business-primary);
-}
-
-.markdown :where(ul, ol) {
-	margin: 16px 0;
-	padding-left: 18px;
-}
-
-.markdown li:not(:first-child) {
-	margin-top: 6px;
-}
-
-.markdown li::marker {
-	line-height: 24px;
-	color: var(--dsw-alias-label-secondary);
-}
-
-.markdown :not(pre) > code {
-	display: inline-flex;
-	align-items: center;
-	box-sizing: border-box;
-	font: var(--dsw-font-markdown-code);
-	font-family: var(--ds-font-family-code);
-	font-size: 0.875em;
-	background-color: var(--dsw-alias-markdown-inline-code);
-	border: 0.5px solid var(--dsw-alias-border-l1);
-	border-radius: var(--dsw-radius-sm);
-	padding: 0 5px;
-}
-
-/* Fenced code (ui-primitives CodeBlock): lg-radius card on the code-block fill, an 11/18
-   language banner in the banner fill, and a 16px-padded pre that scrolls wide lines. */
-.markdown .code-block {
-	margin: 16px 0;
-	color: var(--dsw-alias-label-primary);
-	background: var(--dsw-alias-markdown-code-block);
-	border-radius: var(--dsw-radius-lg);
-}
-
-.markdown .code-block:not(:last-child) {
-	margin-bottom: 11px;
-}
-
-.markdown .code-head {
+.turn-actions {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-	padding: 0 8px 0 14px;
-	border-radius: var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;
-	background: var(--dsw-alias-markdown-code-block-banner);
-	color: var(--dsw-alias-label-tertiary);
-	font-family: var(--ds-font-family-code);
-	font-size: 11px;
-	line-height: 18px;
+	gap: 2px;
+	height: 28px;
+	margin: 4px 0 0 -6px;
+	opacity: 0;
+	transition: opacity var(--dur-fast) var(--ease);
 }
 
-.markdown .code-language {
-	padding: 9px 0;
-	color: inherit;
-	font: inherit;
+.turn-response:hover .turn-actions,
+.turn-actions:focus-within {
+	opacity: 1;
 }
 
-.markdown .code-copy {
-	padding: 2px 8px;
+@media (hover: none) {
+	.turn-actions {
+		opacity: 1;
+	}
+}
+
+.message-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
 	border: 0;
-	border-radius: var(--dsw-radius-sm);
+	border-radius: var(--radius-sm);
 	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	font: inherit;
+	color: var(--text-3);
 	cursor: pointer;
 }
 
-.markdown .code-copy:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
+.message-action .icon {
+	width: 16px;
+	height: 16px;
 }
 
-.markdown .code-block pre {
-	margin: 0;
-	padding: 16px;
-	border-bottom-left-radius: var(--dsw-radius-lg);
-	border-bottom-right-radius: var(--dsw-radius-lg);
-	font: var(--dsw-font-markdown-code-block);
-	overflow-x: auto;
-	white-space: pre-wrap;
-	word-break: break-all;
+.message-action:hover {
+	background: var(--hover);
+	color: var(--text);
 }
 
-.markdown .code-block pre code {
-	font: inherit;
-	background: none;
-	padding: 0;
+.message-action.selected {
+	background: var(--active);
+	color: var(--text);
 }
 
-.markdown > *:first-child,
-.markdown p:first-child {
-	margin-top: 0;
+/* Process rows: reasoning and tool calls, one group per run of them between two answers. */
+.turn-process {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
 }
 
-.markdown > *:last-child,
-.markdown p:last-child {
-	margin-bottom: 0;
-}
-
-/* Tables: a hairline grid in a scroller, so a wide table scrolls sideways instead of pushing the
-   transcript column out of its axis. A number column keeps one right edge with tabular figures, or
-   the digits cannot be compared down the column and the decimal points wander (LightUI 数位). */
-.markdown .table-scroll {
-	margin: 16px 0;
-	overflow-x: auto;
-}
-
-.markdown-table {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: var(--dsh-content-font-size-secondary);
-}
-
-.markdown-table th,
-.markdown-table td {
-	padding: 8px 12px;
-	border-bottom: 0.5px solid var(--dsw-alias-border-l2);
-	text-align: left;
-	vertical-align: top;
-}
-
-.markdown-table th {
-	border-bottom-color: var(--dsw-alias-border-l3);
-	color: var(--dsw-alias-label-secondary);
-	font-weight: 500;
-}
-
-.markdown-table tbody tr:last-child td {
-	border-bottom: none;
-}
-
-.markdown-table .align-center {
-	text-align: center;
-}
-
-.markdown-table .align-right {
-	text-align: right;
-	font-variant-numeric: tabular-nums;
-}
-
-/* Disclosure row (ui-primitives DisclosureRow): [16px leading] gap 6 [title 13/24]. */
 .disclosure {
 	display: flex;
 	flex-direction: column;
@@ -1002,169 +904,211 @@ body.dock-open {
 .disclosure-row {
 	display: flex;
 	align-items: center;
-	height: calc(24px + var(--dsh-content-font-delta));
-	min-width: 0;
-	color: var(--dsw-alias-label-tertiary);
+	gap: 8px;
+	min-height: 32px;
+	margin: 0 -8px;
+	padding: 4px 8px;
+	border-radius: var(--radius-md);
+	color: var(--text-2);
+	font-size: 13px;
 	list-style: none;
-	transition: color 100ms ease;
-}
-
-/* Only a disclosure's own row opens it; a notice row is text. */
-summary.disclosure-row {
 	cursor: pointer;
-}
-
-.disclosure-row:hover {
-	color: var(--dsw-alias-label-secondary);
+	transition:
+		background var(--dur-fast) var(--ease),
+		color var(--dur-fast) var(--ease);
 }
 
 .disclosure-row::-webkit-details-marker {
 	display: none;
 }
 
-/* Leading glyph box. The page ships no icon set, so a row's mark is its own 6px state dot in the
-   row's ink — tertiary at rest, deep-diving while running, error when failed. */
-.disclosure-leading {
-	flex: none;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: calc(16px + var(--dsh-content-font-delta));
-	height: calc(16px + var(--dsh-content-font-delta));
-	margin-right: 6px;
+.disclosure-row:hover {
+	background: var(--hover);
+	color: var(--text);
 }
 
-.disclosure-leading::before {
-	content: "";
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	corner-shape: round;
-	background: currentcolor;
+.disclosure-leading {
+	flex: none;
+	display: inline-grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	color: var(--text-3);
+}
+
+.disclosure-leading .icon {
+	width: 14px;
+	height: 14px;
 }
 
 .disclosure-title {
 	flex: none;
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: calc(24px + var(--dsh-content-font-delta));
-	color: inherit;
-}
-
-.disclosure-sep {
-	flex: none;
-	width: 2px;
-	height: 2px;
-	margin: 0 8px;
-	border-radius: 1px;
-	background: var(--dsw-alias-label-caption);
+	font-weight: 500;
 }
 
 .disclosure-summary {
 	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
-	color: inherit;
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: calc(24px + var(--dsh-content-font-delta));
+	color: var(--text-3);
+	font-family: var(--font-mono);
+	font-size: 12px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-/* Reasoning body (ui-chat ReasoningRow .thinkBody): indented under the title, compact markdown
-   type in the tertiary ink (ui-primitives MarkdownText .compact). */
-.reasoning-body {
-	padding: 4px 0 4px calc(22px + var(--dsh-content-font-delta));
-	min-width: 0;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
-	white-space: pre-wrap;
-	word-break: break-word;
+.disclosure-chevron {
+	width: 14px;
+	height: 14px;
+	color: var(--text-3);
+	transition: transform var(--dur-fast) var(--ease);
 }
 
-/* Running tool: the row's ink moves to the deep-diving tone (ChatView .running). */
-.disclosure.running .disclosure-row {
-	color: var(--dsw-alias-label-deep-diving);
+.disclosure[open] > .disclosure-row .disclosure-chevron {
+	transform: rotate(180deg);
 }
 
-/* A failed tool's summary carries the error colour (ToolRow .errorSummary). */
+.disclosure.running .disclosure-leading {
+	color: var(--accent);
+}
+
+.disclosure.error .disclosure-leading,
+.disclosure.error .disclosure-title {
+	color: var(--danger);
+}
+
 .disclosure.error .disclosure-summary {
-	color: var(--dsw-alias-state-error-primary);
+	color: var(--danger);
 }
 
-/* Short tool arguments (the TUI's expanded `key: value` lines), above the result card. */
+/* Short tool arguments, above the result card. They sit under the row's title, in the indent. */
 .tool-args {
-	margin: 2px 0 0;
-	padding: 2px 0 2px calc(22px + var(--dsh-content-font-delta));
-	min-width: 0;
-	max-height: 320px;
+	margin: 2px 0 6px 24px;
+	max-height: 240px;
 	overflow: auto;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
+	color: var(--text-3);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.6;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
 
-/* Tool result card (ui-tool ToolDetails): hairline card on the code-block fill, secondary ink at
-   the component's own type tier. */
 .tool-output {
-	margin: 4px 0 4px 4px;
-	padding: 10px 14px;
-	border: 0.5px solid var(--dsw-alias-border-l1);
-	border-radius: var(--dsw-radius-lg);
-	background: var(--dsw-alias-markdown-code-block);
-	color: var(--dsw-alias-label-secondary);
-	font: var(--dsw-font-xs-13);
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
+	margin: 0 0 8px 24px;
 	max-height: 320px;
 	overflow-y: auto;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--code);
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
 .tool-output.empty {
-	color: var(--dsw-alias-label-caption);
+	color: var(--text-3);
+	font-family: var(--font-sans);
+	font-style: italic;
 }
 
-/* A flow notice's body (compaction summary), indented under its row by the same 22px the
-   compaction marker's body uses (MessageItem .compactionBody). */
-.notice-body {
-	display: block;
-	padding: 4px 0 4px calc(22px + var(--dsh-content-font-delta));
-	color: var(--dsw-alias-label-tertiary);
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: calc(24px + var(--dsh-content-font-delta));
+/* Reasoning: a quiet block with a rule down its left edge, in the tertiary ink. */
+.reasoning-body {
+	margin: 2px 0 8px 23px;
+	max-height: 320px;
+	overflow-y: auto;
+	padding: 2px 0 2px 14px;
+	border-left: 2px solid var(--line-strong);
+	color: var(--text-3);
+	font-size: 14px;
+	line-height: 1.7;
 	white-space: pre-wrap;
-	word-break: break-word;
+	overflow-wrap: anywhere;
 }
 
-/* Failed turn (MessageItem .turnErrorRow): a state dot, a title in the error colour, the message. */
-.error-row {
-	display: grid;
-	grid-template-columns: 10px minmax(0, 1fr);
+.running {
+	display: inline-flex;
+	align-items: center;
 	gap: 8px;
-	align-items: start;
-	padding: 2px 0;
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: calc(20px + var(--dsh-content-font-delta-secondary));
+	margin: 0 0 0 2px;
+	color: var(--text-3);
+	font-size: 13px;
+	line-height: 20px;
 }
 
-/* The error dot is StateDot's solid form: a 10px layout slot painting one 6px currentColor core. */
-.error-dot {
-	position: relative;
-	width: 10px;
-	height: 10px;
-	margin-top: 5px;
-	color: var(--dsw-alias-state-error-primary);
-}
-
-.error-dot::after {
-	content: "";
-	position: absolute;
-	inset: 20%;
+.running-dot {
+	flex: none;
+	width: 8px;
+	height: 8px;
 	border-radius: 50%;
-	corner-shape: round;
-	background: currentcolor;
+	background: var(--accent);
+	animation: pulse 1.2s ease-in-out infinite;
+}
+
+.running-text {
+	min-width: 0;
+	font-variant-numeric: tabular-nums;
+}
+
+/* A flow notice (compaction, a new context): a labelled rule, with its body beneath it. */
+.notice {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.notice-rule {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: 0;
+	color: var(--text-3);
+	font-size: 12px;
+}
+
+.notice-rule::before,
+.notice-rule::after {
+	content: "";
+	flex: 1 1 auto;
+	height: 1px;
+	background: var(--line);
+}
+
+.notice-body {
+	max-height: 260px;
+	overflow-y: auto;
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-lg);
+	background: var(--code);
+	color: var(--text-2);
+	font-size: 13px;
+	line-height: 1.65;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* A failed turn: a callout in the danger tint, with its title and message. */
+.error-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 12px 14px;
+	border-radius: var(--radius-lg);
+	background: var(--danger-soft);
+	font-size: 14px;
+	line-height: 1.6;
+}
+
+.error-icon {
+	width: 16px;
+	height: 16px;
+	margin-top: 3px;
+	color: var(--danger);
 }
 
 .error-copy {
@@ -1173,214 +1117,331 @@ summary.disclosure-row {
 }
 
 .error-title {
-	margin-right: 6px;
-	color: var(--dsw-alias-state-error-primary);
+	display: block;
+	color: var(--danger);
 	font-weight: 600;
 }
 
 .error-message {
-	color: var(--dsw-alias-label-secondary);
+	display: block;
+	color: var(--text-2);
+	font-size: 13px;
 }
 
-/* Live status row (ChatView .running): the last flow item while a turn is in flight, 12px clear of
-   the row above it — which is why the turn process rule excludes it. */
-.running {
-	--dsh-chat-flow-gap: 12px;
+.history-pages {
 	display: flex;
 	flex-direction: column;
-	align-items: flex-start;
-	color: var(--dsw-alias-label-deep-diving);
-	font-size: calc(var(--dsh-content-font-size) - 2px);
-	line-height: calc(22px + var(--dsh-content-font-delta));
+	gap: 22px;
+	padding-bottom: 22px;
+	border-bottom: 1px solid var(--line);
+	opacity: 0.9;
 }
 
-.running-text {
+.history-more {
+	display: flex;
+	justify-content: center;
+}
+
+.history-more-button {
+	height: 26px;
+	padding: 0 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-pill);
+	background: transparent;
+	color: var(--text-2);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.history-more-button:hover:not(:disabled) {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.history-more-button:disabled {
+	cursor: default;
+}
+
+/* ----------------------------------------------------------------- markdown */
+
+.markdown {
 	min-width: 0;
-	font-variant-numeric: tabular-nums;
+	color: var(--text);
+	font-size: 15px;
+	line-height: 1.7;
+	overflow-wrap: anywhere;
 }
 
-.empty-state {
-	padding: 8px 0;
-	color: var(--dsw-alias-label-caption);
-	font-size: var(--dsh-content-font-size-secondary);
+.markdown > :first-child {
+	margin-top: 0;
+}
+
+.markdown > :last-child {
+	margin-bottom: 0;
+}
+
+.markdown p {
+	margin: 0 0 12px;
+}
+
+.markdown h1 {
+	margin: 24px 0 10px;
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 28px;
+	letter-spacing: -0.01em;
+}
+
+.markdown h2 {
+	margin: 22px 0 8px;
+	font-size: 18px;
+	font-weight: 600;
+	line-height: 26px;
+	letter-spacing: -0.01em;
+}
+
+.markdown h3 {
+	margin: 18px 0 6px;
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 24px;
+}
+
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+	margin: 14px 0 6px;
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 24px;
+}
+
+.markdown strong {
+	font-weight: 600;
+}
+
+.markdown a {
+	color: var(--accent-text);
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
+}
+
+.markdown a:hover {
+	text-decoration-color: var(--accent);
+}
+
+.markdown ul,
+.markdown ol {
+	margin: 0 0 12px;
+	padding-left: 22px;
+}
+
+.markdown li {
+	margin: 4px 0;
+	padding-left: 2px;
+}
+
+.markdown li::marker {
+	color: var(--text-3);
+}
+
+.markdown :not(pre) > code {
+	padding: 0.1em 0.4em;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--code);
+	font-family: var(--font-mono);
+	font-size: 0.86em;
+	white-space: break-spaces;
+}
+
+.markdown .code-block {
+	margin: 12px 0 16px;
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-lg);
+	background: var(--code);
+}
+
+.markdown .code-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	height: 34px;
+	padding: 0 6px 0 14px;
+	border-bottom: 1px solid var(--line);
+	color: var(--text-3);
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.markdown .code-language {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.markdown .code-copy {
+	flex: none;
+	height: 24px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: var(--radius-xs);
+	background: transparent;
+	color: var(--text-3);
+	font-family: var(--font-sans);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.markdown .code-copy:hover {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.markdown .code-block pre {
+	margin: 0;
+	padding: 14px 16px;
+	overflow-x: auto;
+	color: var(--text);
+	font-family: var(--font-mono);
+	font-size: 13px;
+	line-height: 1.65;
+	white-space: pre;
+}
+
+.markdown .code-block pre code {
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	white-space: inherit;
+}
+
+.markdown .table-scroll {
+	margin: 12px 0 16px;
+	overflow-x: auto;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-lg);
+}
+
+.markdown-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 14px;
+}
+
+.markdown-table th,
+.markdown-table td {
+	padding: 8px 12px;
+	border-top: 1px solid var(--line);
+	text-align: left;
+	vertical-align: top;
+}
+
+.markdown-table thead th {
+	border-top: 0;
+	background: var(--hover);
+	color: var(--text-2);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.markdown-table .align-right {
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+.markdown-table .align-center {
+	text-align: center;
 }
 
 /* ---------------------------------------------------------------- composer */
 
-/* Composer dock (InputBar .root): card clearance on the sides, 4px below. The draft cap DSH
-   declares on its composer seat lives here too, on the chain's shared ancestor. */
 .composer-dock {
 	flex: none;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	padding: 0 var(--dsh-composer-side-clearance) 4px;
-	--dsh-composer-text-max-height: 336px;
+	min-height: 0;
+	padding: 0 16px 16px;
 }
 
-/* The queued-input stack: the composer card's width, centred, never wider than the dock. Without
-   its own width a block in a centred flex column is sized by its content, which a long unbroken
-   token makes wider than the column. */
+/* Everything the composer sends or answers sits in one column of the same width as the card. */
 .queue {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
 	width: 100%;
-	min-width: 0;
-	max-width: var(--dsh-composer-card-max-width);
+	max-width: min(var(--column-max), calc(100cqi - 32px));
+	margin-bottom: 8px;
 }
 
-/* Queued input (InputBar .notice): one caption strip above the card. */
+.queue:empty {
+	display: none;
+}
+
 .queue-item {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	width: 100%;
-	/* `min-width: 0` beats the flex item's automatic minimum size, which is the content's and would
-	   let an unbroken token push the strip past the dock at a narrow width. */
 	min-width: 0;
-	max-width: min(100%, var(--dsh-composer-card-max-width));
-	margin-bottom: 6px;
-	padding: 4px 4px 4px 8px;
-	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-secondary);
-	font-size: 12px;
-	line-height: 18px;
-	overflow: hidden;
-	white-space: nowrap;
+	padding: 6px 6px 6px 14px;
+	border-radius: var(--radius-md);
+	background: var(--raised);
+	box-shadow: var(--shadow-card);
+	color: var(--text-2);
+	font-size: 13px;
+	line-height: 20px;
 }
 
-/* Composer card (InputBar .card): panel radius, input surface, soft elevation, l2 stroke. */
-.composer {
-	position: relative;
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
-	width: 100%;
-	max-width: var(--dsh-composer-card-max-width);
-	padding-top: 8px;
-	border: 0;
-	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-panel);
-	background: var(--dsw-specific-input-major);
-	box-shadow: var(--dsw-elevation-soft);
-	font-size: var(--dsh-content-font-size);
-	line-height: calc(24px + var(--dsh-content-font-delta));
-	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-}
-
-/* Draft scrollport and only scrolling box in the composer (InputBar .scroll + .input). */
-.composer-input {
-	box-sizing: border-box;
-	min-height: 36px;
-	max-height: var(--dsh-composer-text-max-height);
-	margin-right: 4px;
-	padding: 4px 8px 0 14px;
-	border: none;
-	background: transparent;
-	color: var(--dsw-alias-label-primary);
-	font-family: var(--dsw-font-family);
-	font-size: inherit;
-	line-height: inherit;
-	caret-color: var(--dsw-alias-state-business-primary);
-	overflow-y: auto;
-	outline: none;
-	resize: none;
-}
-
-.composer-input::placeholder {
-	color: var(--dsw-alias-label-caption);
-}
-
-/* Control row (InputBar .row): the model chip and the primary action trail the draft. The row is a
-   size container so the chip's cap can read its width, and it wraps rather than overlapping. */
-/* The queued input's own line, so a long one is what gives way, never the withdraw. */
 .queue-text {
 	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .queue-cancel {
 	flex: none;
-	height: 20px;
+	height: 24px;
 	padding: 0 8px;
 	border: 0;
-	border-radius: var(--dsw-radius-sm);
+	border-radius: var(--radius-sm);
 	background: transparent;
-	color: var(--dsw-alias-label-caption);
-	font: inherit;
+	color: var(--text-3);
+	font-size: 12px;
 	cursor: pointer;
 }
 
 .queue-cancel:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
+	background: var(--hover);
+	color: var(--text);
 }
 
-/* The header's run controls (compaction), DSH's header action seat. */
-.header-actions {
-	display: flex;
-	flex: none;
-	flex-shrink: 0;
-	align-items: center;
-	gap: 4px;
-}
-
-.header-action {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	height: 24px;
-	padding: 0 10px;
-	border: 0.5px solid var(--dsw-alias-border-l3);
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
-	color: var(--dsw-alias-label-secondary);
-	font-size: var(--dsh-content-font-size-secondary);
-	/* The label stays on one line: a wrapped label grows past the button's 24px box and covers the
-	   transcript's first row, which the header sits above. */
-	white-space: nowrap;
-	cursor: pointer;
-}
-
-.header-action-icon {
-	display: none;
-}
-
-.header-action:hover:not(:disabled) {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
-}
-
-.header-action:disabled {
-	opacity: 0.5;
-	cursor: default;
-}
-
-/* Tool calls waiting for a decision: what wants to run, and the two ways to answer. */
 .approvals {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
 	width: 100%;
-	min-width: 0;
-	max-width: var(--dsh-composer-card-max-width);
-	margin-bottom: 8px;
-}
-
-.approval-card:hover {
-	border-color: var(--dsw-alias-border-l4);
-	border-left-color: var(--dsw-alias-state-business-primary);
+	max-width: min(var(--column-max), calc(100cqi - 32px));
+	margin-bottom: 10px;
 }
 
 .approval-card {
-	padding: 10px 12px 8px;
-	border: 0.5px solid var(--dsw-alias-border-l2);
-	border-left: 2px solid var(--dsw-alias-state-business-primary);
-	border-radius: var(--dsw-radius-lg);
-	background: var(--dsw-specific-menu);
-	box-shadow: var(--dsw-elevation-soft);
+	padding: 14px 16px 12px;
+	border-radius: var(--radius-xl);
+	background: var(--raised);
+	box-shadow: var(--shadow-popover);
+}
+
+.approval-card:hover {
+	box-shadow: var(--shadow-popover), 0 0 0 1px var(--accent-soft);
 }
 
 .approval-head {
@@ -1392,33 +1453,30 @@ summary.disclosure-row {
 
 .approval-title {
 	margin: 0;
-	color: var(--dsw-alias-label-caption);
-	font-size: 11px;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
+	color: var(--text-3);
+	font-size: 12px;
 }
 
 .approval-tool {
-	margin: 0;
-	color: var(--dsw-alias-label-primary);
-	font-size: 13px;
-	font-weight: 500;
+	margin: 2px 0 0;
+	font-size: 14px;
+	font-weight: 600;
 }
 
 .approval-detail {
-	margin: 8px 0;
-	padding: 8px 10px;
-	max-height: 120px;
+	max-height: 140px;
+	margin: 10px 0 12px;
+	padding: 10px 12px;
 	overflow: auto;
-	/* A tool's arguments can be one long unbroken token; the detail wraps it instead of widening. */
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--code);
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.6;
 	white-space: pre-wrap;
 	word-break: break-all;
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-alias-markdown-code-block);
-	color: var(--dsw-alias-label-secondary);
-	font-family: var(--ds-font-family-code);
-	font-size: 12px;
-	line-height: 18px;
 }
 
 .approval-actions {
@@ -1428,86 +1486,80 @@ summary.disclosure-row {
 }
 
 .approval-hint {
-	margin: 6px 0 0;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 11px;
+	margin: 8px 0 0;
+	color: var(--text-3);
+	font-size: 12px;
 }
 
-/* The command palette, above the draft: the host's commands for what has been typed. */
+/* The command palette: a popover above the composer, one row per command. */
 .command-palette {
 	width: 100%;
-	max-width: var(--dsh-composer-card-max-width);
-	margin-bottom: 6px;
+	max-width: min(var(--column-max), calc(100cqi - 32px));
+	margin-bottom: 10px;
 }
 
 .palette-card {
 	overflow: hidden;
-	border: 0.5px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-lg);
-	background: var(--dsw-specific-menu);
-	box-shadow: var(--dsw-elevation-prominent);
-	backdrop-filter: var(--dsw-menu-backdrop-filter);
+	padding: 6px;
+	border-radius: var(--radius-xl);
+	background: var(--raised);
+	box-shadow: var(--shadow-popover);
 }
 
 .palette-title {
-	margin: 0;
-	padding: 8px 12px 4px;
-	color: var(--dsw-alias-label-caption);
-	font-size: 11px;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
+	margin: 6px 10px 4px;
+	color: var(--text-3);
+	font-size: 12px;
+	font-weight: 500;
 }
 
 .palette-rows {
 	display: flex;
 	flex-direction: column;
-	padding: 0 4px;
-	max-height: 240px;
+	max-height: 280px;
 	overflow-y: auto;
 }
 
 .palette-row {
 	display: flex;
-	align-items: baseline;
-	gap: 8px;
+	align-items: center;
+	gap: 10px;
 	width: 100%;
-	padding: 6px 8px;
+	min-height: 38px;
+	padding: 6px 10px;
 	border: 0;
-	border-radius: var(--dsw-radius-sm);
+	border-radius: var(--radius-md);
 	background: transparent;
-	color: var(--dsw-alias-label-primary);
-	font: inherit;
-	font-size: 13px;
+	color: var(--text);
+	font-size: 14px;
 	text-align: left;
 	cursor: pointer;
 }
 
 .palette-row.selected {
-	background: var(--dsw-alias-interactive-bg-hover);
-}
-
-/* A command only the terminal can run stays legible but reads as unavailable. */
-.palette-row.unavailable .palette-name,
-.palette-row.unavailable .palette-desc,
-.palette-row.unavailable .palette-hint {
-	color: var(--dsw-alias-label-caption);
+	background: var(--hover);
 }
 
 .palette-tag {
 	flex: none;
-	width: 48px;
-	color: var(--dsw-alias-label-caption);
+	min-width: 56px;
+	color: var(--text-3);
 	font-size: 11px;
 	white-space: nowrap;
 }
 
 .palette-name {
+	flex: none;
+	font-family: var(--font-mono);
+	font-size: 13px;
 	font-weight: 500;
 	white-space: nowrap;
 }
 
 .palette-hint {
-	color: var(--dsw-alias-label-tertiary);
+	flex: none;
+	color: var(--text-3);
+	font-family: var(--font-mono);
 	font-size: 12px;
 	white-space: nowrap;
 }
@@ -1516,30 +1568,60 @@ summary.disclosure-row {
 	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 12px;
+	color: var(--text-3);
+	font-size: 13px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.palette-row.unavailable .palette-name,
+.palette-row.unavailable .palette-desc {
+	opacity: 0.6;
 }
 
 .palette-empty,
 .palette-foot {
 	margin: 0;
-	padding: 4px 12px;
-	color: var(--dsw-alias-label-tertiary);
+	padding: 6px 10px;
+	color: var(--text-3);
 	font-size: 12px;
 }
 
 .palette-foot {
-	padding-bottom: 8px;
+	margin: 4px 4px 0;
+	padding: 8px 6px 4px;
+	border-top: 1px solid var(--line);
 }
 
-/* The pending images, above the draft: the host carries them with the next prompt. */
+/* The composer card: one rounded surface with the draft, and a toolbar under it. The focus ring is
+   the card's own edge, so the draft and the controls read as one object. */
+.composer {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	width: 100%;
+	max-width: min(var(--column-max), calc(100cqi - 32px));
+	padding: 12px 12px 10px 18px;
+	border-radius: 26px;
+	background: var(--raised);
+	box-shadow: var(--shadow-composer);
+	transition: box-shadow var(--dur) var(--ease);
+}
+
+.composer:focus-within {
+	box-shadow: var(--shadow-composer-focus);
+}
+
+.composer.dropping {
+	box-shadow: 0 0 0 2px var(--accent), var(--shadow-composer);
+}
+
 .attachments {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 8px;
-	padding: 0 12px;
+	padding: 0 0 2px;
 }
 
 .attachment {
@@ -1548,16 +1630,15 @@ summary.disclosure-row {
 	align-items: center;
 	gap: 8px;
 	margin: 0;
-	padding: 6px 8px;
-	border: 0.5px solid var(--dsw-alias-border-l3);
-	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-interactive-bg-hover);
+	padding: 4px 6px 4px 4px;
+	border-radius: var(--radius-lg);
+	background: var(--hover);
 }
 
 .attachment img {
-	width: 32px;
-	height: 32px;
-	border-radius: var(--dsw-radius-sm);
+	width: 40px;
+	height: 40px;
+	border-radius: var(--radius-md);
 	object-fit: cover;
 }
 
@@ -1572,191 +1653,148 @@ summary.disclosure-row {
 .attachment-name {
 	max-width: 180px;
 	overflow: hidden;
-	color: var(--dsw-alias-label-secondary);
+	color: var(--text-2);
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .attachment-size {
-	color: var(--dsw-alias-label-caption);
+	color: var(--text-3);
 	font-variant-numeric: tabular-nums;
 }
 
 .attachment-remove {
-	width: 20px;
-	height: 20px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
 	padding: 0;
 	border: 0;
 	border-radius: 50%;
 	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 14px;
-	line-height: 18px;
+	color: var(--text-3);
 	cursor: pointer;
+}
+
+.attachment-remove .icon {
+	width: 14px;
+	height: 14px;
 }
 
 .attachment-remove:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
+	background: var(--active);
+	color: var(--text);
 }
 
-/* The attach control (InputBar's leading action). */
-.composer-attach {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 28px;
-	height: 28px;
-	padding: 0;
+.composer-input {
+	display: block;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 28px;
+	max-height: 240px;
+	margin: 0;
+	padding: 4px 0 0;
 	border: 0;
-	border-radius: var(--dsw-radius-sm);
 	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	cursor: pointer;
+	color: var(--text);
+	font-family: var(--font-sans);
+	font-size: 15px;
+	line-height: 1.6;
+	outline: none;
+	resize: none;
+	overflow-y: auto;
 }
 
-.composer-attach:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
+.composer-input::placeholder {
+	color: var(--text-3);
 }
 
-/* A drop target says so while a file is over it. */
-.composer.dropping {
-	outline: 2px dashed var(--dsw-alias-state-business-primary);
-	outline-offset: -2px;
-}
-
-/* The submit-mode toggle: how the next message lands while a turn runs. */
-.submit-modes {
-	display: flex;
-	align-items: center;
-	margin-right: auto;
-	min-width: 0;
-}
-
-.mode-group {
-	display: flex;
-	align-items: center;
-	gap: 2px;
-	padding: 2px;
-	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.mode-option {
-	height: 22px;
-	padding: 0 10px;
-	border: 0;
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 12px;
-	line-height: 22px;
-	cursor: pointer;
-}
-
-.mode-option:hover:not(.selected) {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-secondary);
-}
-
-.mode-option:disabled {
-	color: var(--dsw-alias-label-dimmed);
-	cursor: default;
-}
-
-.mode-option.selected {
-	background: var(--dsw-alias-bg-base);
-	color: var(--dsw-alias-label-primary);
-}
-
-/* The model card's refresh row: the host's last word, then the control. */
-.menu-refresh {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-	padding: 2px;
-}
-
-.menu-refresh .menu-empty {
-	flex: 1 1 auto;
-	min-width: 0;
-	padding: 4px 6px;
-}
-
-.menu-refresh-action {
-	flex: none;
+.composer-input:disabled {
+	cursor: not-allowed;
 }
 
 .composer-row {
 	display: flex;
-	flex-wrap: wrap;
 	align-items: center;
-	justify-content: flex-end;
-	gap: 12px;
+	justify-content: space-between;
+	gap: 8px;
 	min-width: 0;
-	padding: 2px 8px 6px;
-	container-type: inline-size;
 }
 
-/* The trailing cluster (InputBar .trailing): model chip + send, pinned right, and the seat the
-   picker card anchors to. */
+.composer-leading,
 .composer-trailing {
-	position: relative;
 	display: flex;
 	align-items: center;
-	flex: none;
-	gap: 12px;
-	margin-left: auto;
+	gap: 6px;
 	min-width: 0;
 }
 
-@container (max-width: 560px) {
-	.composer-trailing {
-		gap: 8px;
-	}
+.composer-trailing {
+	position: relative;
+	margin-left: auto;
 }
 
-/* Model and effort chip (ModelSelect .trigger): 28px, sm radius, 13/20 in the secondary ink, the
-   effort in the caption tone, and a 12px chevron that flips while the card is open. */
+.composer-attach {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--text-2);
+	cursor: pointer;
+	transition:
+		background var(--dur-fast) var(--ease),
+		color var(--dur-fast) var(--ease);
+}
+
+.composer-attach .icon {
+	width: 18px;
+	height: 18px;
+}
+
+.composer-attach:hover:not(:disabled) {
+	background: var(--hover);
+	color: var(--text);
+}
+
+/* The model chip: the configured model's name, its effort, and the chevron that opens the card. */
 .model-trigger {
 	display: flex;
 	align-items: center;
 	gap: 4px;
 	min-width: 0;
-	max-width: min(360px, 45cqw);
-	height: 28px;
-	padding: 0 4px 0 8px;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
+	max-width: 240px;
+	height: 32px;
+	padding: 0 8px 0 10px;
+	border: 0;
+	border-radius: var(--radius-md);
 	background: transparent;
-	color: var(--dsw-alias-label-secondary);
-	font-family: var(--dsw-font-family);
+	color: var(--text-2);
 	font-size: 13px;
-	line-height: 20px;
-	font-weight: 400;
 	cursor: pointer;
+	transition: background var(--dur-fast) var(--ease);
 }
 
-.model-trigger:hover:not(:disabled) {
-	background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.model-trigger:focus-visible {
-	outline: none;
-	box-shadow: 0 0 0 2px var(--dsw-alias-state-business-primary);
+.model-trigger:hover:not(:disabled),
+.model-trigger[aria-expanded="true"] {
+	background: var(--hover);
+	color: var(--text);
 }
 
 .model-trigger:disabled {
-	color: var(--dsw-alias-label-dimmed);
+	color: var(--text-3);
 	cursor: default;
 }
 
 .model-label {
 	min-width: 0;
 	overflow: hidden;
+	font-weight: 500;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -1765,53 +1803,42 @@ summary.disclosure-row {
 	flex-shrink: 1000;
 	min-width: 0;
 	overflow: hidden;
+	color: var(--text-3);
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: var(--dsw-alias-label-caption);
 }
 
 .model-chevron {
-	flex: 0 0 auto;
-	color: var(--dsw-alias-label-caption);
-	transition: transform 120ms ease;
+	width: 12px;
+	height: 12px;
+	color: var(--text-3);
+	transition: transform 120ms var(--ease);
 }
 
 .model-trigger[aria-expanded="true"] .model-chevron {
 	transform: rotate(180deg);
 }
 
-/* The picker card (ModelSelect .menu over MenuSurface): 4px padding, lg radius, the translucent
-   menu material with the prominent elevation, l1 hairline, and the l2 scrollbar pair. It opens
-   upward from the composer and stays inside the viewport on both axes. */
 .model-menu {
 	position: absolute;
 	right: 0;
-	bottom: calc(100% + 4px);
+	bottom: calc(100% + 10px);
 	z-index: 1100;
 	display: flex;
 	flex-direction: column;
 	box-sizing: border-box;
 	width: max-content;
-	min-width: min(240px, calc(100vw - 32px));
-	max-width: min(420px, calc(100vw - 32px));
-	max-height: min(360px, calc(100vh - 96px));
+	min-width: min(260px, calc(100vw - 32px));
+	max-width: min(380px, calc(100vw - 32px));
+	max-height: min(380px, calc(100vh - 120px));
 	overflow: hidden;
-	padding: 4px;
-	border-radius: var(--dsw-radius-lg);
-	background: var(--dsw-specific-menu);
-	backdrop-filter: var(--dsw-menu-backdrop-filter);
-	--dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-	box-shadow: var(--dsw-elevation-prominent);
-	color: var(--dsw-alias-label-primary);
-	font-family: var(--dsw-font-family);
-	font-size: 13px;
+	padding: 6px;
+	border-radius: var(--radius-xl);
+	background: var(--raised);
+	box-shadow: var(--shadow-popover);
+	color: var(--text);
+	font-size: 14px;
 	line-height: 20px;
-	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-}
-
-.model-menu[hidden] {
-	display: none;
 }
 
 .model-menu .menu-scroll {
@@ -1821,36 +1848,34 @@ summary.disclosure-row {
 	overflow-y: auto;
 }
 
-/* Heading row (Menu .label): non-interactive small grey text, padding aligned with the items. */
 .menu-heading {
-	padding: 6px 8px;
-	font-size: 11px;
-	line-height: 15px;
-	color: var(--dsw-alias-label-tertiary);
+	margin: 8px 10px 4px;
+	color: var(--text-3);
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 16px;
 }
 
-/* Row (Menu .item): 34px, md radius, primary ink; the fill is both the hover and the focus mark,
-   and the selected row carries the trailing check instead of a fill. */
 .menu-item {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
 	box-sizing: border-box;
 	width: 100%;
 	min-height: 34px;
-	padding: 6px 8px;
-	border: none;
-	border-radius: var(--dsw-radius-md);
+	padding: 6px 10px;
+	border: 0;
+	border-radius: var(--radius-md);
 	background: transparent;
 	color: inherit;
-	font: inherit;
+	font-size: 14px;
 	text-align: left;
 	cursor: pointer;
 }
 
 .menu-item:hover,
 .menu-item:focus-visible {
-	background: var(--dsw-alias-interactive-bg-hover);
+	background: var(--hover);
 	outline: none;
 }
 
@@ -1863,283 +1888,329 @@ summary.disclosure-row {
 }
 
 .menu-check {
-	display: grid;
+	display: inline-grid;
 	place-items: center;
-	flex: 0 0 14px;
-	color: var(--dsw-alias-label-primary);
+	flex: 0 0 16px;
+	color: var(--accent-text);
+}
+
+.menu-check .icon {
+	width: 16px;
+	height: 16px;
 }
 
 .menu-empty {
-	padding: 8px;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 12px;
+	margin: 0;
+	padding: 8px 10px;
+	color: var(--text-3);
+	font-size: 13px;
 	line-height: 18px;
 }
 
-/* Separator cell (Menu .separator): l2, because l1 is invisible on this surface. */
 .menu-separator {
-	height: 0.5px;
-	margin: 3px 2px;
-	background: var(--dsw-alias-border-l2);
+	height: 1px;
+	margin: 6px 6px;
+	background: var(--line);
 }
 
-/* Stop stays its own control for the whole turn. Send does not change into it. */
+.menu-refresh {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 2px 4px 2px 6px;
+}
+
+.menu-refresh .menu-empty {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 0;
+}
+
+.menu-refresh-action {
+	flex: none;
+}
+
+/* Modes for a message sent during a turn: steer now, or queue for after it. */
+.submit-modes {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.mode-group {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 2px;
+	border-radius: var(--radius-pill);
+	background: var(--hover);
+}
+
+.mode-option {
+	height: 26px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: var(--radius-pill);
+	background: transparent;
+	color: var(--text-3);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.mode-option:hover:not(.selected):not(:disabled) {
+	color: var(--text-2);
+}
+
+.mode-option.selected {
+	background: var(--raised);
+	box-shadow: var(--shadow-card);
+	color: var(--text);
+}
+
+.mode-option:disabled {
+	cursor: default;
+}
+
+/* The stop control: an outlined circle beside the send, shown only while a turn runs. */
 .stop {
-	display: grid;
+	display: inline-grid;
 	place-items: center;
 	flex: none;
-	width: 34px;
-	height: 34px;
+	width: 32px;
+	height: 32px;
 	padding: 0;
-	border: none;
-	border-radius: 999px;
-	corner-shape: round;
-	background: var(--dsw-alias-state-error-primary);
-	color: #fff;
+	border: 1px solid var(--line-strong);
+	border-radius: 50%;
+	background: var(--raised);
+	color: var(--text);
 	cursor: pointer;
-	transform: translateY(-2px);
+}
+
+.stop .icon {
+	width: 12px;
+	height: 12px;
+	fill: currentColor;
+	stroke: none;
+}
+
+.stop:hover:not(:disabled) {
+	background: var(--hover);
 }
 
 .stop:disabled {
-	opacity: 0.6;
+	opacity: 0.5;
 	cursor: default;
 }
 
-/* Primary action (InputBar .primary): 34px circle in the info fill, white glyph, and the row's 2px
-   downward shift cancelled by a transform. */
+/* The send action: the ink circle with the arrow, grey while there is nothing to send. */
 .primary {
-	display: grid;
+	display: inline-grid;
 	place-items: center;
 	flex: none;
-	width: 34px;
-	height: 34px;
+	width: 32px;
+	height: 32px;
 	padding: 0;
-	border: none;
-	border-radius: 999px;
-	corner-shape: round;
-	background: var(--dsw-alias-button-info-fill);
-	/* Static white, not the foreground token: the glyph stays white on the blue fill in both themes. */
-	color: #fff;
+	border: 0;
+	border-radius: 50%;
+	background: var(--ink);
+	color: var(--on-ink);
 	cursor: pointer;
-	transform: translateY(-2px);
-	transition: background-color 100ms ease;
+	transition: opacity var(--dur-fast) var(--ease);
+}
+
+.primary .icon {
+	width: 16px;
+	height: 16px;
+	stroke-width: 2.2;
 }
 
 .primary:hover:not(:disabled) {
-	background: var(--dsw-alias-button-info-hover);
+	opacity: 0.82;
 }
 
 .primary:disabled {
-	background: var(--dsw-alias-border-l4);
-	color: var(--dsw-alias-label-dimmed);
-	opacity: 0.6;
+	background: var(--active);
+	color: var(--text-3);
 	cursor: default;
 }
 
-/* -------------------------------------------------------------- management */
+/* ------------------------------------------------------------------- dock */
 
-/* Sidebar navigation rows (ui-sidebar SidebarRoot panel list): one 32px row per management view,
-   sm radius, secondary ink, hover fill, and the attached fill for the open view. The footer entry
-   sits on the same row shape at the column's bottom edge. */
-.sidebar-nav {
+.dock {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
-	flex: none;
-	margin-bottom: 4px;
-}
-
-.nav-row,
-.sidebar-footer-btn {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	width: 100%;
-	height: 32px;
-	padding: 0 10px;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
-	color: var(--dsw-alias-label-secondary);
-	font: inherit;
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: 1;
-	text-align: left;
-	cursor: pointer;
-	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.nav-row:hover,
-.sidebar-footer-btn:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.nav-row.active,
-.sidebar-footer-btn.active {
-	color: var(--dsw-alias-label-primary);
-	background: var(--dsw-alias-markdown-tag);
-}
-
-.nav-label {
 	min-width: 0;
+	min-height: 0;
 	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	border-left: 1px solid var(--line);
+	background: var(--canvas);
 }
 
-.sidebar-footer {
+.dock-head {
 	flex: none;
-	padding-top: 6px;
-	margin-top: 4px;
-	border-top: 0.5px solid var(--dsw-alias-border-l3);
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--line);
 }
 
-/* The back control returns from a panel to the conversation; it shares the crumb's 24px band. */
-.crumb-back {
+.dock-tab-row {
+	display: flex;
+	gap: 2px;
+	padding: 3px;
+	border-radius: var(--radius-md);
+	background: var(--hover);
+}
+
+.dock-tab {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	flex: none;
-	width: 24px;
-	height: 24px;
-	padding: 0;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
+	flex: 1 1 0;
+	gap: 6px;
+	min-width: 0;
+	height: 28px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: var(--radius-sm);
 	background: transparent;
-	color: var(--dsw-alias-label-secondary);
+	color: var(--text-2);
+	font-size: 13px;
 	cursor: pointer;
 }
 
-.crumb-back:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
+.dock-tab .icon {
+	width: 14px;
+	height: 14px;
 }
 
-/* ------------------------------------------------------- management card */
-
-/* The header's management entry, for the width where the sidebar column is dropped, and the card
-   it opens (Menu over MenuSurface, opening below the trigger). */
-.view-menu-trigger {
-	display: none;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	flex-shrink: 0;
-	width: 24px;
-	height: 24px;
-	padding: 0;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
-	color: var(--dsw-alias-label-secondary);
-	cursor: pointer;
+.dock-tab:hover:not(.active) {
+	color: var(--text);
 }
 
-.view-menu-trigger:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
+.dock-tab.active {
+	background: var(--raised);
+	box-shadow: var(--shadow-card);
+	color: var(--text);
 }
 
-.view-menu {
-	position: absolute;
-	top: calc(100% + 4px);
-	right: 0;
-	z-index: 1100;
-	padding: 4px;
-	border-radius: var(--dsw-radius-lg);
-	background: var(--dsw-specific-menu);
-	backdrop-filter: var(--dsw-menu-backdrop-filter);
-	box-shadow: var(--dsw-elevation-prominent), 0 0 0 0.5px var(--dsw-alias-border-l1);
-	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-	min-width: min(200px, calc(100vw - 32px));
+.dock-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
 }
 
-.view-menu[hidden] {
-	display: none;
+.dock-body .panel {
+	padding: 14px 14px 24px;
 }
 
-.view-menu .menu-scroll {
+.dock-body .panel-head {
+	margin-bottom: 12px;
+}
+
+.dock-body .panel-title {
+	font-size: 15px;
+}
+
+.panel-input-row {
 	display: flex;
-	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	padding: 0 0 10px;
 }
 
-/* The panel column replaces the transcript and the composer while a management view is open. A
-   view's own display rule would win over the UA sheet's `[hidden]`, so the hidden state is stated. */
+.panel-input-wide {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+	height: 32px;
+}
+
+.panel-text-block {
+	padding-top: 6px;
+}
+
+.panel-text-title {
+	margin: 0 0 6px;
+	color: var(--text-3);
+	font-size: 12px;
+}
+
+.panel-text {
+	margin: 0;
+	max-height: 60vh;
+	overflow: auto;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--code);
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+/* ------------------------------------------------------------- management */
+
 .view {
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
-	--dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l1);
-	--dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l1);
-}
-
-/* A rule with an author `display` wins over the UA sheet's `[hidden]`, so every element the page
-   hides with the attribute states it here: an element that is hidden and still in the layout keeps
-   its box, its margins, and its grid track. */
-.view[hidden],
-.transcript[hidden],
-.composer-dock[hidden],
-.crumb-back[hidden],
-.dock[hidden],
-.approval-status[hidden],
-.approvals[hidden],
-.attachments[hidden],
-.submit-modes[hidden],
-.stop[hidden] {
-	display: none;
 }
 
 .view-body {
 	width: 100%;
-	max-width: 760px;
+	max-width: 720px;
 	margin: 0 auto;
-	padding: 16px 24px 48px;
+	padding: 28px 32px 64px;
 }
 
 .panel-head {
-	margin-bottom: 16px;
+	margin-bottom: 24px;
 }
 
 .panel-title {
 	margin: 0;
-	font-size: 18px;
+	font-size: 22px;
 	font-weight: 600;
-	line-height: 26px;
+	line-height: 30px;
+	letter-spacing: -0.015em;
 }
 
 .panel-desc {
-	margin: 4px 0 0;
-	color: var(--dsw-alias-label-secondary);
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: 20px;
+	margin: 6px 0 0;
+	color: var(--text-2);
+	font-size: 14px;
+	line-height: 1.6;
 }
 
 .panel-notice {
-	margin: 0 0 12px;
-	padding: 8px 12px;
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-alias-markdown-tag);
-	color: var(--dsw-alias-label-secondary);
-	font-size: var(--dsh-content-font-size-secondary);
-	line-height: 20px;
+	margin: 0 0 16px;
+	padding: 10px 14px;
+	border-radius: var(--radius-md);
+	background: var(--hover);
+	color: var(--text-2);
+	font-size: 13px;
+	line-height: 1.6;
 	overflow-wrap: anywhere;
 }
 
 .panel-notice.error {
-	color: var(--dsw-alias-state-error-primary);
+	background: var(--danger-soft);
+	color: var(--danger);
 }
 
 .panel-group {
-	margin-bottom: 24px;
+	margin-bottom: 28px;
 }
 
 .panel-group-head {
 	display: flex;
-	align-items: flex-start;
+	align-items: flex-end;
 	justify-content: space-between;
 	gap: 12px;
-	margin-bottom: 8px;
+	margin-bottom: 10px;
 }
 
 .panel-group-titles {
@@ -2148,81 +2219,84 @@ summary.disclosure-row {
 
 .panel-group-title {
 	margin: 0;
-	font-size: var(--dsh-content-font-size);
-	font-weight: 500;
+	font-size: 14px;
+	font-weight: 600;
 	line-height: 22px;
 }
 
 .panel-group-desc {
 	margin: 2px 0 0;
-	color: var(--dsw-alias-label-secondary);
-	font-size: 12px;
-	line-height: 18px;
+	color: var(--text-3);
+	font-size: 13px;
+	line-height: 1.5;
 }
 
-/* The rows read as one settings card: an l2 hairline box, one 0.5px separator between rows. */
+/* A settings card: one rounded surface, one hairline between its rows. */
 .panel-rows {
-	border: 0.5px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-md);
 	overflow: hidden;
+	border-radius: var(--radius-xl);
+	background: var(--raised);
+	box-shadow: var(--shadow-card);
 }
 
 .panel-row {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	padding: 10px 12px;
+	gap: 16px;
+	min-height: 60px;
+	padding: 12px 16px;
 }
 
 .panel-row + .panel-row {
-	border-top: 0.5px solid var(--dsw-alias-border-l2);
+	border-top: 1px solid var(--line);
 }
 
 .panel-row-text {
 	display: flex;
-	flex-direction: column;
-	gap: 2px;
 	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 3px;
 	min-width: 0;
 }
 
 .panel-row-head {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
 	min-width: 0;
 }
 
 .panel-row-title {
 	min-width: 0;
-	font-size: var(--dsh-content-font-size-secondary);
+	font-size: 14px;
 	font-weight: 500;
 	overflow-wrap: anywhere;
 }
 
 .panel-badge {
 	flex: none;
-	padding: 1px 6px;
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-alias-markdown-tag);
-	color: var(--dsw-alias-label-secondary);
+	padding: 0 7px;
+	border-radius: var(--radius-pill);
+	background: var(--hover);
+	color: var(--text-2);
 	font-size: 11px;
-	line-height: 16px;
+	line-height: 18px;
 }
 
 .panel-row-desc {
 	margin: 0;
-	color: var(--dsw-alias-label-secondary);
-	font-size: 12px;
-	line-height: 18px;
+	color: var(--text-2);
+	font-size: 13px;
+	line-height: 1.55;
 	overflow-wrap: anywhere;
 }
 
 .panel-row-value {
-	color: var(--dsw-alias-label-caption);
-	font-family: var(--ds-font-family-code);
-	font-size: 11px;
-	line-height: 16px;
+	color: var(--text-3);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 17px;
 	overflow-wrap: anywhere;
 }
 
@@ -2230,125 +2304,114 @@ summary.disclosure-row {
 .panel-actions {
 	display: flex;
 	align-items: center;
-	gap: 6px;
 	flex: none;
+	gap: 8px;
 }
 
 .panel-empty {
 	margin: 0;
-	padding: 12px;
-	color: var(--dsw-alias-label-secondary);
-	font-size: var(--dsh-content-font-size-secondary);
+	padding: 16px;
+	color: var(--text-3);
+	font-size: 14px;
 	line-height: 20px;
 }
 
 .panel-footnote {
-	margin: 8px 0 0;
-	color: var(--dsw-alias-label-caption);
+	margin: 10px 2px 0;
+	color: var(--text-3);
 	font-size: 12px;
 	line-height: 18px;
 }
 
 .panel-button {
-	height: 28px;
-	padding: 0 10px;
-	border: 0.5px solid var(--dsw-alias-border-l3);
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-alias-button-elevated-fill);
-	color: var(--dsw-alias-label-primary);
-	font: inherit;
-	font-size: var(--dsh-content-font-size-secondary);
+	height: 32px;
+	padding: 0 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-md);
+	background: var(--raised);
+	color: var(--text);
+	font-size: 13px;
+	font-weight: 500;
 	line-height: 1;
 	white-space: nowrap;
 	cursor: pointer;
-	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+	transition: background var(--dur-fast) var(--ease);
 }
 
 .panel-button:hover:not(:disabled) {
-	background: var(--dsw-alias-button-floating-hover);
+	background: var(--hover);
 }
 
 .panel-button:disabled {
-	background: var(--dsw-alias-interactive-bg-hover);
-	border-color: var(--dsw-alias-border-l2);
-	color: var(--dsw-alias-label-dimmed);
+	opacity: 0.45;
 	cursor: default;
 }
 
 .panel-button.tone-primary {
 	border-color: transparent;
-	background: var(--dsw-alias-button-info-fill);
-	color: #fff;
+	background: var(--ink);
+	color: var(--on-ink);
 }
 
 .panel-button.tone-primary:hover:not(:disabled) {
-	background: var(--dsw-alias-button-info-hover);
+	background: var(--ink);
+	opacity: 0.84;
 }
 
 .panel-button.tone-danger {
-	color: var(--dsw-alias-state-error-primary);
+	color: var(--danger);
 }
 
-/* Text and number controls: the input surface, sm radius, l3 hairline, secondary ink. */
 .panel-input {
 	width: 160px;
-	height: 28px;
-	padding: 0 8px;
-	border: 0.5px solid var(--dsw-alias-border-l3);
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-specific-input-major);
-	color: var(--dsw-alias-label-primary);
-	font: inherit;
-	font-size: var(--dsh-content-font-size-secondary);
-}
-
-.panel-input:hover:not(:disabled) {
-	border-color: var(--dsw-alias-border-l4);
-}
-
-.panel-input:disabled {
-	color: var(--dsw-alias-label-dimmed);
+	height: 32px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-md);
+	background: var(--canvas);
+	color: var(--text);
+	font-size: 13px;
 }
 
 .panel-number {
-	width: 96px;
-}
-
-/* A number outside the host's range: the draft stays and the border says why (its title does too). */
-.panel-input.invalid {
-	border-color: var(--dsw-alias-state-error-primary);
-}
-
-.panel-select:hover:not(:disabled) {
-	border-color: var(--dsw-alias-border-l4);
-}
-
-.panel-select:disabled {
-	color: var(--dsw-alias-label-dimmed);
-}
-
-/* The panel's own fields carry the ring: the token mirror's global rule declares the colour and the
-   width but no outline-style, so a control that wants a ring has to ask for one. */
-.panel-input:focus-visible,
-.panel-select:focus-visible {
-	outline: 2px solid var(--dsw-alias-state-business-primary);
-	outline-offset: 1px;
+	width: 100px;
 }
 
 .panel-select {
-	height: 28px;
-	max-width: 160px;
-	padding: 0 6px;
-	border: 0.5px solid var(--dsw-alias-border-l3);
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-specific-input-major);
-	color: var(--dsw-alias-label-primary);
-	font: inherit;
-	font-size: var(--dsh-content-font-size-secondary);
+	height: 32px;
+	max-width: 180px;
+	padding: 0 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-md);
+	background: var(--canvas);
+	color: var(--text);
+	font-size: 13px;
 }
 
-/* Switch: a 32x18 track with a 14px knob, business fill when on. */
+.panel-input:hover:not(:disabled),
+.panel-select:hover:not(:disabled) {
+	border-color: var(--text-3);
+}
+
+.panel-input:disabled,
+.panel-select:disabled {
+	color: var(--text-3);
+}
+
+.panel-input:focus-visible,
+.panel-select:focus-visible {
+	outline: none;
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* A number outside the host's range: the draft stays and the border says why. */
+.panel-input.invalid {
+	border-color: var(--danger);
+}
+
 .panel-switch {
+	position: relative;
 	display: inline-flex;
 	align-items: center;
 	flex: none;
@@ -2366,11 +2429,11 @@ summary.disclosure-row {
 .panel-switch-track {
 	position: relative;
 	display: block;
-	width: 32px;
-	height: 18px;
-	border-radius: 999px;
-	background: var(--dsw-alias-border-l4);
-	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+	width: 36px;
+	height: 22px;
+	border-radius: var(--radius-pill);
+	background: var(--line-strong);
+	transition: background var(--dur-fast) var(--ease);
 }
 
 .panel-switch-track::after {
@@ -2378,37 +2441,43 @@ summary.disclosure-row {
 	position: absolute;
 	top: 2px;
 	left: 2px;
-	width: 14px;
-	height: 14px;
-	border-radius: 999px;
-	background: var(--dsw-alias-bg-base);
-	transition: transform var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.panel-switch:hover .panel-switch-track {
-	box-shadow: 0 0 0 2px var(--dsw-alias-interactive-bg-hover);
-}
-
-.panel-switch input:disabled + .panel-switch-track {
-	opacity: 0.5;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: #ffffff;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+	transition: transform var(--dur-fast) var(--ease);
 }
 
 .panel-switch input:checked + .panel-switch-track {
-	background: var(--dsw-alias-state-business-primary);
+	background: var(--accent);
 }
 
 .panel-switch input:checked + .panel-switch-track::after {
 	transform: translateX(14px);
 }
 
+.panel-switch input:disabled + .panel-switch-track {
+	opacity: 0.45;
+}
+
 .panel-switch input:focus-visible + .panel-switch-track {
-	outline: 2px solid var(--dsw-alias-state-business-primary);
+	outline: 2px solid var(--accent);
 	outline-offset: 2px;
+}
+
+.panel-input-row .panel-button {
+	flex: none;
+}
+
+/* A control whose host call is in flight: it dims and refuses a second activation. */
+.pending {
+	opacity: 0.55;
+	cursor: progress;
 }
 
 /* ------------------------------------------------------------------- modal */
 
-/* The one modal host: a dimming backdrop and a centred card (DSH's modal panel), over the shell. */
 .modal-root {
 	position: fixed;
 	inset: 0;
@@ -2419,14 +2488,10 @@ summary.disclosure-row {
 	padding: 24px;
 }
 
-.modal-root[hidden] {
-	display: none;
-}
-
 .modal-backdrop {
 	position: absolute;
 	inset: 0;
-	background: rgb(0 0 0 / 32%);
+	background: var(--scrim);
 }
 
 .modal-card {
@@ -2434,14 +2499,24 @@ summary.disclosure-row {
 	display: flex;
 	flex-direction: column;
 	width: 100%;
-	max-width: 560px;
+	max-width: 520px;
 	max-height: 100%;
-	border: 0.5px solid var(--dsw-alias-border-l1);
-	border-radius: var(--dsw-radius-lg);
-	background: var(--dsw-specific-menu);
-	backdrop-filter: var(--dsw-menu-backdrop-filter);
-	box-shadow: var(--dsw-elevation-prominent);
 	overflow: hidden;
+	border-radius: var(--radius-2xl);
+	background: var(--raised);
+	box-shadow: var(--shadow-popover);
+	animation: modal-in 160ms var(--ease);
+}
+
+@keyframes modal-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.985);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
 }
 
 .modal-head {
@@ -2449,7 +2524,7 @@ summary.disclosure-row {
 	align-items: flex-start;
 	justify-content: space-between;
 	gap: 12px;
-	padding: 14px 14px 10px;
+	padding: 20px 20px 8px;
 }
 
 .modal-titles {
@@ -2458,16 +2533,16 @@ summary.disclosure-row {
 
 .modal-title {
 	margin: 0;
-	font-size: var(--dsh-content-font-size);
+	font-size: 17px;
 	font-weight: 600;
-	line-height: 22px;
+	line-height: 24px;
 }
 
 .modal-desc {
 	margin: 4px 0 0;
-	color: var(--dsw-alias-label-secondary);
-	font-size: 12px;
-	line-height: 18px;
+	color: var(--text-2);
+	font-size: 13px;
+	line-height: 1.6;
 }
 
 .modal-close {
@@ -2475,28 +2550,28 @@ summary.disclosure-row {
 	align-items: center;
 	justify-content: center;
 	flex: none;
-	width: 24px;
-	height: 24px;
+	width: 28px;
+	height: 28px;
 	padding: 0;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
+	border: 0;
+	border-radius: var(--radius-sm);
 	background: transparent;
-	color: var(--dsw-alias-label-secondary);
+	color: var(--text-2);
 	cursor: pointer;
 }
 
 .modal-close:hover {
-	background: var(--dsw-alias-interactive-bg-hover);
-	color: var(--dsw-alias-label-primary);
+	background: var(--hover);
+	color: var(--text);
 }
 
 .modal-body {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 14px;
 	min-height: 0;
 	overflow-y: auto;
-	padding: 0 14px 14px;
+	padding: 8px 20px 16px;
 }
 
 .modal-field {
@@ -2506,62 +2581,58 @@ summary.disclosure-row {
 }
 
 .modal-field-label {
-	color: var(--dsw-alias-label-secondary);
-	font-size: 12px;
+	color: var(--text-2);
+	font-size: 13px;
 	line-height: 18px;
 }
 
 .modal-input,
 .modal-textarea {
 	width: 100%;
-	padding: 8px 10px;
-	border: 0.5px solid var(--dsw-alias-border-l3);
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-specific-input-major);
-	color: var(--dsw-alias-label-primary);
-	font: inherit;
-	font-size: var(--dsh-content-font-size-secondary);
+	padding: 9px 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-md);
+	background: var(--canvas);
+	color: var(--text);
+	font-size: 14px;
 }
 
 .modal-textarea {
-	min-height: 220px;
+	min-height: 200px;
 	resize: vertical;
+}
+
+.modal-textarea.code {
+	font-family: var(--font-mono);
+	font-size: 13px;
+	line-height: 1.6;
 }
 
 .modal-input:hover,
 .modal-textarea:hover {
-	border-color: var(--dsw-alias-border-l4);
-}
-
-/* A field that holds a file or a JSON entry reads as code. */
-.modal-textarea.code {
-	font-family: var(--ds-font-family-code);
-	font-size: 12px;
-	line-height: 18px;
+	border-color: var(--text-3);
 }
 
 .modal-input:focus-visible,
 .modal-textarea:focus-visible {
-	outline: 2px solid var(--dsw-alias-state-business-primary);
-	outline-offset: 1px;
+	outline: none;
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* A control whose host call is in flight: it dims and refuses a second activation. */
-.pending {
-	opacity: 0.55;
-	cursor: progress;
-}
-
-/* What the last submit of an open modal said, inside the card. */
 .modal-notice {
-	margin: 0 14px;
-	color: var(--dsw-alias-label-secondary);
-	font-size: 12px;
+	margin: 0 20px;
+	color: var(--text-2);
+	font-size: 13px;
 	line-height: 18px;
 }
 
+.modal-notice:not([hidden]) {
+	margin-bottom: 12px;
+}
+
 .modal-notice.error {
-	color: var(--dsw-alias-state-error-primary);
+	color: var(--danger);
 }
 
 .modal-foot {
@@ -2569,64 +2640,122 @@ summary.disclosure-row {
 	align-items: center;
 	justify-content: flex-end;
 	gap: 8px;
-	padding: 10px 14px 14px;
+	padding: 12px 20px 18px;
 }
 
-/* The header's management entry only exists where the sidebar column does not: the base rule hides
-   it, and this override has to follow that rule, so it sits at the end of the sheet. */
+/* ---------------------------------------------------------- drawers (narrow) */
+
+.scrim {
+	display: none;
+}
+
+/* Below 1024px the sidebar and the dock are drawers over the conversation: they slide in from their
+   edge, a scrim takes the rest of the window, and a click on the scrim closes them. */
 @media (max-width: 1023px) {
-	.view-menu-trigger {
-		display: inline-flex;
+	body,
+	body.dock-open,
+	body.sidebar-collapsed,
+	body.sidebar-collapsed.dock-open {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.sidebar {
+		position: fixed;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 1050;
+		width: min(300px, 86vw);
+		transform: translateX(-104%);
+		transition: transform 200ms var(--ease);
+		background: var(--sidebar);
+		box-shadow: var(--shadow-popover);
+	}
+
+	body.sidebar-open .sidebar {
+		transform: none;
+	}
+
+	.dock {
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 1050;
+		width: min(400px, 92vw);
+		box-shadow: var(--shadow-popover);
+	}
+
+	body.sidebar-open .scrim,
+	body.dock-open .scrim {
+		position: fixed;
+		inset: 0;
+		z-index: 1040;
+		display: block;
+		background: var(--scrim);
 	}
 }
 
-/* On a phone the header keeps the title and the run controls. The connection label is ambient —
-   it is the same server for the whole session — so it steps aside rather than squeezing the title
-   into an ellipsis, and only a problem still speaks. */
 @media (max-width: 640px) {
-	/* The token pair is the long figure. Percent and cost stay; the full line remains on the meter's
-	   aria-label. The connection stays: it is only a dot and a short state. */
+	.header {
+		padding: 0 8px 0 6px;
+	}
+
+	/* The title keeps the room on a phone: the lane line and the token pair step aside. */
+	.lane-status,
 	#meter-tokens {
 		display: none;
 	}
 
-	/* The full labels (Compact context, Fork, Session tools) no longer fit beside the approval
-	   count. The icon stays; the words remain on the button's title and aria-label. */
-	.header-action {
-		width: 24px;
-		padding: 0;
-	}
-
-	.header-action-label {
+	.connection:not(.error) {
 		display: none;
 	}
 
-	.header-action-icon {
-		display: block;
+	.approval-status {
+		margin-right: 2px;
+	}
+
+	.header-actions {
+		margin-right: 0;
+	}
+
+	.greeting {
+		font-size: 24px;
+		line-height: 32px;
+	}
+
+	.column {
+		max-width: calc(100cqi - 32px);
+	}
+
+	.composer-dock {
+		padding: 0 10px 10px;
+	}
+
+	.composer {
+		padding: 10px 10px 8px 14px;
+		border-radius: 22px;
+	}
+
+	.bubble {
+		max-width: 88%;
+	}
+
+	.model-trigger {
+		max-width: 150px;
+	}
+
+	.view-body {
+		padding: 20px 16px 48px;
 	}
 }
 
-/* Desktop widths keep the session name well above the 6em floor. The meter and the connection
-   absorb the squeeze first. */
-@media (min-width: 1024px) {
-	.crumbs {
-		min-width: 12em;
-	}
-}
-
-/* Full action labels plus the approval count and the connection no longer fit once the sidebar has
-   narrowed this header (a 1024 viewport) or the viewport itself is around 800. 1280 stays labeled. */
-@container (max-width: 840px) {
-	.header-action {
-		width: 24px;
-		padding: 0;
-	}
-
-	.header-action-label {
-		display: none;
-	}
-
-	.header-action-icon {
-		display: block;
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition-duration: 1ms !important;
+		animation-duration: 1ms !important;
+		animation-iteration-count: 1 !important;
 	}
 }

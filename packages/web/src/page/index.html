@@ -4,104 +4,125 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>AmazMe</title>
-		<!-- Canvas colour before the first paint, the two base fills of the palette
-		     (`--dsw-static-neutral-bluish-00` and `-950` in tokens.css). -->
+		<!-- Canvas colour before the first paint: the two base fills of the palette in tokens.css. -->
 		<style>
 			:root {
 				color-scheme: light dark;
 			}
-			body {
-				margin: 0;
-				background-color: #fff;
+			html {
+				background-color: #ffffff;
 			}
-			/* The dark canvas, keyed off the attribute the body script sets from the stored
-			   preference. A media query here would ignore a fixed light or dark choice. */
-			body[data-ds-dark-theme] {
-				background-color: #151517;
+			html[data-theme="dark"] {
+				background-color: #212121;
 			}
 		</style>
 		<link rel="stylesheet" href="/tokens.css" />
 		<link rel="stylesheet" href="/page.css" />
 		<!--amazme-boot-->
-	</head>
-	<body>
-		<!-- Palette before the first paint. DSH boots the same attribute from a body script: without it
-		     the shell would paint in the light palette until the page bundle runs. The host writes the
-		     stored preference into the boot manifest above; the entry re-applies it and follows later
-		     appearance changes. A document without a manifest falls back to the system. -->
+		<!-- The palette before the first paint. The host writes the stored preference into the boot
+		     manifest above; the entry re-applies it and follows later appearance changes. A document
+		     without a manifest falls back to the system. -->
 		<script>
 			(function () {
 				var preferences = (globalThis.__AMAZME_BOOT__ || {}).preferences || {};
 				var preference = preferences.appearance;
 				var fixed = preference === "light" || preference === "dark";
-				document.body.toggleAttribute(
-					"data-ds-dark-theme",
-					preference === "dark" || (!fixed && matchMedia("(prefers-color-scheme: dark)").matches),
-				);
+				var dark = preference === "dark" || (!fixed && matchMedia("(prefers-color-scheme: dark)").matches);
+				document.documentElement.dataset.theme = dark ? "dark" : "light";
 				document.documentElement.style.colorScheme = fixed ? preference : "light dark";
 			})();
 		</script>
-		<aside class="sidebar">
-			<div class="logo-row">
+	</head>
+	<body>
+		<!-- The icon sprite. Every glyph on the page is a `<use>` of one of these symbols. Strokes are
+		     inherited from the icon, so a symbol names its shapes and nothing else. -->
+		<svg class="sprite" aria-hidden="true" focusable="false">
+			<defs>
+				<symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3c.6 4.6 4.4 8.4 9 9-4.6.6-8.4 4.4-9 9-.6-4.6-4.4-8.4-9-9 4.6-.6 8.4-4.4 9-9Z" fill="currentColor" stroke="none" /></symbol>
+				<symbol id="i-square-pen" viewBox="0 0 24 24"><path d="M12.5 4.5h-6A2.5 2.5 0 0 0 4 7v10.5A2.5 2.5 0 0 0 6.5 20H17a2.5 2.5 0 0 0 2.5-2.5V12" /><path d="M17.8 3.3a2.1 2.1 0 0 1 3 3L12.5 14.6 8.5 15.5l.9-4Z" /></symbol>
+				<symbol id="i-package" viewBox="0 0 24 24"><path d="M21 8.5 12 3.5l-9 5v7l9 5 9-5Z" /><path d="m3 8.5 9 5 9-5M12 13.5v7" /></symbol>
+				<symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3.5l1.6 4.4 4.4 1.6-4.4 1.6L12 15.5l-1.6-4.4L6 9.5l4.4-1.6Z" /><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7Z" /></symbol>
+				<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></symbol>
+				<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></symbol>
+				<symbol id="i-message" viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-8l-4.5 3.5V17H5a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2Z" /></symbol>
+				<symbol id="i-panel-left" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="3" /><path d="M9.5 4v16" /></symbol>
+				<symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="3" /><path d="M14.5 4v16" /></symbol>
+				<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.4l2 2.2H18a2.5 2.5 0 0 1 2.5 2.5v7.8A2.5 2.5 0 0 1 18 19.5H6a2.5 2.5 0 0 1-2.5-2.5Z" /></symbol>
+				<symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="m7.5 9.5 2.5 2.5-2.5 2.5M13 14.5h4" /></symbol>
+				<symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6H21" /></symbol>
+				<symbol id="i-git-fork" viewBox="0 0 24 24"><circle cx="6.5" cy="5.5" r="2" /><circle cx="17.5" cy="5.5" r="2" /><circle cx="12" cy="18.5" r="2" /><path d="M6.5 7.5v1a3 3 0 0 0 3 3h5a3 3 0 0 0 3-3v-1M12 11.5v5" /></symbol>
+				<symbol id="i-minimize" viewBox="0 0 24 24"><path d="M4.5 14.5h5v5M19.5 9.5h-5v-5M14.5 9.5l5.5-5.5M4.5 19.5l5.5-5.5" /></symbol>
+				<symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5m6-6-6 6 6 6" /></symbol>
+				<symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6" /></symbol>
+				<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+				<symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor" stroke="none" /></symbol>
+				<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2.5" /><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5" /></symbol>
+				<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" /></symbol>
+				<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></symbol>
+				<symbol id="i-thumb-up" viewBox="0 0 24 24"><path d="M7 10.5v9.5H4.5A1.5 1.5 0 0 1 3 18.5v-7A1.5 1.5 0 0 1 4.5 10Z" /><path d="M7 10.5 10.6 3.2a2.2 2.2 0 0 1 2.9 1.2c.3.8.3 1.7.1 2.5L13.4 9h5.5a2 2 0 0 1 2 2.3l-1.3 7.2a2.2 2.2 0 0 1-2.2 1.8H7" /></symbol>
+				<symbol id="i-thumb-down" viewBox="0 0 24 24"><g transform="rotate(180 12 12)"><path d="M7 10.5v9.5H4.5A1.5 1.5 0 0 1 3 18.5v-7A1.5 1.5 0 0 1 4.5 10Z" /><path d="M7 10.5 10.6 3.2a2.2 2.2 0 0 1 2.9 1.2c.3.8.3 1.7.1 2.5L13.4 9h5.5a2 2 0 0 1 2 2.3l-1.3 7.2a2.2 2.2 0 0 1-2.2 1.8H7" /></g></symbol>
+				<symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6" /></symbol>
+				<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></symbol>
+				<symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.5 5.5a4.5 4.5 0 0 0-5.7 5.7L4 16.9 7.1 20l5.7-4.8a4.5 4.5 0 0 0 5.7-5.7l-2.6 2.6-2.4-.5-.5-2.4Z" /></symbol>
+				<symbol id="i-spinner" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5" /></symbol>
+				<symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.5 2.9 17.2a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.5a2 2 0 0 0-3.4 0Z" /><path d="M12 9.5v4M12 17h.01" /></symbol>
+			</defs>
+		</svg>
+		<aside class="sidebar" id="sidebar">
+			<div class="brand">
+				<span class="brand-mark" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-star"></use></svg></span>
 				<span class="brand-name">AmazMe</span>
-				<span class="brand-mode" id="mode"></span>
 			</div>
-			<!-- DSH's sidebar new-session bar (SidebarRoot .newSession): the host creates the session,
-			     the page attaches it as soon as the directory carries it. -->
+			<!-- The new-session action: the host creates the session, and the page attaches it as soon as the
+			     directory carries it. It stays inert until then. -->
 			<button class="new-session" type="button" id="new-session" aria-label="{{sidebar.newSession}}" disabled>
-				<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-					<rect
-						x="2.6"
-						y="3.4"
-						width="10.8"
-						height="9.2"
-						rx="2.6"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.4"
-					/>
-					<path d="M8 6.4v3.2M6.4 8h3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-				</svg>
+				<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-square-pen"></use></svg>
 				<span class="new-session-label">{{sidebar.newSession}}</span>
 			</button>
-			<!-- The management views. The renderer fills this from the host's panel model; the
-			     settings entry sits in the footer, DSH's sidebar.footer.action slot. -->
+			<!-- The management views. The renderer fills this from the host's panel model. -->
 			<nav class="sidebar-nav" id="nav" aria-label="{{sidebar.management}}"></nav>
 			<p class="sidebar-label">{{sidebar.sessions}}</p>
-			<input
-				class="roster-filter"
-				id="roster-filter"
-				type="search"
-				autocomplete="off"
-				spellcheck="false"
-				placeholder="{{sidebar.filter}}"
-				aria-label="{{sidebar.filter}}"
-			/>
+			<label class="roster-filter">
+				<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
+				<input
+					class="roster-filter-input"
+					id="roster-filter"
+					type="search"
+					autocomplete="off"
+					spellcheck="false"
+					placeholder="{{sidebar.filter}}"
+					aria-label="{{sidebar.filter}}"
+				/>
+			</label>
 			<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
 			<div class="sidebar-footer">
 				<button class="sidebar-footer-btn" type="button" id="settings-button">
 					<span class="nav-label">{{nav.settings}}</span>
 				</button>
+				<!-- The host's mode and address: diagnostic, so it stays quiet at the foot of the sidebar. -->
+				<span class="brand-mode" id="mode"></span>
 			</div>
 		</aside>
-		<main class="center" id="center">
+		<div class="scrim" id="scrim" aria-hidden="true"></div>
+		<main class="center" id="center" data-state="empty">
 			<header class="header">
-				<div class="crumbs">
+				<div class="header-start">
+					<button
+						class="icon-button"
+						type="button"
+						id="sidebar-toggle"
+						aria-label="{{sidebar.toggle}}"
+						title="{{sidebar.toggle}}"
+						aria-expanded="true"
+					>
+						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-panel-left"></use></svg>
+					</button>
 					<button class="crumb-back" type="button" id="view-back" aria-label="{{header.back}}" hidden>
-						<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-							<path
-								d="M9.6 3.6 5.2 8l4.4 4.4"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="1.6"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-							/>
-						</svg>
+						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
 					</button>
 					<span class="crumb" id="session-title">{{header.noSession}}</span>
 				</div>
-				<div class="header-utilities">
+				<div class="header-end">
 					<!-- Pending tool approvals. Stays in the header when the transcript is empty or the cards are off screen. -->
 					<span class="approval-status" id="approval-status" hidden></span>
 					<!-- Context occupancy, tokens, and cost. Always visible, the same three figures as the TUI top bar. -->
@@ -110,26 +131,9 @@
 						<span id="meter-tokens">? / ?</span>
 						<span id="meter-cost">$0.000</span>
 					</div>
-					<!-- The session's run controls (compaction); the renderer fills this. -->
+					<!-- The session's run controls (compaction, fork, the session tools); the renderer fills this. -->
 					<div class="header-actions" id="run-actions"></div>
 					<span class="connection" id="connection">{{connection.starting}}</span>
-					<!-- Below 1024px the sidebar column is dropped, so the management views need an
-					     entry in the header; the renderer fills this card from the same nav model. -->
-					<button
-						class="view-menu-trigger"
-						type="button"
-						id="view-menu-trigger"
-						aria-haspopup="menu"
-						aria-expanded="false"
-						aria-label="{{sidebar.management}}"
-					>
-						<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-							<circle cx="3.4" cy="8" r="1.2" fill="currentColor" />
-							<circle cx="8" cy="8" r="1.2" fill="currentColor" />
-							<circle cx="12.6" cy="8" r="1.2" fill="currentColor" />
-						</svg>
-					</button>
-					<div class="view-menu" id="view-menu" role="menu" aria-label="{{sidebar.management}}" hidden></div>
 				</div>
 			</header>
 			<!-- The management panel: it replaces the conversation while a view other than chat is open. -->
@@ -156,25 +160,17 @@
 						disabled
 					></textarea>
 					<div class="composer-row">
-						<!-- How the next message is applied while a turn runs; the renderer fills this. -->
-						<div class="submit-modes" id="submit-modes" hidden></div>
-						<div class="composer-trailing">
+						<div class="composer-leading">
 							<!-- The attach control and its hidden picker: an image can also be pasted or dropped. -->
 							<input type="file" id="file-input" accept="image/*" multiple hidden />
 							<button class="composer-attach" type="button" id="attach" aria-label="{{composer.attach}}" title="{{composer.attach}}">
-								<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-									<path
-										d="M9.8 3.4a2.6 2.6 0 0 1 3.7 3.7l-5.3 5.3a3.9 3.9 0 0 1-5.5-5.5l5-5"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="1.4"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									/>
-								</svg>
+								<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"></use></svg>
 							</button>
-							<!-- The attached session's model and reasoning level (InputBar's trailing
-							     ModelSelect). The renderer fills the chip and the card it opens. -->
+							<!-- How the next message is applied while a turn runs; the renderer fills this. -->
+							<div class="submit-modes" id="submit-modes" hidden></div>
+						</div>
+						<div class="composer-trailing">
+							<!-- The attached session's model and reasoning level. The renderer fills the chip and the card it opens. -->
 							<button
 								class="model-trigger"
 								type="button"
@@ -186,34 +182,14 @@
 							>
 								<span class="model-label" id="model-label">{{model.none}}</span>
 								<span class="model-effort" id="model-effort" hidden></span>
-								<svg class="model-chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-									<path
-										d="M4.2 6.4 8 10.2l3.8-3.8"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="1.5"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									/>
-								</svg>
+								<svg class="icon model-chevron" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
 							</button>
 							<!-- One stop control for the whole turn. Ctrl+C does the same thing. -->
 							<button class="stop" type="button" id="stop" aria-label="{{composer.stop}}" title="{{shortcut.stop}}" hidden>
-								<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-									<rect x="3" y="3" width="10" height="10" rx="3" fill="currentColor" />
-								</svg>
+								<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stop"></use></svg>
 							</button>
 							<button class="primary" type="submit" id="primary" aria-label="{{composer.send}}" disabled>
-								<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-									<path
-										d="M8 13.4V3.4M3.6 7.4 8 3l4.4 4.4"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="1.8"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									/>
-								</svg>
+								<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow-up"></use></svg>
 							</button>
 							<div class="model-menu" id="model-menu" role="menu" aria-label="{{model.menuAria}}" hidden></div>
 						</div>
@@ -221,7 +197,7 @@
 				</form>
 			</div>
 		</main>
-		<!-- The session dock: the attached session's files and its shell, beside the conversation. -->
+		<!-- The session dock: the attached session's files, its shell, its conversations, and its tasks. -->
 		<aside class="dock" id="dock" hidden>
 			<div class="dock-head" id="dock-tabs"></div>
 			<div class="dock-body" id="dock-body"></div>
