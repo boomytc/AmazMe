@@ -223,6 +223,20 @@ export type ToolAnnotations = {
 	readonly openWorldHint?: boolean;
 };
 
+/** Model declarations and script capabilities of one resolved selection. Projection only changes declarations. */
+export type ToolLoadout = {
+	readonly declared: readonly ToolRegistration[];
+	readonly callable: readonly ToolRegistration[];
+	getExposure(name: string): ToolExposure;
+	getNamespace(name: string): ToolNamespace | undefined;
+	getPromptGuidelines(name: string): readonly string[];
+};
+
+export type ToolLoadoutChanges = {
+	readonly descriptions?: Readonly<Record<string, string>>;
+	readonly hiddenDeclarations?: readonly string[];
+};
+
 /**
  * Executable tool registered in a registry. Only pi-ai `Tool` fields enter model messages. `args` are typed by
  * `parameters`, which the Harness validates before `execute()`; `defineTool()` infers both generics.
@@ -237,6 +251,9 @@ export type ToolRegistration<
 	readonly annotations?: ToolAnnotations;
 	/** Schema of structuredContent returned to a programmatic caller. */
 	readonly outputSchema?: TSchema;
+	readonly promptGuidelines?: readonly string[];
+	/** Pure request projection; hidden declarations remain callable according to their exposure. */
+	prepareLoadout?(loadout: ToolLoadout): ToolLoadoutChanges | undefined;
 	/** Activated by default unless false; explicit selection or loading can activate it. */
 	readonly defaultActive?: boolean;
 	/** Whether an interrupted execution may rerun on recovery. Default `unsafe`. */

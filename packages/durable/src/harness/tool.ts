@@ -99,7 +99,8 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 		/** Recovery after intent: rerun only when the stored and the current policy both say `safe`. */
 		execute: async (task, runtime, context) => {
 			const { arguments: args, replay } = task.state.checkpoint;
-			const call = await readCall(runtime, task.input, context);
+			const original = await readCall(runtime, task.input, context);
+			const call = { ...original, arguments: args };
 			const agent = await runtime.agent(context);
 			const tool = ("nested" in task.input ? agent.callableTools : agent.tools).find((each) => each.name === call.name);
 			if (replay === "safe" && tool?.replay === "safe") {
@@ -118,7 +119,9 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 		},
 	},
 	abort: async (task, runtime, context) => {
-		const call = await readCall(runtime, task.input, context);
+		const original = await readCall(runtime, task.input, context);
+		const checkpoint = task.state.checkpoint;
+		const call = checkpoint.phase === "execute" ? { ...original, arguments: checkpoint.arguments } : original;
 		const message = `Tool ${call.name} was aborted`;
 		await settle(runtime, call, { status: "aborted" }, (slot) => fromSlot(slot, "aborted", message), context);
 	},
@@ -182,6 +185,8 @@ async function run(
 	context: Context,
 	depth: number,
 ): Promise<void> {
+	// The input preserves the requested call; results and afterTool describe the validated execution intent.
+	call = { ...call, arguments: copyJson(args) as JsonObject };
 	const limits: OutputLimits = {
 		maxBytes: tool.outputLimits?.maxBytes ?? DEFAULT_MAX_BYTES,
 		maxLines: tool.outputLimits?.maxLines ?? DEFAULT_MAX_LINES,

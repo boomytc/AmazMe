@@ -3,7 +3,7 @@ import type { AgentToolResult } from "@amazme/agent";
 import type { Component } from "@amazme/tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { ToolRenderContext } from "../src/core/extensions/types.ts";
-import { codemodeRenderers } from "../src/extensions/codemode/renderer.ts";
+import { codemodeRenderers } from "../src/core/codemode/renderer.ts";
 import type { CodemodeToolDetails } from "../src/extensions/codemode/tool.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 

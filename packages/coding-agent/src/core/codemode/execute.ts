@@ -1,9 +1,7 @@
 /**
- * Runs one codemode script in the sandbox. Split from tool.ts and loaded through
- * execute.lazy.ts so the sandbox runtime only loads when a script runs.
+ * Runs one codemode script in the sandbox. Shared by SDK and Durable; loaded when a script runs.
  */
 
-import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@amazme/agent";
 import type {
 	AnyModel,
 	ClassifierContext,
@@ -25,24 +23,22 @@ import {
 	toCodemodeIdentifier,
 } from "@amazme/codemode";
 import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
-import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
-import type { SessionEntry } from "../../core/session-manager.ts";
-import { formatSize } from "../../core/tools/truncate.ts";
-import { combineUsage } from "../../core/usage-totals.ts";
+import { formatSize } from "../tools/truncate.ts";
+import { combineUsage } from "../usage-totals.ts";
 import { writeOutputFile } from "../../utils/output-files.ts";
-import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "../tool-search/tool.ts";
-import {
-	CODEMODE_DOCS_PATH,
-	CODEMODE_STORE_ENTRY_TYPE,
-	type CodemodeModelRuntime,
-	type CodemodeNestedCall,
-	type CodemodeStoreEntryData,
-	type CodemodeToolDetails,
-	type CodemodeToolInput,
-	type CodemodeToolOptions,
-	getCodemodeCallableTools,
-	toCodemodeDeclaration,
-} from "./tool.ts";
+import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "../tool-search.ts";
+import { CODEMODE_DOCS_PATH, toCodemodeDeclaration } from "./declarations.ts";
+import type {
+	CodemodeModelRuntime,
+	CodemodeNestedCall,
+	CodemodeToolDetails,
+	CodemodeToolInfo,
+	CodemodeNestedOutcome,
+	CodemodeHost,
+	CodemodeExecutionOptions,
+	CodemodeResult as CodemodeExecutionResult,
+	CodemodeNamespace,
+} from "./types.ts";
 
 const ARGS_PREVIEW_CHARS = 200;
 const ERROR_PREVIEW_CHARS = 500;
@@ -69,7 +65,7 @@ function previewArgs(args: unknown): string {
 	}
 }
 
-function textOf(result: AgentToolResult<unknown>): string {
+function textOf(result: CodemodeNestedOutcome["result"]): string {
 	return (result.content ?? [])
 		.filter((block): block is TextContent => block.type === "text")
 		.map((block) => block.text)
@@ -218,30 +214,6 @@ function createLimiter(limit: number): <T>(run: () => Promise<T>) => Promise<T> 
 	};
 }
 
-function isStoreEntryData(data: unknown): data is CodemodeStoreEntryData {
-	if (typeof data !== "object" || data === null) return false;
-	const { set, delete: deleted } = data as Partial<CodemodeStoreEntryData>;
-	return (
-		typeof set === "object" &&
-		set !== null &&
-		Array.isArray(deleted) &&
-		deleted.every((key: unknown) => typeof key === "string")
-	);
-}
-
-/** Values of `load()`: the `codemode-store` entries on the branch, applied from the root. */
-export function readCodemodeStore(branch: readonly SessionEntry[]): Record<string, unknown> {
-	const store = new Map<string, unknown>();
-	for (const entry of branch) {
-		if (entry.type !== "custom" || entry.customType !== CODEMODE_STORE_ENTRY_TYPE || !isStoreEntryData(entry.data)) {
-			continue;
-		}
-		for (const key of entry.data.delete) store.delete(key);
-		for (const [key, value] of Object.entries(entry.data.set)) store.set(key, value);
-	}
-	return Object.fromEntries(store);
-}
-
 /** Default token budget for script output. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
 /** Characters per token when estimating. */
@@ -271,11 +243,17 @@ function formatOutput(output: readonly CodemodeOutputItem[]): (TextContent | Ima
 			consoleLines.push(item.text);
 		} else {
 			index++;
-			items.push({ type: "text", text: total > 1 ? `==> text ${index}/${total} <==\n${item.text}` : item.text });
+			items.push({
+				type: "text",
+				text: total > 1 ? `==> text ${index}/${total} <==\n${item.text}` : item.text,
+			});
 		}
 	}
 	if (consoleLines.length > 0) {
-		items.push({ type: "text", text: `<console_output>\n${consoleLines.join("\n")}\n</console_output>` });
+		items.push({
+			type: "text",
+			text: `<console_output>\n${consoleLines.join("\n")}\n</console_output>`,
+		});
 	}
 	return items;
 }
@@ -287,7 +265,10 @@ function joinAdjacentText(items: (TextContent | ImageContent)[]): (TextContent |
 		const last = joined.at(-1);
 		if (item.type === "text" && last?.type === "text") {
 			const separator = last.text === "" || last.text.endsWith("\n") ? "" : "\n";
-			joined[joined.length - 1] = { type: "text", text: `${last.text}${separator}${item.text}` };
+			joined[joined.length - 1] = {
+				type: "text",
+				text: `${last.text}${separator}${item.text}`,
+			};
 		} else {
 			joined.push(item);
 		}
@@ -401,7 +382,7 @@ async function truncateOutput(
  * as MCP results with `isError`); any other tool resolves to its text content. Other failures
  * reject with the tool's error text.
  */
-function toScriptValue(tool: AgentTool<any>, outcome: AgentToolCallOutcome): unknown {
+function toScriptValue(tool: CodemodeToolInfo, outcome: CodemodeNestedOutcome): unknown {
 	const { result } = outcome;
 	if (tool.outputSchema && result.structuredContent !== undefined) return result.structuredContent;
 	const text = textOf(result);
@@ -410,17 +391,16 @@ function toScriptValue(tool: AgentTool<any>, outcome: AgentToolCallOutcome): unk
 }
 
 /**
- * Run one script. Without a session context (a plain Agent or a direct call) scripts cannot call
- * tools, `store()` starts empty, and writes are dropped.
+ * Run one script against the caller's actual tool, model and store capabilities.
  */
 export async function executeCodemode(
 	toolCallId: string,
-	input: CodemodeToolInput,
+	input: { code: string },
 	signal: AbortSignal | undefined,
-	onUpdate: ((result: AgentToolResult<CodemodeToolDetails>) => void) | undefined,
-	ctx: ExtensionToolContext | undefined,
-	options: CodemodeToolOptions = {},
-): Promise<AgentToolResult<CodemodeToolDetails>> {
+	onUpdate: ((result: CodemodeExecutionResult) => void) | undefined,
+	host: CodemodeHost,
+	options: CodemodeExecutionOptions = {},
+): Promise<CodemodeExecutionResult> {
 	const startedAt = performance.now();
 	const { code, options: sourceOptions } = parseCodemodeSource(input.code);
 	const calls: CodemodeNestedCall[] = [];
@@ -435,10 +415,12 @@ export async function executeCodemode(
 		modelUsage = modelUsage ? combineUsage(modelUsage, usage) : usage;
 	};
 
-	const snapshot = (): CodemodeToolDetails => ({ calls: calls.map((call) => ({ ...call })) });
+	const snapshot = (): CodemodeToolDetails => ({
+		calls: calls.map((call) => ({ ...call })),
+	});
 	const publish = () => onUpdate?.({ content: [], details: snapshot() });
 
-	const callable = ctx ? getCodemodeCallableTools(ctx.tools) : [];
+	const callable = host.tools;
 	// ALL_TOOLS entries carry the declaration.
 	const guidelines = options.getToolGuidelines?.();
 	const samples = new Map(
@@ -449,7 +431,7 @@ export async function executeCodemode(
 		description: samples.get(tool.name),
 		execute: async (args, { signal: callSignal }) => {
 			const record: CodemodeNestedCall = {
-				id: `${toolCallId}/?`,
+				id: `${toolCallId}/?${calls.length + 1}`,
 				name: tool.name,
 				args: previewArgs(args),
 				status: "running",
@@ -457,9 +439,16 @@ export async function executeCodemode(
 			calls.push(record);
 			publish();
 			const callStartedAt = performance.now();
-			// Only tools from ctx.tools are callable, so ctx is set here.
-			if (!ctx) throw new Error("Tool calls need a session");
-			const outcome = await ctx.executeTool(tool.name, args, { signal: callSignal });
+			let outcome: CodemodeNestedOutcome;
+			try {
+				outcome = await host.executeTool(tool.name, args, callSignal);
+			} catch (error) {
+				record.durationMs = performance.now() - callStartedAt;
+				record.status = callSignal.aborted ? "cancelled" : "error";
+				record.error = truncateText(error instanceof Error ? error.message : String(error), ERROR_PREVIEW_CHARS);
+				publish();
+				throw error;
+			}
 			record.id = outcome.toolCall.id;
 			record.durationMs = performance.now() - callStartedAt;
 			if (outcome.isError) {
@@ -477,8 +466,8 @@ export async function executeCodemode(
 		tools: sandboxTools,
 		globals: [
 			...createDiscoveryGlobals(callable, samples, options),
-			...(options.models && ctx
-				? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
+			...(host.models
+				? createModelGlobals(host.models, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
 				: []),
 		],
 		timeoutMs: sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY,
@@ -489,7 +478,7 @@ export async function executeCodemode(
 
 	let result: CodemodeResult;
 	try {
-		const store = ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {};
+		const store = host.store ?? {};
 		result = await sandbox.execute(code, { signal, store });
 	} finally {
 		await sandbox.close();
@@ -503,13 +492,17 @@ export async function executeCodemode(
 	if (result.ok) {
 		const { set, delete: deleted } = result.storeWrites;
 		if (Object.keys(set).length > 0 || deleted.length > 0) {
-			options.appendEntry?.(CODEMODE_STORE_ENTRY_TYPE, { set, delete: deleted });
+			await host.saveStore?.({ set, delete: deleted });
 		}
 		// pi extension: a returned value is appended like text().
 		if (result.value !== undefined) scriptOutput.push({ type: "text", text: valueText(result.value) });
 	}
 	const items = formatOutput(scriptOutput);
-	if (!result.ok) items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
+	if (!result.ok)
+		items.push({
+			type: "text",
+			text: `Script error:\n${formatError(result, calls)}`,
+		});
 	if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
 		items.push({
 			type: "text",
@@ -552,12 +545,15 @@ function isNamespaceName(namespace: string, query: string): boolean {
  * script's nested tools and their namespaces.
  */
 function createDiscoveryGlobals(
-	tools: readonly AgentTool<any>[],
+	tools: readonly CodemodeToolInfo[],
 	samples: ReadonlyMap<string, string>,
-	options: CodemodeToolOptions,
+	options: CodemodeExecutionOptions,
 ): CodemodeTool[] {
 	const ranker = new Bm25Ranker();
-	const entry = (name: string) => ({ name: toCodemodeIdentifier(name), description: samples.get(name) ?? "" });
+	const entry = (name: string) => ({
+		name: toCodemodeIdentifier(name),
+		description: samples.get(name) ?? "",
+	});
 	return [
 		{
 			name: "searchTools",
@@ -599,7 +595,7 @@ function createDiscoveryGlobals(
 			execute: (args) => {
 				const [name] = args as unknown[];
 				if (typeof name !== "string") throw new Error("describeNamespace() expects a namespace name");
-				let namespace: ToolNamespace | undefined;
+				let namespace: CodemodeNamespace | undefined;
 				const names: string[] = [];
 				for (const tool of tools) {
 					const toolNamespace = options.getToolNamespace?.(tool.name);
@@ -723,11 +719,17 @@ function createModelGlobals(
 				args as unknown[],
 				checkImagesContext,
 				async (resolved, context) => {
-					const result = await models.generateImages(resolved, context, { signal });
+					const result = await models.generateImages(resolved, context, {
+						signal,
+					});
 					addGeneratedImages(result.output.filter((block) => block.type === "image").length);
 					return result;
 				},
 			),
 	};
-	return Object.entries(implementations).map(([name, execute]) => ({ name, spread: true, execute }));
+	return Object.entries(implementations).map(([name, execute]) => ({
+		name,
+		spread: true,
+		execute,
+	}));
 }

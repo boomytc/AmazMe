@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
 import { createToolDefinitionFromAgentTool } from "../../src/core/tools/tool-definition-wrapper.ts";
-import { readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
+import { readCodemodeStore } from "../../src/extensions/codemode/store.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import {
 	CODEMODE_DOCS_PATH,

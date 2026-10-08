@@ -1,5 +1,14 @@
 import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@amazme/ai";
-import type { ConversationId, EntryRecord, InboxState, LiveState, TaskGraph, TaskGraphNode, UsageState } from "@amazme/durable";
+import type {
+	ConversationId,
+	EntryRecord,
+	InboxState,
+	LiveState,
+	TaskGraph,
+	TaskGraphNode,
+	UsageState,
+} from "@amazme/durable";
+import { NestedToolResultEntry } from "@amazme/durable";
 import {
 	Box,
 	type Component,
@@ -26,6 +35,7 @@ import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
+import { codemodeRenderers } from "../core/codemode/renderer.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
 import { DynamicBorder } from "../modes/interactive/components/dynamic-border.ts";
@@ -171,7 +181,10 @@ interface Handlers {
 }
 
 class DurableTui {
-	static readonly #renderers: Record<string, ToolRenderers> = createAllToolRenderers();
+	static readonly #renderers: Record<string, ToolRenderers> = {
+		...createAllToolRenderers(),
+		codemode: codemodeRenderers,
+	};
 	readonly #ui: TuiAltScreen;
 	readonly #chat = new Container();
 	readonly #tasks = new Container();
@@ -307,7 +320,8 @@ class DurableTui {
 		if (message !== undefined) this.#syncStreaming(message);
 		for (const slot of live.tools ?? []) {
 			if (slot.status === "pending") continue;
-			const component = this.#tool(slot.name, slot.callId);
+			const key = slot.parentCallId === undefined ? slot.callId : `${slot.taskId}:${slot.callId}`;
+			const component = this.#tool(slot.name, slot.callId, undefined, false, key);
 			component.setArgsComplete();
 			if (slot.status !== "running") continue;
 			component.markExecutionStarted();
@@ -322,10 +336,10 @@ class DurableTui {
 					},
 					true,
 				);
-			} else if (slot.output !== undefined) {
+			} else if (slot.output !== undefined || slot.details !== undefined) {
 				component.updateResult(
 					{
-						content: [{ type: "text", text: slot.output }],
+						content: slot.output === undefined ? [] : [{ type: "text", text: slot.output }],
 						details: slot.details,
 						isError: false,
 					},
@@ -481,6 +495,22 @@ class DurableTui {
 		} else if (entry.kind === "amazme.tool-result" && message?.role === "toolResult") {
 			const result = message as ToolResultMessage;
 			this.#tool(result.toolName, result.toolCallId).updateResult(result);
+		} else if (NestedToolResultEntry.is(entry)) {
+			const { call, result, durationMs } = entry.data;
+			const card = this.#tool(call.name, call.id, call.arguments, false, `${entry.byTaskId}:${call.id}`);
+			card.setArgsComplete();
+			card.updateResult({
+				content: [
+					...(result.content ?? []),
+					...(result.diagnostics ?? []).map((item) => ({
+						type: "text",
+						text: item.message,
+					})),
+				],
+				details: result.details,
+				isError: result.isError ?? false,
+				...(durationMs === undefined ? {} : { durationMs }),
+			});
 		} else if (entry.kind === "amazme.compaction") {
 			const summary = new CompactionComponent(message?.role === "user" ? userText(message.content) : "", this.#expanded);
 			this.#summaries.push(summary);
@@ -508,8 +538,8 @@ class DurableTui {
 	}
 
 	/** The card of a call; `fresh` starts a new one for a call ID an earlier turn used. */
-	#tool(name: string, callId: string, args?: unknown, fresh = false): ToolExecutionComponent {
-		const existing = fresh ? undefined : this.#tools.get(callId);
+	#tool(name: string, callId: string, args?: unknown, fresh = false, key = callId): ToolExecutionComponent {
+		const existing = fresh ? undefined : this.#tools.get(key);
 		if (existing !== undefined) {
 			if (args !== undefined) existing.updateArgs(args);
 			return existing;
@@ -518,7 +548,7 @@ class DurableTui {
 		component.setExpanded(this.#expanded);
 		this.#chat.addChild(component);
 		this.#cards.push(component);
-		this.#tools.set(callId, component);
+		this.#tools.set(key, component);
 		return component;
 	}
 }

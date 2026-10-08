@@ -57,6 +57,8 @@ export type { TaskGraph, TaskGraphNode, TaskGraphState, TaskGraphWatch } from ".
 export { ToolTask, type ToolTaskCheckpoint, type ToolTaskInput, type ToolTaskResult } from "./harness/tool.ts";
 export type {
 	ToolExposure,
+	ToolLoadout,
+	ToolLoadoutChanges,
 	ToolNamespace,
 	ToolAnnotations,
 	Agent,

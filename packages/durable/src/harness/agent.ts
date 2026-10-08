@@ -15,6 +15,7 @@ import type {
 	RegistrySnapshot,
 	Settings,
 	ToolRegistration,
+	ToolLoadout,
 } from "./types.ts";
 
 export const DEFAULT_RETRY_POLICY: ConversationRetryPolicy = {
@@ -253,6 +254,13 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		tools = tools.filter((tool) => !removed(tool.name));
 	}
 	const active = new Set(tools.map((tool) => tool.name));
+	const callableTools = [
+		...tools.filter((tool) => tool.exposure !== "model-only"),
+		...catalog.filter(
+			(tool) => !active.has(tool.name) && (tool.exposure === "codemode" || tool.exposure === "deferred"),
+		),
+	];
+	tools = projectTools(tools, callableTools, catalog, report);
 
 	const instructions = state?.instructions;
 	const agentSections = [...sections.values()];
@@ -264,17 +272,57 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		extensions,
 		tools,
 		catalog,
-		callableTools: [
-			...tools.filter((tool) => tool.exposure !== "model-only"),
-			...catalog.filter(
-				(tool) => !active.has(tool.name) && (tool.exposure === "codemode" || tool.exposure === "deferred"),
-			),
-		],
+		callableTools,
 		sections: agentSections,
 		...(instructions === undefined ? {} : { instructions }),
 		...(state?.cwd === undefined ? {} : { cwd: state.cwd }),
 	};
 	return agent;
+}
+
+function projectTools<Tool extends ToolRegistration>(
+	selected: Tool[],
+	callable: readonly Tool[],
+	catalog: readonly Tool[],
+	report: (error: unknown) => void,
+): Tool[] {
+	let declared = selected;
+	const byName = new Map(catalog.map((tool) => [tool.name, tool]));
+	for (const tool of selected) {
+		if (tool.prepareLoadout === undefined) continue;
+		const loadout: ToolLoadout = {
+			declared,
+			callable,
+			getExposure: (name) => byName.get(name)?.exposure ?? "direct",
+			getNamespace: (name) => byName.get(name)?.namespace,
+			getPromptGuidelines: (name) => byName.get(name)?.promptGuidelines ?? [],
+		};
+		try {
+			const changes = tool.prepareLoadout(loadout);
+			if (changes === undefined) continue;
+			const descriptions = changes.descriptions ?? {};
+			const hidden = changes.hiddenDeclarations ?? [];
+			if (
+				typeof descriptions !== "object" ||
+				descriptions === null ||
+				Array.isArray(descriptions) ||
+				Object.values(descriptions).some((value) => typeof value !== "string") ||
+				!Array.isArray(hidden) ||
+				hidden.some((name) => typeof name !== "string")
+			)
+				throw new TypeError(`Tool ${tool.name} returned invalid loadout changes`);
+			const omitted = new Set(hidden);
+			declared = declared
+				.filter((candidate) => !omitted.has(candidate.name))
+				.map((candidate) => {
+					const description = Object.hasOwn(descriptions, candidate.name) ? descriptions[candidate.name] : undefined;
+					return description === undefined ? candidate : { ...candidate, description };
+				});
+		} catch (error) {
+			report(error);
+		}
+	}
+	return declared;
 }
 
 /** Selected installed extensions: the stored array, or the default selection edited by `{ add, remove }`. */

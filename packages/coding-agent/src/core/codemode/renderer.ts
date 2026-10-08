@@ -3,17 +3,16 @@
  *
  * The call shows the script; the result lists the nested tool calls with their status as they
  * run and the cost of its model calls, followed by the script output without the "Script completed"
- * header. Nested calls are not
- * separate tool rows because they never reach the model as tool calls.
+ * header. Durable presentations can also display the persisted child calls below their parent.
  */
 
 import { Container, Spacer, Text } from "@amazme/tui";
-import type { ToolDefinition } from "../../core/extensions/types.ts";
-import { getTextOutput, replaceTabs, str } from "../../core/tools/render-utils.ts";
+import type { ToolRenderers } from "../extensions/types.ts";
+import { getTextOutput, replaceTabs, str } from "../tools/render-utils.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { VisualLinePreview } from "../../modes/interactive/components/visual-truncate.ts";
 import { highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
-import type { CodemodeNestedCall, CodemodeToolDetails } from "./tool.ts";
+import type { CodemodeNestedCall, CodemodeToolDetails } from "./types.ts";
 
 const CODE_PREVIEW_LINES = 10;
 const CALL_PREVIEW_COUNT = 8;
@@ -62,10 +61,7 @@ function formatCall(call: CodemodeNestedCall, theme: Theme, expanded: boolean): 
 	return line;
 }
 
-export const codemodeRenderers: Pick<
-	ToolDefinition<any, CodemodeToolDetails | undefined>,
-	"renderCall" | "renderResult"
-> = {
+export const codemodeRenderers: ToolRenderers = {
 	renderCall(args, theme, context) {
 		// The code includes the `// @options:` line, so options show as part of the script.
 		const code = str((args as { code?: unknown } | undefined)?.code);
@@ -95,7 +91,8 @@ export const codemodeRenderers: Pick<
 	renderResult(result, options, theme, context) {
 		const component = (context.lastComponent as Container | undefined) ?? new Container();
 		component.clear();
-		const calls = result.details?.calls ?? [];
+		const details = result.details as CodemodeToolDetails | undefined;
+		const calls = details?.calls ?? [];
 		if (calls.length > 0) {
 			const shown = options.expanded ? calls : calls.slice(-CALL_PREVIEW_COUNT);
 			const lines = shown.map((call) => formatCall(call, theme, options.expanded));
@@ -141,7 +138,7 @@ export const codemodeRenderers: Pick<
 					}),
 				);
 				// The collapsed preview hides the truncation notice at the end, so name the file here.
-				const fullOutputPath = result.details?.fullOutputPath;
+				const fullOutputPath = details?.fullOutputPath;
 				if (fullOutputPath) component.addChild(new Text(theme.fg("muted", `Full output: ${fullOutputPath}`), 0, 0));
 			}
 		}

@@ -24,6 +24,7 @@ import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { createPiPrompt } from "./prompt.ts";
+import { createDurableCodemode } from "./codemode.ts";
 
 /** pi's HTTP setup: proxy, idle timeouts, and one undici for fetch. Without it, some provider streams break off. */
 export function configureHarnessHttp(settingsManager: SettingsManager): void {
@@ -62,6 +63,7 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 export function createCodingRegistry(settingsManager: SettingsManager, cwd: string): Registry {
 	const registry = createRegistry();
 	registry.install(CodingTools);
+	registry.install(createDurableCodemode(settingsManager));
 	const program =
 		(name: "rg" | "fd"): SearchProgramOptions["program"] =>
 		async (api) => {
