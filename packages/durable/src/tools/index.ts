@@ -19,7 +19,7 @@ export {
 } from "./bash.ts";
 export { createEditTool, type EditToolDetails, type EditToolInput } from "./edit.ts";
 export { createReadTool, type ReadToolDetails, type ReadToolInput, type ReadToolOptions } from "./read.ts";
-export { createWriteTool, type WriteToolInput } from "./write.ts";
+export { createWriteTool, type WriteToolInput, type WriteToolDetails } from "./write.ts";
 export { createFindTool, type FindToolInput } from "./find.ts";
 export { createGrepTool, type GrepToolInput } from "./grep.ts";
 export { createLsTool, type LsToolInput } from "./ls.ts";

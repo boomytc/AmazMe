@@ -30,6 +30,18 @@
 			"import": "./dist/tools/read-output.js",
 			"default": "./dist/tools/read-output.js"
 		},
+		"./tools/edit-diff": {
+			"source": "./src/tools/edit-diff.ts",
+			"types": "./dist/tools/edit-diff.d.ts",
+			"import": "./dist/tools/edit-diff.js",
+			"default": "./dist/tools/edit-diff.js"
+		},
+		"./tools/write-diff": {
+			"source": "./src/tools/write-diff.ts",
+			"types": "./dist/tools/write-diff.d.ts",
+			"import": "./dist/tools/write-diff.js",
+			"default": "./dist/tools/write-diff.js"
+		},
 		"./tools": {
 			"source": "./src/tools/index.ts",
 			"types": "./dist/tools/index.d.ts",

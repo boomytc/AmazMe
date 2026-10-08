@@ -269,7 +269,7 @@ describe("Coding Agent Tools", () => {
 			const result = await writeTool.execute("test-call-3", { path: testFile, content });
 
 			expect(getTextOutput(result)).toBe(`Successfully wrote to ${testFile}`);
-			expect(result.details).toBeUndefined();
+			expect(result.details).toMatchObject({ diff: "+1 Test content", firstChangedLine: 1 });
 		});
 
 		it("should create parent directories", async () => {

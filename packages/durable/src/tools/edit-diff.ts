@@ -362,12 +362,43 @@ export function applyEditsToNormalizedContent(
 	return { baseContent, newContent };
 }
 
-/** Generate a standard unified patch. */
-export function generateUnifiedPatch(path: string, oldContent: string, newContent: string, contextLines = 4): string {
-	return Diff.createTwoFilesPatch(path, path, oldContent, newContent, undefined, undefined, {
+interface DiffLimits {
+	timeout: number;
+	maxEditLength?: number;
+}
+
+/** Generate a standard unified patch; null denotes a newly created file. */
+export function generateUnifiedPatch(
+	path: string,
+	oldContent: string | null,
+	newContent: string,
+	contextLines?: number,
+): string;
+export function generateUnifiedPatch(
+	path: string,
+	oldContent: string | null,
+	newContent: string,
+	contextLines: number,
+	limits: DiffLimits,
+): string | undefined;
+export function generateUnifiedPatch(
+	path: string,
+	oldContent: string | null,
+	newContent: string,
+	contextLines = 4,
+	limits?: DiffLimits,
+): string | undefined {
+	const oldPath = oldContent === null ? "/dev/null" : path;
+	const options = {
 		context: contextLines,
 		headerOptions: Diff.FILE_HEADERS_ONLY,
-	});
+	};
+	return limits === undefined
+		? Diff.createTwoFilesPatch(oldPath, path, oldContent ?? "", newContent, undefined, undefined, options)
+		: Diff.createTwoFilesPatch(oldPath, path, oldContent ?? "", newContent, undefined, undefined, {
+				...options,
+				...limits,
+			});
 }
 
 /**
@@ -377,9 +408,23 @@ export function generateUnifiedPatch(path: string, oldContent: string, newConten
 export function generateDiffString(
 	oldContent: string,
 	newContent: string,
+	contextLines?: number,
+): { diff: string; firstChangedLine: number | undefined };
+export function generateDiffString(
+	oldContent: string,
+	newContent: string,
+	contextLines: number,
+	limits: DiffLimits,
+): { diff: string; firstChangedLine: number | undefined } | undefined;
+export function generateDiffString(
+	oldContent: string,
+	newContent: string,
 	contextLines = 4,
-): { diff: string; firstChangedLine: number | undefined } {
-	const parts = Diff.diffLines(oldContent, newContent);
+	limits?: DiffLimits,
+): { diff: string; firstChangedLine: number | undefined } | undefined {
+	const parts =
+		limits === undefined ? Diff.diffLines(oldContent, newContent) : Diff.diffLines(oldContent, newContent, limits);
+	if (parts === undefined) return undefined;
 	const output: string[] = [];
 
 	const oldLines = oldContent.split("\n");

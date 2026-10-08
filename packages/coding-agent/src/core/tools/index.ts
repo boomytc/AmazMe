@@ -73,6 +73,7 @@ export {
 export {
 	createWriteTool,
 	createWriteToolDefinition,
+	type WriteToolDetails,
 	type WriteToolInput,
 	type WriteToolOptions,
 } from "./write.ts";

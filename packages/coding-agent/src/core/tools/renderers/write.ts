@@ -7,6 +7,9 @@
  */
 
 import { Container, Text } from "@amazme/tui";
+import type { WriteToolDetails } from "@amazme/durable/tools/write-diff";
+import type { TSchema } from "typebox";
+import { renderDiff } from "../../../modes/interactive/components/diff.ts";
 import { keyHint } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
@@ -126,23 +129,31 @@ function formatWriteCall(
 	return text;
 }
 function formatWriteResult(
-	result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; isError?: boolean },
+	result: {
+		content: Array<{
+			type: string;
+			text?: string;
+			data?: string;
+			mimeType?: string;
+		}>;
+		details?: WriteToolDetails;
+		isError?: boolean;
+	},
 	theme: Theme,
+	path: string | undefined,
 ): string | undefined {
-	if (!result.isError) {
-		return undefined;
-	}
 	const output = result.content
 		.filter((c) => c.type === "text")
 		.map((c) => c.text || "")
 		.join("\n");
-	if (!output) {
-		return undefined;
+	if (result.isError) return output ? `\n${theme.fg("error", output)}` : undefined;
+	if (result.details?.diff) {
+		return `\n${theme.fg("muted", "Applied changes")}\n${renderDiff(result.details.diff, { filePath: path })}${output ? `\n${theme.fg("toolOutput", output)}` : ""}`;
 	}
-	return `\n${theme.fg("error", output)}`;
+	return output ? `\n${theme.fg("toolOutput", output)}` : undefined;
 }
 
-export const writeRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> = {
+export const writeRenderers: Pick<ToolDefinition<TSchema, WriteToolDetails>, "renderCall" | "renderResult"> = {
 	renderCall(args, theme, context) {
 		const renderArgs = args as { path?: string; file_path?: string; content?: string } | undefined;
 		const rawPath = str(renderArgs?.file_path ?? renderArgs?.path);
@@ -168,7 +179,12 @@ export const writeRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rend
 		return component;
 	},
 	renderResult(result, _options, theme, context) {
-		const output = formatWriteResult({ ...result, isError: context.isError }, theme);
+		const args = context.args as { path?: string; file_path?: string } | undefined;
+		const output = formatWriteResult(
+			{ ...result, isError: context.isError },
+			theme,
+			str(args?.path ?? args?.file_path) ?? undefined,
+		);
 		if (!output) {
 			const component = (context.lastComponent as Container | undefined) ?? new Container();
 			component.clear();

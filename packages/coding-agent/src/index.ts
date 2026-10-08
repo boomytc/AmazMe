@@ -383,6 +383,7 @@ export {
 	truncateHead,
 	truncateLine,
 	truncateTail,
+	type WriteToolDetails,
 	type WriteToolInput,
 	type WriteToolOptions,
 	withFileMutationQueue,

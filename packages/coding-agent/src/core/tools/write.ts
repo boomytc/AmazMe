@@ -2,6 +2,8 @@ import type { AgentTool } from "@amazme/agent";
 import { getOrThrow } from "@amazme/durable/env";
 import { observedWriteIntent } from "@amazme/durable/file-observations";
 import { canonicalFilePath, resolveToolPath, withFileMutationQueue } from "@amazme/durable/file-operations";
+import { prepareWriteDiff, writeDiffNote } from "@amazme/durable/tools/write-diff";
+import type { WriteToolDetails } from "@amazme/durable/tools/write-diff";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { createFileRuntime, type FileToolOptions, observePublished, throwIfAborted } from "./file-runtime.ts";
@@ -25,11 +27,12 @@ export const writeToolSystemPromptContribution = {
 export type WriteToolInput = Static<typeof writeSchema>;
 
 export type WriteToolOptions = FileToolOptions;
+export type { WriteToolDetails } from "@amazme/durable/tools/write-diff";
 
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
-): ToolDefinition<typeof writeSchema, undefined> {
+): ToolDefinition<typeof writeSchema, WriteToolDetails> {
 	const runtime = createFileRuntime(cwd, options);
 	return {
 		name: "write",
@@ -57,11 +60,13 @@ export function createWriteToolDefinition(
 					throwIfAborted(context);
 					const target = await canonicalFilePath(files, absolutePath, context);
 					const intent = observedWriteIntent(target, observations.get(files.id, target));
+					const details = await prepareWriteDiff(files, absolutePath, path, content, intent, context);
+					throwIfAborted(context);
 					const outcome = getOrThrow(await files.writeFileChecked(absolutePath, content, intent, context));
 					const warning = await observePublished(observations, files.id, outcome);
 					return {
-						content: [{ type: "text", text: `Successfully wrote to ${path}${warning}` }],
-						details: undefined,
+						content: [{ type: "text", text: `Successfully wrote to ${path}${warning}${writeDiffNote(details)}` }],
+						details,
 					};
 				},
 				context,
@@ -71,6 +76,6 @@ export function createWriteToolDefinition(
 	};
 }
 
-export function createWriteTool(cwd: string, options?: WriteToolOptions): AgentTool<typeof writeSchema> {
+export function createWriteTool(cwd: string, options?: WriteToolOptions): AgentTool<typeof writeSchema, WriteToolDetails> {
 	return wrapToolDefinition(createWriteToolDefinition(cwd, options));
 }

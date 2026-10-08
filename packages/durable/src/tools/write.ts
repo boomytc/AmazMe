@@ -7,6 +7,10 @@ import { requireEnv } from "./env.ts";
 import { canonicalFilePath, withFileMutationQueue } from "../file-operations.ts";
 import { observeMutation, priorFileObservation } from "./file-observations.ts";
 import { resolveToolPath } from "../file-operations.ts";
+import { prepareWriteDiff, writeDiffNote } from "./write-diff.ts";
+import type { WriteToolDetails } from "./write-diff.ts";
+
+export type { WriteToolDetails } from "./write-diff.ts";
 
 const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
@@ -15,7 +19,7 @@ const writeSchema = Type.Object({
 
 export type WriteToolInput = Static<typeof writeSchema>;
 
-export function createWriteTool(): ToolRegistration<typeof writeSchema> {
+export function createWriteTool(): ToolRegistration<typeof writeSchema, WriteToolDetails> {
 	return defineTool({
 		name: "write",
 		description:
@@ -32,9 +36,11 @@ export function createWriteTool(): ToolRegistration<typeof writeSchema> {
 					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 					const target = await canonicalFilePath(env, absolutePath, context);
 					const intent = observedWriteIntent(target, await priorFileObservation(api, env.id, target, context));
+					const details = await prepareWriteDiff(env, absolutePath, path, content, intent, context);
+					context.abortSignal?.throwIfAborted();
 					const outcome = getOrThrow(await env.writeFileChecked(absolutePath, content, intent, context));
 					await observeMutation(api, env.id, outcome);
-					return { content: [{ type: "text", text: `Successfully wrote to ${path}` }] };
+					return { content: [{ type: "text", text: `Successfully wrote to ${path}${writeDiffNote(details)}` }], details };
 				},
 				context,
 			);
