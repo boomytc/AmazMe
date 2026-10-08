@@ -1,15 +1,10 @@
 import type { Context } from "@amazme/chord";
-import type { ModelThinkingLevel } from "@amazme/ai";
-import {
-	createRegistry,
-	type EnvTarget,
-	type HarnessSettings,
-	type ModelRef,
-	type Registry,
-} from "@amazme/durable";
+import { clampThinkingLevel, type Model, type ModelThinkingLevel } from "@amazme/ai";
+import { createRegistry, type EnvTarget, type HarnessSettings, type ModelRef, type Registry } from "@amazme/durable";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import { CodingTools } from "@amazme/durable/tools";
 import { applyHttpProxySettings, configureHttpDispatcher } from "../core/http-dispatcher.ts";
+import { DEFAULT_THINKING_LEVEL } from "../core/defaults.ts";
 import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
@@ -87,20 +82,41 @@ export interface InitialModel {
 	readonly fallbackMessage?: string;
 }
 
+/** Explicit thinking, then per-model and global settings, bounded by the model's capabilities. */
+export function initialThinkingLevel(
+	settingsManager: SettingsManager,
+	model: Model<string>,
+	requested?: ModelThinkingLevel,
+): ModelThinkingLevel {
+	return clampThinkingLevel(
+		model,
+		requested ??
+			settingsManager.getModelThinkingLevel(model.provider, model.id) ??
+			settingsManager.getDefaultThinkingLevel() ??
+			DEFAULT_THINKING_LEVEL,
+	);
+}
+
 /** The model a new root conversation starts with: an explicit `--provider`/`--model`, or pi's default resolution. */
 export async function findInitialAgentModel(
 	settingsManager: SettingsManager,
 	modelRuntime: ModelRuntime,
-	cli?: { readonly provider?: string; readonly model: string },
+	cli?: { readonly provider?: string; readonly model: string; readonly thinkingLevel?: ModelThinkingLevel },
 ): Promise<InitialModel> {
 	if (cli !== undefined) {
-		const resolved = resolveCliModel({ cliProvider: cli.provider, cliModel: cli.model, modelRuntime });
+		const resolved = resolveCliModel({
+			cliProvider: cli.provider,
+			cliModel: cli.model,
+			cliThinking: cli.thinkingLevel,
+			modelRuntime,
+		});
 		if (resolved.error !== undefined || resolved.model === undefined) {
 			throw new Error(`Could not resolve model: ${resolved.error ?? cli.model}`);
 		}
+		const thinkingLevel = cli.thinkingLevel ?? resolved.thinkingLevel;
 		return {
 			model: { provider: resolved.model.provider, modelId: resolved.model.id },
-			...(resolved.thinkingLevel === undefined ? {} : { thinkingLevel: resolved.thinkingLevel }),
+			...(thinkingLevel === undefined ? {} : { thinkingLevel: clampThinkingLevel(resolved.model, thinkingLevel) }),
 		};
 	}
 	const initial = await findInitialModel({
@@ -109,6 +125,7 @@ export async function findInitialAgentModel(
 		defaultProvider: settingsManager.getDefaultProvider(),
 		defaultModelId: settingsManager.getDefaultModel(),
 		defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+		modelThinkingLevels: settingsManager.getAllModelThinkingLevels(),
 		modelRuntime,
 	});
 	return {
@@ -116,7 +133,7 @@ export async function findInitialAgentModel(
 			? {}
 			: {
 					model: { provider: initial.model.provider, modelId: initial.model.id },
-					thinkingLevel: initial.thinkingLevel,
+					thinkingLevel: initialThinkingLevel(settingsManager, initial.model),
 				}),
 		...(initial.fallbackMessage === undefined ? {} : { fallbackMessage: initial.fallbackMessage }),
 	};

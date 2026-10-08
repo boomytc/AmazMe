@@ -73,6 +73,10 @@ See [Choose a Model](models.md) for model selection and [Providers](providers.md
 - `--list-models [search]`<br>
   Lists available models, optionally filtered by a fuzzy search, then exits.
 
+The default Durable TUI applies `--provider`, `--model`, `--thinking`, and `--api-key` to its actual runtime. A new conversation uses per-model thinking settings before the global default. Continuing restores the focused conversation before applying explicit overrides; other branches keep their settings. Without overrides, saved model and thinking values remain in effect. A previously prepared request retains its saved parameters when recovered; subsequent generations use the current selection.
+
+In this interactive path, `--api-key` requires `--model` and is never persisted. `--use-theme <name>` applies for the current run without changing saved settings. Invalid model selection is rejected before opening session storage.
+
 <a id="session-options"></a>
 
 ## Sessions

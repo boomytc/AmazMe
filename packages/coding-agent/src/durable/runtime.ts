@@ -1,3 +1,5 @@
+import { realpath } from "node:fs/promises";
+import { resolve } from "node:path";
 import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
 import type { AttachedReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -27,7 +29,14 @@ import {
 	readSummaries,
 	type TreeNavigationDeps,
 } from "./session-surface.ts";
-import { configureHarnessHttp, createCodingRegistry, createHarnessSettings, ExecutionEnvs, findInitialAgentModel } from "./harness-setup.ts";
+import {
+	configureHarnessHttp,
+	createCodingRegistry,
+	createHarnessSettings,
+	ExecutionEnvs,
+	findInitialAgentModel,
+	initialThinkingLevel,
+} from "./harness-setup.ts";
 import { selectSession } from "./sessions.ts";
 import { Subagent } from "./subagent.ts";
 
@@ -104,6 +113,13 @@ export interface DurableController {
 export interface OpenDurableOptions {
 	readonly cwd?: string;
 	readonly continueSession?: boolean;
+	readonly provider?: string;
+	readonly model?: string;
+	readonly thinkingLevel?: ModelThinkingLevel;
+	/** A non-persistent credential for the explicitly selected provider. */
+	readonly apiKey?: string;
+	readonly settingsManager?: SettingsManager;
+	readonly modelRuntime?: ModelRuntime;
 }
 
 export interface OpenDurableResult {
@@ -119,13 +135,37 @@ export function agentOf(view: ConversationView): AgentState {
 	return (view.docs["amazme.agent"] ?? {}) as AgentState;
 }
 
-export async function openDurable(options: OpenDurableOptions = {}): Promise<OpenDurableResult> {
-	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false);
+export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenDurableResult> {
+	const options = { ...input };
+	if (options.provider !== undefined && options.model === undefined) throw new Error("--provider requires --model");
+	if (options.apiKey !== undefined && options.model === undefined) throw new Error("--api-key requires --model");
+	const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
+	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd);
+	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create());
+	// Resolve explicit arguments before creating or locking persistent session storage.
+	const selected = options.model === undefined
+		? undefined
+		: await findInitialAgentModel(settingsManager, modelRuntime, {
+			provider: options.provider,
+			model: options.model,
+			thinkingLevel: options.thinkingLevel,
+		});
+	if (options.apiKey !== undefined && selected?.model !== undefined) {
+		await modelRuntime.setRuntimeApiKey(selected.model.provider, options.apiKey);
+	}
+	const initial = options.continueSession === true
+		? undefined
+		: selected ?? (await findInitialAgentModel(settingsManager, modelRuntime));
+	const initialRef = initial?.model;
+	const initialModel = initialRef === undefined ? undefined : modelRuntime.getModel(initialRef.provider, initialRef.modelId);
+	const initialThinking = initialModel === undefined
+		? options.thinkingLevel
+		: initialThinkingLevel(settingsManager, initialModel, options.thinkingLevel ?? initial?.thinkingLevel);
+	const location = await selectSession(cwd, options.continueSession ?? false);
 	const envs = new ExecutionEnvs(location.cwd);
 	let harness: Harness | undefined;
+	let disposeView = (): void => {};
 	try {
-		const modelRuntime = await ModelRuntime.create();
-		const settingsManager = SettingsManager.create(location.cwd);
 		configureHarnessHttp(settingsManager);
 		const settings = createHarnessSettings(settingsManager);
 		const registry = createCodingRegistry(settingsManager, location.cwd);
@@ -144,12 +184,11 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			},
 			context,
 		);
-		const initial = location.created ? await findInitialAgentModel(settingsManager, modelRuntime) : undefined;
 		const root = await harness.root(context, {
 			agent: {
 				cwd: location.cwd,
 				...(initial?.model === undefined ? {} : { model: initial.model }),
-				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
+				...(initialThinking === undefined ? {} : { thinkingLevel: initialThinking }),
 			},
 		});
 		const opened = harness;
@@ -411,6 +450,32 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				}),
 		};
 
+		disposeView = () => {
+			unsubscribe();
+			unsubscribeCommits();
+			if (listTimer !== undefined) clearTimeout(listTimer);
+			conversation.dispose();
+			closeTasks();
+			listeners.clear();
+		};
+		const savedFocus = await readFocus(opened, context);
+		if (savedFocus.length > 0 && savedFocus !== String(root.id)) {
+			await show(Number(savedFocus) as ConversationId);
+		}
+		if (!location.created && (selected?.model !== undefined || options.thinkingLevel !== undefined)) {
+			const savedAgent = agentOf(state.conversation);
+			const ref = selected?.model ?? savedAgent.model;
+			const model = ref === undefined ? undefined : modelRuntime.getModel(ref.provider, ref.modelId);
+			const requested = options.thinkingLevel ?? selected?.thinkingLevel ?? savedAgent.thinkingLevel;
+			const thinkingLevel = model === undefined ? requested : initialThinkingLevel(settingsManager, model, requested);
+			await current.configure(
+				{
+					...(selected?.model === undefined ? {} : { model: selected.model }),
+					...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+				},
+				context,
+			);
+		}
 		const saved = agentOf(state.conversation).model;
 		if (saved === undefined) notice("warning", "No model configured; select one with /model.");
 		else if (modelRuntime.getModel(saved.provider, saved.modelId) === undefined) {
@@ -419,10 +484,6 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		if (initial?.fallbackMessage !== undefined) notice("info", initial.fallbackMessage);
 		// The task panel starts open; /tasks hides it.
 		await controller.toggleTasks();
-		const savedFocus = await readFocus(opened, context);
-		if (savedFocus.length > 0 && savedFocus !== String(root.id)) {
-			await controller.switchConversation(Number(savedFocus) as ConversationId);
-		}
 		// Recovered work from an interrupted turn continues now.
 		harness.resume();
 
@@ -439,24 +500,25 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			settings: settingsManager,
 			close() {
 				closing ??= (async () => {
-					unsubscribe();
-					unsubscribeCommits();
-					if (listTimer !== undefined) clearTimeout(listTimer);
-					conversation.dispose();
-					closeTasks();
+					disposeView();
 					try {
 						// Close writes no outcome: a running turn resumes with --continue.
 						await opened.close(context);
-						await envs.cleanup(context);
 					} finally {
-						await location.release();
+						try {
+							await envs.cleanup(context);
+						} finally {
+							await location.release();
+						}
 					}
 				})();
 				return closing;
 			},
 		};
 	} catch (error) {
+		disposeView();
 		await harness?.close(context).catch(() => {});
+		await envs.cleanup(context).catch(() => {});
 		await location.release().catch(() => {});
 		throw error;
 	}

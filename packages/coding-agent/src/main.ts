@@ -700,6 +700,11 @@ export async function main(args: string[], options?: MainOptions) {
 		await runDurableInteractive({
 			cwd,
 			continueSession: parsed.continue === true || parsed.resume === true,
+			settingsManager: startupSettingsManager,
+			...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
+			...(parsed.model === undefined ? {} : { model: parsed.model }),
+			...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),
+			...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
 			...(initialMessage === undefined ? {} : { initialMessage }),
 		});
 		return;

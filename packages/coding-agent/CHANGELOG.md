@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Fixed the default Durable TUI ignoring startup model, thinking, temporary API key and theme options; continuation now applies explicit overrides to the restored focused conversation
 - Fixed SDK tool defaults being reactivated by an extension overriding a removed tool name, and retained exact-name activation until delayed tool registration
 - Fixed the web page offering Fork on a conversation that has no entries yet. The header and the conversations panel keep the control and disable it until there is an entry to fork from
 - Fixed the Dashboard offering a close badge for the current session, which cannot be deleted from there; the close column stays blank so ages keep their alignment, and `Ctrl+X` on it reports that the session stays open
