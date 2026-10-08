@@ -4,9 +4,9 @@ import { observedWriteIntent } from "../file-observations.ts";
 import { defineTool } from "../harness/define.ts";
 import type { ToolRegistration } from "../harness/types.ts";
 import { requireEnv } from "./env.ts";
-import { canonicalFilePath, withFileMutationQueue } from "./file-mutation-queue.ts";
+import { canonicalFilePath, withFileMutationQueue } from "../file-operations.ts";
 import { observeMutation, priorFileObservation } from "./file-observations.ts";
-import { resolveToolPath } from "./path-utils.ts";
+import { resolveToolPath } from "../file-operations.ts";
 
 const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),

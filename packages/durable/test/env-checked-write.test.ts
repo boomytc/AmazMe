@@ -209,3 +209,22 @@ describe("Node checked publication", () => {
 		1000,
 	);
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+	"checked publication does not bypass an existing read-only file",
+	async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "amazme-readonly-publish-"));
+		try {
+			const env = new NodeExecutionEnv({ cwd });
+			writeFileSync(join(cwd, "file.txt"), "original");
+			chmodSync(join(cwd, "file.txt"), 0o444);
+			const revision = getOrThrow(await env.fileRevision("file.txt", BACKGROUND_CONTEXT));
+			expect(
+				await env.writeFileChecked("file.txt", "lost", { kind: "replaceIfVersion", revision }, BACKGROUND_CONTEXT),
+			).toMatchObject({ ok: false, error: { code: "permission_denied" } });
+			expect(readFileSync(join(cwd, "file.txt"), "utf8")).toBe("original");
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	},
+);

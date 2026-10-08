@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { link, lstat, mkdir, open, realpath, rename, rm, type FileHandle } from "node:fs/promises";
+import { access, link, lstat, mkdir, open, realpath, rename, rm, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Context } from "@amazme/chord";
 import { awaitWithContext } from "@amazme/chord/context";
@@ -97,6 +97,7 @@ async function publish(
 ): Promise<FileWriteOutcome> {
 	context.abortSignal?.throwIfAborted();
 	const current = await check(path, target, intent);
+	if (current !== undefined) await access(target, constants.W_OK);
 	await mkdir(dirname(target), { recursive: true });
 	context.abortSignal?.throwIfAborted();
 	const staging = join(dirname(target), `.${basename(target)}.${randomUUID()}.staging`);

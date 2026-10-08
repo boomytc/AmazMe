@@ -1,5 +1,7 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import type { EventEmitter } from "node:events";
+import type { Readable, Writable } from "node:stream";
 
 /** Frame types (docs/protocol.md). */
 const REQUEST = 1;
@@ -52,16 +54,30 @@ export interface RemoteInfo {
 	pid: number;
 }
 
-export interface ConnectionOptions {
-	/**
-	 * Command that starts the daemon, before its `serve --token <hex>` arguments, e.g. `["ssh", "-T", "--", "host",
-	 * "~/.amazme/mobile/tools/amazme-env"]`. A function computes it at each start (detecting and deploying first, for example);
-	 * its failure fails that start, and the next request tries again.
-	 */
-	command: readonly string[] | (() => Promise<readonly string[]>);
+export interface DaemonTransport extends Pick<EventEmitter, "on" | "once"> {
+	stdin: Writable;
+	stdout: Readable;
+	stderr: Readable;
+	kill(): unknown;
+}
+
+export type ConnectionOptions = (
+	| {
+			/**
+			 * Command that starts the daemon, before its `serve --token <hex>` arguments, e.g. `["ssh", "-T", "--", "host",
+			 * "~/.amazme/mobile/tools/amazme-env"]`. A function computes it at each start (detecting and deploying first, for example);
+			 * its failure fails that start, and the next request tries again.
+			 */
+			command: readonly string[] | (() => Promise<readonly string[]>);
+	  }
+	| {
+			/** Start a daemon using another process transport, with the supplied protocol arguments. */
+			start: (args: readonly string[]) => DaemonTransport | Promise<DaemonTransport>;
+	  }
+) & {
 	/** Receives the daemon's and the transport's diagnostic output. */
 	onLog?: (text: string) => void;
-}
+};
 
 export interface Reply {
 	json: Json;
@@ -123,7 +139,7 @@ function closed(): RemoteError {
 /** One running daemon. */
 class Session {
 	readonly id: number;
-	readonly child: ChildProcessWithoutNullStreams;
+	readonly child: DaemonTransport;
 	readonly token: string;
 	readonly pending = new Map<number, Pending>();
 	/** Received bytes not yet parsed, without concatenating on every chunk. */
@@ -134,7 +150,7 @@ class Session {
 	timer: ReturnType<typeof setInterval> | undefined;
 	live = true;
 
-	constructor(id: number, child: ChildProcessWithoutNullStreams, token: string) {
+	constructor(id: number, child: DaemonTransport, token: string) {
 		this.id = id;
 		this.child = child;
 		this.token = token;
@@ -255,19 +271,32 @@ export class Connection {
 	}
 
 	async #start(): Promise<{ info: RemoteInfo; session: Session }> {
-		let command: readonly string[];
+		const token = randomBytes(16).toString("hex");
+		let child: DaemonTransport;
 		try {
-			const option = this.#options.command;
-			command = typeof option === "function" ? await option() : option;
+			if ("start" in this.#options) {
+				child = await this.#options.start(["serve", "--token", token]);
+			} else {
+				const option = this.#options.command;
+				const command = typeof option === "function" ? await option() : option;
+				if (this.#closed) throw closed();
+				const [program, ...args] = command;
+				if (program === undefined) throw new Error("No daemon command");
+				child = spawn(program, [...args, "serve", "--token", token], {
+					stdio: ["pipe", "pipe", "pipe"],
+				});
+			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			throw new RemoteError({ code: "spawn_error", message, lost: true });
 		}
-		if (this.#closed) throw closed();
-		const [program, ...args] = command;
-		if (program === undefined) throw new RemoteError({ code: "spawn_error", message: "No daemon command" });
-		const token = randomBytes(16).toString("hex");
-		const child = spawn(program, [...args, "serve", "--token", token], { stdio: ["pipe", "pipe", "pipe"] });
+		if (this.#closed) {
+			child.on("error", () => {});
+			child.stdin.on("error", () => {});
+			child.stdin.end();
+			child.kill();
+			throw closed();
+		}
 		const session = new Session(++this.#sessions, child, token);
 		this.#session = session;
 		let startTimer: ReturnType<typeof setTimeout> | undefined;
@@ -277,7 +306,13 @@ export class Connection {
 				START_TIMEOUT_MS,
 			);
 			child.once("error", (error) =>
-				reject(new RemoteError({ code: "spawn_error", message: error.message, lost: true })),
+				reject(
+					new RemoteError({
+						code: "spawn_error",
+						message: error.message,
+						lost: true,
+					}),
+				),
 			);
 			child.once("exit", (code) => reject(lost(`amazme-env exited with code ${code} before it was ready`)));
 		});
@@ -359,8 +394,7 @@ export class Connection {
 			try {
 				if (9 + jsonLength > length) throw new Error("JSON length out of range");
 				const parsed: unknown = JSON.parse(body.subarray(9, 9 + jsonLength).toString("utf8"));
-				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-					throw new Error("not an object");
+				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not an object");
 				json = parsed as Json;
 			} catch {
 				this.#teardown(session, lost("Corrupt frame from amazme-env"));

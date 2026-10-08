@@ -1,6 +1,6 @@
 # SDK
 
-`@amazme/coding-agent` embeds Pi in a Node.js or Bun process. It provides direct TypeScript access to the agent, sessions, tools, models, and resources used by the command-line application.
+`@amazme/coding-agent` embeds AmazMe in a Node.js or Bun process. It provides direct TypeScript access to the agent, sessions, tools, models, and resources used by the command-line application.
 
 Use the SDK for in-process TypeScript integration. For a language-independent or isolated subprocess, see [CLI Integration](cli-integration.md).
 
@@ -148,3 +148,23 @@ See the focused examples for [models](../examples/sdk/02-custom-model.ts), [tool
 - [Sessions and Context](sessions.md) explains session behavior; [Session Format](session-format.md) defines persisted entries; [Message Types](message-types.md) defines shared transcript values.
 - [Extensions](extensions.md), [Skills](skills.md), and [Prompt Templates](prompt-templates.md) document resources supplied through a `ResourceLoader`.
 - [CLI Integration](cli-integration.md) covers print, JSON, and RPC alternatives to an in-process SDK integration.
+
+## Observed file tools
+
+Built-in `edit` and replacement `write` require a successful `read` of the existing file. Files changed outside the tool chain must be read again. New-file writes never overwrite another writer's creation. Completed changes refresh the observation, so subsequent edits can use them without another read. The session JSONL journal owns observations; reopening the same session restores them, while a fork or historical branch requires fresh reads. A bounded projection keeps at most 1024 targets per owner.
+
+Standalone groups created by `createCodingTools()`, `createAllTools()` or their definition factories share one in-memory owner. Independent tools share only an explicitly supplied owner:
+
+```typescript
+import { createMemoryFileObservations, createReadTool, createEditTool } from "@amazme/coding-agent";
+
+const observations = createMemoryFileObservations();
+const read = createReadTool(process.cwd(), { observations });
+const edit = createEditTool(process.cwd(), { observations });
+await read.execute("read-1", { path: "app.ts" });
+await edit.execute("edit-1", { path: "app.ts", edits: [{ oldText: "old", newText: "new" }] });
+```
+
+For another filesystem, supply `fileSystem` in the tool options (or group options). It implements the shared `FileSystem` contract from `@amazme/durable/env`, including opened-reader revisions and checked publication. SSH and Gondolin examples use the actual daemon protocol. Gondolin needs a Linux musl daemon for the guest architecture; `AMAZME_ENV_LINUX_BINARY` can point to that build when the package has no bundled binary. There is no unconditional read/write operations fallback. File namespaces must remain stable across connection recreation to restore observations and differ across isolated machines.
+
+Cancellation waits for in-flight IO and required cleanup before releasing a mutation barrier. If publication already completed, the result reports success; unavailable observation persistence adds a reread warning. Checked publication rechecks cooperating writers but does not claim an operating-system lock against arbitrary external processes.

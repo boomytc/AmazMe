@@ -53,6 +53,9 @@ export function createToolDefinitionFromAgentTool(tool: AgentTool<any>): ToolDef
 		constrainedSampling: tool.constrainedSampling,
 		prepareArguments: tool.prepareArguments,
 		executionMode: tool.executionMode,
-		execute: async (toolCallId, params, signal, onUpdate) => tool.execute(toolCallId, params, signal, onUpdate),
+		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+			const execute: ToolDefinition["execute"] = tool.execute.bind(tool);
+			return execute(toolCallId, params, signal, onUpdate, ctx);
+		},
 	};
 }

@@ -1,11 +1,11 @@
 import type { Context } from "@amazme/chord";
 import { awaitWithContext } from "@amazme/chord/context";
-import { type ExecutionEnv, getOrThrow } from "../env/index.ts";
+import { type FileSystem, getOrThrow } from "./env/index.ts";
 
 /** Tail of the mutation chain of each file, keyed by file system id and canonical path. */
 const queues = new Map<string, Promise<void>>();
 
-async function mutationKey(env: ExecutionEnv, path: string, context: Context): Promise<string> {
+async function mutationKey(env: FileSystem, path: string, context: Context): Promise<string> {
 	const absolutePath = getOrThrow(await env.absolutePath(path, context));
 	return `${env.id}\0${await canonicalFilePath(env, absolutePath, context)}`;
 }
@@ -14,7 +14,7 @@ async function mutationKey(env: ExecutionEnv, path: string, context: Context): P
  * The canonical path; for a file that does not exist yet, its canonical parent joined with its name, so a `write` that
  * creates a file and a later mutation of it share one key even under a symlinked directory.
  */
-export async function canonicalFilePath(env: ExecutionEnv, absolutePath: string, context: Context): Promise<string> {
+export async function canonicalFilePath(env: FileSystem, absolutePath: string, context: Context): Promise<string> {
 	const result = await env.canonicalPath(absolutePath, context);
 	if (result.ok) return result.value;
 	if (result.error.code !== "not_found") throw result.error;
@@ -34,7 +34,7 @@ export async function canonicalFilePath(env: ExecutionEnv, absolutePath: string,
  * file run in the order their keys resolve. Not a lock against `bash` or other processes.
  */
 export async function withFileMutationQueue<T>(
-	env: ExecutionEnv,
+	env: FileSystem,
 	path: string,
 	fn: () => Promise<T>,
 	context: Context,
@@ -53,6 +53,36 @@ export async function withFileMutationQueue<T>(
 		return await fn();
 	} finally {
 		release();
-		void tail.then(() => { if (queues.get(key) === tail) queues.delete(key); });
+		void tail.then(() => {
+			if (queues.get(key) === tail) queues.delete(key);
+		});
 	}
+}
+
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+const NARROW_NO_BREAK_SPACE = "\u202F";
+
+function normalizeToolPath(path: string): string {
+	const normalized = path.replace(UNICODE_SPACES, " ");
+	return normalized.startsWith("@") ? normalized.slice(1) : normalized;
+}
+
+export async function resolveToolPath(env: FileSystem, path: string, context: Context): Promise<string> {
+	return getOrThrow(await env.absolutePath(normalizeToolPath(path), context));
+}
+
+export async function resolveReadToolPath(env: FileSystem, path: string, context: Context): Promise<string> {
+	const resolved = await resolveToolPath(env, path, context);
+	const variants = [
+		resolved,
+		resolved.replace(/ (AM|PM)\./gi, `${NARROW_NO_BREAK_SPACE}$1.`),
+		resolved.normalize("NFD"),
+		resolved.replace(/'/g, "\u2019"),
+		resolved.normalize("NFD").replace(/'/g, "\u2019"),
+	];
+
+	for (const variant of new Set(variants)) {
+		if (getOrThrow(await env.exists(variant, context))) return variant;
+	}
+	return resolved;
 }

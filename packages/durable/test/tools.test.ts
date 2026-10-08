@@ -29,7 +29,7 @@ import {
 	type ShellOutputWindow,
 } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
-import { withFileMutationQueue } from "../src/tools/file-mutation-queue.ts";
+import { withFileMutationQueue } from "../src/file-operations.ts";
 import { detectSupportedImageMimeType } from "../src/tools/image.ts";
 import {
 	createBashTool,

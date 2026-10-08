@@ -1,3 +1,5 @@
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 /**
  * Truncated Tool Example - Demonstrates proper output truncation for custom tools
  *
@@ -111,9 +113,9 @@ export default function (pi: ExtensionAPI) {
 				// Save full output to a temp file so LLM can access it if needed
 				const tempDir = await mkdtemp(join(tmpdir(), "pi-rg-"));
 				const tempFile = join(tempDir, "output.txt");
-				await withFileMutationQueue(tempFile, async () => {
+				await withFileMutationQueue(new NodeExecutionEnv({ cwd: process.cwd() }), tempFile, async () => {
 					await writeFile(tempFile, output, "utf8");
-				});
+				}, BACKGROUND_CONTEXT);
 
 				details.truncation = truncation;
 				details.fullOutputPath = tempFile;

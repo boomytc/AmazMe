@@ -140,7 +140,7 @@ Returning an object does not mark it as an error.
 Return `terminate: true` only when the agent should skip its automatic follow-up after every completed tool in that batch agrees to terminate.
 
 Use sequential execution when tools share mutable in-memory state.
-File-mutating tools should wrap the complete read-modify-write operation with `withFileMutationQueue()`.
+File-mutating tools should wrap the complete read-modify-write operation with `withFileMutationQueue(fileSystem, path, operation, context)`. The queue groups canonical targets within a filesystem namespace; it does not lock outside processes. Publish replacements through `fileSystem.writeFileChecked()` using the revision established by a prior read. When wrapping built-in definitions, pass the actual `ctx` to their `execute()` so observations belong to the current session. A wrapper that reimplements reading must also record a stable revision through `ctx.fileObservations`; a raw `readFile()` alone does not grant replacement permission.
 Truncate large model-facing results and tell the model where to read the complete output.
 
 Declare `outputSchema` and return a matching `structuredContent` when the result is data. The model still receives `content`; programmatic callers such as codemode scripts receive `structuredContent` instead of the text. Tools without `outputSchema` are passed to scripts as their text content. To report a failure that still carries data, return the result with `isError: true` instead of throwing: the model sees an error, and scripts still receive `structuredContent`.

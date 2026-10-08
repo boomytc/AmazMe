@@ -181,3 +181,17 @@ describe("Remote checked publication through the actual daemon", () => {
 		expect(statSync(path).mode & 0o777).toBe(0o751);
 	});
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+	"daemon publication does not bypass an existing read-only file",
+	async () => {
+		const { env } = environment();
+		writeFileSync(join(env.cwd, "file.txt"), "original");
+		chmodSync(join(env.cwd, "file.txt"), 0o444);
+		const revision = getOrThrow(await env.fileRevision("file.txt", context));
+		expect(
+			await env.writeFileChecked("file.txt", "lost", { kind: "replaceIfVersion", revision }, context),
+		).toMatchObject({ ok: false, error: { code: "permission_denied" } });
+		expect(readFileSync(join(env.cwd, "file.txt"), "utf8")).toBe("original");
+	},
+);

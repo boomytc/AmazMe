@@ -20,10 +20,10 @@ import {
 	utf8ByteLength,
 } from "../truncate.ts";
 import { requireEnv } from "./env.ts";
-import { canonicalFilePath } from "./file-mutation-queue.ts";
+import { canonicalFilePath } from "../file-operations.ts";
 import { observeFile, observeRead } from "./file-observations.ts";
 import { detectSupportedImageMimeTypeOf } from "./image.ts";
-import { resolveReadToolPath } from "./path-utils.ts";
+import { resolveReadToolPath } from "../file-operations.ts";
 
 const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),

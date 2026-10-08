@@ -1,3 +1,4 @@
+export { withFileMutationQueue } from "@amazme/durable/file-operations";
 export {
 	type BashOperations,
 	type BashSpawnContext,
@@ -12,12 +13,11 @@ export {
 export {
 	createEditTool,
 	createEditToolDefinition,
-	type EditOperations,
 	type EditToolDetails,
 	type EditToolInput,
 	type EditToolOptions,
 } from "./edit.ts";
-export { withFileMutationQueue } from "./file-mutation-queue.ts";
+export type { FileToolOptions } from "./file-runtime.ts";
 export {
 	createFindTool,
 	createFindToolDefinition,
@@ -56,7 +56,6 @@ export {
 export {
 	createReadTool,
 	createReadToolDefinition,
-	type ReadOperations,
 	type ReadToolDetails,
 	type ReadToolInput,
 	type ReadToolOptions,
@@ -74,15 +73,18 @@ export {
 export {
 	createWriteTool,
 	createWriteToolDefinition,
-	type WriteOperations,
 	type WriteToolInput,
 	type WriteToolOptions,
 } from "./write.ts";
 
 import type { AgentTool } from "@amazme/agent";
 import type { ToolDefinition } from "../extensions/types.ts";
+import { createMemoryFileObservations } from "../file-observations.ts";
 import type { ToolName } from "../tool-names.ts";
+import type { FileToolOptions } from "./file-runtime.ts";
+
 export { allToolNames, type ToolName } from "../tool-names.ts";
+
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
 import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.ts";
@@ -95,7 +97,7 @@ import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } fro
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
 
-export interface ToolsOptions {
+export interface ToolsOptions extends FileToolOptions {
 	read?: ReadToolOptions;
 	bash?: BashToolOptions;
 	powershell?: PowerShellToolOptions;
@@ -107,6 +109,7 @@ export interface ToolsOptions {
 }
 
 export function createToolDefinition(toolName: ToolName, cwd: string, options?: ToolsOptions): ToolDef {
+	options = sharedFileOptions(options);
 	switch (toolName) {
 		case "read":
 			return createReadToolDefinition(cwd, options?.read);
@@ -130,6 +133,7 @@ export function createToolDefinition(toolName: ToolName, cwd: string, options?: 
 }
 
 export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptions): Tool {
+	options = sharedFileOptions(options);
 	switch (toolName) {
 		case "read":
 			return createReadTool(cwd, options?.read);
@@ -153,6 +157,7 @@ export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptio
 }
 
 export function createCodingToolDefinitions(cwd: string, options?: ToolsOptions): ToolDef[] {
+	options = sharedFileOptions(options);
 	return [
 		createReadToolDefinition(cwd, options?.read),
 		createBashToolDefinition(cwd, options?.bash),
@@ -162,6 +167,7 @@ export function createCodingToolDefinitions(cwd: string, options?: ToolsOptions)
 }
 
 export function createReadOnlyToolDefinitions(cwd: string, options?: ToolsOptions): ToolDef[] {
+	options = sharedFileOptions(options);
 	return [
 		createReadToolDefinition(cwd, options?.read),
 		createGrepToolDefinition(cwd, options?.grep),
@@ -171,6 +177,7 @@ export function createReadOnlyToolDefinitions(cwd: string, options?: ToolsOption
 }
 
 export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): Record<ToolName, ToolDef> {
+	options = sharedFileOptions(options);
 	return {
 		read: createReadToolDefinition(cwd, options?.read),
 		bash: createBashToolDefinition(cwd, options?.bash),
@@ -184,6 +191,7 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 }
 
 export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
+	options = sharedFileOptions(options);
 	return [
 		createReadTool(cwd, options?.read),
 		createBashTool(cwd, options?.bash),
@@ -193,6 +201,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 }
 
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
+	options = sharedFileOptions(options);
 	return [
 		createReadTool(cwd, options?.read),
 		createGrepTool(cwd, options?.grep),
@@ -202,6 +211,7 @@ export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[]
 }
 
 export function createAllTools(cwd: string, options?: ToolsOptions): Record<ToolName, Tool> {
+	options = sharedFileOptions(options);
 	return {
 		read: createReadTool(cwd, options?.read),
 		bash: createBashTool(cwd, options?.bash),
@@ -211,5 +221,16 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		grep: createGrepTool(cwd, options?.grep),
 		find: createFindTool(cwd, options?.find),
 		ls: createLsTool(cwd, options?.ls),
+	};
+}
+
+function sharedFileOptions(options?: ToolsOptions): ToolsOptions {
+	const observations = options?.observations ?? createMemoryFileObservations();
+	const shared = { fileSystem: options?.fileSystem, observations };
+	return {
+		...options,
+		read: { ...shared, ...options?.read },
+		edit: { ...shared, ...options?.edit },
+		write: { ...shared, ...options?.write },
 	};
 }

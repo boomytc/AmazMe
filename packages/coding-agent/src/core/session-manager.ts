@@ -1033,6 +1033,12 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private contextRevision = 0;
+
+	/** Monotonic lifetime of the selected context; ordinary appends keep the current owner. */
+	getContextRevision(): number {
+		return this.contextRevision;
+	}
 
 	private constructor(
 		cwd: string,
@@ -1060,6 +1066,7 @@ export class SessionManager {
 
 	/** Switch to a different session file (used for resume and branching) */
 	setSessionFile(sessionFile: string): void {
+		this.contextRevision++;
 		this._setSessionFile(sessionFile);
 	}
 
@@ -1095,6 +1102,7 @@ export class SessionManager {
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
+		this.contextRevision++;
 		this.sessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const header: SessionHeader = {
@@ -1641,6 +1649,7 @@ export class SessionManager {
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
+		this.contextRevision++;
 		this.leafId = branchFromId;
 	}
 
@@ -1650,6 +1659,7 @@ export class SessionManager {
 	 * Use this when navigating to re-edit the first user message.
 	 */
 	resetLeaf(): void {
+		this.contextRevision++;
 		this.leafId = null;
 	}
 
@@ -1669,6 +1679,7 @@ export class SessionManager {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
 		const fromId = this.leafId ?? "root";
+		this.contextRevision++;
 		this.leafId = branchFromId;
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",

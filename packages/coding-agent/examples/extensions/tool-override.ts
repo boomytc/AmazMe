@@ -1,3 +1,5 @@
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
 /**
  * Tool Override Example - Demonstrates overriding built-in tools
  *
@@ -20,12 +22,15 @@
  *   pi -e ./tool-override.ts
  */
 
-import type { TextContent } from "@amazme/ai";
-import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@amazme/coding-agent";
-import { constants, readFileSync } from "fs";
-import { access, appendFile, readFile } from "fs/promises";
+import {
+	createReadToolDefinition,
+	type ExtensionAPI,
+	getAgentDir,
+	withFileMutationQueue,
+} from "@amazme/coding-agent";
+import { readFileSync } from "fs";
+import { appendFile } from "fs/promises";
 import { join, resolve } from "path";
-import { Type } from "typebox";
 
 const LOG_FILE = join(getAgentDir(), "read-access.log");
 
@@ -51,77 +56,53 @@ async function logAccess(path: string, allowed: boolean, reason?: string) {
 	const line = `[${timestamp}] ${status}: ${path}${msg}\n`;
 
 	try {
-		await withFileMutationQueue(LOG_FILE, async () => {
-			await appendFile(LOG_FILE, line);
-		});
+		await withFileMutationQueue(
+			new NodeExecutionEnv({ cwd: process.cwd() }),
+			LOG_FILE,
+			async () => {
+				await appendFile(LOG_FILE, line);
+			},
+			BACKGROUND_CONTEXT,
+		);
 	} catch {
 		// Ignore logging errors
 	}
 }
 
-const readSchema = Type.Object({
-	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
-	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
-	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
-});
-
 export default function (pi: ExtensionAPI) {
+	const read = createReadToolDefinition(process.cwd());
 	pi.registerTool({
+		...read,
 		name: "read", // Same name as built-in - this will override it
 		label: "read (audited)",
 		description:
 			"Read the contents of a file with access logging. Some sensitive paths (.env, secrets, credentials) are blocked.",
-		parameters: readSchema,
 
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const { path, offset, limit } = params;
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const { path } = params;
 			const absolutePath = resolve(ctx.cwd, path);
 
 			// Check if path is blocked
 			if (isBlockedPath(absolutePath)) {
 				await logAccess(absolutePath, false, "matches blocked pattern");
+				const message = `Access denied: "${path}" matches a blocked pattern (sensitive file). This tool blocks access to .env files, secrets, credentials, and SSH/AWS/GPG directories.`;
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Access denied: "${path}" matches a blocked pattern (sensitive file). This tool blocks access to .env files, secrets, credentials, and SSH/AWS/GPG directories.`,
+							text: message,
 						},
 					],
-					details: { blocked: true },
+					structuredContent: message,
+					details: undefined,
+					isError: true,
 				};
 			}
 
 			// Log allowed access
 			await logAccess(absolutePath, true);
 
-			// Perform the actual read (simplified implementation)
-			try {
-				await access(absolutePath, constants.R_OK);
-				const content = await readFile(absolutePath, "utf-8");
-				const lines = content.split("\n");
-
-				// Apply offset and limit
-				const startLine = offset ? Math.max(0, offset - 1) : 0;
-				const endLine = limit ? startLine + limit : lines.length;
-				const selectedLines = lines.slice(startLine, endLine);
-
-				// Basic truncation (50KB limit)
-				let text = selectedLines.join("\n");
-				const maxBytes = 50 * 1024;
-				if (Buffer.byteLength(text, "utf-8") > maxBytes) {
-					text = `${text.slice(0, maxBytes)}\n\n[Output truncated at 50KB]`;
-				}
-
-				return {
-					content: [{ type: "text", text }] as TextContent[],
-					details: { lines: lines.length },
-				};
-			} catch (error: any) {
-				return {
-					content: [{ type: "text", text: `Error reading file: ${error.message}` }] as TextContent[],
-					details: { error: true },
-				};
-			}
+			return read.execute(toolCallId, params, signal, onUpdate, ctx);
 		},
 
 		// No renderCall/renderResult - uses built-in renderer automatically

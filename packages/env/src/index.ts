@@ -1,13 +1,17 @@
 export {
 	Connection,
 	type ConnectionOptions,
+	type DaemonTransport,
 	isConnectionLost,
 	RemoteError,
 	type RemoteInfo,
 	type Reply,
 	type RequestOptions,
 } from "./connection.ts";
-export { RemoteExecutionEnv, type RemoteExecutionEnvOptions } from "./remote-env.ts";
+export {
+	RemoteExecutionEnv,
+	type RemoteExecutionEnvOptions,
+} from "./remote-env.ts";
 export {
 	acceptHostKey,
 	connectSsh,

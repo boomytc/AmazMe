@@ -93,6 +93,10 @@ impl Stage {
         };
         let target = target_path(Path::new(path)).map_err(|e| Failure::io(&e, "realpath", path))?;
         let current = check(path, &target, &intent)?;
+        if current.is_some() {
+            OpenOptions::new().write(true).open(&target)
+                .map_err(|e| Failure::io(&e, "open for replacement", path))?;
+        }
         let parent = Path::new(&target)
             .parent()
             .ok_or_else(|| Failure::new("EINVAL", "Missing parent").path(path))?;

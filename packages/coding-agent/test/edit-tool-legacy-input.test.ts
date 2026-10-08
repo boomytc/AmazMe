@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionToolContext } from "../src/core/extensions/types.ts";
+import { createMemoryFileObservations } from "../src/core/file-observations.ts";
+import { createReadTool } from "../src/core/tools/read.ts";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 
 const tempDirs: string[] = [];
@@ -76,7 +78,9 @@ describe("edit tool prepareArguments", () => {
 		const filePath = join(dir, "legacy.txt");
 		await writeFile(filePath, "before\n", "utf8");
 
-		const definition = createEditToolDefinition(dir);
+		const observations = createMemoryFileObservations();
+		const definition = createEditToolDefinition(dir, { observations });
+		await createReadTool(dir, { observations }).execute("read-fixture", { path: filePath });
 		const prepared = definition.prepareArguments!({
 			path: "legacy.txt",
 			oldText: "before",

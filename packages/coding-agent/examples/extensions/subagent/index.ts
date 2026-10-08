@@ -1,3 +1,5 @@
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 /**
  * Subagent Tool - Delegate tasks to specialized agents
  *
@@ -240,9 +242,9 @@ async function writePromptToTempFile(agentName: string, prompt: string): Promise
 	const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-subagent-"));
 	const safeName = agentName.replace(/[^\w.-]+/g, "_");
 	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
-	await withFileMutationQueue(filePath, async () => {
+	await withFileMutationQueue(new NodeExecutionEnv({ cwd: process.cwd() }), filePath, async () => {
 		await fs.promises.writeFile(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
-	});
+	}, BACKGROUND_CONTEXT);
 	return { dir: tmpDir, filePath };
 }
 

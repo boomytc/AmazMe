@@ -1,220 +1,140 @@
 /**
- * SSH Remote Execution Example
- *
- * Demonstrates delegating tool operations to a remote machine via SSH.
- * When --ssh is provided, read/write/edit/bash run on the remote.
- *
- * Usage:
- *   pi -e ./ssh.ts --ssh user@host
- *   pi -e ./ssh.ts --ssh user@host:/remote/path
- *
- * Requirements:
- *   - SSH key-based auth (no password prompts)
- *   - bash on remote
+ * SSH tools use the same daemon-backed filesystem and checked publication as the local tools.
+ * Usage: amazme -e ./ssh.ts --ssh user@host --ssh-cwd /project
+ * The host must already be trusted in ~/.ssh/known_hosts. --ssh-binary supplies a matching daemon build if needed.
  */
-
-import { spawn } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import type { ExtensionAPI } from "@amazme/coding-agent";
 import {
 	type BashOperations,
-	createBashTool,
-	createEditTool,
-	createReadTool,
-	createWriteTool,
-	type EditOperations,
-	type ReadOperations,
-	type WriteOperations,
+	createBashToolDefinition,
+	createEditToolDefinition,
+	createReadToolDefinition,
+	createWriteToolDefinition,
 } from "@amazme/coding-agent";
+import { getOrThrow } from "@amazme/durable/env";
+import { connectSsh, RemoteExecutionEnv } from "@amazme/env";
 
-function sshExec(remote: string, command: string): Promise<Buffer> {
-	return new Promise((resolve, reject) => {
-		const child = spawn("ssh", [remote, command], { stdio: ["ignore", "pipe", "pipe"] });
-		const chunks: Buffer[] = [];
-		const errChunks: Buffer[] = [];
-		child.stdout.on("data", (data) => chunks.push(data));
-		child.stderr.on("data", (data) => errChunks.push(data));
-		child.on("error", reject);
-		child.on("close", (code) => {
-			if (code !== 0) {
-				reject(new Error(`SSH failed (${code}): ${Buffer.concat(errChunks).toString()}`));
-			} else {
-				resolve(Buffer.concat(chunks));
-			}
-		});
-	});
-}
-
-function createRemoteReadOps(remote: string, remoteCwd: string, localCwd: string): ReadOperations {
-	const toRemote = (p: string) => p.replace(localCwd, remoteCwd);
+function bashOperations(files: RemoteExecutionEnv): BashOperations {
 	return {
-		readFile: (p) => sshExec(remote, `cat ${JSON.stringify(toRemote(p))}`),
-		access: (p) => sshExec(remote, `test -r ${JSON.stringify(toRemote(p))}`).then(() => {}),
-		detectImageMimeType: async (p) => {
-			try {
-				const r = await sshExec(remote, `file --mime-type -b ${JSON.stringify(toRemote(p))}`);
-				const m = r.toString().trim();
-				return ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(m) ? m : null;
-			} catch {
-				return null;
-			}
-		},
-	};
-}
-
-function createRemoteWriteOps(remote: string, remoteCwd: string, localCwd: string): WriteOperations {
-	const toRemote = (p: string) => p.replace(localCwd, remoteCwd);
-	return {
-		writeFile: async (p, content) => {
-			const b64 = Buffer.from(content).toString("base64");
-			await sshExec(remote, `echo ${JSON.stringify(b64)} | base64 -d > ${JSON.stringify(toRemote(p))}`);
-		},
-		mkdir: (dir) => sshExec(remote, `mkdir -p ${JSON.stringify(toRemote(dir))}`).then(() => {}),
-	};
-}
-
-function createRemoteEditOps(remote: string, remoteCwd: string, localCwd: string): EditOperations {
-	const r = createRemoteReadOps(remote, remoteCwd, localCwd);
-	const w = createRemoteWriteOps(remote, remoteCwd, localCwd);
-	return { readFile: r.readFile, access: r.access, writeFile: w.writeFile };
-}
-
-function createRemoteBashOps(remote: string, remoteCwd: string, localCwd: string): BashOperations {
-	const toRemote = (p: string) => p.replace(localCwd, remoteCwd);
-	return {
-		exec: (command, cwd, { onData, signal, timeout }) =>
-			new Promise((resolve, reject) => {
-				const cmd = `cd ${JSON.stringify(toRemote(cwd))} && ${command}`;
-				const child = spawn("ssh", [remote, cmd], { stdio: ["ignore", "pipe", "pipe"] });
-				let timedOut = false;
-				const timer = timeout
-					? setTimeout(() => {
-							timedOut = true;
-							child.kill();
-						}, timeout * 1000)
-					: undefined;
-				child.stdout.on("data", onData);
-				child.stderr.on("data", onData);
-				child.on("error", (e) => {
-					if (timer) clearTimeout(timer);
-					reject(e);
-				});
-				const onAbort = () => child.kill();
-				signal?.addEventListener("abort", onAbort, { once: true });
-				child.on("close", (code) => {
-					if (timer) clearTimeout(timer);
-					signal?.removeEventListener("abort", onAbort);
-					if (signal?.aborted) reject(new Error("aborted"));
-					else if (timedOut) reject(new Error(`timeout:${timeout}`));
-					else resolve({ exitCode: code });
-				});
-			}),
-	};
-}
-
-export default function (pi: ExtensionAPI) {
-	pi.registerFlag("ssh", { description: "SSH remote: user@host or user@host:/path", type: "string" });
-
-	const localCwd = process.cwd();
-	const localRead = createReadTool(localCwd);
-	const localWrite = createWriteTool(localCwd);
-	const localEdit = createEditTool(localCwd);
-	const localBash = createBashTool(localCwd);
-
-	// Resolved lazily on session_start (CLI flags not available during factory)
-	let resolvedSsh: { remote: string; remoteCwd: string } | null = null;
-
-	const getSsh = () => resolvedSsh;
-
-	pi.registerTool({
-		...localRead,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
-				const tool = createReadTool(localCwd, {
-					operations: createRemoteReadOps(ssh.remote, ssh.remoteCwd, localCwd),
-				});
-				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localRead.execute(id, params, signal, onUpdate);
-		},
-	});
-
-	pi.registerTool({
-		...localWrite,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
-				const tool = createWriteTool(localCwd, {
-					operations: createRemoteWriteOps(ssh.remote, ssh.remoteCwd, localCwd),
-				});
-				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localWrite.execute(id, params, signal, onUpdate);
-		},
-	});
-
-	pi.registerTool({
-		...localEdit,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
-				const tool = createEditTool(localCwd, {
-					operations: createRemoteEditOps(ssh.remote, ssh.remoteCwd, localCwd),
-				});
-				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localEdit.execute(id, params, signal, onUpdate);
-		},
-	});
-
-	pi.registerTool({
-		...localBash,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
-				const tool = createBashTool(localCwd, {
-					operations: createRemoteBashOps(ssh.remote, ssh.remoteCwd, localCwd),
-				});
-				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localBash.execute(id, params, signal, onUpdate);
-		},
-	});
-
-	pi.on("session_start", async (_event, ctx) => {
-		// Resolve SSH config now that CLI flags are available
-		const arg = pi.getFlag("ssh") as string | undefined;
-		if (arg) {
-			if (arg.includes(":")) {
-				const [remote, path] = arg.split(":");
-				resolvedSsh = { remote, remoteCwd: path };
-			} else {
-				// No path given, evaluate pwd on remote
-				const remote = arg;
-				const pwd = (await sshExec(remote, "pwd")).toString().trim();
-				resolvedSsh = { remote, remoteCwd: pwd };
-			}
-			ctx.ui.setStatus("ssh", ctx.ui.theme.fg("accent", `SSH: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`));
-			ctx.ui.notify(`SSH mode: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`, "info");
-		}
-	});
-
-	// Handle user ! commands via SSH
-	pi.on("user_bash", (_event) => {
-		const ssh = getSsh();
-		if (!ssh) return; // No SSH, use local execution
-		return { operations: createRemoteBashOps(ssh.remote, ssh.remoteCwd, localCwd) };
-	});
-
-	// Replace local cwd with remote cwd in system prompt
-	pi.on("before_agent_start", async (event) => {
-		const ssh = getSsh();
-		if (ssh) {
-			const modified = event.systemPrompt.replace(
-				`Current working directory: ${localCwd}`,
-				`Current working directory: ${ssh.remoteCwd} (via SSH: ${ssh.remote})`,
+		exec: async (command, _cwd, { onData, signal, timeout }) => {
+			const context = signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;
+			const result = getOrThrow(
+				await files.exec(
+					command,
+					{
+						cwd: files.cwd,
+						timeout,
+						onOutput: (text) => onData(Buffer.from(text)),
+					},
+					context,
+				),
 			);
-			return { systemPrompt: modified };
+			return { exitCode: result.exitCode };
+		},
+	};
+}
+
+export default function (amazme: ExtensionAPI) {
+	amazme.registerFlag("ssh", {
+		description: "SSH host or user@host, already trusted in ~/.ssh/known_hosts",
+		type: "string",
+	});
+	amazme.registerFlag("ssh-cwd", {
+		description: "Remote working directory (defaults to daemon cwd)",
+		type: "string",
+	});
+	amazme.registerFlag("ssh-binary", {
+		description: "Local daemon binary matching the remote platform",
+		type: "string",
+	});
+	const cwd = process.cwd();
+	let files: RemoteExecutionEnv | undefined;
+	const localRead = createReadToolDefinition(cwd);
+	amazme.registerTool({
+		...localRead,
+		async execute(id, params, signal, onUpdate, ctx) {
+			const remote = files;
+			const tool = remote === undefined ? localRead : createReadToolDefinition(remote.cwd, { fileSystem: remote });
+			return tool.execute(id, params, signal, onUpdate, ctx);
+		},
+	});
+	const localWrite = createWriteToolDefinition(cwd);
+	amazme.registerTool({
+		...localWrite,
+		async execute(id, params, signal, onUpdate, ctx) {
+			const remote = files;
+			const tool = remote === undefined ? localWrite : createWriteToolDefinition(remote.cwd, { fileSystem: remote });
+			return tool.execute(id, params, signal, onUpdate, ctx);
+		},
+	});
+	const localEdit = createEditToolDefinition(cwd);
+	amazme.registerTool({
+		...localEdit,
+		async execute(id, params, signal, onUpdate, ctx) {
+			const remote = files;
+			const tool = remote === undefined ? localEdit : createEditToolDefinition(remote.cwd, { fileSystem: remote });
+			return tool.execute(id, params, signal, onUpdate, ctx);
+		},
+	});
+	const localBash = createBashToolDefinition(cwd);
+	amazme.registerTool({
+		...localBash,
+		async execute(id, params, signal, onUpdate, ctx) {
+			const remote = files;
+			const tool =
+				remote === undefined
+					? localBash
+					: createBashToolDefinition(remote.cwd, {
+							operations: bashOperations(remote),
+						});
+			return tool.execute(id, params, signal, onUpdate, ctx);
+		},
+	});
+	amazme.on("session_start", async (_event, ctx) => {
+		const target = amazme.getFlag("ssh");
+		if (typeof target !== "string" || target.length === 0) return;
+		const separator = target.lastIndexOf("@");
+		const host = separator === -1 ? target : target.slice(separator + 1);
+		const user = separator === -1 ? undefined : target.slice(0, separator);
+		const binary = amazme.getFlag("ssh-binary");
+		const connected = await connectSsh({
+			host,
+			user,
+			hostKeyAlias: host,
+			knownHostsFile: join(homedir(), ".ssh", "known_hosts"),
+			binary: typeof binary === "string" ? binary : undefined,
+		});
+		try {
+			const info = await connected.connection.info();
+			const remoteCwd = amazme.getFlag("ssh-cwd");
+			files?.connection.close();
+			files = new RemoteExecutionEnv({
+				connection: connected.connection,
+				id: `ssh:${user ?? ""}@${host}`,
+				cwd: typeof remoteCwd === "string" ? remoteCwd : info.cwd,
+			});
+			ctx.ui.setStatus("ssh", `SSH: ${host}:${files.cwd}`);
+		} catch (error) {
+			connected.connection.close();
+			throw error;
 		}
 	});
+	amazme.on("session_shutdown", () => {
+		files?.connection.close();
+		files = undefined;
+	});
+	amazme.on("user_bash", () => (files ? { operations: bashOperations(files) } : undefined));
+	amazme.on("before_agent_start", (event) =>
+		files
+			? {
+					systemPrompt: event.systemPrompt.replace(
+						`Current working directory: ${cwd}`,
+						`Current working directory: ${files.cwd} (SSH)`,
+					),
+				}
+			: undefined,
+	);
 }

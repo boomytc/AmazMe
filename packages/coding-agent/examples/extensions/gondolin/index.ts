@@ -1,7 +1,7 @@
 /**
  * Gondolin Tool Routing Example
  *
- * Runs pi's built-in tools inside a local Gondolin micro-VM. The host working
+ * Runs AmazMe's built-in tools inside a local Gondolin micro-VM. The host working
  * directory is mounted at /workspace in the guest. File changes under
  * /workspace write through to the host; other guest filesystem changes are
  * isolated to the VM.
@@ -12,37 +12,37 @@
  *
  * Usage:
  *   cd /path/to/project
- *   pi -e /path/to/pi/packages/coding-agent/examples/extensions/gondolin
+ *   amazme -e /path/to/AmazMe/packages/coding-agent/examples/extensions/gondolin
  *
  * Requirements:
  *   - Node.js >= 23.6.0 for @earendil-works/gondolin
  *   - QEMU installed (for example, `brew install qemu` on macOS)
+ *   - A Linux musl daemon for the guest architecture, bundled or supplied via AMAZME_ENV_LINUX_BINARY
  */
 
 import path from "node:path";
-import { RealFSProvider, VM } from "@earendil-works/gondolin";
 import type { ExtensionAPI, ExtensionContext } from "@amazme/coding-agent";
 import {
 	type BashOperations,
 	createBashTool,
-	createEditTool,
+	createEditToolDefinition,
 	createFindTool,
 	createGrepTool,
 	createLsTool,
-	createReadTool,
-	createWriteTool,
+	createReadToolDefinition,
+	createWriteToolDefinition,
 	DEFAULT_MAX_BYTES,
-	type EditOperations,
 	type FindOperations,
 	formatSize,
 	type GrepToolDetails,
 	type GrepToolInput,
 	type LsOperations,
-	type ReadOperations,
 	truncateHead,
 	truncateLine,
-	type WriteOperations,
 } from "@amazme/coding-agent";
+import type { RemoteExecutionEnv } from "@amazme/env";
+import { RealFSProvider, VM } from "@earendil-works/gondolin";
+import { createGondolinFileSystem } from "./file-system.ts";
 
 const GUEST_WORKSPACE = "/workspace";
 const DEFAULT_GREP_LIMIT = 100;
@@ -79,44 +79,6 @@ function toGuestPath(localCwd: string, inputPath: string): string {
 		return path.posix.resolve("/", toPosix(trimmed));
 	}
 	return path.posix.resolve(GUEST_WORKSPACE, toPosix(trimmed));
-}
-
-function createGondolinReadOps(vm: VM, localCwd: string): ReadOperations {
-	return {
-		readFile: async (filePath) => vm.fs.readFile(toGuestPath(localCwd, filePath)),
-		access: async (filePath) => {
-			await vm.fs.access(toGuestPath(localCwd, filePath));
-		},
-		detectImageMimeType: async (filePath) => {
-			const ext = path.posix.extname(toGuestPath(localCwd, filePath)).toLowerCase();
-			if (ext === ".png") return "image/png";
-			if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-			if (ext === ".gif") return "image/gif";
-			if (ext === ".webp") return "image/webp";
-			return null;
-		},
-	};
-}
-
-function createGondolinWriteOps(vm: VM, localCwd: string): WriteOperations {
-	return {
-		writeFile: async (filePath, content) => {
-			await vm.fs.writeFile(toGuestPath(localCwd, filePath), content, { encoding: "utf8" });
-		},
-		mkdir: async (dirPath) => {
-			await vm.fs.mkdir(toGuestPath(localCwd, dirPath), { recursive: true });
-		},
-	};
-}
-
-function createGondolinEditOps(vm: VM, localCwd: string): EditOperations {
-	const readOps = createGondolinReadOps(vm, localCwd);
-	const writeOps = createGondolinWriteOps(vm, localCwd);
-	return {
-		readFile: readOps.readFile,
-		writeFile: writeOps.writeFile,
-		access: readOps.access,
-	};
 }
 
 function createGondolinLsOps(vm: VM, localCwd: string): LsOperations {
@@ -364,19 +326,22 @@ function createGondolinBashOps(vm: VM, localCwd: string, shellPath: string): Bas
 
 export default function (pi: ExtensionAPI) {
 	const localCwd = process.cwd();
-	const localRead = createReadTool(localCwd);
-	const localWrite = createWriteTool(localCwd);
-	const localEdit = createEditTool(localCwd);
+	const localRead = createReadToolDefinition(localCwd);
+	const localWrite = createWriteToolDefinition(localCwd);
+	const localEdit = createEditToolDefinition(localCwd);
 	const localBash = createBashTool(localCwd);
 	const localGrep = createGrepTool(localCwd);
 	const localFind = createFindTool(localCwd);
 	const localLs = createLsTool(localCwd);
 
 	let vm: VM | undefined;
+	let files: RemoteExecutionEnv | undefined;
 	let vmStarting: Promise<VM> | undefined;
+	let generation = 0;
 	let shellPath = "/bin/sh";
 
 	async function startVm(ctx?: ExtensionContext): Promise<VM> {
+		const ownerGeneration = generation;
 		ctx?.ui.setStatus("gondolin", ctx.ui.theme.fg("accent", `Gondolin: starting ${GUEST_WORKSPACE}`));
 		const created = await VM.create({
 			sessionLabel: `pi ${path.basename(localCwd)}`,
@@ -386,15 +351,23 @@ export default function (pi: ExtensionAPI) {
 				},
 			},
 		});
-		const bashProbe = await created.exec(["/bin/sh", "-lc", "command -v bash || true"]);
-		shellPath = bashProbe.stdout.trim() || "/bin/sh";
-		vm = created;
-		ctx?.ui.setStatus(
-			"gondolin",
-			ctx.ui.theme.fg("accent", `Gondolin: ${created.id.slice(0, 8)} (${GUEST_WORKSPACE})`),
-		);
-		ctx?.ui.notify(`Gondolin VM ready. ${localCwd} is mounted at ${GUEST_WORKSPACE}.`, "info");
-		return created;
+		let connected: RemoteExecutionEnv | undefined;
+		try {
+			connected = await createGondolinFileSystem(created);
+			const bashProbe = await created.exec(["/bin/sh", "-lc", "command -v bash || true"]);
+			if (ownerGeneration !== generation || ctx?.signal?.aborted) throw new Error("Gondolin startup was cancelled");
+			shellPath = bashProbe.stdout.trim() || "/bin/sh";
+			vm = created;
+			files = connected;
+			ctx?.ui.setStatus("gondolin", ctx.ui.theme.fg("accent", `Gondolin: ${created.id.slice(0, 8)} (${GUEST_WORKSPACE})`));
+			ctx?.ui.notify(`Gondolin VM ready. ${localCwd} is mounted at ${GUEST_WORKSPACE}.`, "info");
+			return created;
+		} catch (error) {
+			if (vm === created) { vm = undefined; files = undefined; }
+			connected?.connection.close();
+			await created.close();
+			throw error;
+		}
 	}
 
 	async function ensureVm(ctx?: ExtensionContext): Promise<VM> {
@@ -412,9 +385,14 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		generation++;
+		const starting = vmStarting;
 		const activeVm = vm;
+		files?.connection.close();
+		files = undefined;
 		vm = undefined;
 		vmStarting = undefined;
+		await starting?.catch(() => undefined);
 		if (!activeVm) return;
 		ctx.ui.setStatus("gondolin", ctx.ui.theme.fg("muted", "Gondolin: stopping"));
 		try {
@@ -443,33 +421,33 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		...localRead,
 		async execute(id, params, signal, onUpdate, ctx) {
-			const activeVm = await ensureVm(ctx);
-			const tool = createReadTool(GUEST_WORKSPACE, {
-				operations: createGondolinReadOps(activeVm, localCwd),
+			await ensureVm(ctx);
+			const tool = createReadToolDefinition(GUEST_WORKSPACE, {
+				fileSystem: files!,
 			});
-			return tool.execute(id, params, signal, onUpdate);
+			return tool.execute(id, { ...params, path: toGuestPath(localCwd, params.path) }, signal, onUpdate, ctx);
 		},
 	});
 
 	pi.registerTool({
 		...localWrite,
 		async execute(id, params, signal, onUpdate, ctx) {
-			const activeVm = await ensureVm(ctx);
-			const tool = createWriteTool(GUEST_WORKSPACE, {
-				operations: createGondolinWriteOps(activeVm, localCwd),
+			await ensureVm(ctx);
+			const tool = createWriteToolDefinition(GUEST_WORKSPACE, {
+				fileSystem: files!,
 			});
-			return tool.execute(id, params, signal, onUpdate);
+			return tool.execute(id, { ...params, path: toGuestPath(localCwd, params.path) }, signal, onUpdate, ctx);
 		},
 	});
 
 	pi.registerTool({
 		...localEdit,
 		async execute(id, params, signal, onUpdate, ctx) {
-			const activeVm = await ensureVm(ctx);
-			const tool = createEditTool(GUEST_WORKSPACE, {
-				operations: createGondolinEditOps(activeVm, localCwd),
+			await ensureVm(ctx);
+			const tool = createEditToolDefinition(GUEST_WORKSPACE, {
+				fileSystem: files!,
 			});
-			return tool.execute(id, params, signal, onUpdate);
+			return tool.execute(id, { ...params, path: toGuestPath(localCwd, params.path) }, signal, onUpdate, ctx);
 		},
 	});
 

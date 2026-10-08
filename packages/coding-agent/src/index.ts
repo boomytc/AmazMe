@@ -1,3 +1,5 @@
+export { createMemoryFileObservations, type FileObservationScope, type FileObservationStore } from "./core/file-observations.ts";
+export type { FileToolOptions } from "./core/tools/file-runtime.ts";
 // Core session management
 
 export { type Args, parseArgs } from "./cli/args.ts";
@@ -350,7 +352,6 @@ export {
 	createWriteToolDefinition,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
-	type EditOperations,
 	type EditToolDetails,
 	type EditToolInput,
 	type EditToolOptions,
@@ -373,7 +374,6 @@ export {
 	type PowerShellToolDetails,
 	type PowerShellToolInput,
 	type PowerShellToolOptions,
-	type ReadOperations,
 	type ReadToolDetails,
 	type ReadToolInput,
 	type ReadToolOptions,
@@ -383,7 +383,6 @@ export {
 	truncateHead,
 	truncateLine,
 	truncateTail,
-	type WriteOperations,
 	type WriteToolInput,
 	type WriteToolOptions,
 	withFileMutationQueue,

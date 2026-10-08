@@ -17,6 +17,7 @@ import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
+import { sessionFileObservations } from "../file-observations.ts";
 import type { SessionManager } from "../session-manager.ts";
 import {
 	type BuildSystemPromptOptions,
@@ -898,6 +899,10 @@ export class ExtensionRunner {
 			get sessionManager() {
 				runner.assertActive();
 				return runner.sessionManager;
+			},
+			get fileObservations() {
+				runner.assertActive();
+				return sessionFileObservations(runner.sessionManager);
 			},
 			get modelRegistry() {
 				runner.assertActive();

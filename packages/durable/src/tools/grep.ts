@@ -3,7 +3,7 @@ import { defineTool } from "../harness/define.ts";
 import type { ToolRegistration } from "../harness/types.ts";
 import { DEFAULT_MAX_LINES } from "../truncate.ts";
 import { requireEnv } from "./env.ts";
-import { resolveToolPath } from "./path-utils.ts";
+import { resolveToolPath } from "../file-operations.ts";
 import { runSearch, searchLimit, type SearchProgramOptions } from "./search-output.ts";
 
 const schema = Type.Object({

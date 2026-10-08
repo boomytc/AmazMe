@@ -1,6 +1,7 @@
 import type { AgentTool } from "@amazme/agent";
-import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
+import { FileError, getOrThrow } from "@amazme/durable/env";
+import { observedEditIntent } from "@amazme/durable/file-observations";
+import { canonicalFilePath, resolveToolPath, withFileMutationQueue } from "@amazme/durable/file-operations";
 import { type Static, Type } from "typebox";
 import { splitBom } from "../../utils/text.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
@@ -13,8 +14,13 @@ import {
 	normalizeToLF,
 	restoreLineEndings,
 } from "./edit-diff.ts";
-import { withFileMutationQueue } from "./file-mutation-queue.ts";
-import { resolveToCwd } from "./path-utils.ts";
+import {
+	createFileRuntime,
+	type FileToolOptions,
+	observePublished,
+	readObservedBytes,
+	throwIfAborted,
+} from "./file-runtime.ts";
 import { type EditRenderState, editRenderers } from "./renderers/edit.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
@@ -24,14 +30,18 @@ const replaceEditSchema = Type.Object(
 			description:
 				"Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.",
 		}),
-		newText: Type.String({ description: "Replacement text for this targeted edit." }),
+		newText: Type.String({
+			description: "Replacement text for this targeted edit.",
+		}),
 	},
 	{},
 );
 
 const editSchema = Type.Object(
 	{
-		path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+		path: Type.String({
+			description: "Path to the file to edit (relative or absolute)",
+		}),
 		edits: Type.Array(replaceEditSchema, {
 			description:
 				"One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
@@ -76,29 +86,7 @@ export interface EditToolDetails {
 	firstChangedLine?: number;
 }
 
-/**
- * Pluggable operations for the edit tool.
- * Override these to delegate file editing to remote systems (for example SSH).
- */
-export interface EditOperations {
-	/** Read file contents as a Buffer */
-	readFile: (absolutePath: string) => Promise<Buffer>;
-	/** Write content to a file */
-	writeFile: (absolutePath: string, content: string) => Promise<void>;
-	/** Check if file is readable and writable (throw if not) */
-	access: (absolutePath: string) => Promise<void>;
-}
-
-const defaultEditOperations: EditOperations = {
-	readFile: (path) => fsReadFile(path),
-	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
-	access: (path) => fsAccess(path, constants.R_OK | constants.W_OK),
-};
-
-export interface EditToolOptions {
-	/** Custom operations for file editing. Default: local filesystem */
-	operations?: EditOperations;
-}
+export type EditToolOptions = FileToolOptions;
 
 function prepareEditArguments(input: unknown): EditToolInput {
 	if (!input || typeof input !== "object") {
@@ -133,7 +121,10 @@ function prepareEditArguments(input: unknown): EditToolInput {
 	return { ...rest, edits } as EditToolInput;
 }
 
-function validateEditInput(input: EditToolInput): { path: string; edits: Edit[] } {
+function validateEditInput(input: EditToolInput): {
+	path: string;
+	edits: Edit[];
+} {
 	if (!Array.isArray(input.edits) || input.edits.length === 0) {
 		throw new Error("Edit tool input is invalid. edits must contain at least one replacement.");
 	}
@@ -144,12 +135,12 @@ export function createEditToolDefinition(
 	cwd: string,
 	options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
-	const ops = options?.operations ?? defaultEditOperations;
+	const runtime = createFileRuntime(cwd, options);
 	return {
 		name: "edit",
 		label: "edit",
 		description:
-			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+			"Edit a previously read file using exact text replacement. The observed version must remain current. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
 		promptSnippet: editToolSystemPromptContribution.snippet,
 		promptGuidelines: [...editToolSystemPromptContribution.guidelines],
 		parameters: editSchema,
@@ -158,58 +149,59 @@ export function createEditToolDefinition(
 		prepareArguments: prepareEditArguments,
 		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionContext) {
 			const { path, edits } = validateEditInput(input);
-			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
+			const { files, context, observations } = runtime(signal, ctx);
+			throwIfAborted(context);
+			const absolutePath = await resolveToolPath(files, path, context);
+			return withFileMutationQueue(
+				files,
+				absolutePath,
+				async () => {
+					throwIfAborted(context);
+					const target = await canonicalFilePath(files, absolutePath, context);
+					const intent = observedEditIntent(target, observations.get(files.id, target));
+					const revision = getOrThrow(await files.fileRevision(absolutePath, context));
+					if (revision.path !== intent.revision.path || revision.version !== intent.revision.version)
+						throw new FileError(
+							"stale_version",
+							`File changed since it was read: ${path}. Read it again before editing.`,
+							absolutePath,
+						);
+					const read = await readObservedBytes(files, absolutePath, context);
+					if (!read.stable || read.path !== intent.revision.path || read.version !== intent.revision.version)
+						throw new FileError(
+							"stale_version",
+							`File changed while preparing the edit: ${path}. Read it again before editing.`,
+							absolutePath,
+						);
+					const rawContent = read.buffer.toString("utf-8");
+					// Strip BOM before matching. The model will not include an invisible BOM in oldText.
+					const { bom, text: content } = splitBom(rawContent);
+					const originalEnding = detectLineEnding(content);
+					const normalizedContent = normalizeToLF(content);
+					const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+					throwIfAborted(context);
 
-			return withFileMutationQueue(absolutePath, async () => {
-				// Do not reject from an abort event listener here: that would release the
-				// mutation queue while an in-flight filesystem operation may still finish.
-				// Checking signal.aborted after each await observes the same aborts while
-				// keeping the queue locked until the current operation has settled.
-				const throwIfAborted = (): void => {
-					if (signal?.aborted) throw new Error("Operation aborted");
-				};
-
-				throwIfAborted();
-
-				// Check if file exists.
-				try {
-					await ops.access(absolutePath);
-				} catch (error: unknown) {
-					throwIfAborted();
-					const errorMessage =
-						error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
-					throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
-				}
-				throwIfAborted();
-
-				// Read the file.
-				const buffer = await ops.readFile(absolutePath);
-				const rawContent = buffer.toString("utf-8");
-				throwIfAborted();
-
-				// Strip BOM before matching. The model will not include an invisible BOM in oldText.
-				const { bom, text: content } = splitBom(rawContent);
-				const originalEnding = detectLineEnding(content);
-				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
-				throwIfAborted();
-
-				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
-				await ops.writeFile(absolutePath, finalContent);
-				throwIfAborted();
-
-				const diffResult = generateDiffString(baseContent, newContent);
-				const patch = generateUnifiedPatch(path, baseContent, newContent);
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
+					const finalContent = bom + restoreLineEndings(newContent, originalEnding);
+					const diffResult = generateDiffString(baseContent, newContent);
+					const patch = generateUnifiedPatch(path, baseContent, newContent);
+					const outcome = getOrThrow(await files.writeFileChecked(absolutePath, finalContent, intent, context));
+					const warning = await observePublished(observations, files.id, outcome);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Successfully replaced ${edits.length} block(s) in ${path}.${warning}`,
+							},
+						],
+						details: {
+							diff: diffResult.diff,
+							patch,
+							firstChangedLine: diffResult.firstChangedLine,
 						},
-					],
-					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
-				};
-			});
+					};
+				},
+				context,
+			);
 		},
 		...editRenderers,
 	};

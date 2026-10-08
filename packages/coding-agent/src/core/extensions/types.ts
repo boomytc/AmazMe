@@ -8,6 +8,7 @@
  * - Interact with the user via UI primitives
  */
 
+import type { FileObservationStore } from "../file-observations.ts";
 import type {
 	AgentMessage,
 	AgentTool,
@@ -333,6 +334,8 @@ export interface ExtensionContext {
 	cwd: string;
 	/** Session manager (read-only) */
 	sessionManager: ReadonlySessionManager;
+	/** File observations owned by this session; omitted only by standalone callers. */
+	fileObservations?: FileObservationStore;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */

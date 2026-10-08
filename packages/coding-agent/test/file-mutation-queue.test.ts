@@ -1,10 +1,14 @@
-import { access, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { createEditTool } from "../src/core/tools/edit.ts";
-import { withFileMutationQueue } from "../src/core/tools/file-mutation-queue.ts";
-import { createWriteTool } from "../src/core/tools/write.ts";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import { withFileMutationQueue } from "@amazme/durable/file-operations";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createAllTools } from "../src/core/tools/index.ts";
+
+const env = new NodeExecutionEnv({ cwd: process.cwd() });
+const queued = <T>(path: string, fn: () => Promise<T>) => withFileMutationQueue(env, path, fn, BACKGROUND_CONTEXT);
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,12 +43,12 @@ describe("withFileMutationQueue", () => {
 		const order: string[] = [];
 		const path = "/tmp/file-mutation-queue-same";
 
-		const first = withFileMutationQueue(path, async () => {
+		const first = queued(path, async () => {
 			order.push("first:start");
 			await delay(30);
 			order.push("first:end");
 		});
-		const second = withFileMutationQueue(path, async () => {
+		const second = queued(path, async () => {
 			order.push("second:start");
 			order.push("second:end");
 		});
@@ -57,12 +61,12 @@ describe("withFileMutationQueue", () => {
 		const order: string[] = [];
 
 		await Promise.all([
-			withFileMutationQueue("/tmp/file-mutation-queue-a", async () => {
+			queued("/tmp/file-mutation-queue-a", async () => {
 				order.push("a:start");
 				await delay(30);
 				order.push("a:end");
 			}),
-			withFileMutationQueue("/tmp/file-mutation-queue-b", async () => {
+			queued("/tmp/file-mutation-queue-b", async () => {
 				order.push("b:start");
 				await delay(30);
 				order.push("b:end");
@@ -83,12 +87,12 @@ describe("withFileMutationQueue", () => {
 
 		const order: string[] = [];
 		await Promise.all([
-			withFileMutationQueue(targetPath, async () => {
+			queued(targetPath, async () => {
 				order.push("target:start");
 				await delay(30);
 				order.push("target:end");
 			}),
-			withFileMutationQueue(symlinkPath, async () => {
+			queued(symlinkPath, async () => {
 				order.push("alias:start");
 				order.push("alias:end");
 			}),
@@ -99,176 +103,97 @@ describe("withFileMutationQueue", () => {
 });
 
 describe("built-in edit and write tools", () => {
-	it("preserves both parallel edits on the same file", async () => {
+	it("preserves both parallel edits after one read", async () => {
 		const dir = await createTempDir();
-		const filePath = join(dir, "parallel-edit.txt");
-		await writeFile(filePath, "alpha\nbeta\ngamma\n", "utf8");
-
-		const editTool = createEditTool(dir, {
-			operations: {
-				access,
-				readFile: async (path) => {
-					const buffer = await readFile(path);
-					await delay(30);
-					return buffer;
-				},
-				writeFile: async (path, content) => {
-					await delay(30);
-					await writeFile(path, content, "utf8");
-				},
-			},
-		});
-
+		const tools = createAllTools(dir);
+		await writeFile(join(dir, "file.txt"), "alpha\nbeta\ngamma\n");
+		await tools.read.execute("read", { path: "file.txt" });
 		await Promise.all([
-			editTool.execute("call-1", { path: filePath, edits: [{ oldText: "alpha", newText: "ALPHA" }] }),
-			editTool.execute("call-2", { path: filePath, edits: [{ oldText: "beta", newText: "BETA" }] }),
+			tools.edit.execute("first", {
+				path: "file.txt",
+				edits: [{ oldText: "alpha", newText: "ALPHA" }],
+			}),
+			tools.edit.execute("second", {
+				path: "file.txt",
+				edits: [{ oldText: "beta", newText: "BETA" }],
+			}),
 		]);
-
-		const content = await readFile(filePath, "utf8");
-		expect(content).toBe("ALPHA\nBETA\ngamma\n");
+		expect(await readFile(join(dir, "file.txt"), "utf8")).toBe("ALPHA\nBETA\ngamma\n");
 	});
 
-	it("shares the queue between edit and write", async () => {
+	it("shares the queue and refreshed observation between edit and write", async () => {
 		const dir = await createTempDir();
-		const filePath = join(dir, "mixed.txt");
-		await writeFile(filePath, "original\n", "utf8");
-
-		const editTool = createEditTool(dir, {
-			operations: {
-				access,
-				readFile: async (path) => {
-					const buffer = await readFile(path);
-					await delay(30);
-					return buffer;
-				},
-				writeFile: async (path, content) => {
-					await delay(30);
-					await writeFile(path, content, "utf8");
-				},
-			},
+		const files = new NodeExecutionEnv({ cwd: dir });
+		const tools = createAllTools(dir, { fileSystem: files });
+		await writeFile(join(dir, "file.txt"), "original\n");
+		await tools.read.execute("read", { path: "file.txt" });
+		const started = createDeferred();
+		const revision = files.fileRevision.bind(files);
+		vi.spyOn(files, "fileRevision").mockImplementation(async (...args) => {
+			const result = await revision(...args);
+			started.resolve();
+			return result;
 		});
-		const writeTool = createWriteTool(dir, {
-			operations: {
-				mkdir: async () => {},
-				writeFile: async (path, content) => {
-					await delay(10);
-					await writeFile(path, content, "utf8");
-				},
-			},
-		});
-
-		const editPromise = editTool.execute("call-1", {
-			path: filePath,
+		const edited = tools.edit.execute("edit", {
+			path: "file.txt",
 			edits: [{ oldText: "original", newText: "edited" }],
 		});
-		await delay(5);
-		const writePromise = writeTool.execute("call-2", {
-			path: filePath,
+		await started.promise;
+		const written = tools.write.execute("write", {
+			path: "file.txt",
 			content: "replacement\n",
 		});
-
-		await Promise.all([editPromise, writePromise]);
-
-		const content = await readFile(filePath, "utf8");
-		expect(content).toBe("replacement\n");
+		await Promise.all([edited, written]);
+		expect(await readFile(join(dir, "file.txt"), "utf8")).toBe("replacement\n");
 	});
 
-	it("keeps write queue locked while an aborted write is still in flight", async () => {
-		const dir = await createTempDir();
-		const filePath = join(dir, "abort-write.txt");
-		const firstWriteStarted = createDeferred();
-		const finishFirstWrite = createDeferred();
-		const secondWriteStarted = createDeferred();
-		let firstWriteSettled = false;
-
-		const writeTool = createWriteTool(dir, {
-			operations: {
-				mkdir: async () => {},
-				writeFile: async (path, content) => {
-					if (content === "first\n") {
-						firstWriteStarted.resolve();
-						await finishFirstWrite.promise;
-						await writeFile(path, content, "utf8");
-						firstWriteSettled = true;
-						return;
-					}
-
-					if (content === "second\n") {
-						expect(firstWriteSettled).toBe(true);
-						secondWriteStarted.resolve();
-					}
-					await writeFile(path, content, "utf8");
-				},
-			},
+	for (const kind of ["write", "edit"] as const) {
+		it(`keeps the ${kind} barrier until cancelled IO actually publishes, then reports completion`, async () => {
+			const dir = await createTempDir();
+			const files = new NodeExecutionEnv({ cwd: dir });
+			const tools = createAllTools(dir, { fileSystem: files });
+			await writeFile(join(dir, "file.txt"), "alpha\nbeta\n");
+			await tools.read.execute("read", { path: "file.txt" });
+			const started = createDeferred();
+			const finish = createDeferred();
+			const secondStarted = createDeferred();
+			const publish = files.writeFileChecked.bind(files);
+			let calls = 0;
+			vi.spyOn(files, "writeFileChecked").mockImplementation(async (path, content, intent, context) => {
+				if (++calls === 1) {
+					started.resolve();
+					await finish.promise;
+					return publish(path, content, intent, BACKGROUND_CONTEXT);
+				}
+				secondStarted.resolve();
+				return publish(path, content, intent, context);
+			});
+			const controller = new AbortController();
+			const first =
+				kind === "write"
+					? tools.write.execute("first", { path: "file.txt", content: "ALPHA\nbeta\n" }, controller.signal)
+					: tools.edit.execute(
+							"first",
+							{
+								path: "file.txt",
+								edits: [{ oldText: "alpha", newText: "ALPHA" }],
+							},
+							controller.signal,
+						);
+			await started.promise;
+			controller.abort();
+			const second = tools.edit.execute("second", {
+				path: "file.txt",
+				edits: [{ oldText: "beta", newText: "BETA" }],
+			});
+			expect(await resolvesWithin(secondStarted.promise, 20)).toBe(false);
+			finish.resolve();
+			expect((await first).content[0]).toMatchObject({
+				type: "text",
+				text: expect.stringContaining("Successfully"),
+			});
+			await second;
+			expect(await readFile(join(dir, "file.txt"), "utf8")).toBe("ALPHA\nBETA\n");
 		});
-
-		const controller = new AbortController();
-		const firstWrite = writeTool.execute("call-1", { path: filePath, content: "first\n" }, controller.signal);
-		await firstWriteStarted.promise;
-		controller.abort();
-
-		const secondWrite = writeTool.execute("call-2", { path: filePath, content: "second\n" });
-		expect(await resolvesWithin(secondWriteStarted.promise, 20)).toBe(false);
-
-		finishFirstWrite.resolve();
-		await expect(firstWrite).rejects.toThrow("Operation aborted");
-		await secondWrite;
-
-		const content = await readFile(filePath, "utf8");
-		expect(content).toBe("second\n");
-	});
-
-	it("keeps edit queue locked while an aborted edit write is still in flight", async () => {
-		const dir = await createTempDir();
-		const filePath = join(dir, "abort-edit.txt");
-		await writeFile(filePath, "alpha\nbeta\n", "utf8");
-		const firstWriteStarted = createDeferred();
-		const finishFirstWrite = createDeferred();
-		const secondWriteStarted = createDeferred();
-		let firstWriteSettled = false;
-
-		const editTool = createEditTool(dir, {
-			operations: {
-				access,
-				readFile,
-				writeFile: async (path, content) => {
-					if (content === "ALPHA\nbeta\n") {
-						firstWriteStarted.resolve();
-						await finishFirstWrite.promise;
-						await writeFile(path, content, "utf8");
-						firstWriteSettled = true;
-						return;
-					}
-
-					if (content === "ALPHA\nBETA\n" || content === "alpha\nBETA\n") {
-						expect(firstWriteSettled).toBe(true);
-						secondWriteStarted.resolve();
-					}
-					await writeFile(path, content, "utf8");
-				},
-			},
-		});
-
-		const controller = new AbortController();
-		const firstEdit = editTool.execute(
-			"call-1",
-			{ path: filePath, edits: [{ oldText: "alpha", newText: "ALPHA" }] },
-			controller.signal,
-		);
-		await firstWriteStarted.promise;
-		controller.abort();
-
-		const secondEdit = editTool.execute("call-2", {
-			path: filePath,
-			edits: [{ oldText: "beta", newText: "BETA" }],
-		});
-		expect(await resolvesWithin(secondWriteStarted.promise, 20)).toBe(false);
-
-		finishFirstWrite.resolve();
-		await expect(firstEdit).rejects.toThrow("Operation aborted");
-		await secondEdit;
-
-		const content = await readFile(filePath, "utf8");
-		expect(content).toBe("ALPHA\nBETA\n");
-	});
+	}
 });

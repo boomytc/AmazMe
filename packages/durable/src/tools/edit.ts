@@ -14,9 +14,9 @@ import {
 	stripBom,
 } from "./edit-diff.ts";
 import { requireEnv } from "./env.ts";
-import { canonicalFilePath, withFileMutationQueue } from "./file-mutation-queue.ts";
+import { canonicalFilePath, withFileMutationQueue } from "../file-operations.ts";
 import { observeMutation, priorFileObservation } from "./file-observations.ts";
-import { resolveToolPath } from "./path-utils.ts";
+import { resolveToolPath } from "../file-operations.ts";
 
 const replaceEditSchema = Type.Object({
 	oldText: Type.String({
