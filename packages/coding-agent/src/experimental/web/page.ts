@@ -56,6 +56,13 @@ import {
 	type PanelRow,
 	type WebView,
 	PLUGIN_MCP_ADD_ACTION,
+	PLUGIN_MCP_RELOAD_ACTION,
+	PLUGIN_MCP_RECONNECT_ACTION,
+	PLUGIN_MCP_LOGIN_ACTION,
+	PLUGIN_MCP_LOGIN_OPEN_ACTION,
+	PLUGIN_MCP_LOGIN_REDIRECT_ACTION,
+	PLUGIN_MCP_LOGIN_CANCEL_ACTION,
+	PLUGIN_MCP_LOGIN_MODAL,
 	PLUGIN_MCP_ENABLED_ACTION,
 	PLUGIN_MCP_EXPOSURE_ACTION,
 	PLUGIN_MCP_MODAL,
@@ -119,6 +126,9 @@ import { Commands, type Commands as CommandsService, type CommandsState } from "
 import { createServerServiceSource, createSessionServiceSource, type SessionServiceSource } from "../services/connection.ts";
 import { Conversations, type Conversations as ConversationsService } from "../services/conversations.ts";
 import { Feedback, type Feedback as FeedbackService, type FeedbackState } from "../services/feedback.ts";
+import { Mcp, type Mcp as McpService } from "../services/mcp.ts";
+import type { McpManagementState } from "../../core/mcp/management.ts";
+import type { McpExposure } from "../../core/mcp-servers.ts";
 import { Models, type ModelsState } from "../services/models.ts";
 import { Plugins } from "../services/plugins.ts";
 import { type ScheduleResult, Schedules } from "../services/schedules.ts";
@@ -241,6 +251,7 @@ class SessionPainter {
 	#transcript: ReplicatedState<ConversationView> | undefined;
 	#controller: AgentController | undefined;
 	#models: Models | undefined;
+	#mcp: McpService | undefined;
 	#sessionSettings: SessionSettings | undefined;
 	#commands: CommandsService | undefined;
 	#workspace: WorkspaceService | undefined;
@@ -278,6 +289,13 @@ class SessionPainter {
 		const root = state.conversations.find((entry) => entry.root)?.id;
 		if (root === undefined || conversationId === root) return undefined;
 		return { id: conversationId, view: state.view ?? undefined };
+	}
+
+	get mcpValue(): McpManagementState | undefined {
+		return this.#mcp?.state.value;
+	}
+	get mcpService(): McpService | undefined {
+		return this.#mcp;
 	}
 
 	get modelsValue(): ModelsState | undefined {
@@ -524,8 +542,9 @@ class SessionPainter {
 		if (attached === undefined || attached.status === "detached" || attached.sessionId !== sessionId) {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
+		const hasMcp = (await this.#sessionSource.catalogue(BACKGROUND_CONTEXT)).some(entry => entry.serviceId === Mcp.id);
 		const services = this.#sessionSource.open({
-			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals],
+			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals, ...(hasMcp ? [Mcp] : [])],
 			assertAccess(): void {},
 			onError: (error: Error) =>
 				this.#renderer.setConnection(
@@ -541,6 +560,8 @@ class SessionPainter {
 		this.#transcript = transcript.state;
 		this.#controller = services.use(AgentController);
 		this.#models = services.use(Models);
+		this.#mcp = hasMcp ? services.use(Mcp) : undefined;
+		this.#mcp?.state.subscribe(() => paint());
 		this.#sessionSettings = services.use(SessionSettings);
 		this.#commands = services.use(Commands);
 		this.#workspace = services.use(Workspace);
@@ -584,6 +605,7 @@ class SessionPainter {
 		this.#transcript = undefined;
 		this.#controller = undefined;
 		this.#models = undefined;
+		this.#mcp = undefined;
 		this.#sessionSettings = undefined;
 		this.#commands = undefined;
 		this.#workspace = undefined;
@@ -817,7 +839,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						...(modal === undefined ? {} : { modal }),
 						settings: { state: settings.state.value },
 						skills: { state: skills.state.value },
-						plugins: { state: plugins.state.value },
+						plugins: { state: plugins.state.value, runtime: painter.mcpValue },
 						automation: {
 							state: schedules.state.value,
 							sessionId: painter.sessionId,
@@ -1226,13 +1248,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * second activation, the surface it changed repaints from the host's state, and a refusal or a
 	 * failure lands beside that control instead of only on the header's connection line.
 	 */
+	let panelCall = 0;
 	const runPanelCall = (request: {
 		readonly id: string;
 		readonly data?: string;
 		readonly inModal?: boolean;
 		readonly closeOnSuccess?: boolean;
+		readonly sessionId?: string;
+		readonly retry?: boolean;
 		readonly call: () => Promise<PanelCallResult | void>;
 	}): void => {
+		const invocation = ++panelCall;
+		const current = () => invocation === panelCall &&
+			(request.sessionId === undefined || request.sessionId === painter.sessionId);
 		const inModal = request.inModal === true;
 		panelPending = request.data === undefined ? { id: request.id } : { id: request.id, data: request.data };
 		if (inModal) {
@@ -1242,8 +1270,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			panelNotice = undefined;
 		}
 		paint();
-		void retryOnRebind(request.call).then(
+		void (request.retry === false ? request.call() : retryOnRebind(request.call)).then(
 			(result) => {
+				if (!current()) return;
 				panelPending = undefined;
 				modalPending = false;
 				if (result !== undefined && result.ok === false) {
@@ -1265,6 +1294,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				paint();
 			},
 			(error: unknown) => {
+				if (!current()) return;
 				panelPending = undefined;
 				modalPending = false;
 				const notice: PanelNotice = { tone: "error", text: message(error) };
@@ -1315,6 +1345,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const skillOf = (name: string): { readonly editable: boolean } | undefined => skills.state.value?.skills.find((candidate) => candidate.name === name);
 
 	renderer.onPanelAction = (action: PanelAction): void => {
+		const mcp = painter.mcpService;
+		const mcpSession = painter.sessionId;
+		const hasMcpServer = (name: string): boolean => mcp !== undefined && painter.mcpValue?.servers.some(server => server.name === name) === true;
 		switch (action.kind) {
 			case "open":
 				// The row of the view already open returns to the conversation.
@@ -1345,7 +1378,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					runPanelCall({
 						id: action.id,
 						data: name,
-						call: () => plugins.setMcpServer(name, { enabled: action.value === "true" }, BACKGROUND_CONTEXT).then(done),
+						sessionId: mcpSession,
+						retry: false,
+						call: () => (hasMcpServer(name)
+							? mcp!.configure(name, { enabled: action.value === "true" }, false, BACKGROUND_CONTEXT)
+							: plugins.setMcpServer(name, { enabled: action.value === "true" }, BACKGROUND_CONTEXT))
+							.then(() => plugins.reload(BACKGROUND_CONTEXT)).then(done),
 					});
 					return;
 				}
@@ -1354,7 +1392,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					runPanelCall({
 						id: action.id,
 						data: name,
-						call: () => plugins.setMcpServer(name, { exposure: action.value }, BACKGROUND_CONTEXT).then(done),
+						sessionId: mcpSession,
+						retry: false,
+						call: () => (hasMcpServer(name)
+							? mcp!.configure(name, { exposure: action.value as McpExposure }, false, BACKGROUND_CONTEXT)
+							: plugins.setMcpServer(name, { exposure: action.value }, BACKGROUND_CONTEXT))
+							.then(() => plugins.reload(BACKGROUND_CONTEXT)).then(done),
 					});
 					return;
 				}
@@ -1369,6 +1412,43 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			case "command":
 				switch (action.id) {
+					case PLUGIN_MCP_RELOAD_ACTION:
+						if (mcp) runPanelCall({ id: action.id, sessionId: mcpSession, retry: false, call: () => mcp.reload(BACKGROUND_CONTEXT).then(done) }); return;
+					case PLUGIN_MCP_RECONNECT_ACTION: {
+						const data = action.data;
+						if (data !== undefined && mcp !== undefined) runPanelCall({
+							id: action.id, data, sessionId: mcpSession, retry: false,
+							call: () => mcp.reconnect(data, BACKGROUND_CONTEXT).then(done),
+						});
+						return;
+					}
+					case PLUGIN_MCP_LOGIN_ACTION: {
+						const data = action.data;
+						if (data !== undefined && mcp !== undefined) runPanelCall({
+							id: action.id, data, sessionId: mcpSession, retry: false,
+							call: () => mcp.startLogin(data, BACKGROUND_CONTEXT).then(done),
+						});
+						return;
+					}
+					case PLUGIN_MCP_LOGIN_OPEN_ACTION:
+						if (action.data && URL.canParse(action.data) && ["http:", "https:"].includes(new URL(action.data).protocol)) window.open(action.data, "_blank", "noopener,noreferrer"); return;
+					case PLUGIN_MCP_LOGIN_REDIRECT_ACTION:
+						modal = {
+							id: PLUGIN_MCP_LOGIN_MODAL, data: action.data,
+							title: copy("panel.plugins.pasteRedirect"), description: copy("panel.plugins.redirectHelp"),
+							submit: copy("panel.plugins.login"),
+							fields: [{ id: "url", label: copy("panel.plugins.pasteRedirect"), kind: "text", value: "" }],
+						};
+						paint();
+						return;
+					case PLUGIN_MCP_LOGIN_CANCEL_ACTION: {
+						const data = action.data;
+						if (data !== undefined && mcp !== undefined) runPanelCall({
+							id: action.id, data, sessionId: mcpSession, retry: false,
+							call: () => mcp.cancelLogin(data, BACKGROUND_CONTEXT).then(done),
+						});
+						return;
+					}
 					case COMPACT_ACTION:
 						openModal(compactModal(locale), action);
 						return;
@@ -1643,7 +1723,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({
 							id: action.id,
 							data: name,
-							call: () => plugins.removeMcpServer(name, BACKGROUND_CONTEXT).then(done),
+							sessionId: mcpSession,
+							retry: false,
+							call: () => plugins.removeMcpServer(name, BACKGROUND_CONTEXT).then(() => mcp?.reload(BACKGROUND_CONTEXT)).then(done),
 						});
 						return;
 					}
@@ -1766,11 +1848,25 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						});
 						return;
 					}
+					case PLUGIN_MCP_LOGIN_MODAL: {
+						const id = action.data;
+						if (id !== undefined && mcp !== undefined) runPanelCall({
+							id: action.id, inModal: true, sessionId: mcpSession, retry: false,
+							call: async () => {
+								if (!await mcp.submitRedirect(id, fields.url ?? "", BACKGROUND_CONTEXT))
+									throw new Error(copy("panel.plugins.loginExpired"));
+								return done();
+							},
+						});
+						return;
+					}
 					case PLUGIN_MCP_MODAL:
 						runPanelCall({
 							id: action.id,
 							inModal: true,
-							call: () => plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT).then(done),
+							sessionId: mcpSession,
+							retry: false,
+							call: () => plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT).then(() => mcp?.reload(BACKGROUND_CONTEXT)).then(done),
 						});
 						return;
 					case SCHEDULE_ADD_MODAL: {

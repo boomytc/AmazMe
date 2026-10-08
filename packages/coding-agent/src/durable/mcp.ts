@@ -24,20 +24,27 @@ import {
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../core/tool-search.ts";
-import { loadMcpConfig, type McpServerEntry } from "../extensions/mcp/config.ts";
+import type { McpServerEntry } from "../extensions/mcp/config.ts";
+import { McpManager } from "./mcp-manager.ts";
+import type { McpManagement } from "../core/mcp/management.ts";
 import type { McpServerConnection } from "../extensions/mcp/runtime.ts";
 
 type Selection = NonNullable<AgentState["tools"]>;
 const RESOURCE_NAMES = [LIST_MCP_RESOURCES_TOOL, LIST_MCP_RESOURCE_TEMPLATES_TOOL, READ_MCP_RESOURCE_TOOL];
 
 export interface DurableMcp {
+	readonly management: McpManagement;
 	selection(value: Selection): Selection;
 	close(): Promise<void>;
 }
 
 /** Apply the application selector to an existing conversation without replacing its branch-specific choices. */
-export async function applyDurableMcpSelection(mcp: DurableMcp, conversation: Conversation, context: Context): Promise<void> {
-	await conversation.commit(async tx => {
+export async function applyDurableMcpSelection(
+	mcp: DurableMcp,
+	conversation: Conversation,
+	context: Context,
+): Promise<void> {
+	await conversation.commit(async (tx) => {
 		const state = await tx.doc(AgentDoc, conversation.id);
 		if (state.tools === undefined) return;
 		const selection = mcp.selection(state.tools);
@@ -54,55 +61,43 @@ export async function openDurableMcp(options: {
 	disabled?: boolean;
 	report(error: unknown): void;
 }): Promise<DurableMcp> {
-	const config = options.disabled
-		? { servers: [], errors: [] }
-		: loadMcpConfig({
-				agentDir: getAgentDir(),
-				cwd: options.cwd,
-				projectTrusted: options.settings.isProjectTrusted(),
-			});
-	for (const error of config.errors) options.report(new Error(`MCP configuration: ${error}`));
-	const entries = config.servers.filter((entry) => entry.config.enabled !== false);
-	if (entries.length === 0) return { selection: (value) => value, close: async () => {} };
 	const runtime = await import("../extensions/mcp/runtime.ts");
-	const credentials = new runtime.McpOAuthCredentialStore();
-	const log = new runtime.McpServerLog(`${getAgentDir()}/mcp.log`);
-	const connections: McpServerConnection[] = [];
-	const ready = new Map<McpServerConnection, Promise<void>>();
-	const reported = new Map<string, string>();
-	let closed = false;
-	let closing: Promise<void> | undefined;
+	const manager = new McpManager(options, runtime);
+	const scripts = options.registry.snapshot().extension("codemode");
 	const exposures = (entry: McpServerEntry) =>
 		new Set([entry.config.exposure ?? "codemode", ...Object.values(entry.config.toolExposure ?? {})]);
-	const codemode = config.autoEnableCodemode !== false && entries.some((entry) => exposures(entry).has("codemode"));
-	const search = entries.some((entry) => exposures(entry).has("deferred"));
-	const scripts = options.registry.snapshot().extension("codemode");
-	if (scripts)
-		options.registry.install({
-			...scripts,
-			tools: scripts.tools?.map((tool) => ({
-				...tool,
-				defaultActive:
-					(tool.name === CODEMODE_TOOL_NAME && codemode) ||
-					(tool.name === TOOL_SEARCH_TOOL_NAME && search) ||
-					tool.defaultActive,
-			})),
-		});
 	const publish = () => {
-		if (closed) return;
+		if (manager.closed) return;
+		const servers = manager.servers.filter(
+			(slot) => slot.entry.config.enabled !== false && slot.connection !== undefined,
+		);
+		if (scripts)
+			options.registry.install({
+				...scripts,
+				tools: scripts.tools?.map((tool) => ({
+					...tool,
+					defaultActive:
+						tool.defaultActive ||
+						(tool.name === CODEMODE_TOOL_NAME &&
+							manager.autoEnableCodemode &&
+							servers.some((slot) => exposures(slot.entry).has("codemode"))) ||
+						(tool.name === TOOL_SEARCH_TOOL_NAME && servers.some((slot) => exposures(slot.entry).has("deferred"))),
+				})),
+			});
 		const tools: ToolRegistration[] = [];
-		for (const connection of connections) {
+		for (const { entry, connection } of servers) {
+			if (!connection) continue;
 			const counts = new Map<string, number>();
-			for (const tool of connection.tools) {
+			for (const tool of new Map(connection.tools.map((tool) => [tool.name, tool])).values()) {
 				const name = createMcpToolName(connection.name, tool.name);
 				counts.set(name, (counts.get(name) ?? 0) + 1);
 			}
-			for (const tool of connection.tools) {
+			for (const tool of new Map(connection.tools.map((tool) => [tool.name, tool])).values()) {
 				const name = createMcpToolName(connection.name, tool.name, (candidate) => (counts.get(candidate) ?? 0) > 1);
-				const exposure = getMcpToolExposure(connection.entry.config, tool.name);
+				const exposure = getMcpToolExposure(entry.config, tool.name);
 				const metadata = createMcpToolMetadata(connection.name, tool, name, exposure, {
 					name: mcpNamespace(connection.name),
-					description: connection.entry.config.description,
+					description: entry.config.description,
 					instructions: connection.instructions,
 				});
 				tools.push(
@@ -110,9 +105,10 @@ export async function openDurableMcp(options: {
 						...metadata,
 						defaultActive: exposure === "direct",
 						async execute(params, api, context) {
-							const result = await connection.callTool(tool.name, params as Record<string, unknown>, {
+							const current = await manager.callConnection(connection.name, tool.name, context);
+							const result = await current.callTool(tool.name, params as Record<string, unknown>, {
 								signal: context.abortSignal,
-								timeoutMs: connection.timeoutMs,
+								timeoutMs: current.timeoutMs,
 								onProgress: (progress) => {
 									const total = progress.total === undefined ? "" : `/${progress.total}`;
 									api.output(`${progress.message ?? `Progress ${progress.progress}${total}`}\n`);
@@ -120,7 +116,7 @@ export async function openDurableMcp(options: {
 							});
 							return copyJson(
 								await convertMcpResult(connection.name, tool.name, result, {
-									readableResources: connection.hasResources,
+									readableResources: current.hasResources,
 								}),
 								{ omitUndefinedProperties: true },
 							) as ToolExecutionResult;
@@ -129,20 +125,19 @@ export async function openDurableMcp(options: {
 				);
 			}
 		}
-		const visible = connections.filter(
-			(connection) => connection.hasResources && connection.entry.config.exposure !== "hidden",
-		);
-		const resourceExposure = visible.some((connection) => connection.entry.config.exposure === "direct")
-			? "direct"
-			: "deferred";
+		const resourceServers = () =>
+			manager.servers.flatMap((slot) =>
+				slot.entry.config.enabled !== false && slot.entry.config.exposure !== "hidden" && slot.connection?.hasResources
+					? [slot.connection]
+					: [],
+			);
+		const visible = servers.filter((slot) => slot.entry.config.exposure !== "hidden" && slot.connection?.hasResources);
+		const resourceExposure = visible.some((slot) => slot.entry.config.exposure === "direct") ? "direct" : "deferred";
 		for (const { execute, ...metadata } of visible.length === 0
 			? []
 			: createMcpResourceTools({
 					exposure: resourceExposure,
-					servers: () =>
-						connections.filter(
-							(connection) => connection.hasResources && connection.entry.config.exposure !== "hidden",
-						),
+					servers: resourceServers,
 				})) {
 			tools.push(
 				defineTool({
@@ -158,54 +153,20 @@ export async function openDurableMcp(options: {
 		}
 		options.registry.install(defineExtension({ name: "mcp", tools }));
 	};
+	const unsubscribe = manager.subscribe(publish);
 	try {
-		for (const entry of entries) {
-			const authRequiredMessage = () => {
-					const provider = "url" in entry.config ? entry.config.auth?.provider : undefined;
-					return provider
-						? `MCP server "${entry.name}" needs credentials for provider "${provider}". Configure that provider and reopen the session.`
-						: `MCP server "${entry.name}" requires sign-in. Run amazme mcp login ${entry.name}, then reopen the session.`;
-			};
-			const connection = new runtime.McpServerConnection({
-				entry,
-				cwd: options.cwd,
-				createTransport: runtime.createDefaultTransport,
-				credentials,
-				log,
-				authRequiredMessage,
-				providerToken: async (provider) => (await options.models.getAuth(provider))?.auth.apiKey,
-				onTools: publish,
-				onChange: (connection) => {
-					if (closed) return;
-					publish();
-					if (connection.state !== "failed" && connection.state !== "needs-auth") return;
-					const message = `${connection.name}: ${connection.error ?? authRequiredMessage()}`;
-					if (reported.get(connection.name) === message) return;
-					reported.set(connection.name, message);
-					options.report(new Error(message));
-				},
-			});
-			connections.push(connection);
-		}
+		await manager.open();
 		publish();
-		for (const connection of connections)
-			ready.set(
-				connection,
-				connection.getClient().then(
-					() => {},
-					() => {},
-				),
-			);
-		// A task fixes its registry for its entire phase, so discovery must finish before opening the Harness.
-		await Promise.all(ready.values());
 	} catch (error) {
-		closed = true;
-		await Promise.allSettled(connections.map((connection) => connection.close()));
+		unsubscribe();
+		await manager.close();
 		throw error;
 	}
 	return {
+		management: manager,
 		selection(value) {
 			if (
+				manager.servers.length === 0 ||
 				Array.isArray(value) ||
 				value.allow === undefined ||
 				value.allow.length === 0 ||
@@ -215,11 +176,8 @@ export async function openDurableMcp(options: {
 			return { ...value, only: value.only ?? [...value.allow], allow: [...value.allow, "mcp__*", ...RESOURCE_NAMES] };
 		},
 		close() {
-			return (closing ??= (async () => {
-				closed = true;
-				await Promise.all(connections.map((connection) => connection.close()));
-				await Promise.all(ready.values());
-			})());
+			unsubscribe();
+			return manager.close();
 		},
 	};
 }

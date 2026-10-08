@@ -555,6 +555,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			conversation: runtime.conversation,
 			modelRuntime: runtime.modelRuntime,
 			settingsManager: runtime.settingsManager,
+			mcp: runtime.mcp,
 			approvalGate: runtime.approvalGate,
 			facetLoader: runtime.facetLoader,
 			refreshMirror: () => runtime?.handoff?.refresh() ?? Promise.resolve(),
@@ -619,7 +620,16 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		onRetire: closeAndExit,
 	});
 	// Every live task, background work included, keeps the worker and its Session open.
-	stopActivity = activity.subscribe((graph) => lifecycle?.setHarnessActive(Object.keys(graph.tasks).length > 0));
+	const syncActivity = () => lifecycle?.setHarnessActive(
+		Object.keys(activity.value.tasks).length > 0 ||
+		["preparing", "awaiting", "finishing"].includes(runtime?.mcp?.snapshot().login?.status ?? ""),
+	);
+	const stopTasks = activity.subscribe(syncActivity);
+	const stopMcp = runtime.mcp?.subscribe(syncActivity);
+	stopActivity = () => {
+		stopTasks();
+		stopMcp?.();
+	};
 	// Recovered work from an interrupted turn continues now.
 	harness.resume();
 
@@ -888,6 +898,7 @@ async function createCodingAgentHarness(
 			conversation,
 			modelRuntime,
 			settingsManager,
+			mcp: activeMcp.management,
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
 			handoff,
 			cleanup: async (context) => {

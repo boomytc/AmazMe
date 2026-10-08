@@ -256,6 +256,7 @@ export interface McpServerLike {
 	readonly enabled: boolean;
 	readonly exposure: string;
 	readonly editable: boolean;
+	readonly removable?: boolean;
 }
 
 export interface PluginsStateLike {
@@ -276,8 +277,31 @@ export interface SkillsPanelInput {
 	readonly state: SkillsStateLike | undefined;
 }
 
+export interface McpRuntimeLike {
+	readonly disabled: boolean;
+	readonly errors: readonly string[];
+	readonly servers: readonly {
+		readonly name: string;
+		readonly state: string;
+		readonly tools: number;
+		readonly enabled: boolean;
+		readonly exposure: string;
+		readonly scope: string;
+		readonly canLogin: boolean;
+		readonly error: string | null;
+	}[];
+	readonly login: {
+		readonly id: string;
+		readonly server: string;
+		readonly status: string;
+		readonly url: string | null;
+		readonly error: string | null;
+	} | null;
+}
+
 export interface PluginsPanelInput {
 	readonly state: PluginsStateLike | undefined;
+	readonly runtime?: McpRuntimeLike;
 }
 
 /** One planned prompt, as the host stores and publishes it. */
@@ -344,6 +368,13 @@ export const PLUGIN_MCP_REMOVE_ACTION = "plugins:mcp-remove";
 export const PLUGIN_MCP_ENABLED_ACTION = "plugins:mcp-enabled";
 export const PLUGIN_MCP_EXPOSURE_ACTION = "plugins:mcp-exposure";
 export const PLUGIN_PACKAGE_MODAL = "plugins:package-path";
+export const PLUGIN_MCP_RELOAD_ACTION = "plugins:mcp-reload";
+export const PLUGIN_MCP_RECONNECT_ACTION = "plugins:mcp-reconnect";
+export const PLUGIN_MCP_LOGIN_ACTION = "plugins:mcp-login";
+export const PLUGIN_MCP_LOGIN_OPEN_ACTION = "plugins:mcp-login-open";
+export const PLUGIN_MCP_LOGIN_REDIRECT_ACTION = "plugins:mcp-login-redirect";
+export const PLUGIN_MCP_LOGIN_CANCEL_ACTION = "plugins:mcp-login-cancel";
+export const PLUGIN_MCP_LOGIN_MODAL = "plugins:mcp-login-response";
 export const PLUGIN_MCP_MODAL = "plugins:mcp-entry";
 
 function settingsControls(locale: Locale, descriptor: SettingDescriptorLike): PanelControl[] {
@@ -524,17 +555,37 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 
 /** The plugins panel: the plugin packages a session loads, and the MCP configuration files. */
 export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpec {
-	const { state } = input;
+	const { state, runtime } = input;
 	const title = translate(locale, "panel.plugins.title");
 	if (state === undefined) {
 		return unavailablePanel(locale, "plugins", title, translate(locale, "panel.plugins.description"));
 	}
 	const remove = translate(locale, "panel.plugins.fromExtension");
+	const liveServers = new Map(runtime?.servers.map((server) => [server.name, server]));
+	const servers: McpServerLike[] = state.mcp.servers.map((server) => {
+		const live = liveServers.get(server.name);
+		return live
+			? {
+					...server,
+					enabled: live.enabled,
+					exposure: live.exposure,
+					scope: live.scope,
+					removable: server.scope === "global" && live.scope === "global",
+				}
+			: server;
+	});
+	for (const live of liveServers.values()) {
+		if (!servers.some((server) => server.name === live.name))
+			servers.push({ ...live, detail: "", editable: true, removable: false });
+	}
 	return {
 		id: "plugins",
 		title,
 		description: translate(locale, "panel.plugins.description"),
-		notices: state.mcp.errors.map((error) => ({ tone: "error" as const, text: error })),
+		notices: [...new Set([...state.mcp.errors, ...(runtime?.errors ?? [])])].map((error) => ({
+			tone: "error" as const,
+			text: error,
+		})),
 		groups: [
 			{
 				id: "plugins:packages",
@@ -564,41 +615,123 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 				description: translate(locale, "panel.plugins.mcpDescription"),
 				actions: [
 					{ id: PLUGIN_MCP_ADD_ACTION, label: translate(locale, "panel.plugins.addServer"), tone: "primary" },
+					...(runtime === undefined
+						? []
+						: [
+								{
+									id: PLUGIN_MCP_RELOAD_ACTION,
+									label: translate(locale, "panel.plugins.reloadMcp"),
+									tone: "default" as const,
+								},
+							]),
 				],
-				rows: state.mcp.servers.map((server) => ({
-					id: `mcp:${server.name}`,
-					title: server.name,
-					description: server.detail,
-					badges: [mcpScopeCopy(locale, server.scope), mcpExposureCopy(locale, server.exposure)],
-					...(server.editable
-						? {
-								controls: [
-									{
-										id: PLUGIN_MCP_ENABLED_ACTION,
-										kind: "switch" as const,
-										data: server.name,
-										value: String(server.enabled),
-									},
-									{
-										id: PLUGIN_MCP_EXPOSURE_ACTION,
-										kind: "select" as const,
-										data: server.name,
-										value: server.exposure,
-										options: mcpExposures(locale),
-									},
-								],
-							}
-						: {}),
-					actions: [
-						{
-							id: PLUGIN_MCP_REMOVE_ACTION,
-							label: server.editable ? translate(locale, "panel.plugins.remove") : remove,
-							data: server.name,
-							tone: server.editable ? ("danger" as const) : ("default" as const),
-							...(server.editable ? {} : { disabled: true }),
-						},
-					],
-				})),
+				rows: [
+					...servers.map((server) => {
+						const live = liveServers.get(server.name);
+						return {
+							id: `mcp:${server.name}`,
+							title: server.name,
+							description: live?.error ?? server.detail,
+							badges: [
+								mcpScopeCopy(locale, server.scope),
+								mcpExposureCopy(locale, server.exposure),
+								...(live
+									? [
+											translate(locale, "panel.plugins.runtime", {
+												state: mcpStatusCopy(locale, live.state),
+												tools: String(live.tools),
+											}),
+										]
+									: []),
+							],
+							...(server.editable
+								? {
+										controls: [
+											{
+												id: PLUGIN_MCP_ENABLED_ACTION,
+												kind: "switch" as const,
+												data: server.name,
+												value: String(server.enabled),
+											},
+											{
+												id: PLUGIN_MCP_EXPOSURE_ACTION,
+												kind: "select" as const,
+												data: server.name,
+												value: server.exposure,
+												options: mcpExposures(locale),
+											},
+										],
+									}
+								: {}),
+							actions: [
+								...(live?.enabled
+									? [
+											{
+												id: PLUGIN_MCP_RECONNECT_ACTION,
+												label: translate(locale, "panel.plugins.reconnect"),
+												data: server.name,
+												tone: "default" as const,
+											},
+										]
+									: []),
+								...(live?.canLogin
+									? [
+											{
+												id: PLUGIN_MCP_LOGIN_ACTION,
+												label: translate(locale, "panel.plugins.login"),
+												data: server.name,
+												tone: "default" as const,
+											},
+										]
+									: []),
+								{
+									id: PLUGIN_MCP_REMOVE_ACTION,
+									label: server.editable ? translate(locale, "panel.plugins.remove") : remove,
+									data: server.name,
+									tone: server.editable ? ("danger" as const) : ("default" as const),
+									...(server.editable && server.removable !== false ? {} : { disabled: true }),
+								},
+							],
+						};
+					}),
+					...(runtime?.login
+						? [
+								{
+									id: `mcp-login:${runtime.login.id}`,
+									title: translate(locale, "panel.plugins.loginFor", { server: runtime.login.server }),
+									description: runtime.login.error ?? mcpStatusCopy(locale, runtime.login.status),
+									actions: [
+										...(runtime.login.url
+											? [
+													{
+														id: PLUGIN_MCP_LOGIN_OPEN_ACTION,
+														label: translate(locale, "panel.plugins.openAuthorization"),
+														data: runtime.login.url,
+														tone: "primary" as const,
+													},
+													{
+														id: PLUGIN_MCP_LOGIN_REDIRECT_ACTION,
+														label: translate(locale, "panel.plugins.pasteRedirect"),
+														data: runtime.login.id,
+														tone: "default" as const,
+													},
+												]
+											: []),
+										...(["preparing", "awaiting", "finishing"].includes(runtime.login.status)
+											? [
+													{
+														id: PLUGIN_MCP_LOGIN_CANCEL_ACTION,
+														label: translate(locale, "panel.plugins.cancelLogin"),
+														data: runtime.login.id,
+														tone: "default" as const,
+													},
+												]
+											: []),
+									],
+								},
+							]
+						: []),
+				],
 				empty: translate(locale, "panel.plugins.mcpEmpty", { path: state.mcp.globalPath }),
 				footnote: translate(locale, "panel.plugins.mcpFootnote"),
 			},
@@ -683,6 +816,25 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 			},
 		],
 	};
+}
+
+function mcpStatusCopy(locale: Locale, state: string): string {
+	const labels: Record<string, readonly [string, string]> = {
+		connecting: ["连接中", "Connecting"],
+		connected: ["已连接", "Connected"],
+		disconnected: ["已断开", "Disconnected"],
+		disabled: ["已禁用", "Disabled"],
+		"needs-auth": ["需要登录", "Sign-in required"],
+		failed: ["连接失败", "Failed"],
+		closed: ["已关闭", "Closed"],
+		preparing: ["准备登录", "Preparing sign-in"],
+		awaiting: ["等待授权", "Awaiting authorization"],
+		finishing: ["完成登录中", "Finishing sign-in"],
+		done: ["登录完成", "Signed in"],
+		cancelled: ["已取消", "Cancelled"],
+		error: ["登录失败", "Sign-in failed"],
+	};
+	return labels[state]?.[locale === "zh" ? 0 : 1] ?? state;
 }
 
 /** The exposure names the MCP configuration accepts, with the reader's names for them. */

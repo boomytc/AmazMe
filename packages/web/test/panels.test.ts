@@ -391,7 +391,7 @@ describe("plugins panel", () => {
 		const empty = pluginsPanel("en", { state: { packages: [], mcp: { ...PLUGINS.mcp, servers: [], errors: [] } } });
 		expect(empty.groups[0]?.empty).toContain("built-in facets only");
 		expect(empty.groups[1]?.empty).toContain("/agent/mcp.json");
-		expect(empty.groups[1]?.footnote).toContain("does not connect MCP servers yet");
+		expect(empty.groups[1]?.footnote).toContain("attached session owns its live connections");
 	});
 
 	test("explains itself while the host offers no service", () => {

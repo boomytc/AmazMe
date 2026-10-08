@@ -36,6 +36,8 @@ import { KeybindingsManager } from "../core/keybindings.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
 import { codemodeRenderers } from "../core/codemode/renderer.ts";
+import { McpManagerView } from "../core/mcp/view.ts";
+import { manageMcp } from "./mcp-menu.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
 import { DynamicBorder } from "../modes/interactive/components/dynamic-border.ts";
@@ -440,7 +442,7 @@ class DurableTui {
 		this.#footerHints.setText(
 			theme.fg(
 				"dim",
-				`/tree  /fork  /older  /agents  /model  /compact  /tasks  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
+				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
 			),
 		);
 	}
@@ -616,6 +618,17 @@ export async function runDurableTui(source: DurableViewSource, controller: Durab
 		exit = resolve;
 	});
 	let view!: DurableTui;
+	let managingMcp = false;
+	const showMcp = (): void => {
+		if (managingMcp || controller.mcp === undefined) return;
+		managingMcp = true;
+		const manager = new McpManagerView(view.ui, theme, KeybindingsManager.create(), settings.getLocalePreference() === "zh");
+		view.mount(manager);
+		void manageMcp(manager, controller.mcp, settings.getLocalePreference() === "zh").catch((error: unknown) => console.error(error instanceof Error ? error.message : String(error))).finally(() => {
+			managingMcp = false;
+			view.restoreEditor();
+		});
+	};
 
 	const selectModel = (): void => {
 		const snapshot = source.current();
@@ -731,6 +744,7 @@ export async function runDurableTui(source: DurableViewSource, controller: Durab
 		submit: (text) => {
 			const trimmed = text.trim();
 			if (!trimmed) return;
+			if (trimmed === "/mcp") return showMcp();
 			if (trimmed === "/model") return selectModel();
 			if (trimmed === "/tasks") return void controller.toggleTasks();
 			if (trimmed === "/agents" || trimmed === "/tree") return selectConversation();

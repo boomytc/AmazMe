@@ -43,6 +43,7 @@ import {
 import { selectSession } from "./sessions.ts";
 import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp.ts";
 import { Subagent } from "./subagent.ts";
+import type { McpManagement } from "../core/mcp/management.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -88,6 +89,7 @@ export interface DurableViewSource {
 
 /** What the TUI may ask for. */
 export interface DurableController {
+	readonly mcp?: McpManagement;
 	/** Prompt when idle; otherwise steer or queue a follow-up. */
 	submit(text: string, whenBusy: "steer" | "followUp"): Promise<void>;
 	compact(instructions: string | undefined): Promise<void>;
@@ -363,6 +365,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			});
 		};
 		const controller: DurableController = {
+			mcp: activeMcp.management,
 			submit: (text, whenBusy) => command(async () => watchAnswer(await current.submit({ type: "input", content: text, whenBusy }, context))),
 			compact: (instructions) =>
 				command(async () => {

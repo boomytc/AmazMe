@@ -22,6 +22,8 @@ import { createCommandsFacet } from "./commands-provider.ts";
 import { createApprovalsFacet, type ApprovalGate } from "./approvals-provider.ts";
 import { createConversationsFacet, summaryModelFromRuntime } from "./conversations-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
+import type { McpManagement } from "../../core/mcp/management.ts";
+import { createMcpFacet } from "./mcp-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { createSlashCommandsRuntimeFacet } from "./slash-commands-provider.ts";
 import { SessionSettings } from "./settings.ts";
@@ -39,6 +41,7 @@ export interface SessionWorkerRuntime {
 	readonly conversation: Conversation;
 	readonly modelRuntime?: ModelRuntime;
 	readonly settingsManager?: SettingsManager;
+	readonly mcp?: McpManagement;
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
@@ -70,6 +73,7 @@ export async function createSessionWorkerServices(options: {
 	readonly conversation: Conversation;
 	readonly modelRuntime: ModelRuntime | undefined;
 	readonly settingsManager?: SettingsManager;
+	readonly mcp?: McpManagement;
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
@@ -118,6 +122,7 @@ export async function createSessionWorkerServices(options: {
 		createSlashCommandsRuntimeFacet(),
 		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
 		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
+		...(options.mcp === undefined ? [] : [createMcpFacet(options.mcp)]),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 		createCommandsFacet({ cwd: options.cwd, settings: options.settingsManager }),
 		createConversationsFacet({
