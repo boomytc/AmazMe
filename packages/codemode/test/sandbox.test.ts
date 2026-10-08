@@ -31,6 +31,21 @@ describe("embedded sources", () => {
 });
 
 describe("script execution", () => {
+	it("round-trips prototype-named store keys as own data properties", async () => {
+		const sandbox = createSandbox();
+		const result = await sandbox.execute(
+			'for (const key of ["__proto__", "constructor", "toString"]) store(key, {value:42});',
+		);
+		if (!result.ok) throw new Error(result.error.message);
+		expect(Object.getPrototypeOf(result.storeWrites.set)).toBe(Object.prototype);
+		expect(Object.keys(result.storeWrites.set).sort()).toEqual(["__proto__", "constructor", "toString"]);
+		expect(Object.getOwnPropertyDescriptor(result.storeWrites.set, "__proto__")?.value).toEqual({ value: 42 });
+		const resumed = await sandbox.execute('return ["__proto__", "constructor", "toString"].map(key => load(key));', {
+			store: result.storeWrites.set,
+		});
+		expect(resumed).toMatchObject({ ok: true, value: [{ value: 42 }, { value: 42 }, { value: 42 }] });
+	});
+
 	it("returns the script's return value after a JSON round trip", async () => {
 		const sandbox = createSandbox();
 		expect(await sandbox.execute("return { a: 1, b: [true, 'x'] }")).toMatchObject({

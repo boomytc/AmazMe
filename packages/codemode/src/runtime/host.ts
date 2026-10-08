@@ -38,12 +38,12 @@ function errorMessage(error: unknown): string {
 }
 
 function serializeStore(store: Readonly<Record<string, unknown>> | undefined): Record<string, string> {
-	const serialized: Record<string, string> = {};
+	const entries: [string, string][] = [];
 	for (const [key, value] of Object.entries(store ?? {})) {
 		const json = JSON.stringify(value);
-		if (json !== undefined) serialized[key] = json;
+		if (json !== undefined) entries.push([key, json]);
 	}
-	return serialized;
+	return Object.fromEntries(entries);
 }
 
 /**
@@ -75,7 +75,13 @@ function parseStoreWrites(json: string): CodemodeStoreWrites {
 		}
 		const [key, value] = entry as [string, string?];
 		if (value === undefined) writes.delete.push(key);
-		else writes.set[key] = parseBridgeJson(value, `store value for ${JSON.stringify(key)}`);
+		else
+			Object.defineProperty(writes.set, key, {
+				value: parseBridgeJson(value, `store value for ${JSON.stringify(key)}`),
+				enumerable: true,
+				configurable: true,
+				writable: true,
+			});
 	}
 	return writes;
 }
