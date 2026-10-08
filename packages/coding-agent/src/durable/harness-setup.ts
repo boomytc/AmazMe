@@ -22,9 +22,21 @@ import { applyHttpProxySettings, configureHttpDispatcher } from "../core/http-di
 import { DEFAULT_THINKING_LEVEL } from "../core/defaults.ts";
 import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
-import type { SettingsManager } from "../core/settings-manager.ts";
+import { SettingsManager } from "../core/settings-manager.ts";
+import { getAgentDir } from "../config.ts";
+import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../core/trust-manager.ts";
 import { createPiPrompt } from "./prompt.ts";
 import { createDurableCodemode } from "./codemode.ts";
+
+/** A headless host uses saved project trust and the global policy; it cannot prompt for trust. */
+export function createCodingSettings(cwd: string): SettingsManager {
+	const agentDir = getAgentDir();
+	const settings = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+	const trusted = !hasTrustRequiringProjectResources(cwd) ||
+		(new ProjectTrustStore(agentDir).get(cwd) ?? settings.getDefaultProjectTrust() === "always");
+	settings.setProjectTrusted(trusted);
+	return settings;
+}
 
 /** pi's HTTP setup: proxy, idle timeouts, and one undici for fetch. Without it, some provider streams break off. */
 export function configureHarnessHttp(settingsManager: SettingsManager): void {

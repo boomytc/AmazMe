@@ -18,12 +18,12 @@ import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
 import { ModelRuntime } from "../core/model-runtime.ts";
-import { SettingsManager } from "../core/settings-manager.ts";
 import { durableToolSelection } from "../core/tool-selection.ts";
 import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
 import {
 	configureHarnessHttp,
 	createCodingRegistry,
+	createCodingSettings,
 	createHarnessSettings,
 	ExecutionEnvs,
 	findInitialAgentModel,
@@ -31,6 +31,7 @@ import {
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
 import { createApprovalGate } from "./services/approvals-provider.ts";
 import { Subagent } from "../durable/subagent.ts";
+import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "../durable/mcp.ts";
 import {
 	consumeInternalProcessRole,
 	encodeControlLine,
@@ -824,7 +825,7 @@ async function createCodingAgentHarness(
 ): Promise<SessionWorkerRuntime> {
 	const { cwd } = options.metadata;
 	const modelRuntime = await ModelRuntime.create();
-	const settingsManager = SettingsManager.create(cwd);
+	const settingsManager = createCodingSettings(cwd);
 	configureHarnessHttp(settingsManager);
 	const envs = new ExecutionEnvs(cwd);
 	const registry = createCodingRegistry(settingsManager, cwd);
@@ -835,7 +836,10 @@ async function createCodingAgentHarness(
 	const approvalGate = createApprovalGate({ mode: () => settingsManager.getToolApprovalMode() });
 	registry.install(approvalGate.extension);
 	let harness: Harness | undefined;
+	let mcp: DurableMcp | undefined;
 	try {
+		const activeMcp = await openDurableMcp({ registry, cwd, settings: settingsManager, models: modelRuntime, report: error => console.error(error) });
+		mcp = activeMcp;
 		harness = await Harness.open(
 			await openNodeSqliteStorage(databasePath),
 			{
@@ -864,9 +868,10 @@ async function createCodingAgentHarness(
 			},
 			init: async (tx, id) => {
 				const agent = await tx.doc(AgentDoc, id);
-				agent.tools = durableToolSelection({}, settingsManager.getDefaultTools(), settingsManager.getSettings().defaultTools);
+				agent.tools = activeMcp.selection(durableToolSelection({}, settingsManager.getDefaultTools(), settingsManager.getSettings().defaultTools));
 			},
 		});
+		await applyDurableMcpSelection(mcp, conversation, TODO_CONTEXT);
 		// The terminal's copy of this session: seeded from it when the hosted transcript is empty,
 		// and refreshed with every committed revision, so one session is visible from either client.
 		const handoff = await startSessionHandoff({
@@ -886,14 +891,28 @@ async function createCodingAgentHarness(
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
 			handoff,
 			cleanup: async (context) => {
-				await handoff.dispose();
-				await envs.cleanup(context);
+				try {
+					await handoff.dispose();
+				} finally {
+					try {
+						await mcp?.close();
+					} finally {
+						await envs.cleanup(context);
+					}
+				}
 			},
 		};
 	} catch (error) {
 		try {
-			await harness?.close(TODO_CONTEXT);
-			await envs.cleanup(TODO_CONTEXT);
+			try {
+				await harness?.close(TODO_CONTEXT);
+			} finally {
+				try {
+					await mcp?.close();
+				} finally {
+					await envs.cleanup(TODO_CONTEXT);
+				}
+			}
 		} catch (cleanupError) {
 			throw new AggregateError([error, cleanupError], "Session worker Harness startup and cleanup failed");
 		}

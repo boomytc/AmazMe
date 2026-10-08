@@ -696,6 +696,14 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 		const { initialMessage } = await prepareInitialMessage(parsed);
+		const projectTrusted = await resolveProjectTrusted({
+			cwd,
+			trustStore: new ProjectTrustStore(agentDir),
+			trustOverride: parsed.projectTrustOverride,
+			defaultProjectTrust: bootstrapSettingsManager.getDefaultProjectTrust(),
+			projectTrustContext: createProjectTrustContext({ cwd, mode: "interactive", settingsManager: startupSettingsManager, hasUI: true }),
+		});
+		startupSettingsManager.setProjectTrusted(projectTrusted);
 		const { runDurableInteractive } = await import("./durable/interactive.ts");
 		await runDurableInteractive({
 			cwd,
@@ -708,6 +716,7 @@ export async function main(args: string[], options?: MainOptions) {
 			...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
 			...(parsed.excludeTools === undefined ? {} : { excludeTools: parsed.excludeTools }),
 			...(parsed.noTools ? { noTools: "all" } : parsed.noBuiltinTools ? { noTools: "builtin" } : {}),
+			noMcp: parsed.noMcp === true || parsed.noExtensions === true,
 			...(initialMessage === undefined ? {} : { initialMessage }),
 		});
 		return;

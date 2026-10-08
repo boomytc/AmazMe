@@ -1,31 +1,33 @@
 # MCP Servers
 
-Pi connects to [Model Context Protocol](https://modelcontextprotocol.io) servers over stdio or streamable HTTP and makes their tools and resources available to the model.
+AmazMe connects to [Model Context Protocol](https://modelcontextprotocol.io) servers over stdio or streamable HTTP and makes their tools and resources available to the model.
+
+The default Durable TUI and session host use the same connections, authentication and result conversion as the SDK. They finish initial discovery before opening the persistent Harness, using the server's configured request timeout. Tools execute as persistent tool tasks; interrupted MCP calls are not replayed automatically. Project servers require project trust, and `--no-mcp` disables connections for that run.
 
 ## Quick setup
 
-Add a local stdio server, check the connection, then start Pi:
+Add a local stdio server, check the connection, then start AmazMe:
 
 ```bash
-pi mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem .
-pi mcp list
-pi
+amazme mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem .
+amazme mcp list
+amazme
 ```
 
 For a remote server:
 
 ```bash
-pi mcp add docs --url https://example.com/mcp --bearer-token-env-var DOCS_TOKEN
-pi mcp list
+amazme mcp add docs --url https://example.com/mcp --bearer-token-env-var DOCS_TOKEN
+amazme mcp list
 ```
 
 These commands add user-level servers by default. Add `--local` or `-l` to write the project configuration instead:
 
 ```bash
-pi mcp add -l tools --env API_KEY='${TOOLS_KEY}' -- uvx tools-mcp
+amazme mcp add -l tools --env API_KEY='${TOOLS_KEY}' -- uvx tools-mcp
 ```
 
-Use `/mcp` inside an interactive session to inspect connections, sign in, reconnect, change exposure, or enable and disable servers. Run `/reload` after adding, removing, or changing a server outside the session.
+For the default Durable TUI, use `amazme mcp list` to inspect servers and `amazme mcp login <server>` to sign in, then reopen the session. Reopen after changing configuration. The SDK interactive UI provides `/mcp` to inspect connections, sign in, reconnect, change exposure, or enable and disable servers, and `/reload` after external configuration changes.
 
 ## Configure servers
 
@@ -81,7 +83,7 @@ Keep personal servers and servers with credentials in the user-level file. Use t
 - `env` and `headers` values can use environment variables such as `${GITHUB_TOKEN}`. They can also run a command with `!command`, but the command must make up the whole value, for example `"Authorization": "!echo Bearer $(gh auth token)"`.
 - Invalid entries are reported and skipped without preventing other servers from connecting.
 
-`pi mcp add` and `pi mcp remove` cover common changes from a shell. See [MCP commands](cli.md#mcp-commands) for their options.
+`amazme mcp add` and `amazme mcp remove` cover common changes from a shell. See [MCP commands](cli.md#mcp-commands) for their options.
 
 ### Inspect or change a server
 
@@ -89,11 +91,11 @@ Keep personal servers and servers with credentials in the user-level file. Use t
 
 Exposure and enabled-state changes are saved to the file that defines the server without replacing unrelated content. In a trusted project, "Enable in this project" and "Disable in this project" add a project override for a user-level server; later changes to that server are saved to the override. Disabled servers remain listed. Outside the interactive TUI, `/mcp` prints server status; `/mcp login <server>`, `/mcp logout <server>`, and `/mcp reconnect <server>` perform those actions directly.
 
-Shell commands work without a session: `pi mcp add`, `pi mcp remove`, `pi mcp list`, `pi mcp login`, and `pi mcp logout`. Shell commands do not load extensions.
+Shell commands work without a session: `amazme mcp add`, `amazme mcp remove`, `amazme mcp list`, `amazme mcp login`, and `amazme mcp logout`. Shell commands do not load extensions.
 
 ### Diagnose connection problems
 
-Run `pi mcp list` to connect to every enabled server and print its state, tools, and errors. It exits with status 1 when an entry is invalid or an enabled server is not connected. `/mcp` shows the full connection error and the tail of stderr from a failed stdio server.
+Run `amazme mcp list` to connect to every enabled server and print its state, tools, and errors. It exits with status 1 when an entry is invalid or an enabled server is not connected. `/mcp` shows the full connection error and the tail of stderr from a failed stdio server.
 
 Pi reports configuration errors, failed connections, and required sign-ins once after startup. Server logging notifications are appended to `~/.amazme/agent/mcp.log` as `<time> [<server>] <level> <logger>: <message>`. The file moves to `mcp.log.1` after it grows past 5 MB.
 
@@ -103,7 +105,7 @@ Stopping a stdio server closes its stdin, sends SIGTERM, then sends SIGKILL to i
 
 ## Migrate configuration from another client
 
-Move the converted entry under `mcpServers` in `mcp.json`, then run `pi mcp list` to validate it.
+Move the converted entry under `mcpServers` in `mcp.json`, then run `amazme mcp list` to validate it.
 
 | Client | Conversion |
 |---|---|
@@ -124,7 +126,7 @@ Remote servers that use OAuth, such as Sentry, need no credentials in `mcp.json`
 }
 ```
 
-When the server rejects an unauthenticated connection, `/mcp` shows that it needs sign-in. Select "Sign in", run `/mcp login sentry`, or run `pi mcp login sentry`. Pi opens the authorization page and waits for approval. If the browser runs on another machine, such as over SSH, paste its redirected URL into the sign-in screen. A running session uses the new credentials on its next turn.
+When the server rejects an unauthenticated connection, `/mcp` shows that it needs sign-in. Select "Sign in", run `/mcp login sentry`, or run `amazme mcp login sentry`. Pi opens the authorization page and waits for approval. If the browser runs on another machine, such as over SSH, paste its redirected URL into the sign-in screen. A running session uses the new credentials on its next turn.
 
 Pi registers itself with the authorization server, stores tokens in `~/.amazme/agent/mcp-auth.json`, and refreshes access tokens when they expire or the server rejects them. If a server later requests additional scope, Pi asks for sign-in again. Signing out deletes the stored credentials.
 
@@ -199,7 +201,7 @@ Each server tool is registered as `mcp__<server>__<tool>`. The server's `exposur
 
 `codemode-deferred` is accepted as an alias for `codemode`.
 
-Servers with `codemode` or `deferred` tools are listed in the `mcp_servers` section of the system prompt, with how their tools are reached and one line from the configured `description` or, once connected, from the server instructions. Pi updates the section when a prompt starts, after waiting for servers with `direct` tools. When it changed, for example because a server connected and its summary became available, Pi appends the new section to the conversation instead of changing tool declarations, so earlier messages stay cached. `describeNamespace()` and the `namespace` option of `searchTools()` accept `mcp__dev-radius`, `mcp__dev_radius`, `dev-radius`, or `dev_radius`.
+SDK sessions list servers with `codemode` or `deferred` tools in the `mcp_servers` section of the system prompt, with how their tools are reached and one line from the configured `description` or, once connected, from the server instructions. Pi updates the section when a prompt starts, after waiting for servers with `direct` tools. When it changed, for example because a server connected and its summary became available, Pi appends the new section to the conversation instead of changing tool declarations, so earlier messages stay cached. `describeNamespace()` and the `namespace` option of `searchTools()` accept `mcp__dev-radius`, `mcp__dev_radius`, `dev-radius`, or `dev_radius`.
 
 Pi activates `codemode` when a server with `codemode` exposure connects. It activates `tool_search` for a server with `deferred` exposure. To make the model see a tool without searching, give it `direct` exposure with `toolExposure`.
 
@@ -221,7 +223,7 @@ Pi activates `codemode` when a server with `codemode` exposure connects. It acti
 }
 ```
 
-`pi mcp list` marks tools whose exposure differs from their server. The Tools view in `/mcp` also shows the effective exposure.
+`amazme mcp list` marks tools whose exposure differs from their server. The Tools view in `/mcp` also shows the effective exposure.
 
 Tools with `codemode` or `deferred` exposure can be reached through either indirect mechanism: codemode scripts can call them, and `tool_search` can load them. Codemode calls do not depend on the active tool set, so they remain available after `/tree`, resume, and fork. Tools loaded by `tool_search` are recorded in the transcript and remain declared on that branch.
 

@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import {
 	type AuthProvider,
 	type CallToolResult,
@@ -39,8 +40,8 @@ import {
 	type McpOAuthCredentialStore,
 	type McpOAuthSettings,
 } from "./oauth.ts";
-import { isMcpAppResource, type McpResourceServer } from "./resources.ts";
-import type { McpToolCaller } from "./tools.ts";
+import { isMcpAppResource, type McpResourceServer } from "../../core/mcp/contracts.ts";
+import type { McpToolCaller } from "../../core/mcp/results.ts";
 
 export { McpServerLog } from "./log.ts";
 export { McpOAuthCredentialStore, McpSignInCancelledError, signInMcpServer } from "./oauth.ts";
@@ -181,6 +182,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	private readonly onTools: (connection: McpServerConnection) => void;
 	private readonly onChange: ((connection: McpServerConnection) => void) | undefined;
 	private readonly log: McpServerLog | undefined;
+	private readonly authRequiredMessage: () => string;
 
 	constructor(options: {
 		entry: McpServerEntry;
@@ -194,6 +196,8 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		onChange?: (connection: McpServerConnection) => void;
 		/** Receives the server's log messages (`notifications/message`). */
 		log?: McpServerLog;
+		/** Client-specific sign-in guidance; connections never open a browser on their own. */
+		authRequiredMessage?: () => string;
 	}) {
 		this.entry = options.entry;
 		this.cwd = options.cwd;
@@ -201,6 +205,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		this.onTools = options.onTools;
 		this.onChange = options.onChange;
 		this.log = options.log;
+		this.authRequiredMessage = options.authRequiredMessage ?? (() => signInRequiredMessage(this.entry));
 		const url = this.oauthUrl;
 		const provider = "url" in this.entry.config ? this.entry.config.auth?.provider : undefined;
 		this.authProvider = url
@@ -263,15 +268,15 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	}
 
 	callTool(name: string, args: Record<string, unknown>, options: McpRequestOptions): Promise<CallToolResult> {
-		return this.withClient((client) => client.callTool(name, args, options));
+		return this.withClient((client) => client.callTool(name, args, options), false, options.signal);
 	}
 
 	readResource(uri: string, options: McpRequestOptions): Promise<ReadResourceResult> {
-		return this.withClient((client) => client.readResource(uri, options), true);
+		return this.withClient((client) => client.readResource(uri, options), true, options.signal);
 	}
 
 	resourcesPage(cursor: string | undefined, options: McpRequestOptions): Promise<ListResourcesResult> {
-		return this.withClient((client) => client.listResourcesPage(cursor, options), true);
+		return this.withClient((client) => client.listResourcesPage(cursor, options), true, options.signal);
 	}
 
 	resourceTemplatesPage(cursor: string | undefined, options: McpRequestOptions): Promise<ListResourceTemplatesResult> {
@@ -279,24 +284,30 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 			(client) =>
 				withoutTemplates(() => client.listResourceTemplatesPage(cursor, options), { resourceTemplates: [] }),
 			true,
+			options.signal,
 		);
 	}
 
 	allResources(options: McpRequestOptions): Promise<Resource[]> {
-		return this.withClient((client) => client.listResources(options), true);
+		return this.withClient((client) => client.listResources(options), true, options.signal);
 	}
 
 	allResourceTemplates(options: McpRequestOptions): Promise<ResourceTemplate[]> {
-		return this.withClient((client) => listTemplates(client, options), true);
+		return this.withClient((client) => listTemplates(client, options), true, options.signal);
 	}
 
 	/**
 	 * Run a request, reconnecting when needed. `readOnly` requests are retried once after a transient
 	 * HTTP error; tool calls are not, since they may have run.
 	 */
-	private async withClient<T>(run: (client: McpClient) => Promise<T>, readOnly = false): Promise<T> {
+	private async withClient<T>(run: (client: McpClient) => Promise<T>, readOnly = false, signal?: AbortSignal): Promise<T> {
 		for (let attempt = 1; ; attempt++) {
-			const client = await this.getClient();
+			signal?.throwIfAborted();
+			// A caller can stop waiting for a shared reconnect without shutting down other calls.
+			const client = signal === undefined
+				? await this.getClient()
+				: await awaitWithContext(this.getClient(), withAbortSignal(signal, BACKGROUND_CONTEXT));
+			signal?.throwIfAborted();
 			try {
 				return await run(client);
 			} catch (error) {
@@ -314,7 +325,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 				if (!this.needsSignIn(error)) throw error;
 				await this.dropClient(client);
 				this.markNeedsAuth();
-				throw new Error(signInRequiredMessage(this.entry));
+				throw new Error(this.authRequiredMessage());
 			}
 		}
 	}
@@ -437,7 +448,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	private connectFailed(error: unknown): Error {
 		if (this.needsSignIn(error) && !this.closed) {
 			this.markNeedsAuth();
-			return new Error(signInRequiredMessage(this.entry));
+			return new Error(this.authRequiredMessage());
 		}
 		this.state = this.closed ? "closed" : "failed";
 		this.error = this.stderrTail ? `${errorMessage(error)}\n${this.stderrTail}` : errorMessage(error);

@@ -17,7 +17,7 @@ import {
 } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
-import { SettingsManager } from "../core/settings-manager.ts";
+import type { SettingsManager } from "../core/settings-manager.ts";
 import { durableToolSelection, getToolSelectionError, type ToolSelectionOptions } from "../core/tool-selection.ts";
 import { IDLE_LANE, type ConversationSummary, type LaneStatus, type ReturnPoint } from "./conversation-view.ts";
 import {
@@ -34,12 +34,14 @@ import {
 import {
 	configureHarnessHttp,
 	createCodingRegistry,
+	createCodingSettings,
 	createHarnessSettings,
 	ExecutionEnvs,
 	findInitialAgentModel,
 	initialThinkingLevel,
 } from "./harness-setup.ts";
 import { selectSession } from "./sessions.ts";
+import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp.ts";
 import { Subagent } from "./subagent.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -120,6 +122,7 @@ export interface OpenDurableOptions extends ToolSelectionOptions {
 	readonly thinkingLevel?: ModelThinkingLevel;
 	/** A non-persistent credential for the explicitly selected provider. */
 	readonly apiKey?: string;
+	readonly noMcp?: boolean;
 	readonly settingsManager?: SettingsManager;
 	readonly modelRuntime?: ModelRuntime;
 }
@@ -144,7 +147,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	if (options.provider !== undefined && options.model === undefined) throw new Error("--provider requires --model");
 	if (options.apiKey !== undefined && options.model === undefined) throw new Error("--api-key requires --model");
 	const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
-	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd);
+	const settingsManager = options.settingsManager ?? createCodingSettings(cwd);
 	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create());
 	// Resolve explicit arguments before creating or locking persistent session storage.
 	const selected = options.model === undefined
@@ -174,6 +177,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	const location = await selectSession(cwd, options.continueSession ?? false);
 	const envs = new ExecutionEnvs(location.cwd);
 	let harness: Harness | undefined;
+	let mcp: DurableMcp | undefined;
 	let disposeView = (): void => {};
 	try {
 		configureHarnessHttp(settingsManager);
@@ -183,6 +187,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 
 		const pendingReports: unknown[] = [];
 		let report: (error: unknown) => void = (error) => pendingReports.push(error);
+		const activeMcp = await openDurableMcp({ registry, cwd: location.cwd, settings: settingsManager, models: modelRuntime, disabled: options.noMcp, report: error => report(error) });
+		mcp = activeMcp;
 		harness = await Harness.open(
 			await openNodeSqliteStorage(location.database),
 			{
@@ -202,10 +208,11 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			},
 			init: async (tx, id) => {
 				const agent = await tx.doc(AgentDoc, id);
-				agent.tools = toolSelection;
+				agent.tools = activeMcp.selection(toolSelection);
 			},
 		});
 		const opened = harness;
+		await applyDurableMcpSelection(mcp, root, context);
 		const summaries = await readSummaries(opened, String(root.id));
 		let current: Conversation = root;
 		let conversation: AttachedReplicatedState<ConversationView> = await root.viewState(context);
@@ -338,6 +345,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			// Focus-only. An existing conversation: no summary, no new conversation.
 			const focused = await navigateTree(opened, { kind: "focus", conversationId: String(id) }, context);
 			const next = focused.conversation;
+			await applyDurableMcpSelection(activeMcp, next, context);
 			const nextState = await next.viewState(context);
 			unsubscribe();
 			conversation.dispose();
@@ -479,7 +487,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		if (!location.created && (explicitTools || agentOf(state.conversation).tools === undefined)) {
 			await opened.commit(async (tx) => {
 				const agent = await tx.doc(AgentDoc, current.id);
-				agent.tools = toolSelection;
+				agent.tools = activeMcp.selection(toolSelection);
 			}, context);
 		}
 		if (!location.created && (selected?.model !== undefined || options.thinkingLevel !== undefined)) {
@@ -526,7 +534,11 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 						await opened.close(context);
 					} finally {
 						try {
-							await envs.cleanup(context);
+							try {
+								await mcp?.close();
+							} finally {
+								await envs.cleanup(context);
+							}
 						} finally {
 							await location.release();
 						}
@@ -538,6 +550,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	} catch (error) {
 		disposeView();
 		await harness?.close(context).catch(() => {});
+		await mcp?.close().catch(() => {});
 		await envs.cleanup(context).catch(() => {});
 		await location.release().catch(() => {});
 		throw error;
