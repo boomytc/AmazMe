@@ -4,6 +4,7 @@ import { overlap } from "@amazme/chord/delta";
 import type { ImageContent, TextContent, ToolCall, ToolResultMessage } from "@amazme/ai";
 import { validateToolArguments } from "@amazme/ai/utils/validation";
 import { AssistantEntry, ToolResultEntry } from "../entries.ts";
+import { FileError } from "../file-error.ts";
 import { defineTask } from "../tasks.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, utf8ByteLength } from "../truncate.ts";
 import type {
@@ -267,7 +268,7 @@ async function run(
 			for (const waiter of await progress.stop()) waiter.reject(error);
 			throw error;
 		}
-		result = { isError: true, diagnostics: [toolDiagnostic("tool_error", errorText(error))] };
+		result = { isError: true, diagnostics: [toolDiagnostic(error instanceof FileError ? error.code : "tool_error", errorText(error))] };
 		// A throw, from `execute()` or from building the environment, ends the task `failed`, which cancels what the call owned; it no longer supervises it. The error text
 		// is already in the result entry.
 		ending = { status: "failed", message: `Tool ${call.name} threw` };

@@ -36,6 +36,12 @@
 			"import": "./dist/tool-names.js",
 			"default": "./dist/tool-names.js"
 		},
+		"./file-observations": {
+			"source": "./src/file-observations.ts",
+			"types": "./dist/file-observations.d.ts",
+			"import": "./dist/file-observations.js",
+			"default": "./dist/file-observations.js"
+		},
 		"./storage/memory": {
 			"source": "./src/storage/memory.ts",
 			"types": "./dist/storage/memory.d.ts",

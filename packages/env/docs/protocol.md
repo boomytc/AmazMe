@@ -87,7 +87,7 @@ File operations take `{ path }` (and the listed fields) and return `{}` unless n
 | `realpath` | | `{ path }` |
 | `fileRevision` | | `{ path, version }` of an opened regular file; `path` is canonical |
 | `fileVersion` | `handle` | `{ version }` of the opened file, independent of its current path |
-| `checkedWriteOpen` | `intent`, payload | `{ handle }` for an adjacent private staging file; `intent` is `{ kind: "createIfAbsent" }` or `{ kind: "replaceIfVersion", version }` |
+| `checkedWriteOpen` | `intent`, payload | `{ handle }` for an adjacent staging file; `intent` is `{ kind: "createIfAbsent" }` or `{ kind: "replaceIfVersion", revision: { path, version } }` |
 | `checkedPublish` | `handle` | `{ path, operation, version? }`; flushes, rechecks and publishes staged bytes; `operation` is `create` or `replace` |
 | `write` | `append`, `parents?` (default true), `keep?`, payload | creates missing parents like Node's recursive `mkdir`, opens like `writeFile` (`w`) or `appendFile` (`a`), writes the payload; with `keep`, `{ handle }` for `writeChunk` |
 | `writeChunk` | `handle`, payload | appends to a kept write handle; after a failed chunk, later chunks fail with `EBADF` |
@@ -112,7 +112,7 @@ bytes of a name that is not valid UTF-8, for sorting. Handles are numbers, valid
 connection; opening more than 4096 fails with `EMFILE`.
 
 Versions are opaque strings derived from opened file identity, size, modification and change metadata, without losing
-integer precision in JSON. A checked replacement must use a version observed in that file namespace. The daemon
+integer precision in JSON. A checked replacement must use the canonical path and version observed in that file namespace. The daemon
 serializes its checked publications; creation uses a hard link that never overwrites an existing entry. Replacement
 checks again just before the atomic rename (Windows uses `ReplaceFileW` to preserve the existing ACL). This protects
 cooperating writers in one daemon, not an arbitrary external writer between the final check and the OS publication.

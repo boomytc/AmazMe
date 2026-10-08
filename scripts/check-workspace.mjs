@@ -240,10 +240,10 @@ export async function checkEntryContracts(repoRoot) {
 			maxFiles: 15,
 			forbid: ["packages/ai/src/providers/", "packages/ai/src/models.generated.ts", "packages/ai/src/index.ts"],
 		},
-		// Branch summaries and the shared pure name matcher add two modules to Pi's 63-module root budget.
+		// Branch summaries, the name matcher, and the leaf file-error contract add three modules to Pi's 63-module root.
 		{
 			entry: "packages/durable/src/index.ts",
-			maxFiles: 65,
+			maxFiles: 66,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
 		},
 	]) {

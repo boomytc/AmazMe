@@ -9,6 +9,7 @@ import type { ToolDiagnostic, ToolExecutionApi } from "../src/harness/types.ts";
 import { detectSupportedImageMimeType } from "../src/tools/image.ts";
 import { createReadTool } from "../src/tools/read.ts";
 import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "../src/truncate.ts";
+import { closeFileToolApis, fileToolApi } from "./file-tool-api.ts";
 
 /**
  * The `read` tool before bounded reads, kept as the reference: it decodes the whole file, splits it into lines, and
@@ -129,8 +130,9 @@ function randomFile(next: () => number): Uint8Array {
 const OFFSETS = [undefined, 0, 1, 2, 3, 2.5, -4, 50, 2001, 3000, 1e20, Number.NaN];
 const LIMITS = [undefined, 0, 1, 2, -3, -1e20, 1.5, 7, 2000, 2500, 1e20, Number.NaN];
 
-function apiFor(env: NodeExecutionEnv): ToolExecutionApi {
+async function apiFor(env: NodeExecutionEnv): Promise<ToolExecutionApi> {
 	return {
+		...await fileToolApi(env),
 		env,
 		output: () => {},
 		outputWindow: undefined,
@@ -140,7 +142,8 @@ function apiFor(env: NodeExecutionEnv): ToolExecutionApi {
 }
 
 const dirs: string[] = [];
-afterAll(() => {
+afterAll(async () => {
+	await closeFileToolApis();
 	for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -170,7 +173,7 @@ describe("read tool", () => {
 					...(offset === undefined ? {} : { offset }),
 					...(limit === undefined ? {} : { limit }),
 				};
-				const actual = await outcome(() => tool.execute(args, apiFor(env), BACKGROUND_CONTEXT));
+				const actual = await outcome(async () => tool.execute(args, await apiFor(env), BACKGROUND_CONTEXT));
 				const expected = await outcome(() => referenceRead(file, "f.txt", offset, limit));
 				expect(actual, `seed ${seed} offset ${offset} limit ${limit}`).toEqual(expected);
 			}
@@ -204,7 +207,7 @@ describe("read tool", () => {
 		]);
 		writeFileSync(join(cwd, "a.png"), png);
 		const env = new NodeExecutionEnv({ cwd });
-		const actual = await outcome(() => createReadTool().execute({ path: "a.png" }, apiFor(env), BACKGROUND_CONTEXT));
+		const actual = await outcome(async () => createReadTool().execute({ path: "a.png" }, await apiFor(env), BACKGROUND_CONTEXT));
 		expect(actual).toEqual(await outcome(() => referenceRead(png, "a.png", undefined, undefined)));
 	});
 });

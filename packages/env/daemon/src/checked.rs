@@ -11,7 +11,7 @@ type Outcome<T> = Result<T, Failure>;
 
 enum Intent {
     Create,
-    Replace(String),
+    Replace { path: String, version: String },
 }
 
 pub struct Stage {
@@ -77,12 +77,18 @@ impl Stage {
         check_abort(control, path)?;
         let intent = match intent["kind"].as_str() {
             Some("createIfAbsent") => Intent::Create,
-            Some("replaceIfVersion") => Intent::Replace(
-                intent["version"]
+            Some("replaceIfVersion") => Intent::Replace {
+                path: intent["revision"]["path"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        Failure::new("EINVAL", "Missing canonical file path").path(path)
+                    })?
+                    .to_string(),
+                version: intent["revision"]["version"]
                     .as_str()
                     .ok_or_else(|| Failure::new("EINVAL", "Missing file version").path(path))?
                     .to_string(),
-            ),
+            },
             _ => return Err(Failure::new("EINVAL", "Invalid write intent").path(path)),
         };
         let target = target_path(Path::new(path)).map_err(|e| Failure::io(&e, "realpath", path))?;
@@ -154,7 +160,7 @@ impl Stage {
                 })?;
                 "create"
             }
-            Intent::Replace(_) => {
+            Intent::Replace { .. } => {
                 sys::checked_replace(&self.temporary.to_string_lossy(), &self.target)
                     .map_err(|e| Failure::io(&e, "rename", &self.original))?;
                 "replace"
@@ -200,7 +206,15 @@ fn check(path: &str, target: &str, intent: &Intent) -> Outcome<Option<Metadata>>
         )
         .path(path)),
         Intent::Create => Ok(None),
-        Intent::Replace(expected) => {
+        Intent::Replace {
+            path: expected_path,
+            version: expected,
+        } => {
+            if expected_path != target {
+                return Err(
+                    Failure::new("stale_version", "File target changed; read it again").path(path),
+                );
+            }
             if !current.as_ref().is_some_and(Metadata::is_file) {
                 return Err(Failure::new(
                     "stale_version",

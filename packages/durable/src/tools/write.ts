@@ -1,9 +1,11 @@
 import { type Static, Type } from "typebox";
 import { getOrThrow } from "../env/index.ts";
+import { observedWriteIntent } from "../file-observations.ts";
 import { defineTool } from "../harness/define.ts";
 import type { ToolRegistration } from "../harness/types.ts";
 import { requireEnv } from "./env.ts";
-import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import { canonicalFilePath, withFileMutationQueue } from "./file-mutation-queue.ts";
+import { observeMutation, priorFileObservation } from "./file-observations.ts";
 import { resolveToolPath } from "./path-utils.ts";
 
 const writeSchema = Type.Object({
@@ -17,7 +19,7 @@ export function createWriteTool(): ToolRegistration<typeof writeSchema> {
 	return defineTool({
 		name: "write",
 		description:
-			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+			"Write content to a file. Creates missing files and parent directories. Read an existing file first; replacement requires the observed path and version to remain current.",
 		parameters: writeSchema,
 		async execute(args, api, context) {
 			const { path, content } = args;
@@ -28,8 +30,10 @@ export function createWriteTool(): ToolRegistration<typeof writeSchema> {
 				absolutePath,
 				async () => {
 					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
-					getOrThrow(await env.writeFile(absolutePath, content, context));
-					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
+					const target = await canonicalFilePath(env, absolutePath, context);
+					const intent = observedWriteIntent(target, await priorFileObservation(api, env.id, target, context));
+					const outcome = getOrThrow(await env.writeFileChecked(absolutePath, content, intent, context));
+					await observeMutation(api, env.id, outcome);
 					return { content: [{ type: "text", text: `Successfully wrote to ${path}` }] };
 				},
 				context,

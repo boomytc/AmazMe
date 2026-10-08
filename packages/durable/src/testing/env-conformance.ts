@@ -128,10 +128,20 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 	};
 
 	const cases: EnvConformanceCase[] = [
+		createCase("checked replacements capture their complete revision before asynchronous initialization", async (env) => {
+			getOrThrow(await env.writeFile("file.txt", "before", context));
+			const observed = getOrThrow(await env.fileRevision("file.txt", context));
+			const intent = { kind: "replaceIfVersion" as const, revision: { ...observed } };
+			const writing = env.writeFileChecked("file.txt", "after", intent, context);
+			Object.assign(intent.revision, { path: "changed path", version: "changed version" });
+			assert.strictEqual(getOrThrow(await writing).operation, "replace");
+			assert.strictEqual(getOrThrow(await env.readTextFile("file.txt", context)), "after");
+		}),
+
 		createCase("checked writes capture their intent before asynchronous initialization", async (env) => {
 			const intent = { kind: "createIfAbsent" as const };
 			const writing = env.writeFileChecked("file.txt", "created", intent, context);
-			Object.assign(intent, { kind: "replaceIfVersion", version: "later mutation" });
+			Object.assign(intent, { kind: "replaceIfVersion", revision: { path: "later", version: "mutation" } });
 			assert.strictEqual(getOrThrow(await writing).operation, "create");
 			assert.strictEqual(getOrThrow(await env.readTextFile("file.txt", context)), "created");
 		}),
@@ -160,7 +170,7 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 			getOrThrow(await env.writeFile("file.txt", "one", context));
 			const observed = getOrThrow(await env.fileRevision("file.txt", context));
 			const replaced = getOrThrow(
-				await env.writeFileChecked("file.txt", "two", { kind: "replaceIfVersion", version: observed.version }, context),
+				await env.writeFileChecked("file.txt", "two", { kind: "replaceIfVersion", revision: observed }, context),
 			);
 			assert.strictEqual(replaced.operation, "replace");
 			assert.ok(replaced.version !== observed.version);
@@ -174,7 +184,7 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 					await env.writeFileChecked(
 						"file.txt",
 						"lost",
-						{ kind: "replaceIfVersion", version: publishedVersion(replaced) },
+						{ kind: "replaceIfVersion", revision: { path: replaced.path, version: publishedVersion(replaced) } },
 						context,
 					),
 				),
@@ -188,7 +198,7 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 			const observed = getOrThrow(await env.fileRevision("file.txt", context));
 			const results = await Promise.all(
 				["left", "right"].map((content) =>
-					env.writeFileChecked("file.txt", content, { kind: "replaceIfVersion", version: observed.version }, context),
+					env.writeFileChecked("file.txt", content, { kind: "replaceIfVersion", revision: observed }, context),
 				),
 			);
 			assert.strictEqual(results.filter((result) => result.ok).length, 1);
@@ -217,7 +227,7 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 					await env.writeFileChecked(
 						"file.txt",
 						"lost",
-						{ kind: "replaceIfVersion", version: observed.version },
+						{ kind: "replaceIfVersion", revision: observed },
 						context,
 					),
 				),
@@ -241,7 +251,7 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 					await env.writeFileChecked(
 						"file.txt",
 						"lost",
-						{ kind: "replaceIfVersion", version: observed.version },
+						{ kind: "replaceIfVersion", revision: observed },
 						abortedContext(),
 					),
 				),
@@ -623,6 +633,18 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 
 	if (symlinks) {
 		cases.push(
+			createCase("checked replacement binds an observation to its canonical path even across hard links", async (env) => {
+				getOrThrow(await env.writeFile("one/file.txt", "observed", context));
+				getOrThrow(await env.createDir("two", undefined, context));
+				assert.strictEqual(getOrThrow(await env.exec([...shell, "ln one/file.txt two/file.txt && ln -s one alias"], undefined, context)).exitCode, 0);
+				const observed = getOrThrow(await env.fileRevision("alias/file.txt", context));
+				assert.strictEqual(getOrThrow(await env.exec([...shell, "rm alias && ln -s two alias"], undefined, context)).exitCode, 0);
+				assert.strictEqual(getOrThrow(await env.fileRevision("alias/file.txt", context)).version, observed.version);
+				assert.strictEqual(errorCode(await env.writeFileChecked("alias/file.txt", "lost", { kind: "replaceIfVersion", revision: observed }, context)), "stale_version");
+				assert.strictEqual(getOrThrow(await env.readTextFile("one/file.txt", context)), "observed");
+				assert.strictEqual(getOrThrow(await env.readTextFile("two/file.txt", context)), "observed");
+			}),
+
 			createCase("checked writes share existing and missing targets through directory aliases", async (env) => {
 				getOrThrow(await env.createDir("real", undefined, context));
 				assert.strictEqual(getOrThrow(await env.exec([...shell, "ln -s real alias"], undefined, context)).exitCode, 0);
@@ -635,7 +657,7 @@ export function createEnvConformance(options: EnvConformanceOptions): readonly E
 						env.writeFileChecked(
 							`${prefix}/nested/file.txt`,
 							prefix,
-							{ kind: "replaceIfVersion", version: publishedVersion(created) },
+							{ kind: "replaceIfVersion", revision: { path: created.path, version: publishedVersion(created) } },
 							context,
 						),
 					),

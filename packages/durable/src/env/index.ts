@@ -1,4 +1,6 @@
 import type { Context } from "@amazme/chord";
+import type { FileError } from "../file-error.ts";
+export { FileError, type FileErrorCode } from "../file-error.ts";
 
 /** Result of a fallible operation. Expected failures are returned instead of thrown. */
 export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };
@@ -31,30 +33,6 @@ export function toError(error: unknown): Error {
 }
 
 export type FileKind = "file" | "directory" | "symlink";
-
-export type FileErrorCode =
-	| "aborted"
-	| "not_found"
-	| "permission_denied"
-	| "not_directory"
-	| "is_directory"
-	| "invalid"
-	| "not_supported"
-	| "not_observed"
-	| "stale_version"
-	| "unknown";
-
-export class FileError extends Error {
-	public code: FileErrorCode;
-	public path?: string;
-
-	constructor(code: FileErrorCode, message: string, path?: string, cause?: Error) {
-		super(message, cause === undefined ? undefined : { cause });
-		this.name = "FileError";
-		this.code = code;
-		this.path = path;
-	}
-}
 
 export type ExecutionErrorCode =
 	| "aborted"
@@ -258,7 +236,7 @@ export interface FileRevision {
 
 export type FileWriteIntent =
 	| { readonly kind: "createIfAbsent" }
-	| { readonly kind: "replaceIfVersion"; readonly version: string };
+	| { readonly kind: "replaceIfVersion"; readonly revision: FileRevision };
 export interface FileWriteOutcome {
 	readonly path: string;
 	/** Absent if publication succeeded but its revision could not be sampled; reread before another replacement. */

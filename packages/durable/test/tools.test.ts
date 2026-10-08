@@ -19,6 +19,8 @@ import {
 	ExecutionError,
 	err,
 	type FileError,
+	type FileWriteIntent,
+	type FileWriteOutcome,
 	getOrThrow,
 	type Result,
 	type ShellExecOptions,
@@ -37,10 +39,12 @@ import {
 	createWriteTool,
 } from "../src/tools/index.ts";
 import { DEFAULT_MAX_LINES } from "../src/truncate.ts";
+import { closeFileToolApis, fileToolApi } from "./file-tool-api.ts";
 
 const tempDirs: string[] = [];
 
-afterAll(() => {
+afterAll(async () => {
+	await closeFileToolApis();
 	for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -55,19 +59,16 @@ function createEnv(): NodeExecutionEnv {
 	return new NodeExecutionEnv({ cwd: createTempDir() });
 }
 
-/** A minimal execution API: the environment, collected output and diagnostics, and nothing durable. */
-function fakeApi(env: ExecutionEnv | undefined): {
+/** A unit execution API with real conversation documents and collected output and diagnostics. */
+async function fakeApi(env: ExecutionEnv | undefined): Promise<{
 	api: ToolExecutionApi;
 	output: string[];
 	diagnostics: ToolDiagnostic[];
-} {
+}> {
 	const output: string[] = [];
 	const diagnostics: ToolDiagnostic[] = [];
 	const api = {
-		taskId: 1,
-		conversationId: 1,
-		callId: "call",
-		env,
+		...await fileToolApi(env),
 		output: (chunk: string | Uint8Array) =>
 			output.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)),
 		diagnostic: (diagnostic: ToolDiagnostic) => diagnostics.push(diagnostic),
@@ -82,7 +83,7 @@ async function run(
 	env: ExecutionEnv | undefined,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<ToolExecutionResult & { output: string[]; reported: ToolDiagnostic[] }> {
-	const { api, output, diagnostics } = fakeApi(env);
+	const { api, output, diagnostics } = await fakeApi(env);
 	return { ...(await tool.execute(args, api, context)), output, reported: diagnostics };
 }
 
@@ -92,7 +93,7 @@ async function runFailing(
 	args: JsonValue,
 	env: ExecutionEnv,
 ): Promise<{ error: Error; output: string[]; reported: ToolDiagnostic[] }> {
-	const { api, output, diagnostics } = fakeApi(env);
+	const { api, output, diagnostics } = await fakeApi(env);
 	try {
 		await tool.execute(args, api, BACKGROUND_CONTEXT);
 	} catch (error) {
@@ -133,18 +134,19 @@ class BlockingWriteExecutionEnv extends NodeExecutionEnv {
 	readonly finishFirstWrite = deferred();
 	secondWriteStarted = false;
 
-	override async writeFile(
+	override async writeFileChecked(
 		path: string,
 		content: string | Uint8Array,
+		intent: FileWriteIntent,
 		context: Context,
-	): Promise<Result<void, FileError>> {
+	): Promise<Result<FileWriteOutcome, FileError>> {
 		if (content === "first\n") {
 			this.firstWriteStarted.resolve();
 			await this.finishFirstWrite.promise;
 		} else if (content === "second\n") {
 			this.secondWriteStarted = true;
 		}
-		return super.writeFile(path, content, context);
+		return super.writeFileChecked(path, content, intent, context);
 	}
 }
 
@@ -154,22 +156,23 @@ class BlockingEditExecutionEnv extends NodeExecutionEnv {
 	firstEditWriteSettled = false;
 	secondEditWriteStarted = false;
 
-	override async writeFile(
+	override async writeFileChecked(
 		path: string,
 		content: string | Uint8Array,
+		intent: FileWriteIntent,
 		context: Context,
-	): Promise<Result<void, FileError>> {
+	): Promise<Result<FileWriteOutcome, FileError>> {
 		if (content === "ALPHA\nbeta\n") {
 			this.firstEditWriteStarted.resolve();
 			await this.finishFirstEditWrite.promise;
-			const result = await super.writeFile(path, content, BACKGROUND_CONTEXT);
+			const result = await super.writeFileChecked(path, content, intent, BACKGROUND_CONTEXT);
 			this.firstEditWriteSettled = true;
 			return result;
 		}
 		if (content === "ALPHA\nBETA\n" || content === "alpha\nBETA\n") {
 			this.secondEditWriteStarted = true;
 		}
-		return super.writeFile(path, content, context);
+		return super.writeFileChecked(path, content, intent, context);
 	}
 }
 
@@ -352,6 +355,7 @@ describe("durable tools", () => {
 			const env = createEnv();
 			const original = "alpha\nbeta\ngamma\ndelta\n";
 			getOrThrow(await env.writeFile("edit.txt", original, BACKGROUND_CONTEXT));
+			await run(createReadTool(), { path: "edit.txt" }, env);
 			const result = await run(
 				createEditTool(),
 				{
@@ -389,6 +393,7 @@ describe("durable tools", () => {
 		it("matches all edits against the original and rejects overlaps", async () => {
 			const env = createEnv();
 			getOrThrow(await env.writeFile("edit.txt", "one\ntwo\nthree\n", BACKGROUND_CONTEXT));
+			await run(createReadTool(), { path: "edit.txt" }, env);
 			await expect(
 				run(
 					createEditTool(),
@@ -408,6 +413,7 @@ describe("durable tools", () => {
 		it("rejects missing and duplicate target text", async () => {
 			const env = createEnv();
 			getOrThrow(await env.writeFile("edit.txt", "foo foo foo", BACKGROUND_CONTEXT));
+			await run(createReadTool(), { path: "edit.txt" }, env);
 			const tool = createEditTool();
 			await expect(
 				run(tool, { path: "edit.txt", edits: [{ oldText: "bar", newText: "baz" }] }, env),
@@ -420,6 +426,7 @@ describe("durable tools", () => {
 		it("keeps the mutation queue locked until an aborted edit write settles", async () => {
 			const env = new BlockingEditExecutionEnv({ cwd: createTempDir() });
 			getOrThrow(await env.writeFile("file.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
+			await run(createReadTool(), { path: "file.txt" }, env);
 			const tool = createEditTool();
 			const controller = new AbortController();
 			const firstEdit = run(
@@ -434,7 +441,8 @@ describe("durable tools", () => {
 			await delay(20);
 			expect(env.secondEditWriteStarted).toBe(false);
 			env.finishFirstEditWrite.resolve();
-			await expect(firstEdit).rejects.toThrow("Operation aborted");
+			// This backend completed publication despite cancellation; the result must report the completed edit.
+			await firstEdit;
 			await secondEdit;
 			expect(env.firstEditWriteSettled).toBe(true);
 			expect(getOrThrow(await env.readTextFile("file.txt", BACKGROUND_CONTEXT))).toBe("ALPHA\nBETA\n");
@@ -443,6 +451,7 @@ describe("durable tools", () => {
 		it("serializes concurrent edits through canonical and symlink paths", async () => {
 			const env = new SlowReadExecutionEnv({ cwd: createTempDir() });
 			getOrThrow(await env.writeFile("target.txt", "alpha\nbeta\ngamma\n", BACKGROUND_CONTEXT));
+			await run(createReadTool(), { path: "target.txt" }, env);
 			await symlink("target.txt", `${env.cwd}/link.txt`);
 			const tool = createEditTool();
 			await Promise.all([
@@ -457,6 +466,7 @@ describe("durable tools", () => {
 			const first = new SlowReadExecutionEnv({ cwd: dir });
 			const second = new SlowReadExecutionEnv({ cwd: dir });
 			getOrThrow(await first.writeFile("file.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
+			await run(createReadTool(), { path: "file.txt" }, first);
 			const tool = createEditTool();
 			await Promise.all([
 				run(tool, { path: "file.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] }, first),
@@ -527,12 +537,13 @@ describe("durable tools", () => {
 			await run(tool, { path: "file.txt", content: "second\n" }, other);
 			expect(other.secondWriteStarted).toBe(true);
 			local.finishFirstWrite.resolve();
-			await blocked;
+			await expect(blocked).rejects.toMatchObject({ code: "not_observed" });
 		});
 
 		it("edits regular files through symlinks", async () => {
 			const env = createEnv();
 			getOrThrow(await env.writeFile("target.txt", "before\n", BACKGROUND_CONTEXT));
+			await run(createReadTool(), { path: "target.txt" }, env);
 			await symlink("target.txt", `${env.cwd}/link.txt`);
 			await run(createEditTool(), { path: "link.txt", edits: [{ oldText: "before", newText: "after" }] }, env);
 			expect(getOrThrow(await env.readTextFile("target.txt", BACKGROUND_CONTEXT))).toBe("after\n");
@@ -541,6 +552,7 @@ describe("durable tools", () => {
 		it("preserves BOM and CRLF line endings", async () => {
 			const env = createEnv();
 			getOrThrow(await env.writeFile("edit.txt", "\uFEFFone\r\ntwo\r\n", BACKGROUND_CONTEXT));
+			await run(createReadTool(), { path: "edit.txt" }, env);
 			await run(createEditTool(), { path: "edit.txt", edits: [{ oldText: "two", newText: "TWO" }] }, env);
 			expect(getOrThrow(await env.readTextFile("edit.txt", BACKGROUND_CONTEXT))).toBe("\uFEFFone\r\nTWO\r\n");
 		});
@@ -635,7 +647,7 @@ describe("durable tools", () => {
 			}
 			const calls: [string, ShellOutputSkip | undefined][] = [];
 			const api = {
-				...fakeApi(new SkippingEnv({ cwd: createTempDir() })).api,
+				...(await fakeApi(new SkippingEnv({ cwd: createTempDir() }))).api,
 				outputWindow: window,
 				output: (chunk: string | Uint8Array, skip?: ShellOutputSkip) => calls.push([String(chunk), skip]),
 			} as ToolExecutionApi;

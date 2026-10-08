@@ -52,7 +52,7 @@ describe("Remote checked publication through the actual daemon", () => {
 			await env.writeFileChecked(
 				"file.txt",
 				new Uint8Array(1_500_000),
-				{ kind: "replaceIfVersion", version: observed.version },
+				{ kind: "replaceIfVersion", revision: observed },
 				withAbortSignal(controller.signal, context),
 			),
 		).toMatchObject({ ok: false, error: { code: "aborted" } });
@@ -71,7 +71,7 @@ describe("Remote checked publication through the actual daemon", () => {
 			return reply;
 		});
 		expect(
-			await env.writeFileChecked("file.txt", "lost", { kind: "replaceIfVersion", version: observed.version }, context),
+			await env.writeFileChecked("file.txt", "lost", { kind: "replaceIfVersion", revision: observed }, context),
 		).toMatchObject({ ok: false, error: { code: "stale_version" } });
 		expect(readFileSync(join(env.cwd, "file.txt"), "utf8")).toBe("external");
 		expect(readdirSync(env.cwd)).toEqual(["file.txt"]);
@@ -134,7 +134,7 @@ describe("Remote checked publication through the actual daemon", () => {
 		writeFileSync(path, "two");
 		utimesSync(path, before.atime, before.mtime);
 		expect(
-			await env.writeFileChecked(path, "lost", { kind: "replaceIfVersion", version: observed.version }, context),
+			await env.writeFileChecked(path, "lost", { kind: "replaceIfVersion", revision: observed }, context),
 		).toMatchObject({ ok: false, error: { code: "stale_version" } });
 		expect(readFileSync(path, "utf8")).toBe("two");
 	});
@@ -160,7 +160,7 @@ describe("Remote checked publication through the actual daemon", () => {
 			await env.writeFileChecked(
 				"alias/file.txt",
 				"lost",
-				{ kind: "replaceIfVersion", version: observed.version },
+				{ kind: "replaceIfVersion", revision: observed },
 				context,
 			),
 		).toMatchObject({ ok: false, error: { code: "stale_version" } });
@@ -176,7 +176,7 @@ describe("Remote checked publication through the actual daemon", () => {
 		chmodSync(path, 0o751);
 		const observed = getOrThrow(await env.fileRevision(path, context));
 		getOrThrow(
-			await env.writeFileChecked(path, "after", { kind: "replaceIfVersion", version: observed.version }, context),
+			await env.writeFileChecked(path, "after", { kind: "replaceIfVersion", revision: observed }, context),
 		);
 		expect(statSync(path).mode & 0o777).toBe(0o751);
 	});

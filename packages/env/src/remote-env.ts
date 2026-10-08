@@ -674,7 +674,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 		intent: FileWriteIntent,
 		context: Context,
 	): Promise<Result<FileWriteOutcome, FileError>> {
-		intent = { ...intent };
+		intent = intent.kind === "replaceIfVersion" ? { kind: intent.kind, revision: { ...intent.revision } } : { ...intent };
 		return this.#fileOp(path, context, async (resolved) => {
 			const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : content;
 			const { json, session } = await this.connection.request(

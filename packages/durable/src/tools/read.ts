@@ -20,6 +20,8 @@ import {
 	utf8ByteLength,
 } from "../truncate.ts";
 import { requireEnv } from "./env.ts";
+import { canonicalFilePath } from "./file-mutation-queue.ts";
+import { observeFile, observeRead } from "./file-observations.ts";
 import { detectSupportedImageMimeTypeOf } from "./image.ts";
 import { resolveReadToolPath } from "./path-utils.ts";
 
@@ -79,15 +81,29 @@ export function createReadTool(): ToolRegistration<typeof readSchema, ReadToolDe
 			const { path, offset, limit } = args;
 			const env = requireEnv(api);
 			const absolutePath = await resolveReadToolPath(env, path, context);
-			const reader = getOrThrow(await env.openBinaryReader(absolutePath, undefined, context));
+			const target = await canonicalFilePath(env, absolutePath, context);
+			const opened = await env.openBinaryReader(target, undefined, context);
+			if (!opened.ok) {
+				if (opened.error.code === "not_found") await observeFile(api, env.id, target, { kind: "absent" }, context);
+				throw opened.error;
+			}
+			const reader = opened.value;
 			try {
 				// A concurrent writer can change the file between the scan and the reads. Appending (a growing log) leaves
 				// the scanned bytes as they were; a file that shrank or was rewritten in place is read again once.
 				for (let attempt = 0; ; attempt++) {
+					const version = getOrThrow(await reader.revision(context));
 					const before = getOrThrow(await reader.info(context));
 					const result = await readText(reader, before, path, offset, limit, context);
 					const after = getOrThrow(await reader.info(context));
-					if (after.size > before.size || (after.size === before.size && after.mtimeMs === before.mtimeMs)) {
+					const unchanged = version === getOrThrow(await reader.revision(context));
+					if (unchanged || after.size > before.size) {
+						if (unchanged && !("isError" in result && result.isError)) {
+							await observeRead(api, env.id, { path: target, version }, context);
+						} else {
+							await observeFile(api, env.id, target, undefined, context);
+							if (!unchanged) api.diagnostic({ severity: "warn", code: "file_changed", message: `${path} changed during reading. Read a stable version before editing or replacing it.` });
+						}
 						return result;
 					}
 					if (attempt === 1) throw new Error(`${path} changed while it was read`);

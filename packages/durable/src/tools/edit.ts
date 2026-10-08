@@ -1,5 +1,6 @@
 import { type Static, Type } from "typebox";
-import type { FileError } from "../env/index.ts";
+import { FileError, getOrThrow } from "../env/index.ts";
+import { observedEditIntent } from "../file-observations.ts";
 import { defineTool } from "../harness/define.ts";
 import type { ToolRegistration } from "../harness/types.ts";
 import {
@@ -13,7 +14,8 @@ import {
 	stripBom,
 } from "./edit-diff.ts";
 import { requireEnv } from "./env.ts";
-import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import { canonicalFilePath, withFileMutationQueue } from "./file-mutation-queue.ts";
+import { observeMutation, priorFileObservation } from "./file-observations.ts";
 import { resolveToolPath } from "./path-utils.ts";
 
 const replaceEditSchema = Type.Object({
@@ -91,7 +93,7 @@ export function createEditTool(): ToolRegistration<typeof editSchema, EditToolDe
 	return defineTool({
 		name: "edit",
 		description:
-			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+			"Read the file first, then edit it using exact text replacement. The observed path and version must remain current. Every edits[].oldText must match a unique, non-overlapping region of the original file. Merge nearby or overlapping changes into one edit. Do not include large unchanged regions just to connect distant changes.",
 		parameters: editSchema,
 		prepareArguments: prepareEditArguments,
 		async execute(args, api, context) {
@@ -103,14 +105,19 @@ export function createEditTool(): ToolRegistration<typeof editSchema, EditToolDe
 				absolutePath,
 				async () => {
 					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
-					const info = await env.fileInfo(absolutePath, context);
-					if (!info.ok) throw editAccessError(path, info.error);
-					if (info.value.kind !== "file" && info.value.kind !== "symlink") {
-						throw new Error(`Could not edit file: ${path}. Path is not a file.`);
-					}
-
-					const readResult = await env.readTextFile(absolutePath, context);
+					const target = await canonicalFilePath(env, absolutePath, context);
+					const intent = observedEditIntent(target, await priorFileObservation(api, env.id, target, context));
+					const check = async () => {
+						const current = await env.fileRevision(absolutePath, context);
+						if (!current.ok && current.error.code !== "not_found") throw editAccessError(path, current.error);
+						if (!current.ok || current.value.path !== intent.revision.path || current.value.version !== intent.revision.version) {
+							throw new FileError("stale_version", `${path} changed since it was read; read it again`, absolutePath);
+						}
+					};
+					await check();
+					const readResult = await env.readTextFile(target, context);
 					if (!readResult.ok) throw editAccessError(path, readResult.error);
+					await check();
 					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 
 					const { bom, text: content } = stripBom(readResult.value);
@@ -120,10 +127,6 @@ export function createEditTool(): ToolRegistration<typeof editSchema, EditToolDe
 					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 
 					const finalContent = bom + restoreLineEndings(newContent, originalEnding);
-					const writeResult = await env.writeFile(absolutePath, finalContent, context);
-					if (!writeResult.ok) throw editAccessError(path, writeResult.error);
-					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
-
 					const diffResult = generateDiffString(baseContent, newContent);
 					const details: EditToolDetails = {
 						diff: diffResult.diff,
@@ -132,6 +135,8 @@ export function createEditTool(): ToolRegistration<typeof editSchema, EditToolDe
 							? {}
 							: { firstChangedLine: diffResult.firstChangedLine }),
 					};
+					const outcome = getOrThrow(await env.writeFileChecked(absolutePath, finalContent, intent, context));
+					await observeMutation(api, env.id, outcome);
 					return {
 						content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
 						details,

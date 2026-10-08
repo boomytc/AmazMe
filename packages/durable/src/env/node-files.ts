@@ -46,7 +46,7 @@ export async function writeFileChecked(
 	intent: FileWriteIntent,
 	context: Context,
 ): Promise<FileWriteOutcome> {
-	intent = { ...intent };
+	intent = intent.kind === "replaceIfVersion" ? { kind: intent.kind, revision: { ...intent.revision } } : { ...intent };
 	context.abortSignal?.throwIfAborted();
 	const target = await targetPath(path);
 	const previous = writes.get(target) ?? Promise.resolve();
@@ -82,7 +82,7 @@ async function check(path: string, target: string, intent: FileWriteIntent): Pro
 	const current = await inspect(target);
 	if (intent.kind === "createIfAbsent") {
 		if (current !== undefined) throw new FileError("not_observed", "Read the existing file before replacing it", path);
-	} else if (current === undefined || !current.isFile() || fileVersion(current) !== intent.version) {
+	} else if (intent.revision.path !== target || current === undefined || !current.isFile() || fileVersion(current) !== intent.revision.version) {
 		throw new FileError("stale_version", "File changed since it was read; read it again", path);
 	}
 	return current;

@@ -80,7 +80,7 @@ describe("Node checked publication", () => {
 		writeFileSync(path, "two");
 		utimesSync(path, before.atime, before.mtime);
 		expect(
-			await env.writeFileChecked(path, "lost", { kind: "replaceIfVersion", version: observed.version }, context),
+			await env.writeFileChecked(path, "lost", { kind: "replaceIfVersion", revision: observed }, context),
 		).toMatchObject({ ok: false, error: { code: "stale_version" } });
 		expect(readFileSync(path, "utf8")).toBe("two");
 	});
@@ -93,7 +93,7 @@ describe("Node checked publication", () => {
 			writeFileSync(join(env.cwd, "file.txt"), "external");
 		};
 		expect(
-			await env.writeFileChecked("file.txt", "lost", { kind: "replaceIfVersion", version: observed.version }, context),
+			await env.writeFileChecked("file.txt", "lost", { kind: "replaceIfVersion", revision: observed }, context),
 		).toMatchObject({ ok: false, error: { code: "stale_version" } });
 		expect(readFileSync(join(env.cwd, "file.txt"), "utf8")).toBe("external");
 		expect(readdirSync(env.cwd)).toEqual(["file.txt"]);
@@ -124,7 +124,7 @@ describe("Node checked publication", () => {
 			await env.writeFileChecked(
 				"file.txt",
 				"lost",
-				{ kind: "replaceIfVersion", version: observed.version },
+				{ kind: "replaceIfVersion", revision: observed },
 				withAbortSignal(controller.signal, context),
 			),
 		).toMatchObject({ ok: false, error: { code: "aborted" } });
@@ -143,7 +143,7 @@ describe("Node checked publication", () => {
 			entered.resolve();
 			await release.promise;
 		};
-		const intent = { kind: "replaceIfVersion" as const, version: observed.version };
+		const intent = { kind: "replaceIfVersion" as const, revision: observed };
 		const first = env.writeFileChecked("file.txt", "first", intent, context);
 		await entered.promise;
 		const controller = new AbortController();
@@ -178,7 +178,7 @@ describe("Node checked publication", () => {
 			await env.writeFileChecked(
 				"alias/file.txt",
 				"lost",
-				{ kind: "replaceIfVersion", version: observed.version },
+				{ kind: "replaceIfVersion", revision: observed },
 				context,
 			),
 		).toMatchObject({ ok: false, error: { code: "stale_version" } });
@@ -194,7 +194,7 @@ describe("Node checked publication", () => {
 		chmodSync(path, 0o751);
 		const observed = getOrThrow(await env.fileRevision(path, context));
 		getOrThrow(
-			await env.writeFileChecked(path, "after", { kind: "replaceIfVersion", version: observed.version }, context),
+			await env.writeFileChecked(path, "after", { kind: "replaceIfVersion", revision: observed }, context),
 		);
 		expect(statSync(path).mode & 0o777).toBe(0o751);
 	});

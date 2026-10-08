@@ -1,4 +1,5 @@
 import type { Context } from "@amazme/chord";
+import { awaitWithContext } from "@amazme/chord/context";
 import { type ExecutionEnv, getOrThrow } from "../env/index.ts";
 
 /** Tail of the mutation chain of each file, keyed by file system id and canonical path. */
@@ -6,23 +7,25 @@ const queues = new Map<string, Promise<void>>();
 
 async function mutationKey(env: ExecutionEnv, path: string, context: Context): Promise<string> {
 	const absolutePath = getOrThrow(await env.absolutePath(path, context));
-	return `${env.id}\0${await canonical(env, absolutePath, context)}`;
+	return `${env.id}\0${await canonicalFilePath(env, absolutePath, context)}`;
 }
 
 /**
  * The canonical path; for a file that does not exist yet, its canonical parent joined with its name, so a `write` that
  * creates a file and a later mutation of it share one key even under a symlinked directory.
  */
-async function canonical(env: ExecutionEnv, absolutePath: string, context: Context): Promise<string> {
+export async function canonicalFilePath(env: ExecutionEnv, absolutePath: string, context: Context): Promise<string> {
 	const result = await env.canonicalPath(absolutePath, context);
 	if (result.ok) return result.value;
-	if (result.error.code === "not_supported") return absolutePath;
 	if (result.error.code !== "not_found") throw result.error;
 	// The file system splits the path, so a name may contain characters that are separators elsewhere.
 	const parent = getOrThrow(await env.joinPath([absolutePath, ".."], context));
-	if (parent === absolutePath || !absolutePath.startsWith(parent)) return absolutePath;
-	const name = absolutePath.slice(parent.length + (/[/\\]$/.test(parent) ? 0 : 1));
-	return getOrThrow(await env.joinPath([await canonical(env, parent, context), name], context));
+	if (parent === absolutePath) throw result.error;
+	const marker = ".amazme-name";
+	const prefix = getOrThrow(await env.joinPath([parent, marker], context)).slice(0, -marker.length);
+	if (!absolutePath.startsWith(prefix)) throw result.error;
+	const name = absolutePath.slice(prefix.length);
+	return getOrThrow(await env.joinPath([await canonicalFilePath(env, parent, context), name], context));
 }
 
 /**
@@ -45,11 +48,11 @@ export async function withFileMutationQueue<T>(
 	});
 	const tail = previous.then(() => done);
 	queues.set(key, tail);
-	await previous;
 	try {
+		await awaitWithContext(previous, context);
 		return await fn();
 	} finally {
 		release();
-		if (queues.get(key) === tail) queues.delete(key);
+		void tail.then(() => { if (queues.get(key) === tail) queues.delete(key); });
 	}
 }

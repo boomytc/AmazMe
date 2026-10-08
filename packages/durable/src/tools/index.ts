@@ -24,6 +24,7 @@ export { createFindTool, type FindToolInput } from "./find.ts";
 export { createGrepTool, type GrepToolInput } from "./grep.ts";
 export { createLsTool, type LsToolInput } from "./ls.ts";
 export type { SearchProgramOptions } from "./search-output.ts";
+export { FileObservationDoc } from "./file-observations.ts";
 
 /** `read`, `write`, `edit`, and `bash`; nothing installs it automatically. `createPowerShellTool()` adds `powershell`. */
 export const CodingTools = defineExtension({
