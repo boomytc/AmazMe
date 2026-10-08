@@ -6,6 +6,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
 
+// These tests exercise cache, debounce and recovery. Native watcher callbacks
+// must not race controlled events or the virtual clock; file reads stay real.
+vi.mock("node:fs", async (importOriginal) => {
+	const fs = await importOriginal<typeof import("node:fs")>();
+	const { EventEmitter } = await import("node:events");
+	return {
+		...fs,
+		watch: vi.fn((_path: string, listener: (event: string, filename: string | null) => void) => {
+			const watcher = new EventEmitter();
+			watcher.on("change", listener);
+			return Object.assign(watcher, {
+				close: () => watcher.removeAllListeners(),
+				ref: () => watcher,
+				unref: () => watcher,
+			});
+		}),
+		watchFile: vi.fn(),
+		unwatchFile: vi.fn(),
+	};
+});
+
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
 		(
