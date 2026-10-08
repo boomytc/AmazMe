@@ -247,12 +247,55 @@ describe("the session dock", () => {
 			disabled: true,
 		});
 		expect(empty.groups[0]?.rows[0]?.actions?.[0]?.disabled).toBeUndefined();
-		// The Chinese labels reach the same rows.
-		expect(conversationsPanel("zh", CONVERSATIONS).groups[0]?.rows[0]?.badges).toEqual([
-			"主线",
-			"1 个子会话",
-			"当前",
-		]);
+		// The root is named in the reader's language, even when the host label is the raw id.
+		expect(empty.groups[0]?.rows[0]?.title).toBe("main");
+		expect(empty.groups[0]?.rows[0]?.description).toBe("4");
+		const unnamed = conversationsPanel("en", {
+			selected: "5",
+			conversations: [
+				{ id: "1", label: "main", root: true, role: "main", depth: 0, children: 1, hasEntries: true },
+				{
+					id: "5",
+					label: "5",
+					root: false,
+					role: "fork",
+					depth: 1,
+					parentConversationId: "1",
+					parentEntryId: "2",
+					children: 0,
+					hasEntries: false,
+				},
+			],
+			tasks: [],
+		});
+		expect(unnamed.groups[0]?.rows[1]).toMatchObject({
+			title: "  New conversation",
+			description: "forked from conversation 1 at entry 2",
+		});
+		// The Chinese labels reach the same rows. The root title follows the badge, not the host word "main".
+		const zh = conversationsPanel("zh", CONVERSATIONS).groups[0]?.rows[0];
+		expect(zh?.title).toBe("主线");
+		expect(zh?.badges).toEqual(["主线", "1 个子会话", "当前"]);
+		expect(
+			conversationsPanel("zh", {
+				selected: "5",
+				conversations: [
+					{ id: "1", label: "main", root: true, role: "main", depth: 0, children: 1, hasEntries: true },
+					{
+						id: "5",
+						label: "5",
+						root: false,
+						role: "fork",
+						depth: 1,
+						parentConversationId: "1",
+						parentEntryId: "2",
+						children: 0,
+						hasEntries: false,
+					},
+				],
+				tasks: [],
+			}).groups[0]?.rows[1]?.title,
+		).toBe("  新对话");
 	});
 
 	test("lists the live tasks with what they wait on and own", () => {

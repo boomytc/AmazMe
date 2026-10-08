@@ -134,15 +134,27 @@ export interface DockViewInput {
 }
 
 /**
- * The conversations panel: every conversation of the session, the root marked as `main`, a subagent's
- * child naming the task and conversation that made it, and the focused one marked as selected.
+ * The title a conversation row shows. The root uses the reader's word for the main line. Any other
+ * conversation uses its first input. The host's id fallback is not a name, so the row says so instead.
+ */
+function conversationTitle(locale: Locale, conversation: ConversationSummaryLike): string {
+	const indent = "  ".repeat(conversation.depth ?? 0);
+	if (conversation.root || conversation.role === "main") return `${indent}${translate(locale, "dock.main")}`;
+	const named = conversation.label.trim();
+	const text = named.length === 0 || named === conversation.id ? translate(locale, "dock.untitled") : named;
+	return `${indent}${text}`;
+}
+
+/**
+ * The conversations panel: every conversation of the session, the root named in the reader's language,
+ * a subagent's child naming the task and conversation that made it, and the focused one marked as selected.
  */
 export function conversationsPanel(locale: Locale, state: ConversationsStateLike | undefined): PanelSpec {
 	const title = translate(locale, "dock.conversations");
 	if (state === undefined) return { id: "conversations", title, notices: [], groups: [] };
 	const rows: PanelRow[] = state.conversations.map((conversation) => ({
 		id: `conversation:${conversation.id}`,
-		title: `${"  ".repeat(conversation.depth ?? 0)}${conversation.label}`,
+		title: conversationTitle(locale, conversation),
 		description:
 			conversation.ownerConversationId !== undefined && conversation.ownerTaskId !== undefined
 				? translate(locale, "dock.owner", {

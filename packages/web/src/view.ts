@@ -657,17 +657,19 @@ function displayName(session: SessionSummaryLike): string | undefined {
 }
 
 /**
- * The roster, newest first, narrowed by the reader's filter. A filter matches the session's name,
- * its id, or its working directory.
+ * The roster, newest first, narrowed by the reader's filter. A filter matches the title the row
+ * shows (the stored name, or the untitled label), its id, or its working directory.
  */
 export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefined, attachedId: string | undefined, now: number, filter = ""): RosterItem[] {
 	const sessions = state?.sessions ?? [];
 	const needle = filter.trim().toLowerCase();
+	const untitled = translate(locale, "sidebar.untitled").toLowerCase();
 	return [...sessions]
 		.filter((session) => {
 			if (needle.length === 0) return true;
 			const name = displayName(session)?.toLowerCase() ?? "";
-			return name.includes(needle) || session.sessionId.toLowerCase().includes(needle) || (session.cwd ?? "").toLowerCase().includes(needle);
+			const title = name.length === 0 ? untitled : name;
+			return title.includes(needle) || session.sessionId.toLowerCase().includes(needle) || (session.cwd ?? "").toLowerCase().includes(needle);
 		})
 		.sort(
 			(left: SessionSummaryLike, right: SessionSummaryLike) =>
@@ -733,7 +735,7 @@ export function rosterGroups(locale: Locale, items: readonly RosterItem[]): Rost
 	})).filter((group) => group.items.length > 0);
 }
 
-/** The attached session's readable name, or its id when `/name` has not set one. */
+/** The attached session's readable name, or the untitled label when `/name` has not set one. */
 export function attachedSessionLabel(directory: SessionDirectoryLike | undefined, attachedId: string | undefined, locale: Locale = "en"): string | undefined {
 	if (attachedId === undefined) return undefined;
 	const session = directory?.sessions.find((item) => item.sessionId === attachedId);
@@ -758,7 +760,7 @@ function titleSessionName(name: string): string {
 export function windowTitle(input: {
 	readonly appName: string;
 	readonly version: string;
-	/** `sessionLabel`: the display name, or the session id when `/name` has not set one. */
+	/** `sessionLabel`: the display name the roster shows, or the untitled label when `/name` has not set one. */
 	readonly sessionName: string | undefined;
 	/** `approvalIndicator.count`, or 0 when the indicator is absent. */
 	readonly pendingCount: number;
@@ -1218,7 +1220,7 @@ export function isBusy(view: ConversationView | undefined): boolean {
 
 /**
  * The composer's placeholder names what the next submit will do. `sessionLabel` is the attached
- * session's display name (`attachedSessionLabel`): the name `/name` set, or the id when it has none.
+ * session's display name (`attachedSessionLabel`): the name `/name` set, or the untitled label when it has none.
  */
 export function composerPlaceholder(locale: Locale, sessionLabel: string | undefined): string {
 	return sessionLabel === undefined || sessionLabel.length === 0

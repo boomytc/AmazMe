@@ -217,7 +217,7 @@ describe("document title on each render", () => {
 });
 
 describe("composer placeholder", () => {
-	test("uses the display name, and the session id only when /name has not set one", () => {
+	test("uses the display name, and New session when the session has no name", () => {
 		const renderer = createRenderer(collectPageElements(), () => {}, APP);
 		renderer.render(buildWebView(input()));
 		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Send a task to Weekly report");
