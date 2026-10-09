@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added on-demand `amazme doctor` and Web read-only diagnostics with shared status codes and repair guidance; no credential resolution, provider calls, subprocesses, locks, or automatic repairs
+
 - Added ordered `+name`/`-name` tool selection to the SDK and print/RPC CLI, with shared validation before runtime creation and preservation across settings reloads
 - Added a reply preview to the Dashboard: a `Response` panel above the composer shows the latest reply of the session under the cursor, so several sessions can be assigned work without opening them
 

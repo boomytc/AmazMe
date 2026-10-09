@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { defineFacet } from "@amazme/chord";
 import type { Context } from "@amazme/chord";
 import { awaitWithContext, BACKGROUND_CONTEXT, withoutAbortSignal } from "@amazme/chord/context";
@@ -616,6 +616,8 @@ async function startServerBackend(
 	// checkout's project settings: one Settings, Skills, and Plugins instance per server.
 	const administrationCwd = process.cwd();
 	const administration: ServerAdministrationOptions = {
+		diagnosticHost: { id: serverId, directory: dirname(options.path), sessionDir },
+		diagnosticResources: options.serverPluginManifestPaths,
 		settings: {
 			manager: SettingsManager.create(administrationCwd),
 			agentDir: getAgentDir(),

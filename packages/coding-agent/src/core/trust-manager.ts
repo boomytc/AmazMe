@@ -218,6 +218,11 @@ export class ProjectTrustStore {
 		return this.getEntry(cwd)?.decision ?? null;
 	}
 
+	/** A diagnostic snapshot: no lock directory or trust file is created. */
+	getEntryReadOnly(cwd: string): ProjectTrustStoreEntry | null {
+		return findNearestTrustEntry(readTrustFile(this.trustPath), cwd);
+	}
+
 	getEntry(cwd: string): ProjectTrustStoreEntry | null {
 		return withTrustFileLock(this.trustPath, () => {
 			const data = readTrustFile(this.trustPath);

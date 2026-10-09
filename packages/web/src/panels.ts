@@ -378,6 +378,8 @@ export interface PanelViewInput {
 
 export const SETTINGS_FIELD_ACTION = "settings:set";
 export const SETTINGS_RELOAD_ACTION = "settings:reload";
+export const DIAGNOSTICS_ACTION = "settings:diagnostics";
+export const DIAGNOSTICS_MODAL = "settings:diagnostic-report";
 export const SKILL_NEW_ACTION = "skills:new";
 export const SKILL_EDIT_ACTION = "skills:edit";
 export const SKILL_REMOVE_ACTION = "skills:remove";
@@ -486,7 +488,10 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		id: "settings:files",
 		title: translate(locale, "panel.settings.filesTitle"),
 		description: translate(locale, "panel.settings.filesDescription"),
-		actions: [{ id: SETTINGS_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), tone: "default" }],
+		actions: [
+			{ id: SETTINGS_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), tone: "default" },
+			{ id: DIAGNOSTICS_ACTION, label: translate(locale, "panel.settings.diagnostics"), tone: "default" },
+		],
 		rows: [
 			{
 				id: "settings:global-path",

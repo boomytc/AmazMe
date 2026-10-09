@@ -225,7 +225,7 @@ describe("settings panel", () => {
 	test("lists the files it reads and offers a re-read", () => {
 		const files = settingsPanel("en", { state: SETTINGS  }).groups.at(-1);
 		expect(files?.id).toBe("settings:files");
-		expect(files?.actions).toEqual([{ id: SETTINGS_RELOAD_ACTION, label: "Re-read files", tone: "default" }]);
+		expect(files?.actions).toEqual([{ id: SETTINGS_RELOAD_ACTION, label: "Re-read files", tone: "default" }, { id: "settings:diagnostics", label: "Read-only diagnostics", tone: "default" }]);
 		expect(files?.rows).toEqual([
 			{ id: "settings:global-path", title: "Global settings", value: "/agent/settings.json" },
 			{ id: "settings:project-path", title: "Project settings", value: "/project/.amazme/settings.json" },

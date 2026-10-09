@@ -910,6 +910,10 @@ export function createRenderer(
 		applyModalState(modal);
 		const first = modal.fields[0] === undefined ? undefined : inputs.get(modal.fields[0].id);
 		(first ?? cancel).focus();
+		if (first instanceof HTMLTextAreaElement && first.readOnly) {
+			first.setSelectionRange(0, 0);
+			first.scrollTop = 0;
+		}
 	};
 
 	/** The sidebar's navigation and the settings entry: one row per management view. */

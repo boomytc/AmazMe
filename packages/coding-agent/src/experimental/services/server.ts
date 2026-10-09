@@ -10,6 +10,8 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { RoutedServerServiceAttachment, RoutedServerServiceHost } from "@amazme/server";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { PluginRuntime } from "../../core/plugins/runtime.ts";
+import { collectDiagnostics, type DiagnosticOptions } from "../../core/local-diagnostics.ts";
+import { Diagnostics } from "./diagnostics.ts";
 import { Plugins, PresentationPlugins, type Plugins as PluginsService } from "./plugins.ts";
 import { createFeedbackService } from "./feedback-provider.ts";
 import { Feedback } from "./feedback.ts";
@@ -33,6 +35,8 @@ import {
 
 /** What the server administration surface reads and writes. */
 export interface ServerAdministrationOptions {
+	readonly diagnosticHost?: DiagnosticOptions["host"];
+	readonly diagnosticResources?: readonly string[];
 	readonly settings: {
 		/** The host's own settings manager: the same files the CLI and the Session workers read. */
 		readonly manager: SettingsManager;
@@ -74,7 +78,7 @@ export async function createExperimentalServerServices(options: {
 	/** Selected server facets own their services and resources. Absent means no plugin host. */
 	plugins?: PluginRuntime;
 }): Promise<ExperimentalServerServices> {
-	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback]
+	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics]
 		.map(service => ({ service, mode: "singleton" as const }));
 	const builtinIds = new Set(definitions.map(({ service }) => service.id));
 	if (options.plugins?.services.catalogue.some(entry => builtinIds.has(entry.serviceId))) {
@@ -152,6 +156,14 @@ export async function createExperimentalServerServices(options: {
 				void refreshNow(BACKGROUND_CONTEXT).catch(() => undefined);
 				const provider = new RemoteServiceProvider(definitions);
 				provider.provide(SessionDirectory, { state: directory });
+				provider.provide(Diagnostics, {
+					async report(context) {
+						context.abortSignal?.throwIfAborted();
+						const report = await collectDiagnostics({ cwd, agentDir, projectTrusted: manager.isProjectTrusted(), host: options.administration.diagnosticHost, resources: options.administration.diagnosticResources });
+						context.abortSignal?.throwIfAborted();
+						return report;
+					},
+				});
 				provider.provide(Settings, {
 					state: settingsState,
 					set: (id, value, context) =>

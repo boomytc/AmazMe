@@ -571,6 +571,12 @@ export interface MainOptions {
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	// Diagnostics precede install cleanup, settings locks, proxy setup, and credential initialization.
+	if (args[0] === "doctor") {
+		const { runDoctorCommand } = await import("./cli/doctor.ts");
+		process.exitCode = await runDoctorCommand(args.slice(1), { cwd: process.cwd(), agentDir: getAgentDir() });
+		return;
+	}
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.AMAZME_OFFLINE);

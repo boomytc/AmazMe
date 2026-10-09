@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Moved API-key environment discovery into `utils/api-key-env` so read-only consumers avoid the compatibility registry and ambient credential probes; existing environment behavior and Pi OAuth identities are unchanged
+
 ## [1.1.0] - 2026-10-07
 
 ### Breaking Changes

@@ -102,6 +102,8 @@ import {
 	SESSION_REMOVE_MODAL,
 	SETTINGS_FIELD_ACTION,
 	SETTINGS_RELOAD_ACTION,
+	DIAGNOSTICS_ACTION,
+	DIAGNOSTICS_MODAL,
 	SETTINGS_VIEW,
 	type ShortcutId,
 	SKILL_CREATE_MODAL,
@@ -145,6 +147,8 @@ import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as S
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
 import { Skills } from "../services/skills.ts";
+import { Diagnostics } from "../services/diagnostics.ts";
+import { formatDiagnosticReport, type DiagnosticReport } from "../../core/diagnostics-types.ts";
 import { Terminal, type Terminal as TerminalService, type TerminalState } from "../services/terminal.ts";
 import { Transcript } from "../services/transcript.ts";
 import { Workspace, type Workspace as WorkspaceService, type WorkspaceState } from "../services/workspace.ts";
@@ -659,7 +663,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let appearance: ThemePreference = resolveThemePreference(manifest.preferences?.appearance);
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(locale, key, values);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, Feedback],
+		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, Feedback, Diagnostics],
 		assertAccess(): void {},
 		onError: report,
 	});
@@ -670,6 +674,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const skills = serverServices.use(Skills);
 	const plugins = serverServices.use(Plugins);
 	const feedback = serverServices.use(Feedback);
+	const diagnostics = serverServices.use(Diagnostics);
+	let diagnosticReport: DiagnosticReport | undefined;
+	let diagnosticRequest = 0;
 	let schedules: SchedulesService | undefined;
 	let scheduleServices: RemoteServices | undefined;
 	let removeScheduleObserver: (() => void) | undefined;
@@ -868,7 +875,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						locale,
 						current: view,
 						availableViews: availableViews(),
-						...(modal === undefined ? {} : { modal }),
+						...(modal === undefined ? {} : { modal: modal.id === DIAGNOSTICS_MODAL ? {
+							...modal, title: copy("panel.settings.diagnostics"), description: copy("panel.settings.diagnosticsHelp"), submit: copy("modal.close"),
+							fields: [{ id: "report", label: copy("panel.settings.diagnostics"), kind: "textarea" as const, readOnly: true, value: diagnosticReport === undefined ? copy(modalNotice?.tone === "error" ? "panel.settings.diagnosticsFailed" : "panel.settings.diagnosticsLoading") : formatDiagnosticReport(diagnosticReport, locale) }],
+						} : modal }),
 						settings: { state: settings.state.value },
 						skills: { state: skills.state.value },
 						plugins: { state: plugins.state.value, runtime: painter.mcpValue },
@@ -1298,6 +1308,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	const closeModal = (): void => {
+		diagnosticRequest += 1;
+		diagnosticReport = undefined;
 		modal = undefined;
 		modalPending = false;
 		modalNotice = undefined;
@@ -1790,6 +1802,29 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							call: () => settings.reload(BACKGROUND_CONTEXT).then(done),
 						});
 						return;
+					case DIAGNOSTICS_ACTION: {
+						const request = ++diagnosticRequest;
+						diagnosticReport = undefined;
+						openModal({ id: DIAGNOSTICS_MODAL, title: copy("panel.settings.diagnostics"), fields: [], submit: copy("modal.close") }, action);
+						modalPending = true;
+						paint();
+						void diagnostics.report(BACKGROUND_CONTEXT).then(result => {
+							if (request !== diagnosticRequest || modal?.id !== DIAGNOSTICS_MODAL) return;
+							diagnosticReport = { ...result, entries: [
+								...result.entries,
+								{ area: "resources", target: "Web client", code: "clientLoaded", level: "info" },
+								...[...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')].map((link, index) => ({ area: "resources" as const, target: `Web stylesheet ${index + 1}`, code: link.sheet === null ? "unreadable" as const : "readable" as const, level: link.sheet === null ? "error" as const : "info" as const })),
+							] };
+							modalPending = false;
+							paint();
+						}, () => {
+							if (request !== diagnosticRequest || modal?.id !== DIAGNOSTICS_MODAL) return;
+							modalPending = false;
+							modalNotice = { tone: "error", text: copy("panel.settings.diagnosticsFailed") };
+							paint();
+						});
+						return;
+					}
 					case SKILL_NEW_ACTION:
 						openModal(newSkillModal(locale), action);
 						return;
@@ -1985,6 +2020,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						});
 						return;
 					case SCHEDULE_HISTORY_MODAL:
+					case DIAGNOSTICS_MODAL:
 						closeModal(); return;
 					case SCHEDULE_ADD_MODAL: {
 						if (schedule === undefined) return;
