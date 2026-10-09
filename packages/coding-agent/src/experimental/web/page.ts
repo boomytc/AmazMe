@@ -1978,9 +1978,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					await client.reconnect();
 				} catch (error: unknown) {
 					renderer.setConnection(
-						copy("connection.retrying", { error: message(error) }),
+						(language) => translate(language, "connection.retrying", { error: message(error) }),
 						"error",
-						copy("connection.stateDisconnected"),
+						(language) => translate(language, "connection.stateDisconnected"),
 					);
 					waitMs = Math.min(waitMs * 2, 10_000);
 				}
@@ -2003,9 +2003,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					}
 					renderer.setConnection(
-						copy("connection.retrying", { error: message(error) }),
+						(language) => translate(language, "connection.retrying", { error: message(error) }),
 						"error",
-						copy("connection.stateDisconnected"),
+						(language) => translate(language, "connection.stateDisconnected"),
 					);
 					await new Promise((resolve) => setTimeout(resolve, waitMs));
 					waitMs = Math.min(waitMs * 2, 10_000);
@@ -2018,9 +2018,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	client.onConnectionStateChange((change) => {
 		if (change.state === "connected") {
 			renderer.setConnection(
-				copy("connection.connected", { id: manifest.server.id }),
+				(language) => translate(language, "connection.connected", { id: manifest.server.id }),
 				"state",
-				copy("connection.stateConnected"),
+				(language) => translate(language, "connection.stateConnected"),
 			);
 			return;
 		}
@@ -2040,18 +2040,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				};
 			}
 			renderer.setConnection(
-				copy("connection.disconnected", {
-					error: change.error?.message ?? copy("connection.hostGone"),
+				(language) => translate(language, "connection.disconnected", {
+					error: change.error?.message ?? translate(language, "connection.hostGone"),
 				}),
 				"error",
-				copy("connection.stateDisconnected"),
+				(language) => translate(language, "connection.stateDisconnected"),
 			);
 			paint();
 			retryConnection();
 			return;
 		}
 		// Any other state the client reports is its own word for an unfinished connection.
-		renderer.setConnection(copy("connection.connecting"), "state");
+		renderer.setConnection((language) => translate(language, "connection.connecting"), "state");
 	});
 	try {
 		await client.connect();

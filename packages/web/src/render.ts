@@ -8,7 +8,7 @@ import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTIO
 import type { DockTabId } from "./dock.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
 import { transcriptPosition } from "./transcript-position.ts";
-import { FALLBACK_LOCALE } from "./locale.ts";
+import { FALLBACK_LOCALE, type Locale } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
 	CHAT_VIEW,
@@ -102,10 +102,13 @@ export interface PageElements {
 	readonly modelMenu: HTMLElement;
 }
 
+/** Host diagnostics may be literal; connection status copy follows the current locale. */
+type ConnectionText = string | ((locale: Locale) => string);
+
 export interface PageRenderer {
 	render(view: WebView): void;
 	/** `text` is the full status (title and aria-label). `label`, when set, is the visible state. */
-	setConnection(text: string, kind: "state" | "error", label?: string): void;
+	setConnection(text: ConnectionText, kind: "state" | "error", label?: ConnectionText): void;
 	/** Handlers the page entry fills in once it can drive the host. */
 	onSelect: (sessionId: string) => void;
 	onCreateSession: () => void;
@@ -555,11 +558,49 @@ export function createRenderer(
 	let rosterKey = "";
 	let sessionMenu: { id: string; node: HTMLElement } | undefined;
 	let heldPromptFocus: { start: number; end: number; direction: "forward" | "backward" | "none" } | undefined;
+	let connectionCopy: { text: ConnectionText; kind: "state" | "error"; label?: ConnectionText } | undefined;
 
 	const draft = (): string => elements.prompt.value.trim();
 
 	/** The language of the view being painted; the fallback only applies before the first paint. */
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(lastView?.locale ?? FALLBACK_LOCALE, key, values);
+	const renderConnection = (): void => {
+		if (connectionCopy === undefined) return;
+		const locale = lastView?.locale ?? FALLBACK_LOCALE;
+		const resolve = (value: ConnectionText): string => typeof value === "string" ? value : value(locale);
+		const text = resolve(connectionCopy.text);
+		elements.connection.className = `connection ${connectionCopy.kind}`;
+		elements.connection.title = text;
+		elements.connection.setAttribute("aria-label", text);
+		if (connectionCopy.label === undefined) {
+			elements.connection.textContent = text;
+			return;
+		}
+		const dot = element("span", "connection-dot");
+		dot.setAttribute("aria-hidden", "true");
+		elements.connection.replaceChildren(dot, document.createTextNode(resolve(connectionCopy.label)));
+	};
+	/** The document is localized at startup; its retained controls follow later language changes. */
+	const renderShellCopy = (): void => {
+		for (const [node, key] of [
+			[elements.nav, "sidebar.management"],
+			[elements.rosterFilter, "sidebar.filter"],
+			[elements.sidebarToggle, "sidebar.toggle"],
+			[elements.viewBack, "header.back"],
+			[elements.attach, "composer.attach"],
+			[elements.primary, "composer.send"],
+			[elements.stop, "composer.stop"],
+			[elements.modelMenu, "model.menuAria"],
+		] as const) node.setAttribute("aria-label", copy(key));
+		for (const [node, key] of [
+			[elements.sidebarToggle, "sidebar.toggle"],
+			[elements.attach, "composer.attach"],
+		] as const) node.title = copy(key);
+		elements.rosterFilter.placeholder = copy("sidebar.filter");
+		const sessions = elements.sidebar.querySelector(".sidebar-label");
+		if (sessions !== null) sessions.textContent = copy("sidebar.sessions");
+		renderConnection();
+	};
 
 	const report = (action: PanelAction): void => renderer.onPanelAction(action);
 
@@ -1713,7 +1754,9 @@ export function createRenderer(
 			return lastView;
 		},
 		render(view: WebView): void {
+			const languageChanged = lastView?.locale !== view.locale;
 			lastView = view;
+			if (languageChanged) renderShellCopy();
 			if (app !== undefined) writeWindowTitle(app, view);
 			const stick = atBottom(elements.transcript);
 			const scopeChanged = flowCache.begin(view.transcriptScope ?? view.attachedId ?? "");
@@ -1842,17 +1885,9 @@ export function createRenderer(
 			renderer.onDraftChange(text);
 			if (focus) elements.prompt.focus();
 		},
-		setConnection(text: string, kind: "state" | "error", label?: string): void {
-			elements.connection.className = `connection ${kind}`;
-			elements.connection.title = text;
-			elements.connection.setAttribute("aria-label", text);
-			if (label === undefined) {
-				elements.connection.textContent = text;
-				return;
-			}
-			const dot = element("span", "connection-dot");
-			dot.setAttribute("aria-hidden", "true");
-			elements.connection.replaceChildren(dot, document.createTextNode(label));
+		setConnection(text: ConnectionText, kind: "state" | "error", label?: ConnectionText): void {
+			connectionCopy = { text, kind, ...(label === undefined ? {} : { label }) };
+			renderConnection();
 		},
 	};
 
