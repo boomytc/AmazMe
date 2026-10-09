@@ -62,7 +62,7 @@ export default defineFacet({
 
 重载使用 `replace()` 暂存同名候选；旧注册退出后候选生效，候选失败则旧注册仍可执行。静态新注册可用 `register()`，名称重复时拒绝。两者均返回需要交给 `env.own()` 的清理函数。
 
-`AgentController` 提供 prompt、steer、followUp、取消排队、abort、compact 和等待结果。原生入口在每次调用时选择当前会话，切换或分支后不会一直操作启动时的根会话。命令异步等待时应传递收到的 `context` 并响应其取消信号；Esc 会取消当前命令及当前会话任务，关闭时先取消并等待命令退出，再关闭 Harness 和插件资源。
+`AgentController` 提供 prompt、steer、followUp、取消排队、abort、compact 和等待结果。原生入口与宿主在每次调用时取得当前对话；宿主与 `AgentRuntime.current(context)` 共用焦点解析。取消排队只操作当前对话所属的输入，停止和压缩也使用该对话。传入 `conversationId` 的投递固定到指定对话，已准入操作和等待回执继续使用其原编号。命令异步等待时应传递收到的 `context` 并响应其取消信号；Esc 会取消当前命令及当前会话任务，关闭时先取消并等待命令退出，再关闭 Harness 和插件资源。
 
 需要准入自定义持久任务的进程内插件可使用 `AgentRuntime.current(context)`，取得当前选中对话与现有 Harness。原生与 session worker 都提供该服务；后台任务准入后保持自己的对话归属，焦点切换不会迁移它。该服务为 `{ local: true }`，不发布到 RPC，也不创建另一套执行器。插件应通过普通所属任务、对话、提交和工具边界执行，并传递取消上下文。
 

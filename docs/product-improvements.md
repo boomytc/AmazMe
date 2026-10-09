@@ -498,3 +498,15 @@
 - 独立安装的 Durable/AI/env 通过同一 Harness 和实际 DeepSeek provider，工具任务在 VM 执行 read、edit、bash，文件成为 REMOTE_DEEPSEEK_OK。会话与任务状态存于本机 SQLite；关闭和重新连接后重开存储，三个工具回执和远程文件均保留，六个任务全部 terminal，报告错误为空。默认 coding-agent 宿主仍使用本地 NodeExecutionEnv；本阶段证明公开 Durable/env 的远程能力，不将其描述为已经提供宿主远程环境选择界面。
 
 远程临时目录、daemon 与连接已清理，构建容器已退出，Colima 恢复原停止状态，Docker context 恢复 default。工具卡的 Unix VM 与匹配产物条目完成；Codex OAuth 和整体插件/产品审计继续进行，TODO 索引保留。
+
+
+### 宿主插件控制器的分叉归属
+
+2026-10-10。独立安装版实际复现：主线执行 /self 后分叉到 16，再执行插件命令，旧 worker 在主线新增第二条输入，分叉没有新增输入。原因是 AgentRuntime 使用焦点，AgentController 固定取启动根对话。
+
+- 共用控制器的对话解析接收调用 context 并支持异步取得既有 Conversation。worker 将默认控制器接到同一个 AgentRuntime.current，沿用 Conversations 的实际焦点，没有新增焦点文档、缓存、转接 API 或执行器。prompt/steer/followUp、取消排队、abort 和 compact 使用同一归属；显式 conversationId 和已准入回执仍按固定目标处理。
+- coding-agent 构建、25 项既有控制器/分叉/重载/worker 生命周期检查、依赖方向和三个浏览器入口检查通过；未新增或修改仓库测试。CLI bundle 保持 111 文件、9.6 MiB；当前 15 个 tarball 隔离安装并从自身 node_modules 运行正式 CLI/Web。
+- 安装版分叉后的插件输入写入 16。主线与分叉分别挂起 MCP 调用后，从主线撤回分叉队列返回 not_found，切回分叉返回 cancelled；停止分叉后主线任务仍在运行，压缩任务归属 16。显式投递主线仍写入 1，网页 /self 也写入当前分叉。
+- 宿主重启保持原 server/session 编号和分叉 16 的焦点，CLI 控制器与网页再次执行插件命令仍写入分叉。最终原始存储主线有 3 条用户输入、分叉有 6 条，27 个任务全部 terminal。网页显示分叉结果，控制台警告/错误为空；插件两次激活/释放与 stdio 两次启动/退出平衡，临时页面和进程已关闭。
+
+本阶段模型是本机协议夹具，用于明确核对目标归属；真实供应商与 OAuth 的前阶段证据保持原范围。扩展模块和最终产品审计继续推进，Codex 仍待已有账户选择，TODO 索引保留。

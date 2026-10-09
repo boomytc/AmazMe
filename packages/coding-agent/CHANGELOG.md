@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- Fixed host plugin prompts, queued-input cancellation, abort and compaction to follow the selected conversation, including after restoring a fork
+
 - Fixed Web `/reload` reusing stale plugin bundles after source edits; it now rebuilds the selected packages before worker activation and reports build or activation failures in the page's language
 - Kept long error messages readable on narrow Web windows without displacing the session title or controls
 

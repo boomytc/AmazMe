@@ -14,11 +14,11 @@ class UnknownConversation extends Error {}
 
 export function createAgentController(
 	harness: Harness,
-	conversation: () => Conversation,
+	conversation: (context: Context) => Conversation | Promise<Conversation>,
 	admission?: () => AgentOperationError | undefined,
 ): AgentControllerService {
 	const target = async (request: AgentPromptRequest, context: Context): Promise<Conversation> => {
-		if (request.conversationId === undefined) return conversation();
+		if (request.conversationId === undefined) return conversation(context);
 		const id = parseRecordId<ConversationId>(request.conversationId);
 		const handle = id === undefined ? undefined : await harness.conversation(id, context);
 		if (handle === undefined) throw new UnknownConversation(`Unknown conversation: ${request.conversationId}`);
@@ -79,12 +79,15 @@ export function createAgentController(
 		async cancelQueued(entryId, context) {
 			const id = parseRecordId<SubmissionId>(entryId);
 			if (id === undefined) return { outcome: "not_found" };
-			const result = await harness.abortSubmission(id, context, conversation().id);
+			const selected = await conversation(context);
+			const result = await harness.abortSubmission(id, context, selected.id);
 			return {
 				outcome: result === "aborted" ? "cancelled" : result === "not_found" ? "not_found" : "already_consumed",
 			};
 		},
-		abort: (context) => conversation().abort(context),
+		async abort(context) {
+			await (await conversation(context)).abort(context);
+		},
 		async cancelPrompt(operationId, context) {
 			const id = parseRecordId<SubmissionId>(operationId);
 			return {
@@ -95,7 +98,7 @@ export function createAgentController(
 			const refusal = admission?.();
 			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
-				const id = await conversation().compact(request.customInstructions ?? undefined, context);
+				const id = await (await conversation(context)).compact(request.customInstructions ?? undefined, context);
 				return { accepted: true, operationId: String(id), error: null };
 			} catch (error) {
 				return {

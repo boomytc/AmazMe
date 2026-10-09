@@ -89,14 +89,15 @@ export async function createSessionWorkerServices(options: {
 		id: "@pi/agent-controller-runtime",
 		setup(env) {
 			const conversations = env.use(Conversations);
-			env.provide(AgentRuntime, createAgentRuntime(
+			const runtime = createAgentRuntime(
 				options.harness,
 				() => Number(conversations.state.value?.selected ?? options.conversation.id) as ConversationId,
 				() => pluginRuntime?.changing === true,
-			));
+			);
+			env.provide(AgentRuntime, runtime);
 			env.provide(AgentController, createAgentController(
 				options.harness,
-				() => options.conversation,
+				async (context) => (await runtime.current(context)).conversation,
 				() => pluginRuntime?.changing === true
 					? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
 					: undefined,
