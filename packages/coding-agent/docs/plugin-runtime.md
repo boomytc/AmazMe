@@ -66,6 +66,8 @@ export default defineFacet({
 
 需要准入自定义持久任务的进程内插件可使用 `AgentRuntime.current(context)`，取得当前选中对话与现有 Harness。原生与 session worker 都提供该服务；后台任务准入后保持自己的对话归属，焦点切换不会迁移它。该服务为 `{ local: true }`，不发布到 RPC，也不创建另一套执行器。插件应通过普通所属任务、对话、提交和工具边界执行，并传递取消上下文。
 
+宿主的 `Models` 服务同样使用当前选中对话。模型与推理强度存于该对话的 `AgentDoc`，其他分叉保持各自配置；读取可用推理强度、循环和显式选择都以实际目标文档为准。选择模型同时沿用 Pi 的新会话默认设置保存行为，重启已有会话时仍恢复其持久配置。
+
 自定义服务直接使用 Chord 的 `defineService()`、`env.provide()` 和 `env.use()`，进程内服务指定 `{ local: true }`。提供者和消费者使用各自 facet，资源仍由其 `env.own()`/生命周期回调清理；不需要额外的插件服务容器。
 
 完成检查可使用 `hook(GenerationTask, { onYield })`。最终响应先写入 Durable 检查点，再运行该钩子；检查期间关闭并重开会继续处理原响应。`api.commit()` 可更新插件文档或创建 `ownership: { kind: "task", taskId: api.taskId }` 的所属任务，回调返回 `undefined`；`api.waitForTask()` 等待其终态。检查失败可返回 `{ continue: "具体反馈" }`，沿用原输入继续；用户跟进或 reset 被最终边界选中时，既有队列策略优先。检查的次数上限、超时与结果属于插件自己的持久状态，不把模型的原始响应当成验证结果。

@@ -18,6 +18,7 @@ export interface ModelsState {
 		revision: number;
 		availableModels: ModelSummary[];
 	};
+	/** Model and thinking level of the currently selected conversation. */
 	configuration: {
 		model: ModelRef | null;
 		thinkingLevel: ModelThinkingLevel;

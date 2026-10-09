@@ -1,16 +1,16 @@
-import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import type { ModelThinkingLevel } from "@amazme/ai";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@amazme/ai";
+import type { Context, Facet, MutableReplicatedState } from "@amazme/chord";
+import { defineFacet } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
-import {
-	AgentDoc,
-	type AgentState,
-	type Conversation,
-	type DocumentState,
-	type Harness,
-} from "@amazme/durable";
+import type { AgentState, Conversation, Harness } from "@amazme/durable";
+import { AgentDoc } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
+import { AgentRuntime } from "../../core/plugins/agent-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
-import { Models, type Models as ModelsService, type ModelsState } from "./models.ts";
+import { Conversations } from "./conversations.ts";
+import type { Models as ModelsService, ModelsState } from "./models.ts";
+import { Models } from "./models.ts";
 
 export interface ModelsServiceRuntime {
 	readonly service: ModelsService;
@@ -20,39 +20,38 @@ export interface ModelsServiceRuntime {
 }
 
 /**
- * The Models service over one conversation. `agent` is the conversation's replicated `pi.agent` document: its
- * configuration follows every change, also those made by other clients.
+ * Model actions use the selected conversation's own agent document. The configuration projection reads the
+ * existing root document or focused view, including changes made by other clients.
  */
 export function createModelsService(
-	conversation: Conversation,
-	agent: DocumentState<AgentState>,
+	current: (context: Context) => Promise<Conversation>,
+	readAgent: () => Readonly<AgentState> | null | undefined,
 	modelRuntime: ModelRuntime | undefined,
 	settingsManager: SettingsManager | undefined,
 	createState: (initial: ModelsState) => MutableReplicatedState<ModelsState>,
 ): ModelsServiceRuntime {
 	let catalogRevision = 0;
-	const configurationOf = (value: Readonly<AgentState> | null): ModelsState["configuration"] => ({
+	const configurationOf = (value: Readonly<AgentState> | null | undefined): ModelsState["configuration"] => ({
 		model: value?.model === undefined ? null : { provider: value.model.provider, modelId: value.model.modelId },
 		thinkingLevel: value?.thinkingLevel ?? "off",
 	});
 	const state = createState({
 		catalog: { revision: 0, availableModels: [] },
-		configuration: configurationOf(agent.value),
+		configuration: { model: null, thinkingLevel: "off" },
 		refresh: { status: "idle" },
 	});
-	const selectedModel = () => {
-		const ref = agent.value?.model;
+	const selectedModel = (agent = readAgent()) => {
+		const ref = agent?.model;
 		return ref === undefined ? undefined : modelRuntime?.getModel(ref.provider, ref.modelId);
 	};
-	const readThinkingLevels = (): ModelThinkingLevel[] => {
-		const selected = selectedModel();
+	const readThinkingLevels = (agent: Readonly<AgentState>): ModelThinkingLevel[] => {
+		const selected = selectedModel(agent);
 		return selected === undefined ? ["off"] : getSupportedThinkingLevels(selected);
 	};
 	const readCatalog = (): ModelsState["catalog"] => {
 		const selected = selectedModel();
 		const available = modelRuntime?.getAvailableSnapshot() ?? [];
-		const catalog =
-			selected === undefined || includesModel(available, selected) ? available : [...available, selected];
+		const catalog = selected === undefined || includesModel(available, selected) ? available : [...available, selected];
 		catalogRevision += 1;
 		return {
 			revision: catalogRevision,
@@ -68,13 +67,17 @@ export function createModelsService(
 	const service: ModelsService = {
 		state,
 		async cycleThinking(context) {
-			const levels = readThinkingLevels();
-			const current = agent.value?.thinkingLevel ?? "off";
-			const next = levels[(levels.indexOf(current) + 1) % levels.length] ?? "off";
-			await conversation.configure({ thinkingLevel: next }, context);
+			const conversation = await current(context);
+			await conversation.commit(async (tx) => {
+				const agent = await tx.doc(AgentDoc, conversation.id);
+				const levels = readThinkingLevels(agent);
+				const level = agent.thinkingLevel ?? "off";
+				agent.thinkingLevel = levels[(levels.indexOf(level) + 1) % levels.length] ?? "off";
+			}, context);
 		},
-		async getThinkingLevels() {
-			return readThinkingLevels();
+		async getThinkingLevels(context) {
+			const conversation = await current(context);
+			return conversation.commit(async (tx) => readThinkingLevels(await tx.doc(AgentDoc, conversation.id)), context);
 		},
 		async refresh(context) {
 			state.change(context, (draft) => {
@@ -94,20 +97,25 @@ export function createModelsService(
 		async select(model, context) {
 			const selected = modelRuntime?.getModel(model.provider, model.modelId);
 			if (selected === undefined) throw new Error(`Unknown model: ${model.provider}/${model.modelId}`);
-			const thinkingLevel = clampThinkingLevel(selected, agent.value?.thinkingLevel ?? "off");
-			await conversation.configure(
-				{ model: { provider: selected.provider, modelId: selected.id }, thinkingLevel },
-				context,
-			);
+			const conversation = await current(context);
+			await conversation.commit(async (tx) => {
+				const agent = await tx.doc(AgentDoc, conversation.id);
+				agent.thinkingLevel = clampThinkingLevel(selected, agent.thinkingLevel ?? "off");
+				agent.model = { provider: selected.provider, modelId: selected.id };
+			}, context);
 			settingsManager?.setDefaultModelAndProvider(selected.provider, selected.id);
 			await settingsManager?.flush();
 		},
 		async selectThinking(level, context) {
-			const levels = readThinkingLevels();
-			if (!levels.includes(level)) {
-				throw new Error(`Thinking level ${level} is unavailable; choose one of: ${levels.join(", ")}`);
-			}
-			await conversation.configure({ thinkingLevel: level }, context);
+			const conversation = await current(context);
+			await conversation.commit(async (tx) => {
+				const agent = await tx.doc(AgentDoc, conversation.id);
+				const levels = readThinkingLevels(agent);
+				if (!levels.includes(level)) {
+					throw new Error(`Thinking level ${level} is unavailable; choose one of: ${levels.join(", ")}`);
+				}
+				agent.thinkingLevel = level;
+			}, context);
 		},
 	};
 	return {
@@ -116,11 +124,12 @@ export function createModelsService(
 			const catalog = readCatalog();
 			state.change(context, (draft) => {
 				draft.catalog = catalog;
+				draft.configuration = configurationOf(readAgent());
 				draft.refresh = { status: "idle" };
 			});
 		},
 		syncConfiguration(context) {
-			const next = configurationOf(agent.value);
+			const next = configurationOf(readAgent());
 			const current = state.value.configuration;
 			if (
 				current.model?.provider === next.model?.provider &&
@@ -129,8 +138,12 @@ export function createModelsService(
 			) {
 				return;
 			}
+			const modelChanged =
+				current.model?.provider !== next.model?.provider || current.model?.modelId !== next.model?.modelId;
+			const catalog = modelChanged ? readCatalog() : undefined;
 			state.change(context, (draft) => {
 				draft.configuration = next;
+				if (catalog !== undefined) draft.catalog = catalog;
 			});
 		},
 	};
@@ -150,9 +163,19 @@ export async function createModelsServiceFacet(options: {
 		id: "@pi/models",
 		setup(env) {
 			env.own(() => agent.dispose());
+			const conversations = env.use(Conversations);
+			const agentRuntime = env.use(AgentRuntime);
+			const readAgent = (): Readonly<AgentState> | null | undefined => {
+				const selected = conversations.state.value?.selected ?? String(options.conversation.id);
+				if (selected === String(options.conversation.id)) return agent.value;
+				const view = conversations.state.value?.view;
+				return view !== null && view !== undefined && String(view.conversation.id) === selected
+					? (view.docs["amazme.agent"] as AgentState | undefined)
+					: undefined;
+			};
 			const runtime = createModelsService(
-				options.conversation,
-				agent,
+				async (context) => (await agentRuntime.current(context)).conversation,
+				readAgent,
 				options.modelRuntime,
 				options.settingsManager,
 				env.replicatedState,
@@ -161,6 +184,7 @@ export async function createModelsServiceFacet(options: {
 			env.onActivate(async () => {
 				await runtime.activate(BACKGROUND_CONTEXT);
 				env.own(agent.subscribe((_value, context) => runtime.syncConfiguration(context)));
+				env.own(conversations.state.subscribe((_value, context) => runtime.syncConfiguration(context)));
 			});
 		},
 	});
