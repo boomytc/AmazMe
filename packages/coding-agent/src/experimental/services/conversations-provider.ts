@@ -16,8 +16,8 @@ import {
 	readSummaries,
 	type TreeNavigationDeps,
 } from "../../durable/session-surface.ts";
-import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest, AgentQueueResponse } from "./agent-controller.ts";
-import { createAgentController } from "./agent-controller-provider.ts";
+import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest, AgentQueueResponse } from "../../core/plugins/agent-controller.ts";
+import { createAgentController } from "../../core/plugins/agent-controller-provider.ts";
 import { Conversations } from "./conversations.ts";
 import { type ConversationsState, type HistoryPage, IDLE_LANE, type LaneStatus, type LeaveResult, type ReturnPoint, type TaskSummary } from "../../durable/conversation-view.ts";
 
@@ -122,7 +122,7 @@ export function createConversationsService(
 		if (existing !== undefined) return existing;
 		const conversation = await conversationOf(id);
 		if (conversation === undefined) return undefined;
-		const created = createAgentController(options.harness, conversation);
+		const created = createAgentController(options.harness, () => conversation);
 		controllers.set(id, created);
 		return created;
 	};

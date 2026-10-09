@@ -8,16 +8,16 @@ import {
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { describe, expect, test } from "vitest";
-import { AgentController, type AgentController as AgentControllerService } from "../src/experimental/services/agent-controller.ts";
+import { AgentController, type AgentController as AgentControllerService } from "../src/core/plugins/agent-controller.ts";
 import { Commands, type CommandSummary } from "../src/experimental/services/commands.ts";
 import { createCommandsFacet } from "../src/experimental/services/commands-provider.ts";
 import { Models, type ModelsState } from "../src/experimental/services/models.ts";
 import { SessionPlugins } from "../src/experimental/services/plugins.ts";
-import { SlashCommands } from "../src/experimental/services/slash-commands.ts";
+import { SlashCommands } from "../src/core/plugins/slash-commands.ts";
 import {
 	createSlashCommandsRuntimeFacet,
 	SlashCommandRegistry,
-} from "../src/experimental/services/slash-commands-provider.ts";
+} from "../src/core/plugins/command-registry.ts";
 
 /** The loopback transport the client tests use: a binding straight onto the host's provider. */
 function loopback(provider: RemoteServiceProvider): RemoteServiceTransport {

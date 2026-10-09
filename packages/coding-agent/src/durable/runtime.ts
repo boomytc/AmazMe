@@ -1,8 +1,9 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
+import { defineFacet } from "@amazme/chord";
 import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import {
 	type AgentState,
 	type Conversation,
@@ -19,6 +20,10 @@ import {
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { createAgentExtensionsFacet } from "../core/plugins/agent-extensions.ts";
+import { AgentController } from "../core/plugins/agent-controller.ts";
+import { createAgentController } from "../core/plugins/agent-controller-provider.ts";
+import { createSlashCommandsRuntimeFacet, SlashCommandRegistry } from "../core/plugins/command-registry.ts";
+import type { SlashCommandCompletion, SlashCommandContribution } from "../core/plugins/slash-commands.ts";
 import { describePluginSources } from "../core/plugins/info.ts";
 import { discoverPluginSources } from "../core/plugins/sources.ts";
 import { assertPluginsIdle, openPluginRuntime, type PluginRuntime } from "../core/plugins/runtime.ts";
@@ -49,6 +54,7 @@ import { selectSession } from "./sessions.ts";
 import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp.ts";
 import { Subagent } from "./subagent.ts";
 import type { McpManagement } from "../core/mcp/management.ts";
+import { NATIVE_COMMANDS } from "./commands.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -81,6 +87,7 @@ export interface DurableView {
 	readonly historyMore: boolean;
 	readonly models: readonly ModelSummary[];
 	readonly notices: readonly Notice[];
+	readonly commands?: readonly Pick<SlashCommandContribution, "name" | "description" | "argumentHint">[];
 	/** The live task graph while the task panel is open. */
 	readonly tasks?: TaskGraph;
 }
@@ -95,6 +102,8 @@ export interface DurableViewSource {
 /** What the TUI may ask for. */
 export interface DurableController {
 	describePlugins?(): string;
+	runCommand?(name: string, args: string): Promise<void>;
+	completeCommand?(name: string, prefix: string): Promise<readonly SlashCommandCompletion[] | null>;
 	/** Reload the selected application plugin facets; absent when none were configured. */
 	reloadPlugins?(): Promise<void>;
 	readonly mcp?: McpManagement;
@@ -211,16 +220,6 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		let report: (error: unknown) => void = (error) => pendingReports.push(error);
 		const activeMcp = await openDurableMcp({ registry, cwd: location.cwd, settings: settingsManager, models: modelRuntime, disabled: options.noMcp, report: error => report(error) });
 		mcp = activeMcp;
-		if (facetLoader !== undefined) {
-			if (sources.length > 0) registry.install({ name: "plugin-development", sections: [section("plugin_development", () => describePluginSources(sources))] });
-			plugins = await openPluginRuntime(
-				[createAgentExtensionsFacet(registry)],
-				facetLoader,
-				async () => {
-					if (harness !== undefined) await assertPluginsIdle(harness);
-				},
-			);
-		}
 		harness = await Harness.open(
 			await openNodeSqliteStorage(location.database),
 			{
@@ -334,9 +333,14 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		};
 
 		let queue = Promise.resolve();
+		let closing: Promise<void> | undefined;
+		let activeCommand: AbortController | undefined;
 		// One at a time, so toggles, switches, and key presses apply in order.
 		const command = (operation: () => Promise<void>): Promise<void> => {
-			queue = queue.then(operation).catch(fail);
+			queue = queue.then(() => {
+				if (closing !== undefined) throw new Error("Session is closing");
+				return operation();
+			}).catch(fail);
 			return queue;
 		};
 		const watchAnswer = (submission: Submission): void => {
@@ -394,9 +398,51 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				lane: laneNow(),
 			});
 		};
+		const pluginCommands = facetLoader === undefined ? undefined : new SlashCommandRegistry(NATIVE_COMMANDS.map(({ name }) => name));
+		let unsubscribeCommands = (): void => {};
+		if (facetLoader !== undefined) {
+			if (sources.length > 0) registry.install({ name: "plugin-development", sections: [section("plugin_development", () => describePluginSources(sources))] });
+			const controllerFacet = defineFacet({
+				id: "@amazme/agent-controller-runtime",
+				setup(env) {
+					env.provide(AgentController, createAgentController(opened, () => current, () => plugins?.changing !== false
+						? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
+						: undefined));
+				},
+			});
+			plugins = await openPluginRuntime(
+				[createAgentExtensionsFacet(registry), createSlashCommandsRuntimeFacet(pluginCommands!), controllerFacet],
+				facetLoader,
+				() => assertPluginsIdle(opened),
+			);
+			unsubscribeCommands = pluginCommands!.subscribe((commands) => update({
+				commands: commands.map(({ name, description, argumentHint }) => ({ name, description, argumentHint })),
+			}));
+		}
 		const controller: DurableController = {
 			...(plugins === undefined ? {} : {
 				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources),
+				runCommand: (name: string, args: string) => command(async () => {
+					if (plugins!.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
+					const selected = pluginCommands!.list().find((entry) => entry.name === name);
+					if (selected === undefined) throw new Error(`Unknown command: /${name}`);
+					const operation = new AbortController();
+					activeCommand = operation;
+					notice("info", `Running /${name}`);
+					try {
+						const outcome = await selected.run(args, withAbortSignal(operation.signal, context));
+						if (outcome?.accepted === false) throw new Error(outcome.error.message);
+						notice("info", `${operation.signal.aborted ? "Cancelled" : "Ran"} /${name}`);
+					} catch (error) {
+						if (operation.signal.aborted) notice("info", `Cancelled /${name}`);
+						else throw error;
+					} finally {
+						if (activeCommand === operation) activeCommand = undefined;
+					}
+				}),
+				completeCommand: async (name: string, prefix: string) => plugins!.changing
+					? null
+					: await pluginCommands!.list().find((entry) => entry.name === name)?.getArgumentCompletions?.(prefix) ?? null,
 				reloadPlugins: () => command(async () => {
 					await assertPluginsIdle(opened);
 					await plugins!.reload();
@@ -434,7 +480,10 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					}, fail);
 				}),
 			// Not queued: it waits until the conversation is idle.
-			abort: () => current.abort(context).catch(fail),
+			abort: () => {
+				activeCommand?.abort(new Error("Command cancelled"));
+				return current.abort(context).catch(fail);
+			},
 			cycleThinking: () =>
 				command(async () => {
 					const model = agentModel();
@@ -517,6 +566,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		};
 
 		disposeView = () => {
+			unsubscribeCommands();
 			unsubscribe();
 			unsubscribeCommits();
 			if (listTimer !== undefined) clearTimeout(listTimer);
@@ -559,7 +609,6 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		// Recovered work from an interrupted turn continues now.
 		harness.resume();
 
-		let closing: Promise<void> | undefined;
 		return {
 			view: {
 				current: () => state,
@@ -572,8 +621,10 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			settings: settingsManager,
 			close() {
 				closing ??= (async () => {
+					activeCommand?.abort(new Error("Session closing"));
 					disposeView();
 					try {
+						await queue;
 						// Close writes no outcome: a running turn resumes with --continue.
 						await opened.close(context);
 					} finally {

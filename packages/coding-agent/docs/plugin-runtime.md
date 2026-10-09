@@ -33,6 +33,37 @@ export default defineFacet({
 
 扩展名称归插件所有，不得覆盖应用已安装的扩展。安装前使用真实注册表校验；候选版本的同名注册等待旧租约退出后生效。`list()` 返回实际注册表的名称和工具、提示段、任务名称。此服务只在进程内使用，不能通过客户端 RPC 安装代码。
 
+## 命令与服务
+
+`@amazme/coding-agent/plugin` 同时提供 `SlashCommands` 和 `AgentController`。命令使用同一份注册表，原生 TUI 和宿主都能消费。原生 TUI 显示命令与参数补全，按名称查找当前注册项后执行；应用自带命令不能被插件覆盖。
+
+```ts
+import { defineFacet } from "@amazme/chord";
+import { AgentController, SlashCommands } from "@amazme/coding-agent/plugin";
+
+export default defineFacet({
+  id: "example/commands",
+  setup(env) {
+    const commands = env.use(SlashCommands);
+    const agent = env.use(AgentController);
+    env.onActivate(() => {
+      env.own(commands.replace({
+        name: "explain",
+        description: "解释指定内容",
+        argumentHint: "<内容>",
+        run: (args, context) => agent.prompt({ message: `解释：${args}`, images: null }, context),
+      }));
+    });
+  },
+});
+```
+
+重载使用 `replace()` 暂存同名候选；旧注册退出后候选生效，候选失败则旧注册仍可执行。静态新注册可用 `register()`，名称重复时拒绝。两者均返回需要交给 `env.own()` 的清理函数。
+
+`AgentController` 提供 prompt、steer、followUp、取消排队、abort、compact 和等待结果。原生入口在每次调用时选择当前会话，切换或分支后不会一直操作启动时的根会话。命令异步等待时应传递收到的 `context` 并响应其取消信号；Esc 会取消当前命令及当前会话任务，关闭时先取消并等待命令退出，再关闭 Harness 和插件资源。
+
+自定义服务直接使用 Chord 的 `defineService()`、`env.provide()` 和 `env.use()`，进程内服务指定 `{ local: true }`。提供者和消费者使用各自 facet，资源仍由其 `env.own()`/生命周期回调清理；不需要额外的插件服务容器。
+
 ## 当前接线
 
 - 宿主给 session worker 传入自己执行的注册表，现有选包、构建和 session facet 加载流程继续使用。

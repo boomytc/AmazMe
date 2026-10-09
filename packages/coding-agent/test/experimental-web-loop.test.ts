@@ -20,7 +20,7 @@ import {
 	transcriptBlocks,
 } from "@amazme/web";
 import { afterEach, describe, expect, test } from "vitest";
-import { AgentController } from "../src/experimental/services/agent-controller.ts";
+import { AgentController } from "../src/core/plugins/agent-controller.ts";
 import {
 	createServerServiceSource,
 	createSessionServiceSource,

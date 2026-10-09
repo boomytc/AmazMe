@@ -1,10 +1,10 @@
 import { createFacetHost, defineFacet } from "@amazme/chord";
 import { describe, expect, test, vi } from "vitest";
-import { SlashCommands } from "../src/experimental/services/slash-commands.ts";
+import { SlashCommands } from "../src/core/plugins/slash-commands.ts";
 import {
 	createSlashCommandsRuntimeFacet,
 	SlashCommandRegistry,
-} from "../src/experimental/services/slash-commands-provider.ts";
+} from "../src/core/plugins/command-registry.ts";
 
 describe("experimental slash command facets", () => {
 	test("registers and removes contributions", () => {

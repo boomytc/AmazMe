@@ -1,12 +1,7 @@
 import type { Context } from "@amazme/chord";
 import type { ImageContent, TextContent } from "@amazme/ai";
-import {
-	type Conversation,
-	ConversationBusy,
-	type Harness,
-	type SubmissionId,
-	type UserInput,
-} from "@amazme/durable";
+import { ConversationBusy } from "@amazme/durable";
+import type { Conversation, Harness, SubmissionId, UserInput } from "@amazme/durable";
 import type {
 	AgentController as AgentControllerService,
 	AgentOperationError,
@@ -17,7 +12,7 @@ import type {
 
 export function createAgentController(
 	harness: Harness,
-	conversation: Conversation,
+	conversation: () => Conversation,
 	admission?: () => AgentOperationError | undefined,
 ): AgentControllerService {
 	const queue = async (
@@ -28,7 +23,7 @@ export function createAgentController(
 		const refusal = admission?.();
 		if (refusal !== undefined) return { accepted: false, entryId: null, error: refusal };
 		try {
-			const submission = await conversation.submit({ type: "input", content: toInput(request), whenBusy }, context);
+			const submission = await conversation().submit({ type: "input", content: toInput(request), whenBusy }, context);
 			return { accepted: true, entryId: String(submission.id), error: null };
 		} catch (error) {
 			return { accepted: false, entryId: null, error: toAgentError(error) };
@@ -40,7 +35,7 @@ export function createAgentController(
 			const refusal = admission?.();
 			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
-				const submission = await conversation.submit(
+				const submission = await conversation().submit(
 					{ type: "input", content: toInput(request), whenBusy: "reject" },
 					context,
 				);
@@ -54,17 +49,17 @@ export function createAgentController(
 		async cancelQueued(entryId, context) {
 			const id = parseSubmissionId(entryId);
 			if (id === undefined) return { outcome: "not_found" };
-			const result = await harness.abortSubmission(id, context, conversation.id);
+			const result = await harness.abortSubmission(id, context, conversation().id);
 			return {
 				outcome: result === "aborted" ? "cancelled" : result === "not_found" ? "not_found" : "already_consumed",
 			};
 		},
-		abort: (context) => conversation.abort(context),
+		abort: (context) => conversation().abort(context),
 		async compact(request, context) {
 			const refusal = admission?.();
 			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
-				const id = await conversation.compact(request.customInstructions ?? undefined, context);
+				const id = await conversation().compact(request.customInstructions ?? undefined, context);
 				return { accepted: true, operationId: String(id), error: null };
 			} catch (error) {
 				return { accepted: false, operationId: null, error: toAgentError(error) };

@@ -7,7 +7,7 @@ import type { ClientCommand } from "../cli/experimental/commands/client.ts";
 import { RadiusRelayAuthResolver } from "./radius-auth.ts";
 import { createRadiusClientTransportFactory, RadiusClientReconnect } from "./radius-relay.ts";
 import { activateServer, ENV_SERVER_ID, resolveServerDirectory, resolveSessionDirectory } from "./server.ts";
-import { AgentController } from "./services/agent-controller.ts";
+import { AgentController } from "../core/plugins/agent-controller.ts";
 import {
 	createServerServiceSource,
 	createSessionServiceSource,

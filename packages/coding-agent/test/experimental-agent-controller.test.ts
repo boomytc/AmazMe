@@ -3,8 +3,8 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { fauxAssistantMessage } from "@amazme/ai";
 import type { InboxState, LiveState } from "@amazme/durable";
 import { describe, expect, test } from "vitest";
-import { AgentController } from "../src/experimental/services/agent-controller.ts";
-import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
+import { AgentController } from "../src/core/plugins/agent-controller.ts";
+import { createAgentController } from "../src/core/plugins/agent-controller-provider.ts";
 import { openFauxConversation, pendingResponse } from "./experimental-durable-support.ts";
 
 describe("AgentController service", () => {
@@ -15,7 +15,7 @@ describe("AgentController service", () => {
 				defineFacet({
 					id: "test-agent-controller",
 					setup(env) {
-						env.provide(AgentController, createAgentController(harness, conversation));
+						env.provide(AgentController, createAgentController(harness, () => conversation));
 					},
 				}),
 			],
@@ -43,7 +43,7 @@ describe("AgentController service", () => {
 	test("rejects a prompt while busy and queues steering and follow-up input", async () => {
 		const pending = pendingResponse();
 		const { harness, conversation, close } = await openFauxConversation([pending.step]);
-		const controller = createAgentController(harness, conversation);
+		const controller = createAgentController(harness, () => conversation);
 		try {
 			const first = await controller.prompt({ message: "first", images: null }, BACKGROUND_CONTEXT);
 			expect(first.accepted).toBe(true);
@@ -99,7 +99,7 @@ describe("AgentController service", () => {
 
 	test("starts a compaction task", async () => {
 		const { harness, conversation, close } = await openFauxConversation();
-		const controller = createAgentController(harness, conversation);
+		const controller = createAgentController(harness, () => conversation);
 		try {
 			await expect(controller.compact({ customInstructions: "short" }, BACKGROUND_CONTEXT)).resolves.toEqual({
 				accepted: true,

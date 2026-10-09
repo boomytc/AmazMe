@@ -11,6 +11,7 @@ import type {
 import { NestedToolResultEntry } from "@amazme/durable";
 import {
 	Box,
+	CombinedAutocompleteProvider,
 	type Component,
 	Container,
 	type Focusable,
@@ -49,6 +50,8 @@ import { UserMessageComponent } from "../modes/interactive/components/user-messa
 import { getEditorTheme, getMarkdownTheme, initTheme, theme } from "../modes/interactive/theme/theme.ts";
 import { InteractiveThemeController } from "../modes/interactive/theme/theme-controller.ts";
 import { agentOf, type DurableController, type DurableView, type DurableViewSource, formatLane } from "./runtime.ts";
+import { NATIVE_COMMANDS } from "./commands.ts";
+import type { SlashCommandCompletion } from "../core/plugins/slash-commands.ts";
 
 const SELECT_THEME: SelectListTheme = {
 	selectedPrefix: (text) => theme.fg("accent", text),
@@ -195,6 +198,8 @@ class CompactionComponent extends Box {
 }
 
 interface Handlers {
+	readonly plugins: boolean;
+	completeCommand(name: string, prefix: string): Promise<readonly SlashCommandCompletion[] | null>;
 	submit(text: string): void;
 	followUp(text: string): void;
 	abort(): void;
@@ -219,6 +224,9 @@ class DurableTui {
 	readonly #editorContainer = new Container();
 	readonly #editor: CustomEditor;
 	readonly #cwd: string;
+	readonly #plugins: boolean;
+	readonly #completeCommand: Handlers["completeCommand"];
+	#autocompleteCommands: DurableView["commands"] | null = null;
 	/** The newest card per call ID; provider call IDs may repeat across turns. */
 	readonly #tools = new Map<string, ToolExecutionComponent>();
 	/** Every card shown, also older ones whose call ID a later turn reused. */
@@ -238,6 +246,8 @@ class DurableTui {
 
 	constructor(cwd: string, handlers: Handlers) {
 		this.#cwd = cwd;
+		this.#plugins = handlers.plugins;
+		this.#completeCommand = handlers.completeCommand;
 		this.#ui = new TuiAltScreen(new ProcessTerminal(), false, getAgentDir());
 		const keybindings = KeybindingsManager.create();
 		setKeybindings(keybindings);
@@ -334,6 +344,19 @@ class DurableTui {
 	}
 
 	apply(view: DurableView): void {
+		if (this.#autocompleteCommands !== view.commands) {
+			this.#autocompleteCommands = view.commands;
+			this.#editor.setAutocompleteProvider(new CombinedAutocompleteProvider([
+				...NATIVE_COMMANDS.filter(({ name }) => this.#plugins || (name !== "plugins" && name !== "reload")),
+				...(view.commands ?? []).map((command) => ({
+					...command,
+					getArgumentCompletions: async (prefix: string) => {
+						const items = await this.#completeCommand(command.name, prefix);
+						return items === null ? null : [...items];
+					},
+				})),
+			], this.#cwd));
+		}
 		const live = (view.conversation.docs["amazme.live"] ?? {}) as LiveState;
 		const shown = [...view.history, ...view.conversation.entries];
 		this.#syncTranscript(shown);
@@ -463,7 +486,7 @@ class DurableTui {
 		this.#footerHints.setText(
 			theme.fg(
 				"dim",
-				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
+				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp${this.#plugins ? "  /plugins  /reload" : ""}  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
 			),
 		);
 	}
@@ -762,6 +785,8 @@ export async function runDurableTui(source: DurableViewSource, controller: Durab
 	};
 
 	view = new DurableTui(source.current().session.cwd, {
+		plugins: controller.runCommand !== undefined,
+		completeCommand: (name, prefix) => controller.completeCommand?.(name, prefix) ?? Promise.resolve(null),
 		submit: (text) => {
 			const trimmed = text.trim();
 			if (!trimmed) return;
@@ -779,6 +804,10 @@ export async function runDurableTui(source: DurableViewSource, controller: Durab
 			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);
+			}
+			const invocation = /^\/([a-z0-9][a-z0-9:-]*)(?:\s+(.*))?$/su.exec(trimmed);
+			if (invocation !== null && source.current().commands?.some(({ name }) => name === invocation[1])) {
+				return void controller.runCommand?.(invocation[1]!, invocation[2] ?? "");
 			}
 			void controller.submit(trimmed, "steer");
 		},

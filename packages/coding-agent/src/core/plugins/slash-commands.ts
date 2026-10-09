@@ -1,4 +1,5 @@
-import { type Context, defineService } from "@amazme/chord";
+import { defineService } from "@amazme/chord";
+import type { Context } from "@amazme/chord";
 import type { AgentOperationResponse, AgentQueueResponse } from "./agent-controller.ts";
 
 export interface SlashCommandCompletion {
@@ -16,6 +17,7 @@ export interface SlashCommandContribution {
 	getArgumentCompletions?(
 		argumentPrefix: string,
 	): readonly SlashCommandCompletion[] | null | Promise<readonly SlashCommandCompletion[] | null>;
+	/** Pass this context to asynchronous agent work and respond to its cancellation signal. */
 	run(args: string, context: Context): SlashCommandRunResult | Promise<SlashCommandRunResult>;
 }
 

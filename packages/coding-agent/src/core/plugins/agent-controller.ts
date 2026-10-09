@@ -1,4 +1,5 @@
-import { type Context, defineService } from "@amazme/chord";
+import { defineService } from "@amazme/chord";
+import type { Context } from "@amazme/chord";
 
 export interface AgentPromptImage {
 	type: "image";
@@ -35,7 +36,7 @@ export interface AgentCompactionRequest {
 	customInstructions: string | null;
 }
 
-/** Presentation-safe command facade over the worker-owned root conversation. */
+/** Presentation-safe command facade over the application's selected conversation. */
 export interface AgentController {
 	/** Start a run; rejected with `busy` while one is active. */
 	prompt(request: AgentPromptRequest, context: Context): Promise<AgentOperationResponse>;

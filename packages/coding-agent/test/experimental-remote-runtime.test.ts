@@ -12,7 +12,7 @@ import { activateBuiltinClientServices, openClientRuntime } from "../src/experim
 import { createPresentationFacetLoaders } from "../src/experimental/plugins/bundled.ts";
 import * as processRuntime from "../src/experimental/process.ts";
 import { type RunningServer, startServer } from "../src/experimental/server.ts";
-import { AgentController } from "../src/experimental/services/agent-controller.ts";
+import { AgentController } from "../src/core/plugins/agent-controller.ts";
 import { createSessionServiceSource, type SessionAttachmentState } from "../src/experimental/services/connection.ts";
 import { Feedback } from "../src/experimental/services/feedback.ts";
 import { Models } from "../src/experimental/services/models.ts";

@@ -121,7 +121,7 @@ import {
 	type CommandLike,
 } from "@amazme/web";
 import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
-import { AgentController, type AgentPromptImage } from "../services/agent-controller.ts";
+import { AgentController, type AgentPromptImage } from "../../core/plugins/agent-controller.ts";
 import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
 import { createServerServiceSource, createSessionServiceSource, type SessionServiceSource } from "../services/connection.ts";

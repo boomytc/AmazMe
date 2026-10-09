@@ -41,7 +41,7 @@ import { RadiusRelayAuthResolver } from "./radius-auth.ts";
 import { RadiusRelayHost, type RadiusRelayHostStatus } from "./radius-relay.ts";
 import { createExperimentalServerServices } from "./services/server.ts";
 import type { ServerAdministrationOptions } from "./services/server.ts";
-import { AgentController } from "./services/agent-controller.ts";
+import { AgentController } from "../core/plugins/agent-controller.ts";
 import { automaticSessionName } from "./session-lifecycle.ts";
 import type { SessionCreateOptions, SessionSource, SessionSummary } from "./services/sessions.ts";
 import {

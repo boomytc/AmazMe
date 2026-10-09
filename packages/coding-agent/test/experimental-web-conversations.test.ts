@@ -9,7 +9,7 @@ import { BranchSummaryEntry, createRegistry, Harness, type Conversation, type En
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
 import { Subagent } from "../src/durable/subagent.ts";
-import { createAgentController } from "../src/experimental/services/agent-controller-provider.ts";
+import { createAgentController } from "../src/core/plugins/agent-controller-provider.ts";
 import { type ConversationsState, IDLE_LANE } from "../src/durable/conversation-view.ts";
 import { createConversationsService } from "../src/experimental/services/conversations-provider.ts";
 import { navigateTree, readReturnPoints, readSummaries } from "../src/durable/session-surface.ts";
@@ -216,7 +216,7 @@ describe("the session's conversation list", () => {
 			const handle = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
 			// A compaction moves the head; what it replaced is still reachable below the view.
 			setup.faux.setResponses([fauxAssistantMessage("a summary of the first inputs")]);
-			const controller = createAgentController(setup.harness, handle);
+			const controller = createAgentController(setup.harness, () => handle);
 			expect(await controller.compact({ customInstructions: null }, BACKGROUND_CONTEXT)).toMatchObject({
 				accepted: true,
 			});

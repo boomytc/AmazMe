@@ -17,14 +17,15 @@ import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
 import { type OpenClientRuntimeOptions, openClientRuntime } from "./client-runtime.ts";
 import { ExperimentalChatView } from "./client-tui-chat.ts";
 import { createPresentationFacetLoaders } from "./plugins/bundled.ts";
-import { AgentController, type AgentOperationResponse, type AgentQueueResponse } from "./services/agent-controller.ts";
+import { AgentController, type AgentOperationResponse, type AgentQueueResponse } from "../core/plugins/agent-controller.ts";
 import type { ServerConnectionState, ServerServiceSource, SessionAttachmentState, SessionServiceSource } from "./services/connection.ts";
 import { Conversations, type Conversations as ConversationsService } from "./services/conversations.ts";
 import { PresentationPlugins } from "./services/plugins.ts";
 import { PresentationUI } from "./services/presentation-ui.ts";
 import { SessionDirectory, SessionManagement, type SessionSummary } from "./services/sessions.ts";
-import { SlashCommands } from "./services/slash-commands.ts";
-import { createBuiltInSlashCommandsFacet, createSlashCommandsRuntimeFacet } from "./services/slash-commands-provider.ts";
+import { SlashCommands } from "../core/plugins/slash-commands.ts";
+import { createBuiltInSlashCommandsFacet } from "./services/slash-commands-provider.ts";
+import { createSlashCommandsRuntimeFacet } from "../core/plugins/command-registry.ts";
 import { liveOf, Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
 import { formatLane } from "../durable/session-surface.ts";
 

@@ -5,7 +5,7 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { loadPromptTemplates, expandPromptTemplate, type PromptTemplate } from "../../core/prompt-templates.ts";
 import { skillCommandPrompt } from "../../core/skill-command.ts";
 import { loadSkills, type Skill } from "../../core/skills.ts";
-import { AgentController } from "./agent-controller.ts";
+import { AgentController } from "../../core/plugins/agent-controller.ts";
 import {
 	Commands,
 	type CommandCompletion,
@@ -16,7 +16,7 @@ import {
 } from "./commands.ts";
 import { Models } from "./models.ts";
 import { SessionPlugins } from "./plugins.ts";
-import { SlashCommands } from "./slash-commands.ts";
+import { SlashCommands } from "../../core/plugins/slash-commands.ts";
 
 /**
  * The session's own commands: the built-ins a web presentation needs, with textual arguments

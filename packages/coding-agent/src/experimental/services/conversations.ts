@@ -4,7 +4,7 @@ import type {
 	AgentOperationResponse,
 	AgentPromptRequest,
 	AgentQueueResponse,
-} from "./agent-controller.ts";
+} from "../../core/plugins/agent-controller.ts";
 
 import type {
 	ConversationsState,

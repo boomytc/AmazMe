@@ -16,8 +16,8 @@ import type { SettingsManager } from "../../core/settings-manager.ts";
 import { configureHarnessHttp } from "../../durable/harness-setup.ts";
 import { createAgentExtensionsFacet } from "../../core/plugins/agent-extensions.ts";
 import { assertPluginsIdle, openPluginRuntime, type PluginRuntime } from "../../core/plugins/runtime.ts";
-import { AgentController } from "./agent-controller.ts";
-import { createAgentController } from "./agent-controller-provider.ts";
+import { AgentController } from "../../core/plugins/agent-controller.ts";
+import { createAgentController } from "../../core/plugins/agent-controller-provider.ts";
 import { createCommandsFacet } from "./commands-provider.ts";
 import { createApprovalsFacet, type ApprovalGate } from "./approvals-provider.ts";
 import { createConversationsFacet, summaryModelFromRuntime } from "./conversations-provider.ts";
@@ -25,7 +25,7 @@ import { createModelsServiceFacet } from "./models-provider.ts";
 import type { McpManagement } from "../../core/mcp/management.ts";
 import { createMcpFacet } from "./mcp-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
-import { createSlashCommandsRuntimeFacet } from "./slash-commands-provider.ts";
+import { createSlashCommandsRuntimeFacet } from "../../core/plugins/command-registry.ts";
 import { SessionSettings } from "./settings.ts";
 import { SessionLifecycle } from "./session-lifecycle.ts";
 import { isSessionEmpty } from "../session-lifecycle.ts";
@@ -88,7 +88,7 @@ export async function createSessionWorkerServices(options: {
 		setup(env) {
 			env.provide(AgentController, createAgentController(
 				options.harness,
-				options.conversation,
+				() => options.conversation,
 				() => pluginRuntime?.changing === true
 					? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
 					: undefined,
