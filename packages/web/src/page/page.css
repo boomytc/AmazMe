@@ -2777,7 +2777,11 @@ p {
 
 @media (max-width: 640px) {
 	.header {
-		padding: 0 8px 0 6px;
+		flex-wrap: wrap;
+		height: auto;
+		min-height: 52px;
+		gap: 4px 8px;
+		padding: 10px 8px 10px 6px;
 	}
 
 	/* The title keeps the room on a phone: the lane line and the token pair step aside. */
@@ -2788,6 +2792,14 @@ p {
 
 	.connection:not(.error) {
 		display: none;
+	}
+
+	.connection.error {
+		display: block;
+		flex: 0 0 100%;
+		margin-left: 0;
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 
 	.approval-status {

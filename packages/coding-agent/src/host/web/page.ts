@@ -142,7 +142,7 @@ import { Mcp, type Mcp as McpService } from "../services/mcp.ts";
 import type { McpManagementState } from "../../core/mcp/management.ts";
 import type { McpExposure } from "../../core/mcp-servers.ts";
 import { Models, type ModelsState } from "../services/models.ts";
-import { Plugins } from "../services/plugins.ts";
+import { Plugins, PresentationPlugins } from "../services/plugins.ts";
 import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
@@ -262,6 +262,7 @@ class SessionPainter {
 	locale: Locale = "en";
 	readonly #sessionSource: SessionServiceSource;
 	readonly #renderer: PageRenderer;
+	readonly #plugins: PresentationPlugins;
 	#transcript: ReplicatedState<ConversationView> | undefined;
 	#controller: AgentController | undefined;
 	#models: Models | undefined;
@@ -277,9 +278,10 @@ class SessionPainter {
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
 	#sessionId: string | undefined;
 
-	constructor(sessionSource: SessionServiceSource, renderer: PageRenderer) {
+	constructor(sessionSource: SessionServiceSource, renderer: PageRenderer, plugins: PresentationPlugins) {
 		this.#sessionSource = sessionSource;
 		this.#renderer = renderer;
+		this.#plugins = plugins;
 	}
 
 	get sessionId(): string | undefined {
@@ -395,8 +397,32 @@ class SessionPainter {
 				ok: false,
 				message: translate(this.locale, "page.commandUnknown", { name }),
 			};
-		const result = await commands.run(name, args, BACKGROUND_CONTEXT);
-		return result.ok ? { ok: true, message: result.note } : { ok: false, message: result.problem };
+		if (name === "reload") {
+			const sessionId = this.#sessionId;
+			if (sessionId === undefined) throw new Error(translate(this.locale, "page.reloadTargetChanged"));
+			const assertAttached = (): void => {
+				if (this.#sessionId !== sessionId || this.#commands !== commands) {
+					throw new Error(translate(this.locale, "page.reloadTargetChanged"));
+				}
+			};
+			// The server owns source builds; the worker then switches to the resulting generation.
+			try {
+				await this.#plugins.prepareSession({ sessionId, packagePaths: null }, BACKGROUND_CONTEXT);
+				assertAttached();
+				await this.#plugins.reload(BACKGROUND_CONTEXT);
+			} catch {
+				assertAttached();
+				return { ok: false, message: translate(this.locale, "page.pluginBuildFailed") };
+			}
+			assertAttached();
+		}
+		const result = await commands.run(name, args, BACKGROUND_CONTEXT).catch((error: unknown) => {
+			if (name !== "reload") throw error;
+			return { ok: false, problem: translate(this.locale, "page.pluginActivationFailed") } as const;
+		});
+		return result.ok
+			? { ok: true, message: name === "reload" ? translate(this.locale, "page.pluginsReloaded") : result.note }
+			: { ok: false, message: result.problem };
 	}
 
 	/** The host's completions for one command's argument. */
@@ -657,13 +683,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const report = (error: Error): void => renderer.setConnection(error.message, "error");
 	const serverSource = createServerServiceSource(client, { onError: report });
 	const sessionSource = createSessionServiceSource(client, { onError: report });
-	const painter = new SessionPainter(sessionSource, renderer);
 	/** The reader's language and palette: the stored preference, or what this browser asks for. */
 	let locale: Locale = resolveLocale(manifest.preferences?.locale, navigator.languages);
 	let appearance: ThemePreference = resolveThemePreference(manifest.preferences?.appearance);
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(locale, key, values);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, Feedback, Diagnostics],
+		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, PresentationPlugins, Feedback, Diagnostics],
 		assertAccess(): void {},
 		onError: report,
 	});
@@ -673,6 +698,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const settings = serverServices.use(Settings);
 	const skills = serverServices.use(Skills);
 	const plugins = serverServices.use(Plugins);
+	const painter = new SessionPainter(sessionSource, renderer, serverServices.use(PresentationPlugins));
 	const feedback = serverServices.use(Feedback);
 	const diagnostics = serverServices.use(Diagnostics);
 	let diagnosticReport: DiagnosticReport | undefined;

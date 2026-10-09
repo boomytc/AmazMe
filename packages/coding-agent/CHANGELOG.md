@@ -23,6 +23,9 @@
 
 ### Fixed
 
+- Fixed Web `/reload` reusing stale plugin bundles after source edits; it now rebuilds the selected packages before worker activation and reports build or activation failures in the page's language
+- Kept long error messages readable on narrow Web windows without displacing the session title or controls
+
 - Fixed release packages depending on workspace source resolvers and stale nested Web assets; builds now replace their outputs before publication
 
 - Fixed Web plugin commands being expanded as prompt templates, refreshed their catalogue on registration changes, and applied selected approval policies to mutation metadata from plugin tools
