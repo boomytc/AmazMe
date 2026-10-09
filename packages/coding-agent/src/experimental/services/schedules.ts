@@ -43,11 +43,12 @@ export interface ScheduleInput {
 export interface Schedules {
 	readonly state: ReplicatedState<SchedulesState>;
 	add(input: ScheduleInput, context: Context): Promise<ScheduleResult>;
+	/** Remove the plan, cancel its accepted prompt, and wait for owned cleanup. */
 	remove(id: string, context: Context): Promise<void>;
 	setEnabled(id: string, enabled: boolean, context: Context): Promise<ScheduleResult>;
-	/** Run one schedule now, whether or not it is due, and record what it produced. */
+	/** Run now even while paused; refuse another invocation while this plan is already running. */
 	runNow(id: string, context: Context): Promise<ScheduleResult>;
-	/** Re-read the file, discarding what another process changed. */
+	/** Re-read the file while no schedule is running. */
 	reload(context: Context): Promise<void>;
 }
 

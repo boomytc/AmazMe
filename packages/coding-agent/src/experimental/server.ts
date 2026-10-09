@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Context } from "@amazme/chord";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { BACKGROUND_CONTEXT, withoutAbortSignal } from "@amazme/chord/context";
 import type { FacetBundleArtifact } from "@amazme/chord/node";
 import { Client, ServerError as ClientServerError, DisconnectedError } from "@amazme/client";
 import { createUnixTransportFactory, type UnixServerRoute } from "@amazme/client/unix";
@@ -514,22 +514,45 @@ async function startServerBackend(
 		const selected = await options.resolveSessionPlugins(metadata, undefined, context);
 		const handle = await workers.openSession(metadata, context, selected.manifestPaths);
 		const attachment = await handle.attachClient(context);
+		const cleanupContext = withoutAbortSignal(context);
+		let operationId: string | undefined;
 		try {
+			context.abortSignal?.throwIfAborted();
+			// Finish the admission receipt even if cancellation arrives after the input was committed.
 			const submitted: unknown = await attachment.invokeService(
 				{ serviceId: AgentController.id, member: "prompt", args: [{ message: prompt, images: null }] },
 				() => {},
-				context,
+				cleanupContext,
 			);
 			const submission = readSubmission(submitted);
 			if ("refusal" in submission) throw new Error(submission.refusal);
+			operationId = submission.operationId;
+			context.abortSignal?.throwIfAborted();
 			const settled: unknown = await attachment.invokeService(
 				{ serviceId: AgentController.id, member: "waitForPrompt", args: [submission.operationId] },
 				() => {},
 				context,
 			);
 			return readSettlement(settled) ?? "Answered.";
+		} catch (error) {
+			if (operationId !== undefined) {
+				try {
+					await attachment.invokeService(
+						{
+							serviceId: AgentController.id,
+							member: "cancelPrompt",
+							args: [operationId],
+						},
+						() => {},
+						cleanupContext,
+					);
+				} catch (cleanupError) {
+					throw new AggregateError([error, cleanupError], "Scheduled prompt cancellation failed");
+				}
+			}
+			throw error;
 		} finally {
-			await attachment.release(context);
+			await attachment.release(cleanupContext);
 		}
 	};
 	// The administration surfaces read and write the agent directory the CLI uses, plus the

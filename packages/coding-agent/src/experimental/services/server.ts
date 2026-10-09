@@ -83,6 +83,8 @@ export async function createExperimentalServerServices(options: {
 		sessions: await options.list(BACKGROUND_CONTEXT),
 	});
 	const attachments = new Set<RoutedServerServiceAttachment>();
+	let disposed = false;
+	let disposePromise: Promise<void> | undefined;
 	let mutationTail = Promise.resolve();
 
 	// The administration surfaces: one Settings/Skills/Plugins instance per server, shared with every
@@ -147,6 +149,7 @@ export async function createExperimentalServerServices(options: {
 	return {
 		host: {
 			attachClient(presentation) {
+				if (disposed) throw new Error("Server services are disposed");
 				let preparedPluginPackagePaths: readonly string[] | undefined;
 				// A client that just arrived sees the sessions that exist now, including terminal ones
 				// created while this host was running.
@@ -265,16 +268,23 @@ export async function createExperimentalServerServices(options: {
 			await options.nameAutomatically(sessionId, name, context);
 			await refreshNow(context);
 		}),
-		async dispose() {
-			schedules.stop();
-			const releases = await Promise.allSettled(
-				[...attachments].map((attachment) => attachment.release(BACKGROUND_CONTEXT)),
-			);
-			attachments.clear();
-			await mutationTail;
-			const errors = releases.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
-			if (errors.length === 1) throw errors[0];
-			if (errors.length > 1) throw new AggregateError(errors, "Failed to release server service attachments");
+		dispose() {
+			if (disposePromise !== undefined) return disposePromise;
+			disposed = true;
+			const { promise, resolve, reject } = Promise.withResolvers<void>();
+			disposePromise = promise;
+			void (async () => {
+				const releases = await Promise.allSettled([
+					schedules.stop(),
+					...[...attachments].map((attachment) => attachment.release(BACKGROUND_CONTEXT)),
+				]);
+				attachments.clear();
+				await mutationTail;
+				const errors = releases.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+				if (errors.length === 1) throw errors[0];
+				if (errors.length > 1) throw new AggregateError(errors, "Failed to stop server services");
+			})().then(resolve, reject);
+			return promise;
 		},
 	};
 }

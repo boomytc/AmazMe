@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal, withoutAbortSignal } from "@amazme/chord/context";
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import {
 	type ScheduleInput,
@@ -21,7 +21,7 @@ export const SCHEDULE_DEFAULT_TICK_MS = 5_000;
 export interface SchedulesServiceOptions {
 	/** The agent directory: the schedules file lives beside the settings the CLI reads. */
 	readonly agentDir: string;
-	/** Run one scheduled prompt against its session; the returned note is what the panel shows. */
+	/** Run one prompt, joining its accepted work's cancellation before rejecting; the note is shown in the panel. */
 	run(sessionId: string, prompt: string, context: Context): Promise<string>;
 	/** The clock, so a test can move time instead of waiting for it. */
 	readonly now?: () => number;
@@ -79,7 +79,8 @@ export interface SchedulesService {
 	tick(context: Context): Promise<void>;
 	/** Start the host's own check loop. */
 	start(): void;
-	stop(): void;
+	/** Close admission, cancel accepted runs, and join their cleanup and the store's writes. */
+	stop(): Promise<void>;
 	/** The starting read, for the facet's activation. */
 	activate(context: Context): Promise<void>;
 }
@@ -108,9 +109,12 @@ export function createSchedulesService(
 	let schedules: ScheduleRecord[] = [];
 	let timer: NodeJS.Timeout | undefined;
 	let ticking = false;
+	let stopped = false;
+	let stopPromise: Promise<void> | undefined;
+	const running = new Map<string, { controller: AbortController; done: Promise<ScheduleResult> }>();
 	let mutationTail: Promise<unknown> = Promise.resolve();
 
-	/** Serialize the file's own reads and writes; a run happens before the queue is entered. */
+	/** Serialize admission and file changes; model work never holds this queue. */
 	const mutate = <T>(operation: () => Promise<T>): Promise<T> => {
 		const result = mutationTail.then(operation, operation);
 		mutationTail = result.then(
@@ -129,22 +133,28 @@ export function createSchedulesService(
 		});
 	};
 
-	const write = async (): Promise<void> => {
-		const body: SchedulesFile = { version: 1, schedules };
+	const commit = async (next: ScheduleRecord[], context: Context): Promise<void> => {
+		const body: SchedulesFile = { version: 1, schedules: next };
 		await mkdir(dirname(path), { recursive: true });
-		const temporary = `${path}.${process.pid}.tmp`;
-		await writeFile(temporary, `${JSON.stringify(body, null, "\t")}\n`, "utf8");
-		await rename(temporary, path);
+		const temporary = `${path}.${randomUUID()}.tmp`;
+		try {
+			await writeFile(temporary, `${JSON.stringify(body, null, "\t")}\n`, {
+				encoding: "utf8",
+				mode: 0o600,
+			});
+			await rename(temporary, path);
+		} finally {
+			await rm(temporary, { force: true });
+		}
+		schedules = next;
+		publish(context);
 	};
-
-	const commit = (context: Context): Promise<void> =>
-		mutate(async () => {
-			await write();
-			publish(context);
-		});
 
 	const load = (context: Context): Promise<void> =>
 		mutate(async () => {
+			if (stopped) throw new Error("Schedules are stopped.");
+			if (running.size > 0) throw new Error("Wait for running schedules before reloading the file.");
+			context.abortSignal?.throwIfAborted();
 			let parsed: unknown;
 			try {
 				parsed = JSON.parse(await readFile(path, "utf8"));
@@ -164,21 +174,18 @@ export function createSchedulesService(
 
 	const find = (id: string): ScheduleRecord | undefined => schedules.find((record) => record.id === id);
 
-	const replace = (record: ScheduleRecord): void => {
-		schedules = schedules.map((candidate) => (candidate.id === record.id ? record : candidate));
-	};
-
 	const due = (): ScheduleRecord[] => schedules.filter((record) => record.enabled && record.nextRunAt <= now());
 
 	/**
 	 * Run one schedule and record what it produced; the returned result is shown to the reader.
 	 * A due run moves the cadence on from the moment it finished; a manual run leaves it where it was.
 	 */
-	const execute = async (record: ScheduleRecord, context: Context, advance: boolean): Promise<ScheduleResult> => {
+	const run = async (record: ScheduleRecord, context: Context, advance: boolean): Promise<ScheduleResult> => {
 		const at = now();
 		let outcome: string;
 		let result: ScheduleResult;
 		try {
+			context.abortSignal?.throwIfAborted();
 			const note = await options.run(record.sessionId, record.prompt, context);
 			outcome = note;
 			result = { ok: true, note };
@@ -187,26 +194,56 @@ export function createSchedulesService(
 			result = { ok: false, problem: outcome };
 		}
 		await mutate(async () => {
-			const current = find(record.id) ?? record;
-			replace({
+			const current = find(record.id);
+			if (current === undefined) return;
+			const updated: ScheduleRecord = {
 				...current,
 				lastRunAt: at,
 				lastOutcome: outcome,
 				nextRunAt: advance && current.enabled ? now() + current.everyMs : current.nextRunAt,
-			});
-			await write();
-			publish(context);
+			};
+			await commit(
+				schedules.map((candidate) => (candidate.id === record.id ? updated : candidate)),
+				withoutAbortSignal(context),
+			);
 		});
 		return result;
 	};
 
+	const execute = async (id: string, context: Context, advance: boolean): Promise<ScheduleResult> => {
+		const accepted = await mutate<{ refusal: string } | { done: Promise<ScheduleResult> }>(async () => {
+			if (stopped) return { refusal: "Schedules are stopped." };
+			context.abortSignal?.throwIfAborted();
+			const record = find(id);
+			if (record === undefined) return { refusal: "That schedule is gone." };
+			if (running.has(id)) return { refusal: "That schedule is already running." };
+			if (advance && (!record.enabled || record.nextRunAt > now())) return { refusal: "That schedule is not due." };
+			const controller = new AbortController();
+			const { promise: done, resolve, reject } = Promise.withResolvers<ScheduleResult>();
+			running.set(id, { controller, done });
+			void run(record, withAbortSignal(controller.signal, context), advance).then(
+				(result) => {
+					running.delete(id);
+					resolve(result);
+				},
+				(error: unknown) => {
+					running.delete(id);
+					reject(error);
+				},
+			);
+			return { done };
+		});
+		return "refusal" in accepted ? { ok: false, problem: accepted.refusal } : accepted.done;
+	};
+
 	const tick = async (context: Context): Promise<void> => {
 		// One pass at a time: a real run takes longer than the gap between checks.
-		if (ticking) return;
+		if (stopped || ticking) return;
 		ticking = true;
 		try {
 			for (const record of due()) {
-				await execute(record, context, true);
+				if (stopped) break;
+				await execute(record.id, context, true);
 			}
 		} finally {
 			ticking = false;
@@ -239,43 +276,71 @@ export function createSchedulesService(
 					lastOutcome: null,
 					nextRunAt: at + everyMs,
 				};
-				schedules = [...schedules, record];
-				await commit(context);
-				return { ok: true, note: "Added. It runs on its own from now on." };
+				return mutate(async () => {
+					if (stopped) return { ok: false, problem: "Schedules are stopped." };
+					context.abortSignal?.throwIfAborted();
+					await commit([...schedules, record], context);
+					return { ok: true, note: "Added. It runs on its own from now on." };
+				});
 			},
 			async remove(id: string, context: Context): Promise<void> {
-				const next = schedules.filter((record) => record.id !== id);
-				if (next.length === schedules.length) return;
-				schedules = next;
-				await commit(context);
+				const active = await mutate(async () => {
+					if (stopped) throw new Error("Schedules are stopped.");
+					context.abortSignal?.throwIfAborted();
+					const next = schedules.filter((record) => record.id !== id);
+					if (next.length !== schedules.length) await commit(next, context);
+					return running.get(id);
+				});
+				active?.controller.abort(new Error("Schedule was removed."));
+				await active?.done;
 			},
 			async setEnabled(id: string, enabled: boolean, context: Context): Promise<ScheduleResult> {
-				const record = find(id);
-				if (record === undefined) return { ok: false, problem: "That schedule is gone." };
-				replace({ ...record, enabled, nextRunAt: enabled ? now() + record.everyMs : record.nextRunAt });
-				await commit(context);
-				return { ok: true, note: enabled ? "Running again." : "Paused." };
+				return mutate(async () => {
+					if (stopped) return { ok: false, problem: "Schedules are stopped." };
+					context.abortSignal?.throwIfAborted();
+					const record = find(id);
+					if (record === undefined) return { ok: false, problem: "That schedule is gone." };
+					const updated = {
+						...record,
+						enabled,
+						nextRunAt: enabled ? now() + record.everyMs : record.nextRunAt,
+					};
+					await commit(
+						schedules.map((candidate) => (candidate.id === id ? updated : candidate)),
+						context,
+					);
+					return { ok: true, note: enabled ? "Running again." : "Paused." };
+				});
 			},
 			async runNow(id: string, context: Context): Promise<ScheduleResult> {
-				const record = find(id);
-				if (record === undefined) return { ok: false, problem: "That schedule is gone." };
 				// A manual run does not move the cadence, so a paused schedule stays paused.
-				return await execute(record, context, false);
+				return execute(id, context, false);
 			},
 			reload: (context: Context) => load(context),
 		},
 		tick,
 		start() {
-			if (timer !== undefined) return;
+			if (stopped || timer !== undefined) return;
 			timer = setInterval(() => {
 				void tick(BACKGROUND_CONTEXT).catch(() => {});
 			}, tickMs);
 			timer.unref();
 		},
 		stop() {
-			if (timer === undefined) return;
-			clearInterval(timer);
+			if (stopPromise !== undefined) return stopPromise;
+			stopped = true;
+			if (timer !== undefined) clearInterval(timer);
 			timer = undefined;
+			const { promise, resolve, reject } = Promise.withResolvers<void>();
+			stopPromise = promise;
+			for (const entry of running.values()) entry.controller.abort(new Error("Schedules are stopped."));
+			void (async () => {
+				const results = await Promise.allSettled([...running.values()].map((entry) => entry.done));
+				await mutationTail;
+				const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+				if (errors.length > 0) throw new AggregateError(errors, "Failed to stop schedules");
+			})().then(resolve, reject);
+			return promise;
 		},
 		activate: (context: Context) => load(context),
 	};
@@ -284,12 +349,14 @@ export function createSchedulesService(
 /** The schedule service as a facet: it owns the file's state, reads it once, and runs the timer. */
 export function createSchedulesFacet(options: SchedulesServiceOptions): Facet {
 	return defineFacet({
-		id: "@pi/schedules",
+		id: "@amazme/schedules",
 		setup(env) {
 			const runtime = createSchedulesService(options, (initial) => env.replicatedState(initial));
 			env.provide(Schedules, runtime.service);
-			env.onActivate(() => {
-				void runtime.activate(BACKGROUND_CONTEXT).then(() => runtime.start());
+			env.own(() => runtime.stop());
+			env.onActivate(async () => {
+				await runtime.activate(BACKGROUND_CONTEXT);
+				runtime.start();
 			});
 		},
 	});
