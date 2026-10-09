@@ -12,6 +12,7 @@ import {
 	FileError,
 	type FileInfo,
 	type FileKind,
+	type FileRemoveOutcome,
 	type FileRevision,
 	type FileWriteIntent,
 	type FileWriteOutcome,
@@ -706,6 +707,22 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 			} finally {
 				await handle.close();
 			}
+		});
+	}
+
+	removeFileChecked(
+		path: string,
+		revision: FileRevision,
+		context: Context,
+	): Promise<Result<FileRemoveOutcome, FileError>> {
+		revision = { ...revision };
+		return this.#fileOp(path, context, async (resolved) => {
+			const { json } = await this.connection.request(
+				"checkedRemove",
+				{ path: resolved, revision },
+				{ signal: context.abortSignal },
+			);
+			return { path: json.path as string };
 		});
 	}
 

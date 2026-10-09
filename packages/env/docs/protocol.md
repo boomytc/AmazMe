@@ -89,6 +89,7 @@ File operations take `{ path }` (and the listed fields) and return `{}` unless n
 | `fileVersion` | `handle` | `{ version }` of the opened file, independent of its current path |
 | `checkedWriteOpen` | `intent`, payload | `{ handle }` for an adjacent staging file; `intent` is `{ kind: "createIfAbsent" }` or `{ kind: "replaceIfVersion", revision: { path, version } }` |
 | `checkedPublish` | `handle` | `{ path, operation, version? }`; flushes, rechecks and publishes staged bytes; `operation` is `create` or `replace` |
+| `checkedRemove` | `revision: { path, version }` | `{ path }`; removes one matching regular file under the checked-publication lock; final symbolic links and directories are refused |
 | `write` | `append`, `parents?` (default true), `keep?`, payload | creates missing parents like Node's recursive `mkdir`, opens like `writeFile` (`w`) or `appendFile` (`a`), writes the payload; with `keep`, `{ handle }` for `writeChunk` |
 | `writeChunk` | `handle`, payload | appends to a kept write handle; after a failed chunk, later chunks fail with `EBADF` |
 | `truncate` | `size` | |

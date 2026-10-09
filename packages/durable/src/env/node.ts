@@ -31,6 +31,7 @@ import {
 	FileError,
 	type FileInfo,
 	type FileKind,
+	type FileRemoveOutcome,
 	type FileRevision,
 	type FileWriteIntent,
 	type FileWriteOutcome,
@@ -48,7 +49,7 @@ import {
 	type WatchTarget,
 } from "./index.ts";
 import { LineScanner } from "./line-scan.ts";
-import { fileVersion, readFileRevision, writeFileChecked } from "./node-files.ts";
+import { fileVersion, readFileRevision, removeFileChecked, writeFileChecked } from "./node-files.ts";
 import { NodeFileWatcher, type NodeWatchOptions } from "./node-watch.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -1050,6 +1051,18 @@ export class NodeExecutionEnv implements ExecutionEnv {
 	): Promise<Result<FileWriteOutcome, FileError>> {
 		try {
 			return ok(await writeFileChecked(resolvePath(this.cwd, path), content, intent, context));
+		} catch (error) {
+			return abortResult(context.abortSignal, path) ?? err(toFileError(error, path));
+		}
+	}
+
+	async removeFileChecked(
+		path: string,
+		revision: FileRevision,
+		context: Context,
+	): Promise<Result<FileRemoveOutcome, FileError>> {
+		try {
+			return ok(await removeFileChecked(resolvePath(this.cwd, path), revision, context));
 		} catch (error) {
 			return abortResult(context.abortSignal, path) ?? err(toFileError(error, path));
 		}

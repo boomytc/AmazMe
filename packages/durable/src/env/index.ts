@@ -190,6 +190,11 @@ export interface FileSystem {
 		intent: FileWriteIntent,
 		context: Context,
 	): Promise<Result<FileWriteOutcome, FileError>>;
+	/**
+	 * Remove one regular file only if its canonical path and revision still match. Final symbolic links and
+	 * directories are refused. Shares the backend's checked-write barrier; arbitrary external writers are not locked.
+	 */
+	removeFileChecked(path: string, revision: FileRevision, context: Context): Promise<Result<FileRemoveOutcome, FileError>>;
 	appendFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>>;
 	/** Truncate or extend a file to exactly `size` bytes. */
 	truncateFile(path: string, size: number, context: Context): Promise<Result<void, FileError>>;
@@ -242,6 +247,10 @@ export interface FileWriteOutcome {
 	/** Absent if publication succeeded but its revision could not be sampled; reread before another replacement. */
 	readonly version?: string;
 	readonly operation: "create" | "replace";
+}
+
+export interface FileRemoveOutcome {
+	readonly path: string;
 }
 
 /** Spill the complete output to a temporary file once it exceeds either threshold. */

@@ -14,6 +14,21 @@ enum Intent {
     Replace { path: String, version: String },
 }
 
+impl Intent {
+    fn replace(revision: &Value, path: &str) -> Outcome<Self> {
+        Ok(Self::Replace {
+            path: revision["path"]
+                .as_str()
+                .ok_or_else(|| Failure::new("EINVAL", "Missing canonical file path").path(path))?
+                .to_string(),
+            version: revision["version"]
+                .as_str()
+                .ok_or_else(|| Failure::new("EINVAL", "Missing file version").path(path))?
+                .to_string(),
+        })
+    }
+}
+
 pub struct Stage {
     original: String,
     target: String,
@@ -47,6 +62,26 @@ pub fn revision(path: &str) -> Outcome<Value> {
     Ok(json!({ "path": canonical, "version": version(&file, path)? }))
 }
 
+/// The caller holds the same publication lock as checked writes through the complete removal.
+pub fn remove(path: &str, revision: &Value, control: &Control) -> Outcome<Value> {
+    check_abort(control, path)?;
+    let intent = Intent::replace(revision, path)?;
+    let target = target_path(Path::new(path)).map_err(|e| Failure::io(&e, "realpath", path))?;
+    check(path, &target, &intent)?;
+    // Open the requested name without following a final symlink, rather than just its resolved target.
+    let (file, _) = fs::open_reader(path, true)?;
+    if version(&file, path)? != revision["version"].as_str().unwrap_or_default() {
+        return Err(Failure::new(
+            "stale_version",
+            "File changed since it was read; read it again",
+        )
+        .path(path));
+    }
+    check_abort(control, path)?;
+    stdfs::remove_file(&target).map_err(|e| Failure::io(&e, "unlink", path))?;
+    Ok(json!({ "path": target }))
+}
+
 /// A missing leaf retains its real parent, so directory aliases share a target identity.
 fn target_path(path: &Path) -> io::Result<String> {
     match sys::realpath(&path.to_string_lossy()) {
@@ -77,24 +112,15 @@ impl Stage {
         check_abort(control, path)?;
         let intent = match intent["kind"].as_str() {
             Some("createIfAbsent") => Intent::Create,
-            Some("replaceIfVersion") => Intent::Replace {
-                path: intent["revision"]["path"]
-                    .as_str()
-                    .ok_or_else(|| {
-                        Failure::new("EINVAL", "Missing canonical file path").path(path)
-                    })?
-                    .to_string(),
-                version: intent["revision"]["version"]
-                    .as_str()
-                    .ok_or_else(|| Failure::new("EINVAL", "Missing file version").path(path))?
-                    .to_string(),
-            },
+            Some("replaceIfVersion") => Intent::replace(&intent["revision"], path)?,
             _ => return Err(Failure::new("EINVAL", "Invalid write intent").path(path)),
         };
         let target = target_path(Path::new(path)).map_err(|e| Failure::io(&e, "realpath", path))?;
         let current = check(path, &target, &intent)?;
         if current.is_some() {
-            OpenOptions::new().write(true).open(&target)
+            OpenOptions::new()
+                .write(true)
+                .open(&target)
                 .map_err(|e| Failure::io(&e, "open for replacement", path))?;
         }
         let parent = Path::new(&target)

@@ -182,6 +182,10 @@ impl Server {
             "lstat" => plain(fs::lstat(field(json, "path")?)),
             "realpath" => plain(fs::realpath(field(json, "path")?)),
             "fileRevision" => plain(checked::revision(field(json, "path")?)),
+            "checkedRemove" => {
+                let _publication = self.checked_publish.lock().unwrap();
+                plain(checked::remove(field(json, "path")?, &json["revision"], control))
+            }
             "fileVersion" => {
                 let handle = self.file(json)?;
                 plain(Ok(

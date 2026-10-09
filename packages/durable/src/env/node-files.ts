@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { access, link, lstat, mkdir, open, realpath, rename, rm, type FileHandle } from "node:fs/promises";
+import { access, link, lstat, mkdir, open, realpath, rename, rm, unlink, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Context } from "@amazme/chord";
 import { awaitWithContext } from "@amazme/chord/context";
-import { FileError, type FileRevision, type FileWriteIntent, type FileWriteOutcome } from "./index.ts";
+import { FileError, type FileRemoveOutcome, type FileRevision, type FileWriteIntent, type FileWriteOutcome } from "./index.ts";
 
 export function fileVersion(stats: BigIntStats): string {
 	return [stats.dev, stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
@@ -39,14 +39,40 @@ async function targetPath(path: string): Promise<string> {
 
 const writes = new Map<string, Promise<void>>();
 
-/** Checked writers in this process share a barrier; external writers are checked again before publication. */
-export async function writeFileChecked(
+export function writeFileChecked(
 	path: string,
 	content: string | Uint8Array,
 	intent: FileWriteIntent,
 	context: Context,
 ): Promise<FileWriteOutcome> {
 	intent = intent.kind === "replaceIfVersion" ? { kind: intent.kind, revision: { ...intent.revision } } : { ...intent };
+	return withFileBarrier(path, context, (target) => publish(path, target, content, intent, context));
+}
+
+export function removeFileChecked(
+	path: string,
+	revision: FileRevision,
+	context: Context,
+): Promise<FileRemoveOutcome> {
+	revision = { ...revision };
+	return withFileBarrier(path, context, async (target) => {
+		await check(path, target, { kind: "replaceIfVersion", revision });
+		const named = await inspect(path);
+		if (named?.isSymbolicLink()) throw new FileError("invalid", "Refusing to remove a symbolic link", path);
+		if (named === undefined || !named.isFile() || fileVersion(named) !== revision.version)
+			throw new FileError("stale_version", "File changed since it was read; read it again", path);
+		context.abortSignal?.throwIfAborted();
+		await unlink(target);
+		return { path: target };
+	});
+}
+
+/** Checked mutations in this process share a barrier; cancelling a waiter retains its predecessor's barrier. */
+async function withFileBarrier<T>(
+	path: string,
+	context: Context,
+	operation: (target: string) => Promise<T>,
+): Promise<T> {
 	context.abortSignal?.throwIfAborted();
 	const target = await targetPath(path);
 	const previous = writes.get(target) ?? Promise.resolve();
@@ -58,7 +84,7 @@ export async function writeFileChecked(
 	writes.set(target, tail);
 	try {
 		await awaitWithContext(previous, context);
-		return await publish(path, target, content, intent, context);
+		return await operation(target);
 	} finally {
 		release();
 		void tail.then(() => {

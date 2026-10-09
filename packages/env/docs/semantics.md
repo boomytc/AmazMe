@@ -1,7 +1,7 @@
 # Semantics
 
 The reference is Durable's `NodeExecutionEnv` (`packages/durable/src/env/node.ts`) on the remote machine. Durable's
-env conformance suite and `test/differential.test.ts` check each rule below.
+env conformance suite and `test/differential.test.ts` compare local and remote behavior.
 
 ## Split of work
 
@@ -37,6 +37,18 @@ env conformance suite and `test/differential.test.ts` check each rule below.
 - `readBinaryFile` returns a `Buffer`, reader reads a plain `Uint8Array`, as Node does.
 - Windows: error codes are libuv's translations; `rm` of a symbolic link or junction to a directory removes the link;
   creating a file where a directory exists fails with `EISDIR`; modification times before 1970 are negative.
+
+## Checked file mutations
+
+`writeFileChecked` and `removeFileChecked` use the same mutation barrier. Replacement and removal require the
+canonical path and revision recorded by `fileRevision`; a different path target or changed file is refused. Removal
+only accepts a regular file and refuses a final symbolic link, even when that link points at the observed file.
+Deleting a directory tree continues to use the separate ordinary `remove` operation.
+
+Cancellation is checked before the mutation. A daemon request waits for its actual result after sending cancellation,
+so a completed removal is reported as completed. A lost transport may leave its outcome unknown; inspect the file
+before retrying. The barrier serializes cooperating checked operations, not arbitrary external writers, and the final
+revision check and filesystem mutation are separate operating-system operations.
 
 ## Commands
 
