@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
-import type { AttachedReplicatedState } from "@amazme/chord";
+import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import {
 	type AgentState,
@@ -17,6 +17,8 @@ import {
 } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
+import { createAgentExtensionsFacet } from "../core/plugins/agent-extensions.ts";
+import { assertPluginsIdle, openPluginRuntime, type PluginRuntime } from "../core/plugins/runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { durableToolSelection, getToolSelectionError, type ToolSelectionOptions } from "../core/tool-selection.ts";
 import { IDLE_LANE, oldestPresentedEntryId, type ConversationSummary, type LaneStatus, type ReturnPoint } from "./conversation-view.ts";
@@ -89,6 +91,8 @@ export interface DurableViewSource {
 
 /** What the TUI may ask for. */
 export interface DurableController {
+	/** Reload the selected application plugin facets; absent when none were configured. */
+	reloadPlugins?(): Promise<void>;
 	readonly mcp?: McpManagement;
 	/** Prompt when idle; otherwise steer or queue a follow-up. */
 	submit(text: string, whenBusy: "steer" | "followUp"): Promise<void>;
@@ -117,6 +121,8 @@ export interface DurableController {
 }
 
 export interface OpenDurableOptions extends ToolSelectionOptions {
+	/** Application-selected Chord facets; no plugin owner is started when absent. */
+	readonly facetLoader?: FacetLoader;
 	readonly cwd?: string;
 	readonly continueSession?: boolean;
 	readonly provider?: string;
@@ -180,6 +186,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	const envs = new ExecutionEnvs(location.cwd);
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;
+	let plugins: PluginRuntime | undefined;
 	let disposeView = (): void => {};
 	try {
 		configureHarnessHttp(settingsManager);
@@ -191,6 +198,15 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		let report: (error: unknown) => void = (error) => pendingReports.push(error);
 		const activeMcp = await openDurableMcp({ registry, cwd: location.cwd, settings: settingsManager, models: modelRuntime, disabled: options.noMcp, report: error => report(error) });
 		mcp = activeMcp;
+		if (options.facetLoader !== undefined) {
+			plugins = await openPluginRuntime(
+				[createAgentExtensionsFacet(registry)],
+				options.facetLoader,
+				async () => {
+					if (harness !== undefined) await assertPluginsIdle(harness);
+				},
+			);
+		}
 		harness = await Harness.open(
 			await openNodeSqliteStorage(location.database),
 			{
@@ -365,10 +381,20 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			});
 		};
 		const controller: DurableController = {
+			...(plugins === undefined ? {} : {
+				reloadPlugins: () => command(async () => {
+					await assertPluginsIdle(opened);
+					await plugins!.reload();
+				}),
+			}),
 			mcp: activeMcp.management,
-			submit: (text, whenBusy) => command(async () => watchAnswer(await current.submit({ type: "input", content: text, whenBusy }, context))),
+			submit: (text, whenBusy) => command(async () => {
+				if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
+				watchAnswer(await current.submit({ type: "input", content: text, whenBusy }, context));
+			}),
 			compact: (instructions) =>
 				command(async () => {
+					if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
 					const id = await current.compact(instructions, context);
 					// Report the outcome once it is known; the status line shows the compaction meanwhile.
 					void opened.waitForTask(id, context).then(async (receipt) => {
@@ -537,9 +563,13 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					} finally {
 						try {
 							try {
-								await mcp?.close();
+								await plugins?.close();
 							} finally {
-								await envs.cleanup(context);
+								try {
+									await mcp?.close();
+								} finally {
+									await envs.cleanup(context);
+								}
 							}
 						} finally {
 							await location.release();
@@ -552,6 +582,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	} catch (error) {
 		disposeView();
 		await harness?.close(context).catch(() => {});
+		await plugins?.close().catch(() => {});
 		await mcp?.close().catch(() => {});
 		await envs.cleanup(context).catch(() => {});
 		await location.release().catch(() => {});

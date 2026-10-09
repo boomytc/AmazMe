@@ -15,12 +15,18 @@ import type {
 	AgentQueueResponse,
 } from "./agent-controller.ts";
 
-export function createAgentController(harness: Harness, conversation: Conversation): AgentControllerService {
+export function createAgentController(
+	harness: Harness,
+	conversation: Conversation,
+	admission?: () => AgentOperationError | undefined,
+): AgentControllerService {
 	const queue = async (
 		whenBusy: "steer" | "followUp",
 		request: AgentPromptRequest,
 		context: Context,
 	): Promise<AgentQueueResponse> => {
+		const refusal = admission?.();
+		if (refusal !== undefined) return { accepted: false, entryId: null, error: refusal };
 		try {
 			const submission = await conversation.submit({ type: "input", content: toInput(request), whenBusy }, context);
 			return { accepted: true, entryId: String(submission.id), error: null };
@@ -31,6 +37,8 @@ export function createAgentController(harness: Harness, conversation: Conversati
 
 	return {
 		async prompt(request, context) {
+			const refusal = admission?.();
+			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
 				const submission = await conversation.submit(
 					{ type: "input", content: toInput(request), whenBusy: "reject" },
@@ -53,6 +61,8 @@ export function createAgentController(harness: Harness, conversation: Conversati
 		},
 		abort: (context) => conversation.abort(context),
 		async compact(request, context) {
+			const refusal = admission?.();
+			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
 				const id = await conversation.compact(request.customInstructions ?? undefined, context);
 				return { accepted: true, operationId: String(id), error: null };

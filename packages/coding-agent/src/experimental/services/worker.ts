@@ -1,10 +1,8 @@
 import {
 	type Context,
-	createFacetHost,
 	createRemoteServiceEndpoint,
 	createStaticFacetLoader,
 	defineFacet,
-	type FacetHost,
 	type FacetLoader,
 	type JsonValue,
 	type RemoteServiceEndpoint,
@@ -12,10 +10,12 @@ import {
 	type ServiceProviderUpdate,
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import type { Conversation, Harness } from "@amazme/durable";
+import type { Conversation, Harness, Registry } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { configureHarnessHttp } from "../../durable/harness-setup.ts";
+import { createAgentExtensionsFacet } from "../../core/plugins/agent-extensions.ts";
+import { assertPluginsIdle, openPluginRuntime, type PluginRuntime } from "../../core/plugins/runtime.ts";
 import { AgentController } from "./agent-controller.ts";
 import { createAgentController } from "./agent-controller-provider.ts";
 import { createCommandsFacet } from "./commands-provider.ts";
@@ -37,6 +37,7 @@ export interface SessionWorkerRuntime {
 	/** The working directory the Session's agent runs in: the workspace and terminal root. */
 	readonly cwd: string;
 	readonly harness: Harness;
+	readonly registry?: Registry;
 	/** The root conversation the services expose. */
 	readonly conversation: Conversation;
 	readonly modelRuntime?: ModelRuntime;
@@ -70,6 +71,7 @@ export interface SessionWorkerServices {
 export async function createSessionWorkerServices(options: {
 	readonly cwd: string;
 	readonly harness: Harness;
+	readonly registry?: Registry;
 	readonly conversation: Conversation;
 	readonly modelRuntime: ModelRuntime | undefined;
 	readonly settingsManager?: SettingsManager;
@@ -80,10 +82,17 @@ export async function createSessionWorkerServices(options: {
 	readonly refreshMirror?: () => Promise<void>;
 	publish(scope: WorkerServiceScope, subscriptionId: string, update: ServiceProviderUpdate): Promise<void>;
 }): Promise<SessionWorkerServices> {
+	let pluginRuntime: PluginRuntime | undefined;
 	const agentControllerRuntimeFacet = defineFacet({
 		id: "@pi/agent-controller-runtime",
 		setup(env) {
-			env.provide(AgentController, createAgentController(options.harness, options.conversation));
+			env.provide(AgentController, createAgentController(
+				options.harness,
+				options.conversation,
+				() => pluginRuntime?.changing === true
+					? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
+					: undefined,
+			));
 			env.provide(SessionLifecycle, {
 				isEmpty: (context) => isSessionEmpty(options.harness, context),
 				refreshMirror: async () => { await options.refreshMirror?.(); },
@@ -114,8 +123,9 @@ export async function createSessionWorkerServices(options: {
 						});
 					},
 				});
-	const builtins = await createStaticFacetLoader([
+	const builtins = [
 		agentControllerRuntimeFacet,
+		...(options.registry === undefined ? [] : [createAgentExtensionsFacet(options.registry)]),
 		pluginRuntimeFacet,
 		// Plugins register their commands here, and the catalogue lists them: one command surface for
 		// the terminal client, the page, and a desktop client.
@@ -138,42 +148,11 @@ export async function createSessionWorkerServices(options: {
 		...(options.settingsManager === undefined
 			? []
 			: [createTerminalFacet({ cwd: options.cwd, settings: options.settingsManager })]),
-	]).load();
+	];
 	const pluginLoader = options.facetLoader ?? createStaticFacetLoader([]);
-	let loadedPlugins = await pluginLoader.load();
-	let facetHost: FacetHost;
-	try {
-		facetHost = await createFacetHost({ facets: [...builtins.facets, ...loadedPlugins.facets] });
-	} catch (error) {
-		const cleanup = await Promise.allSettled([loadedPlugins.dispose(), builtins.dispose()]);
-		const cleanupErrors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
-		if (cleanupErrors.length > 0) {
-			throw new AggregateError([error, ...cleanupErrors], "Session facets failed to start and clean up");
-		}
-		throw error;
-	}
-	let reloadTail = Promise.resolve();
-	reloadPlugins = () => {
-		const operation = reloadTail.then(async () => {
-			const candidate = await pluginLoader.load();
-			try {
-				await facetHost.reload(candidate.facets);
-			} catch (error) {
-				try {
-					await candidate.dispose();
-				} catch (cleanupError) {
-					throw new AggregateError([error, cleanupError], "Session plugin reload and cleanup failed");
-				}
-				throw error;
-			}
-			const retired = loadedPlugins;
-			loadedPlugins = candidate;
-			await retired.dispose();
-		});
-		reloadTail = operation.catch(() => {});
-		return operation;
-	};
-	const provider = facetHost.services;
+	pluginRuntime = await openPluginRuntime(builtins, pluginLoader, () => assertPluginsIdle(options.harness));
+	reloadPlugins = () => pluginRuntime!.reload();
+	const provider = pluginRuntime.services;
 
 	const endpoints = new Map<string, ScopedServiceEndpoint>();
 	const removeSubscriptions = (matches: (scope: WorkerServiceScope) => boolean): void => {
@@ -201,17 +180,7 @@ export async function createSessionWorkerServices(options: {
 		removeSubscriptions,
 		async dispose() {
 			removeSubscriptions(() => true);
-			await reloadTail;
-			const errors: unknown[] = [];
-			try {
-				await facetHost.dispose();
-			} catch (error) {
-				errors.push(error);
-			}
-			const results = await Promise.allSettled([loadedPlugins.dispose(), builtins.dispose()]);
-			errors.push(...results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])));
-			if (errors.length === 1) throw errors[0];
-			if (errors.length > 1) throw new AggregateError(errors, "Failed to dispose Session facets");
+			await pluginRuntime!.close();
 		},
 	};
 }

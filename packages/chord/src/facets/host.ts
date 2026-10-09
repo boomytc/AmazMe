@@ -365,6 +365,10 @@ export class FacetKernel {
 		return this.#provider;
 	}
 
+	get active(): boolean {
+		return this.#phase === "active";
+	}
+
 	#createFacetRuntime(facetId: string): FacetRuntime {
 		return {
 			facetId,

@@ -70,13 +70,21 @@ class RegistryImpl<Tool extends ToolRegistration> implements Registry<Tool> {
 		return () => this.#listeners.delete(listener);
 	}
 
-	install(extension: Extension<Tool>): void {
+	#with(extension: Extension<Tool>): readonly Extension<Tool>[] {
 		validateExtension(extension);
 		const current = this.#current.installed();
 		const index = current.findIndex((installed) => installed.name === extension.name);
 		const next =
 			index < 0 ? [...current, extension] : current.map((installed, at) => (at === index ? extension : installed));
-		this.#publish(next);
+		return next;
+	}
+
+	validate(extension: Extension<Tool>): void {
+		new RegistryState(this.#with(extension));
+	}
+
+	install(extension: Extension<Tool>): void {
+		this.#publish(this.#with(extension));
 	}
 
 	uninstall(extension: Extension): void {

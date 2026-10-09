@@ -745,6 +745,7 @@ export async function runDurableTui(source: DurableViewSource, controller: Durab
 			const trimmed = text.trim();
 			if (!trimmed) return;
 			if (trimmed === "/mcp") return showMcp();
+			if (trimmed === "/reload" && controller.reloadPlugins !== undefined) return void controller.reloadPlugins();
 			if (trimmed === "/model") return selectModel();
 			if (trimmed === "/tasks") return void controller.toggleTasks();
 			if (trimmed === "/agents" || trimmed === "/tree") return selectConversation();

@@ -20,6 +20,11 @@
 		"./rpc-entry": {
 			"import": "./dist/bundle/rpc-entry.js"
 		},
+		"./plugin": {
+			"source": "./src/plugin.ts",
+			"types": "./dist/plugin.d.ts",
+			"import": "./dist/plugin.js"
+		},
 		"./client": {
 			"source": "./src/client/index.ts"
 		},

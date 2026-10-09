@@ -24,6 +24,9 @@ export async function createFacetHost(options: FacetOptions): Promise<FacetHost>
 	await kernel.activate();
 	return Object.freeze({
 		services: kernel.provider,
+		get active() {
+			return kernel.active;
+		},
 		reload: (facets: readonly Facet[]) => kernel.reload(facets),
 		dispose: () => kernel.dispose(),
 	});

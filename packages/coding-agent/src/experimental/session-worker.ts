@@ -497,12 +497,13 @@ async function closeResources(resources: {
 }): Promise<void> {
 	const errors: unknown[] = [];
 	try {
-		await resources.services?.dispose();
+		// Tool invocations release their work before plugin-owned resources are retired.
+		await resources.runtime?.harness.close(TODO_CONTEXT);
 	} catch (error) {
 		errors.push(error);
 	}
 	try {
-		await resources.runtime?.harness.close(TODO_CONTEXT);
+		await resources.services?.dispose();
 	} catch (error) {
 		errors.push(error);
 	}
@@ -552,6 +553,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		services = await createSessionWorkerServices({
 			cwd: runtime.cwd,
 			harness: runtime.harness,
+			registry: runtime.registry,
 			conversation: runtime.conversation,
 			modelRuntime: runtime.modelRuntime,
 			settingsManager: runtime.settingsManager,
@@ -895,6 +897,7 @@ async function createCodingAgentHarness(
 			cwd,
 			approvalGate,
 			harness,
+			registry,
 			conversation,
 			modelRuntime,
 			settingsManager,

@@ -341,6 +341,8 @@ export interface RegistryReader<Tool extends ToolRegistration = ToolRegistration
 
 /** Application-owned registry of extensions. */
 export interface Registry<Tool extends ToolRegistration = ToolRegistration> extends RegistryReader<Tool> {
+	/** Validate a proposed installation against current definitions without publishing it. */
+	validate(extension: Extension<Tool>): void;
 	/** Install `extension`, or replace the installed extension with its name in place. Publishes at once. */
 	install(extension: Extension<Tool>): void;
 	/** Remove the installed extension with `extension.name`, whichever object it is. A later install appends. */
