@@ -471,3 +471,16 @@
 - 四个本阶段临时安装项目逐一核对：任务全部终止，插件激活与释放租约平衡，stdio 启动与退出编号匹配；页面、模型协议服务、宿主、worker 与连接进程已关闭。模型仍是本机协议夹具，请求 User-Agent 保持 Pi。
 
 工具卡的独立安装宿主/Web 链路已验收。远程 Unix daemon 的发布目录缺失已经发现：env 仅编译 TypeScript，当前 tarball 没有 README 声明的 bin 产物，下一阶段继续修正并在已确认可启动的 Linux arm64 VM 验收。本阶段启动的 Colima 已恢复停止状态，Docker context 恢复原默认项。外部 OAuth/真实供应商和整体最终审计继续未完成。
+
+
+### 真实供应商工具执行与 Grok OAuth
+
+2026-10-10。按用户授权从交互式 zsh 继承 DeepSeek、MiMo 的已有密钥；仅输出变量是否存在、公开模型编号和业务回执。全部验证使用上一阶段的独立安装副本、正式 CLI/Web、Unix worker/RPC 和同一 SQLite 会话，不以本机模型协议服务替代供应商。
+
+- DeepSeek 的实际模型目录返回 deepseek-flash、deepseek-v4-pro。deepseek-flash 在正式 worker 中完成 read、edit、bash，修改真实 note.txt 并返回命令输出。切换到 MiMo 后继续同一会话，DeepSeek 再次准确召回此前两个供应商的文件修改和命令结果。
+- MiMo 的现有 MIMO_API_KEY/MIMO_BASE_URL 可通过 models.json 的环境插值使用。先验证兼容端点，再复测内置 xiaomi/mimo-v2.6-flash：仅覆盖 xiaomi 的 baseUrl 和 apiKey，沿用已有模型目录、推理协议与费用元数据，没有新增 provider 或密钥别名。内置 provider 的 read、edit、bash 全部通过。
+- 通过已安装 AI 的 Models.login 和既有认证存储完成 Grok 设备 OAuth，复用 Edge 的现有登录。供应商页面显示官方 Grok Build 授权完成；客户端 ID、referrer=pi、scope 及请求身份沿用当前 Pi 实现，没有改写。实际 grok-4.3 请求返回指定文本，并在正式 worker 中完成 read、edit、bash。
+- 临时凭据保存于仓库外的独立 profile，目录 700、auth.json 600，没有写入用户的正式配置或仓库。将本次临时凭据的期限标成过期后，两份认证存储并发解析只发送一次实际刷新请求，取得同一访问令牌并保存有效期限和刷新令牌；随后重启宿主继续执行 Grok 文件编辑与 Unix 命令。
+- 重启保持原 server/session 编号、模型选择和全部历史，Grok 准确召回三个供应商的此前结果。最终 SQLite 有 15 个成功工具回执、零工具错误、37 个 terminal 任务。正式网页显示恢复后的回执；隔离浏览器控制台无警告/错误。Edge 另有一条接收端连接错误，同一页面在隔离浏览器没有出现，未据此改动业务代码。
+
+本阶段没有新增或修改仓库单元/集成测试，也没有修改运行时代码。供应商验证完成后关闭本阶段宿主、worker 和临时页面，并删除本次临时 OAuth 凭据。Codex 浏览器登录出现两个已有账户，尚待用户选择；回调等待到期已清理，不将其记作供应商拒绝。工具卡的外部验收因此保持部分完成，远程 Unix daemon 产物及最终产品审计仍需继续。
