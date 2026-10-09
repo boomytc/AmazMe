@@ -14,6 +14,7 @@
 - 相对导入带 `.ts` 扩展名，并遵守 `verbatimModuleSyntax`。类型用 `import type`。
 - 外部行为和参照设计以读到的源码为准。
 - 包名是 `@amazme/*`。`@amazme/agent` 对应原来的 `pi-agent-core`。
+- OAuth 沿用 Pi 源码中的客户端 ID、回调配置和供应商请求身份，不随 AmazMe 产品重命名改写。
 
 ## 命令
 

@@ -1738,6 +1738,8 @@ Use this when one process needs different provider settings per request, or when
 
 ## OAuth Providers
 
+Built-in OAuth flows retain Pi's upstream client IDs, authorization parameters and provider identity headers. AmazMe's package and product naming does not change these identities. Callback binding uses `PI_OAUTH_CALLBACK_HOST`; the default is `127.0.0.1`. Provider-specific identities used by Pi, such as Claude Code and GitHub Copilot headers, remain unchanged.
+
 Several providers support OAuth authentication instead of static API keys:
 
 - **Anthropic** (Claude Pro/Max subscription)
