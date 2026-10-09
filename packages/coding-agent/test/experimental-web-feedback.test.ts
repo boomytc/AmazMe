@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, test } from "vitest";
-import { createFeedbackService } from "../src/experimental/services/feedback-provider.ts";
-import type { FeedbackState } from "../src/experimental/services/feedback.ts";
+import { createFeedbackService } from "../src/host/services/feedback-provider.ts";
+import type { FeedbackState } from "../src/host/services/feedback.ts";
 
 /**
  * The ratings store, over its real file: a rating lands in `feedback.json`, re-rating replaces it,

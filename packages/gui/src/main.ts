@@ -13,7 +13,7 @@ import { createHostSupervisor, spawnWebHost, type HostStartupFailure, type HostS
 import {
 	hostWorkingDirectory,
 	missingHostEntry,
-	repositoryRootFromModule,
+	resolveHostCli,
 	resolveNodeExecutable,
 	webHostLaunch,
 } from "./launch.ts";
@@ -279,11 +279,11 @@ async function openWindow(pageUrl: string): Promise<void> {
 }
 
 async function boot(): Promise<void> {
-	const repositoryRoot = repositoryRootFromModule(import.meta.url);
+	const cliEntry = resolveHostCli();
 	const launch = webHostLaunch({
 		nodeExecutable: resolveNodeExecutable(process.env),
-		repositoryRoot,
-		cwd: hostWorkingDirectory(process.env, repositoryRoot),
+		cliEntry,
+		cwd: hostWorkingDirectory(process.env, process.cwd()),
 		env: process.env,
 	});
 	const missing = missingHostEntry(launch);

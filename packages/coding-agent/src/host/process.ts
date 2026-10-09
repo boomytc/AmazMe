@@ -37,7 +37,7 @@ export interface InternalProcessSpawnOptions {
 	readonly env?: NodeJS.ProcessEnv;
 }
 
-/** Spawn a detached Pi-owned process consistently across Node and compiled Bun. */
+/** Spawn a detached host-owned process consistently across Node and compiled Bun. */
 export function spawnInternalProcess(
 	role: InternalProcessRole,
 	args: readonly string[],
@@ -49,7 +49,7 @@ export function spawnInternalProcess(
 	const entryUrl = defaultEntryUrl(role, options.entryUrl);
 	// --import takes a module specifier; a raw path breaks on Windows drives and on `#`, `?`, or `%` in the path.
 	const sourceRuntimeArgs = import.meta.url.endsWith(".ts")
-		? ["--import", new URL("source-resolver.ts", import.meta.url).href]
+		? ["--import", new URL("../source-resolver.ts", import.meta.url).href]
 		: [];
 	const child = spawn(
 		process.execPath,
@@ -84,8 +84,7 @@ export async function terminateInternalProcess(child: ChildProcess): Promise<voi
 function defaultEntryUrl(role: InternalProcessRole, override: URL | undefined): URL {
 	if (override) return override;
 	if (isBundledNode) {
-		const entry = role === "coordinator" ? "coordinator.js" : "cli.js";
-		return pathToFileURL(join(getPackageDir(), "dist", "bundle", entry));
+		return pathToFileURL(join(getPackageDir(), "dist", "bundle", "cli.js"));
 	}
 	const javaScript = import.meta.url.endsWith(".js");
 	if (role === "coordinator") {

@@ -10,7 +10,7 @@ export const BOOT_GLOBAL = "__AMAZME_BOOT__";
 export const BOOT_PLACEHOLDER = "<!--amazme-boot-->";
 
 /** How the host assembles and serves the page. Recorded so the page never guesses its runtime. */
-export type WebMode = "source";
+export type WebMode = "source" | "installed";
 
 /**
  * The stored interface preferences the host read when it served this document. The document has

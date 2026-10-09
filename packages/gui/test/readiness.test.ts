@@ -54,7 +54,7 @@ describe("createReadinessParser", () => {
 
 	test("uses the prefix the web host prints", () => {
 		const source = readFileSync(
-			new URL("../../coding-agent/src/experimental/commands.ts", import.meta.url),
+			new URL("../../coding-agent/src/host/commands.ts", import.meta.url),
 			"utf8",
 		);
 		expect(source).toContain(`\`${WEB_READY_PREFIX}\${host.url}\``);

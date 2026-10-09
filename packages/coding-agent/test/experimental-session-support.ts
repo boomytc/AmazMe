@@ -8,7 +8,7 @@ import {
 	readSession,
 	type SessionCatalogMetadata,
 	sessionStoragePath,
-} from "../src/experimental/session-catalog.ts";
+} from "../src/host/session-catalog.ts";
 
 export async function createExperimentalSessions(
 	sessionsRoot: string,

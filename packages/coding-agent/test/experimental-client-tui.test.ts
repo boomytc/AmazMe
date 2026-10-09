@@ -16,10 +16,10 @@ import {
 import { fauxAssistantMessage } from "@amazme/ai";
 import { ProcessTerminal, TuiMainScreen } from "@amazme/tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { type ClientTuiServer, ExperimentalClientTui } from "../src/experimental/client-tui.ts";
-import { createPresentationFacetData } from "../src/experimental/plugins/bundled.ts";
+import { type ClientTuiServer, ExperimentalClientTui } from "../src/host/client-tui.ts";
+import { createPresentationFacetData } from "../src/host/plugins/bundled.ts";
 import { AgentController } from "../src/core/plugins/agent-controller.ts";
-import { Conversations } from "../src/experimental/services/conversations.ts";
+import { Conversations } from "../src/host/services/conversations.ts";
 import { IDLE_LANE } from "../src/durable/conversation-view.ts";
 import { createAgentController } from "../src/core/plugins/agent-controller-provider.ts";
 import type {
@@ -27,16 +27,16 @@ import type {
 	ServerServiceSource,
 	SessionAttachmentState,
 	SessionServiceSource,
-} from "../src/experimental/services/connection.ts";
-import { Models, type ModelsState } from "../src/experimental/services/models.ts";
-import { PresentationPlugins, SessionPlugins } from "../src/experimental/services/plugins.ts";
+} from "../src/host/services/connection.ts";
+import { Models, type ModelsState } from "../src/host/services/models.ts";
+import { PresentationPlugins, SessionPlugins } from "../src/host/services/plugins.ts";
 import {
 	SessionDirectory,
 	type SessionDirectoryState,
 	SessionManagement,
 	type SessionSummary,
-} from "../src/experimental/services/sessions.ts";
-import { Transcript } from "../src/experimental/services/transcript.ts";
+} from "../src/host/services/sessions.ts";
+import { Transcript } from "../src/host/services/transcript.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { openFauxConversation } from "./experimental-durable-support.ts";
 

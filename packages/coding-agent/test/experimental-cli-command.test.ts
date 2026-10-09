@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { cli } from "../src/cli/experimental/cli.ts";
+import { cli } from "../src/cli/host/cli.ts";
 
-const UNSUPPORTED_SERVER_OPTIONS = "The experimental server command does not support existing CLI options yet";
-const UNSUPPORTED_CLIENT_OPTIONS = "The experimental client command does not support existing CLI options yet";
-const UNSUPPORTED_WEB_OPTIONS = "The experimental web command does not support existing CLI options yet";
+const UNSUPPORTED_SERVER_OPTIONS = "Unsupported options for server";
+const UNSUPPORTED_CLIENT_OPTIONS = "Unsupported options for client";
+const UNSUPPORTED_WEB_OPTIONS = "Unsupported options for web";
 
 describe("experimental CLI commands", () => {
 	test("parses server configuration", () => {

@@ -8,7 +8,7 @@ import {
 import { resolveAgentPluginExternal } from "../../core/plugins/info.ts";
 
 const PRESENTATION_FACET_BUNDLES_KEY = "presentationFacetBundles";
-const AMAZME_PLUGIN_API = "@amazme/coding-agent/experimental/plugin";
+const AMAZME_PLUGIN_API = "@amazme/coding-agent/host/plugin";
 
 export function createSessionPluginFacetLoader(manifestPaths: readonly string[]): FacetLoader | undefined {
 	return createPluginFacetLoader(manifestPaths, "session");

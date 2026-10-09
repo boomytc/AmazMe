@@ -6,7 +6,7 @@ import {
 	firstSessionTitle,
 	isSessionEmpty,
 	watchSessionTitle,
-} from "../src/experimental/session-lifecycle.ts";
+} from "../src/host/session-lifecycle.ts";
 import { openFauxConversation } from "./experimental-durable-support.ts";
 
 const context = BACKGROUND_CONTEXT;

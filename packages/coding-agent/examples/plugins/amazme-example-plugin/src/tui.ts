@@ -1,5 +1,5 @@
 import { defineFacet } from "@amazme/chord";
-import { AgentController, PresentationUI, SlashCommands } from "@amazme/coding-agent/experimental/plugin";
+import { AgentController, PresentationUI, SlashCommands } from "@amazme/coding-agent/host/plugin";
 import { ExampleFacetService } from "./contract.ts";
 
 export default defineFacet({

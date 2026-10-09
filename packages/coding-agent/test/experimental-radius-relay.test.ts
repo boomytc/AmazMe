@@ -1,7 +1,7 @@
 import type { Client } from "@amazme/client";
 import type { Server } from "@amazme/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { RadiusRelayAuthResolver } from "../src/experimental/radius-auth.ts";
+import { RadiusRelayAuthResolver } from "../src/host/radius-auth.ts";
 import {
 	createRadiusClientTransportFactory,
 	encodeRelayDataFrame,
@@ -10,7 +10,7 @@ import {
 	RadiusRelayHost,
 	type RadiusRelayWebSocket,
 	type RadiusRelayWebSocketFactory,
-} from "../src/experimental/radius-relay.ts";
+} from "../src/host/radius-relay.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 const serverId = "00000000-0000-4000-8000-000000000001";

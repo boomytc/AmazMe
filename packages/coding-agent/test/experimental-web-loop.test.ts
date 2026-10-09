@@ -27,24 +27,24 @@ import {
 	createServerServiceSource,
 	createSessionServiceSource,
 	type SessionServiceSource,
-} from "../src/experimental/services/connection.ts";
-import { Commands, type Commands as CommandsService } from "../src/experimental/services/commands.ts";
-import { Approvals, type Approvals as ApprovalsService } from "../src/experimental/services/approvals.ts";
-import { Feedback, type Feedback as FeedbackService } from "../src/experimental/services/feedback.ts";
-import { Conversations, type Conversations as ConversationsService } from "../src/experimental/services/conversations.ts";
-import { Terminal, type Terminal as TerminalService } from "../src/experimental/services/terminal.ts";
-import { Workspace, type Workspace as WorkspaceService } from "../src/experimental/services/workspace.ts";
-import { Models, type Models as ModelsService } from "../src/experimental/services/models.ts";
-import { Plugins, type Plugins as PluginsService } from "../src/experimental/services/plugins.ts";
+} from "../src/host/services/connection.ts";
+import { Commands, type Commands as CommandsService } from "../src/host/services/commands.ts";
+import { Approvals, type Approvals as ApprovalsService } from "../src/host/services/approvals.ts";
+import { Feedback, type Feedback as FeedbackService } from "../src/host/services/feedback.ts";
+import { Conversations, type Conversations as ConversationsService } from "../src/host/services/conversations.ts";
+import { Terminal, type Terminal as TerminalService } from "../src/host/services/terminal.ts";
+import { Workspace, type Workspace as WorkspaceService } from "../src/host/services/workspace.ts";
+import { Models, type Models as ModelsService } from "../src/host/services/models.ts";
+import { Plugins, type Plugins as PluginsService } from "../src/host/services/plugins.ts";
 import { Schedules, type Schedules as SchedulesService } from "../src/core/plugins/schedules.ts";
-import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
-import { Settings, type Settings as SettingsService } from "../src/experimental/services/settings.ts";
-import { Skills, type Skills as SkillsService } from "../src/experimental/services/skills.ts";
-import { Transcript } from "../src/experimental/services/transcript.ts";
-import { runClient } from "../src/experimental/client.ts";
+import { SessionDirectory, SessionManagement } from "../src/host/services/sessions.ts";
+import { Settings, type Settings as SettingsService } from "../src/host/services/settings.ts";
+import { Skills, type Skills as SkillsService } from "../src/host/services/skills.ts";
+import { Transcript } from "../src/host/services/transcript.ts";
+import { runClient } from "../src/host/client.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import { listSessions, readSession, writeSessionName } from "../src/experimental/session-catalog.ts";
-import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
+import { listSessions, readSession, writeSessionName } from "../src/host/session-catalog.ts";
+import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 
 interface Presentation {
 	readonly client: Client;

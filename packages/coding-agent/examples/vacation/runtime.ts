@@ -15,8 +15,8 @@ import {
 	type TaskGraph,
 } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
-import { ModelRuntime } from "../../core/model-runtime.ts";
-import { SettingsManager } from "../../core/settings-manager.ts";
+import { ModelRuntime } from "../../src/core/model-runtime.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
 import {
 	configureHarnessHttp,
 	createHarnessSettings,

@@ -1,8 +1,8 @@
 import { defineFacet, type FacetLoader } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { describe, expect, test, vi } from "vitest";
-import { SessionPlugins } from "../src/experimental/services/plugins.ts";
-import { createSessionWorkerServices } from "../src/experimental/services/worker.ts";
+import { SessionPlugins } from "../src/host/services/plugins.ts";
+import { createSessionWorkerServices } from "../src/host/services/worker.ts";
 import { openFauxConversation } from "./experimental-durable-support.ts";
 
 describe("experimental plugin reload", () => {

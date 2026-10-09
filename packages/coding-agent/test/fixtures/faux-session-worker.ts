@@ -5,8 +5,8 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@amazme/ai";
 import { createRegistry, Harness } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
-import { consumeInternalProcessRole } from "../../src/experimental/process.ts";
-import { runSessionWorkerWithHarness } from "../../src/experimental/session-worker.ts";
+import { consumeInternalProcessRole } from "../../src/host/process.ts";
+import { runSessionWorkerWithHarness } from "../../src/host/session-worker.ts";
 import { KeyedProbe } from "./keyed-service.ts";
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -122,9 +122,9 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 	writeFileSync(join(ai, "src/models.ts"), 'export { value } from "./index.ts";');
 	packageFixture(root, "durable", 'import fs from "node:fs"; export const read = fs.readFileSync;');
 	const agent = packageFixture(root, "coding-agent", "export const value = 1;");
-	mkdirSync(join(agent, "src/experimental/web"), { recursive: true });
+	mkdirSync(join(agent, "src/host/web"), { recursive: true });
 	writeFileSync(
-		join(agent, "src/experimental/web/page.ts"),
+		join(agent, "src/host/web/page.ts"),
 		'import fs from "node:fs"; export const read = fs.readFileSync;',
 	);
 	const { failures } = await checkEntryContracts(root);
@@ -135,7 +135,7 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 	assert.ok(
 		failures.some(
 			(failure) =>
-				failure.startsWith("packages/coding-agent/src/experimental/web/page.ts:") && failure.includes("node:fs"),
+				failure.startsWith("packages/coding-agent/src/host/web/page.ts:") && failure.includes("node:fs"),
 		),
 	);
 });

@@ -90,14 +90,13 @@ Click `[rename]`, or select a session and press `Ctrl+R`, to edit its title inli
 
 ## Use the web client
 
-The experimental slice can serve the same host to a browser. From the repository root:
+The installed CLI serves the same durable host to a browser:
 
 ```bash
-AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
-  ./packages/coding-agent/src/experimental/cli.ts web
+amazme web --port 0
 ```
 
-It prints the canonical loopback URL, the mode it serves (`source`), the WebSocket URL, and the server ID with
+It prints the canonical loopback URL, the mode it serves (`installed`, or `source` during development), the WebSocket URL, and the server ID with
 `started` when this launch began the server or `already running` when it attached to one, once
 the host accepts connections, and it binds loopback only: a connection to another address of this machine is
 refused. Open the printed `http://127.0.0.1:<port>/` URL.

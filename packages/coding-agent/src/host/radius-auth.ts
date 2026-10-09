@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { normalizeRadiusGatewayUrl } from "@amazme/ai/providers/radius-config";
 import { getAuthCredential } from "../cli/auth-command.ts";
-import type { AuthInput } from "../cli/experimental/command-options.ts";
+import type { AuthInput } from "../cli/host/command-options.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { getRadiusGatewayUrl } from "../core/radius.ts";
 import { resolvePath } from "../utils/paths.ts";

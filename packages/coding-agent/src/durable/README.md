@@ -39,4 +39,4 @@
 | `conversation-view.ts` | TUI、Web、服务共享的会话视图和结果类型 |
 | `session-surface.ts` | 会话导航、分叉、历史分页与焦点持久化 |
 
-该目录只承载默认 TUI 及共享会话逻辑。常驻宿主服务在 `src/experimental/`；统一宿主、客户端及安装产物的交付要求见 `docs/product-improvements.md`。
+该目录只承载默认 TUI 及共享会话逻辑。常驻宿主服务在 `src/host/`；统一宿主、客户端及安装产物的交付要求见 `docs/product-improvements.md`。

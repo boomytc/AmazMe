@@ -102,5 +102,5 @@ export function parseAuth(input: ParsedCommandInput): { auth?: AuthInput; errors
 
 export function unsupportedOptions(command: string, input: ParsedCommandInput): string[] {
 	if (input.remainingArgs.length === 0) return [];
-	return [`The experimental ${command} command does not support existing CLI options yet`];
+	return [`Unsupported options for ${command}`];
 }

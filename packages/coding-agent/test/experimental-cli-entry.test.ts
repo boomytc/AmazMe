@@ -7,14 +7,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
 
 // --import takes a module specifier, not a filesystem path.
-const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/experimental/source-resolver.ts")).href;
+const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const tempDirs: string[] = [];
 
 afterEach(() => {
 	for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-function runEntry(entry: string, experimental: boolean) {
+function runEntry(experimental: boolean, version = false) {
 	const directory = mkdtempSync(join(tmpdir(), "pi-cli-boundary-"));
 	tempDirs.push(directory);
 	return spawnSync(
@@ -22,11 +22,8 @@ function runEntry(entry: string, experimental: boolean) {
 		[
 			"--import",
 			sourceResolverUrl,
-			resolve(__dirname, "../src", entry),
-			"server",
-			"--server-id",
-			"invalid",
-			"--version",
+			resolve(__dirname, "../src/cli.ts"),
+			...(version ? ["--version"] : ["server", "--server-id", "invalid"]),
 		],
 		{
 			cwd: directory,
@@ -44,24 +41,20 @@ function runEntry(entry: string, experimental: boolean) {
 	);
 }
 
-describe("stable and development CLI entrypoints", () => {
-	// #9132: enabling experiments must not pull remote-server dependencies into the published CLI.
-	it("does not dispatch experimental commands from the stable entrypoint", () => {
-		const result = runEntry("cli.ts", true);
-		expect(result.status, result.stderr).toBe(0);
-		expect(result.stdout.trim()).toBe(VERSION);
-	});
-
-	it("keeps experimental dispatch in the development entrypoint", () => {
-		const result = runEntry("experimental/cli.ts", true);
+describe("formal CLI dispatch", () => {
+	it("validates host commands without requiring experiment flags", () => {
+		const result = runEntry(false);
 		expect(result.status, result.stderr).toBe(1);
 		expect(result.stderr).toContain("Invalid --server-id");
-		expect(result.stdout).not.toContain(VERSION);
 	});
-
-	it("falls back to the stable CLI when experiments are disabled", () => {
-		const result = runEntry("experimental/cli.ts", false);
+	it("keeps version metadata available without opening a host", () => {
+		const result = runEntry(false, true);
 		expect(result.status, result.stderr).toBe(0);
 		expect(result.stdout.trim()).toBe(VERSION);
+	});
+	it("uses the same host dispatch when other experiments are enabled", () => {
+		const result = runEntry(true);
+		expect(result.status, result.stderr).toBe(1);
+		expect(result.stderr).toContain("Invalid --server-id");
 	});
 });

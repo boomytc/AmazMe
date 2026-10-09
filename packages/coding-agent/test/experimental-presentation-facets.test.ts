@@ -9,11 +9,11 @@ import {
 	activateBuiltinClientServices,
 	type ClientRuntime,
 	openClientRuntime,
-} from "../src/experimental/client-runtime.ts";
-import { createPresentationFacetData, createPresentationFacetLoaders } from "../src/experimental/plugins/bundled.ts";
-import { createServerPluginPackage, restoreServerPluginPackageProfile } from "../src/experimental/plugins/package.ts";
-import { type RunningServer, startServer } from "../src/experimental/server.ts";
-import { PresentationPlugins } from "../src/experimental/services/plugins.ts";
+} from "../src/host/client-runtime.ts";
+import { createPresentationFacetData, createPresentationFacetLoaders } from "../src/host/plugins/bundled.ts";
+import { createServerPluginPackage, restoreServerPluginPackageProfile } from "../src/host/plugins/package.ts";
+import { type RunningServer, startServer } from "../src/host/server.ts";
+import { PresentationPlugins } from "../src/host/services/plugins.ts";
 
 const runtimes = new Set<ClientRuntime>();
 const runningServers = new Set<RunningServer>();
@@ -70,7 +70,7 @@ describe("server-selected presentation facets", () => {
 		const sourcePath = join(packagePath, "src", "tui.ts");
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/experimental/plugin"; export default defineFacet({ id: "built-a", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet({ id: "built-a", setup(env) { env.use(SlashCommands); } });\n',
 		);
 		const plugin = createServerPluginPackage(directory, serverId, packagePath);
 
@@ -86,7 +86,7 @@ describe("server-selected presentation facets", () => {
 
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/experimental/plugin"; export default defineFacet({ id: "built-b", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet({ id: "built-b", setup(env) { env.use(SlashCommands); } });\n',
 		);
 		const second = await plugin.build();
 		expect(second[0]?.source).not.toBe(first[0]?.source);
@@ -137,7 +137,7 @@ describe("server-selected presentation facets", () => {
 
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/experimental/plugin"; export default defineFacet({ id: "built-c", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet({ id: "built-c", setup(env) { env.use(SlashCommands); } });\n',
 		);
 		const services = runtime.servers[0]!.server.open({
 			services: [PresentationPlugins],

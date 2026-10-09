@@ -7,14 +7,14 @@ looks like a coding agent because it reuses pi's interactive TUI components.
 From a pi checkout, after `npm install` and `npm run build`:
 
 ```bash
-node packages/coding-agent/src/experimental/vacation/main.ts
-node packages/coding-agent/src/experimental/vacation/main.ts --continue
+node packages/coding-agent/examples/vacation/main.ts
+node packages/coding-agent/examples/vacation/main.ts --continue
 ```
 
 Without a build, preload the source resolver so the workspace packages load from `src` instead of `dist`:
 
 ```bash
-node --import ./packages/coding-agent/src/experimental/source-resolver.ts packages/coding-agent/src/experimental/vacation/main.ts
+node --import ./packages/coding-agent/src/source-resolver.ts packages/coding-agent/examples/vacation/main.ts
 ```
 
 A new session starts with pi's default model and thinking level from `settings.json`. `--continue` opens the newest

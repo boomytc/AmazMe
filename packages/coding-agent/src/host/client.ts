@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import type { ClientCommand } from "../cli/experimental/commands/client.ts";
+import type { ClientCommand } from "../cli/host/commands/client.ts";
 import { activateBuiltinClientServices, openClientRuntime } from "./client-runtime.ts";
 import type { SessionAddress } from "./services/sessions.ts";
 

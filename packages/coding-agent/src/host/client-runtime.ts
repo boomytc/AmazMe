@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { Client, ServerError } from "@amazme/client";
 import { createUnixTransportFactory, discoverUnixServers, type UnixServerRoute } from "@amazme/client/unix";
 import { isServerId, type ServerId } from "@amazme/protocol";
-import type { ClientCommand } from "../cli/experimental/commands/client.ts";
+import type { ClientCommand } from "../cli/host/commands/client.ts";
 import { RadiusRelayAuthResolver } from "./radius-auth.ts";
 import { createRadiusClientTransportFactory, RadiusClientReconnect } from "./radius-relay.ts";
 import { activateServer, ENV_SERVER_ID, resolveServerDirectory, resolveSessionDirectory } from "./server.ts";

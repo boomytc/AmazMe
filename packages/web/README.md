@@ -67,7 +67,7 @@
 - 名册的年龄与删除控件共用一个位置：悬停或聚焦时删除控件替代年龄，年龄列因此不会在指针下移动。
 
 这个包不打开会话存储、不执行工具、也不调用模型；这些都在宿主里。浏览器侧入口在
-`packages/coding-agent/src/experimental/web/page.ts`，它绑定宿主的服务（会话范围的 transcript、agent-controller、models、
+`packages/coding-agent/src/host/web/page.ts`，它绑定宿主的服务（会话范围的 transcript、agent-controller、models、
 session-settings、commands、workspace、terminal、conversations、approvals，以及服务端范围的 settings、skills、plugins、
 feedback、schedules），驱动 composer、侧栏的新建会话、模型／推理档切换，以及四个管理面板的动作分发。
 

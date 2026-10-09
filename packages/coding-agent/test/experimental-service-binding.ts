@@ -7,7 +7,7 @@ import {
 	type ServerServiceSource,
 	type ServiceSourceOptions,
 	type SessionServiceSource,
-} from "../src/experimental/services/connection.ts";
+} from "../src/host/services/connection.ts";
 
 interface ServiceBindingOptions extends ServiceSourceOptions {
 	readonly services: readonly { readonly id: string }[];

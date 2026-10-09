@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Development launcher for the web client slice. It runs the experimental `web` command
+// Development launcher for the web client slice. It runs the `web` command
 // straight from TypeScript sources through the resolver that slice already uses, so no
 // build is needed while iterating. This is not a release entrypoint.
 
@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDir, "..");
-const cliEntry = join(repositoryRoot, "packages", "coding-agent", "src", "experimental", "cli.ts");
-const sourceResolver = join(repositoryRoot, "packages", "coding-agent", "src", "experimental", "source-resolver.ts");
+const cliEntry = join(repositoryRoot, "packages", "coding-agent", "src", "cli.ts");
+const sourceResolver = join(repositoryRoot, "packages", "coding-agent", "src", "source-resolver.ts");
 
 // One fixed port keeps the page URL stable across restarts: a reload is enough after a
 // stylesheet edit, and the browser tab survives every relaunch of this command.
@@ -40,7 +40,7 @@ const forwarded = chosenPort ? args : [...args, "--port", String(devPort)];
 
 const child = spawn(process.execPath, ["--import", sourceResolver, cliEntry, "web", ...forwarded], {
 	cwd: repositoryRoot,
-	env: { ...process.env, AMAZME_EXPERIMENTAL: "1" },
+	env: { ...process.env },
 	stdio: "inherit",
 });
 // `Ctrl+C` reaches the host by itself: it shares this process group. A signal aimed at this

@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { cli } from "../src/cli/experimental/cli.ts";
+import { cli } from "../src/cli/host/cli.ts";
 
 describe("experimental CLI command composition", () => {
 	test("requires an experimental subcommand", () => {

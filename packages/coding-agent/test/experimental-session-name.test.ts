@@ -10,8 +10,8 @@ import {
 	readSession,
 	writeSessionName,
 	type SessionCatalogMetadata,
-} from "../src/experimental/session-catalog.ts";
-import { writeSessionMirror } from "../src/experimental/session-store.ts";
+} from "../src/host/session-catalog.ts";
+import { writeSessionMirror } from "../src/host/session-store.ts";
 
 describe("session display names", () => {
 	test("normalizes newlines the way /name does", () => {

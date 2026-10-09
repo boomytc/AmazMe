@@ -10,8 +10,8 @@ interface CodingAgentPackageJson {
 	main: string;
 	exports: {
 		".": { import: string; types: string };
-		"./client": { source: string };
-		"./experimental/plugin": { source: string };
+		"./client": { source: string; types: string; import: string };
+		"./host/plugin": { source: string; types: string; import: string };
 		"./rpc-entry": { import: string };
 	};
 }
@@ -28,13 +28,16 @@ describe("package distribution entrypoints", () => {
 		expect(packageJson.exports["./rpc-entry"].import).toBe("./dist/bundle/rpc-entry.js");
 	});
 
-	// Regression for #9132: internal experimental entrypoints must not be published runtime exports.
-	test("keeps experimental exports source-only", () => {
+	test("publishes compiled client and host plugin exports", () => {
 		expect(packageJson.exports["./client"]).toEqual({
 			source: "./src/client/index.ts",
+			types: "./dist/client/index.d.ts",
+			import: "./dist/client/index.js",
 		});
-		expect(packageJson.exports["./experimental/plugin"]).toEqual({
-			source: "./src/experimental/plugin.ts",
+		expect(packageJson.exports["./host/plugin"]).toEqual({
+			source: "./src/host/plugin.ts",
+			types: "./dist/host/plugin.d.ts",
+			import: "./dist/host/plugin.js",
 		});
 	});
 

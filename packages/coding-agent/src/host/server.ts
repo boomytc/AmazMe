@@ -18,7 +18,7 @@ import {
 import type { ServerListener } from "@amazme/server";
 import { createUnixListener, getUnixSocketPath } from "@amazme/server/unix";
 import lockfile from "proper-lockfile";
-import type { AuthInput } from "../cli/experimental/command-options.ts";
+import type { AuthInput } from "../cli/host/command-options.ts";
 import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "../config.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { resolvePath } from "../utils/paths.ts";

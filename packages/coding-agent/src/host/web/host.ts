@@ -59,7 +59,7 @@ export interface WebHost {
 	close(): Promise<void>;
 }
 
-const repositoryRootFromModule = fileURLToPath(new URL("../../../../../", import.meta.url));
+const repositoryRootFromModule = fileURLToPath(new URL("../../../../..", import.meta.url));
 
 /**
  * The stored interface preferences, read fresh for every document: the page's language and palette
@@ -191,6 +191,7 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 			serverId: hosted.serverId,
 			transportUrl: `ws://${WEB_HOST}:${port}${path}`,
 			transportPath: path,
+			mode: import.meta.url.endsWith(".ts") ? "source" : "installed",
 		});
 		releaseReady();
 		const url = `http://${WEB_HOST}:${port}/`;

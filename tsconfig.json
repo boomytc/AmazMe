@@ -34,8 +34,10 @@
 			"@amazme/agent": ["./packages/agent/src/index.ts"],
 			"@amazme/coding-agent": ["./packages/coding-agent/src/index.ts"],
 			"@amazme/coding-agent/plugin": ["./packages/coding-agent/src/plugin.ts"],
-			"@amazme/coding-agent/experimental/plugin": [
-				"./packages/coding-agent/src/experimental/plugin.ts"
+			"@amazme/coding-agent/host": ["./packages/coding-agent/src/host/server.ts"],
+			"@amazme/coding-agent/web": ["./packages/coding-agent/src/host/web/host.ts"],
+			"@amazme/coding-agent/host/plugin": [
+				"./packages/coding-agent/src/host/plugin.ts"
 			],
 			"@amazme/coding-agent/hooks": ["./packages/coding-agent/src/core/hooks/index.ts"],
 			"@amazme/coding-agent/*": ["./packages/coding-agent/src/*"],

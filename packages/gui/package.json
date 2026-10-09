@@ -14,7 +14,8 @@
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"dependencies": {
-		"@amazme/web": "^1.0.4"
+		"@amazme/web": "^1.0.4",
+		"@amazme/coding-agent": "^1.1.0"
 	},
 	"devDependencies": {
 		"electron": "44.6.0",
@@ -23,5 +24,9 @@
 	},
 	"engines": {
 		"node": ">=22.19.0"
-	}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	]
 }

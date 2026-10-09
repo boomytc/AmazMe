@@ -23,6 +23,8 @@ const allowedExternalPackages = new Set([
 	"@amazme/chord/node",
 	"@silvia-odwyer/photon-node",
 	"jiti",
+	"esbuild",
+	"@amazme/web/assets",
 	// Optional native accelerators. Their callers fall back to JavaScript when absent.
 	"bufferutil",
 	"utf-8-validate",
@@ -86,7 +88,7 @@ function commonBuildOptions() {
 		banner,
 		bundle: true,
 		define: { AMAZME_BUNDLED_NODE: "true" },
-		external: ["@amazme/chord", "@silvia-odwyer/photon-node"],
+		external: ["@amazme/chord", "@silvia-odwyer/photon-node", "esbuild", "@amazme/web/assets"],
 		format: "esm",
 		legalComments: "none",
 		logLevel: "warning",
@@ -107,6 +109,18 @@ function commonBuildOptions() {
 		tsconfigRaw: { compilerOptions: {} },
 	};
 }
+
+// Browser code is a release asset. Installed hosts read it without a compiler or source aliases.
+await build({
+	entryPoints: [join(codingAgentDir, "src", "host", "web", "page.ts")],
+	outfile: join(codingAgentDistDir, "host", "web", "page-browser.js"),
+	bundle: true,
+	format: "esm",
+	platform: "browser",
+	target: "es2022",
+	tsconfig: join(repoRoot, "tsconfig.json"),
+	logLevel: "warning",
+});
 
 function validateExternalImports(metafiles) {
 	const unexpected = new Set();

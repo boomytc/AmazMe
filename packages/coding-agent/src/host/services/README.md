@@ -1,19 +1,16 @@
-# Experimental client/server service slices
+# Durable host and client services
 
 Facet setup generates each host's RPC service catalogue from its provided non-local tokens. Remote service sources obtain those catalogues and bind only services required by consuming facets; there is no handwritten built-in service inventory. With no selected Session, its deferred source admits unresolved requirements as unavailable and keeps their handles disconnected. Attachment validates them against the worker's generated catalogue, which is cached for later detached generations. Keyed services hydrate as an empty directory until their owning feature spawns an instance.
 
-Run the source-only server, client, and web entry from the repository root. The slice is source-only because
-it is excluded from npm packages and standalone binaries, so every command starts from the repository's
-TypeScript through the source resolver:
+The installed product exposes one CLI for the host and both clients:
 
 ```bash
-AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
-  ./packages/coding-agent/src/experimental/cli.ts server
-AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
-  ./packages/coding-agent/src/experimental/cli.ts client
-AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
-  ./packages/coding-agent/src/experimental/cli.ts web
+amazme server
+amazme client
+amazme web --port 0
 ```
+
+Development uses the same `src/cli.ts` through `src/source-resolver.ts`; no separate experimental entry or flag is required. Published hosts read the prebuilt browser asset and compiled service modules.
 
 `AMAZME_SERVER_DIR` overrides the server profile and socket directory, which defaults to `~/.amazme/server`. `AMAZME_SERVER_ID` selects the logical server ID when `--server-id` is omitted.
 
@@ -26,9 +23,8 @@ empty shell. A server already listening in the server directory under the resolv
 page's WebSocket endpoint stays this launch's, and every connection is forwarded to that server, so a second
 `web` launch — or a `client` one — shares one session list and one live state. The document, its stylesheets,
 and the browser-side view come from the `@amazme/web` package; this slice holds the entry
-(`experimental/web/page.ts`) that binds the host's services and drives the composer, plus the HTTP/WebSocket
-host. The page bundle is built in memory with the repository's esbuild and the root tsconfig paths, so the
-browser runs the same protocol and client code the TUI does. Changes to the
+(`host/web/page.ts`) that binds the host's services and drives the composer, plus the HTTP/WebSocket
+host. The page bundle is built with the product and read from its installed assets, so the browser runs the same protocol and client code the TUI does. Source development can build it in memory. Changes to the
 page take effect after the host restarts.
 
 | Scope | Service | Current slice | Continuation point |
@@ -62,7 +58,7 @@ TUI ignores them.
 
 `ServerServiceSource.connection` and `SessionServiceSource.attachment` are implemented local control states. Session directory, creation, and address DTOs are owned by these coding-agent service contracts rather than `pi-protocol`; the transport treats their payloads as opaque service data.
 
-With `AMAZME_EXPERIMENTAL=1`, an interactive `pi client` creates and attaches a Session before opening the service-only chat TUI. `pi client -c` and `pi client -r` attach the newest existing Session instead, preserving its durable model and thinking configuration. Model selection is available on demand through `/model`; it is never a startup screen. The presentation always uses the stable coding agent's alternate-screen renderer and shared transcript/dock viewport. It loads configured theme resources and uses the stable terminal light/dark detection and appearance-change notifications. Its replicated state feeds the stable editor, message, tool, status, theme, and tool-renderer components. The presentation drives the worker-owned root conversation through `AgentController` and renders the `Transcript` service's complete replicated value while controller calls are pending. `Transcript` serves `Conversation.viewState()` directly: the durable Harness publishes exact operations per commit, so the worker keeps no reducer of its own. Chord flushes compact operations once per publication, while each client/state pairing encodes them with an independent path dictionary. Chord reconstructs presentation replicas and owns hydration, sequencing, and gap detection.
+An interactive `amazme client` creates and attaches a Session before opening the service-only chat TUI. `amazme client -c` and `amazme client -r` attach the newest existing Session instead, preserving its durable model and thinking configuration. Model selection is available on demand through `/model`; it is never a startup screen. The presentation always uses the stable coding agent's alternate-screen renderer and shared transcript/dock viewport. It loads configured theme resources and uses the stable terminal light/dark detection and appearance-change notifications. Its replicated state feeds the stable editor, message, tool, status, theme, and tool-renderer components. The presentation drives the worker-owned root conversation through `AgentController` and renders the `Transcript` service's complete replicated value while controller calls are pending. `Transcript` serves `Conversation.viewState()` directly: the durable Harness publishes exact operations per commit, so the worker keeps no reducer of its own. Chord flushes compact operations once per publication, while each client/state pairing encodes them with an independent path dictionary. Chord reconstructs presentation replicas and owns hydration, sequencing, and gap detection.
 
 The server keeps each Session in its own directory under the session directory: `meta.json` holds the ID, creation time, and working directory, and `session.sqlite` is the `@amazme/durable` storage. The server lists and creates Sessions from `meta.json` only. The Session worker locks the directory, opens the storage, and owns it until it retires; the worker stays alive while the Harness task graph has live tasks.
 

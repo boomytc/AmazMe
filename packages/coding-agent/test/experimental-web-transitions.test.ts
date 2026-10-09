@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { sessionTransitions } from "../src/experimental/web/page.ts";
+import { sessionTransitions } from "../src/host/web/page.ts";
 
 const tick = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

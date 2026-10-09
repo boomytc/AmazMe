@@ -1,9 +1,9 @@
 import type { ServiceCall } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { CoordinatorConnectionEvent } from "../src/experimental/coordinator.ts";
-import type { SessionCatalogMetadata } from "../src/experimental/session-catalog.ts";
-import { SessionWorkerManager } from "../src/experimental/session-worker-manager.ts";
+import type { CoordinatorConnectionEvent } from "../src/host/coordinator.ts";
+import type { SessionCatalogMetadata } from "../src/host/session-catalog.ts";
+import { SessionWorkerManager } from "../src/host/session-worker-manager.ts";
 
 const metadata: SessionCatalogMetadata = {
 	id: "session-1",

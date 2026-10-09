@@ -121,7 +121,7 @@ describe("electron window", () => {
 		expect(smoke.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
 		expect(smoke.report.boot).toBe(true);
 		expect(smoke.report.name).toBe("AmazMe");
-		expect(smoke.report.mode).toBe("source");
+		expect(smoke.report.mode).toBe("installed");
 		// The shared page sets the document title from the boot manifest.
 		expect(smoke.report.title).toBe(`${smoke.report.name} ${smoke.report.version}`);
 		expect(smoke.report.transport).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/amazme$/);

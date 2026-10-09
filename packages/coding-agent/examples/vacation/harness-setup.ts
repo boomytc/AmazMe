@@ -1,9 +1,9 @@
 import type { ModelThinkingLevel } from "@amazme/ai";
 import { createRegistry, type HarnessSettings, type ModelRef, type Registry } from "@amazme/durable";
-import { applyHttpProxySettings, configureHttpDispatcher } from "../../core/http-dispatcher.ts";
-import { findInitialModel, resolveCliModel } from "../../core/model-resolver.ts";
-import type { ModelRuntime } from "../../core/model-runtime.ts";
-import type { SettingsManager } from "../../core/settings-manager.ts";
+import { applyHttpProxySettings, configureHttpDispatcher } from "../../src/core/http-dispatcher.ts";
+import { findInitialModel, resolveCliModel } from "../../src/core/model-resolver.ts";
+import type { ModelRuntime } from "../../src/core/model-runtime.ts";
+import type { SettingsManager } from "../../src/core/settings-manager.ts";
 import { Search, Vacation } from "./vacation.ts";
 
 /** pi's HTTP setup: proxy, idle timeouts, and one undici for fetch. Without it, some provider streams break off. */

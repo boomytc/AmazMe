@@ -303,6 +303,9 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
   ${APP_NAME} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
   ${APP_NAME} doctor [--json] [--zh]    Read local diagnostics without changing files or contacting providers
+  ${APP_NAME} server [options]         Run the durable Unix host
+  ${APP_NAME} web [--port <port>]       Serve the installed Web client on loopback
+  ${APP_NAME} client [options] [text]   Attach a terminal client to the same host
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
 
 ${chalk.bold("Options:")}

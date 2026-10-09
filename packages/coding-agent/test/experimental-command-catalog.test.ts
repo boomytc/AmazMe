@@ -9,10 +9,10 @@ import {
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { describe, expect, test } from "vitest";
 import { AgentController, type AgentController as AgentControllerService } from "../src/core/plugins/agent-controller.ts";
-import { Commands, type CommandSummary } from "../src/experimental/services/commands.ts";
-import { createCommandsFacet } from "../src/experimental/services/commands-provider.ts";
-import { Models, type ModelsState } from "../src/experimental/services/models.ts";
-import { SessionPlugins } from "../src/experimental/services/plugins.ts";
+import { Commands, type CommandSummary } from "../src/host/services/commands.ts";
+import { createCommandsFacet } from "../src/host/services/commands-provider.ts";
+import { Models, type ModelsState } from "../src/host/services/models.ts";
+import { SessionPlugins } from "../src/host/services/plugins.ts";
 import { SlashCommands } from "../src/core/plugins/slash-commands.ts";
 import {
 	createSlashCommandsRuntimeFacet,

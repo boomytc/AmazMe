@@ -7,10 +7,10 @@ import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
-import { webLaunchLines } from "../src/experimental/commands.ts";
-import { buildBootManifest, injectBootManifest, requestLanguages } from "../src/experimental/web/boot.ts";
+import { webLaunchLines } from "../src/host/commands.ts";
+import { buildBootManifest, injectBootManifest, requestLanguages } from "../src/host/web/boot.ts";
 import type { WebBootManifest } from "@amazme/web";
-import { startWebHost, type WebHost } from "../src/experimental/web/host.ts";
+import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 
 const hosts = new Set<WebHost>();
 const directories = new Set<string>();

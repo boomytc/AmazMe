@@ -34,7 +34,7 @@ const layers = new Map([
 	["@amazme/client", 3],
 	["@amazme/web", 3],
 	["@amazme/server", 4],
-	["@amazme/gui", 4],
+	["@amazme/gui", 6],
 	["@amazme/coding-agent", 5],
 	["@amazme/evals", 6],
 ]);
@@ -269,7 +269,7 @@ export async function checkEntryContracts(repoRoot) {
 	for (const entry of [
 		"packages/ai/src/models.ts",
 		"packages/durable/src/index.ts",
-		"packages/coding-agent/src/experimental/web/page.ts",
+		"packages/coding-agent/src/host/web/page.ts",
 	]) {
 		try {
 			await build({

@@ -3,15 +3,15 @@ import { type ClientCommandContext, clientCommand } from "./commands/client.ts";
 import { type ServerCommandContext, serverCommand } from "./commands/server.ts";
 import { type WebCommandContext, webCommand } from "./commands/web.ts";
 
-interface ExperimentalCommandGroup {
-	readonly command: "experimental";
+interface HostCommandGroup {
+	readonly command: "host";
 }
 
 export type CliContext = ServerCommandContext & ClientCommandContext & WebCommandContext;
 
-const experimentalCommand = new Command<ExperimentalCommandGroup, CliContext>("experimental").build(() => ({
+const hostCommand = new Command<HostCommandGroup, CliContext>("host").build(() => ({
 	ok: false,
-	errors: ["Expected experimental command: server, client, or web"],
+	errors: ["Expected host command: server, client, or web"],
 }));
 
-export const cli = experimentalCommand.command(serverCommand).command(clientCommand).command(webCommand);
+export const cli = hostCommand.command(serverCommand).command(clientCommand).command(webCommand);

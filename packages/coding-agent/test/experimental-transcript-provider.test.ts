@@ -3,8 +3,8 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { fauxAssistantMessage } from "@amazme/ai";
 import type { ConversationView } from "@amazme/durable";
 import { describe, expect, test } from "vitest";
-import { Transcript } from "../src/experimental/services/transcript.ts";
-import { createTranscriptServiceFacet } from "../src/experimental/services/transcript-provider.ts";
+import { Transcript } from "../src/host/services/transcript.ts";
+import { createTranscriptServiceFacet } from "../src/host/services/transcript-provider.ts";
 import { openFauxConversation } from "./experimental-durable-support.ts";
 
 describe("Transcript service", () => {

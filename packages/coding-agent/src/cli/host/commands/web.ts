@@ -8,6 +8,7 @@ export interface WebCommand {
 	readonly port?: number;
 	readonly serverId?: ServerId;
 	readonly sessionDir?: string;
+	readonly pluginPackages?: readonly string[];
 }
 
 export interface WebCommandContext {
@@ -27,17 +28,20 @@ const portOption = valueOption("--port", (value) => {
 		: { ok: false, error: `Invalid --port "${value}"; expected 0-65535` };
 });
 const sessionDirOption = stringOption("--session-dir");
+const pluginPackageOption = stringOption("-e", { repeatable: true });
 
 export const webCommand = new Command<WebCommand, WebCommandContext>("web")
 	.option(portOption)
 	.option(serverIdOption)
 	.option(sessionDirOption)
+	.option(pluginPackageOption)
 	.build((input) => {
 		const errors = unsupportedOptions("web", input);
 		if (errors.length > 0) return { ok: false, errors };
 		const port = input.value(portOption);
 		const serverId = input.value(serverIdOption);
 		const sessionDir = input.value(sessionDirOption);
+		const pluginPackages = input.values(pluginPackageOption);
 		return {
 			ok: true,
 			command: {
@@ -45,6 +49,7 @@ export const webCommand = new Command<WebCommand, WebCommandContext>("web")
 				...(port === undefined ? {} : { port }),
 				...(serverId === undefined ? {} : { serverId }),
 				...(sessionDir === undefined ? {} : { sessionDir }),
+				...(pluginPackages.length === 0 ? {} : { pluginPackages }),
 			},
 		};
 	})

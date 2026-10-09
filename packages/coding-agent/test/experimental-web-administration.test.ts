@@ -6,12 +6,12 @@ import { replicatedState } from "@amazme/chord";
 import { copyIdentities, settingFieldCopy, settingOptionCopy } from "@amazme/web";
 import { afterEach, describe, expect, test } from "vitest";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { createPluginsService } from "../src/experimental/services/plugins-provider.ts";
-import type { PluginsState } from "../src/experimental/services/plugins.ts";
-import { applySetting, describeSettings, settingsSnapshot } from "../src/experimental/services/settings-provider.ts";
-import type { SettingsState } from "../src/experimental/services/settings.ts";
-import { createSkillsService } from "../src/experimental/services/skills-provider.ts";
-import type { SkillsState } from "../src/experimental/services/skills.ts";
+import { createPluginsService } from "../src/host/services/plugins-provider.ts";
+import type { PluginsState } from "../src/host/services/plugins.ts";
+import { applySetting, describeSettings, settingsSnapshot } from "../src/host/services/settings-provider.ts";
+import type { SettingsState } from "../src/host/services/settings.ts";
+import { createSkillsService } from "../src/host/services/skills-provider.ts";
+import type { SkillsState } from "../src/host/services/skills.ts";
 
 const directories = new Set<string>();
 

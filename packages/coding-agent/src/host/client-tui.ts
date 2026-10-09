@@ -3,7 +3,7 @@ import { combineFacetLoaders, createFacetHost, defineFacet, type FacetHost, type
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { AgentState, ConversationView, EntryRecord } from "@amazme/durable";
 import { CombinedAutocompleteProvider, type Component, Container, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
-import type { ClientCommand } from "../cli/experimental/commands/client.ts";
+import type { ClientCommand } from "../cli/host/commands/client.ts";
 import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import { DefaultResourceLoader } from "../core/resource-loader.ts";

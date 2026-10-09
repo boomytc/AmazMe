@@ -32,7 +32,7 @@ const IGNORED_STATUSES = new Set(["INFO", "SKIPPED"]);
 const here = fileURLToPath(new URL(".", import.meta.url));
 const baselinePath = join(here, "baseline.json");
 const clientPath = join(here, "client.ts");
-const resolverUrl = pathToFileURL(join(here, "../../src/experimental/source-resolver.ts")).href;
+const resolverUrl = pathToFileURL(join(here, "../../src/source-resolver.ts")).href;
 
 type CheckStatus = "pass" | "fail";
 

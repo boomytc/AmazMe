@@ -4,6 +4,8 @@
 
 ### Added
 
+- Published the existing durable host, terminal client and Web entry through the formal CLI and compiled package, with prebuilt browser assets and lazy host command dispatch
+
 - Added optional JSON workflows over existing Durable jobs, with isolated agent contexts, bounded background concurrency, saved templates, persistent pause/resume, owned cancellation, and independent command evidence
 - Added the local `AgentRuntime` service for trusted plugins to access the selected conversation's existing Harness
 
@@ -20,6 +22,8 @@
 - Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
 
 ### Fixed
+
+- Fixed release packages depending on workspace source resolvers and stale nested Web assets; builds now replace their outputs before publication
 
 - Fixed Web plugin commands being expanded as prompt templates, refreshed their catalogue on registration changes, and applied selected approval policies to mutation metadata from plugin tools
 

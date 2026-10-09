@@ -11,7 +11,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { Subagent } from "../src/durable/subagent.ts";
 import { createAgentController } from "../src/core/plugins/agent-controller-provider.ts";
 import { type ConversationsState, IDLE_LANE } from "../src/durable/conversation-view.ts";
-import { createConversationsService } from "../src/experimental/services/conversations-provider.ts";
+import { createConversationsService } from "../src/host/services/conversations-provider.ts";
 import { navigateTree, readReturnPoints, readSummaries } from "../src/durable/session-surface.ts";
 
 /**

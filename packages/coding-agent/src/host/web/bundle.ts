@@ -1,6 +1,7 @@
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { build } from "esbuild";
+import { getPackageDir } from "../../config.ts";
 /** The page entry is the host's own presentation bootstrap, next to this module. */
 export const WEB_PAGE_ENTRY = fileURLToPath(new URL("./page.ts", import.meta.url));
 
@@ -12,6 +13,10 @@ export async function bundlePageEntry(
 	repositoryRoot: string,
 	entry: string = WEB_PAGE_ENTRY,
 ): Promise<{ code: string; warnings: readonly string[] }> {
+	if (import.meta.url.endsWith(".js")) {
+		return { code: await readFile(join(getPackageDir(), "dist", "host", "web", "page-browser.js"), "utf8"), warnings: [] };
+	}
+	const { build } = await import("esbuild");
 	const result = await build({
 		entryPoints: [entry],
 		bundle: true,
@@ -27,4 +32,3 @@ export async function bundlePageEntry(
 	if (output === undefined) throw new Error("Page bundle produced no output");
 	return { code: output.text, warnings: result.warnings.map((warning) => warning.text) };
 }
-

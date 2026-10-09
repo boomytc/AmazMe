@@ -544,17 +544,17 @@ The following existing files describe behavior that should become Chord responsi
 | `packages/agent/src/plugins/services/replicated-state.ts` | authoritative replicated state and delivery semantics |
 | `packages/agent/src/plugins/services/provider.ts` | provider classification, calls, singleton replacement, keyed generations, snapshots |
 | `packages/agent/src/plugins/services/namespace.ts` | stable remote facades, hydration, state updates, keyed observation |
-| `packages/coding-agent/src/experimental/facets.ts` | plugin environment, dependency ledger, lifecycle graph, host, reload |
-| `packages/coding-agent/src/experimental/facet-loader.ts` | static and combined loaders plus loaded-generation ownership |
+| `packages/coding-agent/src/host/facets.ts` | plugin environment, dependency ledger, lifecycle graph, host, reload |
+| `packages/coding-agent/src/host/facet-loader.ts` | static and combined loaders plus loaded-generation ownership |
 | generic service sections of `packages/protocol/src/protocol.ts` | Chord-owned versioned service/RPC envelope |
 
 The following must remain outside Chord:
 
 | Existing area | Downstream responsibility |
 |---|---|
-| `packages/coding-agent/src/experimental/services/connection.ts` | Pi connection state, selected-session attachment, route rebinding, Pi client adapter |
-| `packages/coding-agent/src/experimental/services/server.ts` | server-wide session directory and management implementations |
-| `packages/coding-agent/src/experimental/services/worker.ts` | Session worker host construction and Pi protocol publication adapter |
+| `packages/coding-agent/src/host/services/connection.ts` | Pi connection state, selected-session attachment, route rebinding, Pi client adapter |
+| `packages/coding-agent/src/host/services/server.ts` | server-wide session directory and management implementations |
+| `packages/coding-agent/src/host/services/worker.ts` | Session worker host construction and Pi protocol publication adapter |
 | `packages/server`, `packages/client`, and process managers | framing, routing, authentication, attachment, process lifecycle, reconnect policy |
 | slash-command, model, account, transcript, TUI, and agent-controller services | application contracts and plugin implementations |
 | `source-resolver.ts` and Pi internal process entrypoints | Pi source execution and process policy |

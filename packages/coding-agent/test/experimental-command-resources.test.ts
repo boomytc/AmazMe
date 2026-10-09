@@ -8,7 +8,7 @@ import {
 	type CommandResourceSettings,
 	expandResourceCommand,
 	loadCommandResources,
-} from "../src/experimental/services/commands-provider.ts";
+} from "../src/host/services/commands-provider.ts";
 
 let root: string;
 let agentDir: string;

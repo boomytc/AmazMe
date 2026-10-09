@@ -24,11 +24,10 @@ node /path/to/AmazMe/packages/coding-agent/dist/bundle/cli.js
 
 进入交互界面后用 `/login` 连接订阅或 API key，然后给出任务。
 
-实验切片还能把同一个宿主交给浏览器（回环 WebSocket + 内置的网页客户端）：
+正式 CLI 也能把同一个宿主交给浏览器（回环 WebSocket + 内置的网页客户端）：
 
 ```bash
-AMAZME_EXPERIMENTAL=1 node --import ./packages/coding-agent/src/experimental/source-resolver.ts \
-  ./packages/coding-agent/src/experimental/cli.ts web
+amazme web
 ```
 
 界面语言（中／英）与外观（浅色／深色／跟随系统）在网页的设置面板里切换、存进 agent 的 `settings.json`，宿主按偏好
@@ -53,7 +52,7 @@ WebSocket 地址与 server id（`started` 表示这次启动自己起了宿主�
 
 ```bash
 npm run dev:tui      # 交互界面，源码入口 packages/coding-agent/src/cli.ts
-npm run dev:web      # 网页客户端，源码入口 experimental/cli.ts web
+npm run dev:web      # 网页客户端，源码入口 cli.ts web
 npm run dev:desktop  # Electron 窗口，加载与 dev:web 同一个宿主
 ```
 

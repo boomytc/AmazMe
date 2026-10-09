@@ -10,8 +10,8 @@ import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { CodingTools } from "@amazme/durable/tools";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ToolApprovalMode } from "../src/core/settings-manager.ts";
-import { createApprovalGate, toolNeedsApproval } from "../src/experimental/services/approvals-provider.ts";
-import type { ApprovalsState } from "../src/experimental/services/approvals.ts";
+import { createApprovalGate, toolNeedsApproval } from "../src/host/services/approvals-provider.ts";
+import type { ApprovalsState } from "../src/host/services/approvals.ts";
 
 /**
  * The approval gate at the tool boundary, over a real Harness: the scripted model asks for a `read`,
