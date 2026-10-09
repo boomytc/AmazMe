@@ -16,6 +16,7 @@ import {
 	SCHEDULE_REMOVE_ACTION,
 	SCHEDULE_REMOVE_MODAL,
 	SCHEDULE_RUN_ACTION,
+	SCHEDULE_CANCEL_ACTION,
 	SCHEDULE_RELOAD_ACTION,
 	SESSION_REMOVE_MODAL,
 	SESSION_RENAME_MODAL,
@@ -309,6 +310,7 @@ export interface PluginsPanelInput {
 export interface ScheduleRecordLike {
 	readonly id: string;
 	readonly sessionId: string;
+	readonly conversationId: string;
 	readonly prompt: string;
 	readonly everyMs: number;
 	readonly enabled: boolean;
@@ -316,6 +318,7 @@ export interface ScheduleRecordLike {
 	readonly lastRunAt: number | null;
 	readonly lastOutcome: string | null;
 	readonly nextRunAt: number;
+	readonly pending: { readonly cancelling: boolean; readonly problem: string | null } | null;
 }
 
 export interface SchedulesStateLike {
@@ -786,12 +789,13 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 					id: `schedule:${schedule.id}`,
 					title: summarize(schedule.prompt, 90),
 					description: scheduleCadenceCopy(locale, schedule.everyMs),
-					badges: [schedule.sessionId, ...(schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
+					badges: [schedule.sessionId, translate(locale, "panel.automation.conversation", { id: schedule.conversationId }), ...(schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
 					value: [
 						translate(locale, "panel.automation.next", {
 							when: scheduleDueCopy(locale, schedule.nextRunAt, now),
 						}),
 						...(schedule.lastOutcome === null ? [] : [schedule.lastOutcome]),
+						...(schedule.pending === null ? [] : [schedule.pending.problem ?? translate(locale, schedule.pending.cancelling ? "panel.automation.cancelling" : "panel.automation.running")]),
 					].join(" · "),
 					controls: [
 						{
@@ -805,11 +809,12 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 					actions: [
 						{
 							id: SCHEDULE_RUN_ACTION,
-							...(state.problem ? { disabled: true } : {}),
+							...(state.problem || schedule.pending !== null ? { disabled: true } : {}),
 							label: translate(locale, "panel.automation.run"),
 							data: schedule.id,
 							tone: "default" as const,
 						},
+						...(schedule.pending === null ? [] : [{ id: SCHEDULE_CANCEL_ACTION, label: translate(locale, "panel.automation.cancel"), data: schedule.id, tone: "danger" as const, ...(state.problem ? { disabled: true } : {}) }]),
 						{
 							id: SCHEDULE_REMOVE_ACTION,
 							...(state.problem ? { disabled: true } : {}),
@@ -1067,11 +1072,12 @@ export function addMcpServerModal(locale: Locale): PanelModal {
 /**
  * The modal a plan-a-prompt action opens: the text the host will send, and the gap between runs.
  */
-export function addScheduleModal(locale: Locale, sessionId: string): PanelModal {
+export function addScheduleModal(locale: Locale, sessionId: string, conversationId = "1"): PanelModal {
 	return {
 		id: SCHEDULE_ADD_MODAL,
 		title: translate(locale, "modal.scheduleAdd.title"),
-		description: translate(locale, "modal.scheduleAdd.description", { session: sessionId }),
+		description: translate(locale, "modal.scheduleAdd.description", { session: sessionId, conversation: conversationId }),
+		data: JSON.stringify({ sessionId, conversationId }),
 		fields: [
 			{
 				id: "prompt",

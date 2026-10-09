@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import type { SchedulesState } from "../src/core/plugins/schedules.ts";
  * `schedules.json`, which runs the tick performs, and what each run records.
  */
 const directories = new Set<string>();
+const stores = new Set<ReturnType<typeof createSchedulesService>>();
 
 async function makeDirectory(prefix: string): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -20,6 +22,8 @@ async function makeDirectory(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+	await Promise.all([...stores].map((store) => store.stop()));
+	stores.clear();
 	await Promise.all([...directories].map((directory) => rm(directory, { recursive: true, force: true })));
 	directories.clear();
 });
@@ -58,18 +62,23 @@ async function openStore(
 	const service = createSchedulesService(
 		{
 			agentDir: () => agentDir,
+			hostId: () => "test-host",
+			cancel: async () => null,
 			now: () => clock,
 			tickMs,
-			run:
-				runner ??
-				(async (sessionId, prompt) => {
-					runs.push({ sessionId, prompt });
+			run: async (sessionId, request, accepted) => {
+				await accepted("1");
+				if (runner !== undefined) await runner(sessionId, request.message);
+				else {
+					runs.push({ sessionId, prompt: request.message });
 					if (failure.on) throw new Error("the model is unavailable");
-					return "Answered.";
-				}),
+				}
+				return { status: "done", text: "", reason: null };
+			},
 		},
 		() => state,
 	);
+	stores.add(service);
 	await service.activate(BACKGROUND_CONTEXT);
 	const path = join(agentDir, "schedules.json");
 	return {
@@ -93,7 +102,7 @@ describe("planned prompts", () => {
 		// The prompt is trimmed, the cadence becomes milliseconds, and the first run is one gap away.
 		expect(
 			await store.service.service.add(
-				{ sessionId: "session-1", prompt: "  report the changes  ", everyMinutes: 2 },
+				{ conversationId: "1", sessionId: "session-1", prompt: "  report the changes  ", everyMinutes: 2 },
 				BACKGROUND_CONTEXT,
 			),
 		).toEqual({ ok: true, note: "Added. It runs on its own from now on." });
@@ -132,14 +141,14 @@ describe("planned prompts", () => {
 		store.advance(120_000);
 		await store.service.tick(BACKGROUND_CONTEXT);
 		expect(store.runs).toHaveLength(2);
-		expect(store.state.value?.schedules[0]?.lastOutcome).toBe("failed: the model is unavailable");
+		expect(store.state.value?.schedules[0]?.pending?.problem).toBe("the model is unavailable");
 
 		await store.service.stop();
 	}, 30_000);
 
 	test("runs a due prompt from the host's own timer", async () => {
 		const store = await openStore(undefined, 20);
-		await store.service.service.add({ sessionId: "s", prompt: "timer", everyMinutes: 1 }, BACKGROUND_CONTEXT);
+		await store.service.service.add({ conversationId: "1", sessionId: "s", prompt: "timer", everyMinutes: 1 }, BACKGROUND_CONTEXT);
 		// The clock moves past the due time, then the host's own loop is what runs it.
 		store.advance(60_000);
 		store.service.start();
@@ -168,7 +177,7 @@ describe("planned prompts", () => {
 			return "Answered.";
 		});
 		expect(
-			await store.service.service.add({ sessionId: "s", prompt: "slow", everyMinutes: 1 }, BACKGROUND_CONTEXT),
+			await store.service.service.add({ conversationId: "1", sessionId: "s", prompt: "slow", everyMinutes: 1 }, BACKGROUND_CONTEXT),
 		).toMatchObject({ ok: true });
 		store.advance(60_000);
 
@@ -186,7 +195,7 @@ describe("planned prompts", () => {
 	test("pauses, resumes, runs on demand, and removes a schedule", async () => {
 		const store = await openStore();
 		expect(
-			await store.service.service.add({ sessionId: "session-2", prompt: "check the queue", everyMinutes: 5 }, BACKGROUND_CONTEXT),
+			await store.service.service.add({ conversationId: "1", sessionId: "session-2", prompt: "check the queue", everyMinutes: 5 }, BACKGROUND_CONTEXT),
 		).toMatchObject({ ok: true });
 		const id = store.state.value?.schedules[0]?.id ?? "";
 		expect(id.length).toBeGreaterThan(0);
@@ -203,7 +212,7 @@ describe("planned prompts", () => {
 
 		// Run now works while it is paused, and records the outcome without moving the cadence.
 		const pausedNextRun = store.state.value?.schedules[0]?.nextRunAt;
-		expect(await store.service.service.runNow(id, BACKGROUND_CONTEXT)).toEqual({ ok: true, note: "Answered." });
+		expect(await store.service.service.runNow(id, randomUUID(), BACKGROUND_CONTEXT)).toEqual({ ok: true, note: "Answered." });
 		expect(store.runs).toEqual([{ sessionId: "session-2", prompt: "check the queue" }]);
 		expect(store.state.value?.schedules[0]).toMatchObject({ lastRunAt: 1_600_000, lastOutcome: "Answered." });
 		expect(store.state.value?.schedules[0]?.nextRunAt).toBe(pausedNextRun);
@@ -217,7 +226,7 @@ describe("planned prompts", () => {
 
 		// A manual run while it is running does not move that cadence either; only the tick does.
 		store.advance(60_000);
-		expect(await store.service.service.runNow(id, BACKGROUND_CONTEXT)).toEqual({ ok: true, note: "Answered." });
+		expect(await store.service.service.runNow(id, randomUUID(), BACKGROUND_CONTEXT)).toEqual({ ok: true, note: "Answered." });
 		expect(store.state.value?.schedules[0]).toMatchObject({ lastRunAt: 1_660_000, nextRunAt: 1_900_000 });
 		// Once it is due, the tick runs it again and moves the next run on from the run's finish.
 		store.advance(240_000);
@@ -226,7 +235,7 @@ describe("planned prompts", () => {
 		expect(store.state.value?.schedules[0]).toMatchObject({ lastRunAt: 1_900_000, nextRunAt: 2_200_000 });
 
 		// A manual run of a schedule that is gone reports it rather than failing the call.
-		expect(await store.service.service.runNow("no-such-schedule", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
+		expect(await store.service.service.runNow("no-such-schedule", randomUUID(), BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
 		expect(await store.service.service.setEnabled("no-such-schedule", false, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
@@ -239,16 +248,16 @@ describe("planned prompts", () => {
 	test("refuses a prompt or a cadence the store cannot keep", async () => {
 		const store = await openStore();
 		const add = store.service.service.add;
-		expect(await add({ sessionId: "s", prompt: "   ", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
+		expect(await add({ conversationId: "1", sessionId: "s", prompt: "   ", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
-		expect(await add({ sessionId: "", prompt: "hello", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
+		expect(await add({ conversationId: "1", sessionId: "", prompt: "hello", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
-		expect(await add({ sessionId: "s", prompt: "hello", everyMinutes: 0 }, BACKGROUND_CONTEXT)).toMatchObject({
+		expect(await add({ conversationId: "1", sessionId: "s", prompt: "hello", everyMinutes: 0 }, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
-		expect(await add({ sessionId: "s", prompt: "hello", everyMinutes: Number.NaN }, BACKGROUND_CONTEXT)).toMatchObject({
+		expect(await add({ conversationId: "1", sessionId: "s", prompt: "hello", everyMinutes: Number.NaN }, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
 		expect(store.state.value?.schedules).toEqual([]);
@@ -259,10 +268,12 @@ describe("planned prompts", () => {
 		await writeFile(
 			store.path,
 			JSON.stringify({
-				version: 1,
+				version: 2,
+				hostId: "test-host",
 				schedules: [
 					{
 						id: "kept",
+						conversationId: "1", pending: null, history: [],
 						sessionId: "session-3",
 						prompt: "keep me",
 						everyMs: 60_000,
@@ -290,7 +301,7 @@ describe("planned prompts", () => {
 		expect(store.state.value?.schedules).toEqual([]);
 		// Adding after the file went away recreates it.
 		expect(
-			await store.service.service.add({ sessionId: "s", prompt: "again", everyMinutes: 1 }, BACKGROUND_CONTEXT),
+			await store.service.service.add({ conversationId: "1", sessionId: "s", prompt: "again", everyMinutes: 1 }, BACKGROUND_CONTEXT),
 		).toMatchObject({ ok: true });
 		expect((await store.recordFile()).schedules).toHaveLength(1);
 	}, 30_000);

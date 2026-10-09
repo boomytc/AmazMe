@@ -10,6 +10,8 @@ export interface AgentPromptImage {
 export interface AgentPromptRequest {
 	message: string;
 	images: AgentPromptImage[] | null;
+	/** Fixed durable target. Omitted input uses the application's selected conversation. */
+	conversationId?: string;
 	/** Stable conversation-scoped admission key; retries return the same durable submission, including while busy. */
 	requestId?: string;
 }
@@ -55,6 +57,8 @@ export interface AgentController {
 	compact(request: AgentCompactionRequest, context: Context): Promise<AgentOperationResponse>;
 	/** Wait until the prompt with this `operationId` is answered or settles unanswered. */
 	waitForPrompt(operationId: string, context: Context): Promise<AgentPromptResult>;
+	/** Read an existing admission receipt without creating or delivering input. */
+	findPrompt(conversationId: string, requestId: string, context: Context): Promise<string | null>;
 	/** Cancel exactly the accepted input and join its current run; settled IDs cannot stop a later user run. */
 	cancelPrompt(operationId: string, context: Context): Promise<{ outcome: "cancelled" | "settled" | "not_found" }>;
 }

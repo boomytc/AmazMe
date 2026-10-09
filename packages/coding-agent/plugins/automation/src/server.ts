@@ -8,7 +8,9 @@ export default defineFacet({
 		const sessions = env.use(HostSessions);
 		createSchedulesFacet({
 			agentDir: () => sessions.agentDir(),
-			run: (sessionId, prompt, context) => sessions.prompt(sessionId, prompt, context),
+			hostId: () => sessions.hostId(),
+			run: (sessionId, request, accepted, context) => sessions.prompt(sessionId, request, accepted, context),
+			cancel: (sessionId, request, context) => sessions.cancelPrompt(sessionId, request, context),
 		}).setup(env);
 	},
 });

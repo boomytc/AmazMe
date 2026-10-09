@@ -90,6 +90,7 @@ import {
 	SCHEDULE_REMOVE_ACTION,
 	SCHEDULE_REMOVE_MODAL,
 	SCHEDULE_RUN_ACTION,
+	SCHEDULE_CANCEL_ACTION,
 	SCHEDULE_RELOAD_ACTION,
 	SESSION_REMOVE_ACTION,
 	SESSION_REMOVE_MODAL,
@@ -1730,7 +1731,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							paint();
 							return;
 						}
-						openModal(addScheduleModal(locale, sessionId), action);
+						openModal(addScheduleModal(locale, sessionId, painter.conversations?.selected ?? rootConversationId), action);
 						return;
 					}
 					case SCHEDULE_REMOVE_ACTION:
@@ -1740,13 +1741,17 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case SCHEDULE_RUN_ACTION: {
 						if (schedule === undefined) return;
 						const id = action.data ?? "";
+						const requestId = crypto.randomUUID();
 						runPanelCall({
 							id: action.id,
 							data: id,
-							call: () => schedule.runNow(id, BACKGROUND_CONTEXT),
+							call: () => schedule.runNow(id, requestId, BACKGROUND_CONTEXT),
 						});
 						return;
 					}
+					case SCHEDULE_CANCEL_ACTION:
+						if (schedule !== undefined) runPanelCall({ id: action.id, data: action.data, call: () => schedule.cancel(action.data ?? "", BACKGROUND_CONTEXT) });
+						return;
 					case SCHEDULE_RELOAD_ACTION:
 						if (schedule !== undefined) runPanelCall({ id: action.id, call: () => schedule.reload(BACKGROUND_CONTEXT).then(done) });
 						return;
@@ -1964,13 +1969,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					case SCHEDULE_ADD_MODAL: {
 						if (schedule === undefined) return;
-						const sessionId = painter.sessionId;
+						let target: unknown;
+						try { target = JSON.parse(action.data ?? "null"); } catch { return; }
+						if (typeof target !== "object" || target === null || !("sessionId" in target) || typeof target.sessionId !== "string"
+							|| !("conversationId" in target) || typeof target.conversationId !== "string") return;
+						const { sessionId, conversationId } = target;
 						const prompt = (fields.prompt ?? "").trim();
 						const minutes = Number((fields.everyMinutes ?? "").trim());
-						if (sessionId === undefined) {
-							refuseInModal(copy("panel.automation.noSession"));
-							return;
-						}
 						if (prompt.length === 0) {
 							refuseInModal(copy("page.scheduleNeedsPrompt"));
 							return;
@@ -1982,7 +1987,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({
 							id: action.id,
 							inModal: true,
-							call: () => schedule.add({ sessionId, prompt, everyMinutes: minutes }, BACKGROUND_CONTEXT),
+							call: () => schedule.add({ sessionId, conversationId, prompt, everyMinutes: minutes }, BACKGROUND_CONTEXT),
 						});
 						return;
 					}

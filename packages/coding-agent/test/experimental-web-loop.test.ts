@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -994,22 +995,22 @@ describe("web client interactive loop", () => {
 			const marker = `web-loop-schedule-${Date.now()}`;
 			expect(
 				await presentation.schedules.add(
-					{ sessionId: created.sessionId, prompt: marker, everyMinutes: 60 },
+					{ conversationId: "1", sessionId: created.sessionId, prompt: marker, everyMinutes: 60 },
 					BACKGROUND_CONTEXT,
 				),
 			).toEqual({ ok: true, note: "Added. It runs on its own from now on." });
 			await waitFor(() => presentation.schedules.state.value?.schedules.length === 1, "the planned prompt");
 			const planned = presentation.schedules.state.value?.schedules[0];
-			expect(planned).toMatchObject({ sessionId: created.sessionId, prompt: marker, everyMs: 3_600_000, enabled: true });
+			expect(planned).toMatchObject({ conversationId: "1", sessionId: created.sessionId, prompt: marker, everyMs: 3_600_000, enabled: true });
 			// The file the CLI would read carries it.
 			const file = JSON.parse(await readFile(path, "utf8")) as { schedules: readonly { prompt: string }[] };
 			expect(file.schedules.map((schedule) => schedule.prompt)).toEqual([marker]);
 
 			// Run now goes through the host's own runner: the prompt reaches the session's transcript.
-			const run = await presentation.schedules.runNow(planned?.id ?? "", BACKGROUND_CONTEXT);
+			const run = await presentation.schedules.runNow(planned?.id ?? "", randomUUID(), BACKGROUND_CONTEXT);
 			// The scratch agent directory has no credentials, so the turn settles without an answer;
 			// what matters is that the run happened, was reported, and reached the real session.
-			expect(run.ok).toBe(true);
+			expect(run.ok).toBe(false);
 			await waitFor(
 				() => sawUserText(attached.transcript.state.value, marker),
 				"the planned prompt in the session's transcript",
@@ -1020,7 +1021,7 @@ describe("web client interactive loop", () => {
 			);
 			const recorded = presentation.schedules.state.value?.schedules[0];
 			expect(recorded?.lastRunAt).toBeGreaterThan(0);
-			expect(recorded?.lastOutcome).toBe(run.ok ? run.note : "");
+			expect(recorded?.lastOutcome).toBe(run.ok ? run.note : run.problem);
 			expect(JSON.parse(await readFile(path, "utf8")).schedules[0].lastOutcome).toBe(recorded?.lastOutcome);
 
 			// Pausing is replicated, and it keeps the outcome the run recorded.
@@ -1034,9 +1035,9 @@ describe("web client interactive loop", () => {
 			expect(JSON.parse(await readFile(path, "utf8")).schedules).toEqual([]);
 			// A schedule the host does not have is refused rather than silently accepted.
 			expect(
-				await presentation.schedules.add({ sessionId: "", prompt: "x", everyMinutes: 5 }, BACKGROUND_CONTEXT),
+				await presentation.schedules.add({ conversationId: "1", sessionId: "", prompt: "x", everyMinutes: 5 }, BACKGROUND_CONTEXT),
 			).toMatchObject({ ok: false });
-			expect(await presentation.schedules.add({ sessionId: created.sessionId, prompt: "  ", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
+			expect(await presentation.schedules.add({ conversationId: "1", sessionId: created.sessionId, prompt: "  ", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
 				ok: false,
 			});
 

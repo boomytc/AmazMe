@@ -5,6 +5,8 @@ export interface ScheduleRecord {
 	id: string;
 	/** The session the prompt goes to. */
 	sessionId: string;
+	/** Captured when the plan is created; focus changes do not redirect it. */
+	conversationId: string;
 	prompt: string;
 	/** The gap between runs. */
 	everyMs: number;
@@ -15,6 +17,28 @@ export interface ScheduleRecord {
 	lastOutcome: string | null;
 	/** When it runs next; a disabled schedule keeps the value it would have used. */
 	nextRunAt: number;
+	/** Committed before dispatch. Retained across transport failure and host restart. */
+	pending: ScheduleRun | null;
+	/** At most twenty settlement receipts; conversation history owns the actual output. */
+	history: ScheduleRunReceipt[];
+}
+
+export interface ScheduleRun {
+	requestId: string;
+	operationId: string | null;
+	startedAt: number;
+	scheduledFor: number | null;
+	cancelling: boolean;
+	problem: string | null;
+}
+
+export interface ScheduleRunReceipt {
+	requestId: string;
+	operationId: string | null;
+	startedAt: number;
+	finishedAt: number;
+	status: "done" | "unanswered" | "refused" | "cancelled";
+	note: string;
 }
 
 export interface SchedulesState {
@@ -36,6 +60,7 @@ export type ScheduleResult =
 
 export interface ScheduleInput {
 	readonly sessionId: string;
+	readonly conversationId: string;
 	readonly prompt: string;
 	/** Minutes between runs, at least one. */
 	readonly everyMinutes: number;
@@ -48,8 +73,10 @@ export interface Schedules {
 	/** Remove the plan, cancel its accepted prompt, and wait for owned cleanup. */
 	remove(id: string, context: Context): Promise<void>;
 	setEnabled(id: string, enabled: boolean, context: Context): Promise<ScheduleResult>;
-	/** Run now even while paused; refuse another invocation while this plan is already running. */
-	runNow(id: string, context: Context): Promise<ScheduleResult>;
+	/** Run even while paused. Reuse the action's requestId on retries; distinct actions cannot overlap. */
+	runNow(id: string, requestId: string, context: Context): Promise<ScheduleResult>;
+	/** Cancel or recover cancellation of the plan's current admission without delivering new input. */
+	cancel(id: string, context: Context): Promise<ScheduleResult>;
 	/** Re-read the file while no schedule is running. */
 	reload(context: Context): Promise<void>;
 }

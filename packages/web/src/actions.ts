@@ -69,6 +69,8 @@ export const SCHEDULE_REMOVE_ACTION = "schedule:remove";
 export const SCHEDULE_REMOVE_MODAL = "schedule:remove-confirm";
 /** Run one planned prompt now, whether or not it is due: `data` is the schedule id. */
 export const SCHEDULE_RUN_ACTION = "schedule:run";
+/** Cancel the plan's current durable admission and join its cleanup. */
+export const SCHEDULE_CANCEL_ACTION = "schedule:cancel";
 /** Re-read the plan file after the reader repairs or edits it. */
 export const SCHEDULE_RELOAD_ACTION = "schedule:reload";
 /** Pause or resume one planned prompt: `data` is the schedule id, the control's value the state. */

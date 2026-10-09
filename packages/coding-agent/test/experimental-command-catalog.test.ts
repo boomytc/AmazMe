@@ -83,6 +83,8 @@ async function openCommands(registry: SlashCommandRegistry) {
 						async compact() {
 							return { accepted: true, operationId: "op", error: null };
 						},
+						async findPrompt() { return null; },
+						async cancelPrompt() { return { outcome: "not_found" }; },
 						async waitForPrompt() {
 							return { status: "unanswered", text: null, reason: "not used" };
 						},

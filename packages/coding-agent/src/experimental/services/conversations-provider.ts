@@ -400,7 +400,7 @@ export function createConversationsService(
 						},
 					};
 				}
-				return controller.prompt(request, context);
+				return controller.prompt({ ...request, conversationId }, context);
 			},
 			async steer(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentQueueResponse> {
 				const controller = await controllerOf(conversationId);
@@ -414,7 +414,7 @@ export function createConversationsService(
 						},
 					};
 				}
-				return controller.steer(request, context);
+				return controller.steer({ ...request, conversationId }, context);
 			},
 			async followUp(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentQueueResponse> {
 				const controller = await controllerOf(conversationId);
@@ -428,7 +428,7 @@ export function createConversationsService(
 						},
 					};
 				}
-				return controller.followUp(request, context);
+				return controller.followUp({ ...request, conversationId }, context);
 			},
 			async abort(conversationId: string, context: Context): Promise<void> {
 				await (await controllerOf(conversationId))?.abort(context);

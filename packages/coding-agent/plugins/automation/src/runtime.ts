@@ -1,78 +1,38 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { BACKGROUND_CONTEXT, withAbortSignal, withoutAbortSignal } from "@amazme/chord/context";
-import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
-import {
-	type ScheduleInput,
-	type ScheduleRecord,
-	type ScheduleResult,
-	Schedules,
-	type SchedulesState,
+import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal, withoutAbortSignal } from "@amazme/chord/context";
+import { defineFacet } from "@amazme/chord";
+import type { Context, Facet, MutableReplicatedState } from "@amazme/chord";
+import { Schedules } from "@amazme/coding-agent/plugin";
+import type {
+	HostPromptRequest,
+	HostPromptResult,
+	ScheduleInput,
+	ScheduleRecord,
+	ScheduleResult,
+	ScheduleRun,
+	ScheduleRunReceipt,
+	SchedulesState,
 } from "@amazme/coding-agent/plugin";
+import type { AgentPromptResult } from "@amazme/coding-agent/plugin";
+import { createScheduleFile } from "./file.ts";
+import { conversationId, MAX_SCHEDULE_TIME, SCHEDULE_MAX_PROMPT, timestamp } from "./records.ts";
 
-/** The shortest gap a schedule may have. */
+export { SCHEDULE_MAX_PROMPT } from "./records.ts";
 export const SCHEDULE_MIN_MINUTES = 1;
-/** The longest prompt the store accepts, so one file stays readable. */
-export const SCHEDULE_MAX_PROMPT = 8_000;
-/** How often the host looks for due schedules when nothing else says otherwise. */
 export const SCHEDULE_DEFAULT_TICK_MS = 5_000;
-const MAX_SCHEDULE_TIME = 8_640_000_000_000_000;
 
 export interface SchedulesServiceOptions {
-	/** The agent directory: the schedules file lives beside the settings the CLI reads. */
 	readonly agentDir: () => string;
-	/** Run one prompt, joining its accepted work's cancellation before rejecting; the note is shown in the panel. */
-	run(sessionId: string, prompt: string, context: Context): Promise<string>;
-	/** The clock, so a test can move time instead of waiting for it. */
+	readonly hostId: () => string;
+	run(
+		sessionId: string,
+		request: HostPromptRequest,
+		accepted: (operationId: string) => Promise<void>,
+		context: Context,
+	): Promise<HostPromptResult>;
+	cancel(sessionId: string, request: HostPromptRequest, context: Context): Promise<AgentPromptResult | null>;
 	readonly now?: () => number;
-	/** The gap between the host's checks for due schedules. */
 	readonly tickMs?: number;
-}
-
-interface SchedulesFile {
-	readonly version: number;
-	readonly schedules: readonly ScheduleRecord[];
-}
-
-/** Keep only what the store accepts: a prompt, a session, and a positive cadence. */
-function parseSchedule(value: unknown): ScheduleRecord | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const record = value as Record<string, unknown>;
-	if (
-		typeof record.id !== "string" ||
-		record.id.length === 0 ||
-		typeof record.sessionId !== "string" ||
-		record.sessionId.length === 0 ||
-		typeof record.prompt !== "string" ||
-		record.prompt.trim().length === 0 ||
-		record.prompt.length > SCHEDULE_MAX_PROMPT ||
-		typeof record.everyMs !== "number" ||
-		!Number.isSafeInteger(record.everyMs) ||
-		record.everyMs < SCHEDULE_MIN_MINUTES * 60_000 ||
-		typeof record.enabled !== "boolean" ||
-		typeof record.createdAt !== "number" ||
-		!Number.isSafeInteger(record.createdAt) ||
-		record.createdAt < 0 ||
-		record.createdAt > MAX_SCHEDULE_TIME ||
-		typeof record.nextRunAt !== "number" ||
-		!Number.isSafeInteger(record.nextRunAt) ||
-		record.nextRunAt < 0 ||
-		record.nextRunAt > MAX_SCHEDULE_TIME
-	) {
-		return undefined;
-	}
-	return {
-		id: record.id,
-		sessionId: record.sessionId,
-		prompt: record.prompt,
-		everyMs: record.everyMs,
-		enabled: record.enabled,
-		createdAt: record.createdAt,
-		lastRunAt: typeof record.lastRunAt === "number" ? record.lastRunAt : null,
-		lastOutcome: typeof record.lastOutcome === "string" ? record.lastOutcome : null,
-		nextRunAt: record.nextRunAt,
-	};
 }
 
 export interface SchedulesService {
@@ -81,16 +41,13 @@ export interface SchedulesService {
 		add(input: ScheduleInput, context: Context): Promise<ScheduleResult>;
 		remove(id: string, context: Context): Promise<void>;
 		setEnabled(id: string, enabled: boolean, context: Context): Promise<ScheduleResult>;
-		runNow(id: string, context: Context): Promise<ScheduleResult>;
+		runNow(id: string, requestId: string, context: Context): Promise<ScheduleResult>;
+		cancel(id: string, context: Context): Promise<ScheduleResult>;
 		reload(context: Context): Promise<void>;
 	};
-	/** Run every schedule that is due, and record what each produced. */
 	tick(context: Context): Promise<void>;
-	/** Start the host's own check loop. */
 	start(): void;
-	/** Close admission, cancel accepted runs, and join their cleanup and the store's writes. */
 	stop(): Promise<void>;
-	/** The starting read, for the facet's activation. */
 	activate(context: Context): Promise<void>;
 }
 
@@ -98,26 +55,20 @@ function describe(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * The schedule store: one JSON file in the agent directory, written atomically (a temporary file
- * and a rename), read back at activation and on demand. The host runs due schedules itself; the
- * file is the same one a CLI could read, so a schedule made in the browser outlives the tab.
- *
- * A run is a whole turn against a session and can take minutes, so it stays outside the store's
- * write queue: only the reads, the record updates, and the writes are serialized, and the queue is
- * private to this service rather than the server's shared mutation tail.
- */
+/** One host owns the file lease. Durable submissions own execution and deduplication. */
 export function createSchedulesService(
 	options: SchedulesServiceOptions,
 	createState: (initial: SchedulesState) => MutableReplicatedState<SchedulesState>,
 ): SchedulesService {
-	let path = "";
-	const now = options.now ?? (() => Date.now());
+	const now = options.now ?? Date.now;
 	const tickMs = options.tickMs ?? SCHEDULE_DEFAULT_TICK_MS;
-	const state = createState({ revision: 1, path, tickMs, problem: null, schedules: [] });
-	let problem: string | null = null;
-	let contents: string | undefined;
-	let schedules: ScheduleRecord[] = [];
+	const state = createState({
+		revision: 1,
+		path: "",
+		tickMs,
+		problem: null,
+		schedules: [],
+	});
 	let timer: NodeJS.Timeout | undefined;
 	let ticking = false;
 	let stopped = false;
@@ -125,10 +76,24 @@ export function createSchedulesService(
 	const running = new Map<string, { controller: AbortController; done: Promise<ScheduleResult> }>();
 	let mutationTail: Promise<unknown> = Promise.resolve();
 
-	/** Serialize admission and file changes; model work never holds this queue. */
-	const mutate = <T>(operation: () => Promise<T>): Promise<T> => {
-		const result = mutationTail.then(() => {
-			if (path.length === 0) throw new Error("Activate schedules before using the store.");
+	const file = createScheduleFile(
+		{
+			agentDir: options.agentDir,
+			hostId: options.hostId,
+			tickMs,
+			onCompromised(error) {
+				for (const entry of running.values()) entry.controller.abort(error);
+			},
+		},
+		state,
+	);
+	const { find, update } = file;
+
+	const mutate = <T>(operation: () => Promise<T>, context: Context, writable = true, settling = false): Promise<T> => {
+		const result = mutationTail.then(async () => {
+			if (writable && file.path.length === 0) throw new Error("Activate schedules before using the store.");
+			if (stopped && !settling) throw new Error("Schedules are stopped.");
+			if (writable) await file.own(context);
 			return operation();
 		});
 		mutationTail = result.then(
@@ -137,145 +102,174 @@ export function createSchedulesService(
 		);
 		return result;
 	};
-
-	const publish = (context: Context): void => {
-		state.change(context, (draft) => {
-			draft.revision += 1;
-			draft.path = path;
-			draft.tickMs = tickMs;
-			draft.problem = problem;
-			draft.schedules = schedules;
-		});
+	const request = (record: ScheduleRecord, run: ScheduleRun): HostPromptRequest => ({
+		conversationId: record.conversationId,
+		requestId: run.requestId,
+		message: record.prompt,
+	});
+	const cleanupContext = (context: Context): Context => withoutAbortSignal(context);
+	const cancelRun = async (record: ScheduleRecord, pending: ScheduleRun, context: Context) => {
+		const settled = await options.cancel(record.sessionId, request(record, pending), cleanupContext(context));
+		return settled?.status === "done"
+			? { status: "done" as const, note: "Answered." }
+			: { status: "cancelled" as const, note: "Cancelled." };
 	};
 
-	const read = async (): Promise<string | undefined> => {
+	const run = async (record: ScheduleRecord, pending: ScheduleRun, context: Context): Promise<ScheduleResult> => {
+		let status: ScheduleRunReceipt["status"] = "unanswered";
+		let note = "";
+		let cancelled = false;
 		try {
-			return await readFile(path, "utf8");
-		} catch (error) {
-			if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-			throw error;
-		}
-	};
-
-	const requireCurrentFile = async (context: Context): Promise<void> => {
-		if (problem !== null) throw new Error(problem);
-		try {
-			if ((await read()) !== contents) throw new Error("Schedules file changed. Reload it before making changes.");
-		} catch (error) {
-			problem = describe(error);
-			publish(context);
-			throw error;
-		}
-	};
-
-	const commit = async (next: ScheduleRecord[], context: Context): Promise<void> => {
-		await requireCurrentFile(context);
-		const body: SchedulesFile = { version: 1, schedules: next };
-		const text = `${JSON.stringify(body, null, "\t")}\n`;
-		await mkdir(dirname(path), { recursive: true });
-		const temporary = `${path}.${randomUUID()}.tmp`;
-		try {
-			await writeFile(temporary, text, {
-				encoding: "utf8",
-				mode: 0o600,
-			});
-			await rename(temporary, path);
-		} finally {
-			await rm(temporary, { force: true });
-		}
-		contents = text;
-		schedules = next;
-		publish(context);
-	};
-
-	const load = (context: Context): Promise<void> =>
-		mutate(async () => {
-			if (stopped) throw new Error("Schedules are stopped.");
-			if (running.size > 0) throw new Error("Wait for running schedules before reloading the file.");
-			context.abortSignal?.throwIfAborted();
-			let parsed: unknown;
-			problem = null;
-			try {
-				contents = await read();
-				parsed = contents === undefined ? { version: 1, schedules: [] } : JSON.parse(contents);
-				if (
-					typeof parsed !== "object" ||
-					parsed === null ||
-					!("version" in parsed) ||
-					parsed.version !== 1 ||
-					!("schedules" in parsed) ||
-					!Array.isArray(parsed.schedules)
-				)
-					throw new Error("Invalid schedules file format.");
-			} catch (error) {
-				problem = `Cannot read ${path}: ${describe(error)} Repair the file and reload.`;
-				schedules = [];
-				publish(context);
-				return;
+			if (pending.cancelling) {
+				({ status, note } = await cancelRun(record, pending, context));
+			} else {
+				context.abortSignal?.throwIfAborted();
+				const settled = await options.run(
+					record.sessionId,
+					request(record, pending),
+					async (operationId) => {
+						await mutate(
+							async () => {
+								if (find(record.id)?.pending?.requestId !== pending.requestId)
+									throw new Error("Schedule receipt no longer belongs to this run.");
+								await update(
+									record.id,
+									(current) => ({
+										...current,
+										pending: { ...current.pending!, operationId },
+									}),
+									cleanupContext(context),
+								);
+							},
+							cleanupContext(context),
+							true,
+							true,
+						);
+					},
+					context,
+				);
+				status = settled.status;
+				note =
+					settled.status === "done"
+						? "Answered."
+						: settled.status === "unanswered"
+							? `No answer: ${settled.reason}`
+							: `failed: ${settled.message}`;
 			}
-			const list = (parsed as { schedules: unknown[] }).schedules;
-			schedules = list.flatMap((entry) => {
-				const record = parseSchedule(entry);
-				return record === undefined ? [] : [record];
-			});
-			if (schedules.length !== list.length || new Set(schedules.map((record) => record.id)).size !== schedules.length) {
-				problem = `Invalid records in ${path}. Repair the file and reload.`;
-			}
-			publish(context);
-		});
-
-	const find = (id: string): ScheduleRecord | undefined => schedules.find((record) => record.id === id);
-
-	const due = (): ScheduleRecord[] => schedules.filter((record) => record.enabled && record.nextRunAt <= now());
-
-	/**
-	 * Run one schedule and record what it produced; the returned result is shown to the reader.
-	 * A due run moves the cadence on from the moment it finished; a manual run leaves it where it was.
-	 */
-	const run = async (record: ScheduleRecord, context: Context, advance: boolean): Promise<ScheduleResult> => {
-		const at = now();
-		let outcome: string;
-		let result: ScheduleResult;
-		try {
-			context.abortSignal?.throwIfAborted();
-			const note = await options.run(record.sessionId, record.prompt, context);
-			outcome = note;
-			result = { ok: true, note };
 		} catch (error) {
-			outcome = `failed: ${describe(error)}`;
-			result = { ok: false, problem: outcome };
+			if (context.abortSignal?.aborted) {
+				try {
+					({ status, note } = await cancelRun(record, pending, context));
+					cancelled = true;
+				} catch (cancelError) {
+					error = new AggregateError([error, cancelError], "Schedule cancellation awaits recovery");
+				}
+			}
+			if (!cancelled) {
+				await mutate(
+					async () => {
+						if (find(record.id)?.pending?.requestId !== pending.requestId) return;
+						await update(
+							record.id,
+							(current) => ({
+								...current,
+								pending: {
+									...current.pending!,
+									cancelling: current.pending!.cancelling || context.abortSignal?.aborted === true,
+									problem: describe(error),
+								},
+							}),
+							cleanupContext(context),
+						);
+					},
+					cleanupContext(context),
+					true,
+					true,
+				);
+				return {
+					ok: false,
+					problem: `Delivery awaits recovery: ${describe(error)}`,
+				};
+			}
 		}
-		await mutate(async () => {
-			const current = find(record.id);
-			if (current === undefined) return;
-			const updated: ScheduleRecord = {
-				...current,
-				lastRunAt: at,
-				lastOutcome: outcome,
-				nextRunAt: advance && current.enabled ? now() + current.everyMs : current.nextRunAt,
-			};
-			await commit(
-				schedules.map((candidate) => (candidate.id === record.id ? updated : candidate)),
-				withoutAbortSignal(context),
-			);
-		});
-		return result;
+		await mutate(
+			async () => {
+				const current = find(record.id);
+				if (current?.pending?.requestId !== pending.requestId) return;
+				const receipt: ScheduleRunReceipt = {
+					requestId: pending.requestId,
+					operationId: current.pending.operationId,
+					startedAt: pending.startedAt,
+					finishedAt: now(),
+					status,
+					note,
+				};
+				await update(
+					record.id,
+					(latest) => ({
+						...latest,
+						pending: null,
+						history: [...latest.history.filter((entry) => entry.requestId !== receipt.requestId), receipt].slice(-20),
+						lastRunAt: pending.startedAt,
+						lastOutcome: note,
+						nextRunAt:
+							pending.scheduledFor !== null && latest.enabled
+								? Math.min(MAX_SCHEDULE_TIME, now() + latest.everyMs)
+								: latest.nextRunAt,
+					}),
+					cleanupContext(context),
+				);
+			},
+			cleanupContext(context),
+			true,
+			true,
+		);
+		return status === "done" || status === "cancelled" ? { ok: true, note } : { ok: false, problem: note };
 	};
-
-	const execute = async (id: string, context: Context, advance: boolean): Promise<ScheduleResult> => {
-		const accepted = await mutate<{ refusal: string } | { done: Promise<ScheduleResult> }>(async () => {
+	const execute = async (
+		id: string,
+		context: Context,
+		automatic: boolean,
+		manualKey?: string,
+	): Promise<ScheduleResult> => {
+		const admitted = await mutate<{ refusal: string } | { done: Promise<ScheduleResult> }>(async () => {
 			if (stopped) return { refusal: "Schedules are stopped." };
-			if (problem !== null) return { refusal: problem };
 			context.abortSignal?.throwIfAborted();
-			await requireCurrentFile(context);
+			await file.check(context);
 			const record = find(id);
 			if (record === undefined) return { refusal: "That schedule is gone." };
-			if (running.has(id)) return { refusal: "That schedule is already running." };
-			if (advance && (!record.enabled || record.nextRunAt > now())) return { refusal: "That schedule is not due." };
+			const prior = record.history.find((receipt) => receipt.requestId === manualKey);
+			if (prior !== undefined && record.pending?.requestId !== manualKey)
+				return {
+					done: Promise.resolve(
+						prior.status === "done" || prior.status === "cancelled"
+							? { ok: true, note: prior.note }
+							: { ok: false, problem: prior.note },
+					),
+				};
+			if (running.has(id))
+				return manualKey === record.pending?.requestId
+					? { done: running.get(id)!.done }
+					: { refusal: "That schedule is already running." };
+			if (manualKey !== undefined && record.pending !== null && manualKey !== record.pending.requestId)
+				return { refusal: "The current delivery needs recovery before a new run." };
+			if (record.pending === null && automatic && (!record.enabled || record.nextRunAt > now()))
+				return { refusal: "That schedule is not due." };
+			const pending: ScheduleRun = record.pending ?? {
+				requestId: automatic
+					? `schedule:${id}:${record.nextRunAt}`
+					: (manualKey ?? `schedule:${id}:manual:${randomUUID()}`),
+				operationId: null,
+				startedAt: now(),
+				scheduledFor: automatic ? record.nextRunAt : null,
+				cancelling: false,
+				problem: null,
+			};
+			if (record.pending === null) await update(id, (current) => ({ ...current, pending }), context);
 			const controller = new AbortController();
 			const { promise: done, resolve, reject } = Promise.withResolvers<ScheduleResult>();
 			running.set(id, { controller, done });
-			void run(record, withAbortSignal(controller.signal, context), advance).then(
+			void run(record, pending, withAbortSignal(controller.signal, withoutAbortSignal(context))).then(
 				(result) => {
 					running.delete(id);
 					resolve(result);
@@ -286,16 +280,38 @@ export function createSchedulesService(
 				},
 			);
 			return { done };
-		});
-		return "refusal" in accepted ? { ok: false, problem: accepted.refusal } : accepted.done;
+		}, context);
+		return "refusal" in admitted ? { ok: false, problem: admitted.refusal } : awaitWithContext(admitted.done, context);
 	};
-
+	const cancel = async (id: string, context: Context): Promise<ScheduleResult> => {
+		const entry = await mutate(async () => {
+			if (stopped) throw new Error("Schedules are stopped.");
+			context.abortSignal?.throwIfAborted();
+			const record = find(id);
+			if (record?.pending === undefined || record.pending === null) return undefined;
+			await update(
+				id,
+				(current) => ({
+					...current,
+					pending: { ...current.pending!, cancelling: true },
+				}),
+				context,
+			);
+			return running.get(id);
+		}, context);
+		if (entry !== undefined) {
+			entry.controller.abort(new Error("Schedule was cancelled."));
+			return entry.done;
+		}
+		return find(id)?.pending ? execute(id, context, false) : { ok: true, note: "No active prompt." };
+	};
 	const tick = async (context: Context): Promise<void> => {
-		// One pass at a time: a real run takes longer than the gap between checks.
-		if (stopped || problem !== null || ticking) return;
+		if (stopped || file.problem !== null || ticking) return;
 		ticking = true;
 		try {
-			for (const record of due()) {
+			for (const record of file.schedules.filter(
+				(candidate) => candidate.pending !== null || (candidate.enabled && candidate.nextRunAt <= now()),
+			)) {
 				if (stopped) break;
 				await execute(record.id, context, true);
 			}
@@ -307,74 +323,91 @@ export function createSchedulesService(
 	return {
 		service: {
 			state,
-			async add(input: ScheduleInput, context: Context): Promise<ScheduleResult> {
+			async add(input, context) {
 				const prompt = input.prompt.trim();
-				if (input.sessionId.length === 0) return { ok: false, problem: "A schedule needs a session." };
-				if (prompt.length === 0) return { ok: false, problem: "A schedule needs a prompt." };
-				if (prompt.length > SCHEDULE_MAX_PROMPT) {
-					return { ok: false, problem: `A prompt may hold at most ${SCHEDULE_MAX_PROMPT} characters.` };
-				}
-				if (!Number.isFinite(input.everyMinutes) || input.everyMinutes < SCHEDULE_MIN_MINUTES) {
-					return { ok: false, problem: `The gap must be at least ${SCHEDULE_MIN_MINUTES} minute.` };
-				}
+				if (input.sessionId.length === 0 || !conversationId(input.conversationId))
+					return {
+						ok: false,
+						problem: "A schedule needs a fixed session and conversation.",
+					};
+				if (prompt.length === 0 || prompt.length > SCHEDULE_MAX_PROMPT)
+					return {
+						ok: false,
+						problem: `A prompt must contain 1–${SCHEDULE_MAX_PROMPT} characters.`,
+					};
+				if (!Number.isFinite(input.everyMinutes) || input.everyMinutes < SCHEDULE_MIN_MINUTES)
+					return { ok: false, problem: "The gap must be at least one minute." };
 				const everyMs = Math.round(input.everyMinutes * 60_000);
 				const at = now();
-				if (!Number.isSafeInteger(at + everyMs) || at + everyMs > MAX_SCHEDULE_TIME)
-					return { ok: false, problem: "The schedule time is out of range." };
-				const record: ScheduleRecord = {
-					id: randomUUID(),
-					sessionId: input.sessionId,
-					prompt,
-					everyMs,
-					enabled: true,
-					createdAt: at,
-					lastRunAt: null,
-					lastOutcome: null,
-					nextRunAt: at + everyMs,
-				};
+				if (!timestamp(at + everyMs)) return { ok: false, problem: "The schedule time is out of range." };
 				return mutate(async () => {
 					if (stopped) return { ok: false, problem: "Schedules are stopped." };
-					if (problem !== null) return { ok: false, problem };
 					context.abortSignal?.throwIfAborted();
-					await commit([...schedules, record], context);
+					await file.commit(
+						[
+							...file.schedules,
+							{
+								id: randomUUID(),
+								sessionId: input.sessionId,
+								conversationId: input.conversationId,
+								prompt,
+								everyMs,
+								enabled: true,
+								createdAt: at,
+								lastRunAt: null,
+								lastOutcome: null,
+								nextRunAt: at + everyMs,
+								pending: null,
+								history: [],
+							},
+						],
+						context,
+					);
 					return { ok: true, note: "Added. It runs on its own from now on." };
-				});
+				}, context);
 			},
-			async remove(id: string, context: Context): Promise<void> {
-				const active = await mutate(async () => {
+			async remove(id, context) {
+				await cancel(id, context);
+				await mutate(async () => {
 					if (stopped) throw new Error("Schedules are stopped.");
-					context.abortSignal?.throwIfAborted();
-					const next = schedules.filter((record) => record.id !== id);
-					if (next.length !== schedules.length) await commit(next, context);
-					return running.get(id);
-				});
-				active?.controller.abort(new Error("Schedule was removed."));
-				await active?.done;
+					if (find(id)?.pending) throw new Error("Cancel the current delivery before removing this schedule.");
+					await file.commit(
+						file.schedules.filter((record) => record.id !== id),
+						context,
+					);
+				}, context);
 			},
-			async setEnabled(id: string, enabled: boolean, context: Context): Promise<ScheduleResult> {
-				return mutate(async () => {
+			setEnabled: (id, enabled, context) =>
+				mutate(async () => {
 					if (stopped) return { ok: false, problem: "Schedules are stopped." };
-					if (problem !== null) return { ok: false, problem };
 					context.abortSignal?.throwIfAborted();
-					const record = find(id);
-					if (record === undefined) return { ok: false, problem: "That schedule is gone." };
-					const updated = {
-						...record,
-						enabled,
-						nextRunAt: enabled ? now() + record.everyMs : record.nextRunAt,
-					};
-					await commit(
-						schedules.map((candidate) => (candidate.id === id ? updated : candidate)),
+					if (find(id) === undefined) return { ok: false, problem: "That schedule is gone." };
+					await update(
+						id,
+						(record) => ({
+							...record,
+							enabled,
+							nextRunAt: enabled ? now() + record.everyMs : record.nextRunAt,
+						}),
 						context,
 					);
 					return { ok: true, note: enabled ? "Running again." : "Paused." };
-				});
-			},
-			async runNow(id: string, context: Context): Promise<ScheduleResult> {
-				// A manual run does not move the cadence, so a paused schedule stays paused.
-				return execute(id, context, false);
-			},
-			reload: (context: Context) => load(context),
+				}, context),
+			runNow: (id, requestId, context) =>
+				requestId.trim().length === 0 || requestId.length > 256
+					? Promise.resolve({ ok: false, problem: "A manual run needs a stable request ID of at most 256 characters." })
+					: execute(id, context, false, `schedule:${id}:manual:${requestId}`),
+			cancel,
+			reload: (context) =>
+				mutate(
+					async () => {
+						if (stopped || running.size > 0) throw new Error("Wait for running schedules before reloading the file.");
+						context.abortSignal?.throwIfAborted();
+						await file.load(context);
+					},
+					context,
+					false,
+				),
 		},
 		tick,
 		start() {
@@ -388,26 +421,62 @@ export function createSchedulesService(
 			if (stopPromise !== undefined) return stopPromise;
 			stopped = true;
 			if (timer !== undefined) clearInterval(timer);
-			timer = undefined;
 			const { promise, resolve, reject } = Promise.withResolvers<void>();
 			stopPromise = promise;
-			for (const entry of running.values()) entry.controller.abort(new Error("Schedules are stopped."));
 			void (async () => {
-				const results = await Promise.allSettled([...running.values()].map((entry) => entry.done));
+				const errors: unknown[] = [];
 				await mutationTail;
-				const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+				try {
+					if (file.owned && file.schedules.some((record) => record.pending !== null))
+						await mutate(
+							async () => {
+								await file.commit(
+									file.schedules.map((record) =>
+										record.pending !== null
+											? {
+													...record,
+													pending: { ...record.pending, cancelling: true },
+												}
+											: record,
+									),
+									BACKGROUND_CONTEXT,
+								);
+							},
+							BACKGROUND_CONTEXT,
+							true,
+							true,
+						);
+				} catch (error) {
+					errors.push(error);
+				}
+				const recovering = file.owned
+					? file.schedules.filter((record) => record.pending !== null && !running.has(record.id))
+					: [];
+				for (const entry of running.values()) entry.controller.abort(new Error("Schedules are stopped."));
+				const settled = await Promise.allSettled(
+					[...running.values()]
+						.map((entry) => entry.done)
+						.concat(
+							recovering.map((record) => run(record, { ...record.pending!, cancelling: true }, BACKGROUND_CONTEXT)),
+						),
+				);
+				errors.push(...settled.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])));
+				await mutationTail;
+				if (file.owned && file.schedules.some((record) => record.pending !== null))
+					errors.push(new Error("Some deliveries still await cancellation recovery."));
+				try {
+					await file.close();
+				} catch (error) {
+					errors.push(error);
+				}
 				if (errors.length > 0) throw new AggregateError(errors, "Failed to stop schedules");
 			})().then(resolve, reject);
 			return promise;
 		},
-		activate: (context: Context) => {
-			if (path.length === 0) path = join(options.agentDir(), "schedules.json");
-			return load(context);
-		},
+		activate: (context) => mutate(() => file.activate(context), context, false),
 	};
 }
 
-/** The schedule service as a facet: it owns the file's state, reads it once, and runs the timer. */
 export function createSchedulesFacet(options: SchedulesServiceOptions): Facet {
 	return defineFacet({
 		id: "@amazme/schedules",

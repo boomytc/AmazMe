@@ -1,7 +1,7 @@
 import type { Context } from "@amazme/chord";
 import type { ImageContent, TextContent } from "@amazme/ai";
 import { ConversationBusy } from "@amazme/durable";
-import type { Conversation, Harness, SubmissionId, UserInput } from "@amazme/durable";
+import type { Conversation, ConversationId, Harness, SubmissionId, UserInput } from "@amazme/durable";
 import type {
 	AgentController as AgentControllerService,
 	AgentOperationError,
@@ -15,6 +15,13 @@ export function createAgentController(
 	conversation: () => Conversation,
 	admission?: () => AgentOperationError | undefined,
 ): AgentControllerService {
+	const target = async (request: AgentPromptRequest, context: Context): Promise<Conversation> => {
+		if (request.conversationId === undefined) return conversation();
+		const id = parseRecordId<ConversationId>(request.conversationId);
+		const handle = id === undefined ? undefined : await harness.conversation(id, context);
+		if (handle === undefined) throw new Error(`Unknown conversation: ${request.conversationId}`);
+		return handle;
+	};
 	const queue = async (
 		whenBusy: "steer" | "followUp",
 		request: AgentPromptRequest,
@@ -23,7 +30,7 @@ export function createAgentController(
 		const refusal = admission?.();
 		if (refusal !== undefined) return { accepted: false, entryId: null, error: refusal };
 		try {
-			const submission = await conversation().submit(
+			const submission = await (await target(request, context)).submit(
 				{
 					type: "input",
 					content: toInput(request),
@@ -43,7 +50,7 @@ export function createAgentController(
 			const refusal = admission?.();
 			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
-				const submission = await conversation().submit(
+				const submission = await (await target(request, context)).submit(
 					{
 						type: "input",
 						content: toInput(request),
@@ -52,15 +59,23 @@ export function createAgentController(
 					},
 					context,
 				);
-				return { accepted: true, operationId: String(submission.id), error: null };
+				return {
+					accepted: true,
+					operationId: String(submission.id),
+					error: null,
+				};
 			} catch (error) {
-				return { accepted: false, operationId: null, error: toAgentError(error) };
+				return {
+					accepted: false,
+					operationId: null,
+					error: toAgentError(error),
+				};
 			}
 		},
 		steer: (request, context) => queue("steer", request, context),
 		followUp: (request, context) => queue("followUp", request, context),
 		async cancelQueued(entryId, context) {
-			const id = parseSubmissionId(entryId);
+			const id = parseRecordId<SubmissionId>(entryId);
 			if (id === undefined) return { outcome: "not_found" };
 			const result = await harness.abortSubmission(id, context, conversation().id);
 			return {
@@ -69,8 +84,10 @@ export function createAgentController(
 		},
 		abort: (context) => conversation().abort(context),
 		async cancelPrompt(operationId, context) {
-			const id = parseSubmissionId(operationId);
-			return { outcome: id === undefined ? "not_found" : await harness.cancelPrompt(id, context) };
+			const id = parseRecordId<SubmissionId>(operationId);
+			return {
+				outcome: id === undefined ? "not_found" : await harness.cancelPrompt(id, context),
+			};
 		},
 		async compact(request, context) {
 			const refusal = admission?.();
@@ -79,11 +96,15 @@ export function createAgentController(
 				const id = await conversation().compact(request.customInstructions ?? undefined, context);
 				return { accepted: true, operationId: String(id), error: null };
 			} catch (error) {
-				return { accepted: false, operationId: null, error: toAgentError(error) };
+				return {
+					accepted: false,
+					operationId: null,
+					error: toAgentError(error),
+				};
 			}
 		},
 		async waitForPrompt(operationId, context): Promise<AgentPromptResult> {
-			const id = parseSubmissionId(operationId);
+			const id = parseRecordId<SubmissionId>(operationId);
 			const submission = id === undefined ? undefined : await harness.submission(id, context);
 			if (submission === undefined) throw new Error(`Unknown prompt: ${operationId}`);
 			const settled = await submission.wait(context);
@@ -97,12 +118,18 @@ export function createAgentController(
 					: "";
 			return { status: "done", text, reason: null };
 		},
+		async findPrompt(conversationId, requestId, context) {
+			const id = parseRecordId<ConversationId>(conversationId);
+			if (id === undefined) return null;
+			const receipt = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
+			return receipt === undefined ? null : String(receipt.id);
+		},
 	};
 }
 
-function parseSubmissionId(value: string): SubmissionId | undefined {
+function parseRecordId<T extends ConversationId | SubmissionId>(value: string): T | undefined {
 	const id = Number(value);
-	return /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(id) ? (id as SubmissionId) : undefined;
+	return /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(id) ? (id as T) : undefined;
 }
 
 function toInput(request: AgentPromptRequest): UserInput {
@@ -113,5 +140,8 @@ function toInput(request: AgentPromptRequest): UserInput {
 
 function toAgentError(error: unknown): AgentOperationError {
 	if (error instanceof ConversationBusy) return { code: "busy", message: error.message };
-	return { code: "operation_failed", message: error instanceof Error ? error.message : String(error) };
+	return {
+		code: "operation_failed",
+		message: error instanceof Error ? error.message : String(error),
+	};
 }

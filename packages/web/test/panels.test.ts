@@ -408,6 +408,7 @@ const SCHEDULES: SchedulesStateLike = {
 			sessionId: "web-loop",
 			prompt: "Summarize what changed\nsince the last run",
 			everyMs: 900_000,
+			conversationId: "1", pending: null,
 			enabled: true,
 			createdAt: 1_000,
 			lastRunAt: 1_000,
@@ -419,6 +420,7 @@ const SCHEDULES: SchedulesStateLike = {
 			sessionId: "other",
 			prompt: "Drain the queue",
 			everyMs: 60_000,
+			conversationId: "1", pending: null,
 			enabled: false,
 			createdAt: 2_000,
 			lastRunAt: null,
@@ -444,7 +446,7 @@ describe("automation panel", () => {
 			id: "schedule:s1",
 			title: "Summarize what changed since the last run",
 			description: "Every 15 minutes",
-			badges: ["web-loop"],
+			badges: ["web-loop", "Conversation 1"],
 			value: "Next run in 20 minutes · Answered.",
 		});
 		expect(first?.controls).toEqual([{ id: SCHEDULE_ENABLED_ACTION, kind: "switch", data: "s1", value: "true" }]);
@@ -452,7 +454,7 @@ describe("automation panel", () => {
 			{ id: SCHEDULE_RUN_ACTION, label: "Run now", data: "s1", tone: "default" },
 			{ id: SCHEDULE_REMOVE_ACTION, label: "Remove", data: "s1", tone: "danger" },
 		]);
-		expect(second).toMatchObject({ badges: ["other", "paused"], value: "Next run in 16 minutes" });
+		expect(second).toMatchObject({ badges: ["other", "Conversation 1", "paused"], value: "Next run in 16 minutes" });
 		expect(panel.groups[0]?.footnote).toContain("/agent/schedules.json");
 	});
 

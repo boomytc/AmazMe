@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { defineFacet } from "@amazme/chord";
 import type { Context } from "@amazme/chord";
-import { BACKGROUND_CONTEXT, withoutAbortSignal } from "@amazme/chord/context";
+import { awaitWithContext, BACKGROUND_CONTEXT, withoutAbortSignal } from "@amazme/chord/context";
 import type { FacetBundleArtifact } from "@amazme/chord/node";
 import { Client, ServerError as ClientServerError, DisconnectedError } from "@amazme/client";
 import { createUnixTransportFactory, type UnixServerRoute } from "@amazme/client/unix";
@@ -25,6 +25,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import { createPresentationFacetData, createServerPluginFacetLoader } from "./plugins/bundled.ts";
 import { HostSessions } from "../core/plugins/host-sessions.ts";
+import type { HostPromptRequest, HostPromptResult } from "../core/plugins/host-sessions.ts";
 import { openPluginRuntime } from "../core/plugins/runtime.ts";
 import {
 	createServerPluginPackage,
@@ -45,6 +46,7 @@ import { RadiusRelayHost, type RadiusRelayHostStatus } from "./radius-relay.ts";
 import { createExperimentalServerServices } from "./services/server.ts";
 import type { ServerAdministrationOptions } from "./services/server.ts";
 import { AgentController } from "../core/plugins/agent-controller.ts";
+import type { AgentPromptResult } from "../core/plugins/agent-controller.ts";
 import { automaticSessionName } from "./session-lifecycle.ts";
 import type { SessionCreateOptions, SessionSource, SessionSummary } from "./services/sessions.ts";
 import {
@@ -395,6 +397,7 @@ interface StartServerBackendOptions {
 
 interface RunningServerBackend extends RunningServer {
 	refreshSessions(): Promise<void>;
+	activateHostSessions(): void;
 }
 
 async function startServerBackend(
@@ -403,6 +406,9 @@ async function startServerBackend(
 	onConnectionCountChanged?: (count: number) => void,
 ): Promise<RunningServerBackend> {
 	const serverId = options.serverId;
+	const { promise: hostReady, resolve: resolveHostReady, reject: rejectHostReady } = Promise.withResolvers<void>();
+	void hostReady.catch(() => {});
+	const activateHostSessions = (): void => resolveHostReady();
 	const sessionDir = resolveSessionDirectory(options.sessionDir);
 	const listSessions = async (): Promise<SessionCatalogMetadata[]> => {
 		const sessions = new Map((await listCatalogSessions(sessionDir)).map((metadata) => [metadata.path, metadata]));
@@ -509,35 +515,53 @@ async function startServerBackend(
 		);
 	};
 	/**
-	 * Run one planned prompt against its session: attach a client to the session's worker, submit
-	 * the prompt, wait for the turn to settle, and release the attachment. The returned note is the
-	 * schedule's last outcome, so it reports how the run ended rather than only that it started.
+	 * Join one plugin-owned prompt through the existing worker and its durable receipt.
+	 * Session routing must be ready before a server facet can open an attachment.
 	 */
-	const runScheduledPrompt = async (sessionId: string, prompt: string, context: Context): Promise<string> => {
+	const openPromptSession = async (sessionId: string, context: Context) => {
+		await awaitWithContext(hostReady, context);
 		const metadata = await resolveSession(sessionId, context);
 		const selected = await options.resolveSessionPlugins(metadata, undefined, context);
 		const handle = await workers.openSession(metadata, context, selected.manifestPaths);
-		const attachment = await handle.attachClient(context);
+		return handle.attachClient(context);
+	};
+	const runHostPrompt = async (
+		sessionId: string,
+		request: HostPromptRequest,
+		accepted: (operationId: string) => Promise<void>,
+		context: Context,
+	): Promise<HostPromptResult> => {
+		const attachment = await openPromptSession(sessionId, context);
 		const cleanupContext = withoutAbortSignal(context);
 		let operationId: string | undefined;
 		try {
 			context.abortSignal?.throwIfAborted();
-			// Finish the admission receipt even if cancellation arrives after the input was committed.
-			const submitted: unknown = await attachment.invokeService(
-				{ serviceId: AgentController.id, member: "prompt", args: [{ message: prompt, images: null }] },
+			const existing: unknown = await attachment.invokeService(
+				{ serviceId: AgentController.id, member: "findPrompt", args: [request.conversationId, request.requestId] },
 				() => {},
 				cleanupContext,
 			);
-			const submission = readSubmission(submitted);
-			if ("refusal" in submission) throw new Error(submission.refusal);
-			operationId = submission.operationId;
+			if (existing !== null && typeof existing !== "string") throw new Error("Invalid prompt receipt.");
+			if (existing !== null) operationId = existing;
+			else {
+				context.abortSignal?.throwIfAborted();
+				// Finish the admission receipt even if cancellation arrives after the input was committed.
+				const submitted: unknown = await attachment.invokeService(
+					{ serviceId: AgentController.id, member: "prompt", args: [{ ...request, images: null }] },
+					() => {}, cleanupContext,
+				);
+				const submission = readSubmission(submitted);
+				if ("refusal" in submission) return { status: "refused", ...submission.refusal };
+				operationId = submission.operationId;
+			}
+			await accepted(operationId);
 			context.abortSignal?.throwIfAborted();
 			const settled: unknown = await attachment.invokeService(
-				{ serviceId: AgentController.id, member: "waitForPrompt", args: [submission.operationId] },
+				{ serviceId: AgentController.id, member: "waitForPrompt", args: [operationId] },
 				() => {},
 				context,
 			);
-			return readSettlement(settled) ?? "Answered.";
+			return readSettlement(settled);
 		} catch (error) {
 			if (operationId !== undefined) {
 				try {
@@ -558,6 +582,27 @@ async function startServerBackend(
 		} finally {
 			await attachment.release(cleanupContext);
 		}
+	};
+	const cancelHostPrompt = async (sessionId: string, request: HostPromptRequest, context: Context): Promise<AgentPromptResult | null> => {
+		const attachment = await openPromptSession(sessionId, context);
+		const cleanupContext = withoutAbortSignal(context);
+		try {
+			const found: unknown = await attachment.invokeService(
+				{ serviceId: AgentController.id, member: "findPrompt", args: [request.conversationId, request.requestId] },
+				() => {}, cleanupContext,
+			);
+			if (found === null) return null;
+			if (typeof found !== "string") throw new Error("Invalid prompt receipt.");
+			await attachment.invokeService(
+				{ serviceId: AgentController.id, member: "cancelPrompt", args: [found] },
+				() => {}, cleanupContext,
+			);
+			const settlement: unknown = await attachment.invokeService(
+				{ serviceId: AgentController.id, member: "waitForPrompt", args: [found] },
+				() => {}, cleanupContext,
+			);
+			return readSettlement(settlement);
+		} finally { await attachment.release(cleanupContext); }
 	};
 	// The administration surfaces read and write the agent directory the CLI uses, plus the
 	// checkout's project settings: one Settings, Skills, and Plugins instance per server.
@@ -583,7 +628,7 @@ async function startServerBackend(
 		defineFacet({
 			id: "amazme.host-sessions",
 			setup(env) {
-				env.provide(HostSessions, { agentDir: () => getAgentDir(), prompt: runScheduledPrompt });
+				env.provide(HostSessions, { agentDir: () => getAgentDir(), hostId: () => serverId, prompt: runHostPrompt, cancelPrompt: cancelHostPrompt });
 			},
 		}),
 	], pluginLoader);
@@ -649,6 +694,7 @@ async function startServerBackend(
 	};
 	const socketPath = options.path;
 	const closeCatalog = (): Promise<void> => {
+		rejectHostReady(new Error("Host closed before Session routing became ready."));
 		stopTitles();
 		return serverServices.dispose();
 	};
@@ -688,11 +734,16 @@ async function startServerBackend(
 		workerPids: workers.workerPids,
 		closed,
 		refreshSessions: () => serverServices.refresh(BACKGROUND_CONTEXT),
+		activateHostSessions,
 		close() {
-			closePromise ??= server.close().then(
-				() => closed,
-				() => closed,
-			);
+			closePromise ??= (async () => {
+				// Plugin-owned prompts must settle before the server releases Session handles.
+				const pluginCleanup = await Promise.allSettled([plugins?.close()]);
+				await server.close().catch(() => {});
+				const shutdown = await Promise.allSettled([closed]);
+				const errors = [...pluginCleanup, ...shutdown].flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+				if (errors.length > 0) throw new AggregateError(errors, "Server plugin and transport shutdown failed");
+			})();
 			return closePromise;
 		},
 	};
@@ -827,6 +878,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		startupLease = undefined;
 		await workers.discover(coordinator.peerIds);
 		await backend.refreshSessions();
+		backend.activateHostSessions();
 		relay = new RadiusRelayHost({
 			serverId,
 			server: backend.server,
@@ -982,22 +1034,26 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 }
 
 /** The accepted prompt's operation, or why the session refused it. */
-function readSubmission(value: unknown): { readonly operationId: string } | { readonly refusal: string } {
-	if (typeof value !== "object" || value === null) return { refusal: "The session did not answer the prompt." };
-	const response = value as { accepted?: unknown; operationId?: unknown; error?: { message?: unknown } | null };
+function readSubmission(value: unknown): { readonly operationId: string } | { readonly refusal: { code: string; message: string } } {
+	if (typeof value !== "object" || value === null) throw new Error("Invalid prompt admission receipt.");
+	const response = value as { accepted?: unknown; operationId?: unknown; error?: { code?: unknown; message?: unknown } | null };
 	if (response.accepted === true && typeof response.operationId === "string") {
 		return { operationId: response.operationId };
 	}
-	const message = response.error?.message;
-	return { refusal: typeof message === "string" ? message : "The session refused the prompt." };
+	if (response.accepted !== false || typeof response.error?.code !== "string" || typeof response.error.message !== "string")
+		throw new Error("Invalid prompt admission receipt.");
+	return { refusal: { code: response.error.code, message: response.error.message } };
 }
 
-/** Why the turn produced no answer, or undefined when it answered. */
-function readSettlement(value: unknown): string | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const settled = value as { status?: unknown; reason?: unknown };
-	if (settled.status !== "unanswered") return undefined;
-	return `No answer: ${typeof settled.reason === "string" ? settled.reason : "the host did not say why"}`;
+/** Validate the actual settlement; a malformed receipt must never look successful. */
+function readSettlement(value: unknown): AgentPromptResult {
+	if (typeof value === "object" && value !== null) {
+		if ("status" in value && value.status === "done" && "text" in value && typeof value.text === "string")
+			return { status: "done", text: value.text, reason: null };
+		if ("status" in value && value.status === "unanswered" && "reason" in value && typeof value.reason === "string")
+			return { status: "unanswered", text: null, reason: value.reason };
+	}
+	throw new Error("Invalid prompt settlement receipt.");
 }
 
 if (isDirectInternalProcessEntry(import.meta.url)) {
