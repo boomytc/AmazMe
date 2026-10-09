@@ -609,14 +609,19 @@ describe("tool results", () => {
 		setup.settings.extensions = [Echo];
 		const first = await run(setup, [DONE]);
 		await first.root.configure({ extensions: { add: [Audit] } }, context);
-		// An owner task no registered definition takes stays live and pending.
+		// A registered live owner keeps its child's selection available while its phase waits.
 		const owner = defineTask<Record<string, never>, { phase: "never" }, null>({
 			name: "test.owner",
 			version: 1,
 			initial: () => ({ phase: "never" }),
-			phases: { never: async () => {} },
+			phases: {
+				never: async (_task, runtime, context) => {
+					await runtime.sleep(runtime.now() + 60_000, context);
+				},
+			},
 			abort: async () => {},
 		});
+		setup.registry.install({ name: "test.owner-task", tasks: [owner] });
 		const childId = await first.harness.commit(async (tx) => {
 			const taskId = await tx.createTask(
 				owner,

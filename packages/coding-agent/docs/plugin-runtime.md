@@ -87,7 +87,7 @@ export default defineFacet({
 
 包没有 session 时不会激活原生插件，也不会把 SDK 的 `pi.extensions` 工厂转接为 facet。包安装与资源文档见 [Packages](packages.md)。
 
-随包交付的可选能力位于 `plugins/`，当前 [history](../plugins/history/README.md) 提供原始文本检索、记录读取和 `/recall`。显式安装或选择后才注册其工具和命令，默认会话不加载。
+随包交付的可选能力位于 `plugins/`：[history](../plugins/history/README.md) 提供原始文本检索、记录读取和 `/recall`；[memory](../plugins/memory/README.md) 提供 Markdown 项目记忆、`/memory` 和单独启用的后台候选捕获。显式安装或选择后才注册其工具和命令，默认会话不加载。
 
 `/plugins` 显示已选源码、当前安装中的 API 类型位置与本指南。模型提示中也包含相同信息。修改这些源码后，在任务结束或取消时运行 `/reload`，会重新构建并加载候选版本，不要求先手工构建。修改包声明或来源选择后需重启，重载沿用本次启动选中的来源。没有选中插件时不创建插件宿主，也不提供插件命令。
 

@@ -16,6 +16,7 @@ import type {
 } from "@amazme/ai";
 import type { ExecutionEnv, ShellOutputSkip, ShellOutputWindow } from "../env/index.ts";
 import type {
+	BackgroundTasks,
 	ConversationId,
 	ConversationOwnership,
 	ConversationRecord,
@@ -566,6 +567,14 @@ export type TaskInspection = {
 				readonly kind: "blocked";
 				readonly reason: "missing_task" | "task_too_old" | "migration_failed";
 				readonly error?: unknown;
+		  }
+		| {
+				/** A live owner's definition is unavailable; its work resumes when that owner is available. */
+				readonly kind: "blocked";
+				readonly reason: "owner_unavailable";
+				readonly ownerTaskId: TaskId;
+				readonly ownerReason: "missing_task" | "task_too_old" | "migration_failed";
+				readonly error?: unknown;
 		  };
 };
 
@@ -721,12 +730,14 @@ export interface Harness extends Session {
 	watchTaskGraph(context: Context): Promise<TaskGraphWatch>;
 }
 
-/** What a hook may use: committed reads and the asking task's memos, which hooks and the task share. */
-export interface HookApi extends DocumentReader {
+/** Committed reads, owned environment, task memos and idempotent background admission shared with the asking task. */
+export interface HookApi extends DocumentReader, BackgroundTasks {
 	readonly taskId: TaskId;
 	readonly conversationId: ConversationId;
 	/** `HarnessOptions.models`. */
 	readonly models: Models;
+	/** The same owned execution environment the asking task uses; absent when the host has none. */
+	env(context: Context): Promise<ExecutionEnv | undefined>;
 	memo<T extends JsonValue>(name: string, context: Context): Promise<T | undefined>;
 	memo<T extends JsonValue>(name: string, candidate: T, context: Context): Promise<T>;
 }

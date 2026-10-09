@@ -167,7 +167,7 @@ export interface HookRunner<H extends object> {
  * Operations of one task invocation. Every operation rejects after the invocation ends; watches acquired through it
  * stop at invocation end.
  */
-export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver, DocumentReader {
+export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver, DocumentReader, BackgroundTasks {
 	readonly taskId: TaskId<R>;
 	readonly conversationId: ConversationId;
 	/**
@@ -280,6 +280,17 @@ export type TaskOptions = {
 	/** Conversation-owned tasks only: excluded from ordinary idle waits, conversation aborts, and cascades. */
 	readonly background?: boolean;
 };
+
+/** Idempotent background admission on the calling task's existing durable memo and mutation line. */
+export interface BackgroundTasks {
+	/** Same key on this task returns the same ID, including after recovery. The caller need not wait for completion. */
+	enqueueBackground<I, S extends { phase: string }, R, H extends object>(
+		key: string,
+		task: Task<I, S, R, H>,
+		input: I,
+		context: Context,
+	): Promise<TaskId<R>>;
+}
 
 /** Ownership selected explicitly whenever a conversation is created. */
 export type ConversationOwnership = { readonly kind: "ownerless" } | { readonly kind: "task"; readonly taskId: TaskId };

@@ -120,6 +120,7 @@ export { createSession } from "./session/session.ts";
 export { MemoryStorage } from "./storage/memory.ts";
 export { defineTask } from "./tasks.ts";
 export type {
+	BackgroundTasks,
 	CheckpointInfo,
 	CommitChange,
 	CommitPublication,

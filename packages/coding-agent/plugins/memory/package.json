@@ -1,0 +1,8 @@
+{
+	"name": "@amazme/memory",
+	"version": "1.1.0",
+	"private": true,
+	"type": "module",
+	"peerDependencies": { "@amazme/ai": "*", "@amazme/chord": "*", "@amazme/coding-agent": "*", "@amazme/durable": "*" },
+	"chord": { "facets": { "session": "src/session.ts" } }
+}

@@ -15,6 +15,7 @@ import type {
 	NextTaskState,
 	RunningTask,
 	Storage,
+	Task,
 	TaskDefinition,
 	TaskId,
 	TaskOutcome,
@@ -786,6 +787,7 @@ export class TaskScheduler {
 					const runnable = record as RunnableTaskRecord;
 					const mode = record.abortRequested ? "abort" : "run";
 					snapshot ??= this.#registry.snapshot();
+					if (mode === "run" && this.#blockedOwner(record, snapshot) !== undefined) continue;
 					const resolution = this.#resolve(runnable, snapshot);
 					if (resolution.kind === "blocked") {
 						if (mode === "abort") {
@@ -882,12 +884,45 @@ export class TaskScheduler {
 		if (record.state.status === "completing") return { kind: "completing" };
 		const on = this.#waitingOn(record, owned);
 		if (on.length > 0) return { kind: "waiting", on };
+		if (!record.abortRequested) {
+			const owner = this.#blockedOwner(record, snapshot);
+			if (owner !== undefined) return owner;
+		}
 		const fit = this.#fit(record, snapshot.task(record.kind));
 		if ("reason" in fit) return { kind: "blocked", ...fit };
 		if (fit.migrates && fit.task.definition.migrate === undefined) {
 			return { kind: "blocked", reason: "migration_failed", error: missingMigration(record, erased(fit.task)) };
 		}
 		return { kind: "ready", migrates: fit.migrates };
+	}
+
+	/** Keep known child definitions from executing work for an unavailable plugin owner; abort cleanup still runs. */
+	#blockedOwner(
+		record: AnyTaskRecord,
+		snapshot: RegistrySnapshot,
+	): Extract<TaskInspection["state"], { reason: "owner_unavailable" }> | undefined {
+		for (const step of this.#above(parentOf(record))) {
+			if (!("task" in step)) continue;
+			const owner = this.#live.get(step.task);
+			if (owner === undefined || owner.state.status === "completing" || this.#invocations.has(owner.id)) continue;
+			const fit = this.#fit(owner, snapshot.task(owner.kind));
+			if ("reason" in fit)
+				return {
+					kind: "blocked",
+					reason: "owner_unavailable",
+					ownerTaskId: owner.id,
+					ownerReason: fit.reason,
+					...(fit.error === undefined ? {} : { error: fit.error }),
+				};
+			if (fit.migrates && fit.task.definition.migrate === undefined)
+				return {
+					kind: "blocked",
+					reason: "owner_unavailable",
+					ownerTaskId: owner.id,
+					ownerReason: "migration_failed",
+				};
+		}
+		return undefined;
 	}
 
 	#createInvocation(record: AnyTaskRecord, mode: "run" | "abort"): Invocation {
@@ -1186,6 +1221,31 @@ export class TaskScheduler {
 					rest[1] as Context,
 				);
 			}) as ErasedRuntime["memo"],
+			enqueueBackground: async <I, S extends { phase: string }, R, H extends object>(
+				key: string,
+				task: Task<I, S, R, H>,
+				input: I,
+				context: Context,
+			): Promise<TaskId<R>> => {
+				if (key.length === 0 || key.length > 128)
+					throw new Error("Background admission key must contain 1 to 128 characters");
+				const name = `background:${key}`;
+				return this.#gated(invocation, async (tx, current) => {
+					const winner = memoOf(current, name);
+					if (winner !== undefined) {
+						if (typeof winner !== "number" || !Number.isSafeInteger(winner) || winner <= 0)
+							throw new Error(`Invalid background task memo: ${key}`);
+						return winner as TaskId<R>;
+					}
+					const id = await tx.createTask(task, input, {
+						ownership: { kind: "conversation" },
+						conversationId: invocation.conversationId,
+						background: true,
+					});
+					tx.setTask({ ...current, memos: { ...current.memos, [name]: id } } as AnyTaskRecord);
+					return id;
+				}, context);
+			},
 			sleep: (until, context) => this.#sleep(invocation, until, context),
 			watchDoc: ((...args: readonly unknown[]) => this.#watchDoc(invocation, args)) as ErasedRuntime["watchDoc"],
 			snapshot: ((...args: readonly unknown[]) =>

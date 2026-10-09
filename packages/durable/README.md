@@ -526,6 +526,10 @@ graph.subscribe((value) => {
 
 A task appears with the commit that creates it and leaves with the commit that makes it terminal. Statuses are the committed ones: `pending`, `running`, `waiting` (with `on` and `policy`), and `completing` (with the held outcome's status). After a restart, tasks that were `running` show as `pending` until they run again. Whether a pending task is blocked by a missing definition is not part of the graph; `harness.inspect()` reports that. The graph lists live tasks only: once a subagent's owner task is terminal, a later task in its conversation is a top-level node, and the conversation's `ConversationRecord.owner` (also in its view's `conversation`) links it to its parent. [`24-child-tasks.ts`](test/examples/24-child-tasks.ts) prints the checkout's tree while its payments run.
 
+Hooks can use their task's owned `env(context)` and `enqueueBackground(key, task, input, context)`. Background admission and the caller's memo commit together; the same key on that calling task returns the same task ID after retries or recovery. The task belongs to the calling conversation with `background: true`, so ordinary idle waits do not wait for it. The host's close and explicit background abort still govern its lifecycle.
+
+Work below a live owner whose definition is unavailable does not start new phases. `inspect()` reports `blocked` with `owner_unavailable`, the owner ID and its reason. Restoring the definition allows scheduling again; abort cleanup remains available. An active owner phase retains its existing snapshot, and terminal or completing owners do not require a definition to drain their work. Register a live owner's definition before submitting work to its owned conversation.
+
 ## Your Own State
 
 Documents are typed JSON objects committed together with entries. Define one, and edit it in a commit:
