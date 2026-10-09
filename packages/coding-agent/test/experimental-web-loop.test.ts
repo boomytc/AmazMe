@@ -995,13 +995,13 @@ describe("web client interactive loop", () => {
 			const marker = `web-loop-schedule-${Date.now()}`;
 			expect(
 				await presentation.schedules.add(
-					{ conversationId: "1", sessionId: created.sessionId, prompt: marker, everyMinutes: 60 },
+					{ conversationId: "1", sessionId: created.sessionId, prompt: marker, id: randomUUID(), rule: { kind: "interval", everyMinutes: 60 }, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600 },
 					BACKGROUND_CONTEXT,
 				),
-			).toEqual({ ok: true, note: "Added. It runs on its own from now on." });
+			).toEqual({ ok: true, code: "added" });
 			await waitFor(() => presentation.schedules.state.value?.schedules.length === 1, "the planned prompt");
 			const planned = presentation.schedules.state.value?.schedules[0];
-			expect(planned).toMatchObject({ conversationId: "1", sessionId: created.sessionId, prompt: marker, everyMs: 3_600_000, enabled: true });
+			expect(planned).toMatchObject({ conversationId: "1", sessionId: created.sessionId, prompt: marker, rule: { kind: "interval", everyMinutes: 60 }, enabled: true });
 			// The file the CLI would read carries it.
 			const file = JSON.parse(await readFile(path, "utf8")) as { schedules: readonly { prompt: string }[] };
 			expect(file.schedules.map((schedule) => schedule.prompt)).toEqual([marker]);
@@ -1016,18 +1016,18 @@ describe("web client interactive loop", () => {
 				"the planned prompt in the session's transcript",
 			);
 			await waitFor(
-				() => presentation.schedules.state.value?.schedules[0]?.lastOutcome !== null,
+				() => (presentation.schedules.state.value?.schedules[0]?.history.length ?? 0) > 0,
 				"the recorded outcome",
 			);
 			const recorded = presentation.schedules.state.value?.schedules[0];
-			expect(recorded?.lastRunAt).toBeGreaterThan(0);
-			expect(recorded?.lastOutcome).toBe(run.ok ? run.note : run.problem);
-			expect(JSON.parse(await readFile(path, "utf8")).schedules[0].lastOutcome).toBe(recorded?.lastOutcome);
+			expect(recorded?.history.at(-1)?.startedAt).toBeGreaterThan(0);
+			expect(recorded?.history.at(-1)?.status).toBe("unanswered");
+			expect(JSON.parse(await readFile(path, "utf8")).schedules[0].history.at(-1).status).toBe(recorded?.history.at(-1)?.status);
 
 			// Pausing is replicated, and it keeps the outcome the run recorded.
 			expect(await presentation.schedules.setEnabled(planned?.id ?? "", false, BACKGROUND_CONTEXT)).toEqual({
 				ok: true,
-				note: "Paused.",
+				code: "paused",
 			});
 			await waitFor(() => presentation.schedules.state.value?.schedules[0]?.enabled === false, "the paused schedule");
 			await presentation.schedules.remove(planned?.id ?? "", BACKGROUND_CONTEXT);
@@ -1035,9 +1035,9 @@ describe("web client interactive loop", () => {
 			expect(JSON.parse(await readFile(path, "utf8")).schedules).toEqual([]);
 			// A schedule the host does not have is refused rather than silently accepted.
 			expect(
-				await presentation.schedules.add({ conversationId: "1", sessionId: "", prompt: "x", everyMinutes: 5 }, BACKGROUND_CONTEXT),
+				await presentation.schedules.add({ conversationId: "1", sessionId: "", prompt: "x", id: randomUUID(), rule: { kind: "interval", everyMinutes: 5 }, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600 }, BACKGROUND_CONTEXT),
 			).toMatchObject({ ok: false });
-			expect(await presentation.schedules.add({ conversationId: "1", sessionId: created.sessionId, prompt: "  ", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
+			expect(await presentation.schedules.add({ conversationId: "1", sessionId: created.sessionId, prompt: "  ", id: randomUUID(), rule: { kind: "interval", everyMinutes: 5 }, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600 }, BACKGROUND_CONTEXT)).toMatchObject({
 				ok: false,
 			});
 

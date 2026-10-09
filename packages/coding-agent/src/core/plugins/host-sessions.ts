@@ -6,6 +6,7 @@ export interface HostPromptRequest {
 	readonly conversationId: string;
 	readonly requestId: string;
 	readonly message: string;
+	readonly whenBusy: "reject" | "followUp";
 }
 
 export type HostPromptResult = AgentPromptResult | { status: "refused"; code: string; message: string };

@@ -6,6 +6,8 @@ import {
 	SCHEDULE_REMOVE_ACTION,
 	SCHEDULE_REMOVE_MODAL,
 	SCHEDULE_RUN_ACTION,
+	SCHEDULE_EDIT_ACTION,
+	SCHEDULE_HISTORY_ACTION,
 	SESSION_REMOVE_MODAL,
 } from "../src/actions.ts";
 import {
@@ -407,24 +409,22 @@ const SCHEDULES: SchedulesStateLike = {
 			id: "s1",
 			sessionId: "web-loop",
 			prompt: "Summarize what changed\nsince the last run",
-			everyMs: 900_000,
+			rule: { kind: "interval", everyMinutes: 15 }, generation: 1, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600,
 			conversationId: "1", pending: null,
 			enabled: true,
 			createdAt: 1_000,
-			lastRunAt: 1_000,
-			lastOutcome: "Answered.",
+			history: [{ startedAt: 1_000, finishedAt: 2_000, scheduledFor: null, status: "done", detail: null }],
 			nextRunAt: 2_300_000,
 		},
 		{
 			id: "s2",
 			sessionId: "other",
 			prompt: "Drain the queue",
-			everyMs: 60_000,
+			rule: { kind: "interval", everyMinutes: 1 }, generation: 1, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600,
 			conversationId: "1", pending: null,
 			enabled: false,
 			createdAt: 2_000,
-			lastRunAt: null,
-			lastOutcome: null,
+			history: [],
 			nextRunAt: 2_060_000,
 		},
 	],
@@ -445,13 +445,15 @@ describe("automation panel", () => {
 		expect(first).toMatchObject({
 			id: "schedule:s1",
 			title: "Summarize what changed since the last run",
-			description: "Every 15 minutes",
+			description: "Every 15 minutes · queue while busy · coalesce missed runs · timeout 600s",
 			badges: ["web-loop", "Conversation 1"],
-			value: "Next run in 20 minutes · Answered.",
+			value: "Next run in 20 minutes · Completed",
 		});
 		expect(first?.controls).toEqual([{ id: SCHEDULE_ENABLED_ACTION, kind: "switch", data: "s1", value: "true" }]);
 		expect(first?.actions).toEqual([
 			{ id: SCHEDULE_RUN_ACTION, label: "Run now", data: "s1", tone: "default" },
+			{ id: SCHEDULE_EDIT_ACTION, label: "Edit", data: "s1", tone: "default" },
+			{ id: SCHEDULE_HISTORY_ACTION, label: "Run history", data: "s1", tone: "default" },
 			{ id: SCHEDULE_REMOVE_ACTION, label: "Remove", data: "s1", tone: "danger" },
 		]);
 		expect(second).toMatchObject({ badges: ["other", "Conversation 1", "paused"], value: "Next run in 16 minutes" });
@@ -461,12 +463,12 @@ describe("automation panel", () => {
 	test("names the cadence and the next run in the reader's language", () => {
 		// The clock is past every due time here, so the rows say the runs are due.
 		const zh = automationPanel("zh", { state: SCHEDULES, sessionId: "web-loop", now: 2_400_000 });
-		expect(zh.groups[0]?.rows[0]?.description).toBe("每 15 分钟");
+		expect(zh.groups[0]?.rows[0]?.description).toBe("每 15 分钟 · 忙碌时排队 · 错过后合并最新一次 · 超时 600 秒");
 		expect(zh.groups[0]?.rows[0]?.value).toContain("就在现在");
 		// A one-minute schedule reads as a single minute rather than "1 分钟".
-		expect(zh.groups[0]?.rows[1]?.description).toBe("每分钟");
+		expect(zh.groups[0]?.rows[1]?.description).toBe("每分钟 · 忙碌时排队 · 错过后合并最新一次 · 超时 600 秒");
 		expect(automationPanel("en", { state: SCHEDULES, now: 2_400_000 }).groups[0]?.rows[1]?.description).toBe(
-			"Every minute",
+			"Every minute · queue while busy · coalesce missed runs · timeout 600s",
 		);
 	});
 
@@ -513,9 +515,9 @@ describe("automation panel", () => {
 		const add = addScheduleModal("en", "web-loop");
 		expect(add).toMatchObject({ id: SCHEDULE_ADD_MODAL, submit: "Add" });
 		expect(add.description).toContain("web-loop");
-		expect(add.fields.map((field) => field.id)).toEqual(["prompt", "everyMinutes"]);
+		expect(add.fields.map((field) => field.id)).toEqual(["prompt", "kind", "everyMinutes", "at", "expression", "timeZone", "busy", "missed", "graceMinutes", "timeoutSeconds"]);
 		expect(add.fields[0]?.kind).toBe("textarea");
-		expect(add.fields[1]?.value).toBe("15");
+		expect(add.fields.find((field) => field.id === "everyMinutes")?.value).toBe("15");
 		const remove = removeScheduleModal("en", "s1");
 		expect(remove).toMatchObject({ id: SCHEDULE_REMOVE_MODAL, data: "s1", danger: true, fields: [] });
 		expect(removeScheduleModal("zh", "s1").submit).toBe("删除");

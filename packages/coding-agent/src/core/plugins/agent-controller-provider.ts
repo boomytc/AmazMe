@@ -10,6 +10,8 @@ import type {
 	AgentQueueResponse,
 } from "./agent-controller.ts";
 
+class UnknownConversation extends Error {}
+
 export function createAgentController(
 	harness: Harness,
 	conversation: () => Conversation,
@@ -19,7 +21,7 @@ export function createAgentController(
 		if (request.conversationId === undefined) return conversation();
 		const id = parseRecordId<ConversationId>(request.conversationId);
 		const handle = id === undefined ? undefined : await harness.conversation(id, context);
-		if (handle === undefined) throw new Error(`Unknown conversation: ${request.conversationId}`);
+		if (handle === undefined) throw new UnknownConversation(`Unknown conversation: ${request.conversationId}`);
 		return handle;
 	};
 	const queue = async (
@@ -54,7 +56,7 @@ export function createAgentController(
 					{
 						type: "input",
 						content: toInput(request),
-						whenBusy: "reject",
+						whenBusy: request.whenBusy ?? "reject",
 						...(request.requestId === undefined ? {} : { requestId: request.requestId }),
 					},
 					context,
@@ -140,6 +142,7 @@ function toInput(request: AgentPromptRequest): UserInput {
 
 function toAgentError(error: unknown): AgentOperationError {
 	if (error instanceof ConversationBusy) return { code: "busy", message: error.message };
+	if (error instanceof UnknownConversation) return { code: "target_missing", message: error.message };
 	return {
 		code: "operation_failed",
 		message: error instanceof Error ? error.message : String(error),

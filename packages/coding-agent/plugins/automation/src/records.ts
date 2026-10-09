@@ -1,11 +1,7 @@
 import type { ScheduleRecord, ScheduleRun, ScheduleRunReceipt } from "@amazme/coding-agent/plugin";
 
-export const MAX_SCHEDULE_TIME = 8_640_000_000_000_000;
+import { MAX_GRACE_MINUTES, MAX_TIMEOUT_SECONDS, normalizeRule, timestamp } from "./rules.ts";
 export const SCHEDULE_MAX_PROMPT = 8_000;
-
-export function timestamp(value: unknown): value is number {
-	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= MAX_SCHEDULE_TIME;
-}
 
 export function conversationId(value: unknown): value is string {
 	return typeof value === "string" && /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
@@ -30,8 +26,11 @@ function pending(value: unknown): ScheduleRun | null | undefined {
 		!text(record.requestId) ||
 		!operationId(record.operationId) ||
 		!timestamp(record.startedAt) ||
+		!timestamp(record.deadlineAt) ||
+		record.deadlineAt < record.startedAt ||
+		record.deadlineAt - record.startedAt > MAX_TIMEOUT_SECONDS * 1_000 ||
 		!(record.scheduledFor === null || timestamp(record.scheduledFor)) ||
-		typeof record.cancelling !== "boolean" ||
+		!(record.cancelReason === null || record.cancelReason === "cancelled" || record.cancelReason === "timed_out") ||
 		!(record.problem === null || typeof record.problem === "string")
 	)
 		return undefined;
@@ -39,8 +38,9 @@ function pending(value: unknown): ScheduleRun | null | undefined {
 		requestId: record.requestId,
 		operationId: record.operationId,
 		startedAt: record.startedAt,
+		deadlineAt: record.deadlineAt,
 		scheduledFor: record.scheduledFor,
-		cancelling: record.cancelling,
+		cancelReason: record.cancelReason,
 		problem: record.problem,
 	};
 }
@@ -53,12 +53,15 @@ function receipt(value: unknown): ScheduleRunReceipt | undefined {
 		!operationId(record.operationId) ||
 		!timestamp(record.startedAt) ||
 		!timestamp(record.finishedAt) ||
-		typeof record.note !== "string" ||
+		!(record.detail === null || typeof record.detail === "string") ||
+		!(record.scheduledFor === null || timestamp(record.scheduledFor)) ||
 		!(
 			record.status === "done" ||
 			record.status === "unanswered" ||
 			record.status === "refused" ||
-			record.status === "cancelled"
+			record.status === "cancelled" ||
+			record.status === "timed_out" ||
+			record.status === "skipped"
 		)
 	)
 		return undefined;
@@ -68,29 +71,46 @@ function receipt(value: unknown): ScheduleRunReceipt | undefined {
 		startedAt: record.startedAt,
 		finishedAt: record.finishedAt,
 		status: record.status,
-		note: record.note,
+		detail: record.detail,
+		scheduledFor: record.scheduledFor,
 	};
 }
 
-/** Invalid or incomplete targets are read-only; never infer a conversation from today's focus. */
+export function policy(value: Record<string, unknown>): boolean {
+	return (
+		(value.busy === "queue" || value.busy === "skip") &&
+		(value.missed === "latest" || value.missed === "skip") &&
+		typeof value.graceMinutes === "number" &&
+		Number.isInteger(value.graceMinutes) &&
+		value.graceMinutes >= 0 &&
+		value.graceMinutes <= MAX_GRACE_MINUTES &&
+		typeof value.timeoutSeconds === "number" &&
+		Number.isInteger(value.timeoutSeconds) &&
+		value.timeoutSeconds >= 1 &&
+		value.timeoutSeconds <= MAX_TIMEOUT_SECONDS
+	);
+}
+
+/** Invalid targets or rules stay read-only; never infer a destination from today's focus. */
 export function parseSchedule(value: unknown): ScheduleRecord | undefined {
 	const record = object(value);
 	if (
 		record === undefined ||
 		!text(record.id) ||
+		record.id.length > 256 ||
+		typeof record.generation !== "number" ||
+		!Number.isSafeInteger(record.generation) ||
+		record.generation < 1 ||
 		!text(record.sessionId) ||
 		!conversationId(record.conversationId) ||
 		!text(record.prompt) ||
 		record.prompt.trim().length === 0 ||
 		record.prompt.length > SCHEDULE_MAX_PROMPT ||
-		typeof record.everyMs !== "number" ||
-		!Number.isSafeInteger(record.everyMs) ||
-		record.everyMs < 60_000 ||
+		!policy(record) ||
 		typeof record.enabled !== "boolean" ||
 		!timestamp(record.createdAt) ||
-		!timestamp(record.nextRunAt) ||
-		!(record.lastRunAt === null || timestamp(record.lastRunAt)) ||
-		!(record.lastOutcome === null || typeof record.lastOutcome === "string") ||
+		!(record.nextRunAt === null || timestamp(record.nextRunAt)) ||
+		(record.enabled && record.nextRunAt === null) ||
 		!Array.isArray(record.history) ||
 		record.history.length > 20
 	)
@@ -98,18 +118,25 @@ export function parseSchedule(value: unknown): ScheduleRecord | undefined {
 	const run = pending(record.pending);
 	const history = record.history.map(receipt);
 	if (run === undefined || history.some((entry) => entry === undefined)) return undefined;
-	return {
-		id: record.id,
-		sessionId: record.sessionId,
-		conversationId: record.conversationId,
-		prompt: record.prompt,
-		everyMs: record.everyMs,
-		enabled: record.enabled,
-		createdAt: record.createdAt,
-		lastRunAt: record.lastRunAt,
-		lastOutcome: record.lastOutcome,
-		nextRunAt: record.nextRunAt,
-		pending: run,
-		history: history as ScheduleRunReceipt[],
-	};
+	try {
+		return {
+			id: record.id,
+			generation: record.generation,
+			sessionId: record.sessionId,
+			conversationId: record.conversationId,
+			prompt: record.prompt,
+			rule: normalizeRule(record.rule),
+			busy: record.busy as ScheduleRecord["busy"],
+			missed: record.missed as ScheduleRecord["missed"],
+			graceMinutes: record.graceMinutes as number,
+			timeoutSeconds: record.timeoutSeconds as number,
+			enabled: record.enabled,
+			createdAt: record.createdAt,
+			nextRunAt: record.nextRunAt,
+			pending: run,
+			history: history as ScheduleRunReceipt[],
+		};
+	} catch {
+		return undefined;
+	}
 }

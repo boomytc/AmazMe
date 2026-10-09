@@ -2838,3 +2838,5 @@ p {
 		animation-iteration-count: 1 !important;
 	}
 }
+
+.modal-field-help { color: var(--text-2); font-size: 12px; line-height: 1.55; }

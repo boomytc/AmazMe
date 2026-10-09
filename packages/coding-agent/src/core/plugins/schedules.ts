@@ -1,22 +1,32 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { defineService } from "@amazme/chord";
+import type { Context, ReplicatedState } from "@amazme/chord";
+
+export type ScheduleRule =
+	| { kind: "interval"; everyMinutes: number }
+	| { kind: "once"; at: string; timeZone: string }
+	| { kind: "cron"; expression: string; timeZone: string };
+
+export interface SchedulePolicy {
+	busy: "queue" | "skip";
+	missed: "latest" | "skip";
+	graceMinutes: number;
+	timeoutSeconds: number;
+}
 
 /** One planned prompt: what to send, to which session, and how often. */
-export interface ScheduleRecord {
+export interface ScheduleRecord extends SchedulePolicy {
 	id: string;
+	generation: number;
 	/** The session the prompt goes to. */
 	sessionId: string;
 	/** Captured when the plan is created; focus changes do not redirect it. */
 	conversationId: string;
 	prompt: string;
-	/** The gap between runs. */
-	everyMs: number;
+	rule: ScheduleRule;
 	enabled: boolean;
 	createdAt: number;
-	/** When it last ran, and what that run produced. */
-	lastRunAt: number | null;
-	lastOutcome: string | null;
 	/** When it runs next; a disabled schedule keeps the value it would have used. */
-	nextRunAt: number;
+	nextRunAt: number | null;
 	/** Committed before dispatch. Retained across transport failure and host restart. */
 	pending: ScheduleRun | null;
 	/** At most twenty settlement receipts; conversation history owns the actual output. */
@@ -27,8 +37,9 @@ export interface ScheduleRun {
 	requestId: string;
 	operationId: string | null;
 	startedAt: number;
+	deadlineAt: number;
 	scheduledFor: number | null;
-	cancelling: boolean;
+	cancelReason: "cancelled" | "timed_out" | null;
 	problem: string | null;
 }
 
@@ -37,8 +48,9 @@ export interface ScheduleRunReceipt {
 	operationId: string | null;
 	startedAt: number;
 	finishedAt: number;
-	status: "done" | "unanswered" | "refused" | "cancelled";
-	note: string;
+	scheduledFor: number | null;
+	status: "done" | "unanswered" | "refused" | "cancelled" | "timed_out" | "skipped";
+	detail: string | null;
 }
 
 export interface SchedulesState {
@@ -55,21 +67,27 @@ export interface SchedulesState {
 
 /** What adding or running a schedule produced; a refused input is a value, not a thrown call. */
 export type ScheduleResult =
-	| { readonly ok: true; readonly note: string }
-	| { readonly ok: false; readonly problem: string };
+	| {
+			readonly ok: true;
+			readonly code: "added" | "updated" | "enabled" | "paused" | "idle" | "done" | "cancelled" | "skipped";
+	  }
+	| { readonly ok: false; readonly problem: string; readonly code?: "refused" | "unanswered" | "timed_out" };
 
-export interface ScheduleInput {
+export interface ScheduleInput extends SchedulePolicy {
+	/** Stable plan ID generated once before submitting the create action. */
+	readonly id: string;
 	readonly sessionId: string;
 	readonly conversationId: string;
 	readonly prompt: string;
-	/** Minutes between runs, at least one. */
-	readonly everyMinutes: number;
+	readonly rule: ScheduleRule;
 }
 
 /** Planned prompts the host runs on their own, stored in one file. */
 export interface Schedules {
 	readonly state: ReplicatedState<SchedulesState>;
 	add(input: ScheduleInput, context: Context): Promise<ScheduleResult>;
+	/** Change an idle plan against the configuration version the editor read; retries are idempotent. */
+	update(input: ScheduleInput, expectedGeneration: number, context: Context): Promise<ScheduleResult>;
 	/** Remove the plan, cancel its accepted prompt, and wait for owned cleanup. */
 	remove(id: string, context: Context): Promise<void>;
 	setEnabled(id: string, enabled: boolean, context: Context): Promise<ScheduleResult>;

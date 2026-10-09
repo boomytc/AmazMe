@@ -1,7 +1,7 @@
 /** Agent contributions use Chord facets and the application's existing Durable registry. */
 export { AgentExtensions, type AgentExtensionInfo } from "./core/plugins/agent-extensions.ts";
 export { HostSessions, type HostPromptRequest, type HostPromptResult } from "./core/plugins/host-sessions.ts";
-export { Schedules, type ScheduleInput, type ScheduleRecord, type ScheduleResult, type ScheduleRun, type ScheduleRunReceipt, type SchedulesState } from "./core/plugins/schedules.ts";
+export { Schedules, type ScheduleInput, type SchedulePolicy, type ScheduleRule, type ScheduleRecord, type ScheduleResult, type ScheduleRun, type ScheduleRunReceipt, type SchedulesState } from "./core/plugins/schedules.ts";
 export {
 	AgentController,
 	type AgentPromptRequest,

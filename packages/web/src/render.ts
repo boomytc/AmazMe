@@ -838,21 +838,38 @@ export function createRenderer(
 		close.addEventListener("click", () => report({ kind: "modal-close" }));
 		head.append(titles, close);
 		const body = element("div", "modal-body");
-		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
+		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>();
 		for (const field of modal.fields) {
 			const label = element("label", "modal-field");
 			label.append(element("span", "modal-field-label", field.label));
-			const input = field.kind === "textarea" ? document.createElement("textarea") : document.createElement("input");
-			if (input instanceof HTMLInputElement) input.type = "text";
+			const input = field.kind === "textarea" ? document.createElement("textarea") : field.kind === "select" ? document.createElement("select") : document.createElement("input");
+			if (input instanceof HTMLInputElement) input.type = field.inputType ?? "text";
+			if (input instanceof HTMLInputElement && field.inputType !== undefined) input.step = "1";
+			if (input instanceof HTMLSelectElement) for (const choice of field.options ?? []) {
+				const option = document.createElement("option"); option.value = choice.value; option.textContent = choice.label; input.append(option);
+			}
+			if (field.readOnly === true && !(input instanceof HTMLSelectElement)) input.readOnly = true;
 			// The file and JSON fields are code; prose instructions keep the text face.
 			const code = field.id === "content" || field.id === "entry";
 			input.className = field.kind === "textarea" ? `modal-textarea${code ? " code" : ""}` : "modal-input";
 			input.value = field.value;
-			if (field.placeholder !== undefined) input.placeholder = field.placeholder;
+			if (field.placeholder !== undefined && !(input instanceof HTMLSelectElement)) input.placeholder = field.placeholder;
 			inputs.set(field.id, input);
 			label.append(input);
+			if (field.description !== undefined) label.append(element("small", "modal-field-help", field.description));
 			body.append(label);
 		}
+		const visibility = (): void => {
+			for (const field of modal.fields) {
+				const input = inputs.get(field.id)!;
+				const visible = field.visibleWhen === undefined || field.visibleWhen.values.includes(inputs.get(field.visibleWhen.field)?.value ?? "");
+				input.disabled = !visible;
+				input.parentElement!.style.display = visible ? "" : "none";
+			}
+		};
+		for (const input of inputs.values()) input.addEventListener("change", visibility);
+		visibility();
+
 		const foot = element("footer", "modal-foot");
 		const cancel = button("panel-button default");
 		cancel.textContent = copy("panel.cancel");
@@ -870,7 +887,7 @@ export function createRenderer(
 				submit.click();
 			}
 			if (event.key !== "Tab") return;
-			const controls = [...card.querySelectorAll<HTMLElement>("button:not(:disabled), input, textarea")];
+			const controls = [...card.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)")];
 			const first = controls[0];
 			const last = controls.at(-1);
 			if (event.shiftKey && document.activeElement === first) {

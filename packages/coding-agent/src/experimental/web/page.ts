@@ -19,6 +19,9 @@ import {
 	addMcpServerModal,
 	addPackageModal,
 	addScheduleModal,
+	editScheduleModal,
+	scheduleHistoryModal,
+	scheduleActionCopy,
 	applyTheme,
 	attachmentRejection,
 	BOOT_GLOBAL,
@@ -91,6 +94,9 @@ import {
 	SCHEDULE_REMOVE_MODAL,
 	SCHEDULE_RUN_ACTION,
 	SCHEDULE_CANCEL_ACTION,
+	SCHEDULE_EDIT_ACTION,
+	SCHEDULE_HISTORY_ACTION,
+	SCHEDULE_HISTORY_MODAL,
 	SCHEDULE_RELOAD_ACTION,
 	SESSION_REMOVE_ACTION,
 	SESSION_REMOVE_MODAL,
@@ -135,7 +141,7 @@ import type { McpManagementState } from "../../core/mcp/management.ts";
 import type { McpExposure } from "../../core/mcp-servers.ts";
 import { Models, type ModelsState } from "../services/models.ts";
 import { Plugins } from "../services/plugins.ts";
-import { type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
+import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
 import { Skills } from "../services/skills.ts";
@@ -1320,7 +1326,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	/** What one management call answers: the schedule store's shape, or a plain success. */
-	type PanelCallResult = ScheduleResult | { readonly ok: true; readonly note?: string };
+	type PanelCallResult = { readonly ok: false; readonly problem: string } | { readonly ok: true; readonly note?: string };
+	const scheduleReply = (response: ScheduleResult): PanelCallResult => response.ok
+		? { ok: true, note: scheduleActionCopy(locale, response.code) }
+		: { ok: false, problem: response.code === undefined ? response.problem : response.code === "timed_out"
+			? scheduleActionCopy(locale, response.code) : `${scheduleActionCopy(locale, response.code)}: ${response.problem}` };
 
 	/**
 	 * Run one management call: the control that started it reports itself in flight and refuses a
@@ -1489,7 +1499,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					runPanelCall({
 						id: action.id,
 						data: id,
-						call: () => schedule.setEnabled(id, action.value === "true", BACKGROUND_CONTEXT),
+						call: () => schedule.setEnabled(id, action.value === "true", BACKGROUND_CONTEXT).then(scheduleReply),
 					});
 				}
 				return;
@@ -1734,6 +1744,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						openModal(addScheduleModal(locale, sessionId, painter.conversations?.selected ?? rootConversationId), action);
 						return;
 					}
+					case SCHEDULE_EDIT_ACTION:
+					case SCHEDULE_HISTORY_ACTION: {
+						const record = schedule?.state.value?.schedules.find((candidate) => candidate.id === action.data);
+						if (record !== undefined) openModal(action.id === SCHEDULE_EDIT_ACTION ? editScheduleModal(locale, record) : scheduleHistoryModal(locale, record), action);
+						return;
+					}
+
 					case SCHEDULE_REMOVE_ACTION:
 						if (schedule === undefined) return;
 						openModal(removeScheduleModal(locale, action.data ?? ""), action);
@@ -1745,12 +1762,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({
 							id: action.id,
 							data: id,
-							call: () => schedule.runNow(id, requestId, BACKGROUND_CONTEXT),
+							call: () => schedule.runNow(id, requestId, BACKGROUND_CONTEXT).then(scheduleReply),
 						});
 						return;
 					}
 					case SCHEDULE_CANCEL_ACTION:
-						if (schedule !== undefined) runPanelCall({ id: action.id, data: action.data, call: () => schedule.cancel(action.data ?? "", BACKGROUND_CONTEXT) });
+						if (schedule !== undefined) runPanelCall({ id: action.id, data: action.data, call: () => schedule.cancel(action.data ?? "", BACKGROUND_CONTEXT).then(scheduleReply) });
 						return;
 					case SCHEDULE_RELOAD_ACTION:
 						if (schedule !== undefined) runPanelCall({ id: action.id, call: () => schedule.reload(BACKGROUND_CONTEXT).then(done) });
@@ -1967,30 +1984,35 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							call: () => plugins.addMcpServer((fields.name ?? "").trim(), fields.entry ?? "", BACKGROUND_CONTEXT).then(() => mcp?.reload(BACKGROUND_CONTEXT)).then(done),
 						});
 						return;
+					case SCHEDULE_HISTORY_MODAL:
+						closeModal(); return;
 					case SCHEDULE_ADD_MODAL: {
 						if (schedule === undefined) return;
 						let target: unknown;
 						try { target = JSON.parse(action.data ?? "null"); } catch { return; }
-						if (typeof target !== "object" || target === null || !("sessionId" in target) || typeof target.sessionId !== "string"
-							|| !("conversationId" in target) || typeof target.conversationId !== "string") return;
-						const { sessionId, conversationId } = target;
+						if (typeof target !== "object" || target === null || !("id" in target) || typeof target.id !== "string"
+							|| !("sessionId" in target) || typeof target.sessionId !== "string" || !("conversationId" in target) || typeof target.conversationId !== "string") return;
 						const prompt = (fields.prompt ?? "").trim();
-						const minutes = Number((fields.everyMinutes ?? "").trim());
-						if (prompt.length === 0) {
-							refuseInModal(copy("page.scheduleNeedsPrompt"));
-							return;
-						}
-						if (!Number.isFinite(minutes) || minutes < 1) {
-							refuseInModal(copy("page.scheduleNeedsMinutes"));
-							return;
-						}
-						runPanelCall({
-							id: action.id,
-							inModal: true,
-							call: () => schedule.add({ sessionId, conversationId, prompt, everyMinutes: minutes }, BACKGROUND_CONTEXT),
-						});
+						if (prompt.length === 0) { refuseInModal(copy("page.scheduleNeedsPrompt")); return; }
+						const kind = fields.kind;
+						if (!(kind === "interval" || kind === "once" || kind === "cron")) return;
+						const busy = fields.busy; const missed = fields.missed;
+						if (!(busy === "queue" || busy === "skip") || !(missed === "latest" || missed === "skip")) return;
+						const minutes = Number(fields.everyMinutes);
+						if (kind === "interval" && (!Number.isInteger(minutes) || minutes < 1)) { refuseInModal(copy("page.scheduleNeedsMinutes")); return; }
+						const rule: ScheduleInput["rule"] = kind === "interval" ? { kind, everyMinutes: minutes }
+							: kind === "once" ? { kind, at: fields.at ?? "", timeZone: (fields.timeZone ?? "").trim() }
+							: { kind, expression: fields.expression ?? "", timeZone: (fields.timeZone ?? "").trim() };
+						const input: ScheduleInput = { id: target.id, sessionId: target.sessionId, conversationId: target.conversationId,
+							prompt, rule, busy, missed, graceMinutes: Number(fields.graceMinutes), timeoutSeconds: Number(fields.timeoutSeconds) };
+						const generation = "expectedGeneration" in target ? target.expectedGeneration : undefined;
+						if (generation !== undefined && typeof generation !== "number") return;
+						runPanelCall({ id: action.id, inModal: true,
+							call: () => (generation === undefined ? schedule.add(input, BACKGROUND_CONTEXT)
+								: schedule.update(input, generation, BACKGROUND_CONTEXT)).then(scheduleReply) });
 						return;
 					}
+
 					case SCHEDULE_REMOVE_MODAL:
 						if (schedule === undefined) return;
 						runPanelCall({

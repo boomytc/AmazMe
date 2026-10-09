@@ -12,6 +12,8 @@ export interface AgentPromptRequest {
 	images: AgentPromptImage[] | null;
 	/** Fixed durable target. Omitted input uses the application's selected conversation. */
 	conversationId?: string;
+	/** Admission policy; defaults to reject. Accepted requests keep their original placement. */
+	whenBusy?: "reject" | "followUp";
 	/** Stable conversation-scoped admission key; retries return the same durable submission, including while busy. */
 	requestId?: string;
 }
@@ -42,7 +44,7 @@ export interface AgentCompactionRequest {
 
 /** Presentation-safe command facade over the application's selected conversation. */
 export interface AgentController {
-	/** Start a run; rejected with `busy` while one is active. */
+	/** Start or queue according to whenBusy; an absent explicit target returns target_missing. */
 	prompt(request: AgentPromptRequest, context: Context): Promise<AgentOperationResponse>;
 	/** Steer the active run, or start one when idle. */
 	steer(request: AgentPromptRequest, context: Context): Promise<AgentQueueResponse>;

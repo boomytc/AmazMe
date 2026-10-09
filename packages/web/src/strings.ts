@@ -1,3 +1,4 @@
+import type { ScheduleRuleLike } from "./panels.ts";
 /**
  * The page's copy, in both shipped languages. Everything a reader sees comes from here: the
  * conversation, the composer, and the management panels, plus the labels for the host's settings
@@ -16,6 +17,48 @@ import { type Locale, documentLanguage } from "./locale.ts";
 
 /** Message keys for the page and the desktop shell: flat, dotted, and complete in both languages. */
 export const EN = {
+	"panel.automation.busyQueue": "queue while busy",
+	"panel.automation.busySkip": "skip while busy",
+	"panel.automation.missedLatest": "coalesce missed runs",
+	"panel.automation.missedSkip": "skip beyond grace",
+	"panel.automation.timeout": "timeout {seconds}s",
+	"panel.automation.finished": "no future trigger",
+	"panel.automation.edit": "Edit",
+	"panel.automation.history": "Run history",
+	"panel.automation.historyFinished": "Finished: {time}",
+	"panel.automation.historyDue": "Scheduled: {time}",
+	"panel.automation.added": "Plan added",
+	"panel.automation.updated": "Plan updated",
+	"panel.automation.enabled": "Enabled",
+	"panel.automation.idle": "No active prompt",
+	"panel.automation.done": "Completed",
+	"panel.automation.cancelled": "Cancelled",
+	"panel.automation.skipped": "Skipped",
+	"panel.automation.refused": "Refused",
+	"panel.automation.unanswered": "No answer",
+	"panel.automation.timed_out": "Timed out",
+	"panel.automation.reasonBusy": "conversation was busy",
+	"panel.automation.reasonMissed": "missed the grace period",
+	"panel.automation.oneTime": "Once: {at} · {zone}",
+	"panel.automation.cronRule": "{expression} · {zone}",
+	"modal.scheduleAdd.editTitle": "Edit planned prompt",
+	"modal.scheduleAdd.save": "Save",
+	"modal.scheduleAdd.kind": "Time rule",
+	"modal.scheduleAdd.interval": "Fixed interval",
+	"modal.scheduleAdd.once": "Once",
+	"modal.scheduleAdd.cron": "Calendar (cron)",
+	"modal.scheduleAdd.at": "Local date and time",
+	"modal.scheduleAdd.expression": "Cron expression",
+	"modal.scheduleAdd.timeZone": "Time zone",
+	"modal.scheduleAdd.cronHelp": "Five numeric fields: minute hour day month weekday. 0 9 * * 1-5 means weekdays at 09:00. Use *, lists, ranges and steps; Sunday is 0 or 7. Restricted day and weekday fields match either.",
+	"modal.scheduleAdd.zoneHelp": "IANA zone, e.g. Asia/Shanghai. Repeated clock times use the first occurrence. Missing clock times are skipped; one-time rules reject them.",
+	"modal.scheduleAdd.busy": "When the conversation is busy",
+	"modal.scheduleAdd.queue": "Queue",
+	"modal.scheduleAdd.skip": "Skip",
+	"modal.scheduleAdd.missed": "When occurrences were missed",
+	"modal.scheduleAdd.latest": "Deliver the latest once",
+	"modal.scheduleAdd.grace": "Missed-run grace (minutes, 0–10080)",
+	"modal.scheduleAdd.timeout": "Timeout (seconds, 1–86400)",
 	"nav.chat": "Chat",
 	"nav.plugins": "Plugins",
 	"nav.skills": "Skills",
@@ -304,7 +347,8 @@ export const EN = {
 		"Prompts the host sends to a session on their own, whether or not this page is open.",
 	"panel.automation.schedules": "Planned prompts",
 	"panel.automation.conversation": "Conversation {id}",
-	"panel.automation.running": "Running",
+	"panel.automation.running": "Waiting for result",
+	"panel.automation.recoveryPending": "Run record needs recovery",
 	"panel.automation.cancelling": "Waiting for cancellation",
 	"panel.automation.cancel": "Cancel run",
 	"panel.automation.add": "Plan a prompt…",
@@ -450,6 +494,48 @@ export const EN = {
 export type MessageKey = keyof typeof EN;
 
 export const ZH: Readonly<Record<MessageKey, string>> = {
+	"panel.automation.busyQueue": "忙碌时排队",
+	"panel.automation.busySkip": "忙碌时跳过",
+	"panel.automation.missedLatest": "错过后合并最新一次",
+	"panel.automation.missedSkip": "超过宽限期跳过",
+	"panel.automation.timeout": "超时 {seconds} 秒",
+	"panel.automation.finished": "无后续触发",
+	"panel.automation.edit": "编辑",
+	"panel.automation.history": "运行记录",
+	"panel.automation.historyFinished": "结束：{time}",
+	"panel.automation.historyDue": "计划时间：{time}",
+	"panel.automation.added": "已添加计划",
+	"panel.automation.updated": "已更新计划",
+	"panel.automation.enabled": "已启用",
+	"panel.automation.idle": "没有正在执行的请求",
+	"panel.automation.done": "已完成",
+	"panel.automation.cancelled": "已取消",
+	"panel.automation.skipped": "已跳过",
+	"panel.automation.refused": "未接纳",
+	"panel.automation.unanswered": "没有回答",
+	"panel.automation.timed_out": "已超时",
+	"panel.automation.reasonBusy": "会话忙碌",
+	"panel.automation.reasonMissed": "超过错过宽限期",
+	"panel.automation.oneTime": "一次性：{at} · {zone}",
+	"panel.automation.cronRule": "{expression} · {zone}",
+	"modal.scheduleAdd.editTitle": "编辑定时任务",
+	"modal.scheduleAdd.save": "保存",
+	"modal.scheduleAdd.kind": "时间规则",
+	"modal.scheduleAdd.interval": "固定间隔",
+	"modal.scheduleAdd.once": "一次性",
+	"modal.scheduleAdd.cron": "日历（cron）",
+	"modal.scheduleAdd.at": "本地日期与时间",
+	"modal.scheduleAdd.expression": "Cron 表达式",
+	"modal.scheduleAdd.timeZone": "时区",
+	"modal.scheduleAdd.cronHelp": "五个数字字段：分钟 小时 日 月 星期。0 9 * * 1-5 为工作日 09:00。支持 *、列表、范围和步长，周日为 0 或 7。日与星期都指定时满足任一即可。",
+	"modal.scheduleAdd.zoneHelp": "IANA 时区，如 Asia/Shanghai。夏令时重复时间只取首次；不存在的时间会跳过，一次性规则则拒绝保存。",
+	"modal.scheduleAdd.busy": "会话忙碌时",
+	"modal.scheduleAdd.queue": "排队",
+	"modal.scheduleAdd.skip": "跳过",
+	"modal.scheduleAdd.missed": "错过执行时",
+	"modal.scheduleAdd.latest": "合并最新一次",
+	"modal.scheduleAdd.grace": "错过宽限（分钟，0–10080）",
+	"modal.scheduleAdd.timeout": "超时（秒，1–86400）",
 	"nav.chat": "对话",
 	"nav.plugins": "插件",
 	"nav.skills": "技能",
@@ -728,7 +814,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.automation.description": "宿主按设定自行发给会话的提示，不需要打开页面。",
 	"panel.automation.schedules": "定时任务",
 	"panel.automation.conversation": "分支 {id}",
-	"panel.automation.running": "正在运行",
+	"panel.automation.running": "等待结果",
+	"panel.automation.recoveryPending": "运行记录待恢复",
 	"panel.automation.cancelling": "正在等待取消完成",
 	"panel.automation.cancel": "取消运行",
 	"panel.automation.add": "新建定时任务…",
@@ -1209,16 +1296,29 @@ export function mcpExposureCopy(locale: Locale, exposure: string): string {
 	return table[exposure] ?? exposure;
 }
 
-/** A schedule's cadence in the reader's language, such as "Every 15 minutes". */
-export function scheduleCadenceCopy(locale: Locale, everyMs: number): string {
-	const minutes = Math.max(1, Math.round(everyMs / 60_000));
-	return minutes === 1
-		? translate(locale, "panel.automation.everyMinute")
-		: translate(locale, "panel.automation.everyMinutes", { count: String(minutes) });
+/** Rule labels keep calendar clock values in their declared zone. */
+export function scheduleRuleCopy(locale: Locale, rule: ScheduleRuleLike): string {
+	if (rule.kind === "once") return translate(locale, "panel.automation.oneTime", { at: rule.at.replace("T", " "), zone: rule.timeZone });
+	if (rule.kind === "cron") return translate(locale, "panel.automation.cronRule", { expression: rule.expression, zone: rule.timeZone });
+	return rule.everyMinutes === 1 ? translate(locale, "panel.automation.everyMinute") : translate(locale, "panel.automation.everyMinutes", { count: String(rule.everyMinutes) });
+}
+
+export function scheduleActionCopy(locale: Locale, code: string): string {
+	const keys: Record<string, MessageKey> = {
+		added: "panel.automation.added", updated: "panel.automation.updated", enabled: "panel.automation.enabled", paused: "panel.automation.paused", idle: "panel.automation.idle",
+		done: "panel.automation.done", cancelled: "panel.automation.cancelled", skipped: "panel.automation.skipped", refused: "panel.automation.refused", unanswered: "panel.automation.unanswered", timed_out: "panel.automation.timed_out",
+	};
+	return keys[code] === undefined ? code : translate(locale, keys[code]!);
+}
+
+export function scheduleOutcomeCopy(locale: Locale, receipt: { readonly status: string; readonly detail: string | null }): string {
+	const detail = receipt.detail === "busy" ? translate(locale, "panel.automation.reasonBusy") : receipt.detail === "missed" ? translate(locale, "panel.automation.reasonMissed") : receipt.detail;
+	return scheduleActionCopy(locale, receipt.status) + (detail === null ? "" : `: ${detail}`);
 }
 
 /** When a schedule is next due, as the reader's language expresses it, such as "in 12 minutes". */
-export function scheduleDueCopy(locale: Locale, nextRunAt: number, now: number): string {
+export function scheduleDueCopy(locale: Locale, nextRunAt: number | null, now: number): string {
+	if (nextRunAt === null) return translate(locale, "panel.automation.finished");
 	const seconds = Math.floor((nextRunAt - now) / 1000);
 	if (seconds <= 0) return translate(locale, "panel.automation.dueNow");
 	if (seconds < 60) return translate(locale, "panel.automation.soon");

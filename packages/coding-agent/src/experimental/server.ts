@@ -531,7 +531,11 @@ async function startServerBackend(
 		accepted: (operationId: string) => Promise<void>,
 		context: Context,
 	): Promise<HostPromptResult> => {
-		const attachment = await openPromptSession(sessionId, context);
+		const attachment = await openPromptSession(sessionId, context).catch((error: unknown) => {
+			if (error instanceof SessionNotFoundError) return null;
+			throw error;
+		});
+		if (attachment === null) return { status: "refused", code: "target_missing", message: `Unknown session: ${sessionId}` };
 		const cleanupContext = withoutAbortSignal(context);
 		let operationId: string | undefined;
 		try {
@@ -584,7 +588,11 @@ async function startServerBackend(
 		}
 	};
 	const cancelHostPrompt = async (sessionId: string, request: HostPromptRequest, context: Context): Promise<AgentPromptResult | null> => {
-		const attachment = await openPromptSession(sessionId, context);
+		const attachment = await openPromptSession(sessionId, context).catch((error: unknown) => {
+			if (error instanceof SessionNotFoundError) return null;
+			throw error;
+		});
+		if (attachment === null) return null;
 		const cleanupContext = withoutAbortSignal(context);
 		try {
 			const found: unknown = await attachment.invokeService(

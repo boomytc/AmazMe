@@ -48,18 +48,18 @@ export function createScheduleFile(
 		schedules = [];
 		try {
 			contents = await read();
-			const parsed: unknown = contents === undefined ? { version: 2, hostId, schedules: [] } : JSON.parse(contents);
+			const parsed: unknown = contents === undefined ? { version: 3, hostId, schedules: [] } : JSON.parse(contents);
 			if (
 				typeof parsed !== "object" ||
 				parsed === null ||
 				!("version" in parsed) ||
-				parsed.version !== 2 ||
+				parsed.version !== 3 ||
 				!("hostId" in parsed) ||
 				parsed.hostId !== hostId ||
 				!("schedules" in parsed) ||
 				!Array.isArray(parsed.schedules)
 			)
-				throw new Error("Expected version 2 and this host's ID. Each plan needs an explicit conversation target.");
+				throw new Error("Expected version 3 and this host's ID. Each plan needs an explicit conversation target.");
 			schedules = parsed.schedules.flatMap((value: unknown) => {
 				const record = parseSchedule(value);
 				return record === undefined ? [] : [record];
@@ -115,7 +115,7 @@ export function createScheduleFile(
 	};
 	const commit = async (next: ScheduleRecord[], context: Context): Promise<void> => {
 		await requireCurrentFile(context);
-		const text = `${JSON.stringify({ version: 2, hostId, schedules: next }, null, "\t")}\n`;
+		const text = `${JSON.stringify({ version: 3, hostId, schedules: next }, null, "\t")}\n`;
 		const temporary = `${path}.${randomUUID()}.tmp`;
 		try {
 			const file = await open(temporary, "wx", 0o600);
@@ -132,6 +132,10 @@ export function createScheduleFile(
 			} finally {
 				await directory.close();
 			}
+		} catch (error) {
+			problem = `Cannot write ${path}: ${describe(error)} Repair the file and reload.`;
+			publish(context);
+			throw error;
 		} finally {
 			await rm(temporary, { force: true });
 		}

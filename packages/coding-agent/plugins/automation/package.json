@@ -4,6 +4,6 @@
 	"private": true,
 	"type": "module",
 	"peerDependencies": { "@amazme/chord": "*", "@amazme/coding-agent": "*" },
-	"dependencies": { "proper-lockfile": "4.1.2" },
+	"dependencies": { "@js-temporal/polyfill": "0.5.1", "proper-lockfile": "4.1.2" },
 	"chord": { "facets": { "server": "src/server.ts" } }
 }

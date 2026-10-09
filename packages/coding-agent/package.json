@@ -56,6 +56,7 @@
 	"dependencies": {
 		"@amazme/chord": "^1.1.0",
 		"@amazme/durable": "^1.1.0",
+		"@js-temporal/polyfill": "0.5.1",
 		"@amazme/agent": "^1.1.0",
 		"@amazme/ai": "^1.1.0",
 		"@amazme/codemode": "^1.1.0",

@@ -102,18 +102,17 @@ describe("planned prompts", () => {
 		// The prompt is trimmed, the cadence becomes milliseconds, and the first run is one gap away.
 		expect(
 			await store.service.service.add(
-				{ conversationId: "1", sessionId: "session-1", prompt: "  report the changes  ", everyMinutes: 2 },
+				{ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "session-1", prompt: "  report the changes  ", rule: { kind: "interval", everyMinutes: 2 } },
 				BACKGROUND_CONTEXT,
 			),
-		).toEqual({ ok: true, note: "Added. It runs on its own from now on." });
+		).toEqual({ ok: true, code: "added" });
 		expect(store.state.value?.schedules[0]).toMatchObject({
 			sessionId: "session-1",
 			prompt: "report the changes",
-			everyMs: 120_000,
+			rule: { kind: "interval", everyMinutes: 2 },
 			enabled: true,
 			createdAt: 1_000_000,
-			lastRunAt: null,
-			lastOutcome: null,
+			history: [],
 			nextRunAt: 1_120_000,
 		});
 		// The file the CLI would read carries it, not only the replicated state.
@@ -130,11 +129,10 @@ describe("planned prompts", () => {
 		await store.service.tick(BACKGROUND_CONTEXT);
 		expect(store.runs).toEqual([{ sessionId: "session-1", prompt: "report the changes" }]);
 		expect(store.state.value?.schedules[0]).toMatchObject({
-			lastRunAt: 1_120_000,
-			lastOutcome: "Answered.",
+			history: [{ startedAt: 1_120_000, status: "done" }],
 			nextRunAt: 1_240_000,
 		});
-		expect((await store.recordFile()).schedules[0]).toMatchObject({ lastOutcome: "Answered." });
+		expect((await store.recordFile()).schedules[0]).toMatchObject({ history: [{ status: "done" }] });
 
 		// A run that throws is reported as the outcome instead of escaping the tick.
 		store.failure.on = true;
@@ -148,7 +146,7 @@ describe("planned prompts", () => {
 
 	test("runs a due prompt from the host's own timer", async () => {
 		const store = await openStore(undefined, 20);
-		await store.service.service.add({ conversationId: "1", sessionId: "s", prompt: "timer", everyMinutes: 1 }, BACKGROUND_CONTEXT);
+		await store.service.service.add({ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "s", prompt: "timer", rule: { kind: "interval", everyMinutes: 1 } }, BACKGROUND_CONTEXT);
 		// The clock moves past the due time, then the host's own loop is what runs it.
 		store.advance(60_000);
 		store.service.start();
@@ -177,7 +175,7 @@ describe("planned prompts", () => {
 			return "Answered.";
 		});
 		expect(
-			await store.service.service.add({ conversationId: "1", sessionId: "s", prompt: "slow", everyMinutes: 1 }, BACKGROUND_CONTEXT),
+			await store.service.service.add({ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "s", prompt: "slow", rule: { kind: "interval", everyMinutes: 1 } }, BACKGROUND_CONTEXT),
 		).toMatchObject({ ok: true });
 		store.advance(60_000);
 
@@ -189,13 +187,13 @@ describe("planned prompts", () => {
 		release?.();
 		await first;
 		expect(entered).toHaveLength(1);
-		expect(store.state.value?.schedules[0]?.lastOutcome).toBe("Answered.");
+		expect(store.state.value?.schedules[0]?.history.at(-1)?.status).toBe("done");
 	}, 30_000);
 
 	test("pauses, resumes, runs on demand, and removes a schedule", async () => {
 		const store = await openStore();
 		expect(
-			await store.service.service.add({ conversationId: "1", sessionId: "session-2", prompt: "check the queue", everyMinutes: 5 }, BACKGROUND_CONTEXT),
+			await store.service.service.add({ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "session-2", prompt: "check the queue", rule: { kind: "interval", everyMinutes: 5 } }, BACKGROUND_CONTEXT),
 		).toMatchObject({ ok: true });
 		const id = store.state.value?.schedules[0]?.id ?? "";
 		expect(id.length).toBeGreaterThan(0);
@@ -203,7 +201,7 @@ describe("planned prompts", () => {
 		// A paused schedule is skipped by the tick even once its due time passes.
 		expect(await store.service.service.setEnabled(id, false, BACKGROUND_CONTEXT)).toEqual({
 			ok: true,
-			note: "Paused.",
+			code: "paused",
 		});
 		expect(store.state.value?.schedules[0]?.enabled).toBe(false);
 		store.advance(600_000);
@@ -212,27 +210,27 @@ describe("planned prompts", () => {
 
 		// Run now works while it is paused, and records the outcome without moving the cadence.
 		const pausedNextRun = store.state.value?.schedules[0]?.nextRunAt;
-		expect(await store.service.service.runNow(id, randomUUID(), BACKGROUND_CONTEXT)).toEqual({ ok: true, note: "Answered." });
+		expect(await store.service.service.runNow(id, randomUUID(), BACKGROUND_CONTEXT)).toEqual({ ok: true, code: "done" });
 		expect(store.runs).toEqual([{ sessionId: "session-2", prompt: "check the queue" }]);
-		expect(store.state.value?.schedules[0]).toMatchObject({ lastRunAt: 1_600_000, lastOutcome: "Answered." });
+		expect(store.state.value?.schedules[0]).toMatchObject({ history: [{ startedAt: 1_600_000, status: "done" }] });
 		expect(store.state.value?.schedules[0]?.nextRunAt).toBe(pausedNextRun);
 
-		// Resuming re-arms the next run from now.
+		// Resuming keeps its fixed cadence; the missed policy decides what to deliver.
 		expect(await store.service.service.setEnabled(id, true, BACKGROUND_CONTEXT)).toEqual({
 			ok: true,
-			note: "Running again.",
+			code: "enabled",
 		});
-		expect(store.state.value?.schedules[0]?.nextRunAt).toBe(1_600_000 + 300_000);
+		expect(store.state.value?.schedules[0]?.nextRunAt).toBe(1_300_000);
 
 		// A manual run while it is running does not move that cadence either; only the tick does.
 		store.advance(60_000);
-		expect(await store.service.service.runNow(id, randomUUID(), BACKGROUND_CONTEXT)).toEqual({ ok: true, note: "Answered." });
-		expect(store.state.value?.schedules[0]).toMatchObject({ lastRunAt: 1_660_000, nextRunAt: 1_900_000 });
+		expect(await store.service.service.runNow(id, randomUUID(), BACKGROUND_CONTEXT)).toEqual({ ok: true, code: "done" });
+		expect(store.state.value?.schedules[0]).toMatchObject({ nextRunAt: 1_300_000 });
 		// Once it is due, the tick runs it again and moves the next run on from the run's finish.
 		store.advance(240_000);
 		await store.service.tick(BACKGROUND_CONTEXT);
 		expect(store.runs).toHaveLength(3);
-		expect(store.state.value?.schedules[0]).toMatchObject({ lastRunAt: 1_900_000, nextRunAt: 2_200_000 });
+		expect(store.state.value?.schedules[0]).toMatchObject({ nextRunAt: 2_200_000 });
 
 		// A manual run of a schedule that is gone reports it rather than failing the call.
 		expect(await store.service.service.runNow("no-such-schedule", randomUUID(), BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
@@ -248,16 +246,16 @@ describe("planned prompts", () => {
 	test("refuses a prompt or a cadence the store cannot keep", async () => {
 		const store = await openStore();
 		const add = store.service.service.add;
-		expect(await add({ conversationId: "1", sessionId: "s", prompt: "   ", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
+		expect(await add({ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "s", prompt: "   ", rule: { kind: "interval", everyMinutes: 5 } }, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
-		expect(await add({ conversationId: "1", sessionId: "", prompt: "hello", everyMinutes: 5 }, BACKGROUND_CONTEXT)).toMatchObject({
+		expect(await add({ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "", prompt: "hello", rule: { kind: "interval", everyMinutes: 5 } }, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
-		expect(await add({ conversationId: "1", sessionId: "s", prompt: "hello", everyMinutes: 0 }, BACKGROUND_CONTEXT)).toMatchObject({
+		expect(await add({ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "s", prompt: "hello", rule: { kind: "interval", everyMinutes: 0 } }, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
-		expect(await add({ conversationId: "1", sessionId: "s", prompt: "hello", everyMinutes: Number.NaN }, BACKGROUND_CONTEXT)).toMatchObject({
+		expect(await add({ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "s", prompt: "hello", rule: { kind: "interval", everyMinutes: Number.NaN } }, BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 		});
 		expect(store.state.value?.schedules).toEqual([]);
@@ -268,23 +266,21 @@ describe("planned prompts", () => {
 		await writeFile(
 			store.path,
 			JSON.stringify({
-				version: 2,
+				version: 3,
 				hostId: "test-host",
 				schedules: [
 					{
-						id: "kept",
+						id: "kept", generation: 1, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600,
 						conversationId: "1", pending: null, history: [],
 						sessionId: "session-3",
 						prompt: "keep me",
-						everyMs: 60_000,
+						rule: { kind: "interval", everyMinutes: 1 },
 						enabled: true,
 						createdAt: 5,
-						lastRunAt: null,
-						lastOutcome: null,
 						nextRunAt: 65_000,
 					},
 					{ nonsense: true },
-					{ id: "bad", sessionId: "s", prompt: "x", everyMs: 0, enabled: true, createdAt: 1, nextRunAt: 2 },
+					{ id: "bad", sessionId: "s", prompt: "x", rule: { kind: "interval", everyMinutes: 0 }, enabled: true, createdAt: 1, nextRunAt: 2 },
 				],
 			}),
 			"utf8",
@@ -301,7 +297,7 @@ describe("planned prompts", () => {
 		expect(store.state.value?.schedules).toEqual([]);
 		// Adding after the file went away recreates it.
 		expect(
-			await store.service.service.add({ conversationId: "1", sessionId: "s", prompt: "again", everyMinutes: 1 }, BACKGROUND_CONTEXT),
+			await store.service.service.add({ id: randomUUID(), busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600, conversationId: "1", sessionId: "s", prompt: "again", rule: { kind: "interval", everyMinutes: 1 } }, BACKGROUND_CONTEXT),
 		).toMatchObject({ ok: true });
 		expect((await store.recordFile()).schedules).toHaveLength(1);
 	}, 30_000);

@@ -71,6 +71,9 @@ export const SCHEDULE_REMOVE_MODAL = "schedule:remove-confirm";
 export const SCHEDULE_RUN_ACTION = "schedule:run";
 /** Cancel the plan's current durable admission and join its cleanup. */
 export const SCHEDULE_CANCEL_ACTION = "schedule:cancel";
+export const SCHEDULE_EDIT_ACTION = "schedule:edit";
+export const SCHEDULE_HISTORY_ACTION = "schedule:history";
+export const SCHEDULE_HISTORY_MODAL = "schedule:history-dismiss";
 /** Re-read the plan file after the reader repairs or edits it. */
 export const SCHEDULE_RELOAD_ACTION = "schedule:reload";
 /** Pause or resume one planned prompt: `data` is the schedule id, the control's value the state. */
