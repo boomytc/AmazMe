@@ -20,6 +20,7 @@ import {
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { createAgentExtensionsFacet } from "../core/plugins/agent-extensions.ts";
+import { AgentRuntime, createAgentRuntime } from "../core/plugins/agent-runtime.ts";
 import { AgentController } from "../core/plugins/agent-controller.ts";
 import { createAgentController } from "../core/plugins/agent-controller-provider.ts";
 import { createSlashCommandsRuntimeFacet, SlashCommandRegistry } from "../core/plugins/command-registry.ts";
@@ -405,6 +406,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			const controllerFacet = defineFacet({
 				id: "@amazme/agent-controller-runtime",
 				setup(env) {
+					env.provide(AgentRuntime, createAgentRuntime(opened, () => current.id, () => plugins?.changing !== false));
 					env.provide(AgentController, createAgentController(opened, () => current, () => plugins?.changing !== false
 						? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
 						: undefined));

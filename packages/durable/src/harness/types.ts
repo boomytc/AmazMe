@@ -747,6 +747,8 @@ export interface HookApi extends DocumentReader, BackgroundTasks {
 	readonly models: Models;
 	/** The same owned execution environment the asking task uses; absent when the host has none. */
 	env(context: Context): Promise<ExecutionEnv | undefined>;
+	/** The asking task's resolved selection, including tool metadata after its wrappers. */
+	agent(context: Context): Promise<Agent>;
 	/** Atomically update hook-owned documents or admit owned children, without changing the asking task's checkpoint. */
 	commit(change: (tx: Tx) => undefined | Promise<undefined>, context: Context): Promise<void>;
 	/** Wait for a durable child; invocation cancellation also cancels this wait. */

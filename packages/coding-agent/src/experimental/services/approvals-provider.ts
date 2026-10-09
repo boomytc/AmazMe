@@ -1,6 +1,7 @@
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import type { ToolCall } from "@amazme/ai";
 import { defineExtension, hook, ToolTask } from "@amazme/durable";
+import type { ToolAnnotations } from "@amazme/durable";
 import type { ToolApprovalMode } from "../../core/settings-manager.ts";
 import { Approvals, type ApprovalRequest, type ApprovalsState } from "./approvals.ts";
 
@@ -8,10 +9,10 @@ import { Approvals, type ApprovalRequest, type ApprovalsState } from "./approval
 const DANGEROUS_TOOLS: readonly string[] = ["bash", "powershell", "write", "edit"];
 
 /** Whether one tool call waits for a decision under a policy. */
-export function toolNeedsApproval(mode: ToolApprovalMode, tool: string): boolean {
+export function toolNeedsApproval(mode: ToolApprovalMode, tool: string, annotations?: ToolAnnotations): boolean {
 	if (mode === "off") return false;
 	if (mode === "all") return true;
-	return DANGEROUS_TOOLS.includes(tool);
+	return DANGEROUS_TOOLS.includes(tool) || annotations?.destructiveHint === true || annotations?.readOnlyHint === false;
 }
 
 /** The line a reader judges a call by: the tool's own arguments, kept short. */
@@ -75,7 +76,12 @@ export function createApprovalGate(options: {
 				hook(ToolTask, {
 					// The handler's parameters come from the tool task's own hook shape.
 					async beforeTool(call, api, context) {
-						if (!toolNeedsApproval(options.mode(), call.name)) return undefined;
+						const mode = options.mode();
+						if (mode === "off") return undefined;
+						const annotations = mode === "dangerous"
+							? (await api.agent(context)).callableTools.find((tool) => tool.name === call.name)?.annotations
+							: undefined;
+						if (!toolNeedsApproval(mode, call.name, annotations)) return undefined;
 						const id = `approval-${++sequence}`;
 						const request: ApprovalRequest = {
 							id,

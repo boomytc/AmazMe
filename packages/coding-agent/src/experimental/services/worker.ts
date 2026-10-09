@@ -10,11 +10,13 @@ import {
 	type ServiceProviderUpdate,
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import type { Conversation, Harness, Registry } from "@amazme/durable";
+import type { Conversation, ConversationId, Harness, Registry } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { configureHarnessHttp } from "../../durable/harness-setup.ts";
 import { createAgentExtensionsFacet } from "../../core/plugins/agent-extensions.ts";
+import { AgentRuntime, createAgentRuntime } from "../../core/plugins/agent-runtime.ts";
+import { Conversations } from "./conversations.ts";
 import { assertPluginsIdle, openPluginRuntime, type PluginRuntime } from "../../core/plugins/runtime.ts";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import { createAgentController } from "../../core/plugins/agent-controller-provider.ts";
@@ -86,6 +88,12 @@ export async function createSessionWorkerServices(options: {
 	const agentControllerRuntimeFacet = defineFacet({
 		id: "@pi/agent-controller-runtime",
 		setup(env) {
+			const conversations = env.use(Conversations);
+			env.provide(AgentRuntime, createAgentRuntime(
+				options.harness,
+				() => Number(conversations.state.value?.selected ?? options.conversation.id) as ConversationId,
+				() => pluginRuntime?.changing === true,
+			));
 			env.provide(AgentController, createAgentController(
 				options.harness,
 				() => options.conversation,

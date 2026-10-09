@@ -64,9 +64,13 @@ export default defineFacet({
 
 `AgentController` 提供 prompt、steer、followUp、取消排队、abort、compact 和等待结果。原生入口在每次调用时选择当前会话，切换或分支后不会一直操作启动时的根会话。命令异步等待时应传递收到的 `context` 并响应其取消信号；Esc 会取消当前命令及当前会话任务，关闭时先取消并等待命令退出，再关闭 Harness 和插件资源。
 
+需要准入自定义持久任务的进程内插件可使用 `AgentRuntime.current(context)`，取得当前选中对话与现有 Harness。原生与 session worker 都提供该服务；后台任务准入后保持自己的对话归属，焦点切换不会迁移它。该服务为 `{ local: true }`，不发布到 RPC，也不创建另一套执行器。插件应通过普通所属任务、对话、提交和工具边界执行，并传递取消上下文。
+
 自定义服务直接使用 Chord 的 `defineService()`、`env.provide()` 和 `env.use()`，进程内服务指定 `{ local: true }`。提供者和消费者使用各自 facet，资源仍由其 `env.own()`/生命周期回调清理；不需要额外的插件服务容器。
 
 完成检查可使用 `hook(GenerationTask, { onYield })`。最终响应先写入 Durable 检查点，再运行该钩子；检查期间关闭并重开会继续处理原响应。`api.commit()` 可更新插件文档或创建 `ownership: { kind: "task", taskId: api.taskId }` 的所属任务，回调返回 `undefined`；`api.waitForTask()` 等待其终态。检查失败可返回 `{ continue: "具体反馈" }`，沿用原输入继续；用户跟进或 reset 被最终边界选中时，既有队列策略优先。检查的次数上限、超时与结果属于插件自己的持久状态，不把模型的原始响应当成验证结果。
+
+钩子的 `api.agent(context)` 返回实际解析后的模型、工具选择及工具元数据。现有 Web“改动前询问”策略除内建修改工具外，还识别插件工具的 `destructiveHint: true` 或 `readOnlyHint: false`，不会因新增工具名而漏掉已经选用的询问策略。
 
 ## 当前接线
 
@@ -98,6 +102,8 @@ export default defineFacet({
 [automation](../plugins/automation/README.md) 的调度执行代码位于该可选包内。未选中时没有调度服务或定时器；Web 从实际服务目录发现能力，启动及重连后显示相应入口。计划文件损坏时显示只读问题，修复后可从页面重新读取。
 
 [verification](../plugins/verification/README.md) 通过完成钩子运行用户显式配置的命令检查，沿用普通工具任务与审批，保存独立结果并有限地请求修正。默认不启用；恢复复用原回答与检查，不自动重跑已中断的不安全命令。
+
+[workflows](../plugins/workflows/README.md) 提供 JSON 阶段计划、独立上下文、有界后台并发、持久暂停/恢复和独立命令检查证据。`/workflows` 在原生和 Web 都调用同一工具任务；命令目录订阅实际注册与退役变化，插件命令直接执行，只有提示词模板和技能转换为模型输入。
 
 `/plugins` 显示已选源码、当前安装中的 API 类型位置与本指南。模型提示中也包含相同信息。修改这些源码后，在任务结束或取消时运行 `/reload`，会重新构建并加载候选版本，不要求先手工构建。修改包声明或来源选择后需重启，重载沿用本次启动选中的来源。没有选中插件时不创建插件宿主，也不提供插件命令。
 

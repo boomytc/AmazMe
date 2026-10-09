@@ -4,6 +4,8 @@
 
 ### Added
 
+- Exposed the asking task's resolved agent and tool metadata to hooks through `api.agent(context)`
+
 - Added invocation-bound commits and owned-task waits to completion hooks; final responses are persisted before `onYield`, so recovery resumes verification without re-requesting or changing the candidate answer
 
 - Added inactive tool registration, persistent name/pattern selection, and allow/exclude boundaries that dynamic loading cannot bypass

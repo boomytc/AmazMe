@@ -1,4 +1,5 @@
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import { getAgentDir } from "../../config.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
@@ -219,9 +220,15 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 					draft.commands = commandCatalog(resources, pluginCommands());
 				});
 			};
-			// Plugin registrations are read when the catalogue is re-read: a session cannot use another
-			// facet's service while it is still starting, and /reload is the documented moment a plugin
-			// change takes effect.
+			// Publish actual registrations at activation and retirement, using the existing registry.
+			env.onActivate(() => {
+				env.own(slashCommands.subscribe(() => {
+					state.change(BACKGROUND_CONTEXT, (draft) => {
+						draft.revision += 1;
+						draft.commands = commandCatalog(resources, pluginCommands());
+					});
+				}));
+			});
 			env.provide(Commands, {
 				state,
 				async run(name: string, args: string, callContext: Context): Promise<CommandResult> {
@@ -296,7 +303,8 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 							.filter((level) => level.includes(normalized))
 							.map((level) => ({ value: level, label: level, description: THINKING_DESCRIPTIONS[level] }));
 					}
-					return [];
+					const contribution = slashCommands.list().find((command) => command.name === name);
+					return (await contribution?.getArgumentCompletions?.(prefix)) ?? [];
 				},
 				async expand(name: string, args: string): Promise<CommandExpansion> {
 					return expandResourceCommand(resources, name, args);

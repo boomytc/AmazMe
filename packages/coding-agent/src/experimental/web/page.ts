@@ -1208,7 +1208,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			return;
 		}
 		const command = composerCommands().find((candidate) => candidate.name === name);
-		if (command !== undefined && command.source !== "builtin") {
+		if (command?.source === "template" || command?.source === "skill") {
 			void painter.expandCommand(name, args).then(
 				(expansion) => {
 					if (!expansion.ok) {
