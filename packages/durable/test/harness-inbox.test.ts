@@ -171,13 +171,21 @@ describe("inbox", () => {
 		const first = gated(answer("first"));
 		setup.faux.setResponses([first.step, answer("both")]);
 		const yielded = deferred();
-		addHooks(setup.registry, GenerationTask, { onYield: () => void yielded.resolve() });
+		const releaseHook = deferred();
+		addHooks(setup.registry, GenerationTask, {
+			onYield: async () => {
+				yielded.resolve();
+				await releaseHook.promise;
+			},
+		});
 		const storage = new ControlledStorage();
 		const { harness, root } = await openChat(storage, setup);
 		await root.submit({ type: "input", content: "a" }, context);
 		await first.reached;
 		const f1 = await root.submit({ type: "input", content: "f1" }, context);
 		const f2 = await root.submit({ type: "input", content: "f2" }, context);
+		first.release();
+		await yielded.promise;
 		// Occupy the line, let the answer queue its boundary commit behind it, then change the mode.
 		const held = storage.holdCommits();
 		const Marker = defineDoc<{ n: number }>({
@@ -188,8 +196,7 @@ describe("inbox", () => {
 		});
 		const occupying = root.commit(async (tx) => void (await tx.doc(Marker)).n++, context);
 		await held.entered;
-		first.release();
-		await yielded.promise;
+		releaseHook.resolve();
 		await flush();
 		setup.settings.followUpMode = "all";
 		held.release();

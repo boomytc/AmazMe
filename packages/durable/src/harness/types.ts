@@ -747,6 +747,10 @@ export interface HookApi extends DocumentReader, BackgroundTasks {
 	readonly models: Models;
 	/** The same owned execution environment the asking task uses; absent when the host has none. */
 	env(context: Context): Promise<ExecutionEnv | undefined>;
+	/** Atomically update hook-owned documents or admit owned children, without changing the asking task's checkpoint. */
+	commit(change: (tx: Tx) => undefined | Promise<undefined>, context: Context): Promise<void>;
+	/** Wait for a durable child; invocation cancellation also cancels this wait. */
+	waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>>;
 	memo<T extends JsonValue>(name: string, context: Context): Promise<T | undefined>;
 	memo<T extends JsonValue>(name: string, candidate: T, context: Context): Promise<T>;
 }

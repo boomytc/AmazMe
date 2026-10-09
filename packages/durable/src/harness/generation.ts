@@ -69,6 +69,7 @@ export type GenerationCheckpoint =
 			cutoff: EntryId;
 	  }
 	| { phase: "retry"; attempt: number; compacted?: TaskId<CompactionResult>; until: number }
+	| { phase: "yield"; message: AssistantMessage }
 	| {
 			phase: "poll";
 			attempt: number;
@@ -114,7 +115,17 @@ const DEFAULT_POLL_AFTER_MS = 5000;
  */
 export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, GenerationResult, GenerationHooks>({
 	name: "amazme.generation",
-	version: 1,
+	version: 2,
+	// Existing phases retain their shape. Promote stored v1 work; older executors must not take a v2 yield phase.
+	migrate(input, checkpoint, version) {
+		if (version !== 1) throw new Error(`Unsupported generation version: ${version}`);
+		if (
+			checkpoint === null || typeof checkpoint !== "object" || Array.isArray(checkpoint) ||
+			!(["prepare", "request", "retry", "poll", "tools"] as const).some(phase => phase === checkpoint.phase)
+		)
+			throw new Error("Invalid v1 generation checkpoint");
+		return { input: input as GenerationInput, checkpoint: checkpoint as GenerationCheckpoint };
+	},
 	initial: () => ({ phase: "prepare", attempt: 1 }),
 	phases: {
 		/**
@@ -230,6 +241,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const request = { attempt, compacted, model: ref, cutoff, pollAt };
 			await classify(runtime, request, message, context);
 		},
+		yield: async (task, runtime, context) => answer(runtime, task.state.checkpoint.message, context),
 		tools: async (task, runtime, context) => {
 			const { assistant, tools, pending } = task.state.checkpoint;
 			const [next, ...rest] = pending;
@@ -459,7 +471,16 @@ async function classify(
 		return startToolRound(runtime, request, message, calls, context);
 	}
 	if (message.stopReason === "stop" || message.stopReason === "length" || message.stopReason === "toolUse") {
-		return answer(runtime, message, context);
+		// A completion hook may wait for owned verification work. Recovery must resume that work with this exact
+		// provider response instead of issuing another request or pairing a new answer with an old decision.
+		const saved = copyJson(message, { omitUndefinedProperties: true });
+		await runtime.commit(async (tx) => {
+			const live = await tx.doc(LiveDoc, conversationId);
+			live.generation = { attempt };
+			assignJson(live.generation as Draft<Record<string, JsonValue>>, "message", saved);
+			return { status: "running", checkpoint: { phase: "yield", message: saved as unknown as AssistantMessage } };
+		}, context);
+		return;
 	}
 	// The retry and compaction policies govern the next attempt, so they are read now rather than pinned at preparation.
 	const settings = runtime.settings;

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added invocation-bound commits and owned-task waits to completion hooks; final responses are persisted before `onYield`, so recovery resumes verification without re-requesting or changing the candidate answer
+
 - Added inactive tool registration, persistent name/pattern selection, and allow/exclude boundaries that dynamic loading cannot bypass
 - Added portable `grep`, `find`, and `ls` tools and the separate `FileSearchTools` extension, with bounded output, literal argv, invocation cancellation and paged alphabetical directory listing
 
