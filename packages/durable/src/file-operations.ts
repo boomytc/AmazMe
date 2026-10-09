@@ -3,7 +3,10 @@ import { awaitWithContext } from "@amazme/chord/context";
 import { type FileSystem, getOrThrow } from "./env/index.ts";
 
 /** Tail of the mutation chain of each file, keyed by file system id and canonical path. */
-const queues = new Map<string, Promise<void>>();
+// A compiled host and a source plugin can load different copies of this module in the same process.
+const queueKey = Symbol.for("@amazme/durable/file-mutation-queues");
+const processScope = globalThis as typeof globalThis & { [queueKey]?: Map<string, Promise<void>> };
+const queues = (processScope[queueKey] ??= new Map<string, Promise<void>>());
 
 async function mutationKey(env: FileSystem, path: string, context: Context): Promise<string> {
 	const absolutePath = getOrThrow(await env.absolutePath(path, context));
