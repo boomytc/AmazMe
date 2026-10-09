@@ -11,20 +11,28 @@ const PRESENTATION_FACET_BUNDLES_KEY = "presentationFacetBundles";
 const AMAZME_PLUGIN_API = "@amazme/coding-agent/experimental/plugin";
 
 export function createSessionPluginFacetLoader(manifestPaths: readonly string[]): FacetLoader | undefined {
-	if (manifestPaths.length === 0) return undefined;
-	return combineFacetLoaders(manifestPaths.map(createOptionalSessionFacetLoader));
+	return createPluginFacetLoader(manifestPaths, "session");
 }
 
-function createOptionalSessionFacetLoader(manifestPath: string): FacetLoader {
+export function createServerPluginFacetLoader(manifestPaths: readonly string[]): FacetLoader | undefined {
+	return createPluginFacetLoader(manifestPaths, "server");
+}
+
+function createPluginFacetLoader(manifestPaths: readonly string[], entry: string): FacetLoader | undefined {
+	if (manifestPaths.length === 0) return undefined;
+	return combineFacetLoaders(manifestPaths.map(path => createOptionalFacetLoader(path, entry)));
+}
+
+function createOptionalFacetLoader(manifestPath: string, entry: string): FacetLoader {
 	const loader = createFacetBundleLoader({
 		manifestPath,
-		entry: "session",
+		entry,
 		resolveExternal: resolvePluginExternal,
 	});
 	return {
 		async load() {
 			const manifest = await readFacetBundleManifest(manifestPath);
-			if (manifest.entries.session !== undefined) return loader.load();
+			if (manifest.entries[entry] !== undefined) return loader.load();
 			return { facets: Object.freeze([]), async dispose() {} };
 		},
 	};

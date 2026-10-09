@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +35,7 @@ import { Terminal, type Terminal as TerminalService } from "../src/experimental/
 import { Workspace, type Workspace as WorkspaceService } from "../src/experimental/services/workspace.ts";
 import { Models, type Models as ModelsService } from "../src/experimental/services/models.ts";
 import { Plugins, type Plugins as PluginsService } from "../src/experimental/services/plugins.ts";
-import { Schedules, type Schedules as SchedulesService } from "../src/experimental/services/schedules.ts";
+import { Schedules, type Schedules as SchedulesService } from "../src/core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
 import { Settings, type Settings as SettingsService } from "../src/experimental/services/settings.ts";
 import { Skills, type Skills as SkillsService } from "../src/experimental/services/skills.ts";
@@ -135,7 +136,7 @@ async function startHostWithDirectories(holdModel = false): Promise<LoopHost> {
 	}
 	const directory = await makeDirectory("web-loop-server-");
 	const sessionDir = await makeDirectory("web-loop-sessions-");
-	const host = await startWebHost({ port: 0, directory, sessionDir });
+	const host = await startWebHost({ port: 0, directory, sessionDir, pluginPackages: [fileURLToPath(new URL("../plugins/automation", import.meta.url))] });
 	hosts.add(host);
 	return { host, directory, sessionDir };
 }

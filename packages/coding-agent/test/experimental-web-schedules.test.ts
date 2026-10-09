@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, test } from "vitest";
-import { createSchedulesService } from "../src/experimental/services/schedules-provider.ts";
-import type { SchedulesState } from "../src/experimental/services/schedules.ts";
+import { createSchedulesService } from "../plugins/automation/src/runtime.ts";
+import type { SchedulesState } from "../src/core/plugins/schedules.ts";
 
 /**
  * The schedule store over its real file and a clock the test moves: what lands in
@@ -51,13 +51,13 @@ async function openStore(
 	tickMs = 1_000,
 ): Promise<Store> {
 	const agentDir = await makeDirectory("web-schedules-");
-	const state = replicatedState<SchedulesState>({ revision: 0, path: "", tickMs: 0, schedules: [] });
+	const state = replicatedState<SchedulesState>({ revision: 0, path: "", tickMs: 0, problem: null, schedules: [] });
 	const runs: { sessionId: string; prompt: string }[] = [];
 	const failure = { on: false };
 	let clock = 1_000_000;
 	const service = createSchedulesService(
 		{
-			agentDir,
+			agentDir: () => agentDir,
 			now: () => clock,
 			tickMs,
 			run:
@@ -173,6 +173,7 @@ describe("planned prompts", () => {
 		store.advance(60_000);
 
 		const first = store.service.tick(BACKGROUND_CONTEXT);
+		await waitFor(() => entered.length === 1, "the first run's file checks and admission");
 		// The second pass starts while the first is inside its run: it returns without running again.
 		await store.service.tick(BACKGROUND_CONTEXT);
 		expect(entered).toHaveLength(1);

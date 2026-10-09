@@ -10,7 +10,7 @@ import {
 import type { ServerId } from "@amazme/protocol";
 
 const PLUGIN_PACKAGE_PROFILE_VERSION = 1;
-const DEFAULT_PLUGIN_FACETS = Object.freeze({ session: "src/session.ts", tui: "src/tui.ts" });
+const DEFAULT_PLUGIN_FACETS = Object.freeze({ session: "src/session.ts", tui: "src/tui.ts", server: "src/server.ts" });
 
 export interface ConfiguredServerPluginPackage {
 	readonly manifestPath: string;

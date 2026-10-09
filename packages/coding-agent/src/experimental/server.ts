@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { defineFacet } from "@amazme/chord";
 import type { Context } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withoutAbortSignal } from "@amazme/chord/context";
 import type { FacetBundleArtifact } from "@amazme/chord/node";
@@ -22,7 +23,9 @@ import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "../config.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
-import { createPresentationFacetData } from "./plugins/bundled.ts";
+import { createPresentationFacetData, createServerPluginFacetLoader } from "./plugins/bundled.ts";
+import { HostSessions } from "../core/plugins/host-sessions.ts";
+import { openPluginRuntime } from "../core/plugins/runtime.ts";
 import {
 	createServerPluginPackage,
 	normalizePluginPackagePaths,
@@ -377,6 +380,7 @@ interface StartServerBackendOptions {
 	readonly serverId: ServerId;
 	readonly sessionDir?: string;
 	readonly listeners?: readonly ServerListener[];
+	readonly serverPluginManifestPaths: readonly string[];
 	resolveSessionPlugins(
 		metadata: SessionCatalogMetadata,
 		packagePaths: readonly string[] | undefined,
@@ -569,13 +573,22 @@ async function startServerBackend(
 			},
 		},
 		feedback: { agentDir: getAgentDir() },
-		schedules: { agentDir: getAgentDir(), run: runScheduledPrompt },
 		pluginPackages: {
 			list: () => options.listServerPluginPackages(),
 			set: (packagePaths) => options.setServerPluginPackages(packagePaths),
 		},
 	};
+	const pluginLoader = createServerPluginFacetLoader(options.serverPluginManifestPaths);
+	const plugins = pluginLoader === undefined ? undefined : await openPluginRuntime([
+		defineFacet({
+			id: "amazme.host-sessions",
+			setup(env) {
+				env.provide(HostSessions, { agentDir: () => getAgentDir(), prompt: runScheduledPrompt });
+			},
+		}),
+	], pluginLoader);
 	const serverServices = await createExperimentalServerServices({
+		...(plugins === undefined ? {} : { plugins }),
 		administration,
 		list: () => listSummaries(),
 		create: async (createOptions, context) => summarize(await createSession(createOptions, context)),
@@ -618,6 +631,10 @@ async function startServerBackend(
 		async reloadPresentationPlugins(packagePaths) {
 			return createPresentationFacetData(await options.reloadPresentationFacetBundles(packagePaths));
 		},
+	}).catch(async (error: unknown) => {
+		try { await plugins?.close(); }
+		catch (cleanup) { throw new AggregateError([error, cleanup], "Server services startup and cleanup failed"); }
+		throw error;
 	});
 	const stopTitles = workers.onSessionTitle((metadata, title) => {
 		void serverServices.nameAutomatically(metadata.id, title).catch((error: unknown) => console.error("Session title:", error));
@@ -793,6 +810,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			{
 				path: serverPath,
 				serverId,
+				serverPluginManifestPaths: defaultPluginSelection.manifestPaths,
 				sessionDir: options.sessionDir,
 				...(options.listeners === undefined ? {} : { listeners: options.listeners }),
 				resolveSessionPlugins,

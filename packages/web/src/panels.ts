@@ -16,6 +16,7 @@ import {
 	SCHEDULE_REMOVE_ACTION,
 	SCHEDULE_REMOVE_MODAL,
 	SCHEDULE_RUN_ACTION,
+	SCHEDULE_RELOAD_ACTION,
 	SESSION_REMOVE_MODAL,
 	SESSION_RENAME_MODAL,
 } from "./actions.ts";
@@ -201,8 +202,8 @@ const NAV_ITEMS: readonly { readonly id: string; readonly message: Parameters<ty
 	];
 
 /** The sidebar's panel rows and the settings entry, marked with the view the page shows. */
-export function panelNav(locale: Locale, current: string): NavItem[] {
-	return NAV_ITEMS.map((item) => ({
+export function panelNav(locale: Locale, current: string, available?: readonly string[]): NavItem[] {
+	return NAV_ITEMS.filter(item => available === undefined || available.includes(item.id)).map((item) => ({
 		id: item.id,
 		label: translate(locale, item.message),
 		glyph: item.glyph,
@@ -318,6 +319,7 @@ export interface ScheduleRecordLike {
 }
 
 export interface SchedulesStateLike {
+	readonly problem?: string | null;
 	/** The file the host keeps the schedules in. */
 	readonly path: string;
 	readonly tickMs: number;
@@ -337,6 +339,8 @@ export interface PanelViewInput {
 	readonly locale: Locale;
 	/** The view the main area shows; defaults to the conversation. */
 	readonly current?: string;
+	/** Management views backed by the connected host's actual service catalogue. */
+	readonly availableViews?: readonly string[];
 	readonly modal?: PanelModal;
 	readonly settings?: SettingsPanelInput;
 	readonly skills?: SkillsPanelInput;
@@ -761,10 +765,10 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 		id: AUTOMATION_VIEW,
 		title,
 		description: translate(locale, "panel.automation.description"),
-		notices:
-			sessionId === undefined
-				? [{ tone: "info" as const, text: translate(locale, "panel.automation.noSession") }]
-				: [],
+		notices: [
+			...(state.problem ? [{ tone: "error" as const, text: state.problem }] : []),
+			...(sessionId === undefined ? [{ tone: "info" as const, text: translate(locale, "panel.automation.noSession") }] : []),
+		],
 		groups: [
 			{
 				id: "automation:schedules",
@@ -774,8 +778,9 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 						id: SCHEDULE_ADD_ACTION,
 						label: translate(locale, "panel.automation.add"),
 						tone: "primary" as const,
-						...(sessionId === undefined ? { disabled: true } : {}),
+						...(sessionId === undefined || state.problem ? { disabled: true } : {}),
 					},
+					...(state.problem ? [{ id: SCHEDULE_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), tone: "default" as const }] : []),
 				],
 				rows: state.schedules.map((schedule) => ({
 					id: `schedule:${schedule.id}`,
@@ -791,6 +796,7 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 					controls: [
 						{
 							id: SCHEDULE_ENABLED_ACTION,
+							...(state.problem ? { disabled: true } : {}),
 							kind: "switch" as const,
 							data: schedule.id,
 							value: String(schedule.enabled),
@@ -799,19 +805,21 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 					actions: [
 						{
 							id: SCHEDULE_RUN_ACTION,
+							...(state.problem ? { disabled: true } : {}),
 							label: translate(locale, "panel.automation.run"),
 							data: schedule.id,
 							tone: "default" as const,
 						},
 						{
 							id: SCHEDULE_REMOVE_ACTION,
+							...(state.problem ? { disabled: true } : {}),
 							label: translate(locale, "panel.automation.remove"),
 							data: schedule.id,
 							tone: "danger" as const,
 						},
 					],
 				})),
-				empty: translate(locale, "panel.automation.empty"),
+				empty: translate(locale, state.problem ? "panel.automation.unreadable" : "panel.automation.empty"),
 				footnote: translate(locale, "panel.automation.footnote", { path: state.path }),
 			},
 		],
@@ -862,8 +870,10 @@ export function panelSpec(input: PanelViewInput): PanelSpec | undefined {
 }
 
 export function panelView(input: PanelViewInput): PanelView {
-	const spec = panelSpec(input);
-	const current = input.current ?? CHAT_VIEW;
+	const requested = input.current ?? CHAT_VIEW;
+	const current = input.availableViews !== undefined && requested !== CHAT_VIEW && !input.availableViews.includes(requested)
+		? CHAT_VIEW : requested;
+	const spec = panelSpec({ ...input, current });
 	// The page's own in-flight action and message ride on the panel it belongs to, so the renderer
 	// reads one description of the panel and never looks for feature state of its own.
 	const withState =
@@ -883,7 +893,7 @@ export function panelView(input: PanelViewInput): PanelView {
 					...(input.modalNotice === undefined ? {} : { notice: input.modalNotice }),
 				};
 	return {
-		nav: panelNav(input.locale, current),
+		nav: panelNav(input.locale, current, input.availableViews),
 		current: spec === undefined ? CHAT_VIEW : current,
 		...(withState === undefined ? {} : { panel: withState }),
 		...(modal === undefined ? {} : { modal }),

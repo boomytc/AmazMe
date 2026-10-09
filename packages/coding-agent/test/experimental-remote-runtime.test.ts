@@ -19,7 +19,7 @@ import { Models } from "../src/experimental/services/models.ts";
 import { Plugins, PresentationPlugins, SessionPlugins } from "../src/experimental/services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../src/experimental/services/sessions.ts";
 import { Settings } from "../src/experimental/services/settings.ts";
-import { Schedules } from "../src/experimental/services/schedules.ts";
+import { Schedules } from "../src/core/plugins/schedules.ts";
 import { Skills } from "../src/experimental/services/skills.ts";
 import { Transcript } from "../src/experimental/services/transcript.ts";
 import { createServerServiceBinding, createSessionServiceBinding } from "./experimental-service-binding.ts";
@@ -47,10 +47,10 @@ beforeEach(async () => {
 	await createExperimentalSessions(join(agentDir, "experimental", "sessions"), ["demo-1", "demo-2"]);
 });
 
-async function makeServer(): Promise<{ directory: string; runtime: RunningServer }> {
+async function makeServer(pluginPackages?: readonly string[]): Promise<{ directory: string; runtime: RunningServer }> {
 	const directory = await mkdtemp(join("/tmp", "pes-"));
 	directories.add(directory);
-	const runtime = await startServer({ ...sessionWorkerModel, directory });
+	const runtime = await startServer({ ...sessionWorkerModel, directory, ...(pluginPackages === undefined ? {} : { pluginPackages }) });
 	servers.add(runtime);
 	return { directory, runtime };
 }
@@ -287,7 +287,7 @@ describe("experimental durable server composition", () => {
 	});
 
 	test("hydrates and mutates server Session services across framed clients", async () => {
-		const { runtime } = await makeServer();
+		const { runtime } = await makeServer([fileURLToPath(new URL("../plugins/automation", import.meta.url))]);
 		const firstClient = await Client.connect({
 			serverId: runtime.serverId,
 			transportFactory: createUnixTransportFactory({ path: runtime.socketPath }),

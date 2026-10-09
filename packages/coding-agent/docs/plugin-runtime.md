@@ -91,6 +91,10 @@ export default defineFacet({
 
 随包交付的可选能力位于 `plugins/`：[history](../plugins/history/README.md) 提供原始文本检索、记录读取和 `/recall`；[memory](../plugins/memory/README.md) 提供 Markdown 项目记忆、`/memory` 和单独启用的后台候选捕获；[checkpoint](../plugins/checkpoint/README.md) 提供所选文件的字节快照、恢复预览、备份与回滚。显式安装或选择后才注册其工具和命令，默认会话不加载。
 
+宿主还加载已选包的 `server` 角色，约定入口为 `src/server.ts`，可用 `chord.facets.server` 指定或关闭。服务和资源复用 Chord 及同一包 profile。`HostSessions` 只在宿主进程内提供 agent 目录和会话执行接口，不发布到远程服务目录，也不在原生或 worker 的 session 角色中提供。新增、移除或修改宿主包后重启宿主，运行中的会话保留自己的包选择。
+
+[automation](../plugins/automation/README.md) 的调度执行代码位于该可选包内。未选中时没有调度服务或定时器；Web 从实际服务目录发现能力，启动及重连后显示相应入口。计划文件损坏时显示只读问题，修复后可从页面重新读取。
+
 `/plugins` 显示已选源码、当前安装中的 API 类型位置与本指南。模型提示中也包含相同信息。修改这些源码后，在任务结束或取消时运行 `/reload`，会重新构建并加载候选版本，不要求先手工构建。修改包声明或来源选择后需重启，重载沿用本次启动选中的来源。没有选中插件时不创建插件宿主，也不提供插件命令。
 
 ## 修改后生效

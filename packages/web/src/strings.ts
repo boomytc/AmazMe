@@ -279,7 +279,7 @@ export const EN = {
 	"panel.plugins.addPackage": "Add package…",
 	"panel.plugins.packagesEmpty": "No plugin packages: sessions load the built-in facets only.",
 	"panel.plugins.packagesFootnote":
-		"The server default applies to sessions opened after the change. A running session keeps the generation it started with.",
+		"Session packages apply to newly opened sessions. Host services apply after restarting the host. A running session keeps its current version.",
 	"panel.plugins.reloadMcp": "Reload connections",
 	"panel.plugins.reconnect": "Reconnect",
 	"panel.plugins.login": "Sign in",
@@ -306,6 +306,7 @@ export const EN = {
 	"panel.automation.add": "Plan a prompt…",
 	"panel.automation.empty":
 		"No planned prompts. A schedule sends its prompt to one session on its own and records what that run produced.",
+	"panel.automation.unreadable": "Cannot read plans. Repair the file, then re-read it.",
 	"panel.automation.noSession": "Attach a session to plan a prompt for it.",
 	"panel.automation.everyMinute": "Every minute",
 	"panel.automation.everyMinutes": "Every {count} minutes",
@@ -700,7 +701,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.plugins.packagesDescription": "工作进程启动时，插件包会被构建进会话的 facet 代际。",
 	"panel.plugins.addPackage": "添加插件包…",
 	"panel.plugins.packagesEmpty": "还没有插件包：会话只加载内置 facet。",
-	"panel.plugins.packagesFootnote": "服务端默认值作用于改动之后打开的会话；运行中的会话保留启动时的代际。",
+	"panel.plugins.packagesFootnote": "会话插件作用于之后打开的会话，宿主服务在重启宿主后生效；运行中的会话保留当前版本。",
 	"panel.plugins.reloadMcp": "重新加载连接",
 	"panel.plugins.reconnect": "重连",
 	"panel.plugins.login": "登录",
@@ -724,6 +725,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.automation.schedules": "定时任务",
 	"panel.automation.add": "新建定时任务…",
 	"panel.automation.empty": "还没有定时任务。每个任务会自行把提示发给一个会话，并记录这次运行的结果。",
+	"panel.automation.unreadable": "无法读取定时任务。修复文件后重新读取。",
 	"panel.automation.noSession": "先附加一个会话，才能为它新建定时任务。",
 	"panel.automation.everyMinute": "每分钟",
 	"panel.automation.everyMinutes": "每 {count} 分钟",

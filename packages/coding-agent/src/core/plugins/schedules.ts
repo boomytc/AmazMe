@@ -19,6 +19,8 @@ export interface ScheduleRecord {
 
 export interface SchedulesState {
 	revision: number;
+	/** A read-only store problem; repair the file and reload before accepting changes or runs. */
+	problem: string | null;
 	/** The file the schedules are stored in, so a reader can find it. */
 	path: string;
 	/** The gap between the host's checks for due schedules. */

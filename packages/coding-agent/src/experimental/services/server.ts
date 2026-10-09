@@ -1,6 +1,7 @@
 import {
 	type Context,
 	createRemoteServiceEndpoint,
+	decodeServiceControlCall,
 	type JsonValue,
 	RemoteServiceProvider,
 	replicatedState,
@@ -8,6 +9,7 @@ import {
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { RoutedServerServiceAttachment, RoutedServerServiceHost } from "@amazme/server";
 import type { SettingsManager } from "../../core/settings-manager.ts";
+import type { PluginRuntime } from "../../core/plugins/runtime.ts";
 import { Plugins, PresentationPlugins, type Plugins as PluginsService } from "./plugins.ts";
 import { createFeedbackService } from "./feedback-provider.ts";
 import { Feedback } from "./feedback.ts";
@@ -18,8 +20,6 @@ import {
 	type Settings as SettingsService,
 	type SettingsState,
 } from "./settings.ts";
-import { createSchedulesService } from "./schedules-provider.ts";
-import { Schedules } from "./schedules.ts";
 import { applySetting, describeSettings, publishSettings, settingsErrors } from "./settings-provider.ts";
 import { Skills, type Skills as SkillsService } from "./skills.ts";
 import { createSkillsService } from "./skills-provider.ts";
@@ -43,11 +43,6 @@ export interface ServerAdministrationOptions {
 	/** The agent directory the reader's ratings file lives in. */
 	readonly feedback: {
 		readonly agentDir: string;
-	};
-	/** The agent directory the planned prompts live in, and the run one of them performs. */
-	readonly schedules: {
-		readonly agentDir: string;
-		run(sessionId: string, prompt: string, context: Context): Promise<string>;
 	};
 	/** The server's default plugin package selection, as the plugin profile stores it. */
 	readonly pluginPackages: {
@@ -76,7 +71,15 @@ export async function createExperimentalServerServices(options: {
 	): Promise<{ readonly packagePaths: readonly string[]; readonly presentationPlugins: JsonValue }>;
 	reloadPresentationPlugins(packagePaths: readonly string[], context: Context): Promise<JsonValue>;
 	administration: ServerAdministrationOptions;
+	/** Selected server facets own their services and resources. Absent means no plugin host. */
+	plugins?: PluginRuntime;
 }): Promise<ExperimentalServerServices> {
+	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback]
+		.map(service => ({ service, mode: "singleton" as const }));
+	const builtinIds = new Set(definitions.map(({ service }) => service.id));
+	if (options.plugins?.services.catalogue.some(entry => builtinIds.has(entry.serviceId))) {
+		throw new Error("Server plugins cannot replace built-in services");
+	}
 	let revision = 1;
 	const directory = replicatedState<SessionDirectoryState>({
 		revision,
@@ -121,13 +124,6 @@ export async function createExperimentalServerServices(options: {
 		replicatedState,
 	);
 	void feedback.activate(BACKGROUND_CONTEXT);
-	// The planned prompts: the reader's own file, and the timer that runs them.
-	const schedules = createSchedulesService(
-		{ agentDir: options.administration.schedules.agentDir, run: options.administration.schedules.run },
-		replicatedState,
-	);
-	await schedules.activate(BACKGROUND_CONTEXT);
-	schedules.start();
 
 	const refreshNow = async (context: Context): Promise<void> => {
 		const sessions = await options.list(context);
@@ -154,16 +150,7 @@ export async function createExperimentalServerServices(options: {
 				// A client that just arrived sees the sessions that exist now, including terminal ones
 				// created while this host was running.
 				void refreshNow(BACKGROUND_CONTEXT).catch(() => undefined);
-				const provider = new RemoteServiceProvider([
-					{ service: SessionDirectory, mode: "singleton" },
-					{ service: SessionManagement, mode: "singleton" },
-					{ service: PresentationPlugins, mode: "singleton" },
-					{ service: Settings, mode: "singleton" },
-					{ service: Skills, mode: "singleton" },
-					{ service: Plugins, mode: "singleton" },
-					{ service: Feedback, mode: "singleton" },
-					{ service: Schedules, mode: "singleton" },
-				]);
+				const provider = new RemoteServiceProvider(definitions);
 				provider.provide(SessionDirectory, { state: directory });
 				provider.provide(Settings, {
 					state: settingsState,
@@ -185,16 +172,6 @@ export async function createExperimentalServerServices(options: {
 					rate: (request, context) => serialize(() => feedback.service.rate(request, context)),
 					retract: (request, context) => serialize(() => feedback.service.retract(request, context)),
 					reload: (context) => serialize(() => feedback.service.reload(context)),
-				});
-				// The schedule store keeps its own write queue: a manual run awaits a whole turn, so
-				// it must not hold the server's shared mutation tail while it does.
-				provider.provide(Schedules, {
-					state: schedules.service.state,
-					add: (input, context) => schedules.service.add(input, context),
-					remove: (id, context) => schedules.service.remove(id, context),
-					setEnabled: (id, enabled, context) => schedules.service.setEnabled(id, enabled, context),
-					runNow: (id, context) => schedules.service.runNow(id, context),
-					reload: (context) => schedules.service.reload(context),
 				});
 				const pluginsService: PluginsService = {
 					state: plugins.service.state,
@@ -258,7 +235,7 @@ export async function createExperimentalServerServices(options: {
 							return renamed;
 						}),
 				});
-				const attachment = createProviderAttachment(provider, () => attachments.delete(attachment));
+				const attachment = createProviderAttachment(provider, () => attachments.delete(attachment), options.plugins?.services);
 				attachments.add(attachment);
 				return attachment;
 			},
@@ -275,7 +252,7 @@ export async function createExperimentalServerServices(options: {
 			disposePromise = promise;
 			void (async () => {
 				const releases = await Promise.allSettled([
-					schedules.stop(),
+					options.plugins?.close(),
 					...[...attachments].map((attachment) => attachment.release(BACKGROUND_CONTEXT)),
 				]);
 				attachments.clear();
@@ -292,18 +269,40 @@ export async function createExperimentalServerServices(options: {
 function createProviderAttachment(
 	provider: RemoteServiceProvider,
 	onRelease: () => void,
+	additional?: RemoteServiceProvider,
 ): RoutedServerServiceAttachment {
 	const endpoint = createRemoteServiceEndpoint(provider);
+	const pluginEndpoint = additional === undefined ? undefined : createRemoteServiceEndpoint(additional);
+	const pluginIds = new Set(additional?.catalogue.map(entry => entry.serviceId));
+	const subscriptions = new Map<string, typeof endpoint>();
 	let released = false;
 	return {
-		invokeService(call, publish, context) {
+		async invokeService(call, publish, context) {
 			if (released) return Promise.reject(new Error("Server service attachment is released"));
-			return endpoint.invoke(call, publish, context);
+			const control = decodeServiceControlCall(call);
+			if (control?.type === "catalogue") return [...provider.catalogue, ...(additional?.catalogue ?? [])];
+			const target = control?.type === "unsubscribe"
+				? subscriptions.get(control.subscriptionId) ?? endpoint
+				: pluginIds.has(control?.type === "subscribe" ? control.serviceId : call.serviceId) ? pluginEndpoint! : endpoint;
+			if (control?.type === "subscribe") {
+				if (subscriptions.has(control.subscriptionId)) throw new Error("Service subscription ID is already active");
+				subscriptions.set(control.subscriptionId, target);
+			}
+			try {
+				const result = await target.invoke(call, publish, context);
+				if (control?.type === "unsubscribe") subscriptions.delete(control.subscriptionId);
+				return result;
+			} catch (error) {
+				if (control?.type === "subscribe") subscriptions.delete(control.subscriptionId);
+				throw error;
+			}
 		},
 		release() {
 			if (released) return;
 			released = true;
 			endpoint.dispose();
+			pluginEndpoint?.dispose();
+			subscriptions.clear();
 			provider.dispose();
 			onRelease();
 		},

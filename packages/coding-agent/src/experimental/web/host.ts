@@ -31,6 +31,8 @@ export interface WebHostOptions {
 	readonly serverId?: ServerId;
 	readonly sessionDir?: string;
 	readonly directory?: string;
+	/** Selected server/session/presentation packages; undefined restores the host profile. */
+	readonly pluginPackages?: readonly string[];
 	/** Upgrade path for the byte protocol. Defaults to `/amazme`. */
 	readonly path?: string;
 	/** Repository root used for the page bundle's tsconfig paths. */
@@ -131,6 +133,7 @@ async function hostServer(options: WebHostOptions, listener: WebSocketListener):
 			directory,
 			serverId,
 			...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
+			...(options.pluginPackages === undefined ? {} : { pluginPackages: options.pluginPackages }),
 			listeners: [listener],
 			keepAlive: true,
 		});

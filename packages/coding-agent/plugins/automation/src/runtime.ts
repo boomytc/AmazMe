@@ -9,7 +9,7 @@ import {
 	type ScheduleResult,
 	Schedules,
 	type SchedulesState,
-} from "./schedules.ts";
+} from "@amazme/coding-agent/plugin";
 
 /** The shortest gap a schedule may have. */
 export const SCHEDULE_MIN_MINUTES = 1;
@@ -17,10 +17,11 @@ export const SCHEDULE_MIN_MINUTES = 1;
 export const SCHEDULE_MAX_PROMPT = 8_000;
 /** How often the host looks for due schedules when nothing else says otherwise. */
 export const SCHEDULE_DEFAULT_TICK_MS = 5_000;
+const MAX_SCHEDULE_TIME = 8_640_000_000_000_000;
 
 export interface SchedulesServiceOptions {
 	/** The agent directory: the schedules file lives beside the settings the CLI reads. */
-	readonly agentDir: string;
+	readonly agentDir: () => string;
 	/** Run one prompt, joining its accepted work's cancellation before rejecting; the note is shown in the panel. */
 	run(sessionId: string, prompt: string, context: Context): Promise<string>;
 	/** The clock, so a test can move time instead of waiting for it. */
@@ -44,12 +45,20 @@ function parseSchedule(value: unknown): ScheduleRecord | undefined {
 		typeof record.sessionId !== "string" ||
 		record.sessionId.length === 0 ||
 		typeof record.prompt !== "string" ||
+		record.prompt.trim().length === 0 ||
+		record.prompt.length > SCHEDULE_MAX_PROMPT ||
 		typeof record.everyMs !== "number" ||
-		!Number.isFinite(record.everyMs) ||
-		record.everyMs <= 0 ||
+		!Number.isSafeInteger(record.everyMs) ||
+		record.everyMs < SCHEDULE_MIN_MINUTES * 60_000 ||
 		typeof record.enabled !== "boolean" ||
 		typeof record.createdAt !== "number" ||
-		typeof record.nextRunAt !== "number"
+		!Number.isSafeInteger(record.createdAt) ||
+		record.createdAt < 0 ||
+		record.createdAt > MAX_SCHEDULE_TIME ||
+		typeof record.nextRunAt !== "number" ||
+		!Number.isSafeInteger(record.nextRunAt) ||
+		record.nextRunAt < 0 ||
+		record.nextRunAt > MAX_SCHEDULE_TIME
 	) {
 		return undefined;
 	}
@@ -102,10 +111,12 @@ export function createSchedulesService(
 	options: SchedulesServiceOptions,
 	createState: (initial: SchedulesState) => MutableReplicatedState<SchedulesState>,
 ): SchedulesService {
-	const path = join(options.agentDir, "schedules.json");
+	let path = "";
 	const now = options.now ?? (() => Date.now());
 	const tickMs = options.tickMs ?? SCHEDULE_DEFAULT_TICK_MS;
-	const state = createState({ revision: 1, path, tickMs, schedules: [] });
+	const state = createState({ revision: 1, path, tickMs, problem: null, schedules: [] });
+	let problem: string | null = null;
+	let contents: string | undefined;
 	let schedules: ScheduleRecord[] = [];
 	let timer: NodeJS.Timeout | undefined;
 	let ticking = false;
@@ -116,7 +127,10 @@ export function createSchedulesService(
 
 	/** Serialize admission and file changes; model work never holds this queue. */
 	const mutate = <T>(operation: () => Promise<T>): Promise<T> => {
-		const result = mutationTail.then(operation, operation);
+		const result = mutationTail.then(() => {
+			if (path.length === 0) throw new Error("Activate schedules before using the store.");
+			return operation();
+		});
 		mutationTail = result.then(
 			() => undefined,
 			() => undefined,
@@ -129,16 +143,39 @@ export function createSchedulesService(
 			draft.revision += 1;
 			draft.path = path;
 			draft.tickMs = tickMs;
+			draft.problem = problem;
 			draft.schedules = schedules;
 		});
 	};
 
+	const read = async (): Promise<string | undefined> => {
+		try {
+			return await readFile(path, "utf8");
+		} catch (error) {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+			throw error;
+		}
+	};
+
+	const requireCurrentFile = async (context: Context): Promise<void> => {
+		if (problem !== null) throw new Error(problem);
+		try {
+			if ((await read()) !== contents) throw new Error("Schedules file changed. Reload it before making changes.");
+		} catch (error) {
+			problem = describe(error);
+			publish(context);
+			throw error;
+		}
+	};
+
 	const commit = async (next: ScheduleRecord[], context: Context): Promise<void> => {
+		await requireCurrentFile(context);
 		const body: SchedulesFile = { version: 1, schedules: next };
+		const text = `${JSON.stringify(body, null, "\t")}\n`;
 		await mkdir(dirname(path), { recursive: true });
 		const temporary = `${path}.${randomUUID()}.tmp`;
 		try {
-			await writeFile(temporary, `${JSON.stringify(body, null, "\t")}\n`, {
+			await writeFile(temporary, text, {
 				encoding: "utf8",
 				mode: 0o600,
 			});
@@ -146,6 +183,7 @@ export function createSchedulesService(
 		} finally {
 			await rm(temporary, { force: true });
 		}
+		contents = text;
 		schedules = next;
 		publish(context);
 	};
@@ -156,19 +194,33 @@ export function createSchedulesService(
 			if (running.size > 0) throw new Error("Wait for running schedules before reloading the file.");
 			context.abortSignal?.throwIfAborted();
 			let parsed: unknown;
+			problem = null;
 			try {
-				parsed = JSON.parse(await readFile(path, "utf8"));
-			} catch {
+				contents = await read();
+				parsed = contents === undefined ? { version: 1, schedules: [] } : JSON.parse(contents);
+				if (
+					typeof parsed !== "object" ||
+					parsed === null ||
+					!("version" in parsed) ||
+					parsed.version !== 1 ||
+					!("schedules" in parsed) ||
+					!Array.isArray(parsed.schedules)
+				)
+					throw new Error("Invalid schedules file format.");
+			} catch (error) {
+				problem = `Cannot read ${path}: ${describe(error)} Repair the file and reload.`;
 				schedules = [];
 				publish(context);
 				return;
 			}
-			const list =
-				typeof parsed === "object" && parsed !== null ? (parsed as { schedules?: unknown }).schedules : undefined;
-			schedules = (Array.isArray(list) ? list : []).flatMap((entry) => {
+			const list = (parsed as { schedules: unknown[] }).schedules;
+			schedules = list.flatMap((entry) => {
 				const record = parseSchedule(entry);
 				return record === undefined ? [] : [record];
 			});
+			if (schedules.length !== list.length || new Set(schedules.map((record) => record.id)).size !== schedules.length) {
+				problem = `Invalid records in ${path}. Repair the file and reload.`;
+			}
 			publish(context);
 		});
 
@@ -213,7 +265,9 @@ export function createSchedulesService(
 	const execute = async (id: string, context: Context, advance: boolean): Promise<ScheduleResult> => {
 		const accepted = await mutate<{ refusal: string } | { done: Promise<ScheduleResult> }>(async () => {
 			if (stopped) return { refusal: "Schedules are stopped." };
+			if (problem !== null) return { refusal: problem };
 			context.abortSignal?.throwIfAborted();
+			await requireCurrentFile(context);
 			const record = find(id);
 			if (record === undefined) return { refusal: "That schedule is gone." };
 			if (running.has(id)) return { refusal: "That schedule is already running." };
@@ -238,7 +292,7 @@ export function createSchedulesService(
 
 	const tick = async (context: Context): Promise<void> => {
 		// One pass at a time: a real run takes longer than the gap between checks.
-		if (stopped || ticking) return;
+		if (stopped || problem !== null || ticking) return;
 		ticking = true;
 		try {
 			for (const record of due()) {
@@ -265,6 +319,8 @@ export function createSchedulesService(
 				}
 				const everyMs = Math.round(input.everyMinutes * 60_000);
 				const at = now();
+				if (!Number.isSafeInteger(at + everyMs) || at + everyMs > MAX_SCHEDULE_TIME)
+					return { ok: false, problem: "The schedule time is out of range." };
 				const record: ScheduleRecord = {
 					id: randomUUID(),
 					sessionId: input.sessionId,
@@ -278,6 +334,7 @@ export function createSchedulesService(
 				};
 				return mutate(async () => {
 					if (stopped) return { ok: false, problem: "Schedules are stopped." };
+					if (problem !== null) return { ok: false, problem };
 					context.abortSignal?.throwIfAborted();
 					await commit([...schedules, record], context);
 					return { ok: true, note: "Added. It runs on its own from now on." };
@@ -297,6 +354,7 @@ export function createSchedulesService(
 			async setEnabled(id: string, enabled: boolean, context: Context): Promise<ScheduleResult> {
 				return mutate(async () => {
 					if (stopped) return { ok: false, problem: "Schedules are stopped." };
+					if (problem !== null) return { ok: false, problem };
 					context.abortSignal?.throwIfAborted();
 					const record = find(id);
 					if (record === undefined) return { ok: false, problem: "That schedule is gone." };
@@ -342,7 +400,10 @@ export function createSchedulesService(
 			})().then(resolve, reject);
 			return promise;
 		},
-		activate: (context: Context) => load(context),
+		activate: (context: Context) => {
+			if (path.length === 0) path = join(options.agentDir(), "schedules.json");
+			return load(context);
+		},
 	};
 }
 

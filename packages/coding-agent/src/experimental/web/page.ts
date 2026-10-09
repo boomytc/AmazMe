@@ -6,12 +6,13 @@
  * failure states.
  */
 import type { ModelThinkingLevel } from "@amazme/ai";
-import type { ReplicatedState } from "@amazme/chord";
+import type { RemoteServices, ReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { Client, type ClientOptions } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
+	AUTOMATION_VIEW,
 	APPROVAL_APPROVE_ACTION,
 	APPROVAL_DENY_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
@@ -89,6 +90,7 @@ import {
 	SCHEDULE_REMOVE_ACTION,
 	SCHEDULE_REMOVE_MODAL,
 	SCHEDULE_RUN_ACTION,
+	SCHEDULE_RELOAD_ACTION,
 	SESSION_REMOVE_ACTION,
 	SESSION_REMOVE_MODAL,
 	SETTINGS_FIELD_ACTION,
@@ -132,7 +134,7 @@ import type { McpManagementState } from "../../core/mcp/management.ts";
 import type { McpExposure } from "../../core/mcp-servers.ts";
 import { Models, type ModelsState } from "../services/models.ts";
 import { Plugins } from "../services/plugins.ts";
-import { type ScheduleResult, Schedules } from "../services/schedules.ts";
+import { type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
 import { Skills } from "../services/skills.ts";
@@ -650,7 +652,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let appearance: ThemePreference = resolveThemePreference(manifest.preferences?.appearance);
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(locale, key, values);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, Feedback, Schedules],
+		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, Feedback],
 		assertAccess(): void {},
 		onError: report,
 	});
@@ -661,7 +663,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const skills = serverServices.use(Skills);
 	const plugins = serverServices.use(Plugins);
 	const feedback = serverServices.use(Feedback);
-	const schedules = serverServices.use(Schedules);
+	let schedules: SchedulesService | undefined;
+	let scheduleServices: RemoteServices | undefined;
+	let removeScheduleObserver: (() => void) | undefined;
+	let scheduleEpoch = 0;
+	let scheduleDiscovery: Promise<void> = Promise.resolve();
+	let booted = false;
+	const availableViews = (): readonly string[] => ["plugins", "skills", SETTINGS_VIEW, ...(schedules === undefined ? [] : [AUTOMATION_VIEW])];
 	let view = CHAT_VIEW;
 	let creating = false;
 	let modal: PanelModal | undefined;
@@ -852,18 +860,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					panel: {
 						locale,
 						current: view,
+						availableViews: availableViews(),
 						...(modal === undefined ? {} : { modal }),
 						settings: { state: settings.state.value },
 						skills: { state: skills.state.value },
 						plugins: { state: plugins.state.value, runtime: painter.mcpValue },
-						automation: {
+						...(schedules === undefined ? {} : { automation: {
 							state: schedules.state.value,
 							sessionId: painter.sessionId,
 							now: Date.now(),
-						},
+						} }),
 						// The page's own management state: what is in flight, and what it last said.
 						...(panelPending === undefined ? {} : { pending: panelPending }),
-						...(panelNotice === undefined ? {} : { notice: panelNotice }),
+						...(panelNotice === undefined || (view === AUTOMATION_VIEW && schedules?.state.value?.problem) ? {} : { notice: panelNotice }),
 						modalPending,
 						...(modalNotice === undefined ? {} : { modalNotice }),
 					},
@@ -913,8 +922,36 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	// The catalogue itself moves when the host re-reads the session's templates and skills.
 	painter.commandsState?.subscribe(() => paint());
 	plugins.state.subscribe(() => paint());
-	// A schedule added, run, or paused here — or in another tab — repaints the automation panel.
-	schedules.state.subscribe(() => paint());
+	const clearSchedules = async (): Promise<number> => {
+		const epoch = ++scheduleEpoch;
+		const previous = scheduleServices;
+		scheduleServices = undefined;
+		schedules = undefined;
+		removeScheduleObserver?.();
+		removeScheduleObserver = undefined;
+		if (view === AUTOMATION_VIEW) { view = CHAT_VIEW; modal = undefined; }
+		await previous?.dispose(BACKGROUND_CONTEXT);
+		return epoch;
+	};
+	const discoverSchedules = async (): Promise<void> => {
+		const epoch = await clearSchedules();
+		if (epoch !== scheduleEpoch || !client.connected || leaving) return;
+		const catalogue = await serverSource.catalogue(BACKGROUND_CONTEXT);
+		if (epoch !== scheduleEpoch || !client.connected || leaving) return;
+		if (catalogue.some(entry => entry.serviceId === Schedules.id)) {
+			const binding = serverSource.open({ services: [Schedules], assertAccess() {}, onError: report });
+			scheduleServices = binding;
+			try { await binding.ready(BACKGROUND_CONTEXT); }
+			catch (error) {
+				if (epoch !== scheduleEpoch) { await binding.dispose(BACKGROUND_CONTEXT); return; }
+				await clearSchedules(); throw error;
+			}
+			if (epoch !== scheduleEpoch || leaving || !client.connected) { await binding.dispose(BACKGROUND_CONTEXT); return; }
+			schedules = binding.use(Schedules);
+			removeScheduleObserver = schedules.state.subscribe(() => paint());
+		}
+		paint();
+	};
 
 	/**
 	 * Attach another session. The painter lets go of the previous one first: the host has already
@@ -1003,7 +1040,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		}
 		if (id === "composer.focus") return;
 		// Cycle the main area through the conversation and every management view.
-		const views = [CHAT_VIEW, ...panelNav(locale, CHAT_VIEW).map((item) => item.id)];
+		const views = [CHAT_VIEW, ...panelNav(locale, CHAT_VIEW, availableViews()).map((item) => item.id)];
 		const index = views.indexOf(view);
 		view = views[(index + 1) % views.length] ?? CHAT_VIEW;
 		modal = undefined;
@@ -1388,11 +1425,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const skillOf = (name: string): { readonly editable: boolean } | undefined => skills.state.value?.skills.find((candidate) => candidate.name === name);
 
 	renderer.onPanelAction = (action: PanelAction): void => {
+		const schedule = schedules;
 		const mcp = painter.mcpService;
 		const mcpSession = painter.sessionId;
 		const hasMcpServer = (name: string): boolean => mcp !== undefined && painter.mcpValue?.servers.some(server => server.name === name) === true;
 		switch (action.kind) {
 			case "open":
+				if (action.panel === AUTOMATION_VIEW && schedule === undefined) return;
 				// The row of the view already open returns to the conversation.
 				view = action.panel === view ? CHAT_VIEW : action.panel;
 				closeModal();
@@ -1444,12 +1483,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					});
 					return;
 				}
-				if (action.id === SCHEDULE_ENABLED_ACTION && action.data !== undefined) {
+				if (action.id === SCHEDULE_ENABLED_ACTION && action.data !== undefined && schedule !== undefined) {
 					const id = action.data;
 					runPanelCall({
 						id: action.id,
 						data: id,
-						call: () => schedules.setEnabled(id, action.value === "true", BACKGROUND_CONTEXT),
+						call: () => schedule.setEnabled(id, action.value === "true", BACKGROUND_CONTEXT),
 					});
 				}
 				return;
@@ -1680,6 +1719,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						openModal(removeSessionModal(locale, action.data ?? ""), action);
 						return;
 					case SCHEDULE_ADD_ACTION: {
+						if (schedule === undefined) return;
 						const sessionId = painter.sessionId;
 						// The panel's own footer says what to do; the button is inert without a session.
 						if (sessionId === undefined) {
@@ -1694,17 +1734,22 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					}
 					case SCHEDULE_REMOVE_ACTION:
+						if (schedule === undefined) return;
 						openModal(removeScheduleModal(locale, action.data ?? ""), action);
 						return;
 					case SCHEDULE_RUN_ACTION: {
+						if (schedule === undefined) return;
 						const id = action.data ?? "";
 						runPanelCall({
 							id: action.id,
 							data: id,
-							call: () => schedules.runNow(id, BACKGROUND_CONTEXT),
+							call: () => schedule.runNow(id, BACKGROUND_CONTEXT),
 						});
 						return;
 					}
+					case SCHEDULE_RELOAD_ACTION:
+						if (schedule !== undefined) runPanelCall({ id: action.id, call: () => schedule.reload(BACKGROUND_CONTEXT).then(done) });
+						return;
 					case ATTACHMENT_REMOVE_ACTION: {
 						pending = pending.filter((image) => image.id !== action.data);
 						paint();
@@ -1918,6 +1963,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						});
 						return;
 					case SCHEDULE_ADD_MODAL: {
+						if (schedule === undefined) return;
 						const sessionId = painter.sessionId;
 						const prompt = (fields.prompt ?? "").trim();
 						const minutes = Number((fields.everyMinutes ?? "").trim());
@@ -1936,16 +1982,17 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({
 							id: action.id,
 							inModal: true,
-							call: () => schedules.add({ sessionId, prompt, everyMinutes: minutes }, BACKGROUND_CONTEXT),
+							call: () => schedule.add({ sessionId, prompt, everyMinutes: minutes }, BACKGROUND_CONTEXT),
 						});
 						return;
 					}
 					case SCHEDULE_REMOVE_MODAL:
+						if (schedule === undefined) return;
 						runPanelCall({
 							id: action.id,
 							data: action.data,
 							inModal: true,
-							call: () => schedules.remove(action.data ?? "", BACKGROUND_CONTEXT).then(done),
+							call: () => schedule.remove(action.data ?? "", BACKGROUND_CONTEXT).then(done),
 						});
 						return;
 					default:
@@ -1985,7 +2032,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					waitMs = Math.min(waitMs * 2, 10_000);
 				}
 			}
-			if (!client.connected || wanted === undefined) return;
+			if (!client.connected) return;
+			await scheduleDiscovery;
+			if (wanted === undefined) return;
 			// An attachment lives with the connection, so the reader's session is bound again. The
 			// bindings of the old connection are released first: their handles are gone with it.
 			for (let attempt = 0; !leaving; attempt += 1) {
@@ -2017,6 +2066,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	client.onConnectionStateChange((change) => {
 		if (change.state === "connected") {
+			if (booted) scheduleDiscovery = discoverSchedules().catch(report);
 			renderer.setConnection(
 				(language) => translate(language, "connection.connected", { id: manifest.server.id }),
 				"state",
@@ -2025,6 +2075,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			return;
 		}
 		if (change.state === "disconnected") {
+			void clearSchedules().catch(report);
 			historyRequest += 1;
 			historyLoading = false;
 			const previous = renderer.view;
@@ -2061,6 +2112,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		return undefined;
 	}
 	await serverServices.ready(BACKGROUND_CONTEXT);
+	scheduleDiscovery = discoverSchedules();
+	await scheduleDiscovery;
+	booted = true;
 	// Restore this tab's last selection when it still exists; otherwise use the newest session.
 	let remembered: string | null = null;
 	try {
@@ -2079,6 +2133,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	globalThis.addEventListener("pagehide", () => {
 		leaving = true;
+		void clearSchedules().catch(() => {});
 		void painter.detach();
 		void serverServices.dispose(BACKGROUND_CONTEXT).then(() => client.dispose());
 	});

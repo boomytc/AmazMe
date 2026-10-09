@@ -33,6 +33,7 @@
 			"@amazme/env": ["./packages/env/src/index.ts"],
 			"@amazme/agent": ["./packages/agent/src/index.ts"],
 			"@amazme/coding-agent": ["./packages/coding-agent/src/index.ts"],
+			"@amazme/coding-agent/plugin": ["./packages/coding-agent/src/plugin.ts"],
 			"@amazme/coding-agent/experimental/plugin": [
 				"./packages/coding-agent/src/experimental/plugin.ts"
 			],
