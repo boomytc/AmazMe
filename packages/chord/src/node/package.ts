@@ -10,11 +10,43 @@ export interface BundleFacetPackageOptions {
 	readonly defaultFacets?: Readonly<Record<string, string>>;
 	/** Imports provided by the loading application, in addition to package peers. */
 	readonly external?: readonly string[];
+	/** Load/build only these application roles; omitted means every declared or conventional role. */
+	readonly entryNames?: readonly string[];
 }
 
 export interface BundleFacetPackageResult extends BundleFacetsResult {
 	readonly packageDirectory: string;
 	readonly packageJsonPath: string;
+}
+
+export interface FacetPackageInfo {
+	readonly packageDirectory: string;
+	readonly packageJsonPath: string;
+	readonly name: string;
+	readonly version: string;
+	readonly entries: Readonly<Record<string, string>>;
+}
+
+/** Inspect the same validated entry mappings used by the builder, without evaluating plugin code. */
+export async function inspectFacetPackage(
+	options: Pick<
+		BundleFacetPackageOptions,
+		"packagePath" | "defaultFacets" | "entryNames"
+	>,
+): Promise<FacetPackageInfo> {
+	const metadata = await readFacetPackageMetadata(options.packagePath);
+	const entries = await resolveFacetEntries(
+		metadata,
+		options.defaultFacets ?? {},
+		options.entryNames,
+	);
+	return Object.freeze({
+		packageDirectory: metadata.packageDirectory,
+		packageJsonPath: metadata.packageJsonPath,
+		name: metadata.name,
+		version: metadata.version,
+		entries,
+	});
 }
 
 interface FacetPackageMetadata {
@@ -31,7 +63,10 @@ interface FacetPackageMetadata {
 /** Build a plugin package using package.json metadata and application-provided facet conventions. */
 export async function bundleFacetPackage(options: BundleFacetPackageOptions): Promise<BundleFacetPackageResult> {
 	const metadata = await readFacetPackageMetadata(options.packagePath);
-	const entries = await resolveFacetEntries(metadata, options.defaultFacets ?? {});
+	const entries = await resolveFacetEntries(metadata, options.defaultFacets ?? {}, options.entryNames);
+	if (Object.keys(entries).length === 0) {
+		throw new Error(`Facet package ${metadata.name} has no configured or conventional facet entries`);
+	}
 	const external = [...metadata.peerDependencies, ...metadata.external, ...(options.external ?? [])].flatMap((specifier) => [
 		specifier,
 		`${specifier}/*`,
@@ -158,9 +193,12 @@ function parseChordConfiguration(
 async function resolveFacetEntries(
 	metadata: FacetPackageMetadata,
 	defaultFacets: Readonly<Record<string, string>>,
+	entryNames?: readonly string[],
 ): Promise<Readonly<Record<string, string>>> {
 	const entries: Record<string, string> = {};
 	for (const [name, source] of Object.entries(defaultFacets)) {
+		if (entryNames !== undefined && !entryNames.includes(name)) continue;
+		if (metadata.configuredFacets[name] !== undefined) continue;
 		validateFacetMapping(name, source, "default");
 		const path = resolvePackageEntry(metadata.packageDirectory, source, name);
 		try {
@@ -175,6 +213,7 @@ async function resolveFacetEntries(
 		}
 	}
 	for (const [name, source] of Object.entries(metadata.configuredFacets)) {
+		if (entryNames !== undefined && !entryNames.includes(name)) continue;
 		if (source === false) {
 			delete entries[name];
 			continue;
@@ -191,9 +230,6 @@ async function resolveFacetEntries(
 		const canonicalPath = await realpath(path);
 		validateCanonicalPackageEntry(metadata.packageDirectory, canonicalPath, name);
 		entries[name] = canonicalPath;
-	}
-	if (Object.keys(entries).length === 0) {
-		throw new Error(`Facet package ${metadata.name} has no configured or conventional facet entries`);
 	}
 	return Object.freeze(entries);
 }

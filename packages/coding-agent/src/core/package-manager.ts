@@ -112,6 +112,12 @@ export interface ConfiguredPackage {
 }
 
 export interface PackageManager {
+	resolvePackagePaths(options?: {
+		sources?: readonly string[];
+		resource?: ResourceType;
+		onMissing?: (source: string) => Promise<MissingSourceAction>;
+	}): Promise<readonly ResolvedPackagePath[]>;
+
 	resolve(onMissing?: (source: string) => Promise<MissingSourceAction>): Promise<ResolvedPaths>;
 	install(source: string, options?: { local?: boolean }): Promise<void>;
 	installAndPersist(source: string, options?: { local?: boolean }): Promise<void>;
@@ -127,6 +133,13 @@ export interface PackageManager {
 	removeSourceFromSettings(source: string, options?: { local?: boolean }): boolean;
 	setProgressCallback(callback: ProgressCallback | undefined): void;
 	getInstalledPath(source: string, scope: "user" | "project"): string | undefined;
+}
+
+export interface ResolvedPackagePath {
+	readonly source: string;
+	readonly scope: SourceScope;
+	readonly path: string;
+	readonly filter?: PackageFilter;
 }
 
 interface PackageManagerOptions {
@@ -282,16 +295,16 @@ function isPattern(s: string): boolean {
 	return s.startsWith("!") || s.startsWith("+") || s.startsWith("-") || s.includes("*") || s.includes("?");
 }
 
-function isOverridePattern(s: string): boolean {
+export function isOverridePattern(s: string): boolean {
 	return s.startsWith("!") || s.startsWith("+") || s.startsWith("-");
 }
 
-function hasGlobPattern(s: string): boolean {
+export function hasGlobPattern(s: string): boolean {
 	return s.includes("*") || s.includes("?");
 }
 
 /** Glob entries discover visible paths; exact entries can target dot paths or symlinked trees. */
-function expandPackageGlob(pattern: string, root: string): string[] {
+export function expandPackageGlob(pattern: string, root: string): string[] {
 	return globSync(pattern, { cwd: root })
 		.map((match) => resolve(root, match))
 		.filter((path) =>
@@ -715,7 +728,7 @@ function getOverridePatterns(entries: string[]): string[] {
 	return entries.filter((pattern) => pattern.startsWith("!") || pattern.startsWith("+") || pattern.startsWith("-"));
 }
 
-function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: string): boolean {
+export function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: string): boolean {
 	const overrides = getOverridePatterns(patterns);
 	const excludes = overrides.filter((pattern) => pattern.startsWith("!")).map((pattern) => pattern.slice(1));
 	const forceIncludes = overrides.filter((pattern) => pattern.startsWith("+")).map((pattern) => pattern.slice(1));
@@ -742,7 +755,7 @@ function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: str
  * - `+path`: force-include exact path (overrides exclusions)
  * - `-path`: force-exclude exact path (overrides force-includes)
  */
-function applyPatterns(allPaths: string[], patterns: string[], baseDir: string): Set<string> {
+export function applyPatterns(allPaths: string[], patterns: string[], baseDir: string): Set<string> {
 	const includes: string[] = [];
 	const excludes: string[] = [];
 	const forceIncludes: string[] = [];
@@ -790,7 +803,7 @@ function applyPatterns(allPaths: string[], patterns: string[], baseDir: string):
 	return new Set(result);
 }
 
-function applyAutoloadDisabledPatterns(allPaths: string[], patterns: string[], baseDir: string): Map<string, boolean> {
+export function applyAutoloadDisabledPatterns(allPaths: string[], patterns: string[], baseDir: string): Map<string, boolean> {
 	const result = new Map<string, boolean>();
 	for (const pattern of patterns) {
 		const target = pattern.slice(
@@ -1299,47 +1312,105 @@ export class DefaultPackageManager implements PackageManager {
 				continue;
 			}
 
-			const installMissing = async (): Promise<boolean> => {
-				if (isOfflineModeEnabled()) return false;
-				if (!onMissing) {
-					await this.installParsedSource(parsed, resolvedScope);
-					return true;
-				}
-				const action = await onMissing(resolvedSource);
-				if (action === "skip") return false;
-				if (action === "error") throw new Error(`Missing source: ${resolvedSource}`);
-				await this.installParsedSource(parsed, resolvedScope);
-				return true;
-			};
-
-			if (parsed.type === "npm") {
-				let installedPath = this.getNpmInstallPath(parsed, resolvedScope);
-				const needsInstall =
-					!existsSync(installedPath) || !(await this.installedNpmMatchesConfiguredVersion(parsed, installedPath));
-				if (needsInstall) {
-					const installed = await installMissing();
-					if (!installed) continue;
-					installedPath = this.getNpmInstallPath(parsed, resolvedScope);
-				}
-				metadata.baseDir = installedPath;
-				metadata.packageRoot = installedPath;
-				this.collectPackageResources(installedPath, accumulator, filter, metadata);
-				continue;
-			}
-
-			if (parsed.type === "git") {
-				const installedPath = this.getGitInstallPath(parsed, resolvedScope);
-				if (!existsSync(installedPath)) {
-					const installed = await installMissing();
-					if (!installed) continue;
-				} else if (resolvedScope === "temporary" && !parsed.pinned && !isOfflineModeEnabled()) {
-					await this.refreshTemporaryGitSource(parsed, resolvedSource);
-				}
-				metadata.baseDir = installedPath;
-				metadata.packageRoot = installedPath;
-				this.collectPackageResources(installedPath, accumulator, filter, metadata);
-			}
+			const installedPath = await this.resolveInstalledSource(parsed, resolvedScope, resolvedSource, onMissing);
+			if (installedPath === undefined) continue;
+			metadata.baseDir = installedPath;
+			metadata.packageRoot = installedPath;
+			this.collectPackageResources(installedPath, accumulator, filter, metadata);
 		}
+	}
+
+	/** Resolve one installed source for both resource collection and native facet loading. */
+	private async resolveInstalledSource(
+		parsed: ParsedSource,
+		scope: SourceScope,
+		source: string,
+		onMissing?: (source: string) => Promise<MissingSourceAction>,
+	): Promise<string | undefined> {
+		if (parsed.type === "local")
+			return this.resolvePathFromBase(
+				parsed.path,
+				this.getBaseDirForScope(scope),
+			);
+		const installMissing = async (): Promise<boolean> => {
+			if (isOfflineModeEnabled()) return false;
+			const action = (await onMissing?.(source)) ?? "install";
+			if (action === "skip") return false;
+			if (action === "error") throw new Error(`Missing source: ${source}`);
+			await this.installParsedSource(parsed, scope);
+			return true;
+		};
+		if (parsed.type === "npm") {
+			let path = this.getNpmInstallPath(parsed, scope);
+			if (
+				!existsSync(path) ||
+				!(await this.installedNpmMatchesConfiguredVersion(parsed, path))
+			) {
+				if (!(await installMissing())) return undefined;
+				path = this.getNpmInstallPath(parsed, scope);
+			}
+			return path;
+		}
+		const path = this.getGitInstallPath(parsed, scope);
+		if (!existsSync(path)) {
+			if (!(await installMissing())) return undefined;
+		} else if (
+			scope === "temporary" &&
+			!parsed.pinned &&
+			!isOfflineModeEnabled()
+		) {
+			await this.refreshTemporaryGitSource(parsed, source);
+		}
+		return path;
+	}
+
+	async resolvePackagePaths(
+		options: {
+			sources?: readonly string[];
+			resource?: ResourceType;
+			onMissing?: (source: string) => Promise<MissingSourceAction>;
+		} = {},
+	): Promise<readonly ResolvedPackagePath[]> {
+		const configured: Array<{ pkg: PackageSource; scope: SourceScope }> =
+			options.sources === undefined
+				? [
+						...(this.settingsManager.isProjectTrusted()
+							? (this.settingsManager.getProjectSettings().packages ?? []).map(
+									(pkg) => ({ pkg, scope: "project" as const }),
+								)
+							: []),
+						...(this.settingsManager.getGlobalSettings().packages ?? []).map(
+							(pkg) => ({ pkg, scope: "user" as const }),
+						),
+					]
+				: options.sources.map((pkg) => ({ pkg, scope: "temporary" }));
+		const selected = this.dedupePackages(configured);
+		const result: ResolvedPackagePath[] = [];
+		for (const { pkg, scope } of selected) {
+			const source = this.getPackageSourceString(pkg);
+			const filter = typeof pkg === "string" ? undefined : pkg;
+			const delta = this.findAutoloadDeltaBase(pkg, scope, selected);
+			if (options.resource !== undefined && filter !== undefined) {
+				const patterns = filter[options.resource];
+				if (patterns?.length === 0) continue;
+				if (filter.autoload === false && patterns === undefined) continue;
+			}
+			const resolvedSource = delta?.source ?? source;
+			const path = await this.resolveInstalledSource(
+				this.parseSource(resolvedSource),
+				delta?.scope ?? scope,
+				resolvedSource,
+				options.onMissing,
+			);
+			if (path !== undefined)
+				result.push({
+					source,
+					scope,
+					path,
+					...(filter === undefined ? {} : { filter }),
+				});
+		}
+		return Object.freeze(result);
 	}
 
 	private findAutoloadDeltaBase(

@@ -22,6 +22,7 @@ export function createSourcePluginLoader(sources: readonly string[]): FacetLoade
 						outdir: directory,
 						defaultFacets: { session: "src/session.ts" },
 						external: HOST_IMPORTS,
+						entryNames: ["session"],
 					})
 					: await bundleFacets({
 						plugin: { id: source },

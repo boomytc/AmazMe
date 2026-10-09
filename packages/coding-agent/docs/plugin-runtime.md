@@ -68,15 +68,26 @@ export default defineFacet({
 
 - 宿主给 session worker 传入自己执行的注册表，现有选包、构建和 session facet 加载流程继续使用。
 - 原生 Durable 运行时接受可选的 `facetLoader`，配置后才创建插件宿主并提供 `reloadPlugins()`；TUI 的 `/reload` 调用该入口。没有 loader 时不创建插件宿主。
-- 默认 CLI 的 `-e <文件或包目录>` 加载原生 facet 插件；也发现用户扩展目录与已信任项目的 `.amazme/extensions`。`--no-extensions` 关闭发现，显式 `-e` 仍生效。原生路径不加载 SDK 扩展工厂；Print/RPC 继续使用其 SDK 扩展入口。
+- 默认 CLI 的 `-e <文件、包目录或 npm/git 来源>` 加载原生 facet 插件；也发现用户扩展目录与已信任项目的 `.amazme/extensions`。`--no-extensions` 关闭发现，显式 `-e` 仍生效。原生路径不加载 SDK 扩展工厂；Print/RPC 继续使用其 SDK 扩展入口。
 
 ## 源码选择
 
-单文件导出 `defineFacet(...)`，扩展目录也支持 `index.ts`/`index.js` 入口或直接放置的源码文件。包目录包含 `package.json`，session 入口默认为 `src/session.ts`，可用 `chord.facets.session` 指定。包名称和版本必填。AmazMe 提供 AI、Chord、Durable 和插件 API，普通包依赖仍由插件自行声明和安装。
+单文件导出 `defineFacet(...)`，扩展目录也支持 `index.ts`/`index.js` 入口或直接放置的源码文件。包目录包含 `package.json`，session 入口默认为 `src/session.ts`，可用 `chord.facets.session` 指定或设为 `false`。包名称和版本必填。原生入口只检查和构建 session，其他 facet 不会在这里运行。AmazMe 提供 AI、Chord、Durable 和插件 API，普通包依赖仍由插件自行声明和安装。
 
-用户 `settings.json` 的 `extensions` 路径相对用户 agent 目录；项目 `.amazme/settings.json` 的路径相对 `.amazme`，只在项目已信任时加载。目前原生设置选择精确本地路径，其他选择规则继续完善。
+用户 `settings.json` 的 `extensions` 路径相对用户 agent 目录；项目 `.amazme/settings.json` 的路径相对 `.amazme`，只在项目已信任时加载。本地路径和 glob 增加发现来源，`!pattern` 排除，`+path` 强制包含，`-path` 强制排除且优先于包含；精确包路径和它的 session 文件选择同一个模块。实际来源按规范路径去重，项目决定优先，显式 `-e` 强制包含。
 
-`/plugins` 显示已选源码、当前安装中的 API 类型位置与本指南。模型提示中也包含相同信息。修改这些源码后，在任务结束或取消时运行 `/reload`，会重新构建并加载候选版本，不要求先手工构建。没有选中插件时不创建插件宿主，也不提供插件命令。
+`packages` 复用现有包管理器的安装位置、npm 版本检查、git 更新和项目优先规则。`amazme install <来源>` 保存声明；`-e npm:...` 或 `-e git:...` 使用已有临时安装位置。包对象的 `extensions` 过滤其 session 文件，空数组关闭加载；项目的 `autoload: false` 只应用匹配项的增减，并可沿用同名用户包安装。例如：
+
+```json
+{
+  "packages": [{ "source": "npm:my-plugin@1.0.0", "extensions": ["src/session.ts"] }],
+  "extensions": ["./plugins/*.ts", "!extensions/**/*.ts", "+extensions/keep.ts"]
+}
+```
+
+包没有 session 时不会激活原生插件，也不会把 SDK 的 `pi.extensions` 工厂转接为 facet。包安装与资源文档见 [Packages](packages.md)。
+
+`/plugins` 显示已选源码、当前安装中的 API 类型位置与本指南。模型提示中也包含相同信息。修改这些源码后，在任务结束或取消时运行 `/reload`，会重新构建并加载候选版本，不要求先手工构建。修改包声明或来源选择后需重启，重载沿用本次启动选中的来源。没有选中插件时不创建插件宿主，也不提供插件命令。
 
 ## 修改后生效
 
