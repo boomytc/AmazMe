@@ -18,6 +18,8 @@ If Pi is already installed, choose what you want to do:
 
 ## Customize Pi
 
+For the default AmazMe TUI, use [native plugins](plugin-runtime.md) to add tools and prompt sections, inspect the loaded source and API, and rebuild plugins with `/reload` after editing them.
+
 Pi can reuse prompts, load specialized instructions, add executable integrations, change its terminal interface, connect model services, and distribute these resources as packages.
 Use the [Quickstart customization chooser](quickstart.md#choose-how-to-customize-pi) to select the smallest mechanism that meets your need.
 

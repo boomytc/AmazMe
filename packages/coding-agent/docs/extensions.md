@@ -1,5 +1,7 @@
 # Extensions
 
+This page describes extensions for the AgentSession SDK and Print/RPC runtime. The default AmazMe TUI loads native Chord facets; use the [native plugin guide](plugin-runtime.md) for `-e`, automatic discovery, `/plugins`, and `/reload` there.
+
 Extensions are TypeScript modules that add executable behavior to Pi. Use one when a workflow needs tools, commands, event handlers, model providers, session state, or terminal UI rather than instructions alone.
 
 An extension runs inside the Pi process with the same operating-system permissions. It can inspect prompts, tool calls, files, credentials, and session history, so load extensions only from sources you trust.
@@ -29,10 +31,10 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-Start Pi and run `/hello`. During development, load a file directly:
+An AgentSession-based interactive presentation can run `/hello`. The RPC runtime can load the same module directly:
 
 ```bash
-pi --extension ./hello.ts
+amazme --mode rpc --extension ./hello.ts
 ```
 
 Pi uses `jiti`, so local TypeScript extensions do not need a separate compilation step. Use [Pi packages](packages.md) for distributed extensions and dependencies.

@@ -114,6 +114,27 @@ class ListSelector extends Container implements Focusable {
 	}
 }
 
+/** Runtime information without sending a local command to the model. */
+class InfoPanel extends Container implements Focusable {
+	focused = false;
+	readonly #close: () => void;
+
+	constructor(title: string, text: string, close: () => void) {
+		super();
+		this.#close = close;
+		this.addChild(new DynamicBorder());
+		this.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 1));
+		this.addChild(new Text(text, 1, 0));
+		this.addChild(new Text(theme.fg("dim", "Esc / Enter to close"), 1, 1));
+		this.addChild(new DynamicBorder());
+	}
+
+	handleInput(data: string): void {
+		const keys = getKeybindings();
+		if (keys.matches(data, "tui.select.cancel") || keys.matches(data, "tui.select.confirm")) this.#close();
+	}
+}
+
 /** One line of text, for custom branch-summary instructions. */
 class LinePrompt extends Container implements Focusable {
 	readonly #input = new Input();
@@ -745,6 +766,10 @@ export async function runDurableTui(source: DurableViewSource, controller: Durab
 			const trimmed = text.trim();
 			if (!trimmed) return;
 			if (trimmed === "/mcp") return showMcp();
+			if (trimmed === "/plugins" && controller.describePlugins !== undefined) {
+				view.mount(new InfoPanel("Plugins", controller.describePlugins(), () => view.restoreEditor()));
+				return;
+			}
 			if (trimmed === "/reload" && controller.reloadPlugins !== undefined) return void controller.reloadPlugins();
 			if (trimmed === "/model") return selectModel();
 			if (trimmed === "/tasks") return void controller.toggleTasks();

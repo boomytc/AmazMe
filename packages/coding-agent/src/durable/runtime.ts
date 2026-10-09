@@ -11,6 +11,7 @@ import {
 	type EntryRecord,
 	AgentDoc,
 	Harness,
+	section,
 	type ModelRef,
 	type Submission,
 	type TaskGraph,
@@ -18,6 +19,8 @@ import {
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { createAgentExtensionsFacet } from "../core/plugins/agent-extensions.ts";
+import { describePluginSources } from "../core/plugins/info.ts";
+import { discoverPluginSources } from "../core/plugins/sources.ts";
 import { assertPluginsIdle, openPluginRuntime, type PluginRuntime } from "../core/plugins/runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { durableToolSelection, getToolSelectionError, type ToolSelectionOptions } from "../core/tool-selection.ts";
@@ -91,6 +94,7 @@ export interface DurableViewSource {
 
 /** What the TUI may ask for. */
 export interface DurableController {
+	describePlugins?(): string;
 	/** Reload the selected application plugin facets; absent when none were configured. */
 	reloadPlugins?(): Promise<void>;
 	readonly mcp?: McpManagement;
@@ -121,6 +125,8 @@ export interface DurableController {
 }
 
 export interface OpenDurableOptions extends ToolSelectionOptions {
+	readonly extensions?: readonly string[];
+	readonly noExtensions?: boolean;
 	/** Application-selected Chord facets; no plugin owner is started when absent. */
 	readonly facetLoader?: FacetLoader;
 	readonly cwd?: string;
@@ -156,6 +162,13 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	if (options.apiKey !== undefined && options.model === undefined) throw new Error("--api-key requires --model");
 	const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
 	const settingsManager = options.settingsManager ?? createCodingSettings(cwd);
+	const sources = options.facetLoader === undefined
+		? await discoverPluginSources({ cwd, settings: settingsManager, extensions: options.extensions, noExtensions: options.noExtensions })
+		: [];
+	if (options.facetLoader !== undefined && options.extensions !== undefined) throw new Error("Select either facetLoader or extension sources");
+	const facetLoader = options.facetLoader ?? (sources.length === 0
+		? undefined
+		: (await import("../core/plugins/loader.ts")).createSourcePluginLoader(sources));
 	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create());
 	// Resolve explicit arguments before creating or locking persistent session storage.
 	const selected = options.model === undefined
@@ -198,10 +211,11 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		let report: (error: unknown) => void = (error) => pendingReports.push(error);
 		const activeMcp = await openDurableMcp({ registry, cwd: location.cwd, settings: settingsManager, models: modelRuntime, disabled: options.noMcp, report: error => report(error) });
 		mcp = activeMcp;
-		if (options.facetLoader !== undefined) {
+		if (facetLoader !== undefined) {
+			if (sources.length > 0) registry.install({ name: "plugin-development", sections: [section("plugin_development", () => describePluginSources(sources))] });
 			plugins = await openPluginRuntime(
 				[createAgentExtensionsFacet(registry)],
-				options.facetLoader,
+				facetLoader,
 				async () => {
 					if (harness !== undefined) await assertPluginsIdle(harness);
 				},
@@ -382,9 +396,11 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		};
 		const controller: DurableController = {
 			...(plugins === undefined ? {} : {
+				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources),
 				reloadPlugins: () => command(async () => {
 					await assertPluginsIdle(opened);
 					await plugins!.reload();
+					notice("info", "Reloaded plugins");
 				}),
 			}),
 			mcp: activeMcp.management,

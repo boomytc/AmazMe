@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { combineFacetLoaders, type FacetLoader, type JsonValue } from "@amazme/chord";
 import {
 	createFacetBundleArtifactLoader,
@@ -6,7 +5,7 @@ import {
 	type FacetBundleArtifact,
 	readFacetBundleManifest,
 } from "@amazme/chord/node";
-import { getPackageDir } from "../../config.ts";
+import { resolveAgentPluginExternal } from "../../core/plugins/info.ts";
 
 const PRESENTATION_FACET_BUNDLES_KEY = "presentationFacetBundles";
 const AMAZME_PLUGIN_API = "@amazme/coding-agent/experimental/plugin";
@@ -51,10 +50,8 @@ export function createPresentationFacetLoaders(data: JsonValue): readonly FacetL
 }
 
 function resolvePluginExternal(specifier: string): string | undefined {
-	if (specifier === "@amazme/coding-agent/plugin") {
-		const source = import.meta.url.endsWith(".ts");
-		return join(getPackageDir(), source ? "src" : "dist", source ? "plugin.ts" : "plugin.js");
-	}
+	const agentApi = resolveAgentPluginExternal(specifier);
+	if (agentApi !== undefined) return agentApi;
 	if (specifier !== AMAZME_PLUGIN_API) return undefined;
 	const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
 	return new URL(`../plugin.${extension}`, import.meta.url).href;

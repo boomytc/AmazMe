@@ -8,6 +8,8 @@ export interface BundleFacetPackageOptions {
 	readonly outdir: string;
 	/** Application conventions applied when the corresponding source file exists. */
 	readonly defaultFacets?: Readonly<Record<string, string>>;
+	/** Imports provided by the loading application, in addition to package peers. */
+	readonly external?: readonly string[];
 }
 
 export interface BundleFacetPackageResult extends BundleFacetsResult {
@@ -30,7 +32,7 @@ interface FacetPackageMetadata {
 export async function bundleFacetPackage(options: BundleFacetPackageOptions): Promise<BundleFacetPackageResult> {
 	const metadata = await readFacetPackageMetadata(options.packagePath);
 	const entries = await resolveFacetEntries(metadata, options.defaultFacets ?? {});
-	const external = [...metadata.peerDependencies, ...metadata.external].flatMap((specifier) => [
+	const external = [...metadata.peerDependencies, ...metadata.external, ...(options.external ?? [])].flatMap((specifier) => [
 		specifier,
 		`${specifier}/*`,
 	]);

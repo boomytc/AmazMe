@@ -709,6 +709,8 @@ export async function main(args: string[], options?: MainOptions) {
 			cwd,
 			continueSession: parsed.continue === true || parsed.resume === true,
 			settingsManager: startupSettingsManager,
+			...(parsed.extensions === undefined ? {} : { extensions: parsed.extensions }),
+			noExtensions: parsed.noExtensions === true,
 			...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
 			...(parsed.model === undefined ? {} : { model: parsed.model }),
 			...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),

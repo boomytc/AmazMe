@@ -331,7 +331,8 @@ ${chalk.bold("Options:")}
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names or patterns (*) to disable
                                  Applies to all tools, MCP tools included
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
-  --extension, -e <path>         Load an extension file or builtin:<name> (can be used multiple times)
+  --extension, -e <path>         Load a native facet file/package in the TUI (repeatable)
+                                 Print/RPC use SDK extensions; native plugins use defineFacet
   --no-extensions, -ne           Disable extension discovery and built-in extensions (explicit -e paths still work)
   --no-mcp                       Disable built-in MCP support: no servers connect and no MCP tools
   --skill <path>                 Load a skill file or directory (can be used multiple times)
