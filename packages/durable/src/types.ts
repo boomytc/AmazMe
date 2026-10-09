@@ -777,6 +777,8 @@ export interface Tx {
 		cursor?: Cursor,
 	): Promise<Page<ConversationRecord, Cursor>>;
 	scanEntries(query: EntryQuery, limit: number, cursor?: Cursor): Promise<Page<EntryRecord, Cursor>>;
+	/** Ordered submission records for this committed read, such as a run's placed input boundary. */
+	scanSubmissions(query: SubmissionQuery, limit: number, cursor?: Cursor): Promise<Page<SubmissionRecord, Cursor>>;
 	/** Newest visible entry of the conversation that carries a `head`. */
 	latestHeadMarker(conversationId: ConversationId): Promise<(EntryRecord & { readonly head: EntryId }) | undefined>;
 	scanTasks(

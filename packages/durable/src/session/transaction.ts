@@ -40,6 +40,7 @@ import type {
 	SubmissionCreate,
 	SubmissionId,
 	SubmissionRecord,
+	SubmissionQuery,
 	SubmissionSettlement,
 	Task,
 	TaskDocFamilyToken,
@@ -253,6 +254,10 @@ export class Transaction implements Tx {
 
 	scanEntries(query: EntryQuery, limit: number, cursor?: Cursor) {
 		return this.#read("scanEntries", () => this.#host.storage.scanEntries(query, limit, cursor, this.#context));
+	}
+
+	scanSubmissions(query: SubmissionQuery, limit: number, cursor?: Cursor) {
+		return this.#read("scanSubmissions", () => this.#host.storage.scanSubmissions(query, limit, cursor, this.#context));
 	}
 
 	latestHeadMarker(conversationId: ConversationId) {
