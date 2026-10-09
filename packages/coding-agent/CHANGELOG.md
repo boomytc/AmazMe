@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added an optional native completion-verification plugin with explicit command checks, bounded corrective requests, independent receipts, persistent deadlines, owned cancellation, and recovery without replaying interrupted unsafe commands
+
 - Added on-demand `amazme doctor` and Web read-only diagnostics with shared status codes and repair guidance; no credential resolution, provider calls, subprocesses, locks, or automatic repairs
 
 - Added ordered `+name`/`-name` tool selection to the SDK and print/RPC CLI, with shared validation before runtime creation and preservation across settings reloads
