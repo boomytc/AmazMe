@@ -523,3 +523,16 @@
 - 最终 SQLite 的 21 个任务全部 terminal，两次插件激活/释放和 stdio 启动/退出平衡，子进程已结束。重启后的网页标题与选择器一致，控制台警告/错误为空；截图在关闭临时页面、宿主和协议服务前保存。
 
 本阶段使用本机 SSE 模型协议夹具核对分叉、请求和恢复归属；真实供应商与 OAuth 的前阶段证据保持原范围。扩展模块和最终产品审计继续进行，Codex 仍待已有账户选择，TODO 索引保留。
+
+
+### 编译运行时的完整发布目录
+
+2026-10-10。重新核对实际源码，dist/bun/cli.js 在当前构建中存在，不沿用此前的缺失推测。实际 Bun 1.2.5 二进制在签名修正后报 node:sqlite 不存在；较新 Bun 的编译成功也不等于动态模块、插件 API 和网页资源已可用。
+
+- build:binary 复用现有 createPackageArtifacts/installPackageArtifacts、当前锁文件和正常包构建，隔离安装 14 个本地包及 130 个运行依赖。小型编译入口使用 Bun 运行同一份已安装 CLI、宿主、插件 API 和 worker，避免把共享模块重复嵌入二进制或新增外部模块注册表。删除原重复的二进制资源复制命令；主题、图片及完整 HTML 导出资源复制到既有 Bun 路径。
+- Bun 至少要求 1.4，实际使用 1.4.2；按[官方 SQLite 兼容说明](https://bun.sh/docs/runtime/nodejs-compat)使用原 node:sqlite 后端。按[编译配置说明](https://bun.sh/docs/bundler/executables)开启运行时 package.json 解析以加载模块 exports，关闭 .env 与 bunfig 自动加载，tsconfig 保持默认关闭。旧 Bun、已存在输出目录、位于仓库发布树中的自定义输出都在构建前拒绝；候选在独立临时目录生成，只有版本检查通过才发布，失败清理候选。
+- coding-agent 正常构建、35 项既有配置/产物/worker/宿主/重载检查、9 项既有打包检查、工作区依赖方向和三个浏览器入口通过；未新增或修改仓库测试。正常 Node bundle 保持 111 文件、9.6 MiB。最终目录的清理后 manifest 不含临时 tarball 路径。
+- 实际目录移到含空格与 # 的仓库外路径后，编译入口正确报告 1.1.0；Web、coordinator 和 session worker 都由同一编译运行时启动。普通插件命令、模型 read/edit 修改插件源码、V1 到 V2 的构建/重载、损坏源码后保留 V2、修复重试及 Web /reload 都通过。未选用 codemode 时调用被拒绝，显式选用后实际 worker 调用 HTTP MCP 成功，结果写入 SQLite。真实 PTY 的 /self 显示 SELF-V2 和零活动任务。
+- 最终产物在 PATH 仅有 /usr/bin:/bin 时重启同一宿主，原 server/session 编号、历史、工具选择和 V2 保留，启动没有模型调用；后续 CLI/Web 插件命令及 codemode/MCP 继续成功。最终 36 个任务全部 terminal，六次激活/释放租约平衡，worker、Web、构建器和 coordinator 已退出；网页控制台警告/错误为空，截图在关闭前保存。
+
+当前实际验收为 macOS arm64；Windows 沿用户范围不要求实测，Linux 的 Node/daemon 证据沿用前阶段。编译运行时目录约 242 MB，其中 Bun 可执行文件约 60 MB，必须分发完整目录，不能只复制可执行文件。模型是本机 SSE 协议夹具，用于核对实际执行与恢复；真实供应商和 OAuth 的证据保持原范围。最终产品审计继续，Codex 尚待已有账户选择，TODO 索引保留。

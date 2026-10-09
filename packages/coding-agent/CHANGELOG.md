@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- Fixed binary releases missing the installed modules needed by host processes, plugin reloads and Web assets; the build now publishes a complete runtime directory and requires Bun with native SQLite support
+
 - Fixed host model and thinking selection changing the root conversation while a fork was selected; configuration and supported levels now follow the focused conversation
 
 - Fixed host plugin prompts, queued-input cancellation, abort and compaction to follow the selected conversation, including after restoring a fork

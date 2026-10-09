@@ -4,7 +4,7 @@ AmazMe 是终端里的编码代理。它读取文件、运行命令、修改内�
 
 实现来自 [Pi](https://github.com/earendil-works/pi) 的 packages，包作用域和命令名是 AmazMe。许可证是 MIT，版权归 Mario Zechner。当前对齐的上游版本和后续跟进方法见 [UPSTREAM.md](UPSTREAM.md)。
 
-需要 Node.js 22.19 或更新版本。
+npm 与源码入口需要 Node.js 22.19 或更新版本。
 
 ## 从本仓库运行
 
@@ -45,8 +45,7 @@ WebSocket 地址与 server id（`started` 表示这次启动自己起了宿主�
 命令面板同样只有一份目录（宿主自己的命令、插件注册的命令、prompt 模板、技能，外加标 `terminal only` 的终端专属
 命令），客户端执行不了的名字会被如实拒绝而不是当 prompt 发给模型。宿主断开后页面按退避自行重连并重新附着会话，
 重连前后的状态一致。
-细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。这一入口依赖
-源码切片，尚未进入打包产物。
+细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。正式安装包包含宿主模块与预构建网页资源。
 
 开发阶段，终端和网页不用先构建，直接跑源码；桌面窗口会先构建壳再打开：
 
@@ -64,6 +63,18 @@ npm run dev:desktop  # Electron 窗口，加载与 dev:web 同一个宿主
 `dev:desktop` 先构建 `@amazme/web`，再构建 `@amazme/gui`，然后用 Electron 打开同一个宿主：窗口加载的就是上面这条 `web` 命令印出的回环页面，会话仍是那一套 durable。根 `build` 和 `build:offline` 也在 durable 之后构建这两个包，壳才能解析到网页的 locale 与文案。
 
 项目配置在当前目录的 `.amazme`，用户配置在 `~/.amazme/agent`。命令名是 `amazme`。`@amazme/coding-agent` 的 bin 指向 `dist/bundle/cli.js`，所以要先构建，再从本仓库运行或做 `npm link`。
+
+## 编译运行时发布
+
+依赖包已有构建产物时，使用 Bun 1.4 或更新版本生成本机平台的完整运行目录：
+
+```bash
+npm run build:binary --workspace @amazme/coding-agent
+# 可指定 Bun 与一个尚不存在的输出目录：
+npm run build:binary --workspace @amazme/coding-agent -- --bun /path/to/bun --out /path/to/release
+```
+
+默认输出在 `packages/coding-agent/binaries/<platform>-<arch>`。Unix 从该目录的 `amazme` 启动，运行不需要另装 Node 或 Bun。Windows 的可执行文件在 `node_modules/@amazme/coding-agent/amazme.exe`。必须分发整个目录，其中包含同一套已安装模块、插件 API、构建器和界面资源；插件修改后的 `/reload` 继续使用这些模块。构建沿用当前锁文件和本地产物，安装依赖使用 `--ignore-scripts`，不自动重建所有包，也不覆盖已有输出目录。自定义输出应在仓库外，避免候选目录被打进其他包。
 
 ## 验证
 

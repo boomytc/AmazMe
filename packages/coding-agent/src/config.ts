@@ -14,12 +14,13 @@ import { stripBom } from "./utils/text.ts";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-/**
- * Detect if we're running as a Bun compiled binary.
- * Bun binaries have import.meta.url containing "$bunfs", "~BUN", or "%7EBUN" (Bun's virtual filesystem path)
- */
+function isBunVirtualPath(value: string): boolean {
+	return value.includes("$bunfs") || value.includes("~BUN") || value.includes("%7EBUN");
+}
+
+/** Detect embedded modules and installed modules entered by the compiled Bun launcher. */
 export const isBunBinary =
-	import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
+	isBunVirtualPath(import.meta.url) || (!!process.versions.bun && isBunVirtualPath(process.argv[1] ?? ""));
 
 /** Detect if Bun is the runtime (compiled binary or bun run) */
 export const isBunRuntime = !!process.versions.bun;
@@ -512,11 +513,11 @@ export function resolveCodemodeWorkerSpecifier(
 let codemodeWorkerDataUrl: URL | undefined;
 
 /**
- * Get the codemode worker entry, or undefined to use the worker that ships next to pi-codemode.
- * The Bun and Node release builds both pass the worker as an extra entrypoint.
+ * Get an embedded worker entry, or undefined to use the worker in the installed codemode package.
  */
 export function getCodemodeWorkerSpecifier(): string | URL | undefined {
-	const runtime = isBunBinary ? "bun-binary" : isBundledNode ? "bundled-node" : "unbundled";
+	// A compiled launcher uses the installed worker; only an embedded module needs an embedded entry.
+	const runtime = isBunVirtualPath(import.meta.url) ? "bun-binary" : isBundledNode ? "bundled-node" : "unbundled";
 	const specifier = resolveCodemodeWorkerSpecifier(runtime, import.meta.url);
 	if (runtime !== "bundled-node" || !(specifier instanceof URL)) return specifier;
 	// Spawn workers from an in-memory copy. An update replaces or deletes the file while this
