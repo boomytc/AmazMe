@@ -25,7 +25,9 @@
 		"clean": "shx rm -rf dist",
 		"build": "tsc -p tsconfig.build.json",
 		"build:daemon": "cargo build --manifest-path daemon/Cargo.toml --locked",
+		"build:daemons": "node scripts/build-daemons.mjs",
 		"test": "vitest --run",
+		"prepack": "node scripts/build-daemons.mjs --check",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [

@@ -484,3 +484,17 @@
 - 重启保持原 server/session 编号、模型选择和全部历史，Grok 准确召回三个供应商的此前结果。最终 SQLite 有 15 个成功工具回执、零工具错误、37 个 terminal 任务。正式网页显示恢复后的回执；隔离浏览器控制台无警告/错误。Edge 另有一条接收端连接错误，同一页面在隔离浏览器没有出现，未据此改动业务代码。
 
 本阶段没有新增或修改仓库单元/集成测试，也没有修改运行时代码。供应商验证完成后关闭本阶段宿主、worker 和临时页面，并删除本次临时 OAuth 凭据。Codex 浏览器登录出现两个已有账户，尚待用户选择；回调等待到期已清理，不将其记作供应商拒绝。工具卡的外部验收因此保持部分完成，远程 Unix daemon 产物及最终产品审计仍需继续。
+
+
+### Unix daemon 发布产物与真实 Linux VM
+
+2026-10-10。修复 env README 与实际 tarball 不一致的发布缺口：新增独立 release 构建命令，复用原 Rust daemon、SSH bootstrap、Connection、RemoteExecutionEnv 和 Durable 工具，没有添加执行器或运行时注册表。
+
+- 构建使用 daemon 的既有 Rust 1.96.0 配置和 locked 依赖，按目标写入 packagedDaemon() 读取的 bin 目录，保存版本、源码指纹、目标和 SHA-256。正常 npm pack 必须验证 Linux/macOS 的 x64/arm64 四个产物；TypeScript 构建和安装不调用 Rust。Windows/Android 的现有实现保留，可显式提供匹配二进制或额外构建，默认发布验收按用户的 Unix 范围执行。
+- 四个 Unix release 产物均完成真实编译、架构头部与指纹验证；Linux 使用 musl 静态链接，arm64 在 Linux VM 原生运行，x64 在同一 VM 的 binfmt 仿真中完成协议 1/version 1.1.0 握手。macOS arm64 实际运行；macOS x64 在当前机器启动返回 -86，仅记为交叉构建和架构验证，不声称 Intel Mac 实跑。Windows 未实测。
+- env 构建、64 项既有检查通过；新的 macOS arm64 release 另通过 12 项既有协议与条件写入检查。七个仓库外临时场景确认缺失、未知目标、源码变化、字节损坏、架构错误和版本错误会被拒绝，当前产物会被接受。没有新增仓库单元或集成测试。
+- 正常 npm pack 执行 prepack 成功，发布包包含四个 daemon、对应 build.json 和编译模块，二进制均有执行权限。tarball 约 2.4 MB，解包约 4.6 MB；隔离 consumer 用 --ignore-scripts 安装更新后的 env 包，运行仍从自己的 node_modules 加载。
+- 通过受控 Colima Linux arm64 VM 的真实 SSH 验证主机密钥：扫描结果与该 VM 的已知公钥一致后，写入独立 known_hosts。connectSsh 未传 binary 覆盖，从安装包自动选择、校验 SHA-256 并部署。实际 hello 返回 Linux/aarch64、协议 1、版本 1.1.0；文件条件创建/替换、旧版本拒绝、原生监听、Unix 命令与取消通过。终止远程 daemon 后自动重连，进程编号改变，文件仍可读取。
+- 独立安装的 Durable/AI/env 通过同一 Harness 和实际 DeepSeek provider，工具任务在 VM 执行 read、edit、bash，文件成为 REMOTE_DEEPSEEK_OK。会话与任务状态存于本机 SQLite；关闭和重新连接后重开存储，三个工具回执和远程文件均保留，六个任务全部 terminal，报告错误为空。默认 coding-agent 宿主仍使用本地 NodeExecutionEnv；本阶段证明公开 Durable/env 的远程能力，不将其描述为已经提供宿主远程环境选择界面。
+
+远程临时目录、daemon 与连接已清理，构建容器已退出，Colima 恢复原停止状态，Docker context 恢复 default。工具卡的 Unix VM 与匹配产物条目完成；Codex OAuth 和整体插件/产品审计继续进行，TODO 索引保留。

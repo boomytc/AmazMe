@@ -1,6 +1,6 @@
 # @amazme/env
 
-Remote execution environments for [Pi Durable](../durable): an agent's tools run on another machine, usually over SSH,
+Remote execution environments for [AmazMe Durable](../durable): an agent's tools run on another machine, usually over SSH,
 while the Durable worker, its storage and credentials stay local.
 
 - `amazme-env` (`daemon/`): a small Rust program that runs on the remote machine. It speaks a framed protocol on stdin and
@@ -28,13 +28,28 @@ const lazy = sshConnection(target);
 const lazyEnv = new RemoteExecutionEnv({ connection: lazy.connection, id: "amazme-env:gpu", cwd: "/home/me/project" });
 ```
 
-The package ships the daemon for every supported remote system in `bin/`. `ssh` runs with `BatchMode`, strict host-key
+The release package ships Linux and macOS daemons for x86-64 and arm64 in `bin/`. Linux builds use musl so deployment
+does not require the remote host's glibc version to match the build host. `ssh` runs with `BatchMode`, strict host-key
 checking against the application's own known-hosts file under a fixed alias, no forwarding of any kind, no shared
 connections or configured commands, and without forwarding the local locale. On Windows, detection and deployment go
 through PowerShell, and the daemon starts through the server's default shell (cmd.exe or PowerShell).
 
-Supported remote systems: Linux, macOS, Android (Termux) and Windows, on x86-64 and arm64. On Windows, string commands
-run through Git Bash as `NodeExecutionEnv` runs them there; argv commands run directly.
+Android (Termux) and Windows retain their existing detection, deployment and execution implementations. Supply a
+matching daemon through `connectSsh({ ...target, binary })`, or build the additional target into `bin/` before packing.
+On Windows, string commands run through Git Bash as `NodeExecutionEnv` runs them there; argv commands run directly.
+
+## Release daemons
+
+`npm run build:daemons -- darwin-arm64 darwin-x64` compiles release daemons with the pinned Rust toolchain and stages
+them in the directory used by `packagedDaemon()`. With no arguments it builds the current platform/architecture.
+Install the matching Rust targets and cross-linker before cross-compiling. Build `linux-arm64` and `linux-x64` on
+appropriate Linux builders; both use the corresponding `*-unknown-linux-musl` target. Android builds need the Android
+NDK; Windows builds use the existing MSVC target.
+
+The build records the package version, Rust source fingerprint, target and binary SHA-256 beside each artifact.
+`npm pack` runs a prepack check for all four Unix artifacts and rejects missing, stale or mismatched binaries. Ordinary
+TypeScript builds stay independent of Rust. Installers consume the packaged binaries without compiling Rust or running
+package installation scripts. Explicitly passing `--ignore-scripts` to `npm pack` also skips this release check.
 
 ## Development
 
