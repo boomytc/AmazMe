@@ -45,7 +45,12 @@ export type CompactionStatus = {
 /** Built-in live conversation state: run control and presentation of the current generation and tool round. */
 export type LiveState = {
 	/** Run control: the task that settles the run's inputs, and those inputs; present exactly while busy. */
-	run?: { taskId: TaskId; inputs: SubmissionId[] };
+	run?: {
+		taskId: TaskId;
+		inputs: SubmissionId[];
+		/** Scoped prompt cancellation preserves and advances unrelated queued inputs after this run is aborted. */
+		continueQueuedOnAbort?: boolean;
+	};
 	/** Presentation of the current generation attempt. */
 	generation?: {
 		attempt: number;

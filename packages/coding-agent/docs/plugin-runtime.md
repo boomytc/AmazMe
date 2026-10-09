@@ -37,6 +37,8 @@ export default defineFacet({
 
 `@amazme/coding-agent/plugin` 同时提供 `SlashCommands` 和 `AgentController`。命令使用同一份注册表，原生 TUI 和宿主都能消费。原生 TUI 显示命令与参数补全，按名称查找当前注册项后执行；应用自带命令不能被插件覆盖。
 
+`prompt`、`steer` 和 `followUp` 可以传入稳定的 `requestId`，相同对话中的重试返回原提交，即使对话正在运行或曾经重启，也不会创建第二个输入。持久请求编号用于 `waitForPrompt` 和 `cancelPrompt`；`cancelPrompt` 只取消该输入所在的当前轮次，并等待其工具及所属工作清理。其他排队输入保留并继续，已结束的编号不会取消后来的轮次。同一轮次中已经放置的 steering 输入共享取消结果。
+
 ```ts
 import { defineFacet } from "@amazme/chord";
 import { AgentController, SlashCommands } from "@amazme/coding-agent/plugin";

@@ -270,12 +270,18 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				: [];
 		await runtime.commit(async (tx) => {
 			const live = await tx.doc(LiveDoc, conversationId);
+			const continueQueued = live.run?.taskId === runtime.taskId && live.run.continueQueuedOnAbort === true;
+			const boundary = continueQueued ? await prepareBoundary(tx, conversationId, runtime.settings) : undefined;
 			await convertPartial(tx, live, conversationId);
 			for (const call of unstarted) {
 				const result = harnessError("aborted", `Tool ${call.name} was aborted`);
 				await appendToolResult(tx, conversationId, call, result, runtime.now());
 			}
 			endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "aborted" });
+			if (boundary !== undefined) {
+				const { users } = await applyBoundary(tx, boundary, "final", runtime.now());
+				if (users.length > 0) await startRun(tx, conversationId, live, users);
+			}
 			return { status: "terminal", outcome: { status: "aborted" } };
 		}, context);
 	},

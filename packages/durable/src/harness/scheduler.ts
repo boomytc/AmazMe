@@ -281,13 +281,24 @@ export class TaskScheduler {
 	 * starts once the task's ordinary owned work is gone. A `completing` task is only marked.
 	 */
 	async abort(id: TaskId, context: Context, owner?: Invocation): Promise<"marked" | "terminal"> {
+		return (await this.abortSelected(async () => id, context, owner))!.result;
+	}
+
+	/** Resolve an exact task on the same mutation line as its abort mark, then join the interrupted phase. */
+	async abortSelected(
+		select: (tx: Transaction) => Promise<TaskId | undefined>,
+		context: Context,
+		owner?: Invocation,
+	): Promise<{ id: TaskId; result: "marked" | "terminal" } | undefined> {
 		const marked = await this.#session.commitWith(async (tx) => {
 			if (owner?.ended) throw endedError(owner);
+			const id = await select(tx);
+			if (id === undefined) return undefined;
 			const current = await tx.task(id);
 			if (current === undefined) throw new Error(`Task ${id} does not exist`);
 			if (owner !== undefined && current.owner !== owner.taskId)
 				throw new Error(`Task ${id} is not owned by ${owner.taskId}`);
-			if (current.state.status === "terminal") return { result: "terminal" as const };
+			if (current.state.status === "terminal") return { id, result: "terminal" as const };
 			const invocation = this.#invocations.get(id);
 			if (invocation === undefined && current.state.status !== "completing") {
 				await this.#loadScopes(false);
@@ -295,16 +306,17 @@ export class TaskScheduler {
 					const resolution = this.#resolve(current as RunnableTaskRecord, this.#registry.snapshot());
 					if (resolution.kind === "blocked") {
 						await this.#terminate(tx, current, { status: "orphaned", reason: resolution.reason });
-						return { result: "marked" as const };
+						return { id, result: "marked" as const };
 					}
 				}
 			}
 			if (!current.abortRequested) tx.setTask({ ...current, abortRequested: true });
-			return { result: "marked" as const, run: invocation?.mode === "run" ? invocation : undefined };
+			return { id, result: "marked" as const, run: invocation?.mode === "run" ? invocation : undefined };
 		}, context);
 		// The commit listener signalled the run; join it.
+		if (marked === undefined) return undefined;
 		if (marked.run !== undefined) await awaitWithContext(marked.run.done, context);
-		return marked.result;
+		return { id: marked.id, result: marked.result };
 	}
 
 	async waitForTask(id: TaskId, context: Context): Promise<SettledTask<JsonValue>> {

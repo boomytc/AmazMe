@@ -23,7 +23,15 @@ export function createAgentController(
 		const refusal = admission?.();
 		if (refusal !== undefined) return { accepted: false, entryId: null, error: refusal };
 		try {
-			const submission = await conversation().submit({ type: "input", content: toInput(request), whenBusy }, context);
+			const submission = await conversation().submit(
+				{
+					type: "input",
+					content: toInput(request),
+					whenBusy,
+					...(request.requestId === undefined ? {} : { requestId: request.requestId }),
+				},
+				context,
+			);
 			return { accepted: true, entryId: String(submission.id), error: null };
 		} catch (error) {
 			return { accepted: false, entryId: null, error: toAgentError(error) };
@@ -36,7 +44,12 @@ export function createAgentController(
 			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
 				const submission = await conversation().submit(
-					{ type: "input", content: toInput(request), whenBusy: "reject" },
+					{
+						type: "input",
+						content: toInput(request),
+						whenBusy: "reject",
+						...(request.requestId === undefined ? {} : { requestId: request.requestId }),
+					},
 					context,
 				);
 				return { accepted: true, operationId: String(submission.id), error: null };
@@ -55,6 +68,10 @@ export function createAgentController(
 			};
 		},
 		abort: (context) => conversation().abort(context),
+		async cancelPrompt(operationId, context) {
+			const id = parseSubmissionId(operationId);
+			return { outcome: id === undefined ? "not_found" : await harness.cancelPrompt(id, context) };
+		},
 		async compact(request, context) {
 			const refusal = admission?.();
 			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };

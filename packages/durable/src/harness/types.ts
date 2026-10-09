@@ -688,6 +688,15 @@ export type ConversationWatch = WatchHandle<ConversationView>;
 /** Durable agent harness over one Session. */
 export interface Harness extends Session {
 	/**
+	 * Withdraw a queued prompt, or abort and join the live run currently carrying its input. Other queued inputs and
+	 * unrelated runs stay intact. Steered inputs already placed into the same run share that run's cancellation.
+	 */
+	cancelPrompt(
+		id: SubmissionId,
+		context: Context,
+		conversationId?: ConversationId,
+	): Promise<"cancelled" | "settled" | "not_found">;
+	/**
 	 * Enable task scheduling. Idempotent; throws after close. Calls that ask for progress enable it too:
 	 * `Conversation.submit()`, `Conversation.compact()`, `Conversation.abort()`, `Submission.wait()`, `waitForTask()`,
 	 * `Harness.waitForIdle()`, and `Conversation.waitForIdle()`. Read-only viewers never do.

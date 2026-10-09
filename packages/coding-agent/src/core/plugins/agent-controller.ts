@@ -10,6 +10,8 @@ export interface AgentPromptImage {
 export interface AgentPromptRequest {
 	message: string;
 	images: AgentPromptImage[] | null;
+	/** Stable conversation-scoped admission key; retries return the same durable submission, including while busy. */
+	requestId?: string;
 }
 
 export interface AgentOperationError {
@@ -53,6 +55,8 @@ export interface AgentController {
 	compact(request: AgentCompactionRequest, context: Context): Promise<AgentOperationResponse>;
 	/** Wait until the prompt with this `operationId` is answered or settles unanswered. */
 	waitForPrompt(operationId: string, context: Context): Promise<AgentPromptResult>;
+	/** Cancel exactly the accepted input and join its current run; settled IDs cannot stop a later user run. */
+	cancelPrompt(operationId: string, context: Context): Promise<{ outcome: "cancelled" | "settled" | "not_found" }>;
 }
 
 export const AgentController = defineService<AgentController>("amazme.agent-controller");

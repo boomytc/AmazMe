@@ -14,6 +14,7 @@ import type {
 import { startRun } from "./generation.ts";
 import { applyBoundary, InboxDoc, isStale, prepareBoundary, type QueueModes, removeInboxItem } from "./inbox.ts";
 import { LiveDoc } from "./live.ts";
+import type { TaskScheduler } from "./scheduler.ts";
 import type { SettledSubmissionRecord, Submission, SubmissionDraft, UserInput } from "./types.ts";
 import { closedError, Waiters } from "./util.ts";
 
@@ -100,6 +101,39 @@ export class Submissions {
 			}
 			return record.status === "placed" ? "already_placed" : "settled";
 		}, context);
+	}
+
+	/** Cancel a queued input or exactly the live run currently carrying that input, preserving unrelated inbox items. */
+	async cancelPrompt(
+		id: SubmissionId,
+		tasks: TaskScheduler,
+		context: Context,
+		conversationId?: ConversationId,
+	): Promise<"cancelled" | "settled" | "not_found"> {
+		let outcome: "cancelled" | "settled" | "not_found" = "not_found";
+		const selected = await tasks.abortSelected(async (tx) => {
+			const record = await tx.submission(id);
+			if (record?.type !== "input" || (conversationId !== undefined && record.conversationId !== conversationId))
+				return undefined;
+			outcome = "settled";
+			if (record.status === "queued") {
+				tx.settleSubmission(id, { status: "unanswered", reason: "aborted" });
+				await removeInboxItem(tx, record.conversationId, id);
+				outcome = "cancelled";
+				return undefined;
+			}
+			if (record.status !== "placed") return undefined;
+			const run = (await tx.doc(LiveDoc, record.conversationId)).run;
+			if (run?.inputs.includes(id) !== true) return undefined;
+			run.continueQueuedOnAbort = true;
+			outcome = "cancelled";
+			return run.taskId;
+		}, context);
+		if (selected !== undefined) {
+			tasks.resume();
+			await tasks.waitForTask(selected.id, context);
+		}
+		return outcome;
 	}
 
 	#observe(publication: CommitPublication): void {

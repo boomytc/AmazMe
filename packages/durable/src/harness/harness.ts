@@ -300,6 +300,14 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.abort(id, context);
 	}
 
+	cancelPrompt(
+		id: SubmissionId,
+		context: Context,
+		conversationId?: ConversationId,
+	): Promise<"cancelled" | "settled" | "not_found"> {
+		return this.#submissions.cancelPrompt(id, this.#tasks, context, conversationId);
+	}
+
 	waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
 		this.#tasks.resume();
 		return this.#tasks.waitForTask(id, context) as Promise<SettledTask<R>>;
