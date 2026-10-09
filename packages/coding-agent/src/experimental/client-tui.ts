@@ -8,6 +8,7 @@ import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import { DefaultResourceLoader } from "../core/resource-loader.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
+import { oldestPresentedEntryId } from "../durable/conversation-view.ts";
 import { createChatViewport } from "../modes/interactive/chat-viewport.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
 import { getEditorTheme, setRegisteredThemes, stopThemeWatcher, theme } from "../modes/interactive/theme/theme.ts";
@@ -763,8 +764,7 @@ export class ExperimentalClientTui implements Component {
 		const target = conversations?.state.value?.selected;
 		if (conversations === undefined || target === undefined) return;
 		const shown = this.#conversationView();
-		const oldest = shown?.entries[0]?.id;
-		const before = this.#historyLoaded || oldest === undefined ? null : String(oldest);
+		const before = this.#historyLoaded ? null : oldestPresentedEntryId(shown?.entries);
 		const page = await conversations.older(target, before, this.#historyCursor, 20, BACKGROUND_CONTEXT);
 		this.#historyLoaded = true;
 		this.#history = [...page.entries, ...this.#history];

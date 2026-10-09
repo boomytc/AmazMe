@@ -1,13 +1,13 @@
 /// <reference lib="dom" />
 /**
  * Thin DOM renderer: it turns the pure view model into the page's shell markup and owns no
- * business state of its own. Every update rebuilds the flow, then restores the transcript's
- * scroll position so streaming does not yank the reader around. The one thing kept between
- * updates is the reader's own disclosure choices, keyed by block id, because a rebuild would
- * otherwise reset them.
+ * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
+ * selection, focus and viewport position. Disclosure choices belong to this page.
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
+import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
+import { transcriptPosition } from "./transcript-position.ts";
 import { FALLBACK_LOCALE } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
@@ -126,7 +126,7 @@ export interface PageRenderer {
 	/** The reader picked a palette row: the composer takes its text. */
 	onCommandPick: (value: string) => void;
 	/** Put text in the composer, the way a completion does. */
-	setDraft(text: string): void;
+	setDraft(text: string, focus?: boolean): void;
 	/** Every navigation, control, and modal report from the management surface. */
 	onPanelAction: (action: PanelAction) => void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
@@ -538,6 +538,13 @@ export function createRenderer(
 	let lastView: WebView | undefined;
 	/** Reader disclosure choices, keyed by block id so a rebuild keeps them. */
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
+	const flowCache = new DomCache();
+	const chromeValues = new Map<string, unknown>();
+	const changed = (key: string, value: unknown): boolean => {
+		if (chromeValues.has(key) && sameViewValue(chromeValues.get(key), value)) return false;
+		chromeValues.set(key, value);
+		return true;
+	};
 	/** Text a reader is typing into a panel control, keyed by action id and target. */
 	const drafts = new Map<string, string>();
 	/** The modal already in the DOM; a rebuild would drop what the reader typed into it. */
@@ -547,6 +554,7 @@ export function createRenderer(
 	let modalMessage: HTMLParagraphElement | undefined;
 	let rosterKey = "";
 	let sessionMenu: { id: string; node: HTMLElement } | undefined;
+	let heldPromptFocus: { start: number; end: number; direction: "forward" | "backward" | "none" } | undefined;
 
 	const draft = (): string => elements.prompt.value.trim();
 
@@ -1125,6 +1133,7 @@ export function createRenderer(
 			header.append(control);
 		}
 		const code = element("pre", "tool-diff-code");
+		code.dataset.textKey = "diff";
 		for (const line of diff.text.split("\n")) {
 			const tone = line.startsWith("+") ? "addition" : line.startsWith("-") ? "removal" : "context";
 			code.append(element("span", `tool-diff-line ${tone}`, line || " "));
@@ -1143,7 +1152,9 @@ export function createRenderer(
 		const mark = block.running ? icon("spinner", "icon spin") : block.tone === "error" ? icon("alert") : icon("wrench");
 		details.append(disclosureSummary(mark, block.title, summary));
 		if (block.toolArgs !== undefined && block.toolArgs.expanded.length > 0) {
-			details.append(element("div", "tool-args", block.toolArgs.expanded));
+			const args = element("div", "tool-args", block.toolArgs.expanded);
+			args.dataset.textKey = "args";
+			details.append(args);
 		}
 		if (block.result !== undefined) {
 			const meta = element("div", "tool-result-meta");
@@ -1160,7 +1171,9 @@ export function createRenderer(
 			if (block.result.diff) details.append(diffElement(block.result.diff));
 		}
 		if (block.text.length > 0) {
-			details.append(element("div", block.result?.terminal === undefined ? "tool-output" : "tool-output terminal-output", block.text));
+			const output = element("div", block.result?.terminal === undefined ? "tool-output" : "tool-output terminal-output", block.text);
+			output.dataset.textKey = "output";
+			details.append(output);
 		} else if (!block.running && (block.images?.length ?? 0) === 0) {
 			details.append(element("div", "tool-output empty", copy("tool.noOutput")));
 		}
@@ -1186,7 +1199,9 @@ export function createRenderer(
 	/** Assistant reasoning: the Thinking row, collapsed until the reader opens it. */
 	const reasoningElement = (block: TranscriptBlock): HTMLElement => {
 		const details = disclosure(block, "", false);
-		details.append(disclosureSummary(icon("sparkles"), block.title, ""), element("div", "reasoning-body", block.text));
+		const body = element("div", "reasoning-body", block.text);
+		body.dataset.textKey = "reasoning";
+		details.append(disclosureSummary(icon("sparkles"), block.title, ""), body);
 		return details;
 	};
 
@@ -1555,29 +1570,40 @@ export function createRenderer(
 	const isProcess = (block: TranscriptBlock): boolean => block.kind === "thinking" || block.kind === "tool";
 
 	/** The flow: user and assistant turns, one group per run of process rows, notices, the status. */
-	const flowElements = (blocks: readonly TranscriptBlock[]): HTMLElement[] => {
+	const flowElements = (blocks: readonly TranscriptBlock[], area: string): HTMLElement[] => {
 		const flow: HTMLElement[] = [];
 		let process: HTMLElement | undefined;
+		let children: HTMLElement[] = [];
+		const finishProcess = (): void => {
+			if (process !== undefined) reconcileChildren(process, children);
+		};
 		for (const block of blocks) {
+			const key = `block:${block.id}`;
 			if (isProcess(block)) {
 				if (process === undefined) {
-					process = element("div", "turn-process");
+					process = flowCache.get(`process:${area}:${block.id}`, "turn-process", () => element("div", "turn-process"));
+					children = [];
 					flow.push(process);
 				}
-				process.append(block.kind === "tool" ? toolElement(block) : reasoningElement(block));
+				children.push(flowCache.get(key, [lastView?.locale, block], () => block.kind === "tool" ? toolElement(block) : reasoningElement(block)));
 				continue;
 			}
+			finishProcess();
 			process = undefined;
-			if (block.kind === "user") flow.push(wrap("turn-user", userBubble(block)));
+			if (block.kind === "user") flow.push(flowCache.get(key, [lastView?.locale, block], () => wrap("turn-user", userBubble(block))));
 			else if (block.kind === "assistant") {
 				// A tool-only answer has no text of its own: its calls are the process rows above it.
 				if (block.text.length > 0) {
-					const answer = wrap("turn-response", markdownElement(block.text, markdown));
-					answer.append(answerActions(block));
+					const answer = flowCache.get(key, [lastView?.locale, block], () => {
+						const answer = wrap("turn-response", markdownElement(block.text, markdown));
+						answer.append(answerActions(block));
+						return answer;
+					});
 					flow.push(answer);
 				}
-			} else if (block.kind === "notice") flow.push(block.tone === "error" ? errorElement(block) : noticeElement(block));
+			} else if (block.kind === "notice") flow.push(flowCache.get(key, [lastView?.locale, block], () => block.tone === "error" ? errorElement(block) : noticeElement(block)));
 		}
+		finishProcess();
 		return flow;
 	};
 
@@ -1690,6 +1716,18 @@ export function createRenderer(
 			lastView = view;
 			if (app !== undefined) writeWindowTitle(app, view);
 			const stick = atBottom(elements.transcript);
+			const scopeChanged = flowCache.begin(view.transcriptScope ?? view.attachedId ?? "");
+			const restorePosition = scopeChanged
+				? () => {
+					elements.transcript.scrollTop = elements.transcript.scrollHeight;
+				}
+				: transcriptPosition(elements.column, elements.transcript, stick);
+			if (scopeChanged) {
+				expanded.clear();
+				chromeValues.clear();
+				elements.column.replaceChildren();
+				heldPromptFocus = undefined;
+			}
 
 			elements.newSession.disabled = !view.newSession.enabled;
 			elements.newSession.setAttribute("aria-busy", String(view.newSession.pending === true));
@@ -1725,64 +1763,84 @@ export function createRenderer(
 			}
 			if (document.activeElement !== elements.rosterFilter) elements.rosterFilter.value = view.rosterFilter;
 
-			const flow = flowElements(view.blocks);
+			const flow = flowElements(view.blocks, "current");
 			const hasConversation = view.blocks.length > 0 || view.history.blocks.length > 0;
 			// The pages the reader asked for sit above the live transcript, in their own group.
 			if (view.history.blocks.length > 0) {
-				const pages = element("div", "history-pages");
-				pages.append(...flowElements(view.history.blocks));
+				const pages = flowCache.get("history", "history-pages", () => element("div", "history-pages"));
+				reconcileChildren(pages, flowElements(view.history.blocks, "history"));
 				flow.unshift(pages);
 			}
 			// "Load older" belongs to a conversation that has entries; an empty one has nothing to load.
 			if (hasConversation && (view.history.loading || view.history.more)) {
-				const more = element("div", "history-more");
-				const control = button(view.history.loading ? "history-more-button loading" : "history-more-button");
-				control.dataset.action = HISTORY_MORE_ACTION;
-				control.disabled = view.history.loading;
-				control.textContent = copy(view.history.loading ? "history.loading" : "history.more");
-				control.addEventListener("click", () => report({ kind: "command", id: HISTORY_MORE_ACTION, data: undefined }));
-				more.append(control);
+				const more = flowCache.get("history-more", [view.locale, view.history.loading, view.attachedId !== undefined], () => {
+					const more = element("div", "history-more");
+					const control = button(view.history.loading ? "history-more-button loading" : "history-more-button");
+					control.dataset.action = HISTORY_MORE_ACTION;
+					control.disabled = view.history.loading || view.attachedId === undefined;
+					control.textContent = copy(view.history.loading ? "history.loading" : "history.more");
+					control.addEventListener("click", () => report({ kind: "command", id: HISTORY_MORE_ACTION, data: undefined }));
+					more.append(control);
+					return more;
+				});
 				flow.unshift(more);
 			}
 			// The empty layout centres the greeting and the composer; anything in the transcript brings the conversation layout.
 			elements.center.dataset.state = hasConversation || view.status.length > 0 ? "chat" : "empty";
 			if (view.blocks.length === 0) {
-				flow.push(view.welcome !== undefined ? welcomeElement(view.welcome) : emptyElement(view));
+				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter, view.newSession], () => view.welcome !== undefined ? welcomeElement(view.welcome) : emptyElement(view)));
 			}
-			if (view.status.length > 0) flow.push(runningElement(view.status));
-			elements.column.replaceChildren(...flow);
+			if (view.status.length > 0) flow.push(flowCache.get("status", view.status, () => runningElement(view.status)));
+			reconcileChildren(elements.column, flow);
+			flowCache.finish();
 
 			const detached = view.attachedId === undefined;
+			if (!scopeChanged && detached && !elements.prompt.disabled && document.activeElement === elements.prompt) {
+				heldPromptFocus = {
+					start: elements.prompt.selectionStart,
+					end: elements.prompt.selectionEnd,
+					direction: elements.prompt.selectionDirection,
+				};
+			}
 			elements.prompt.disabled = detached;
+			if (!detached && heldPromptFocus !== undefined) {
+				if (document.activeElement === document.body || document.activeElement === elements.prompt) {
+					elements.prompt.focus({ preventScroll: true });
+					elements.prompt.setSelectionRange(heldPromptFocus.start, heldPromptFocus.end, heldPromptFocus.direction);
+				}
+				heldPromptFocus = undefined;
+			}
 			elements.prompt.placeholder = composerPlaceholder(view.locale, view.sessionLabel);
 			renderPrimary();
 			renderStop();
 			renderApprovalStatus(view);
 			renderMeter(view);
 
-			elements.queue.replaceChildren();
-			for (const item of view.queue) elements.queue.append(queueElement(item));
+			if (changed("queue", [view.locale, view.queue])) {
+				elements.queue.replaceChildren();
+				for (const item of view.queue) elements.queue.append(queueElement(item));
+			}
 
-			renderModelChip(view);
-			renderAttachments(view);
-			renderPalette(view);
-			renderApprovals(view);
-			renderRunActions(view);
-			renderDock(view);
-			renderSubmitModes(view);
-			renderNav(view);
-			renderPanelView(view);
+			if (changed("model", [view.locale, view.model])) renderModelChip(view);
+			if (changed("attachments", view.attachments)) renderAttachments(view);
+			if (changed("palette", [view.locale, view.palette, view.attachedId !== undefined])) renderPalette(view);
+			if (changed("approvals", [view.locale, view.approvals])) renderApprovals(view);
+			if (changed("run", [view.locale, view.run, view.dock.toggle, view.lane])) renderRunActions(view);
+			if (changed("dock", [view.locale, view.dock])) renderDock(view);
+			if (changed("submit", [view.locale, view.busy, view.run.submitModes])) renderSubmitModes(view);
+			if (changed("nav", [view.locale, view.panel.nav, view.panel.current])) renderNav(view);
+			if (changed("panel", [view.locale, view.panel.panel, view.sessionLabel, view.focus])) renderPanelView(view);
 			renderModal(view.panel.modal);
 			// The composer's dock may have grown (an approval, a queued input) and shrunk the transcript
 			// under the reader; a reader who was at the bottom stays there.
-			if (stick) elements.transcript.scrollTop = elements.transcript.scrollHeight;
+			restorePosition();
 		},
-		setDraft(text: string): void {
-			elements.prompt.value = text;
+		setDraft(text: string, focus = true): void {
+			if (elements.prompt.value !== text) elements.prompt.value = text;
 			fitPrompt(elements.prompt);
 			renderPrimary();
 			renderer.onDraftChange(text);
-			elements.prompt.focus();
+			if (focus) elements.prompt.focus();
 		},
 		setConnection(text: string, kind: "state" | "error", label?: string): void {
 			elements.connection.className = `connection ${kind}`;
@@ -1799,6 +1857,9 @@ export function createRenderer(
 	};
 
 	syncSidebarToggle();
+	document.addEventListener("pointerdown", (event) => {
+		if (event.target !== elements.prompt) heldPromptFocus = undefined;
+	});
 
 	elements.composer.addEventListener("submit", (event) => {
 		event.preventDefault();

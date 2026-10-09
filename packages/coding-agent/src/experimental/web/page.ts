@@ -120,6 +120,7 @@ import {
 	WORKSPACE_RELOAD_ACTION,
 	type CommandLike,
 } from "@amazme/web";
+import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
 import { AgentController, type AgentPromptImage } from "../services/agent-controller.ts";
 import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
@@ -270,6 +271,9 @@ class SessionPainter {
 
 	get sessionId(): string | undefined {
 		return this.#sessionId;
+	}
+	get ready(): boolean {
+		return this.#services !== undefined && this.#controller !== undefined && this.#conversations !== undefined;
 	}
 
 	get transcriptValue(): ConversationView | undefined {
@@ -535,7 +539,7 @@ class SessionPainter {
 	async attach(sessionId: string, paint: () => void): Promise<void> {
 		// Bound services are the mark of a live attachment: the same id with nothing bound is a
 		// stale handle from a transition that was interrupted, so it is bound again.
-		if (this.#sessionId === sessionId && this.#services !== undefined) return;
+		if (this.#sessionId === sessionId && this.ready) return;
 		await this.detach();
 		this.#sessionId = sessionId;
 		const attached = this.#sessionSource.attachment.value;
@@ -554,9 +558,14 @@ class SessionPainter {
 					"error",
 				),
 		});
-		await services.ready(BACKGROUND_CONTEXT);
-		const transcript = services.use(Transcript);
 		this.#services = services;
+		try {
+			await services.ready(BACKGROUND_CONTEXT);
+		} catch (error) {
+			await this.detach();
+			throw error;
+		}
+		const transcript = services.use(Transcript);
 		this.#transcript = transcript.state;
 		this.#controller = services.use(AgentController);
 		this.#models = services.use(Models);
@@ -670,10 +679,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let history: readonly EntryRecord[] = [];
 	let historyCursor: string | null = null;
 	let historyLoading = false;
+	let historyRequest = 0;
 	/** Whether a page has been asked for; until then "load older" is offered for any history. */
 	let historyLoaded = false;
 	/** The session's root conversation, once the conversation list has published it. */
 	let rootConversationId = "";
+	let desiredSessionId: string | undefined;
+	/** A read-only display cache while connection-bound services are released and rebound. */
+	let reconnectTranscript:
+		| Pick<WebView, "blocks" | "history" | "transcriptScope" | "sessionLabel" | "focus" | "lane" | "model">
+		| undefined;
 	/** Earlier user entries of the focused conversation, so the dock can leave back to one. */
 	let returnPoints: readonly { readonly id: string; readonly label: string }[] = [];
 	let returnPointsKey = "";
@@ -685,13 +700,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const saveDraft = (): void => {
 		if (draftSessionId !== undefined) sessionDrafts.set(draftSessionId, { text: draft, images: pending });
 	};
-	const restoreDraft = (sessionId: string): void => {
+	const restoreDraft = (sessionId: string, focus = true): void => {
 		const saved = sessionDrafts.get(sessionId);
 		draftSessionId = sessionId;
 		pending = saved?.images ?? [];
 		completions = [];
 		completionSequence += 1;
-		renderer.setDraft(saved?.text ?? "");
+		renderer.setDraft(saved?.text ?? "", focus);
 	};
 	/** The host's argument completions for the command line being typed. */
 	let completions: readonly {
@@ -751,6 +766,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	/** The conversation the page shows: the root's live transcript, or a focused one's view. */
 	const shownTranscript = (): ConversationView | undefined => {
+		if (painter.sessionId !== desiredSessionId) return undefined;
 		if (!focusing()) return painter.transcriptValue;
 		return painter.conversations?.view ?? undefined;
 	};
@@ -804,7 +820,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					history,
 					historyMore: !historyLoaded || historyCursor !== null,
 					historyLoading,
-					attachedId: painter.sessionId,
+					attachedId: client.connected && painter.ready && painter.sessionId === desiredSessionId ? painter.sessionId : undefined,
 					now: Date.now(),
 					models: painter.modelsValue,
 					thinkingLevels: painter.levels,
@@ -852,7 +868,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						...(modalNotice === undefined ? {} : { modalNotice }),
 					},
 				});
-		paintSafely(() => renderer.render(withReturnPoints(built, returnPoints, painter.conversations?.branchSummarySkipPrompt === true)));
+		const displayed = reconnectTranscript === undefined ? built : { ...built, ...reconnectTranscript, status: "", busy: false };
+		paintSafely(() => renderer.render(withReturnPoints(
+			{
+				...displayed,
+				newSession: { ...displayed.newSession, enabled: client.connected && displayed.newSession.enabled },
+			},
+			returnPoints,
+			painter.conversations?.branchSummarySkipPrompt === true,
+		)));
 		refreshReturnPoints();
 	};
 
@@ -900,35 +924,48 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * disposing the bindings that bind is using.
 	 */
 	const transition = sessionTransitions();
-	const selectSession = (sessionId: string): Promise<void> =>
-		transition(async () => {
-			if (painter.sessionId === sessionId) {
+	const selectSession = (sessionId: string, resume = false): Promise<void> => {
+		if (!resume) {
+			desiredSessionId = sessionId;
+			reconnectTranscript = undefined;
+		}
+		return transition(async () => {
+			if (desiredSessionId !== sessionId) return;
+			if (!resume && painter.sessionId === sessionId && painter.ready) {
 				paint();
 				return;
 			}
 			saveDraft();
+			historyRequest += 1;
 			await painter.detach();
-			history = [];
-			historyCursor = null;
-			historyLoaded = false;
+			if (!resume) {
+				history = [];
+				historyCursor = null;
+				historyLoaded = false;
+			}
 			historyLoading = false;
 			rootConversationId = "";
 			returnPoints = [];
 			returnPointsKey = "";
 			returnPointsRequest += 1;
 			paint();
+			if (!client.connected) return;
 			await retryOnRebind(async () => {
 				await management.attach(sessionId, BACKGROUND_CONTEXT);
 				await sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
 				await painter.attach(sessionId, paint);
 			});
-			restoreDraft(sessionId);
+			if (desiredSessionId !== sessionId) return;
+			reconnectTranscript = undefined;
+			restoreDraft(sessionId, !resume);
+			paint();
 			try {
 				sessionStorage.setItem(`amazme.session.${manifest.server.id}`, sessionId);
 			} catch {
 				// Storage may be unavailable in a restricted browser or desktop webview.
 			}
 		});
+	};
 	renderer.onSelect = (sessionId) => {
 		view = CHAT_VIEW;
 		modal = undefined;
@@ -940,7 +977,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	// click while the first create is in flight would make a second session, so this one is one-shot.
 	/** Create a session and attach it; one path serves the sidebar's bar and the shortcut. */
 	const createSession = (): void => {
-		if (creating) return;
+		if (creating || !client.connected) return;
 		creating = true;
 		paint();
 		void management
@@ -1153,6 +1190,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	renderer.onSubmit = (text) => {
+		if (!client.connected || !painter.ready || painter.sessionId !== desiredSessionId) {
+			renderer.setDraft(text, false);
+			return;
+		}
 		const line = parseCommandLine(text);
 		if (line !== undefined && composerCommands().some((command) => command.name === line.name)) {
 			renderer.setDraft("");
@@ -1318,6 +1359,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const id = painter.conversations?.selected;
 		if (service === undefined || id === undefined || at.length === 0) return;
 		history = [];
+		historyRequest += 1;
+		historyLoading = false;
 		historyCursor = null;
 		historyLoaded = false;
 		dockOpen = true;
@@ -1516,6 +1559,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						const service = painter.conversationsService;
 						if (id === undefined || service === undefined) return;
 						history = [];
+						historyRequest += 1;
+						historyLoading = false;
 						historyCursor = null;
 						historyLoaded = false;
 						dockOpen = true;
@@ -1531,6 +1576,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						const id = action.data ?? "";
 						// A page of history belongs to the conversation it was paged from.
 						history = [];
+						historyRequest += 1;
+						historyLoading = false;
 						historyCursor = null;
 						historyLoaded = false;
 						dockOpen = true;
@@ -1568,19 +1615,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						settle(painter.conversationsService?.refresh(BACKGROUND_CONTEXT));
 						return;
 					case HISTORY_MORE_ACTION: {
+						if (historyLoading || !client.connected || !painter.ready || painter.sessionId !== desiredSessionId) return;
 						const target = targetConversation();
 						const sessionId = painter.sessionId;
 						const service = painter.conversationsService;
 						if (target === undefined || service === undefined) return;
 						// The first page starts below the oldest entry the transcript shows.
 						const shown = shownTranscript();
-						const oldest = shown?.entries[0]?.id;
-						const before = historyLoaded ? null : oldest === undefined ? null : String(oldest);
+						const before = historyLoaded ? null : oldestPresentedEntryId(shown?.entries);
+						const request = ++historyRequest;
 						historyLoading = true;
 						paint();
 						void service.older(target, before, historyCursor, 20, BACKGROUND_CONTEXT).then(
 							(page) => {
-								if (painter.sessionId !== sessionId || targetConversation() !== target) return;
+								if (request !== historyRequest || painter.sessionId !== sessionId || painter.conversationsService !== service || targetConversation() !== target) return;
 								historyLoading = false;
 								historyLoaded = true;
 								history = [...page.entries, ...history];
@@ -1588,7 +1636,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								paint();
 							},
 							(error: unknown) => {
-								if (painter.sessionId !== sessionId || targetConversation() !== target) return;
+								if (request !== historyRequest || painter.sessionId !== sessionId || painter.conversationsService !== service || targetConversation() !== target) return;
 								historyLoading = false;
 								paint();
 								renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error");
@@ -1920,7 +1968,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let retrying: Promise<void> | undefined;
 	const retryConnection = (): void => {
 		if (leaving || retrying !== undefined) return;
-		const wanted = painter.sessionId;
+		const wanted = desiredSessionId ?? painter.sessionId;
 		retrying = (async () => {
 			let waitMs = 500;
 			while (!leaving && !client.connected) {
@@ -1940,15 +1988,17 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			if (!client.connected || wanted === undefined) return;
 			// An attachment lives with the connection, so the reader's session is bound again. The
 			// bindings of the old connection are released first: their handles are gone with it.
-			await painter.detach();
-			paint();
 			for (let attempt = 0; !leaving; attempt += 1) {
 				try {
-					await selectSession(wanted);
+					if (!client.connected) await client.reconnect();
+					const target = desiredSessionId ?? wanted;
+					await selectSession(target, true);
+					if (!client.connected) throw new Error(copy("connection.hostGone"));
+					if (painter.sessionId !== desiredSessionId || !painter.ready) continue;
 					paint();
 					return;
 				} catch (error: unknown) {
-					if (attempt >= 4) {
+					if (attempt >= 4 && client.connected) {
 						renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
 						return;
 					}
@@ -1975,6 +2025,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			return;
 		}
 		if (change.state === "disconnected") {
+			historyRequest += 1;
+			historyLoading = false;
+			const previous = renderer.view;
+			if (previous?.attachedId !== undefined) {
+				reconnectTranscript = {
+					blocks: previous.blocks,
+					history: { ...previous.history, loading: false },
+					transcriptScope: previous.transcriptScope,
+					sessionLabel: previous.sessionLabel,
+					focus: previous.focus,
+					lane: previous.lane,
+					model: { ...previous.model, disabled: true },
+				};
+			}
 			renderer.setConnection(
 				copy("connection.disconnected", {
 					error: change.error?.message ?? copy("connection.hostGone"),
@@ -1982,6 +2046,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				"error",
 				copy("connection.stateDisconnected"),
 			);
+			paint();
 			retryConnection();
 			return;
 		}

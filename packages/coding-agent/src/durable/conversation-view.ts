@@ -1,5 +1,12 @@
 import type { ConversationView, EntryRecord } from "@amazme/durable";
 
+/** A compaction summary can lead the projection while its raw record is newer than retained turns. */
+export function oldestPresentedEntryId(entries: readonly EntryRecord[] | undefined): string | null {
+	let oldest: EntryRecord["id"] | undefined;
+	for (const entry of entries ?? []) if (oldest === undefined || entry.id < oldest) oldest = entry.id;
+	return oldest === undefined ? null : String(oldest);
+}
+
 /** How a conversation sits in the session tree. */
 export type ConversationRole = "main" | "fork" | "subagent";
 

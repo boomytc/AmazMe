@@ -404,6 +404,8 @@ export interface NewSessionAffordance {
 export interface WebView {
 	/** The language this view's copy is in; the renderer reads it for its own chrome too. */
 	readonly locale: Locale;
+	/** Namespace of the displayed transcript; independent of whether sending is currently available. */
+	readonly transcriptScope?: string;
 	/** The roster, narrowed by the reader's filter. */
 	readonly roster: readonly RosterItem[];
 	/** The filter text itself, so the input keeps what the reader typed. */
@@ -946,6 +948,10 @@ function toolKey(entry: EntryRecord, callId: string): string {
 	return `tool:${entry.byTaskId === undefined ? `entry:${entry.id}` : `generation:${entry.byTaskId}`}:${callId}`;
 }
 
+function answerKey(entry: EntryRecord): EntryId | string {
+	return entry.byTaskId === undefined ? entry.id : `answer:${entry.byTaskId}`;
+}
+
 interface ToolResults {
 	readonly outcomes: Map<string, ToolOutcome>;
 	readonly orphans: Set<EntryId>;
@@ -1009,7 +1015,7 @@ function entryBlocks(
 					const thinking = thinkingText(message.content);
 					if (thinking.length > 0) {
 						blocks.push({
-							id: `${entry.id}:thinking`,
+							id: `${answerKey(entry)}:thinking`,
 							kind: "thinking",
 							title: translate(locale, "block.thinking"),
 							text: thinking,
@@ -1029,7 +1035,7 @@ function entryBlocks(
 								(scope === undefined || (record.sessionId === scope.sessionId && record.conversationId === scope.conversationId)),
 						);
 						blocks.push({
-							id: entry.id,
+							id: answerKey(entry),
 							kind: "assistant",
 							// The author's own name is the brand, in every language.
 							title: "AmazMe",
@@ -1175,8 +1181,11 @@ export function transcriptBlocks(
 
 	const partial = live.generation?.message as AssistantMessage | undefined;
 	if (partial !== undefined) {
+		const id = live.run?.taskId === undefined ? "live:generation" : `answer:${live.run.taskId}`;
+		const thinking = thinkingText(partial.content);
+		if (thinking.length > 0) blocks.push({ id: `${id}:thinking`, kind: "thinking", title: translate(locale, "block.thinking"), text: thinking, tone: "muted", running: true });
 		blocks.push({
-			id: "live:generation",
+			id,
 			kind: "assistant",
 			title: "AmazMe",
 			text: assistantText(partial.content),
@@ -1405,6 +1414,7 @@ export function buildWebView(input: WebViewInput): WebView {
 		locale,
 		roster,
 		rosterFilter: input.rosterFilter,
+		...(input.attachedId === undefined ? {} : { transcriptScope: `${input.attachedId}:${input.transcript?.conversation.id ?? input.feedbackScope?.conversationId ?? "root"}` }),
 		focus: input.focus,
 		lane: input.lane === undefined ? "" : laneLine(locale, input.lane),
 		history: {

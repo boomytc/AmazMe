@@ -19,7 +19,7 @@ import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { durableToolSelection, getToolSelectionError, type ToolSelectionOptions } from "../core/tool-selection.ts";
-import { IDLE_LANE, type ConversationSummary, type LaneStatus, type ReturnPoint } from "./conversation-view.ts";
+import { IDLE_LANE, oldestPresentedEntryId, type ConversationSummary, type LaneStatus, type ReturnPoint } from "./conversation-view.ts";
 import {
 	forkAt,
 	formatLane,
@@ -462,8 +462,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 						update({ historyMore: false });
 						return;
 					}
-					const oldest = history[0]?.id ?? conversation.value.entries[0]?.id;
-					const before = historyLoaded || oldest === undefined ? null : String(oldest);
+					const before = historyLoaded ? null : oldestPresentedEntryId(history.length > 0 ? history : conversation.value.entries);
 					const page = await pageOlder(current, before, historyCursor, 20, context);
 					historyLoaded = true;
 					history = [...page.entries, ...history];
