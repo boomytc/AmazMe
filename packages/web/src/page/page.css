@@ -2827,6 +2827,20 @@ p {
 	.view-body {
 		padding: 20px 16px 48px;
 	}
+
+	/* Management rows with several actions keep prose readable on narrow screens. */
+	.panel-row:has(.panel-actions) {
+		flex-wrap: wrap;
+	}
+
+	.panel-row:has(.panel-actions) > .panel-row-text {
+		flex-basis: 100%;
+	}
+
+	.panel-actions {
+		flex-wrap: wrap;
+		max-width: 100%;
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {
