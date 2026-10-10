@@ -38,6 +38,7 @@ import {
 import { type CommandCompletionLike, type CommandLike, type CommandPalette, commandPalette, parseCommandLine } from "./commands.ts";
 import { type DockView, type DockViewInput, dockView } from "./dock.ts";
 import type { Locale } from "./locale.ts";
+import type { ProviderAuthLike } from "./provider-auth.ts";
 import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panelView } from "./panels.ts";
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
 import { type MessageKey, thinkingLevelCopy, translate } from "./strings.ts";
@@ -129,6 +130,7 @@ export interface ModelPicker {
 	readonly disabled: boolean;
 	/** The catalog's refresh state: the control to ask for one, and the host's last word. */
 	readonly refresh: ModelRefresh;
+	readonly authentication?: string;
 }
 
 /** The model card's refresh row: a button plus the status the host's state reports. */
@@ -492,6 +494,7 @@ export interface ModelSummaryLike {
 
 /** The host's replicated `amazme.models` state, as this package reads it. */
 export interface ModelsStateLike {
+	readonly authentication?: ProviderAuthLike | null;
 	readonly catalog: {
 		readonly revision: number;
 		readonly availableModels: readonly ModelSummaryLike[];
@@ -638,6 +641,7 @@ export function modelPicker(locale: Locale, models: ModelsStateLike | undefined,
 		empty: groups.length === 0 ? translate(locale, "model.empty") : undefined,
 		levelsEmpty: levels === undefined || reasoned ? undefined : translate(locale, "model.levelsEmpty"),
 		disabled: false,
+		...(models.authentication ? { authentication: translate(locale, "auth.title") } : {}),
 		refresh: {
 			label: translate(locale, "model.refresh"),
 			status: refreshStatus(locale, models.refresh),

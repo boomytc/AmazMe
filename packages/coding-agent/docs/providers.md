@@ -13,6 +13,8 @@ In the default native terminal UI, run `/login [provider]` to choose a provider 
 
 The hosted terminal client (`amazme client`) offers the same commands through its session's model service. The session worker owns the current sign-in, so `/login` can reopen an existing flow after reattachment. Plugin reload preserves that flow; cancellation and worker shutdown clean it up. Submitted secrets and callbacks do not enter the replicated model state.
 
+In the Web client, open **Provider accounts** from the model menu, or run `/login [provider]` or `/logout [provider]`. Choose the provider and method, then follow its prompts. Secret fields are masked. **Close** dismisses the window while the host continues the flow; reopen Provider accounts to resume, including after a page reload. The flow expires after five minutes. **Cancel sign-in** ends it immediately. Switching sessions clears the old input, and expired prompt ids cannot submit to a later flow. After signing in, select a model from the model menu.
+
 Run `amazme auth login --provider <provider>`. AmazMe guides you through the provider's OAuth or API-key flow and saves the resulting credential in [`auth.json`](configuration.md#agent-directory). If both methods are supported, choose one in the terminal or specify `--method oauth` or `--method api-key`.
 
 ```bash

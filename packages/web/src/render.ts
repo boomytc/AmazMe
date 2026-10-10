@@ -4,7 +4,7 @@
  * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
 import { transcriptPosition } from "./transcript-position.ts";
@@ -809,7 +809,7 @@ export function createRenderer(
 
 	const renderModal = (modal: PanelModal | undefined): void => {
 		const key =
-			modal === undefined ? undefined : `${modal.id}\u0000${modal.data ?? ""}\u0000${modal.fields.map((field) => `${field.id}=${field.value}`).join("\u0001")}`;
+			modal === undefined ? undefined : JSON.stringify([modal.id, modal.data, modal.title, modal.description, modal.fields, modal.submit, modal.dismiss, modal.actions, modal.danger]);
 		if (key === modalKey) {
 			if (modal !== undefined) applyModalState(modal);
 			return;
@@ -844,7 +844,11 @@ export function createRenderer(
 			label.append(element("span", "modal-field-label", field.label));
 			const input = field.kind === "textarea" ? document.createElement("textarea") : field.kind === "select" ? document.createElement("select") : document.createElement("input");
 			if (input instanceof HTMLInputElement) input.type = field.inputType ?? "text";
-			if (input instanceof HTMLInputElement && field.inputType !== undefined) input.step = "1";
+			if (input instanceof HTMLInputElement && (field.inputType === "number" || field.inputType === "datetime-local")) input.step = "1";
+			if (input instanceof HTMLInputElement && field.inputType === "password") {
+				input.autocomplete = "off";
+				input.spellcheck = false;
+			}
 			if (input instanceof HTMLSelectElement) for (const choice of field.options ?? []) {
 				const option = document.createElement("option"); option.value = choice.value; option.textContent = choice.label; input.append(option);
 			}
@@ -872,17 +876,17 @@ export function createRenderer(
 
 		const foot = element("footer", "modal-foot");
 		const cancel = button("panel-button default");
-		cancel.textContent = copy("panel.cancel");
+		cancel.textContent = modal.dismiss ?? copy("panel.cancel");
 		cancel.addEventListener("click", () => report({ kind: "modal-close" }));
 		const submit = button(`panel-button ${modal.danger === true ? "tone-danger" : "tone-primary"}`);
-		submit.textContent = modal.submit;
+		submit.textContent = modal.submit ?? "";
 		submit.addEventListener("click", () => {
 			const fields: Record<string, string> = {};
 			for (const [id, input] of inputs) fields[id] = input.value;
 			report({ kind: "modal-submit", id: modal.id, data: modal.data, fields });
 		});
 		card.addEventListener("keydown", (event) => {
-			if (event.key === "Enter" && !event.isComposing && event.target instanceof HTMLInputElement) {
+			if (modal.submit !== undefined && event.key === "Enter" && !event.isComposing && event.target instanceof HTMLInputElement && !event.target.readOnly) {
 				event.preventDefault();
 				submit.click();
 			}
@@ -898,14 +902,16 @@ export function createRenderer(
 				first?.focus();
 			}
 		});
-		foot.append(cancel, submit);
+		foot.append(cancel);
+		for (const action of modal.actions ?? []) foot.append(panelButton(action, report));
+		if (modal.submit !== undefined) foot.append(submit);
 		const message = document.createElement("p");
 		message.className = "modal-notice";
 		message.hidden = true;
 		card.append(head, body, message, foot);
 		elements.modalRoot.replaceChildren(backdrop, card);
 		elements.modalRoot.hidden = false;
-		modalSubmit = submit;
+		modalSubmit = modal.submit === undefined ? undefined : submit;
 		modalMessage = message;
 		applyModalState(modal);
 		const first = modal.fields[0] === undefined ? undefined : inputs.get(modal.fields[0].id);
@@ -1723,6 +1729,16 @@ export function createRenderer(
 			refresh.disabled = picker.refresh.busy;
 			refresh.addEventListener("click", () => report({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined }));
 			row.append(refresh);
+			if (picker.authentication !== undefined) {
+				const auth = button("panel-button default");
+				auth.dataset.action = PROVIDER_AUTH_ACTION;
+				auth.textContent = picker.authentication;
+				auth.addEventListener("click", () => {
+					closeModelMenu();
+					report({ kind: "command", id: PROVIDER_AUTH_ACTION, data: undefined });
+				});
+				row.append(auth);
+			}
 			rows.push(row);
 		}
 		const scroll = element("div", "menu-scroll");

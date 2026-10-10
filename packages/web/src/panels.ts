@@ -146,7 +146,7 @@ export interface PanelField {
 	readonly id: string;
 	readonly label: string;
 	readonly kind: "text" | "textarea" | "select";
-	readonly inputType?: "number" | "datetime-local";
+	readonly inputType?: "number" | "datetime-local" | "password";
 	readonly options?: readonly { readonly value: string; readonly label: string }[];
 	readonly visibleWhen?: { readonly field: string; readonly values: readonly string[] };
 	readonly readOnly?: boolean;
@@ -167,7 +167,11 @@ export interface PanelModal {
 	readonly title: string;
 	readonly description?: string;
 	readonly fields: readonly PanelField[];
-	readonly submit: string;
+	readonly submit?: string;
+	/** Optional footer actions, reported through the same command path as panel buttons. */
+	readonly actions?: readonly PanelButton[];
+	/** The dismiss button's label when closing does not cancel the underlying operation. */
+	readonly dismiss?: string;
 	/** The subject of the modal: the name or path a submit acts on. */
 	readonly data?: string;
 	/** A destructive submit, such as a remove confirmation. */

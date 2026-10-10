@@ -16,6 +16,11 @@ export const COMPACT_ACTION = "run:compact";
 export const COMPACT_MODAL = "run:compact-submit";
 /** Ask the attached session's host to re-read the provider catalog. */
 export const REFRESH_MODELS_ACTION = "run:model-refresh";
+/** Open the provider sign-in surface from the model picker. */
+export const PROVIDER_AUTH_ACTION = "run:provider-auth";
+export const PROVIDER_AUTH_MODAL = "run:provider-auth-submit";
+export const PROVIDER_AUTH_OPEN_ACTION = "run:provider-auth-open";
+export const PROVIDER_AUTH_CANCEL_ACTION = "run:provider-auth-cancel";
 /** How the next submit is applied while a turn runs: `data` is `steer` or `followUp`. */
 export const SUBMIT_MODE_ACTION = "run:submit-mode";
 /** Show or hide the session dock; the page owns whether it is open. */

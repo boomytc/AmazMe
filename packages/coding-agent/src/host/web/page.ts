@@ -78,6 +78,12 @@ import {
 	parseCommandLine,
 	QUEUE_CANCEL_ACTION,
 	REFRESH_MODELS_ACTION,
+	PROVIDER_AUTH_ACTION,
+	PROVIDER_AUTH_MODAL,
+	PROVIDER_AUTH_OPEN_ACTION,
+	PROVIDER_AUTH_CANCEL_ACTION,
+	providerAuthModal,
+	providerLoginModal,
 	removeScheduleModal,
 	removeSessionModal,
 	renameSessionModal,
@@ -141,7 +147,7 @@ import { Feedback, type Feedback as FeedbackService, type FeedbackState } from "
 import { Mcp, type Mcp as McpService } from "../services/mcp.ts";
 import type { McpManagementState } from "../../core/mcp/management.ts";
 import type { McpExposure } from "../../core/mcp-servers.ts";
-import { Models, type ModelsState } from "../services/models.ts";
+import { Models, type Models as ModelsService, type ModelsState } from "../services/models.ts";
 import { Plugins, PresentationPlugins } from "../services/plugins.ts";
 import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
@@ -319,6 +325,9 @@ class SessionPainter {
 
 	get modelsValue(): ModelsState | undefined {
 		return this.#models?.state.value;
+	}
+	get modelsService(): ModelsService | undefined {
+		return this.#models;
 	}
 
 	/** The attached model's levels; `undefined` until the host has answered for this model. */
@@ -713,6 +722,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let view = CHAT_VIEW;
 	let creating = false;
 	let modal: PanelModal | undefined;
+	/** Only the modal's binding and expected ids are local; interaction state stays on Models. */
+	let providerAuthView: {
+		readonly service: ModelsService;
+		readonly sessionId: string;
+		readonly preferred?: string;
+		readonly mode: "login" | "logout";
+		loginId?: string;
+		starting?: boolean;
+		matched?: boolean;
+	} | undefined;
 	/** How the composer submits while a turn runs; the reader picks it in the composer itself. */
 	let submitMode: SubmitMode = "followUp";
 	/** Images attached but not sent yet, in the order the reader added them. */
@@ -789,7 +808,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const listed = skillsEnabled ? host : host.filter((command) => command.source !== "skill");
 		// `/name` is a terminal command in the shared catalogue. This page runs it: the roster reads
 		// the name it stores, so the row is runnable here instead of marked terminal-only.
-		const rest = listed.filter((command) => command.name !== "name");
+		const authentication = Boolean(painter.modelsValue?.authentication);
+		const rest = listed.filter((command) => command.name !== "name" && (!authentication || (command.name !== "login" && command.name !== "logout")));
 		const insertAt = rest.findIndex((command) => command.source !== undefined && command.source !== "builtin");
 		const nameCommand: CommandLike = {
 			name: "name",
@@ -799,7 +819,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			availability: "all",
 		};
 		const index = insertAt === -1 ? rest.length : insertAt;
-		return [...rest.slice(0, index), nameCommand, ...rest.slice(index)];
+		const authCommands: CommandLike[] = authentication ? ["login", "logout"].map(name => ({
+			name, description: copy(name === "login" ? "auth.title" : "auth.logout"), argumentHint: "[provider]", source: "builtin", availability: "all",
+		})) : [];
+		return [...rest.slice(0, index), nameCommand, ...authCommands, ...rest.slice(index)];
 	};
 
 	/** The session's root conversation id, as the host's conversation list reports it. */
@@ -858,6 +881,29 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		applyTheme(appearance);
 		document.documentElement.lang = documentLanguage(locale);
 		refreshCommandResources();
+		if (providerAuthView !== undefined) {
+			const owner = providerAuthView;
+			const state = painter.modelsValue?.authentication;
+			if (!client.connected || painter.modelsService !== owner.service || painter.sessionId !== owner.sessionId || desiredSessionId !== owner.sessionId || !state) {
+				providerAuthView = undefined;
+				modal = undefined;
+				modalPending = false;
+				modalNotice = undefined;
+			} else {
+				const login = state.login?.id === owner.loginId ? state.login : null;
+				const expired = !login && owner.matched;
+				if (login) owner.matched = true;
+				else if (expired) {
+					owner.loginId = undefined;
+					owner.matched = false;
+				}
+				const next = owner.starting || owner.loginId !== undefined ? providerLoginModal(locale, state, login)
+					: providerAuthModal(locale, state, owner.preferred, owner.mode);
+				if (modal?.data !== next.data) modalNotice = undefined;
+				if (expired) modalNotice = { tone: "error", text: copy("auth.expired") };
+				modal = next;
+			}
+		}
 		const built = buildWebView({
 					locale,
 					creatingSession: creating,
@@ -1048,6 +1094,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	renderer.onSelect = (sessionId) => {
 		view = CHAT_VIEW;
+		providerAuthView = undefined;
 		modal = undefined;
 		void selectSession(sessionId).catch((error: unknown) => {
 			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
@@ -1086,6 +1133,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const views = [CHAT_VIEW, ...panelNav(locale, CHAT_VIEW, availableViews()).map((item) => item.id)];
 		const index = views.indexOf(view);
 		view = views[(index + 1) % views.length] ?? CHAT_VIEW;
+		providerAuthView = undefined;
 		modal = undefined;
 		paint();
 	};
@@ -1117,6 +1165,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			completions = [];
 			paint();
 			return;
+		}
+		if ((line.name === "login" || line.name === "logout") && painter.modelsValue?.authentication) {
+			completions = (painter.modelsValue?.authentication?.providers ?? [])
+				.filter(provider => provider.id.includes(line.args) && (line.name === "login" ? provider.methods.length > 0 : provider.configured))
+				.map(provider => ({ value: provider.id, label: provider.name }));
+			paint(); return;
 		}
 		void painter.complete(line.name, line.args).then(
 			(answered) => {
@@ -1229,6 +1283,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		);
 	};
 	const runCommandLine = (name: string, args: string): void => {
+		if ((name === "login" || name === "logout") && painter.modelsValue?.authentication) {
+			openProviderAuthentication(args.trim() || undefined, name); return;
+		}
 		if (name === "name") {
 			runNameCommand(args);
 			return;
@@ -1325,6 +1382,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let modalNotice: PanelNotice | undefined;
 
 	const openModal = (spec: PanelModal, opener?: { readonly id: string; readonly data?: string }): void => {
+		if (spec.id !== PROVIDER_AUTH_MODAL) providerAuthView = undefined;
 		modal = spec;
 		modalOpener = opener;
 		modalPending = false;
@@ -1334,6 +1392,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	const closeModal = (): void => {
+		providerAuthView = undefined;
 		diagnosticRequest += 1;
 		diagnosticReport = undefined;
 		modal = undefined;
@@ -1383,11 +1442,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		readonly closeOnSuccess?: boolean;
 		readonly sessionId?: string;
 		readonly retry?: boolean;
+		/** Extra ownership check for an interaction whose modal or binding may have changed. */
+		readonly current?: () => boolean;
 		readonly call: () => Promise<PanelCallResult | void>;
 	}): void => {
 		const invocation = ++panelCall;
 		const current = () => invocation === panelCall &&
-			(request.sessionId === undefined || request.sessionId === painter.sessionId);
+			(request.sessionId === undefined || request.sessionId === painter.sessionId) && (request.current?.() ?? true);
 		const inModal = request.inModal === true;
 		panelPending = request.data === undefined ? { id: request.id } : { id: request.id, data: request.data };
 		if (inModal) {
@@ -1434,6 +1495,31 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	/** The call answers nothing but its own completion. */
 	const done = (): Promise<{ readonly ok: true }> => Promise.resolve({ ok: true });
+	const openProviderAuthentication = (preferred?: string, mode: "login" | "logout" = "login"): void => {
+		const service = painter.modelsService;
+		const sessionId = painter.sessionId;
+		const state = painter.modelsValue?.authentication;
+		if (!service || !sessionId || !state || !client.connected || desiredSessionId !== sessionId) return;
+		if (preferred !== undefined && !state.providers.some(provider => provider.id === preferred && (mode === "login" ? provider.methods.length > 0 : provider.configured))) {
+			renderer.setConnection(copy("auth.invalid"), "error");
+			return;
+		}
+		const login = state.login && ["preparing", "awaiting", "finishing"].includes(state.login.status) ? state.login : null;
+		providerAuthView = { service, sessionId, preferred, mode, ...(login ? { loginId: login.id } : {}) };
+		openModal(providerAuthModal(locale, state, preferred, mode), { id: PROVIDER_AUTH_ACTION });
+	};
+	/** Authentication calls never retry onto a replacement binding, and never echo provider errors. */
+	const runProviderAuthCall = (owner: NonNullable<typeof providerAuthView>, call: () => Promise<PanelCallResult>): void => {
+		const current = () => providerAuthView === owner && painter.modelsService === owner.service &&
+			painter.sessionId === owner.sessionId && desiredSessionId === owner.sessionId && client.connected;
+		runPanelCall({ id: PROVIDER_AUTH_MODAL, inModal: true, closeOnSuccess: false, sessionId: owner.sessionId, retry: false, current,
+			call: async () => {
+				if (!current()) return { ok: false, problem: copy("auth.expired") };
+				try { return await call(); }
+				catch { owner.starting = false; return { ok: false, problem: copy("auth.failed") }; }
+			},
+		});
+	};
 
 	/**
 	 * Run one host call that has no control of its own — the dock's surfaces, the transcript's
@@ -1543,6 +1629,23 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			case "command":
 				switch (action.id) {
+					case PROVIDER_AUTH_ACTION:
+						openProviderAuthentication(); return;
+					case PROVIDER_AUTH_OPEN_ACTION: {
+						const owner = providerAuthView;
+						const login = painter.modelsValue?.authentication?.login;
+						if (!owner || !login || !client.connected || owner.service !== painter.modelsService || owner.sessionId !== painter.sessionId || owner.sessionId !== desiredSessionId || login.id !== owner.loginId || !action.data) return;
+						const authorization = login.authorization;
+						const urls = [...login.links.map(link => link.url), ...(authorization ? [authorization.type === "auth_url" ? authorization.url : authorization.verificationUri] : [])];
+						if (urls.includes(action.data) && URL.canParse(action.data) && ["http:", "https:"].includes(new URL(action.data).protocol)) window.open(action.data, "_blank", "noopener,noreferrer");
+						return;
+					}
+					case PROVIDER_AUTH_CANCEL_ACTION: {
+						const owner = providerAuthView;
+						if (owner && action.data === owner.loginId) runProviderAuthCall(owner, async () =>
+							await owner.service.cancelLogin(action.data!, BACKGROUND_CONTEXT) ? { ok: true } : { ok: false, problem: copy("auth.expired") });
+						return;
+					}
 					case PLUGIN_MCP_RELOAD_ACTION:
 						if (mcp) runPanelCall({ id: action.id, sessionId: mcpSession, retry: false, call: () => mcp.reload(BACKGROUND_CONTEXT).then(done) }); return;
 					case PLUGIN_MCP_RECONNECT_ACTION: {
@@ -2022,6 +2125,39 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							inModal: true,
 							call: () => plugins.setPackages([...pluginPackages(), path], BACKGROUND_CONTEXT).then(done),
 						});
+						return;
+					}
+					case PROVIDER_AUTH_MODAL: {
+						const owner = providerAuthView;
+						const state = painter.modelsValue?.authentication;
+						if (!owner || !state || modal?.id !== action.id || modal.data !== action.data || modalPending) return;
+						if (owner.loginId !== undefined || owner.starting) {
+							const login = state.login?.id === owner.loginId ? state.login : null;
+							const prompt = login?.prompt;
+							if (!prompt) { closeModal(); return; }
+							if (prompt.type === "secret" && !(fields.value ?? "").trim()) { refuseInModal(copy("auth.required")); return; }
+							runProviderAuthCall(owner, async () => await owner.service.submitLoginPrompt(login.id, prompt.id, fields.value ?? "", BACKGROUND_CONTEXT)
+								? { ok: true } : { ok: false, problem: copy("auth.expired") });
+							return;
+						}
+						const provider = state.providers.find(entry => entry.id === fields.provider);
+						const method = fields[`method:${provider?.id}`];
+						if (!provider || !(method === "logout" ? provider.configured : provider.methods.some(entry => entry.type === method))) {
+							refuseInModal(copy("auth.invalid")); return;
+						}
+						if (method === "logout") runProviderAuthCall(owner, async () => {
+							await owner.service.logout(provider.id, BACKGROUND_CONTEXT);
+							return { ok: true, note: copy("auth.loggedOut") };
+						});
+						else {
+							owner.starting = true;
+							runProviderAuthCall(owner, async () => {
+								const id = await owner.service.startLogin(provider.id, method as "oauth" | "api_key", BACKGROUND_CONTEXT);
+								owner.loginId = id;
+								owner.starting = false;
+								return { ok: true };
+							});
+						}
 						return;
 					}
 					case PLUGIN_MCP_LOGIN_MODAL: {
