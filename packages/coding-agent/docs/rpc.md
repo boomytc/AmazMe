@@ -1,5 +1,7 @@
 # RPC Mode
 
+This is the AgentSession SDK JSONL protocol. It is separate from the hosted Unix/WebSocket service protocol used by `amazme client` and Web; see [CLI integration](cli-integration.md).
+
 RPC mode runs Pi as a long-lived subprocess controlled through JSON records on stdin and stdout. Use it for language-independent integrations, process isolation, IDEs, and custom user interfaces.
 
 For an in-process Node.js or Bun integration, prefer the [SDK](sdk.md). For a subprocess-based TypeScript integration, prefer the exported `RpcClient`, which starts Pi, correlates responses, exposes typed command methods, and delivers events to listeners.
@@ -12,10 +14,10 @@ For an in-process Node.js or Bun integration, prefer the [SDK](sdk.md). For a su
 ## Start RPC mode
 
 ```bash
-pi --mode rpc --no-session
+amazme --mode rpc --no-session
 ```
 
-Normal CLI options still select the working folder, model, tools, resources, and session behavior. Common choices include `--provider`, `--model`, `--name`, `--no-session`, and `--session-dir`. See [Command Line](cli.md) for the complete, version-specific interface; `pi --help` is authoritative for the installed version.
+Normal CLI options still select the working folder, model, tools, resources, and session behavior. Common choices include `--provider`, `--model`, `--name`, `--no-session`, and `--session-dir`. See [Command Line](cli.md) for the complete, version-specific interface; `amazme --help` is authoritative for the installed version.
 
 RPC mode rejects `@file` prompt arguments. Send prompts through the [`prompt`](rpc-commands.md#prompt) command instead.
 

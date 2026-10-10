@@ -1,5 +1,7 @@
 # RPC Commands
 
+These commands belong to the AgentSession SDK RPC process, not the hosted client service protocol.
+
 This reference lists commands accepted on stdin in [RPC mode](rpc.md). Each command and response is one JSON object. Shared message values use the [message types](message-types.md).
 
 ## Prompting
@@ -781,7 +783,7 @@ Response:
 }
 ```
 
-The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `pi --mode rpc` process.
+The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `amazme --mode rpc` process.
 
 ## Discoverable commands
 

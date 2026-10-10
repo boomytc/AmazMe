@@ -728,3 +728,11 @@ coding-agent 构建、109 项既有技能/资源/Web 宿主检查、工作区依
 TUI 构建及全包既有检查、Web 构建及 120 项既有检查、coding-agent 构建及 46 项既有命令/宿主/重载检查通过；最后公共补全修正后，coding-agent 的 12 项入口检查另行通过。四份既有测试只更新命令断言、提示文字和依赖夹具，用例声明数不变，没有新增仓库测试。依赖方向与三项浏览器入口通过，差异检查无错误。
 
 编译后的真实 Unix client/worker 完成五次本机模型协议请求，验证模板/技能、插件命令及补全、重载后新资源、未知命令零请求、分叉后所属提交、展开期间切换焦点与关闭零迟到请求/渲染。实际 Web 页面使用延迟展开，在等待时点击 Fork，显示目标变化提示且请求数保持五；随后正常模板执行产生第六次请求，目录没有虚假 SDK 命令，控制台警告/错误为零。发布 bundle 的独立 Unix PTY 另完成四次请求，客户端与 worker 不同工作目录，仍正确消费 worker 资源；模板、技能、重载、实际 Tab 参数补全和 session 插件执行通过，终端退出码为 0。编译补全器还直接验证参数候选和两种路径回退。临时页面、server/worker、HTTP 服务及目录已关闭/删除；供应商和最终完整安装产物验收继续按原范围执行。
+
+### 随包接口说明审计
+
+2026-10-10。按实际 main/CLI setup、Durable/SDK shell、远端执行环境、资源加载器、认证与版本检查源码，修正默认终端与 SDK 的接口混淆。环境标识为 AI_AGENT=AmazMe 和 AMAZME_CODING_AGENT=true；默认/宿主工具继承所属进程环境，不注入 SDK JSONL 会话及模型变量。BASH_ENV 是默认本地 Bash 的实际启动配置，SDK shellPath/prefix/spawnHook、JSONL/RPC 记录及部分 UI 动作标明各自范围。原生键位与可选 SDK composer 分开，SDK 动作声明不再等于默认客户端入口。
+
+CLI 集成、provider 工厂列表、JSON/RPC 命令、MCP SDK 钩子、配置目录、更新来源和相关教程使用实际 AmazMe 命令与模式。普通元数据入口不运行 SDK 工厂，SDK 模式的 provider 列表保留 stdout 并写入 stderr。隔离环境指南移除不能当作 AmazMe 产物的 Pi 镜像/安装器和不属于默认工具的 SDK 配方，改为当前完整安装/发布目录及既有执行环境的真实边界；删除 package files 中不存在的根 containerization.md 条目，随包指南仍为 docs/containerization.md。OAuth 的 Pi client ID、回调和供应商身份未改。
+
+coding-agent 构建、142 项既有参数/命令/shell/会话格式检查通过，1 项既有检查跳过，没有新增或修改仓库测试。编译模块实跑确认进程标识、默认 shell 继承、不注入 SDK 模型变量和 BASH_ENV 别名；发布 CLI 验证异步 SDK provider 注册后列表含该模型、普通列表不执行该工厂及实际命令名。临时文件/执行环境清理。42 份专题文档的 380 个本地文件/锚点引用均可解析；npm pack dry-run 仍包含全部 42 份，包含当前指南且没有根目录旧条目。工作区依赖/三项浏览器入口和差异检查通过。该阶段只证明说明与对应入口契约，不替代真实 Codex OAuth、完整安装/编译产物及最终生命周期审计。

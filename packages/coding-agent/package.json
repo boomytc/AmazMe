@@ -52,7 +52,6 @@
 		"plugins",
 		"examples",
 		"schemas",
-		"containerization.md",
 		"CHANGELOG.md"
 	],
 	"scripts": {

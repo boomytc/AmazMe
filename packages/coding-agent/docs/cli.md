@@ -163,7 +163,7 @@ The MCP resource tools (`list_mcp_resources`, `list_mcp_resource_templates`, `re
 | `find` | Find paths using glob patterns |
 | `ls` | List directory contents |
 
-Built-in extensions add two more tools. They are off by default; the MCP extension turns them on when an MCP server needs them (see [MCP](mcp.md#exposure)). To enable them yourself, name them in `--tools` or `defaultTools`.
+Built-in extensions add two more tools. They are off by default; the MCP extension turns them on when an MCP server needs them (see [MCP](mcp.md#control-tool-exposure)). To enable them yourself, name them in `--tools` or `defaultTools`.
 
 | Built-in extension | Purpose |
 |---|---|
@@ -358,6 +358,6 @@ These commands work outside a session, so agents can run them through `bash`. Se
 | `amazme mcp login <server> [--timeout <seconds>]` | Sign in to an OAuth server: open the authorization page and wait for the browser (default 300 seconds); a terminal also accepts the pasted redirect URL |
 | `amazme mcp logout <server>` | Delete the stored OAuth credentials of a server |
 
-`add` and `remove` change `~/.amazme/agent/mcp.json`, or `.amazme/mcp.json` in the current directory with `--local` (`-l`). `add` also takes `--exposure <mode>` (see [Exposure](mcp.md#exposure)) and `--description <text>` and does not connect; run `amazme mcp list` to check the server.
+`add` and `remove` change `~/.amazme/agent/mcp.json`, or `.amazme/mcp.json` in the current directory with `--local` (`-l`). `add` also takes `--exposure <mode>` (see [Exposure](mcp.md#control-tool-exposure)) and `--description <text>` and does not connect; run `amazme mcp list` to check the server.
 
 Project `.amazme/mcp.json` files are only read for projects that are already trusted.

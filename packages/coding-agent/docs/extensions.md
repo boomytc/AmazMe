@@ -1,6 +1,6 @@
 # Extensions
 
-This page describes extensions for the AgentSession SDK and Print/RPC runtime. The default AmazMe TUI loads native Chord facets; use the [native plugin guide](plugin-runtime.md) for `-e`, automatic discovery, `/plugins`, and `/reload` there.
+This page describes extensions for the AgentSession SDK and Print/JSON/RPC runtime. The default AmazMe TUI loads native Chord facets; use the [native plugin guide](plugin-runtime.md) for `-e`, automatic discovery, `/plugins`, and `/reload` there.
 
 Extensions are TypeScript modules that add executable behavior to Pi. Use one when a workflow needs tools, commands, event handlers, model providers, session state, or terminal UI rather than instructions alone.
 
@@ -202,7 +202,7 @@ pi.unregisterMcpServer("jira");
 
 Servers registered while the extension loads connect when the session starts, together with the `mcp.json` servers; servers registered later connect right away, and `pi.unregisterMcpServer()` closes the connection and makes the server's tools unreachable. Registrations are not saved: register again on every load, for example based on the extension's own settings. A server in `mcp.json` with the same name takes precedence, and `/mcp` shows the override. Registering the same name again replaces the extension's earlier registration; names registered by another extension, invalid names, and invalid configs throw.
 
-The built-in MCP support connects registered servers. When nothing does, because another extension replaced it (see [MCP](mcp.md#other-mcp-extensions)), each registration is reported as an extension error. Other MCP extensions can connect registered servers too: read them with `pi.getMcpServers()` on `session_start` and handle the `mcp_servers_change` event for later changes.
+The built-in MCP support connects registered servers. When nothing does, because another extension replaced it (see [MCP](mcp.md#replace-the-built-in-mcp-support)), each registration is reported as an extension error. Other MCP extensions can connect registered servers too: read them with `pi.getMcpServers()` on `session_start` and handle the `mcp_servers_change` event for later changes.
 
 <a id="extensioncontext"></a>
 <a id="extensioncommandcontext"></a>

@@ -1,6 +1,8 @@
 # Compaction Reference
 
-This reference describes automatic compaction, branch summarization, persisted entries, and extension hooks. For the user workflow, see [Sessions and Context](sessions.md#manage-conversation-context).
+This reference covers AgentSession SDK compaction, JSONL entries and SDK extension hooks. The default terminal and hosted workers use Durable compaction; see [Sessions](sessions.md#branches-and-context) for their user workflow.
+
+This reference describes automatic compaction, branch summarization, persisted entries, and extension hooks. For the user workflow, see [Sessions and Context](sessions.md#branches-and-context).
 
 **Source files** ([pi](https://github.com/earendil-works/pi)):
 - [`packages/coding-agent/src/core/compaction/compaction.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) - Auto-compaction logic

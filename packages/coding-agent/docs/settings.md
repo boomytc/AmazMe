@@ -136,6 +136,8 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are requir
 
 ## Shell
 
+`shellPath` and `shellCommandPrefix` configure the AgentSession SDK shell tools and user shell actions. The default Durable/hosted shell uses its execution environment instead; see [Shell commands](shell-aliases.md). `npmCommand` applies to package management.
+
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `shellPath` | string | Platform default | Custom shell executable path. Supports a leading `~`. |
@@ -146,11 +148,11 @@ See [Shell aliases](shell-aliases.md) for shell setup and [Pi Packages](packages
 
 ## Resources
 
-Resource paths in user settings resolve from the agent directory. Paths in project settings resolve from the project `.pi` directory. Absolute paths and `~` are supported.
+Resource paths in user settings resolve from the agent directory. Paths in project settings resolve from the project `.amazme` directory. Absolute paths and `~` are supported.
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `packages` | array | `[]` | npm, git, or local Pi package sources. See [Pi Packages](packages.md). |
+| `packages` | array | `[]` | npm, git, or local Pi package sources. See [Packages](packages.md). |
 | `extensions` | `string[]` | `[]` | Extension files or directories. |
 | `skills` | `string[]` | `[]` | Skill files or directories. |
 | `prompts` | `string[]` | `[]` | Prompt-template files or directories. |
@@ -159,7 +161,7 @@ Resource paths in user settings resolve from the agent directory. Paths in proje
 
 Resource arrays support glob exclusions with `!pattern`, exact inclusion with `+path`, and exact exclusion with `-path`. Pi loads resources listed in both user-level and project settings.
 
-The built-in extensions are named `builtin:mcp`, `builtin:llama.cpp`, `builtin:codemode`, and `builtin:tool-search` in `extensions`. They load by default; `-builtin:mcp` disables one. A `+builtin:<name>` or `-builtin:<name>` entry in project settings overrides the user setting. `pi config` lists them under Built-in. `--no-extensions` disables them too, and `-e builtin:<name>` loads one explicitly.
+In AgentSession SDK modes, the built-in extensions are named `builtin:mcp`, `builtin:llama.cpp`, `builtin:codemode`, and `builtin:tool-search` in `extensions`. They load by default; `-builtin:mcp` disables one. A `+builtin:<name>` or `-builtin:<name>` entry in project settings overrides the user setting. `amazme config` lists them under Built-in. `--no-extensions` disables them too, and `-e builtin:<name>` loads one explicitly.
 
 ## Updates, telemetry, and warnings
 

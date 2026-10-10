@@ -1,9 +1,11 @@
 # JSON Event Stream
 
+This is the AgentSession SDK event stream used by JSON and RPC modes. The default Durable terminal and hosted service protocol use their own state and session contracts; see [CLI integration](cli-integration.md).
+
 JSON mode emits structured progress for one invocation:
 
 ```bash
-pi --mode json "Review this repository"
+amazme --mode json "Review this repository"
 ```
 
 Pi writes one session header followed by session events, then exits after the supplied prompts finish. RPC mode emits the same session-event shapes but has no session header because it is a bidirectional, long-lived protocol. See [RPC Mode](rpc.md).
@@ -222,5 +224,5 @@ Use the exported `JsonAgentSessionEvent` type from `@amazme/coding-agent`. Its i
 Print completed messages from a one-shot run:
 
 ```bash
-pi --mode json "List files" 2>/dev/null | jq -c 'select(.type == "message_end")'
+amazme --mode json "List files" 2>/dev/null | jq -c 'select(.type == "message_end")'
 ```

@@ -1,10 +1,27 @@
 # Keybindings Reference
 
-Pi exposes named actions, such as `app.session.new`, that can be assigned keybindings. You can change default assignments or bind unassigned actions in Pi's [user configuration](configuration.md#agent-directory).
+AmazMe exposes named actions, such as `app.model.select`, that can be assigned keybindings. You can change default assignments or bind unassigned actions in the [user configuration](configuration.md#agent-directory).
 
-Run `/hotkeys` to see the active shortcuts for the main editor and application.
+The registry below includes shared editor actions and optional SDK actions. An application action works only in a client that registers its handler. `/hotkeys` belongs to SDK interactive mode; the default terminal shows its active shortcuts in the editor and footer.
 
-## Main composer
+## Default terminal composer
+
+| Key/action | Behavior |
+|---|---|
+| `Enter` | Submit a prompt; during a run it steers the focused conversation |
+| `Shift+Enter` | Insert a newline |
+| `app.message.followUp` | Submit a follow-up; Unix defaults to `Alt+Enter` |
+| `Esc` | Cancel current work or dismiss a selector |
+| `Ctrl+C` | Exit the default terminal |
+| `Ctrl+D` | Exit when the draft is empty |
+| `Tab` | Complete a command, an argument or a path |
+| `Ctrl+L` | Select a model |
+| `Ctrl+P`, `Shift+Ctrl+P` | Cycle the configured model scope |
+| `Shift+Tab` | Cycle supported thinking levels |
+
+The hosted terminal registers its own actions and commands; see [Slash commands](slash-commands.md). Shared editor movement, selection and clipboard bindings apply wherever that editor is used. SDK session menus and display toggles in the registry are not default-terminal controls.
+
+## SDK composer
 
 The main editor handles these controls before the configurable actions listed below:
 
@@ -25,8 +42,8 @@ Map each action identifier to one key or a list of keys:
 
 ```json
 {
-  "app.session.new": "ctrl+shift+n",
-  "app.session.tree": ["ctrl+shift+t", "alt+shift+t"]
+  "app.model.select": "ctrl+shift+l",
+  "app.message.followUp": ["alt+enter", "ctrl+q"]
 }
 ```
 

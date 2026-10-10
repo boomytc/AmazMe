@@ -1,99 +1,68 @@
-# Environment Variables
+# Environment variables
 
-Pi uses environment variables in three ways:
+AmazMe inherits the environment of the process that starts it. Export provider keys in your shell before starting the CLI or host; an already running host keeps the environment it started with. See [Providers](providers.md#use-an-api-key-from-the-environment) for the supported credential variables.
 
-- Variables such as `AMAZME_OFFLINE` configure the Pi process.
-- Pi sets process markers so child processes can identify Pi as the launching agent.
-- Commands run by the LLM-callable shell tools receive `PI_*` variables describing the current session.
+## Process markers
 
-Provider API-key variables are documented separately in [Providers](providers.md#use-an-api-key-from-the-environment).
+The CLI and RPC entry points set `AI_AGENT=AmazMe` and `AMAZME_CODING_AGENT=true`. Their child processes inherit these markers. Embedding through a library does not automatically set them.
 
-## Process Marker
+These are application process markers. OAuth client IDs, callbacks and provider request identities remain Pi's; changing product branding does not change them.
 
-The CLI and RPC entry points set two process markers:
+## Default terminal and hosted tools
 
-- `AI_AGENT=pi` is a generic marker that lets tooling identify Pi as the agent that launched the process.
-- `AMAZME_CODING_AGENT=true` is Pi-specific and lets child processes detect that they run inside Pi.
+The default terminal and hosted workers run tools through Durable and their execution environment. The built-in local environment inherits process variables when a shell command starts. It does not inject the SDK's `AMAZME_SESSION_*` or selected-model variables below. Its sessions use SQLite rather than the SDK's JSONL session files.
 
-Child processes inherit both markers. They are not session-specific and are not set automatically when Pi is embedded through the SDK.
+Use the client's model display and its conversation state for the current selection. Trusted native plugins can read their current conversation through `AgentRuntime`; tool implementations can use the invocation's `ToolExecutionApi.agent(context)`. A shell variable inherited from a parent process does not identify a Durable conversation's current model.
 
-## Shell Tool Session Environment
+Remote environments use the environment configured for that target. They do not inherit your Mac's secrets just because the client runs there.
 
-Commands run by the `bash` and `powershell` tools receive the current Pi session state:
+## SDK shell session metadata
 
-| Variable | Description |
-|----------|-------------|
-| `AMAZME_SESSION_ID` | Current session ID |
-| `AMAZME_SESSION_FILE` | Absolute path to the current session JSONL file; unset for ephemeral sessions |
-| `AMAZME_PROVIDER` | Currently selected model provider |
-| `AMAZME_MODEL` | Currently selected model ID |
-| `AMAZME_REASONING_LEVEL` | Current effective reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
+The AgentSession SDK's `bash` and `powershell` tools inject these values when their extension context is available:
 
-The values are resolved when each command starts. Switching models or changing the reasoning level therefore affects the next shell command without restarting Pi. `AMAZME_PROVIDER` and `AMAZME_MODEL` identify the selected Pi model, not a different upstream model that a router may choose internally.
+| Variable | Value |
+|---|---|
+| `AMAZME_SESSION_ID` | SDK session ID |
+| `AMAZME_SESSION_FILE` | JSONL session file; absent for ephemeral SDK sessions |
+| `AMAZME_PROVIDER` | Selected model provider |
+| `AMAZME_MODEL` | Selected model ID |
+| `AMAZME_REASONING_LEVEL` | Effective reasoning level |
 
-When asked which model or provider is running, inspect these variables instead of inferring the answer from the system prompt:
+Values are resolved for each command. They describe the selected SDK model, including when a router sends the request to another upstream model. User-entered `!`/`!!` commands in SDK interactive mode do not receive this injection.
 
-```bash
-printf '%s/%s\n' "$AMAZME_PROVIDER" "$AMAZME_MODEL"
-printf 'reasoning=%s session=%s\n' "$AMAZME_REASONING_LEVEL" "$AMAZME_SESSION_ID"
-```
-
-The session file can be inspected directly when the session is persistent:
-
-```bash
-if [ -n "$AMAZME_SESSION_FILE" ]; then
-  tail -n 1 "$AMAZME_SESSION_FILE"
-fi
-```
-
-These variables are injected into the LLM-callable `bash` and `powershell` tools. They are not injected into user-entered `!` or `!!` commands.
-
-### Custom Shell Tools
-
-Tools created with `createBashTool()` or `createPowerShellTool()` expose the session environment by default when registered with Pi. Injection happens before `spawnHook`, so a hook receives the variables in `ctx.env`:
+SDK `createBashTool(cwd, options)` and `createPowerShellTool(cwd, options)` expose this metadata by default when registered with an extension context. `spawnHook` receives it in `ctx.env`. Set `exposeSessionEnvironment: false` to disable injection; the SDK removes inherited metadata names before building that command's environment.
 
 ```typescript
 const bashTool = createBashTool(cwd, {
-  spawnHook: (ctx) => ({
-    ...ctx,
-    env: { ...ctx.env, CI: "1" },
-  }),
+  spawnHook: (ctx) => ({ ...ctx, env: { ...ctx.env, CI: "1" } }),
 });
 ```
 
-Disable session metadata independently of the spawn hook:
+Durable's shell factories and execution environments have their own options; this SDK option is not a native tool contract. See [SDK](sdk.md) and [Native plugins](plugin-runtime.md).
 
-```typescript
-const powershellTool = createPowerShellTool(cwd, {
-  exposeSessionEnvironment: false,
-  spawnHook: (ctx) => ctx,
-});
-```
+## Process configuration
 
-When disabled, Pi removes inherited values for these variables so nested Pi processes do not expose stale parent-session metadata.
+| Variable | Behavior |
+|---|---|
+| `AMAZME_CODING_AGENT_DIR` | Agent configuration directory; default `~/.amazme/agent` |
+| `AMAZME_CODING_AGENT_SESSION_DIR` | Native/SDK terminal session storage override; `--session-dir` takes precedence. Hosted session storage uses the host's `--session-dir` separately |
+| `AMAZME_SERVER_DIR` | Hosted server discovery and socket directory; default `~/.amazme/server` |
+| `AMAZME_SERVER_ID` | Preferred server identity during local automatic activation |
+| `AMAZME_PACKAGE_DIR` | Package resource directory override, including installed or compiled layouts |
+| `AMAZME_OFFLINE` | Disable automatic network activity such as catalog and update checks; explicit model/tool requests still require their configured services |
+| `AMAZME_SKIP_VERSION_CHECK` | Disable optional automatic update checks. The release checker uses this package's npm metadata |
+| `AMAZME_TELEMETRY` | Override the install/update telemetry preference with `1`/`true`/`yes` or `0`/`false`/`no` |
+| `AMAZME_CACHE_RETENTION` | `long` requests extended prompt caching from providers that support it |
+| `AMAZME_STARTUP_BENCHMARK` | Measure native interactive startup and exit; initial prompts are not submitted |
+| `AMAZME_SHARE_VIEWER_URL` | SDK `/share` viewer URL |
+| `AMAZME_RADIUS_GATEWAY` | Radius relay and SDK `/bug` gateway origin |
+| `AMAZME_HARDWARE_CURSOR` | `1` enables the hardware cursor |
+| `AMAZME_HYPERLINKS` | OSC 8 override: `1`, `0`, or `auto` |
+| `AMAZME_PROGRAM_STATUS` | OSC 7501 override: `1` always reports, `0` never reports; otherwise terminal support is queried |
+| `AMAZME_IMAGE_PROTOCOL` | Inline image protocol: `kitty`, `iterm2`, `none`, or `auto` |
+| `AMAZME_TRUE_COLOR` | Truecolor override: `1`, `0`, or `auto` |
+| `AMAZME_TUI_ESC_TIMEOUT` | Lone Escape timeout in milliseconds; defaults to `100` over SSH and `10` otherwise |
+| `VISUAL`, `EDITOR` | External-editor fallback in clients that expose that action |
+| `HTTP_PROXY`, `HTTPS_PROXY` | Outbound HTTP proxy configuration |
 
-## Pi Process Configuration
-
-These variables are read by Pi itself:
-
-| Variable | Description |
-|----------|-------------|
-| `AMAZME_CODING_AGENT_DIR` | Override the config directory; default is `~/.amazme/agent` |
-| `AMAZME_CODING_AGENT_SESSION_DIR` | Override session storage; overridden by `--session-dir` |
-| `AMAZME_PACKAGE_DIR` | Override the package directory, useful for Nix/Guix store paths |
-| `AMAZME_OFFLINE` | Disable automatic network activity, including model catalog refreshes |
-| `AMAZME_SKIP_VERSION_CHECK` | Disable the `pi.dev` latest-version request |
-| `AMAZME_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
-| `AMAZME_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
-| `AMAZME_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
-| `AMAZME_RADIUS_GATEWAY` | Override the Radius gateway origin used by `/bug` uploads and Radius relay connections |
-| `AMAZME_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |
-| `AMAZME_HYPERLINKS` | Override OSC 8 hyperlink detection with `1`, `0`, or `auto` |
-| `AMAZME_PROGRAM_STATUS` | Override OSC 7501 program status detection: `1` always reports, `0` never reports; otherwise Pi reports only after the terminal confirms support. See [Terminal setup](terminal-setup.md#program-status) |
-| `AMAZME_IMAGE_PROTOCOL` | Override inline image detection with `kitty`, `iterm2`, `none`, or `auto` |
-| `AMAZME_TRUE_COLOR` | Override truecolor detection with `1`, `0`, or `auto` |
-| `AMAZME_TUI_ESC_TIMEOUT` | How long to wait after a lone ESC before treating it as Escape, in milliseconds; defaults to `100` over SSH and `10` otherwise. Increase if Alt-key input is misread as Escape |
-| `VISUAL`, `EDITOR` | External editor fallback when `externalEditor` is unset |
-| `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
-
-Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and provider-specific configuration are listed in [Providers](providers.md#use-an-api-key-from-the-environment).
+See [Terminal setup](terminal-setup.md), [Configuration](configuration.md) and [Sessions](sessions.md) for the respective scopes. Internal worker control addresses and tokens are managed by the host, not user configuration.

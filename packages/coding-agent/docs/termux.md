@@ -31,7 +31,7 @@ Install Termux from [GitHub or F-Droid](https://github.com/termux/termux-app#ins
 4. Verify the installation:
 
    ```bash
-   pi --version
+   amazme --version
    ```
 
 5. Open the folder you want to work in and start Pi:
@@ -41,7 +41,7 @@ Install Termux from [GitHub or F-Droid](https://github.com/termux/termux-app#ins
    pi
    ```
 
-Continue with the main [Quickstart](quickstart.md#3-choose-a-model) to connect a model and run your first task.
+Continue with the main [Quickstart](quickstart.md#2-choose-a-provider) to connect a model and run your first task.
 
 ## Access Android shared storage
 

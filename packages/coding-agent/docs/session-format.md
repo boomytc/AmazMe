@@ -1,8 +1,10 @@
 # Session File Format
 
+This is the AgentSession SDK JSONL format used by Print/JSON/RPC and SDK applications. The default terminal and hosted workers use SQLite. See [Sessions](sessions.md) for their storage and lifecycle.
+
 Sessions are stored as JSONL (JSON Lines) files. Each line is a JSON object with a `type` field. Session entries form a tree structure via `id`/`parentId` fields, enabling in-place branching without creating new files.
 
-For programmatic creation, persistence, and tree navigation, see the [`SessionManager` API](sdk.md#sessionmanager-api).
+For programmatic SDK creation, persistence, and tree navigation, see [SDK sessions](sdk.md#session-lifecycle).
 
 
 ## File Location

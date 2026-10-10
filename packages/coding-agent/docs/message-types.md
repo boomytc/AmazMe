@@ -1,5 +1,7 @@
 # Message Types
 
+This reference covers SDK AgentMessage events and JSONL session entries. Native Durable histories use their own entry/task records while sharing provider-facing content types.
+
 Pi uses `AgentMessage` values in SDK state, lifecycle events, RPC responses, and persisted session message entries. This page defines those shared messages and their content blocks.
 
 Message timestamps are Unix timestamps in milliseconds. They are different from the ISO 8601 timestamps on [session entries](session-format.md#entry-base).

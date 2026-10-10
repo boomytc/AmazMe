@@ -1,5 +1,7 @@
 # Custom Providers
 
+Provider factories below apply to AgentSession SDK modes (Print/JSON/RPC). For the default terminal and hosted workers, use models.json for a supported compatible endpoint. Plain --help and --list-models do not evaluate SDK factories.
+
 A provider extension connects Pi to a model service that needs custom authentication, model discovery, request handling, or streaming. If the service already speaks a supported API, configure it in `models.json` instead.
 
 Provider extensions run inside Pi and can inspect credentials, prompts, tool definitions, model responses, and usage. Treat them as trusted code and avoid logging secrets or provider payloads.
@@ -18,7 +20,9 @@ A provider extension is an [extension](extensions.md), so it follows the same lo
 
 ## Register a provider
 
-Call `pi.registerProvider()` from the extension factory. Pi waits for asynchronous factories before startup continues, so providers registered there are available to startup model selection and `pi --list-models`.
+Call `pi.registerProvider()` from the extension factory. SDK modes wait for asynchronous factories before startup continues, so providers registered there are available to startup model selection and `amazme --print --list-models -e ./provider.ts`.
+
+That SDK-mode listing is written to stderr, preserving stdout for the selected output interface. A plain `amazme --list-models` uses the native catalogue and does not run SDK factories.
 
 There are two registration forms:
 
