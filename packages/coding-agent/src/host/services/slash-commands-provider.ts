@@ -1,5 +1,6 @@
 import { defineFacet, type Facet, type JsonValue } from "@amazme/chord";
 import type { ModelThinkingLevel } from "@amazme/ai";
+import type { Context } from "@amazme/chord";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import { type ModelSummary, Models, type Models as ModelsService } from "./models.ts";
 import { PresentationPlugins, SessionPlugins } from "./plugins.ts";
@@ -18,6 +19,7 @@ const THINKING_DESCRIPTIONS: Record<ModelThinkingLevel, string> = {
 
 export function createBuiltInSlashCommandsFacet(options: {
 	reloadPresentationPlugins(data: JsonValue): Promise<void>;
+	authenticate?(mode: "login" | "logout", provider: string | undefined, context: Context): Promise<void>;
 }): Facet {
 	return defineFacet({
 		id: "@pi/slash-commands-builtin",
@@ -29,6 +31,17 @@ export function createBuiltInSlashCommandsFacet(options: {
 			const presentationPlugins = env.use(PresentationPlugins);
 			const sessionPlugins = env.use(SessionPlugins);
 			env.onActivate(() => {
+				if (options.authenticate) for (const mode of ["login", "logout"] as const) env.own(commands.replace({
+					name: mode,
+					description: mode === "login" ? "Sign in to a model provider" : "Remove saved provider credentials",
+					argumentHint: "[provider]",
+					getArgumentCompletions(prefix) {
+						return (models.state.value?.authentication?.providers ?? [])
+							.filter(provider => provider.id.includes(prefix) && (mode === "login" ? provider.methods.length > 0 : provider.configured))
+							.map(provider => ({ value: provider.id, label: provider.name }));
+					},
+					run: (args, context) => options.authenticate!(mode, args || undefined, context).then(() => undefined),
+				}));
 				env.own(commands.replace(modelCommand(models, ui)));
 				env.own(commands.replace(thinkingCommand(models, ui)));
 				env.own(commands.replace(compactCommand(controller, ui)));

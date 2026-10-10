@@ -641,13 +641,16 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 	// Every live task, background work included, keeps the worker and its Session open.
 	const syncActivity = () => lifecycle?.setHarnessActive(
 		Object.keys(activity.value.tasks).length > 0 ||
+		services?.authenticationActive() === true ||
 		["preparing", "awaiting", "finishing"].includes(runtime?.mcp?.snapshot().login?.status ?? ""),
 	);
 	const stopTasks = activity.subscribe(syncActivity);
 	const stopMcp = runtime.mcp?.subscribe(syncActivity);
+	const stopAuthentication = services.subscribeAuthentication(syncActivity);
 	stopActivity = () => {
 		stopTasks();
 		stopMcp?.();
+		stopAuthentication();
 	};
 	// Recovered work from an interrupted turn continues now.
 	harness.resume();

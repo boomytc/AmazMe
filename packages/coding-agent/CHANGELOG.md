@@ -6,6 +6,8 @@
 - A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
 ### Added
 
+- Hosted model services and terminal clients use the same provider interaction owner for `/login` and `/logout`. Active sign-in keeps the worker alive; plugin reload preserves its prompt, while late submissions remain bound to their flow and session.
+
 - Native `/login` and `/logout` reuse the provider interaction owner and ModelRuntime credential APIs, including provider/method selection, prompt expiry, owned cancellation and close cleanup. OAuth identity remains Pi's.
 
 - Native plugins use Durable `output`, `structuredOutputSchema` and `executeTool`; MCP, codemode, workflow and verification calls share owned tasks and scoped result retirement.

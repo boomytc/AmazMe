@@ -4,7 +4,9 @@ import { CredentialSynchronizationError } from "./model-runtime.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 
-type WithoutSignal<T> = T extends AuthPrompt ? Omit<T, "signal"> : never;
+type WithoutSignal<T> = T extends { options: readonly (infer Option)[] }
+	? Omit<T, "signal" | "options"> & { options: Option[] }
+	: T extends AuthPrompt ? Omit<T, "signal"> : never;
 export type ProviderLoginPrompt = WithoutSignal<AuthPrompt> & { id: string };
 export interface ProviderAuthSummary {
 	id: string;
@@ -65,7 +67,8 @@ export class ProviderLogin implements ProviderAuthManagement {
 					...(provider.auth.apiKey?.login ? [{ type: "api_key" as const, label: provider.auth.apiKey.name }] : []),
 				],
 			})),
-			login: this.#operation ? structuredClone(this.#operation.state) : null,
+			// Provider prompts may include optional undefined fields; the public replica is JSON.
+			login: this.#operation ? JSON.parse(JSON.stringify(this.#operation.state)) as ProviderLoginState : null,
 		};
 	}
 	get active(): boolean {
@@ -122,7 +125,9 @@ export class ProviderLogin implements ProviderAuthManagement {
 				};
 				const abort = () => finish();
 				operation.submit = { id, resolve: (value) => finish(value) };
-				state.prompt = { ...publicPrompt, id };
+				state.prompt = publicPrompt.type === "select"
+					? { ...publicPrompt, options: publicPrompt.options.map((option) => ({ ...option })), id }
+					: { ...publicPrompt, id };
 				state.status = "awaiting";
 				if (promptSignal.aborted) finish();
 				else promptSignal.addEventListener("abort", abort, { once: true });

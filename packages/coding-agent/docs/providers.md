@@ -11,6 +11,8 @@ Use `amazme auth login --provider <provider>` in a terminal to see the supported
 
 In the default native terminal UI, run `/login [provider]` to choose a provider and supported method. Run `/logout [provider]` to remove saved credentials. Esc cancels sign-in, and `/model` selects from the updated available catalog. Secret input stays masked, including the submitted confirmation.
 
+The hosted terminal client (`amazme client`) offers the same commands through its session's model service. The session worker owns the current sign-in, so `/login` can reopen an existing flow after reattachment. Plugin reload preserves that flow; cancellation and worker shutdown clean it up. Submitted secrets and callbacks do not enter the replicated model state.
+
 Run `amazme auth login --provider <provider>`. AmazMe guides you through the provider's OAuth or API-key flow and saves the resulting credential in [`auth.json`](configuration.md#agent-directory). If both methods are supported, choose one in the terminal or specify `--method oauth` or `--method api-key`.
 
 ```bash

@@ -87,6 +87,7 @@ describe("experimental client TUI", () => {
 				},
 				configuration: { model: { provider: "test", modelId: "one" }, thinkingLevel: "off" },
 				refresh: { status: "idle" },
+				authentication: null,
 			});
 			const create = vi.fn(async () => {
 				const created = session("two", 2);

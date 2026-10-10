@@ -15,6 +15,7 @@ import { type RunningServer, startServer } from "../src/host/server.ts";
 import { AgentController } from "../src/core/plugins/agent-controller.ts";
 import { createSessionServiceSource, type SessionAttachmentState } from "../src/host/services/connection.ts";
 import { Feedback } from "../src/host/services/feedback.ts";
+import { Diagnostics } from "../src/host/services/diagnostics.ts";
 import { Models } from "../src/host/services/models.ts";
 import { Plugins, PresentationPlugins, SessionPlugins } from "../src/host/services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../src/host/services/sessions.ts";
@@ -317,6 +318,7 @@ describe("experimental durable server composition", () => {
 			{ serviceId: Skills.id, mode: "singleton" },
 			{ serviceId: Plugins.id, mode: "singleton" },
 			{ serviceId: Feedback.id, mode: "singleton" },
+			{ serviceId: Diagnostics.id, mode: "singleton" },
 			{ serviceId: Schedules.id, mode: "singleton" },
 		]);
 		const firstDirectory = firstServices.use(SessionDirectory);

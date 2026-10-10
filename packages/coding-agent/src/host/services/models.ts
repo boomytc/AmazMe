@@ -1,5 +1,6 @@
 import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
-import type { ModelThinkingLevel } from "@amazme/ai";
+import type { AuthType, ModelThinkingLevel } from "@amazme/ai";
+import type { ProviderAuthState } from "../../core/provider-login.ts";
 
 export interface ModelRef {
 	provider: string;
@@ -24,6 +25,8 @@ export interface ModelsState {
 		thinkingLevel: ModelThinkingLevel;
 	};
 	refresh: { status: "idle" | "refreshing" | "done" } | { status: "warning"; errors: Record<string, string> };
+	/** Transient provider interaction metadata, never submitted credentials or tokens. */
+	authentication: ProviderAuthState | null;
 }
 
 export interface Models {
@@ -33,6 +36,10 @@ export interface Models {
 	refresh(context: Context): Promise<void>;
 	select(model: ModelRef, context: Context): Promise<void>;
 	selectThinking(level: ModelThinkingLevel, context: Context): Promise<void>;
+	startLogin(provider: string, method: AuthType, context: Context): Promise<string>;
+	submitLoginPrompt(id: string, promptId: string, value: string, context: Context): Promise<boolean>;
+	cancelLogin(id: string, context: Context): Promise<boolean>;
+	logout(provider: string, context: Context): Promise<void>;
 }
 
 export const Models = defineService<Models>("amazme.models");

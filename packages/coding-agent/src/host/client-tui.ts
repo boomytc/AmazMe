@@ -1,8 +1,11 @@
 import { resolve } from "node:path";
 import { combineFacetLoaders, createFacetHost, defineFacet, type FacetHost, type FacetLoader, type JsonValue, type LoadedFacets } from "@amazme/chord";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import type { AgentState, ConversationView, EntryRecord } from "@amazme/durable";
-import { CombinedAutocompleteProvider, type Component, Container, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
+import { CombinedAutocompleteProvider, type Component, Container, isFocusable, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
+import { manageProviderAuth } from "../durable/provider-menu.ts";
+import { ListSelector } from "../modes/interactive/components/list-selector.ts";
+import { Models } from "./services/models.ts";
 import type { ClientCommand } from "../cli/host/commands/client.ts";
 import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
@@ -88,6 +91,9 @@ export class ExperimentalClientTui implements Component {
 	#slashCommands: SlashCommands | undefined;
 	#controller: AgentController | undefined;
 	#conversations: ConversationsService | undefined;
+	#models: Models | undefined;
+	#authComponent: Component | undefined;
+	#authFlow: { controller: AbortController; done: Promise<void> } | undefined;
 	#history: readonly EntryRecord[] = [];
 	#historyCursor: string | null = null;
 	#historyLoaded = false;
@@ -178,6 +184,12 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	handleInput(data: string): void {
+		if (this.#authComponent && !this.#busy) {
+			if (this.#keybindings.matches(data, "app.clear")) this.#authFlow?.controller.abort();
+			else this.#authComponent.handleInput?.(data);
+			this.#requestRender();
+			return;
+		}
 		if (this.#busy) {
 			if (this.#keybindings.matches(data, "app.clear") || (this.#chatInput.getText().length === 0 && this.#keybindings.matches(data, "app.exit"))) {
 				this.#finish();
@@ -223,6 +235,7 @@ export class ExperimentalClientTui implements Component {
 		let facetHost!: FacetHost;
 		const reloadPresentationPlugins = (data: JsonValue): Promise<void> => {
 			const operation = this.#facetReloadTail.then(async () => {
+				if (this.#authFlow) await this.#stopAuthentication();
 				const candidate = await combineFacetLoaders(createPresentationFacetLoaders(data)).load();
 				try {
 					await facetHost.reload(candidate.facets);
@@ -261,6 +274,7 @@ export class ExperimentalClientTui implements Component {
 				const controller = env.use(AgentController);
 				const transcript = env.use(Transcript);
 				const conversations = env.use(Conversations);
+				const models = env.use(Models);
 				const sessionFeature: SessionFeature = {
 					serverId: server.serverId,
 					session: server.session,
@@ -274,11 +288,13 @@ export class ExperimentalClientTui implements Component {
 					this.#slashCommands = commands;
 					this.#controller = controller;
 					this.#conversations = conversations;
+					this.#models = models;
 					env.own(() => {
 						if (this.#session === sessionFeature) this.#session = undefined;
 						if (this.#slashCommands === commands) this.#slashCommands = undefined;
 						if (this.#controller === controller) this.#controller = undefined;
 						if (this.#conversations === conversations) this.#conversations = undefined;
+						if (this.#models === models) this.#models = undefined;
 					});
 					env.own(
 						conversations.state.subscribe(() => {
@@ -288,6 +304,9 @@ export class ExperimentalClientTui implements Component {
 						}),
 					);
 					env.own(commands.subscribe(() => this.#updateAutocomplete()));
+					env.own(server.session.attachment.subscribe((state) => {
+						if (state.status !== "attached" || state.sessionId !== this.#sessionId) this.#authFlow?.controller.abort();
+					}));
 					if (server.radius) {
 						env.own(server.server.connection.subscribe((state) => this.#handleConnectionState(server.serverId, state)));
 						env.own(server.session.attachment.subscribe((state) => this.#handleAttachmentState(sessionFeature, state)));
@@ -299,7 +318,7 @@ export class ExperimentalClientTui implements Component {
 			facets: [
 				createSlashCommandsRuntimeFacet(),
 				presentationBridgeFacet,
-				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins }),
+				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins, authenticate: (mode, provider) => this.#authenticate(mode, provider) }),
 				...this.#sharedFacets.facets,
 				...presentationFacets.facets,
 			],
@@ -323,6 +342,7 @@ export class ExperimentalClientTui implements Component {
 
 	async #close(): Promise<void> {
 		this.#closed = true;
+		if (this.#authFlow) await this.#stopAuthentication();
 		this.#completeSelection(undefined);
 		const errors: unknown[] = [];
 		try {
@@ -361,7 +381,11 @@ export class ExperimentalClientTui implements Component {
 		if (this.#chatView !== undefined) this.#statusContainer.addChild(this.#chatView.status);
 		this.#footerComponent.setText(theme.fg("dim", this.#footer()));
 		this.#editorContainer.clear();
-		if (this.#screen === "select" && this.#selection !== undefined) {
+		if (this.#authComponent !== undefined) {
+			this.#chatInput.focused = false;
+			this.#selectList = undefined;
+			this.#editorContainer.addChild(this.#authComponent);
+		} else if (this.#screen === "select" && this.#selection !== undefined) {
 			this.#chatInput.focused = false;
 			const selector = new Container();
 			selector.addChild(new Text(theme.bold(this.#selection.title), 1, 1));
@@ -403,6 +427,73 @@ export class ExperimentalClientTui implements Component {
 		this.#screen = "chat";
 		selection.resolve(value);
 		if (!this.#closed) this.#rebuild();
+	}
+
+	async #stopAuthentication(): Promise<void> {
+		const flow = this.#authFlow;
+		flow?.controller.abort();
+		await flow?.done;
+	}
+
+	#authenticate(mode: "login" | "logout", provider: string | undefined): Promise<void> {
+		const models = this.#models;
+		const feature = this.#session;
+		const sessionId = this.#sessionId;
+		if (!models || !feature || !sessionId || this.#authFlow) return Promise.resolve();
+		const owner = new AbortController();
+		const sameTarget = () => {
+			const attachment = feature.session.attachment.value;
+			return this.#session === feature && this.#models === models && this.#sessionId === sessionId
+				&& attachment?.status === "attached" && attachment.sessionId === sessionId;
+		};
+		const context = () => {
+			owner.signal.throwIfAborted();
+			if (this.#closed || !sameTarget()) throw new Error("The authentication session changed");
+			return withAbortSignal(owner.signal, BACKGROUND_CONTEXT);
+		};
+		const mount = (component: Component) => {
+			if (owner.signal.aborted || this.#closed || !sameTarget()) return;
+			if (this.#authComponent && isFocusable(this.#authComponent)) this.#authComponent.focused = false;
+			this.#authComponent = component;
+			if (isFocusable(component)) component.focused = true;
+			this.#rebuild();
+		};
+		const done = manageProviderAuth({
+			snapshot: () => sameTarget() ? models.state.value?.authentication ?? { providers: [], login: null } : { providers: [], login: null },
+			subscribe: (listener) => models.state.subscribe(listener),
+			startLogin: (id, method) => models.startLogin(id, method, context()),
+			submitPrompt: (id, promptId, value) => models.submitLoginPrompt(id, promptId, value, context()),
+			cancelLogin: (id) => sameTarget() ? models.cancelLogin(id, withAbortSignal(AbortSignal.timeout(5_000), BACKGROUND_CONTEXT)) : Promise.resolve(false),
+			logout: (id) => models.logout(id, context()),
+		}, mode, provider, {
+			ui: this.#ui,
+			mount,
+			select: (title, items, confirm, cancel) => mount(new ListSelector(title, items, confirm, cancel)),
+			inform: (text, close) => {
+				const panel = new Container();
+				panel.addChild(new Text(text, 1, 1));
+				const back = new SelectList([{ value: "close", label: "Back to prompt" }], 1, selectTheme);
+				back.onSelect = close; back.onCancel = close;
+				panel.addChild(back);
+				mount({ render: width => panel.render(width), invalidate: () => panel.invalidate(), handleInput: data => back.handleInput(data) });
+			},
+		}, owner.signal).then((result) => {
+			if (this.#closed || this.#busy || !sameTarget()) return;
+			const login = models.state.value?.authentication?.login;
+			this.#status = result && "loggedOut" in result ? "Saved credentials removed; environment credentials remain available."
+				: result && "id" in result && login?.id === result.id
+					? login.error ?? (login.status === "done" ? "Signed in. Select a model with /model." : "Provider sign-in ended.")
+					: "Provider authentication ended.";
+		}).finally(() => {
+			if (this.#authFlow?.controller !== owner) return;
+			this.#authComponent = undefined;
+			this.#authFlow = undefined;
+			if (!this.#closed && !this.#busy && sameTarget()) {
+				this.#rebuild();
+			}
+		});
+		this.#authFlow = { controller: owner, done };
+		return done;
 	}
 
 	#updateAutocomplete(): void {
@@ -498,6 +589,7 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	async #closeLane(): Promise<void> {
+		if (this.#authFlow) await this.#stopAuthentication();
 		this.#laneUnsubscribe?.();
 		this.#laneUnsubscribe = undefined;
 		this.#chatView?.dispose();
@@ -779,7 +871,7 @@ export class ExperimentalClientTui implements Component {
 	#footer(): string {
 		const view = this.#conversationView();
 		const lane = this.#conversations?.state.value?.lane;
-		const commands = "/tree · /fork · /older · /model · /thinking · /compact · /reload";
+		const commands = "/tree · /fork · /older · /model · /login · /logout · /thinking · /compact · /reload";
 		if (lane !== undefined) {
 			const count = view === undefined ? "" : ` · ${view.entries.length} entries`;
 			return `${formatLane(lane)}${count} · ${commands}`;

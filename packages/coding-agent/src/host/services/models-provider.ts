@@ -6,6 +6,7 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { AgentState, Conversation, Harness } from "@amazme/durable";
 import { AgentDoc } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
+import { ProviderLogin } from "../../core/provider-login.ts";
 import { AgentRuntime } from "../../core/plugins/agent-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { Conversations } from "./conversations.ts";
@@ -17,6 +18,7 @@ export interface ModelsServiceRuntime {
 	activate(context: Context): Promise<void>;
 	/** Publish the agent document's model and thinking level when they changed. */
 	syncConfiguration(context: Context): void;
+	close(): Promise<void>;
 }
 
 /**
@@ -29,8 +31,11 @@ export function createModelsService(
 	modelRuntime: ModelRuntime | undefined,
 	settingsManager: SettingsManager | undefined,
 	createState: (initial: ModelsState) => MutableReplicatedState<ModelsState>,
+	sharedAuthentication?: ProviderLogin,
 ): ModelsServiceRuntime {
 	let catalogRevision = 0;
+	const authentication = sharedAuthentication ?? (modelRuntime === undefined ? undefined
+		: new ProviderLogin(modelRuntime, settingsManager === undefined ? {} : { getDeviceId: () => settingsManager.getOrCreateDeviceId() }));
 	const configurationOf = (value: Readonly<AgentState> | null | undefined): ModelsState["configuration"] => ({
 		model: value?.model === undefined ? null : { provider: value.model.provider, modelId: value.model.modelId },
 		thinkingLevel: value?.thinkingLevel ?? "off",
@@ -39,6 +44,7 @@ export function createModelsService(
 		catalog: { revision: 0, availableModels: [] },
 		configuration: { model: null, thinkingLevel: "off" },
 		refresh: { status: "idle" },
+		authentication: authentication?.snapshot() ?? null,
 	});
 	const selectedModel = (agent = readAgent()) => {
 		const ref = agent?.model;
@@ -64,8 +70,29 @@ export function createModelsService(
 			})),
 		};
 	};
+	let stopAuthentication: (() => void) | undefined;
+	const authenticationOwner = (): ProviderLogin => {
+		if (!authentication) throw new Error("Provider authentication is unavailable for this session");
+		return authentication;
+	};
 	const service: ModelsService = {
 		state,
+		startLogin(provider, method, context) {
+			context.abortSignal?.throwIfAborted();
+			return authenticationOwner().startLogin(provider, method, context.abortSignal);
+		},
+		submitLoginPrompt(id, promptId, value, context) {
+			context.abortSignal?.throwIfAborted();
+			return authenticationOwner().submitPrompt(id, promptId, value);
+		},
+		cancelLogin(id, context) {
+			context.abortSignal?.throwIfAborted();
+			return authenticationOwner().cancelLogin(id);
+		},
+		logout(provider, context) {
+			context.abortSignal?.throwIfAborted();
+			return authenticationOwner().logout(provider, context.abortSignal);
+		},
 		async cycleThinking(context) {
 			const conversation = await current(context);
 			await conversation.commit(async (tx) => {
@@ -91,6 +118,7 @@ export function createModelsService(
 			const catalog = readCatalog();
 			state.change(context, (draft) => {
 				draft.catalog = catalog;
+				draft.authentication = authentication?.snapshot() ?? null;
 				draft.refresh = Object.keys(errors).length === 0 ? { status: "done" } : { status: "warning", errors };
 			});
 		},
@@ -121,12 +149,23 @@ export function createModelsService(
 	return {
 		service,
 		async activate(context) {
+			stopAuthentication ??= authentication?.subscribe(() => {
+				state.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.authentication = authentication.snapshot();
+					if (!authentication.active) draft.catalog = readCatalog();
+				});
+			});
 			const catalog = readCatalog();
 			state.change(context, (draft) => {
 				draft.catalog = catalog;
 				draft.configuration = configurationOf(readAgent());
 				draft.refresh = { status: "idle" };
+				draft.authentication = authentication?.snapshot() ?? null;
 			});
+		},
+		async close() {
+			stopAuthentication?.();
+			if (sharedAuthentication === undefined) await authentication?.close();
 		},
 		syncConfiguration(context) {
 			const next = configurationOf(readAgent());
@@ -156,6 +195,7 @@ export async function createModelsServiceFacet(options: {
 	readonly modelRuntime: ModelRuntime | undefined;
 	readonly settingsManager?: SettingsManager;
 	readonly context: Context;
+	readonly authentication?: ProviderLogin;
 }): Promise<Facet> {
 	const agent = await options.harness.documentState(AgentDoc, options.conversation.id, options.context);
 	if (agent === undefined) throw new Error(`Conversation ${options.conversation.id} has no agent document`);
@@ -179,7 +219,9 @@ export async function createModelsServiceFacet(options: {
 				options.modelRuntime,
 				options.settingsManager,
 				env.replicatedState,
+				options.authentication,
 			);
+			env.own(() => runtime.close());
 			env.provide(Models, runtime.service);
 			env.onActivate(async () => {
 				await runtime.activate(BACKGROUND_CONTEXT);

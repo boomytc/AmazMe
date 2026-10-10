@@ -12,6 +12,7 @@ import {
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { Conversation, ConversationId, Harness, Registry } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
+import { ProviderLogin } from "../../core/provider-login.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { configureHarnessHttp } from "../../durable/harness-setup.ts";
 import { createAgentExtensionsFacet } from "../../core/plugins/agent-extensions.ts";
@@ -68,6 +69,8 @@ export interface SessionWorkerServices {
 	invoke(call: ServiceCall, scope: WorkerServiceScope, context: Context): Promise<JsonValue | undefined>;
 	removeSubscriptions(matches: (scope: WorkerServiceScope) => boolean): void;
 	dispose(): Promise<void>;
+	authenticationActive(): boolean;
+	subscribeAuthentication(listener: () => void): () => void;
 }
 
 export async function createSessionWorkerServices(options: {
@@ -85,6 +88,8 @@ export async function createSessionWorkerServices(options: {
 	publish(scope: WorkerServiceScope, subscriptionId: string, update: ServiceProviderUpdate): Promise<void>;
 }): Promise<SessionWorkerServices> {
 	let pluginRuntime: PluginRuntime | undefined;
+	const authentication = options.modelRuntime === undefined ? undefined : new ProviderLogin(options.modelRuntime,
+		options.settingsManager === undefined ? {} : { getDeviceId: () => options.settingsManager!.getOrCreateDeviceId() });
 	const agentControllerRuntimeFacet = defineFacet({
 		id: "@pi/agent-controller-runtime",
 		setup(env) {
@@ -140,7 +145,7 @@ export async function createSessionWorkerServices(options: {
 		// the terminal client, the page, and a desktop client.
 		createSlashCommandsRuntimeFacet(),
 		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
-		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
+		await createModelsServiceFacet({ ...options, authentication, context: BACKGROUND_CONTEXT }),
 		...(options.mcp === undefined ? [] : [createMcpFacet(options.mcp)]),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 		createCommandsFacet({ cwd: options.cwd, settings: options.settingsManager }),
@@ -159,7 +164,8 @@ export async function createSessionWorkerServices(options: {
 			: [createTerminalFacet({ cwd: options.cwd, settings: options.settingsManager })]),
 	];
 	const pluginLoader = options.facetLoader ?? createStaticFacetLoader([]);
-	pluginRuntime = await openPluginRuntime(builtins, pluginLoader, () => assertPluginsIdle(options.harness));
+	try { pluginRuntime = await openPluginRuntime(builtins, pluginLoader, () => assertPluginsIdle(options.harness)); }
+	catch (error) { await authentication?.close(); throw error; }
 	reloadPlugins = () => pluginRuntime!.reload();
 	const provider = pluginRuntime.services;
 
@@ -173,6 +179,8 @@ export async function createSessionWorkerServices(options: {
 	};
 
 	return {
+		authenticationActive: () => authentication?.active ?? false,
+		subscribeAuthentication: (listener) => authentication?.subscribe(listener) ?? (() => {}),
 		invoke(call, scope, context) {
 			const key = serviceScopeKey(scope);
 			let entry = endpoints.get(key);
@@ -189,7 +197,8 @@ export async function createSessionWorkerServices(options: {
 		removeSubscriptions,
 		async dispose() {
 			removeSubscriptions(() => true);
-			await pluginRuntime!.close();
+			try { await authentication?.close(); await options.settingsManager?.flush(); }
+			finally { await pluginRuntime!.close(); }
 		},
 	};
 }

@@ -17,7 +17,7 @@ export async function manageProviderAuth(
 	providerId: string | undefined,
 	view: ProviderMenuPresentation,
 	signal: AbortSignal,
-): Promise<void> {
+): Promise<{ id: string } | { loggedOut: string } | undefined> {
 	const choose = (title: string, items: SelectItem[]): Promise<string | undefined> => new Promise((resolve) => {
 		const finish = (value?: string) => { signal.removeEventListener("abort", abort); resolve(value); };
 		const abort = () => finish();
@@ -32,9 +32,15 @@ export async function manageProviderAuth(
 		view.inform(text, finish);
 	});
 	try {
-		const providers = auth.snapshot().providers;
+		const snapshot = auth.snapshot();
+		const existing = mode === "login" && snapshot.login && ["preparing", "awaiting", "finishing"].includes(snapshot.login.status)
+			? snapshot.login : undefined;
+		if (existing && providerId && existing.provider !== providerId) {
+			await info("Finish or cancel the current sign-in. Use /login to open it."); return;
+		}
+		const providers = snapshot.providers;
 		const candidates = providers.filter((entry) => mode === "login" ? entry.methods.length > 0 : entry.configured);
-		const selected = providerId ?? await choose(mode === "login" ? "Sign in to:" : "Remove saved credentials:",
+		const selected = existing?.provider ?? providerId ?? await choose(mode === "login" ? "Sign in to:" : "Remove saved credentials:",
 			candidates.map((entry) => ({ value: entry.id, label: entry.name, description: entry.configured ? "configured" : "" })));
 		if (selected === undefined || signal.aborted) return;
 		const provider = providers.find((entry) => entry.id === selected);
@@ -42,25 +48,30 @@ export async function manageProviderAuth(
 		if (mode === "logout") {
 			await auth.logout(provider.id, signal);
 			await info(`Removed saved credentials for ${provider.name}. Environment credentials remain available.`);
-			return;
+			return { loggedOut: provider.id };
 		}
-		const methodId = provider.methods.length === 1 ? provider.methods[0]?.type : await choose(`Sign in to ${provider.name}:`,
-			provider.methods.map((method) => ({ value: method.type, label: method.label })));
+		const methodId = existing?.method ?? (provider.methods.length === 1 ? provider.methods[0]?.type : await choose(`Sign in to ${provider.name}:`,
+			provider.methods.map((method) => ({ value: method.type, label: method.label }))));
 		const method = provider.methods.find((entry) => entry.type === methodId)?.type;
 		if (!method || signal.aborted) return;
-		let id: string | undefined;
+		let id = existing?.id;
+		let bound = false;
 		let complete!: () => void;
 		const finished = new Promise<void>((resolve) => { complete = resolve; });
-		const cancel = () => { if (id) void auth.cancelLogin(id).catch(() => complete()); };
+		const cancel = () => { if (id) void auth.cancelLogin(id).then(complete, complete); };
 		const dialog = new LoginDialogComponent(view.ui, provider.id, cancel, provider.name);
 		view.mount(dialog);
 		let authorization = "";
 		let message = "";
 		let promptId: string | null = null;
 		const paintLogin = (): void => {
+			if (id === undefined || signal.aborted) return;
 			const login = auth.snapshot().login;
-			if (!login || (id !== undefined && login.id !== id)) return;
-			id = login.id;
+			if (!login || login.id !== id) {
+				if (bound || signal.aborted) { dialog.clearPrompt(); complete(); }
+				return;
+			}
+			bound = true;
 			if (["done", "cancelled", "error"].includes(login.status)) { dialog.clearPrompt(); complete(); return; }
 			const nextAuthorization = JSON.stringify(login.authorization);
 			if (login.authorization && authorization !== nextAuthorization) {
@@ -97,7 +108,7 @@ export async function manageProviderAuth(
 		};
 		const stop = auth.subscribe(paintLogin);
 		signal.addEventListener("abort", cancel, { once: true });
-		try { await auth.startLogin(provider.id, method, signal); paintLogin(); await finished; }
+		try { id ??= await auth.startLogin(provider.id, method, signal); paintLogin(); await finished; return { id }; }
 		finally { stop(); signal.removeEventListener("abort", cancel); dialog.clearPrompt(); }
 	} catch {
 		await info("Authentication could not complete. Check credentials from the CLI or retry.");
