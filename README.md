@@ -1,124 +1,182 @@
 # AmazMe
 
-AmazMe 是终端里的编码代理。它读取文件、运行命令、修改内容，并完成多步任务。
+**以插件扩展的编码代理，支持终端、Web 和桌面入口。**
 
-实现来自 [Pi](https://github.com/earendil-works/pi) 的 packages，包作用域和命令名是 AmazMe。许可证是 MIT，版权归 Mario Zechner。当前对齐的上游版本和后续跟进方法见 [UPSTREAM.md](UPSTREAM.md)。
+给 AmazMe 一个工作目录和任务，它可以读取代码、修改文件、执行 Unix 命令，并通过持久会话、任务记录和工具结果继续工作。实现基于 [Pi 的 packages](https://github.com/earendil-works/pi)，以小内核、可选插件和可恢复执行为主要设计方向。
 
-npm 与源码入口需要 Node.js 22.19 或更新版本。
+## 能做什么
 
-## 从本仓库运行
+- **处理代码任务**：文件读写、精确编辑、命令执行、代码搜索和图片输入；修改已有文件时检查读取版本，避免覆盖外部变更。
+- **管理持续工作**：会话历史、分叉、上下文压缩、介入与排队、取消和任务视图；模型及工具选择跟随当前对话。
+- **连接模型与工具**：供应商 API key、OAuth、兼容端点、MCP 和 Codemode，按需要选择可用工具。
+- **使用多种客户端**：独立终端直接工作；宿主终端客户端、Web 与 Electron 桌面共享同一宿主的会话和实时状态。
+- **修改自身扩展**：发现所选插件的源码和 API，修改后用 `/reload` 重建；候选构建失败时保留可用版本。
+
+项目记忆、历史召回、文件检查点、自动化、完成验证和工作流通过可选插件提供。未选择的能力不注册其工具、后台工作或管理入口。
+
+## 快速开始
+
+### 1. 从本仓库构建
+
+需要 Node.js **22.19 或更新版本**。在仓库根目录运行：
 
 ```bash
 npm install --ignore-scripts
 npm run build
-node packages/coding-agent/dist/bundle/cli.js
 ```
 
-`npm run build` 会先联网刷新模型目录，再按依赖从底向上编译。没有网络时用 `npm run build:offline`，它使用仓库里已有的模型数据。
+首次构建需要联网获取模型目录数据。已有完整本地数据时，可以用 `npm run build:offline` 跳过刷新；该命令会先检查数据是否齐全。
 
-构建完成后，在要工作的目录里启动：
+### 2. 在项目目录启动
 
 ```bash
+cd /path/to/your-project
 node /path/to/AmazMe/packages/coding-agent/dist/bundle/cli.js
 ```
 
-进入交互界面后用 `/login` 连接订阅或 API key，然后给出任务。
+进入终端后，用 `/login` 连接供应商，再用 `/model` 选择模型。也可沿用已有的供应商环境变量，例如 `DEEPSEEK_API_KEY`。OAuth 客户端 ID、回调和供应商请求身份沿用 Pi。
 
-正式 CLI 也能把同一个宿主交给浏览器（回环 WebSocket + 内置的网页客户端）：
+给出一个具体任务，例如：
 
-```bash
-amazme web
+```text
+梳理这个项目的启动入口，说明关键模块之间的关系。
+定位配置读取问题，修正后使用已有检查验证。
+读取这个页面的代码和截图，调整布局并核对实际效果。
 ```
 
-界面语言（中／英）与外观（浅色／深色／跟随系统）在网页的设置面板里切换、存进 agent 的 `settings.json`，宿主按偏好
-（没有偏好时按浏览器语言）在响应文档时就把静态外壳本地化，所以首帧不会闪英文。它会打印回环 URL、服务模式、
-WebSocket 地址与 server id（`started` 表示这次启动自己起了宿主，`already running` 表示接上了已运行的宿主——
-终端客户端与第二个网页从此共用同一个宿主的会话与实时状态），随后在浏览器里打开该 URL 即可看到会话名册、transcript、
-实时状态与输入框：侧栏可以新建会话，输入框右侧的模型档可以切换当前会话的模型与推理档，助手回答按 markdown 排版呈现。
-侧栏的 **Plugins**、**Skills**、**Automation** 与底部的 **Settings** 把主区切成管理面板：插件包与 `mcp.json` 里的 MCP 服务器、
-宿主加载的技能（agent 目录下的可新建／编辑／删除／导入）、宿主自己按间隔运行的定时提示（存在 `schedules.json`，
-关掉页面也照跑，回答落进对应会话），以及宿主发布字段目录的配置编辑（写入全局
-`settings.json`，并让已连接的会话重读设置）。主区右侧的坞里是会话范围的四个面：工作目录文件、终端、会话清单
-（含子代理的子会话）与实时任务图；命中审批策略的工具调用会在输入框上方等你通过或拒绝，每条已提交的助手回答
-带一对评分控件（写进 agent 目录的 `feedback.json`），名册为空时主区给出一张首启引导卡片。名册里还会出现宿主工作目录下的终端会话（标 `terminal`）：附着即认领它，
-宿主按同一 id 建档并从它的 JSONL 种入 transcript，之后把每个已提交的版本写回同一个文件，终端那边因此看到同一会话；
-命令面板同样只有一份目录（宿主自己的命令、插件注册的命令、prompt 模板、技能，外加标 `terminal only` 的终端专属
-命令），客户端执行不了的名字会被如实拒绝而不是当 prompt 发给模型。宿主断开后页面按退避自行重连并重新附着会话，
-重连前后的状态一致。
-细节见 [docs/usage.md](packages/coding-agent/docs/usage.md) 的 "Use the web client"。正式安装包包含宿主模块与预构建网页资源。
+### 3. 选择入口
 
-开发阶段，终端和网页不用先构建，直接跑源码；桌面窗口会先构建壳再打开：
+下表用 `amazme` 表示产品命令。未链接本地包时，可用上面的 `node /path/to/AmazMe/.../cli.js` 启动命令替代它。
+
+| 入口 | 调用 | 用途 |
+| --- | --- | --- |
+| 独立终端 | `amazme` | 直接使用原生终端与持久会话 |
+| Web | `amazme web` | 打开打印的回环 URL，通过浏览器使用宿主 |
+| 常驻宿主 | `amazme server` | 运行宿主，供客户端连接 |
+| 宿主终端客户端 | `amazme client` | 连接同一宿主的会话与实时状态 |
+| 诊断 | `amazme doctor` | 只读检查配置、凭据可用性和运行资源 |
+
+例如，从源码构建产物启动 Web：
 
 ```bash
-npm run dev:tui      # 交互界面，源码入口 packages/coding-agent/src/cli.ts
-npm run dev:web      # 网页客户端，源码入口 cli.ts web
-npm run dev:desktop  # Electron 窗口，加载与 dev:web 同一个宿主
+node /path/to/AmazMe/packages/coding-agent/dist/bundle/cli.js web
 ```
 
-`dev:web`（[scripts/dev-web.mjs](scripts/dev-web.mjs)）默认端口 4310，打开它打印的 URL 即可，`--port`、`--server-id`、
-`--session-dir` 与 `web` 命令一致；样式表按请求读盘，改完刷新页面就能看到，`index.html` 和 `page.ts` 在宿主启动时读取，
-改完要重启这条命令。两个入口都经 `source-resolver.ts` 走 `packages/*/src`；`packages/ai/src/providers/data/` 的模型
-目录数据不入库，`npm run build` 会先刷新它。
-
-`dev:desktop` 先构建 `@amazme/web`，再构建 `@amazme/gui`，然后用 Electron 打开同一个宿主：窗口加载的就是上面这条 `web` 命令印出的回环页面，会话仍是那一套 durable。根 `build` 和 `build:offline` 也在 durable 之后构建这两个包，壳才能解析到网页的 locale 与文案。
-
-项目配置在当前目录的 `.amazme`，用户配置在 `~/.amazme/agent`。命令名是 `amazme`。`@amazme/coding-agent` 的 bin 指向 `dist/bundle/cli.js`，所以要先构建，再从本仓库运行或做 `npm link`。
-
-## 编译运行时发布
-
-依赖包已有构建产物时，使用 Bun 1.4 或更新版本生成本机平台的完整运行目录：
+若希望直接使用 `amazme` 命令，可在构建后链接本地包：
 
 ```bash
-npm run build:binary --workspace @amazme/coding-agent
-# 可指定 Bun 与一个尚不存在的输出目录：
-npm run build:binary --workspace @amazme/coding-agent -- --bun /path/to/bun --out /path/to/release
+npm link --workspace @amazme/coding-agent --ignore-scripts
 ```
 
-默认输出在 `packages/coding-agent/binaries/<platform>-<arch>`。Unix 从该目录的 `amazme` 启动，运行不需要另装 Node 或 Bun。Windows 的可执行文件在 `node_modules/@amazme/coding-agent/amazme.exe`。必须分发整个目录，其中包含同一套已安装模块、插件 API、构建器和界面资源；插件修改后的 `/reload` 继续使用这些模块。构建沿用当前锁文件和本地产物，安装依赖使用 `--ignore-scripts`，不自动重建所有包，也不覆盖已有输出目录。自定义输出应在仓库外，避免候选目录被打进其他包。
+Web 提供会话切换、模型与推理选择、工具结果、文件、终端和任务视图，以及已启用能力的管理面板。支持中文与英文、浅色与深色外观；页面关闭不等于取消宿主已经接纳的工作。
 
-## 验证
+完整操作见 [快速开始](packages/coding-agent/docs/quickstart.md)、[使用指南](packages/coding-agent/docs/usage.md)和 [CLI 参考](packages/coding-agent/docs/cli.md)。
 
-`npm run check:workspace` 检查源码导入、运行依赖、包依赖方向、浏览器入口和轻量入口的依赖预算。
-`npm run test:engineering` 验证检查器以及真实产物打包与隔离安装。
+## 按需扩展
 
-改动包后先构建、再测试该包，例如 `npm run build --workspace @amazme/coding-agent`，随后
-`npm test --workspace @amazme/coding-agent`。默认离线测试隔离继承的供应商凭据；本机 HTTP 服务和 faux provider 验证协议与状态生命周期。
-只有显式设置 `AMAZME_TEST_LIVE=1` 才允许真实供应商测试读取环境凭据。这些测试的通过与否要单独记录。
+先选择适合任务的资源：提示模板复用输入，技能提供操作说明，原生插件贡献工具、命令、提示段、任务、钩子和服务。
 
-## 包
+原生插件使用 Chord facets 和同一个 Durable Harness，注册与资源释放跟随其所属生命周期。选择源码文件或插件包：
 
-依赖只向下。
+```bash
+amazme -e /path/to/plugin
+amazme web -e /path/to/plugin
+```
 
-| 包 | 作用 |
+仓库提供以下可选插件，包目录也随 coding-agent 发布：
+
+| 插件 | 作用 |
 | --- | --- |
-| [@amazme/chord](packages/chord) | 服务、复制状态、RPC 和插件的组合运行时 |
-| [@amazme/telemetry](packages/telemetry) | 与供应商无关的遥测契约 |
-| [@amazme/tui](packages/tui) | 差分渲染的终端界面库 |
-| [@amazme/codemode](packages/codemode) | 只能调用注入工具的 JavaScript 沙箱 |
-| [@amazme/mcp](packages/mcp) | Model Context Protocol 客户端 |
-| [@amazme/protocol](packages/protocol) | 远程会话的 CBOR 帧协议，依赖 chord |
-| [@amazme/ai](packages/ai) | 多供应商模型 API，依赖 telemetry |
-| [@amazme/agent](packages/agent) | 带工具调用的代理循环，依赖 ai |
-| [@amazme/client](packages/client) | 远程会话客户端，依赖 chord 和 protocol |
-| [@amazme/server](packages/server) | 远程会话服务端，依赖 chord 和 protocol |
-| [@amazme/durable](packages/durable) | 持久的对话、任务和文档，依赖 chord 和 ai |
-| [@amazme/env](packages/env) | 经 SSH 部署的远程执行环境，依赖 chord 和 durable |
-| [@amazme/web](packages/web) | 回环网页客户端的文档与样式、启动契约与视图投影（实验切片） |
-| [@amazme/gui](packages/gui) | Electron 窗口，加载同一套回环网页宿主（实验切片） |
-| [@amazme/coding-agent](packages/coding-agent) | 交互式编码代理命令行 |
-| [@amazme/evals](packages/evals) | 文档和宿主评测，依赖 ai 和 coding-agent |
+| [history](packages/coding-agent/plugins/history/README.md) | 只读搜索和读取会话历史 |
+| [memory](packages/coding-agent/plugins/memory/README.md) | 可阅读、可编辑的 Markdown 项目记忆 |
+| [checkpoint](packages/coding-agent/plugins/checkpoint/README.md) | 文件检查点、恢复预览、备份与选择性恢复 |
+| [automation](packages/coding-agent/plugins/automation/README.md) | 宿主定时任务、时区与逐次执行记录 |
+| [verification](packages/coding-agent/plugins/verification/README.md) | 显式命令检查、独立回执与有限修正 |
+| [workflows](packages/coding-agent/plugins/workflows/README.md) | 可复用分阶段任务、有界并发和持久暂停/恢复 |
 
-扩展包在自己的 `package.json` 里用 `pi` 字段声明入口。加载器读的是这个字段。
+例如，使用仓库中的项目记忆插件：
+
+```bash
+amazme -e /path/to/AmazMe/packages/coding-agent/plugins/memory
+```
+
+通过 `/plugins` 查看所选来源，修改原源码后，在任务结束或取消时运行 `/reload`。应用壳和内核修改需要构建与重启。自动化使用宿主的 `server` 角色，详见对应插件说明。
+
+原生包通过 `chord.facets` 声明角色，API 为 `@amazme/coding-agent/plugin`。SDK 与 print/RPC 使用独立的扩展工厂契约，包资源声明沿用 `pi` 字段。开发前查看 [插件执行与重载](packages/coding-agent/docs/plugin-runtime.md)、[原生示例](packages/coding-agent/examples/plugins/)或 [SDK 扩展](packages/coding-agent/docs/extensions.md)。
+
+## 配置与文档
+
+项目配置在工作目录的 `.amazme`，用户配置在 `~/.amazme/agent`。模型、认证、工具和资源选择的具体格式以各专题文档为准。
+
+| 主题 | 文档 |
+| --- | --- |
+| 模型、API key 与 OAuth | [模型配置](packages/coding-agent/docs/models.md)、[供应商认证](packages/coding-agent/docs/providers.md) |
+| 会话、继续与分叉 | [会话管理](packages/coding-agent/docs/sessions.md) |
+| 项目指令、设置与信任 | [配置](packages/coding-agent/docs/configuration.md)、[设置参考](packages/coding-agent/docs/settings.md)、[项目安全](packages/coding-agent/docs/security.md) |
+| 技能与提示模板 | [技能](packages/coding-agent/docs/skills.md)、[提示模板](packages/coding-agent/docs/prompt-templates.md) |
+| 外部工具与程序调用 | [MCP](packages/coding-agent/docs/mcp.md)、[Codemode](packages/coding-agent/docs/codemode.md) |
+| 界面与快捷键 | [主题](packages/coding-agent/docs/themes.md)、[快捷键](packages/coding-agent/docs/keybindings.md) |
+| 嵌入与自动控制 | [TypeScript SDK](packages/coding-agent/docs/sdk.md)、[RPC](packages/coding-agent/docs/rpc.md)、[JSON 事件](packages/coding-agent/docs/json.md) |
+| 排查问题 | [只读诊断](packages/coding-agent/docs/diagnostics.md)、[环境变量](packages/coding-agent/docs/environment-variables.md) |
+
+完整目录见 [产品文档](packages/coding-agent/docs/index.md)。
 
 ## 开发
 
+依赖安装与模型数据准备后，可使用源码入口：
+
 ```bash
-npm test --workspace @amazme/chord
-npm test
+npm run dev:tui
+npm run dev:web
+npm run dev:desktop
 ```
 
-`npm test` 会跑每个带测试脚本的包。单个包用上面的 `--workspace` 形式。
+`dev:web` 默认端口 4310。桌面开发命令先构建 Web、coding-agent 和 GUI，再通过 Electron 打开同一宿主页面。正式 GUI 从已安装依赖解析 CLI；桌面壳需要 Electron，宿主需要 Node.js 22.19+。详见 [桌面包](packages/gui/README.md)。
 
-交互使用、打印模式、RPC 和 SDK 写在 [packages/coding-agent/docs](packages/coding-agent/docs/index.md)。这些文档里很多地方仍写成 Pi。
+修改包后，先构建再运行该包的既有检查：
 
-模型目录与 SDK 会话分享沿用 Pi 服务地址。自身版本检查读取当前 AmazMe 包的 npm 元数据；源码与编译运行时通过各自的发行来源更新。
+```bash
+npm run build --workspace @amazme/coding-agent
+npm test --workspace @amazme/coding-agent
+```
+
+工程检查使用 `npm run check:workspace` 和 `npm run test:engineering`，覆盖导入、运行依赖、依赖方向、浏览器入口、入口预算与实际产物安装。默认离线测试隔离供应商凭据；显式 `AMAZME_TEST_LIVE=1` 才允许真实供应商测试读取环境凭据。
+
+### 编译运行目录
+
+依赖包已有构建产物时，使用 **Bun 1.4 或更新版本**生成本机平台的完整发行目录：
+
+```bash
+npm run build:binary --workspace @amazme/coding-agent
+npm run build:binary --workspace @amazme/coding-agent -- --bun /path/to/bun --out /path/to/new-release
+```
+
+默认输出为 `packages/coding-agent/binaries/<platform>-<arch>`，Unix 从其中的 `amazme` 启动，无需另装 Node 或 Bun。必须保留并分发整个目录，其中包含插件 API、构建器、已安装模块和界面资源；构建不覆盖已有输出目录。当前开发与实跑以 Unix 为主，Windows 复用已有实现，未实测。
+
+### 包结构
+
+包作用域为 `@amazme/*`，依赖只向下。
+
+| 包 | 职责 |
+| --- | --- |
+| [coding-agent](packages/coding-agent) | 产品 CLI、原生终端、宿主与插件接线 |
+| [ai](packages/ai) | 多供应商模型、认证与流式 API |
+| [agent](packages/agent) | 代理循环 |
+| [durable](packages/durable) | 持久对话、任务、工具执行与恢复 |
+| [chord](packages/chord) | 服务、复制状态、RPC 与 facets 生命周期 |
+| [mcp](packages/mcp) | MCP 客户端 |
+| [codemode](packages/codemode) | 调用注入工具的 JavaScript 沙箱 |
+| [env](packages/env) | SSH 远程执行环境与 Unix daemon |
+| [tui](packages/tui) | 终端界面与编辑器 |
+| [web](packages/web) | 网页文档、视图投影与渲染 |
+| [gui](packages/gui) | 加载同一 Web 页面的 Electron 窗口 |
+| [protocol](packages/protocol) | 远程会话帧协议 |
+| [client](packages/client) / [server](packages/server) | 远程会话连接与服务 |
+| [telemetry](packages/telemetry) | 供应商无关的遥测契约 |
+| [evals](packages/evals) | 文档与宿主评测 |
+
+## 来源与许可
+
+AmazMe 基于 Pi 的 packages，保留其 MIT 许可证和原有版权归属。当前上游基线、已吸收提交及后续跟进方法见 [UPSTREAM.md](UPSTREAM.md)，许可证见 [LICENSE](LICENSE)。
+
+产品名、命令及包作用域使用 AmazMe；OAuth 与供应商请求身份、部分模型目录服务和 SDK 会话分享地址沿用 Pi。自身版本检查读取当前 AmazMe 包的元数据，源码和编译运行目录按各自来源更新。
