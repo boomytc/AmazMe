@@ -39,6 +39,9 @@
 
 ### Fixed
 
+- Native and hosted generation now honor the saved provider transport. Native shell prompts only describe the metadata their execution environment supplies.
+- Automation plugin generations share the host's lock library instead of retaining another process-exit listener for each load.
+
 - Packaged guides distinguish native/hosted execution from AgentSession SDK sessions, events, shell metadata and UI actions. Environment markers, SDK provider listing, commands and local references match their current entry points; the unused root container guide packaging entry is removed.
 
 - Hosted terminals now consume the worker's command resources and session plugin commands, and refresh them on reload. The shared catalogue lists only implemented terminal navigation. Resource expansion remains bound to its session and conversation in terminal and Web clients.

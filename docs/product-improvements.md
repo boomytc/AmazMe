@@ -742,3 +742,11 @@ coding-agent 构建、142 项既有参数/命令/shell/会话格式检查通过�
 最终生命周期审计通过 `--trace-warnings` 定位到自动化 bundle 中的 `proper-lockfile`：每次 VM 加载都重新注册一份进程退出监听，关闭 facet 后仍保留。自动化改用宿主已有的 peer 依赖，现有插件 external resolver 从 coding-agent 所属依赖树解析它，不增加锁实现或关闭机制。租约、原子发布和失败恢复保持同一实现。
 
 coding-agent 构建、30 项真实宿主既有检查及 6 项自动化既有检查通过，没有新增仓库测试；原检查中的 MaxListenersExceededWarning 消失。编译模块实际构建三代自动化包，加载/释放 36 次，SIGINT/SIGTERM/SIGABRT 各保持 1 个监听，bundle manifest 明确包含外部 proper-lockfile，源码不再内嵌该库。临时构建目录清理。该阶段不替代 Codex 工具全链路与最终完整发行验收。
+
+### Codex 真实认证与原生传输设置
+
+使用用户指定的 amazing boom 现有 Edge 账号，通过 Pi 的 client ID、localhost:1455 回调、scope 和 originator 完成 Codex OAuth；真实 gpt-5.6-luna 返回预期回答。两个凭据实例并发刷新只发出一次 token 请求，访问凭据与持久结果一致，临时认证文件为 0600。正式安装宿主中的 read、edit、bash 均成功，切换到 gpt-6.1-sol 后完成文件验证；同宿主/同会话重启后再次执行实际命令并回复成功。关闭后 SQLite 中 16 个任务全部 terminal。两份隔离配置的凭据和授权事件均已清理。
+
+实跑暴露默认原生/宿主没有传递保存的 transport 设置，现已在共用 Harness settings 的 stream getter 中读取它，不添加供应商分支或另一个请求层。默认原生提示不再复用只适用于 SDK 的 shell 会话环境变量说明；SDK 实现保持其实际契约。包构建和 56 项既有启动/提示检查通过，没有新增仓库测试；安装版实际三轮生成收到 auto、sse、websocket，提示没有不存在的元数据说明。
+
+gpt-5.6-luna 工具长流两次超时，其中一次记录上游 WebSocket 1011 keepalive ping timeout；等待超时后实际取消并正常关闭，不计为通过。SSE 配置和同一账号的 gpt-6.1-sol 完成后续验收。Bun 1.4.2 的最新完整发行目录通过真实 Unix PTY 调用该供应商，并核对 SQLite 中最终 assistant 回答、成功 read/bash 结果及零在途任务后才退出。以上证据不承诺外部服务持续可用。

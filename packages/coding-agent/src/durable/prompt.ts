@@ -12,13 +12,13 @@ import { writeToolSystemPromptContribution } from "../core/tools/write.ts";
 
 const CONTRIBUTIONS = {
 	read: readToolSystemPromptContribution,
-	bash: bashToolSystemPromptContribution,
+	bash: { ...bashToolSystemPromptContribution, guidelines: [] },
 	edit: editToolSystemPromptContribution,
 	write: writeToolSystemPromptContribution,
 	grep: grepToolSystemPromptContribution,
 	find: findToolSystemPromptContribution,
 	ls: lsToolSystemPromptContribution,
-	powershell: powershellToolSystemPromptContribution,
+	powershell: { ...powershellToolSystemPromptContribution, guidelines: [] },
 };
 
 /** pi's section order; `buildSystemPromptSections()` omits the ones without content. */

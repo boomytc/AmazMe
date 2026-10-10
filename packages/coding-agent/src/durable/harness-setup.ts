@@ -52,6 +52,7 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 			const provider = settingsManager.getProviderRetrySettings();
 			const idle = settingsManager.getHttpIdleTimeoutMs();
 			return {
+				transport: settingsManager.getTransport(),
 				timeoutMs: provider.timeoutMs ?? (idle === 0 ? 2147483647 : idle),
 				maxRetryDelayMs: provider.maxRetryDelayMs,
 				...(provider.maxRetries === undefined ? {} : { maxRetries: provider.maxRetries }),
