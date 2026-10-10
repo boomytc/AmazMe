@@ -1097,7 +1097,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		providerAuthView = undefined;
 		modal = undefined;
 		void selectSession(sessionId).catch((error: unknown) => {
-			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
+			renderer.setConnection(
+				(language) => translate(language, "page.attachFailed", { error: message(error) }),
+				"error",
+				(language) => translate(language, "page.attachFailedShort"),
+			);
 		});
 	};
 	// The host creates the session; the roster shows it from the replicated directory. A second
@@ -2280,7 +2284,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					return;
 				} catch (error: unknown) {
 					if (attempt >= 4 && client.connected) {
-						renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
+						renderer.setConnection(
+							(language) => translate(language, "page.attachFailed", { error: message(error) }),
+							"error",
+							(language) => translate(language, "page.attachFailedShort"),
+						);
 						return;
 					}
 					renderer.setConnection(
@@ -2358,7 +2366,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const initial = listed.find((item) => item.id === remembered) ?? listed[0];
 	if (initial !== undefined) {
 		await selectSession(initial.id).catch((error: unknown) => {
-			renderer.setConnection(copy("page.attachFailed", { error: message(error) }), "error");
+			renderer.setConnection(
+				(language) => translate(language, "page.attachFailed", { error: message(error) }),
+				"error",
+				(language) => translate(language, "page.attachFailedShort"),
+			);
 		});
 	}
 	paint();
