@@ -32,11 +32,16 @@ With terminal stdin and stdout, AmazMe opens the terminal UI unless `--print`, `
 | Input | Behavior |
 |---|---|
 | `message` | Provide an initial prompt |
+| Additional messages | Queue each remaining argument as a follow-up in the default terminal |
 | `@path` | Include a text file or image in the first prompt |
 | Piped stdin | Prepend its contents to the first prompt |
 | `--` | Stop option parsing so a prompt can begin with `-` |
 
 AmazMe resolves `@path` from the current working directory. The working directory also controls project configuration, resource discovery, and session grouping.
+
+The default terminal includes CLI images in the first input and reserves all supplied messages in order before accepting interactive input. Its existing follow-up policy applies: the default handles one queued input at a time; `followUpMode: "all"` can group them at the next boundary. The terminal is live during image preparation, so `Esc` cancels preparation and inputs still waiting for admission. Already admitted images and queued messages persist in the native session and recover after an interrupted exit.
+
+New images use the shared image processor, the selected model's resize limits and the `images.autoResize` setting before entering history. Conversion/resize notes remain in the input; an image that cannot be processed is explicitly marked as omitted. Later model changes do not rewrite historical images. Native clipboard images are attached directly to the draft; `/attachments` removes them before submission. Prompt-template and skill expansion keep their attached images. Native plugin commands accept text arguments, and an image-bearing command is refused before running rather than discarding its attachments.
 
 `--print` controls whether AmazMe runs once and exits. `--mode` selects the output interface. `--mode text` does not force one-shot execution when stdin and stdout are terminals; use `--print` for that behavior.
 

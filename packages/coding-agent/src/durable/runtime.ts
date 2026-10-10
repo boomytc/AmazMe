@@ -1,6 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import { getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
+import { getSupportedThinkingLevels, type ImageContent, type ModelThinkingLevel, type TextContent } from "@amazme/ai";
 import { defineFacet } from "@amazme/chord";
 import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
@@ -68,6 +68,7 @@ import type { McpManagement } from "../core/mcp/management.ts";
 import { NATIVE_COMMANDS } from "./commands.ts";
 import { APP_COMMAND, APP_NAME, VERSION } from "../config.ts";
 import { collectSettingsDiagnostics } from "../core/settings-diagnostics.ts";
+import { normalizePromptImages } from "../utils/prompt-images.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -122,8 +123,8 @@ export interface DurableController {
 	reload(): Promise<void>;
 	readonly mcp?: McpManagement;
 	readonly auth?: ProviderAuthManagement;
-	/** Prompt when idle; otherwise steer or queue a follow-up. */
-	submit(text: string, whenBusy: "steer" | "followUp"): Promise<void>;
+	/** Normalize and admit input to the current conversation; false means preparation/command rejection. */
+	submit(text: string, whenBusy: "steer" | "followUp", images?: readonly ImageContent[]): Promise<boolean>;
 	compact(instructions: string | undefined): Promise<void>;
 	abort(): Promise<void>;
 	cycleThinking(): Promise<void>;
@@ -394,6 +395,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		let queue = Promise.resolve();
 		let closing: Promise<void> | undefined;
 		let activeCommand: AbortController | undefined;
+		let inputGeneration = 0;
 		// One at a time, so toggles, switches, and key presses apply in order.
 		const command = (operation: () => Promise<void>): Promise<void> => {
 			queue = queue.then(() => {
@@ -527,12 +529,36 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				if (activeCommand === operation) activeCommand = undefined;
 			}
 		};
-		const submitInput = async (text: string, whenBusy: "steer" | "followUp"): Promise<void> => {
+		const submitInput = async (text: string, whenBusy: "steer" | "followUp", images: readonly ImageContent[] = []): Promise<void> => {
 			if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
 			const invocation = /^\/([^\s]+)(?:\s+([\s\S]*))?$/u.exec(text);
 			const selected = invocation === null ? undefined : pluginCommands?.list().find(({ name }) => name === invocation[1]);
-			if (selected !== undefined) await runPluginCommand(selected, invocation?.[2] ?? "");
-			else watchAnswer(await current.submit({ type: "input", content: expandInput(text), whenBusy }, context));
+			if (selected !== undefined) {
+				if (images.length > 0) throw new Error("Plugin commands do not accept attached images; submit a prompt or clear the attachments first.");
+				await runPluginCommand(selected, invocation?.[2] ?? "");
+				return;
+			}
+			let expanded = expandInput(text);
+			if (images.length === 0) {
+				watchAnswer(await current.submit({ type: "input", content: expanded, whenBusy }, context));
+				return;
+			}
+			const operation = new AbortController();
+			activeCommand = operation;
+			try {
+				const ref = agentOf(state.conversation).model;
+				const model = ref === undefined ? undefined : modelRuntime.getModel(ref.provider, ref.modelId);
+				const normalized = await normalizePromptImages(images, {
+					autoResizeImages: settingsManager.getImageAutoResize(),
+					resizeOptions: model?.inputLimits?.images?.resize,
+				}, operation.signal);
+				if (normalized.hints.length > 0) expanded += `\n\n${normalized.hints.join("\n")}`;
+				const content: (TextContent | ImageContent)[] = [{ type: "text", text: expanded }, ...normalized.images];
+				operation.signal.throwIfAborted();
+				watchAnswer(await current.submit({ type: "input", content, whenBusy }, context));
+			} finally {
+				if (activeCommand === operation) activeCommand = undefined;
+			}
 		};
 		const controller: DurableController = {
 			auth,
@@ -556,7 +582,17 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				notice("info", plugins === undefined ? "Reloaded prompt resources" : "Reloaded prompt resources and plugins");
 			}),
 			mcp: activeMcp.management,
-			submit: (text, whenBusy) => command(() => submitInput(text, whenBusy)),
+			submit: async (text, whenBusy, images) => {
+				const copied = images?.map((image) => ({ ...image }));
+				const generation = inputGeneration;
+				let accepted = false;
+				await command(async () => {
+					if (generation !== inputGeneration) throw new Error("Input preparation cancelled");
+					await submitInput(text, whenBusy, copied);
+					accepted = true;
+				});
+				return accepted;
+			},
 			compact: (instructions) =>
 				command(async () => {
 					if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
@@ -584,6 +620,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				}),
 			// Not queued: it waits until the conversation is idle.
 			abort: () => {
+				++inputGeneration;
 				activeCommand?.abort(new Error("Command cancelled"));
 				return current.abort(context).catch(fail);
 			},

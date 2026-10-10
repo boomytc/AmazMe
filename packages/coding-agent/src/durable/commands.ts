@@ -1,6 +1,7 @@
 /** The commands the native presentation owns; plugins cannot shadow them. */
 export const NATIVE_COMMANDS = [
 	{ name: "model", description: "Select the model" },
+	{ name: "attachments", description: "Remove draft image attachments" },
 	{ name: "login", description: "Sign in to a model provider", argumentHint: "[provider]" },
 	{ name: "logout", description: "Remove saved provider credentials", argumentHint: "[provider]" },
 	{ name: "mcp", description: "Manage MCP servers" },

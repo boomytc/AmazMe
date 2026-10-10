@@ -8,7 +8,9 @@ Type a prompt and press `Enter`. `Shift+Enter` inserts a newline. While work is 
 
 Press `Esc` to abort the current conversation's work. In a selector, `Esc` closes that selector. `Ctrl+C` exits the terminal; `Ctrl+D` exits when the editor is empty. Closing a persistent session keeps interrupted work recoverable; use `Esc` first when you want an explicit cancellation.
 
-Text paste, path completion and terminal text selection use the shared editor and TUI. CLI `@file` text is included in the initial prompt. The model can inspect additional files through its selected tools. See [CLI options](cli.md) and [Keybindings](keybindings.md) for the supported invocation and active action names.
+Text paste, path completion and terminal text selection use the shared editor and TUI. CLI `@file` text and images enter the initial prompt; remaining message arguments enter the existing follow-up queue in order. The model can inspect additional files through its selected tools. See [CLI options](cli.md) and [Keybindings](keybindings.md) for the supported invocation and active action names.
+
+Use the configured `app.clipboard.pasteImage` binding to paste clipboard content: macOS defaults to `Cmd+V` with `Ctrl+V` as a fallback, and Linux to `Ctrl+Shift+V` with `Ctrl+V` as a fallback. Copied files keep their paths, an image becomes a draft attachment, and plain text is the final fallback. An empty bracketed-paste notification uses the same reader. A badge shows attached images; `/attachments` removes one or all. `Enter` or the follow-up key can submit an image-only draft. Clipboard images go into the persisted input without an intermediate image file. A read that returns after focus, conversation or terminal ownership changes is discarded.
 
 ## Follow execution
 
@@ -25,6 +27,7 @@ The footer shows the focused conversation, saved title, working directory, conte
 | Cycle supported thinking levels | `Shift+Tab` |
 | Sign in or remove saved credentials | `/login` / `/logout` |
 | Manage MCP connections | `/mcp` |
+| Remove draft images | `/attachments` |
 | Reload resources and selected plugins while idle | `/reload` |
 | Inspect selected plugin sources | `/plugins`, when plugins are selected |
 

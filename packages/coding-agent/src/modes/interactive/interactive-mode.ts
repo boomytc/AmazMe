@@ -132,8 +132,9 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { addMcpServerConfig, loadMcpConfig } from "../../extensions/mcp/config.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
-import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
-import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
+import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
+import { extensionForImageMimeType } from "../../utils/clipboard-image.ts";
+import { readClipboardContent } from "../../utils/clipboard-content.ts";
 import { isEmptyTerminalPaste } from "../../utils/clipboard-paste.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
@@ -3260,16 +3261,15 @@ export class InteractiveMode {
 			this.ui.requestRender();
 		};
 		try {
-			const filePaths = await readClipboardFilePaths();
-			if (!target.isActive()) return;
-			if (filePaths?.length) {
-				insertPaths(filePaths);
+			const content = await readClipboardContent(() => target.isActive());
+			if (!content) return;
+			if (content.type === "files") {
+				insertPaths(content.paths);
 				return;
 			}
 
-			const image = await readClipboardImage();
-			if (!target.isActive()) return;
-			if (image) {
+			if (content.type === "image") {
+				const image = content.image;
 				const ext = extensionForImageMimeType(image.mimeType) ?? "png";
 				const filePath = path.join(os.tmpdir(), `amazme-clipboard-${crypto.randomUUID()}.${ext}`);
 				fs.writeFileSync(filePath, Buffer.from(image.bytes), { mode: 0o600 });
@@ -3277,9 +3277,8 @@ export class InteractiveMode {
 				return;
 			}
 
-			const text = await readClipboardText();
-			if (text && target.isActive()) {
-				target.insertTextAtCursor(text);
+			if (content.type === "text") {
+				target.insertTextAtCursor(content.text);
 				this.ui.requestRender();
 			}
 		} catch (error) {

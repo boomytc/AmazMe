@@ -6,6 +6,8 @@
 - A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
 ### Added
 
+- Native CLI image arguments and every message now reach the existing Durable input queue. Clipboard images attach to the draft, support image-only submission and `/attachments` removal, and retain input ownership across preparation, cancellation and close. Native and SDK prompts share image normalization and the clipboard content reader.
+
 - Native `--models` and saved `enabledModels` now control startup selection and ordered forward/backward cycling through the existing resolver and ModelRuntime. Scope thinking suffixes, authentication changes, current-conversation persistence and custom cycle keybindings are honored without changing global defaults.
 
 - Hosted model services and terminal clients use the same provider interaction owner for `/login` and `/logout`. Active sign-in keeps the worker alive; plugin reload preserves its prompt, while late submissions remain bound to their flow and session.

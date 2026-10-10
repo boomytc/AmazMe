@@ -746,7 +746,7 @@ export async function main(args: string[], options?: MainOptions) {
 			);
 			process.exit(1);
 		}
-		const { initialMessage } = await prepareInitialMessage(parsed);
+		const { initialMessage, initialImages } = await prepareInitialMessage(parsed);
 		const projectTrusted = await resolveProjectTrusted({
 			cwd,
 			trustStore: new ProjectTrustStore(agentDir),
@@ -786,6 +786,8 @@ export async function main(args: string[], options?: MainOptions) {
 			...(parsed.noTools ? { noTools: "all" } : parsed.noBuiltinTools ? { noTools: "builtin" } : {}),
 			noMcp: parsed.noMcp === true || parsed.noExtensions === true,
 			...(initialMessage === undefined ? {} : { initialMessage }),
+			...(initialImages === undefined ? {} : { initialImages }),
+			initialMessages: parsed.messages.slice(),
 		});
 		printTimings();
 		return;

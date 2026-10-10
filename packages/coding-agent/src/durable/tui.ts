@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@amazme/ai";
+import type { AssistantMessage, ImageContent, ToolResultMessage, Usage, UserMessage } from "@amazme/ai";
 import type {
 	ConversationId,
 	EntryRecord,
@@ -33,6 +33,7 @@ import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { time } from "../core/timings.ts";
+import { readClipboardContent } from "../utils/clipboard-content.ts";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
 import { codemodeRenderers } from "../core/codemode/renderer.ts";
 import { McpManagerView } from "../core/mcp/view.ts";
@@ -138,8 +139,7 @@ class CompactionComponent extends Box {
 interface Handlers {
 	readonly plugins: boolean;
 	completeCommand(name: string, prefix: string): Promise<readonly SlashCommandCompletion[] | null>;
-	submit(text: string): void;
-	followUp(text: string): void;
+	submit(text: string, whenBusy: "steer" | "followUp", images: readonly ImageContent[]): Promise<boolean> | undefined;
 	abort(): void;
 	exit(): void;
 	selectModel(): void;
@@ -161,7 +161,13 @@ class DurableTui {
 	readonly #footerStats = new Text("", 1, 0);
 	readonly #footerHints = new Text("", 1, 0);
 	readonly #editorContainer = new Container();
+	readonly #attachments = new Text("", 1, 0);
 	readonly #editor: CustomEditor;
+	#images: ImageContent[] = [];
+	#pasteEpoch = 0;
+	#clipboardRead: Promise<void> | undefined;
+	#disposed = false;
+	#conversationId: string | undefined;
 	readonly #cwd: string;
 	readonly #plugins: boolean;
 	readonly #completeCommand: Handlers["completeCommand"];
@@ -200,7 +206,46 @@ class DurableTui {
 			paddingX: 1,
 			embedWorkingStatus: true,
 		});
-		this.#editor.onSubmit = handlers.submit;
+		const send = (text: string, whenBusy: "steer" | "followUp"): void => {
+			const epoch = ++this.#pasteEpoch;
+			const images = this.#images.slice();
+			const result = handlers.submit(text, whenBusy, images);
+			if (result === undefined) return;
+			this.#images = [];
+			this.#syncAttachments();
+			const finish = (accepted: boolean): void => {
+				if (!accepted && !this.#disposed && this.#pasteEpoch === epoch) {
+					this.#images = images;
+					this.#syncAttachments();
+				}
+			};
+			void result.then(finish, () => finish(false));
+		};
+		this.#editor.onSubmit = (text) => send(text, "steer");
+		this.#editor.onPasteImage = () => {
+			if (this.#clipboardRead !== undefined) return;
+			const epoch = this.#pasteEpoch;
+			const isActive = () => !this.#disposed && this.#pasteEpoch === epoch && this.#ui.getFocusedComponent() === this.#editor;
+			this.#clipboardRead = readClipboardContent(isActive).then((content) => {
+				if (!content || !isActive()) return;
+				if (content.type === "image") {
+					this.#images.push({ type: "image", data: Buffer.from(content.image.bytes).toString("base64"), mimeType: content.image.mimeType });
+					this.#syncAttachments();
+					return;
+				}
+				if (content.type === "files") {
+					if (content.paths.some((path) => /\p{Cc}/u.test(path))) throw new Error("Clipboard file path contains control characters");
+					const cursor = this.#editor.getCursor();
+					const line = this.#editor.getText().split("\n")[cursor.line] ?? "";
+					const before = line[cursor.col - 1];
+					const after = line[cursor.col];
+					this.#editor.insertTextAtCursor(`${before && !/\s/u.test(before) ? " " : ""}${content.paths.join("\n")}${after && !/\s/u.test(after) ? " " : ""}`);
+				} else this.#editor.insertTextAtCursor(content.text);
+				this.#ui.requestRender();
+			}).catch((error: unknown) => {
+				if (isActive()) this.mount(new InfoPanel("Clipboard", error instanceof Error ? error.message : String(error), () => this.restoreEditor()));
+			}).finally(() => { this.#clipboardRead = undefined; });
+		};
 		this.#editor.setShortcutLine(() => `Enter send · ${keyText("app.message.followUp")} follow-up`);
 		this.#editor.onEscape = handlers.abort;
 		this.#editor.onCtrlD = handlers.exit;
@@ -216,16 +261,16 @@ class DurableTui {
 		});
 		this.#editor.onAction("app.message.followUp", () => {
 			const text = this.#editor.getText().trim();
-			if (!text) return;
+			if (!text && this.#images.length === 0) return;
 			this.#editor.setText("");
-			handlers.followUp(text);
+			send(text, "followUp");
 		});
 
 		this.#editorContainer.addChild(this.#editor);
 		this.#footer.addChild(this.#footerStats);
 		this.#footer.addChild(this.#footerHints);
 		// One empty line between the transcript and everything below it.
-		for (const component of [this.#chat, this.#tasks, this.#queue, this.#notices, this.#editorContainer, this.#footer]) {
+		for (const component of [this.#chat, this.#tasks, this.#queue, this.#notices, this.#attachments, this.#editorContainer, this.#footer]) {
 			this.#ui.addChild(component);
 		}
 		if (this.#ui instanceof TuiAltScreen) {
@@ -238,6 +283,7 @@ class DurableTui {
 				{ component: this.#tasks, shrink: 1, minSize: 0 },
 				{ component: this.#queue, shrink: 1, minSize: 0 },
 				{ component: this.#notices, shrink: 1, minSize: 0 },
+				{ component: this.#attachments, shrink: 1, minSize: 0 },
 				{ component: this.#editorContainer, shrink: 1, minSize: 3 },
 				{ component: this.#footer, shrink: 1, minSize: 0 },
 			]);
@@ -258,6 +304,10 @@ class DurableTui {
 	}
 
 	stop(): void {
+		this.#disposed = true;
+		++this.#pasteEpoch;
+		this.#editor.onPasteImage = undefined;
+		this.#images = [];
 		this.#discardTools();
 		this.#indicator?.dispose();
 		this.#ui.stop();
@@ -272,6 +322,7 @@ class DurableTui {
 	}
 
 	mount(component: Component): void {
+		++this.#pasteEpoch;
 		this.#editorContainer.clear();
 		this.#editorContainer.addChild(component);
 		this.#ui.setFocus(component);
@@ -294,6 +345,8 @@ class DurableTui {
 	}
 
 	apply(view: DurableView): void {
+		const conversationId = String(view.conversation.conversation.id);
+		if (this.#conversationId !== conversationId) { this.#conversationId = conversationId; ++this.#pasteEpoch; }
 		if (this.#autocompleteCommands !== view.commands) {
 			this.#autocompleteCommands = view.commands;
 			this.#editor.setAutocompleteProvider(new CombinedAutocompleteProvider([
@@ -354,12 +407,32 @@ class DurableTui {
 		this.#syncTasks(view.tasks);
 		this.#syncQueue((view.conversation.docs["amazme.inbox"] ?? { items: [] }) as InboxState);
 		this.#syncNotices(view);
+		this.#syncAttachments();
 		this.#editor.borderColor = theme.getThinkingBorderColor(agentOf(view.conversation).thinkingLevel ?? "off");
 		this.#syncStatus(live);
 		this.#syncFooter(view);
 		if (this.#rebuilt) this.#transcript?.scrollToEnd();
 		this.#ui.requestRender(this.#rebuilt);
 		this.#rebuilt = false;
+	}
+
+	#syncAttachments(): void {
+		this.#attachments.setText(this.#images.length === 0 ? "" : theme.fg("muted", `${this.#images.length} ${this.#images.length === 1 ? "image" : "images"} attached · /attachments to remove`));
+		this.#ui.requestRender();
+	}
+
+	showAttachments(): void {
+		const images = this.#images.slice();
+		if (images.length === 0) { this.mount(new InfoPanel("Attachments", "No images attached", () => this.restoreEditor())); return; }
+		const selector = new ListSelector("Remove attachment:", [
+			...images.map((image, index) => ({ value: String(index), label: `Image ${index + 1}`, description: image.mimeType })),
+			{ value: "all", label: "Clear all images" },
+		], (value) => {
+			this.#images = value === "all" ? [] : this.#images.filter((image) => image !== images[Number(value)]);
+			this.#syncAttachments();
+			this.restoreEditor();
+		}, () => this.restoreEditor());
+		this.mount(selector);
 	}
 
 	#syncTasks(graph: TaskGraph | undefined): void {
@@ -757,33 +830,30 @@ export async function runDurableTui(
 	view = new DurableTui(source.current().session.cwd, {
 		plugins: controller.describePlugins !== undefined,
 		completeCommand: (name, prefix) => controller.completeCommand?.(name, prefix) ?? Promise.resolve(null),
-		submit: (text) => {
+		submit: (text, whenBusy, images) => {
 			const trimmed = text.trim();
-			if (!trimmed) return;
+			if (!trimmed && images.length === 0) return;
+			if (whenBusy === "followUp") return controller.submit(trimmed, whenBusy, images);
 			const authCommand = /^\/(login|logout)(?:\s+(.*))?$/su.exec(trimmed);
-			if (authCommand) return showAuth(authCommand[1] === "login" ? "login" : "logout", authCommand[2]?.trim() || undefined);
-			if (trimmed === "/mcp") return showMcp();
+			if (authCommand) { showAuth(authCommand[1] === "login" ? "login" : "logout", authCommand[2]?.trim() || undefined); return; }
+			if (trimmed === "/mcp") { showMcp(); return; }
 			if (trimmed === "/plugins" && controller.describePlugins !== undefined) {
 				view.mount(new InfoPanel("Plugins", controller.describePlugins(), () => view.restoreEditor()));
 				return;
 			}
 			if (trimmed === "/reload") return void controller.reload();
-			if (trimmed === "/model") return selectModel();
+			if (trimmed === "/model") { selectModel(); return; }
+			if (trimmed === "/attachments") { view.showAttachments(); return; }
 			if (trimmed === "/tasks") return void controller.toggleTasks();
-			if (trimmed === "/agents" || trimmed === "/tree") return selectConversation();
+			if (trimmed === "/agents" || trimmed === "/tree") { selectConversation(); return; }
 			if (trimmed === "/fork") return void controller.fork();
 			if (trimmed === "/older") return void controller.loadOlder();
 			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);
 			}
-			const invocation = /^\/([a-z0-9][a-z0-9:-]*)(?:\s+(.*))?$/su.exec(trimmed);
-			if (invocation !== null && source.current().commands?.some(({ name }) => name === invocation[1])) {
-				return void controller.runCommand(invocation[1]!, invocation[2] ?? "");
-			}
-			void controller.submit(trimmed, "steer");
+			return controller.submit(trimmed, "steer", images);
 		},
-		followUp: (text) => void controller.submit(text, "followUp"),
 		abort: () => void controller.abort(),
 		exit,
 		selectModel,
