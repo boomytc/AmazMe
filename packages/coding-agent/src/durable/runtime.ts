@@ -20,6 +20,8 @@ import {
 } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
+import { ProviderLogin } from "../core/provider-login.ts";
+import type { ProviderAuthManagement } from "../core/provider-login.ts";
 import { createAgentExtensionsFacet } from "../core/plugins/agent-extensions.ts";
 import { AgentRuntime, createAgentRuntime } from "../core/plugins/agent-runtime.ts";
 import { AgentController } from "../core/plugins/agent-controller.ts";
@@ -109,6 +111,7 @@ export interface DurableController {
 	/** Reload the selected application plugin facets; absent when none were configured. */
 	reloadPlugins?(): Promise<void>;
 	readonly mcp?: McpManagement;
+	readonly auth?: ProviderAuthManagement;
 	/** Prompt when idle; otherwise steer or queue a follow-up. */
 	submit(text: string, whenBusy: "steer" | "followUp"): Promise<void>;
 	compact(instructions: string | undefined): Promise<void>;
@@ -212,6 +215,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;
 	let plugins: PluginRuntime | undefined;
+	let providerLogin: ProviderLogin | undefined;
 	let disposeView = (): void => {};
 	try {
 		configureHarnessHttp(settingsManager);
@@ -302,6 +306,17 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			});
 		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
+		const auth = new ProviderLogin(modelRuntime, { getDeviceId: () => settingsManager.getOrCreateDeviceId() });
+		providerLogin = auth;
+		let lastLogin: string | undefined;
+		const stopAuth = auth.subscribe(() => {
+			update({ models: models() });
+			const login = auth.snapshot().login;
+			if (!login || !["done", "error", "cancelled"].includes(login.status) || lastLogin === login.id) return;
+			lastLogin = login.id;
+			notice(login.status === "error" ? "error" : "info", login.error ?? (login.status === "done"
+				? `Signed in to ${login.provider}; select a model with /model.` : "Provider sign-in cancelled."));
+		});
 		report = (error) => notice("warning", error instanceof Error ? error.message : String(error));
 		for (const error of pendingReports) report(error);
 		let unsubscribe = conversation.subscribe((value) => update({ conversation: value, lane: laneNow(value) }));
@@ -424,6 +439,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			}));
 		}
 		const controller: DurableController = {
+			auth,
 			...(plugins === undefined ? {} : {
 				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources),
 				runCommand: (name: string, args: string) => command(async () => {
@@ -570,6 +586,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		};
 
 		disposeView = () => {
+			stopAuth();
 			unsubscribeCommands();
 			unsubscribe();
 			unsubscribeCommits();
@@ -629,6 +646,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					activeCommand?.abort(new Error("Session closing"));
 					disposeView();
 					try {
+						await auth.close();
+						await settingsManager.flush();
 						await queue;
 						// Close writes no outcome: a running turn resumes with --continue.
 						await opened.close(context);
@@ -655,6 +674,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		return result;
 	} catch (error) {
 		disposeView();
+		await providerLogin?.close().catch(() => {});
 		await harness?.close(context).catch(() => {});
 		await plugins?.close().catch(() => {});
 		await mcp?.close().catch(() => {});

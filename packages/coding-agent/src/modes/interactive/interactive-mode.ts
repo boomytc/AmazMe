@@ -6780,16 +6780,16 @@ export class InteractiveMode {
 	}
 
 	private async showAuthPrompt(dialog: LoginDialogComponent, prompt: AuthPrompt, providerId: string): Promise<string> {
+		if (prompt.signal?.aborted) throw new Error("Login cancelled");
 		let response: Promise<string>;
 		if (prompt.type === "select") {
 			response = this.showAuthSelect(dialog, prompt, providerId);
 		} else if (prompt.type === "manual_code") {
 			response = dialog.showManualInput(prompt.message);
 		} else {
-			response = dialog.showPrompt(prompt.message, prompt.placeholder);
+			response = dialog.showPrompt(prompt.message, prompt.placeholder, prompt.type === "secret");
 		}
 		if (!prompt.signal) return response;
-		if (prompt.signal.aborted) throw new Error("Login cancelled");
 		const signal = prompt.signal;
 		let onAbort: (() => void) | undefined;
 		const aborted = new Promise<string>((_resolve, reject) => {
@@ -6800,6 +6800,7 @@ export class InteractiveMode {
 			return await Promise.race([response, aborted]);
 		} finally {
 			if (onAbort) signal.removeEventListener("abort", onAbort);
+			dialog.clearPrompt();
 		}
 	}
 

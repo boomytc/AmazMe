@@ -6,6 +6,8 @@
 - A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
 ### Added
 
+- Native `/login` and `/logout` reuse the provider interaction owner and ModelRuntime credential APIs, including provider/method selection, prompt expiry, owned cancellation and close cleanup. OAuth identity remains Pi's.
+
 - Native plugins use Durable `output`, `structuredOutputSchema` and `executeTool`; MCP, codemode, workflow and verification calls share owned tasks and scoped result retirement.
 - Native image reading uses provider limits and the existing image worker; standalone Durable hosts may explicitly load Photon.
 
@@ -27,6 +29,8 @@
 - Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
 
 ### Fixed
+
+- TUI login secret prompts stay masked before and after submission; each new prompt gets a fresh input so undo cannot restore a previous credential into another prompt. Expired callback prompts clear without cancelling the completed callback flow.
 
 - Added `amazme auth login/logout` through the existing provider and credential APIs, including masked terminal input, method selection and cancellation. Authentication guidance and CLI examples now use the installed command name; OAuth identity remains Pi's.
 

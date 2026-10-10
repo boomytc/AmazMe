@@ -40,6 +40,7 @@ import { McpManagerView } from "../core/mcp/view.ts";
 import { manageMcp } from "./mcp-menu.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
+import { manageProviderAuth } from "./provider-menu.ts";
 import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
 import { DynamicBorder } from "../modes/interactive/components/dynamic-border.ts";
 import { formatTokens } from "../modes/interactive/components/footer.ts";
@@ -500,7 +501,7 @@ class DurableTui {
 		this.#footerHints.setText(
 			theme.fg(
 				"dim",
-				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp${this.#plugins ? "  /plugins  /reload" : ""}  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
+				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp  /login${this.#plugins ? "  /plugins  /reload" : ""}  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
 			),
 		);
 	}
@@ -666,8 +667,24 @@ export async function runDurableTui(
 	});
 	let view!: DurableTui;
 	let managingMcp = false;
+	let authFlow: { controller: AbortController; done: Promise<void> } | undefined;
+	const showAuth = (mode: "login" | "logout", providerId?: string): void => {
+		const auth = controller.auth;
+		if (!auth || authFlow || managingMcp) return;
+		const owner = new AbortController();
+		const done = manageProviderAuth(auth, mode, providerId, {
+			ui: view.ui,
+			mount: (component) => view.mount(component),
+			select: (title, items, confirm, cancel) => view.mount(new ListSelector(title, items, confirm, cancel)),
+			inform: (text, close) => view.mount(new InfoPanel("Provider authentication", text, close)),
+		}, owner.signal).finally(() => {
+			if (!owner.signal.aborted) view.restoreEditor();
+			if (authFlow?.controller === owner) authFlow = undefined;
+		});
+		authFlow = { controller: owner, done };
+	};
 	const showMcp = (): void => {
-		if (managingMcp || controller.mcp === undefined) return;
+		if (managingMcp || authFlow || controller.mcp === undefined) return;
 		managingMcp = true;
 		const manager = new McpManagerView(view.ui, theme, KeybindingsManager.create(), settings.getLocalePreference() === "zh");
 		view.mount(manager);
@@ -793,6 +810,8 @@ export async function runDurableTui(
 		submit: (text) => {
 			const trimmed = text.trim();
 			if (!trimmed) return;
+			const authCommand = /^\/(login|logout)(?:\s+(.*))?$/su.exec(trimmed);
+			if (authCommand) return showAuth(authCommand[1] === "login" ? "login" : "logout", authCommand[2]?.trim() || undefined);
 			if (trimmed === "/mcp") return showMcp();
 			if (trimmed === "/plugins" && controller.describePlugins !== undefined) {
 				view.mount(new InfoPanel("Plugins", controller.describePlugins(), () => view.restoreEditor()));
@@ -835,6 +854,9 @@ export async function runDurableTui(
 	try {
 		end = await Promise.race([exited.then(() => undefined), ...(closed === undefined ? [] : [closed])]);
 	} finally {
+		const login = authFlow;
+		login?.controller.abort();
+		await login?.done;
 		unsubscribe();
 		themes.dispose();
 		view.stop();

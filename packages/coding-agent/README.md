@@ -19,6 +19,8 @@ amazme client
 
 在终端运行 `amazme auth login --provider openai-codex` 完成 OAuth，或 `amazme auth login --provider deepseek --method api-key` 输入密钥。`amazme auth logout --provider <provider>` 删除已保存的凭据，环境变量仍可使用。参见 [供应商认证](docs/providers.md)。
 
+默认原生终端内也可使用 `/login [provider]` 与 `/logout [provider]`，登录后通过 `/model` 选择模型。输入的密钥保持隐藏，Esc 取消登录。
+
 ## 小内核与可选插件
 
 默认 CLI、宿主与 Web 使用 Chord facets 和同一个 Durable Harness。插件可以贡献工具、命令、提示段、任务、钩子及服务，资源随其所属生命周期释放。项目记忆、历史召回、文件检查点、自动化、完成验证及工作流都按需选择，未启用时不运行其后台工作。

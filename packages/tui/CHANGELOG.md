@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- `Input` supports `secret: true` to mask typed and pasted text while preserving editing, scrolling and original submission values.
+
 - Fixed component-owned prompt selections bypassing the host clipboard path, and exposed selected original text, including large pastes. Draft replacement, submission, history, undo and completion clear stale selection; pasting and inserting a newline replace it.
 
 - Fixed overlay compositing dropping `CURSOR_MARKER` when an overlay ends directly left of the cursor, which lost the hardware cursor position

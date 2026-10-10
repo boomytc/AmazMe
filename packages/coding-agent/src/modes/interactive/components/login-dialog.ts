@@ -54,23 +54,38 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer = new Container();
 		this.addChild(this.contentContainer);
 
-		// Input (always present, used when needed)
-		this.input = new Input();
-		this.input.onSubmit = () => {
-			if (this.inputResolver) {
-				const value = this.input.getValue();
-				this.replaceInputWithSubmittedText(value);
-				this.inputResolver(value);
-				this.inputResolver = undefined;
-				this.inputRejecter = undefined;
-			}
-		};
-		this.input.onEscape = () => {
-			this.cancel();
-		};
+		this.input = this.createInput();
 
 		// Bottom border
 		this.addChild(new DynamicBorder());
+	}
+
+	private createInput(secret = false): Input {
+		const input = new Input({ secret });
+		input.focused = this._focused;
+		input.onSubmit = () => {
+			if (this.inputResolver) {
+				const value = input.getValue();
+				this.replaceInputWithSubmittedText(secret ? "[hidden]" : value);
+				this.inputResolver(value);
+				this.inputResolver = undefined;
+				this.inputRejecter = undefined;
+				input.setValue("");
+			}
+		};
+		input.onEscape = () => {
+			this.cancel();
+		};
+		return input;
+	}
+
+	/** Drop an expired prompt without cancelling a callback flow that already completed it. */
+	clearPrompt(): void {
+		this.inputRejecter?.(new Error("Login prompt closed"));
+		this.inputResolver = undefined;
+		this.inputRejecter = undefined;
+		this.contentContainer.children = this.contentContainer.children.filter((child) => child !== this.input);
+		this.input = this.createInput();
 	}
 
 	get signal(): AbortSignal {
@@ -134,7 +149,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Show input for manual code/URL entry (for callback server providers)
 	 */
 	showManualInput(prompt: string): Promise<string> {
-		this.input.setValue("");
+		this.clearPrompt();
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("dim", prompt), 1, 0));
 		this.contentContainer.addChild(this.input);
@@ -151,7 +166,9 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Called by onPrompt callback - show prompt and wait for input
 	 * Note: Does NOT clear content, appends to existing (preserves URL from showAuth)
 	 */
-	showPrompt(message: string, placeholder?: string): Promise<string> {
+	showPrompt(message: string, placeholder?: string, secret = false): Promise<string> {
+		this.clearPrompt();
+		this.input = this.createInput(secret);
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("text", message), 1, 0));
 		if (placeholder) {

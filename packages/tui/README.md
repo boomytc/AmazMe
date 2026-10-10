@@ -427,6 +427,9 @@ input.setValue("initial");
 input.getValue();
 ```
 
+Use `new Input({ secret: true })` for credentials: rendering masks the value, while editing, horizontal scrolling and `onSubmit` use the original text. Create a fresh input for each credential prompt to discard its undo and kill-ring history.
+
+
 Clicking positions the cursor and gives the input keyboard focus in alternate-screen mode.
 
 **Key Bindings:**
