@@ -1,3 +1,4 @@
+import { SETTINGS_DEFAULTS } from "../settings-defaults.ts";
 import { join } from "node:path";
 import type { CodemodeJsonSchema, CodemodeTool } from "@amazme/codemode";
 import {
@@ -49,7 +50,7 @@ function describeGlobals(models: boolean): string {
 }
 
 /** Default for {@link CodemodeDescriptionOptions.inlineBudget}, in estimated tokens. */
-export const DEFAULT_CODEMODE_INLINE_BUDGET = 3000;
+export const DEFAULT_CODEMODE_INLINE_BUDGET = SETTINGS_DEFAULTS.codemode.inlineBudget;
 /** Characters per token when estimating the cost of a tool section. */
 const CHARS_PER_TOKEN = 4;
 
@@ -243,7 +244,7 @@ export function prepareCodemodeLoadout(
 	loadout: CodemodeLoadout,
 	options: CodemodePresentationOptions,
 ): CodemodeLoadoutChanges {
-	const mode = options.mode ?? "on";
+	const mode = options.mode ?? SETTINGS_DEFAULTS.codemode.mode;
 	const isDirect = (tool: CodemodeToolInfo) => loadout.getExposure(tool.name) === "direct";
 	const callable = getCodemodeCallableTools(loadout.callable);
 	const callableNames = new Set(callable.map((tool) => tool.name));

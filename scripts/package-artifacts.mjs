@@ -110,7 +110,7 @@ export function createPackageArtifacts({ repoRoot, directory, packageNames }) {
 	const packages = runtimePackages(workspacePackages(root), packageNames);
 	mkdirSync(output, { recursive: true });
 	const artifacts = packages.map(({ directory: cwd, manifest }) => {
-		const packed = JSON.parse(
+		const parsed = JSON.parse(
 			execNpmSync(
 				["pack", "--ignore-scripts", "--json", "--cache", join(output, ".npm-cache"), "--pack-destination", output],
 				{
@@ -121,13 +121,15 @@ export function createPackageArtifacts({ repoRoot, directory, packageNames }) {
 				},
 			),
 		);
-		if (packed.length !== 1 || !packed[0].filename) throw new Error(`Unexpected npm pack result for ${manifest.name}`);
-		verifyPackedFiles(manifest, packed[0].files);
-		const tarball = join(output, packed[0].filename);
+		const packed = Array.isArray(parsed) ? (parsed.length === 1 ? parsed[0] : undefined) : parsed?.[manifest.name];
+		if (packed?.name !== manifest.name || typeof packed.filename !== "string" || !Array.isArray(packed.files))
+			throw new Error(`Unexpected npm pack result for ${manifest.name}`);
+		verifyPackedFiles(manifest, packed.files);
+		const tarball = join(output, packed.filename);
 		return {
 			name: manifest.name,
 			version: manifest.version,
-			tarball: packed[0].filename,
+			tarball: packed.filename,
 			integrity: `sha512-${createHash("sha512").update(readFileSync(tarball)).digest("base64")}`,
 		};
 	});

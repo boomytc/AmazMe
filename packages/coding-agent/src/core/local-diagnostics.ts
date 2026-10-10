@@ -18,7 +18,7 @@ import type {
 	DiagnosticReport,
 } from "./diagnostics-types.ts";
 import { ModelConfig } from "./model-config.ts";
-import { validateThemeJson } from "../modes/interactive/theme/theme-json.ts";
+import { validateThemeJson } from "../modes/interactive/theme/theme-schema.ts";
 import {
 	isCommandConfigValue,
 	isConfigValueConfigured,

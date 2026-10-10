@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Shared compatibility and model configuration schemas now derive public types from the same contract used by models.json.
+- Mistral request deadlines apply only until response headers arrive, including when no caller cancellation signal is supplied; active streams continue beyond that deadline.
+- Claude 5.5 catalog metadata comes from models.dev instead of hardcoded fallbacks.
 - Moved API-key environment discovery into `utils/api-key-env` so read-only consumers avoid the compatibility registry and ambient credential probes; existing environment behavior and Pi OAuth identities are unchanged
 
 ## [1.1.0] - 2026-10-07

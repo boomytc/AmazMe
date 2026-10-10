@@ -469,18 +469,15 @@ describe("Mistral HTTP transport", () => {
 		expect(message.stopReason).toBe("aborted");
 	});
 
-	it("applies the request timeout while waiting for an SSE chunk", async () => {
+	it("applies the request timeout while waiting for response headers", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
 		const context = normalizeContext({
 			messages: [{ role: "user", content: "hello", timestamp: 1 }],
 		});
-		const fetch: FetchFunction = async () =>
-			new Response(
-				new ReadableStream({
-					start() {},
-				}),
-				{ headers: { "content-type": "text/event-stream" } },
-			);
+		const fetch: FetchFunction = (_url, init) =>
+			new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+			});
 
 		const message = await streamMistral(model, context, {
 			apiKey: "test",
@@ -489,7 +486,7 @@ describe("Mistral HTTP transport", () => {
 		}).result();
 
 		expect(message.stopReason).toBe("error");
-		expect(message.errorMessage).toMatch(/timeout/i);
+		expect(message.errorMessage).toBe("Mistral response headers timed out after 5ms");
 	});
 
 	it("preserves HTTP status and response bodies in errors", async () => {

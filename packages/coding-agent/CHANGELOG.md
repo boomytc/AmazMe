@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Published settings, models, keybindings and theme schemas share runtime defaults and theme tokens. AmazMe interface settings and custom extension keybindings are included; theme validation is strict.
+- A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
 ### Added
 
 - Published the existing durable host, terminal client and Web entry through the formal CLI and compiled package, with prebuilt browser assets and lazy host command dispatch
