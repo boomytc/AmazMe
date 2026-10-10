@@ -747,7 +747,11 @@ describe("abort order", () => {
 			const owner = await tx.createTask(Unregistered, { name: "owner" }, OWN_CONVERSATION);
 			return { owner, child: await spawn(tx, owner, "child") };
 		}, context);
-		await until(() => log.includes("run:child"));
+		// The missing parent's plugin cannot execute its queued children, but abort cleanup must still drain them.
+		await until(async () => (await harness.inspect(context)).tasks.some((task) =>
+			task.record.id === child && task.state.kind === "blocked" && task.state.reason === "owner_unavailable",
+		));
+		expect(log).not.toContain("run:child");
 		expect(await harness.abortTask(owner, context)).toBe("marked");
 		expect(await outcomeOf(harness, child)).toBe("aborted");
 		expect((await harness.waitForTask(owner, context)).state.outcome).toEqual({

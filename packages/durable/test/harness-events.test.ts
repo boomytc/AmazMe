@@ -47,23 +47,16 @@ function slow(): ChatSetup {
 	return chatSetup({ tokensPerSecond: 400, tokenSize: { min: 1, max: 1 } });
 }
 
-/** Rebuild the streamed text of block 0 from `message_start` and the text deltas that follow it. */
+/** Rebuild streamed text from both incremental changes and whole-message replacements. */
 function streamedText(events: readonly AgentEvent[]): string {
-	let text = "";
+	let message: AssistantMessage | undefined;
 	for (const event of events) {
 		if (event.type === "message_start" && event.message.role === "assistant") {
-			const block = event.message.content[0];
-			text = block?.type === "text" ? block.text : "";
-		}
-		if (event.type !== "message_update") continue;
-		for (const change of event.changes) {
-			if (change.type === "text_start" && change.contentIndex === 0 && change.block.type === "text") {
-				text = change.block.text;
-			}
-			if (change.type === "text_delta" && change.contentIndex === 0) text += change.delta;
-		}
+			message = event.message;
+		} else if (event.type === "message_update" && message !== undefined)
+			message = applyChanges(message, event.changes);
 	}
-	return text;
+	return textOf(message) ?? "";
 }
 
 type Mutable = { [key: string]: unknown };
@@ -287,9 +280,12 @@ describe("agent events", () => {
 		await drained();
 		const rebuilt: AssistantMessage[] = [];
 		let current: AssistantMessage | undefined;
-		// The streamed tool-calling message, up to its end; the short final answer commits no partial.
+		// Include each turn: the final answer is published before its completion hooks run.
 		for (const event of events()) {
-			if (event.type === "message_end" && event.entry?.kind === "amazme.assistant") break;
+			if (event.type === "message_end" && event.entry?.kind === "amazme.assistant") {
+				current = undefined;
+				continue;
+			}
 			if (event.type === "message_start" && event.message.role === "assistant") current = event.message;
 			else if (event.type === "message_update") current = applyChanges(current!, event.changes);
 			else continue;
@@ -379,8 +375,12 @@ describe("agent events", () => {
 		await followUp.wait(context);
 		await drained();
 		const boundary = batches.find((batch) => batch.some((event) => event.type === "run_end"))!;
+		const beforeBoundary = batches.slice(0, batches.indexOf(boundary)).flat();
+		expect(beforeBoundary).toContainEqual(expect.objectContaining({
+			type: "message_start",
+			message: expect.objectContaining({ content: [fauxText("first")] }),
+		}));
 		expect(boundary.map((event) => event.type)).toEqual([
-			"message_start",
 			"message_end",
 			"message_start",
 			"message_end",

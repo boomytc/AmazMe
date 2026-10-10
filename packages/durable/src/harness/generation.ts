@@ -482,8 +482,7 @@ async function classify(
 		const saved = copyJson(message, { omitUndefinedProperties: true });
 		await runtime.commit(async (tx) => {
 			const live = await tx.doc(LiveDoc, conversationId);
-			live.generation = { attempt };
-			assignJson(live.generation as Draft<Record<string, JsonValue>>, "message", saved);
+			assignJson(live as Draft<Record<string, JsonValue>>, "generation", { attempt, message: saved });
 			return { status: "running", checkpoint: { phase: "yield", message: saved as unknown as AssistantMessage } };
 		}, context);
 		return;

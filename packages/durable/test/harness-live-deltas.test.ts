@@ -149,6 +149,8 @@ describe("amazme.live deltas", () => {
 				["s", ["run", "taskId"], secondGeneration],
 			]),
 			[["s", ["generation"], { attempt: 1 }]],
+			// Persist the final response before completion hooks; keep the generation's other fields in place.
+			[["s", ["generation", "message"], expect.objectContaining({ content: [fauxText("done")] })]],
 			// the answer ends the run
 			expect.arrayContaining([
 				["d", ["run"]],
@@ -270,9 +272,11 @@ describe("amazme.live deltas", () => {
 		const partials = commits.slice(2, -1);
 		expect(partials.length).toBeGreaterThan(2);
 		expect(partials[0]).toEqual([["s", ["generation", "message"], expect.any(Object)]]);
-		for (const ops of partials.slice(1)) {
+		for (const ops of partials.slice(1, -1)) {
 			expect(ops).toEqual([["a", ["generation", "message", "content", 0, "text"], expect.any(String)]]);
 		}
+		// The final checkpoint can update usage and timing too, without replacing the complete progress container.
+		for (const op of partials.at(-1)!) expect(op[1]?.slice(0, 2)).toEqual(["generation", "message"]);
 		await harness.close(context);
 	});
 

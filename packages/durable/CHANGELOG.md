@@ -29,6 +29,8 @@
 
 ### Fixed
 
+- Final responses update committed progress leaf by leaf before completion hooks, instead of replacing the entire generation and retransmitting its accumulated text.
+
 - Preserved nested call count/depth bounds and automatically drop an unchanged structured payload when an `afterTool` hook rewrites its model output.
 
 - A throwing `onReport` no longer replaces the error being reported or becomes an unhandled rejection, a throwing `now()` is reported once and `Date.now` used, and a watch listener's error is reported as well as ending the watch with `listener_error`.
