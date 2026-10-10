@@ -565,6 +565,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			approvalGate: runtime.approvalGate,
 			facetLoader: runtime.facetLoader,
 			refreshMirror: () => runtime?.handoff?.refresh() ?? Promise.resolve(),
+			mirror: runtime.handoff,
 			publish: (scope, subscriptionId, update) =>
 				control.send({
 					type: "service_update",

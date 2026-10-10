@@ -43,6 +43,7 @@ export interface PageElements {
 	readonly connection: HTMLElement;
 	readonly mode: HTMLElement;
 	readonly sessionTitle: HTMLElement;
+	readonly sessionWarning: HTMLElement;
 	readonly laneStatus: HTMLElement;
 	/** The sidebar's new-session bar. */
 	readonly newSession: HTMLButtonElement;
@@ -141,6 +142,7 @@ export function collectPageElements(): PageElements {
 		connection: pick("connection"),
 		mode: pick("mode"),
 		sessionTitle: pick("session-title"),
+		sessionWarning: pick("session-warning"),
 		laneStatus: laneStatusElement(),
 		newSession: pickElement("new-session", HTMLButtonElement),
 		nav: pick("nav"),
@@ -1794,6 +1796,8 @@ export function createRenderer(
 			const languageChanged = lastView?.locale !== view.locale;
 			lastView = view;
 			if (languageChanged) renderShellCopy();
+			elements.sessionWarning.hidden = view.mirrorWarning == null;
+			elements.sessionWarning.textContent = view.mirrorWarning == null ? "" : copy("page.mirrorWarning", view.mirrorWarning);
 			if (app !== undefined) writeWindowTitle(app, view);
 			const stick = atBottom(elements.transcript);
 			const scopeChanged = flowCache.begin(view.transcriptScope ?? view.attachedId ?? "");

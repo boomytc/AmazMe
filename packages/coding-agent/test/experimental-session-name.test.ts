@@ -63,8 +63,9 @@ describe("session display names", () => {
 		const dir = await mkdtemp(join(tmpdir(), "session-mirror-"));
 		const path = join(dir, "session.jsonl");
 		try {
-			await writeSessionMirror({
+			const mirrored = await writeSessionMirror({
 				path,
+				guard: { expected: undefined },
 				sessionId: "s1",
 				cwd: "/work",
 				createdAt: 1_700_000_000_000,
@@ -74,6 +75,7 @@ describe("session display names", () => {
 			expect(SessionManager.open(path).getSessionName()).toBe("weekly report");
 			await writeSessionMirror({
 				path,
+				guard: { expected: mirrored.fingerprint },
 				sessionId: "s1",
 				cwd: "/work",
 				createdAt: 1_700_000_000_000,

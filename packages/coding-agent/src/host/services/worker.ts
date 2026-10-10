@@ -32,6 +32,9 @@ import { SessionPlugins } from "./plugins.ts";
 import { createSlashCommandsRuntimeFacet } from "../../core/plugins/command-registry.ts";
 import { SessionSettings } from "./settings.ts";
 import { SessionLifecycle } from "./session-lifecycle.ts";
+import { SessionMirror } from "./session-mirror.ts";
+import type { SessionMirrorStatus } from "./session-mirror.ts";
+import type { SessionHandoff } from "../session-handoff.ts";
 import { isSessionEmpty } from "../session-lifecycle.ts";
 import { createTerminalFacet } from "./terminal-provider.ts";
 import { createTranscriptServiceFacet } from "./transcript-provider.ts";
@@ -52,7 +55,7 @@ export interface SessionWorkerRuntime {
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
 	/** The terminal handoff: the mirror of this session in the terminal's store. */
-	readonly handoff?: { refresh(): Promise<void>; dispose(): Promise<void> };
+	readonly handoff?: SessionHandoff;
 	/** Release resources the Harness does not own, such as execution environments, after it closed. */
 	cleanup?(context: Context): Promise<void>;
 }
@@ -88,6 +91,7 @@ export async function createSessionWorkerServices(options: {
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
 	readonly refreshMirror?: () => Promise<void>;
+	readonly mirror?: SessionHandoff;
 	publish(scope: WorkerServiceScope, subscriptionId: string, update: ServiceProviderUpdate): Promise<void>;
 }): Promise<SessionWorkerServices> {
 	let pluginRuntime: PluginRuntime | undefined;
@@ -114,6 +118,14 @@ export async function createSessionWorkerServices(options: {
 				isEmpty: (context) => isSessionEmpty(options.harness, context),
 				refreshMirror: async () => { await options.refreshMirror?.(); },
 			});
+			const mirrorState = env.replicatedState<SessionMirrorStatus>({
+				warning: options.mirror?.warning ?? null,
+			});
+			const stopMirror = options.mirror?.subscribeWarning((warning) => {
+				mirrorState.change(BACKGROUND_CONTEXT, (draft) => { draft.warning = warning; });
+			});
+			env.own(() => stopMirror?.());
+			env.provide(SessionMirror, { state: mirrorState });
 		},
 	});
 	let reloadPlugins = (): Promise<void> => Promise.reject(new Error("Session plugins are not ready"));

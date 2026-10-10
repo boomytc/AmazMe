@@ -10,9 +10,12 @@
  * transcript: a refresh cannot leave a half-written session behind, and the ids it writes are the
  * same every time.
  */
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { durableEntriesToSessionFile, type SessionInteropReport } from "../core/session-interop.ts";
+import { assertSessionFileUnchanged, readSessionFileSnapshot, SessionMirrorConflict } from "./session-mirror-file.ts";
+import type { SessionFileFingerprint } from "./session-mirror-file.ts";
 import {
 	getDefaultSessionDir,
 	SessionManager,
@@ -80,7 +83,7 @@ export function mirrorPath(cwd: string, sessionId: string, createdAt: number): s
  * report names what the projection could not carry, so a caller can log it rather than let the
  * terminal quietly miss entries.
  */
-export async function writeSessionMirror(input: {
+export interface SessionMirrorInput {
 	readonly path: string;
 	readonly sessionId: string;
 	readonly cwd: string;
@@ -92,18 +95,49 @@ export async function writeSessionMirror(input: {
 		readonly kind: string;
 		readonly model?: readonly import("@amazme/ai").Message[];
 	}[];
-}): Promise<SessionInteropReport> {
+}
+
+/** Pure export, also used to recognize a previous mirror without trusting terminal-only content. */
+export function projectSessionMirror(input: SessionMirrorInput): { readonly content: string; readonly report: SessionInteropReport } {
 	const projection = durableEntriesToSessionFile(input.entries, {
 		id: input.sessionId,
 		cwd: input.cwd,
 		timestamp: new Date(input.createdAt).toISOString(),
 	});
 	const entries = withSessionName(projection.entries, input.name);
+	return { content: `${entries.map(line).join("\n")}\n`, report: projection.report };
+}
+
+/**
+ * Replace only an unchanged target. The final check narrows, but cannot eliminate, the
+ * check-to-rename race with non-cooperating writers on an existing file.
+ */
+export async function writeSessionMirror(input: SessionMirrorInput & { readonly guard: { readonly expected: SessionFileFingerprint | undefined } }): Promise<SessionInteropReport & { readonly fingerprint: SessionFileFingerprint }> {
+	const projection = projectSessionMirror(input);
+	await assertSessionFileUnchanged(input.path, input.guard.expected);
 	await mkdir(dirname(input.path), { recursive: true });
-	const temporary = `${input.path}.tmp-${process.pid}`;
-	await writeFile(temporary, `${entries.map(line).join("\n")}\n`, "utf8");
-	await rename(temporary, input.path);
-	return projection.report;
+	const temporary = `${input.path}.tmp-${process.pid}-${randomUUID()}`;
+	try {
+		await writeFile(temporary, projection.content, { encoding: "utf8", flag: "wx" });
+		const written = await readSessionFileSnapshot(temporary);
+		if (written === undefined) throw new Error("Temporary mirror disappeared");
+		await assertSessionFileUnchanged(input.path, input.guard.expected);
+		if (input.guard.expected === undefined) {
+			// Unlike rename, hard-link creation cannot overwrite a target created after the check.
+			try { await link(temporary, input.path); }
+			catch (error: unknown) {
+				if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+					throw new SessionMirrorConflict("terminal file was created by another writer");
+				}
+				throw error;
+			}
+		} else {
+			await rename(temporary, input.path);
+		}
+		return { ...projection.report, fingerprint: written.fingerprint };
+	} finally {
+		await rm(temporary, { force: true });
+	}
 }
 
 /**

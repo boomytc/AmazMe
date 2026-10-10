@@ -152,6 +152,8 @@ import { Plugins, PresentationPlugins } from "../services/plugins.ts";
 import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
+import { SessionMirror } from "../services/session-mirror.ts";
+import type { SessionMirrorWarning } from "../services/session-mirror.ts";
 import { Skills } from "../services/skills.ts";
 import { Diagnostics } from "../services/diagnostics.ts";
 import { formatDiagnosticReport, type DiagnosticReport } from "../../core/diagnostics-types.ts";
@@ -274,6 +276,7 @@ class SessionPainter {
 	#models: Models | undefined;
 	#mcp: McpService | undefined;
 	#sessionSettings: SessionSettings | undefined;
+	#mirror: SessionMirror | undefined;
 	#commands: CommandsService | undefined;
 	#workspace: WorkspaceService | undefined;
 	#terminal: TerminalService | undefined;
@@ -295,6 +298,10 @@ class SessionPainter {
 	}
 	get ready(): boolean {
 		return this.#services !== undefined && this.#controller !== undefined && this.#conversations !== undefined;
+	}
+
+	get mirrorWarning(): SessionMirrorWarning | null | undefined {
+		return this.#mirror?.state.value?.warning;
 	}
 
 	get transcriptValue(): ConversationView | undefined {
@@ -594,9 +601,10 @@ class SessionPainter {
 		if (attached === undefined || attached.status === "detached" || attached.sessionId !== sessionId) {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
-		const hasMcp = (await this.#sessionSource.catalogue(BACKGROUND_CONTEXT)).some(entry => entry.serviceId === Mcp.id);
+		const catalogue = await this.#sessionSource.catalogue(BACKGROUND_CONTEXT);
+		const hasMcp = catalogue.some(entry => entry.serviceId === Mcp.id);
 		const services = this.#sessionSource.open({
-			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals, ...(hasMcp ? [Mcp] : [])],
+			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals, ...(hasMcp ? [Mcp] : []), SessionMirror],
 			assertAccess(): void {},
 			onError: (error: Error) =>
 				this.#renderer.setConnection(
@@ -620,6 +628,8 @@ class SessionPainter {
 		this.#mcp = hasMcp ? services.use(Mcp) : undefined;
 		this.#mcp?.state.subscribe(() => paint());
 		this.#sessionSettings = services.use(SessionSettings);
+		this.#mirror = services.use(SessionMirror);
+		this.#mirror.state.subscribe(() => paint());
 		this.#commands = services.use(Commands);
 		this.#workspace = services.use(Workspace);
 		this.#terminal = services.use(Terminal);
@@ -664,6 +674,7 @@ class SessionPainter {
 		this.#models = undefined;
 		this.#mcp = undefined;
 		this.#sessionSettings = undefined;
+		this.#mirror = undefined;
 		this.#commands = undefined;
 		this.#workspace = undefined;
 		this.#terminal = undefined;
@@ -970,6 +981,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		paintSafely(() => renderer.render(withReturnPoints(
 			{
 				...displayed,
+				mirrorWarning: painter.mirrorWarning,
 				newSession: { ...displayed.newSession, enabled: client.connected && displayed.newSession.enabled },
 			},
 			returnPoints,

@@ -705,6 +705,15 @@ p {
 	color: var(--danger);
 }
 
+.session-warning {
+	flex: none;
+	padding: 8px 14px;
+	border-bottom: 1px solid var(--line);
+	color: var(--warn);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
 /* Header priority: usage contracts first, then connection copy, then the session name.
    The center can be much narrower than the window when both side panels are columns. */
 @container (max-width: 880px) {

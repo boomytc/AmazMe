@@ -420,6 +420,8 @@ export interface WebView {
 	readonly approvals: readonly ApprovalCard[];
 	/** Pending approvals the header keeps visible. Absent when the queue is empty. */
 	readonly approvalIndicator: ApprovalIndicator | undefined;
+	/** Host-owned export warning; never inserted into the model transcript. */
+	readonly mirrorWarning?: { readonly path: string; readonly detail: string } | null;
 	/** The first-run guide, while the host has no sessions and it is not dismissed. */
 	readonly welcome: WelcomeCard | undefined;
 	readonly run: RunControls;
