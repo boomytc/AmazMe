@@ -1,8 +1,5 @@
 import { defineExtension, type PromptInput, section } from "@amazme/durable";
-import { getAgentDir } from "../config.ts";
-import { loadProjectContextFiles } from "../core/resource-loader.ts";
-import type { SettingsManager } from "../core/settings-manager.ts";
-import { loadSkills, type Skill } from "../core/skills.ts";
+import type { ResourceLoader } from "../core/resource-loader.ts";
 import { buildSystemPromptSections } from "../core/system-prompt.ts";
 import { bashToolSystemPromptContribution } from "../core/tools/bash.ts";
 import { editToolSystemPromptContribution } from "../core/tools/edit.ts";
@@ -25,26 +22,23 @@ const CONTRIBUTIONS = {
 };
 
 /** pi's section order; `buildSystemPromptSections()` omits the ones without content. */
-const KEYS = ["preamble", "tools", "rules", "docs", "project_context", "skills", "cwd"] as const;
+const KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"] as const;
+
+export interface CodingPromptOptions {
+	readonly systemPrompt?: string;
+	readonly appendSystemPrompt?: readonly string[];
+	readonly skills?: readonly string[];
+	readonly noSkills?: boolean;
+	readonly noContextFiles?: boolean;
+}
+
+type PromptResources = Pick<ResourceLoader, "getSystemPrompt" | "getAppendSystemPrompt" | "getAgentsFiles" | "getSkills">;
 
 /**
  * pi's system prompt as one extension: the sections of `buildSystemPromptSections()` for the request's tools and the
- * conversation's directory. Context files and skills load once per directory, like pi at startup.
+ * conversation's directory. All resource selection and reloads belong to the shared resource loader.
  */
-export function createPiPrompt(settings: SettingsManager, fallbackCwd: string) {
-	const resources = new Map<string, { contextFiles: { path: string; content: string }[]; skills: Skill[] }>();
-	const load = (cwd: string) => {
-		let found = resources.get(cwd);
-		if (found === undefined) {
-			const agentDir = getAgentDir();
-			found = {
-				contextFiles: loadProjectContextFiles({ cwd, agentDir }),
-				skills: loadSkills({ cwd, agentDir, skillPaths: settings.getSkillPaths(), includeDefaults: true }).skills,
-			};
-			resources.set(cwd, found);
-		}
-		return found;
-	};
+export function createPiPrompt(resources: PromptResources, fallbackCwd: string) {
 	// The sections of one request render from one build.
 	const built = new WeakMap<PromptInput, Record<string, string>>();
 	const build = (input: PromptInput): Record<string, string> => {
@@ -71,7 +65,10 @@ export function createPiPrompt(settings: SettingsManager, fallbackCwd: string) {
 			selectedTools,
 			toolSnippets: snippets,
 			toolGuidelines: guidelines,
-			...load(cwd),
+			customPrompt: resources.getSystemPrompt(),
+			appendSystemPrompt: resources.getAppendSystemPrompt().join("\n\n"),
+			contextFiles: resources.getAgentsFiles().agentsFiles,
+			skills: resources.getSkills().skills,
 		});
 	};
 	return defineExtension({

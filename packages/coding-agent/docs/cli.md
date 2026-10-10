@@ -200,11 +200,11 @@ amazme --extension ./review.ts
 See [Configuration](configuration.md) for conventional directories and project trust, [Settings](settings.md#resources) for configured paths, and [AmazMe Packages](packages.md) for package sources.
 
 - `-e`, `--extension <path>`<br>
-  Loads an extension file or directory, or a built-in extension such as `builtin:mcp`, and is repeatable.
+  Loads a native facet file/package in the default terminal and is repeatable. Print/RPC and SDK applications use SDK extension factories, including their `builtin:mcp` source.
 - `-ne`, `--no-extensions`<br>
-  Disables discovered, configured, and built-in extensions. Explicit `-e` paths still load, so `amazme -ne -e builtin:mcp` keeps only the built-in MCP support.
+  Disables extension discovery and default built-in MCP support. Explicit `-e` sources still load, using the current entry point's format. Native plugins use [Chord facets](plugin-runtime.md).
 - `--no-mcp`<br>
-  Disables the built-in MCP support for this run: no servers connect, and there are no MCP tools or `/mcp`. It does not affect an extension that replaces the built-in MCP support.
+  Disables built-in MCP connections and MCP tools for this run. The default terminal's `/mcp` reports that support is disabled. SDK applications may supply their own replacement extension.
 - `--skill <path>`<br>
   Loads a skill file or directory and is repeatable.
 - `-ns`, `--no-skills`<br>
@@ -222,6 +222,8 @@ See [Configuration](configuration.md) for conventional directories and project t
 - `-nc`, `--no-context-files`<br>
   Disables `AGENTS.md` and `CLAUDE.md` discovery.
 
+The default terminal consumes `--skill`, `--no-skills` and `--no-context-files` through the same resource loader as the SDK. Explicit skill paths still load when discovery is disabled. Project skill discovery requires project trust; context-file discovery follows its separate directory inheritance rules. While idle, `/reload` refreshes these prompt resources even when no plugin is selected.
+
 Resource paths apply only to the current process. Relative paths resolve from the current working directory.
 
 <a id="prompt-and-display-options"></a>
@@ -238,6 +240,9 @@ See [Configuration](configuration.md) for saved configuration, [Security](securi
   Replaces the default system prompt with text or the contents of an existing file.
 - `--append-system-prompt <text|path>`<br>
   Appends text or an existing file to the system prompt and is repeatable.
+
+These prompt options apply to the default terminal's actual model requests. Without CLI sources, it discovers `SYSTEM.md` and `APPEND_SYSTEM.md` in the trusted project configuration or agent directory; a project file replaces the corresponding user file. An explicit prefix replaces the default prefix, while context files, skills and the working-directory section remain. Appended sources keep their CLI order before context and skills. File paths resolve against the runtime working directory and support `~`.
+
 - `--tui-mode <mode>`<br>
   Uses `fullscreen` (default) or `regular` terminal mode.
 - `--verbose`<br>

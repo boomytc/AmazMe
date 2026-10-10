@@ -11,5 +11,5 @@ export const NATIVE_COMMANDS = [
 	{ name: "older", description: "Load older history" },
 	{ name: "compact", description: "Compact the conversation", argumentHint: "[instructions]" },
 	{ name: "plugins", description: "Show selected plugin sources and API" },
-	{ name: "reload", description: "Rebuild and reload selected plugins" },
+	{ name: "reload", description: "Reload prompt resources and selected plugins" },
 ] as const;

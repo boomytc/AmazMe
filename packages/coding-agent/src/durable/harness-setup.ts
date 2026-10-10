@@ -23,9 +23,10 @@ import { DEFAULT_THINKING_LEVEL } from "../core/defaults.ts";
 import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
+import { DefaultResourceLoader, type ResourceLoader } from "../core/resource-loader.ts";
 import { getAgentDir } from "../config.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../core/trust-manager.ts";
-import { createPiPrompt } from "./prompt.ts";
+import { createPiPrompt, type CodingPromptOptions } from "./prompt.ts";
 import { createDurableCodemode } from "./codemode.ts";
 
 /** A headless host uses saved project trust and the global policy; it cannot prompt for trust. */
@@ -71,8 +72,30 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 	};
 }
 
-/** A registry with pi's coding tools and system prompt. */
-export function createCodingRegistry(settingsManager: SettingsManager, cwd: string): Registry {
+/** Use Pi's resource selection without evaluating SDK extension factories in the native runtime. */
+export async function loadCodingResources(
+	settingsManager: SettingsManager,
+	cwd: string,
+	options: CodingPromptOptions = {},
+): Promise<ResourceLoader> {
+	const resources = new DefaultResourceLoader({
+		cwd,
+		agentDir: getAgentDir(),
+		settingsManager,
+		noExtensions: true,
+		noThemes: true,
+		systemPrompt: options.systemPrompt,
+		appendSystemPrompt: options.appendSystemPrompt?.slice(),
+		additionalSkillPaths: options.skills?.slice(),
+		noSkills: options.noSkills,
+		noContextFiles: options.noContextFiles,
+	});
+	await resources.reload();
+	return resources;
+}
+
+/** A registry with Pi's coding tools and one resource-backed system prompt. */
+export function createCodingRegistry(settingsManager: SettingsManager, cwd: string, resources: ResourceLoader): Registry {
 	const registry = createRegistry();
 	registry.install(
 		createCodingTools({
@@ -110,7 +133,7 @@ export function createCodingRegistry(settingsManager: SettingsManager, cwd: stri
 	registry.install(
 		defineExtension({ name: "powershell", tools: [{ ...createPowerShellTool(), defaultActive: false }] }),
 	);
-	registry.install(createPiPrompt(settingsManager, cwd));
+	registry.install(createPiPrompt(resources, cwd));
 	return registry;
 }
 

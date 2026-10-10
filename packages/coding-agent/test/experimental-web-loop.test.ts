@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -1318,6 +1318,15 @@ describe("web client interactive loop", () => {
 				"---\nname: web-loop-brief\ndescription: Draft a brief\n---\n\n# Steps\n\nWrite it.\n",
 				"utf8",
 			);
+			// Keep this fixture's exact catalogue independent of the developer's ~/.agents skills.
+			const settingsPath = join(agentDir, "settings.json");
+			const fixtureSettings = existsSync(settingsPath)
+				? JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>
+				: {};
+			await writeFile(settingsPath, JSON.stringify({
+				...fixtureSettings,
+				skills: [`!${join(process.env.HOME ?? homedir(), ".agents", "skills", "**")}`],
+			}));
 			const attached = await attachSession(presentation, created.sessionId);
 
 			await waitFor(() => (attached.commands.state.value?.commands ?? []).length > 4, "the command catalogue");

@@ -14,6 +14,7 @@ import type { Conversation, ConversationId, Harness, Registry } from "@amazme/du
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
+import type { ResourceLoader } from "../../core/resource-loader.ts";
 import { configureHarnessHttp } from "../../durable/harness-setup.ts";
 import { createAgentExtensionsFacet } from "../../core/plugins/agent-extensions.ts";
 import { AgentRuntime, createAgentRuntime } from "../../core/plugins/agent-runtime.ts";
@@ -45,6 +46,7 @@ export interface SessionWorkerRuntime {
 	readonly conversation: Conversation;
 	readonly modelRuntime?: ModelRuntime;
 	readonly settingsManager?: SettingsManager;
+	readonly resources?: ResourceLoader;
 	readonly mcp?: McpManagement;
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
@@ -80,6 +82,7 @@ export async function createSessionWorkerServices(options: {
 	readonly conversation: Conversation;
 	readonly modelRuntime: ModelRuntime | undefined;
 	readonly settingsManager?: SettingsManager;
+	readonly resources?: ResourceLoader;
 	readonly mcp?: McpManagement;
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
@@ -131,7 +134,7 @@ export async function createSessionWorkerServices(options: {
 					setup(env) {
 						env.provide(SessionSettings, {
 							reload: async () => {
-								await settingsManager.reload();
+								await (options.resources?.reload() ?? settingsManager.reload());
 								configureHarnessHttp(settingsManager);
 							},
 						});
@@ -148,7 +151,7 @@ export async function createSessionWorkerServices(options: {
 		await createModelsServiceFacet({ ...options, authentication, context: BACKGROUND_CONTEXT }),
 		...(options.mcp === undefined ? [] : [createMcpFacet(options.mcp)]),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
-		createCommandsFacet({ cwd: options.cwd, settings: options.settingsManager }),
+		createCommandsFacet({ cwd: options.cwd, settings: options.settingsManager, resourceLoader: options.resources }),
 		createConversationsFacet({
 			harness: options.harness,
 			root: options.conversation,
@@ -164,8 +167,15 @@ export async function createSessionWorkerServices(options: {
 			: [createTerminalFacet({ cwd: options.cwd, settings: options.settingsManager })]),
 	];
 	const pluginLoader = options.facetLoader ?? createStaticFacetLoader([]);
-	try { pluginRuntime = await openPluginRuntime(builtins, pluginLoader, () => assertPluginsIdle(options.harness)); }
-	catch (error) { await authentication?.close(); throw error; }
+	try {
+		pluginRuntime = await openPluginRuntime(builtins, pluginLoader, async () => {
+			await assertPluginsIdle(options.harness);
+			await options.resources?.reload();
+		});
+	} catch (error) {
+		await authentication?.close();
+		throw error;
+	}
 	reloadPlugins = () => pluginRuntime!.reload();
 	const provider = pluginRuntime.services;
 

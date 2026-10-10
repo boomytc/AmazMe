@@ -55,7 +55,9 @@ import {
 	ExecutionEnvs,
 	findInitialAgentModel,
 	initialThinkingLevel,
+	loadCodingResources,
 } from "./harness-setup.ts";
+import type { CodingPromptOptions } from "./prompt.ts";
 import { selectSession } from "./sessions.ts";
 import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp.ts";
 import { Subagent } from "./subagent.ts";
@@ -111,8 +113,8 @@ export interface DurableController {
 	describePlugins?(): string;
 	runCommand?(name: string, args: string): Promise<void>;
 	completeCommand?(name: string, prefix: string): Promise<readonly SlashCommandCompletion[] | null>;
-	/** Reload the selected application plugin facets; absent when none were configured. */
-	reloadPlugins?(): Promise<void>;
+	/** Reload prompt resources and any selected application plugin facets while idle. */
+	reload(): Promise<void>;
 	readonly mcp?: McpManagement;
 	readonly auth?: ProviderAuthManagement;
 	/** Prompt when idle; otherwise steer or queue a follow-up. */
@@ -141,7 +143,7 @@ export interface DurableController {
 	loadOlder(): Promise<void>;
 }
 
-export interface OpenDurableOptions extends ToolSelectionOptions {
+export interface OpenDurableOptions extends ToolSelectionOptions, CodingPromptOptions {
 	readonly extensions?: readonly string[];
 	readonly noExtensions?: boolean;
 	/** Application-selected Chord facets; no plugin owner is started when absent. */
@@ -219,6 +221,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		settingsManager.getSettings().defaultTools,
 	);
 	const explicitTools = options.tools !== undefined || options.noTools !== undefined || options.excludeTools !== undefined;
+	const resources = await loadCodingResources(settingsManager, cwd, options);
 	const location = await selectSession(cwd, options.continueSession ?? false, {
 		noSession: options.noSession,
 		sessionDir: options.sessionDir ?? settingsManager.getSessionDir(),
@@ -232,7 +235,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	try {
 		configureHarnessHttp(settingsManager);
 		const settings = createHarnessSettings(settingsManager);
-		const registry = createCodingRegistry(settingsManager, location.cwd);
+		const registry = createCodingRegistry(settingsManager, location.cwd, resources);
 		registry.install(Subagent);
 
 		const pendingReports: unknown[] = [];
@@ -325,6 +328,11 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			});
 		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
+		const reportResources = (): void => {
+			for (const diagnostic of resources.getSkills().diagnostics) {
+				notice(diagnostic.type === "error" ? "error" : "warning", `${diagnostic.path === undefined ? "" : `${diagnostic.path}: `}${diagnostic.message}`);
+			}
+		};
 		const auth = new ProviderLogin(modelRuntime, { getDeviceId: () => settingsManager.getOrCreateDeviceId() });
 		providerLogin = auth;
 		let lastLogin: string | undefined;
@@ -451,7 +459,10 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			plugins = await openPluginRuntime(
 				[createAgentExtensionsFacet(registry), createSlashCommandsRuntimeFacet(pluginCommands!), controllerFacet],
 				facetLoader,
-				() => assertPluginsIdle(opened),
+				async () => {
+					await assertPluginsIdle(opened);
+					await resources.reload();
+				},
 			);
 			unsubscribeCommands = pluginCommands!.subscribe((commands) => update({
 				commands: commands.map(({ name, description, argumentHint }) => ({ name, description, argumentHint })),
@@ -482,11 +493,14 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				completeCommand: async (name: string, prefix: string) => plugins!.changing
 					? null
 					: await pluginCommands!.list().find((entry) => entry.name === name)?.getArgumentCompletions?.(prefix) ?? null,
-				reloadPlugins: () => command(async () => {
+			}),
+			reload: () => command(async () => {
+				if (plugins === undefined) {
 					await assertPluginsIdle(opened);
-					await plugins!.reload();
-					notice("info", "Reloaded plugins");
-				}),
+					await resources.reload();
+				} else await plugins.reload();
+				reportResources();
+				notice("info", plugins === undefined ? "Reloaded prompt resources" : "Reloaded prompt resources and plugins");
 			}),
 			mcp: activeMcp.management,
 			submit: (text, whenBusy) => command(async () => {
@@ -644,6 +658,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
 		}
 		if (initial?.fallbackMessage !== undefined) notice("info", initial.fallbackMessage);
+		reportResources();
 		// The task panel starts open; /tasks hides it.
 		await controller.toggleTasks();
 		// Recovered work from an interrupted turn continues now.

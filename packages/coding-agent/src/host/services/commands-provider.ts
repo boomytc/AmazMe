@@ -6,6 +6,7 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { loadPromptTemplates, expandPromptTemplate, type PromptTemplate } from "../../core/prompt-templates.ts";
 import { skillCommandPrompt } from "../../core/skill-command.ts";
 import { loadSkills, type Skill } from "../../core/skills.ts";
+import type { ResourceLoader } from "../../core/resource-loader.ts";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import {
 	Commands,
@@ -76,6 +77,8 @@ export interface CommandsServiceOptions {
 	readonly cwd: string;
 	/** The session's settings, read for the configured resource paths and the skill-command switch. */
 	readonly settings?: CommandResourceSettings;
+	/** The default worker's prompt and command resources share this owner. */
+	readonly resourceLoader?: ResourceLoader;
 }
 
 /**
@@ -86,6 +89,12 @@ export interface CommandsServiceOptions {
 export function loadCommandResources(options: CommandsServiceOptions): CommandResources {
 	const agentDir = getAgentDir();
 	const settings = options.settings;
+	if (options.resourceLoader !== undefined) {
+		return {
+			templates: options.resourceLoader.getPrompts().prompts,
+			skills: settings?.getEnableSkillCommands() === false ? [] : options.resourceLoader.getSkills().skills,
+		};
+	}
 	const templates = loadPromptTemplates({
 		cwd: options.cwd,
 		agentDir,
@@ -210,10 +219,13 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 				revision: 1,
 				commands: commandCatalog(resources),
 			});
-			const republish = async (context: Context): Promise<void> => {
+			const republish = async (context: Context, resourcesReloaded = false): Promise<void> => {
 				// A catalogue built from settings the session has not re-read would answer with the
 				// previous switch, so the settings files are read again before the resources are.
-				await options.settings?.reload().catch(() => undefined);
+				if (!resourcesReloaded || options.resourceLoader === undefined) {
+					if (options.resourceLoader === undefined) await options.settings?.reload().catch(() => undefined);
+					else await options.resourceLoader.reload();
+				}
 				resources = loadCommandResources(options);
 				state.change(context, (draft) => {
 					draft.revision += 1;
@@ -267,7 +279,7 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 						case "reload": {
 							await sessionPlugins.reload(callContext);
 							// A template or skill added since startup becomes a command with the reload.
-							await republish(callContext);
+							await republish(callContext, true);
 							return { ok: true, note: "Reloaded this session's plugins and command resources." };
 						}
 						default: {

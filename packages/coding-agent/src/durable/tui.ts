@@ -288,7 +288,7 @@ class DurableTui {
 		if (this.#autocompleteCommands !== view.commands) {
 			this.#autocompleteCommands = view.commands;
 			this.#editor.setAutocompleteProvider(new CombinedAutocompleteProvider([
-				...NATIVE_COMMANDS.filter(({ name }) => this.#plugins || (name !== "plugins" && name !== "reload")),
+				...NATIVE_COMMANDS.filter(({ name }) => this.#plugins || name !== "plugins"),
 				...(view.commands ?? []).map((command) => ({
 					...command,
 					getArgumentCompletions: async (prefix: string) => {
@@ -437,7 +437,7 @@ class DurableTui {
 		this.#footerHints.setText(
 			theme.fg(
 				"dim",
-				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp  /login${this.#plugins ? "  /plugins  /reload" : ""}  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
+				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp  /login  /reload${this.#plugins ? "  /plugins" : ""}  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
 			),
 		);
 	}
@@ -753,7 +753,7 @@ export async function runDurableTui(
 				view.mount(new InfoPanel("Plugins", controller.describePlugins(), () => view.restoreEditor()));
 				return;
 			}
-			if (trimmed === "/reload" && controller.reloadPlugins !== undefined) return void controller.reloadPlugins();
+			if (trimmed === "/reload") return void controller.reload();
 			if (trimmed === "/model") return selectModel();
 			if (trimmed === "/tasks") return void controller.toggleTasks();
 			if (trimmed === "/agents" || trimmed === "/tree") return selectConversation();

@@ -164,16 +164,17 @@ export interface ResourceLoader {
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
 }
 
-function resolvePromptInput(input: string | undefined, description: string): string | undefined {
+function resolvePromptInput(input: string | undefined, description: string, cwd: string): string | undefined {
 	if (!input) {
 		return undefined;
 	}
 
-	if (existsSync(input)) {
+	const path = resolvePath(input, cwd);
+	if (existsSync(path)) {
 		try {
-			return stripBom(readFileSync(input, "utf-8"));
+			return stripBom(readFileSync(path, "utf-8"));
 		} catch (error) {
-			console.error(chalk.yellow(`Warning: Could not read ${description} file ${input}: ${error}`));
+			console.error(chalk.yellow(`Warning: Could not read ${description} file ${path}: ${error}`));
 			return input;
 		}
 	}
@@ -655,10 +656,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
 
 		const systemPromptSource = this.systemPromptSource ?? this.discoverSystemPromptFile();
-		const baseSystemPrompt = resolvePromptInput(systemPromptSource, "system prompt");
+		const baseSystemPrompt = resolvePromptInput(systemPromptSource, "system prompt", this.cwd);
 		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
-		this.systemPromptSourcePath =
-			systemPromptSource && existsSync(systemPromptSource) ? resolvePath(systemPromptSource) : undefined;
+		const systemPromptPath = systemPromptSource ? resolvePath(systemPromptSource, this.cwd) : undefined;
+		this.systemPromptSourcePath = systemPromptPath && existsSync(systemPromptPath) ? systemPromptPath : undefined;
 
 		let appendSources = this.appendSystemPromptSource;
 		if (!appendSources) {
@@ -666,14 +667,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 			appendSources = discoveredAppendSystemPromptFile ? [discoveredAppendSystemPromptFile] : [];
 		}
 		const baseAppend = appendSources
-			.map((s) => resolvePromptInput(s, "append system prompt"))
+			.map((s) => resolvePromptInput(s, "append system prompt", this.cwd))
 			.filter((s): s is string => s !== undefined);
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)
 			: baseAppend;
 		this.appendSystemPromptSourcePaths = appendSources
-			.filter((source) => existsSync(source))
-			.map((source) => resolvePath(source));
+			.map((source) => resolvePath(source, this.cwd))
+			.filter((source) => existsSync(source));
 		this.loaded = true;
 	}
 

@@ -29,6 +29,7 @@ import {
 	createHarnessSettings,
 	ExecutionEnvs,
 	findInitialAgentModel,
+	loadCodingResources,
 } from "../durable/harness-setup.ts";
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
 import { createApprovalGate } from "./services/approvals-provider.ts";
@@ -559,6 +560,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			conversation: runtime.conversation,
 			modelRuntime: runtime.modelRuntime,
 			settingsManager: runtime.settingsManager,
+			resources: runtime.resources,
 			mcp: runtime.mcp,
 			approvalGate: runtime.approvalGate,
 			facetLoader: runtime.facetLoader,
@@ -860,7 +862,8 @@ async function createCodingAgentHarness(
 	const settingsManager = createCodingSettings(cwd);
 	configureHarnessHttp(settingsManager);
 	const envs = new ExecutionEnvs(cwd);
-	const registry = createCodingRegistry(settingsManager, cwd);
+	const resources = await loadCodingResources(settingsManager, cwd);
+	const registry = createCodingRegistry(settingsManager, cwd, resources);
 	if (options.pluginManifestPaths.length > 0) {
 		registry.install(defineExtension({
 			name: "plugin-development",
@@ -927,6 +930,7 @@ async function createCodingAgentHarness(
 			conversation,
 			modelRuntime,
 			settingsManager,
+			resources,
 			mcp: activeMcp.management,
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
 			handoff,

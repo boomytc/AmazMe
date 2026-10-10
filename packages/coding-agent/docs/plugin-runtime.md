@@ -77,7 +77,7 @@ export default defineFacet({
 ## 当前接线
 
 - 宿主给 session worker 传入自己执行的注册表，现有选包、构建和 session facet 加载流程继续使用。
-- 原生 Durable 运行时接受可选的 `facetLoader`，配置后才创建插件宿主并提供 `reloadPlugins()`；TUI 的 `/reload` 调用该入口。没有 loader 时不创建插件宿主。
+- 原生 Durable 运行时接受可选的 `facetLoader`，配置后才创建插件宿主。控制器的 `reload()` 与 TUI `/reload` 在空闲时重读提示资源，并重建已选插件；没有 loader 时只重读资源，不创建插件宿主。
 - 默认 CLI 的 `-e <文件、包目录或 npm/git 来源>` 加载原生 facet 插件；也发现用户扩展目录与已信任项目的 `.amazme/extensions`。`--no-extensions` 关闭发现，显式 `-e` 仍生效。原生路径不加载 SDK 扩展工厂；Print/RPC 继续使用其 SDK 扩展入口。
 
 ## 源码选择
