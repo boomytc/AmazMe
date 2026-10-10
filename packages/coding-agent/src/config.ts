@@ -587,6 +587,8 @@ export const VERSION: string = pkg.version || "0.0.0";
 // e.g., AMAZME_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+/** The owned web host watches stdin EOF; the marker is removed before starting workers. */
+export const DESKTOP_PARENT_PIPE_ENV = "AMAZME_DESKTOP_PARENT_PIPE";
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);

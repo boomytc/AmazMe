@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { DESKTOP_PARENT_PIPE_ENV } from "@amazme/coding-agent/config";
 import { describe, expect, test } from "vitest";
 import { hostWorkingDirectory, resolveHostCli, resolveNodeExecutable, webHostLaunch } from "../src/launch.ts";
 
@@ -24,7 +25,7 @@ describe("web host launch", () => {
 		expect(launch.env.AMAZME_EXPERIMENTAL).toBeUndefined();
 		expect(launch.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
 		expect(launch.env.PATH).toBe("/usr/bin");
-		expect(launch.env.AMAZME_DESKTOP_PARENT_PIPE).toBe("1");
+		expect(launch.env[DESKTOP_PARENT_PIPE_ENV]).toBe("1");
 		for (const entry of launch.entries) {
 			expect(readFileSync(entry, "utf8").length).toBeGreaterThan(0);
 		}

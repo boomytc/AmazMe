@@ -1,6 +1,5 @@
 import type { Readable } from "node:stream";
-
-export const DESKTOP_PARENT_PIPE_ENV = "AMAZME_DESKTOP_PARENT_PIPE";
+import { DESKTOP_PARENT_PIPE_ENV } from "../config.ts";
 
 /**
  * Only the desktop-owned web process reads this pipe. EOF survives a parent's SIGKILL and

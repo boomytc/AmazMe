@@ -5,7 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Node strips TypeScript natively, but it does not apply the workspace source
 // aliases from tsconfig.json. Internal source processes preload this resolver so
-// they cannot silently fall through to stale package dist files.
+// they cannot silently fall through to stale package dist files. A path that
+// points at a package dist declaration is loaded from that package's src: the
+// node project uses the declaration because it excludes browser source, and
+// Node would otherwise follow the declaration's .ts specifiers into dist.
 
 interface TsConfig {
 	readonly compilerOptions?: {
@@ -71,16 +74,51 @@ function resolveSourcePath(replacement: string): string | undefined {
 	const basePath = resolve(repositoryRoot, replacement);
 	const rootPrefix = repositoryRoot.endsWith(sep) ? repositoryRoot : `${repositoryRoot}${sep}`;
 	if (!basePath.startsWith(rootPrefix)) return undefined;
-	const extension = extname(basePath);
-	const sourceExtension =
-		extension === ".js" ? ".ts" : extension === ".mjs" ? ".mts" : extension === ".cjs" ? ".cts" : undefined;
-	const candidates = sourceExtension
-		? [basePath, `${basePath.slice(0, -extension.length)}${sourceExtension}`]
-		: extension === ".ts" || extension === ".mts" || extension === ".cts" || extension === ".json"
-			? [basePath]
-			: [basePath, `${basePath}.ts`, resolve(basePath, "index.ts")];
-	for (const candidate of candidates) {
+	for (const candidate of sourcePathCandidates(basePath, rootPrefix)) {
+		if (!candidate.startsWith(rootPrefix)) continue;
 		if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
 	}
 	return undefined;
+}
+
+// extname("index.d.ts") is ".ts", so a declaration target would otherwise be the
+// only candidate and win. A package dist declaration maps to that package's src,
+// then to a sibling .ts. The declaration itself is left out: loading it makes
+// Node follow its .ts specifiers into dist. Missing source fails as an unresolved
+// tsconfig path instead of a missing file inside dist.
+function sourcePathCandidates(basePath: string, rootPrefix: string): readonly string[] {
+	const packageSource = packageDeclarationSource(basePath, rootPrefix);
+	const preferred: string[] = [];
+	if (packageSource !== undefined) preferred.push(packageSource);
+	if (basePath.endsWith(".d.ts")) {
+		const besideDeclaration = `${basePath.slice(0, -".d.ts".length)}.ts`;
+		if (besideDeclaration !== packageSource) preferred.push(besideDeclaration);
+	}
+	if (packageSource !== undefined) return preferred;
+	return [...preferred, ...extensionCandidates(basePath)];
+}
+
+function packageDeclarationSource(basePath: string, rootPrefix: string): string | undefined {
+	if (!basePath.endsWith(".d.ts")) return undefined;
+	const relativePath = basePath.slice(rootPrefix.length);
+	const packagesPrefix = `packages${sep}`;
+	if (!relativePath.startsWith(packagesPrefix)) return undefined;
+	const afterPackages = relativePath.slice(packagesPrefix.length);
+	const nameEnd = afterPackages.indexOf(sep);
+	if (nameEnd <= 0) return undefined;
+	const insidePackage = afterPackages.slice(nameEnd + 1);
+	const distPrefix = `dist${sep}`;
+	if (!insidePackage.startsWith(distPrefix)) return undefined;
+	const sourceStem = insidePackage.slice(distPrefix.length, -".d.ts".length);
+	if (sourceStem.length === 0 || sourceStem.endsWith(sep)) return undefined;
+	return resolve(repositoryRoot, "packages", afterPackages.slice(0, nameEnd), "src", `${sourceStem}.ts`);
+}
+
+function extensionCandidates(basePath: string): readonly string[] {
+	const extension = extname(basePath);
+	const sourceExtension =
+		extension === ".js" ? ".ts" : extension === ".mjs" ? ".mts" : extension === ".cjs" ? ".cts" : undefined;
+	if (sourceExtension) return [basePath, `${basePath.slice(0, -extension.length)}${sourceExtension}`];
+	if (extension === ".ts" || extension === ".mts" || extension === ".cts" || extension === ".json") return [basePath];
+	return [basePath, `${basePath}.ts`, resolve(basePath, "index.ts")];
 }

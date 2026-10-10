@@ -8,6 +8,8 @@ export const WEB_PAGE_ENTRY = fileURLToPath(new URL("./page.ts", import.meta.url
 /**
  * Bundle the page's TypeScript entry for the browser with the repository's esbuild and the
  * root tsconfig paths, so the page shares the real protocol and client code instead of a copy.
+ * `@amazme/web` in those paths is the declaration the node project typechecks. Alias the
+ * package back to its TypeScript source so the page inlines the implementation, not dist.
  */
 export async function bundlePageEntry(
 	repositoryRoot: string,
@@ -24,6 +26,9 @@ export async function bundlePageEntry(
 		format: "esm",
 		platform: "browser",
 		target: ["es2022"],
+		alias: {
+			"@amazme/web": join(repositoryRoot, "packages", "web", "src", "index.ts"),
+		},
 		tsconfig: join(repositoryRoot, "tsconfig.json"),
 		logLevel: "silent",
 		metafile: false,

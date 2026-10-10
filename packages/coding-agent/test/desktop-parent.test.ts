@@ -1,6 +1,7 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
-import { DESKTOP_PARENT_PIPE_ENV, watchDesktopParent } from "../src/host/desktop-parent.ts";
+import { DESKTOP_PARENT_PIPE_ENV } from "../src/config.ts";
+import { watchDesktopParent } from "../src/host/desktop-parent.ts";
 
 describe("desktop-owned web host parent pipe", () => {
 	test("only watches explicitly owned hosts and does not consume ordinary stdin", () => {

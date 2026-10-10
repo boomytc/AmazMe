@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { DESKTOP_PARENT_PIPE_ENV } from "@amazme/coding-agent/config";
 
 /** Resolve the installed coding-agent distribution through this application's dependency. */
 export function resolveHostCli(): string {
@@ -42,7 +43,7 @@ export function webHostLaunch(input: {
 		env[key] = value;
 	}
 	// EOF is observable even when Electron is killed without running its quit hooks.
-	env.AMAZME_DESKTOP_PARENT_PIPE = "1";
+	env[DESKTOP_PARENT_PIPE_ENV] = "1";
 	return {
 		nodeExecutable: input.nodeExecutable,
 		args: [cli, "web", "--port", "0"],

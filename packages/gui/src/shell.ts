@@ -7,9 +7,7 @@
  * torn down. A later exit or `render-process-gone` then sees the flag and stays quiet.
  */
 import { shouldPresentRenderFailure, type HostFailure, type RenderFailure } from "./dialogs.ts";
-
-import type { HostExitDetail } from "./host-events.ts";
-export type { HostExitDetail } from "./host-events.ts";
+import type { HostExitDetail } from "./host.ts";
 
 export interface LoadFailureInput {
 	readonly errorCode: number;

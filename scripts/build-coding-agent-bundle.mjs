@@ -111,6 +111,8 @@ function commonBuildOptions() {
 }
 
 // Browser code is a release asset. Installed hosts read it without a compiler or source aliases.
+// Root paths supply protocol and client source. `@amazme/web` there is the declaration the node
+// project typechecks; alias the package back to its source so this asset inlines the implementation.
 await build({
 	entryPoints: [join(codingAgentDir, "src", "host", "web", "page.ts")],
 	outfile: join(codingAgentDistDir, "host", "web", "page-browser.js"),
@@ -118,6 +120,9 @@ await build({
 	format: "esm",
 	platform: "browser",
 	target: "es2022",
+	alias: {
+		"@amazme/web": join(repoRoot, "packages", "web", "src", "index.ts"),
+	},
 	tsconfig: join(repoRoot, "tsconfig.json"),
 	logLevel: "warning",
 });

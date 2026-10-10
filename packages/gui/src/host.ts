@@ -1,7 +1,6 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import type { HostExitDetail } from "./host-events.ts";
-export type { HostExitDetail } from "./host-events.ts";
+import { DESKTOP_PARENT_PIPE_ENV } from "@amazme/coding-agent/config";
 import type { WebHostLaunch } from "./launch.ts";
 import { createReadinessParser } from "./readiness.ts";
 
@@ -13,6 +12,13 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
  * Older bytes are dropped. The dialog then shows the last few lines of this buffer.
  */
 export const MAX_HOST_OUTPUT_CHARS = 32_768;
+
+/** Exit data is diagnostic; future signal names remain valid. */
+export interface HostExitDetail {
+	readonly code: number | null;
+	readonly signal: string | null;
+	readonly tail: string;
+}
 
 /** Why `start` rejected. `message` is the sentence the rejection Error carries, without the tail. */
 export type HostStartupFailure =
@@ -70,7 +76,7 @@ interface NodeChildOptions {
 export function spawnNodeChild(options: NodeChildOptions): HostChild {
 	const spawnOptions = { cwd: options.cwd, env: options.env, windowsHide: true };
 	// Only a desktop-owned web host receives an open parent-lifetime pipe.
-	const child = options.env.AMAZME_DESKTOP_PARENT_PIPE === "1"
+	const child = options.env[DESKTOP_PARENT_PIPE_ENV] === "1"
 		? spawn(options.executable, [...options.args], { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] })
 		: spawn(options.executable, [...options.args], { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] });
 	return nodeChildAdapter(child);
