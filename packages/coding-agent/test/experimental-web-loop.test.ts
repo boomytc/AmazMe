@@ -135,6 +135,15 @@ async function startHostWithDirectories(holdModel = false): Promise<LoopHost> {
 			}),
 		);
 	}
+	// The resource loader also discovers ~/.agents; keep fixture catalogues independent of the developer's skills.
+	const settingsPath = join(process.env.AMAZME_CODING_AGENT_DIR, "settings.json");
+	const fixtureSettings = existsSync(settingsPath)
+		? JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>
+		: {};
+	await writeFile(settingsPath, JSON.stringify({
+		...fixtureSettings,
+		skills: [`!${join(process.env.HOME ?? homedir(), ".agents", "skills", "**")}`],
+	}));
 	const directory = await makeDirectory("web-loop-server-");
 	const sessionDir = await makeDirectory("web-loop-sessions-");
 	const host = await startWebHost({ port: 0, directory, sessionDir, pluginPackages: [fileURLToPath(new URL("../plugins/automation", import.meta.url))] });
@@ -1318,15 +1327,6 @@ describe("web client interactive loop", () => {
 				"---\nname: web-loop-brief\ndescription: Draft a brief\n---\n\n# Steps\n\nWrite it.\n",
 				"utf8",
 			);
-			// Keep this fixture's exact catalogue independent of the developer's ~/.agents skills.
-			const settingsPath = join(agentDir, "settings.json");
-			const fixtureSettings = existsSync(settingsPath)
-				? JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>
-				: {};
-			await writeFile(settingsPath, JSON.stringify({
-				...fixtureSettings,
-				skills: [`!${join(process.env.HOME ?? homedir(), ".agents", "skills", "**")}`],
-			}));
 			const attached = await attachSession(presentation, created.sessionId);
 
 			await waitFor(() => (attached.commands.state.value?.commands ?? []).length > 4, "the command catalogue");

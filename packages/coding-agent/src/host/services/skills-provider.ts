@@ -2,8 +2,8 @@ import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { type Context, type MutableReplicatedState } from "@amazme/chord";
-import { CONFIG_DIR_NAME } from "../../config.ts";
-import { loadSkills, type Skill, type SkillFrontmatter } from "../../core/skills.ts";
+import type { Skill, SkillFrontmatter } from "../../core/skills.ts";
+import type { ResourceLoader } from "../../core/resource-loader.ts";
 import { parseFrontmatter } from "../../utils/frontmatter.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import type { SkillsState, SkillSummary } from "./skills.ts";
@@ -15,8 +15,8 @@ const MAX_SKILL_NAME = 64;
 export interface SkillsServiceOptions {
 	readonly agentDir: string;
 	readonly cwd: string;
-	/** The configured skill paths, read per load so a settings change is picked up. */
-	readonly skillPaths: () => readonly string[];
+	/** The host's selected resources, including package filters and project trust. */
+	readonly resources: Pick<ResourceLoader, "getSkills" | "reload">;
 }
 
 function requireName(name: string): string {
@@ -53,8 +53,8 @@ function summarize(skill: Skill, userDirectory: string): SkillSummary {
 }
 
 /**
- * The skills catalogue over the agent directory's `skills/` folder. Loading goes through the coding
- * agent's own loader, so the list a client sees is exactly the set the prompt receives.
+ * The host working directory's selected skills. Session workers use the same resource selection
+ * rules in their own working directories; this administration surface does not change their owner.
  */
 export function createSkillsService(
 	options: SkillsServiceOptions,
@@ -64,15 +64,13 @@ export function createSkillsService(
 	const service = {
 		state: createState({ revision: 0, directory: userDirectory, skills: [], diagnostics: [] }),
 	};
-	const load = () =>
-		loadSkills({ cwd: options.cwd, agentDir: options.agentDir, skillPaths: [...options.skillPaths()], includeDefaults: true });
 	const found = (name: string): Skill => {
-		const skill = load().skills.find((candidate) => candidate.name === name);
+		const skill = options.resources.getSkills().skills.find((candidate) => candidate.name === name);
 		if (skill === undefined) throw new Error(`Unknown skill: ${name}`);
 		return skill;
 	};
 	const refresh = (context: Context): void => {
-		const result = load();
+		const result = options.resources.getSkills();
 		service.state.change(context, (draft) => {
 			draft.revision += 1;
 			draft.directory = userDirectory;
@@ -82,6 +80,10 @@ export function createSkillsService(
 				...(diagnostic.path === undefined ? {} : { path: diagnostic.path }),
 			}));
 		});
+	};
+	const reload = async (context: Context): Promise<void> => {
+		await options.resources.reload();
+		refresh(context);
 	};
 
 	return {
@@ -100,7 +102,7 @@ export function createSkillsService(
 				requireDescription(frontmatter, filePath);
 				await mkdir(dirname(filePath), { recursive: true });
 				await writeFile(filePath, request.content.endsWith("\n") ? request.content : `${request.content}\n`, "utf8");
-				refresh(context);
+				await reload(context);
 			},
 			async remove(name: string, context: Context): Promise<void> {
 				requireName(name);
@@ -109,7 +111,7 @@ export function createSkillsService(
 					throw new Error(`Skill ${name} is not an agent-directory skill; remove ${skill.filePath} where it lives`);
 				}
 				await rm(dirname(skill.filePath), { recursive: true, force: true });
-				refresh(context);
+				await reload(context);
 			},
 			async importSkill(path: string, context: Context): Promise<void> {
 				const source = resolvePath(path, options.cwd, { trim: true });
@@ -148,10 +150,10 @@ export function createSkillsService(
 					throw new Error(`A skill named ${name} already exists in ${userDirectory}`);
 				}
 				await copy();
-				refresh(context);
+				await reload(context);
 			},
 			async reload(context: Context): Promise<void> {
-				refresh(context);
+				await reload(context);
 			},
 		},
 		/** Publish the loaded set; the host calls this once the service is reachable. */

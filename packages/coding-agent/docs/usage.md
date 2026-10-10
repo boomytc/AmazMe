@@ -228,12 +228,14 @@ select write the same files the CLI and the TUI read, and **Add server…** take
 JSON (a `command` for stdio, a `url` for HTTP). Entries an extension registered are read-only here, and this host
 does not connect MCP servers itself, so the panel says so.
 
-**Skills** lists what the agent loads: the agent directory's own skills (scope `user`), the workspace's
-`.amazme/skills`, and configured skill paths. A user skill can be created, edited, removed, or imported from a
+**Skills** lists the host working directory's selected resources using the same loader as session workers:
+user and project skills, configured paths and package resources, with project trust and resource filters applied.
+Sessions in other working directories resolve their own project resources. A user skill can be created, edited, removed, or imported from a
 folder or markdown file; **Edit** opens the whole `SKILL.md` so nothing the loader reads is lost, and the host
 rejects a name outside the Agent Skills spec or a file without a description. Project and configured-path skills
-open read-only. Like the CLI, the agent loads skills when a session starts, so a new or edited skill applies to
-the sessions started afterwards.
+open read-only. Mutations and **Re-read files** refresh the host catalogue; the page refreshes the attached
+session's own resources and command catalogue after its revision changes. `/reload` also re-reads a running
+session's resources. New sessions load the current files.
 
 **Settings** is the host's own field catalogue: each row is a field the host can read and write, grouped under its
 own heading (the first group, **Interface**, holds **Language** and **Appearance**), with the settings key it maps to,

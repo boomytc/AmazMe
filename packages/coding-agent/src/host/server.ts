@@ -20,7 +20,7 @@ import { createUnixListener, getUnixSocketPath } from "@amazme/server/unix";
 import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/host/command-options.ts";
 import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "../config.ts";
-import { SettingsManager } from "../core/settings-manager.ts";
+import { createCodingSettings } from "../durable/harness-setup.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import { createPresentationFacetData, createServerPluginFacetLoader } from "./plugins/bundled.ts";
@@ -619,7 +619,7 @@ async function startServerBackend(
 		diagnosticHost: { id: serverId, directory: dirname(options.path), sessionDir },
 		diagnosticResources: options.serverPluginManifestPaths,
 		settings: {
-			manager: SettingsManager.create(administrationCwd),
+			manager: createCodingSettings(administrationCwd),
 			agentDir: getAgentDir(),
 			cwd: administrationCwd,
 			paths: {

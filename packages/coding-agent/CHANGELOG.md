@@ -39,6 +39,8 @@
 
 ### Fixed
 
+- Hosted skill administration now uses the same resource loader and project-trust selection as native sessions and workers, including package resources and exclusions. Skill operations share the server's existing mutation queue.
+
 - TUI login secret prompts stay masked before and after submission; each new prompt gets a fresh input so undo cannot restore a previous credential into another prompt. Expired callback prompts clear without cancelling the completed callback flow.
 
 - Added `amazme auth login/logout` through the existing provider and credential APIs, including masked terminal input, method selection and cancellation. Authentication guidance and CLI examples now use the installed command name; OAuth identity remains Pi's.

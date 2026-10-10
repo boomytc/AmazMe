@@ -11,6 +11,7 @@ import type { RoutedServerServiceAttachment, RoutedServerServiceHost } from "@am
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { PluginRuntime } from "../../core/plugins/runtime.ts";
 import { collectDiagnostics, type DiagnosticOptions } from "../../core/local-diagnostics.ts";
+import { loadCodingResources } from "../../durable/harness-setup.ts";
 import { Diagnostics } from "./diagnostics.ts";
 import { Plugins, PresentationPlugins, type Plugins as PluginsService } from "./plugins.ts";
 import { createFeedbackService } from "./feedback-provider.ts";
@@ -108,7 +109,7 @@ export async function createExperimentalServerServices(options: {
 		errors: [...settingsErrorList],
 	});
 	const skills = createSkillsService(
-		{ agentDir, cwd, skillPaths: () => manager.getSkillPaths() },
+		{ agentDir, cwd, resources: await loadCodingResources(manager, cwd) },
 		replicatedState,
 	);
 	skills.refresh(BACKGROUND_CONTEXT);
@@ -169,16 +170,24 @@ export async function createExperimentalServerServices(options: {
 					set: (id, value, context) =>
 						serialize(async () => {
 							settingsErrorList = await applySetting(manager, id, value);
+							await skills.service.reload(context);
 							publishSettings(settingsState, context, { manager, agentDir, cwd, paths, errors: settingsErrorList });
 						}),
 					reload: (context) =>
 						serialize(async () => {
-							await manager.reload();
+							await skills.service.reload(context);
 							settingsErrorList = settingsErrors(manager);
 							publishSettings(settingsState, context, { manager, agentDir, cwd, paths, errors: settingsErrorList });
 						}),
 				});
-				provider.provide(Skills, skills.service);
+				provider.provide(Skills, {
+					state: skills.service.state,
+					read: (name, context) => serialize(() => skills.service.read(name, context)),
+					write: (request, context) => serialize(() => skills.service.write(request, context)),
+					remove: (name, context) => serialize(() => skills.service.remove(name, context)),
+					importSkill: (path, context) => serialize(() => skills.service.importSkill(path, context)),
+					reload: (context) => serialize(() => skills.service.reload(context)),
+				});
 				provider.provide(Feedback, {
 					state: feedback.service.state,
 					rate: (request, context) => serialize(() => feedback.service.rate(request, context)),
