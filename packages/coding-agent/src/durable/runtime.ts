@@ -446,6 +446,14 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				model: ref,
 				thinkingLevel: initialThinkingLevel(settingsManager, model, thinkingLevel, agentOf(state.conversation).thinkingLevel),
 			}, context);
+			notice("info", `Selected ${ref.provider}/${ref.modelId}.`);
+		};
+		const selectThinking = async (value: string): Promise<void> => {
+			const levels = getSupportedThinkingLevels(agentModel());
+			const level = levels.find((candidate) => candidate === value.toLowerCase());
+			if (level === undefined) throw new Error(`Unknown thinking level "${value}". Available: ${levels.join(", ")}.`);
+			await current.configure({ thinkingLevel: level }, context);
+			notice("info", `Thinking level: ${level}.`);
 		};
 		const show = async (id: ConversationId): Promise<void> => {
 			// Focus-only. An existing conversation: no summary, no new conversation.
@@ -564,11 +572,27 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			auth,
 			...(plugins === undefined ? {} : {
 				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources),
-				completeCommand: async (name: string, prefix: string) => plugins!.changing
-					? null
-					: await pluginCommands!.list().find((entry) => entry.name === name)?.getArgumentCompletions?.(prefix) ?? null,
 			}),
+			completeCommand: async (name, prefix) => {
+				const query = prefix.toLowerCase();
+				if (name === "model") return modelRuntime.getAvailableSnapshot()
+					.filter((model) => `${model.provider}/${model.id} ${model.name}`.toLowerCase().includes(query))
+					.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name, description: model.provider }));
+				if (name === "thinking") return getSupportedThinkingLevels(agentModel())
+					.filter((level) => level.includes(query)).map((level) => ({ value: level, label: level }));
+				return plugins?.changing ? null : await pluginCommands?.list().find((entry) => entry.name === name)?.getArgumentCompletions?.(prefix) ?? null;
+			},
 			runCommand: (name, args) => command(async () => {
+				if (name === "model") {
+					const query = args.trim().toLowerCase();
+					const matches = modelRuntime.getAvailableSnapshot().filter((model) =>
+						`${model.provider}/${model.id}`.toLowerCase() === query || model.id.toLowerCase() === query);
+					const selected = matches[0];
+					if (matches.length !== 1 || selected === undefined) throw new Error(matches.length === 0 ? `Unknown model: ${args}` : `Ambiguous model: ${args}. Use provider/model.`);
+					await selectModel({ provider: selected.provider, modelId: selected.id });
+					return;
+				}
+				if (name === "thinking") { await selectThinking(args.trim()); return; }
 				if (reservedCommands.has(name) || !state.commands?.some((candidate) => candidate.name === name)) throw new Error(`Unknown command: /${name}`);
 				await submitInput(`/${name}${args.length === 0 ? "" : ` ${args}`}`, "steer");
 			}),
@@ -631,7 +655,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					const levels = getSupportedThinkingLevels(model);
 					const level = agentOf(state.conversation).thinkingLevel ?? "off";
 					const next = levels[(levels.indexOf(level) + 1) % levels.length] ?? "off";
-					await current.configure({ thinkingLevel: next }, context);
+					await selectThinking(next);
 				}),
 			setModel: (ref) => command(() => selectModel(ref)),
 			cycleModel: (direction = "forward") => command(async () => {

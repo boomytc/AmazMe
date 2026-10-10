@@ -68,6 +68,23 @@ export function turnCancelNotice(): string {
 
 const VS_CODE_TERMINALS = new Set(["vscode", "cursor", "windsurf", "zed"]);
 
+/** Native and hosted Durable terminals expose the same keyboard entry points. */
+export function durablePromptShortcutLine(turnRunning: boolean): string {
+	const parts = ["/ commands"];
+	for (const [action, label] of [["app.model.select", "model"], ["app.thinking.cycle", "thinking"]] as const) {
+		const keys = keyDisplayText(action);
+		if (keys) parts.push(`${keys} ${label}`);
+	}
+	if (turnRunning) {
+		const keys = keyDisplayText("app.interrupt");
+		if (keys) parts.push(`${keys} stop`);
+	}
+	parts.push(`Enter ${turnRunning ? "steer" : "send"}`);
+	const followUp = keyDisplayText("app.message.followUp");
+	if (followUp) parts.push(`${followUp} follow-up`);
+	return parts.join(" · ");
+}
+
 export function detectTerminalClass(env: NodeJS.ProcessEnv = process.env): TerminalClass {
 	const program = env.TERM_PROGRAM ?? "";
 	if (program === "Apple_Terminal") return "apple-terminal";

@@ -1,6 +1,7 @@
 import { defineFacet, type Facet, type JsonValue } from "@amazme/chord";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import type { Context } from "@amazme/chord";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import { type ModelSummary, Models, type Models as ModelsService } from "./models.ts";
 import { PresentationPlugins } from "./plugins.ts";
@@ -121,6 +122,11 @@ function thinkingCommand(models: ModelsService, ui: PresentationUI): SlashComman
 		name: "thinking",
 		description: "Set thinking level",
 		argumentHint: "<level>",
+		async getArgumentCompletions(prefix) {
+			const levels = await models.getThinkingLevels(BACKGROUND_CONTEXT);
+			return levels.filter((level) => level.includes(prefix.toLowerCase()))
+				.map((level) => ({ value: level, label: level, description: THINKING_DESCRIPTIONS[level] }));
+		},
 		async run(args, context) {
 			const levels = await models.getThinkingLevels(context);
 			let selected = levels.find((level) => level === args.toLowerCase());

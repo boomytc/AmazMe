@@ -14,6 +14,7 @@ import { SettingsManager } from "../core/settings-manager.ts";
 import { oldestPresentedEntryId } from "../durable/conversation-view.ts";
 import { createChatViewport } from "../modes/interactive/chat-viewport.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
+import { durablePromptShortcutLine } from "../modes/interactive/composer-contract.ts";
 import { getEditorTheme, setRegisteredThemes, stopThemeWatcher, theme } from "../modes/interactive/theme/theme.ts";
 import { InteractiveThemeController } from "../modes/interactive/theme/theme-controller.ts";
 import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
@@ -127,6 +128,9 @@ export class ExperimentalClientTui implements Component {
 		this.#chatInput.onCtrlD = finish;
 		this.#chatInput.onAction("app.clear", finish);
 		this.#chatInput.onAction("app.model.select", () => void this.#executeSlashCommand("model", ""));
+		this.#chatInput.onAction("app.thinking.cycle", () => {
+			void this.#models?.cycleThinking(BACKGROUND_CONTEXT).catch((error: unknown) => this.showError(message(error)));
+		});
 		this.#chatInput.onAction("app.message.followUp", () => {
 			const text = this.#chatInput.getText().trim();
 			if (text.length === 0) return;
@@ -221,6 +225,7 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	showError(error: string): void {
+		if (this.#closed) return;
 		this.#status = `Error: ${error}`;
 		this.#rebuild();
 	}
@@ -375,6 +380,11 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	#rebuild(): void {
+		const conversation = this.#conversationView();
+		const agent = conversation?.docs["amazme.agent"] as AgentState | undefined;
+		const running = conversation !== undefined && liveOf(conversation).run !== undefined;
+		this.#chatInput.setModelLabel(() => `${agent?.model?.modelId ?? "No model"} · ${agent?.thinkingLevel ?? "off"}`);
+		this.#chatInput.setShortcutLine(() => durablePromptShortcutLine(running));
 		this.#sessionHeading.setText(
 			this.#sessionId === undefined || this.#selectedServerId === undefined
 				? ""
@@ -628,6 +638,7 @@ export class ExperimentalClientTui implements Component {
 		if (pending !== undefined) this.#pendingSummary = undefined;
 		if (prompt.length === 0) return;
 		if (prompt.startsWith("/")) {
+			this.#chatInput.setText("");
 			const separator = prompt.indexOf(" ");
 			const name = prompt.slice(1, separator === -1 ? undefined : separator);
 			const args = separator === -1 ? "" : prompt.slice(separator + 1).trim();
@@ -644,8 +655,6 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	async #executeSlashCommand(name: string, args: string): Promise<void> {
-		const local = TERMINAL_COMMANDS.some(command => command.name === name) || (name === "compact" && this.#focusedId() !== undefined);
-		if (local) this.#chatInput.setText("");
 		if (name === "tree" || name === "agents") {
 			await this.#switchConversation();
 			return;
@@ -679,7 +688,6 @@ export class ExperimentalClientTui implements Component {
 		const command = this.#selectedSlashCommands()
 			?.list()
 			.find((candidate) => candidate.name === name);
-		this.#chatInput.setText("");
 		try {
 			if (command === undefined) {
 				const catalog = this.#commands;
@@ -902,15 +910,11 @@ export class ExperimentalClientTui implements Component {
 	#footer(): string {
 		const view = this.#conversationView();
 		const lane = this.#conversations?.state.value?.lane;
-		const commands = "/tree · /fork · /older · /model · /login · /logout · /thinking · /compact · /reload";
 		if (lane !== undefined) {
 			const count = view === undefined ? "" : ` · ${view.entries.length} entries`;
-			return `${formatLane(lane)}${count} · ${commands}`;
+			return `${formatLane(lane)}${count}`;
 		}
-		if (!view) return commands;
-		const agent = (view.docs["amazme.agent"] ?? {}) as AgentState;
-		const model = agent.model === undefined ? "no model" : `${agent.model.provider}/${agent.model.modelId}`;
-		return `${model} · thinking ${agent.thinkingLevel ?? "off"} · ${view.entries.length} entries · ${commands}`;
+		return view === undefined ? "" : `${view.entries.length} entries`;
 	}
 }
 

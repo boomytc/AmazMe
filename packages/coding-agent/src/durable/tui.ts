@@ -43,6 +43,7 @@ import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
 import { ListSelector } from "../modes/interactive/components/list-selector.ts";
 import { manageProviderAuth } from "./provider-menu.ts";
 import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
+import { durablePromptShortcutLine } from "../modes/interactive/composer-contract.ts";
 import { DynamicBorder } from "../modes/interactive/components/dynamic-border.ts";
 import { formatTokens } from "../modes/interactive/components/footer.ts";
 import { keyText } from "../modes/interactive/components/keybinding-hints.ts";
@@ -159,7 +160,6 @@ class DurableTui {
 	readonly #notices = new Container();
 	readonly #footer = new Container();
 	readonly #footerStats = new Text("", 1, 0);
-	readonly #footerHints = new Text("", 1, 0);
 	readonly #editorContainer = new Container();
 	readonly #attachments = new Text("", 1, 0);
 	readonly #editor: CustomEditor;
@@ -246,7 +246,6 @@ class DurableTui {
 				if (isActive()) this.mount(new InfoPanel("Clipboard", error instanceof Error ? error.message : String(error), () => this.restoreEditor()));
 			}).finally(() => { this.#clipboardRead = undefined; });
 		};
-		this.#editor.setShortcutLine(() => `Enter send · ${keyText("app.message.followUp")} follow-up`);
 		this.#editor.onEscape = handlers.abort;
 		this.#editor.onCtrlD = handlers.exit;
 		this.#editor.onAction("app.clear", handlers.exit);
@@ -268,7 +267,6 @@ class DurableTui {
 
 		this.#editorContainer.addChild(this.#editor);
 		this.#footer.addChild(this.#footerStats);
-		this.#footer.addChild(this.#footerHints);
 		// One empty line between the transcript and everything below it.
 		for (const component of [this.#chat, this.#tasks, this.#queue, this.#notices, this.#attachments, this.#editorContainer, this.#footer]) {
 			this.#ui.addChild(component);
@@ -322,6 +320,7 @@ class DurableTui {
 	}
 
 	mount(component: Component): void {
+		if (this.#disposed) return;
 		++this.#pasteEpoch;
 		this.#editorContainer.clear();
 		this.#editorContainer.addChild(component);
@@ -351,14 +350,14 @@ class DurableTui {
 			this.#autocompleteCommands = view.commands;
 			this.#editor.setAutocompleteProvider(new CombinedAutocompleteProvider([
 				...NATIVE_COMMANDS.filter(({ name }) => this.#plugins || name !== "plugins"),
-				...(view.commands ?? []).map((command) => ({
+				...(view.commands ?? []),
+			].map((command) => ({
 					...command,
 					getArgumentCompletions: async (prefix: string) => {
 						const items = await this.#completeCommand(command.name, prefix);
 						return items === null ? null : [...items];
 					},
-				})),
-			], this.#cwd));
+				})), this.#cwd));
 		}
 		const live = (view.conversation.docs["amazme.live"] ?? {}) as LiveState;
 		const shown = [...view.history, ...view.conversation.entries];
@@ -491,7 +490,8 @@ class DurableTui {
 
 	#syncFooter(view: DurableView): void {
 		const agent = agentOf(view.conversation);
-		this.#editor.setModelLabel(() => `${agent.model === undefined ? "No model" : `${agent.model.provider}/${agent.model.modelId}`} · ${agent.thinkingLevel ?? "off"}`);
+		this.#editor.setModelLabel(() => `${agent.model?.modelId ?? "No model"} · ${agent.thinkingLevel ?? "off"}`);
+		this.#editor.setShortcutLine(() => durablePromptShortcutLine(view.lane.run !== "idle"));
 		const usage = totalUsage(
 			(view.conversation.docs["amazme.usage"] ?? {
 				models: {},
@@ -516,12 +516,6 @@ class DurableTui {
 		const storageCue = view.session.directory === undefined ? " · in memory" : "";
 		this.#footerStats.setText(
 			`${title}${theme.fg(view.lane.role === "main" ? "dim" : "accent", formatLane(view.lane))}${theme.fg("dim", `${historyCue}${storageCue}  ${stats.join(" ")}  ${view.session.cwd}`)}`,
-		);
-		this.#footerHints.setText(
-			theme.fg(
-				"dim",
-				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp  /login  /reload${this.#plugins ? "  /plugins" : ""}  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.cycleForward")} cycle · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
-			),
 		);
 	}
 
@@ -719,13 +713,17 @@ export async function runDurableTui(
 
 	const selectModel = (): void => {
 		const snapshot = source.current();
+		if (snapshot.models.length === 0) {
+			view.mount(new InfoPanel("Models", "No configured models. Use /login to connect a provider, then open /model.", () => view.restoreEditor()));
+			return;
+		}
 		const current = agentOf(snapshot.conversation).model;
 		const isCurrent = (model: { provider: string; modelId: string }) => model.provider === current?.provider && model.modelId === current.modelId;
 		const items: SelectItem[] = [...snapshot.models]
 			.sort((left, right) => Number(isCurrent(right)) - Number(isCurrent(left)))
 			.map((model) => ({
 				value: `${model.provider}/${model.modelId}`,
-				label: model.modelId,
+				label: `${model.modelId}${isCurrent(model) ? " (selected)" : ""}`,
 				description: model.provider,
 			}));
 		const selector = new ListSelector(
@@ -733,6 +731,7 @@ export async function runDurableTui(
 			items,
 			(value) => {
 				view.restoreEditor();
+				if (source.current().conversation.conversation.id !== snapshot.conversation.conversation.id) return;
 				const separator = value.indexOf("/");
 				void controller.setModel({
 					provider: value.slice(0, separator),
@@ -742,6 +741,28 @@ export async function runDurableTui(
 			() => view.restoreEditor(),
 		);
 		view.mount(selector);
+	};
+
+	const selectThinking = (): void => {
+		const snapshot = source.current();
+		const focused = view.ui.getFocusedComponent();
+		void (async () => {
+			const levels = await controller.completeCommand?.("thinking", "") ?? [];
+			if (view.ui.getFocusedComponent() !== focused || source.current().conversation.conversation.id !== snapshot.conversation.conversation.id) return;
+			const current = agentOf(snapshot.conversation).thinkingLevel ?? "off";
+			view.mount(new ListSelector("Select thinking level:", [...levels]
+				.sort((left, right) => Number(right.value === current) - Number(left.value === current)).map((level) => ({
+				value: level.value, label: `${level.label}${level.value === current ? " (selected)" : ""}`,
+				...(level.description === undefined ? {} : { description: level.description }),
+			})), (value) => {
+				view.restoreEditor();
+				if (source.current().conversation.conversation.id === snapshot.conversation.conversation.id)
+					void controller.runCommand("thinking", value);
+			}, () => view.restoreEditor()));
+		})().catch((error: unknown) => {
+			if (view.ui.getFocusedComponent() === focused && source.current().conversation.conversation.id === snapshot.conversation.conversation.id)
+				view.mount(new InfoPanel("Thinking", error instanceof Error ? error.message : String(error), () => view.restoreEditor()));
+		});
 	};
 
 	const selectConversation = (): void => {
@@ -833,7 +854,6 @@ export async function runDurableTui(
 		submit: (text, whenBusy, images) => {
 			const trimmed = text.trim();
 			if (!trimmed && images.length === 0) return;
-			if (whenBusy === "followUp") return controller.submit(trimmed, whenBusy, images);
 			const authCommand = /^\/(login|logout)(?:\s+(.*))?$/su.exec(trimmed);
 			if (authCommand) { showAuth(authCommand[1] === "login" ? "login" : "logout", authCommand[2]?.trim() || undefined); return; }
 			if (trimmed === "/mcp") { showMcp(); return; }
@@ -842,7 +862,16 @@ export async function runDurableTui(
 				return;
 			}
 			if (trimmed === "/reload") return void controller.reload();
-			if (trimmed === "/model") { selectModel(); return; }
+			const modelCommand = /^\/model(?:\s+(.*))?$/su.exec(trimmed);
+			if (modelCommand) {
+				if (modelCommand[1]) return void controller.runCommand("model", modelCommand[1]);
+				selectModel(); return;
+			}
+			const thinkingCommand = /^\/thinking(?:\s+(.*))?$/su.exec(trimmed);
+			if (thinkingCommand) {
+				if (thinkingCommand[1]) return void controller.runCommand("thinking", thinkingCommand[1]);
+				selectThinking(); return;
+			}
 			if (trimmed === "/attachments") { view.showAttachments(); return; }
 			if (trimmed === "/tasks") return void controller.toggleTasks();
 			if (trimmed === "/agents" || trimmed === "/tree") { selectConversation(); return; }
@@ -852,7 +881,7 @@ export async function runDurableTui(
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);
 			}
-			return controller.submit(trimmed, "steer", images);
+			return controller.submit(trimmed, whenBusy, images);
 		},
 		abort: () => void controller.abort(),
 		exit,

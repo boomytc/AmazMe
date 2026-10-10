@@ -8,7 +8,8 @@ The default terminal runs on Durable. Its local commands are:
 
 | Command | Behavior |
 |---|---|
-| `/model` | Open the model selector |
+| `/model [provider/model]` | Select a model; open the selector when omitted |
+| `/thinking [level]` | Select a supported reasoning level; open the selector when omitted |
 | `/login [provider]`, `/logout [provider]` | Manage provider credentials |
 | `/attachments` | Remove draft image attachments |
 | `/mcp` | Manage MCP connections |
@@ -20,7 +21,7 @@ The default terminal runs on Durable. Its local commands are:
 | `/plugins` | Inspect selected plugin sources and API; present when plugins are selected |
 | `/reload` | Re-read prompt resources and rebuild selected plugins while idle |
 
-Use the configured model and thinking shortcuts to cycle selections. Configure resource selection through `amazme config` and preferences in the settings files. Start or resume sessions through CLI options; see [CLI](cli.md), [Sessions](sessions.md) and [Keybindings](keybindings.md). `Ctrl+C` exits; `Ctrl+D` exits when the editor is empty.
+The terminal favors commands and shortcuts. `Ctrl+L` opens the model selector and `Shift+Tab` cycles the current model's supported reasoning levels in both terminal clients. The composer shows the current selection and a short key guide; typing `/` discovers the other commands. Configure resource selection through `amazme config` and preferences in the settings files. Start or resume sessions through CLI options; see [CLI](cli.md), [Sessions](sessions.md) and [Keybindings](keybindings.md). `Ctrl+C` exits; `Ctrl+D` exits when the editor is empty.
 
 ## Hosted terminal and Web
 
