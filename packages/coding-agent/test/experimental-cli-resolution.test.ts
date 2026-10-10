@@ -1,11 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 import { cli } from "../src/cli/host/cli.ts";
 
-describe("experimental CLI command composition", () => {
-	test("requires an experimental subcommand", () => {
+describe("host CLI command composition", () => {
+	test("requires a host subcommand", () => {
 		expect(cli.parse([])).toEqual({
 			ok: false,
-			errors: ["Expected experimental command: server, client, or web"],
+			errors: ["Expected host command: server, client, or web"],
 		});
 	});
 

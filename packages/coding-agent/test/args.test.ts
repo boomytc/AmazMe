@@ -511,10 +511,10 @@ describe("parseArgs", () => {
 			expect(result.messages).toEqual(["hello", "world"]);
 		});
 
-		test("opens the dashboard from the dashboard command without sending it as a prompt", () => {
-			expect(parseArgs(["dashboard"])).toMatchObject({ dashboard: true, messages: [] });
-			expect(parseArgs(["--dashboard"])).toMatchObject({ dashboard: true, messages: [] });
-			expect(parseArgs(["dashboard", "keep going"]).messages).toEqual(["keep going"]);
+		test("treats dashboard as prose and captures the unsupported long option", () => {
+			expect(parseArgs(["dashboard"]).messages).toEqual(["dashboard"]);
+			expect(parseArgs(["--dashboard"]).unknownFlags.get("dashboard")).toBe(true);
+			expect(parseArgs(["dashboard", "keep going"]).messages).toEqual(["dashboard", "keep going"]);
 		});
 
 		test("parses @file arguments", () => {

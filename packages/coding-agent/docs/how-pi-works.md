@@ -1,49 +1,43 @@
-# How Pi Works
+# How AmazMe Works
 
-Pi coordinates model requests, tool execution, context assembly, and session storage. A session is Pi's record of a conversation, including messages, tool calls and results, model changes, compactions, and other events.
+The default terminal and hosted product use Durable: one Harness coordinates model requests, tools, persistent conversations and owned tasks. ModelRuntime owns provider catalogs and credentials; the resource loader owns prompts, skills, context files and themes.
 
-Messages and events in a session form a tree. Each path through that tree is a branch. The branch ending at the current entry is the active branch and supplies the history for the next model request.
+## Conversation and execution
 
-## Agent loop
+A submission enters the focused conversation. The Harness prepares a model request from its saved agent configuration, selected tools, prompt sections and history. The provider streams a response; tool calls run as owned tasks through the same registry, with results committed before the next generation.
 
-A submitted message is added to the active branch. Pi builds a model request from the system prompt, active branch, available tools, and model settings, then sends it through the selected provider.
+Steering enters at a turn boundary. A follow-up waits until the current work completes. Cancellation targets the current conversation and waits for its owned work to stop. Closing an interrupted persistent session preserves recoverable work; reopening uses Durable's recovery rules rather than starting an independent agent loop.
 
-The provider streams an assistant response, which can contain text and tool calls. Pi records the response, executes each tool call, and records the results. That completes one turn. If tool results or queued messages require another model request, Pi starts another turn. Otherwise, the run ends.
+Subagents and workflows use conversations and tasks in this same Harness. Their task IDs, conversation ownership and results remain available to the task graph and transcript. Focusing another conversation does not transfer previously admitted work to it.
 
-Steering messages enter after the current assistant turn. Follow-up messages enter after the agent has finished its pending work. Aborting stops the current run and returns queued messages to the editor.
+## Context and resources
 
-## Context
+The selected conversation supplies model history and settings. Prompt sections reuse Pi's system-prompt builder and include the active tool descriptions, context files, skill descriptions and working directory. Skills carry full instructions on demand. Prompt templates and `/skill:<name>` commands expand before the input is admitted, using the same expansion code in native and hosted clients.
 
-The active branch supplies conversation history. Pi converts its session entries into model-compatible user, assistant, and tool-result messages.
+One resource loader applies configured paths, project trust, exclusions and explicit CLI selections. `/reload` reads its resources and settings while idle. It preserves process-local overrides and does not silently replace an existing conversation's saved model or tool selection.
 
-Pi builds the system prompt from its base instructions and discovered context files. The request also carries tool definitions and skill descriptions.
+Model scope patterns control startup and cycling through the existing resolver. Authentication changes are resolved through ModelRuntime; clients do not maintain a second credential store. OAuth uses Pi's original provider client IDs, callbacks and request identity.
 
-Full skill instructions are loaded on demand. Extensions can add instructions or transform context.
+## Storage and branches
 
-Prompt templates expand editor input before it becomes a user message. Selected files, images, pasted text, and shell output can become message content.
+The default terminal stores each session in a SQLite database. Its session document keeps the title and focused conversation. Branches and subagents have independent agent configuration; changing the focused model updates that conversation. `/tree`, `/fork` and older-history paging operate on persisted conversation state.
 
-## Sessions
+Hosted sessions use the host's session storage. The terminal client and Web client observe the same worker and focus. Host restarts reopen the same saved sessions and task state.
 
-Persistent sessions are JSONL files. Each tree entry has an ID and refers to its parent. The current entry identifies the active branch.
+`--no-session` gives the default terminal in-memory storage and discards conversation state on close. Tools and plugins still use their normal permissions; this option does not hide file edits or configuration writes.
 
-Continuing from an earlier entry creates another branch in the same file. Forking and cloning copy selected history into a new session file.
+Print/RPC and `createAgentSession()` use the SDK's JSONL entry tree. Their session selectors, extensions and events follow the [SDK](sdk.md), [RPC](rpc.md) and [Sessions](sessions.md) contracts. A JSONL file is not the default terminal's SQLite database.
 
-Model context is reconstructed from the active branch. Compaction inserts a summary entry that replaces older messages in subsequent model requests. The original entries remain in the session tree.
+## Plugins and lifecycle
 
-## Interfaces
+A native plugin is a Chord facet. It contributes tools, prompt sections, commands, tasks or hooks through the existing services. Registrations and resources are leases owned by the facet. Reload builds a candidate while the session is idle; failure preserves the usable registration, and cleanup releases the resources it owns.
 
-Interactive mode renders session and agent events in the terminal. Print mode runs a prompt and writes the final response. JSON mode writes agent events as JSONL.
+History, memory, checkpoints, completion verification and workflows are optional plugins. Verification uses ordinary tool tasks and independent receipts. Workflows use saved stages and owned tasks for bounded concurrency and pause/resume. Neither creates a second execution loop or enables itself in a default session.
 
-RPC mode accepts JSONL commands on stdin and writes responses and events to stdout. The TypeScript SDK creates and controls agent sessions in process.
+## Interfaces and trust
 
-All interfaces use the same agent and session mechanisms.
+`amazme` opens the native terminal when stdin and stdout are terminals. `amazme server`, `client` and `web` expose the hosted runtime; `--print`, JSON and RPC select the SDK's scripted interfaces.
 
-## Extensions and resources
+The CLI's startup benchmark initializes the same native terminal and follows its normal cleanup. Plain help and model listing do not evaluate SDK extension factories. Native plugins use slash commands, while SDK extensions may register CLI flags for their own invocation.
 
-Extensions are TypeScript modules loaded into the Pi process. Their factory functions register tools, commands, shortcuts, providers, event handlers, renderers, and terminal UI.
-
-Skills provide on-demand instructions and supporting files. Prompt templates provide reusable message text. Themes provide terminal colors. Pi packages distribute these resources through npm or git.
-
-## Trust and permissions
-
-Pi resolves project trust before loading project settings and resources. After the trust decision and project-resource loading, Pi loads context files. Enabled tools use the operating-system permissions of the Pi process. Extensions execute inside that process.
+Project trust controls which project configuration and executable resources load. Context files have their own discovery rules. Tool execution and trusted plugins use the process's operating-system permissions. See [Security](security.md) and [Plugin runtime](plugin-runtime.md) for the actual boundaries.

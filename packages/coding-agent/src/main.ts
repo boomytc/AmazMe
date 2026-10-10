@@ -1,8 +1,7 @@
 /**
  * Main entry point for the coding agent CLI.
  *
- * This file handles CLI argument parsing and translates them into
- * createAgentSession() options. The SDK does the heavy lifting.
+ * Selects the native Durable terminal or the SDK print/RPC runtime from CLI arguments.
  */
 
 import { createInterface } from "node:readline";
@@ -64,8 +63,9 @@ import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
-import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
-import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
+import { runMigrations } from "./migrations.ts";
+import { runPrintMode } from "./modes/print-mode.ts";
+import { runRpcMode } from "./modes/rpc/rpc-mode.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -683,15 +683,39 @@ export async function main(args: string[], options?: MainOptions) {
 	const nativeInteractive =
 		appMode === "interactive" &&
 		!parsed.help &&
-		parsed.listModels === undefined &&
-		!isTruthyEnvFlag(process.env.AMAZME_STARTUP_BENCHMARK);
+		parsed.listModels === undefined;
+	const plainMetadata = isPlainRuntimeMetadataCommand(parsed);
+	if ((nativeInteractive || plainMetadata) && parsed.unknownFlags.size > 0) {
+		for (const option of parsed.unknownFlags.keys()) console.error(chalk.red(`Error: Unknown option --${option} for the native terminal. Use ${APP_COMMAND} --help.`));
+		process.exit(1);
+	}
+	if (nativeInteractive && options?.extensionFactories?.length) {
+		console.error(chalk.red("Error: inline SDK extension factories require --print, --mode json, or --mode rpc. Select native facet sources with -e for the terminal."));
+		process.exit(1);
+	}
+	if (plainMetadata && parsed.help) {
+		printHelp();
+		return;
+	}
+	if (plainMetadata && parsed.listModels !== undefined) {
+		reportDiagnostics(collectSettingsDiagnostics(bootstrapSettingsManager));
+		configureHttpDispatcher(bootstrapSettingsManager.getHttpIdleTimeoutMs());
+		const modelRuntime = await ModelRuntime.create({ signal: AbortSignal.timeout(15_000) });
+		await listModels(modelRuntime, typeof parsed.listModels === "string" ? parsed.listModels : undefined, AbortSignal.timeout(15_000));
+		return;
+	}
+	const startupBenchmark = isTruthyEnvFlag(process.env.AMAZME_STARTUP_BENCHMARK);
+	if (startupBenchmark && !nativeInteractive) {
+		console.error(chalk.red("Error: AMAZME_STARTUP_BENCHMARK only supports interactive mode"));
+		process.exit(1);
+	}
 	if (nativeInteractive && parsed.noSession && (parsed.continue || parsed.resume)) {
 		console.error(chalk.red("Error: --no-session cannot be combined with --continue or --resume"));
 		process.exit(1);
 	}
 
 	// Run migrations (pass cwd for project-local migrations)
-	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(cwd);
+	runMigrations(cwd);
 	time("runMigrations");
 
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
@@ -699,7 +723,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
 	// Runs before any runtime services are created so the chosen settings apply everywhere.
-	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined && shouldRunFirstTimeSetup()) {
+	if (nativeInteractive && !startupBenchmark && shouldRunFirstTimeSetup()) {
 		await showFirstTimeSetup(startupSettingsManager);
 		time("firstTimeSetup");
 	}
@@ -710,6 +734,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "interactive" && parsed.tuiMode !== undefined) {
 		startupSettingsManager.applyOverrides({ tuiMode: parsed.tuiMode });
 	}
+	if (nativeInteractive && parsed.verbose) startupSettingsManager.applyOverrides({ quietStartup: false });
 
 	// The interactive TUI is the durable session. Print and RPC still use the JSONL agent session.
 	if (nativeInteractive) {
@@ -733,6 +758,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const sessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
 		const { runDurableInteractive } = await import("./durable/interactive.ts");
 		await runDurableInteractive({
+			startupBenchmark,
 			cwd,
 			continueSession: parsed.continue === true || parsed.resume === true,
 			noSession: parsed.noSession === true,
@@ -761,6 +787,7 @@ export async function main(args: string[], options?: MainOptions) {
 			noMcp: parsed.noMcp === true || parsed.noExtensions === true,
 			...(initialMessage === undefined ? {} : { initialMessage }),
 		});
+		printTimings();
 		return;
 	}
 
@@ -793,10 +820,6 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const trustStore = new ProjectTrustStore(agentDir);
 	const sessionCwd = sessionManager.getCwd();
-	const autoTrustOnReloadCwd =
-		parsed.projectTrustOverride === undefined && !hasTrustRequiringProjectResources(sessionCwd)
-			? sessionCwd
-			: undefined;
 	const trustPromptMode: AppMode = parsed.help || parsed.listModels !== undefined ? "print" : appMode;
 	const projectTrustByCwd = new Map<string, boolean>();
 
@@ -943,7 +966,7 @@ export async function main(args: string[], options?: MainOptions) {
 		sessionManager,
 	});
 	time("createAgentSessionRuntime");
-	const { services, session, modelFallbackMessage } = runtime;
+	const { services, session } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
@@ -980,11 +1003,6 @@ export async function main(args: string[], options?: MainOptions) {
 	initTheme(settingsManager.getTheme(), appMode === "interactive");
 	time("initTheme");
 
-	// Show deprecation warnings in interactive mode
-	if (appMode === "interactive" && deprecationWarnings.length > 0) {
-		await showDeprecationWarnings(deprecationWarnings);
-	}
-
 	time("resolveModelScope");
 	const startupDiagnostics = deduplicateDiagnostics([...startupSettingsDiagnostics, ...runtime.diagnostics]);
 	const hasRuntimeErrors = runtime.diagnostics.some((diagnostic) => diagnostic.type === "error");
@@ -1004,12 +1022,6 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	const startupBenchmark = isTruthyEnvFlag(process.env.AMAZME_STARTUP_BENCHMARK);
-	if (startupBenchmark && appMode !== "interactive") {
-		console.error(chalk.red("Error: AMAZME_STARTUP_BENCHMARK only supports interactive mode"));
-		process.exit(1);
-	}
-
 	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
 	if (!offlineMode && appMode === "rpc") {
 		const controller = new AbortController();
@@ -1023,40 +1035,6 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		printTimings();
 		await runRpcMode(runtime);
-	} else if (appMode === "interactive") {
-		const interactiveMode = new InteractiveMode(runtime, {
-			migratedProviders,
-			startupDiagnostics,
-			modelFallbackMessage,
-			autoTrustOnReloadCwd,
-			initialMessage,
-			initialImages,
-			initialMessages: parsed.messages,
-			verbose: parsed.verbose,
-			tuiMode: parsed.tuiMode,
-			initialThemeSetting: parsed.useTheme,
-			openDashboard: parsed.dashboard,
-		});
-		if (startupBenchmark) {
-			await interactiveMode.init();
-			time("interactiveMode.init");
-			// Give the TUI's stdin handler a brief chance to consume terminal query replies
-			// (Kitty keyboard protocol, device attributes, cell size) before restoring the terminal.
-			await new Promise((resolve) => setTimeout(resolve, 150));
-			interactiveMode.stop();
-			stopThemeWatcher();
-			printTimings();
-			if (process.stdout.writableLength > 0) {
-				await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
-			}
-			if (process.stderr.writableLength > 0) {
-				await new Promise<void>((resolve) => process.stderr.once("drain", resolve));
-			}
-			return;
-		}
-
-		printTimings();
-		await interactiveMode.run();
 	} else {
 		printTimings();
 		const exitCode = await runPrintMode(runtime, {

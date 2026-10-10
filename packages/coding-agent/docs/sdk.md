@@ -4,6 +4,8 @@
 
 Use the SDK for in-process TypeScript integration. For a language-independent or isolated subprocess, see [CLI Integration](cli-integration.md).
 
+`main(args, { extensionFactories })` embeds the scripted CLI and requires Print/JSON/RPC mode for inline SDK factories. The default terminal selects native facet sources through `-e`; it does not adapt SDK factories into facets. Plain CLI help and model listing do not evaluate those factories.
+
 ```typescript
 import { createAgentSession } from "@amazme/coding-agent";
 

@@ -138,10 +138,10 @@ export class ModelConfig {
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(stripJsonComments(stripBom(content)));
-		} catch (error) {
+		} catch {
 			return new ModelConfig(
 				new Map(),
-				`Failed to parse models.json: ${error instanceof Error ? error.message : error}\n\nFile: ${path}`,
+				`Failed to parse models.json: malformed JSON\n\nFile: ${path}`,
 			);
 		}
 

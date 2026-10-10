@@ -66,6 +66,8 @@ import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp
 import { Subagent } from "./subagent.ts";
 import type { McpManagement } from "../core/mcp/management.ts";
 import { NATIVE_COMMANDS } from "./commands.ts";
+import { APP_COMMAND, APP_NAME, VERSION } from "../config.ts";
+import { collectSettingsDiagnostics } from "../core/settings-diagnostics.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -708,6 +710,14 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				context,
 			);
 		}
+		if (settingsManager.getQuietStartup() !== true) notice("info", `${APP_NAME} v${VERSION}`);
+		if (settingsManager.getQuietStartup() === false) {
+			notice("info", `Loaded resources: ${resources.getAgentsFiles().agentsFiles.length} context files, ${resources.getSkills().skills.length} skills, ${resources.getPrompts().prompts.length} templates, ${resources.getThemes().themes.length} themes, ${sources.length} plugin sources`);
+			if (modelPatterns().length > 0) notice("info", `Model scope: ${modelPatterns().join(", ")}`);
+		}
+		for (const diagnostic of collectSettingsDiagnostics(settingsManager)) notice(diagnostic.type, diagnostic.message);
+		const modelError = modelRuntime.getError();
+		if (modelError !== undefined) notice("warning", `Model configuration or availability has errors; run ${APP_COMMAND} doctor for local diagnostics.`);
 		const saved = agentOf(state.conversation).model;
 		if (saved === undefined) notice("warning", "No model configured; select one with /model.");
 		else if (modelRuntime.getModel(saved.provider, saved.modelId) === undefined) {

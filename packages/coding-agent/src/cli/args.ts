@@ -20,7 +20,6 @@ export interface Args {
 	thinking?: ThinkingLevel;
 	continue?: boolean;
 	resume?: boolean;
-	dashboard?: boolean;
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
@@ -114,10 +113,6 @@ export function parseArgs(args: string[]): Args {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
 			result.resume = true;
-		} else if (arg === "--dashboard") {
-			result.dashboard = true;
-		} else if (arg === "dashboard" && result.messages.length === 0) {
-			result.dashboard = true;
 		} else if (arg === "--provider" && i + 1 < args.length) {
 			result.provider = args[++i];
 		} else if (arg === "--model" && i + 1 < args.length) {
@@ -291,7 +286,6 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 
 ${chalk.bold("Usage:")}
   ${APP_COMMAND} [options] [--] [@files...] [messages...]
-  ${APP_COMMAND} dashboard                 Open the agent dashboard
 
 ${chalk.bold("Commands:")}
   ${APP_COMMAND} install <source> [-l]     Install extension source and add to settings
@@ -318,7 +312,6 @@ ${chalk.bold("Options:")}
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue previous session
   --resume, -r                   Continue newest native session; JSONL mode opens a selector
-  --dashboard                    Open the agent dashboard
   --session <path|id>            Use specific JSONL session file or partial UUID (print/RPC)
   --session-id <id>              Use exact JSONL session ID, creating it if missing (print/RPC)
   --fork <path|id>               Fork a JSONL session into a new session (print/RPC)
@@ -349,7 +342,7 @@ ${chalk.bold("Options:")}
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
-  --verbose                      Force verbose startup (overrides quietStartup setting)
+  --verbose                      Show startup resource counts (overrides quietStartup)
   --tui-mode <mode>              TUI mode: fullscreen (default) or regular
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
@@ -358,7 +351,7 @@ ${chalk.bold("Options:")}
   --help, -h                     Show this help
   --version, -v                  Show version number
 
-Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
+SDK extensions in print/RPC can register additional flags. Native plugins use slash commands.${extensionFlagsText}
 
 ${chalk.bold("Examples:")}
   # Sign in using the provider's OAuth or API-key flow

@@ -2,10 +2,13 @@ import type { AgentSessionRuntimeDiagnostic } from "./agent-session-services.ts"
 import type { SettingsManager } from "./settings-manager.ts";
 
 export function collectSettingsDiagnostics(settingsManager: SettingsManager): AgentSessionRuntimeDiagnostic[] {
-	return settingsManager.drainErrors().map(({ scope, path, error }) => ({
-		type: "warning",
-		message: path ? `Invalid settings file ${path}: ${error.message}` : `Invalid ${scope} settings: ${error.message}`,
-	}));
+	return settingsManager.drainErrors().map(({ scope, path, error }) => {
+		const detail = error instanceof SyntaxError ? "malformed JSON" : error.message;
+		return {
+			type: "warning",
+			message: path ? `Invalid settings file ${path}: ${detail}` : `Invalid ${scope} settings: ${detail}`,
+		};
+	});
 }
 
 /**

@@ -29,6 +29,9 @@
 
 ### Changed
 
+- Native CLI help and model listing bypass SDK factories; startup verbosity, settings diagnostics and model labels reflect the actual Durable session. The startup benchmark now initializes that same TUI and releases its normal resources. Removed the ineffective Dashboard CLI option and the alternate SDK terminal dispatch; SDK Print/RPC extension flags remain available in their own invocation.
+- Malformed settings/models JSON reports its file without echoing parser content fragments.
+
 - Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor
 - Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
 

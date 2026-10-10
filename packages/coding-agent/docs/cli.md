@@ -71,7 +71,7 @@ See [Choose a Model](models.md) for model selection and [Providers](providers.md
 - `--models <patterns>`<br>
   Sets a comma-separated scope for startup and cycling. It accepts exact IDs, fuzzy matches, case-insensitive globs, and optional `:<thinking>` suffixes.
 - `--list-models [search]`<br>
-  Lists available models, optionally filtered by a fuzzy search, then exits.
+  Lists available models, optionally filtered by a fuzzy search, then exits. Plain `--list-models` uses the native ModelRuntime without loading SDK extension factories. Use an explicit Print/RPC invocation when listing models contributed by SDK extensions.
 
 The default Durable TUI applies `--provider`, `--model`, `--models`, `--thinking`, and `--api-key` to its actual runtime. Without an explicit model, a new conversation prefers the saved default if it is inside the scope, otherwise the first available scoped model. `--models` overrides `enabledModels` for this process. A new conversation uses the scope's thinking suffix before per-model and global defaults; explicit `--thinking` takes priority. Continuing restores the focused conversation before applying explicit model/thinking overrides; a scope alone does not replace the saved selection. Other branches keep their settings. A previously prepared request retains its saved parameters when recovered; subsequent generations use the current selection.
 
@@ -250,7 +250,7 @@ These prompt options apply to the default terminal's actual model requests. With
 - `--tui-mode <mode>`<br>
   Uses `fullscreen` (default) or `regular` terminal mode. The default terminal honors the saved `tuiMode` setting; the flag overrides it for this process without saving it. Fullscreen uses the alternate screen, while regular mode uses terminal scrollback.
 - `--verbose`<br>
-  Shows verbose interactive startup information, overriding `quietStartup`.
+  Shows the version, loaded-resource counts and configured model scope at native startup, overriding `quietStartup` for this process. It does not change saved settings. Startup diagnostics remain visible in quiet mode.
 - `-a`, `--approve`<br>
   Trusts project-local configuration and resources for this process.
 - `-na`, `--no-approve`<br>
@@ -258,9 +258,11 @@ These prompt options apply to the default terminal's actual model requests. With
 - `--offline`<br>
   Disables automatic network activity, including model catalog refreshes. Equivalent to `AMAZME_OFFLINE=1`.
 - `-h`, `--help`<br>
-  Shows help, including flags registered by loaded extensions, then exits.
+  Shows help, then exits. Plain help does not evaluate SDK extension factories. Explicit Print/RPC help includes flags registered by its loaded SDK extensions. Native plugins contribute slash commands; unknown native long options are rejected before plugin activation and session storage.
 - `-v`, `--version`<br>
   Shows the AmazMe version, then exits.
+
+The default terminal uses the commands in [Use AmazMe in the terminal](usage.md). `dashboard` is ordinary prompt text; `--dashboard` is unsupported. Use `amazme web` or `amazme client` to browse the hosted session roster.
 
 Extensions may register additional long-form options. Unknown short options are rejected.
 

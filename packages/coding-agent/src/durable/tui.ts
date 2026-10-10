@@ -32,6 +32,7 @@ import {
 import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
+import { time } from "../core/timings.ts";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
 import { codemodeRenderers } from "../core/codemode/renderer.ts";
 import { McpManagerView } from "../core/mcp/view.ts";
@@ -417,6 +418,7 @@ class DurableTui {
 
 	#syncFooter(view: DurableView): void {
 		const agent = agentOf(view.conversation);
+		this.#editor.setModelLabel(() => `${agent.model === undefined ? "No model" : `${agent.model.provider}/${agent.model.modelId}`} · ${agent.thinkingLevel ?? "off"}`);
 		const usage = totalUsage(
 			(view.conversation.docs["amazme.usage"] ?? {
 				models: {},
@@ -602,6 +604,7 @@ export async function runDurableTui(
 	settings: SettingsManager,
 	resources: Pick<ResourceLoader, "getThemes">,
 	closed?: Promise<SessionEnd>,
+	startupBenchmark = false,
 ): Promise<void> {
 	setCapabilityOverrides(settings.getTerminalCapabilityOverrides());
 	let registered = resources.getThemes().themes;
@@ -804,13 +807,17 @@ export async function runDurableTui(
 		}
 		view.apply(source.current());
 	});
-	view.start();
-	themes.applyFromSettings();
-	view.apply(source.current());
+	let benchmarkTimer: NodeJS.Timeout | undefined;
 	let end: SessionEnd | undefined;
 	try {
+		view.start();
+		themes.applyFromSettings();
+		view.apply(source.current());
+		time("runDurableTui.init");
+		if (startupBenchmark) benchmarkTimer = setTimeout(exit, 150);
 		end = await Promise.race([exited.then(() => undefined), ...(closed === undefined ? [] : [closed])]);
 	} finally {
+		if (benchmarkTimer !== undefined) clearTimeout(benchmarkTimer);
 		const login = authFlow;
 		login?.controller.abort();
 		await login?.done;
