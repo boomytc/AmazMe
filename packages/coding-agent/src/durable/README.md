@@ -6,6 +6,20 @@
 
 `node packages/coding-agent/dist/bundle/cli.js` 启动新会话，追加 `--continue` 打开当前工作目录的最近会话。存储路径为 `~/.amazme/agent/experimental/durable-sessions/<cwd-hash>/<session>/session.sqlite`；文件锁防止两个进程同时写入。崩溃遗留锁在 10 秒后失效，重开会等待锁恢复。
 
+## 三条会话路径
+
+交互 TUI、print/RPC、宿主各写各的存储。下面是当前行为；表中标为「当前」的回写损失留到后续变更再修。
+
+| 路径 | 磁盘位置 | 接受 | 拒绝或当前限制 |
+| --- | --- | --- | --- |
+| 交互 TUI | `~/.amazme/agent/experimental/durable-sessions/<cwd-hash>/<session>/session.sqlite`。不写 JSONL，也不走 handoff。 | `--continue`、`--resume`、单独的 `--no-session`（内存，不建目录）、`--session-dir`、`--name` | `--fork`、`--session`、`--session-id` 各自以状态 1 退出，提示改用 `/tree` 和 `/fork`，并说明这三个参数选择 print/RPC 的 JSONL 会话。此时不创建 durable 存储。`--no-session` 与 `--continue` 或 `--resume` 同用也以状态 1 退出。 |
+| print / RPC | `<agentDir>/sessions/<编码后的 cwd>/*.jsonl`，由 `SessionManager` 读写。`--print`、非 TTY、`--mode json` 和 `--mode rpc` 都走这里。 | `--fork`、`--session`、`--session-id`、`--continue`、`--resume`、`--no-session` | 上面的交互拒绝不在这里生效。`--no-session` 使用内存会话，先于 `--continue`、`--resume`、`--session` 和 `--fork`。`--resume` 打开选择器。 |
+| 宿主（web / gui 的 server worker） | 每个 worker 一份 durable：`<agentDir>/experimental/sessions/<id>/session.sqlite`，同目录有 `meta.json`。`--session-dir` 换的是这个目录，不是交互 TUI 的 durable 根。终端副本在 print/RPC 的 JSONL 目录：已有同 id 文件就覆盖该文件，否则写成 `<timestamp>_<id>.jsonl`。 | 空的 durable 转录，且该工作目录有同 id 终端 JSONL 时，从该文件 seed。`amazme client` 的用法文本包含 `--session-id <id>`；client 命令注册了该选项，与 `--continue`、`--resume` 互斥。这个 id 按已发现服务器的宿主会话列表匹配 `sessionId` 再 attach。列表里没有时：client TUI 在非 radius 且只有一个服务器时用该 id 创建宿主 Session；非 TUI 的 client 还要求同时带 prompt，否则报服务器里没有该会话。这不是 print/RPC 用来选择 JSONL 文件的 `--session-id`。 | `amazme web` 与 `amazme server` 的用法文本不列出 `--fork`、`--session`、`--session-id`，这两个命令的选项里也没有这三项；其余参数会报 `Unsupported options for web` 或 `Unsupported options for server`。seed 之后，每个已提交 revision 整文件替换同一 JSONL，不比较 mtime 或内容。回写先写同路径的 `.tmp-<pid>`，再 `rename`；写入失败或该临时文件残留时，终端仍读取原来的 `.jsonl`。 |
+
+交互 TUI 的 durable 会话不会出现在 JSONL 列表里，所以 TUI 的 `--continue` 和 print/RPC 的 `--continue` 互相看不见。宿主会话会写 JSONL 副本，因此会出现在终端列表中。
+
+当前回写（测试只记录现状）：seed 按 `getEntries()` 的文件顺序线性写入，不沿 `parentId`。一次 mirror 把活动视图收成单链，原文件里的分叉不再保留；不在活动叶上的消息仍按文件顺序留在链上。`model_change`、`thinking_level_change`、`label`、`session_info`、custom 消息、`branch_summary` 只计数，不进入 durable，回写后从终端文件消失。终端文件里的 `session_info` 不会被 seed 带上；只有调用方另传的显示名才会写成新的 `session_info`。线性会话里的 compaction 会变成 durable 的 `amazme.reset`（`head` 为自身）。mirror 只写活动视图，压缩点之前的消息从 JSONL 消失，摘要变成 `compactionSummary`，且 `tokensBefore` 写成 0；再投影回 durable 时这条摘要按 `message:compactionSummary` 计数后丢掉。因此 JSONL → durable → JSONL → durable 在含 compaction 时并不保持同一份转录。
+
 界面读取 `Conversation.viewState()`，流式内容、工具进度、输入队列、重试、压缩、模型及用量由 Durable 状态提供。子任务由调用它的工具持有，取消主任务会取消其子任务。当前焦点存入 `amazme.session.focus`，重开时恢复。
 
 启动支持 `--provider`、`--model`（含 `:thinking` 后缀）、`--thinking`、`--api-key` 和 `--use-theme`。显式推理级别优先于后缀，随后按模型能力约束；新会话按模型设置、全局设置、默认级别依次取值。临时密钥要求显式 `--model`，只用于当前进程；主题覆盖同样不写入设置。
