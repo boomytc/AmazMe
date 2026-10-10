@@ -1,95 +1,65 @@
-<p align="center">
-  <a href="https://pi.dev">
-    <img alt="Pi logo" src="https://pi.dev/logo-auto.svg" width="128">
-  </a>
-</p>
-<p align="center">
-  <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@amazme/coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@amazme/coding-agent?style=flat-square&logo=npm&logoColor=white" /></a>
-</p>
+# AmazMe
 
-> New issues and PRs from new contributors are closed automatically. Maintainers review closed submissions daily. See [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTING.md).
+AmazMe 是可扩展的编码代理，提供文件读写、Unix 命令、会话分叉与恢复、工具调用和插件重载。实现基于 [Pi 的 packages](https://github.com/earendil-works/pi)，产品命令为 `amazme`，包作用域为 `@amazme/*`。
 
-# Pi
+## 运行
 
-Pi is a minimal, extensible agent harness that you can make your own.
-
-Adapt Pi to your workflows, not the other way around. Customize Pi with [extensions](docs/extensions.md), [skills](docs/skills.md), [prompt templates](docs/prompt-templates.md), and [themes](docs/themes.md). Bundle them as [Pi packages](docs/packages.md) and share via npm or git.
-
-Pi ships with powerful defaults but skips features like sub-agents and plan mode. Ask Pi to build what you want, or install a package that does it your way.
-
-Use Pi [interactively](docs/usage.md), automate it in [print or JSON mode](docs/cli.md), control it over [RPC](docs/rpc.md), or build apps with the [Pi TypeScript SDK](docs/sdk.md). See [OpenClaw](https://github.com/OpenClaw/OpenClaw) for a real-world integration.
-
-## Getting started
-
-Install the command-line interface:
+已安装完整运行依赖的 npm 包使用 Node.js 22.19 或更新版本：
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+amazme
+amazme web
+amazme server
+amazme client
 ```
 
-On Windows:
+`web` 在回环地址提供网页，终端和网页连接同一宿主状态。编译运行时发布目录还可直接运行其中的 `amazme`，无需另装 Node 或 Bun；必须保留完整目录中的模块和资源。
 
-```shell
-powershell -c "irm https://pi.dev/install.ps1 | iex"
-```
+项目配置在工作目录的 `.amazme`，用户配置在 `~/.amazme/agent`。供应商密钥可来自环境变量或 `models.json`，已有 OAuth 凭据来自同一认证存储。OAuth 的客户端 ID、回调和供应商请求身份沿用 Pi，不随产品名称改写。查看 [模型配置](docs/models.md)、[环境变量](docs/environment-variables.md)及 [CLI](docs/cli.md)。
 
-The installer pins all dependencies and updates Pi with `pi update`. Alternatively, install directly with npm, which does not pin transitive dependencies:
+## 小内核与可选插件
+
+默认 CLI、宿主与 Web 使用 Chord facets 和同一个 Durable Harness。插件可以贡献工具、命令、提示段、任务、钩子及服务，资源随其所属生命周期释放。项目记忆、历史召回、文件检查点、自动化、完成验证及工作流都按需选择，未启用时不运行其后台工作。
+
+原生插件入口及 API：
+
+- [插件执行与重载](docs/plugin-runtime.md)：`@amazme/coding-agent/plugin`，使用 `defineFacet`，注册由 `env.own()` 清理。
+- [插件包示例](examples/plugins/)：宿主与客户端角色保持独立。
+- [包管理](docs/packages.md)：安装位置、来源与项目选择。
+
+从已安装产品的 `plugins/` 选择所需包，或提供自己的源码：
 
 ```bash
-npm install -g --ignore-scripts @amazme/coding-agent
+amazme -e /path/to/plugin
+amazme web -e /path/to/plugin
 ```
 
-Pi requires Node.js 22.19 or newer. The macOS, Linux, and Windows installers can install it if needed. Pi does not require dependency lifecycle scripts for a normal npm installation.
+修改原插件源码后，在任务空闲时运行 `/reload`。候选构建失败会保留可用版本；修复源码后可重试。应用壳及核心源码修改需要构建与重启。当前宿主会向模型提供已选插件的 manifest 位置，源码映射可定位原文件；默认终端直接加载源码时提供其位置。
 
-On macOS and Linux, Nix users can install the latest release with `nix profile add github:earendil-works/pi/stable`. See the [quickstart](docs/quickstart.md#1-install-pi) for updating and pinning releases.
+[SDK 扩展](docs/extensions.md) 使用 `ExtensionAPI` 工厂，适用于 SDK 与 print/RPC 路径。它们与默认入口的原生 facets 是不同契约，选择对应文档和示例。
 
-Start Pi in the directory where you want it to work:
+## 会话与工具
+
+`/model` 选择模型；`/tree` 查看历史，`/fork` 分叉，`/older` 加载更早记录，`/compact` 压缩当前上下文，`/tasks` 查看任务，`/mcp` 管理 MCP。模型、推理强度与工具选择属于当前对话，其他分叉保留各自配置。
+
+工具可用名称白名单或仅由 `+name`／`-name` 组成的增减列表选择。文件覆盖和编辑检查先前读取的版本；外部变更时需要重新读取。工具结果、实际修改差异和所属任务保存在会话中，重开后可继续查看。
+
+- [使用与 Web](docs/usage.md)
+- [MCP](docs/mcp.md)
+- [Codemode](docs/codemode.md)
+- [主题](docs/themes.md)、[技能](docs/skills.md)、[提示模板](docs/prompt-templates.md)
+- [SDK](docs/sdk.md)、[RPC](docs/rpc.md)
+- [诊断与命令参考](docs/cli.md)
+
+## 开发与许可
+
+仓库中先构建需要的依赖，再构建此包并运行既有检查：
 
 ```bash
-cd /path/to/project
-pi
+npm run build --workspace @amazme/coding-agent
+npm test --workspace @amazme/coding-agent
 ```
 
-For a built-in AI provider, run `/login` inside Pi to connect a subscription or API key. Then give Pi a task.
+`build:binary` 使用 Bun 1.4 或更新版本生成本机平台的完整运行目录，复用当前锁文件与本地产物。命令支持 `--bun /path/to/bun` 和 `--out /path/to/new-release`，默认输出到 `binaries/<platform>-<arch>`。
 
-See the [documentation](docs/index.md) for full setup and usage instructions.
-
-## Share your OSS coding agent sessions
-
-If you use Pi for open source work, please share your coding agent sessions.
-
-Public OSS session data helps improve models, prompts, tools, and evaluations using real development workflows.
-
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
-
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf) using a Hugging Face account and the Hugging Face CLI.
-
-- [Demo video](https://x.com/badlogicgames/status/2041151967695634619) on how to publish Pi sessions
-- Published Pi development sessions: [`badlogicgames/pi-mono` on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono).
-
-## Development
-
-Clone the repository, install its dependencies, and run Pi from source:
-
-```bash
-git clone https://github.com/earendil-works/pi
-cd pi
-npm install --ignore-scripts
-./pi-test.sh
-```
-
-`pi-test.sh` can be called from any directory and preserves the caller's working directory.
-
-Before submitting changes, run:
-
-```bash
-npm run check
-./test.sh
-```
-
-Read [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTING.md) before opening an issue or pull request. It defines the contribution gate, issue quality bar, and required checks. Read [AGENTS.md](https://github.com/earendil-works/pi/blob/main/AGENTS.md) for repository-specific implementation, testing, dependency, and release rules.
-
-## License
-
-MIT
+MIT 许可证。上游版权及来源保持其原有归属。

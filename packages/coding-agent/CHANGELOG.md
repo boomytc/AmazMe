@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- Fixed default prompts and the packaged README identifying the product as Pi; native plugin guides now use AmazMe APIs, and hosted sessions expose their selected manifests for source discovery
+
 - Fixed binary releases missing the installed modules needed by host processes, plugin reloads and Web assets; the build now publishes a complete runtime directory and requires Bun with native SQLite support
 
 - Fixed host model and thinking selection changing the root conversation while a fork was selected; configuration and supported levels now follow the focused conversation

@@ -12,12 +12,14 @@ import {
 	type ServiceProviderUpdate,
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT, withCancel } from "@amazme/chord/context";
-import { AgentDoc, Harness, ROOT_CONVERSATION_ID, type TaskGraph } from "@amazme/durable";
+import { AgentDoc, defineExtension, Harness, ROOT_CONVERSATION_ID, section } from "@amazme/durable";
+import type { TaskGraph } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
 import { ModelRuntime } from "../core/model-runtime.ts";
+import { describePluginManifests } from "../core/plugins/info.ts";
 import { durableToolSelection } from "../core/tool-selection.ts";
 import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
 import {
@@ -841,6 +843,12 @@ async function createCodingAgentHarness(
 	configureHarnessHttp(settingsManager);
 	const envs = new ExecutionEnvs(cwd);
 	const registry = createCodingRegistry(settingsManager, cwd);
+	if (options.pluginManifestPaths.length > 0) {
+		registry.install(defineExtension({
+			name: "plugin-development",
+			sections: [section("plugin_development", () => describePluginManifests(options.pluginManifestPaths))],
+		}));
+	}
 	// The durable runtime installs this tool beside its registry; the Session worker is the same
 	// agent, so a session opened here can delegate to a subagent the way the TUI's does.
 	registry.install(Subagent);
