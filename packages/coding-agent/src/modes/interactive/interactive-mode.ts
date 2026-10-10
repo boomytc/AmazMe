@@ -56,7 +56,9 @@ import chalk from "chalk";
 import { spawn } from "child_process";
 import {
 	APP_NAME,
+	APP_COMMAND,
 	APP_TITLE,
+	PACKAGE_NAME,
 	CONFIG_DIR_NAME,
 	detectInstallChange,
 	getAgentDir,
@@ -140,7 +142,7 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
+import { checkForNewVersion, type LatestRelease } from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
 import { createChatViewport, createScreenViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
@@ -1224,7 +1226,7 @@ export class InteractiveMode {
 		}
 
 		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
+		checkForNewVersion(this.version).then((newRelease) => {
 			if (newRelease) {
 				this.showNewVersionNotification(newRelease);
 			}
@@ -5139,11 +5141,11 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	showNewVersionNotification(release: LatestPiRelease): void {
+	showNewVersionNotification(release: LatestRelease): void {
 		const updateInstruction = () =>
 			theme.fg("muted", `New version ${release.version} is available. Run `) +
-			theme.fg("accent", `${APP_NAME} update`);
-		const changelogUrl = "https://pi.dev/changelog";
+			theme.fg("accent", `${APP_COMMAND} update`);
+		const changelogUrl = `https://www.npmjs.com/package/${PACKAGE_NAME}?activeTab=versions`;
 		const changelogLine = () => {
 			const changelogLink = getCapabilities().hyperlinks
 				? hyperlink(theme.fg("accent", changelogUrl), changelogUrl)

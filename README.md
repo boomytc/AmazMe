@@ -121,4 +121,4 @@ npm test
 
 交互使用、打印模式、RPC 和 SDK 写在 [packages/coding-agent/docs](packages/coding-agent/docs/index.md)。这些文档里很多地方仍写成 Pi。
 
-模型目录、版本检查和会话分享会访问 `pi.dev`。这是上游服务地址。
+模型目录与 SDK 会话分享沿用 Pi 服务地址。自身版本检查读取当前 AmazMe 包的 npm 元数据；源码与编译运行时通过各自的发行来源更新。

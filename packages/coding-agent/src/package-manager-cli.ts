@@ -16,6 +16,7 @@ import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	APP_NAME,
+	APP_COMMAND,
 	CONFIG_DIR_NAME,
 	detectInstallMethod,
 	getAgentDir,
@@ -37,7 +38,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/tru
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
 import { canonicalizePath, getCwdRelativePath } from "./utils/paths.ts";
 import { getPiUserAgent } from "./utils/pi-user-agent.ts";
-import { formatVersionCheckError, getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
+import { formatVersionCheckError, getLatestRelease, isNewerPackageVersion } from "./utils/version-check.ts";
 import {
 	cleanupWindowsSelfUpdateQuarantine,
 	quarantineWindowsNativeDependencies,
@@ -47,7 +48,6 @@ export type PackageCommand = "install" | "remove" | "update" | "list";
 
 type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string } | { type: "models" };
 
-const DEFAULT_INSTALLER_API_BASE = "https://pi.dev/api/installer/releases";
 const MANAGED_INSTALL_MARKER = "managed-install.json";
 const MANAGED_RELEASE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -58,7 +58,7 @@ function getActiveManagedInstallRoot(): string | undefined {
 	const managedRoot = resolve(configuredRoot);
 	const releasesDir = canonicalizePath(join(managedRoot, "releases"));
 	// The launcher environment is inherited by child processes. Do not classify a
-	// source checkout or another Pi installation launched from managed Pi as managed.
+	// source checkout or another installation launched from a managed runtime as managed.
 	if (getCwdRelativePath(canonicalizePath(getPackageDir()), releasesDir) === undefined) return undefined;
 
 	const markerPath = join(managedRoot, MANAGED_INSTALL_MARKER);
@@ -68,7 +68,7 @@ function getActiveManagedInstallRoot(): string | undefined {
 			layout?: unknown;
 			schemaVersion?: unknown;
 		};
-		if (marker.kind !== "pi-managed-install" || marker.schemaVersion !== 1 || marker.layout !== "releases-v1") {
+		if (marker.kind !== "amazme-managed-install" || marker.schemaVersion !== 1 || marker.layout !== "releases-v1") {
 			throw new Error();
 		}
 	} catch {
@@ -103,11 +103,14 @@ async function runManagedNpmCi(stageDir: string): Promise<void> {
 }
 
 function verifyManagedRelease(releaseDir: string, expectedVersion: string): void {
+	const installed: unknown = JSON.parse(readFileSync(join(releaseDir, "node_modules", ...PACKAGE_NAME.split("/"), "package.json"), "utf8"));
+	if (typeof installed !== "object" || installed === null || !("name" in installed) || installed.name !== PACKAGE_NAME || !("version" in installed) || installed.version !== expectedVersion)
+		throw new Error(`Managed release must contain ${PACKAGE_NAME}@${expectedVersion}.`);
 	const binPath = join(
 		releaseDir,
 		"node_modules",
 		".bin",
-		process.platform === "win32" ? `${APP_NAME}.cmd` : APP_NAME,
+		process.platform === "win32" ? `${APP_COMMAND}.cmd` : APP_COMMAND,
 	);
 	const result = spawnProcessSync(binPath, ["--version"], {
 		encoding: "utf8",
@@ -115,11 +118,11 @@ function verifyManagedRelease(releaseDir: string, expectedVersion: string): void
 	});
 	if (result.error || result.status !== 0) {
 		const reason = result.error?.message || result.stderr.trim() || `exit code ${result.status ?? "unknown"}`;
-		throw new Error(`Could not verify managed Pi ${expectedVersion}: ${reason}`);
+		throw new Error(`Could not verify managed ${APP_NAME} ${expectedVersion}: ${reason}`);
 	}
 	const installedVersion = result.stdout.trim();
 	if (installedVersion !== expectedVersion) {
-		throw new Error(`Managed Pi smoke test returned version ${installedVersion}; expected ${expectedVersion}.`);
+		throw new Error(`Managed ${APP_NAME} smoke test returned version ${installedVersion}; expected ${expectedVersion}.`);
 	}
 }
 
@@ -192,13 +195,15 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 	if (!MANAGED_RELEASE_VERSION_RE.test(version)) {
 		throw new Error(`Invalid managed release version: ${version}`);
 	}
+	const installerApiBase = process.env.AMAZME_INSTALLER_API_BASE?.trim().replace(/\/+$/, "");
+	if (!installerApiBase) throw new Error("Managed AmazMe updates require AMAZME_INSTALLER_API_BASE from the installation's release source.");
 
 	let releaseLock: () => Promise<void>;
 	try {
 		releaseLock = await lockfile.lock(join(managedRoot, "update"), { realpath: false });
 	} catch (error: unknown) {
 		if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
-			throw new Error("Another managed Pi update is already running.");
+			throw new Error(`Another managed ${APP_NAME} update is already running.`);
 		}
 		throw error;
 	}
@@ -206,10 +211,6 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 	let stageDir: string | undefined;
 	try {
 		cleanupManagedStaging(managedRoot);
-		const installerApiBase = (process.env.AMAZME_INSTALLER_API_BASE?.trim() || DEFAULT_INSTALLER_API_BASE).replace(
-			/\/+$/,
-			"",
-		);
 		const releaseUrl = `${installerApiBase}/${encodeURIComponent(version)}`;
 		const stagingRoot = join(managedRoot, "staging");
 		const releasesRoot = join(managedRoot, "releases");
@@ -228,6 +229,10 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 			fetchInstallerArtifact(`${releaseUrl}/package.json`, "package.json"),
 			fetchInstallerArtifact(`${releaseUrl}/package-lock.json`, "package-lock.json"),
 		]);
+		const manifest: unknown = JSON.parse(packageJsonContent);
+		const dependencies = typeof manifest === "object" && manifest !== null && "dependencies" in manifest ? manifest.dependencies : undefined;
+		if (typeof dependencies !== "object" || dependencies === null || (dependencies as Record<string, unknown>)[PACKAGE_NAME] !== version)
+			throw new Error(`Managed release must pin ${PACKAGE_NAME}@${version}.`);
 		writeFileSync(join(stageDir, "package.json"), packageJsonContent);
 		writeFileSync(join(stageDir, "package-lock.json"), packageLockContent);
 
@@ -287,17 +292,17 @@ function reportSettingsErrors(settingsManager: SettingsManager, context: string)
 function getPackageCommandUsage(command: PackageCommand): string {
 	switch (command) {
 		case "install":
-			return `${APP_NAME} install <source> [-l] [--approve|--no-approve]`;
+			return `${APP_COMMAND} install <source> [-l] [--approve|--no-approve]`;
 		case "remove":
-			return `${APP_NAME} remove <source> [-l] [--approve|--no-approve]`;
+			return `${APP_COMMAND} remove <source> [-l] [--approve|--no-approve]`;
 		case "update":
-			return `${APP_NAME} update [source|self|amazme] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
+			return `${APP_COMMAND} update [source|self|amazme] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
-			return `${APP_NAME} list [--approve|--no-approve]`;
+			return `${APP_COMMAND} list [--approve|--no-approve]`;
 	}
 }
 
-const CONFIG_COMMAND_USAGE = `${APP_NAME} config [-l] [--approve|--no-approve]`;
+const CONFIG_COMMAND_USAGE = `${APP_COMMAND} config [-l] [--approve|--no-approve]`;
 
 function printConfigCommandHelp(): void {
 	console.log(`${chalk.bold("Usage:")}
@@ -328,12 +333,12 @@ Options:
   -na, --no-approve Ignore project-local files for this command
 
 Examples:
-  ${APP_NAME} install npm:@foo/bar
-  ${APP_NAME} install git:github.com/user/repo
-  ${APP_NAME} install git:git@github.com:user/repo
-  ${APP_NAME} install https://github.com/user/repo
-  ${APP_NAME} install ssh://git@github.com/user/repo
-  ${APP_NAME} install ./local/path
+  ${APP_COMMAND} install npm:@foo/bar
+  ${APP_COMMAND} install git:github.com/user/repo
+  ${APP_COMMAND} install git:git@github.com:user/repo
+  ${APP_COMMAND} install https://github.com/user/repo
+  ${APP_COMMAND} install ssh://git@github.com/user/repo
+  ${APP_COMMAND} install ./local/path
 `);
 			return;
 
@@ -342,7 +347,7 @@ Examples:
   ${getPackageCommandUsage("remove")}
 
 Remove a package and its source from settings.
-Alias: ${APP_NAME} uninstall <source> [-l]
+Alias: ${APP_COMMAND} uninstall <source> [-l]
 
 Options:
   -l, --local       Remove from project settings (${CONFIG_DIR_NAME}/settings.json)
@@ -350,8 +355,8 @@ Options:
   -na, --no-approve Ignore project-local files for this command
 
 Examples:
-  ${APP_NAME} remove npm:@foo/bar
-  ${APP_NAME} uninstall npm:@foo/bar
+  ${APP_COMMAND} remove npm:@foo/bar
+  ${APP_COMMAND} uninstall npm:@foo/bar
 `);
 			return;
 
@@ -372,11 +377,11 @@ Options:
   --force                 Reinstall AmazMe even if the current version is latest
 
 Short forms:
-  ${APP_NAME} update                Update AmazMe only
-  ${APP_NAME} update --all          Update AmazMe and all extensions
-  ${APP_NAME} update --models       Refresh model catalogs only
-  ${APP_NAME} update <source>       Update one package
-  ${APP_NAME} update amazme         Update AmazMe only (self works as an alias)
+  ${APP_COMMAND} update                Update AmazMe only
+  ${APP_COMMAND} update --all          Update AmazMe and all extensions
+  ${APP_COMMAND} update --models       Refresh model catalogs only
+  ${APP_COMMAND} update <source>       Update one package
+  ${APP_COMMAND} update amazme         Update AmazMe only (self works as an alias)
 `);
 			return;
 
@@ -650,7 +655,7 @@ function printSelfUpdateFallback(command: SelfUpdateCommand): void {
 
 function printPnpmSelfUpdateMetadataHint(): void {
 	console.error(chalk.yellow("If pnpm reports missing package versions, its cached registry metadata may be stale."));
-	console.error(chalk.yellow(`Run \`pnpm store prune\` and retry \`${APP_NAME} update --self\`.`));
+	console.error(chalk.yellow(`Run \`pnpm store prune\` and retry \`${APP_COMMAND} update --self\`.`));
 }
 
 function printSelfUpdateNote(note: string): void {
@@ -682,9 +687,9 @@ interface SelfUpdatePlan {
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
-	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;
+	let latestRelease: Awaited<ReturnType<typeof getLatestRelease>>;
 	try {
-		latestRelease = await getLatestPiRelease(VERSION, { retry: true });
+		latestRelease = await getLatestRelease(VERSION, { retry: true });
 	} catch (error: unknown) {
 		throw new Error(`Could not determine latest ${APP_NAME} version: ${formatVersionCheckError(error)}`, {
 			cause: error,
@@ -694,9 +699,9 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 		throw new Error(`Could not determine latest ${APP_NAME} version.`);
 	}
 
-	const packageName = latestRelease.packageName ?? PACKAGE_NAME;
+	const packageName = latestRelease.packageName;
 	const installSpec = `${packageName}@${latestRelease.version}`;
-	if (force || packageName !== PACKAGE_NAME || isNewerPackageVersion(latestRelease.version, VERSION)) {
+	if (force || isNewerPackageVersion(latestRelease.version, VERSION)) {
 		return {
 			packageName,
 			installSpec,
@@ -835,7 +840,7 @@ export async function handleConfigCommand(
 			projectTrustOverride = false;
 		} else if (arg.startsWith("-")) {
 			console.error(chalk.red(`Unknown option ${arg} for "config".`));
-			console.error(chalk.dim(`Use "${APP_NAME} --help" or "${CONFIG_COMMAND_USAGE}".`));
+			console.error(chalk.dim(`Use "${APP_COMMAND} --help" or "${CONFIG_COMMAND_USAGE}".`));
 			process.exitCode = 1;
 			return true;
 		} else {
@@ -903,7 +908,7 @@ export async function handlePackageCommand(
 
 	if (options.invalidOption) {
 		console.error(chalk.red(`Unknown option ${options.invalidOption} for "${options.command}".`));
-		console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getPackageCommandUsage(options.command)}".`));
+		console.error(chalk.dim(`Use "${APP_COMMAND} --help" or "${getPackageCommandUsage(options.command)}".`));
 		process.exitCode = 1;
 		return true;
 	}
@@ -1033,7 +1038,7 @@ export async function handlePackageCommand(
 				const target = options.updateTarget ?? { type: "self" };
 				if (options.showExtensionsSkippedNote) {
 					console.log(
-						chalk.dim(`Extensions are skipped. Run ${APP_NAME} update --extensions to update extensions.`),
+						chalk.dim(`Extensions are skipped. Run ${APP_COMMAND} update --extensions to update extensions.`),
 					);
 				}
 				if (updateTargetIncludesExtensions(target)) {
@@ -1115,19 +1120,6 @@ export async function handlePackageCommand(
 						return true;
 					}
 					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
-					// The pi.dev installer migrates global npm installs to a managed install
-					// that pins all dependencies. It does not migrate pnpm, yarn, or bun installs.
-					if (installMethod === "npm") {
-						const installerCommand =
-							process.platform === "win32"
-								? 'powershell -c "irm https://pi.dev/install.ps1 | iex"'
-								: "curl -fsSL https://pi.dev/install.sh | sh";
-						console.log();
-						console.log(chalk.yellow(`This npm installation of ${APP_NAME} does not pin its dependencies.`));
-						console.log(chalk.yellow("Run the installer to migrate to a managed installation that does:"));
-						console.log();
-						console.log(`  ${chalk.bold(installerCommand)}`);
-					}
 				}
 				return true;
 			}

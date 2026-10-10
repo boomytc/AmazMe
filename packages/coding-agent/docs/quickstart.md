@@ -1,136 +1,93 @@
 # Quickstart
 
-Pi runs in your terminal and works with files on your machine. To use it, you need access to a model through a supported provider. This can be a subscription, an API key, or a local model.
+AmazMe works with files and commands in your working directory. Use a supported model provider through OAuth, an API key, or a configured compatible endpoint. The product command is `amazme`; OAuth client identities and provider request headers remain Pi's.
 
-For native Windows setup, read [Windows Setup](windows.md). For Android, read [Termux Setup](termux.md).
+## 1. Install or build AmazMe
 
-## 1. Install Pi
+Use the complete AmazMe release directory supplied for your Unix platform. Keep its modules, plugins, builder, and page resources together; the compiled runtime does not need a separate Node.js or Bun installation. Run its `amazme` executable directly, or add that directory to your `PATH`.
 
-On macOS or Linux, you can use the installer:
+The public npm registry did not contain `@amazme/coding-agent` when checked on 2026-10-10; these instructions therefore use the supplied complete release or this source checkout.
 
-```bash
-curl -fsSL https://pi.dev/install.sh | sh
-```
-
-The installer pins all dependencies and updates Pi with `pi update`. Alternatively, install Pi from npm, which does not pin transitive dependencies. This requires Node.js 22.19 or newer:
+From the repository, use Node.js 22.19 or newer:
 
 ```bash
-npm install -g --ignore-scripts @amazme/coding-agent
+npm install --ignore-scripts
+npm run build
+node packages/coding-agent/dist/bundle/cli.js --version
 ```
 
-Pi does not require dependency lifecycle scripts for a normal npm installation.
+The repository build refreshes model data and builds the dependency graph. `npm run build:offline` uses already available model data. For a single changed package with its dependencies built, use its workspace build. The default terminal, Web and host commands are all part of `dist/bundle/cli.js`.
 
-With Nix on macOS or Linux, install the latest release from Pi's flake. Nix builds Pi from source:
+The examples below assume `amazme` is on `PATH`. From a checkout, substitute `node /path/to/AmazMe/packages/coding-agent/dist/bundle/cli.js`.
+
+## 2. Choose a provider
+
+Authenticate before starting, or use `/login [provider]` in the default terminal:
 
 ```bash
-nix profile add github:earendil-works/pi/stable
+amazme auth login --provider openai-codex
+amazme auth login --provider deepseek --method api-key
 ```
 
-Older Nix versions use `nix profile install` instead. Update with `nix profile upgrade pi`; `pi update` cannot update a Nix installation. To pin a release, use a tag such as `github:earendil-works/pi/v1.0.0`.
+Choose a supported method and follow its prompts. Secret input is hidden. Environment credentials and `models.json` are also supported; see [Providers](providers.md) and [Models](models.md).
 
-Verify the installation:
+`amazme auth logout --provider <provider>` removes saved credentials. It does not unset environment variables or revoke access at the provider.
+
+## 3. Start in your working folder
 
 ```bash
-pi --version
+cd /path/to/project
+amazme
 ```
 
-## 2. Start Pi
+The working folder determines project resources and groups the default terminal's persisted sessions. Project resources load according to the saved trust decision. User configuration is in `~/.amazme/agent`; project configuration is in `.amazme`.
 
-Change to the folder you want Pi to work with, then start it:
-
-```bash
-cd /path/to/folder
-pi
-```
-
-The working folder helps Pi discover relevant files, instructions, and configuration. Pi also uses it to group saved sessions.
-
-<p align="center"><img src="images/interactive-mode.png" alt="Pi running in a terminal with a conversation, input editor, and status footer" width="750"></p>
-
-The interface shows your conversation, an editor for prompts and commands, and a footer with the current folder, model, and session status. See [Use Pi in the terminal](usage.md) to learn how to add files, run commands, direct ongoing work, and manage results.
-
-## 3. Choose a model
-
-A **model** generates Pi's responses. A **provider** is the service or account Pi uses to access that model.
-
-In Pi, run:
+Run `/model` to select an available model. `Shift+Tab` cycles its supported thinking levels. Give AmazMe a task:
 
 ```text
-/login
+Explain this repository and the commands needed to build it.
 ```
 
-Choose a provider, then follow the prompts to use a subscription or store an API key. Run `/model` afterward if you want to select a different available model.
+The transcript shows the response, tool calls, actual file changes and errors. Use `/tasks` to inspect work, `/tree` or `/agents` to choose a conversation or return point, `/fork` to explore another branch, and `/older` to load earlier records. `/compact [instructions]` reduces the active model context while keeping the original history.
 
-See [Choose a model and provider](models.md) for supported providers, environment-variable authentication, local models, and custom endpoints.
+During a run, `Enter` sends steering input and `Alt+Enter` queues follow-up work. `Escape` cancels the active run when the editor is focused; inside a menu it dismisses that menu. Exit with `Ctrl+D` from an empty editor.
 
-## 4. Give Pi a task
+Review changed files and tool output. Project trust controls resource loading; it does not sandbox tools. See [Security](security.md).
 
-Pi shows each file read, search, command, and edit it performs. It does not ask before every tool call.
+## 4. Continue or use the host
 
-Enter a task that matches your work, for example:
-
-```text
-Summarize @meeting-notes.md and save the action items to action-items.md.
-```
-
-```text
-Explain how this repository is structured and how to run its checks.
-```
-
-```text
-Compare @previous.csv with @current.csv and summarize the important changes.
-```
-
-Type `@` in the editor to search for a file instead of entering its full path. When Pi finishes, review its response and any changed files. Use version control or backups for important work. For untrusted or unattended work, use a container or another sandbox. See [Security](security.md).
-
-## Continue later
-
-Pi saves sessions automatically. Exit Pi, then resume the most recent session for the same working folder with:
+Resume the newest default terminal session for the same working folder:
 
 ```bash
-pi --continue
+amazme --continue
 ```
 
-Use `/resume` to choose another saved session. See [Continue or branch a session](sessions.md) for session naming, branching, compaction, export, and sharing.
+For a shared session roster and graphical controls, start the Web client or connect a hosted terminal:
 
-## Next steps
+```bash
+amazme web
+amazme client
+```
 
-- [Use Pi interactively](usage.md) to learn input, commands, shortcuts, and queued messages.
-- [Add instructions](configuration.md#context-files) that Pi should follow whenever it works in a folder.
-- [Choose a model and provider](models.md).
+Open the loopback URL printed by `web`. The page and hosted terminal use the same server's state. Choose **Provider accounts** from the model menu, or use `/login` and `/logout`. Web **Close** keeps the flow available to reopen until its five-minute deadline; **Cancel sign-in** ends it.
 
-### Choose how to customize Pi
+Native terminal sessions use Durable SQLite storage. Print/JSON/RPC and the SDK use their own JSONL session interface; their session selectors and export commands are documented separately in [CLI Integration](cli-integration.md) and [Sessions](sessions.md).
 
-Start with the least powerful mechanism that meets your need:
+## Add only the capabilities you need
 
-| Need | Start with |
+| Need | Mechanism |
 |---|---|
-| Give Pi persistent instructions for a folder | [`AGENTS.md`](configuration.md#context-files) |
-| Reuse a prompt from the `/` menu | [Prompt template](prompt-templates.md) |
-| Add task-specific instructions and supporting files | [Skill](skills.md) |
-| Add executable tools, commands, or event handlers | [Extension](extensions.md) |
-| Build a custom terminal component | [Terminal UI](tui.md) |
-| Connect an unsupported model service | [Custom provider](custom-provider.md) |
-| Install or distribute several resources | [Pi package](packages.md) |
+| Persistent folder instructions | [AGENTS.md](configuration.md#context-files) |
+| Reusable prompts | [Prompt templates](prompt-templates.md) |
+| Task instructions and supporting files | [Skills](skills.md) |
+| Tools, commands, tasks, hooks or services in the default terminal/host | [Native plugins](plugin-runtime.md) |
+| Extensions for SDK or print/RPC applications | [SDK extensions](extensions.md) |
+| Model endpoint configuration | [Models](models.md) |
 
-## Uninstall Pi
+Select a native plugin with `-e /path/to/plugin`. `/plugins` shows its source and API; after editing that source, run `/reload` while idle. A failed candidate build preserves the active version. Changes to the application core or shell require rebuilding and restarting.
 
-If you installed Pi with npm, run:
+## Update or remove
 
-```bash
-npm uninstall -g @amazme/coding-agent
-```
+Global package-manager installations can use `amazme update` once a matching release of their own package exists in npm. The update accepts only its own package name and a valid version. Update a source checkout through that checkout. Replace compiled releases with a complete AmazMe runtime from the source that supplied them.
 
-If you used the installer, run it again and choose **Uninstall Pi**:
-
-```bash
-curl -fsSL https://pi.dev/install.sh | sh
-```
-
-If you installed Pi with Nix, run:
-
-```bash
-nix profile remove pi
-```
-
-None of these methods removes configuration, credentials, sessions, or installed Pi packages from `~/.amazme/agent/`.
+For npm installations, `npm uninstall -g @amazme/coding-agent` removes the CLI package. Removing the release directory or package does not delete configuration, credentials or session data in `~/.amazme/agent`.
