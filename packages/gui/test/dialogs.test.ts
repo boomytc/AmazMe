@@ -100,26 +100,22 @@ describe("host failure dialog", () => {
 		expect(copy.detail).toBe("(no output)");
 	});
 
-	test("spawn, timeout, and invalid launch each keep their own sentence and the tail", () => {
-		expect(
-			hostFailureCopy("zh", { kind: "spawn-error", message: "desktop host failed to spawn: missing", tail: "err\n" }),
-		).toMatchObject({
-			title: "宿主启动失败",
-			message: "无法启动网页宿主：desktop host failed to spawn: missing",
-			detail: "err",
-			buttons: ["退出"],
+	test.each(["en", "zh"] as const)("localizes structured failures and keeps raw diagnostics in detail (%s)", (locale) => {
+		const spawn = hostFailureCopy(locale, { kind: "spawn-error", message: "desktop host failed to spawn: ENOENT", tail: "missing node\n" });
+		expect(spawn.message).toBe(locale === "zh" ? "无法启动网页宿主。" : "Could not start the web host.");
+		expect(spawn.detail).toContain("ENOENT");
+		expect(spawn.detail).toContain("missing node");
+		const timeout = hostFailureCopy(locale, {
+			kind: "readiness-timeout", timeoutMs: 60_000,
+			message: "desktop host readiness timed out after 60000ms", tail: "",
 		});
-		expect(
-			hostFailureCopy("zh", {
-				kind: "readiness-timeout",
-				message: "desktop host readiness timed out after 60000ms",
-				tail: "",
-			}).message,
-		).toBe("网页宿主没有在时限内就绪：desktop host readiness timed out after 60000ms");
-		expect(hostFailureCopy("en", { kind: "startup-error", message: "desktop host entry is missing: cli.ts", tail: "" })).toMatchObject({
-			message: "The web host failed while starting: desktop host entry is missing: cli.ts",
-			detail: "(no output)",
-		});
+		expect(timeout.message).toBe(locale === "zh" ? "网页宿主没有在 60000 毫秒内就绪。" : "The web host was not ready within 60000 ms.");
+		expect(timeout.detail).toContain("readiness timed out after 60000ms");
+		for (const kind of ["startup-error", "invalid-output"] as const) {
+			const invalid = hostFailureCopy(locale, { kind, message: "desktop host entry is missing: cli.ts", tail: "" });
+			expect(invalid.message).toBe(locale === "zh" ? "网页宿主启动失败。" : "The web host failed while starting.");
+			expect(invalid.detail).toContain("desktop host entry is missing: cli.ts");
+		}
 	});
 
 	test("visibleOutputTail drops a carriage return and a too-long line", () => {

@@ -31,8 +31,8 @@ export function workspacePackages(repoRoot) {
 	return new Map(packages);
 }
 
-/** Dependency order for the selected runtime, rejecting undeclared local packages and cycles. */
-export function runtimePackages(packages, names) {
+/** One workspace dependency traversal for build and artifact closures. */
+export function workspaceDependencyPackages(packages, names, fields) {
 	const visiting = new Set();
 	const visited = new Set();
 	const ordered = [];
@@ -42,11 +42,9 @@ export function runtimePackages(packages, names) {
 		const pkg = packages.get(name);
 		if (!pkg) throw new Error(`Unknown workspace package: ${name}`);
 		visiting.add(name);
-		for (const dependency of Object.keys({
-			...pkg.manifest.dependencies,
-			...pkg.manifest.optionalDependencies,
-		})) {
-			if (dependency.startsWith("@amazme/")) visit(dependency);
+		const dependencies = Object.assign({}, ...fields.map((field) => pkg.manifest[field]));
+		for (const dependency of Object.keys(dependencies)) {
+			if (packages.has(dependency) || dependency.startsWith("@amazme/")) visit(dependency);
 		}
 		visiting.delete(name);
 		visited.add(name);
@@ -54,6 +52,11 @@ export function runtimePackages(packages, names) {
 	};
 	for (const name of names) visit(name);
 	return ordered;
+}
+
+/** Runtime artifacts omit build-only development dependencies. */
+export function runtimePackages(packages, names) {
+	return workspaceDependencyPackages(packages, names, ["dependencies", "optionalDependencies"]);
 }
 
 function inside(path, directory) {

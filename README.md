@@ -131,7 +131,7 @@ npm run dev:web
 npm run dev:desktop
 ```
 
-`dev:web` 默认端口 4310。桌面开发命令先构建 Web、coding-agent 和 GUI，再通过 Electron 打开同一宿主页面。正式 GUI 从已安装依赖解析 CLI；桌面壳需要 Electron，宿主需要 Node.js 22.19+。详见 [桌面包](packages/gui/README.md)。
+`dev:web` 默认端口 4310。桌面开发命令先按依赖顺序构建 GUI 的 workspace 依赖闭包，再通过 Electron 打开同一宿主页面。AI 使用离线构建，不自动刷新模型目录；缺数据时会提示先运行 `npm run hydrate:model-data`。正式 GUI 从已安装依赖解析 CLI；桌面壳需要 Electron，宿主需要 Node.js 22.19+。详见 [桌面包](packages/gui/README.md)。
 
 修改包后，先构建再运行该包的既有检查：
 

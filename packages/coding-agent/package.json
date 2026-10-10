@@ -17,6 +17,11 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./config": {
+			"source": "./src/config.ts",
+			"types": "./dist/config.d.ts",
+			"import": "./dist/config.js"
+		},
 		"./rpc-entry": {
 			"import": "./dist/bundle/rpc-entry.js"
 		},

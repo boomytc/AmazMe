@@ -7,17 +7,22 @@ Electron 窗口。它拉起已安装 AmazMe CLI 的网页宿主，再把那个�
 宿主入口通过应用依赖解析 `@amazme/coding-agent` 的已安装 CLI，运行 `amazme web`，不查找仓库或源码解析器。就绪行是宿主打印的 `Web: http://127.0.0.1:<port>/`。端口用 `0`，避免和已经开着的 `dev:web` 抢 4310；同一目录里若已有宿主，这条命令会附着上去，窗口看到的仍是那一份会话。子进程用系统 Node，不用 Electron 当 Node：宿主的会话 worker 会再执行 `process.execPath`，并且存储用 `node:sqlite`。
 
 ```bash
-npm run build --workspace @amazme/web
-npm run build --workspace @amazme/coding-agent
-npm run build --workspace @amazme/gui
-npm start --workspace @amazme/gui
+npm run dev:desktop
 ```
+
+该命令按 package manifest 计算并顺序构建 GUI 的 workspace 依赖闭包，覆盖源码中的构建期 workspace 依赖。AI 使用 `build:offline`，已有模型数据不会被刷新；缺数据时先显式运行 `npm run hydrate:model-data`。可用 `node scripts/build-workspace-dependencies.mjs @amazme/gui --plan` 查看构建顺序。
+
+桌面通过 `@amazme/coding-agent/config` 复用 profile 路径归一化，不复制一套 CLI 配置路径规则。
+
+菜单和错误框优先使用当前页面的 `lang`，页面未就绪、已崩溃或语言读取超时时使用同一 profile 的全局 `locale` 设置（与 `SettingsManager.getLocalePreference` 一致，不读项目覆盖）；`auto` 才跟随系统。程序生成的英文错误留在有界详情中，摘要按错误类型、退出码和超时参数本地化。
+
+桌面拥有的 Web 子进程通过 stdin 管道观察父进程；正常关闭也用 EOF 请求跨平台的普通清理，强制升级只针对直属 Web PID，不杀可能被其他宿主接管的子树。即使 Electron 被 SIGKILL、无法执行退出钩子，EOF 仍触发普通宿主关闭。只关闭该次创建的宿主；附着已有宿主时不关闭共享后端。Web 子进程本身被 SIGKILL 时，端口由操作系统释放，空闲 worker 在 orphan-demand 宽限后退出（默认 30 秒），有未结束 Harness 任务时继续持久工作；不批量杀 Node。
 
 壳的 typecheck 和构建解析 `@amazme/web/locale` 与 `@amazme/web/strings` 的 dist。根 `build` / `build:offline` 先构建 Web 与 coding-agent，再构建 GUI。单独启动这个包之前，两者的 dist 要已经在。
 
 需要 Node.js 22.19 或更新版本，以及随产品发布的模型目录数据。宿主默认使用启动进程的当前目录。经 npm 启动时沿用 npm 记录的初始工作目录；项目目录可显式指定。要打开别的项目目录时设置 `AMAZME_GUI_CWD`。`AMAZME_GUI_NODE` 可指定跑宿主的 Node。
 
-`npm test` 检查就绪行和拉起参数。`npm run test:smoke` 在有显示的环境里真正打开窗口并核对启动清单。
+`npm test` 检查就绪行、拉起参数、语言和错误合同；不含真实窗口 smoke。构建后用 `npm run test:smoke --workspace @amazme/gui` 在有显示的环境里单独验证真实窗口、退出与强制终止。smoke 使用临时 Electron/profile/server 目录，不读取用户凭据。
 
 正式发布的网页脚本由 coding-agent 构建预先生成，宿主、worker 与客户端共享编译模块和同一持久状态。桌面依赖声明包括 coding-agent；Electron 作为桌面壳运行环境，宿主使用系统 Node 22.19+。
 

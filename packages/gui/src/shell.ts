@@ -8,11 +8,8 @@
  */
 import { shouldPresentRenderFailure, type HostFailure, type RenderFailure } from "./dialogs.ts";
 
-export interface HostExitDetail {
-	readonly code: number | null;
-	readonly signal: string | null;
-	readonly tail: string;
-}
+import type { HostExitDetail } from "./host-events.ts";
+export type { HostExitDetail } from "./host-events.ts";
 
 export interface LoadFailureInput {
 	readonly errorCode: number;

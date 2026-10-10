@@ -41,6 +41,8 @@ export function webHostLaunch(input: {
 		if (value === undefined || key.startsWith("ELECTRON_")) continue;
 		env[key] = value;
 	}
+	// EOF is observable even when Electron is killed without running its quit hooks.
+	env.AMAZME_DESKTOP_PARENT_PIPE = "1";
 	return {
 		nodeExecutable: input.nodeExecutable,
 		args: [cli, "web", "--port", "0"],

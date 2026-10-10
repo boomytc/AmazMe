@@ -7,6 +7,7 @@
  */
 import type { Locale } from "@amazme/web/locale";
 import { translate, type MessageKey } from "@amazme/web/strings";
+import type { HostExitDetail, HostStartupFailure } from "./host.ts";
 
 /** Chromium `net::ERR_ABORTED`. A load the page itself replaced, or a window tearing down. */
 const ERR_ABORTED = -3;
@@ -47,24 +48,9 @@ export type RenderFailure =
  * failures that are not an exit code. `tail` is the raw bounded stdout/stderr buffer.
  */
 export type HostFailure =
-	| {
-			readonly kind: "spawn-error" | "readiness-timeout" | "invalid-output" | "startup-error";
-			readonly message: string;
-			readonly tail: string;
-	  }
-	| {
-			readonly kind: "exit-before-ready";
-			readonly message: string;
-			readonly code: number | null;
-			readonly signal: string | null;
-			readonly tail: string;
-	  }
-	| {
-			readonly kind: "unexpected-exit";
-			readonly code: number | null;
-			readonly signal: string | null;
-			readonly tail: string;
-	  };
+	| HostStartupFailure
+	| { readonly kind: "startup-error"; readonly message: string; readonly tail: string }
+	| ({ readonly kind: "unexpected-exit" } & HostExitDetail);
 
 export interface RenderDialogCopy {
 	readonly title: string;
@@ -186,7 +172,11 @@ function hostCopy(
 	};
 }
 
-/** Quit-only copy for a host failure, including the trailing stdout/stderr when there is any. */
+function startupDiagnostic(failure: { readonly message: string; readonly tail: string }): string {
+	return [failure.message, failure.tail].filter((value) => value.trim().length > 0).join("\n");
+}
+
+/** Quit-only copy: the kind selects localized prose; generated/raw diagnostics stay in bounded detail. */
 export function hostFailureCopy(locale: Locale, failure: HostFailure): HostDialogCopy {
 	switch (failure.kind) {
 		case "spawn-error":
@@ -194,8 +184,8 @@ export function hostFailureCopy(locale: Locale, failure: HostFailure): HostDialo
 				locale,
 				"desktop.host.spawn.title",
 				"desktop.host.spawn.message",
-				{ message: failure.message },
-				failure.tail,
+				undefined,
+				startupDiagnostic(failure),
 			);
 		case "exit-before-ready":
 			return hostCopy(
@@ -209,9 +199,9 @@ export function hostFailureCopy(locale: Locale, failure: HostFailure): HostDialo
 			return hostCopy(
 				locale,
 				"desktop.host.timeout.title",
-				"desktop.host.timeout.message",
-				{ message: failure.message },
-				failure.tail,
+				"desktop.host.timeout.duration",
+				{ timeoutMs: String(failure.timeoutMs) },
+				startupDiagnostic(failure),
 			);
 		case "invalid-output":
 		case "startup-error":
@@ -219,8 +209,8 @@ export function hostFailureCopy(locale: Locale, failure: HostFailure): HostDialo
 				locale,
 				"desktop.host.invalid.title",
 				"desktop.host.invalid.message",
-				{ message: failure.message },
-				failure.tail,
+				undefined,
+				startupDiagnostic(failure),
 			);
 		case "unexpected-exit":
 			return hostCopy(

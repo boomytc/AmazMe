@@ -8,6 +8,7 @@ import { runClientTui } from "./client-tui.ts";
 import type { RadiusRelayHostStatus } from "./radius-relay.ts";
 import { startForegroundServer } from "./server.ts";
 import { startWebHost, type WebHost } from "./web/host.ts";
+import { watchDesktopParent } from "./desktop-parent.ts";
 
 async function runServerCommand(command: ServerCommand): Promise<void> {
 	let previousRelayStatus = "";
@@ -83,33 +84,39 @@ async function runClientCommand(command: ClientCommand): Promise<void> {
 }
 
 async function runWebCommand(command: WebCommand): Promise<void> {
-	const host = await startWebHost({
-		...(command.port === undefined ? {} : { port: command.port }),
-		...(command.serverId === undefined ? {} : { serverId: command.serverId }),
-		...(command.sessionDir === undefined ? {} : { sessionDir: command.sessionDir }),
-		...(command.pluginPackages === undefined ? {} : { pluginPackages: command.pluginPackages }),
+	let parentClosed = false;
+	let finishParent: (() => void) | undefined;
+	const stopParent = watchDesktopParent(() => {
+		parentClosed = true;
+		finishParent?.();
 	});
-	for (const line of webLaunchLines(host)) console.log(line);
+	let host: WebHost | undefined;
 	try {
+		const running = await startWebHost({
+			...(command.port === undefined ? {} : { port: command.port }),
+			...(command.serverId === undefined ? {} : { serverId: command.serverId }),
+			...(command.sessionDir === undefined ? {} : { sessionDir: command.sessionDir }),
+			...(command.pluginPackages === undefined ? {} : { pluginPackages: command.pluginPackages }),
+		});
+		host = running;
+		if (parentClosed) return;
+		for (const line of webLaunchLines(running)) console.log(line);
 		await new Promise<void>((resolve, reject) => {
 			const cleanup = (): void => {
 				process.off("SIGINT", finish);
 				process.off("SIGTERM", finish);
+				finishParent = undefined;
 			};
-			const finish = (): void => {
-				cleanup();
-				resolve();
-			};
-			const fail = (error: unknown): void => {
-				cleanup();
-				reject(error);
-			};
+			const finish = (): void => { cleanup(); resolve(); };
+			const fail = (error: unknown): void => { cleanup(); reject(error); };
+			finishParent = finish;
 			process.once("SIGINT", finish);
 			process.once("SIGTERM", finish);
-			void host.closed.then(finish, fail);
+			void running.closed.then(finish, fail);
 		});
 	} finally {
-		await host.close();
+		stopParent();
+		await host?.close();
 	}
 }
 

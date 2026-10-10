@@ -9,8 +9,8 @@
 		"clean": "shx rm -rf dist",
 		"build": "tsc -p tsconfig.build.json",
 		"start": "electron .",
-		"test": "vitest --run --exclude test/smoke.test.ts",
-		"test:smoke": "vitest --run test/smoke.test.ts",
+		"test": "vitest --run --exclude test/smoke.test.ts --exclude test/desktop-lifecycle.smoke.test.ts",
+		"test:smoke": "vitest --run --no-file-parallelism test/smoke.test.ts test/desktop-lifecycle.smoke.test.ts",
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"dependencies": {

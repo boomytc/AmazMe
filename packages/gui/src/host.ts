@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
+import type { HostExitDetail } from "./host-events.ts";
+export type { HostExitDetail } from "./host-events.ts";
 import type { WebHostLaunch } from "./launch.ts";
 import { createReadinessParser } from "./readiness.ts";
 
@@ -15,27 +17,21 @@ export const MAX_HOST_OUTPUT_CHARS = 32_768;
 /** Why `start` rejected. `message` is the sentence the rejection Error carries, without the tail. */
 export type HostStartupFailure =
 	| {
-			readonly kind: "spawn-error" | "readiness-timeout" | "invalid-output";
+			readonly kind: "spawn-error" | "invalid-output";
 			readonly message: string;
 			readonly tail: string;
 	  }
 	| {
-			readonly kind: "exit-before-ready";
+			readonly kind: "readiness-timeout";
+			readonly timeoutMs: number;
 			readonly message: string;
-			readonly code: number | null;
-			readonly signal: NodeJS.Signals | null;
 			readonly tail: string;
-	  };
-
-/** A host that was ready and then left while the shell was not shutting it down. */
-export interface HostExitDetail {
-	readonly code: number | null;
-	readonly signal: NodeJS.Signals | null;
-	readonly tail: string;
-}
+	  }
+	| ({ readonly kind: "exit-before-ready"; readonly message: string } & HostExitDetail);
 
 /** Child the supervisor owns. Tests substitute a fake; the app uses a Node process. */
 export interface HostChild {
+	readonly pid?: number | undefined;
 	readonly stdout: { onData(listener: (chunk: string) => void): () => void };
 	readonly stderr: { onData(listener: (chunk: string) => void): () => void };
 	onExit(listener: (code: number | null, signal: NodeJS.Signals | null) => void): () => void;
@@ -72,12 +68,11 @@ interface NodeChildOptions {
 
 /** Spawn a Node process whose stdout and stderr the supervisor reads to completion. */
 export function spawnNodeChild(options: NodeChildOptions): HostChild {
-	const child = spawn(options.executable, [...options.args], {
-		cwd: options.cwd,
-		env: options.env,
-		stdio: ["ignore", "pipe", "pipe"],
-		windowsHide: true,
-	});
+	const spawnOptions = { cwd: options.cwd, env: options.env, windowsHide: true };
+	// Only a desktop-owned web host receives an open parent-lifetime pipe.
+	const child = options.env.AMAZME_DESKTOP_PARENT_PIPE === "1"
+		? spawn(options.executable, [...options.args], { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] })
+		: spawn(options.executable, [...options.args], { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] });
 	return nodeChildAdapter(child);
 }
 
@@ -105,18 +100,27 @@ function streamAdapter(stream: Readable): HostChild["stdout"] {
 	};
 }
 
-function terminate(child: ChildProcessByStdio<null, Readable, Readable>, signal: "SIGTERM" | "SIGKILL"): void {
+function terminate(child: ChildProcessByStdio<Writable | null, Readable, Readable>, signal: "SIGTERM" | "SIGKILL"): void {
 	if (child.pid === undefined) return;
-	// A Windows host pulls in detached session workers. Killing the tree is what stops them.
+	// EOF requests ordinary cleanup on every platform, including ownership-aware worker release.
+	if (signal === "SIGTERM" && child.stdin !== null) {
+		if (!child.stdin.destroyed && !child.stdin.writableEnded) {
+			child.stdin.once("error", (error: Error) => console.error(`desktop parent pipe: ${error.message}`));
+			child.stdin.end();
+		}
+		return;
+	}
+	// Escalate only this child: descendants can have been adopted by a replacement/shared server.
 	if (process.platform === "win32") {
-		spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+		spawn("taskkill", ["/pid", String(child.pid), "/F"], { stdio: "ignore", windowsHide: true });
 		return;
 	}
 	child.kill(signal);
 }
 
-function nodeChildAdapter(child: ChildProcessByStdio<null, Readable, Readable>): HostChild {
+function nodeChildAdapter(child: ChildProcessByStdio<Writable | null, Readable, Readable>): HostChild {
 	return {
+		pid: child.pid,
 		stdout: streamAdapter(child.stdout),
 		stderr: streamAdapter(child.stderr),
 		onExit(listener) {
@@ -190,6 +194,7 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 			readinessTimer = setTimeout(() => {
 				fail({
 					kind: "readiness-timeout",
+					timeoutMs: readinessTimeoutMs,
 					message: `desktop host readiness timed out after ${String(readinessTimeoutMs)}ms`,
 					tail: output,
 				});

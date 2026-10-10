@@ -24,6 +24,7 @@ describe("web host launch", () => {
 		expect(launch.env.AMAZME_EXPERIMENTAL).toBeUndefined();
 		expect(launch.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
 		expect(launch.env.PATH).toBe("/usr/bin");
+		expect(launch.env.AMAZME_DESKTOP_PARENT_PIPE).toBe("1");
 		for (const entry of launch.entries) {
 			expect(readFileSync(entry, "utf8").length).toBeGreaterThan(0);
 		}

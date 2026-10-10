@@ -1,12 +1,11 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
-const require = createRequire(import.meta.url);
+import { electronBinary, smokeEnvironment } from "./smoke-support.ts";
 
 interface SmokeReport {
 	readonly title: string;
@@ -15,14 +14,8 @@ interface SmokeReport {
 	readonly version: string;
 	readonly mode: string;
 	readonly transport: string;
-}
-
-function electronBinary(): string {
-	const resolved: unknown = require("electron");
-	if (typeof resolved !== "string" || resolved.length === 0) {
-		throw new Error("electron did not resolve to a binary path");
-	}
-	return resolved;
+	readonly language: string;
+	readonly desktopLocale: string;
 }
 
 function isSmokeReport(value: unknown): value is SmokeReport {
@@ -34,7 +27,9 @@ function isSmokeReport(value: unknown): value is SmokeReport {
 		typeof record.name === "string" &&
 		typeof record.version === "string" &&
 		typeof record.mode === "string" &&
-		typeof record.transport === "string"
+		typeof record.transport === "string" &&
+		typeof record.language === "string" &&
+		typeof record.desktopLocale === "string"
 	);
 }
 
@@ -68,8 +63,10 @@ describe("electron window", () => {
 		}
 	});
 
-	test("opens the shared web host", async () => {
+	test.each(["en", "zh", "auto"] as const)("opens the shared web host with application language %s", async (locale) => {
 		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-"));
+		await mkdir(join(scratch, "agent"));
+		await writeFile(join(scratch, "agent", "settings.json"), JSON.stringify({ locale }));
 		const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 		let stdout = "";
 		let stderr = "";
@@ -79,15 +76,7 @@ describe("electron window", () => {
 			{
 				cwd: packageRoot,
 				detached: true,
-				env: {
-					...process.env,
-					AMAZME_GUI_SMOKE: "1",
-					AMAZME_GUI_NODE: process.execPath,
-					AMAZME_GUI_CWD: scratch,
-					AMAZME_SERVER_DIR: join(scratch, "server"),
-					AMAZME_CODING_AGENT_DIR: join(scratch, "agent"),
-					AMAZME_GUI_READY_TIMEOUT_MS: "120000",
-				},
+				env: smokeEnvironment(scratch),
 				stdio: ["ignore", "pipe", "pipe"],
 			},
 		);
@@ -125,5 +114,7 @@ describe("electron window", () => {
 		// The shared page sets the document title from the boot manifest.
 		expect(smoke.report.title).toBe(`${smoke.report.name} ${smoke.report.version}`);
 		expect(smoke.report.transport).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/amazme$/);
+		expect(smoke.report.language.split("-")[0]).toBe(smoke.report.desktopLocale);
+		if (locale !== "auto") expect(smoke.report.desktopLocale).toBe(locale);
 	}, 180_000);
 });

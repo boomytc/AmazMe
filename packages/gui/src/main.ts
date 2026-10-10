@@ -7,7 +7,7 @@ import {
 	type Event as ElectronEvent,
 	type MessageBoxOptions,
 } from "electron";
-import { resolveLocale } from "@amazme/web/locale";
+import { desktopLocale, readDesktopDocumentLanguage, readDesktopLocalePreference } from "./locale.ts";
 import { hostFailureCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
 import { createHostSupervisor, spawnWebHost, type HostStartupFailure, type HostSupervisor } from "./host.ts";
 import {
@@ -24,6 +24,7 @@ import { attentionOnTitle } from "./title.ts";
 
 const APP_NAME = "AmazMe";
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
+if (SMOKE && process.env.AMAZME_GUI_SMOKE_DATA_DIR) app.setPath("userData", process.env.AMAZME_GUI_SMOKE_DATA_DIR);
 
 const SMOKE_EXPRESSION = `({
 	title: document.title,
@@ -31,12 +32,15 @@ const SMOKE_EXPRESSION = `({
 	name: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.app && globalThis.__AMAZME_BOOT__.app.name,
 	version: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.app && globalThis.__AMAZME_BOOT__.app.version,
 	mode: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.mode,
+	serverId: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.server && globalThis.__AMAZME_BOOT__.server.id,
+	language: document.documentElement.lang,
 	transport: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.transport && globalThis.__AMAZME_BOOT__.transport.url
 })`;
 
 let host: HostSupervisor | undefined;
 let hostPageUrl: string | undefined;
 let window: BrowserWindow | undefined;
+let rendererReady = false;
 let shutdownPromise: Promise<void> | undefined;
 let quitReleased = false;
 let quitRequested = false;
@@ -57,11 +61,18 @@ function shutdownHost(): Promise<void> {
 	return shutdownPromise;
 }
 
-function currentLocale() {
+async function currentLocale() {
 	const preferred = app.getPreferredSystemLanguages();
-	if (preferred.length > 0) return resolveLocale(undefined, preferred);
-	const locale = app.getLocale();
-	return resolveLocale(undefined, locale.length > 0 ? [locale] : []);
+	const system = app.getLocale();
+	const languages = preferred.length > 0 ? preferred : system.length > 0 ? [system] : [];
+	const preference = await readDesktopLocalePreference(hostWorkingDirectory(process.env, process.cwd()), process.env);
+	const current = liveWindow();
+	let documentLanguage: unknown;
+	// Constant read from the owned page, not a new renderer capability or arbitrary IPC execution.
+	if (rendererReady && current !== undefined && hostPageUrl !== undefined && current.webContents.getURL() === hostPageUrl) {
+		documentLanguage = await readDesktopDocumentLanguage(() => current.webContents.executeJavaScript("document.documentElement.lang"));
+	}
+	return desktopLocale(preference, languages, documentLanguage);
 }
 
 function liveWindow(): BrowserWindow | undefined {
@@ -96,7 +107,7 @@ function boxOptions(
  * leave; the success path never asks.
  */
 async function ask(options: MessageBoxOptions): Promise<number> {
-	if (SMOKE) return options.cancelId ?? 0;
+	if (SMOKE || notices.quitting) return options.cancelId ?? 0;
 	const parent = liveWindow();
 	const result =
 		parent === undefined ? await dialog.showMessageBox(options) : await dialog.showMessageBox(parent, options);
@@ -135,7 +146,7 @@ function leaveAfterHostFailure(): void {
 function beginHostDialog(failure: HostFailure): void {
 	showingDialog = true;
 	revealWindow();
-	void ask(boxOptions(hostFailureCopy(currentLocale(), failure), 0))
+	void currentLocale().then((locale) => ask(boxOptions(hostFailureCopy(locale, failure), 0)))
 		.catch((error: unknown) => {
 			console.error(error instanceof Error ? error.message : String(error));
 		})
@@ -180,8 +191,7 @@ function presentRenderFailure(failure: RenderFailure): void {
 	if (showingDialog || notices.quitting) return;
 	showingDialog = true;
 	revealWindow();
-	const copy = renderFailureCopy(currentLocale(), failure);
-	void ask(boxOptions(copy, 1)).then(
+	void currentLocale().then((locale) => ask(boxOptions(renderFailureCopy(locale, failure), 1))).then(
 		(response) => {
 			finishRenderDialog(response);
 		},
@@ -239,14 +249,22 @@ async function openWindow(pageUrl: string): Promise<void> {
 		notices.userClosedWindow();
 	});
 	watchPendingApprovals(created);
+	let contextMenuRequest = 0;
 	created.webContents.on("context-menu", (_event, params) => {
-		const template = editMenuTemplate(params, currentLocale());
-		if (template.length === 0) return;
-		Menu.buildFromTemplate(
-			template.map((item) => ({ role: item.role, label: item.label, enabled: item.enabled })),
-		).popup({ window: created });
+		const request = ++contextMenuRequest;
+		void currentLocale().then((locale) => {
+			if (request !== contextMenuRequest || created.isDestroyed() || notices.quitting || showingDialog) return;
+			const template = editMenuTemplate(params, locale);
+			if (template.length === 0) return;
+			Menu.buildFromTemplate(
+				template.map((item) => ({ role: item.role, label: item.label, enabled: item.enabled })),
+			).popup({ window: created });
+		}).catch((error: unknown) => console.error(error instanceof Error ? error.message : String(error)));
 	});
+	created.webContents.on("did-start-loading", () => { rendererReady = false; });
+	created.webContents.on("did-finish-load", () => { rendererReady = true; });
 	created.webContents.on("render-process-gone", (_event, details) => {
+		rendererReady = false;
 		notices.renderProcessGone(details);
 	});
 	created.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -271,7 +289,9 @@ async function openWindow(pageUrl: string): Promise<void> {
 	created.show();
 	if (!SMOKE) return;
 	const marker: unknown = await created.webContents.executeJavaScript(SMOKE_EXPRESSION);
-	process.stdout.write(`desktop smoke: ${created.webContents.getURL()} ${JSON.stringify(marker)}\n`);
+	if (typeof marker !== "object" || marker === null) throw new Error("Invalid desktop smoke marker");
+	process.stdout.write(`desktop smoke: ${created.webContents.getURL()} ${JSON.stringify({ ...marker, desktopLocale: await currentLocale() })}\n`);
+	if (process.env.AMAZME_GUI_SMOKE_HOLD === "1") return;
 	notices.applicationWillQuit();
 	await shutdownHost();
 	quitReleased = true;
@@ -292,7 +312,11 @@ async function boot(): Promise<void> {
 	}
 	const timeout = readinessTimeout();
 	host = createHostSupervisor({
-		spawnHost: () => spawnWebHost(launch),
+		spawnHost: () => {
+			const child = spawnWebHost(launch);
+			if (SMOKE && child.pid !== undefined) process.stdout.write(`desktop host pid: ${child.pid}\n`);
+			return child;
+		},
 		...(timeout === undefined ? {} : { readinessTimeoutMs: timeout }),
 		log: (chunk) => {
 			process.stderr.write(chunk);

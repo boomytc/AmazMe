@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { createHostSupervisor, MAX_HOST_OUTPUT_CHARS, spawnNodeChild, type HostStartupFailure } from "../src/host.ts";
+import { createHostSupervisor, MAX_HOST_OUTPUT_CHARS, spawnNodeChild, type HostExitDetail, type HostStartupFailure } from "../src/host.ts";
 import { fakeHost } from "./fake-host.ts";
 
 describe("host supervisor", () => {
@@ -68,6 +68,9 @@ describe("host supervisor", () => {
 			const supervisor = createHostSupervisor({
 				spawnHost: () => fake.child,
 				readinessTimeoutMs: 60_000,
+				onStartupFailure: (failure) => {
+					expect(failure).toMatchObject({ kind: "readiness-timeout", timeoutMs: 60_000 });
+				},
 			});
 			const pending = supervisor.start();
 			const assertion = expect(pending).rejects.toThrow(/timed out after 60000ms/);
@@ -133,7 +136,7 @@ describe("host supervisor", () => {
 
 	test("reports an unexpected exit with the output tail", async () => {
 		const fake = fakeHost();
-		const seen: Array<{ code: number | null; signal: NodeJS.Signals | null; tail: string }> = [];
+		const seen: HostExitDetail[] = [];
 		const supervisor = createHostSupervisor({
 			spawnHost: () => fake.child,
 			onUnexpectedExit: (detail) => {
