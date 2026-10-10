@@ -12,7 +12,7 @@ pi uninstall <source> [options]
 pi update [target] [options]
 pi list
 pi config [options]
-pi auth <check|print-api-key|print-bearer-token> [options]
+amazme auth <login|logout|check|print-api-key|print-bearer-token> [options]
 pi mcp <list|login|logout> [options]
 ```
 
@@ -295,24 +295,30 @@ Add `--force` to reinstall Pi when the selected update includes Pi.
 - `-a`, `--approve` trusts project-local files for one command. `-na`, `--no-approve` ignores trust-gated project-local files.
 - Append `-h` or `--help` to a command for its exact usage and option constraints.
 
-## Credential commands
+## Authentication commands
 
 ```sh
-pi auth check --provider openai --json
+amazme auth login --provider openai-codex
+amazme auth login --provider deepseek --method api-key
+amazme auth logout --provider deepseek
+amazme auth check --provider openai --json
 ```
 
-Authentication commands require `--provider <provider>` or `--model <model>`. See [Providers](providers.md) for supported methods.
+Login and logout require `--provider <provider>`. Login runs in a terminal, prompts for a method when needed, hides secret input and supports Ctrl+C cancellation. Credential checks and printing require `--provider <provider>` or `--model <model>`. See [Providers](providers.md) for supported methods.
 
 | Command | Description |
 |---|---|
-| `pi auth check` | Print `ready`, `not_ready`, or `invalid`; exit with status `0`, `1`, or `2`, respectively |
-| `pi auth print-api-key` | Print the resolved API key |
-| `pi auth print-bearer-token` | Print a resolved OAuth bearer token |
+| `amazme auth login` | Run the existing provider login flow and save its credential |
+| `amazme auth logout` | Delete saved credentials; environment and models.json configuration remain available |
+| `amazme auth check` | Print `ready`, `not_ready`, or `invalid`; exit with status `0`, `1`, or `2`, respectively |
+| `amazme auth print-api-key` | Print the resolved API key |
+| `amazme auth print-bearer-token` | Print a resolved OAuth bearer token |
 
 | Option | Applies to | Description |
 |---|---|---|
 | `--provider <provider>` | All | Resolve credentials for a provider |
-| `--model <model>` | All | Resolve credentials from a model; may be combined with `--provider` |
+| `--method oauth\|api-key` | `auth login` | Select a supported method instead of prompting |
+| `--model <model>` | Checks and printing | Resolve credentials from a model; may be combined with `--provider` |
 | `--json` | `auth check` | Write the structured result as JSON |
 | `--credentials` | `auth check` | Emit the resolved credential when ready |
 | `--no-refresh` | `auth check` | Do not refresh expired OAuth credentials; refresh is the default |

@@ -5,25 +5,33 @@ Most hosted providers support one or both of these authentication methods:
 - Sign in through a browser or device flow backed by OAuth.
 - Provide an API key.
 
-Use `/login [provider]` to see the methods supported by a provider. Amazon Bedrock and Google Vertex AI can also use ambient cloud credentials.
+Use `amazme auth login --provider <provider>` in a terminal to see the supported methods. Amazon Bedrock and Google Vertex AI can also use ambient cloud credentials.
 
 ## Authenticate interactively
 
-Run `/login` and select a provider. Pi guides you through its OAuth or API-key flow and saves the resulting credential in [`auth.json`](configuration.md#agent-directory).
+Run `amazme auth login --provider <provider>`. AmazMe guides you through the provider's OAuth or API-key flow and saves the resulting credential in [`auth.json`](configuration.md#agent-directory). If both methods are supported, choose one in the terminal or specify `--method oauth` or `--method api-key`.
 
-On a remote or headless machine, an OAuth callback may not reach the local process. When prompted, paste the final redirect URL or authorization code back into Pi.
+```bash
+amazme auth login --provider openai-codex
+amazme auth login --provider xai --method oauth
+amazme auth login --provider deepseek --method api-key
+```
 
-Run `/logout` and select a provider to remove its stored credential. This does not unset environment variables, remove authentication from `models.json`, or revoke the credential at the provider.
+Keys are entered without terminal echo and are not accepted as command arguments. Ctrl+C cancels the flow; login expires after five minutes. The CLI adapter calls the same provider implementations and credential store as the SDK. OAuth client IDs, callbacks, default login identity and provider request headers remain Pi's.
+
+On a remote terminal, an OAuth callback may not reach the local process. When prompted, paste the final redirect URL or authorization code back into the terminal. Login requires an interactive terminal; noninteractive clients can use environment credentials or credentials saved by a prior login.
+
+Run `amazme auth logout --provider <provider>` to remove its stored credential. This does not unset environment variables, remove authentication from `models.json`, or revoke the credential at the provider. Existing hosted sessions can refresh their model catalog after the external CLI changes credentials.
 
 `auth.json` can contain API keys and OAuth tokens. Keep it private and do not commit it.
 
 ## Use an API key from the environment
 
-Environment variables are useful in CI and anywhere Pi should not store the key. Set the variable before starting Pi:
+Environment variables are useful in CI and anywhere AmazMe should not store the key. Set the variable before starting AmazMe:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi
+amazme
 ```
 
 This table covers providers with a single primary API-key variable. Providers that need additional configuration or support ambient credentials are covered under [Provider Specific Config](#provider-specific-config).
@@ -105,7 +113,7 @@ A stored API-key credential can include an `env` object. Its values take priorit
 
 Radius is a service crafted for Pi by the builders of Pi, Earendil Works. It provides a customizable AI gateway with organization-level controls and analytics built in, and artifacts for sharing what you create with Pi.
 
-To get started, run `/login radius` in Pi. This adds Radius as a provider, and its models appear in `/model` like any other provider's.
+To get started, run `amazme auth login --provider radius`. Refresh the model catalog in an existing hosted session to load its authenticated catalog.
 
 Radius also has an MCP server, so Pi can manage Radius for you.
 

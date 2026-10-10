@@ -4,7 +4,7 @@
 
 import type { ThinkingLevel } from "@amazme/agent";
 import chalk from "chalk";
-import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
+import { APP_COMMAND, APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
 import { getToolSelectionError } from "../core/tool-selection.ts";
@@ -290,23 +290,23 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
 
 ${chalk.bold("Usage:")}
-  ${APP_NAME} [options] [--] [@files...] [messages...]
-  ${APP_NAME} dashboard                 Open the agent dashboard
+  ${APP_COMMAND} [options] [--] [@files...] [messages...]
+  ${APP_COMMAND} dashboard                 Open the agent dashboard
 
 ${chalk.bold("Commands:")}
-  ${APP_NAME} install <source> [-l]     Install extension source and add to settings
-  ${APP_NAME} remove <source> [-l]      Remove extension source from settings
-  ${APP_NAME} uninstall <source> [-l]   Alias for remove
-  ${APP_NAME} update [source|self|amazme]   Update AmazMe, extensions, or model catalogs
-  ${APP_NAME} list                      List installed extensions from settings
-  ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
-  ${APP_NAME} auth <command>            Print credentials or check provider readiness
-  ${APP_NAME} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
-  ${APP_NAME} doctor [--json] [--zh]    Read local diagnostics without changing files or contacting providers
-  ${APP_NAME} server [options]         Run the durable Unix host
-  ${APP_NAME} web [--port <port>]       Serve the installed Web client on loopback
-  ${APP_NAME} client [options] [text]   Attach a terminal client to the same host
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
+  ${APP_COMMAND} install <source> [-l]     Install extension source and add to settings
+  ${APP_COMMAND} remove <source> [-l]      Remove extension source from settings
+  ${APP_COMMAND} uninstall <source> [-l]   Alias for remove
+  ${APP_COMMAND} update [source|self|amazme]   Update AmazMe, extensions, or model catalogs
+  ${APP_COMMAND} list                      List installed extensions from settings
+  ${APP_COMMAND} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
+  ${APP_COMMAND} auth <command>            Sign in, sign out, check readiness or print credentials
+  ${APP_COMMAND} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
+  ${APP_COMMAND} doctor [--json] [--zh]    Read local diagnostics without changing files or contacting providers
+  ${APP_COMMAND} server [options]         Run the durable Unix host
+  ${APP_COMMAND} web [--port <port>]       Serve the installed Web client on loopback
+  ${APP_COMMAND} client [options] [text]   Attach a terminal client to the same host
+  ${APP_COMMAND} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider to search for --model (requires --model)
@@ -361,69 +361,76 @@ ${chalk.bold("Options:")}
 Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
 
 ${chalk.bold("Examples:")}
+  # Sign in using the provider's OAuth or API-key flow
+  ${APP_COMMAND} auth login --provider openai-codex
+  ${APP_COMMAND} auth login --provider deepseek --method api-key
+
+  # Remove saved provider credentials
+  ${APP_COMMAND} auth logout --provider deepseek
+
   # Print a provider API key for an external client
-  ${APP_NAME} auth print-api-key --provider openai
+  ${APP_COMMAND} auth print-api-key --provider openai
 
   # Print an OAuth bearer token for an external client (refreshes if expired)
-  ${APP_NAME} auth print-bearer-token --provider openai-codex
+  ${APP_COMMAND} auth print-bearer-token --provider openai-codex
 
   # Interactive mode
-  ${APP_NAME}
+  ${APP_COMMAND}
 
   # Interactive mode with initial prompt
-  ${APP_NAME} "List all .ts files in src/"
+  ${APP_COMMAND} "List all .ts files in src/"
 
   # Include files in initial message
-  ${APP_NAME} @prompt.md @image.png "What color is the sky?"
+  ${APP_COMMAND} @prompt.md @image.png "What color is the sky?"
 
   # Non-interactive mode (process and exit)
-  ${APP_NAME} -p "List all .ts files in src/"
+  ${APP_COMMAND} -p "List all .ts files in src/"
 
   # Prompt beginning with a dash
-  ${APP_NAME} -p -- "- Summarize these points"
+  ${APP_COMMAND} -p -- "- Summarize these points"
 
   # Multiple messages (interactive)
-  ${APP_NAME} "Read package.json" "What dependencies do we have?"
+  ${APP_COMMAND} "Read package.json" "What dependencies do we have?"
 
   # Continue previous session
-  ${APP_NAME} --continue "What did we discuss?"
+  ${APP_COMMAND} --continue "What did we discuss?"
 
   # Start a named session
-  ${APP_NAME} --name "Refactor auth module"
+  ${APP_COMMAND} --name "Refactor auth module"
 
   # Use different model
-  ${APP_NAME} --provider openai --model gpt-4o-mini "Help me refactor this code"
+  ${APP_COMMAND} --provider openai --model gpt-4o-mini "Help me refactor this code"
 
   # Use model with provider prefix (no --provider needed)
-  ${APP_NAME} --model openai/gpt-4o "Help me refactor this code"
+  ${APP_COMMAND} --model openai/gpt-4o "Help me refactor this code"
 
   # Use model with thinking level shorthand
-  ${APP_NAME} --model sonnet:high "Solve this complex problem"
+  ${APP_COMMAND} --model sonnet:high "Solve this complex problem"
 
   # Limit model cycling to specific models
-  ${APP_NAME} --models claude-sonnet,claude-haiku,gpt-4o
+  ${APP_COMMAND} --models claude-sonnet,claude-haiku,gpt-4o
 
   # Limit to a specific provider with glob pattern
-  ${APP_NAME} --models "github-copilot/*"
+  ${APP_COMMAND} --models "github-copilot/*"
 
   # Cycle models with fixed thinking levels
-  ${APP_NAME} --models sonnet:high,haiku:low
+  ${APP_COMMAND} --models sonnet:high,haiku:low
 
   # Start with a specific thinking level
-  ${APP_NAME} --thinking high "Solve this complex problem"
+  ${APP_COMMAND} --thinking high "Solve this complex problem"
 
   # Read-only mode (no file modifications possible)
-  ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
+  ${APP_COMMAND} --tools read,grep,find,ls -p "Review the code in src/"
 
   # Codemode with only the tools of one MCP server
-  ${APP_NAME} --tools read,bash,codemode,'mcp__radius__*'
+  ${APP_COMMAND} --tools read,bash,codemode,'mcp__radius__*'
 
   # Disable one tool while keeping the rest available
-  ${APP_NAME} --exclude-tools ask_question
+  ${APP_COMMAND} --exclude-tools ask_question
 
   # Export a session file to HTML
-  ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
-  ${APP_NAME} --export session.jsonl output.html
+  ${APP_COMMAND} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
+  ${APP_COMMAND} --export session.jsonl output.html
 
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token

@@ -557,6 +557,7 @@ export function detectInstallChange(packageJsonPath = startupPackageJsonPath): I
 interface PackageJson {
 	name?: string;
 	version?: string;
+	bin?: string | Record<string, string>;
 	amazmeConfig?: {
 		name?: string;
 		configDir?: string;
@@ -578,6 +579,7 @@ try {
 const amazmeConfigName: string | undefined = pkg.amazmeConfig?.name;
 export const PACKAGE_NAME: string = pkg.name || "@amazme/coding-agent";
 export const APP_NAME: string = amazmeConfigName || "AmazMe";
+export const APP_COMMAND: string = typeof pkg.bin === "object" ? Object.keys(pkg.bin)[0] ?? "amazme" : "amazme";
 export const APP_TITLE: string = amazmeConfigName ? APP_NAME : "AmazMe";
 export const CONFIG_DIR_NAME: string = pkg.amazmeConfig?.configDir || ".amazme";
 export const VERSION: string = pkg.version || "0.0.0";

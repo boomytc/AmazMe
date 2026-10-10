@@ -28,12 +28,13 @@ import {
 } from "./cli/auth-command.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
+import { runProviderAuthCommand } from "./cli/provider-auth.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
+import { APP_COMMAND, APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -151,13 +152,18 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 	if (parsed.unknownFlags.size > 0) {
 		const option = parsed.unknownFlags.keys().next().value;
 		console.error(chalk.red(`Unknown option --${option} for "${getAuthCommandName(command.kind)}".`));
-		console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getAuthCommandUsage(command.kind)}".`));
+		console.error(chalk.dim(`Use "${APP_COMMAND} --help" or "${getAuthCommandUsage(command.kind)}".`));
 		process.exitCode = 1;
 		return true;
 	}
 	try {
 		if (parsed.diagnostics.length > 0) {
 			throw new AuthCommandError(parsed.diagnostics.map((diagnostic) => diagnostic.message).join("\n"));
+		}
+		if (command.kind === "login" || command.kind === "logout") {
+			const requested = validateAuthCommandArgs(parsed, command.kind);
+			await runProviderAuthCommand(command.kind, requested.provider!, command.authType);
+			return true;
 		}
 		if (command.kind !== "check") {
 			const signal = AbortSignal.timeout(15_000);

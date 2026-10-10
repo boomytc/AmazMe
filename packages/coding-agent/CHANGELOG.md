@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- Added `amazme auth login/logout` through the existing provider and credential APIs, including masked terminal input, method selection and cancellation. Authentication guidance and CLI examples now use the installed command name; OAuth identity remains Pi's.
+
 - Prompt selections now copy through the shared Unix clipboard backend in native, hosted and SDK editors. The configured copy action prioritizes prompt selection; automatic-copy preferences remain effective. Native TUI uses the shared renderer composition and saved clipboard/scroll settings.
 
 - A fatal Durable storage failure now closes native TUI and hosted worker resources through their existing cleanup barriers.

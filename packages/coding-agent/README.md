@@ -17,6 +17,8 @@ amazme client
 
 项目配置在工作目录的 `.amazme`，用户配置在 `~/.amazme/agent`。供应商密钥可来自环境变量或 `models.json`，已有 OAuth 凭据来自同一认证存储。OAuth 的客户端 ID、回调和供应商请求身份沿用 Pi，不随产品名称改写。查看 [模型配置](docs/models.md)、[环境变量](docs/environment-variables.md)及 [CLI](docs/cli.md)。
 
+在终端运行 `amazme auth login --provider openai-codex` 完成 OAuth，或 `amazme auth login --provider deepseek --method api-key` 输入密钥。`amazme auth logout --provider <provider>` 删除已保存的凭据，环境变量仍可使用。参见 [供应商认证](docs/providers.md)。
+
 ## 小内核与可选插件
 
 默认 CLI、宿主与 Web 使用 Chord facets 和同一个 Durable Harness。插件可以贡献工具、命令、提示段、任务、钩子及服务，资源随其所属生命周期释放。项目记忆、历史召回、文件检查点、自动化、完成验证及工作流都按需选择，未启用时不运行其后台工作。

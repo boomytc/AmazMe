@@ -1,11 +1,11 @@
 import { join } from "node:path";
-import { getDocsPath } from "../config.ts";
+import { APP_COMMAND, getDocsPath } from "../config.ts";
 
 const UNKNOWN_PROVIDER = "unknown";
 
 export function getProviderLoginHelp(): string {
 	return [
-		"Use /login to log into a provider via OAuth or API key. See:",
+		`Use ${APP_COMMAND} auth login --provider <provider> to sign in via OAuth or API key. See:`,
 		`  ${join(getDocsPath(), "providers.md")}`,
 		`  ${join(getDocsPath(), "models.md")}`,
 	].join("\n");
