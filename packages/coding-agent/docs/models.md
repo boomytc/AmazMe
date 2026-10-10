@@ -1,6 +1,6 @@
 # Choose a Model
 
-For a built-in provider, start with `/login`, then choose a model with `/model`. Use custom model configuration only when Pi does not already include the provider or endpoint you need.
+For a built-in provider, start with `/login`, then choose a model with `/model`. Use custom model configuration when AmazMe does not already include the provider or endpoint you need.
 
 ## Choose a connection
 
@@ -8,35 +8,35 @@ For a built-in provider, start with `/login`, then choose a model with `/model`.
 |---|---|
 | A supported subscription | Sign in through `/login` |
 | A provider API key | Store it through `/login` or set its environment variable |
-| A local GGUF model | Connect Pi to the llama.cpp router |
+| A local GGUF model | Connect AmazMe to a running llama.cpp router |
 | An OpenAI-, Anthropic-, or Google-compatible endpoint | Add it to `models.json` |
 | A provider with a custom protocol or authentication flow | Build or install a provider extension |
 
-Browse the [model catalog](https://pi.dev/models) for current providers, model IDs, capabilities, context limits, and pricing. Pi starts with its bundled catalog and can overlay newer catalog data from pi.dev. Cached catalog data remains available offline; run `pi update --models` to force a refresh.
+Browse the upstream [Pi model catalog](https://pi.dev/models) for provider metadata. AmazMe starts with its bundled catalog and can overlay newer catalog data from pi.dev. Cached catalog data remains available offline; run `amazme update --models` to force a refresh.
 
 ## Authenticate
 
-Run `/login` and select a provider. Pi stores credentials in [`auth.json`](configuration.md#agent-directory). Run `/logout` to remove stored credentials for a provider.
+Run `/login` and select a provider. AmazMe stores credentials in [`auth.json`](configuration.md#agent-directory). Run `/logout` to remove stored credentials for a provider. OAuth retains Pi's provider client IDs, callback configuration and request identity.
 
-You can instead provide an API key through the provider's environment variable. This is useful in CI and other environments where Pi should not write credentials. [Providers](providers.md) lists the variables and provider-specific setup.
+You can instead provide an API key through the provider's environment variable. This is useful in CI and other environments where AmazMe should not write credentials. [Providers](providers.md) lists the variables and provider-specific setup.
 
-When several credential sources are configured, Pi uses a runtime `--api-key` first, then a stored `auth.json` credential, an `apiKey` from `models.json`, and finally the provider's environment variables or ambient cloud credentials. Provider extensions can define their own authentication behavior.
+When several credential sources are configured, AmazMe uses a runtime `--api-key` first, then a stored `auth.json` credential, an `apiKey` from `models.json`, and finally the provider's environment variables or ambient cloud credentials. Provider extensions can define their own authentication behavior.
 
-Keep `auth.json` and any credential commands private. Project settings and extensions can execute inside the Pi process after you trust a project. Review [Security](security.md) before loading configuration from an untrusted directory.
+Keep `auth.json` and any credential commands private. Project settings and extensions can execute inside the AmazMe process after you trust a project. Review [Security](security.md) before loading configuration from an untrusted directory.
 
 ## Select a model
 
-Run `/model` to search available models. The picker shows models whose providers have usable authentication. Press `Ctrl+S` on a model to save it as the default for new sessions.
+Run `/model` to choose an available model. The default terminal lists models whose providers have usable authentication. Choosing one changes the current conversation; set `defaultProvider` and `defaultModel` in settings to choose defaults for new sessions.
 
-Run `/thinking` to select the thinking level for the current model. Press `Ctrl+S` there to save the startup level. Pi limits the choices to levels supported by the selected model.
+Press `Shift+Tab` to cycle thinking levels supported by the current model. Use `--thinking` for a startup override, or `defaultThinkingLevel` and `modelThinkingLevels` in settings for defaults.
 
-`Ctrl+P` cycles through available models. Use `/scoped-models` to control that cycle and save the selection, or configure model patterns through [Settings](settings.md#model-cycling).
+`Ctrl+P` cycles forward and `Shift+Ctrl+P` cycles backward on Unix. Use `--models 'provider/first:high,provider/second:low'` for an ordered process-local scope, or configure `enabledModels` through [Settings](settings.md#model-cycling). Patterns support exact IDs, fuzzy matches and case-insensitive globs. Authentication changes are checked on each cycle. `/model` remains available outside the cycle scope. The SDK's optional interactive UI also provides `/thinking`, `/scoped-models` and save-default actions.
 
-A session records model and thinking-level changes. Resuming the session restores them without changing defaults for new sessions.
+A new session prefers its saved default when that model is in scope, otherwise the first available scoped model. Explicit `--model` takes priority. Scope thinking suffixes take priority over per-model and global defaults; explicit `--thinking` wins at startup. Cycling uses the target's defaults and clamps them to its capabilities. A session records model and thinking-level changes. Resuming restores them without changing defaults for new sessions; a scope alone does not replace the saved selection.
 
 ## Connect local models
 
-Pi integrates directly with the llama.cpp router. The router discovers GGUF files and loads models on demand. Pi's `/llama` command manages the router, while `/model` selects one of its loaded models.
+AmazMe's provider layer integrates with the llama.cpp router. Start the router separately and use `/model` to select an available model. The SDK's optional interactive UI provides `/llama` management; the default terminal does not expose that command.
 
 Follow [Local Models with llama.cpp](llama-cpp.md) for server startup, model layout, downloads, and connection troubleshooting.
 
@@ -63,7 +63,7 @@ Use [`models.json`](configuration.md#agent-directory) when an endpoint speaks an
 
 The dummy key makes the model available to Pi; Ollama ignores it. For an authenticated endpoint, `apiKey` and header values can use `$NAME` or `${NAME}` environment interpolation, a literal value, or a leading `!command`. Commands in `models.json` run at request time and are not cached by Pi.
 
-Opening `/model` reloads the file. A `models` entry adds or replaces a model with the same ID on that provider. Use `modelOverrides` to change metadata for an existing built-in or extension-provided model without replacing the provider's model list. Unknown override IDs are ignored.
+Restart the default terminal after editing `models.json`; the hosted model service and the SDK expose their own refresh operations. A `models` entry adds or replaces a model with the same ID on that provider. Use `modelOverrides` to change metadata for an existing built-in or extension-provided model without replacing the provider's model list. Unknown override IDs are ignored.
 
 ### Describe model input and caching
 

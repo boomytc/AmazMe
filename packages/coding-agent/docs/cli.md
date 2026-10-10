@@ -65,7 +65,7 @@ See [Choose a Model](models.md) for model selection and [Providers](providers.md
 - `--model <pattern>`<br>
   Selects by exact ID or fuzzy ID/name match. It accepts `provider/id` and an optional `:<thinking>` suffix.
 - `--api-key <key>`<br>
-  Uses a non-persistent API-key override. It requires a model selected through `--model` or `--models`.
+  Uses a non-persistent API-key override. The default terminal requires an explicit `--model`; the SDK Print/RPC path also accepts a model selected through `--models` for a new session.
 - `--thinking <level>`<br>
   Sets `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. It overrides a `--model` suffix and is clamped to the model's capabilities.
 - `--models <patterns>`<br>
@@ -73,7 +73,9 @@ See [Choose a Model](models.md) for model selection and [Providers](providers.md
 - `--list-models [search]`<br>
   Lists available models, optionally filtered by a fuzzy search, then exits.
 
-The default Durable TUI applies `--provider`, `--model`, `--thinking`, and `--api-key` to its actual runtime. A new conversation uses per-model thinking settings before the global default. Continuing restores the focused conversation before applying explicit overrides; other branches keep their settings. Without overrides, saved model and thinking values remain in effect. A previously prepared request retains its saved parameters when recovered; subsequent generations use the current selection.
+The default Durable TUI applies `--provider`, `--model`, `--models`, `--thinking`, and `--api-key` to its actual runtime. Without an explicit model, a new conversation prefers the saved default if it is inside the scope, otherwise the first available scoped model. `--models` overrides `enabledModels` for this process. A new conversation uses the scope's thinking suffix before per-model and global defaults; explicit `--thinking` takes priority. Continuing restores the focused conversation before applying explicit model/thinking overrides; a scope alone does not replace the saved selection. Other branches keep their settings. A previously prepared request retains its saved parameters when recovered; subsequent generations use the current selection.
+
+`Ctrl+P` cycles forward and `Shift+Ctrl+P` cycles backward on Unix. Custom bindings use `app.model.cycleForward` and `app.model.cycleBackward`. Cycling follows pattern order, skips unavailable providers, applies the target's suffix/per-model/global thinking defaults, and clamps to its capabilities. `/model` still lists all available models. Selection and cycling update only the focused conversation, without saving global defaults. With no matching scope, startup reports warnings and uses normal defaults; a known scope whose models lose authentication does not cycle to an unrelated provider. `/reload` re-reads saved `enabledModels` when there is no CLI scope.
 
 In this interactive path, `--api-key` requires `--model` and is never persisted. `--use-theme <name>` applies for the current run without changing saved settings. Invalid model selection is rejected before opening session storage.
 

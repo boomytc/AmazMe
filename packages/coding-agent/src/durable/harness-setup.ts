@@ -20,7 +20,7 @@ import {
 import { ensureTool } from "../utils/tools-manager.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "../core/http-dispatcher.ts";
 import { DEFAULT_THINKING_LEVEL } from "../core/defaults.ts";
-import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
+import { findInitialModel, resolveCliModel, type ScopedModel } from "../core/model-resolver.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { DefaultResourceLoader, type ResourceLoader } from "../core/resource-loader.ts";
@@ -171,26 +171,29 @@ export interface InitialModel {
 	readonly fallbackMessage?: string;
 }
 
-/** Explicit thinking, then per-model and global settings, bounded by the model's capabilities. */
+/** Explicit thinking, then per-model/global defaults and a switch fallback, bounded by model capabilities. */
 export function initialThinkingLevel(
 	settingsManager: SettingsManager,
 	model: Model<string>,
 	requested?: ModelThinkingLevel,
+	fallback?: ModelThinkingLevel,
 ): ModelThinkingLevel {
 	return clampThinkingLevel(
 		model,
 		requested ??
 			settingsManager.getModelThinkingLevel(model.provider, model.id) ??
 			settingsManager.getDefaultThinkingLevel() ??
+			fallback ??
 			DEFAULT_THINKING_LEVEL,
 	);
 }
 
-/** The model a new root conversation starts with: an explicit `--provider`/`--model`, or pi's default resolution. */
+/** New roots use the explicit model, saved default within a scope, first scoped model, or Pi's defaults. */
 export async function findInitialAgentModel(
 	settingsManager: SettingsManager,
 	modelRuntime: ModelRuntime,
 	cli?: { readonly provider?: string; readonly model: string; readonly thinkingLevel?: ModelThinkingLevel },
+	scopedModels: readonly ScopedModel[] = [],
 ): Promise<InitialModel> {
 	if (cli !== undefined) {
 		const resolved = resolveCliModel({
@@ -206,6 +209,15 @@ export async function findInitialAgentModel(
 		return {
 			model: { provider: resolved.model.provider, modelId: resolved.model.id },
 			...(thinkingLevel === undefined ? {} : { thinkingLevel: clampThinkingLevel(resolved.model, thinkingLevel) }),
+		};
+	}
+	if (scopedModels.length > 0) {
+		const selected = scopedModels.find(({ model }) =>
+			model.provider === settingsManager.getDefaultProvider() && model.id === settingsManager.getDefaultModel(),
+		) ?? scopedModels[0]!;
+		return {
+			model: { provider: selected.model.provider, modelId: selected.model.id },
+			thinkingLevel: initialThinkingLevel(settingsManager, selected.model, selected.thinkingLevel),
 		};
 	}
 	const initial = await findInitialModel({

@@ -1,6 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
+import { getSupportedThinkingLevels, type ModelThinkingLevel } from "@amazme/ai";
 import { defineFacet } from "@amazme/chord";
 import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
@@ -21,6 +21,7 @@ import {
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
+import { resolveModelScopeFromModels, resolveModelScopeWithDiagnostics } from "../core/model-resolver.ts";
 import { ProviderLogin } from "../core/provider-login.ts";
 import type { ProviderAuthManagement } from "../core/provider-login.ts";
 import { createAgentExtensionsFacet } from "../core/plugins/agent-extensions.ts";
@@ -124,6 +125,7 @@ export interface DurableController {
 	compact(instructions: string | undefined): Promise<void>;
 	abort(): Promise<void>;
 	cycleThinking(): Promise<void>;
+	cycleModel(direction?: "forward" | "backward"): Promise<void>;
 	setModel(model: ModelRef): Promise<void>;
 	toggleTasks(): Promise<void>;
 	/** Show and talk to another conversation. The choice is stored in the session. */
@@ -157,6 +159,8 @@ export interface OpenDurableOptions extends ToolSelectionOptions, CodingResource
 	readonly name?: string;
 	readonly provider?: string;
 	readonly model?: string;
+	/** Ordered model patterns for startup and cycling; falls back to enabledModels in settings. */
+	readonly models?: readonly string[];
 	readonly thinkingLevel?: ModelThinkingLevel;
 	/** A non-persistent credential for the explicitly selected provider. */
 	readonly apiKey?: string;
@@ -184,7 +188,7 @@ export function agentOf(view: ConversationView): AgentState {
 export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenDurableResult> {
 	const error = getToolSelectionError(input);
 	if (error !== undefined) throw new Error(`Invalid tools option: ${error}`);
-	const options = { ...input, tools: input.tools?.slice(), excludeTools: input.excludeTools?.slice() };
+	const options = { ...input, models: input.models?.slice(), tools: input.tools?.slice(), excludeTools: input.excludeTools?.slice() };
 	const name = options.name?.trim();
 	if (options.name !== undefined && !name) throw new Error("--name requires a non-empty value");
 	if (options.noSession && options.continueSession) throw new Error("--no-session cannot be combined with --continue or --resume");
@@ -211,9 +215,13 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	if (options.apiKey !== undefined && selected?.model !== undefined) {
 		await modelRuntime.setRuntimeApiKey(selected.model.provider, options.apiKey);
 	}
+	const modelPatterns = () => options.models ?? settingsManager.getEnabledModels() ?? [];
+	const scope = modelPatterns().length === 0
+		? { scopedModels: [], diagnostics: [] }
+		: await resolveModelScopeWithDiagnostics(modelPatterns(), modelRuntime, { signal: AbortSignal.timeout(15_000) });
 	const initial = options.continueSession === true
 		? undefined
-		: selected ?? (await findInitialAgentModel(settingsManager, modelRuntime));
+		: selected ?? (await findInitialAgentModel(settingsManager, modelRuntime, undefined, scope.scopedModels));
 	const initialRef = initial?.model;
 	const initialModel = initialRef === undefined ? undefined : modelRuntime.getModel(initialRef.provider, initialRef.modelId);
 	const initialThinking = initialModel === undefined
@@ -426,6 +434,15 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			};
 		};
 		let leaveAbort: AbortController | undefined;
+		const selectModel = async (ref: ModelRef, thinkingLevel?: ModelThinkingLevel): Promise<void> => {
+			const model = modelRuntime.getModel(ref.provider, ref.modelId);
+			if (model === undefined) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
+			if (!(await modelRuntime.checkAuth(model.provider))) throw new Error(`No API key for ${ref.provider}/${ref.modelId}`);
+			await current.configure({
+				model: ref,
+				thinkingLevel: initialThinkingLevel(settingsManager, model, thinkingLevel, agentOf(state.conversation).thinkingLevel),
+			}, context);
+		};
 		const show = async (id: ConversationId): Promise<void> => {
 			// Focus-only. An existing conversation: no summary, no new conversation.
 			const focused = await navigateTree(opened, { kind: "focus", conversationId: String(id) }, context);
@@ -577,13 +594,21 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					const next = levels[(levels.indexOf(level) + 1) % levels.length] ?? "off";
 					await current.configure({ thinkingLevel: next }, context);
 				}),
-			setModel: (ref) =>
-				command(async () => {
-					const model = modelRuntime.getModel(ref.provider, ref.modelId);
-					if (model === undefined) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
-					const thinking: ModelThinkingLevel = agentOf(state.conversation).thinkingLevel ?? "off";
-					await current.configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, context);
-				}),
+			setModel: (ref) => command(() => selectModel(ref)),
+			cycleModel: (direction = "forward") => command(async () => {
+				const available = modelRuntime.getAvailableSnapshot();
+				const patterns = modelPatterns();
+				const scoped = resolveModelScopeFromModels(patterns, available).scopedModels;
+				// A known scope with no authenticated models must not escape into unrelated providers.
+				if (scoped.length === 0 && resolveModelScopeFromModels(patterns, modelRuntime.getModels()).scopedModels.length > 0) return;
+				const choices = scoped.length === 0 ? available.map((model) => ({ model, thinkingLevel: undefined }))
+					: scoped;
+				if (choices.length <= 1) return;
+				const ref = agentOf(state.conversation).model;
+				const index = Math.max(0, choices.findIndex(({ model }) => model.provider === ref?.provider && model.id === ref.modelId));
+				const next = choices[(index + (direction === "forward" ? 1 : choices.length - 1)) % choices.length]!;
+				await selectModel({ provider: next.model.provider, modelId: next.model.id }, next.thinkingLevel);
+			}),
 			toggleTasks: () =>
 				command(async () => {
 					if (tasks !== undefined) {
@@ -689,6 +714,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
 		}
 		if (initial?.fallbackMessage !== undefined) notice("info", initial.fallbackMessage);
+		for (const diagnostic of scope.diagnostics) notice("warning", diagnostic.message);
 		reportResources();
 		// The task panel starts open; /tasks hides it.
 		await controller.toggleTasks();

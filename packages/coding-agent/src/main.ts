@@ -752,6 +752,7 @@ export async function main(args: string[], options?: MainOptions) {
 			noThemes: parsed.noThemes === true,
 			...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
 			...(parsed.model === undefined ? {} : { model: parsed.model }),
+			...(parsed.models === undefined ? {} : { models: parsed.models }),
 			...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),
 			...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
 			...(parsed.tools === undefined ? {} : { tools: parsed.tools }),

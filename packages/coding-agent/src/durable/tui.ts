@@ -142,6 +142,7 @@ interface Handlers {
 	abort(): void;
 	exit(): void;
 	selectModel(): void;
+	cycleModel(direction: "forward" | "backward"): void;
 	cycleThinking(): void;
 }
 
@@ -204,6 +205,8 @@ class DurableTui {
 		this.#editor.onCtrlD = handlers.exit;
 		this.#editor.onAction("app.clear", handlers.exit);
 		this.#editor.onAction("app.model.select", handlers.selectModel);
+		this.#editor.onAction("app.model.cycleForward", () => handlers.cycleModel("forward"));
+		this.#editor.onAction("app.model.cycleBackward", () => handlers.cycleModel("backward"));
 		this.#editor.onAction("app.thinking.cycle", handlers.cycleThinking);
 		this.#editor.onAction("app.tools.expand", () => {
 			this.#expanded = !this.#expanded;
@@ -442,7 +445,7 @@ class DurableTui {
 		this.#footerHints.setText(
 			theme.fg(
 				"dim",
-				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp  /login  /reload${this.#plugins ? "  /plugins" : ""}  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
+				`/tree  /fork  /older  /agents  /model  /compact  /tasks  /mcp  /login  /reload${this.#plugins ? "  /plugins" : ""}  · ${keyText("app.thinking.cycle")} thinking · ${keyText("app.model.cycleForward")} cycle · ${keyText("app.model.select")} model · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
 			),
 		);
 	}
@@ -781,6 +784,7 @@ export async function runDurableTui(
 		abort: () => void controller.abort(),
 		exit,
 		selectModel,
+		cycleModel: (direction) => void controller.cycleModel(direction),
 		cycleThinking: () => void controller.cycleThinking(),
 	}, settings);
 
