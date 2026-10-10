@@ -39,6 +39,9 @@
 
 ### Fixed
 
+- Hosted terminals now consume the worker's command resources and session plugin commands, and refresh them on reload. The shared catalogue lists only implemented terminal navigation. Resource expansion remains bound to its session and conversation in terminal and Web clients.
+- Bundled hosts resolve the hosted plugin API from the package root through the same resolver as native plugins.
+
 - Hosted skill administration now uses the same resource loader and project-trust selection as native sessions and workers, including package resources and exclusions. Skill operations share the server's existing mutation queue.
 
 - TUI login secret prompts stay masked before and after submission; each new prompt gets a fresh input so undo cannot restore a previous credential into another prompt. Expired callback prompts clear without cancelling the completed callback flow.

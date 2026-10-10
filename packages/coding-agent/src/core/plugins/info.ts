@@ -2,9 +2,11 @@ import { join } from "node:path";
 import { getPackageDir } from "../../config.ts";
 
 export function resolveAgentPluginExternal(specifier: string): string | undefined {
-	if (specifier !== "@amazme/coding-agent/plugin") return undefined;
+	const entry = specifier === "@amazme/coding-agent/plugin" ? "plugin"
+		: specifier === "@amazme/coding-agent/host/plugin" ? "host/plugin" : undefined;
+	if (entry === undefined) return undefined;
 	const source = import.meta.url.endsWith(".ts");
-	return join(getPackageDir(), source ? "src" : "dist", source ? "plugin.ts" : "plugin.js");
+	return join(getPackageDir(), source ? "src" : "dist", `${entry}.${source ? "ts" : "js"}`);
 }
 
 /** Source paths and the installed contract are discoverable without inventing another plugin catalogue. */

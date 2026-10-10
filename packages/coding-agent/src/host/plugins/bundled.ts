@@ -8,7 +8,6 @@ import {
 import { resolveAgentPluginExternal } from "../../core/plugins/info.ts";
 
 const PRESENTATION_FACET_BUNDLES_KEY = "presentationFacetBundles";
-const AMAZME_PLUGIN_API = "@amazme/coding-agent/host/plugin";
 
 export function createSessionPluginFacetLoader(manifestPaths: readonly string[]): FacetLoader | undefined {
 	return createPluginFacetLoader(manifestPaths, "session");
@@ -27,7 +26,7 @@ function createOptionalFacetLoader(manifestPath: string, entry: string): FacetLo
 	const loader = createFacetBundleLoader({
 		manifestPath,
 		entry,
-		resolveExternal: resolvePluginExternal,
+		resolveExternal: resolveAgentPluginExternal,
 	});
 	return {
 		async load() {
@@ -53,14 +52,6 @@ export function createPresentationFacetLoaders(data: JsonValue): readonly FacetL
 	if (artifacts === undefined) return [];
 	if (!Array.isArray(artifacts)) throw new Error("Invalid presentation plugin bundle list");
 	return artifacts.map((artifact) =>
-		createFacetBundleArtifactLoader({ artifact, resolveExternal: resolvePluginExternal }),
+		createFacetBundleArtifactLoader({ artifact, resolveExternal: resolveAgentPluginExternal }),
 	);
-}
-
-function resolvePluginExternal(specifier: string): string | undefined {
-	const agentApi = resolveAgentPluginExternal(specifier);
-	if (agentApi !== undefined) return agentApi;
-	if (specifier !== AMAZME_PLUGIN_API) return undefined;
-	const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
-	return new URL(`../plugin.${extension}`, import.meta.url).href;
 }

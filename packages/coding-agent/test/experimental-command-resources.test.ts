@@ -96,14 +96,14 @@ describe("the session's command catalogue", () => {
 			availability: "all",
 		});
 		// The terminal's own commands are listed once, after everything runnable, and marked.
-		expect(catalog.find((command) => command.name === "export")).toMatchObject({
+		expect(catalog.find((command) => command.name === "older")).toMatchObject({
 			source: "builtin",
 			availability: "terminal",
 		});
 		expect(catalog.filter((command) => command.name === "model")).toHaveLength(1);
 		const runnable = catalog.filter((command) => command.availability === "all").length;
 		expect(catalog.slice(runnable).every((command) => command.availability === "terminal")).toBe(true);
-		expect(catalog.some((command) => command.name === "quit")).toBe(true);
+		expect(catalog.some((command) => command.name === "quit")).toBe(false);
 	});
 
 	test("leaves skills out when the skill-command switch is off", async () => {

@@ -31,6 +31,7 @@ import { createBuiltInSlashCommandsFacet } from "./services/slash-commands-provi
 import { createSlashCommandsRuntimeFacet } from "../core/plugins/command-registry.ts";
 import { liveOf, Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
 import { formatLane } from "../durable/session-surface.ts";
+import { Commands, TERMINAL_COMMANDS } from "./services/commands.ts";
 
 export interface RunClientTuiOptions extends OpenClientRuntimeOptions {
 	readonly facetLoader?: FacetLoader;
@@ -89,6 +90,7 @@ export class ExperimentalClientTui implements Component {
 	#facetReloadTail = Promise.resolve();
 	#session: SessionFeature | undefined;
 	#slashCommands: SlashCommands | undefined;
+	#commands: Commands | undefined;
 	#controller: AgentController | undefined;
 	#conversations: ConversationsService | undefined;
 	#models: Models | undefined;
@@ -271,6 +273,7 @@ export class ExperimentalClientTui implements Component {
 					},
 				});
 				const commands = env.use(SlashCommands);
+				const catalog = env.use(Commands);
 				const controller = env.use(AgentController);
 				const transcript = env.use(Transcript);
 				const conversations = env.use(Conversations);
@@ -286,12 +289,14 @@ export class ExperimentalClientTui implements Component {
 					}
 					this.#session = sessionFeature;
 					this.#slashCommands = commands;
+					this.#commands = catalog;
 					this.#controller = controller;
 					this.#conversations = conversations;
 					this.#models = models;
 					env.own(() => {
 						if (this.#session === sessionFeature) this.#session = undefined;
 						if (this.#slashCommands === commands) this.#slashCommands = undefined;
+						if (this.#commands === catalog) this.#commands = undefined;
 						if (this.#controller === controller) this.#controller = undefined;
 						if (this.#conversations === conversations) this.#conversations = undefined;
 						if (this.#models === models) this.#models = undefined;
@@ -304,6 +309,7 @@ export class ExperimentalClientTui implements Component {
 						}),
 					);
 					env.own(commands.subscribe(() => this.#updateAutocomplete()));
+					env.own(catalog.state.subscribe(() => this.#updateAutocomplete()));
 					env.own(server.session.attachment.subscribe((state) => {
 						if (state.status !== "attached" || state.sessionId !== this.#sessionId) this.#authFlow?.controller.abort();
 					}));
@@ -498,9 +504,20 @@ export class ExperimentalClientTui implements Component {
 
 	#updateAutocomplete(): void {
 		const commands = this.#selectedSlashCommands()?.list() ?? [];
+		const catalog = this.#commands;
+		const taken = new Set([...TERMINAL_COMMANDS, ...commands].map(command => command.name));
+		const remote = catalog === undefined ? [] : (catalog.state.value?.commands ?? [])
+			.filter(command => command.availability === "all" && !taken.has(command.name))
+			.map(command => ({
+				...command,
+				getArgumentCompletions: async (prefix: string) => {
+					const items = await catalog.complete(command.name, prefix, BACKGROUND_CONTEXT);
+					return this.#closed || catalog !== this.#commands ? [] : [...items];
+				},
+			}));
 		this.#chatInput.setAutocompleteProvider(
 			new CombinedAutocompleteProvider(
-				commands.map((command) => ({
+				[...TERMINAL_COMMANDS, ...commands.filter(command => !TERMINAL_COMMANDS.some(local => local.name === command.name)).map((command) => ({
 					name: command.name,
 					description: command.description,
 					...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
@@ -512,7 +529,7 @@ export class ExperimentalClientTui implements Component {
 									return items === null ? null : [...items];
 								},
 							}),
-				})),
+				})), ...remote],
 				process.cwd(),
 			),
 		);
@@ -627,7 +644,7 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	async #executeSlashCommand(name: string, args: string): Promise<void> {
-		const local = name === "tree" || name === "agents" || name === "fork" || name === "older" || (name === "compact" && this.#focusedId() !== undefined);
+		const local = TERMINAL_COMMANDS.some(command => command.name === name) || (name === "compact" && this.#focusedId() !== undefined);
 		if (local) this.#chatInput.setText("");
 		if (name === "tree" || name === "agents") {
 			await this.#switchConversation();
@@ -663,18 +680,32 @@ export class ExperimentalClientTui implements Component {
 			?.list()
 			.find((candidate) => candidate.name === name);
 		this.#chatInput.setText("");
-		if (command === undefined) {
-			this.#status = `Unknown slash command: /${name}`;
-			this.#rebuild();
-			return;
-		}
 		try {
+			if (command === undefined) {
+				const catalog = this.#commands;
+				const selected = catalog?.state.value?.commands.find(candidate => candidate.name === name && candidate.availability === "all");
+				if (!catalog || !selected) throw new Error(`Unknown slash command: /${name}`);
+				if (selected.source === "template" || selected.source === "skill") {
+					const sessionId = this.#sessionId;
+					const target = this.#focusedId();
+					const expanded = await catalog.expand(name, args, BACKGROUND_CONTEXT);
+					if (this.#closed || catalog !== this.#commands || sessionId !== this.#sessionId || target !== this.#focusedId()) throw new Error("Command target changed; retry in the current conversation.");
+					if (!expanded.ok) throw new Error(expanded.problem);
+					await this.#submitPrompt(expanded.prompt);
+				} else {
+					const result = await catalog.run(name, args, BACKGROUND_CONTEXT);
+					this.#status = result.ok ? result.note : result.problem;
+					this.#rebuild();
+				}
+				return;
+			}
 			const result = await command.run(args, BACKGROUND_CONTEXT);
 			if (result !== undefined) {
 				if ("entryId" in result) this.#reportQueue(result);
 				else this.#reportOperation(result);
 			}
 		} catch (error) {
+			if (this.#closed) return;
 			this.#status = `Error: ${message(error)}`;
 			this.#rebuild();
 		}

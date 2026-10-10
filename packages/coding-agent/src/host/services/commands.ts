@@ -17,6 +17,14 @@ export type CommandSource = "builtin" | "template" | "skill" | "plugin";
  */
 export type CommandAvailability = "all" | "terminal";
 
+/** Commands the hosted terminal handles locally, rather than through the worker's command service. */
+export const TERMINAL_COMMANDS = [
+	{ name: "tree", description: "Navigate conversation history" },
+	{ name: "agents", description: "Switch conversations" },
+	{ name: "fork", description: "Fork the current conversation" },
+	{ name: "older", description: "Load older history" },
+] as const;
+
 /**
  * One command the session offers. A presentation renders the composer's command palette from these
  * names and descriptions, runs a runnable one by name with its argument text, and expands a resource

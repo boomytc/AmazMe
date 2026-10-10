@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Explicit Tab completion consults slash-command argument candidates, including after a paste, and falls back to paths when no argument matches.
+
 - `Input` supports `secret: true` to mask typed and pasted text while preserving editing, scrolling and original submission values.
 
 - Fixed component-owned prompt selections bypassing the host clipboard path, and exposed selected original text, including large pastes. Draft replacement, submission, history, undo and completion clear stale selection; pasting and inserting a newline replace it.

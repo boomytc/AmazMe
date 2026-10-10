@@ -29,6 +29,7 @@ import type {
 	SessionServiceSource,
 } from "../src/host/services/connection.ts";
 import { Models, type ModelsState } from "../src/host/services/models.ts";
+import { Commands } from "../src/host/services/commands.ts";
 import { PresentationPlugins, SessionPlugins } from "../src/host/services/plugins.ts";
 import {
 	SessionDirectory,
@@ -186,10 +187,18 @@ describe("experimental client TUI", () => {
 				Models,
 				AgentController,
 				SessionPlugins,
+				Commands,
 				Transcript,
 				Conversations,
 			]);
 			sessionProvider.provide(SessionPlugins, { reload: reloadSessionPlugins });
+			sessionProvider.provide(Commands, {
+				state: replicatedState({ revision: 1, commands: [] }),
+				async run() { await reloadSessionPlugins(); return { ok: true, note: "Reloaded." }; },
+				async complete() { return []; },
+				async expand() { return { ok: false, problem: "No fixture resources" }; },
+				async refresh() {},
+			});
 			sessionProvider.provide(Models, {
 				state: modelsState,
 				async cycleThinking() {},
@@ -259,7 +268,7 @@ describe("experimental client TUI", () => {
 				},
 			});
 			const sessionNamespace = createRemoteServiceBinding({
-				services: [Models, AgentController, SessionPlugins, Transcript, Conversations],
+				services: [Models, AgentController, SessionPlugins, Commands, Transcript, Conversations],
 				transport: createLoopbackServiceTransport(sessionProvider),
 				bound: false,
 			});
@@ -344,7 +353,7 @@ describe("experimental client TUI", () => {
 					expect(reloadPresentationPlugins).toHaveBeenCalledOnce();
 					expect(reloadSessionPlugins).toHaveBeenCalledOnce();
 				});
-				await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("Reloaded plugins."));
+				await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("Reloaded plugins and resources."));
 
 				publishReplacement(attachment, { status: "detached" });
 				publishReplacement(connectionState, {

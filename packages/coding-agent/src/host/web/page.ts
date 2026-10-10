@@ -1292,15 +1292,22 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		}
 		const command = composerCommands().find((candidate) => candidate.name === name);
 		if (command?.source === "template" || command?.source === "skill") {
+			const target = targetConversation();
+			const sessionId = painter.sessionId;
+			const owner = painter.commandsState;
+			const mode = submitMode;
 			void painter.expandCommand(name, args).then(
 				(expansion) => {
+					if (painter.sessionId !== sessionId || desiredSessionId !== sessionId || painter.commandsState !== owner || targetConversation() !== target) {
+						renderer.setConnection(copy("page.commandTargetChanged"), "error");
+						return;
+					}
 					if (!expansion.ok) {
 						renderer.setConnection(expansion.message, "error");
 						return;
 					}
-					const target = targetConversation();
 					const focused = target !== undefined && target !== rootConversationId ? target : undefined;
-					return painter.submit(expansion.message, submitMode, [], focused);
+					return painter.submit(expansion.message, mode, [], focused);
 				},
 				(error: unknown) => {
 					renderer.setConnection(copy("page.commandFailed", { error: message(error) }), "error");

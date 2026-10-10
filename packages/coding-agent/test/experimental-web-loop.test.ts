@@ -1342,14 +1342,14 @@ describe("web client interactive loop", () => {
 				["web-loop-report", "template"],
 				["skill:web-loop-brief", "skill"],
 			]);
-			expect(runnable.every((command) => command.source !== "builtin" || command.name !== "export")).toBe(true);
-			expect(catalogue.find((command) => command.name === "export")).toMatchObject({
+			expect(catalogue.some((command) => command.name === "export")).toBe(false);
+			expect(catalogue.find((command) => command.name === "older")).toMatchObject({
 				availability: "terminal",
 				source: "builtin",
 			});
-			expect(await attached.commands.run("export", "", BACKGROUND_CONTEXT)).toEqual({
+			expect(await attached.commands.run("older", "", BACKGROUND_CONTEXT)).toEqual({
 				ok: false,
-				problem: "/export runs in the terminal only.",
+				problem: "/older runs in the terminal only.",
 			});
 			expect(catalogue.find((command) => command.name === "model")?.argumentHint).toBe("<provider/model>");
 			// The host expands a resource command with the same code the terminal uses, and the

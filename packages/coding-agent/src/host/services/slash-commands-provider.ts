@@ -3,7 +3,8 @@ import type { ModelThinkingLevel } from "@amazme/ai";
 import type { Context } from "@amazme/chord";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import { type ModelSummary, Models, type Models as ModelsService } from "./models.ts";
-import { PresentationPlugins, SessionPlugins } from "./plugins.ts";
+import { PresentationPlugins } from "./plugins.ts";
+import { Commands } from "./commands.ts";
 import { PresentationUI } from "./presentation-ui.ts";
 import { type SlashCommandContribution, SlashCommands } from "../../core/plugins/slash-commands.ts";
 
@@ -29,7 +30,7 @@ export function createBuiltInSlashCommandsFacet(options: {
 			const controller = env.use(AgentController);
 			const ui = env.use(PresentationUI);
 			const presentationPlugins = env.use(PresentationPlugins);
-			const sessionPlugins = env.use(SessionPlugins);
+			const catalog = env.use(Commands);
 			env.onActivate(() => {
 				if (options.authenticate) for (const mode of ["login", "logout"] as const) env.own(commands.replace({
 					name: mode,
@@ -52,9 +53,10 @@ export function createBuiltInSlashCommandsFacet(options: {
 						async run(_args, context) {
 							ui.showStatus("Reloading plugins…", context);
 							const data = await presentationPlugins.reload(context);
-							await sessionPlugins.reload(context);
+							const result = await catalog.run("reload", "", context);
+							if (!result.ok) throw new Error(result.problem);
 							await options.reloadPresentationPlugins(data);
-							ui.showStatus("Reloaded plugins.", context);
+							ui.showStatus("Reloaded plugins and resources.", context);
 							return undefined;
 						},
 					}),

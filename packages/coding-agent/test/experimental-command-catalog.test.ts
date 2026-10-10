@@ -145,7 +145,7 @@ describe("the session's command catalogue at the service boundary", () => {
 			"model",
 		);
 		// The terminal's screen-only commands are listed as such, not left for a client to guess.
-		expect(catalog.find((command) => command.name === "export")).toMatchObject({
+		expect(catalog.find((command) => command.name === "older")).toMatchObject({
 			availability: "terminal",
 			source: "builtin",
 		});
@@ -158,9 +158,9 @@ describe("the session's command catalogue at the service boundary", () => {
 
 	test("refuses a terminal-only command with the reason, and an unknown one as unknown", async () => {
 		const session = await openCommands(new SlashCommandRegistry());
-		expect(await session.commands.run("export", "out.html", BACKGROUND_CONTEXT)).toEqual({
+		expect(await session.commands.run("older", "", BACKGROUND_CONTEXT)).toEqual({
 			ok: false,
-			problem: "/export runs in the terminal only.",
+			problem: "/older runs in the terminal only.",
 		});
 		expect(await session.commands.run("quit", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
 		expect(await session.commands.run("nope", "", BACKGROUND_CONTEXT)).toEqual({

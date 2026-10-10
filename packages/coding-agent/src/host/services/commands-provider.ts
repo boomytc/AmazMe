@@ -2,7 +2,6 @@ import { type Context, defineFacet, type Facet, type MutableReplicatedState } fr
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import { getAgentDir } from "../../config.ts";
-import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { loadPromptTemplates } from "../../core/prompt-templates.ts";
 import { loadSkills } from "../../core/skills.ts";
 import { expandResourceCommand, type CommandResources } from "../../core/resource-command.ts";
@@ -10,6 +9,7 @@ import type { ResourceLoader } from "../../core/resource-loader.ts";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import {
 	Commands,
+	TERMINAL_COMMANDS,
 	type CommandCompletion,
 	type CommandExpansion,
 	type CommandResult,
@@ -142,12 +142,11 @@ export function commandCatalog(
 		availability: "all",
 	}));
 	const taken = new Set([...builtins, ...plugins, ...templates, ...skills].map((command) => command.name));
-	const terminalOnly: CommandSummary[] = BUILTIN_SLASH_COMMANDS.filter(
+	const terminalOnly: CommandSummary[] = TERMINAL_COMMANDS.filter(
 		(command) => !HOST_COMMAND_NAMES.has(command.name) && !taken.has(command.name),
 	).map((command) => ({
 		name: command.name,
 		description: command.description,
-		...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
 		source: "builtin",
 		availability: "terminal",
 	}));
@@ -156,7 +155,7 @@ export function commandCatalog(
 
 /** The terminal's own command of this name, when it has one: `undefined` for anything runnable here. */
 function terminalOnlyCommand(name: string): CommandSummary | undefined {
-	return BUILTIN_SLASH_COMMANDS.some((command) => command.name === name) && !HOST_COMMAND_NAMES.has(name)
+	return TERMINAL_COMMANDS.some((command) => command.name === name)
 		? {
 				name,
 				description: "",
