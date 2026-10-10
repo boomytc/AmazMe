@@ -61,6 +61,10 @@ async function openCommands(registry: SlashCommandRegistry) {
 						async refresh() {},
 						async select() {},
 						async selectThinking() {},
+						async startLogin() { throw new Error("Fixture does not log in"); },
+						async submitLoginPrompt() { return false; },
+						async cancelLogin() { return false; },
+						async logout() {},
 					});
 				},
 			}),

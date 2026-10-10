@@ -1,0 +1,20 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"incremental": true,
+		"tsBuildInfoFile": "./.artifacts/typecheck/browser.tsbuildinfo",
+		"lib": [
+			"ES2024",
+			"DOM",
+			"DOM.Iterable"
+		],
+		"paths": {}
+	},
+	"include": [
+		"packages/web/src/**/*",
+		"packages/web/test/**/*",
+		"packages/coding-agent/src/host/web/page.ts",
+		"packages/coding-agent/test/experimental-web-transitions.test.ts",
+		"packages/coding-agent/src/utils/highlight-js.d.ts"
+	]
+}

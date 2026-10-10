@@ -140,6 +140,8 @@ npm run build --workspace @amazme/coding-agent
 npm test --workspace @amazme/coding-agent
 ```
 
+`npm run typecheck` 分别检查 Node 和浏览器代码，覆盖源码、测试及示例；需要相关 workspace 已构建的声明，不把缺失 dist 当作源码缺陷。
+
 工程检查使用 `npm run check:workspace` 和 `npm run test:engineering`，覆盖导入、运行依赖、依赖方向、浏览器入口、入口预算与实际产物安装。默认离线测试隔离供应商凭据；显式 `AMAZME_TEST_LIVE=1` 才允许真实供应商测试读取环境凭据。
 
 ### 编译运行目录

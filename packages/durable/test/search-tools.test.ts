@@ -209,7 +209,8 @@ describe("portable search tools", () => {
 
 	it("listing includes hidden entries and directory suffixes in alphabetical order", async () => {
 		const result = await run(createLsTool(), {});
-		expect(result.content).toEqual([{ type: "text", text: ".gitignore\n.hidden.ts\nb.md\nskip.ts\nsrc/" }]);
+		// Assert ls's concrete response shape; grep/find use a different streaming result contract.
+		expect(result).toMatchObject({ content: [{ type: "text", text: ".gitignore\n.hidden.ts\nb.md\nskip.ts\nsrc/" }] });
 		expect(result.details).toEqual({ truncated: false });
 	});
 
@@ -235,7 +236,7 @@ describe("portable search tools", () => {
 			}),
 		);
 		const result = await run(createLsTool(), { limit: 2 });
-		expect(result.content).toEqual([{ type: "text", text: "a\nb" }]);
+		expect(result).toMatchObject({ content: [{ type: "text", text: "a\nb" }] });
 		expect(result.details).toEqual({ truncated: true });
 		expect(close).toHaveBeenCalledOnce();
 	});

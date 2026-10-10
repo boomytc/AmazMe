@@ -47,6 +47,7 @@ describe("interactive composer keys", () => {
 			cancelAndSend: (text) => effects.push(`cancel-and-send:${text}`),
 			cancelTurn: () => effects.push("cancel"),
 			showEscHint: () => effects.push("esc-hint"),
+			background: () => false,
 		});
 		const scrolled: number[] = [];
 		const filler = { render: () => ["status"] };

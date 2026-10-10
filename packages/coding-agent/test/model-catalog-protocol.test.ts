@@ -6,8 +6,8 @@ import { VERSION } from "../src/config.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
-// A local fixture for pi.dev's public catalog negotiation, verified against
-// Pi scripts/model-catalog-protocol.ts (1cedd3272).
+// Historical protocol source: Pi commit 1cedd3272, scripts/model-catalog-protocol.ts.
+// This independent local fixture reproduces pi.dev catalog negotiation; no upstream script is required.
 // The current client consumes typed shards and identifies its version before
 // receiving a catalog. This fixture owns no production server implementation.
 

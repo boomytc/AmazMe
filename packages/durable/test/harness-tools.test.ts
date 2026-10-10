@@ -1029,7 +1029,7 @@ describe("tool progress and lifetime", () => {
 	it.each(["allow", "exclude"] as const)("tool loading cannot bypass a stored %s boundary", async (boundary) => {
 		const setup = chatSetup();
 		const grow = tool("grow", async () => ({ content: [], control: { addTools: ["extra"] } }));
-		const extra = tool("extra", async () => ({ content: [] }), { defaultActive: false });
+		const extra = tool("extra", async () => ({ output: [] }), { defaultActive: false });
 		addTool(setup.registry, grow);
 		addTool(setup.registry, extra);
 		const selection = boundary === "allow" ? { allow: [grow] } : { exclude: [extra] };

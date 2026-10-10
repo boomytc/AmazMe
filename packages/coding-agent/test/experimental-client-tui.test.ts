@@ -168,6 +168,7 @@ describe("experimental client TUI", () => {
 			const conversationsState = replicatedState({
 				revision: 1,
 				selected: rootConversationId,
+				branchSummarySkipPrompt: false,
 				lane: { ...IDLE_LANE, model: "faux/faux-1" },
 				conversations: [
 					{
@@ -208,12 +209,18 @@ describe("experimental client TUI", () => {
 				async refresh() {},
 				select,
 				selectThinking,
+				async startLogin() { throw new Error("Fixture does not log in"); },
+				async submitLoginPrompt() { return false; },
+				async cancelLogin() { return false; },
+				async logout() {},
 			});
 			sessionProvider.provide(AgentController, createAgentController(durable.harness, () => durable.conversation));
 			sessionProvider.provide(Transcript, { state: transcriptState });
 			sessionProvider.provide(Conversations, {
 				state: conversationsState,
 				async select() {},
+				async returnPoints() { return []; },
+				async leave() { throw new Error("Fixture does not leave branches"); },
 				async fork() {
 					return { conversationId: null, error: { code: "fork", message: "unused" } };
 				},

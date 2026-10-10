@@ -52,6 +52,7 @@
 			"@amazme/web/strings": ["./packages/web/src/strings.ts"],
 			"@amazme/client/*": ["./packages/client/src/*"],
 			"@amazme/server": ["./packages/server/src/index.ts"],
+			"@amazme/server/testing": ["./packages/server/src/testing/index.ts"],
 			"@amazme/server/unix": ["./packages/server/src/transports/unix/index.ts"],
 			"@amazme/server/websocket": ["./packages/server/src/transports/websocket/index.ts"],
 			"@amazme/server/*": ["./packages/server/src/*"],
@@ -60,6 +61,8 @@
 			"@amazme/tui/*": ["./packages/tui/src/*"]
 		}
 	},
-	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*", "packages/agent/examples/**/*"],
+	"files": [],
+	"include": [],
+	"references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.browser.json" }],
 	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
 }

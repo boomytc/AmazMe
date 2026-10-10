@@ -276,7 +276,11 @@ describe("amazme.live deltas", () => {
 			expect(ops).toEqual([["a", ["generation", "message", "content", 0, "text"], expect.any(String)]]);
 		}
 		// The final checkpoint can update usage and timing too, without replacing the complete progress container.
-		for (const op of partials.at(-1)!) expect(op[1]?.slice(0, 2)).toEqual(["generation", "message"]);
+		for (const op of partials.at(-1)!) {
+			const path = op[1];
+			if (!Array.isArray(path)) throw new Error("Expected a path-bearing live delta");
+			expect(path.slice(0, 2)).toEqual(["generation", "message"]);
+		}
 		await harness.close(context);
 	});
 

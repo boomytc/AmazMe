@@ -324,7 +324,7 @@ describe("nested tool execution", () => {
 					typeof task.input === "object" &&
 					!Array.isArray(task.input) &&
 					task.input.kind === "nested",
-			)?.state.outcome.status,
+			)?.state.outcome?.status,
 		).toBe("aborted");
 	});
 
@@ -600,7 +600,7 @@ describe("nested tool execution", () => {
 					typeof task.input === "object" &&
 					!Array.isArray(task.input) &&
 					task.input.kind === "nested",
-			)?.state.outcome.status,
+			)?.state.outcome?.status,
 		).toBe("aborted");
 	});
 

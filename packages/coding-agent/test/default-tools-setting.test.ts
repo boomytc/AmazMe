@@ -145,7 +145,7 @@ describe("defaultTools setting", () => {
 
 	it("activates an edited inactive tool when its extension registers after startup", async () => {
 		const session = await createSession(["read"], { tools: ["+late"] }, [
-			(extension) => extension.on("session_start", () => { extension.registerTool(tool("late", false)); }),
+			(extension) => { extension.on("session_start", () => { extension.registerTool(tool("late", false)); }); },
 		]);
 		expect(session.getActiveToolNames()).toEqual(["read"]);
 		await session.bindExtensions({});

@@ -301,6 +301,7 @@ describe("Chord usage guide", () => {
 			},
 		});
 		const trackedHost: FacetHost = {
+			get active() { return host.active; },
 			services: host.services,
 			reload: (facets) => host.reload(facets),
 			dispose: async () => {

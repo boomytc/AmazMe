@@ -67,6 +67,7 @@ const input: PromptInput<ToolRegistration> = {
 		extensions: [],
 		tools: [],
 		callable: [],
+		catalog: [],
 		sections: [],
 	},
 	env: undefined,

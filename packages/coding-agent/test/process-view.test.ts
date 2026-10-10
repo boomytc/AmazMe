@@ -43,9 +43,7 @@ async function waitFor(ready: () => boolean, label: string): Promise<void> {
 function bashEntries(harness: Awaited<ReturnType<typeof createHarness>>): Array<{ output?: string; exitCode?: number; command?: string }> {
 	return harness.sessionManager
 		.getEntries()
-		.filter((entry) => entry.type === "message" && entry.message.role === "bashExecution")
-		.map((entry) => (entry.type === "message" ? entry.message : undefined))
-		.filter((message): message is { output?: string; exitCode?: number; command?: string } => message !== undefined);
+		.flatMap((entry) => entry.type === "message" && entry.message.role === "bashExecution" ? [entry.message] : []);
 }
 
 describe("foreground command presentation", () => {
@@ -365,7 +363,7 @@ test("a background process keeps one row with open and close badges", () => {
 		});
 		let chordStreamed = "";
 		let chord: Promise<Awaited<ReturnType<typeof tool.execute>>> | undefined;
-		let userRun: Promise<unknown> | undefined;
+		let userRun: ReturnType<typeof harness.session.executeBash> | undefined;
 		try {
 			await waitFor(() => streamed.includes("stream-line"), "streamed output");
 			expect(alive(foregroundCommands.runningPid())).toBe(true);

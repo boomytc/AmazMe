@@ -5,6 +5,7 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { replicatedState } from "@amazme/chord";
 import { copyIdentities, settingFieldCopy, settingOptionCopy } from "@amazme/web";
 import { afterEach, describe, expect, test } from "vitest";
+import { loadSkills } from "../src/core/skills.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createPluginsService } from "../src/host/services/plugins-provider.ts";
 import type { PluginsState } from "../src/host/services/plugins.ts";
@@ -154,8 +155,14 @@ describe("skills surface", () => {
 	}> {
 		const agentDir = await makeDirectory("skills-agent-");
 		const cwd = await makeDirectory("skills-project-");
+		const options = { cwd, agentDir, skillPaths: [], includeDefaults: true };
+		let loaded = loadSkills(options);
+		const resources = {
+			getSkills: () => loaded,
+			async reload() { loaded = loadSkills(options); },
+		};
 		const runtime = createSkillsService(
-			{ agentDir, cwd, skillPaths: () => [] },
+			{ agentDir, cwd, resources },
 			replicatedState<SkillsState>,
 		);
 		runtime.refresh(BACKGROUND_CONTEXT);
