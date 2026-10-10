@@ -306,6 +306,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.copyOnSelect = enabled;
 	}
 
+	/** Copy a component-owned selection through the same host clipboard and automatic-copy policy. */
+	async copyComponentSelectionToClipboard(text: string, explicit = false): Promise<boolean> {
+		if ((!explicit && !this.copyOnSelect) || text.length === 0) return false;
+		return this.copyTextToClipboard(text);
+	}
+
 	/** Whether the fullscreen viewport has a non-empty active text selection. */
 	hasActiveSelection(): boolean {
 		return this.getActiveSelectionText() !== undefined;

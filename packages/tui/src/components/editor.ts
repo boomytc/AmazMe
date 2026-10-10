@@ -372,8 +372,8 @@ export class Editor implements Component, Focusable {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
-	/** Called when a prompt selection becomes non-empty, so the host can copy it. */
-	public onCopySelection?: (text: string) => void;
+	/** Requests host copying; `explicit` bypasses an automatic-copy preference. */
+	public onCopySelection?: (text: string, explicit?: boolean) => void;
 	public disableSubmit: boolean = false;
 	private selAnchor: { line: number; col: number } | null = null;
 	private selHead: { line: number; col: number } | null = null;
@@ -480,6 +480,7 @@ export class Editor implements Component, Focusable {
 			const draft = this.historyDraft;
 			this.historyDraft = null;
 			if (draft) {
+				this.clearSelection();
 				this.state = draft;
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
@@ -500,6 +501,7 @@ export class Editor implements Component, Focusable {
 
 	/** Internal setText that doesn't reset history state - used by navigateHistory */
 	private setTextInternal(text: string, cursorPlacement: "start" | "end" = "end"): void {
+		this.clearSelection();
 		const lines = text.split("\n");
 		this.state.lines = lines.length === 0 ? [""] : lines;
 		this.state.cursorLine = cursorPlacement === "start" ? 0 : this.state.lines.length - 1;
@@ -811,6 +813,7 @@ export class Editor implements Component, Focusable {
 						selected,
 						this.autocompletePrefix,
 					);
+					this.clearSelection();
 					this.state.lines = result.lines;
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
@@ -832,6 +835,7 @@ export class Editor implements Component, Focusable {
 						selected,
 						this.autocompletePrefix,
 					);
+					this.clearSelection();
 					this.state.lines = result.lines;
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
@@ -1222,6 +1226,8 @@ export class Editor implements Component, Focusable {
 	 */
 	private insertTextAtCursorInternal(text: string): void {
 		if (!text) return;
+		if (this.hasSelection()) this.applySelectionDelete();
+		this.clearSelection();
 
 		// Normalize line endings and tabs
 		const normalized = this.normalizeText(text);
@@ -1403,6 +1409,8 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 
 		this.pushUndoSnapshot();
+		if (this.hasSelection()) this.applySelectionDelete();
+		this.clearSelection();
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1437,6 +1445,7 @@ export class Editor implements Component, Focusable {
 		this.cancelAutocomplete();
 		const result = this.expandPasteMarkers(this.state.lines.join("\n")).trim();
 
+		this.clearSelection();
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pastes.clear();
 		this.pasteCounter = 0;
@@ -1698,27 +1707,28 @@ export class Editor implements Component, Focusable {
 		| { startLine: number; startCol: number; endLine: number; endCol: number }
 		| null {
 		if (!this.selAnchor || !this.selHead) return null;
-		const anchor = this.selAnchor.line * 1_000_000 + this.selAnchor.col;
-		const head = this.selHead.line * 1_000_000 + this.selHead.col;
-		const start = anchor <= head ? this.selAnchor : this.selHead;
-		const end = anchor <= head ? this.selHead : this.selAnchor;
+		const forwards = this.selAnchor.line < this.selHead.line ||
+			(this.selAnchor.line === this.selHead.line && this.selAnchor.col <= this.selHead.col);
+		const start = forwards ? this.selAnchor : this.selHead;
+		const end = forwards ? this.selHead : this.selAnchor;
 		return { startLine: start.line, startCol: start.col, endLine: end.line, endCol: end.col };
 	}
 
-	private selectedText(): string {
+	/** The prompt's selected text, for host copy commands. */
+	getSelectedText(): string {
 		const bounds = this.selectionBounds();
 		if (!bounds || (bounds.startLine === bounds.endLine && bounds.startCol === bounds.endCol)) return "";
 		if (bounds.startLine === bounds.endLine) {
-			return (this.state.lines[bounds.startLine] ?? "").slice(bounds.startCol, bounds.endCol);
+			return this.expandPasteMarkers((this.state.lines[bounds.startLine] ?? "").slice(bounds.startCol, bounds.endCol));
 		}
 		const parts = [(this.state.lines[bounds.startLine] ?? "").slice(bounds.startCol)];
 		for (let line = bounds.startLine + 1; line < bounds.endLine; line++) parts.push(this.state.lines[line] ?? "");
 		parts.push((this.state.lines[bounds.endLine] ?? "").slice(0, bounds.endCol));
-		return parts.join("\n");
+		return this.expandPasteMarkers(parts.join("\n"));
 	}
 
 	private copySelection(): void {
-		const text = this.selectedText();
+		const text = this.getSelectedText();
 		if (text.length > 0) this.onCopySelection?.(text);
 	}
 
@@ -2316,6 +2326,7 @@ export class Editor implements Component, Focusable {
 		this.exitHistoryBrowsing();
 		const snapshot = this.undoStack.pop();
 		if (!snapshot) return;
+		this.clearSelection();
 		Object.assign(this.state, snapshot.state);
 		this.pastes = snapshot.pastes;
 		this.pasteCounter = snapshot.pasteCounter;
@@ -2445,6 +2456,7 @@ export class Editor implements Component, Focusable {
 				selected,
 				this.autocompletePrefix,
 			);
+			this.clearSelection();
 			this.state.lines = result.lines;
 			this.state.cursorLine = result.cursorLine;
 			this.setCursorCol(result.cursorCol);
@@ -2596,6 +2608,7 @@ export class Editor implements Component, Focusable {
 				item,
 				suggestions.prefix,
 			);
+			this.clearSelection();
 			this.state.lines = result.lines;
 			this.state.cursorLine = result.cursorLine;
 			this.setCursorCol(result.cursorCol);

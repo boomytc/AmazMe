@@ -7,9 +7,11 @@ import {
 	type TuiMouseEventResult,
 	truncateToWidth,
 	visibleWidth,
+	TuiAltScreen,
 } from "@amazme/tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 import { isEmptyTerminalPaste } from "../../../utils/clipboard-paste.ts";
+import { copyToClipboard } from "../../../utils/clipboard.ts";
 import { promptShortcutLine } from "../composer-contract.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
@@ -48,6 +50,16 @@ export class CustomEditor extends Editor {
 		super(tui, theme, options);
 		this.keybindings = keybindings;
 		this.embedWorkingStatus = options?.embedWorkingStatus ?? false;
+		this.onCopySelection = (text, explicit = false) => {
+			const copying = tui instanceof TuiAltScreen
+				? tui.copyComponentSelectionToClipboard(text, explicit)
+				: copyToClipboard(text);
+			void copying.catch(() => tui.terminal.write("\x07"));
+		};
+		this.onAction("app.message.copy", () => {
+			if (tui instanceof TuiAltScreen)
+				void tui.copyActiveSelectionToClipboard().catch(() => tui.terminal.write("\x07"));
+		});
 	}
 
 	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void {
@@ -214,6 +226,14 @@ export class CustomEditor extends Editor {
 		// Check extension-registered shortcuts first
 		if (this.onExtensionShortcut?.(data)) {
 			return;
+		}
+
+		if (this.keybindings.matches(data, "app.message.copy")) {
+			const text = this.getSelectedText();
+			if (text.length > 0) {
+				this.onCopySelection?.(text, true);
+				return;
+			}
 		}
 
 		// Check for clipboard paste keybinding

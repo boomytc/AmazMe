@@ -19,7 +19,6 @@ import {
 	getKeybindings,
 	Input,
 	Markdown,
-	ProcessTerminal,
 	ScrollView,
 	type SelectItem,
 	SelectList,
@@ -41,6 +40,7 @@ import { McpManagerView } from "../core/mcp/view.ts";
 import { manageMcp } from "./mcp-menu.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
+import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
 import { DynamicBorder } from "../modes/interactive/components/dynamic-border.ts";
 import { formatTokens } from "../modes/interactive/components/footer.ts";
 import { keyText } from "../modes/interactive/components/keybinding-hints.ts";
@@ -244,11 +244,17 @@ class DurableTui {
 	#rebuilt = false;
 	#transcript: ScrollView;
 
-	constructor(cwd: string, handlers: Handlers) {
+	constructor(cwd: string, handlers: Handlers, settings: SettingsManager) {
 		this.#cwd = cwd;
 		this.#plugins = handlers.plugins;
 		this.#completeCommand = handlers.completeCommand;
-		this.#ui = new TuiAltScreen(new ProcessTerminal(), false, getAgentDir());
+		this.#ui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			showHardwareCursor: settings.getShowHardwareCursor(),
+			logDirectory: getAgentDir(),
+			fullscreenCopyOnSelect: settings.getFullscreenCopyOnSelect(),
+			fullscreenWheelScrollLines: settings.getFullscreenWheelScrollLines(),
+		});
 		const keybindings = KeybindingsManager.create();
 		setKeybindings(keybindings);
 		this.#editor = new CustomEditor(this.#ui, getEditorTheme(), keybindings, {
@@ -813,7 +819,7 @@ export async function runDurableTui(
 		exit,
 		selectModel,
 		cycleThinking: () => void controller.cycleThinking(),
-	});
+	}, settings);
 
 	// pi's theme handling: the theme setting (also light/dark pairs) resolved against the terminal's reported colors.
 	const themes = new InteractiveThemeController(view.ui, {

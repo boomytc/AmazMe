@@ -760,6 +760,8 @@ if (matchesKey(data, Key.enter)) {
 
 Provide `TuiAltScreenOptions.copySelection` to use a verified system-clipboard implementation instead of OSC 52. `onCopySuccess` lets the host render its own successful-copy feedback, suppressing the default success flash; failures retain their error flash. Without the callback, the default `Copied!` flash is unchanged.
 
+Editors manage their own prompt selection. Connect `Editor.onCopySelection` to `tui.copyComponentSelectionToClipboard(text, explicit)` to use the same clipboard backend and automatic-copy setting; an explicit copy bypasses that setting. `Editor.getSelectedText()` returns the selected original text, expanding large-paste markers. Replacing a draft, submitting, loading history, undoing or accepting completion clears its old selection. Pasting and inserting a newline replace the current selection.
+
 Both renderers wrap updates in **synchronized output** (`\x1b[?2026h` ... `\x1b[?2026l`) for atomic, flicker-free rendering.
 
 ## Terminal Interface

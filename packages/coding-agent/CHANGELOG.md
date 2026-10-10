@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- Prompt selections now copy through the shared Unix clipboard backend in native, hosted and SDK editors. The configured copy action prioritizes prompt selection; automatic-copy preferences remain effective. Native TUI uses the shared renderer composition and saved clipboard/scroll settings.
+
 - A fatal Durable storage failure now closes native TUI and hosted worker resources through their existing cleanup barriers.
 
 - Fixed default prompts and the packaged README identifying the product as Pi; native plugin guides now use AmazMe APIs, and hosted sessions expose their selected manifests for source discovery
