@@ -23,6 +23,7 @@ export const TERMINAL_COMMANDS = [
 	{ name: "agents", description: "Switch conversations" },
 	{ name: "fork", description: "Fork the current conversation" },
 	{ name: "older", description: "Load older history" },
+	{ name: "scoped_models", description: "Choose models shown in /model and model cycling" },
 ] as const;
 
 /**

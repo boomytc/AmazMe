@@ -41,6 +41,7 @@ import { manageMcp } from "./mcp-menu.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
 import { ListSelector } from "../modes/interactive/components/list-selector.ts";
+import { ScopedModelsSelectorComponent } from "../modes/interactive/components/scoped-models-selector.ts";
 import { manageProviderAuth } from "./provider-menu.ts";
 import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
 import { durablePromptShortcutLine } from "../modes/interactive/composer-contract.ts";
@@ -713,13 +714,17 @@ export async function runDurableTui(
 
 	const selectModel = (): void => {
 		const snapshot = source.current();
-		if (snapshot.models.length === 0) {
-			view.mount(new InfoPanel("Models", "No configured models. Use /login to connect a provider, then open /model.", () => view.restoreEditor()));
+		const scope = controller.getModelScope().enabledModelIds;
+		const models = scope === null ? snapshot.models : scope.flatMap((id) => snapshot.models.filter((model) => `${model.provider}/${model.modelId}` === id));
+		if (models.length === 0) {
+			const message = snapshot.models.length === 0 ? "No configured models. Use /login to connect a provider, then open /model."
+				: "No models are enabled in the current scope. Use /scoped_models to change the list. The active model is unchanged.";
+			view.mount(new InfoPanel("Models", message, () => view.restoreEditor()));
 			return;
 		}
 		const current = agentOf(snapshot.conversation).model;
 		const isCurrent = (model: { provider: string; modelId: string }) => model.provider === current?.provider && model.modelId === current.modelId;
-		const items: SelectItem[] = [...snapshot.models]
+		const items: SelectItem[] = [...models]
 			.sort((left, right) => Number(isCurrent(right)) - Number(isCurrent(left)))
 			.map((model) => ({
 				value: `${model.provider}/${model.modelId}`,
@@ -741,6 +746,19 @@ export async function runDurableTui(
 			() => view.restoreEditor(),
 		);
 		view.mount(selector);
+	};
+
+	const configureModels = (): void => {
+		const config = controller.getModelScope();
+		view.mount(new ScopedModelsSelectorComponent({
+			allModels: config.allModels,
+			enabledModelIds: config.enabledModelIds === null ? null : [...config.enabledModelIds],
+		}, {
+			onChange: (ids) => controller.setModelScope(ids, false),
+			onPersist: (ids) => controller.setModelScope(ids, true),
+			onCancel: () => view.restoreEditor(),
+			requestRender: () => view.ui.requestRender(),
+		}));
 	};
 
 	const selectThinking = (): void => {
@@ -862,6 +880,7 @@ export async function runDurableTui(
 				return;
 			}
 			if (trimmed === "/reload") return void controller.reload();
+			if (trimmed === "/scoped_models") { configureModels(); return; }
 			const modelCommand = /^\/model(?:\s+(.*))?$/su.exec(trimmed);
 			if (modelCommand) {
 				if (modelCommand[1]) return void controller.runCommand("model", modelCommand[1]);
@@ -880,6 +899,11 @@ export async function runDurableTui(
 			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);
+			}
+			const nativeName = /^\/([^\s]+)/u.exec(trimmed)?.[1];
+			if (NATIVE_COMMANDS.some(({ name }) => name === nativeName)) {
+				view.mount(new InfoPanel("Command", `Unsupported arguments for /${nativeName}. Type / to inspect the command.`, () => view.restoreEditor()));
+				return;
 			}
 			return controller.submit(trimmed, whenBusy, images);
 		},

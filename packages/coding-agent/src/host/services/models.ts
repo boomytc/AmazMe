@@ -1,6 +1,7 @@
 import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
 import type { AuthType, ModelThinkingLevel } from "@amazme/ai";
 import type { ProviderAuthState } from "../../core/provider-login.ts";
+import type { ModelScopeConfig } from "../../core/model-scope.ts";
 
 export interface ModelRef {
 	provider: string;
@@ -18,6 +19,8 @@ export interface ModelsState {
 	catalog: {
 		revision: number;
 		availableModels: ModelSummary[];
+		/** null includes all catalog models; [] deliberately presents an empty list. */
+		enabledModelIds: string[] | null;
 	};
 	/** Model and thinking level of the currently selected conversation. */
 	configuration: {
@@ -32,6 +35,9 @@ export interface ModelsState {
 export interface Models {
 	readonly state: ReplicatedState<ModelsState>;
 	cycleThinking(context: Context): Promise<void>;
+	cycleModel(direction: "forward" | "backward", context: Context): Promise<void>;
+	getModelScope(context: Context): Promise<ModelScopeConfig>;
+	setModelScope(models: readonly string[] | null, persist: boolean, context: Context): Promise<void>;
 	getThinkingLevels(context: Context): Promise<ModelThinkingLevel[]>;
 	refresh(context: Context): Promise<void>;
 	select(model: ModelRef, context: Context): Promise<void>;
@@ -43,3 +49,10 @@ export interface Models {
 }
 
 export const Models = defineService<Models>("amazme.models");
+
+export function selectableModels(state: ModelsState | undefined): ModelSummary[] {
+	if (!state) return [];
+	const { availableModels, enabledModelIds } = state.catalog;
+	return enabledModelIds === null ? availableModels
+		: enabledModelIds.flatMap((id) => availableModels.filter((model) => `${model.provider}/${model.modelId}` === id));
+}

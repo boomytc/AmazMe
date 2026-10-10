@@ -35,7 +35,7 @@ function loopback(provider: RemoteServiceProvider): RemoteServiceTransport {
 }
 
 const models: ModelsState = {
-	catalog: { revision: 1, availableModels: [{ provider: "p", modelId: "m", name: "M", reasoning: false, contextWindow: 1000 }] },
+	catalog: { revision: 1, enabledModelIds: null, availableModels: [{ provider: "p", modelId: "m", name: "M", reasoning: false, contextWindow: 1000 }] },
 	configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "low" },
 	refresh: { status: "idle" },
 	authentication: null,
@@ -55,6 +55,9 @@ async function openCommands(registry: SlashCommandRegistry) {
 					env.provide(Models, {
 						state: replicatedState(models),
 						async cycleThinking() {},
+						async cycleModel() {},
+						async getModelScope() { return { allModels: [], enabledModelIds: null }; },
+						async setModelScope() {},
 						async getThinkingLevels() {
 							return ["off", "low", "high"] as const;
 						},

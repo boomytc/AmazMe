@@ -21,7 +21,8 @@ import {
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
-import { resolveModelScopeFromModels, resolveModelScopeWithDiagnostics } from "../core/model-resolver.ts";
+import { ModelScope, type ModelScopeConfig } from "../core/model-scope.ts";
+import { resolveModelScopeWithDiagnostics } from "../core/model-resolver.ts";
 import { ProviderLogin } from "../core/provider-login.ts";
 import type { ProviderAuthManagement } from "../core/provider-login.ts";
 import { createAgentExtensionsFacet } from "../core/plugins/agent-extensions.ts";
@@ -130,6 +131,8 @@ export interface DurableController {
 	cycleThinking(): Promise<void>;
 	cycleModel(direction?: "forward" | "backward"): Promise<void>;
 	setModel(model: ModelRef): Promise<void>;
+	getModelScope(): ModelScopeConfig;
+	setModelScope(models: readonly string[] | null, persist: boolean): Promise<void>;
 	toggleTasks(): Promise<void>;
 	/** Show and talk to another conversation. The choice is stored in the session. */
 	switchConversation(id: ConversationId): Promise<void>;
@@ -218,7 +221,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	if (options.apiKey !== undefined && selected?.model !== undefined) {
 		await modelRuntime.setRuntimeApiKey(selected.model.provider, options.apiKey);
 	}
-	const modelPatterns = () => options.models ?? settingsManager.getEnabledModels() ?? [];
+	const modelScope = new ModelScope(settingsManager, options.models ?? settingsManager.getEnabledModels() ?? null);
+	const modelPatterns = () => modelScope.patterns ?? [];
 	const scope = modelPatterns().length === 0
 		? { scopedModels: [], diagnostics: [] }
 		: await resolveModelScopeWithDiagnostics(modelPatterns(), modelRuntime, { signal: AbortSignal.timeout(15_000) });
@@ -575,7 +579,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			}),
 			completeCommand: async (name, prefix) => {
 				const query = prefix.toLowerCase();
-				if (name === "model") return modelRuntime.getAvailableSnapshot()
+				if (name === "model") return modelScope.resolve(modelRuntime.getAvailableSnapshot()).map(({ model }) => model)
 					.filter((model) => `${model.provider}/${model.id} ${model.name}`.toLowerCase().includes(query))
 					.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name, description: model.provider }));
 				if (name === "thinking") return getSupportedThinkingLevels(agentModel())
@@ -658,18 +662,20 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					await selectThinking(next);
 				}),
 			setModel: (ref) => command(() => selectModel(ref)),
+			getModelScope: () => modelScope.configuration(modelRuntime.getAvailableSnapshot()),
+			setModelScope: async (ids, persist) => {
+				if (closing !== undefined) throw new Error("Session is closing");
+				await modelScope.configure(ids, persist);
+				update({ models: models() });
+			},
 			cycleModel: (direction = "forward") => command(async () => {
 				const available = modelRuntime.getAvailableSnapshot();
-				const patterns = modelPatterns();
-				const scoped = resolveModelScopeFromModels(patterns, available).scopedModels;
-				// A known scope with no authenticated models must not escape into unrelated providers.
-				if (scoped.length === 0 && resolveModelScopeFromModels(patterns, modelRuntime.getModels()).scopedModels.length > 0) return;
-				const choices = scoped.length === 0 ? available.map((model) => ({ model, thinkingLevel: undefined }))
-					: scoped;
-				if (choices.length <= 1) return;
+				const choices = modelScope.resolve(available);
+				if (choices.length === 0) return;
 				const ref = agentOf(state.conversation).model;
-				const index = Math.max(0, choices.findIndex(({ model }) => model.provider === ref?.provider && model.id === ref.modelId));
-				const next = choices[(index + (direction === "forward" ? 1 : choices.length - 1)) % choices.length]!;
+				const index = choices.findIndex(({ model }) => model.provider === ref?.provider && model.id === ref.modelId);
+				if (choices.length === 1 && index === 0) return;
+				const next = choices[index < 0 ? 0 : (index + (direction === "forward" ? 1 : choices.length - 1)) % choices.length]!;
 				await selectModel({ provider: next.model.provider, modelId: next.model.id }, next.thinkingLevel);
 			}),
 			toggleTasks: () =>
@@ -810,6 +816,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					disposeView();
 					try {
 						await auth.close();
+						await modelScope.flush();
 						await settingsManager.flush();
 						await queue;
 						// Close writes no outcome: a running turn resumes with --continue.

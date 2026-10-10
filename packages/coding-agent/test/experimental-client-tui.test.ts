@@ -81,6 +81,7 @@ describe("experimental client TUI", () => {
 			const modelsState = replicatedState<ModelsState>({
 				catalog: {
 					revision: 1,
+					enabledModelIds: null,
 					availableModels: [
 						{ provider: "test", modelId: "one", name: "Model One", reasoning: false, contextWindow: 1000 },
 						{ provider: "test", modelId: "two", name: "Model Two", reasoning: true, contextWindow: 1000 },
@@ -203,6 +204,9 @@ describe("experimental client TUI", () => {
 			sessionProvider.provide(Models, {
 				state: modelsState,
 				async cycleThinking() {},
+				async cycleModel() {},
+				async getModelScope() { return { allModels: [], enabledModelIds: null }; },
+				async setModelScope() {},
 				async getThinkingLevels() {
 					return ["off", "high"];
 				},

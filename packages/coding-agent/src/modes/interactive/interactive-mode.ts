@@ -5944,19 +5944,24 @@ export class InteractiveMode {
 						selectionChanged = true;
 						updateSessionModels(enabledIds);
 					},
-					onPersist: (enabledIds) => {
+					onPersist: async (enabledIds) => {
 						const allEnabled =
 							enabledIds !== null &&
 							enabledIds.length === availableModels.length &&
 							enabledIds.every((id) => availableModelIds.has(id));
 						const newPatterns = enabledIds === null || allEnabled ? undefined : enabledIds;
+						this.settingsManager.drainErrors();
 						this.settingsManager.setEnabledModels(newPatterns ? [...newPatterns] : undefined);
+						await this.settingsManager.flush();
+						const errors = this.settingsManager.drainErrors();
+						if (errors.length > 0) throw new Error(errors.map(({ error }) => error.message).join("; "));
 						this.showStatus("Model selection saved to settings");
 					},
 					onCancel: () => {
 						done();
 						this.ui.requestRender();
 					},
+					requestRender: () => this.ui.requestRender(),
 				},
 			);
 			void refreshModelCatalogs(this.session.modelRuntime, controller.signal)

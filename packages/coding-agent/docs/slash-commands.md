@@ -10,6 +10,7 @@ The default terminal runs on Durable. Its local commands are:
 |---|---|
 | `/model [provider/model]` | Select a model; open the selector when omitted |
 | `/thinking [level]` | Select a supported reasoning level; open the selector when omitted |
+| `/scoped_models` | Choose the models shown in `/model` and used by model cycling |
 | `/login [provider]`, `/logout [provider]` | Manage provider credentials |
 | `/attachments` | Remove draft image attachments |
 | `/mcp` | Manage MCP connections |
@@ -31,6 +32,7 @@ The terminal favors commands and shortcuts. `Ctrl+L` opens the model selector an
 |---|---|
 | `/model [provider/model]` | Select a model; the hosted terminal opens a selector when omitted |
 | `/thinking [level]` | Select a reasoning level; the hosted terminal opens a selector when omitted |
+| `/scoped_models` | Hosted terminal model-list configuration |
 | `/compact [instructions]` | Compact the focused conversation |
 | `/reload` | Rebuild the worker's plugin generation and refresh command resources; the hosted terminal also reloads its presentation plugins |
 | `/login [provider]`, `/logout [provider]` | Open that client's provider authentication flow |
@@ -42,6 +44,8 @@ Templates and enabled `/skill:<name>` entries come from the attached worker's re
 The worker catalogue marks its four terminal navigation commands `terminal`; a Web client refuses those slash commands instead of submitting them as prose. SDK-only commands such as `/export` and `/dashboard` are absent. Authentication commands and Web naming are added by the client that owns their interaction.
 
 Use `/reload` after adding or changing resource files. Skill changes made in the Web management panel also refresh the attached session's command resources. See [Usage](usage.md) for the hosted interfaces.
+
+In both terminals, `/scoped_models` reuses the searchable model configuration list. Enter toggles a row, Ctrl+A enables all, Ctrl+X clears all, and Ctrl+S saves the current scope as the default for new sessions. Changes affect the current terminal/session immediately; Esc closes the list. An empty scope stays empty. Hiding the active model changes the list and cycling choices without switching the active model.
 
 ## SDK interactive mode
 

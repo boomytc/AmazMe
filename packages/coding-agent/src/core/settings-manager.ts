@@ -639,6 +639,7 @@ export class SettingsManager {
 		this.settings = this.resolveSettings();
 
 		if (this.globalSettingsLoadError) {
+			this.recordError("global", this.globalSettingsLoadError);
 			return;
 		}
 
@@ -657,6 +658,7 @@ export class SettingsManager {
 		this.settings = this.resolveSettings();
 
 		if (this.projectSettingsLoadError) {
+			this.recordError("project", this.projectSettingsLoadError);
 			return;
 		}
 

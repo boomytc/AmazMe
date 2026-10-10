@@ -3,7 +3,7 @@ import type { ModelThinkingLevel } from "@amazme/ai";
 import type { Context } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
-import { type ModelSummary, Models, type Models as ModelsService } from "./models.ts";
+import { type ModelSummary, Models, type Models as ModelsService, selectableModels } from "./models.ts";
 import { PresentationPlugins } from "./plugins.ts";
 import { Commands } from "./commands.ts";
 import { PresentationUI } from "./presentation-ui.ts";
@@ -74,7 +74,7 @@ function modelCommand(models: ModelsService, ui: PresentationUI): SlashCommandCo
 		argumentHint: "<provider/model>",
 		getArgumentCompletions(prefix) {
 			const normalized = prefix.toLowerCase();
-			return (models.state.value?.catalog.availableModels ?? [])
+			return selectableModels(models.state.value)
 				.filter((model) => `${model.provider}/${model.modelId} ${model.name}`.toLowerCase().includes(normalized))
 				.map((model) => ({
 					value: `${model.provider}/${model.modelId}`,
@@ -90,9 +90,16 @@ function modelCommand(models: ModelsService, ui: PresentationUI): SlashCommandCo
 				throw new Error(`Unknown model: ${args}`);
 			}
 			if (selected === undefined) {
+				const choices = selectableModels(state);
+				if (choices.length === 0) {
+					ui.showStatus(state.catalog.availableModels.length === 0
+						? "No configured models. Use /login to connect a provider."
+						: "No models are enabled. Use /scoped_models to change the list. The active model is unchanged.", context);
+					return undefined;
+				}
 				const value = await ui.select(
 					"Select model:",
-					state.catalog.availableModels.map((model) => ({
+					choices.map((model) => ({
 						value: `${model.provider}/${model.modelId}`,
 						label:
 							state.configuration.model?.provider === model.provider &&

@@ -6,6 +6,7 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { AgentState, Conversation, Harness } from "@amazme/durable";
 import { AgentDoc } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
+import { ModelScope } from "../../core/model-scope.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
 import { AgentRuntime } from "../../core/plugins/agent-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
@@ -34,6 +35,7 @@ export function createModelsService(
 	sharedAuthentication?: ProviderLogin,
 ): ModelsServiceRuntime {
 	let catalogRevision = 0;
+	const modelScope = new ModelScope(settingsManager);
 	const authentication = sharedAuthentication ?? (modelRuntime === undefined ? undefined
 		: new ProviderLogin(modelRuntime, settingsManager === undefined ? {} : { getDeviceId: () => settingsManager.getOrCreateDeviceId() }));
 	const configurationOf = (value: Readonly<AgentState> | null | undefined): ModelsState["configuration"] => ({
@@ -41,7 +43,7 @@ export function createModelsService(
 		thinkingLevel: value?.thinkingLevel ?? "off",
 	});
 	const state = createState({
-		catalog: { revision: 0, availableModels: [] },
+		catalog: { revision: 0, availableModels: [], enabledModelIds: modelScope.patterns },
 		configuration: { model: null, thinkingLevel: "off" },
 		refresh: { status: "idle" },
 		authentication: authentication?.snapshot() ?? null,
@@ -58,9 +60,11 @@ export function createModelsService(
 		const selected = selectedModel();
 		const available = modelRuntime?.getAvailableSnapshot() ?? [];
 		const catalog = selected === undefined || includesModel(available, selected) ? available : [...available, selected];
+		const enabledModelIds = modelScope.configuration(available).enabledModelIds;
 		catalogRevision += 1;
 		return {
 			revision: catalogRevision,
+			enabledModelIds: enabledModelIds === null ? null : [...enabledModelIds],
 			availableModels: catalog.map((model) => ({
 				provider: model.provider,
 				modelId: model.id,
@@ -77,6 +81,31 @@ export function createModelsService(
 	};
 	const service: ModelsService = {
 		state,
+		async getModelScope(context) {
+			context.abortSignal?.throwIfAborted();
+			return modelScope.configuration(modelRuntime?.getAvailableSnapshot() ?? []);
+		},
+		async setModelScope(models, persist, context) {
+			context.abortSignal?.throwIfAborted();
+			await modelScope.configure(models, persist);
+			state.change(context, (draft) => { draft.catalog = readCatalog(); });
+		},
+		async cycleModel(direction, context) {
+			if (direction !== "forward" && direction !== "backward") throw new Error("Unknown model cycling direction.");
+			const choices = modelScope.resolve(modelRuntime?.getAvailableSnapshot() ?? []);
+			if (choices.length === 0) return;
+			const conversation = await current(context);
+			await conversation.commit(async (tx) => {
+				const agent = await tx.doc(AgentDoc, conversation.id);
+				const ref = agent.model;
+				const index = choices.findIndex(({ model }) => model.provider === ref?.provider && model.id === ref.modelId);
+				if (choices.length === 1 && index === 0) return;
+				const next = choices[index < 0 ? 0 : (index + (direction === "forward" ? 1 : choices.length - 1)) % choices.length];
+				if (!next) return;
+				agent.model = { provider: next.model.provider, modelId: next.model.id };
+				agent.thinkingLevel = clampThinkingLevel(next.model, next.thinkingLevel ?? agent.thinkingLevel ?? "off");
+			}, context);
+		},
 		startLogin(provider, method, context) {
 			context.abortSignal?.throwIfAborted();
 			return authenticationOwner().startLogin(provider, method, context.abortSignal);
@@ -165,6 +194,7 @@ export function createModelsService(
 		},
 		async close() {
 			stopAuthentication?.();
+			await modelScope.flush();
 			if (sharedAuthentication === undefined) await authentication?.close();
 		},
 		syncConfiguration(context) {

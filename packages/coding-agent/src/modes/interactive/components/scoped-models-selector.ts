@@ -1,4 +1,4 @@
-import type { Model } from "@amazme/ai";
+import type { ScopeModel } from "../../../core/model-scope.ts";
 import {
 	Container,
 	type Focusable,
@@ -72,12 +72,12 @@ function getSortedIds(enabledIds: EnabledIds, allIds: string[]): string[] {
 
 interface ModelItem {
 	fullId: string;
-	model: Model<any> | undefined;
+	model: ScopeModel | undefined;
 	enabled: boolean;
 }
 
 export interface ModelsConfig {
-	allModels: Model<any>[];
+	allModels: readonly ScopeModel[];
 	enabledModelIds: string[] | null;
 	refreshStatus?: string;
 }
@@ -88,14 +88,15 @@ export interface ModelsCallbacks {
 	/** Called when user wants to persist current selection to settings */
 	onPersist: (enabledModelIds: string[] | null) => void | Promise<void>;
 	onCancel: () => void;
+	requestRender?: () => void;
 }
 
 /**
- * Component for enabling/disabling models for Ctrl+P cycling.
+ * Component for choosing the model menu and cycling list.
  * Changes are session-only until explicitly persisted with Ctrl+S.
  */
 export class ScopedModelsSelectorComponent extends Container implements Focusable {
-	private modelsById: Map<string, Model<any>> = new Map();
+	private modelsById: Map<string, ScopeModel> = new Map();
 	private allIds: string[] = [];
 	private enabledIds: EnabledIds = null;
 	private filteredItems: ModelItem[] = [];
@@ -116,6 +117,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	private callbacks: ModelsCallbacks;
 	private maxVisible = 8;
 	private isDirty = false;
+	private saving = false;
+	private closed = false;
+	private changeVersion = 0;
+	private saveMessage = "";
 	private refreshStatusText?: Text;
 
 	constructor(config: ModelsConfig, callbacks: ModelsCallbacks) {
@@ -162,7 +167,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		this.updateList();
 	}
 
-	updateModels(models: readonly Model<any>[], enabledModelIds?: string[] | null): void {
+	updateModels(models: readonly ScopeModel[], enabledModelIds?: string[] | null): void {
 		const selectedId = this.filteredItems[this.selectedIndex]?.fullId;
 		if (enabledModelIds !== undefined) this.enabledIds = enabledModelIds === null ? null : [...enabledModelIds];
 		this.modelsById.clear();
@@ -208,9 +213,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			`${keyDisplayText("app.models.save")} save`,
 			countText,
 		];
+		const message = this.saveMessage ? ` · ${this.saveMessage}` : "";
 		return this.isDirty
-			? theme.fg("dim", `  ${parts.join(" · ")} `) + theme.fg("warning", "(unsaved)")
-			: theme.fg("dim", `  ${parts.join(" · ")}`);
+			? theme.fg("dim", `  ${parts.join(" · ")} `) + theme.fg("warning", `(unsaved)${message}`)
+			: theme.fg("dim", `  ${parts.join(" · ")}${message}`);
 	}
 
 	private refresh(): void {
@@ -229,7 +235,22 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	}
 
 	private notifyChange(): void {
-		this.callbacks.onChange(this.enabledIds === null ? null : [...this.enabledIds]);
+		++this.changeVersion;
+		this.saveMessage = "";
+		this.footerText.setText(this.getFooterText());
+		try {
+			void Promise.resolve(this.callbacks.onChange(this.enabledIds === null ? null : [...this.enabledIds]))
+				.catch((error: unknown) => this.reportFailure(error));
+		} catch (error) { this.reportFailure(error); }
+	}
+
+	private reportFailure(error: unknown): void {
+		if (this.closed) return;
+		this.saving = false;
+		this.isDirty = true;
+		this.saveMessage = error instanceof Error ? error.message : String(error);
+		this.footerText.setText(this.getFooterText());
+		this.callbacks.requestRender?.();
 	}
 
 	private updateList(): void {
@@ -278,6 +299,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	}
 
 	handleInput(data: string): void {
+		if (this.closed) return;
 		const kb = getKeybindings();
 
 		// Navigation
@@ -367,9 +389,21 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Save/persist to settings
 		if (kb.matches(data, "app.models.save")) {
-			this.callbacks.onPersist(this.enabledIds === null ? null : [...this.enabledIds]);
-			this.isDirty = false;
+			if (this.saving) return;
+			this.saving = true;
+			this.saveMessage = "Saving…";
+			const version = this.changeVersion;
 			this.footerText.setText(this.getFooterText());
+			try {
+				void Promise.resolve(this.callbacks.onPersist(this.enabledIds === null ? null : [...this.enabledIds])).then(() => {
+					if (this.closed) return;
+					this.saving = false;
+					if (version === this.changeVersion) { this.isDirty = false; this.saveMessage = "Saved to settings"; }
+					else this.saveMessage = "New changes remain unsaved";
+					this.footerText.setText(this.getFooterText());
+					this.callbacks.requestRender?.();
+				}, (error: unknown) => this.reportFailure(error));
+			} catch (error) { this.reportFailure(error); }
 			return;
 		}
 
@@ -379,6 +413,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 				this.searchInput.setValue("");
 				this.refresh();
 			} else {
+				this.closed = true;
 				this.callbacks.onCancel();
 			}
 			return;
@@ -386,6 +421,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Escape - cancel
 		if (matchesKey(data, Key.escape)) {
+			this.closed = true;
 			this.callbacks.onCancel();
 			return;
 		}

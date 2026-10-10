@@ -2,6 +2,7 @@
 export const NATIVE_COMMANDS = [
 	{ name: "model", description: "Select the model", argumentHint: "[provider/model]" },
 	{ name: "thinking", description: "Select reasoning effort", argumentHint: "[level]" },
+	{ name: "scoped_models", description: "Choose models shown in /model and model cycling" },
 	{ name: "attachments", description: "Remove draft image attachments" },
 	{ name: "login", description: "Sign in to a model provider", argumentHint: "[provider]" },
 	{ name: "logout", description: "Remove saved provider credentials", argumentHint: "[provider]" },

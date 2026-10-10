@@ -5,6 +5,7 @@ import type { AgentState, ConversationView, EntryRecord } from "@amazme/durable"
 import { CombinedAutocompleteProvider, type Component, Container, isFocusable, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
 import { manageProviderAuth } from "../durable/provider-menu.ts";
 import { ListSelector } from "../modes/interactive/components/list-selector.ts";
+import { ScopedModelsSelectorComponent } from "../modes/interactive/components/scoped-models-selector.ts";
 import { Models } from "./services/models.ts";
 import type { ClientCommand } from "../cli/host/commands/client.ts";
 import { getAgentDir } from "../config.ts";
@@ -96,6 +97,8 @@ export class ExperimentalClientTui implements Component {
 	#conversations: ConversationsService | undefined;
 	#models: Models | undefined;
 	#authComponent: Component | undefined;
+	#modelScopeSelector: ScopedModelsSelectorComponent | undefined;
+	#selectionEpoch = 0;
 	#authFlow: { controller: AbortController; done: Promise<void> } | undefined;
 	#history: readonly EntryRecord[] = [];
 	#historyCursor: string | null = null;
@@ -131,6 +134,10 @@ export class ExperimentalClientTui implements Component {
 		this.#chatInput.onAction("app.thinking.cycle", () => {
 			void this.#models?.cycleThinking(BACKGROUND_CONTEXT).catch((error: unknown) => this.showError(message(error)));
 		});
+		for (const [action, direction] of [["app.model.cycleForward", "forward"], ["app.model.cycleBackward", "backward"]] as const)
+			this.#chatInput.onAction(action, () => {
+				void this.#models?.cycleModel(direction, BACKGROUND_CONTEXT).catch((error: unknown) => this.showError(message(error)));
+			});
 		this.#chatInput.onAction("app.message.followUp", () => {
 			const text = this.#chatInput.getText().trim();
 			if (text.length === 0) return;
@@ -190,6 +197,11 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	handleInput(data: string): void {
+		if (this.#modelScopeSelector && !this.#busy) {
+			this.#modelScopeSelector.handleInput(data);
+			this.#requestRender();
+			return;
+		}
 		if (this.#authComponent && !this.#busy) {
 			if (this.#keybindings.matches(data, "app.clear")) this.#authFlow?.controller.abort();
 			else this.#authComponent.handleInput?.(data);
@@ -315,6 +327,7 @@ export class ExperimentalClientTui implements Component {
 					);
 					env.own(commands.subscribe(() => this.#updateAutocomplete()));
 					env.own(catalog.state.subscribe(() => this.#updateAutocomplete()));
+					env.own(models.state.subscribe(() => { this.#updateAutocomplete(); this.#rebuild(); }));
 					env.own(server.session.attachment.subscribe((state) => {
 						if (state.status !== "attached" || state.sessionId !== this.#sessionId) this.#authFlow?.controller.abort();
 					}));
@@ -401,6 +414,9 @@ export class ExperimentalClientTui implements Component {
 			this.#chatInput.focused = false;
 			this.#selectList = undefined;
 			this.#editorContainer.addChild(this.#authComponent);
+		} else if (this.#modelScopeSelector !== undefined) {
+			this.#chatInput.focused = false;
+			this.#editorContainer.addChild(this.#modelScopeSelector);
 		} else if (this.#screen === "select" && this.#selection !== undefined) {
 			this.#chatInput.focused = false;
 			const selector = new Container();
@@ -423,6 +439,8 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	#select(title: string, items: readonly SelectItem[], selectedValue?: string): Promise<string | undefined> {
+		++this.#selectionEpoch;
+		this.#modelScopeSelector = undefined;
 		if (this.#selection !== undefined) throw new Error("A slash command selector is already active");
 		return new Promise((resolve) => {
 			this.#selection = {
@@ -452,6 +470,8 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	#authenticate(mode: "login" | "logout", provider: string | undefined): Promise<void> {
+		++this.#selectionEpoch;
+		this.#modelScopeSelector = undefined;
 		const models = this.#models;
 		const feature = this.#session;
 		const sessionId = this.#sessionId;
@@ -616,6 +636,8 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	async #closeLane(): Promise<void> {
+		++this.#selectionEpoch;
+		this.#modelScopeSelector = undefined;
 		if (this.#authFlow) await this.#stopAuthentication();
 		this.#laneUnsubscribe?.();
 		this.#laneUnsubscribe = undefined;
@@ -655,6 +677,11 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	async #executeSlashCommand(name: string, args: string): Promise<void> {
+		if (name === "scoped_models") {
+			if (args.length > 0) { this.showError("Usage: /scoped_models"); return; }
+			await this.#configureModelScope();
+			return;
+		}
 		if (name === "tree" || name === "agents") {
 			await this.#switchConversation();
 			return;
@@ -717,6 +744,32 @@ export class ExperimentalClientTui implements Component {
 			this.#status = `Error: ${message(error)}`;
 			this.#rebuild();
 		}
+	}
+
+	async #configureModelScope(): Promise<void> {
+		const epoch = ++this.#selectionEpoch;
+		const models = this.#models;
+		const sessionId = this.#sessionId;
+		if (!models) return;
+		const current = () => !this.#closed && this.#selectionEpoch === epoch && this.#models === models && this.#sessionId === sessionId;
+		try {
+			const config = await models.getModelScope(BACKGROUND_CONTEXT);
+			if (!current()) return;
+			const configure = (ids: string[] | null, persist: boolean) => {
+				if (!current()) return Promise.reject(new Error("Model scope target changed. Open /scoped_models again."));
+				return models.setModelScope(ids, persist, BACKGROUND_CONTEXT);
+			};
+			this.#modelScopeSelector = new ScopedModelsSelectorComponent({
+				allModels: config.allModels,
+				enabledModelIds: config.enabledModelIds === null ? null : [...config.enabledModelIds],
+			}, {
+				onChange: (ids) => configure(ids, false),
+				onPersist: (ids) => configure(ids, true),
+				onCancel: () => { this.#modelScopeSelector = undefined; this.#rebuild(); },
+				requestRender: this.#requestRender,
+			});
+			this.#rebuild();
+		} catch (error) { if (current()) this.showError(message(error)); }
 	}
 
 	async #submitPrompt(prompt: string): Promise<void> {
