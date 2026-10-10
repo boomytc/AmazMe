@@ -90,22 +90,25 @@ See [Sessions and Context](sessions.md) for resuming, forking, naming, and stori
 - `-c`, `--continue`<br>
   Continues the most recent session for the current project.
 - `-r`, `--resume`<br>
-  Opens the session selector.
+  Continues the newest session in the default terminal, like `--continue`. JSONL applications use a session selector.
 - `--session <path|id>`<br>
-  Opens by file path, exact ID, or partial ID. AmazMe searches the current project first and offers to fork a cross-project match.
+  Selects a JSONL session for print/RPC by file path, exact ID, or partial ID. AmazMe searches the current project first and offers to fork a cross-project match.
 - `--session-id <id>`<br>
-  Opens the exact project session ID or creates it if absent. IDs accept letters, numbers, `.`, `_`, and `-`.
+  Opens the exact JSONL project session ID or creates it if absent. IDs accept letters, numbers, `.`, `_`, and `-`.
 - `--fork <path|id>`<br>
-  Forks an existing session into a new session for the current project.
+  Forks an existing JSONL session into a new session for the current project. In the default terminal, use `/fork` or `/tree`.
 - `--session-dir <dir>`<br>
   Overrides storage and lookup. It takes precedence over `AMAZME_CODING_AGENT_SESSION_DIR` and the `sessionDir` setting.
 - `--no-session`<br>
-  Uses an in-memory session that is not persisted.
+  Uses the existing runtime with in-memory storage. No conversation database or session lock is created, and the conversation cannot be resumed after exit. Configuration and authentication still use their normal files.
 - `-n`, `--name <name>`<br>
-  Sets the session display name.
+  Sets a non-empty session display name after trimming surrounding whitespace. The default terminal displays it in the footer and restores it on continuation; an explicit name updates the continued session.
+
+The default terminal stores SQLite sessions under `<agent-dir>/experimental/durable-sessions/<cwd-hash>/<session-id>/session.sqlite`. The directory name is retained for existing histories. A custom session root replaces `experimental/durable-sessions`; it still groups sessions by canonical working directory. Relative roots resolve against the working directory and `~` expands to the home directory. CLI root selection takes precedence over the environment, then settings, then the default. Web/server session roots belong to their shared host; these native terminal options do not select a hosted session.
 
 Constraints:
 
+- In the default terminal, `--no-session` cannot be combined with `--continue` or `--resume`. `--session`, `--session-id`, and `--fork` select JSONL storage and are rejected by that terminal.
 - Session IDs must start and end with a letter or number.
 - `--fork` cannot be combined with `--session`, `--continue`, `--resume`, or `--no-session`.
 - `--session-id` cannot be combined with `--session`, `--continue`, or `--resume`. Combine it with `--fork` to choose the new ID.

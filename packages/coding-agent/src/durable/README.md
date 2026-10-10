@@ -2,6 +2,8 @@
 
 默认交互 CLI 使用 `@amazme/durable`。一个进程持有模型运行时、Harness、SQLite 存储与 TUI，读取当前配置目录中的模型、凭据和设置。正式实现位于 `src/durable/`，编译模块随包发布，SDK 的 `main()` 与 CLI 使用同一个交互入口。
 
+`--no-session` 将同一 Harness 的存储换成现有 MemoryStorage，不创建会话目录或锁；`--session-dir` 及对应环境变量、设置选择持久根目录，仍按真实工作目录分组并使用原有锁。`--name` 与焦点保存在同一会话文档，页脚消费该投影，续开时恢复；没有额外命名文件或内存执行器。
+
 `node packages/coding-agent/dist/bundle/cli.js` 启动新会话，追加 `--continue` 打开当前工作目录的最近会话。存储路径为 `~/.amazme/agent/experimental/durable-sessions/<cwd-hash>/<session>/session.sqlite`；文件锁防止两个进程同时写入。崩溃遗留锁在 10 秒后失效，重开会等待锁恢复。
 
 界面读取 `Conversation.viewState()`，流式内容、工具进度、输入队列、重试、压缩、模型及用量由 Durable 状态提供。子任务由调用它的工具持有，取消主任务会取消其子任务。当前焦点存入 `amazme.session.focus`，重开时恢复。

@@ -1,66 +1,61 @@
 # Sessions and Context
 
-Pi saves a conversation as a session. The active branch of that session supplies conversation history for the next model request. Use session commands to continue work, explore another branch, or reduce the amount of history sent to the model.
+AmazMe keeps conversation history and supplies the active conversation to the model. The default terminal uses Durable SQLite storage. Web and hosted clients share their server's session roster. Print/JSON/RPC and the SDK expose a JSONL session API; select storage through the entry point you are using.
 
-## Continue or switch sessions
+## Default terminal
 
-Pi saves sessions automatically unless you start it with `--no-session`.
+Start a named session or continue the newest session for the same working folder:
 
 ```bash
-pi --continue
-pi --resume
+amazme --name "Refactor authentication"
+amazme --continue
 ```
 
-`--continue` opens the most recent session for the current working directory. `--resume` opens the session picker. In interactive mode, `/resume` opens the same picker and `/new` starts a new session.
+`--resume` also continues the newest native session. The footer shows the stored name. Supplying `--name` while continuing updates that session; omitting it preserves the name. Names are trimmed and must be non-empty.
 
-Use `/name` or `--name` to assign a recognizable session name. Run `/session` to verify the current session file, ID, message count, token usage, and cost.
+The default storage root is `<agent-dir>/experimental/durable-sessions`. The historical directory name is retained so existing sessions remain discoverable. Each canonical working directory has a hash group, and each session owns a directory containing `session.sqlite`. A process holds the session's lock until it closes; another process cannot write that same session concurrently.
 
-The session picker lets you search, rename, and delete sessions. It can also show paths, change sorting, and limit results to named sessions. See [Keybindings](keybindings.md#sessions) for its shortcuts.
+Choose another root with `--session-dir`, `AMAZME_CODING_AGENT_SESSION_DIR`, or the `sessionDir` setting, in that precedence order. Relative roots resolve against the working folder; `~` expands to the home directory. Custom roots still group sessions by canonical working directory, so continuation uses the selected root and folder.
 
-## Choose how to branch
+```bash
+amazme --session-dir ./agent-history --name "Review"
+amazme --session-dir ./agent-history --continue
+amazme --no-session
+```
 
-Pi stores entries as a tree, so returning to an earlier point does not erase the branch you leave.
+`--no-session` uses the same Harness, tools and plugins with in-memory storage. Its footer says `in memory`; no conversation database or session lock is created. Exiting discards the conversation. Configuration, credentials and files changed by tools retain their usual behavior. Combining it with `--continue` or `--resume` is rejected.
 
-| Action | Result | Use it when |
-|---|---|---|
-| `/tree` | Moves within the current session file | Related alternatives should stay together |
-| `/fork` | Creates a new session from an earlier user message | The alternative should become separate work |
-| `/clone` | Copies the active branch into a new session | You want a separate copy of the current state |
+### Branches and context
 
-In `/tree`, select a user message to put its text back in the editor. Edit and submit it to create another branch. Selecting an assistant response or another entry continues after that entry with an empty editor.
+| Command | Result |
+|---|---|
+| `/tree` or `/agents` | Choose a stored conversation or a return point in the current conversation |
+| `/fork` | Fork at the current tip and focus the new conversation within the same session |
+| `/older` | Load an earlier page of stored history above the transcript |
+| `/tasks` | Show the current task graph |
+| `/compact [instructions]` | Summarize older context while retaining the original history |
 
-When you leave a branch, Pi can summarize it and attach that summary to the branch you enter. This preserves relevant work from the abandoned path without including every message from it.
+Leaving at a return point can summarize the branch being left. The menu offers no summary, a summary, or custom summarization instructions. The `branchSummary.skipPrompt` setting skips that menu and leaves without a summary. Selecting an existing conversation only changes focus. The stored focus survives exit and continuation; all branches keep the same session display name.
 
-For the persisted tree and entry types, see [Session Format](session-format.md).
+The model receives the focused conversation's context rather than every branch. The footer shows context usage. Automatic compaction uses the [compaction settings](settings.md#compaction); manual compaction also works when automatic compaction is disabled. If a provider error prevents compaction, correct the provider issue and retry `/compact`.
 
-## Manage conversation context
+## Web and hosted terminal
 
-The model receives the active branch, not every branch in the session file. Pi combines that history with the system prompt, discovered context files, available tools, and loaded skill descriptions. [How Pi Works](how-pi-works.md#context) describes how those inputs are assembled.
+`amazme web`, `amazme server` and `amazme client` use the shared host. Its session controls create, select and name sessions. Conversation selection, forks, tools and task state belong to the selected hosted session; clients observe the same server state.
 
-The footer shows current context usage. When the active context approaches the model's limit, Pi normally compacts older history automatically. Compaction adds a summary and keeps recent messages. It does not delete the original session entries.
+The host's `--session-dir` selects its server storage root. Default terminal flags do not select a hosted session. See [CLI Integration](cli-integration.md) for host commands.
 
-Run `/compact` to compact manually. You can add instructions when the summary should preserve a particular topic or decision. Configure automatic compaction and retained history through [Settings](settings.md#compaction).
+## JSONL API and print/RPC
 
-Compaction can fail if the provider is unavailable or cannot accept the summarization request. Correct the provider problem and run `/compact` again. Disabling automatic compaction does not disable the manual command.
+Print, JSON and RPC sessions use the SDK's [JSONL format](session-format.md), normally under `<agent-dir>/sessions`, grouped by working directory. Their `--session`, `--session-id` and `--fork` options select or create JSONL sessions. `--session-dir`, the environment root, the `sessionDir` setting and `--no-session` also apply to this entry point.
 
-See [Compaction Reference](compaction.md) for thresholds, retained boundaries, branch-summary behavior, and extension hooks.
+```bash
+amazme --print --name "Review" "Explain this project"
+amazme --print --continue "Continue that review"
+amazme --mode rpc --session /path/to/session.jsonl
+amazme --export /path/to/session.jsonl
+```
 
-## Control session storage
+An application embedding the SDK can use its `SessionManager` and interactive UI APIs for session selection, naming, cloning and export. See [SDK](sdk.md) and [RPC](rpc.md). The default terminal's SQLite session is selected through its native continuation and conversation commands.
 
-By default, Pi stores sessions under `~/.amazme/agent/sessions/`, grouped by working directory. Use `--session-dir`, `AMAZME_CODING_AGENT_SESSION_DIR`, or the `sessionDir` setting to choose another location. The CLI option has highest precedence.
-
-Use `--no-session` for an ephemeral run. An ephemeral session cannot be resumed after Pi exits.
-
-Use `--session` when you already know the session path or ID. Use `--fork` to create a new session from an existing session before interactive mode starts.
-
-## Export or share a session
-
-Use `/export` to write the current session as HTML or JSONL. Use `/share` to upload it and get a viewer link. Pi uses a Radius artifact when Radius authentication is configured; otherwise, it uses a private GitHub gist.
-
-Review exported or shared sessions first. They can contain prompts, model responses, tool arguments, command output, file contents, and extension messages.
-
-## Report a bug
-
-Run `/bug [description]` to prepare a private report for the Pi developers. You can include the session transcript, omit it, or ask the current model to summarize the problem. Review any transcript or generated summary because it can contain sensitive conversation data.
-
-The report includes environment and provider configuration without credential values, plus recorded error diagnostics. Upload it through `radius.pi.dev` or export the same report as a zip to inspect and share yourself. Uploads do not require a login; Radius authentication attributes the report to your account so the developers can follow up. If an upload fails, Pi offers to export the zip.
+Review exported transcripts before sharing them: they can contain prompts, responses, tool arguments, command output and file contents.

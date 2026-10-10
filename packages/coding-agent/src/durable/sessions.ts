@@ -2,27 +2,31 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
-import { getAgentDir } from "../config.ts";
+import { expandTildePath, getAgentDir } from "../config.ts";
 
-/** One session directory holding `session.sqlite`, locked by this process. */
+/** A session lease; persistent sessions own a locked directory containing `session.sqlite`. */
 export interface SessionLocation {
 	id: string;
-	directory: string;
-	database: string;
+	directory?: string;
+	database?: string;
 	cwd: string;
 	created: boolean;
 	release(): Promise<void>;
 }
 
-/** A new session for `cwd`, or its newest one with `continueSession`. */
-export async function selectSession(cwdInput: string, continueSession: boolean): Promise<SessionLocation> {
+/** A fresh memory session, a new persisted session, or the newest persisted session for `cwd`. */
+export async function selectSession(
+	cwdInput: string,
+	continueSession: boolean,
+	options: { sessionDir?: string; noSession?: boolean } = {},
+): Promise<SessionLocation> {
+	if (options.noSession && continueSession) throw new Error("--no-session cannot be combined with --continue or --resume");
 	const cwd = await realpath(resolve(cwdInput));
-	const root = join(
-		getAgentDir(),
-		"experimental",
-		"durable-sessions",
-		createHash("sha256").update(cwd).digest("hex").slice(0, 24),
-	);
+	if (options.noSession) return { id: randomUUID(), cwd, created: true, release: async () => {} };
+	const base = options.sessionDir === undefined
+		? join(getAgentDir(), "experimental", "durable-sessions")
+		: resolve(cwd, expandTildePath(options.sessionDir));
+	const root = join(base, createHash("sha256").update(cwd).digest("hex").slice(0, 24));
 	await mkdir(root, { recursive: true });
 
 	let directory: string;

@@ -429,8 +429,10 @@ class DurableTui {
 			stats.push(percent !== undefined && percent > 90 ? theme.fg("error", text) : text);
 		}
 		const historyCue = view.history.length === 0 ? "" : view.historyMore ? " · older above" : " · start of history";
+		const title = view.session.name === undefined ? "" : `${theme.fg("accent", view.session.name)} · `;
+		const storageCue = view.session.directory === undefined ? " · in memory" : "";
 		this.#footerStats.setText(
-			`${theme.fg(view.lane.role === "main" ? "dim" : "accent", formatLane(view.lane))}${theme.fg("dim", `${historyCue}  ${stats.join(" ")}  ${view.session.cwd}`)}`,
+			`${title}${theme.fg(view.lane.role === "main" ? "dim" : "accent", formatLane(view.lane))}${theme.fg("dim", `${historyCue}${storageCue}  ${stats.join(" ")}  ${view.session.cwd}`)}`,
 		);
 		this.#footerHints.setText(
 			theme.fg(

@@ -18,6 +18,7 @@ import {
 	type TaskGraph,
 	type SessionEnd,
 } from "@amazme/durable";
+import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { ProviderLogin } from "../core/provider-login.ts";
@@ -43,6 +44,7 @@ import {
 	readFocus,
 	readReturnPoints,
 	readSummaries,
+	SessionViewDoc,
 	type TreeNavigationDeps,
 } from "./session-surface.ts";
 import {
@@ -77,8 +79,9 @@ export interface Notice {
 export interface DurableView {
 	readonly session: {
 		readonly id: string;
-		readonly directory: string;
+		readonly directory?: string;
 		readonly cwd: string;
+		readonly name?: string;
 	};
 	/** The conversation shown and talked to. */
 	readonly conversation: ConversationView;
@@ -145,6 +148,9 @@ export interface OpenDurableOptions extends ToolSelectionOptions {
 	readonly facetLoader?: FacetLoader;
 	readonly cwd?: string;
 	readonly continueSession?: boolean;
+	readonly noSession?: boolean;
+	readonly sessionDir?: string;
+	readonly name?: string;
 	readonly provider?: string;
 	readonly model?: string;
 	readonly thinkingLevel?: ModelThinkingLevel;
@@ -173,6 +179,9 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	const error = getToolSelectionError(input);
 	if (error !== undefined) throw new Error(`Invalid tools option: ${error}`);
 	const options = { ...input, tools: input.tools?.slice(), excludeTools: input.excludeTools?.slice() };
+	const name = options.name?.trim();
+	if (options.name !== undefined && !name) throw new Error("--name requires a non-empty value");
+	if (options.noSession && options.continueSession) throw new Error("--no-session cannot be combined with --continue or --resume");
 	if (options.provider !== undefined && options.model === undefined) throw new Error("--provider requires --model");
 	if (options.apiKey !== undefined && options.model === undefined) throw new Error("--api-key requires --model");
 	const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
@@ -210,7 +219,10 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		settingsManager.getSettings().defaultTools,
 	);
 	const explicitTools = options.tools !== undefined || options.noTools !== undefined || options.excludeTools !== undefined;
-	const location = await selectSession(cwd, options.continueSession ?? false);
+	const location = await selectSession(cwd, options.continueSession ?? false, {
+		noSession: options.noSession,
+		sessionDir: options.sessionDir ?? settingsManager.getSessionDir(),
+	});
 	const envs = new ExecutionEnvs(location.cwd);
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;
@@ -228,7 +240,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		const activeMcp = await openDurableMcp({ registry, cwd: location.cwd, settings: settingsManager, models: modelRuntime, disabled: options.noMcp, report: error => report(error) });
 		mcp = activeMcp;
 		harness = await Harness.open(
-			await openNodeSqliteStorage(location.database),
+			location.database === undefined ? new MemoryStorage() : await openNodeSqliteStorage(location.database),
 			{
 				models: modelRuntime,
 				registry,
@@ -250,6 +262,12 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			},
 		});
 		const opened = harness;
+		if (name !== undefined) {
+			await opened.commit(async (tx) => {
+				(await tx.doc(SessionViewDoc)).name = name;
+			}, context);
+		}
+		const sessionName = (await opened.snapshot(SessionViewDoc, context))?.name;
 		await applyDurableMcpSelection(mcp, root, context);
 		const summaries = await readSummaries(opened, String(root.id));
 		let current: Conversation = root;
@@ -276,8 +294,9 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		let state: DurableView = {
 			session: {
 				id: location.id,
-				directory: location.directory,
+				...(location.directory === undefined ? {} : { directory: location.directory }),
 				cwd: location.cwd,
+				...(sessionName === undefined ? {} : { name: sessionName }),
 			},
 			conversation: conversation.value,
 			conversations: summaries,

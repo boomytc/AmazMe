@@ -28,10 +28,10 @@ import type { ConversationRole, ConversationSummary, HistoryPage, LaneStatus, Re
 const SCAN_PAGE = 256;
 
 /**
- * The conversation the session is showing. A session document, so a reload of the same sqlite file
- * restores the fork or subagent the reader had open. This is the durable document API, not a second store.
+ * The session's display name and focused conversation. Opening the same storage restores both;
+ * changing focus preserves its name. Session metadata uses the same durable document API as agents.
  */
-export const FocusDoc = defineDoc<{ conversationId: string }>({
+export const SessionViewDoc = defineDoc<{ conversationId: string; name?: string }>({
 	kind: "amazme.session.focus",
 	version: 1,
 	scope: "session",
@@ -174,13 +174,13 @@ export async function forkAt(harness: Harness, conversationId: string, at: strin
 }
 
 export async function readFocus(harness: Harness, context: Context): Promise<string> {
-	const stored = await harness.snapshot(FocusDoc, context);
+	const stored = await harness.snapshot(SessionViewDoc, context);
 	return stored?.conversationId ?? "";
 }
 
 export async function writeFocus(harness: Harness, conversationId: string, context: Context): Promise<void> {
 	await harness.commit(async (tx) => {
-		const focus = await tx.doc(FocusDoc);
+		const focus = await tx.doc(SessionViewDoc);
 		focus.conversationId = conversationId;
 	}, context);
 }

@@ -270,6 +270,7 @@ describe("durable startup over SQLite", () => {
 	it("an invalid continuation leaves existing storage and the lock available", async () => {
 		const original = await open();
 		const sessionDirectory = original.view.current().session.directory;
+		if (sessionDirectory === undefined) throw new Error("Expected a persistent session directory");
 		await original.close();
 		const before = await readdir(sessionDirectory);
 		await expect(open({ continueSession: true, model: "unavailable-provider/unknown" })).rejects.toThrow(

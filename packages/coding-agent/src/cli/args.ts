@@ -317,11 +317,11 @@ ${chalk.bold("Options:")}
   --mode <mode>                  Output mode: text (default), json, or rpc
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue previous session
-  --resume, -r                   Select a session to resume
+  --resume, -r                   Continue newest native session; JSONL mode opens a selector
   --dashboard                    Open the agent dashboard
-  --session <path|id>            Use specific session file or partial UUID
-  --session-id <id>              Use exact project session ID, creating it if missing
-  --fork <path|id>               Fork specific session file or partial UUID into a new session
+  --session <path|id>            Use specific JSONL session file or partial UUID (print/RPC)
+  --session-id <id>              Use exact JSONL session ID, creating it if missing (print/RPC)
+  --fork <path|id>               Fork a JSONL session into a new session (print/RPC)
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name

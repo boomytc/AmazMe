@@ -675,6 +675,20 @@ export async function main(args: string[], options?: MainOptions) {
 
 	validateForkFlags(parsed);
 	validateSessionIdFlags(parsed);
+	const sessionName = parsed.name === undefined ? undefined : normalizeSessionName(parsed.name);
+	if (parsed.name !== undefined && sessionName === undefined) {
+		console.error(chalk.red("Error: --name requires a non-empty value"));
+		process.exit(1);
+	}
+	const nativeInteractive =
+		appMode === "interactive" &&
+		!parsed.help &&
+		parsed.listModels === undefined &&
+		!isTruthyEnvFlag(process.env.AMAZME_STARTUP_BENCHMARK);
+	if (nativeInteractive && parsed.noSession && (parsed.continue || parsed.resume)) {
+		console.error(chalk.red("Error: --no-session cannot be combined with --continue or --resume"));
+		process.exit(1);
+	}
 
 	// Run migrations (pass cwd for project-local migrations)
 	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(cwd);
@@ -695,12 +709,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	// The interactive TUI is the durable session. Print and RPC still use the JSONL agent session.
-	if (
-		appMode === "interactive" &&
-		!parsed.help &&
-		parsed.listModels === undefined &&
-		!isTruthyEnvFlag(process.env.AMAZME_STARTUP_BENCHMARK)
-	) {
+	if (nativeInteractive) {
 		if (parsed.fork !== undefined || parsed.session !== undefined || parsed.sessionId !== undefined) {
 			console.error(
 				chalk.red(
@@ -718,10 +727,14 @@ export async function main(args: string[], options?: MainOptions) {
 			projectTrustContext: createProjectTrustContext({ cwd, mode: "interactive", settingsManager: startupSettingsManager, hasUI: true }),
 		});
 		startupSettingsManager.setProjectTrusted(projectTrusted);
+		const sessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
 		const { runDurableInteractive } = await import("./durable/interactive.ts");
 		await runDurableInteractive({
 			cwd,
 			continueSession: parsed.continue === true || parsed.resume === true,
+			noSession: parsed.noSession === true,
+			...(sessionDir === undefined ? {} : { sessionDir }),
+			...(sessionName === undefined ? {} : { name: sessionName }),
 			settingsManager: startupSettingsManager,
 			...(parsed.extensions === undefined ? {} : { extensions: parsed.extensions }),
 			noExtensions: parsed.noExtensions === true,
@@ -762,14 +775,7 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
-	if (parsed.name !== undefined) {
-		const name = normalizeSessionName(parsed.name);
-		if (name === undefined) {
-			console.error(chalk.red("Error: --name requires a non-empty value"));
-			process.exit(1);
-		}
-		sessionManager.appendSessionInfo(name);
-	}
+	if (sessionName !== undefined) sessionManager.appendSessionInfo(sessionName);
 	time("createSessionManager");
 
 	const trustStore = new ProjectTrustStore(agentDir);

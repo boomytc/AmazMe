@@ -62,6 +62,8 @@ Resume the newest default terminal session for the same working folder:
 amazme --continue
 ```
 
+Use `amazme --name "Refactor authentication"` to name a session. The footer shows that name and continuing restores it. `--session-dir /path/to/sessions` selects a storage root, grouped by working folder; it overrides `AMAZME_CODING_AGENT_SESSION_DIR` and the `sessionDir` setting. For a conversation that disappears on exit, use `amazme --no-session`. Its footer says `in memory`, and it creates no conversation database or session lock. Saved configuration and credentials retain their normal behavior.
+
 For a shared session roster and graphical controls, start the Web client or connect a hosted terminal:
 
 ```bash

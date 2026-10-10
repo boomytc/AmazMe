@@ -67,7 +67,10 @@ describe("main's default durable TUI startup", () => {
 			});
 			expect(settings.getTheme()).toBe("light");
 			expect(agentOf(view.current().conversation).tools).toEqual({ allow: ["grep"] });
-			sessionDirectory = view.current().session.directory;
+			const storedDirectory = view.current().session.directory;
+			expect(storedDirectory).toBeDefined();
+			if (storedDirectory === undefined) throw new Error("Expected a persistent session directory");
+			sessionDirectory = storedDirectory;
 		});
 		await main([
 			"--offline",
