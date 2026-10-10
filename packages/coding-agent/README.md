@@ -46,6 +46,16 @@ amazme web -e /path/to/plugin
 
 ## 会话与工具
 
+### 存储与恢复边界
+
+| 路径 | 存储 | 选择与恢复 | JSONL 互通 |
+| --- | --- | --- | --- |
+| 默认原生交互 TUI | Durable SQLite；`--no-session` 使用内存 | `--continue` / `--resume` 恢复工作目录会话，界面内 `/tree` / `/fork` 导航 | 不直接写 JSONL，不迁移终端文件 |
+| print / JSON / RPC / 兼容 SDK AgentSession | SessionManager JSONL | 使用该路径支持的 `--session`、`--session-id`、`--fork` 选择文件 | 保留 JSONL 树及条目格式 |
+| 常驻宿主（Web、桌面、宿主终端客户端） | Durable SQLite | 宿主会话目录与同工作目录的终端会话列表 | 空转录且同 cwd、同 id 时可导入；提交后按序导出同一 JSONL |
+
+原生交互拒绝 `--fork`、`--session`、`--session-id`，以及 `--no-session` 配 `--continue` 或 `--resume`，退出码为 1，不创建 durable 会话存储。这是兼容边界，不是自动迁移入口。
+
 `/model` 选择模型；`/tree` 查看历史，`/fork` 分叉，`/older` 加载更早记录，`/compact` 压缩当前上下文，`/tasks` 查看任务，`/mcp` 管理 MCP。模型、推理强度与工具选择属于当前对话，其他分叉保留各自配置。
 
 工具可用名称白名单或仅由 `+name`／`-name` 组成的增减列表选择。文件覆盖和编辑检查先前读取的版本；外部变更时需要重新读取。工具结果、实际修改差异和所属任务保存在会话中，重开后可继续查看。
