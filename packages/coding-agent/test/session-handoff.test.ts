@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, utimes, w
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import type { UserMessage } from "@amazme/ai";
+import type { Message, UserMessage } from "@amazme/ai";
 import { UserEntry } from "@amazme/durable";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX } from "../src/core/messages.ts";
@@ -25,7 +25,7 @@ const createdAt = Date.parse(timestamp);
 const id = "handoff-session";
 const userText = "hello from the terminal";
 const user: UserMessage = { role: "user", content: userText, timestamp: 1 };
-function entry(entryId: string, parentId: string | null = null, message = user): SessionEntry {
+function entry(entryId: string, parentId: string | null = null, message: Message = user): SessionEntry {
 	return { type: "message", id: entryId, parentId, timestamp, message };
 }
 
@@ -145,6 +145,25 @@ describe("terminal and durable handoff contract", () => {
 		} finally { await second.close(); }
 	});
 
+	it("preserves all four message roles, images, thinking and tool-call payloads through real handoff", async () => {
+		const model = opened.faux.getModel();
+		const stream: Message[] = [
+			{ role: "system", content: "fixture instructions", sections: { fixture: "section" }, timestamp: 1 },
+			{ ...user, content: [{ type: "text", text: userText }, { type: "image", data: "AA==", mimeType: "image/png" }] },
+			{
+				role: "assistant", provider: model.provider, model: model.id, api: model.api, timestamp: 3, stopReason: "toolUse",
+				content: [{ type: "thinking", thinking: "fixture reasoning" }, { type: "toolCall", id: "call-1", name: "read", arguments: { path: "fixture.txt" } }],
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			},
+			{ role: "toolResult", toolName: "read", toolCallId: "call-1", content: [{ type: "text", text: "fixture body" }], isError: false, timestamp: 4 },
+		];
+		const path = await terminal(stream.map((message, index) => entry("terminal-" + index, index === 0 ? null : "terminal-" + (index - 1), message)));
+		await start();
+		expect((await messages()).map((item) => item.model?.[0])).toEqual(stream);
+		expect(SessionManager.open(path).getEntries().flatMap((item) => item.type === "message" ? [item.message] : [])).toEqual(stream);
+		expect(handoff?.warning).toBeNull();
+	});
+
 	it("reports failed mirroring and leaves the original file intact", async () => {
 		const path = await terminal([entry("terminal-1")]);
 		const original = await readFile(path, "utf8");
@@ -237,19 +256,26 @@ describe("terminal and durable handoff contract", () => {
 		expect(await readFile(parent, "utf8")).toBe("original");
 	});
 
-	it.each(["old-version", "malformed-line", "extra-header", "extra-entry", "reserved-summary"] as const)("preserves unsupported captured bytes without migration (%s)", async (kind) => {
+	it.each(["old-version", "malformed-line", "extra-header", "extra-entry", "reserved-summary", "reserved-summary-blocks"] as const)("preserves captured files that cannot be imported losslessly (%s)", async (kind) => {
 		const path = await terminal([entry("terminal-1")]);
 		let content = await readFile(path, "utf8");
 		if (kind === "old-version") content = content.replace('"version":3', '"version":2');
 		if (kind === "malformed-line") content += "not JSON\n";
 		if (kind === "extra-header") content = content.replace('"cwd":', '"extensionState":{"keep":true},"cwd":');
 		if (kind === "extra-entry") content = content.replace('"parentId":', '"extensionState":{"keep":true},"parentId":');
-		if (kind === "reserved-summary") content = content.replace(userText, COMPACTION_SUMMARY_PREFIX + "literal user input" + COMPACTION_SUMMARY_SUFFIX);
+		if (kind === "reserved-summary" || kind === "reserved-summary-blocks") {
+			const text = COMPACTION_SUMMARY_PREFIX + "literal user input" + COMPACTION_SUMMARY_SUFFIX;
+			const reserved: UserMessage = { ...user, content: kind === "reserved-summary" ? text
+				: [{ type: "text", text }, { type: "image", data: "AA==", mimeType: "image/png" }] };
+			await terminal([entry("terminal-1", null, reserved)]);
+			content = await readFile(path, "utf8");
+		}
 		await writeFile(path, content);
 		await start();
 		expect(await readFile(path, "utf8")).toBe(content);
 		expect(await messages()).toEqual([]);
 		expect(handoff?.warning).not.toBeNull();
+		if (kind === "reserved-summary" || kind === "reserved-summary-blocks") expect(handoff?.warning?.detail).toContain("cannot round trip without loss");
 	});
 
 	it("deletes all matching files only in the requested project", async () => {
