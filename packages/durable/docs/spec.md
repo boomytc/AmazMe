@@ -73,7 +73,7 @@ Required invariants:
 7. The mutation line remains held through storage settlement and committed-state
    adoption. Commit/close observers run synchronously only to capture immutable
    state; document-state and watch user callbacks run later, off the line.
-8. An uncertain storage failure is fatal to the open Session. It publishes
+8. A storage error is fatal to the open Session (section 10.1). It publishes
    nothing and must be reopened. Preparation and checkpoint failures occur before
    storage admission and roll back normally.
 
@@ -361,6 +361,7 @@ type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
   readonly conversationCreated?: (tx: Tx, conversation: ConversationRecord) => void | Promise<void>;
   /** Wall clock for sleeps, retries, message timestamps, and task lifecycle times. Default `Date.now`. */
   readonly now?: () => number;
+  /** Failures that do not fail the calling operation, and the Session's failure, once (section 10.1). */
   readonly onReport?: (error: unknown) => void;
 };
 
@@ -434,8 +435,10 @@ type AgentState = {
   thinkingLevel?: ModelThinkingLevel;
   /** An array selects exactly these extensions, in order. An object edits the host default selection. */
   extensions?: string[] | { add?: string[]; remove?: string[] };
-  /** Filters the selected extensions' tools. An array offers exactly these, in order. */
-  tools?: string[] | { remove: string[] };
+  /** Filters the selected extensions' tools: the enabled tools. An array enables exactly these, in order. */
+  tools?: string[] | { only?: string[]; add?: string[]; remove?: string[]; allow?: string[]; exclude?: string[] };
+  /** Filters the enabled tools the model may call: the tools it is offered. An array offers exactly these, in order. */
+  modelTools?: string[] | { remove: string[] };
   /** Rendered after every extension section, as the section `instructions`. */
   instructions?: string;
   /** Directory within the environment's file system, passed to `HarnessOptions.env`. */
@@ -453,7 +456,8 @@ type AgentChange = {
     | readonly Extension[]
     | { readonly add?: readonly Extension[]; readonly remove?: readonly Extension[] }
     | null;
-  readonly tools?: readonly ToolRegistration[] | { readonly remove: readonly ToolRegistration[] } | null;
+  readonly tools?: readonly (ToolRegistration | string)[] | { readonly only?: readonly (ToolRegistration | string)[]; readonly add?: readonly (ToolRegistration | string)[]; readonly remove?: readonly (ToolRegistration | string)[]; readonly allow?: readonly (ToolRegistration | string)[]; readonly exclude?: readonly (ToolRegistration | string)[] } | null;
+  readonly modelTools?: readonly ToolRegistration[] | { readonly remove: readonly ToolRegistration[] } | null;
   readonly instructions?: string | null;
   readonly cwd?: string | null;
 };
@@ -466,7 +470,12 @@ type Agent<Tool extends ToolRegistration = ToolRegistration> = {
   readonly model?: ModelRef;
   readonly thinkingLevel: ModelThinkingLevel;
   readonly extensions: readonly Extension<Tool>[];
+  /** Offered to the model: enabled, `callers` includes `model`, and selected by `modelTools`. */
   readonly tools: readonly Tool[];
+  /** Nested calls resolve among these: enabled, and `callers` includes `tools`. */
+  readonly callable: readonly Tool[];
+  /** Permitted catalog for discovery and loading, after allow/exclude and hidden exposure. */
+  readonly catalog: readonly Tool[];
   /** Extension sections, then `instructions` when set. */
   readonly sections: readonly PromptSection<Tool>[];
   readonly instructions?: string;
@@ -606,7 +615,7 @@ interface Harness extends Session {
   abortTask(id: TaskId, context: Context): Promise<"marked" | "terminal">;
   waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>>;
   waitForIdle(context: Context): Promise<void>;
-  /** Session total of every conversation's `pi.usage` (section 8.6). */
+  /** Session total of every conversation's `amazme.usage` (section 8.6). */
   usage(context: Context): Promise<UsageState>;
   /** Live tasks as a structural view (section 9.5). */
   taskGraph(context: Context): Promise<AttachedReplicatedState<TaskGraph>>;
@@ -678,17 +687,17 @@ creation hook in the same commit, whether through the conveniences or through
 raw `tx.createConversation()` and `tx.forkConversation()`, for example inside a
 tool commit. It runs inside `tx.createConversation()` and
 `tx.forkConversation()`, before they return, so a `configure()` later in the
-same callback overrides its copy. It creates empty `pi.live`, `pi.inbox`, and
-`pi.usage`, creates `pi.provider` with a fresh provider-facing UUIDv7, and handles
-`pi.agent`:
+same callback overrides its copy. It creates empty `amazme.live`, `amazme.inbox`, and
+`amazme.usage`, creates `amazme.provider` with a fresh provider-facing UUIDv7, and handles
+`amazme.agent`:
 
-- A fork keeps the `asOf` copy of its parent's `pi.agent` (section 3.7),
+- A fork keeps the `asOf` copy of its parent's `amazme.agent` (section 3.7),
   whatever its ownership.
-- A new task-owned conversation gets a copy of the stored `pi.agent` of the
+- A new task-owned conversation gets a copy of the stored `amazme.agent` of the
   owner task's conversation, every field, `instructions` included. A later
   change to the owner does not reach the child. Fields the owner leaves unset
   stay unset and follow the host.
-- A new ownerless conversation gets an empty `pi.agent`, `{}`.
+- A new ownerless conversation gets an empty `amazme.agent`, `{}`.
 
 `HarnessOptions.conversationCreated`, if given, then runs in the same commit
 with the new record, for every creation path, so the host can create the
@@ -715,7 +724,7 @@ The built-in agent document is final at version 1:
 
 | field | value |
 |---|---|
-| kind | `pi.agent` |
+| kind | `amazme.agent` |
 | version | `1` (no migration) |
 | scope/history/fork | conversation, `rewindable`, `asOf` |
 | schema | `AgentState` |
@@ -763,7 +772,7 @@ The built-in provider document is final at version 1:
 
 | field | value |
 |---|---|
-| kind | `pi.provider` |
+| kind | `amazme.provider` |
 | version | `1` (no migration) |
 | scope/history/fork | conversation, `latest`, `initial` |
 | schema | `{ sessionId: string }` |
@@ -896,7 +905,7 @@ so `Conversation.abort()` cancels it and idle waits include it. It does not take
 run control, so it does not make the conversation busy: the conversation keeps
 working while it summarizes, and its summary is placed through a write
 submission, at once when idle, otherwise at the next boundary (section 8.7). `reset()` durably admits a write submission of a
-`pi.reset` entry (section 8.1) with `head: "self"`, carrying the handoff text as
+`amazme.reset` entry (section 8.1) with `head: "self"`, carrying the handoff text as
 a user message when given, and then resolves; while busy, placement follows
 section 6 and may occur later. Observe its placement through the conversation
 watch. An idle wait does not guarantee placement of queued passive writes.
@@ -1188,9 +1197,13 @@ without storage-assigned lifetime fields.
 There is no mutable `session.document()` API.
 
 ```ts
+type SessionEnd = { readonly reason: "closed" } | { readonly reason: "failed"; readonly error: unknown };
+
 interface Session extends DocumentObserver {
   commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
   close(context: Context): Promise<void>;
+  /** Settles once closed, Storage included: `{ reason: "closed" }`, or `{ reason: "failed", error }` (section 10.1). */
+  readonly closed: Promise<SessionEnd>;
   subscribeCommits(listener: (publication: CommitPublication, context: Context) => void): () => void;
   subscribeClose(listener: () => void): () => void;
 
@@ -1243,7 +1256,7 @@ interface Tx {
   settleSubmission(id: SubmissionId, settlement: SubmissionSettlement): void;
   /** Newest visible entry of the conversation that carries a `head`. */
   latestHeadMarker(conversationId: ConversationId): Promise<(EntryRecord & { readonly head: EntryId }) | undefined>;
-  /** Record a queued submission's placement at `entry`: an input becomes `placed`, a write `done` (section 6). The caller appends the entry and edits `pi.inbox` and `pi.live`. */
+  /** Record a queued submission's placement at `entry`: an input becomes `placed`, a write `done` (section 6). The caller appends the entry and edits `amazme.inbox` and `amazme.live`. */
   placeSubmission(id: SubmissionId, entry: EntryId): void;
 
   doc<T extends JsonObject>(token: SessionDocToken<T>): Promise<Draft<T>>;
@@ -1394,7 +1407,7 @@ storage succeeds
   commit listeners, including conversation view mounts (section 9.3), capture it synchronously
   release the line; invoke listeners later
 storage fails
-  abort every prepared change, poison Session, and publish nothing
+  abort every prepared change, fail the Session (section 10.1), and publish nothing
 ```
 
 A pending acquisition that resolves after sealing never exposes a draft; its
@@ -1589,10 +1602,13 @@ line; document-state and watch user callbacks run later.
 External model, process, tool, network, and human effects run outside it.
 `subscribeCommits()` observes complete immutable publications synchronously on
 the line after adoption. `subscribeClose()` observes close synchronously when it
-begins, after admission is sealed; the Harness stops watches and signals task
-invocations there. Both return idempotent disposers; their listeners must not
-throw, block, or call Session APIs. Document-state subscribers and watch
-listeners still run later, off the line.
+begins, after admission is sealed, also when a failure closes the Session; the
+Harness ends waits, watches, and streams there, and signals task invocations
+after every close listener has run, so what a task holds ends with the Session's
+reason rather than as cancelled. Both return idempotent
+disposers; their listeners must not block or call Session APIs, and one that
+throws is reported without affecting the others (section 10.1). Document-state
+subscribers and watch listeners still run later, off the line.
 
 ```ts
 await session.commit(async tx => {
@@ -1668,6 +1684,10 @@ type TaskRecord<I, S, R> = {
   readonly owner?: TaskId;
   readonly background: boolean;
   readonly abortRequested: boolean;
+  /** `restart` when the mark abandons the task after a restart, not an abort request (section 5.4). */
+  readonly abortReason?: "restart";
+  /** From `TaskOptions.abandonOnRestart`. Immutable. */
+  readonly abandonOnRestart?: true;
   /** Wall clock at the first change to `running`; kept through waits and recovery. */
   readonly startedAt?: number;
   /** Wall clock at the change to `terminal`. */
@@ -1733,6 +1753,8 @@ interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver, Docum
   getTask<T>(id: TaskId<T>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, T> | undefined>;
   /** Terminal receipt; rejects when the invocation ends. */
   waitForTask<T>(id: TaskId<T>, context: Context): Promise<SettledTask<T>>;
+  /** `abortTask()` of a task this task owns, resolving once it is terminal; rejects for a task another owns. */
+  abortOwned(id: TaskId, context: Context): Promise<void>;
   /** Outcomes of terminal tasks, in order; rejects when one is not terminal. Used after a wait (section 5.5). */
   outcomes<T>(ids: readonly TaskId<T>[], context: Context): Promise<TaskOutcome<T>[]>;
   /** Committed entry visible from the task's conversation. */
@@ -1755,7 +1777,7 @@ type TaskDefinition<I, S extends { phase: string }, R, H extends object> = {
     [P in S["phase"]]: PhaseHandler<I, Extract<S, { phase: P }>, S, R, H>;
   };
   abort(task: RunningTask<I, S, R>, runtime: TaskRuntime<I, S, R, H>, context: Context): Promise<void>;
-  migrate?(input: JsonValue, checkpoint: JsonValue, fromVersion: number): {
+  migrate?(input: JsonValue, checkpoint: JsonValue, fromVersion: number, record: { readonly id: TaskId; readonly owner?: TaskId }): {
     input: I;
     checkpoint: S;
   };
@@ -1773,6 +1795,8 @@ type TaskOptions = {
   readonly conversationId?: ConversationId;
   /** Conversation-owned tasks only: excluded from conversation abort and idle, and from cascades. */
   readonly background?: boolean;
+  /** Its creator awaits it only in memory and does not resume after a restart (section 5.4). */
+  readonly abandonOnRestart?: boolean;
 };
 
 function defineTask<I, S extends { phase: string }, R, H extends object = {}>(
@@ -2069,7 +2093,30 @@ directly; otherwise the scheduler settles it when it would reserve the abort
 invocation, which is after the owned work drained (section 5.5), so an orphaned
 outcome never holds. Only an abort (direct, by
 conversation, or by cascade) orphans a task; a missing definition alone never
-does. The orphaning commit performs the cleanup the task's code cannot: affected
+does, and neither does a `restart` mark (below), whose task waits for its
+definition, so its abort handler can still clean up.
+
+A task created with `abandonOnRestart` is awaited by its creator only in
+memory, and the creator does not resume after a restart, as a replay-unsafe
+tool does not. When such a task is still live once another Harness starts
+scheduling (`resume()`, or the first submission or wait), it is pointless: the
+first reservation pass sets its abort mark with `abortReason: "restart"` and
+reserves nothing, so the next pass sees the marks. Opening alone marks nothing,
+so an inspection-only open marks no task. The cascade passes the `restart`
+reason on to the ordinary owned work below; any other cancellation intent
+marks without a reason, and replaces a `restart` mark below it. A request
+(`abortTask()`, a conversation abort) replaces a `restart` mark too, so a
+restart-marked task waiting for its definition is then orphaned; an owner's own
+cleanup through `runtime.abortOwned()` keeps the mark. Abort handlers see the
+reason on the task record and can tell an abandonment from a request.
+
+No task below an owner with cancellation intent starts a run phase, even
+before the cascade has marked it: reservation skips it, a running invocation
+ends before its next phase, and both schedule the cascade again. Such work runs
+only its abort handler. A reconciliation or reservation commit that fails fails
+the Session (section 10.1).
+
+The orphaning commit performs the cleanup the task's code cannot: affected
 input submissions become unanswered with the reason, any matching active run
 control is cleared, and task-scoped documents retire. The terminal task record
 and unanswered submissions carry the reason; the only transcript entry written
@@ -2082,19 +2129,18 @@ The scheduler knows nothing about runs or task kinds. The Harness, which owns
 submissions, run control, and the built-in tasks, gives it one hook that the
 scheduler calls in the commit that makes an outcome it wrote itself (`faulted`
 and `orphaned`) terminal, which is the final commit after a hold. The hook ignores tasks whose kind is not a built-in
-run, tool, or compaction kind, so it never creates `pi.live` elsewhere. It settles the run when
-`pi.live.run` names the task (section 8): a committed generation partial becomes
-an aborted `pi.assistant` entry, exactly as the generation abort handler converts
-it, so the transcript keeps what the model produced and `pi.usage` counts its
+run, tool, or compaction kind, so it never creates `amazme.live` elsewhere. It settles the run when
+`amazme.live.run` names the task (section 8): a committed generation partial becomes
+an aborted `amazme.assistant` entry, exactly as the generation abort handler converts
+it, so the transcript keeps what the model produced and `amazme.usage` counts its
 spend (the scheduler's commit has no task scope, so the entry has no
 `byTaskId`); its inputs become `unanswered` with reason `faulted` (detail: the error
 message) or the blocked reason; and `run`, `generation`, and `tools` are
 removed. Faults come from task bugs or malformed provider data, such as a
-non-JSON value in a response, or a commit the Storage rejected without effect
-(`StorageRejected`). An uncertain storage failure poisons the Session and writes
-no outcome. For a `pi.tool` task it marks the task's tool slot `done`
+non-JSON value in a response. A storage failure fails the Session and writes no
+outcome (section 10.1). For a `amazme.tool` task it marks the task's tool slot `done`
 without an entry; the run continues, and context derivation synthesizes the
-missing result (section 2.1). For a `pi.compaction` task it removes the task's
+missing result (section 2.1). For a `amazme.compaction` task it removes the task's
 compaction status (section 8.7). Outcomes a task commits for itself do their own settlement.
 The Harness also supplies the per-phase agent resolution behind `runtime.hooks`
 and `runtime.agent()` (section 7.1); the scheduler only passes each phase's
@@ -2158,7 +2204,7 @@ its ordinary owned work drained:
    record's terminal state, task-document retirement, and task waiters are
    deferred to the final commit. A scheduler-written outcome writes only the
    record at hold; its Harness cleanup (section 5.4) runs in the final commit,
-   so a faulted run task keeps `pi.live.run` until its tools drained.
+   so a faulted run task keeps `amazme.live.run` until its tools drained.
 5. Waiters, idle waits, inspection, and ordinary traversal see a `completing`
    task as live until its final commit.
 
@@ -2219,7 +2265,7 @@ type InboxState = { items: InboxItem[] };
 
 | field | value |
 |---|---|
-| kind | `pi.inbox` |
+| kind | `amazme.inbox` |
 | version | `1` |
 | scope/history/fork | conversation, `latest`, `initial` |
 | `initial()` | `{ items: [] }` |
@@ -2227,18 +2273,18 @@ type InboxState = { items: InboxItem[] };
 | view mount | `docs["amazme.inbox"]` |
 | created | with every Harness conversation (section 2.2) |
 
-Items are in ID order. A queued input stores its content; its `pi.user` entry
+Items are in ID order. A queued input stores its content; its `amazme.user` entry
 gets the Harness clock's timestamp at placement. Queued submissions belong to
 their conversation, so a fork starts with an empty inbox.
 
-Run control lives in the built-in live document `pi.live` (section 8). Its
+Run control lives in the built-in live document `amazme.live` (section 8). Its
 optional `run` value names the task currently responsible for the run and its
 placed input-submission IDs. `run !== undefined` defines `busy`; get-or-create
 of the idle document does not. The value remains while generation, tools, and
 tools hand work to one another: `taskId` names the generation that settles the
 inputs, including while its tool round runs, then the next
 generation. Tool tasks never own the run; the current round's tool tasks are
-listed in `pi.live.tools`. The ID list is mutable state because a
+listed in `amazme.live.tools`. The ID list is mutable state because a
 boundary adds placed steering inputs to an active run; every terminal path
 settles exactly the listed inputs.
 
@@ -2325,7 +2371,7 @@ Only successful run ends apply the final boundary: an answer, `terminate`, or
 `handoff`. Failure, a run task's abort handler, fault, and orphan settle the
 run's inputs `unanswered` and leave the inbox alone (`Conversation.abort()`
 separately withdraws queued user items); the queued items stay visible in
-`pi.inbox` until the next submission's boundary or their withdrawal.
+`amazme.inbox` until the next submission's boundary or their withdrawal.
 
 Selected and stale items are removed positionally while retained item order is
 preserved. Chord's Astra operation generator must express scattered removals
@@ -2341,7 +2387,7 @@ extensions. An extension is a named bundle of tools, prompt sections, hooks,
 tool and section wrappers, and task definitions. The registry is process-local,
 may outlive a Harness, and is not persisted; durable state stays in
 conversations, entries, tasks, and documents. A conversation selects extensions
-by name in its `pi.agent` document (section 2.2).
+by name in its `amazme.agent` document (section 2.2).
 
 ```ts
 type DocumentReader = Pick<Session, "snapshot" | "snapshotAsOf">;
@@ -2516,7 +2562,7 @@ still-running call fail with an ordinary error result. Extensions that need
 graceful disposal manage their resources' lifetime themselves, for example by
 reference counting.
 
-**Resolution.** A conversation's `Agent` is resolved from its stored `pi.agent`
+**Resolution.** A conversation's `Agent` is resolved from its stored `amazme.agent`
 (absent: every field unset), a registry snapshot, and the resolved settings:
 
 ```text
@@ -2525,8 +2571,10 @@ extensions  base = settings.extensions ?? every installed extension; in that ord
             duplicates keep their first position; names not installed are skipped
 tools       the selected extensions' tools in extension order; a later same-name tool replaces an earlier one in place
             then every selected extension's tool wrappers, in extension order, then in each extension's order
-            then the filter: an array keeps exactly these names in its order, a repeated name at its first position;
-            { remove } drops these names
+            then the `tools` filter, which yields the enabled tools: an array keeps exactly these names in its order,
+            a repeated name at its first position; { remove } drops these names
+            `tools`: the enabled tools whose `callers` include "model" (default both), through the `modelTools`
+            filter, the same way; `callable`: the enabled tools whose `callers` include "tools"
 sections    the selected extensions' sections, same-key replacement in place, then their section wrappers,
             then `instructions` when set
 hooks       the selected extensions' hooks for the task's name, in extension order
@@ -2576,7 +2624,7 @@ await conversation.configure({ extensions: { add: [Venv] } }, context);
 | reader | resolves | when |
 |---|---|---|
 | generation `prepare` | agent (tools, sections, model, thinking level), stream options, compaction thresholds | once per request; model, stream options, and offered tools are fixed in the request checkpoint (section 8.3) |
-| every task phase | extension selection for hooks; `runtime.agent()` | at most once per phase handler, at its first hook dispatch or `agent()` call, from that phase's snapshot and the committed `pi.agent`, off the Session line, with the invocation's context; fixed for the rest of the phase |
+| every task phase | extension selection for hooks; `runtime.agent()` | at most once per phase handler, at its first hook dispatch or `agent()` call, from that phase's snapshot and the committed `amazme.agent`, off the Session line, with the invocation's context; fixed for the rest of the phase |
 | tool task | the implementation of an accepted call | at `call` and `execute`: the name among the phase agent's `tools`, the current selection after the tools filter; no such tool, for example one removed after preparation: `tool_unavailable`. Replay policy on reopen uses the same lookup (section 7.3) |
 | generation, when a tool round starts | tool execution mode | once per round (section 8.3) |
 | generation, compaction | retry policy | at each attempt's classification |
@@ -2642,16 +2690,19 @@ interface GenerationHooks {
   afterTools(assistant: EntryId, results: readonly EntryId[], api: HookApi, context: Context): void | Promise<void>;
 }
 
+/** `parent` is set for a nested call (section 7.3). */
+type ToolHookCall = ToolCall & { readonly parent?: { readonly taskId: TaskId; readonly callId: string } };
+
 interface ToolHooks {
   /** Before intent; replaces the arguments or blocks the call with error text. */
   beforeTool(
-    call: ToolCall,
+    call: ToolHookCall,
     api: HookApi,
     context: Context,
   ): HookResult<{ readonly arguments?: JsonObject; readonly block?: string }>;
-  /** After execution, before the result entry; replaces the result. */
+  /** After execution, before the result is committed; replaces the result. */
   afterTool(
-    call: ToolCall,
+    call: ToolHookCall,
     result: ToolExecutionResult,
     api: HookApi,
     context: Context,
@@ -2730,12 +2781,14 @@ type ToolDiagnostic = {
   readonly code?: string;
 };
 
+/** Three channels: `output` for the model, `structuredOutput` for programs that call the tool, `details` for UIs. */
 type ToolExecutionResult<TDetails extends JsonValue = JsonValue> = {
-  readonly content?: ToolResultMessage["content"];
+  readonly output?: ToolResultMessage["content"];
+  readonly structuredOutput?: JsonValue;
   readonly isError?: boolean;
   readonly details?: TDetails;
   readonly diagnostics?: readonly ToolDiagnostic[];
-  /** Spend of the execution itself, such as a model call; stored on the result and in `pi.usage.tools`. */
+  /** Spend of the execution itself, such as a model call; stored on the result and in `amazme.usage.tools`. */
   readonly usage?: Usage;
   readonly control?: ToolControl;
 };
@@ -2760,6 +2813,8 @@ interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extends Docum
   /** Built by `HarnessOptions.env` for this call. */
   readonly env: ExecutionEnv | undefined;
   output(chunk: string | Uint8Array): void;
+  /** The output retained so far, as the model will see it, and whether earlier output was dropped. */
+  retainedOutput(): { readonly text: string; readonly truncated: boolean };
   diagnostic(diagnostic: ToolDiagnostic): void;
   details(value: TDetails, context: Context): Promise<void>;
   commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
@@ -2774,7 +2829,27 @@ interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extends Docum
   getTask<R>(id: TaskId<R>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, R> | undefined>;
   waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>>;
   conversation(id: ConversationId, context: Context): Promise<ConversationHandle | undefined>;
+  /** Run another tool as a nested call of this one (below) and wait for its result. */
+  executeTool(
+    name: string,
+    args: JsonObject,
+    context: Context,
+    options?: { readonly key?: string; readonly progress?: boolean },
+  ): Promise<NestedToolExecutionResult>;
 }
+
+/** A nested call's result, for programs: no output for the model, and `control` does not apply. */
+type NestedToolExecutionResult = {
+  /** The nested call's tool task. */
+  readonly taskId: TaskId;
+  /** A schema tool's validated `structuredOutput`, else its bounded output, collapsed (below). */
+  readonly structuredOutput?: JsonValue;
+  readonly isError: boolean;
+  readonly details?: JsonValue;
+  readonly diagnostics: readonly ToolDiagnostic[];
+  readonly usage?: Usage;
+  readonly durationMs?: number;
+};
 
 type ToolRegistration<TParameters extends TSchema = TSchema, TDetails extends JsonValue = JsonValue> =
   Tool<TParameters> & {
@@ -2782,6 +2857,10 @@ type ToolRegistration<TParameters extends TSchema = TSchema, TDetails extends Js
   readonly executionMode?: ToolExecutionMode;
   /** Pure repair of commonly malformed arguments; runs before validation, which still checks its result. */
   prepareArguments?(args: unknown): Static<TParameters>;
+  /** Schema of `structuredOutput`; omitted, programs get the bounded output, collapsed (section 7.3). */
+  readonly structuredOutputSchema?: TSchema;
+  /** Who may call the tool; default both. */
+  readonly callers?: readonly ("model" | "tools")[];
   readonly outputLimits?: {
     readonly maxBytes?: number;
     readonly maxLines?: number;
@@ -2810,6 +2889,115 @@ and `retain: "head"`. Omitted `executionMode` follows the settings'
 `toolExecution`; one `sequential` call makes its whole round sequential
 (section 8.3).
 
+A running tool calls another tool with `api.executeTool()`, as a codemode
+script or an MCP bridge does. The nested call is its own `amazme.tool` task, owned
+by the calling tool's task, so it has its own task ID for idempotence and
+ownership, runs the whole tool pipeline (section 8.4) including the `ToolTask`
+hooks, which see `call.parent`, and reports progress in `amazme.live.nestedTools`
+(section 8.2). Its result returns to the caller as a `NestedToolExecutionResult` and
+never enters the transcript; the model sees only what the caller puts in its
+own result. Its tool resolves among the agent's `callable` tools: the enabled
+tools whose `callers` include `tools` (section 7.1). A call that is
+unavailable, invalid, blocked, throws, is interrupted, or is aborted returns
+an `isError` result; a nested task the scheduler faulted or orphaned returns a
+synthesized one.
+
+AmazMe also supports a nested `ToolTask` created directly by an ordinary owning task. Before execution, the tool kernel verifies its live owner, registers its unique key in the same task-scoped index, and enforces the per-parent bound. Workflow and verification tasks use this path; they read `NestedResultDoc` before settling and retain only their own bounded evidence. There is one tool executor and result store.
+
+The nested call's key names it within its caller; the nested call ID is
+`<callId>/<key>`. By default the key is the call's position among the
+invocation's nested calls, `1`, `2`, ... An explicit `key` must be non-empty,
+without `/`, not `__proto__`, and not a positive integer, so call IDs never
+collide. One commit creates the nested task, its slot, and an index entry from
+the key to the task in `amazme.tool.nested`, a task-scoped document of the caller,
+which retires with it. A caller that is not replay-safe creates its nested
+calls, and the child tasks it creates through `api.createTask()` unless the
+options say otherwise, with `abandonOnRestart` (section 5.4): it never resumes
+after a restart, so neither do they. With `progress: false`, a nested call
+commits only its status to its slot, no running output, details, or
+diagnostics; its result still carries its details and diagnostics, and a
+schema-less tool's output as `structuredOutput`, but an interrupted or aborted
+call, whose result is built from its slot, then has none of them. Programs
+never get the partial output of an interrupted or aborted call. AmazMe limits a parent to 256 nested calls and nesting to eight levels.
+Nested calls can run concurrently; callers await them in order when needed.
+`callers` keeps a tool from being called by tools at all.
+
+The nested call's result does not go into its receipt, which stays
+`{ kind: "nested" }`. Its terminal commit writes the result to
+`NestedResultDoc` (`amazme.tool.nested-result`), a task-scoped document family of
+the caller keyed by the nested task ID, one member per result, and sets its
+slot's `summary` (`isError`, `durationMs`, `usage`, bounded error text). The
+stored result is exactly what `executeTool()` returns: it keeps no `output`,
+which only the model reads, so each result, an image or a `bash` tail, is stored
+once. The caller is
+never terminal before its owned nested calls, so the write always finds its
+documents open; a nested call missing from the caller's index throws. The
+caller reads the result after the wait, and every nested result is gone from
+storage once its caller is terminal. A nested call the scheduler faulted or
+orphaned has no stored result; the caller gets a synthesized `isError` one.
+
+A later `executeTool()` with a used key, from the same invocation or from a
+replay-safe rerun after recovery that calls in the same order or passes the
+same `key`, waits for that task again, finished or still running, instead of
+creating another; a different tool name or arguments that
+are not structurally equal throws. So a replay-safe caller admits each nested
+call once and reuses its committed result. This is not exactly-once execution:
+a nested call interrupted by a crash before its result commits follows its own
+replay policy, rerunning when safe and returning `interrupted` otherwise, so a
+replay-safe tool with external effects still needs its own idempotency. Nested calls start when
+made, whatever their `executionMode`; the caller decides what runs at once by
+what it awaits. A nested result's `usage` is counted under its tool when it
+settles (section 8.6); a caller that passes it on in its own result counts it
+again.
+
+Before a caller settles, by any path, it lets nested call admissions its
+invocation started commit, then aborts every nested call it left running with
+`runtime.abortOwned()`, all at once, and waits for them, so they settle into
+their slots before the caller's settlement removes them. `executeTool()` throws
+once `execute()` has returned, and rejects when the caller is aborted or the
+Harness closes; cancelling its `context` stops only the wait. An abort that
+arrives during this cleanup still aborts the caller, whose finished result is
+then replaced by the `aborted` one. The caller's result message lists none
+of its nested calls (no pi-ai `nestedCalls`): their task records keep every
+call and its arguments, and a tool that wants a list in its result, as code
+mode does, writes one into its own `details`. A crash between the
+caller's return and its result commit leaves it in `execute`: a replay-safe
+caller runs again and finds its nested calls by key; any other caller settles
+`interrupted`, and its nested calls were abandoned before they could run.
+
+Programs that call a tool get its `structuredOutput`. A tool that declares
+`structuredOutputSchema` must return a `structuredOutput` matching it, except
+on an error result, where it may omit it; the Harness validates it after the
+`afterTool` chain, like arguments. A tool without a schema must not return one;
+programs get its bounded output, the content the model sees without the
+rendered diagnostics, for a success and for an error alike: one text item as
+its string, one image as its `ImageContent`, no items as `""`, and anything
+else as the content list. So a
+hook that redacts a schema-less tool's output redacts what programs get. An
+error result the Harness writes itself (unavailable, invalid arguments,
+blocked, interrupted, aborted, abandoned, or a scheduler fault) has no
+`structuredOutput`; its diagnostics say what went wrong, as they do for a
+schema tool's error result without one. A nested call whose result breaks this gets an error result
+with an `invalid_structured_output` diagnostic, without the broken value: a
+schema tool's then has no `structuredOutput`, a schema-less tool's its output;
+a model-issued call, whose `structuredOutput` the model never sees, only loses
+it, and the break is reported through `HarnessOptions.onReport`. `structuredOutput` has no size bound;
+keeping it small is the tool's job, as `bash` keeps its retained tail and the
+spill path rather than the whole output. A model-issued call's result entry
+does not store it, and the Harness does not build a schema-less one for it; a
+nested call's result does, until its caller settles. A
+tool that returns the text it streamed in its `structuredOutput` reads it with
+`api.retainedOutput()`, the bounded text the model sees when the result omits
+`output`.
+
+`callers` says who may call a tool: the model, other tools through
+`executeTool()`, or both (the default). A code mode tool is `["model"]`, so
+scripts cannot start scripts; tools behind code mode, such as MCP tools, can be
+`["tools"]`, so the model is never offered them. A conversation's `modelTools`
+narrows which of its model-callable tools the model is offered, for example
+only the code mode tool, while the others stay callable by tools. Neither can
+widen what `tools` enables.
+
 Tools reach files and processes only through `api.env`, never through an
 environment captured when the tool was built. The tool task builds it for each
 call with `HarnessOptions.env` from the conversation's ID and `cwd` (section
@@ -2823,7 +3011,7 @@ A running tool reports output and details to the UI, mirroring the two halves of
 its final result, plus diagnostics (below):
 
 - `output(chunk)` appends running text output, like stdout. If `execute()` omits
-  `content`, the final retained output becomes one text content item; no output
+  `output`, the final retained output becomes one text content item; no output
   becomes an empty content list. Retained output is an exact slice of whole lines
   of the stream (the first lines for `head`, the last for `tail`), trailing
   newline included; a single line longer than `maxBytes` is cut at the byte limit
@@ -2837,7 +3025,7 @@ its final result, plus diagnostics (below):
 Neither is sent to the model while the tool runs. `output()` synchronously
 accepts UTF-8 output into that invocation-owned bounded buffer and throws after
 invocation end. Throttled commits publish the retained output, dropped
-byte/line counts, and the current details and diagnostics in its `pi.live.tools`
+byte/line counts, and the current details and diagnostics in its `amazme.live.tools`
 slot. The throttle is adaptive, like the environment's shell output capture: the
 first change after an idle period commits at once; each commit then delays the
 next by at least `settings.progress.outputIntervalMs` (default 100 ms) and by
@@ -2867,7 +3055,7 @@ When there are any, the result content ends with one text item:
 </harness>
 ```
 
-with one `[severity] message` line per diagnostic, and the `pi.tool-result`
+with one `[severity] message` line per diagnostic, and the `amazme.tool-result`
 entry stores the structured list, possibly empty, as `data: { diagnostics }`
 (section 8.1). The
 stored message is exactly what the model saw, while UIs and code read the list.
@@ -2881,8 +3069,11 @@ renderer needs it. The environment's shell streams raw output chunks and spills
 the complete output to a file once it crosses byte or line thresholds; it keeps
 no bounded view of its own, so `output()` is the one place output is bounded,
 sanitized, and throttled. The `bash` tool pipes those chunks into `output()`,
-reports the spill path as a diagnostic, and throws on a nonzero exit or timeout;
-the error result still carries the retained output and diagnostics.
+reports the spill path as a diagnostic, returns `structuredOutput: { output,
+truncated, fullOutputPath?, exitCode }` with the retained output, answers a
+nonzero exit with an error result carrying an `exit_code` diagnostic, and
+throws on a timeout; either error result still carries the retained output and
+diagnostics.
 
 An environment that moves output over a slow link, such as one on another host,
 need not move all of it. `api.outputWindow` names the tail a tail-retaining
@@ -2946,7 +3137,7 @@ final flush and settles any `details()` promise still pending. Abort and close o
 invocation and Session admission gates: uncommitted buffered updates may be
 discarded, while admitted commits settle. Cancellation, callback, tracker
 preparation, and checkpoint failures occur before Storage admission and do not
-poison the Session. An uncertain Storage failure follows the fatal Session rule.
+fail the Session. A Storage failure follows the fatal Session rule (section 10.1).
 
 Tools come with extensions (section 7.1) and have a name, description, JSON
 schema, replay policy, and execute function. `wrapTool(tool, wrapper)` decorates
@@ -2989,7 +3180,7 @@ ordinary transaction writes for passive entries.
 
 A tool executes in a durable task. It may:
 
-- publish bounded running output and details to its `pi.live.tools` slot;
+- publish bounded running output and details to its `amazme.live.tools` slot;
 - commit memos;
 - create and wait for tasks;
 - atomically create or fork explicitly owned conversations through `commit()`;
@@ -3050,7 +3241,7 @@ export const Subagent = defineExtension({
       const request = { type: "input", content: task, requestId: `subagent:${api.taskId}` } as const;
       const settled = await (await handle.submit(request, context)).wait(context);
       if (settled.status !== "done" || settled.type !== "input") throw new Error(`Subagent failed: ${settled.status}`);
-      return { content: [{ type: "text", text: await answerText(api, settled.answer, context) }] };
+      return { output: [{ type: "text", text: await answerText(api, settled.answer, context) }] };
     },
   })],
 });
@@ -3086,7 +3277,7 @@ the answer once. The reporter therefore needs no transaction-level admission;
 `tx.createSubmission()` writes a raw record without admission rules. The
 application's name document uses
 `fork: "initial"` so forks of the parent do not inherit it. A UI lists
-subagents from that document; a child is working while its `pi.live.run` is
+subagents from that document; a child is working while its `amazme.live.run` is
 set. Owner edges alone drive abort and idle traversal. The anchor and reporter
 task definitions come with the subagent extension, so pending reporters resume
 after a restart once the host installs it again:
@@ -3110,14 +3301,14 @@ conversation's stored tools filter; they take effect at the next preparation. Th
 terminates only when every result of the round requests `terminate`, as in the
 pi agent loop; the `tools` phase then uses a final boundary. Any
 `handoff` in the round, the last one in call order when several ask, ends the
-run the same way after appending a `pi.reset` entry with `head: "self"` and the
+run the same way after appending a `amazme.reset` entry with `head: "self"` and the
 handoff text as a user message (section 8.1), exactly what `reset(handoff)`
 writes.
 
 A result's `usage` is stored on the tool-result message and added to the
-conversation's `pi.usage.tools[toolName]` in the result commit (section 8.6). A
+conversation's `amazme.usage.tools[toolName]` in the result commit (section 8.6). A
 tool that runs an owned conversation must not report that conversation's spend
-again: the child's own `pi.usage` already counts it (section 12).
+again: the child's own `amazme.usage` already counts it (section 12).
 
 On reopen, a tool reruns only when both its stored intent policy and the current
 declaration, resolved as at `call`, say `safe`. A current `unsafe` declaration
@@ -3134,12 +3325,35 @@ and the error text as its message. Their content is the durable partial output,
 if any, and `details` is the tool's last reported value, if any.
 
 `@amazme/durable/tools` provides `read`, `write`, `edit`, and `bash`
-factories, ported from the agent harness tools, and the `CodingTools` extension
-with all four. They use only `api.env`; nothing
-installs them automatically. `read` does not return images yet. It reads a
-file through `openBinaryReader`: image detection reads the header (and a PNG's
-chunk headers), `scanLines` counts and locates the selected lines, and only the
-shown head is read and decoded, so its cost and transfer are bounded by the
+factories, ported from the agent harness tools, the `CodingTools` extension
+with all four, and `createCodingTools({ images })`, the same with an image
+processor for `read`. They use only `api.env`; nothing installs them
+automatically.
+
+`read` returns an image file, detected by content, as one image block with an
+`info` diagnostic (code `image`) saying its type and what was done to it, so
+programs get a bare `ImageContent`. An image must be read whole: unlike text,
+one that grows while it is read is read again. The limits are the
+conversation model's `inputLimits.images.resize`, each absent one
+`DEFAULT_IMAGE_LIMITS` (2000x2000 pixels, 4.5 MiB of base64). Without an
+`ImageProcessor`, `read` passes PNG, JPEG, GIF, and WebP through, undecoded,
+when the file size puts their base64 within the byte limit (checked before
+reading the file) and their header declares dimensions within the limits;
+otherwise, and for BMP, it returns an error result (code `unsupported_image`).
+With one, `await processor.prepare(bytes, mimeType, limits)` returns the image fitted to the limits, or `undefined` for an error result; the
+diagnostic says when its format changed or it was resized, with the factor that
+maps coordinates back. The Photon processor decodes every image, returns it as
+it is when it is upright, inline, and within the limits, and otherwise
+re-encodes it as PNG or JPEG (JPEG first for JPEG sources). `@amazme/durable/images` provides `createPhotonImages(wasm)`,
+on Photon's WebAssembly, given its module or bytes; `/images/node` reads the
+wasm from the installed package and `/images/cloudflare` imports it as a
+Workers module. Neither is loaded unless imported. A conversation whose model
+does not take images still gets the image; pi-ai replaces it with a placeholder
+in requests, and the diagnostic says so.
+
+For text, `read` reads a file through `openBinaryReader`: image detection reads
+the header (and a PNG's chunk headers), `scanLines` counts and locates the
+selected lines, and only the shown head is read and decoded, so its cost and transfer are bounded by the
 output limits plus one pass over the file inside the environment. Its result is
 exactly that of decoding the whole file, splitting it into lines, and
 truncating the selection. A file that changes while it is read is read again
@@ -3153,7 +3367,7 @@ is not a lock against `bash` or other processes.
 ### 7.4 System prompt and dynamic tools
 
 Pico has no durable prompt sections. The conversation's resolved agent produces
-the desired sections for each request; the transcript's `pi.system` entries are
+the desired sections for each request; the transcript's `amazme.system` entries are
 the only durable record of what the model saw. Pico stores prompt and tool
 changes directly as PR #9548 `SystemMessage` values at their transcript
 positions, always with empty `content`:
@@ -3193,7 +3407,7 @@ Generation preparation takes these steps against its phase snapshot:
    committed documents (the task runtime). The results are the desired
    sections.
 4. Compare desired sections and tool declarations with the replayed state and
-   append one positional `pi.system` entry when they differ.
+   append one positional `amazme.system` entry when they differ.
 
 Preparation does not recheck the transcript before appending: only the Harness
 writes to a busy conversation, through submissions, run tasks, boundaries, and a
@@ -3241,7 +3455,7 @@ so a same-name replacement gets the new declaration and position.
 
 Preparation compares both values and order. If values can be patched without
 changing order, it emits the minimal patch. If shown and desired section order
-differ, one commit appends two `pi.system` entries: the first removes every
+differ, one commit appends two `amazme.system` entries: the first removes every
 shown section with `null`, and the second re-adds every desired section in
 desired order. This makes order-only changes and deletion/re-addition between
 requests replay exactly; merely restating equal values is insufficient.
@@ -3249,14 +3463,14 @@ requests replay exactly; merely restating equal values is insufficient.
 A PR #9548 `SystemMessage` is always a patch, not a reset: it cannot remove
 previous `content` or restore section order merely by restating current values.
 Therefore, when a head removes the previous request-visible baseline, which is
-the case when the active context has a head marker and no `pi.system` entry
+the case when the active context has a head marker and no `amazme.system` entry
 was appended after that marker (has a higher ID), the new
-`pi.system` entry adds `ContextEdit` omissions for every earlier `pi.system`
+`amazme.system` entry adds `ContextEdit` omissions for every earlier `amazme.system`
 entry still retained after the cut. Its own message is then a complete baseline
 containing every desired section in order and every effective tool declaration.
 Model-context replay sees the new baseline instead of the omitted retained
 deltas. Preparation writes this baseline even when it restates the replayed
-values, so every later preparation finds a `pi.system` entry after the marker.
+values, so every later preparation finds a `amazme.system` entry after the marker.
 Head rebaselining takes precedence over ordinary order/value patching.
 Without a head cut, an order mismatch uses the two-entry remove/re-add sequence
 above; only when order already matches does preparation emit the minimal changed
@@ -3322,9 +3536,9 @@ The initial implementation provides:
 
 | kind | responsibility |
 |---|---|
-| `pi.generation` | prepare system prompt and tools, request or poll model, retry, classify response |
-| `pi.tool` | validate, hook, execute, persist output and details, append result |
-| `pi.compaction` | select a transcript range, summarize, place a headed summary |
+| `amazme.generation` | prepare system prompt and tools, request or poll model, retry, classify response |
+| `amazme.tool` | validate, hook, execute, persist output and details, append result |
+| `amazme.compaction` | select a transcript range, summarize, place a headed summary |
 
 Generation uses `HarnessOptions.models` without a Pico-specific model adapter. It
 resolves `models.getModel(ref.provider, ref.modelId)`, builds a pi-ai `Context`
@@ -3348,22 +3562,22 @@ does not delete transcript history.
 
 ### 8.1 Built-in entries
 
-Built-in entry kinds carry no `data`, except `pi.tool-result`, whose token is
+Built-in entry kinds carry no `data`, except `amazme.tool-result`, whose token is
 `Entry<{ diagnostics: ToolDiagnostic[] }>`; every tool result carries `data`,
 with an empty list when it has no diagnostics (section 7.3), and
-`pi.compaction`, whose token is `Entry<{ reason: CompactionReason }>`. Each kind
+`amazme.compaction`, whose token is `Entry<{ reason: CompactionReason }>`. Each kind
 is exported as an `Entry` token.
 
 | kind | `model` | written by |
 |---|---|---|
-| `pi.user` | `[UserMessage]`, timestamp from the Harness clock at admission or placement | submissions, `onYield` continuations |
-| `pi.assistant` | `[AssistantMessage]` with any stop reason | generation |
-| `pi.system` | `[SystemMessage]` with `content: ""` (section 7.4) | generation preparation |
-| `pi.tool-result` | `[ToolResultMessage]` | tool tasks; generation for calls to tools its request did not offer |
-| `pi.reset` | absent, or `[UserMessage]` with the handoff text; always `head: "self"` | `reset()`, generation `tools` phase for `handoff` |
-| `pi.compaction` | `[UserMessage]` with the wrapped summary; `head` is the first kept entry | compaction tasks (section 8.7) |
+| `amazme.user` | `[UserMessage]`, timestamp from the Harness clock at admission or placement | submissions, `onYield` continuations |
+| `amazme.assistant` | `[AssistantMessage]` with any stop reason | generation |
+| `amazme.system` | `[SystemMessage]` with `content: ""` (section 7.4) | generation preparation |
+| `amazme.tool-result` | `[ToolResultMessage]` | tool tasks; generation for calls to tools its request did not offer |
+| `amazme.reset` | absent, or `[UserMessage]` with the handoff text; always `head: "self"` | `reset()`, generation `tools` phase for `handoff` |
+| `amazme.compaction` | `[UserMessage]` with the wrapped summary; `head` is the first kept entry | compaction tasks (section 8.7) |
 
-Every generation response becomes a `pi.assistant` entry: answers, failed attempts
+Every generation response becomes a `amazme.assistant` entry: answers, failed attempts
 with their error text and usage, and converted partials with stop reason
 `aborted`. Context derivation (section 2.1, rule 9) keeps failed and aborted
 messages out of later requests, so no separate usage or notice kind exists.
@@ -3384,6 +3598,29 @@ type LiveState = {
     /** Provider-side deferred response being polled. */
     deferred?: { pollAt: number };
   };
+  /**
+   * Nested calls of running tool calls (section 7.3), in creation order, so a parent precedes its children and task
+   * IDs ascend.
+   */
+  nestedTools?: {
+    /** `<parentCallId>/<key>`: the call's ID in tool events, unique because keys contain no `/`. */
+    callId: string;
+    parentCallId: string;
+    /** The calling tool task, model-issued or nested; the Harness relates slots by task ID. */
+    parentTaskId: TaskId;
+    taskId: TaskId;
+    name: string;
+    /** The call's arguments, unbounded; once it executes, those it runs with, after repair, hooks, and coercion. */
+    arguments: JsonObject;
+    status: "pending" | "running" | "done";
+    output?: string;
+    droppedBytes?: number;
+    droppedLines?: number;
+    details?: JsonValue;
+    diagnostics?: ToolDiagnostic[];
+    /** Once done: how the call ended, with up to 500 characters of error text; the result is not here (section 7.3). */
+    summary?: { isError: boolean; durationMs?: number; usage?: Usage; error?: string };
+  }[];
   /** The current tool round in call order, from the tool-calling answer until the generation's `tools` phase ends it. */
   tools?: {
     callId: string;
@@ -3422,11 +3659,11 @@ type CompactionStatus = {
 
 | field | value |
 |---|---|
-| kind | `pi.live` |
+| kind | `amazme.live` |
 | version | `1` |
 | scope/history/fork | conversation, `latest`, `initial` |
 | `initial()` | `{}` |
-| checkpoint | complete base whenever nothing runs: `generation` absent and no `running` tool slot |
+| checkpoint | complete base whenever nothing runs: `generation` absent and no `running` tool or nested slot |
 | view mount | `docs["amazme.live"]` |
 | created | with every Harness conversation (section 2.2) |
 
@@ -3450,6 +3687,16 @@ publishes throttled output and details into it, and in its terminal commit sets
 The generation's `tools` phase removes `tools`. Slot updates apply only while a slot with the task's
 `taskId` exists; without one, the durable partial output, details, and
 diagnostics are empty.
+
+A nested slot is pushed to `nestedTools` in the commit that creates its task,
+with the arguments the caller passed, runs like a tool slot, gets the arguments
+it executes with in its intent commit when they differ (a model-issued call's
+are in its assistant entry), and in its terminal commit becomes `done`, with its progress
+removed like a tool slot's and its `summary` set, enough for a status line; its
+result is in the caller's `NestedResultDoc`, never in `amazme.live` (section 7.3). When any call settles, its terminal commit
+removes the nested slots below it, transitively by `parentTaskId`; its
+left-running nested calls were aborted first. `endRun` and the generation's
+`tools` phase remove `nestedTools` with `tools`.
 
 A compaction's status is added in the commit that creates the task and removed
 in the commit that decides its outcome: the task's own outcome commit, even when
@@ -3507,15 +3754,15 @@ type GenerationCheckpoint =
 type GenerationResult = { entryId: EntryId };
 ```
 
-`pi.generation` is version 1 and starts at `{ phase: "prepare", attempt: 1 }`.
-The run's inputs live in `pi.live.run`, not in the task input.
+`amazme.generation` is version 1 and starts at `{ phase: "prepare", attempt: 1 }`.
+The run's inputs live in `amazme.live.run`, not in the task input.
 
 - `prepare` runs section 7.4 with the phase's agent resolution and resolves
   the settings once. When the agent has no model or `models.getModel()` does
   not know it, the task fails with `no_model`. When it resumes with `overflow`
   and its compaction did not complete with an `entryId`, the run fails with
   `model_error` and the overflow text as detail. Otherwise one commit appends
-  the planned `pi.system` entries and moves to `request` with the new tail as
+  the planned `amazme.system` entries and moves to `request` with the new tail as
   `cutoff`, the agent's model and thinking level, and the settings' stream
   options. These stay fixed for this request attempt; a retry prepares again. `compacted` carries over to
   `request`, `retry`, `poll`, and the next `prepare`.
@@ -3535,7 +3782,7 @@ The run's inputs live in `pi.live.run`, not in the task input.
     and checkpoint `{ phase: "prepare", attempt, compacted }`. Whatever its
     outcome, `prepare` then runs again and sends the request.
   - Above `contextWindow - reserveTokens - backgroundTokens` with
-    `backgroundTokens > 0` and no compaction status in `pi.live`: the commit that
+    `backgroundTokens > 0` and no compaction status in `amazme.live`: the commit that
     moves to `request` also creates a background compaction, owned by the
     conversation, with reason `threshold`, and adds its status. The generation
     does not wait for it. The settings' retry policy is read when the
@@ -3545,8 +3792,8 @@ The run's inputs live in `pi.live.run`, not in the task input.
   `models.getModel()`; an unknown model fails the task with `no_model`, like
   `prepare`. `request` converts a leftover partial (below) before it resolves
   the model.
-- `request` first converts a committed partial left in `pi.live` by an
-  interrupted attempt into an aborted `pi.assistant` entry. It then streams the
+- `request` first converts a committed partial left in `amazme.live` by an
+  interrupted attempt into an aborted `amazme.assistant` entry. It then streams the
   model context through `cutoff` with the invocation signal, the thinking level
   as `reasoning` (omitted for `off`), the conversation's persisted provider
   `sessionId`, and the pinned `streamOptions`, committing throttled partials at
@@ -3563,8 +3810,8 @@ The run's inputs live in `pi.live.run`, not in the task input.
   - `stop`/`length`: before the commit, the `onYield` chain runs; the first
     `{ continue }` wins. The commit appends the answer and applies the final
     boundary (section 6). With a continuation and no selected user item or
-    reset, it appends a `pi.user` entry with the continuation content, creates a
-    successor generation, and hands it `pi.live.run`, keeping the inputs open.
+    reset, it appends a `amazme.user` entry with the continuation content, creates a
+    successor generation, and hands it `amazme.live.run`, keeping the inputs open.
     Otherwise it settles the run's inputs `done`, removes `run` and
     `generation`, and starts a successor run for the selected user items, if
     any; a dropped continuation is not retried. Both complete with
@@ -3605,7 +3852,7 @@ A tool round starts in the commit that appends the tool-calling answer:
    committed model context through `cutoff`: `request` already holds it, and
    `poll` derives it again. A call to a tool not offered gets its
    `tool_unavailable` result entry here, without a task.
-2. Every other call gets a `pi.tool` task owned by the generation, with input
+2. Every other call gets a `amazme.tool` task owned by the generation, with input
    `{ assistant, callId }`. The round is sequential when the settings'
    `toolExecution`, read as the round starts, is `sequential` or any called
    tool, resolved from the phase's agent as the tool task resolves it (section
@@ -3615,28 +3862,39 @@ A tool round starts in the commit that appends the tool-calling answer:
    created so far and grows by one per started sequential call, while
    `pending` shrinks.
 3. The generation commits `waiting` on its tool tasks with `allSettled` and the
-   `tools` checkpoint (section 8.5); `pi.live.run` stays with it.
-4. `pi.live.tools` receives the round's slots (section 8.2), and `generation` is
+   `tools` checkpoint (section 8.5); `amazme.live.run` stays with it.
+4. `amazme.live.tools` receives the round's slots (section 8.2), and `generation` is
    removed.
 
 Input submissions settle `unanswered` with one of these reasons: `no_model`,
 `model_error` (detail: provider error text), `aborted`, `faulted` (detail: error
 message), or an orphaning blocked reason (section 5.4). Fault and orphan
-settlement convert a committed partial into an aborted `pi.assistant` entry,
+settlement convert a committed partial into an aborted `amazme.assistant` entry,
 like the abort handler.
 
 ### 8.4 Tool
 
 ```ts
-type ToolTaskInput = { assistant: EntryId; callId: string };
+type ToolTaskInput =
+  | { kind: "model"; assistant: EntryId; callId: string }
+  | { kind: "nested"; parent: TaskId; parentCallId: string; key: string; call: ToolCall; progress?: false };
 type ToolTaskCheckpoint =
   | { phase: "call" }
   | { phase: "execute"; arguments: JsonObject; replay: "safe" | "unsafe" };
-type ToolTaskResult = { entryId: EntryId; control?: ToolControl };
+type ToolTaskResult = { kind: "model"; entryId: EntryId; control?: ToolControl } | { kind: "nested" };
 ```
 
-`pi.tool` is version 1 and starts at `{ phase: "call" }`. The input stays small
-because the terminal record keeps it; the call is read from the assistant entry.
+`amazme.tool` is version 2 and starts at `{ phase: "call" }`; `migrate` gives a
+version 1 input `kind: "model"`, and readers treat a terminal result without
+`kind` as a model-issued call's. A model-issued call's input stays small
+because the terminal record keeps it; the call is read from the assistant
+entry. A nested call (section 7.3) carries its call, since no entry holds it,
+and settles differently: its result commit records the result's `usage`
+(section 8.6), writes its result for programs to the caller's
+`NestedResultDoc` (section 7.3), marks its nested slot `done` with its
+summary, appends no entry, and ends with `{ kind: "nested" }`; `control` does
+not apply.
+Below, `{ entryId }` is a model-issued call's result.
 
 - `call` reads the call with `runtime.entry()`, resolves the tool among the
   phase's agent `tools` (section 7.3), validates
@@ -3654,7 +3912,7 @@ because the terminal record keeps it; the call is read from the assistant entry.
   `interrupted` error result from the slot's durable partial output, details, and
   diagnostics, and ends `failed` with `{ entryId }`.
 - The result commit bounds the content, appends the diagnostics block (section
-  7.3), appends one `pi.tool-result` entry with `model: [{ role: "toolResult",
+  7.3), appends one `amazme.tool-result` entry with `model: [{ role: "toolResult",
   toolCallId, toolName, content, details, isError, durationMs, timestamp }]` and
   `data: { diagnostics }`, marks the slot `done`, and
   completes with `{ entryId, control }`. An `isError` result still completes.
@@ -3680,22 +3938,22 @@ The generation resumes in its `tools` phase once every tool task it waits on is
 terminal. In a sequential round with calls left in `pending`, one commit creates
 the next call's owned tool task and waits on it again with the shorter `pending`.
 Otherwise it reads the tool records with `runtime.getTask()` and the round's
-result entries from the `pi.live.tools` slots, runs the `afterTools` observers,
+result entries from the `amazme.live.tools` slots, runs the `afterTools` observers,
 and then commits once:
 
-- It edits the conversation's stored `pi.agent` `tools` for every `addTools`
-  name: an array gets the name appended unless it holds it already, and
-  `{ remove }` loses the name. With `tools` unset, every tool is already
-  offered, and nothing is written. The next preparation offers the tool when it
-  resolves.
+- It edits the conversation's stored `amazme.agent` `tools` and `modelTools` for
+  every `addTools` name: an array gets the name appended unless it holds it
+  already, and `{ remove }` loses the name. An unset filter already lets every
+  tool through, and nothing is written for it. The next preparation offers the
+  tool when it resolves and the model may call it.
 - When every result of the round requests `terminate`, or any requests
-  `handoff`, it appends the handoff's `pi.reset` entry, if any, settles the
+  `handoff`, it appends the handoff's `amazme.reset` entry, if any, settles the
   run's inputs `done` with the tool-calling answer, removes `run` and `tools`,
   and applies the final boundary.
 - Otherwise it removes `tools` and applies the `postTools` boundary. When that
   boundary placed a reset, the run's inputs settle `unanswered` with `reset` and
   selected user items start a successor run (section 6). Otherwise selected
-  steer IDs join `pi.live.run`, and it creates the next generation, owned by the
+  steer IDs join `amazme.live.run`, and it creates the next generation, owned by the
   conversation, and hands it the run.
 
 It completes with `{ entryId }` of the tool-calling answer. Its abort handler
@@ -3719,7 +3977,7 @@ type UsageState = {
 
 | field | value |
 |---|---|
-| kind | `pi.usage` |
+| kind | `amazme.usage` |
 | version | `1` |
 | scope/history/fork | conversation, `latest`, `initial` |
 | `initial()` | `{ models: {}, tools: {} }` |
@@ -3727,10 +3985,11 @@ type UsageState = {
 | view mount | `docs["amazme.usage"]` |
 | created | with every Harness conversation (section 2.2) |
 
-`pi.usage` is the ledger of the conversation's own spend. Every built-in writer
-of a `pi.assistant` entry adds its message's `usage` to `models` under the
+`amazme.usage` is the ledger of the conversation's own spend. Every built-in writer
+of a `amazme.assistant` entry adds its message's `usage` to `models` under the
 message's own `provider/model`, and every writer of
-a `pi.tool-result` entry with `usage` adds it to `tools`, in the same commit.
+a `amazme.tool-result` entry with `usage` adds it to `tools`, in the same commit, as
+does the result commit of a nested call (section 7.3) with `usage`.
 Every summarization attempt of a compaction task adds its response's `usage` to
 `models` in the commit that classifies it (section 8.7); that spend has no entry,
 whether the summary is placed, fails, or ends stale. Failed and aborted attempts
@@ -3767,7 +4026,7 @@ type CompactionCheckpoint =
 type CompactionResult = { entryId?: EntryId; submissionId?: SubmissionId };
 ```
 
-`pi.compaction` is version 1 and starts at `{ phase: "select" }`. Compaction
+`amazme.compaction` is version 1 and starts at `{ phase: "select" }`. Compaction
 replaces an old prefix of the model context with a summary entry whose `head` is
 the first kept entry (section 2.1). Raw history stays in storage. There are three
 ways to start one; the task is the same, only ownership and placement differ:
@@ -3841,7 +4100,7 @@ Phases:
   `cacheRetention: "none"` and the pinned `maxTokens`. Providers such as Codex
   may suppress that identity when caching is disabled. Recovery resends the same
   request. The response is classified in one commit
-  that adds its usage to `pi.usage` (section 8.6):
+  that adds its usage to `amazme.usage` (section 8.6):
   - `stop` with non-empty text and no tool call: the text is the summary, placed
     as below.
   - `error` that `isRetryableAssistantError()` accepts while the settings'
@@ -3884,7 +4143,7 @@ commits the task's `completed` outcome:
   `Harness.submission()` observes the placement.
 
 The next generation's preparation finds a head marker without a later
-`pi.system` entry and writes a complete system baseline (section 7.4).
+`amazme.system` entry and writes a complete system baseline (section 7.4).
 
 **Cancellation.** The abort handler removes the task's status and ends
 `aborted`; it writes no entry. An attempt cut short by abort or a crash has no
@@ -3948,7 +4207,9 @@ type DocumentState<T extends JsonObject> =
 
 type WatchEnd =
   | { readonly reason: "stopped" | "cancelled" | "session_closed" | "retired" }
-  | { readonly reason: "listener_error"; readonly error: Error };
+  | { readonly reason: "listener_error"; readonly error: Error }
+  /** The Session failed; `error` is what failed it, usually a storage error (section 10.1). */
+  | { readonly reason: "session_failed"; readonly error: unknown };
 
 interface WatchHandle<T> {
   /** Acquisition revision before start; latest delivered immutable revision afterward. */
@@ -4069,7 +4330,7 @@ type ConversationView = {
   readonly conversation: ConversationRecord;
   /** Raw active entries, as `ContextView.entries` (section 2.1): the head marker, then the non-head entries from its head. */
   readonly entries: readonly EntryRecord[];
-  /** `pi.agent`, `pi.live`, `pi.inbox`, `pi.provider`, and `pi.usage`, keyed by kind; absent documents are absent. */
+  /** `amazme.agent`, `amazme.live`, `amazme.inbox`, `amazme.provider`, and `amazme.usage`, keyed by kind; absent documents are absent. */
   readonly docs: Readonly<Record<string, JsonObject>>;
 };
 ```
@@ -4120,6 +4381,19 @@ covers exactly one conversation (not its owned subtree), and emits an event only
 after the commit that makes it true. Its protocol may change without notice.
 
 ```ts
+/**
+ * Which call a tool event is about. `toolCallId` is the provider's ID for a model-issued call and
+ * `<parent call ID>/<key>` for a nested one; consumers match it and never parse it. `taskId` is the call's tool task,
+ * absent for a call that never got one. A nested call also names its caller by call ID and by tool task.
+ */
+type ToolEventCall = {
+  toolCallId: string;
+  toolName: string;
+  taskId?: TaskId;
+  parentToolCallId?: string;
+  parentTaskId?: TaskId;
+};
+
 type AgentEvent =
   | {
       type: "snapshot";
@@ -4128,10 +4402,12 @@ type AgentEvent =
       /** Current generation attempt: its in-flight partial, retry backoff, or deferred poll. */
       generation?: { attempt: number; message?: AssistantMessage; retry?: { at: number; error: string }; deferred?: { pollAt: number } };
       tools: readonly ToolSlot[];
-      /** `pi.live.compactions` (section 8.2). */
+      /** `amazme.live.nestedTools` (section 8.2). */
+      nestedTools: readonly NestedToolSlot[];
+      /** `amazme.live.compactions` (section 8.2). */
       compactions: readonly CompactionStatus[];
       inbox: readonly { id: SubmissionId; mode: InboxItem["mode"] }[];
-      /** `pi.agent`; `{}` when absent. */
+      /** `amazme.agent`; `{}` when absent. */
       agent: AgentState;
       usage: UsageState;
     }
@@ -4142,18 +4418,16 @@ type AgentEvent =
   | { type: "message_start"; message: Message }
   | { type: "message_update"; usage: Usage; changes: readonly MessageChange[] }
   | { type: "message_end"; entry: EntryRecord }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: JsonObject }
-  | {
+  | ({ type: "tool_execution_start"; args: JsonObject } & ToolEventCall)
+  | ({
       type: "tool_execution_update";
-      toolCallId: string;
-      toolName: string;
       /** A front trim and then an append of the retained window, or its replacement. */
       output?: { trimStart?: number; append?: string } | { set: string };
       details?: JsonValue;
       diagnostics?: readonly ToolDiagnostic[];
-    }
-  /** `entry` is absent when the tool task faulted or was orphaned. */
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; entry?: EntryRecord }
+    } & ToolEventCall)
+  /** A model-issued call ends with its `entry`, a nested call with its `result`; see below for when neither. */
+  | ({ type: "tool_execution_end"; entry?: EntryRecord; result?: NestedToolExecutionResult } & ToolEventCall)
   | { type: "inbox_update"; items: readonly { id: SubmissionId; mode: InboxItem["mode"] }[] }
   | { type: "submission"; record: SubmissionRecord }
   | { type: "auto_retry_start"; attempt: number; at: number; errorMessage: string }
@@ -4191,11 +4465,11 @@ registers for later publications atomically on the Session line.
 
 Events derive from committed changes:
 
-- `run_start`/`run_end`: `pi.live.run` appears, is removed, or is replaced by a
+- `run_start`/`run_end`: `amazme.live.run` appears, is removed, or is replaced by a
   successor run whose first input differs. Steers joining the current run and
   handovers between its tasks are not run events. The inputs' outcomes are
   `submission` events.
-- `turn_start`: a `pi.generation` task is created. `turn_end`: a generation's
+- `turn_start`: a `amazme.generation` task is created. `turn_end`: a generation's
   outcome is committed, when it holds `completing` or becomes terminal,
   whichever comes first, so a successor created at hold starts after it.
 - `message_start`: the first committed partial of an attempt, or, for a message
@@ -4220,20 +4494,26 @@ Events derive from committed changes:
   appends, front trims, and replacements of the slot's retained window, and the
   slot's current `details` and `diagnostics` when they change; removed ones, as
   when a safe replay restarts the tool, send `null` and `[]`.
-  `tool_execution_end`: the slot becomes `done`, with its `pi.tool-result`
+  `tool_execution_end`: the slot becomes `done`, with its `amazme.tool-result`
   entry, which carries the diagnostics, or without one after a fault or
   orphan. An unfinished slot that disappears because its run ended ends with the
   result entry appended in the same commit, as for the unstarted calls of an
   aborted round, directly before its `message_start`, or without an entry.
+  Nested slots produce the same events with `parentToolCallId`; a nested call
+  ends with its `result`, taken from the `NestedResultDoc` value its terminal
+  commit published, or without one after a fault or orphan or when its slot
+  disappears unfinished. Snapshots show done nested slots with their summary,
+  not their result; a late subscriber reads a live caller's results from its
+  `NestedResultDoc`.
 - `inbox_update`, `agent_changed`, `usage_changed`: the document changed; a
   retired one reads as its initial value, as in a snapshot. Registry installs
   and settings changes make no commit and emit nothing; a UI showing resolved
   tools or a resolved model resolves again through `Conversation.agent()`.
-- `auto_retry_start`/`auto_retry_end`, `deferred_poll`: `pi.live.generation`
+- `auto_retry_start`/`auto_retry_end`, `deferred_poll`: `amazme.live.generation`
   gains or drops `retry`, or gains `deferred` or moves its `pollAt`.
 - `task_failed`: a task of the conversation settles `faulted` or `orphaned`.
 - `compaction_start`/`compaction_end`: a status appears in or disappears from
-  `pi.live.compactions`. A retry backoff shows only in the snapshot's
+  `amazme.live.compactions`. A retry backoff shows only in the snapshot's
   `compactions`. A queued summary is placed later with its own
   `message_start`/`message_end` and `submission` events.
 
@@ -4242,7 +4522,8 @@ One commit produces one batch, in this order: `tool_execution_start`,
 and retry/deferred events; then entries in append order with their
 `message_start`/`message_end` or `entry_appended`, where a tool result's
 `tool_execution_end` directly precedes its `message_start`, as in the coding
-agent; then the `tool_execution_end` of tools ending without an entry;
+agent, and the `tool_execution_end` of nested calls, children first, precede
+the entries; then the `tool_execution_end` of tools ending without an entry;
 then `compaction_end`, `task_failed`, `turn_end`, `run_end`; then `submission`
 events in ID order; then `inbox_update`, `agent_changed`, and `usage_changed`;
 and last `compaction_start`, `run_start`, and `turn_start`. A stream buffers at most 100 undelivered
@@ -4443,7 +4724,10 @@ type StorageWrite =
  */
 interface Storage {
   commit(writes: readonly StorageWrite[], context: Context): Promise<Seq>;
-  /** Allocate from the one global numeric namespace; the generic brand is compile-time only. */
+  /**
+   * Allocate from the one global numeric namespace, above every ID minted or stored before, also across reopen: scans
+   * order by ID as creation order, and the Harness relies on it. The generic brand is compile-time only.
+   */
   mintId<I extends Id<string>>(): Promise<I>;
 
   conversation(id: ConversationId, context: Context): Promise<ConversationRecord | undefined>;
@@ -4469,11 +4753,10 @@ interface Storage {
 }
 ```
 
-`StorageRejected` means a batch was rejected before any durable effect and is
-guaranteed not to have committed. Session rolls such a batch back normally;
-unknown failures after Storage admission remain fatal because their commit state
-is uncertain. Backends use `StorageRejected` for deterministic `document.copy`
-source, replay, and consistency failures only when rollback is guaranteed.
+Every error a method throws is final for the Session (section 10.1), so a
+backend retries its own transient failures. A read throws `StorageRequestError`
+for an invalid request, with no durable effect; from `commit()` it is fatal like any
+other error.
 
 A `document.copy` reads committed pre-batch source state independent of command
 order. The source must be an alive conversation document at the selected point,
@@ -4539,6 +4822,73 @@ address makes the new incarnation current at that sequence. Deltas cannot cross
 a stored version boundary; a version transition must be a base.
 
 The semantic conformance suite covers memory, SQLite, and JSONL.
+
+### 10.1 Failures
+
+One rule per kind of error, so a host knows what happens without reading code.
+
+**A storage error ends the Session.** Any error a `Storage` method throws, a
+commit, a read, or `mintId()`, fails the Session, with two exceptions below.
+Neither the Session nor the Harness retries anything: a Storage retries its own
+transient failures inside the method. Reopening recovers from what was committed,
+which is always consistent, because commits are atomic; a call that threw may or
+may not have committed, so a host that resubmits after reopening reuses its
+`requestId`, which finds an admitted submission. On the first failure:
+
+- The call that hit it rejects with that error. Every later call, every pending
+  wait (`submission.wait()`, `waitForTask()`, `waitForIdle()`, `abortTask()`),
+  and every wait that starts later rejects with `SessionFailed`, whose `cause` is
+  the first error; so does every Storage call still underway when it returns,
+  whatever it returned.
+- Watches and event streams end with `{ reason: "session_failed", error }`;
+  attached replicated states stop updating and keep their last value.
+- Running task invocations get their abort signal. `HarnessOptions.onReport`
+  gets the error once, after the Session is sealed, so a report handler that
+  calls back finds it failed.
+- The Session closes itself. `closed` settles `{ reason: "failed", error }` once
+  that close has run, also when the backend could not close cleanly; after a
+  plain `close()` it settles
+  `{ reason: "closed" }`. Closing the backend waits for every Storage call
+  underway, refusing new ones, and for running task code to return: code that
+  ignores its abort signal keeps the backend open and `closed` pending.
+- A failing `Storage.close()` fails the Session too, unless it already failed;
+  the `close()` call rejects with it, and `closed` settles `failed`. Waits and
+  watches had already ended as for a close (`session_closed`).
+
+The exceptions fail only their call, and apply to reads alone: a
+`StorageRequestError`, which a Storage throws for an invalid read, with no
+durable effect (an unknown conversation, a malformed cursor or one from another scan
+order, history a document does not keep), and a read rejected because its
+caller's context was aborted. An error from `commit()` or `mintId()` is never
+exempt: once a batch is admitted, whether it committed is unknown.
+
+A commit callback that catches a failed read cannot commit afterwards: the Session
+checks its health after the callback. Adopting a committed batch in memory that
+fails also fails the Session, since memory would be behind storage.
+
+**The Session's own bookkeeping fails it too.** A throw in a commit the
+scheduler makes for itself (reconciliation, reservation, a fault or terminal
+write) fails the Session. The only extension code there is a task's `migrate`,
+whose throw is caught and blocks that task; anything else that throws is a
+storage failure, a host callback such as a `RegistryReader` whose `snapshot()`
+throws, or a bug, and running the commit again fixes none of them. A throw in a commit
+listener of the Session's own components (scheduler, submissions, views, task
+graph, document observers) fails it as well, since their memory would fall
+behind storage; the commit itself stands.
+
+**User code fails only its unit.** A task phase that throws ends that task
+`faulted`; a throwing `migrate` blocks it as `migration_failed`; a tool that
+throws, or whose environment cannot be built, gets an error result; hooks that
+throw are reported and skipped, except `beforeTool`, whose throw blocks the call;
+a commit callback, `conversationCreated`, `init`, or a document's `initial`,
+`migrate`, or `checkpointWhen` that throws rolls its commit back and rejects it.
+Callbacks that must not fail their caller are contained: a host
+`subscribeCommits()` or `subscribeClose()` listener, a watch listener, a
+replicated-state subscriber, and a view observer that throws, or returns a
+promise that rejects, are reported, and the others still run; a watch whose
+listener throws ends with `listener_error`. A throwing or rejecting `onReport` is
+dropped, since nothing is left to report it to. A throwing `now()` is reported
+once, and `Date.now` serves instead.
 
 ## 11. Backends
 
@@ -4634,7 +4984,7 @@ These are contracts, not invitations to add defensive machinery:
   task while a generation prepares its request can misplace its system prompt entries;
   use a write submission.
 - **Queued items after a failed run:** failure and task abort leave the inbox alone.
-  Queued follow-ups wait in `pi.inbox`, and their `wait()` does not settle, until
+  Queued follow-ups wait in `amazme.inbox`, and their `wait()` does not settle, until
   the next submission's boundary places them or the host withdraws them. A
   compaction summary is such a submission: when a manual or background
   compaction finishes in that idle conversation, its final boundary places the
@@ -4658,7 +5008,7 @@ These are contracts, not invitations to add defensive machinery:
   context, but a mounted view keeps only the entries it already holds until the
   mount is rebuilt. Use a write submission, whose stale check rejects it.
 - **Double-counted subagent spend:** a tool that runs an owned conversation must
-  not report that conversation's usage in its result; the child's `pi.usage`
+  not report that conversation's usage in its result; the child's `amazme.usage`
   already counts it, and subtree sums would count it twice.
 - **Owned work holds its owner:** a task that owns live ordinary work stays
   `completing` until that work ends (section 5.5). Foreground work an extension
@@ -4718,9 +5068,9 @@ These are contracts, not invitations to add defensive machinery:
   outcome. Never reference a task-scoped document retired by that same outcome.
 - **Raw transcript:** view entries are not model context. Rendering edits,
   display-only entries, and model filtering require the appropriate reducer.
-- **Reserved `pi.` names:** task names, document kinds, and entry kinds starting
-  with `pi.` belong to built-ins by convention. Nothing enforces it; reusing one
-  collides with Harness behavior, such as `pi.system` entries being replayed as
+- **Reserved `amazme.` names:** task names, document kinds, and entry kinds starting
+  with `amazme.` belong to built-ins by convention. Nothing enforces it; reusing one
+  collides with Harness behavior, such as `amazme.system` entries being replayed as
   system messages.
 - **Early resource disposal:** uninstalling or replacing an extension only stops
   new use. Freeing resources immediately can fail calls that are still running.
@@ -4733,14 +5083,14 @@ These are contracts, not invitations to add defensive machinery:
   gets the host default with the edit, not the owner's selection. Compute the child's array from the resolved agent
   instead (section 7.3).
 - **Copies are one-time:** a new task-owned conversation copies its owner's
-  `pi.agent` at creation; later owner changes do not reach it. A fork keeps its
+  `amazme.agent` at creation; later owner changes do not reach it. A fork keeps its
   `asOf` copy instead (section 2.2).
 - **Environment on recovery:** a tool rerun after recovery builds its
   environment again, with the conversation's current `cwd`, which may differ
   from the first attempt's.
 - **Moving default selections:** a conversation on the default selection changes
   whenever the settings or the installed extensions change; each change appends
-  `pi.system` entries and misses the provider prompt cache.
+  `amazme.system` entries and misses the provider prompt cache.
 - **Unstable prompt text:** a section renderer whose output changes without a
   real content change, for example by embedding the time, appends system deltas
   and defeats provider prompt caching.
@@ -4750,8 +5100,9 @@ These are contracts, not invitations to add defensive machinery:
 - **Services outliving the Harness:** withdraw Chord services and detach clients
   before closing the Harness. A state ended by close keeps its last value and
   never updates again.
-- **Fatal storage errors:** after an uncertain storage failure the Session is
-  poisoned. Do not catch the error and continue using it.
+- **Fatal storage errors:** after a storage error the Session has failed and
+  closed itself; reopen it (section 10.1). Retrying the failed call cannot
+  succeed: retry transient failures inside the Storage.
 - **JSONL durability:** default JSONL ordering handles ordinary process crashes;
   without durable mode it does not promise acknowledged commits survive power or
   host failure.

@@ -97,6 +97,11 @@ export async function addTools(tx: Tx, conversationId: ConversationId, added: re
 			: undefined;
 	const permitted = added.filter((name) => (allowed === undefined || allowed(name)) && !excluded?.(name));
 	if (permitted.length === 0) return;
+	const modelTools = state.modelTools;
+	if (Array.isArray(modelTools)) {
+		for (const name of permitted) if (!modelTools.includes(name)) modelTools.push(name);
+	} else if (modelTools !== undefined)
+		modelTools.remove = modelTools.remove.filter((name) => !permitted.includes(name));
 	if (tools === undefined) {
 		state.tools = { add: permitted };
 		return;
@@ -150,6 +155,15 @@ function applyChange(state: Draft<AgentState>, change: AgentChange): void {
 						...(tools.remove === undefined ? {} : { remove: names(tools.remove) }),
 						...(tools.exclude === undefined ? {} : { exclude: names(tools.exclude) }),
 					},
+	);
+	const modelTools = change.modelTools;
+	set(
+		"modelTools",
+		modelTools === undefined || modelTools === null
+			? modelTools
+			: isList(modelTools)
+				? names(modelTools)
+				: { remove: names(modelTools.remove) },
 	);
 	set("instructions", change.instructions);
 	set("cwd", change.cwd);
@@ -254,13 +268,22 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		tools = tools.filter((tool) => !removed(tool.name));
 	}
 	const active = new Set(tools.map((tool) => tool.name));
-	const callableTools = [
+	const callable = [
 		...tools.filter((tool) => tool.exposure !== "model-only"),
 		...catalog.filter(
 			(tool) => !active.has(tool.name) && (tool.exposure === "codemode" || tool.exposure === "deferred"),
 		),
-	];
-	tools = projectTools(tools, callableTools, catalog, report);
+	].filter((tool) => tool.callers === undefined || tool.callers.includes("tools"));
+	tools = tools.filter((tool) => tool.callers === undefined || tool.callers.includes("model"));
+	const modelTools = state?.modelTools;
+	if (Array.isArray(modelTools)) {
+		const byName = new Map(tools.map((tool) => [tool.name, tool]));
+		tools = [...new Set(modelTools)].flatMap((name) => byName.get(name) ?? []);
+	} else if (modelTools !== undefined) {
+		const removed = new Set(modelTools.remove);
+		tools = tools.filter((tool) => !removed.has(tool.name));
+	}
+	tools = projectTools(tools, callable, catalog, report);
 
 	const instructions = state?.instructions;
 	const agentSections = [...sections.values()];
@@ -272,7 +295,7 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		extensions,
 		tools,
 		catalog,
-		callableTools,
+		callable,
 		sections: agentSections,
 		...(instructions === undefined ? {} : { instructions }),
 		...(state?.cwd === undefined ? {} : { cwd: state.cwd }),

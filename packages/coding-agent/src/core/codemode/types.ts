@@ -28,7 +28,7 @@ export interface CodemodeNestedOutcome {
 	readonly isError: boolean;
 	readonly result: {
 		readonly content?: (TextContent | ImageContent)[];
-		readonly structuredContent?: unknown;
+		readonly value?: unknown;
 	};
 }
 

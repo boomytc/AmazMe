@@ -206,7 +206,7 @@ export const Run = defineTask<RunInput, State, RunResult>({
 		},
 		async stop(task, runtime, context) {
 			const state = task.state.checkpoint;
-			await Promise.all(state.active.map((active) => runtime.abortTask(active.task, context)));
+			await Promise.all(state.active.map((active) => runtime.abortOwned(active.task, context)));
 			const jobs = [...state.jobs];
 			for (const active of state.active) {
 				const outcome = (await runtime.waitForTask(active.task, context)).state.outcome;
@@ -221,17 +221,17 @@ export const Run = defineTask<RunInput, State, RunResult>({
 					const receipt = await tx.createTask(
 						ToolTask,
 						{
-							nested: {
-								parentCallId: `workflow:${runtime.taskId}`,
-								depth: 1,
-								call: {
-									type: "toolCall",
-									id: `workflow:${runtime.taskId}:result`,
-									name: "workflow",
-									arguments: {
-										action: "status",
-										runId: String(runtime.taskId),
-									},
+							kind: "nested",
+							parent: runtime.taskId,
+							key: "receipt",
+							parentCallId: `workflow:${runtime.taskId}`,
+							call: {
+								type: "toolCall",
+								id: `workflow:${runtime.taskId}:result`,
+								name: "workflow",
+								arguments: {
+									action: "status",
+									runId: String(runtime.taskId),
 								},
 							},
 						},

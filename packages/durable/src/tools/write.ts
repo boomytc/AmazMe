@@ -40,7 +40,15 @@ export function createWriteTool(): ToolRegistration<typeof writeSchema, WriteToo
 					context.abortSignal?.throwIfAborted();
 					const outcome = getOrThrow(await env.writeFileChecked(absolutePath, content, intent, context));
 					await observeMutation(api, env.id, outcome);
-					return { content: [{ type: "text", text: `Successfully wrote to ${path}${writeDiffNote(details)}` }], details };
+					return {
+						output: [
+							{
+								type: "text",
+								text: `Successfully wrote to ${path}${writeDiffNote(details)}`,
+							},
+						],
+						details,
+					};
 				},
 				context,
 			);

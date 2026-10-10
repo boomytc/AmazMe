@@ -167,7 +167,7 @@ describe("conversation-owned file observations", () => {
 			},
 		};
 		const result = await write.execute({ path: "file.txt", content: "published" }, broken, context);
-		expect(result.content).toMatchObject([{ text: "Successfully wrote to file.txt" }]);
+		expect(result.output).toMatchObject([{ text: "Successfully wrote to file.txt" }]);
 		expect(diagnostics).toEqual(["observation_unavailable"]);
 		expect(await readFile(join(cwd, "file.txt"), "utf8")).toBe("published");
 		await expect(edit.execute(editArgs, api, context)).rejects.toMatchObject({ code: "stale_version" });

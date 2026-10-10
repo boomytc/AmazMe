@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-对齐到 pi 提交 `0cf65d2bf`（2026-10-06），包含 v1.0.4 的全部内容。此前已处理到 `1cedd3272`（2026-10-08，发布 v1.1.0）。本轮核对它之后至 `42a3497d0` 的 12 个提交；配置及修复已吸收，Durable 两项继续实施，具体处置见下表。
+对齐到 pi 提交 `0cf65d2bf`（2026-10-06），包含 v1.0.4 的全部内容。此前已处理到 `1cedd3272`（2026-10-08，发布 v1.1.0）。本轮已核对并处理它之后至 `42a3497d0`（2026-10-09）的 12 个提交；产品能力已吸收，Pi 仓库维护流程按实际适用性记录，具体处置见下表。
 
 基线之后已处理的提交（按 pi 提交顺序）：
 
@@ -17,8 +17,8 @@
 | `0cf65d2bf` | Codex `originator`/`User-Agent` 允许被调用方覆盖 | 吸收 |
 | `428a12bc7` | 批准贡献者（GitHub Actions bot） | 跳过，仓库治理，AmazMe 无 `.github` |
 | `23cf2b948` | 统一 npm 包产物校验，重写发布与本地安装脚本 | 吸收产物校验和本地安装设计；本仓库的 `scripts/package-artifacts.mjs` 按运行依赖闭包打包、裁剪当前锁文件并用 `npm ci` 安装，eval 安装器已去掉悬空旧脚本引用 |
-| `ddaa0a034` | `--tools` 接受 `+name`/`-name` 条目 | 吸收 SDK、CLI、设置与重载语义；默认 Durable TUI 共用选择计算并持久化激活及调用边界，补齐提前校验、动态注册、分支恢复和同名扩展回归。原生 MCP 与 codemode 按产品计划继续落实 |
-| `56b25ff4e` | 对齐 `docs/message-types.md` | 暂缓，纯文档 |
+| `ddaa0a034` | `--tools` 接受 `+name`/`-name` 条目 | 吸收 SDK、CLI、设置与重载语义；默认 Durable TUI 共用选择计算并持久化激活及调用边界，补齐提前校验、动态注册、分支恢复和同名扩展回归。原生 MCP 与 codemode 已接线并通过正式安装入口验收 |
+| `56b25ff4e` | 对齐 `docs/message-types.md` | 待同步文档；保留为整体文档审计项 |
 | `8b5708dbb` | 重试 `server_busy` 瞬时错误 | 吸收 |
 | `83c9e2645` | 全屏选区在 transcript 重建时清理 | 吸收 |
 | `68ccef176` | durable 复用已扫描的 context 范围 | 吸收 |
@@ -28,7 +28,7 @@
 | `27075fe07` | context 估算改为 3.5 字符/token | 吸收 |
 | `269121616` | codemode 查找助手在描述里标注 async | 吸收 |
 | `311f0e020` | 随估算调整输出上限断言 | 吸收，与 `27075fe07` 同批 |
-| `2989eb581` | Bedrock Converse 传 OpenAI 推理档位 | 暂缓，只影响 Bedrock 上的 GPT 模型 |
+| `2989eb581` | Bedrock Converse 传 OpenAI 推理档位 | 待落实 Bedrock 上的 GPT 推理配置；整体产品跟进项 |
 | `636703a0a` | durable `context()` 截止点改为 options 对象 | 吸收，与上面三项一起（破坏性改动落在同一批） |
 | `36a686ee8` | 记录响应、工具执行与 durable 任务的时间 | 吸收 |
 | `43d376399` | Radius 目录改用网关目录，不再叠加内置基线 | 吸收 |
@@ -74,16 +74,21 @@
 | `6fb2e7815` | 支持 npm 12 pack 的对象结果 | 吸收到现有依赖闭包打包器，继续验证实际包身份和文件清单 |
 | `f1b2e77f5` | 嵌套 worktree 读取符号链接 AGENTS.md | 吸收，按目录真实路径去重；实际 symlink 布局及既有检查通过 |
 | `5a1049269` | 本地 issue triage 服务、维护分类及 UI | 跳过，Pi 维护服务并非运行库；其普通 Durable agent 和结构化结果设计由下项吸收，不另加 HTTP 服务或同步库 |
-| `eba849739` | Durable 嵌套调用/结构化结果/调用方/存储失败边界 | 实施中，替换现有重叠实现并迁移产品调用方 |
-| `42a3497d0` | 图片读取和可选 Photon 处理器 | 实施中，继续保持处理器显式导入 |
+| `eba849739` | Durable 嵌套调用/结构化结果/调用方/存储失败边界 | 吸收；使用同一 ToolTask 内核及父任务作用域结果，迁移原生 MCP/codemode、插件及 TUI/Web；存储失败收拢到既有宿主清理屏障 |
+| `42a3497d0` | 图片读取和可选 Photon 处理器 | 吸收；Photon 子入口显式加载，默认入口不引入 WASM；产品沿用已有图片 worker 和来源大小限制 |
 
 本轮配置与修复验证：AI 构建及 52 项既有检查、coding-agent 构建及 204 项既有检查、TUI 构建及 60 项按键检查、9 项打包检查和依赖/浏览器入口检查通过。真实 HTTP 长流、4 份 schema 的生成一致性、AmazMe 设置/扩展按键/严格主题及 symlink worktree 已核对；npm 12.2.0 实际打包 14 个依赖包，包含 4 份 schema 且无旧主题校验文件。TUI 全套的拖选复制既有用例失败，换回改动前按键源码仍失败；本轮未改变相关鼠标实现。未新增测试。
+
+本轮 Durable 与产品接线验证：Durable 构建、1067 项既有检查通过，6 项失败均在吸收前的隔离源码中复现，继续列入整体验收（事件投影 5 项、缺失定义父任务的清理顺序 1 项）；3 项跳过。coding-agent 的 72 项接线/生命周期检查、Web 的 120 项检查、9 项打包检查、可选插件类型检查和依赖/浏览器入口检查通过。未新增仓库测试。
+
+正式 tarball 的 15 包隔离安装实际验证：50KB 嵌套结构化结果、稳定键重用、父任务结果回收、SQLite 重开、非零退出码；Photon 4000×1000 缩至 2000×500、BMP 转 PNG、JPEG EXIF 转正；非法读取仅拒绝当前调用，致命后端失败关闭会话。安装版 worker 上报故障并退出，插件释放、存储关闭、会话锁释放各一次。安装版宿主通过 stdio/HTTP MCP、资源、codemode、工作流成功/失败、完成验证、自修改与重载；SQLite 69 个任务全部终止。真实 DeepSeek 调用原生插件成功，临时连接和进程已关闭，插件租约释放平衡。
 
 ## 刻意偏离
 
 - 面向供应商的身份字符串维持 pi：运行时请求头（Codex `originator`/`User-Agent`、OpenRouter、opencode client）和登录默认名（ChatGPT `agent_name_hint`、Codex 登录 `originator`）都保持 pi 身份，避免脱离 pi 与供应商的合作关系。`LoginOptions.agentName` 选项保留，调用方需要时可覆盖。
+- Durable 保留 256 次/8 层嵌套调用限制、输出改写时丢弃未同步改写的结构化数据、文件读取版本保护和工具选择边界；普通 workflow/verification 父任务登记到同一嵌套索引。v1 在途工具一次性迁移，已执行阶段按不安全重放处理，不另留旧执行器。
 - `coding-agent` 与 `tui` 已按 AmazMe 方向重做（Dashboard、子会话、前台命令、编辑器选区等），吸收上游时只取功能，不覆盖界面结构。
-- 库包（`agent`、`ai`、`chord`、`durable`、`env`、`mcp`、`protocol`、`server`、`client`、`codemode`、`telemetry`、`evals`）以 Pi 的功能基线同步，AmazMe 的本地扩展按本节保留。本仓库在 `client`/`server` 之上另加了 `websocket` 子路径（回环字节传输，见 `transports/websocket`），并新增了独立的私有包 `@amazme/web`（回环页面的文档与样式、启动契约、视图投影与 DOM 渲染器，浏览器侧入口在 `coding-agent` 的 `experimental/web`）；吸收上游时不要覆盖这些文件。
+- 库包（`agent`、`ai`、`chord`、`durable`、`env`、`mcp`、`protocol`、`server`、`client`、`codemode`、`telemetry`、`evals`）以 Pi 的功能基线同步，AmazMe 的本地扩展按本节保留。本仓库在 `client`/`server` 之上另加了 `websocket` 子路径（回环字节传输，见 `transports/websocket`），并新增了独立的私有包 `@amazme/web`（回环页面的文档与样式、启动契约、视图投影与 DOM 渲染器，浏览器侧入口在 `coding-agent` 的 `host/web`）；吸收上游时不要覆盖这些文件。
 - `durable` 的上游改动 `68ccef176`、`b0114ef5f`、`76f6c06da`、`636703a0a` 在 Web 客户端开工前一次性吸收，`runtime.context()` 的 options 对象改动随之落地。本仓库另有通过执行环境运行的搜索工具、持久名称/模式选择、默认不激活注册、加载边界与轻量共用匹配器；上游同步时保留这些实现与回归。
 
 ## 跟进方法
@@ -95,3 +100,5 @@
 4. 分类处理并在上面的表格记录：吸收 / 只参考 / 跳过（不适用项写具体原因），实施中的改动继续跟进。
 5. 吸收后按包的约定验证：`npm run build --workspace <包>`，再 `npm test --workspace <包>`。`coding-agent` 有存量失败，用干净基线对比确认失败集合没有新增。
 6. 更新「当前基线」和表格。
+
+安装产物升级核对：v1 在途嵌套工具一次性迁移到 v2，旧副作用未执行，调用标为 interrupted，父任务结束后结果回收。

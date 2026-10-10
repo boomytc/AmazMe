@@ -9,5 +9,6 @@
 		"rootDir": "./src"
 	},
 	"include": ["src/**/*.ts"],
+	"files": ["src/images/photon-wasm.d.ts"],
 	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts"]
 }

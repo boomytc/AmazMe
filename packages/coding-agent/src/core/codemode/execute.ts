@@ -378,13 +378,13 @@ async function truncateOutput(
 
 /**
  * The value a script receives for a nested call: a tool that declares
- * `outputSchema` resolves to its `structuredContent`, also for error results that carry one (such
+ * `outputSchema` resolves to its structured value, also for error results that carry one (such
  * as MCP results with `isError`); any other tool resolves to its text content. Other failures
  * reject with the tool's error text.
  */
 function toScriptValue(tool: CodemodeToolInfo, outcome: CodemodeNestedOutcome): unknown {
 	const { result } = outcome;
-	if (tool.outputSchema && result.structuredContent !== undefined) return result.structuredContent;
+	if (result.value !== undefined && (tool.outputSchema || !outcome.isError)) return result.value;
 	const text = textOf(result);
 	if (outcome.isError) throw new Error(text || `Tool "${tool.name}" failed`);
 	return text;

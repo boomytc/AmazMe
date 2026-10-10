@@ -7,8 +7,8 @@ import type {
 	TaskGraph,
 	TaskGraphNode,
 	UsageState,
+	SessionEnd,
 } from "@amazme/durable";
-import { NestedToolResultEntry } from "@amazme/durable";
 import {
 	Box,
 	CombinedAutocompleteProvider,
@@ -364,12 +364,20 @@ class DurableTui {
 		// A partial without its entry was dropped, for example by a retry: render the transcript again.
 		if (message === undefined && this.#streaming !== undefined) this.#rebuild(shown);
 		if (message !== undefined) this.#syncStreaming(message);
-		for (const slot of live.tools ?? []) {
+		for (const slot of [...(live.tools ?? []), ...(live.nestedTools ?? [])]) {
 			if (slot.status === "pending") continue;
-			const key = slot.parentCallId === undefined ? slot.callId : `${slot.taskId}:${slot.callId}`;
-			const component = this.#tool(slot.name, slot.callId, undefined, false, key);
+			const key = !("parentCallId" in slot) ? slot.callId : `${slot.taskId}:${slot.callId}`;
+			const component = this.#tool(slot.name, slot.callId, "arguments" in slot ? slot.arguments : undefined, false, key);
 			component.setArgsComplete();
-			if (slot.status !== "running") continue;
+			if (slot.status !== "running") {
+				if ("summary" in slot && slot.summary !== undefined)
+					component.updateResult({
+						content: slot.summary.error ? [{ type: "text", text: slot.summary.error }] : [],
+						isError: slot.summary.isError,
+						durationMs: slot.summary.durationMs,
+					});
+				continue;
+			}
 			component.markExecutionStarted();
 			const child = (slot.details as { conversationId?: number } | undefined)?.conversationId;
 			if (slot.output === undefined && child !== undefined) {
@@ -541,22 +549,6 @@ class DurableTui {
 		} else if (entry.kind === "amazme.tool-result" && message?.role === "toolResult") {
 			const result = message as ToolResultMessage;
 			this.#tool(result.toolName, result.toolCallId).updateResult(result);
-		} else if (NestedToolResultEntry.is(entry)) {
-			const { call, result, durationMs } = entry.data;
-			const card = this.#tool(call.name, call.id, call.arguments, false, `${entry.byTaskId}:${call.id}`);
-			card.setArgsComplete();
-			card.updateResult({
-				content: [
-					...(result.content ?? []),
-					...(result.diagnostics ?? []).map((item) => ({
-						type: "text",
-						text: item.message,
-					})),
-				],
-				details: result.details,
-				isError: result.isError ?? false,
-				...(durationMs === undefined ? {} : { durationMs }),
-			});
 		} else if (entry.kind === "amazme.compaction") {
 			const summary = new CompactionComponent(message?.role === "user" ? userText(message.content) : "", this.#expanded);
 			this.#summaries.push(summary);
@@ -653,7 +645,12 @@ function contextTokens(entries: readonly EntryRecord[]): number | undefined {
 	return undefined;
 }
 
-export async function runDurableTui(source: DurableViewSource, controller: DurableController, settings: SettingsManager): Promise<void> {
+export async function runDurableTui(
+	source: DurableViewSource,
+	controller: DurableController,
+	settings: SettingsManager,
+	closed?: Promise<SessionEnd>,
+): Promise<void> {
 	setCapabilityOverrides(settings.getTerminalCapabilityOverrides());
 	// The system theme until the controller resolves the user's theme against the terminal's colors.
 	initTheme();
@@ -828,8 +825,16 @@ export async function runDurableTui(source: DurableViewSource, controller: Durab
 	view.start();
 	themes.applyFromSettings();
 	view.apply(source.current());
-	await exited;
-	unsubscribe();
-	themes.dispose();
-	view.stop();
+	let end: SessionEnd | undefined;
+	try {
+		end = await Promise.race([exited.then(() => undefined), ...(closed === undefined ? [] : [closed])]);
+	} finally {
+		unsubscribe();
+		themes.dispose();
+		view.stop();
+	}
+	if (end?.reason === "failed")
+		throw new Error("Session failed after a storage error", {
+			cause: end.error,
+		});
 }

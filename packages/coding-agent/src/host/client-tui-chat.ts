@@ -49,11 +49,25 @@ export class ExperimentalChatView {
 		// A partial without its entry was dropped, for example by a retry: render the transcript again.
 		if (message === undefined && this.#streaming !== undefined) this.#rebuild(view.entries);
 		if (message !== undefined) this.#syncStreaming(message);
-		for (const slot of live.tools ?? []) {
+		for (const slot of [...(live.tools ?? []), ...(live.nestedTools ?? [])]) {
 			if (slot.status === "pending") continue;
-			const component = this.#tool(slot.name, slot.callId);
+			const component = this.#tool(
+				slot.name,
+				slot.callId,
+				"arguments" in slot ? slot.arguments : undefined,
+				false,
+				"parentCallId" in slot ? `${slot.taskId}:${slot.callId}` : slot.callId,
+			);
 			component.setArgsComplete();
-			if (slot.status !== "running") continue;
+			if (slot.status !== "running") {
+				if ("summary" in slot && slot.summary !== undefined)
+					component.updateResult({
+						content: slot.summary.error ? [{ type: "text", text: slot.summary.error }] : [],
+						isError: slot.summary.isError,
+						durationMs: slot.summary.durationMs,
+					});
+				continue;
+			}
 			component.markExecutionStarted();
 			if (slot.output !== undefined) {
 				component.updateResult(
@@ -196,8 +210,8 @@ export class ExperimentalChatView {
 	}
 
 	/** The card of a call; `fresh` starts a new one for a call ID an earlier turn used. */
-	#tool(toolName: string, toolCallId: string, args?: unknown, fresh = false): ToolExecutionComponent {
-		const existing = fresh ? undefined : this.#tools.get(toolCallId);
+	#tool(toolName: string, toolCallId: string, args?: unknown, fresh = false, key = toolCallId): ToolExecutionComponent {
+		const existing = fresh ? undefined : this.#tools.get(key);
 		if (existing !== undefined) {
 			if (args !== undefined) existing.updateArgs(args);
 			return existing;
@@ -213,7 +227,7 @@ export class ExperimentalChatView {
 		);
 		this.transcript.addChild(component);
 		this.#cards.push(component);
-		this.#tools.set(toolCallId, component);
+		this.#tools.set(key, component);
 		return component;
 	}
 

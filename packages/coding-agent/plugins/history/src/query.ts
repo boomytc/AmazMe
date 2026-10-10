@@ -1,5 +1,4 @@
 import type { Context } from "@amazme/chord";
-import { NestedToolResultEntry } from "@amazme/durable";
 import type { EntryId, EntryRecord } from "@amazme/durable";
 
 const MAX_SCANNED = 500;
@@ -118,18 +117,5 @@ function* textParts(entry: EntryRecord): Generator<string> {
 					yield `[tool ${block.name}]`;
 			}
 		yield "\n";
-	}
-	if (
-		NestedToolResultEntry.is(entry) &&
-		entry.data !== undefined &&
-		!/^history_(?:search|read)$/.test(entry.data.call.name)
-	) {
-		yield `toolResult ${entry.data.call.name}: `;
-		for (const block of entry.data.result.content ?? []) {
-			if (block.type === "text") yield block.text;
-			else if (block.type === "image") yield `[image ${block.mimeType}]`;
-		}
-		for (const diagnostic of entry.data.result.diagnostics ?? [])
-			yield `\n${diagnostic.severity}: ${diagnostic.message}`;
 	}
 }

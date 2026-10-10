@@ -32,6 +32,7 @@ Built on [`@amazme/ai`](../ai/README.md) for model access and `@amazme/chord` fo
 - [Your Own State](#your-own-state)
 - [Usage and Cost](#usage-and-cost)
 - [Storage](#storage)
+- [Errors](#errors)
 - [Examples](#examples)
 - [Design Documents](#design-documents)
 
@@ -79,23 +80,23 @@ Every async call takes a Chord `Context`, which carries cancellation. `BACKGROUN
 
 - **Harness**: one open storage plus the machinery that runs agents on it. All changes go through one line of atomic commits, and nothing is shown before its commit is stored.
 - **Conversation**: a transcript. `root()` creates the root conversation on first use; you can create more and fork them. A `Conversation` handle holds no state; compare handles by `id`.
-- **Entry**: one immutable transcript record, such as a user message (`pi.user`), a model response (`pi.assistant`), a tool result (`pi.tool-result`), a system prompt change (`pi.system`), a reset (`pi.reset`), or your own kind. The model sees the entries from the newest reset onward.
+- **Entry**: one immutable transcript record, such as a user message (`amazme.user`), a model response (`amazme.assistant`), a tool result (`amazme.tool-result`), a system prompt change (`amazme.system`), a reset (`amazme.reset`), or your own kind. The model sees the entries from the newest reset onward.
 - **Commit**: an atomic write. `conversation.commit((tx) => ...)` can append entries, edit documents, and create tasks together; either all of it is stored or none of it.
-- **Document**: typed JSON state stored next to the transcript and changed in commits. Built-in ones hold each conversation's agent choices (`pi.agent`), provider-facing session identity (`pi.provider`), running generation and tools (`pi.live`), queued submissions (`pi.inbox`), and spend (`pi.usage`).
-- **Task**: a durable state machine that saves a checkpoint at every step, so a restarted process continues from the last one. Every task has an owner: its conversation, or another task. The Harness runs answers as built-in tasks: `pi.generation` calls the model and owns the `pi.tool` tasks of its tool calls, waits for them, and hands the run to the next generation.
+- **Document**: typed JSON state stored next to the transcript and changed in commits. Built-in ones hold each conversation's agent choices (`amazme.agent`), provider-facing session identity (`amazme.provider`), running generation and tools (`amazme.live`), queued submissions (`amazme.inbox`), and spend (`amazme.usage`).
+- **Task**: a durable state machine that saves a checkpoint at every step, so a restarted process continues from the last one. Every task has an owner: its conversation, or another task. The Harness runs answers as built-in tasks: `amazme.generation` calls the model and owns the `amazme.tool` tasks of its tool calls, waits for them, and hands the run to the next generation.
 - **Submission**: something you hand to a conversation, either user input or an entry to write, which you can wait for.
 - **Turn and run**: a turn is one model response and its tool calls; a run is the turns from an input to its final answer. A conversation is busy while a run is going.
 - **Extension**: a named bundle of tools, system prompt sections, hooks, wrappers, and tasks.
 - **Registry**: the extensions this process installed. It can change while the Harness runs; new work uses the new state.
-- **Agent**: what a conversation runs with: model, thinking level, selected extensions, tools, instructions, and working directory. Stored per conversation as names in `pi.agent`, resolved against the registry at each use.
+- **Agent**: what a conversation runs with: model, thinking level, selected extensions, tools, instructions, and working directory. Stored per conversation as names in `amazme.agent`, resolved against the registry at each use.
 
 One answered input, as entries and tasks:
 
 ```text
-submit(input) → pi.user
-  pi.generation → pi.system (only if the prompt or tools changed), pi.assistant (tool calls)
-    pi.tool × n → pi.tool-result × n   (owned by the generation, which waits for them)
-  pi.generation → pi.assistant (answer) → submission done
+submit(input) → amazme.user
+  amazme.generation → amazme.system (only if the prompt or tools changed), amazme.assistant (tool calls)
+    amazme.tool × n → amazme.tool-result × n   (owned by the generation, which waits for them)
+  amazme.generation → amazme.assistant (answer) → submission done
 ```
 
 ## Persist and Resume
@@ -110,7 +111,7 @@ const root = await harness.root(context); // the same root as last time
 harness.resume(); // continue any run the last process left unfinished
 ```
 
-Work interrupted by a crash or close stays pending. `resume()` starts the task scheduler; submitting or waiting starts it too. Each conversation has its own persisted UUIDv7 in `pi.provider`, forwarded to pi-ai as `sessionId` for provider prompt-cache and session affinity. It survives reopen, retries, reset, compaction, and model changes; a child or fork receives a fresh identity. A legacy conversation receives and persists one before its first generation or compaction request.
+Work interrupted by a crash or close stays pending. `resume()` starts the task scheduler; submitting or waiting starts it too. Each conversation has its own persisted UUIDv7 in `amazme.provider`, forwarded to @amazme/ai as `sessionId` for provider prompt-cache and session affinity. It survives reopen, retries, reset, compaction, and model changes; a child or fork receives a fresh identity. A legacy conversation receives and persists one before its first generation or compaction request.
 
 A retried submission with the same `requestId` returns the existing submission instead of submitting twice:
 
@@ -148,13 +149,24 @@ An extension may bring `tools`, `sections`, `hooks`, `wraps` (decorators of a to
 
 ## Tools
 
-`@amazme/durable/tools` provides `read`, `write`, `edit`, and `bash`, and the `CodingTools` extension with all four. They touch files and processes only through the call's environment (see [Environment](#environment)). Reading images is not supported yet.
+`@amazme/durable/tools` provides `read`, `write`, `edit`, and `bash`, and the `CodingTools` extension with all four. They touch files and processes only through the call's environment (see [Environment](#environment)).
 
 It also exports `createGrepTool()`, `createFindTool()`, `createLsTool()`, and the separate `FileSearchTools` extension. Install only the capabilities the host selects. `grep` runs ripgrep with literal argv and returns a bounded head of matching lines and requested context; its `limit` counts output lines including context. `find` runs fd for basename or path globs, respects ignore files outside repositories and nested repository boundaries, and excludes `.git` and `node_modules`. `ls` pages the environment's directory reader and retains only the first alphabetically sorted entries, including hidden entries and `/` suffixes for directories.
 
 Searches stop at their line or 50KB output bound without cancelling sibling commands, propagate caller cancellation, and time out after 30 seconds. Diagnostics identify bounded results; narrow the search to read more. The environment must provide `rg` and `fd`, or the host can supply a `program` path/resolver to each factory. No host filesystem access or package download is performed by these tools. Native binary integration tests in `test/search-tools.test.ts` require both programs in `PATH`.
 
-Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `content`:
+`read` returns an image file as one image block, which programs calling it get as an `ImageContent`. Limits are the model's `inputLimits.images.resize`, by default 2000x2000 pixels and 4.5 MB of base64. Without an image processor it sends PNG, JPEG, GIF, and WebP files within them (dimensions read from the file's header) as they are, without decoding them, and refuses larger ones and other formats. With one, it decodes every image, turns it upright by its EXIF orientation, converts BMP to PNG, and shrinks it to fit. The Photon-based processor runs on WebAssembly and is only loaded when you import it:
+
+```typescript
+import { createNodePhotonImages } from "@amazme/durable/images/node"; // or /images/cloudflare, or createPhotonImages(wasm) from /images
+import { createCodingTools } from "@amazme/durable/tools";
+
+registry.install(createCodingTools({ images: await createNodePhotonImages() }));
+```
+
+A model without image input sees a placeholder instead of the image, and `read` says so in a diagnostic. The Photon processor works on the calling thread, about a second and a half for a 12-megapixel photo, and decoding takes the image's full size in WebAssembly memory, which does not shrink again; leave it out on memory-constrained hosts such as Cloudflare Workers unless images stay small.
+
+Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `output`:
 
 `defaultActive: false` keeps a tool registered without offering it by default. Stored tool selectors accept names or `*` patterns: `only` starts a selection, `add` extends it and `remove` adjusts default activation. `allow` bounds the selected and dynamically loaded tools; `exclude` always wins and cannot be cleared by a tool-loading result. Loading retains activation intent across registry updates. Hosts can share the pure matcher from `@amazme/durable/tool-names` without importing the runtime.
 
@@ -175,11 +187,23 @@ registry.install(defineExtension({ name: "count", tools: [count] }));
 
 Each call runs as its own durable task. Its intent is committed before `execute()` runs. If the process dies mid-call, the tool reruns on reopen only when it is declared `replay: "safe"`; otherwise the model gets an `interrupted` error result with the output committed so far. Throwing from `execute()` gives the model an error result. A result can also return `usage`, which is added to the conversation's [usage](#usage-and-cost). It can also return `control: { terminate: true }`: when every result of the round asks for it, the run ends without another model request.
 
-Tools can call `await api.callTool(name, args, context)`. Each nested call uses the same validation, hooks, intent, replay policy and execution environment as a model call, and creates an ordinary task owned by its parent. Cancelling its context marks that child and waits for cleanup. Returning from the parent cancels and drains calls it left unfinished; a cancelled sequential waiter retains the earlier barrier. Calls are limited to 256 per parent and eight nested levels.
+A result has three channels: `output` for the model, `structuredOutput` for programs that call the tool (see [Calling tools from tools](#calling-tools-from-tools)), and `details` for UIs. A tool that declares `structuredOutputSchema` returns a matching `structuredOutput`, which the Harness validates. Programs calling a tool without one get its bounded output: one text item as a string, one image as its `ImageContent`, nothing as `""`, and anything else as the content list, for errors too. The transcript stores only `output` and `details`:
 
-`exposure` defaults to `direct`. Active direct tools are callable from other tools. `model-only` tools can be offered to the model but cannot be called by tools. `codemode` and `deferred` tools are callable without activation and can be explicitly loaded into the model's selection. `hidden` tools cannot be selected or called. `agent.tools`, `agent.callableTools`, and `agent.catalog` expose these views after the conversation's hard `allow` and `exclude` limits.
+```typescript
+const lines = defineTool({
+	name: "lines",
+	description: "Count the lines of a file",
+	parameters: Type.Object({ path: Type.String() }),
+	structuredOutputSchema: Type.Object({ lines: Type.Number() }),
+	execute: async (args, api, context) => {
+		const text = await readText(api, args.path, context);
+		const count = text.split("\n").length;
+		return { output: [{ type: "text", text: `${count} lines` }], structuredOutput: { lines: count } };
+	},
+});
+```
 
-Results may include `structuredContent` for programmatic callers alongside bounded model-facing `content`. It is stored with the result and does not add another model message. An `afterTool` content rewrite must also replace structured data to retain it; keeping the original payload alongside rewritten content drops that payload. Nested calls append `NestedToolResultEntry`, with the call, result and parent ID, without a synthetic provider tool-result message. Live slots and execution events carry `parentCallId` so clients can group child activity. Nested activation controls reach the next model request; handoff and termination remain decisions of the outer call.
+A missing, undeclared, or invalid `structuredOutput` turns a nested call's result into an error result with an `invalid_structured_output` diagnostic; for a call the model made, which never sees it, it is dropped and reported through `onReport`. An error result may omit it; error results the Harness writes itself (blocked, invalid, interrupted, aborted) carry none, and their `diagnostics` say what went wrong. An `afterTool` hook that redacts a schema tool's `output` must redact its `structuredOutput` too. The built-in `bash` returns `{ output, truncated, fullOutputPath?, exitCode }`, where `output` is the retained tail the model sees, read with `api.retainedOutput()`, and answers a nonzero exit with an error result that still carries it.
 
 A later extension's tool with the same name replaces an earlier one where both are selected, and `wrapTool()` decorates whichever tool won:
 
@@ -190,6 +214,56 @@ const Timing = defineExtension({
 	wraps: [wrapTool(createBashTool(), (bash) => ({ ...bash, execute: (args, api, ctx) => timed(() => bash.execute(args, api, ctx)) }))],
 });
 ```
+
+### Calling tools from tools
+
+A tool calls another tool with `api.executeTool()`, as a code mode script or an MCP bridge does. The nested call is its own tool task, owned by the calling one: it is validated, runs the `ToolTask` hooks, keeps its own output limits and replay policy, and returns its result to the caller instead of the transcript:
+
+```typescript
+const testsPass = defineTool({
+	name: "tests_pass",
+	description: "Run the test suite and say whether it passed",
+	parameters: Type.Object({}),
+	execute: async (_args, api, context) => {
+		const run = await api.executeTool("bash", { command: "npm test" }, context, { progress: false });
+		// Absent when bash did not finish, for example on a timeout.
+		const exitCode = (run.structuredOutput as { exitCode: number } | undefined)?.exitCode;
+		return { output: [{ type: "text", text: exitCode === 0 ? "passed" : "failed" }] };
+	},
+});
+```
+
+- The caller gets the nested call's `taskId`, `structuredOutput`, `details`, `diagnostics`, `usage`, and `isError`, not the `output` meant for the model. A blocked, invalid, failed, or aborted nested call returns an `isError` result. `executeTool()` itself rejects once `execute()` has returned, when the caller is aborted, or when the Harness closes; cancelling its `context` stops only the wait.
+- Hooks see a nested call's `call.parent`, so a guard can treat calls from scripts differently.
+- While the caller runs, its nested calls show in `docs["amazme.live"].nestedTools`, with the arguments they run with and a `summary` (error, duration, usage) once done, and as tool events with `parentToolCallId` and `parentTaskId`. `progress: false` keeps a nested call's running output out of `amazme.live`. Before the caller settles, nested calls it left running are aborted. The caller's result message does not list its nested calls; their task records keep them.
+- Each nested call has a key, its position among the caller's nested calls unless the caller passes `{ key }`. A replay-safe caller that reruns after a crash and calls in the same order, or passes the same keys, gets the nested calls it already made back, finished or still running, instead of starting them again. A nested call the crash interrupted before its result was committed follows its own `replay` policy, so a replay-safe tool with external effects still needs its own idempotency. A caller that is not replay-safe never reruns, so after a restart its unfinished nested calls are abandoned, with everything they own, before they run again.
+- A nested call's `usage` is counted under its own tool; passing it on in the caller's result counts it twice.
+- Nested results are not kept: they live in the caller's task documents (`NestedResultDoc`, one per nested call) only until the caller settles. The nested call's task record keeps only a small receipt. A stored result is exactly what `executeTool()` returns, without the model's `output`, so an image or a `bash` tail is stored once.
+- Each parent admits at most 256 nested calls and nesting is limited to eight levels. Calls can run concurrently; callers that require ordering must await each call before starting the next. Restrict `callers` where recursion is inappropriate (below).
+
+### Who may call a tool
+
+`callers` on a tool says who may call it: the model, other tools through `executeTool()`, or both, the default. A conversation's `modelTools` narrows which of its tools the model is offered, without taking them away from tools:
+
+```typescript
+const codemode = defineTool({ name: "codemode", callers: ["model"], ... }); // scripts cannot start scripts
+const search = defineTool({ name: "mcp__github__search", callers: ["tools"], ... }); // never offered to the model
+
+// The model is offered only codemode; its scripts call read, bash, and the MCP tools.
+await root.configure({ modelTools: [codemode] }, context);
+// The model is offered everything but bash, which scripts may still call.
+await root.configure({ modelTools: { remove: [bash] } }, context);
+```
+
+`conversation.agent()` resolves both lists: `tools`, offered to the model, and `callable`, which nested calls resolve among. `tools` still decides what is enabled at all; `modelTools` cannot add to it.
+
+`exposure` and the persisted name/pattern selectors remain host activation controls. Active `direct` tools are callable, `model-only` tools are only offered to models, `codemode` and `deferred` tools are callable without model activation, and `hidden` tools are unavailable. `callers` further narrows these permissions. `agent.catalog` exposes the permitted catalog; `allow` and `exclude` bound all three views. An `afterTool` output rewrite that leaves the original structured payload unchanged drops that payload, so redaction cannot expose it to nested callers.
+
+Live version 1 AmazMe tool tasks migrate once to the tagged input. A task that had already started executing is treated as unsafe to replay, because its old nested calls cannot be reliably reattached. Queued calls use the new executor; there is no second executor for old tasks.
+
+### Tasks a restart abandons
+
+A task that its creator awaits only in memory, and that the creator never resumes after a restart, can be created with `abandonOnRestart: true`. When a later Harness starts scheduling and finds it still live, it is aborted with `abortReason: "restart"`, together with everything it owns, before any of it runs again. Nested calls of tools that are not replay-safe get this automatically, and so do the child tasks such a tool creates with `api.createTask()`. A task abandoned this way whose definition is missing waits until its extension is installed, so its abort handler still cleans up. Its caller, and the conversation, wait with it; `harness.inspect()` shows it as blocked. Aborting it then orphans it, as any abort does.
 
 ## System Prompt
 
@@ -203,7 +277,7 @@ A conversation's `instructions` render last, as the section `instructions`. Sect
 
 ## Per-Conversation Agent
 
-Each conversation stores what it runs with in its `pi.agent` document. `configure()` changes it in one commit; unset fields follow the host:
+Each conversation stores what it runs with in its `amazme.agent` document. `configure()` changes it in one commit; unset fields follow the host:
 
 ```typescript
 await root.configure(
@@ -211,7 +285,8 @@ await root.configure(
 		model: { provider: "openai", modelId: "gpt-6-sol" },
 		thinkingLevel: "high",
 		extensions: { remove: [Coding] }, // edits the host default; an array selects exactly these, in order
-		tools: [readTool, bashTool], // an array offers exactly these; { remove: [...] } drops some
+		tools: [readTool, bashTool], // an array enables exactly these; { remove: [...] } drops some
+		modelTools: [readTool], // of those, offer the model only read; tools may still call bash
 		instructions: "Only read; never edit files.",
 		cwd: "/work/repo",
 	},
@@ -349,7 +424,7 @@ While busy, the reset is queued like a write. When it is placed during a tool ro
 
 ## Compaction
 
-Compaction shrinks what the model sees: it summarizes older entries and appends a `pi.compaction` entry that holds the summary and heads the first entry it keeps. Older entries stay in storage.
+Compaction shrinks what the model sees: it summarizes older entries and appends a `amazme.compaction` entry that holds the summary and heads the first entry it keeps. Older entries stay in storage.
 
 ```typescript
 const id = await root.compact("Keep the failing test names", context); // manual, with optional instructions
@@ -375,7 +450,7 @@ settings: {
 }
 ```
 
-When a provider rejects a request because the context is too long, generation compacts and retries once. A summary that would cut before the start of the current context settles as `stale` when it is placed, so when several are in flight, the furthest cut stays in effect. Summarization spend counts in `pi.usage`. A `beforeCompact` hook on `CompactionTask` can decline or supply its own summary.
+When a provider rejects a request because the context is too long, generation compacts and retries once. A summary that would cut before the start of the current context settles as `stale` when it is placed, so when several are in flight, the furthest cut stays in effect. Summarization spend counts in `amazme.usage`. A `beforeCompact` hook on `CompactionTask` can decline or supply its own summary.
 
 Running compactions are listed in `docs["amazme.live"].compactions` with their reason, attempt, and retry backoff. The agent events add `compaction_start` and `compaction_end`, and a `compactions` field in the snapshot.
 
@@ -467,7 +542,7 @@ const Subagent: Extension = defineExtension({
 				await api.details({ conversationId: child }, context); // lets a UI attach to the child
 				const request = { type: "input", content: args.task, requestId: `subagent:${api.taskId}` } as const;
 				const settled = await (await (await api.conversation(child, context))!.submit(request, context)).wait(context);
-				return { content: [{ type: "text", text: settled.status }] };
+				return { output: [{ type: "text", text: settled.status }] };
 			},
 		}),
 	],
@@ -602,6 +677,24 @@ registerStorageConformance({ describe, expect, it }, "My Storage", async (use) =
 
 The package root loads TypeBox, because the tool task validates arguments with pi-ai's `validateToolArguments()`. That costs about 23 MB of peak RSS unbundled, about 4 MB in a tree-shaken bundle.
 
+## Errors
+
+Three rules decide what an error does:
+
+1. **A storage error ends the Harness.** The call that hit it rejects with the error. Everything after it, and every pending wait, rejects with `SessionFailed` (its `cause` is that error); watches and event streams end with `session_failed`; running tasks get their abort signal; `onReport` gets the error once. The Harness then closes itself. Nothing is retried; a custom storage retries its own transient failures. Reopen to recover: commits are atomic, so the store is consistent, and resubmitting with the same `requestId` finds a submission that was already admitted.
+2. **An invalid request fails only that call:** a storage throws `StorageRequestError` for a bad cursor, an unknown conversation, or history a document does not keep. A read you cancelled fails only itself too.
+3. **Your code fails only its own unit:** a throwing task phase faults that task, a throwing tool gets an error result, a throwing hook is reported and skipped (`beforeTool` blocks the call), and a throwing commit callback rolls back that commit. Listeners that throw, or return a rejected promise, are reported and the others still run. The exception is a host `RegistryReader` whose `snapshot()` throws: the Harness cannot schedule without it, so it fails the Harness like a storage error.
+
+`harness.closed` settles once the Harness has closed, by `close()` or after a storage error, so a host restarts on failure like this:
+
+```typescript
+harness.closed.then((end) => {
+	if (end.reason === "failed") reopen(end.error);
+});
+```
+
+A failure closes the Harness by itself; `closed` settles once that close is done, even if the storage could not close cleanly. Closing waits for running task code to return, so code that ignores its abort signal delays `closed`.
+
 ## Examples
 
 Runnable examples live in [`test/examples`](test/examples). Run one from this package directory with:
@@ -639,7 +732,7 @@ Examples that call OpenAI need `OPENAI_API_KEY`; most use the faux provider othe
 - [`docs/pico-v5-handoff.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/pico-v5-handoff.md): the implementation plan
 - [`docs/pico-v5-chord-usage.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/pico-v5-chord-usage.md): how the package uses Chord
 
-Benchmarks: `npm run bench:storage`, `npm run bench:storage:memory`, and `npm run bench:tool-output`.
+Benchmarks: `npm run bench:storage`, `npm run bench:storage:memory`, `npm run bench:tool-output`, and `npm run bench:nested-tools`.
 
 ## License
 

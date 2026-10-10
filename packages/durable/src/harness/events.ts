@@ -1,7 +1,6 @@
 import type { Context, JsonValue } from "@amazme/chord";
 import type { Op, Path } from "@amazme/chord/delta";
 import type { AssistantMessage, Message, Usage } from "@amazme/ai";
-import { NestedToolResultEntry } from "../entries.ts";
 import { CommittedWatch } from "../session/observation.ts";
 import type {
 	CommitChange,
@@ -16,8 +15,9 @@ import type {
 } from "../types.ts";
 import { AgentDoc } from "./agent.ts";
 import type { InboxItem, InboxState } from "./inbox.ts";
-import type { CompactionStatus, LiveState, ToolSlot } from "./live.ts";
-import type { AgentState, CompactionReason, Harness, ToolDiagnostic } from "./types.ts";
+import type { CompactionStatus, LiveState, NestedToolSlot, ToolSlot } from "./live.ts";
+import { NestedResultDoc } from "./tool.ts";
+import type { AgentState, CompactionReason, Harness, NestedToolExecutionResult, ToolDiagnostic } from "./types.ts";
 import { UsageDoc, type UsageState } from "./usage.ts";
 import { scanAll } from "./util.ts";
 import { type ConversationView, conversationViews } from "./view.ts";
@@ -45,6 +45,8 @@ export type SnapshotEvent = {
 		deferred?: { pollAt: number };
 	};
 	tools: readonly ToolSlot[];
+	/** `pi.live.nestedTools`: nested calls of running tool calls. */
+	nestedTools: readonly NestedToolSlot[];
 	/** `pi.live.compactions`: live compactions with their attempt and retry backoff. */
 	compactions: readonly CompactionStatus[];
 	inbox: readonly QueuedItem[];
@@ -64,19 +66,24 @@ export type AgentEvent =
 	/** `usage` is the partial's current usage, as in the coding agent's JSON mode. */
 	| { type: "message_update"; usage: Usage; changes: readonly MessageChange[] }
 	| { type: "message_end"; entry: EntryRecord }
-	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: JsonObject; parentCallId?: string }
-	| {
+	| ({ type: "tool_execution_start"; args: JsonObject } & ToolEventCall)
+	| ({
 			type: "tool_execution_update";
-			toolCallId: string;
-			toolName: string;
-			parentCallId?: string;
 			/** A front trim and then an append of the retained window, or its replacement. */
 			output?: { trimStart?: number; append?: string } | { set: string };
 			details?: JsonValue;
 			diagnostics?: readonly ToolDiagnostic[];
-	  }
-	/** `entry` is absent when the tool task faulted or was orphaned. */
-	| { type: "tool_execution_end"; toolCallId: string; toolName: string; entry?: EntryRecord; parentCallId?: string }
+	  } & ToolEventCall)
+	/**
+	 * A model-issued call ends with its result `entry`, a nested call with its `result`. Both are absent when the tool
+	 * task faulted or was orphaned, or when the call's slot left `pi.live` unfinished: its run ended, or its parent
+	 * settled first.
+	 */
+	| ({
+			type: "tool_execution_end";
+			entry?: EntryRecord;
+			result?: NestedToolExecutionResult;
+	  } & ToolEventCall)
 	| { type: "inbox_update"; items: readonly QueuedItem[] }
 	| { type: "submission"; record: SubmissionRecord }
 	| { type: "auto_retry_start"; attempt: number; at: number; errorMessage: string }
@@ -89,6 +96,20 @@ export type AgentEvent =
 	| { type: "compaction_start"; taskId: TaskId; reason: CompactionReason; blocking: boolean }
 	/** The task's receipt tells whether it produced a summary; the summary entry has its own events. */
 	| { type: "compaction_end"; taskId: TaskId; reason: CompactionReason };
+
+/**
+ * Which call a tool event is about. `toolCallId` is the call's ID in the transcript and in tool events: the provider's
+ * ID for a model-issued call, `<parent call ID>/<key>` for a nested one. Match events by it; do not parse it. `taskId`
+ * is the call's tool task, absent for a call that never got one (not offered, or not started in a sequential round).
+ * A nested call also names the call that made it, by call ID and by tool task.
+ */
+export type ToolEventCall = {
+	toolCallId: string;
+	toolName: string;
+	taskId?: TaskId;
+	parentToolCallId?: string;
+	parentTaskId?: TaskId;
+};
 
 /** Serialized stream of one conversation's event batches, one per commit. */
 export interface AgentEventStream {
@@ -124,6 +145,7 @@ function snapshotOf(view: ConversationView): SnapshotEvent {
 		...(live.run === undefined ? {} : { run: { inputs: live.run.inputs } }),
 		...(live.generation === undefined ? {} : { generation: live.generation as SnapshotEvent["generation"] }),
 		tools: live.tools ?? [],
+		nestedTools: live.nestedTools ?? [],
 		compactions: live.compactions ?? [],
 		inbox: queued(inbox),
 		agent: agent ?? AgentDoc.definition.initial(),
@@ -144,9 +166,10 @@ export async function watchEvents(
 	conversationId: ConversationId,
 	context: Context,
 ): Promise<AgentEventStream> {
+	const views = conversationViews(harness);
 	let watch!: CommittedWatch<readonly AgentEvent[]>;
 	let snapshot!: SnapshotEvent;
-	await conversationViews(harness).attach(
+	await views.attach(
 		conversationId,
 		async (initial, release, storage) => {
 			// Generations whose held outcome already ended their turn, read on the line with the snapshot.
@@ -156,14 +179,19 @@ export async function watchEvents(
 			let current = initial;
 			snapshot = snapshotOf(initial);
 			// Batches are the watch's values; an overflow delivers a snapshot of the newest view instead.
-			watch = new CommittedWatch<readonly AgentEvent[]>([], release, () => [snapshotOf(current)]);
+			watch = new CommittedWatch<readonly AgentEvent[]>(
+				[],
+				release,
+				(error) => views.report(error),
+				() => [snapshotOf(current)],
+			);
 			return {
 				publication: (before, after, ops, publication, commitContext) => {
 					current = after;
 					const events = translate(conversationId, before, after, ops, publication, held);
 					if (events.length > 0) watch.advance(events, [], commitContext);
 				},
-				closeSession: () => watch.closeSession(),
+				closeSession: (failure) => watch.closeSession(failure),
 			};
 		},
 		context,
@@ -188,7 +216,6 @@ type TaskChange = Extract<CommitChange, { type: "task" }>;
 /** The tool result for `callId` among `entries`. */
 function resultOf(entries: readonly EntryRecord[], callId: string): EntryRecord | undefined {
 	return entries.find((entry) => {
-		if (NestedToolResultEntry.is(entry)) return entry.data.call.id === callId;
 		const message = entry.model?.[0];
 		return message?.role === "toolResult" && message.toolCallId === callId;
 	});
@@ -206,7 +233,18 @@ function translate(
 	const entries: EntryRecord[] = [];
 	const tasks = new Map<TaskId, TaskChange["value"]>();
 	const submissions: SubmissionRecord[] = [];
+	// Nested results this commit stored, by nested task ID; read now, since the caller's documents may retire next.
+	const nestedResults = new Map<string, NestedToolExecutionResult>();
 	for (const change of publication.changes) {
+		if (
+			change.type === "document" &&
+			change.record.kind === NestedResultDoc.definition.kind &&
+			change.record.key !== undefined &&
+			change.value !== null &&
+			change.conversationId === conversationId
+		) {
+			nestedResults.set(change.record.key, change.value.result as unknown as NestedToolExecutionResult);
+		}
 		if (change.type === "entry" && change.value.conversationId === conversationId) entries.push(change.value);
 		if (change.type === "task" && change.value.conversationId === conversationId)
 			tasks.set(change.value.id, change.value);
@@ -224,17 +262,18 @@ function translate(
 	// Progress: tool starts, the in-flight message, tool updates, retry and deferred state.
 	const slotsBefore = new Map((was.live.tools ?? []).map((slot) => [slot.callId, slot]));
 	const slots = now.live.tools ?? [];
-	for (const slot of slots) {
-		if (slot.status !== "running" || slotsBefore.get(slot.callId)?.status === "running") continue;
+	const nestedBefore = new Map((was.live.nestedTools ?? []).map((slot) => [slot.taskId, slot]));
+	const nested = now.live.nestedTools ?? [];
+	for (const slot of [...slots, ...nested]) {
+		const previous = "parentCallId" in slot ? nestedBefore.get(slot.taskId) : slotsBefore.get(slot.callId);
+		if (slot.status !== "running" || previous?.status === "running") continue;
+		// A nested slot carries the arguments the call runs with; a model-issued call's are in its intent checkpoint.
 		const checkpoint = slot.taskId === undefined ? undefined : tasks.get(slot.taskId)?.state.checkpoint;
-		const args = (checkpoint as { arguments?: JsonObject } | undefined)?.arguments ?? {};
-		events.push({
-			type: "tool_execution_start",
-			toolCallId: slot.callId,
-			toolName: slot.name,
-			args,
-			...(slot.parentCallId === undefined ? {} : { parentCallId: slot.parentCallId }),
-		});
+		const args =
+			"parentCallId" in slot
+				? slot.arguments
+				: ((checkpoint as { arguments?: JsonObject } | undefined)?.arguments ?? {});
+		events.push({ type: "tool_execution_start", ...callOf(slot), args });
 	}
 	const partialBefore = was.live.generation?.message as AssistantMessage | undefined;
 	const partial = now.live.generation?.message as AssistantMessage | undefined;
@@ -245,15 +284,16 @@ function translate(
 	for (const [index, slot] of slots.entries()) {
 		const previous = slotsBefore.get(slot.callId);
 		if (slot.status !== "running" || previous?.status !== "running") continue;
-		const update = toolUpdate(viewOps, index, slot, previous);
+		const update = toolUpdate(viewOps, ["tools", index], slot, previous);
 		if (update === undefined) continue;
-		events.push({
-			type: "tool_execution_update",
-			toolCallId: slot.callId,
-			toolName: slot.name,
-			...update,
-			...(slot.parentCallId === undefined ? {} : { parentCallId: slot.parentCallId }),
-		});
+		events.push({ type: "tool_execution_update", ...callOf(slot), ...update });
+	}
+	for (const [index, slot] of nested.entries()) {
+		const previous = nestedBefore.get(slot.taskId);
+		if (slot.status !== "running" || previous?.status !== "running") continue;
+		const update = toolUpdate(viewOps, ["nestedTools", index], slot, previous);
+		if (update === undefined) continue;
+		events.push({ type: "tool_execution_update", ...callOf(slot), ...update });
 	}
 	const generation = now.live.generation;
 	const generationBefore = was.live.generation;
@@ -275,9 +315,7 @@ function translate(
 		const entry = entries.find((candidate) => candidate.id === entryId);
 		toolEnds.push({
 			type: "tool_execution_end",
-			toolCallId: slot.callId,
-			toolName: slot.name,
-			...(slot.parentCallId === undefined ? {} : { parentCallId: slot.parentCallId }),
+			...callOf(slot),
 			...(entry === undefined ? {} : { entry }),
 		});
 	};
@@ -290,6 +328,25 @@ function translate(
 	}
 	for (const slot of slots) {
 		if (slot.status === "done" && !slotsBefore.has(slot.callId)) endTool(slot, slot.entry);
+	}
+	// Nested calls that end in this commit, the same way, children before the calls that made them: the lists hold
+	// parents first, so walk them backwards.
+	const endNested = (slot: NestedToolSlot): void => {
+		const result = nestedResults.get(String(slot.taskId));
+		events.push({
+			type: "tool_execution_end",
+			...callOf(slot),
+			...(result === undefined ? {} : { result }),
+		});
+	};
+	const nestedNow = new Map(nested.map((slot) => [slot.taskId, slot]));
+	for (const previous of [...nestedBefore.values()].reverse()) {
+		if (previous.status === "done") continue;
+		const slot = nestedNow.get(previous.taskId);
+		if (slot?.status === "done" || slot === undefined) endNested(slot ?? previous);
+	}
+	for (const slot of [...nested].reverse()) {
+		if (slot.status === "done" && !nestedBefore.has(slot.taskId)) endNested(slot);
 	}
 
 	// Entries in append order; a tool's end directly precedes its result's message, as in the coding agent.
@@ -404,14 +461,24 @@ function messageChanges(viewOps: readonly Op[], message: AssistantMessage): Mess
 	return changes;
 }
 
-/** Output, details, and diagnostics changes of a running slot, from the view operations on it. */
+/** The identifying fields of a slot's tool events. */
+function callOf(slot: ToolSlot | NestedToolSlot): ToolEventCall {
+	return {
+		toolCallId: slot.callId,
+		toolName: slot.name,
+		...(slot.taskId === undefined ? {} : { taskId: slot.taskId }),
+		...("parentCallId" in slot ? { parentToolCallId: slot.parentCallId, parentTaskId: slot.parentTaskId } : {}),
+	};
+}
+
+/** Output, details, and diagnostics changes of a running slot at `at` in `pi.live`, from the view operations on it. */
 function toolUpdate(
 	viewOps: readonly Op[],
-	index: number,
-	slot: ToolSlot,
-	previous: ToolSlot,
-): Omit<Extract<AgentEvent, { type: "tool_execution_update" }>, "type" | "toolCallId" | "toolName"> | undefined {
-	const outputPath = ["docs", "amazme.live", "tools", index, "output"];
+	at: readonly ["tools" | "nestedTools", number],
+	slot: ToolSlot | NestedToolSlot,
+	previous: ToolSlot | NestedToolSlot,
+): Omit<Extract<AgentEvent, { type: "tool_execution_update" }>, "type" | keyof ToolEventCall> | undefined {
+	const outputPath = ["docs", "amazme.live", ...at, "output"];
 	let trimStart = 0;
 	let append = "";
 	let set = false;

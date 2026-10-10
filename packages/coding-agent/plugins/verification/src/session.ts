@@ -9,7 +9,7 @@ import {
 	GenerationTask,
 	hook,
 	LiveDoc,
-	NestedToolResultEntry,
+	NestedResultDoc,
 	section,
 	ToolTask,
 } from "@amazme/durable";
@@ -44,6 +44,7 @@ export const Verification = defineExtension({
 	tools: [
 		defineTool({
 			name: "completion_verification",
+			structuredOutputSchema: Type.Object({}, { additionalProperties: true }),
 			parameters: Parameters,
 			replay: "safe",
 			description:
@@ -77,9 +78,9 @@ export const Verification = defineExtension({
 					const status = result?.status ?? "unverified";
 					const text = `Completion verification: ${status}. ${round.correctiveRequest === true ? "A corrective request is planned." : status === "passed" ? "The configured commands passed." : "No further corrective request is scheduled; the candidate is not verified."}\n${formatChecks(result?.checks ?? [])}`;
 					return {
-						content: [{ type: "text", text }],
+						output: [{ type: "text", text }],
 						isError: status !== "passed",
-						structuredContent: {
+						structuredOutput: {
 							round: { ...round },
 							result: result ?? null,
 							error: outcome?.error?.message ?? null,
@@ -104,8 +105,8 @@ export const Verification = defineExtension({
 					rounds,
 				};
 				return {
-					content: [{ type: "text", text: JSON.stringify(value) }],
-					structuredContent: value,
+					output: [{ type: "text", text: JSON.stringify(value) }],
+					structuredOutput: value,
 				};
 			},
 		}),
@@ -198,24 +199,26 @@ export const Verification = defineExtension({
 						round.receipt = await tx.createTask(
 							ToolTask,
 							{
-								nested: {
-									parentCallId,
-									depth: 1,
-									call: {
-										type: "toolCall",
-										id: callId,
-										name: "completion_verification",
-										arguments: { action: "status", taskId: String(child) },
-									},
+								kind: "nested",
+								parent: api.taskId,
+								key: "receipt",
+								parentCallId,
+								call: {
+									type: "toolCall",
+									id: callId,
+									name: "completion_verification",
+									arguments: { action: "status", taskId: String(child) },
 								},
 							},
 							{ ownership: { kind: "task", taskId: api.taskId } },
 						);
 						const live = await tx.doc(LiveDoc, api.conversationId);
-						live.tools ??= [];
-						live.tools.push({
+						live.nestedTools ??= [];
+						live.nestedTools.push({
 							taskId: round.receipt,
 							parentCallId,
+							parentTaskId: api.taskId,
+							arguments: { action: "status", taskId: String(child) },
 							callId,
 							name: "completion_verification",
 							status: "pending",
@@ -226,14 +229,9 @@ export const Verification = defineExtension({
 				}, context);
 				if (receipt !== undefined) {
 					const reported = await api.waitForTask(receipt, context);
-					const entry = reported.state.outcome.result?.entryId;
-					let reportedResult = false;
-					if (entry !== undefined)
-						await api.commit(async (tx) => {
-							const report = await tx.entry(NestedToolResultEntry, entry);
-							reportedResult = report?.data.result.structuredContent !== undefined;
-							return undefined;
-						}, context);
+					const report = await api.snapshot(NestedResultDoc, api.taskId, String(receipt), context);
+					const reportedResult =
+						reported.state.outcome.status === "completed" && report?.result.structuredOutput !== undefined;
 					// A disabled or blocked reporting tool cannot silently trigger more command execution.
 					if (!reportedResult) return;
 				}

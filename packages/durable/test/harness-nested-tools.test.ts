@@ -8,16 +8,23 @@ import {
 	defineTool,
 	LiveDoc,
 	MemoryStorage,
-	NestedToolResultEntry,
+	NestedResultDoc,
 	ToolResultEntry,
 	ToolTask,
 	defineTask,
 	watchEvents,
 	GenerationTask,
 } from "@amazme/durable";
-import type { AgentEvent, Harness, ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@amazme/durable";
+import type {
+	AgentEvent,
+	Harness,
+	ToolExecutionApi,
+	ToolExecutionResult,
+	NestedToolExecutionResult,
+	ToolRegistration,
+} from "@amazme/durable";
 import { afterEach, describe, expect, it } from "vitest";
-import { MAX_NESTED_TOOL_CALLS, MAX_NESTED_TOOL_DEPTH } from "../src/harness/nested-tools.ts";
+import { MAX_NESTED_TOOL_CALLS, MAX_NESTED_TOOL_DEPTH } from "../src/harness/tool.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
@@ -28,7 +35,9 @@ const harnesses = new Set<Harness>();
 const directories = new Set<string>();
 const DONE = fauxAssistantMessage([fauxText("done")]);
 const CALL = fauxAssistantMessage([fauxToolCall("parent", {}, { id: "parent-call" })], { stopReason: "toolUse" });
-const text = (value: string): ToolExecutionResult => ({ content: [{ type: "text", text: value }] });
+const text = (value: string): ToolExecutionResult => ({
+	output: [{ type: "text", text: value }],
+});
 
 function parent(execute: ToolRegistration["execute"]): ToolRegistration {
 	return defineTool({ name: "parent", description: "Nested caller", parameters: Type.Object({}), execute });
@@ -66,13 +75,13 @@ describe("nested tool execution", () => {
 		);
 		const agent = await root.agent(context);
 		expect(agent.tools.map((tool) => tool.name)).toEqual(["direct", "model-only"]);
-		expect(agent.callableTools.map((tool) => tool.name)).toEqual(["direct", "codemode", "deferred"]);
+		expect(agent.callable.map((tool) => tool.name)).toEqual(["direct", "codemode", "deferred"]);
 		expect(agent.catalog.map((tool) => tool.name)).toEqual(["direct", "model-only", "codemode", "deferred"]);
 		await root.commit(async (tx) => {
 			(await tx.doc(AgentDoc, root.id)).tools = { only: ["hidden", "codemode", "model-only"], exclude: ["codemode"] };
 		}, context);
 		expect((await root.agent(context)).tools.map((tool) => tool.name)).toEqual(["model-only"]);
-		expect((await root.agent(context)).callableTools.map((tool) => tool.name)).toEqual(["deferred"]);
+		expect((await root.agent(context)).callable.map((tool) => tool.name)).toEqual(["deferred"]);
 		await root.commit(async (tx) => {
 			(await tx.doc(AgentDoc, root.id)).tools = { allow: ["direct"], add: ["codemode"] };
 		}, context);
@@ -80,14 +89,14 @@ describe("nested tool execution", () => {
 	});
 
 	it("uses validation and both hooks, preserves structured data, and stores child evidence without model messages", async () => {
-		let received: ToolExecutionResult | undefined;
+		let received: NestedToolExecutionResult | undefined;
 		let savedApi: ToolExecutionApi | undefined;
 		const payload = { value: "x".repeat(2048) };
 		const observed: string[] = [];
 		const { root, harness, setup } = await open([
 			parent(async (_args, api, ctx) => {
 				savedApi = api;
-				received = await api.callTool("child", { value: "original" }, ctx);
+				received = await api.executeTool("child", { value: "original" }, ctx);
 				return text("parent completed");
 			}),
 			defineTool({
@@ -96,9 +105,10 @@ describe("nested tool execution", () => {
 				exposure: "codemode",
 				parameters: Type.Object({ value: Type.String() }),
 				outputLimits: { maxBytes: 20 },
+				structuredOutputSchema: Type.Object({ value: Type.String() }),
 				execute: async (args) => {
 					observed.push(args.value);
-					return { ...text("y".repeat(200)), structuredContent: payload };
+					return { ...text("y".repeat(200)), structuredOutput: payload };
 				},
 			}),
 		]);
@@ -116,40 +126,42 @@ describe("nested tool execution", () => {
 		});
 		expect((await (await root.submit({ type: "input", content: "go" }, context)).wait(context)).status).toBe("done");
 		await stream.stop();
-		expect(events.find((event) => event.type === "tool_execution_start" && event.toolName === "child")).toMatchObject({
-			parentCallId: "parent-call",
-			args: { value: "rewritten" },
-		});
+		expect(events.find((event) => event.type === "tool_execution_start" && event.toolName === "child")).toMatchObject(
+			{
+				parentToolCallId: "parent-call",
+				args: { value: "rewritten" },
+			},
+		);
 		expect(events.find((event) => event.type === "tool_execution_end" && event.toolName === "child")).toMatchObject({
-			parentCallId: "parent-call",
-			entry: { kind: "amazme.nested-tool-result" },
+			parentToolCallId: "parent-call",
+			result: { structuredOutput: payload },
 		});
 		expect(observed).toEqual(["rewritten", "after:child", "after:parent"]);
-		expect(received?.structuredContent).toEqual(payload);
-		expect(received?.content).toEqual([{ type: "text", text: "y".repeat(20) }]);
+		expect(received?.structuredOutput).toEqual(payload);
+		expect(received).not.toHaveProperty("output");
 		expect(received?.diagnostics).toContainEqual(expect.objectContaining({ code: "truncated" }));
-		const receivedData = received?.structuredContent;
+		const receivedData = received?.structuredOutput;
 		if (receivedData !== null && typeof receivedData === "object" && !Array.isArray(receivedData))
 			receivedData.value = "caller mutation";
 		const entries = await allEntries(root);
-		const child = entries.find(NestedToolResultEntry.is)!;
-		expect(child.model).toBeUndefined();
-		expect(child.data).toMatchObject({
-			parentCallId: "parent-call",
-			call: { name: "child", id: "parent-call/1" },
-			result: { structuredContent: payload },
-		});
-		const record = await harness.getTask(child.byTaskId!, context);
+		const record = await harness.getTask(received!.taskId, context);
 		const parentEntry = entries.find(ToolResultEntry.is)!;
 		expect(record?.owner).toBe(parentEntry.byTaskId);
+		expect(record?.state.outcome).toEqual({
+			status: "completed",
+			result: { kind: "nested" },
+		});
+		expect(
+			await harness.snapshot(NestedResultDoc, parentEntry.byTaskId!, String(received!.taskId), context),
+		).toBeUndefined();
 		expect(entries.filter(ToolResultEntry.is)).toHaveLength(1);
 		expect((await root.context(context)).messages.filter((message) => message.role === "toolResult")).toHaveLength(1);
 		expect(await harness.snapshot(LiveDoc, root.id, context)).toEqual({});
-		expect(() => savedApi!.callTool("child", {}, context)).toThrow("has settled");
+		await expect(savedApi!.executeTool("child", {}, context)).rejects.toThrow("has settled");
 	});
 
 	it("rejects invalid, blocked, hidden, model-only and excluded calls before their executor", async () => {
-		const results: ToolExecutionResult[] = [];
+		const results: NestedToolExecutionResult[] = [];
 		let executions = 0;
 		const { root, setup } = await open([
 			parent(async (_args, api, ctx) => {
@@ -161,7 +173,7 @@ describe("nested tool execution", () => {
 					["excluded", {}],
 					["inactive", {}],
 				] as const)
-					results.push(await api.callTool(name, args, ctx));
+					results.push(await api.executeTool(name, args, ctx));
 				return text("done");
 			}),
 			...(["child", "hidden", "model", "excluded", "inactive"] as const).map((name) =>
@@ -208,7 +220,7 @@ describe("nested tool execution", () => {
 		let observed: readonly number[] = [];
 		const { root, setup } = await open([
 			parent(async (_args, api, ctx) => {
-				await api.callTool("child", {}, ctx);
+				await api.executeTool("child", {}, ctx);
 				return { ...text("done"), control: { terminate: true } };
 			}),
 			defineTool({
@@ -231,27 +243,31 @@ describe("nested tool execution", () => {
 	});
 
 	it("drops original structured data when afterTool rewrites content", async () => {
-		let received: ToolExecutionResult | undefined;
+		let received: NestedToolExecutionResult | undefined;
 		const { root, setup } = await open([
 			parent(async (_args, api, ctx) => {
-				received = await api.callTool("child", {}, ctx);
+				received = await api.executeTool("child", {}, ctx);
 				return text("done");
 			}),
 			defineTool({
 				name: "child",
 				description: "Secret",
+				structuredOutputSchema: Type.Object({ secret: Type.Boolean() }),
 				exposure: "codemode",
 				parameters: Type.Object({}),
-				execute: async () => ({ ...text("secret"), structuredContent: { secret: true } }),
+				execute: async () => ({
+					...text("secret"),
+					structuredOutput: { secret: true },
+				}),
 			}),
 		]);
 		addHooks(setup.registry, ToolTask, {
 			afterTool: (call, result) => (call.name === "child" ? { ...result, ...text("redacted") } : undefined),
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
-		expect(received).toMatchObject(text("redacted"));
-		expect(received?.structuredContent).toBeUndefined();
-		expect((await allEntries(root)).find(NestedToolResultEntry.is)?.data.result.structuredContent).toBeUndefined();
+		expect(received).toMatchObject({ isError: true });
+		expect(received?.structuredOutput).toBeUndefined();
+		expect((await allEntries(root)).filter(ToolResultEntry.is)).toHaveLength(1);
 	});
 
 	it.each(["caller cancellation", "unawaited return"])("waits for child cleanup after %s", async (mode) => {
@@ -262,7 +278,7 @@ describe("nested tool execution", () => {
 		const caller = withCancel(context);
 		const { root } = await open([
 			parent(async (_args, api, ctx) => {
-				const child = api.callTool("child", {}, mode === "caller cancellation" ? caller.context : ctx);
+				const child = api.executeTool("child", {}, mode === "caller cancellation" ? caller.context : ctx);
 				// The parent deliberately stops awaiting in the second scenario.
 				void child.catch(() => {});
 				await started.promise;
@@ -300,61 +316,71 @@ describe("nested tool execution", () => {
 		}
 		expect((await completion).status).toBe("done");
 		expect(await settled(cleaned.promise)).toBe(true);
-		expect((await allEntries(root)).find(NestedToolResultEntry.is)?.data.result.diagnostics).toContainEqual(
-			expect.objectContaining({ code: "aborted" }),
-		);
+		const tasks = await root.commit((tx) => tx.scanTasks({ kind: ToolTask.definition.name }, 100), context);
+		expect(
+			tasks.items.find(
+				(task) =>
+					task.input !== null &&
+					typeof task.input === "object" &&
+					!Array.isArray(task.input) &&
+					task.input.kind === "nested",
+			)?.state.outcome.status,
+		).toBe("aborted");
 	});
 
-	it.each(["tool", "global"])("preserves parallel groups around a %s sequential barrier", async (mode) => {
-		const started: string[] = [];
-		const first = deferred();
-		const second = deferred();
-		const { root, setup } = await open([
-			parent(async (_args, api, ctx) => {
-				await Promise.all(["a", "b", "c"].map((name) => api.callTool(name, {}, ctx)));
-				return text("done");
-			}),
-			...["a", "b", "c"].map((name) =>
-				defineTool({
-					name,
-					description: name,
-					exposure: "codemode",
-					parameters: Type.Object({}),
-					executionMode: mode === "tool" && name === "b" ? "sequential" : "parallel",
-					execute: async () => {
-						started.push(name);
-						if (name === "a") await first.promise;
-						if (name === "b") await second.promise;
-						return text(name);
-					},
+	it.each(["tool", "global"])(
+		"lets the caller sequence nested tools independently of %s round policy",
+		async (mode) => {
+			const started: string[] = [];
+			const first = deferred();
+			const second = deferred();
+			const { root, setup } = await open([
+				parent(async (_args, api, ctx) => {
+					for (const name of ["a", "b", "c"]) await api.executeTool(name, {}, ctx);
+					return text("done");
 				}),
-			),
-		]);
-		if (mode === "global") setup.settings.toolExecution = "sequential";
-		const completion = (await root.submit({ type: "input", content: "go" }, context)).wait(context);
-		try {
-			await eventually(() => started.length === 1);
-			expect(started).toEqual(["a"]);
-			first.resolve();
-			await eventually(() => started.length === 2);
-			expect(started).toEqual(["a", "b"]);
-		} finally {
-			first.resolve();
-			second.resolve();
-		}
-		expect((await completion).status).toBe("done");
-		expect(started).toEqual(["a", "b", "c"]);
-	});
+				...["a", "b", "c"].map((name) =>
+					defineTool({
+						name,
+						description: name,
+						exposure: "codemode",
+						parameters: Type.Object({}),
+						executionMode: mode === "tool" && name === "b" ? "sequential" : "parallel",
+						execute: async () => {
+							started.push(name);
+							if (name === "a") await first.promise;
+							if (name === "b") await second.promise;
+							return text(name);
+						},
+					}),
+				),
+			]);
+			if (mode === "global") setup.settings.toolExecution = "sequential";
+			const completion = (await root.submit({ type: "input", content: "go" }, context)).wait(context);
+			try {
+				await eventually(() => started.length === 1);
+				expect(started).toEqual(["a"]);
+				first.resolve();
+				await eventually(() => started.length === 2);
+				expect(started).toEqual(["a", "b"]);
+			} finally {
+				first.resolve();
+				second.resolve();
+			}
+			expect((await completion).status).toBe("done");
+			expect(started).toEqual(["a", "b", "c"]);
+		},
+	);
 
 	it("bounds recursive depth and the number of child calls", async () => {
 		let count = 0;
 		let limited: string | undefined;
 		const { root } = await open([
 			parent(async (_args, api, ctx) => {
-				await api.callTool("recursive", {}, ctx);
-				for (let index = 1; index < MAX_NESTED_TOOL_CALLS; index++) await api.callTool("missing", {}, ctx);
+				await api.executeTool("recursive", {}, ctx);
+				for (let index = 1; index < MAX_NESTED_TOOL_CALLS; index++) await api.executeTool("missing", {}, ctx);
 				try {
-					await api.callTool("missing", {}, ctx);
+					await api.executeTool("missing", {}, ctx);
 				} catch (error) {
 					limited = String(error);
 				}
@@ -367,7 +393,7 @@ describe("nested tool execution", () => {
 				parameters: Type.Object({}),
 				execute: async (_args, api, ctx) => {
 					count++;
-					const result = await api.callTool("recursive", {}, ctx);
+					const result = await api.executeTool("recursive", {}, ctx);
 					return result.isError ? result : text("recursive");
 				},
 			}),
@@ -375,23 +401,30 @@ describe("nested tool execution", () => {
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		expect(count).toBe(MAX_NESTED_TOOL_DEPTH);
 		expect(limited).toContain(`exceed ${MAX_NESTED_TOOL_CALLS}`);
-		expect((await allEntries(root)).filter(NestedToolResultEntry.is)).toHaveLength(
-			MAX_NESTED_TOOL_CALLS + MAX_NESTED_TOOL_DEPTH - 1,
-		);
+		const tasks = await root.commit((tx) => tx.scanTasks({ kind: ToolTask.definition.name }, 1000), context);
+		expect(
+			tasks.items.filter(
+				(task) =>
+					task.input !== null &&
+					typeof task.input === "object" &&
+					!Array.isArray(task.input) &&
+					task.input.kind === "nested",
+			),
+		).toHaveLength(MAX_NESTED_TOOL_CALLS + MAX_NESTED_TOOL_DEPTH - 1);
 	});
 
-	it("retains the earlier barrier when a queued sequential caller is cancelled", async () => {
+	it("cancels an unadmitted call without delaying independent nested calls", async () => {
 		const started: string[] = [];
 		const first = deferred();
 		const queued = withCancel(context);
 		const cancelled = deferred();
 		const { root } = await open([
 			parent(async (_args, api, ctx) => {
-				const a = api.callTool("a", {}, ctx);
-				const b = api.callTool("b", {}, queued.context).catch(() => {
+				const a = api.executeTool("a", {}, ctx);
+				const b = api.executeTool("b", {}, queued.context).catch(() => {
 					cancelled.resolve();
 				});
-				const c = api.callTool("c", {}, ctx);
+				const c = api.executeTool("c", {}, ctx);
 				queued.cancel();
 				await Promise.all([a, b, c]);
 				return text("done");
@@ -415,7 +448,7 @@ describe("nested tool execution", () => {
 		try {
 			await cancelled.promise;
 			await eventually(() => started.includes("a"));
-			expect(started).toEqual(["a"]);
+			expect(started).toEqual(["a", "c"]);
 		} finally {
 			first.resolve();
 		}
@@ -423,13 +456,13 @@ describe("nested tool execution", () => {
 		expect(started).toEqual(["a", "c"]);
 	});
 
-	it("allows independent calls to run together and forwards deferred activation to the next request", async () => {
+	it("allows independent calls to run together and the parent activates deferred tools", async () => {
 		const started: string[] = [];
 		const release = deferred();
 		const { root } = await open([
 			parent(async (_args, api, ctx) => {
-				await Promise.all(["a", "b"].map((name) => api.callTool(name, {}, ctx)));
-				return text("done");
+				await Promise.all(["a", "b"].map((name) => api.executeTool(name, {}, ctx)));
+				return { ...text("done"), control: { addTools: ["deferred"] } };
 			}),
 			...["a", "b"].map((name) =>
 				defineTool({
@@ -485,17 +518,23 @@ describe("nested tool execution", () => {
 			initial: () => ({ phase: "run" }),
 			phases: {
 				run: async (_task, runtime, ctx) => {
-					let owned!: Parameters<typeof runtime.abortTask>[0];
+					let owned!: Parameters<typeof runtime.abortOwned>[0];
 					let unrelated!: typeof owned;
 					await runtime.commit(async (tx) => {
 						owned = await tx.createTask(child, null, { ownership: { kind: "task", taskId: runtime.taskId } });
 						unrelated = await tx.createTask(child, null, { ownership: { kind: "conversation" } });
 					}, ctx);
-					await expect(runtime.abortTask(unrelated, ctx)).rejects.toThrow("is not owned");
-					await runtime.abortTask(owned, ctx);
+					await expect(runtime.abortOwned(unrelated, ctx)).rejects.toThrow("is not owned");
+					await runtime.abortOwned(owned, ctx);
 					expect((await runtime.waitForTask(owned, ctx)).state.outcome.status).toBe("aborted");
-					late = () => runtime.abortTask(owned, ctx);
-					await runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx);
+					late = () => runtime.abortOwned(owned, ctx);
+					await runtime.commit(
+						() => ({
+							status: "terminal",
+							outcome: { status: "completed", result: null },
+						}),
+						ctx,
+					);
 				},
 			},
 			abort: async (_task, runtime, ctx) => {
@@ -519,7 +558,7 @@ describe("nested tool execution", () => {
 		let count = 0;
 		addTool(
 			setup.registry,
-			parent(async (_args, api, ctx) => api.callTool("child", {}, ctx)),
+			parent(async (_args, api, ctx) => api.executeTool("child", {}, ctx)),
 		);
 		addTool(
 			setup.registry,
@@ -553,29 +592,43 @@ describe("nested tool execution", () => {
 		expect(entries.find(ToolResultEntry.is)?.data.diagnostics).toContainEqual(
 			expect.objectContaining({ code: "interrupted" }),
 		);
-		expect(entries.filter(NestedToolResultEntry.is)).toHaveLength(1);
-		expect(entries.find(NestedToolResultEntry.is)?.data.result.diagnostics).toContainEqual(
-			expect.objectContaining({ code: "interrupted" }),
-		);
+		const tasks = await reopened.root.commit((tx) => tx.scanTasks({ kind: ToolTask.definition.name }, 100), context);
+		expect(
+			tasks.items.find(
+				(task) =>
+					task.input !== null &&
+					typeof task.input === "object" &&
+					!Array.isArray(task.input) &&
+					task.input.kind === "nested",
+			)?.state.outcome.status,
+		).toBe("aborted");
 	});
 
-	it("restores structured top-level and nested results from actual SQLite storage", async () => {
+	it("retires nested structured output and reopens the model result from actual SQLite storage", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "amazme-nested-tools-"));
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const setup = chatSetup();
 		addTool(
 			setup.registry,
-			parent(async (_args, api, ctx) => ({ ...(await api.callTool("child", {}, ctx)), ...text("parent") })),
+			parent(async (_args, api, ctx) => {
+				const nested = await api.executeTool("child", {}, ctx);
+				expect(nested.structuredOutput).toEqual({ value: 42 });
+				return text("parent");
+			}),
 		);
 		addTool(
 			setup.registry,
 			defineTool({
 				name: "child",
 				description: "Child",
+				structuredOutputSchema: Type.Object({ value: Type.Number() }),
 				exposure: "codemode",
 				parameters: Type.Object({}),
-				execute: async () => ({ ...text("child"), structuredContent: { value: 42 } }),
+				execute: async () => ({
+					...text("child"),
+					structuredOutput: { value: 42 },
+				}),
 			}),
 		);
 		setup.faux.setResponses([CALL, DONE]);
@@ -587,8 +640,7 @@ describe("nested tool execution", () => {
 		const reopened = await openChat(await openNodeSqliteStorage(path), setup);
 		harnesses.add(reopened.harness);
 		const entries = await allEntries(reopened.root);
-		expect(entries.find(NestedToolResultEntry.is)?.data.result.structuredContent).toEqual({ value: 42 });
-		expect(entries.find(ToolResultEntry.is)?.data.structuredContent).toEqual({ value: 42 });
-		expect(entries.find(NestedToolResultEntry.is)?.model).toBeUndefined();
+		expect(entries.filter(ToolResultEntry.is)).toHaveLength(1);
+		expect(entries.find(ToolResultEntry.is)?.model?.[0].content).toEqual([{ type: "text", text: "parent" }]);
 	});
 });

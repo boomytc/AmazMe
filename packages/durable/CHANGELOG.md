@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `ToolTaskInput` and `ToolTaskResult` are tagged unions: a model-issued call is `{ kind: "model", ... }` with its previous fields, a nested call `{ kind: "nested", ... }`. `amazme.tool` is version 2 and migrates live version 1 tasks. Previously executing AmazMe tasks are marked unsafe to replay because the old nested call keys cannot be reattached.
+- `ToolExecutionResult.content` is now `output`, next to the new `structuredOutput`.
+- `bash` and `powershell` answer a nonzero exit with an error result carrying an `exit_code` diagnostic, instead of throwing (`tool_error`).
+- Any error a `Storage` method throws, a read included, now fails the Session, which closes itself: every later call and every pending wait rejects with `SessionFailed`, whose `cause` is that error, and nothing is retried. `StorageRejected` is removed; a storage retries its own transient failures and throws the new `StorageRequestError` for an invalid request, which fails only that call. A throw in the scheduler's own commits, or in the commit listeners of the Harness's components, fails the Session too.
+- `subscribeCommits()` and `subscribeClose()` listeners that throw, or return a rejected promise, are reported through `onReport` instead of failing the operation that ran them.
+
 ### Added
 
 - Exposed the asking task's resolved agent and tool metadata to hooks through `api.agent(context)`
@@ -10,6 +18,21 @@
 
 - Added inactive tool registration, persistent name/pattern selection, and allow/exclude boundaries that dynamic loading cannot bypass
 - Added portable `grep`, `find`, and `ls` tools and the separate `FileSearchTools` extension, with bounded output, literal argv, invocation cancellation and paged alphabetical directory listing
+
+- `Session.closed` settles once the Session has closed, Storage included: `{ reason: "closed" }` after `close()`, or `{ reason: "failed", error }` after a storage error. `WatchEnd` gains `{ reason: "session_failed", error }`, and the README has an Errors section.
+- `ToolExecutionApi.executeTool(name, args, context, { key?, progress? })`: a tool calls another tool as a nested call. The nested call is its own `amazme.tool` task owned by the caller, runs validation, the `ToolTask` hooks (whose `ToolHookCall` carries `parent`), output limits, and its replay policy, and returns a `NestedToolExecutionResult` (its `taskId`, `structuredOutput`, `details`, `diagnostics`, `usage`, `isError`, `durationMs`, but not the model's `output`) to the caller instead of the transcript. The result is kept, as returned, in `NestedResultDoc`, a task-scoped document family of the caller, so it is gone from storage once the caller settles; its task's receipt stays small. Keys, by default the call's position, let a replay-safe caller's rerun reattach to its nested calls; a caller that is not replay-safe has its unfinished nested calls abandoned after a restart. Nested calls show in `amazme.live.nestedTools`, with the arguments they run with and a `summary` (error, duration, usage) once done (`progress: false` keeps their running output out), and as tool events with `parentToolCallId` and `parentTaskId`; every tool event also carries its call's `taskId`. A caller aborts the nested calls it left running before it settles.
+- Structured tool output: a tool declares `structuredOutputSchema` and returns `structuredOutput`, which the Harness validates and gives to programs that call the tool; a tool without a schema gives them its bounded output, one text item as a string, one image as itself, and otherwise the content list, for errors too. A nested call with invalid structured output gets an error result; a model-issued one only loses it, and the host gets a report. `api.retainedOutput()` reads the bounded output the model will see. `bash` and `powershell` return `{ output, truncated, fullOutputPath?, exitCode }`.
+- `ToolRegistration.callers` (`model`, `tools`, or both, the default) and `amazme.agent` `modelTools`: who may call a tool, and which of its tools a conversation offers the model; `Agent.callable` lists the tools nested calls resolve among. `addTools` also extends `modelTools`.
+- `TaskOptions.abandonOnRestart`: a task its creator awaits only in memory is aborted, with its owned work, when a later Harness starts scheduling, before any of it runs again. Its mark carries `abortReason: "restart"`, which cascades; such a task waits for a missing definition instead of becoming `orphaned`. Nested calls and `api.createTask()` children of tools that are not replay-safe get it by default. No task below an owner with cancellation intent starts a run phase any more, even before the cascade marks it.
+- `TaskRuntime.abortOwned(id, context)`: abort a task this task owns and wait until it is terminal.
+- `read` returns images as one image block instead of an `unsupported_image` error: PNG, JPEG, GIF, and WebP within the model's image limits (by default 2000x2000 pixels and 4.5 MB of base64) as they are, or, with `createCodingTools({ images })`, oriented, converted, and shrunk to fit. `@amazme/durable/images` provides a Photon (WebAssembly) image processor, with `/images/node` and `/images/cloudflare` loaders; nothing loads it unless imported. A model without image input gets a diagnostic saying it sees a placeholder.
+
+### Fixed
+
+- Preserved nested call count/depth bounds and automatically drop an unchanged structured payload when an `afterTool` hook rewrites its model output.
+
+- A throwing `onReport` no longer replaces the error being reported or becomes an unhandled rejection, a throwing `now()` is reported once and `Date.now` used, and a watch listener's error is reported as well as ending the watch with `listener_error`.
+- A task whose fault write failed no longer runs again in the same process.
 
 ## [1.1.0] - 2026-10-07
 
@@ -24,7 +47,7 @@
 - `Conversation.context(context, { at })` returns the model context as of a visible earlier entry, the same view `fork(at)` would start with, without creating a conversation ([#10512](https://github.com/earendil-works/pi/issues/10512)).
 - `ScanOrder` (`ascending` or `descending`) as `order` on conversation, entry, task, and submission scans, including `Tx.scanTasks()` and `Conversation.entries()`, so hosts can page the newest tasks first. Defaults are unchanged: entries newest first, everything else oldest first. A cursor continues in its scan's order, so the query may omit `order`; asking for the other order with it throws ([#10546](https://github.com/earendil-works/pi/issues/10546)).
 - Task records carry `startedAt` and `endedAt`, wall-clock times the Session stamps at the first change to `running` and at the change to `terminal`, with `HarnessOptions.now` or the new `createSession(storage, { now })` option. `startedAt` survives waits and reopen. `inspect()` shows them on each live task's record. Records written by earlier versions have neither ([#10549](https://github.com/earendil-works/pi/issues/10549)).
-- `pi.tool-result` messages carry `durationMs`: how long `execute()` took in that attempt, measured with a monotonic clock. Calls that did not execute, and interrupted or aborted calls, have none ([#10549](https://github.com/earendil-works/pi/issues/10549)).
+- `amazme.tool-result` messages carry `durationMs`: how long `execute()` took in that attempt, measured with a monotonic clock. Calls that did not execute, and interrupted or aborted calls, have none ([#10549](https://github.com/earendil-works/pi/issues/10549)).
 - Assistant messages carry the `durationMs` pi-ai measures for each response ([#10549](https://github.com/earendil-works/pi/issues/10549)).
 - `openDurableObjectSqliteStorage(ctx.storage)` in `@amazme/durable/storage/sqlite/cloudflare`: SQLite storage on a SQLite-backed Cloudflare Durable Object.
 - `settings.contextRetentionMs` (default ten minutes): how long an idle conversation keeps its last context read in memory; `0` drops it once idle.

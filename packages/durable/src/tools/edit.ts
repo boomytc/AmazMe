@@ -138,7 +138,12 @@ export function createEditTool(): ToolRegistration<typeof editSchema, EditToolDe
 					const outcome = getOrThrow(await env.writeFileChecked(absolutePath, finalContent, intent, context));
 					await observeMutation(api, env.id, outcome);
 					return {
-						content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
+						output: [
+							{
+								type: "text",
+								text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
+							},
+						],
 						details,
 					};
 				},

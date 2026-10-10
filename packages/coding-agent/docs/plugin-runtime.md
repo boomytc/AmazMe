@@ -23,7 +23,7 @@ export default defineFacet({
           name: "echo",
           description: "返回输入文字",
           parameters: Type.Object({ text: Type.String() }),
-          execute: async (args) => ({ content: [{ type: "text", text: args.text }] }),
+          execute: async (args) => ({ output: [{ type: "text", text: args.text }] }),
         })],
       })));
     });
@@ -116,3 +116,7 @@ export default defineFacet({
 重载串行处理，只在会话任务结束或取消后进行。加载和切换期间拒绝新的模型操作。候选版本准备失败时，清理候选并保留旧版；切换完成后的清理失败可能使 Chord 宿主失效，此时拒绝继续运行，需重启会话。关闭会话先等待 Harness 结束工具调用，再释放插件资源和加载产物。
 
 CLI 源码插件由重载入口重新构建；Web 的 `/reload` 先请求既有宿主构建服务重建当前会话选中的包，再由 worker 加载产物。构建失败时原版本继续可用，修复源码后可重试；活动任务需先结束或取消。重载期间切换会话不会把迟到的产物用于新会话。应用直接提供 manifest loader 时仍需先生成新的 facet 产物。Facet ID 和服务形状沿用 Chord 的重载约束。浏览器构建、应用壳及内核源码仍有各自的构建与重启边界，不承诺所有源码热替换。
+
+## 工具结果与嵌套调用
+
+原生工具结果用 `output` 提供模型文字/图片、`structuredOutput` 提供程序数据、`details` 提供界面状态。返回结构化数据时声明 `structuredOutputSchema`。`api.executeTool(name, args, context, { key?, progress? })` 复用同一套校验、钩子、审批和所属任务规则；嵌套结果随父任务结束回收，显式稳定键可在安全重放的父任务恢复时重新附着。`callers` 进一步限定模型、工具或两者是否可调用注册项。

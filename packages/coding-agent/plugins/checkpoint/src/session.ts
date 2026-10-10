@@ -39,6 +39,7 @@ const checkpoint = defineTool({
 	name: "file_checkpoint",
 	description:
 		"Manage optional file checkpoints in this conversation. create snapshots explicitly selected project files, including absent paths. preview returns file changes and a plan ID without changing files. Only restore after the user has selected files and approved the preview; restore requires that plan ID and explicit paths. A pre-restore checkpoint is saved first; failures and cancellation roll back checked publications. External edits are preserved as conflicts. list/status/remove manage stored records. Conversation history is not rewound.",
+	structuredOutputSchema: Type.Object({}, { additionalProperties: true }),
 	parameters: Type.Object({
 		action: Type.Union(
 			["create", "list", "preview", "restore", "status", "remove"].map((value) => Type.Literal(value)),
@@ -173,8 +174,8 @@ const checkpoint = defineTool({
 			const result = settled.state.outcome.result;
 			value = { task: id, outcome: settled.state.outcome.status, result: result ?? null };
 			return {
-				content: [{ type: "text", text: JSON.stringify(value) }],
-				structuredContent: value,
+				output: [{ type: "text", text: JSON.stringify(value) }],
+				structuredOutput: value,
 				isError: result?.status !== "restored",
 			};
 		} else {
@@ -226,7 +227,10 @@ const checkpoint = defineTool({
 				value = preview(plan);
 			}
 		}
-		return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+		return {
+			output: [{ type: "text", text: JSON.stringify(value) }],
+			structuredOutput: value,
+		};
 	},
 });
 

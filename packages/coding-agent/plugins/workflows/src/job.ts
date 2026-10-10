@@ -1,5 +1,5 @@
 import type { Context } from "@amazme/chord";
-import { AgentDoc, AssistantEntry, defineTask, NestedToolResultEntry, ToolTask, UsageDoc } from "@amazme/durable";
+import { AgentDoc, AssistantEntry, defineTask, NestedResultDoc, ToolTask, UsageDoc } from "@amazme/durable";
 import type { ConversationId, EntryId, TaskId, TaskRuntime, ToolTaskResult } from "@amazme/durable";
 import type { JobSpec } from "./plan.ts";
 import type { Evidence } from "./state.ts";
@@ -70,7 +70,7 @@ export const Job = defineTask<JobInput, State, JobResult>({
 			const requested = spec.kind === "agent" ? spec.tools : [spec.tool];
 			if (
 				requested.some(
-					(name) => !input.allowed.includes(name) || !agent.callableTools.some((tool) => tool.name === name),
+					(name) => !input.allowed.includes(name) || !agent.callable.some((tool) => tool.name === name),
 				)
 			)
 				return finish(
@@ -86,17 +86,17 @@ export const Job = defineTask<JobInput, State, JobResult>({
 					const child = await tx.createTask(
 						ToolTask,
 						{
-							nested: {
-								parentCallId: `workflow:${runtime.taskId}`,
-								depth: 1,
-								call: {
-									type: "toolCall",
-									id: `workflow:${runtime.taskId}:command`,
-									name: spec.tool,
-									arguments: {
-										command: spec.command,
-										timeout: input.timeoutSeconds,
-									},
+							kind: "nested",
+							parent: runtime.taskId,
+							key: "command",
+							parentCallId: `workflow:${runtime.taskId}`,
+							call: {
+								type: "toolCall",
+								id: `workflow:${runtime.taskId}:command`,
+								name: spec.tool,
+								arguments: {
+									command: spec.command,
+									timeout: input.timeoutSeconds,
 								},
 							},
 						},
@@ -204,16 +204,13 @@ export const Job = defineTask<JobInput, State, JobResult>({
 				waiting.then((record) => ({ record })),
 				runtime.sleep(deadline, context).then(() => ({ expired: true as const })),
 			]);
-			if ("expired" in first) await runtime.abortTask(child, context);
+			if ("expired" in first) await runtime.abortOwned(child, context);
 			const settled = "record" in first ? first.record : await waiting,
 				outcome = settled.state.outcome;
-			const entry =
-				outcome.result?.entryId === undefined
-					? undefined
-					: await runtime.entry(NestedToolResultEntry, outcome.result.entryId, context);
-			const facts = entry?.data.result.details;
+			const nested = (await runtime.snapshot(NestedResultDoc, runtime.taskId, String(child), context))?.result;
+			const facts = nested?.details;
 			const details = facts !== null && typeof facts === "object" && !Array.isArray(facts) ? facts : undefined;
-			const interrupted = entry?.data.result.diagnostics?.some((item) => item.code === "interrupted") === true;
+			const interrupted = nested?.diagnostics?.some((item) => item.code === "interrupted") === true;
 			const timedOut =
 				("expired" in first && outcome.status === "aborted") ||
 				(settled.endedAt ?? runtime.now()) > deadline ||
@@ -223,18 +220,25 @@ export const Job = defineTask<JobInput, State, JobResult>({
 					? "unverified"
 					: timedOut
 						? "timed_out"
-						: outcome.status === "completed" && entry?.data.result.isError !== true && details?.exit_code === 0
+						: outcome.status === "completed" && nested?.isError !== true && details?.exit_code === 0
 							? "passed"
 							: "failed";
 			const text = [
-				entry?.data.result.content?.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
-				...(entry?.data.result.diagnostics ?? []).map((item) => item.message),
+				typeof nested?.structuredOutput === "string"
+					? nested.structuredOutput
+					: nested?.structuredOutput !== null &&
+							typeof nested?.structuredOutput === "object" &&
+							!Array.isArray(nested.structuredOutput) &&
+							typeof nested.structuredOutput.output === "string"
+						? nested.structuredOutput.output
+						: undefined,
+				...(nested?.diagnostics ?? []).map((item) => item.message),
 				outcome.error?.message,
 				outcome.reason,
 			]
 				.filter(Boolean)
 				.join("\n");
-			return finish(runtime, result(runtime, input, status, text, outcome.result?.entryId ?? null), context);
+			return finish(runtime, result(runtime, input, status, text, null), context);
 		},
 	},
 	abort: async (task, runtime, context) => {

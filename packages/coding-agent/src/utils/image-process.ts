@@ -14,6 +14,11 @@ export type ProcessImageResult =
 			data: string;
 			mimeType: string;
 			hints: string[];
+			convertedFrom?: string;
+			resized?: {
+				from: { width: number; height: number };
+				to: { width: number; height: number };
+			};
 	  }
 	| {
 			ok: false;
@@ -103,6 +108,20 @@ export async function processImage(
 			data: resized.data,
 			mimeType: resized.mimeType,
 			hints,
+			...(normalized.mimeType === resized.mimeType && normalized.convertedFrom === undefined
+				? {}
+				: { convertedFrom: normalized.convertedFrom ?? normalized.mimeType }),
+			...(resized.width === resized.originalWidth && resized.height === resized.originalHeight
+				? {}
+				: {
+						resized: {
+							from: {
+								width: resized.originalWidth,
+								height: resized.originalHeight,
+							},
+							to: { width: resized.width, height: resized.height },
+						},
+					}),
 		};
 	}
 
@@ -115,5 +134,6 @@ export async function processImage(
 		data: Buffer.from(normalized.bytes).toString("base64"),
 		mimeType: normalized.mimeType,
 		hints,
+		...(normalized.convertedFrom === undefined ? {} : { convertedFrom: normalized.convertedFrom }),
 	};
 }

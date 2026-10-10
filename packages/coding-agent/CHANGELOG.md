@@ -6,6 +6,9 @@
 - A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
 ### Added
 
+- Native plugins use Durable `output`, `structuredOutputSchema` and `executeTool`; MCP, codemode, workflow and verification calls share owned tasks and scoped result retirement.
+- Native image reading uses provider limits and the existing image worker; standalone Durable hosts may explicitly load Photon.
+
 - Published the existing durable host, terminal client and Web entry through the formal CLI and compiled package, with prebuilt browser assets and lazy host command dispatch
 
 - Added optional JSON workflows over existing Durable jobs, with isolated agent contexts, bounded background concurrency, saved templates, persistent pause/resume, owned cancellation, and independent command evidence
@@ -24,6 +27,8 @@
 - Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
 
 ### Fixed
+
+- A fatal Durable storage failure now closes native TUI and hosted worker resources through their existing cleanup barriers.
 
 - Fixed default prompts and the packaged README identifying the product as Pi; native plugin guides now use AmazMe APIs, and hosted sessions expose their selected manifests for source discovery
 

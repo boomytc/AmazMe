@@ -18,9 +18,22 @@ import { closeFileToolApis, fileToolApi } from "./file-tool-api.ts";
 function referenceRead(bytes: Uint8Array, path: string, offset: number | undefined, limit: number | undefined) {
 	const mimeType = detectSupportedImageMimeType(bytes);
 	if (mimeType) {
-		const note = `Read image file [${mimeType}]`;
-		const image = { type: "image", mimeType, data: Buffer.from(bytes).toString("base64") };
-		return { content: [{ type: "text", text: note }, image], structuredContent: { ...image, note } };
+		return {
+			output: [
+				{
+					type: "image",
+					data: Buffer.from(bytes).toString("base64"),
+					mimeType,
+				},
+			],
+			diagnostics: [
+				{
+					severity: "info",
+					code: "image",
+					message: `Read image file [${mimeType}].`,
+				},
+			],
+		};
 	}
 	const textContent = new TextDecoder().decode(bytes);
 	const allLines = textContent.split("\n");
@@ -72,7 +85,7 @@ function referenceRead(bytes: Uint8Array, path: string, offset: number | undefin
 		});
 	}
 	return {
-		content: outputText === "" ? [] : [{ type: "text", text: outputText }],
+		output: outputText === "" ? [] : [{ type: "text", text: outputText }],
 		...(details === undefined ? {} : { details }),
 		diagnostics,
 	};
@@ -130,6 +143,7 @@ async function apiFor(env: NodeExecutionEnv): Promise<ToolExecutionApi> {
 		outputWindow: undefined,
 		diagnostic: () => {},
 		details: async () => {},
+		agent: async () => ({}),
 	} as unknown as ToolExecutionApi;
 }
 

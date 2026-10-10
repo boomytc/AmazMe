@@ -1,6 +1,5 @@
 import type { JsonRepresentation, JsonValue } from "@amazme/chord";
-import type { ToolCall } from "@amazme/ai";
-import type { CompactionReason, ToolDiagnostic, ToolExecutionResult } from "./harness/types.ts";
+import type { CompactionReason, ToolDiagnostic } from "./harness/types.ts";
 import type { ConversationId, Entry, EntryId, EntryRecord, TypedEntry } from "./types.ts";
 
 /** Define a typed entry kind whose `is()` guard narrows by `EntryRecord.kind`. */
@@ -22,16 +21,8 @@ export const SystemEntry = defineEntry("amazme.system");
  * Tool result: `model` is `[ToolResultMessage]`, whose content ends with the rendered diagnostics block; `data` holds
  * the structured diagnostics, possibly none. Written by tool tasks, and by generation for calls it did not offer.
  */
-export type ToolResultData = { diagnostics: ToolDiagnostic[]; structuredContent?: JsonValue };
+export type ToolResultData = { diagnostics: ToolDiagnostic[] };
 export const ToolResultEntry = defineEntry<ToolResultData>("amazme.tool-result");
-/** Nested results are durable evidence for their parent, without a synthetic provider tool message. */
-export type NestedToolResultData = {
-	parentCallId: string;
-	call: JsonRepresentation<ToolCall>;
-	result: JsonRepresentation<ToolExecutionResult>;
-	durationMs?: number;
-};
-export const NestedToolResultEntry = defineEntry<NestedToolResultData>("amazme.nested-tool-result");
 /**
  * Start of a new context: always `head: "self"`, with `model` absent for a plain reset or `[UserMessage]` carrying the
  * handoff text. Written by `Conversation.reset()` and the `handoff` tool control.

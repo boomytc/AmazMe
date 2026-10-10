@@ -16,6 +16,7 @@ import {
 	type ModelRef,
 	type Submission,
 	type TaskGraph,
+	type SessionEnd,
 } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
@@ -152,6 +153,7 @@ export interface OpenDurableOptions extends ToolSelectionOptions {
 }
 
 export interface OpenDurableResult {
+	readonly closed: Promise<SessionEnd>;
 	readonly view: DurableViewSource;
 	readonly controller: DurableController;
 	/** pi's settings, for the TUI's theme and terminal capabilities. */
@@ -611,7 +613,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		// Recovered work from an interrupted turn continues now.
 		harness.resume();
 
-		return {
+		const result: OpenDurableResult = {
+			closed: opened.closed,
 			view: {
 				current: () => state,
 				subscribe: (listener) => {
@@ -648,6 +651,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				return closing;
 			},
 		};
+		void opened.closed.then((end) => (end.reason === "failed" ? result.close().catch(fail) : undefined));
+		return result;
 	} catch (error) {
 		disposeView();
 		await harness?.close(context).catch(() => {});

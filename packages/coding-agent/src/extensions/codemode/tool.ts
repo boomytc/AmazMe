@@ -136,7 +136,15 @@ export function createCodemodeToolDefinition(
 					store: ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {},
 					executeTool: (name, args, callSignal) => {
 						if (!ctx) throw new Error("Tool calls need a session");
-						return ctx.executeTool(name, args, { signal: callSignal });
+						return ctx.executeTool(name, args, { signal: callSignal }).then((outcome) => ({
+							...outcome,
+							result: {
+								content: outcome.result.content,
+								value: ctx.tools.find((tool) => tool.name === name)?.outputSchema
+									? outcome.result.structuredContent
+									: undefined,
+							},
+						}));
 					},
 					saveStore: appendEntry ? (writes) => appendEntry("codemode-store", writes) : undefined,
 				} satisfies CodemodeHost,

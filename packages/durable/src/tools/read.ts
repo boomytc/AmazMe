@@ -1,4 +1,3 @@
-import type { ImagesOutputContent } from "@amazme/ai";
 import type { Context } from "@amazme/chord";
 import { type Static, Type } from "typebox";
 import {
@@ -11,7 +10,7 @@ import {
 } from "../env/index.ts";
 import { defineTool } from "../harness/define.ts";
 import { characterEnd } from "../harness/output.ts";
-import type { ToolDiagnostic, ToolRegistration, ToolExecutionApi } from "../harness/types.ts";
+import type { ToolDiagnostic, ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "../harness/types.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -21,11 +20,17 @@ import {
 	utf8ByteLength,
 } from "../truncate.ts";
 import { requireEnv } from "./env.ts";
-import { canonicalFilePath } from "../file-operations.ts";
+import { detectSupportedImageMimeTypeOf, imageDimensions } from "./image.ts";
+import {
+	base64Length,
+	DEFAULT_IMAGE_LIMITS,
+	type ImageLimits,
+	type ImageProcessor,
+	INLINE_IMAGE_TYPES,
+	toBase64,
+} from "./image-processor.ts";
+import { resolveReadToolPath, canonicalFilePath } from "../file-operations.ts";
 import { observeFile, observeRead } from "./file-observations.ts";
-import { detectSupportedImageMimeTypeOf } from "./image.ts";
-import { resolveReadToolPath } from "../file-operations.ts";
-import { readOutputSchema } from "./read-output.ts";
 
 const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
@@ -41,55 +46,6 @@ export type ReadToolDetails = {
 };
 
 const READ_CHUNK = 64 * 1024;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-
-export interface ReadToolOptions {
-	/** Applications supply their provider-aware conversion and resize pipeline. */
-	imageProcessor?(
-		bytes: Uint8Array,
-		mimeType: string,
-		api: ToolExecutionApi<ReadToolDetails>,
-		context: Context,
-	): Promise<{ content: ImagesOutputContent[]; isError?: boolean }>;
-}
-
-async function imageResult(
-	reader: BinaryReader,
-	size: number,
-	mimeType: string,
-	context: Context,
-	process?: (bytes: Uint8Array) => Promise<{ content: ImagesOutputContent[]; isError?: boolean }>,
-) {
-	if (size > MAX_IMAGE_BYTES) throw new Error(`Image exceeds the ${formatSize(MAX_IMAGE_BYTES)} read limit`);
-	const bytes = new Uint8Array(size);
-	for (let offset = 0; offset < size; ) {
-		const chunk = getOrThrow(await reader.read(offset, Math.min(READ_CHUNK, size - offset), context));
-		if (chunk.length === 0) throw new Error("Image changed while reading");
-		bytes.set(chunk, offset);
-		offset += chunk.length;
-	}
-	const encode = () => {
-		let binary = "";
-		for (let offset = 0; offset < bytes.length; offset += READ_CHUNK)
-			binary += String.fromCharCode(...bytes.subarray(offset, offset + READ_CHUNK));
-		return btoa(binary);
-	};
-	const result = process
-		? await process(bytes)
-		: {
-				content: [
-					{ type: "text" as const, text: `Read image file [${mimeType}]` },
-					{ type: "image" as const, mimeType, data: encode() },
-				],
-			};
-	context.abortSignal?.throwIfAborted();
-	const image = result.content.find((block) => block.type === "image");
-	const note = result.content
-		.filter((block) => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
-	return { ...result, structuredContent: image ? { ...image, note } : note };
-}
 
 /** `Array.prototype.slice`'s conversion of an index: NaN is 0, other values truncate toward zero. */
 function sliceIndex(value: number): number {
@@ -122,14 +78,21 @@ async function readHead(
 	return text + decoder.decode();
 }
 
-/** Reads text and images. Text truncation and continuation are reported as diagnostics. */
-export function createReadTool(options?: ReadToolOptions): ToolRegistration<typeof readSchema, ReadToolDetails> {
-	const imageProcessor = options?.imageProcessor;
+export type ReadToolOptions = {
+	/** Resizes and converts images; without one, images within `DEFAULT_IMAGE_LIMITS.maxBytes` pass through as they are. */
+	readonly images?: ImageProcessor;
+};
+
+/**
+ * Reads text files and images. Remarks about truncation, continuation, and image processing are diagnostics; the content
+ * is only file text, or one image, which programs get as its `ImageContent`.
+ */
+export function createReadTool(options: ReadToolOptions = {}): ToolRegistration<typeof readSchema, ReadToolDetails> {
+	const formats = options.images === undefined ? "jpg, png, gif, webp" : "jpg, png, gif, webp, bmp";
 	return defineTool({
 		name: "read",
-		description: `Read text files and images (PNG, JPEG, GIF, WebP, BMP). Images are limited to 10MB before processing. Text output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read the contents of a file. Supports text files and images (${formats}). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		parameters: readSchema,
-		outputSchema: readOutputSchema,
 		async execute(args, api, context) {
 			const { path, offset, limit } = args;
 			const env = requireEnv(api);
@@ -143,7 +106,7 @@ export function createReadTool(options?: ReadToolOptions): ToolRegistration<type
 			const reader = opened.value;
 			try {
 				// A concurrent writer can change the file between the scan and the reads. Appending (a growing log) leaves
-				// the scanned bytes as they were; a file that shrank or was rewritten in place is read again once.
+				// the scanned text as it was; an image must be whole. Otherwise the file is read again once.
 				for (let attempt = 0; ; attempt++) {
 					const version = getOrThrow(await reader.revision(context));
 					const before = getOrThrow(await reader.info(context));
@@ -151,21 +114,24 @@ export function createReadTool(options?: ReadToolOptions): ToolRegistration<type
 						size: before.size,
 						read: async (position, length) => getOrThrow(await reader.read(position, length, context)),
 					});
-					const result = mimeType
-						? await imageResult(
-								reader,
-								before.size,
-								mimeType,
-								context,
-								imageProcessor === undefined ? undefined : (bytes) => imageProcessor(bytes, mimeType, api, context),
-							)
-						: await readText(reader, before, path, offset, limit, context);
+					const result =
+						mimeType === undefined
+							? await readText(reader, path, offset, limit, context)
+							: await readImage(
+									reader,
+									before,
+									path,
+									mimeType,
+									options.images,
+									await imageModel(api, context),
+									context,
+								);
 					const after = getOrThrow(await reader.info(context));
 					const unchanged = version === getOrThrow(await reader.revision(context));
-					if (unchanged || (!mimeType && after.size > before.size)) {
-						if (unchanged && !("isError" in result && result.isError)) {
+					if (unchanged || (mimeType === undefined && after.size > before.size)) {
+						if (unchanged && !("isError" in result && result.isError))
 							await observeRead(api, env.id, { path: target, version }, context);
-						} else {
+						else {
 							await observeFile(api, env.id, target, undefined, context);
 							if (!unchanged) api.diagnostic({ severity: "warn", code: "file_changed", message: `${path} changed during reading. Read a stable version before editing or replacing it.` });
 						}
@@ -181,12 +147,108 @@ export function createReadTool(options?: ReadToolOptions): ToolRegistration<type
 }
 
 /**
+ * One image block, prepared by `processor` or, without one, as it is when its format is inline and it fits the limits
+ * (its size is checked before reading it, its dimensions from its header); otherwise an error result saying why. What happened to the image is an `info` diagnostic, so programs get the
+ * bare `ImageContent`. A model without image input sees pi-ai's placeholder instead; a diagnostic says so.
+ */
+async function readImage(
+	reader: BinaryReader,
+	info: FileInfo,
+	path: string,
+	mimeType: string,
+	processor: ImageProcessor | undefined,
+	{ vision, limits }: ImageModel,
+	context: Context,
+): Promise<ToolExecutionResult<ReadToolDetails>> {
+	let image: { readonly data: string; readonly mimeType: string };
+	const notes: string[] = [];
+	if (processor !== undefined) {
+		if (info.size > 10 * 1024 * 1024) return imageError(`${path} exceeds the 10MB image read limit`);
+		const bytes = getOrThrow(await reader.read(0, info.size, context));
+		const prepared = await processor.prepare(bytes, mimeType, limits);
+		if (prepared === undefined)
+			return imageError(`${path} is an image (${mimeType}) that cannot be prepared for the model`);
+		image = prepared;
+		if (prepared.convertedFrom !== undefined)
+			notes.push(`Converted from ${prepared.convertedFrom} to ${prepared.mimeType}.`);
+		if (prepared.resized !== undefined) {
+			const { from, to } = prepared.resized;
+			const scale = (from.width / to.width).toFixed(2);
+			notes.push(
+				`Resized from ${from.width}x${from.height} to ${to.width}x${to.height}. Multiply coordinates by ${scale} to map them to the original.`,
+			);
+		}
+	} else {
+		if (!INLINE_IMAGE_TYPES.has(mimeType)) {
+			return imageError(
+				`${path} is an image (${mimeType}) that needs converting, and no image processor is configured`,
+			);
+		}
+		const unshrinkable = "and no image processor is configured to shrink it";
+		if (base64Length(info.size) > limits.maxBytes) {
+			return imageError(
+				`${path} is an image (${mimeType}) of ${formatSize(info.size)}, too large to send, ${unshrinkable}`,
+			);
+		}
+		const bytes = getOrThrow(await reader.read(0, info.size, context));
+		const size = imageDimensions(bytes, mimeType);
+		if (size === undefined) return imageError(`${path} is an image (${mimeType}) whose size cannot be read`);
+		if (size.width > limits.maxWidth || size.height > limits.maxHeight) {
+			return imageError(
+				`${path} is an image (${mimeType}) of ${size.width}x${size.height}, larger than ${limits.maxWidth}x${limits.maxHeight}, ${unshrinkable}`,
+			);
+		}
+		image = { data: toBase64(bytes), mimeType };
+	}
+	if (!vision) notes.push("The current model does not support images; it sees a placeholder instead.");
+	const diagnostics: ToolDiagnostic[] = [
+		{
+			severity: "info",
+			code: "image",
+			message: [`Read image file [${image.mimeType}].`, ...notes].join(" "),
+		},
+	];
+	return {
+		output: [{ type: "image", data: image.data, mimeType: image.mimeType }],
+		diagnostics,
+	};
+}
+
+/** What the conversation's model takes: whether images, and within which limits. */
+type ImageModel = { readonly vision: boolean; readonly limits: ImageLimits };
+
+/**
+ * The conversation model's image input: `DEFAULT_IMAGE_LIMITS` overridden by its `inputLimits.images.resize`. Without
+ * a resolvable model, it counts as one that takes images within the defaults.
+ */
+async function imageModel(api: ToolExecutionApi, context: Context): Promise<ImageModel> {
+	const ref = (await api.agent(context)).model;
+	const model = ref === undefined ? undefined : api.models.getModel(ref.provider, ref.modelId);
+	const resize = model?.inputLimits?.images?.resize;
+	return {
+		vision: model?.input.includes("image") ?? true,
+		limits: {
+			maxWidth: resize?.maxWidth ?? DEFAULT_IMAGE_LIMITS.maxWidth,
+			maxHeight: resize?.maxHeight ?? DEFAULT_IMAGE_LIMITS.maxHeight,
+			maxBytes: resize?.maxBytes ?? DEFAULT_IMAGE_LIMITS.maxBytes,
+		},
+	};
+}
+
+function imageError(message: string): ToolExecutionResult<ReadToolDetails> {
+	return {
+		output: [],
+		isError: true,
+		diagnostics: [{ severity: "error", code: "unsupported_image", message }],
+	};
+}
+
+/**
  * The read result for the opened file. It equals decoding the whole file with `TextDecoder`, splitting it on `\n`,
  * and bounding the selected lines with `truncateHead`, while reading only one scan's worth of the file plus the head.
  */
 async function readText(
 	reader: BinaryReader,
-	info: FileInfo,
 	path: string,
 	offset: number | undefined,
 	limit: number | undefined,
@@ -271,7 +333,7 @@ async function readText(
 	}
 
 	return {
-		content: outputText === "" ? [] : [{ type: "text" as const, text: outputText }],
+		output: outputText === "" ? [] : [{ type: "text" as const, text: outputText }],
 		...(details === undefined ? {} : { details }),
 		diagnostics,
 	};

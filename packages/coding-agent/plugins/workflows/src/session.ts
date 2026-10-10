@@ -4,9 +4,10 @@ import { defineFacet } from "@amazme/chord";
 import type { Context, JsonValue } from "@amazme/chord";
 import { withoutAbortSignal } from "@amazme/chord/context";
 import { AgentExtensions, AgentRuntime, SlashCommands } from "@amazme/coding-agent/plugin";
-import { defineExtension, defineTool, ToolTask } from "@amazme/durable";
+import { defineExtension, defineTool } from "@amazme/durable";
 import type { TaskId, ToolExecutionApi } from "@amazme/durable";
 import { listTemplates, loadTemplate, saveTemplate } from "./files.ts";
+import { Command } from "./command.ts";
 import { Job } from "./job.ts";
 import type { JobResult } from "./job.ts";
 import { PlanSchema, readPlan } from "./plan.ts";
@@ -96,12 +97,13 @@ async function describe(api: ToolExecutionApi, id: TaskId<RunResult>, context: C
 export function workflowExtension(local: AgentRuntime) {
 	return defineExtension({
 		name: "workflows",
-		tasks: [Run, Job],
+		tasks: [Run, Job, Command],
 		tools: [
 			defineTool({
 				name: "workflow_save",
 				replay: "unsafe",
 				annotations: { readOnlyHint: false, destructiveHint: true },
+				structuredOutputSchema: Type.Object({}, { additionalProperties: true }),
 				parameters: Type.Object(
 					{
 						plan: PlanSchema,
@@ -118,13 +120,14 @@ export function workflowExtension(local: AgentRuntime) {
 						path = args.path ?? `.amazme/workflows/${plan.name}.json`;
 					const value = await saveTemplate(api.env, path, plan, args.expectedVersion, context);
 					return {
-						content: [{ type: "text", text: JSON.stringify(value) }],
-						structuredContent: value,
+						output: [{ type: "text", text: JSON.stringify(value) }],
+						structuredOutput: value,
 					};
 				},
 			}),
 			defineTool({
 				name: "workflow",
+				structuredOutputSchema: Type.Object({}, { additionalProperties: true }),
 				parameters: Parameters,
 				replay: "safe",
 				description:
@@ -150,8 +153,8 @@ export function workflowExtension(local: AgentRuntime) {
 							if (accepted !== undefined && accepted !== null) {
 								const report = await describe(api, accepted, context);
 								return {
-									content: [{ type: "text", text: report.text }],
-									structuredContent: report.value,
+									output: [{ type: "text", text: report.text }],
+									structuredOutput: report.value,
 									isError: report.value.state === "failed" || report.value.state === "cancelled",
 								};
 							}
@@ -165,7 +168,7 @@ export function workflowExtension(local: AgentRuntime) {
 									: readPlan(args.plan);
 							if (plan === undefined) throw new Error("Running requires an explicit plan or template path");
 							const agent = await api.agent(context),
-								allowed = agent.callableTools
+								allowed = agent.callable
 									.map((tool) => tool.name)
 									.filter((name) => name !== "subagent" && name !== "workflow" && name !== "workflow_save");
 							if (
@@ -261,8 +264,8 @@ export function workflowExtension(local: AgentRuntime) {
 						!Array.isArray(value) &&
 						(value.state === "failed" || value.state === "cancelled");
 					return {
-						content: [{ type: "text", text }],
-						structuredContent: value,
+						output: [{ type: "text", text }],
+						structuredOutput: value,
 						isError: (args.action === "run" || args.action === "status") && failed,
 					};
 				},
@@ -325,19 +328,8 @@ export default defineFacet({
 						const id = await harness.commit(
 							(tx) =>
 								tx.createTask(
-									ToolTask,
-									{
-										nested: {
-											parentCallId: callId,
-											depth: 1,
-											call: {
-												type: "toolCall",
-												id: callId,
-												name: toolName,
-												arguments: arguments_,
-											},
-										},
-									},
+									Command,
+									{ callId, name: toolName, args: arguments_ },
 									{
 										conversationId: conversation.id,
 										ownership: { kind: "conversation" },
@@ -346,7 +338,9 @@ export default defineFacet({
 							context,
 						);
 						try {
-							await harness.waitForTask(id, context);
+							const settled = await harness.waitForTask(id, context);
+							if (settled.state.outcome.status !== "completed" || settled.state.outcome.result.isError)
+								throw new Error(settled.state.outcome.result?.error ?? "Workflow command did not complete");
 						} catch (error) {
 							if (context.abortSignal?.aborted) {
 								const cleanup = withoutAbortSignal(context);

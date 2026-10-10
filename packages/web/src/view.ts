@@ -18,7 +18,6 @@ import {
 	type LiveState,
 	ResetEntry,
 	ToolResultEntry,
-	NestedToolResultEntry,
 	UserEntry,
 } from "@amazme/durable";
 import {
@@ -1065,14 +1064,6 @@ function entryBlocks(
 					}
 				}
 				break;
-			case NestedToolResultEntry.kind:
-				if (NestedToolResultEntry.is(entry)) {
-					const { call, result, durationMs } = entry.data;
-					const outcome: ToolOutcome = { ...result, content: result.content ?? [], durationMs };
-					pushToolBlock(locale, call, `tool:task:${entry.byTaskId ?? `entry:${entry.id}`}:${call.id}`, true, false,
-						new Map(), blocks, EMPTY_LIVE_CALLS, outcome, true);
-				}
-				break;
 			case ToolResultEntry.kind:
 				if (results.orphans.has(entry.id) && message?.role === "toolResult") {
 					const outcome: ToolOutcome = { ...message, diagnostics: ToolResultEntry.is(entry) ? entry.data?.diagnostics ?? [] : [] };
@@ -1167,15 +1158,22 @@ export function transcriptBlocks(
 	if (view === undefined) return blocks;
 	const results = toolResults(view.entries);
 	const live = liveOf(view);
-	const current = view.entries.findLast(entry => entry.kind === AssistantEntry.kind &&
-		(live.run?.taskId === undefined ? live.generation === undefined : entry.byTaskId === live.run.taskId));
-	const keyOf = (callId: string): string => current !== undefined ? toolKey(current, callId)
-		: `tool:${live.run?.taskId === undefined ? "live" : `generation:${live.run.taskId}`}:${callId}`;
-	const slotKey = (slot: NonNullable<LiveState["tools"]>[number]): string => slot.parentCallId === undefined
-		? keyOf(slot.callId) : `tool:task:${slot.taskId ?? "live"}:${slot.callId}`;
+	const current = view.entries.findLast(
+		(entry) =>
+			entry.kind === AssistantEntry.kind &&
+			(live.run?.taskId === undefined ? live.generation === undefined : entry.byTaskId === live.run.taskId),
+	);
+	const keyOf = (callId: string): string =>
+		current !== undefined
+			? toolKey(current, callId)
+			: `tool:${live.run?.taskId === undefined ? "live" : `generation:${live.run.taskId}`}:${callId}`;
+	const slots = [...(live.tools ?? []), ...(live.nestedTools ?? [])];
+	const slotKey = (
+		slot: NonNullable<LiveState["tools"]>[number] | NonNullable<LiveState["nestedTools"]>[number],
+	): string => (!("parentCallId" in slot) ? keyOf(slot.callId) : `tool:task:${slot.taskId ?? "live"}:${slot.callId}`);
 	const calls: LiveCalls = {
-		running: new Set((live.tools ?? []).filter(slot => slot.status === "running").map(slotKey)),
-		output: new Map((live.tools ?? []).map(slot => [slotKey(slot), slot.output ?? ""])),
+		running: new Set(slots.filter((slot) => slot.status === "running").map(slotKey)),
+		output: new Map(slots.map((slot) => [slotKey(slot), slot.output ?? ""])),
 	};
 	entryBlocks(locale, view.entries, results, blocks, calls, feedback, scope);
 
@@ -1197,7 +1195,35 @@ export function transcriptBlocks(
 			pushToolBlock(locale, call, keyOf(call.id), true, true, results.outcomes, blocks, calls);
 		}
 	}
-	for (const slot of live.tools ?? []) {
+	for (const slot of slots) {
+		if (slot.status === "pending") continue;
+		if ("parentCallId" in slot) {
+			const summary = slot.summary;
+			pushToolBlock(
+				locale,
+				{
+					type: "toolCall",
+					id: slot.callId,
+					name: slot.name,
+					arguments: slot.arguments,
+				},
+				slotKey(slot),
+				true,
+				slot.status === "running",
+				new Map(),
+				blocks,
+				calls,
+				summary === undefined
+					? undefined
+					: {
+							content: summary.error ? [{ type: "text", text: summary.error }] : [],
+							isError: summary.isError,
+							durationMs: summary.durationMs,
+						},
+				true,
+			);
+			continue;
+		}
 		if (slot.status !== "running") continue;
 		if (blocks.some((block) => block.id === slotKey(slot))) continue;
 		blocks.push({

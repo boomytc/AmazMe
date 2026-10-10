@@ -78,9 +78,10 @@ export function createApprovalGate(options: {
 					async beforeTool(call, api, context) {
 						const mode = options.mode();
 						if (mode === "off") return undefined;
-						const annotations = mode === "dangerous"
-							? (await api.agent(context)).callableTools.find((tool) => tool.name === call.name)?.annotations
-							: undefined;
+						const annotations =
+							mode === "dangerous"
+								? (await api.agent(context)).catalog.find((tool) => tool.name === call.name)?.annotations
+								: undefined;
 						if (!toolNeedsApproval(mode, call.name, annotations)) return undefined;
 						const id = `approval-${++sequence}`;
 						const request: ApprovalRequest = {

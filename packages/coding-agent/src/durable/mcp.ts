@@ -95,7 +95,7 @@ export async function openDurableMcp(options: {
 			for (const tool of new Map(connection.tools.map((tool) => [tool.name, tool])).values()) {
 				const name = createMcpToolName(connection.name, tool.name, (candidate) => (counts.get(candidate) ?? 0) > 1);
 				const exposure = getMcpToolExposure(entry.config, tool.name);
-				const metadata = createMcpToolMetadata(connection.name, tool, name, exposure, {
+				const { outputSchema, ...metadata } = createMcpToolMetadata(connection.name, tool, name, exposure, {
 					name: mcpNamespace(connection.name),
 					description: entry.config.description,
 					instructions: connection.instructions,
@@ -103,6 +103,7 @@ export async function openDurableMcp(options: {
 				tools.push(
 					defineTool({
 						...metadata,
+						structuredOutputSchema: outputSchema,
 						defaultActive: exposure === "direct",
 						async execute(params, api, context) {
 							const current = await manager.callConnection(connection.name, tool.name, context);
@@ -114,10 +115,16 @@ export async function openDurableMcp(options: {
 									api.output(`${progress.message ?? `Progress ${progress.progress}${total}`}\n`);
 								},
 							});
+							const converted = await convertMcpResult(connection.name, tool.name, result, {
+								readableResources: current.hasResources,
+							});
 							return copyJson(
-								await convertMcpResult(connection.name, tool.name, result, {
-									readableResources: current.hasResources,
-								}),
+								{
+									output: converted.content,
+									structuredOutput: converted.structuredContent,
+									details: converted.details,
+									isError: converted.isError,
+								},
 								{ omitUndefinedProperties: true },
 							) as ToolExecutionResult;
 						},
@@ -133,7 +140,7 @@ export async function openDurableMcp(options: {
 			);
 		const visible = servers.filter((slot) => slot.entry.config.exposure !== "hidden" && slot.connection?.hasResources);
 		const resourceExposure = visible.some((slot) => slot.entry.config.exposure === "direct") ? "direct" : "deferred";
-		for (const { execute, ...metadata } of visible.length === 0
+		for (const { execute, outputSchema, ...metadata } of visible.length === 0
 			? []
 			: createMcpResourceTools({
 					exposure: resourceExposure,
@@ -142,11 +149,19 @@ export async function openDurableMcp(options: {
 			tools.push(
 				defineTool({
 					...metadata,
+					structuredOutputSchema: outputSchema,
 					defaultActive: resourceExposure === "direct",
 					async execute(params, _api, context) {
-						return copyJson(await execute(params, context.abortSignal), {
-							omitUndefinedProperties: true,
-						}) as ToolExecutionResult;
+						const result = await execute(params, context.abortSignal);
+						return copyJson(
+							{
+								output: result.content,
+								structuredOutput: result.structuredContent,
+								details: result.details,
+								isError: result.isError,
+							},
+							{ omitUndefinedProperties: true },
+						) as ToolExecutionResult;
 					},
 				}),
 			);

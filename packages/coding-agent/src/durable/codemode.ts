@@ -3,6 +3,8 @@ import type { JsonValue } from "@amazme/chord";
 import { withAbortSignal } from "@amazme/chord/context";
 import { CODEMODE_SOURCE_GRAMMAR, MAX_STORE_TOTAL_CHARS } from "@amazme/codemode";
 import { defineDoc, defineExtension, defineTool } from "@amazme/durable";
+import type { ToolRegistration } from "@amazme/durable";
+import { Type } from "typebox";
 import {
 	CODEMODE_TOOL_NAME,
 	codemodeSchema,
@@ -19,6 +21,25 @@ import {
 	searchDeferredTools,
 	renderToolSearchResult,
 } from "../core/tool-search.ts";
+
+const ImageOutput = Type.Object({
+	type: Type.Literal("image"),
+	mimeType: Type.String(),
+	data: Type.String(),
+});
+const DefaultOutput = Type.Union([
+	Type.String(),
+	ImageOutput,
+	Type.Array(Type.Union([Type.Object({ type: Type.Literal("text"), text: Type.String() }), ImageOutput])),
+]);
+
+/** Declare the values native nested calls return, without adding a second schema to the registration. */
+function scriptTool(tool: ToolRegistration) {
+	return {
+		...tool,
+		outputSchema: tool.structuredOutputSchema ?? DefaultOutput,
+	};
+}
 
 /** Script state follows the conversation's actual history; a fork receives its as-of values. */
 export const CodemodeStoreDoc = defineDoc<{
@@ -49,14 +70,21 @@ export function createDurableCodemode(settings: SettingsManager) {
 					variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR },
 				},
 				prepareLoadout: (loadout) =>
-					prepareCodemodeLoadout(loadout, {
-						mode: settings.getSettings().codemode?.mode,
-						inlineBudget: settings.getSettings().codemode?.inlineBudget,
-						models: true,
-					}),
+					prepareCodemodeLoadout(
+						{
+							...loadout,
+							declared: loadout.declared.map(scriptTool),
+							callable: loadout.callable.map(scriptTool),
+						},
+						{
+							mode: settings.getSettings().codemode?.mode,
+							inlineBudget: settings.getSettings().codemode?.inlineBudget,
+							models: true,
+						},
+					),
 				async execute(input, api, context) {
 					const agent = await api.agent(context);
-					const tools = getCodemodeCallableTools(agent.callableTools);
+					const tools = getCodemodeCallableTools(agent.callable).map(scriptTool);
 					const store = await api.snapshot(CodemodeStoreDoc, api.conversationId, context);
 					let calls = 0;
 					const host: CodemodeHost = {
@@ -68,19 +96,22 @@ export function createDurableCodemode(settings: SettingsManager) {
 							if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters))
 								throw new TypeError("Tool arguments must be a JSON object");
 							const id = `${api.callId}/${++calls}`;
-							const result = await api.callTool(name, parameters, withAbortSignal(signal, context));
+							const result = await api.executeTool(name, parameters, withAbortSignal(signal, context));
 							const diagnostics = result.isError ? (result.diagnostics ?? []) : [];
 							return {
 								toolCall: { id },
 								result: {
 									content: [
-										...(result.content ?? []),
 										...diagnostics.map((item) => ({
 											type: "text" as const,
 											text: item.message,
 										})),
 									],
-									structuredContent: result.structuredContent,
+									value:
+										result.isError &&
+										agent.callable.find((tool) => tool.name === name)?.structuredOutputSchema === undefined
+											? undefined
+											: result.structuredOutput,
 								},
 								isError: result.isError ?? false,
 							};
@@ -111,7 +142,11 @@ export function createDurableCodemode(settings: SettingsManager) {
 							getToolGuidelines: () => new Map(tools.map((tool) => [tool.name, tool.promptGuidelines ?? []])),
 						},
 					);
-					return { ...result, details: copyJson(result.details) };
+					return {
+						output: result.content,
+						isError: result.isError,
+						details: copyJson(result.details),
+					};
 				},
 			}),
 			defineTool({
@@ -130,7 +165,7 @@ export function createDurableCodemode(settings: SettingsManager) {
 						limit,
 					);
 					return {
-						...renderToolSearchResult(matches),
+						output: renderToolSearchResult(matches).content,
 						control: { addTools: matches.map((tool) => tool.name) },
 					};
 				},

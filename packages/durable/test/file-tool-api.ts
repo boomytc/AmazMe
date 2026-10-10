@@ -27,6 +27,8 @@ export async function fileToolApi(env: ExecutionEnv | undefined): Promise<ToolEx
 		env,
 		taskId: 1,
 		callId: "call",
+		agent: async () => ({}),
+		retainedOutput: () => ({ text: "", truncated: false }),
 		snapshot: session.snapshot.bind(session),
 		commit: session.commit.bind(session),
 		output: () => {},

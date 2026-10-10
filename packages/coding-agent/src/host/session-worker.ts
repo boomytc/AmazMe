@@ -616,6 +616,21 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			},
 		);
 	};
+	void harness.closed
+		.then(async (end) => {
+			if (end.reason !== "failed" || closing !== undefined) return;
+			try {
+				await control.send({
+					type: "worker_failed",
+					token,
+					sessionKey,
+					message: end.error instanceof Error ? end.error.message : String(end.error),
+				});
+			} finally {
+				closeAndExit();
+			}
+		})
+		.catch(() => closeAndExit());
 
 	lifecycle = new WorkerLifecycle({
 		initialServerConnectionId: control.initialServerConnectionId,

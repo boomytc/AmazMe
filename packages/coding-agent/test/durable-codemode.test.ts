@@ -3,7 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { createModels, fauxProvider, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@amazme/ai";
-import { AgentDoc, createRegistry, defineExtension, defineTool, Harness, MemoryStorage, NestedToolResultEntry, ToolResultEntry, ToolTask, hook } from "@amazme/durable";
+import {
+	AgentDoc,
+	createRegistry,
+	defineExtension,
+	defineTool,
+	Harness,
+	MemoryStorage,
+	ToolResultEntry,
+	ToolTask,
+	hook,
+} from "@amazme/durable";
 import type { Conversation, Harness as HarnessType, Storage, ToolRegistration } from "@amazme/durable";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import { CodingTools } from "@amazme/durable/tools";
@@ -70,35 +80,99 @@ describe("Durable codemode", () => {
 		await writeFile(join(opened.cwd, "file.txt"), "before\n");
 		const agent = await opened.root.agent(context);
 		expect(agent.tools.map((tool) => tool.name)).toEqual(["codemode", "tool_search"]);
-		expect(agent.callableTools.map((tool) => tool.name)).toContain("read");
+		expect(agent.callable.map((tool) => tool.name)).toContain("read");
 		expect(agent.tools.find((tool) => tool.name === "codemode")?.description).toContain("### `read`");
 		const result = await run(opened, 'text(await tools.read({path:"file.txt"})); text(await tools.edit({path:"file.txt",edits:[{oldText:"before",newText:"after"}]}));');
 		expect(result.message.isError).toBe(false);
 		expect(result.text).toContain("before");
 		expect(await readFile(join(opened.cwd, "file.txt"), "utf8")).toBe("after\n");
-		expect(result.entries.filter(NestedToolResultEntry.is).map((entry) => entry.data.call.name).sort()).toEqual(["edit", "read"]);
-		expect(result.entries.filter(NestedToolResultEntry.is).every((entry) => entry.model === undefined)).toBe(true);
-		expect(result.entry.model?.[0]).toMatchObject({ details: { calls: [{ id: "script/1", status: "ok" }, { id: "script/2", status: "ok" }] } });
+		expect(result.entries.filter((entry) => entry.kind === "amazme.tool-result")).toHaveLength(1);
+		expect(result.entry.model?.[0]).toMatchObject({
+			details: {
+				calls: [
+					{ id: "script/1", status: "ok" },
+					{ id: "script/2", status: "ok" },
+				],
+			},
+		});
 	});
 
 	it("keeps only permitted tools in script discovery and applies blocking hooks to nested calls", async () => {
 		let executed = 0;
-		const opened = await open({ tools: [defineTool({ name: "secret", description: "Secret lookup", exposure: "deferred", parameters: Type.Object({}), execute: async () => { executed++; return { content: [] }; } })] });
-		await opened.root.commit(async (tx) => { (await tx.doc(AgentDoc, opened.root.id)).tools = { allow: ["codemode", "read"], exclude: ["secret"] }; }, context);
-		opened.registry.install(defineExtension({ name: "policy", hooks: [hook(ToolTask, { beforeTool: (call) => call.name === "read" ? { block: "fixture denied" } : undefined })] }));
-		const result = await run(opened, 'text(ALL_TOOLS.map(t=>t.name)); try { await tools.read({path:"file.txt"}); } catch(e) { text(e.message); }');
+		const opened = await open({
+			tools: [
+				defineTool({
+					name: "secret",
+					description: "Secret lookup",
+					exposure: "deferred",
+					parameters: Type.Object({}),
+					execute: async () => {
+						executed++;
+						return { output: [] };
+					},
+				}),
+			],
+		});
+		await opened.root.commit(async (tx) => {
+			(await tx.doc(AgentDoc, opened.root.id)).tools = {
+				allow: ["codemode", "read"],
+				exclude: ["secret"],
+			};
+		}, context);
+		opened.registry.install(
+			defineExtension({
+				name: "policy",
+				hooks: [
+					hook(ToolTask, {
+						beforeTool: (call) => (call.name === "read" ? { block: "fixture denied" } : undefined),
+					}),
+				],
+			}),
+		);
+		const result = await run(
+			opened,
+			'text(ALL_TOOLS.map(t=>t.name)); try { await tools.read({path:"file.txt"}); } catch(e) { text(e.message); }',
+		);
 		expect(result.text).toContain("fixture denied");
 		expect(result.text).not.toContain("secret");
 		expect(executed).toBe(0);
-		expect(result.entries.find(NestedToolResultEntry.is)?.data.result.diagnostics).toContainEqual(expect.objectContaining({ code: "blocked" }));
+		expect(result.entry.model?.[0]).toMatchObject({
+			details: {
+				calls: [{ status: "error", error: expect.stringContaining("fixture denied") }],
+			},
+		});
 	});
 
 	it("returns full structured data to scripts and applies result redaction before the sandbox sees it", async () => {
-		const opened = await open({ tools: [defineTool({ name: "record", description: "Record", exposure: "codemode", parameters: Type.Object({}), outputSchema: Type.Object({ value: Type.Number() }), execute: async () => ({ content: [{ type: "text", text: "record" }], structuredContent: { value: 42 } }) })] });
-		expect((await run(opened, 'text((await tools.record({})).value);', "structured")).text).toContain("42");
-		opened.registry.install(defineExtension({ name: "redact", hooks: [hook(ToolTask, { afterTool: (call, result) => call.name === "record" ? { ...result, content: [{ type: "text", text: "redacted" }] } : undefined })] }));
-		const result = await run(opened, 'text(await tools.record({}));', "redaction");
-		expect(result.text).toContain("redacted");
+		const opened = await open({
+			tools: [
+				defineTool({
+					name: "record",
+					description: "Record",
+					exposure: "codemode",
+					parameters: Type.Object({}),
+					structuredOutputSchema: Type.Object({ value: Type.Number() }),
+					execute: async () => ({
+						output: [{ type: "text", text: "record" }],
+						structuredOutput: { value: 42 },
+					}),
+				}),
+			],
+		});
+		expect((await run(opened, "text((await tools.record({})).value);", "structured")).text).toContain("42");
+		opened.registry.install(
+			defineExtension({
+				name: "redact",
+				hooks: [
+					hook(ToolTask, {
+						afterTool: (call, result) =>
+							call.name === "record" ? { ...result, output: [{ type: "text", text: "redacted" }] } : undefined,
+					}),
+				],
+			}),
+		);
+		const result = await run(opened, "text(await tools.record({}));", "redaction");
+		expect(result.text).toContain("returned no structuredOutput");
 		expect(result.text).not.toContain("42");
 	});
 
@@ -132,9 +206,26 @@ describe("Durable codemode", () => {
 	it("loads deferred tool matches for the next request and retains activation on reopen", async () => {
 		const cwd = await directory();
 		const path = join(cwd, "session.sqlite");
-		const tools = [defineTool({ name: "lookup", description: "Look up weather", exposure: "deferred", parameters: Type.Object({}), execute: async () => ({ content: [] }) })];
-		const first = await open({ cwd, storage: await openNodeSqliteStorage(path), tools });
-		first.faux.setResponses([fauxAssistantMessage([fauxToolCall("tool_search", { query: "weather" }, { id: "search" })], { stopReason: "toolUse" }), done()]);
+		const tools = [
+			defineTool({
+				name: "lookup",
+				description: "Look up weather",
+				exposure: "deferred",
+				parameters: Type.Object({}),
+				execute: async () => ({ output: [] }),
+			}),
+		];
+		const first = await open({
+			cwd,
+			storage: await openNodeSqliteStorage(path),
+			tools,
+		});
+		first.faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("tool_search", { query: "weather" }, { id: "search" })], {
+				stopReason: "toolUse",
+			}),
+			done(),
+		]);
 		await (await first.root.submit({ type: "input", content: "go" }, context)).wait(context);
 		expect((await first.root.agent(context)).tools.map((tool) => tool.name)).toContain("lookup");
 		await first.harness.close(context);
@@ -156,8 +247,11 @@ describe("Durable codemode", () => {
 		sessions.add(first);
 		faux.setResponses([fauxAssistantMessage([fauxToolCall("codemode", { code: 'text(await tools.read({path:"file.txt"})); store("controller",42);' }, { id: "script" })], { stopReason: "toolUse" }), done()]);
 		await first.controller.submit("go", "followUp");
-		await vi.waitFor(() => { expect(faux.state.callCount).toBe(2); expect(first.view.current().conversation.docs["amazme.live"]?.run).toBeUndefined(); });
-		expect(first.view.current().conversation.entries.some(NestedToolResultEntry.is)).toBe(true);
+		await vi.waitFor(() => {
+			expect(faux.state.callCount).toBe(2);
+			expect(first.view.current().conversation.docs["amazme.live"]?.run).toBeUndefined();
+		});
+		expect(JSON.stringify(first.view.current().conversation.entries)).toContain("file.txt");
 		await first.close();
 		sessions.delete(first);
 		const reopened = await openDurable({ cwd, settingsManager: settings, modelRuntime: runtime, continueSession: true });

@@ -1,6 +1,6 @@
 import type { Context } from "@amazme/chord";
 import type { TaskId, TaskRuntime, ToolTaskResult } from "@amazme/durable";
-import { defineTask, LiveDoc, NestedToolResultEntry, ToolTask } from "@amazme/durable";
+import { defineTask, LiveDoc, NestedResultDoc, ToolTask } from "@amazme/durable";
 import type { CommandCheck } from "./state.ts";
 
 export type Candidate = { text: string; limited: boolean; stopReason: string };
@@ -51,8 +51,10 @@ async function finish(
 	await runtime.commit(async (tx) => {
 		const live = await tx.doc(LiveDoc, runtime.conversationId);
 		const owned = new Set<TaskId>(checks.map((check) => check.task));
-		if (live.tools !== undefined)
-			live.tools = live.tools.filter((slot) => slot.taskId === undefined || !owned.has(slot.taskId));
+		if (live.nestedTools !== undefined) {
+			live.nestedTools = live.nestedTools.filter((slot) => !owned.has(slot.taskId));
+			if (live.nestedTools.length === 0) delete live.nestedTools;
+		}
 		return {
 			status: "terminal",
 			outcome:
@@ -100,27 +102,32 @@ export const Check = defineTask<Input, State, CheckResult>({
 					const child = await tx.createTask(
 						ToolTask,
 						{
-							nested: {
-								parentCallId,
-								depth: 1,
-								call: {
-									type: "toolCall",
-									id: callId,
-									name: check.tool,
-									arguments: {
-										command: check.command,
-										timeout: Math.max(1, Math.ceil((state.deadline - runtime.now()) / 1000)),
-									},
+							kind: "nested",
+							parent: runtime.taskId,
+							key: `check-${state.next}`,
+							parentCallId,
+							call: {
+								type: "toolCall",
+								id: callId,
+								name: check.tool,
+								arguments: {
+									command: check.command,
+									timeout: Math.max(1, Math.ceil((state.deadline - runtime.now()) / 1000)),
 								},
 							},
 						},
 						{ ownership: { kind: "task", taskId: runtime.taskId } },
 					);
 					const live = await tx.doc(LiveDoc, runtime.conversationId);
-					live.tools ??= [];
-					live.tools.push({
+					live.nestedTools ??= [];
+					live.nestedTools.push({
 						taskId: child,
 						parentCallId,
+						parentTaskId: runtime.taskId,
+						arguments: {
+							command: check.command,
+							timeout: Math.max(1, Math.ceil((state.deadline - runtime.now()) / 1000)),
+						},
 						callId,
 						name: check.tool,
 						status: "pending",
@@ -146,16 +153,19 @@ export const Check = defineTask<Input, State, CheckResult>({
 				completed.then((record) => ({ record })),
 				runtime.sleep(state.deadline, context).then(() => ({ expired: true as const })),
 			]);
-			if ("expired" in first) await runtime.abortTask(state.child!, context);
+			if ("expired" in first) await runtime.abortOwned(state.child!, context);
 			const record = "record" in first ? first.record : await completed;
 			const outcome = record.state.outcome;
-			const entry =
-				outcome.result?.entryId === undefined
-					? undefined
-					: await runtime.entry(NestedToolResultEntry, outcome.result.entryId, context);
-			const result = entry?.data.result;
+			const result = (await runtime.snapshot(NestedResultDoc, runtime.taskId, String(state.child), context))?.result;
 			const output = [
-				result?.content?.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+				typeof result?.structuredOutput === "string"
+					? result.structuredOutput
+					: result?.structuredOutput !== null &&
+							typeof result?.structuredOutput === "object" &&
+							!Array.isArray(result.structuredOutput) &&
+							typeof result.structuredOutput.output === "string"
+						? result.structuredOutput.output
+						: undefined,
 				...(result?.diagnostics ?? []).map((item) => item.message),
 				outcome.error?.message,
 				outcome.reason,
