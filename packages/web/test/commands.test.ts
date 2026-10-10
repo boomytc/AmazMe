@@ -65,22 +65,10 @@ describe("command lines", () => {
 		expect(commandPalette("zh", { draft: "/mo", commands: COMMANDS }).title).toBe("命令");
 	});
 
-	test("marks a command only the terminal can run, and tags a plugin's", () => {
-		const commands = [
-			...COMMANDS,
-			{ name: "hello", description: "Say hello", argumentHint: "<who>", source: "plugin" as const },
-			{ name: "export", description: "Export the session", source: "builtin" as const, availability: "terminal" as const },
-		];
-		const palette = commandPalette("en", { draft: "/", commands });
-		const plugin = palette.rows.find((row) => row.value === "hello");
-		const terminalOnly = palette.rows.find((row) => row.value === "export");
-		expect(plugin?.tag).toBe("plugin");
-		expect(plugin?.disabled).toBeUndefined();
-		// The terminal's own command is listed so the reader is told, and marked unrunnable here.
-		expect(terminalOnly).toMatchObject({ tag: "terminal only", disabled: true });
-		expect(commandPalette("zh", { draft: "/", commands }).rows.find((row) => row.value === "export")?.tag).toBe(
-			"仅终端",
-		);
+	test("tags a plugin's command", () => {
+		const commands = [...COMMANDS, { name: "hello", description: "Say hello", argumentHint: "<who>", source: "plugin" as const }];
+		expect(commandPalette("en", { draft: "/", commands }).rows.find(row => row.value === "hello")?.tag).toBe("plugin");
+		expect(commandPalette("zh", { draft: "/", commands }).rows.find(row => row.value === "hello")?.tag).toBe("插件");
 	});
 
 	test("offers the session's resource commands, each tagged with where it came from", () => {

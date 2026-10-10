@@ -38,6 +38,7 @@ export interface Models {
 	cycleModel(direction: "forward" | "backward", context: Context): Promise<void>;
 	getModelScope(context: Context): Promise<ModelScopeConfig>;
 	setModelScope(models: readonly string[] | null, persist: boolean, context: Context): Promise<void>;
+	saveDefaults(model: ModelRef, thinking: ModelThinkingLevel, context: Context): Promise<void>;
 	getThinkingLevels(context: Context): Promise<ModelThinkingLevel[]>;
 	refresh(context: Context): Promise<void>;
 	select(model: ModelRef, context: Context): Promise<void>;

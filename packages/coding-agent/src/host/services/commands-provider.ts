@@ -1,6 +1,5 @@
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import type { ModelThinkingLevel } from "@amazme/ai";
 import { getAgentDir } from "../../config.ts";
 import { loadPromptTemplates } from "../../core/prompt-templates.ts";
 import { loadSkills } from "../../core/skills.ts";
@@ -9,33 +8,20 @@ import type { ResourceLoader } from "../../core/resource-loader.ts";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import {
 	Commands,
-	TERMINAL_COMMANDS,
 	type CommandCompletion,
 	type CommandExpansion,
 	type CommandResult,
 	type CommandSummary,
 	type CommandsState,
 } from "./commands.ts";
-import { Models } from "./models.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { SlashCommands } from "../../core/plugins/slash-commands.ts";
 
-/**
- * The session's own commands: the built-ins a web presentation needs, with textual arguments
- * instead of dialogs. A presentation supplies the interaction (the composer's palette); the host
- * supplies the effect, and every effect goes through the session services the page already depends
- * on. Everything else in the catalogue is a resource the session loaded — a prompt template or a
- * skill — which the presentation expands with `expand` and sends on its own prompt path.
- */
-const BUILTIN_COMMANDS: readonly Omit<CommandSummary, "source" | "availability">[] = [
-	{ name: "model", description: "Select the conversation's model", argumentHint: "<provider/model>" },
-	{ name: "thinking", description: "Set the reasoning level", argumentHint: "<level>" },
+/** Shared task operations; presentations call Models for model and account configuration. */
+const BUILTIN_COMMANDS: readonly Omit<CommandSummary, "source">[] = [
 	{ name: "compact", description: "Summarize the conversation so far", argumentHint: "[instructions]" },
 	{ name: "reload", description: "Rebuild this session's plugin generation" },
 ];
-
-/** The names this host runs itself, so the terminal's own entries of the same name are not listed twice. */
-const HOST_COMMAND_NAMES = new Set(BUILTIN_COMMANDS.map((command) => command.name));
 
 /** One command a plugin registered with this session, as the catalogue lists it. */
 export interface PluginCommandSummary {
@@ -43,16 +29,6 @@ export interface PluginCommandSummary {
 	readonly description?: string;
 	readonly argumentHint?: string;
 }
-
-const THINKING_DESCRIPTIONS: Readonly<Record<ModelThinkingLevel, string>> = {
-	off: "No reasoning",
-	minimal: "Very brief reasoning",
-	low: "Light reasoning",
-	medium: "Moderate reasoning",
-	high: "Deep reasoning",
-	xhigh: "Extra-high reasoning",
-	max: "Maximum reasoning",
-};
 
 /**
  * The settings a command catalogue reads: where the session's resources live, and whether skills are
@@ -105,12 +81,7 @@ export function loadCommandResources(options: CommandsServiceOptions): CommandRe
 	return { templates, skills };
 }
 
-/**
- * The session's catalogue: what this host runs, what it expands, what a plugin registered, and — last,
- * marked `terminal` — the terminal's own commands that no other client can carry out. A client lists
- * the whole catalogue so a name it cannot run is refused with a reason instead of reaching the model
- * as prose.
- */
+/** Shared work actions and resource commands; each presentation owns its settings controls. */
 export function commandCatalog(
 	resources: CommandResources,
 	pluginCommands: readonly PluginCommandSummary[] = [],
@@ -118,58 +89,32 @@ export function commandCatalog(
 	const builtins: CommandSummary[] = BUILTIN_COMMANDS.map((command) => ({
 		...command,
 		source: "builtin",
-		availability: "all",
 	}));
 	const plugins: CommandSummary[] = pluginCommands.map((command) => ({
 		name: command.name,
 		description: command.description ?? "",
 		...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
 		source: "plugin",
-		availability: "all",
 	}));
 	const templates: CommandSummary[] = resources.templates.map((template) => ({
 		name: template.name,
 		description: template.description,
 		...(template.argumentHint === undefined ? {} : { argumentHint: template.argumentHint }),
 		source: "template",
-		availability: "all",
 	}));
 	const skills: CommandSummary[] = resources.skills.map((skill) => ({
 		name: `skill:${skill.name}`,
 		description: skill.description,
 		argumentHint: "[args]",
 		source: "skill",
-		availability: "all",
 	}));
-	const taken = new Set([...builtins, ...plugins, ...templates, ...skills].map((command) => command.name));
-	const terminalOnly: CommandSummary[] = TERMINAL_COMMANDS.filter(
-		(command) => !HOST_COMMAND_NAMES.has(command.name) && !taken.has(command.name),
-	).map((command) => ({
-		name: command.name,
-		description: command.description,
-		source: "builtin",
-		availability: "terminal",
-	}));
-	return [...builtins, ...plugins, ...templates, ...skills, ...terminalOnly];
-}
-
-/** The terminal's own command of this name, when it has one: `undefined` for anything runnable here. */
-function terminalOnlyCommand(name: string): CommandSummary | undefined {
-	return TERMINAL_COMMANDS.some((command) => command.name === name)
-		? {
-				name,
-				description: "",
-				source: "builtin",
-				availability: "terminal",
-			}
-		: undefined;
+	return [...builtins, ...plugins, ...templates, ...skills];
 }
 
 export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 	return defineFacet({
 		id: "@pi/commands",
 		setup(env) {
-			const models = env.use(Models);
 			const controller = env.use(AgentController);
 			const sessionPlugins = env.use(SessionPlugins);
 			const slashCommands = env.use(SlashCommands);
@@ -213,27 +158,6 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 				state,
 				async run(name: string, args: string, callContext: Context): Promise<CommandResult> {
 					switch (name) {
-						case "model": {
-							const catalog = models.state.value?.catalog.availableModels ?? [];
-							const exact = catalog.find(
-								(model) => `${model.provider}/${model.modelId}` === args || model.modelId === args,
-							);
-							if (args.length === 0) {
-								return failure("Give the model as provider/model, for example /model kimi-coding/kimi-for-coding.");
-							}
-							if (exact === undefined) return failure(`Unknown model: ${args}.`);
-							await models.select({ provider: exact.provider, modelId: exact.modelId }, callContext);
-							return { ok: true, note: `Selected ${exact.provider}/${exact.modelId}.` };
-						}
-						case "thinking": {
-							const wanted = args.toLowerCase();
-							const levels = await models.getThinkingLevels(callContext);
-							if (!(levels as readonly string[]).includes(wanted)) {
-								return failure(`Unknown thinking level "${args}". Available: ${levels.join(", ")}.`);
-							}
-							await models.selectThinking(wanted as ModelThinkingLevel, callContext);
-							return { ok: true, note: `Thinking level: ${wanted}.` };
-						}
 						case "compact": {
 							const trimmed = args.trim();
 							const response = await controller.compact(
@@ -257,32 +181,11 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 								const outcome = await contribution.run(args, callContext);
 								return { ok: true, note: describeRun(outcome) };
 							}
-							const terminalOnly = terminalOnlyCommand(name);
-							if (terminalOnly !== undefined) {
-								return failure(`/${name} runs in the terminal only.`);
-							}
 							return failure(`Unknown command: /${name}`);
 						}
 					}
 				},
-				async complete(name: string, prefix: string, callContext: Context): Promise<readonly CommandCompletion[]> {
-					const normalized = prefix.toLowerCase();
-					if (name === "model") {
-						return (models.state.value?.catalog.availableModels ?? [])
-							.filter((model) =>
-								`${model.provider}/${model.modelId} ${model.name}`.toLowerCase().includes(normalized),
-							)
-							.map((model) => ({
-								value: `${model.provider}/${model.modelId}`,
-								label: model.modelId,
-								description: model.provider,
-							}));
-					}
-					if (name === "thinking") {
-						return (await models.getThinkingLevels(callContext))
-							.filter((level) => level.includes(normalized))
-							.map((level) => ({ value: level, label: level, description: THINKING_DESCRIPTIONS[level] }));
-					}
+				async complete(name: string, prefix: string, _callContext: Context): Promise<readonly CommandCompletion[]> {
 					const contribution = slashCommands.list().find((command) => command.name === name);
 					return (await contribution?.getArgumentCompletions?.(prefix)) ?? [];
 				},

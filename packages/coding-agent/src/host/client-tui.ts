@@ -33,7 +33,16 @@ import { createBuiltInSlashCommandsFacet } from "./services/slash-commands-provi
 import { createSlashCommandsRuntimeFacet } from "../core/plugins/command-registry.ts";
 import { liveOf, Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
 import { formatLane } from "../durable/session-surface.ts";
-import { Commands, TERMINAL_COMMANDS } from "./services/commands.ts";
+import { Commands } from "./services/commands.ts";
+
+/** Commands owned by the terminal presentation, not by the worker. */
+const TERMINAL_COMMANDS = [
+	{ name: "tree", description: "Navigate conversation history" },
+	{ name: "agents", description: "Switch conversations" },
+	{ name: "fork", description: "Fork the current conversation" },
+	{ name: "older", description: "Load older history" },
+	{ name: "scoped_models", description: "Choose models shown in /model and model cycling" },
+] as const;
 
 export interface RunClientTuiOptions extends OpenClientRuntimeOptions {
 	readonly facetLoader?: FacetLoader;
@@ -537,7 +546,7 @@ export class ExperimentalClientTui implements Component {
 		const catalog = this.#commands;
 		const taken = new Set([...TERMINAL_COMMANDS, ...commands].map(command => command.name));
 		const remote = catalog === undefined ? [] : (catalog.state.value?.commands ?? [])
-			.filter(command => command.availability === "all" && !taken.has(command.name))
+			.filter(command => !taken.has(command.name))
 			.map(command => ({
 				...command,
 				getArgumentCompletions: async (prefix: string) => {
@@ -718,7 +727,7 @@ export class ExperimentalClientTui implements Component {
 		try {
 			if (command === undefined) {
 				const catalog = this.#commands;
-				const selected = catalog?.state.value?.commands.find(candidate => candidate.name === name && candidate.availability === "all");
+				const selected = catalog?.state.value?.commands.find(candidate => candidate.name === name);
 				if (!catalog || !selected) throw new Error(`Unknown slash command: /${name}`);
 				if (selected.source === "template" || selected.source === "skill") {
 					const sessionId = this.#sessionId;

@@ -10,6 +10,11 @@
  */
 import {
 	COMPACT_MODAL,
+	MODEL_SCOPE_ACTION,
+	MODEL_SELECTOR_ACTION,
+	MODEL_DEFAULTS_ACTION,
+	PROVIDER_AUTH_ACTION,
+	SESSION_RELOAD_ACTION,
 	SCHEDULE_ADD_ACTION,
 	SCHEDULE_ADD_MODAL,
 	SCHEDULE_ENABLED_ACTION,
@@ -145,7 +150,7 @@ export interface PanelSpec {
 export interface PanelField {
 	readonly id: string;
 	readonly label: string;
-	readonly kind: "text" | "textarea" | "select";
+	readonly kind: "text" | "textarea" | "select" | "checkbox" | "multiselect";
 	readonly inputType?: "number" | "datetime-local" | "password";
 	readonly options?: readonly { readonly value: string; readonly label: string }[];
 	readonly visibleWhen?: { readonly field: string; readonly values: readonly string[] };
@@ -287,6 +292,7 @@ export interface PluginsStateLike {
 
 export interface SettingsPanelInput {
 	readonly state: SettingsStateLike | undefined;
+	readonly models?: { readonly available: boolean; readonly authentication: boolean; readonly selected: boolean };
 }
 
 export interface SkillsPanelInput {
@@ -479,6 +485,16 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		return unavailablePanel(locale, "settings", title, translate(locale, "panel.settings.description"));
 	}
 	const groups: PanelGroup[] = [];
+	if (input.models !== undefined) groups.push({
+		id: "settings:models", title: translate(locale, "model.manage"),
+		description: translate(locale, input.models.available ? "model.manageHelp" : "model.needsSession"),
+		actions: [
+			{ id: MODEL_SELECTOR_ACTION, label: translate(locale, "model.menuAria"), tone: "default", disabled: !input.models.available },
+			{ id: MODEL_SCOPE_ACTION, label: translate(locale, "model.scope"), tone: "default", disabled: !input.models.available },
+			{ id: PROVIDER_AUTH_ACTION, label: translate(locale, "auth.title"), tone: "default", disabled: !input.models.available || !input.models.authentication },
+			{ id: MODEL_DEFAULTS_ACTION, label: translate(locale, "model.defaults"), tone: "default", disabled: !input.models.available || !input.models.selected },
+		], rows: [], empty: "",
+	});
 	const rowsByGroup = new Map<string, PanelRow[]>();
 	for (const descriptor of state.descriptors) {
 		const rows = rowsByGroup.get(descriptor.group) ?? [];
@@ -494,6 +510,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		description: translate(locale, "panel.settings.filesDescription"),
 		actions: [
 			{ id: SETTINGS_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), tone: "default" },
+			...(input.models === undefined ? [] : [{ id: SESSION_RELOAD_ACTION, label: translate(locale, "page.reloadResources"), tone: "default" as const, disabled: !input.models.available }]),
 			{ id: DIAGNOSTICS_ACTION, label: translate(locale, "panel.settings.diagnostics"), tone: "default" },
 		],
 		rows: [

@@ -78,6 +78,12 @@ import {
 	parseCommandLine,
 	QUEUE_CANCEL_ACTION,
 	REFRESH_MODELS_ACTION,
+	MODEL_SELECTOR_ACTION,
+	MODEL_SCOPE_ACTION,
+	MODEL_SCOPE_MODAL,
+	MODEL_DEFAULTS_ACTION,
+	SESSION_RELOAD_ACTION,
+	modelScopeModal,
 	PROVIDER_AUTH_ACTION,
 	PROVIDER_AUTH_MODAL,
 	PROVIDER_AUTH_OPEN_ACTION,
@@ -733,12 +739,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let view = CHAT_VIEW;
 	let creating = false;
 	let modal: PanelModal | undefined;
+	let modelScopeView: { readonly service: ModelsService; readonly sessionId: string } | undefined;
 	/** Only the modal's binding and expected ids are local; interaction state stays on Models. */
 	let providerAuthView: {
 		readonly service: ModelsService;
 		readonly sessionId: string;
-		readonly preferred?: string;
-		readonly mode: "login" | "logout";
 		loginId?: string;
 		starting?: boolean;
 		matched?: boolean;
@@ -808,33 +813,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		}
 	};
 
-	/**
-	 * The commands the composer offers, as the host published them: its own four, the session's
-	 * prompt templates, and its skills. `enableSkillCommands` still decides whether skill rows show,
-	 * so the switch reaches this page without a worker restart.
-	 */
-	const composerCommands = (): readonly CommandLike[] => {
-		const host = painter.commands;
-		const skillsEnabled = settingValue("enableSkillCommands") !== "false";
-		const listed = skillsEnabled ? host : host.filter((command) => command.source !== "skill");
-		// `/name` is a terminal command in the shared catalogue. This page runs it: the roster reads
-		// the name it stores, so the row is runnable here instead of marked terminal-only.
-		const authentication = Boolean(painter.modelsValue?.authentication);
-		const rest = listed.filter((command) => command.name !== "name" && (!authentication || (command.name !== "login" && command.name !== "logout")));
-		const insertAt = rest.findIndex((command) => command.source !== undefined && command.source !== "builtin");
-		const nameCommand: CommandLike = {
-			name: "name",
-			description: "Set the session display name",
-			argumentHint: "[name]",
-			source: "builtin",
-			availability: "all",
-		};
-		const index = insertAt === -1 ? rest.length : insertAt;
-		const authCommands: CommandLike[] = authentication ? ["login", "logout"].map(name => ({
-			name, description: copy(name === "login" ? "auth.title" : "auth.logout"), argumentHint: "[provider]", source: "builtin", availability: "all",
-		})) : [];
-		return [...rest.slice(0, index), nameCommand, ...authCommands, ...rest.slice(index)];
-	};
+	/** The composer offers work actions; model, account and session management use click controls. */
+	const composerCommands = (): readonly CommandLike[] => painter.commands.filter(command =>
+		command.source !== "builtin" && (command.source !== "skill" || settingValue("enableSkillCommands") !== "false"));
 
 	/** The session's root conversation id, as the host's conversation list reports it. */
 	const rootId = (): string | undefined => painter.conversations?.conversations.find((entry) => entry.root)?.id;
@@ -867,8 +848,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/**
 	 * The host read the session's command resources when it attached. A skill written, removed, or
 	 * imported in the panel, or the skill-command switch, must reach the palette without a worker
-	 * restart, so the host re-reads them whenever those inputs move. Templates follow their files:
-	 * `/reload` picks up a new one, exactly as the terminal documents it.
+	 * restart, so the host re-reads them whenever those inputs move. The reload-resources button picks up new templates from their files.
 	 */
 	const catalogInputs = (): string => `${skills.state.value?.revision ?? 0}:${settingValue("enableSkillCommands") ?? ""}`;
 	let catalogRead = catalogInputs();
@@ -892,6 +872,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		applyTheme(appearance);
 		document.documentElement.lang = documentLanguage(locale);
 		refreshCommandResources();
+		if (modelScopeView && (!client.connected || painter.modelsService !== modelScopeView.service || painter.sessionId !== modelScopeView.sessionId || desiredSessionId !== modelScopeView.sessionId)) {
+			modelScopeView = undefined;
+			modal = undefined;
+			modalPending = false;
+			modalNotice = undefined;
+			panelPending = undefined;
+		}
 		if (providerAuthView !== undefined) {
 			const owner = providerAuthView;
 			const state = painter.modelsValue?.authentication;
@@ -909,7 +896,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					owner.matched = false;
 				}
 				const next = owner.starting || owner.loginId !== undefined ? providerLoginModal(locale, state, login)
-					: providerAuthModal(locale, state, owner.preferred, owner.mode);
+					: providerAuthModal(locale, state);
 				if (modal?.data !== next.data) modalNotice = undefined;
 				if (expired) modalNotice = { tone: "error", text: copy("auth.expired") };
 				modal = next;
@@ -962,7 +949,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							...modal, title: copy("panel.settings.diagnostics"), description: copy("panel.settings.diagnosticsHelp"), submit: copy("modal.close"),
 							fields: [{ id: "report", label: copy("panel.settings.diagnostics"), kind: "textarea" as const, readOnly: true, value: diagnosticReport === undefined ? copy(modalNotice?.tone === "error" ? "panel.settings.diagnosticsFailed" : "panel.settings.diagnosticsLoading") : formatDiagnosticReport(diagnosticReport, locale) }],
 						} : modal }),
-						settings: { state: settings.state.value },
+						settings: { state: settings.state.value, models: {
+							available: client.connected && painter.ready && painter.sessionId === desiredSessionId && painter.modelsService !== undefined,
+							authentication: Boolean(painter.modelsValue?.authentication),
+							selected: Boolean(painter.modelsValue?.configuration.model),
+						} },
 						skills: { state: skills.state.value },
 						plugins: { state: plugins.state.value, runtime: painter.mcpValue },
 						...(schedules === undefined ? {} : { automation: {
@@ -1168,8 +1159,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * reason instead of being dropped silently, and the rest of the batch still arrives.
 	 */
 	/**
-	 * Follow the draft: a bare `/name` is filtered from the catalogue locally, and an argument is
-	 * completed by the host. Answers are sequenced so a slow one cannot land on a newer draft.
+	 * Follow a work-action draft and ask the host for argument completions. Answers are sequenced so a slow one cannot land on a newer draft.
 	 */
 	renderer.onDraftChange = (text) => {
 		draft = text;
@@ -1181,12 +1171,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			completions = [];
 			paint();
 			return;
-		}
-		if ((line.name === "login" || line.name === "logout") && painter.modelsValue?.authentication) {
-			completions = (painter.modelsValue?.authentication?.providers ?? [])
-				.filter(provider => provider.id.includes(line.args) && (line.name === "login" ? provider.methods.length > 0 : provider.configured))
-				.map(provider => ({ value: provider.id, label: provider.name }));
-			paint(); return;
 		}
 		void painter.complete(line.name, line.args).then(
 			(answered) => {
@@ -1270,43 +1254,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * still apply; the host's own commands run on the host, and their note or problem reaches the
 	 * connection line.
 	 */
-	const runNameCommand = (args: string): void => {
-		const sessionId = painter.sessionId;
-		if (sessionId === undefined) {
-			renderer.setConnection(copy("page.nameNeedsSession"), "error");
-			return;
-		}
-		const requested = args.trim();
-		if (requested.length === 0) {
-			const current = directory.state.value?.sessions.find((session) => session.sessionId === sessionId)?.name;
-			const named = current !== undefined && current.length > 0;
-			renderer.setConnection(named ? copy("page.sessionName", { name: current }) : copy("page.nameUsage"), named ? "state" : "error");
-			return;
-		}
-		void management.rename(sessionId, requested, BACKGROUND_CONTEXT).then(
-			(summary) => {
-				const stored = summary.name ?? "";
-				renderer.setConnection(
-					stored === requested
-						? copy("page.sessionNameSet", { name: stored })
-						: copy("page.sessionNameNormalized", { from: requested, name: stored }),
-					"state",
-				);
-			},
-			(error: unknown) => {
-				renderer.setConnection(copy("page.commandFailed", { error: message(error) }), "error");
-			},
-		);
-	};
 	const runCommandLine = (name: string, args: string): void => {
-		if ((name === "login" || name === "logout") && painter.modelsValue?.authentication) {
-			openProviderAuthentication(args.trim() || undefined, name); return;
-		}
-		if (name === "name") {
-			runNameCommand(args);
+		const command = composerCommands().find((candidate) => candidate.name === name);
+		if (!command) {
+			const key: MessageKey = ["model", "thinking", "scoped_models", "login", "logout"].includes(name) ? "model.commandInstead"
+				: ["name", "tree", "agents", "fork", "older"].includes(name) ? "page.sessionCommandInstead"
+				: name === "reload" ? "page.reloadCommandInstead" : name === "compact" ? "page.compactCommandInstead" : "page.commandUnknown";
+			renderer.setConnection(copy(key, { name }), "error");
 			return;
 		}
-		const command = composerCommands().find((candidate) => candidate.name === name);
 		if (command?.source === "template" || command?.source === "skill") {
 			const target = targetConversation();
 			const sessionId = painter.sessionId;
@@ -1355,7 +1311,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			return;
 		}
 		const line = parseCommandLine(text);
-		if (line !== undefined && composerCommands().some((command) => command.name === line.name)) {
+		if (line !== undefined) {
 			renderer.setDraft("");
 			runCommandLine(line.name, line.args);
 			return;
@@ -1406,6 +1362,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	const openModal = (spec: PanelModal, opener?: { readonly id: string; readonly data?: string }): void => {
 		if (spec.id !== PROVIDER_AUTH_MODAL) providerAuthView = undefined;
+		if (spec.id !== MODEL_SCOPE_MODAL) modelScopeView = undefined;
 		modal = spec;
 		modalOpener = opener;
 		modalPending = false;
@@ -1415,7 +1372,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	const closeModal = (): void => {
+		if (modalPending) panelPending = undefined;
 		providerAuthView = undefined;
+		modelScopeView = undefined;
 		diagnosticRequest += 1;
 		diagnosticReport = undefined;
 		modal = undefined;
@@ -1433,7 +1392,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const attribute = opener.data === undefined ? `[data-action="${opener.id}"]` : `[data-action="${opener.id}"][data-action-data="${opener.data}"]`;
 		try {
 			const node = document.querySelector(attribute);
-			if (node instanceof HTMLElement) node.focus();
+			if (node instanceof HTMLElement && node.getClientRects().length > 0) node.focus();
+			else if (opener.id === MODEL_SCOPE_ACTION || opener.id === PROVIDER_AUTH_ACTION) document.getElementById("model-trigger")?.focus();
 		} catch {
 			// A selector the page cannot express leaves the focus where it is.
 		}
@@ -1518,18 +1478,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	/** The call answers nothing but its own completion. */
 	const done = (): Promise<{ readonly ok: true }> => Promise.resolve({ ok: true });
-	const openProviderAuthentication = (preferred?: string, mode: "login" | "logout" = "login"): void => {
+	const openProviderAuthentication = (): void => {
 		const service = painter.modelsService;
 		const sessionId = painter.sessionId;
 		const state = painter.modelsValue?.authentication;
 		if (!service || !sessionId || !state || !client.connected || desiredSessionId !== sessionId) return;
-		if (preferred !== undefined && !state.providers.some(provider => provider.id === preferred && (mode === "login" ? provider.methods.length > 0 : provider.configured))) {
-			renderer.setConnection(copy("auth.invalid"), "error");
-			return;
-		}
 		const login = state.login && ["preparing", "awaiting", "finishing"].includes(state.login.status) ? state.login : null;
-		providerAuthView = { service, sessionId, preferred, mode, ...(login ? { loginId: login.id } : {}) };
-		openModal(providerAuthModal(locale, state, preferred, mode), { id: PROVIDER_AUTH_ACTION });
+		providerAuthView = { service, sessionId, ...(login ? { loginId: login.id } : {}) };
+		openModal(providerAuthModal(locale, state), { id: PROVIDER_AUTH_ACTION });
 	};
 	/** Authentication calls never retry onto a replacement binding, and never echo provider errors. */
 	const runProviderAuthCall = (owner: NonNullable<typeof providerAuthView>, call: () => Promise<PanelCallResult>): void => {
@@ -1652,6 +1608,55 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			case "command":
 				switch (action.id) {
+					case MODEL_SELECTOR_ACTION:
+						view = CHAT_VIEW;
+						closeModal();
+						renderer.openModelSelector();
+						return;
+					case MODEL_SCOPE_ACTION: {
+						const service = painter.modelsService;
+						const sessionId = painter.sessionId;
+						if (!service || !sessionId || !client.connected || sessionId !== desiredSessionId || modalPending) return;
+						const owner = { service, sessionId };
+						modelScopeView = owner;
+						openModal({ id: MODEL_SCOPE_MODAL, title: copy("model.scope"), fields: [], submit: copy("model.scopeApply") }, action);
+						modalPending = true;
+						paint();
+						void service.getModelScope(BACKGROUND_CONTEXT).then(scope => {
+							if (modelScopeView !== owner || painter.modelsService !== service || painter.sessionId !== sessionId || desiredSessionId !== sessionId || !client.connected) return;
+							modal = modelScopeModal(locale, scope);
+							modalPending = false;
+							paint();
+						}, () => {
+							if (modelScopeView !== owner) return;
+							modalPending = false;
+							refuseInModal(copy("model.scopeFailed"));
+						});
+						return;
+					}
+					case MODEL_DEFAULTS_ACTION: {
+						const service = painter.modelsService;
+						const sessionId = painter.sessionId;
+						const configuration = painter.modelsValue?.configuration;
+						const model = configuration?.model;
+						if (!service || !sessionId || !model || !client.connected || desiredSessionId !== sessionId) return;
+						runPanelCall({ id: action.id, sessionId, retry: false,
+							current: () => painter.modelsService === service && client.connected && desiredSessionId === sessionId,
+							call: () => service.saveDefaults(model, configuration.thinkingLevel, BACKGROUND_CONTEXT)
+								.then(() => settings.reload(BACKGROUND_CONTEXT))
+								.then(() => ({ ok: true as const, note: copy("model.defaultsSaved") }), () => ({ ok: false as const, problem: copy("model.defaultsFailed") })),
+						});
+						return;
+					}
+					case SESSION_RELOAD_ACTION: {
+						const sessionId = painter.sessionId;
+						if (!sessionId || !client.connected || desiredSessionId !== sessionId) return;
+						runPanelCall({ id: action.id, sessionId, retry: false, call: async () => {
+							const result = await painter.runCommand("reload", "");
+							return result.ok ? { ok: true, note: result.message } : { ok: false, problem: result.message };
+						} });
+						return;
+					}
 					case PROVIDER_AUTH_ACTION:
 						openProviderAuthentication(); return;
 					case PROVIDER_AUTH_OPEN_ACTION: {
@@ -2147,6 +2152,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							id: action.id,
 							inModal: true,
 							call: () => plugins.setPackages([...pluginPackages(), path], BACKGROUND_CONTEXT).then(done),
+						});
+						return;
+					}
+					case MODEL_SCOPE_MODAL: {
+						const owner = modelScopeView;
+						if (!owner || modal?.id !== action.id || modalPending) return;
+						const current = () => modelScopeView === owner && painter.modelsService === owner.service && painter.sessionId === owner.sessionId && desiredSessionId === owner.sessionId && client.connected;
+						if (!current()) return;
+						let selected: unknown;
+						try { selected = JSON.parse(fields.models ?? ""); } catch { refuseInModal(copy("model.scopeFailed")); return; }
+						if (selected !== null && (!Array.isArray(selected) || selected.some((id: unknown) => typeof id !== "string"))) return;
+						runPanelCall({ id: action.id, inModal: true, sessionId: owner.sessionId, retry: false, current,
+							call: () => owner.service.setModelScope(selected as string[] | null, fields.persist === "true", BACKGROUND_CONTEXT)
+								.then(done, () => ({ ok: false as const, problem: copy("model.scopeFailed") })),
 						});
 						return;
 					}

@@ -3,28 +3,11 @@ import type { CommandExpansion } from "../../core/resource-command.ts";
 export type { CommandExpansion } from "../../core/resource-command.ts";
 
 /**
- * Where a command comes from. The host's own four are `builtin`; the rest are resources the session
+ * Where a command comes from. Shared work actions are `builtin`; the rest are resources the session
  * loaded — a prompt template, a skill the reader may invoke as a command, or a command a plugin
  * registered with this session.
  */
 export type CommandSource = "builtin" | "template" | "skill" | "plugin";
-
-/**
- * Which clients can run a command. `all` means any presentation of this session can: the host runs
- * it, or the presentation expands it into a prompt. `terminal` means the terminal's own screen, which
- * a page or a desktop client has no counterpart for — listed so a client can say so instead of
- * sending the text to the model.
- */
-export type CommandAvailability = "all" | "terminal";
-
-/** Commands the hosted terminal handles locally, rather than through the worker's command service. */
-export const TERMINAL_COMMANDS = [
-	{ name: "tree", description: "Navigate conversation history" },
-	{ name: "agents", description: "Switch conversations" },
-	{ name: "fork", description: "Fork the current conversation" },
-	{ name: "older", description: "Load older history" },
-	{ name: "scoped_models", description: "Choose models shown in /model and model cycling" },
-] as const;
 
 /**
  * One command the session offers. A presentation renders the composer's command palette from these
@@ -38,11 +21,9 @@ export interface CommandSummary {
 	argumentHint?: string;
 	/** What the command is, so the palette can say where it came from. */
 	source: CommandSource;
-	/** Which clients can run it, so a presentation can refuse honestly. */
-	availability: CommandAvailability;
 }
 
-/** One completion for a command's argument, such as a model id or a thinking level. */
+/** One completion for a command's argument, such as a plugin action parameter. */
 export interface CommandCompletion {
 	value: string;
 	label: string;

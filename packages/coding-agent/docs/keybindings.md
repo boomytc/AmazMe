@@ -229,7 +229,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 
 ### Scoped Models Selector
 
-Used inside the scoped models selector (opened via `/scoped-models`).
+Used inside the scoped models selector (opened via `/scoped_models`).
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|

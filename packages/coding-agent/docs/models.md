@@ -26,11 +26,13 @@ Keep `auth.json` and any credential commands private. Project settings and exten
 
 ## Select a model
 
-Run `/model` to choose an available model. The default terminal lists models whose providers have usable authentication. Choosing one changes the current conversation; set `defaultProvider` and `defaultModel` in settings to choose defaults for new sessions.
+In either terminal, run `/model` to choose an available model, `/thinking` to choose reasoning effort, or `/scoped_models` to configure the candidate list. The default terminal lists models whose providers have usable authentication. Choosing one changes the current conversation; set `defaultProvider` and `defaultModel` in settings to choose defaults for new sessions.
 
 Press `Shift+Tab` to cycle thinking levels supported by the current model. Use `--thinking` for a startup override, or `defaultThinkingLevel` and `modelThinkingLevels` in settings for defaults.
 
-`Ctrl+P` cycles forward and `Shift+Ctrl+P` cycles backward on Unix. Use `--models 'provider/first:high,provider/second:low'` for an ordered process-local scope, or configure `enabledModels` through [Settings](settings.md#model-cycling). Patterns support exact IDs, fuzzy matches and case-insensitive globs. Authentication changes are checked on each cycle. `/model` remains available outside the cycle scope. The SDK's optional interactive UI also provides `/thinking`, `/scoped-models` and save-default actions.
+`Ctrl+P` cycles forward and `Shift+Ctrl+P` cycles backward on Unix. Use `--models 'provider/first:high,provider/second:low'` for an ordered process-local scope, or configure `enabledModels` through [Settings](settings.md#model-cycling). Patterns support exact IDs, fuzzy matches and case-insensitive globs. Authentication changes are checked on each cycle. `/model` lists the scoped candidates; a known model reference can still be selected directly with `/model provider/id`. The SDK's optional interactive UI also provides `/thinking`, `/scoped-models` and save-default actions.
+
+In Web and desktop, click the model button or the model section in Settings. Scope uses a searchable checkbox list; only an explicit save makes it the default for new sessions. Current model and reasoning changes remain local to the conversation; the Settings action saves them as new-session defaults.
 
 A new session prefers its saved default when that model is in scope, otherwise the first available scoped model. Explicit `--model` takes priority. Scope thinking suffixes take priority over per-model and global defaults; explicit `--thinking` wins at startup. Cycling uses the target's defaults and clamps them to its capabilities. A session records model and thinking-level changes. Resuming restores them without changing defaults for new sessions; a scope alone does not replace the saved selection.
 

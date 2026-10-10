@@ -131,6 +131,8 @@ export interface ModelPicker {
 	/** The catalog's refresh state: the control to ask for one, and the host's last word. */
 	readonly refresh: ModelRefresh;
 	readonly authentication?: string;
+	readonly scope?: string;
+	readonly scopeNotice?: string;
 }
 
 /** The model card's refresh row: a button plus the status the host's state reports. */
@@ -500,6 +502,7 @@ export interface ModelsStateLike {
 	readonly catalog: {
 		readonly revision: number;
 		readonly availableModels: readonly ModelSummaryLike[];
+		readonly enabledModelIds: readonly string[] | null;
 	};
 	readonly configuration: {
 		readonly model: {
@@ -614,6 +617,7 @@ export function modelPicker(locale: Locale, models: ModelsStateLike | undefined,
 	const configured = models.configuration.model;
 	const byProvider = new Map<string, ModelOption[]>();
 	for (const model of models.catalog.availableModels) {
+		if (models.catalog.enabledModelIds !== null && !models.catalog.enabledModelIds.includes(`${model.provider}/${model.modelId}`)) continue;
 		const options = byProvider.get(model.provider) ?? [];
 		if (!byProvider.has(model.provider)) byProvider.set(model.provider, options);
 		options.push({
@@ -640,10 +644,13 @@ export function modelPicker(locale: Locale, models: ModelsStateLike | undefined,
 			label: thinkingLevelCopy(locale, level),
 			selected: level === models.configuration.thinkingLevel,
 		})),
-		empty: groups.length === 0 ? translate(locale, "model.empty") : undefined,
+		empty: groups.length === 0 ? translate(locale, models.catalog.enabledModelIds === null ? "model.empty" : "model.scopeEmpty") : undefined,
 		levelsEmpty: levels === undefined || reasoned ? undefined : translate(locale, "model.levelsEmpty"),
 		disabled: false,
 		...(models.authentication ? { authentication: translate(locale, "auth.title") } : {}),
+		scope: translate(locale, "model.scope"),
+		...(configured && models.catalog.enabledModelIds !== null && !models.catalog.enabledModelIds.includes(`${configured.provider}/${configured.modelId}`)
+			? { scopeNotice: translate(locale, "model.scopeHidden") } : {}),
 		refresh: {
 			label: translate(locale, "model.refresh"),
 			status: refreshStatus(locale, models.refresh),

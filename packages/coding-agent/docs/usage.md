@@ -104,19 +104,9 @@ for a model that reasons, its thinking level; it opens a card listing the host's
 provider and the levels that model supports, and either choice lands in that session's configuration on the host,
 so the next turn resolves its model and level from it.
 
-A draft that starts with `/` opens the command palette. It lists, in one order, what this host runs (`model`,
-`thinking`, `compact`, `reload`), what a plugin registered with the session (`plugin`), the prompt templates that
-session loaded (`template`), its skills as `/skill:<name>` (`skill`), and — last — the hosted terminal's four navigation commands
-(`/tree`, `/agents`, `/fork`, `/older`, marked `terminal only`). The page adds its authentication and naming commands.
-Each row shows its argument hint from the resource's
-frontmatter, and the runnable rows come first. `Tab` completes the highlighted row and `Enter` runs it. A row marked `terminal only` is refused with that reason on
-the connection line, so the text never reaches the model as prose. The session's own
-commands run on the host and report their note or problem on the connection line; a template or a skill is expanded
-there too, with the same code the TUI expands it with (`$1`/`$ARGUMENTS` substitution, or a `<skill>` block plus the
-arguments), and the page then sends that prompt on its normal path, so a focused conversation and the composer's
-Steer/Queue mode still apply. A skill written, imported, or removed in **Skills**, or the **Skills as commands** switch
-in there, reaches the palette at once; a template file added on disk arrives with `/reload`. Expansion keeps its
-session, conversation and submit mode; switching its target while it is pending requires retrying in the new target.
+A draft that starts with `/` opens the work-action palette: plugin commands, prompt templates and skills (`/skill:<name>`). `Tab` completes the highlighted row and `Enter` runs it. Plugins run through `Commands.run`; templates and skills expand through `Commands.expand` and use the page's normal submit path, preserving the focused conversation and Steer/Queue mode. Unknown names are refused without sending them to the model. Changes in **Skills** or **Skills as commands** refresh the catalog; use **Settings → Reload session resources** for new files or plugin changes.
+
+Model, reasoning and provider accounts use the model button or **Settings → Models and accounts**. The searchable checkbox model list controls the picker and model cycling, without switching a hidden current model. Scope changes apply to this session unless **Use this list for new sessions too** is checked. Choosing a model or reasoning level changes the current conversation; **Use current model and reasoning as defaults** explicitly saves new-session defaults. Session naming, branching, history and compaction have their own click controls.
 
 Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
 served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of

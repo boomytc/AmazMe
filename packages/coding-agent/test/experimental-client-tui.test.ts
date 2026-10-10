@@ -207,6 +207,7 @@ describe("experimental client TUI", () => {
 				async cycleModel() {},
 				async getModelScope() { return { allModels: [], enabledModelIds: null }; },
 				async setModelScope() {},
+						async saveDefaults() {},
 				async getThinkingLevels() {
 					return ["off", "high"];
 				},

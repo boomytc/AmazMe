@@ -4,10 +4,11 @@
  * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
 import { transcriptPosition } from "./transcript-position.ts";
+import { createMultiselect } from "./multiselect.ts";
 import { FALLBACK_LOCALE, type Locale } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
@@ -131,6 +132,7 @@ export interface PageRenderer {
 	onCommandPick: (value: string) => void;
 	/** Put text in the composer, the way a completion does. */
 	setDraft(text: string, focus?: boolean): void;
+	openModelSelector(): void;
 	/** Every navigation, control, and modal report from the management surface. */
 	onPanelAction: (action: PanelAction) => void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
@@ -702,6 +704,7 @@ export function createRenderer(
 
 	const groupElement = (group: PanelGroup, pending?: PanelPending): HTMLElement => {
 		const node = element("section", "panel-group");
+		node.dataset.groupId = group.id;
 		const head = element("header", "panel-group-head");
 		const titles = element("div", "panel-group-titles");
 		titles.append(element("h2", "panel-group-title", group.title));
@@ -714,7 +717,7 @@ export function createRenderer(
 		}
 		node.append(head);
 		const rows = element("div", "panel-rows");
-		if (group.rows.length === 0) rows.append(element("p", "panel-empty", group.empty ?? copy("panel.empty")));
+		if (group.rows.length === 0 && group.empty !== "") rows.append(element("p", "panel-empty", group.empty ?? copy("panel.empty")));
 		else for (const row of group.rows) rows.append(rowElementOf(row, pending));
 		node.append(rows);
 		if (group.footnote !== undefined) node.append(element("p", "panel-footnote", group.footnote));
@@ -795,9 +798,20 @@ export function createRenderer(
 	 * reader typed, so the submit and the message line are updated in place instead.
 	 */
 	const applyModalState = (modal: PanelModal): void => {
+		for (const control of elements.modalRoot.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>(".modal-body input, .modal-body textarea, .modal-body select, .modal-body button")) {
+			if (modal.pending === true) {
+				control.dataset.pendingDisabled ??= String(control.disabled);
+				control.disabled = true;
+			} else if (control.dataset.pendingDisabled !== undefined) {
+				control.disabled = control.dataset.pendingDisabled === "true";
+				delete control.dataset.pendingDisabled;
+			}
+		}
 		if (modalSubmit !== undefined) {
+			const wasPending = modalSubmit.disabled;
 			modalSubmit.disabled = modal.pending === true;
 			modalSubmit.classList.toggle("pending", modal.pending === true);
+			if (wasPending && !modalSubmit.disabled && document.activeElement === document.body) modalSubmit.focus();
 			if (modal.pending === true) modalSubmit.setAttribute("aria-busy", "true");
 			else modalSubmit.removeAttribute("aria-busy");
 		}
@@ -841,11 +855,19 @@ export function createRenderer(
 		head.append(titles, close);
 		const body = element("div", "modal-body");
 		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>();
+		let firstField: HTMLElement | undefined;
 		for (const field of modal.fields) {
-			const label = element("label", "modal-field");
+			const label = element(field.kind === "multiselect" ? "div" : "label", "modal-field");
 			label.append(element("span", "modal-field-label", field.label));
+			if (field.kind === "multiselect") {
+				const control = createMultiselect(field, lastView?.locale ?? FALLBACK_LOCALE);
+				label.append(control.body); inputs.set(field.id, control.value);
+				firstField ??= control.focus;
+				body.append(label); continue;
+			}
 			const input = field.kind === "textarea" ? document.createElement("textarea") : field.kind === "select" ? document.createElement("select") : document.createElement("input");
-			if (input instanceof HTMLInputElement) input.type = field.inputType ?? "text";
+			if (input instanceof HTMLInputElement) input.type = field.kind === "checkbox" ? "checkbox" : field.inputType ?? "text";
+			if (input instanceof HTMLInputElement && input.type === "checkbox") { input.checked = field.value === "true"; label.classList.add("modal-checkbox"); }
 			if (input instanceof HTMLInputElement && (field.inputType === "number" || field.inputType === "datetime-local")) input.step = "1";
 			if (input instanceof HTMLInputElement && field.inputType === "password") {
 				input.autocomplete = "off";
@@ -857,10 +879,11 @@ export function createRenderer(
 			if (field.readOnly === true && !(input instanceof HTMLSelectElement)) input.readOnly = true;
 			// The file and JSON fields are code; prose instructions keep the text face.
 			const code = field.id === "content" || field.id === "entry";
-			input.className = field.kind === "textarea" ? `modal-textarea${code ? " code" : ""}` : "modal-input";
+			input.className = field.kind === "checkbox" ? "modal-check" : field.kind === "textarea" ? `modal-textarea${code ? " code" : ""}` : "modal-input";
 			input.value = field.value;
 			if (field.placeholder !== undefined && !(input instanceof HTMLSelectElement)) input.placeholder = field.placeholder;
 			inputs.set(field.id, input);
+			firstField ??= input;
 			label.append(input);
 			if (field.description !== undefined) label.append(element("small", "modal-field-help", field.description));
 			body.append(label);
@@ -884,16 +907,16 @@ export function createRenderer(
 		submit.textContent = modal.submit ?? "";
 		submit.addEventListener("click", () => {
 			const fields: Record<string, string> = {};
-			for (const [id, input] of inputs) fields[id] = input.value;
+			for (const [id, input] of inputs) fields[id] = input instanceof HTMLInputElement && input.type === "checkbox" ? String(input.checked) : input.value;
 			report({ kind: "modal-submit", id: modal.id, data: modal.data, fields });
 		});
 		card.addEventListener("keydown", (event) => {
-			if (modal.submit !== undefined && event.key === "Enter" && !event.isComposing && event.target instanceof HTMLInputElement && !event.target.readOnly) {
+			if (modal.submit !== undefined && event.key === "Enter" && !event.isComposing && event.target instanceof HTMLInputElement && !event.target.readOnly && !event.target.closest(".modal-multiselect")) {
 				event.preventDefault();
 				submit.click();
 			}
 			if (event.key !== "Tab") return;
-			const controls = [...card.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)")];
+			const controls = [...card.querySelectorAll<HTMLElement>("button:not(:disabled), input:not([type=hidden]):not(:disabled), textarea:not(:disabled), select:not(:disabled)")].filter((node) => node.getClientRects().length > 0);
 			const first = controls[0];
 			const last = controls.at(-1);
 			if (event.shiftKey && document.activeElement === first) {
@@ -916,7 +939,7 @@ export function createRenderer(
 		modalSubmit = modal.submit === undefined ? undefined : submit;
 		modalMessage = message;
 		applyModalState(modal);
-		const first = modal.fields[0] === undefined ? undefined : inputs.get(modal.fields[0].id);
+		const first = firstField;
 		(first ?? cancel).focus();
 		if (first instanceof HTMLTextAreaElement && first.readOnly) {
 			first.setSelectionRange(0, 0);
@@ -948,6 +971,8 @@ export function createRenderer(
 
 	const syncSidebarToggle = (): void => {
 		elements.sidebarToggle.setAttribute("aria-expanded", String(sidebarExpanded()));
+		const sidebar = elements.nav.closest<HTMLElement>(".sidebar");
+		if (sidebar) sidebar.inert = !sidebarExpanded();
 	};
 
 	/** The header's toggle: a column collapses and expands, a drawer slides in and out. */
@@ -1477,9 +1502,6 @@ export function createRenderer(
 		view.palette.rows.forEach((row, index) => {
 			const classes = ["palette-row"];
 			if (row.selected) classes.push("selected");
-			// A command this client cannot run is shown as such: the row picks its text, and the
-			// host answers with the reason when it is submitted.
-			if (row.disabled === true) classes.push("unavailable");
 			const node = button(classes.join(" "));
 			node.dataset.value = row.value;
 			// Every row carries the tag slot, so the names keep one left edge whether or not the
@@ -1680,8 +1702,7 @@ export function createRenderer(
 	/** One picker row; the selected one carries the trailing check. */
 	const pickerRow = (label: string, selected: boolean, choose: () => void): HTMLButtonElement => {
 		const row = button(selected ? "menu-item selected" : "menu-item");
-		row.setAttribute("role", "menuitemradio");
-		row.setAttribute("aria-checked", String(selected));
+		row.setAttribute("aria-pressed", String(selected));
 		row.append(element("span", "menu-item-name", label));
 		if (selected) {
 			const check = element("span", "menu-check");
@@ -1689,69 +1710,91 @@ export function createRenderer(
 			row.append(check);
 		}
 		row.addEventListener("click", () => {
-			closeModelMenu();
+			closeModelMenu(true);
 			choose();
 		});
 		return row;
 	};
 
-	/** The card the chip opens: the host's catalog under its providers, then the effort group. */
+	let modelMenuKey: string | undefined;
+	/** A searchable model list, with effort and account controls always within reach. */
 	const renderModelMenu = (view: WebView): void => {
 		const picker = view.model;
-		const rows: HTMLElement[] = [];
-		if (picker.empty !== undefined) rows.push(element("p", "menu-empty", picker.empty));
-		if (picker.groups.length > 0) {
-			rows.push(element("p", "menu-heading", copy("model.heading")));
-			for (const group of picker.groups) {
-				rows.push(element("p", "menu-heading", group.provider));
-				for (const option of group.options) {
-					rows.push(pickerRow(option.label, option.selected, () => renderer.onSelectModel(option.provider, option.modelId)));
-				}
-			}
-			if (picker.levels.length > 0 || picker.levelsEmpty !== undefined) {
-				rows.push(element("div", "menu-separator"), element("p", "menu-heading", copy("model.effort")));
-				if (picker.levels.length > 0) {
-					for (const level of picker.levels) {
-						rows.push(pickerRow(level.label, level.selected, () => renderer.onSelectThinking(level.level)));
-					}
-				} else if (picker.levelsEmpty !== undefined) {
-					rows.push(element("p", "menu-empty", picker.levelsEmpty));
-				}
-			}
-		}
-		if (picker.refresh.status !== undefined || !picker.disabled) {
-			rows.push(element("div", "menu-separator"));
-			const row = element("div", "menu-refresh");
-			if (picker.refresh.status !== undefined) {
-				row.append(element("p", "menu-empty", picker.refresh.status));
-			}
-			const refresh = button("panel-button default menu-refresh-action");
-			refresh.dataset.action = REFRESH_MODELS_ACTION;
-			refresh.textContent = picker.refresh.label;
-			refresh.disabled = picker.refresh.busy;
-			refresh.addEventListener("click", () => report({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined }));
-			row.append(refresh);
-			if (picker.authentication !== undefined) {
-				const auth = button("panel-button default");
-				auth.dataset.action = PROVIDER_AUTH_ACTION;
-				auth.textContent = picker.authentication;
-				auth.addEventListener("click", () => {
-					closeModelMenu();
-					report({ kind: "command", id: PROVIDER_AUTH_ACTION, data: undefined });
-				});
-				row.append(auth);
-			}
-			rows.push(row);
-		}
+		const key = JSON.stringify([view.locale, picker]);
+		if (key === modelMenuKey) return;
+		modelMenuKey = key;
+		const previousSearch = elements.modelMenu.querySelector<HTMLInputElement>(".model-search");
+		const hadSearchFocus = previousSearch === document.activeElement;
+		const query = previousSearch?.value ?? "";
+		const previousScroll = elements.modelMenu.querySelector(".menu-scroll")?.scrollTop ?? 0;
+		const search = document.createElement("input");
+		search.type = "search";
+		search.className = "modal-input model-search";
+		search.placeholder = copy("model.search");
+		search.setAttribute("aria-label", search.placeholder);
+		search.value = query;
 		const scroll = element("div", "menu-scroll");
-		scroll.append(...rows);
-		elements.modelMenu.replaceChildren(scroll);
+		const groups = picker.groups.map(group => {
+			const heading = element("p", "menu-heading", group.provider);
+			const options = group.options.map(option => ({
+				search: `${option.label} ${option.provider}/${option.modelId}`.toLocaleLowerCase(),
+				row: pickerRow(option.label, option.selected, () => renderer.onSelectModel(option.provider, option.modelId)),
+			}));
+			scroll.append(heading, ...options.map(option => option.row));
+			return { heading, options };
+		});
+		const empty = element("p", "menu-empty");
+		scroll.append(empty);
+		const filter = (): void => {
+			const value = search.value.trim().toLocaleLowerCase();
+			for (const group of groups) {
+				for (const option of group.options) option.row.hidden = !option.search.includes(value);
+				group.heading.hidden = group.options.every(option => option.row.hidden);
+			}
+			empty.hidden = groups.some(group => !group.heading.hidden);
+			empty.textContent = picker.empty ?? copy("model.noMatches");
+		};
+		search.addEventListener("input", filter);
+		filter();
+		const controls = element("div", "model-controls");
+		if (picker.scopeNotice) controls.append(element("p", "menu-empty", picker.scopeNotice));
+		if (picker.levels.length > 0 || picker.levelsEmpty !== undefined) {
+			controls.append(element("p", "menu-heading", copy("model.effort")));
+			const effort = element("div", "menu-effort");
+			for (const level of picker.levels) effort.append(pickerRow(level.label, level.selected, () => renderer.onSelectThinking(level.level)));
+			controls.append(effort);
+			if (picker.levelsEmpty !== undefined) controls.append(element("p", "menu-empty", picker.levelsEmpty));
+		}
+		controls.append(element("p", "menu-empty", copy("model.nextRequest")));
+		if (picker.refresh.status) controls.append(element("p", "menu-empty", picker.refresh.status));
+		const actions = element("div", "menu-refresh");
+		const action = (id: string, label: string): HTMLButtonElement => {
+			const row = button("panel-button default");
+			row.dataset.action = id;
+			row.textContent = label;
+			row.addEventListener("click", () => {
+				closeModelMenu(true);
+				report({ kind: "command", id, data: undefined });
+			});
+			return row;
+		};
+		const refresh = action(REFRESH_MODELS_ACTION, picker.refresh.label);
+		refresh.disabled = picker.refresh.busy;
+		actions.append(action(MODEL_SCOPE_ACTION, picker.scope ?? copy("model.scope")), refresh);
+		if (picker.authentication) actions.append(action(PROVIDER_AUTH_ACTION, picker.authentication));
+		controls.append(actions);
+		elements.modelMenu.replaceChildren(search, scroll, controls);
+		scroll.scrollTop = previousScroll;
+		if (hadSearchFocus) search.focus();
 	};
 
-	const closeModelMenu = (): void => {
+	const closeModelMenu = (restoreFocus = false): void => {
 		if (elements.modelMenu.hidden) return;
 		elements.modelMenu.hidden = true;
+		modelMenuKey = undefined;
+		elements.modelMenu.replaceChildren();
 		elements.modelTrigger.setAttribute("aria-expanded", "false");
+		if (restoreFocus) elements.modelTrigger.focus();
 	};
 
 	const openModelMenu = (): void => {
@@ -1759,6 +1802,7 @@ export function createRenderer(
 		renderModelMenu(lastView);
 		elements.modelMenu.hidden = false;
 		elements.modelTrigger.setAttribute("aria-expanded", "true");
+		elements.modelMenu.querySelector<HTMLInputElement>(".model-search")?.focus();
 	};
 
 	/** The chip's text follows the host's replicated configuration on every render. */
@@ -1789,6 +1833,7 @@ export function createRenderer(
 		onDraftChange: () => {},
 		onCommandPick: () => {},
 		onPanelAction: () => {},
+		openModelSelector: openModelMenu,
 		get view(): WebView | undefined {
 			return lastView;
 		},
@@ -1807,6 +1852,7 @@ export function createRenderer(
 				}
 				: transcriptPosition(elements.column, elements.transcript, stick);
 			if (scopeChanged) {
+				closeModelMenu();
 				expanded.clear();
 				chromeValues.clear();
 				elements.column.replaceChildren();
@@ -2039,7 +2085,7 @@ export function createRenderer(
 	});
 	// The card closes on a click elsewhere and on Escape, so it can never strand the pointer.
 	elements.roster.addEventListener("scroll", () => closeSessionMenu());
-	window.addEventListener("resize", () => closeSessionMenu());
+	window.addEventListener("resize", () => { closeSessionMenu(); syncSidebarToggle(); });
 	document.addEventListener("pointerdown", (event) => {
 		const target = event.target;
 		if (sessionMenu !== undefined && target instanceof Node && !sessionMenu.node.contains(target) && !sessionMenuTrigger(sessionMenu.id)?.contains(target)) closeSessionMenu();
@@ -2049,6 +2095,10 @@ export function createRenderer(
 		const target = event.target;
 		if (target instanceof Node && (elements.modelMenu.contains(target) || elements.modelTrigger.contains(target))) return;
 		closeModelMenu();
+	});
+	elements.modelMenu.addEventListener("focusout", (event) => {
+		const target = event.relatedTarget;
+		if (target instanceof Node && !elements.modelMenu.contains(target) && !elements.modelTrigger.contains(target)) closeModelMenu();
 	});
 	const gestureOf = (event: KeyboardEvent): ShortcutGesture => {
 		if (isStopChord(event)) return { code: event.code, primary: false, alt: false, shift: false, control: true };

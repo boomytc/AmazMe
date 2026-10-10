@@ -34,7 +34,7 @@ cd /path/to/your-project
 node /path/to/AmazMe/packages/coding-agent/dist/bundle/cli.js
 ```
 
-进入终端后，用 `/login` 连接供应商，再用 `/model` 选择模型。也可沿用已有的供应商环境变量，例如 `DEEPSEEK_API_KEY`。OAuth 客户端 ID、回调和供应商请求身份沿用 Pi。
+进入终端后，用 `/login` 连接供应商，再用 `/model` 选择模型、`/thinking` 调整推理强度、`/scoped_models` 配置候选列表。Web/桌面通过模型按钮和设置页点击配置。也可沿用已有的供应商环境变量，例如 `DEEPSEEK_API_KEY`。OAuth 客户端 ID、回调和供应商请求身份沿用 Pi。
 
 给出一个具体任务，例如：
 

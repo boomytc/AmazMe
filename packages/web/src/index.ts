@@ -18,6 +18,11 @@ export {
 	PROVIDER_AUTH_MODAL,
 	PROVIDER_AUTH_OPEN_ACTION,
 	PROVIDER_AUTH_CANCEL_ACTION,
+	MODEL_SCOPE_ACTION,
+	MODEL_SCOPE_MODAL,
+	MODEL_SELECTOR_ACTION,
+	MODEL_DEFAULTS_ACTION,
+	SESSION_RELOAD_ACTION,
 	SESSION_REMOVE_ACTION,
 	SESSION_REMOVE_MODAL,
 	SESSION_RENAME_ACTION,
@@ -46,6 +51,7 @@ export {
 	WELCOME_SETTINGS_ACTION,
 } from "./actions.ts";
 export { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
+export { modelScopeModal, type ModelScopeLike } from "./model-scope.ts";
 export {
 	BOOT_GLOBAL,
 	BOOT_PLACEHOLDER,

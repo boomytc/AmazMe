@@ -1329,29 +1329,19 @@ describe("web client interactive loop", () => {
 			);
 			const attached = await attachSession(presentation, created.sessionId);
 
-			await waitFor(() => (attached.commands.state.value?.commands ?? []).length > 4, "the command catalogue");
+			await waitFor(() => (attached.commands.state.value?.commands ?? []).length >= 4, "the command catalogue");
 			const catalogue = attached.commands.state.value?.commands ?? [];
-			// What this host runs and expands comes first; the terminal's own commands follow, marked
-			// so a client refuses them with a reason instead of sending the text to the model.
-			const runnable = catalogue.filter((command) => command.availability === "all");
+			// The shared catalog contains work actions and prompt resources.
+			const runnable = catalogue;
 			expect(runnable.map((command) => [command.name, command.source])).toEqual([
-				["model", "builtin"],
-				["thinking", "builtin"],
 				["compact", "builtin"],
 				["reload", "builtin"],
 				["web-loop-report", "template"],
 				["skill:web-loop-brief", "skill"],
 			]);
 			expect(catalogue.some((command) => command.name === "export")).toBe(false);
-			expect(catalogue.find((command) => command.name === "older")).toMatchObject({
-				availability: "terminal",
-				source: "builtin",
-			});
-			expect(await attached.commands.run("older", "", BACKGROUND_CONTEXT)).toEqual({
-				ok: false,
-				problem: "/older runs in the terminal only.",
-			});
-			expect(catalogue.find((command) => command.name === "model")?.argumentHint).toBe("<provider/model>");
+			expect(catalogue.some(command => command.name === "older" || command.name === "model")).toBe(false);
+			expect(await attached.commands.run("older", "", BACKGROUND_CONTEXT)).toEqual({ ok: false, problem: "Unknown command: /older" });
 			// The host expands a resource command with the same code the terminal uses, and the
 			// presentation sends the prompt on its own path.
 			expect(await attached.commands.expand("web-loop-report", "w34", BACKGROUND_CONTEXT)).toEqual({
@@ -1366,42 +1356,17 @@ describe("web client interactive loop", () => {
 			expect(await attached.commands.expand("model", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
 
 			await waitFor(() => attached.models.state.value !== undefined, "the models state");
-			// /thinking takes a level the attached model reports, and says so when it does not.
+			// Settings changes use the Models service, independently of task commands.
 			const levels = await attached.models.getThinkingLevels(BACKGROUND_CONTEXT);
-			const level = levels[levels.length - 1] ?? "low";
-			expect(await attached.commands.run("thinking", level, BACKGROUND_CONTEXT)).toEqual({
-				ok: true,
-				note: `Thinking level: ${level}.`,
-			});
-			await waitFor(
-				() => attached.models.state.value?.configuration.thinkingLevel === level,
-				"the level the command selected",
-			);
-			const rejected = await attached.commands.run("thinking", "nonsense", BACKGROUND_CONTEXT);
-			expect(rejected.ok).toBe(false);
-			expect(rejected.ok ? "" : rejected.problem).toContain("Unknown thinking level");
-
-			// /model selects a catalogue entry and completes from the same catalogue.
+			const level = levels[levels.length - 1] ?? "off";
+			await attached.models.selectThinking(level, BACKGROUND_CONTEXT);
+			await waitFor(() => attached.models.state.value?.configuration.thinkingLevel === level, "the selected effort");
+			await expect(attached.models.selectThinking("nonsense" as typeof level, BACKGROUND_CONTEXT)).rejects.toThrow();
 			const catalog = attached.models.state.value?.catalog.availableModels ?? [];
-			if (catalog.length === 0) {
-				// Without the repository's model data there is nothing to select; the problem is the answer.
-				expect(await attached.commands.run("model", "provider/model", BACKGROUND_CONTEXT)).toMatchObject({
-					ok: false,
-				});
-				expect(await attached.commands.run("model", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
-			} else {
+			if (catalog.length > 0) {
 				const target = catalog[0]!;
-				expect(
-					await attached.commands.run("model", `${target.provider}/${target.modelId}`, BACKGROUND_CONTEXT),
-				).toEqual({ ok: true, note: `Selected ${target.provider}/${target.modelId}.` });
-				await waitFor(
-					() => attached.models.state.value?.configuration.model?.modelId === target.modelId,
-					"the model the command selected",
-				);
-				const completions = await attached.commands.complete("model", target.modelId, BACKGROUND_CONTEXT);
-				expect(completions.some((completion) => completion.value === `${target.provider}/${target.modelId}`)).toBe(
-					true,
-				);
+				await attached.models.select(target, BACKGROUND_CONTEXT);
+				await waitFor(() => attached.models.state.value?.configuration.model?.modelId === target.modelId, "the selected model");
 			}
 
 			// /compact is the same durable task the header's control reaches.

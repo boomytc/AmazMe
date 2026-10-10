@@ -90,6 +90,18 @@ export function createModelsService(
 			await modelScope.configure(models, persist);
 			state.change(context, (draft) => { draft.catalog = readCatalog(); });
 		},
+		async saveDefaults(model, thinking, context) {
+			context.abortSignal?.throwIfAborted();
+			const selected = modelRuntime?.getModel(model.provider, model.modelId);
+			if (!selected || !getSupportedThinkingLevels(selected).includes(thinking)) throw new Error("Choose an available model and reasoning level before saving defaults.");
+			if (!settingsManager) throw new Error("Default settings are unavailable.");
+			settingsManager.drainErrors();
+			settingsManager.setDefaultModelAndProvider(selected.provider, selected.id);
+			settingsManager.setDefaultThinkingLevel(thinking);
+			await settingsManager.flush();
+			const errors = settingsManager.drainErrors();
+			if (errors.length > 0) throw new Error(errors.map(({ error }) => error.message).join("; "));
+		},
 		async cycleModel(direction, context) {
 			if (direction !== "forward" && direction !== "backward") throw new Error("Unknown model cycling direction.");
 			const choices = modelScope.resolve(modelRuntime?.getAvailableSnapshot() ?? []);
@@ -160,8 +172,6 @@ export function createModelsService(
 				agent.thinkingLevel = clampThinkingLevel(selected, agent.thinkingLevel ?? "off");
 				agent.model = { provider: selected.provider, modelId: selected.id };
 			}, context);
-			settingsManager?.setDefaultModelAndProvider(selected.provider, selected.id);
-			await settingsManager?.flush();
 		},
 		async selectThinking(level, context) {
 			const conversation = await current(context);

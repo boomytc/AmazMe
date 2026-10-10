@@ -326,7 +326,7 @@ describe("web view model", () => {
 			},
 		});
 		const models: ModelsStateLike = {
-			catalog: {
+			catalog: { enabledModelIds: null,
 				revision: 1,
 				availableModels: [{ provider: "test", modelId: "test", name: "Test", reasoning: false, contextWindow: 10_000 }],
 			},
@@ -767,7 +767,7 @@ describe("web view model", () => {
 
 	test("projects the model picker from the host's catalog and configuration", () => {
 		const models: ModelsStateLike = {
-			catalog: {
+			catalog: { enabledModelIds: null,
 				revision: 3,
 				availableModels: [
 					{ provider: "kimi", modelId: "k2", name: "Kimi K2", reasoning: false },
@@ -798,7 +798,7 @@ describe("web view model", () => {
 
 	test("keeps the picker explainable when the catalog, the levels, or the session are missing", () => {
 		const emptyCatalog = modelPicker("en", 
-			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
+			{ catalog: { enabledModelIds: null, revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
 			["off"],
 			true,
 		);
@@ -810,7 +810,7 @@ describe("web view model", () => {
 
 		const notReasoning = modelPicker("en", 
 			{
-				catalog: {
+				catalog: { enabledModelIds: null,
 					revision: 1,
 					availableModels: [{ provider: "kimi", modelId: "k2", name: "Kimi K2", reasoning: false }],
 				},
@@ -824,7 +824,7 @@ describe("web view model", () => {
 
 		// A configured model the catalog no longer carries is still named as configured.
 		const missing = modelPicker("en", 
-			{ catalog: { revision: 2, availableModels: [] }, configuration: { model: { provider: "x", modelId: "y" }, thinkingLevel: "off" }, refresh: { status: "idle" } },
+			{ catalog: { enabledModelIds: null, revision: 2, availableModels: [] }, configuration: { model: { provider: "x", modelId: "y" }, thinkingLevel: "off" }, refresh: { status: "idle" } },
 			["off"],
 			true,
 		);
@@ -833,7 +833,7 @@ describe("web view model", () => {
 		expect(modelPicker("en", undefined, [], true)).toEqual(modelPickerEmpty("en"));
 		expect(modelPicker("en", undefined, [], false)).toEqual(modelPickerEmpty("en"));
 		const detached = modelPicker("en", 
-			{ catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
+			{ catalog: { enabledModelIds: null, revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
 			["off"],
 			false,
 		);
@@ -868,7 +868,7 @@ describe("web view model", () => {
 			transcript: undefined,
 			attachedId: undefined,
 			now: NOW,
-			models: { catalog: { revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
+			models: { catalog: { enabledModelIds: null, revision: 0, availableModels: [] }, configuration: { model: null, thinkingLevel: "off" }, refresh: { status: "idle" } },
 			thinkingLevels: ["off"],
 		}).model).toEqual(modelPickerEmpty("en"));
 	});
@@ -905,7 +905,7 @@ describe("web view model", () => {
 			attachedId: "s",
 			now: NOW,
 			models: {
-				catalog: { revision: 1, availableModels: [{ provider: "p", modelId: "m", name: "Model M", reasoning: true }] },
+				catalog: { enabledModelIds: null, revision: 1, availableModels: [{ provider: "p", modelId: "m", name: "Model M", reasoning: true }] },
 				configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "low" }, refresh: { status: "idle" },
 			},
 			thinkingLevels: ["off", "low"],
@@ -1247,7 +1247,7 @@ describe("web view model", () => {
 
 	test("projects the catalog's refresh state as one line", () => {
 		const models = (refresh: ModelsStateLike["refresh"]): ModelsStateLike => ({
-			catalog: { revision: 1, availableModels: [] },
+			catalog: { enabledModelIds: null, revision: 1, availableModels: [] },
 			configuration: { model: null, thinkingLevel: "off" },
 			refresh,
 		});

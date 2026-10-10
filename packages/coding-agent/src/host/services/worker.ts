@@ -29,7 +29,8 @@ import { createModelsServiceFacet } from "./models-provider.ts";
 import type { McpManagement } from "../../core/mcp/management.ts";
 import { createMcpFacet } from "./mcp-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
-import { createSlashCommandsRuntimeFacet } from "../../core/plugins/command-registry.ts";
+import { NATIVE_COMMANDS } from "../../durable/commands.ts";
+import { createSlashCommandsRuntimeFacet, SlashCommandRegistry } from "../../core/plugins/command-registry.ts";
 import { SessionSettings } from "./settings.ts";
 import { SessionLifecycle } from "./session-lifecycle.ts";
 import { SessionMirror } from "./session-mirror.ts";
@@ -158,7 +159,7 @@ export async function createSessionWorkerServices(options: {
 		pluginRuntimeFacet,
 		// Plugins register their commands here, and the catalogue lists them: one command surface for
 		// the terminal client, the page, and a desktop client.
-		createSlashCommandsRuntimeFacet(),
+		createSlashCommandsRuntimeFacet(new SlashCommandRegistry(NATIVE_COMMANDS.map(command => command.name))),
 		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
 		await createModelsServiceFacet({ ...options, authentication, context: BACKGROUND_CONTEXT }),
 		...(options.mcp === undefined ? [] : [createMcpFacet(options.mcp)]),

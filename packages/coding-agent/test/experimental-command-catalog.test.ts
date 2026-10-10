@@ -2,7 +2,6 @@ import {
 	createFacetHost,
 	createRemoteServiceBinding,
 	defineFacet,
-	replicatedState,
 	type RemoteServiceProvider,
 	type RemoteServiceTransport,
 } from "@amazme/chord";
@@ -11,7 +10,6 @@ import { describe, expect, test } from "vitest";
 import { AgentController, type AgentController as AgentControllerService } from "../src/core/plugins/agent-controller.ts";
 import { Commands, type CommandSummary } from "../src/host/services/commands.ts";
 import { createCommandsFacet } from "../src/host/services/commands-provider.ts";
-import { Models, type ModelsState } from "../src/host/services/models.ts";
 import { SessionPlugins } from "../src/host/services/plugins.ts";
 import { SlashCommands } from "../src/core/plugins/slash-commands.ts";
 import {
@@ -34,13 +32,6 @@ function loopback(provider: RemoteServiceProvider): RemoteServiceTransport {
 	};
 }
 
-const models: ModelsState = {
-	catalog: { revision: 1, enabledModelIds: null, availableModels: [{ provider: "p", modelId: "m", name: "M", reasoning: false, contextWindow: 1000 }] },
-	configuration: { model: { provider: "p", modelId: "m" }, thinkingLevel: "low" },
-	refresh: { status: "idle" },
-	authentication: null,
-};
-
 /**
  * A session's command surface as a client reads it: the plugin registry, the three services the
  * catalogue's own commands use, and the catalogue facet, all behind the real service boundary.
@@ -49,28 +40,6 @@ async function openCommands(registry: SlashCommandRegistry) {
 	const host = await createFacetHost({
 		facets: [
 			createSlashCommandsRuntimeFacet(registry),
-			defineFacet({
-				id: "@test/models",
-				setup(env) {
-					env.provide(Models, {
-						state: replicatedState(models),
-						async cycleThinking() {},
-						async cycleModel() {},
-						async getModelScope() { return { allModels: [], enabledModelIds: null }; },
-						async setModelScope() {},
-						async getThinkingLevels() {
-							return ["off", "low", "high"] as const;
-						},
-						async refresh() {},
-						async select() {},
-						async selectThinking() {},
-						async startLogin() { throw new Error("Fixture does not log in"); },
-						async submitLoginPrompt() { return false; },
-						async cancelLogin() { return false; },
-						async logout() {},
-					});
-				},
-			}),
 			defineFacet({
 				id: "@test/controller",
 				setup(env) {
@@ -126,7 +95,7 @@ async function openCommands(registry: SlashCommandRegistry) {
 }
 
 describe("the session's command catalogue at the service boundary", () => {
-	test("lists a plugin's command beside the host's own and the terminal's own", async () => {
+	test("lists shared work actions and plugin commands", async () => {
 		const registry = new SlashCommandRegistry();
 		const ran: string[] = [];
 		const close = registry.register({
@@ -145,17 +114,10 @@ describe("the session's command catalogue at the service boundary", () => {
 		const catalog: CommandSummary[] = session.commands.state.value?.commands ?? [];
 		expect(catalog.find((command) => command.name === "hello")).toMatchObject({
 			source: "plugin",
-			availability: "all",
 			argumentHint: "<who>",
 		});
-		expect(catalog.filter((command) => command.availability === "all").map((command) => command.name)).toContain(
-			"model",
-		);
-		// The terminal's screen-only commands are listed as such, not left for a client to guess.
-		expect(catalog.find((command) => command.name === "older")).toMatchObject({
-			availability: "terminal",
-			source: "builtin",
-		});
+		expect(catalog.filter(command => command.source === "builtin").map(command => command.name)).toEqual(["compact", "reload"]);
+		expect(catalog.some(command => command.name === "older" || command.name === "model")).toBe(false);
 		// A plugin's command runs through the same contract the terminal client uses.
 		expect(await session.commands.run("hello", "world", BACKGROUND_CONTEXT)).toEqual({ ok: true, note: "Done." });
 		expect(ran).toEqual(["world"]);
@@ -163,11 +125,11 @@ describe("the session's command catalogue at the service boundary", () => {
 		await session.dispose();
 	});
 
-	test("refuses a terminal-only command with the reason, and an unknown one as unknown", async () => {
+	test("refuses presentation commands and unknown commands", async () => {
 		const session = await openCommands(new SlashCommandRegistry());
 		expect(await session.commands.run("older", "", BACKGROUND_CONTEXT)).toEqual({
 			ok: false,
-			problem: "/older runs in the terminal only.",
+			problem: "Unknown command: /older",
 		});
 		expect(await session.commands.run("quit", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
 		expect(await session.commands.run("nope", "", BACKGROUND_CONTEXT)).toEqual({
