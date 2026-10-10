@@ -3,7 +3,7 @@
 	"version": "1.1.0",
 	"private": true,
 	"type": "module",
-	"peerDependencies": { "@amazme/chord": "*", "@amazme/coding-agent": "*" },
-	"dependencies": { "@js-temporal/polyfill": "0.5.1", "proper-lockfile": "4.1.2" },
+	"peerDependencies": { "@amazme/chord": "*", "@amazme/coding-agent": "*", "proper-lockfile": "4.1.2" },
+	"dependencies": { "@js-temporal/polyfill": "0.5.1" },
 	"chord": { "facets": { "server": "src/server.ts" } }
 }

@@ -1,7 +1,9 @@
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { getPackageDir } from "../../config.ts";
 
 export function resolveAgentPluginExternal(specifier: string): string | undefined {
+	if (specifier === "proper-lockfile") return createRequire(import.meta.url).resolve(specifier);
 	const entry = specifier === "@amazme/coding-agent/plugin" ? "plugin"
 		: specifier === "@amazme/coding-agent/host/plugin" ? "host/plugin" : undefined;
 	if (entry === undefined) return undefined;

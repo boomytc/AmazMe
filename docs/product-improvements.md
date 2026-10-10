@@ -736,3 +736,9 @@ TUI 构建及全包既有检查、Web 构建及 120 项既有检查、coding-age
 CLI 集成、provider 工厂列表、JSON/RPC 命令、MCP SDK 钩子、配置目录、更新来源和相关教程使用实际 AmazMe 命令与模式。普通元数据入口不运行 SDK 工厂，SDK 模式的 provider 列表保留 stdout 并写入 stderr。隔离环境指南移除不能当作 AmazMe 产物的 Pi 镜像/安装器和不属于默认工具的 SDK 配方，改为当前完整安装/发布目录及既有执行环境的真实边界；删除 package files 中不存在的根 containerization.md 条目，随包指南仍为 docs/containerization.md。OAuth 的 Pi client ID、回调和供应商身份未改。
 
 coding-agent 构建、142 项既有参数/命令/shell/会话格式检查通过，1 项既有检查跳过，没有新增或修改仓库测试。编译模块实跑确认进程标识、默认 shell 继承、不注入 SDK 模型变量和 BASH_ENV 别名；发布 CLI 验证异步 SDK provider 注册后列表含该模型、普通列表不执行该工厂及实际命令名。临时文件/执行环境清理。42 份专题文档的 380 个本地文件/锚点引用均可解析；npm pack dry-run 仍包含全部 42 份，包含当前指南且没有根目录旧条目。工作区依赖/三项浏览器入口和差异检查通过。该阶段只证明说明与对应入口契约，不替代真实 Codex OAuth、完整安装/编译产物及最终生命周期审计。
+
+### 自动化插件退出监听归属
+
+最终生命周期审计通过 `--trace-warnings` 定位到自动化 bundle 中的 `proper-lockfile`：每次 VM 加载都重新注册一份进程退出监听，关闭 facet 后仍保留。自动化改用宿主已有的 peer 依赖，现有插件 external resolver 从 coding-agent 所属依赖树解析它，不增加锁实现或关闭机制。租约、原子发布和失败恢复保持同一实现。
+
+coding-agent 构建、30 项真实宿主既有检查及 6 项自动化既有检查通过，没有新增仓库测试；原检查中的 MaxListenersExceededWarning 消失。编译模块实际构建三代自动化包，加载/释放 36 次，SIGINT/SIGTERM/SIGABRT 各保持 1 个监听，bundle manifest 明确包含外部 proper-lockfile，源码不再内嵌该库。临时构建目录清理。该阶段不替代 Codex 工具全链路与最终完整发行验收。
