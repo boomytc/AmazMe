@@ -6,9 +6,9 @@ import { ENV_AGENT_DIR } from "../src/config.ts";
 import {
 	commandCatalog,
 	type CommandResourceSettings,
-	expandResourceCommand,
 	loadCommandResources,
 } from "../src/host/services/commands-provider.ts";
+import { expandResourceCommand } from "../src/core/resource-command.ts";
 
 let root: string;
 let agentDir: string;

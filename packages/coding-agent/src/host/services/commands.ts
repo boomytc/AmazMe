@@ -1,4 +1,6 @@
 import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import type { CommandExpansion } from "../../core/resource-command.ts";
+export type { CommandExpansion } from "../../core/resource-command.ts";
 
 /**
  * Where a command comes from. The host's own four are `builtin`; the rest are resources the session
@@ -44,14 +46,6 @@ export interface CommandCompletion {
  */
 export type CommandResult =
 	| { readonly ok: true; readonly note: string }
-	| { readonly ok: false; readonly problem: string };
-
-/**
- * The prompt a resource command becomes, or why it cannot become one. Like a command's result, the
- * refusal is a value: the file may have been removed since the catalogue was read.
- */
-export type CommandExpansion =
-	| { readonly ok: true; readonly prompt: string }
 	| { readonly ok: false; readonly problem: string };
 
 export interface CommandsState {

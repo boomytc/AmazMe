@@ -24,12 +24,16 @@ const CONTRIBUTIONS = {
 /** pi's section order; `buildSystemPromptSections()` omits the ones without content. */
 const KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"] as const;
 
-export interface CodingPromptOptions {
+export interface CodingResourceOptions {
 	readonly systemPrompt?: string;
 	readonly appendSystemPrompt?: readonly string[];
 	readonly skills?: readonly string[];
 	readonly noSkills?: boolean;
 	readonly noContextFiles?: boolean;
+	readonly promptTemplates?: readonly string[];
+	readonly noPromptTemplates?: boolean;
+	readonly themes?: readonly string[];
+	readonly noThemes?: boolean;
 }
 
 type PromptResources = Pick<ResourceLoader, "getSystemPrompt" | "getAppendSystemPrompt" | "getAgentsFiles" | "getSkills">;

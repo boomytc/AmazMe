@@ -707,6 +707,9 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "interactive" && parsed.useTheme !== undefined) {
 		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
 	}
+	if (appMode === "interactive" && parsed.tuiMode !== undefined) {
+		startupSettingsManager.applyOverrides({ tuiMode: parsed.tuiMode });
+	}
 
 	// The interactive TUI is the durable session. Print and RPC still use the JSONL agent session.
 	if (nativeInteractive) {
@@ -743,6 +746,10 @@ export async function main(args: string[], options?: MainOptions) {
 			...(parsed.skills === undefined ? {} : { skills: resolveCliPaths(cwd, parsed.skills) }),
 			noSkills: parsed.noSkills === true,
 			noContextFiles: parsed.noContextFiles === true,
+			...(parsed.promptTemplates === undefined ? {} : { promptTemplates: resolveCliPaths(cwd, parsed.promptTemplates) }),
+			noPromptTemplates: parsed.noPromptTemplates === true,
+			...(parsed.themes === undefined ? {} : { themes: resolveCliPaths(cwd, parsed.themes) }),
+			noThemes: parsed.noThemes === true,
 			...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
 			...(parsed.model === undefined ? {} : { model: parsed.model }),
 			...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),

@@ -22,11 +22,11 @@ describe("theme picker", () => {
 		const agentDir = join(tempRoot, "agent");
 		vi.stubEnv("AMAZME_CODING_AGENT_DIR", agentDir);
 		mkdirSync(join(agentDir, "themes"), { recursive: true });
-		setRegisteredThemes([]);
+		setRegisteredThemes(undefined);
 	});
 
 	afterEach(() => {
-		setRegisteredThemes([]);
+		setRegisteredThemes(undefined);
 		rmSync(tempRoot, { recursive: true, force: true });
 		vi.unstubAllEnvs();
 	});

@@ -12,7 +12,7 @@ export async function runDurableInteractive(
 		if (options.initialMessage !== undefined && options.initialMessage.length > 0) {
 			await durable.controller.submit(options.initialMessage, "steer");
 		}
-		await runDurableTui(durable.view, durable.controller, durable.settings, durable.closed);
+		await runDurableTui(durable.view, durable.controller, durable.settings, durable.resources, durable.closed);
 	} finally {
 		await durable.close();
 	}

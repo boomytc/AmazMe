@@ -224,6 +224,8 @@ See [Configuration](configuration.md) for conventional directories and project t
 
 The default terminal consumes `--skill`, `--no-skills` and `--no-context-files` through the same resource loader as the SDK. Explicit skill paths still load when discovery is disabled. Project skill discovery requires project trust; context-file discovery follows its separate directory inheritance rules. While idle, `/reload` refreshes these prompt resources even when no plugin is selected.
 
+It also consumes template and theme paths and their discovery switches. Templates and `/skill:name` expand before the prompt enters the current conversation or its follow-up queue. Native plugin commands take precedence over same-name resources, and built-in commands stay reserved. `enableSkillCommands` controls skill completion; manually typed skill commands still work. Theme selection uses the loaded catalogue, so disabled or filtered custom themes cannot be loaded through an unrelated fallback path; explicit theme paths remain available.
+
 Resource paths apply only to the current process. Relative paths resolve from the current working directory.
 
 <a id="prompt-and-display-options"></a>
@@ -244,7 +246,7 @@ See [Configuration](configuration.md) for saved configuration, [Security](securi
 These prompt options apply to the default terminal's actual model requests. Without CLI sources, it discovers `SYSTEM.md` and `APPEND_SYSTEM.md` in the trusted project configuration or agent directory; a project file replaces the corresponding user file. An explicit prefix replaces the default prefix, while context files, skills and the working-directory section remain. Appended sources keep their CLI order before context and skills. File paths resolve against the runtime working directory and support `~`.
 
 - `--tui-mode <mode>`<br>
-  Uses `fullscreen` (default) or `regular` terminal mode.
+  Uses `fullscreen` (default) or `regular` terminal mode. The default terminal honors the saved `tuiMode` setting; the flag overrides it for this process without saving it. Fullscreen uses the alternate screen, while regular mode uses terminal scrollback.
 - `--verbose`<br>
   Shows verbose interactive startup information, overriding `quietStartup`.
 - `-a`, `--approve`<br>

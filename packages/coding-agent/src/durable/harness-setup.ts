@@ -26,7 +26,7 @@ import { SettingsManager } from "../core/settings-manager.ts";
 import { DefaultResourceLoader, type ResourceLoader } from "../core/resource-loader.ts";
 import { getAgentDir } from "../config.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../core/trust-manager.ts";
-import { createPiPrompt, type CodingPromptOptions } from "./prompt.ts";
+import { createPiPrompt, type CodingResourceOptions } from "./prompt.ts";
 import { createDurableCodemode } from "./codemode.ts";
 
 /** A headless host uses saved project trust and the global policy; it cannot prompt for trust. */
@@ -76,14 +76,17 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 export async function loadCodingResources(
 	settingsManager: SettingsManager,
 	cwd: string,
-	options: CodingPromptOptions = {},
+	options: CodingResourceOptions = {},
 ): Promise<ResourceLoader> {
 	const resources = new DefaultResourceLoader({
 		cwd,
 		agentDir: getAgentDir(),
 		settingsManager,
 		noExtensions: true,
-		noThemes: true,
+		additionalPromptTemplatePaths: options.promptTemplates?.slice(),
+		noPromptTemplates: options.noPromptTemplates,
+		additionalThemePaths: options.themes?.slice(),
+		noThemes: options.noThemes,
 		systemPrompt: options.systemPrompt,
 		appendSystemPrompt: options.appendSystemPrompt?.slice(),
 		additionalSkillPaths: options.skills?.slice(),

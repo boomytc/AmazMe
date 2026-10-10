@@ -88,6 +88,8 @@ Native terminal sessions use Durable SQLite storage. Print/JSON/RPC and the SDK 
 
 Select a native plugin with `-e /path/to/plugin`. `/plugins` shows its source and API; after editing that source, run `/reload` while idle. A failed candidate build preserves the active version. Changes to the application core or shell require rebuilding and restarting.
 
+Markdown templates appear as `/name` commands; `/skill:name` loads a selected skill's instructions. Both expand before submission or follow-up queuing. Use `--no-prompt-templates`, `--no-skills` or `--no-themes` to disable discovery; explicit paths still load. `--theme /path/to/palette.json --use-theme <name>` uses a custom palette for this run. `--tui-mode regular` uses terminal scrollback instead of the default fullscreen presentation.
+
 ## Update or remove
 
 Global package-manager installations can use `amazme update` once a matching release of their own package exists in npm. The update accepts only its own package name and a valid version. Update a source checkout through that checkout. Replace compiled releases with a complete AmazMe runtime from the source that supplied them.

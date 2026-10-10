@@ -26,6 +26,7 @@ import {
 	Text,
 	TruncatedText,
 	TuiAltScreen,
+	TuiMainScreen,
 	VStack,
 } from "@amazme/tui";
 import { getAgentDir } from "../config.ts";
@@ -46,7 +47,8 @@ import { keyText } from "../modes/interactive/components/keybinding-hints.ts";
 import { type StatusIndicator, WorkingStatusIndicator } from "../modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent, type ToolRenderers } from "../modes/interactive/components/tool-execution.ts";
 import { UserMessageComponent } from "../modes/interactive/components/user-message.ts";
-import { getEditorTheme, getMarkdownTheme, initTheme, theme } from "../modes/interactive/theme/theme.ts";
+import { getEditorTheme, getMarkdownTheme, initTheme, onThemeChange, setRegisteredThemes, theme } from "../modes/interactive/theme/theme.ts";
+import type { ResourceLoader } from "../core/resource-loader.ts";
 import { InteractiveThemeController } from "../modes/interactive/theme/theme-controller.ts";
 import { agentOf, type DurableController, type DurableView, type DurableViewSource, formatLane } from "./runtime.ts";
 import { NATIVE_COMMANDS } from "./commands.ts";
@@ -148,7 +150,7 @@ class DurableTui {
 		...createAllToolRenderers(),
 		codemode: codemodeRenderers,
 	};
-	readonly #ui: TuiAltScreen;
+	readonly #ui: TuiAltScreen | TuiMainScreen;
 	readonly #chat = new Container();
 	readonly #tasks = new Container();
 	readonly #queue = new Container();
@@ -177,14 +179,14 @@ class DurableTui {
 	#statusText = "";
 	/** Set when the transcript was rebuilt: the next render repaints the screen and shows the end. */
 	#rebuilt = false;
-	#transcript: ScrollView;
+	#transcript: ScrollView | undefined;
 
 	constructor(cwd: string, handlers: Handlers, settings: SettingsManager) {
 		this.#cwd = cwd;
 		this.#plugins = handlers.plugins;
 		this.#completeCommand = handlers.completeCommand;
 		this.#ui = createInteractiveTui({
-			tuiMode: "fullscreen",
+			tuiMode: settings.getTuiMode(),
 			showHardwareCursor: settings.getShowHardwareCursor(),
 			logDirectory: getAgentDir(),
 			fullscreenCopyOnSelect: settings.getFullscreenCopyOnSelect(),
@@ -197,6 +199,7 @@ class DurableTui {
 			embedWorkingStatus: true,
 		});
 		this.#editor.onSubmit = handlers.submit;
+		this.#editor.setShortcutLine(() => `Enter send · ${keyText("app.message.followUp")} follow-up`);
 		this.#editor.onEscape = handlers.abort;
 		this.#editor.onCtrlD = handlers.exit;
 		this.#editor.onAction("app.clear", handlers.exit);
@@ -218,35 +221,31 @@ class DurableTui {
 		this.#footer.addChild(this.#footerStats);
 		this.#footer.addChild(this.#footerHints);
 		// One empty line between the transcript and everything below it.
-		const content = new Container();
-		content.addChild(this.#chat);
-		content.addChild(new Spacer(1));
-		const transcript = new ScrollView(content, {
-			follow: "end",
-			primary: true,
-			overscroll: "chain",
-		});
-		this.#transcript = transcript;
-		const dock = new VStack([
-			{ component: this.#tasks, shrink: 1, minSize: 0 },
-			{ component: this.#queue, shrink: 1, minSize: 0 },
-			{ component: this.#notices, shrink: 1, minSize: 0 },
-			{ component: this.#editorContainer, shrink: 1, minSize: 3 },
-			{ component: this.#footer, shrink: 1, minSize: 0 },
-		]);
 		for (const component of [this.#chat, this.#tasks, this.#queue, this.#notices, this.#editorContainer, this.#footer]) {
 			this.#ui.addChild(component);
 		}
-		this.#ui.setLayoutRoot(
-			new VStack([
+		if (this.#ui instanceof TuiAltScreen) {
+			const content = new Container();
+			content.addChild(this.#chat);
+			content.addChild(new Spacer(1));
+			const transcript = new ScrollView(content, { follow: "end", primary: true, overscroll: "chain" });
+			this.#transcript = transcript;
+			const dock = new VStack([
+				{ component: this.#tasks, shrink: 1, minSize: 0 },
+				{ component: this.#queue, shrink: 1, minSize: 0 },
+				{ component: this.#notices, shrink: 1, minSize: 0 },
+				{ component: this.#editorContainer, shrink: 1, minSize: 3 },
+				{ component: this.#footer, shrink: 1, minSize: 0 },
+			]);
+			this.#ui.setLayoutRoot(new VStack([
 				{ component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
 				{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
-			]),
-		);
+			]));
+		}
 		this.#ui.setFocus(this.#editor);
 	}
 
-	get ui(): TuiAltScreen {
+	get ui(): TuiAltScreen | TuiMainScreen {
 		return this.#ui;
 	}
 
@@ -282,6 +281,12 @@ class DurableTui {
 	/** Escape during a branch summary cancels that summary; otherwise it aborts the turn. */
 	setEscape(handler: () => void): void {
 		this.#editor.onEscape = handler;
+	}
+
+	refreshTheme(snapshot: DurableView): void {
+		this.#rebuild([...snapshot.history, ...snapshot.conversation.entries]);
+		this.#ui.invalidate();
+		this.apply(snapshot);
 	}
 
 	apply(view: DurableView): void {
@@ -348,7 +353,7 @@ class DurableTui {
 		this.#editor.borderColor = theme.getThinkingBorderColor(agentOf(view.conversation).thinkingLevel ?? "off");
 		this.#syncStatus(live);
 		this.#syncFooter(view);
-		if (this.#rebuilt) this.#transcript.scrollToEnd();
+		if (this.#rebuilt) this.#transcript?.scrollToEnd();
 		this.#ui.requestRender(this.#rebuilt);
 		this.#rebuilt = false;
 	}
@@ -592,9 +597,12 @@ export async function runDurableTui(
 	source: DurableViewSource,
 	controller: DurableController,
 	settings: SettingsManager,
+	resources: Pick<ResourceLoader, "getThemes">,
 	closed?: Promise<SessionEnd>,
 ): Promise<void> {
 	setCapabilityOverrides(settings.getTerminalCapabilityOverrides());
+	let registered = resources.getThemes().themes;
+	setRegisteredThemes(registered);
 	// The system theme until the controller resolves the user's theme against the terminal's colors.
 	initTheme();
 	let exit = (): void => {};
@@ -741,7 +749,7 @@ export async function runDurableTui(
 	};
 
 	view = new DurableTui(source.current().session.cwd, {
-		plugins: controller.runCommand !== undefined,
+		plugins: controller.describePlugins !== undefined,
 		completeCommand: (name, prefix) => controller.completeCommand?.(name, prefix) ?? Promise.resolve(null),
 		submit: (text) => {
 			const trimmed = text.trim();
@@ -765,7 +773,7 @@ export async function runDurableTui(
 			}
 			const invocation = /^\/([a-z0-9][a-z0-9:-]*)(?:\s+(.*))?$/su.exec(trimmed);
 			if (invocation !== null && source.current().commands?.some(({ name }) => name === invocation[1])) {
-				return void controller.runCommand?.(invocation[1]!, invocation[2] ?? "");
+				return void controller.runCommand(invocation[1]!, invocation[2] ?? "");
 			}
 			void controller.submit(trimmed, "steer");
 		},
@@ -782,7 +790,16 @@ export async function runDurableTui(
 		showError: (message) => console.error(message),
 		onChanged: () => view.ui.requestRender(),
 	});
-	const unsubscribe = source.subscribe(() => view.apply(source.current()));
+	const unsubscribeTheme = onThemeChange(() => view.refreshTheme(source.current()));
+	const unsubscribe = source.subscribe(() => {
+		const nextThemes = resources.getThemes().themes;
+		if (nextThemes !== registered) {
+			registered = nextThemes;
+			setRegisteredThemes(registered);
+			themes.applyFromSettings();
+		}
+		view.apply(source.current());
+	});
 	view.start();
 	themes.applyFromSettings();
 	view.apply(source.current());
@@ -794,7 +811,9 @@ export async function runDurableTui(
 		login?.controller.abort();
 		await login?.done;
 		unsubscribe();
+		unsubscribeTheme();
 		themes.dispose();
+		setRegisteredThemes(undefined);
 		view.stop();
 	}
 	if (end?.reason === "failed")

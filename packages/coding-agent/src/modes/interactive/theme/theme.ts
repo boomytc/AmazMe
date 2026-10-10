@@ -419,8 +419,8 @@ export function getAvailableThemesWithPaths(): ThemeInfo[] {
 	}
 
 	// Custom themes
-	for (const themeInfo of getCustomThemeInfos()) {
-		addTheme(themeInfo);
+	if (!resourceThemeSelection) {
+		for (const themeInfo of getCustomThemeInfos()) addTheme(themeInfo);
 	}
 
 	for (const [name, theme] of registeredThemes.entries()) {
@@ -497,6 +497,7 @@ function loadThemeJson(name: string): ThemeJson {
 	if (registeredTheme) {
 		throw new Error(`Theme "${name}" does not have a source path for export`);
 	}
+	if (resourceThemeSelection) throw new Error(`Theme not selected by the resource loader: ${name}`);
 	const customThemesDir = getCustomThemesDir();
 	const themePath = path.join(customThemesDir, `${name}.json`);
 	if (!fs.existsSync(themePath)) {
@@ -668,10 +669,13 @@ let themeWatcher: fs.FSWatcher | undefined;
 let themeReloadTimer: NodeJS.Timeout | undefined;
 let onThemeChangeCallback: (() => void) | undefined;
 const registeredThemes = new Map<string, Theme>();
+let resourceThemeSelection = false;
 
-export function setRegisteredThemes(themes: Theme[]): void {
+/** A loaded resource set is authoritative; undefined releases it for standalone theme helpers. */
+export function setRegisteredThemes(themes: readonly Theme[] | undefined): void {
+	resourceThemeSelection = themes !== undefined;
 	registeredThemes.clear();
-	for (const theme of themes) {
+	for (const theme of themes ?? []) {
 		if (theme.name) {
 			assertThemeNameIsValid(theme.name);
 			registeredThemes.set(theme.name, theme);
@@ -727,8 +731,11 @@ export function setThemeInstance(themeInstance: Theme): void {
 	}
 }
 
-export function onThemeChange(callback: () => void): void {
+export function onThemeChange(callback: () => void): () => void {
 	onThemeChangeCallback = callback;
+	return () => {
+		if (onThemeChangeCallback === callback) onThemeChangeCallback = undefined;
+	};
 }
 
 function startThemeWatcher(): void {
@@ -744,10 +751,12 @@ function startThemeWatcher(): void {
 		return;
 	}
 
-	const customThemesDir = getCustomThemesDir();
 	const watchedThemeName = currentThemeName;
-	const watchedFileName = `${watchedThemeName}.json`;
-	const themeFile = path.join(customThemesDir, watchedFileName);
+	const themeFile = registeredThemes.get(watchedThemeName)?.sourcePath ??
+		(resourceThemeSelection ? undefined : path.join(getCustomThemesDir(), `${watchedThemeName}.json`));
+	if (themeFile === undefined) return;
+	const customThemesDir = path.dirname(themeFile);
+	const watchedFileName = path.basename(themeFile);
 
 	// Only watch if the file exists
 	if (!fs.existsSync(themeFile)) {

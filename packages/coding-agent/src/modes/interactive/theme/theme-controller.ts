@@ -11,6 +11,7 @@ import {
 	setTerminalColors,
 	setTheme,
 	setThemeInstance,
+	stopThemeWatcher,
 	type TerminalTheme,
 	type Theme,
 } from "./theme.ts";
@@ -68,6 +69,7 @@ export class InteractiveThemeController {
 	private terminalColorSchemeUnsubscribe: (() => void) | undefined;
 	// Settles when the latest color query completed or timed out, and its colors applied.
 	private terminalColorQuery: Promise<void> = Promise.resolve();
+	private disposed = false;
 
 	constructor(
 		ui: TUI,
@@ -157,9 +159,12 @@ export class InteractiveThemeController {
 	}
 
 	dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
 		this.setAutoSync(false);
 		this.terminalColorSchemeUnsubscribe?.();
 		this.terminalColorSchemeUnsubscribe = undefined;
+		stopThemeWatcher();
 	}
 
 	getTerminalTheme(): TerminalTheme {
@@ -187,6 +192,7 @@ export class InteractiveThemeController {
 
 	/** Query the terminal's colors without waiting for them; `waitForTerminalColors()` waits for this query. */
 	private queryTerminalColors(): void {
+		if (this.disposed) return;
 		this.terminalColorQuery = requestTerminalColors(this.ui, (colors) => this.applyTerminalColors(colors));
 	}
 
@@ -195,6 +201,7 @@ export class InteractiveThemeController {
 	 * generated from all of them, and light/dark detection uses them. Re-renders only when they changed.
 	 */
 	private applyTerminalColors(reported: TerminalColors): void {
+		if (this.disposed) return;
 		const previous = this.terminalColors;
 		const next: TerminalColors = {
 			foreground: reported.foreground ?? previous?.foreground,
@@ -239,7 +246,7 @@ export class InteractiveThemeController {
 	 * the appearance. The reported scheme only matters for terminals that do not report their background.
 	 */
 	private applyTerminalColorSchemeChange(terminalTheme: TerminalTheme): void {
-		if (!this.autoSyncEnabled) return;
+		if (this.disposed || !this.autoSyncEnabled) return;
 		const previous = getTerminalTheme();
 		setTerminalColorScheme(terminalTheme);
 		if (getTerminalTheme() !== previous) this.reapplyForTerminal();

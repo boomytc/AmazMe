@@ -1,10 +1,10 @@
 # Skills
 
-Skills give Pi specialized instructions and supporting files for a particular kind of work. Pi advertises each available skill by name and description, then loads its full instructions only when the task calls for them.
+Skills give AmazMe specialized instructions and supporting files for a particular kind of work. AmazMe advertises each available skill by name and description, then loads its full instructions only when the task calls for them.
 
 Use a skill when a workflow needs more context than a prompt template but does not need a new executable integration point. Skills can bundle scripts, references, and assets alongside their instructions.
 
-Pi implements the [Agent Skills specification](https://agentskills.io/specification). Most invalid fields produce warnings rather than stopping startup.
+AmazMe implements the [Agent Skills specification](https://agentskills.io/specification). Most invalid fields produce warnings rather than stopping startup.
 
 ## Create a skill
 
@@ -36,13 +36,15 @@ Read `references/formats.md` before converting a document. Run scripts relative 
 
 The description determines when the model considers loading the skill. State both what the skill does and when it applies. Avoid descriptions such as “Helps with PDFs,” which do not provide enough routing information.
 
-Use relative paths from the skill directory when referring to bundled files. Pi tells the model where the skill lives so it can resolve those paths.
+Use relative paths from the skill directory when referring to bundled files. AmazMe tells the model where the skill lives so it can resolve those paths.
 
 ## Understand how skills load
 
-At startup, Pi scans configured skill locations and adds each skill’s name, description, and path to the system prompt. It does not add the full instructions.
+At startup, AmazMe scans configured skill locations and adds each skill’s name, description, and path to the system prompt. It does not add the full instructions.
 
 When a task matches, the model reads `SKILL.md` and follows its instructions. This keeps detailed guidance out of context until it is needed. A model might fail to load a relevant skill, so use `/skill:name` when you need to force it.
+
+The default terminal and hosted clients expand `/skill:name` through the same function. It reads the skill body, includes its file location and reference directory, then appends the arguments. Expansion happens before admission to the current conversation, including queued follow-up input. Unknown or unreadable skills produce a local error.
 
 Arguments after `/skill:name` are appended to the loaded instructions as a user request:
 
@@ -54,13 +56,13 @@ Set `disable-model-invocation: true` in frontmatter when a skill should be avail
 
 <a id="choose-where-it-loads"></a>
 
-## Add it to Pi
+## Add it to AmazMe
 
 Place the skill in your user or project skills directory. Directories containing `SKILL.md` are discovered recursively.
 
-Pi also supports the Agent Skills locations `~/.agents/skills/` and `.agents/skills/`. Project `.agents/skills/` directories are discovered from the working directory through its ancestors, stopping at the repository root when one exists.
+AmazMe also supports the Agent Skills locations `~/.agents/skills/` and `.agents/skills/`. Project `.agents/skills/` directories are discovered from the working directory through its ancestors, stopping at the repository root when one exists.
 
-Pi accepts some standalone Markdown skills, but a directory containing `SKILL.md` is the portable form and should be preferred. See [Settings](settings.md#resources) and [Pi Packages](packages.md) for additional locations.
+AmazMe accepts some standalone Markdown skills, but a directory containing `SKILL.md` is the portable form and should be preferred. See [Settings](settings.md#resources) and [AmazMe Packages](packages.md) for additional locations.
 
 Project skills can instruct the model to run scripts or modify files. Review unfamiliar skills and their supporting files before granting project trust.
 
@@ -80,14 +82,16 @@ The Agent Skills specification defines these fields:
 
 Names use lowercase letters, numbers, and hyphens, with no leading, trailing, or consecutive hyphens. They can contain at most 64 characters; descriptions can contain at most 1024.
 
-Pi neither requires nor warns when the declared name differs from the parent directory. Other Agent Skills implementations may enforce that requirement, so matching names remain the portable choice.
+AmazMe neither requires nor warns when the declared name differs from the parent directory. Other Agent Skills implementations may enforce that requirement, so matching names remain the portable choice.
 
 Malformed `SKILL.md` files and declared skills without descriptions are not loaded. Name collisions keep the first discovered skill and produce a warning.
 
 ## Validate and share a skill
 
-Run Pi from a location where the skill is discoverable, then inspect the startup diagnostics and `/skill:name` command. Run `/reload` after editing a skill during an active session.
+Run AmazMe from a location where the skill is discoverable, then inspect the startup diagnostics and `/skill:name` command. Run `/reload` after editing a skill during an active session.
 
-Use a [Pi package](packages.md) to distribute one or more skills through npm or git. Keep environment setup inside the skill and declare any required runtime dependencies in the package.
+Use a [AmazMe package](packages.md) to distribute one or more skills through npm or git. Keep environment setup inside the skill and declare any required runtime dependencies in the package.
 
 For examples, see the [Anthropic skills collection](https://github.com/anthropics/skills) and [Pi skills collection](https://github.com/badlogic/pi-skills).
+
+Use `--no-skills` to disable configured and discovered skills for the default terminal. Explicit `--skill` paths still load. `/reload` refreshes the available set and command completion while idle.

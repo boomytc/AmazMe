@@ -20,7 +20,7 @@ The agent directory is shown as `<agent-dir>` below. Set its location with the `
 | `<agent-dir>/APPEND_SYSTEM.md` | Adds instructions to AmazMe’s system prompt. |
 | `<agent-dir>/extensions/` | User [native plugins](plugin-runtime.md) for the default terminal; [SDK extensions](extensions.md) use their own entry point. |
 | `<agent-dir>/skills/` | User [skills](skills.md) and supporting files. |
-| `<agent-dir>/prompts/` | User [prompt templates](prompt-templates.md) for hosted/SDK commands. |
+| `<agent-dir>/prompts/` | User [prompt templates](prompt-templates.md) for native, hosted and SDK commands. |
 | `<agent-dir>/themes/` | User [theme](themes.md) files. |
 
 ## Project `.amazme` directory
@@ -33,7 +33,7 @@ The agent directory is shown as `<agent-dir>` below. Set its location with the `
 | `.amazme/APPEND_SYSTEM.md` | Adds project-specific instructions to the system prompt. |
 | `.amazme/extensions/` | Project native plugins or SDK extensions, selected by the application entry point. |
 | `.amazme/skills/` | Project skills and supporting files. |
-| `.amazme/prompts/` | Project prompt templates for hosted/SDK commands. |
+| `.amazme/prompts/` | Project prompt templates for native, hosted and SDK commands. |
 | `.amazme/themes/` | Project theme files. |
 
 For `SYSTEM.md` and `APPEND_SYSTEM.md`, the trusted project file takes precedence over the corresponding agent-directory file. Files with the same name are not combined.

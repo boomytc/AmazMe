@@ -3,9 +3,9 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import { getAgentDir } from "../../config.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
-import { loadPromptTemplates, expandPromptTemplate, type PromptTemplate } from "../../core/prompt-templates.ts";
-import { skillCommandPrompt } from "../../core/skill-command.ts";
-import { loadSkills, type Skill } from "../../core/skills.ts";
+import { loadPromptTemplates } from "../../core/prompt-templates.ts";
+import { loadSkills } from "../../core/skills.ts";
+import { expandResourceCommand, type CommandResources } from "../../core/resource-command.ts";
 import type { ResourceLoader } from "../../core/resource-loader.ts";
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import {
@@ -53,12 +53,6 @@ const THINKING_DESCRIPTIONS: Readonly<Record<ModelThinkingLevel, string>> = {
 	xhigh: "Extra-high reasoning",
 	max: "Maximum reasoning",
 };
-
-/** The resources that contribute commands to one session: its prompt templates and its skills. */
-export interface CommandResources {
-	readonly templates: readonly PromptTemplate[];
-	readonly skills: readonly Skill[];
-}
 
 /**
  * The settings a command catalogue reads: where the session's resources live, and whether skills are
@@ -170,31 +164,6 @@ function terminalOnlyCommand(name: string): CommandSummary | undefined {
 				availability: "terminal",
 			}
 		: undefined;
-}
-
-/**
- * The prompt a resource command stands for. A template substitutes its arguments the way the
- * terminal does; a skill becomes its `<skill>` block. A built-in and an unknown name have no prompt.
- */
-export function expandResourceCommand(
-	resources: CommandResources,
-	name: string,
-	args: string,
-): CommandExpansion {
-	if (name.startsWith("skill:")) {
-		const skill = resources.skills.find((candidate) => candidate.name === name.slice("skill:".length));
-		if (skill === undefined) return { ok: false, problem: `Unknown skill: ${name.slice("skill:".length)}` };
-		try {
-			return { ok: true, prompt: skillCommandPrompt(skill, args) };
-		} catch (error) {
-			return { ok: false, problem: error instanceof Error ? error.message : String(error) };
-		}
-	}
-	const template = resources.templates.find((candidate) => candidate.name === name);
-	if (template === undefined) return { ok: false, problem: `Unknown command: /${name}` };
-	// The terminal's own call, with the same template object: one substitution, two clients.
-	const line = args.length === 0 ? `/${name}` : `/${name} ${args}`;
-	return { ok: true, prompt: expandPromptTemplate(line, [template]) };
 }
 
 export function createCommandsFacet(options: CommandsServiceOptions): Facet {

@@ -57,7 +57,9 @@ import {
 	initialThinkingLevel,
 	loadCodingResources,
 } from "./harness-setup.ts";
-import type { CodingPromptOptions } from "./prompt.ts";
+import type { CodingResourceOptions } from "./prompt.ts";
+import { expandResourceCommand } from "../core/resource-command.ts";
+import type { ResourceLoader } from "../core/resource-loader.ts";
 import { selectSession } from "./sessions.ts";
 import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp.ts";
 import { Subagent } from "./subagent.ts";
@@ -111,7 +113,7 @@ export interface DurableViewSource {
 /** What the TUI may ask for. */
 export interface DurableController {
 	describePlugins?(): string;
-	runCommand?(name: string, args: string): Promise<void>;
+	runCommand(name: string, args: string): Promise<void>;
 	completeCommand?(name: string, prefix: string): Promise<readonly SlashCommandCompletion[] | null>;
 	/** Reload prompt resources and any selected application plugin facets while idle. */
 	reload(): Promise<void>;
@@ -143,7 +145,7 @@ export interface DurableController {
 	loadOlder(): Promise<void>;
 }
 
-export interface OpenDurableOptions extends ToolSelectionOptions, CodingPromptOptions {
+export interface OpenDurableOptions extends ToolSelectionOptions, CodingResourceOptions {
 	readonly extensions?: readonly string[];
 	readonly noExtensions?: boolean;
 	/** Application-selected Chord facets; no plugin owner is started when absent. */
@@ -169,6 +171,8 @@ export interface OpenDurableResult {
 	readonly controller: DurableController;
 	/** pi's settings, for the TUI's theme and terminal capabilities. */
 	readonly settings: SettingsManager;
+	/** The same resource owner supplies the presentation's selected themes. */
+	readonly resources: Pick<ResourceLoader, "getThemes">;
 	close(): Promise<void>;
 }
 
@@ -329,7 +333,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
 		const reportResources = (): void => {
-			for (const diagnostic of resources.getSkills().diagnostics) {
+			for (const diagnostic of [...resources.getSkills().diagnostics, ...resources.getPrompts().diagnostics, ...resources.getThemes().diagnostics]) {
 				notice(diagnostic.type === "error" ? "error" : "warning", `${diagnostic.path === undefined ? "" : `${diagnostic.path}: `}${diagnostic.message}`);
 			}
 		};
@@ -444,6 +448,19 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			});
 		};
 		const pluginCommands = facetLoader === undefined ? undefined : new SlashCommandRegistry(NATIVE_COMMANDS.map(({ name }) => name));
+		const reservedCommands = new Set<string>(NATIVE_COMMANDS.map(({ name }) => name));
+		const publishCommands = (): void => {
+			const contributed = pluginCommands?.list() ?? [];
+			const taken = new Set([...reservedCommands, ...contributed.map(({ name }) => name)]);
+			const templates = resources.getPrompts().prompts
+				.filter(({ name }) => !taken.has(name))
+				.map(({ name, description, argumentHint }) => ({ name, description, argumentHint }));
+			for (const { name } of templates) taken.add(name);
+			const skills = settingsManager.getEnableSkillCommands()
+				? resources.getSkills().skills.flatMap(({ name, description }) => taken.has(`skill:${name}`) ? [] : [{ name: `skill:${name}`, description, argumentHint: "[args]" }])
+				: [];
+			update({ commands: [...contributed, ...templates, ...skills].map(({ name, description, argumentHint }) => ({ name, description, argumentHint })) });
+		};
 		let unsubscribeCommands = (): void => {};
 		if (facetLoader !== undefined) {
 			if (sources.length > 0) registry.install({ name: "plugin-development", sections: [section("plugin_development", () => describePluginSources(sources))] });
@@ -464,49 +481,63 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					await resources.reload();
 				},
 			);
-			unsubscribeCommands = pluginCommands!.subscribe((commands) => update({
-				commands: commands.map(({ name, description, argumentHint }) => ({ name, description, argumentHint })),
-			}));
+			unsubscribeCommands = pluginCommands!.subscribe(publishCommands);
 		}
+		publishCommands();
+		const expandInput = (text: string): string => {
+			const invocation = /^\/([^\s]+)(?:\s+([\s\S]*))?$/u.exec(text);
+			if (invocation === null || reservedCommands.has(invocation[1]!)) return text;
+			const name = invocation[1]!;
+			if (!name.startsWith("skill:") && !resources.getPrompts().prompts.some((template) => template.name === name)) return text;
+			const expanded = expandResourceCommand({ templates: resources.getPrompts().prompts, skills: resources.getSkills().skills }, name, invocation[2] ?? "");
+			if (!expanded.ok) throw new Error(expanded.problem);
+			return expanded.prompt;
+		};
+		const runPluginCommand = async (selected: SlashCommandContribution, args: string): Promise<void> => {
+			const operation = new AbortController();
+			activeCommand = operation;
+			notice("info", `Running /${selected.name}`);
+			try {
+				const outcome = await selected.run(args, withAbortSignal(operation.signal, context));
+				if (outcome?.accepted === false) throw new Error(outcome.error.message);
+				notice("info", `${operation.signal.aborted ? "Cancelled" : "Ran"} /${selected.name}`);
+			} catch (error) {
+				if (operation.signal.aborted) notice("info", `Cancelled /${selected.name}`);
+				else throw error;
+			} finally {
+				if (activeCommand === operation) activeCommand = undefined;
+			}
+		};
+		const submitInput = async (text: string, whenBusy: "steer" | "followUp"): Promise<void> => {
+			if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
+			const invocation = /^\/([^\s]+)(?:\s+([\s\S]*))?$/u.exec(text);
+			const selected = invocation === null ? undefined : pluginCommands?.list().find(({ name }) => name === invocation[1]);
+			if (selected !== undefined) await runPluginCommand(selected, invocation?.[2] ?? "");
+			else watchAnswer(await current.submit({ type: "input", content: expandInput(text), whenBusy }, context));
+		};
 		const controller: DurableController = {
 			auth,
 			...(plugins === undefined ? {} : {
 				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources),
-				runCommand: (name: string, args: string) => command(async () => {
-					if (plugins!.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
-					const selected = pluginCommands!.list().find((entry) => entry.name === name);
-					if (selected === undefined) throw new Error(`Unknown command: /${name}`);
-					const operation = new AbortController();
-					activeCommand = operation;
-					notice("info", `Running /${name}`);
-					try {
-						const outcome = await selected.run(args, withAbortSignal(operation.signal, context));
-						if (outcome?.accepted === false) throw new Error(outcome.error.message);
-						notice("info", `${operation.signal.aborted ? "Cancelled" : "Ran"} /${name}`);
-					} catch (error) {
-						if (operation.signal.aborted) notice("info", `Cancelled /${name}`);
-						else throw error;
-					} finally {
-						if (activeCommand === operation) activeCommand = undefined;
-					}
-				}),
 				completeCommand: async (name: string, prefix: string) => plugins!.changing
 					? null
 					: await pluginCommands!.list().find((entry) => entry.name === name)?.getArgumentCompletions?.(prefix) ?? null,
+			}),
+			runCommand: (name, args) => command(async () => {
+				if (reservedCommands.has(name) || !state.commands?.some((candidate) => candidate.name === name)) throw new Error(`Unknown command: /${name}`);
+				await submitInput(`/${name}${args.length === 0 ? "" : ` ${args}`}`, "steer");
 			}),
 			reload: () => command(async () => {
 				if (plugins === undefined) {
 					await assertPluginsIdle(opened);
 					await resources.reload();
 				} else await plugins.reload();
+				publishCommands();
 				reportResources();
 				notice("info", plugins === undefined ? "Reloaded prompt resources" : "Reloaded prompt resources and plugins");
 			}),
 			mcp: activeMcp.management,
-			submit: (text, whenBusy) => command(async () => {
-				if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
-				watchAnswer(await current.submit({ type: "input", content: text, whenBusy }, context));
-			}),
+			submit: (text, whenBusy) => command(() => submitInput(text, whenBusy)),
 			compact: (instructions) =>
 				command(async () => {
 					if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
@@ -675,6 +706,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			},
 			controller,
 			settings: settingsManager,
+			resources,
 			close() {
 				closing ??= (async () => {
 					activeCommand?.abort(new Error("Session closing"));
