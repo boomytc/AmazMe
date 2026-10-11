@@ -28,7 +28,7 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 				kind: "list",
 				sessions: discovered
 					.flatMap(({ route, directory }) =>
-						directory.state.value!.sessions.map(({ sessionId }) => ({ serverId: route.serverId, sessionId })),
+						directory.state.value!.sessions.filter(session => session.archivedAt === undefined).map(({ sessionId }) => ({ serverId: route.serverId, sessionId })),
 					)
 					.sort(
 						(left, right) =>

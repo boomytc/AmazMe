@@ -19,6 +19,7 @@ import { Diagnostics } from "../src/host/services/diagnostics.ts";
 import { Models } from "../src/host/services/models.ts";
 import { Plugins, PresentationPlugins, SessionPlugins } from "../src/host/services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../src/host/services/sessions.ts";
+import { ProjectManagement, SessionArchive } from "../src/host/services/projects.ts";
 import { Settings } from "../src/host/services/settings.ts";
 import { Schedules } from "../src/core/plugins/schedules.ts";
 import { Skills } from "../src/host/services/skills.ts";
@@ -319,6 +320,8 @@ describe("experimental durable server composition", () => {
 			{ serviceId: Plugins.id, mode: "singleton" },
 			{ serviceId: Feedback.id, mode: "singleton" },
 			{ serviceId: Diagnostics.id, mode: "singleton" },
+			{ serviceId: ProjectManagement.id, mode: "singleton" },
+			{ serviceId: SessionArchive.id, mode: "singleton" },
 			{ serviceId: Schedules.id, mode: "singleton" },
 		]);
 		const firstDirectory = firstServices.use(SessionDirectory);

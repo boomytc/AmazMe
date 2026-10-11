@@ -12,6 +12,11 @@ import { Client, type ClientOptions } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
+	PROJECT_ADD_ACTION, PROJECT_ADD_MODAL, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_RENAME_MODAL,
+	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, ARCHIVE_TOGGLE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
+	addProjectModal, renameProjectModal, removeProjectModal,
+} from "@amazme/web";
+import {
 	AUTOMATION_VIEW,
 	APPROVAL_APPROVE_ACTION,
 	APPROVAL_DENY_ACTION,
@@ -160,6 +165,7 @@ import { Models, type Models as ModelsService, type ModelsState } from "../servi
 import { Plugins, PresentationPlugins } from "../services/plugins.ts";
 import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
+import { ProjectManagement, SessionArchive } from "../services/projects.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
 import { SessionMirror } from "../services/session-mirror.ts";
 import type { SessionMirrorWarning } from "../services/session-mirror.ts";
@@ -736,12 +742,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let appearance: ThemePreference = resolveThemePreference(manifest.preferences?.appearance);
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(locale, key, values);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, Settings, Skills, Plugins, PresentationPlugins, Feedback, Diagnostics],
+		services: [SessionDirectory, SessionManagement, ProjectManagement, SessionArchive, Settings, Skills, Plugins, PresentationPlugins, Feedback, Diagnostics],
 		assertAccess(): void {},
 		onError: report,
 	});
 	const directory = serverServices.use(SessionDirectory);
 	const management = serverServices.use(SessionManagement);
+	const projects = serverServices.use(ProjectManagement);
+	const archives = serverServices.use(SessionArchive);
 	/** The management surface's own services, and the view the main area shows. */
 	const settings = serverServices.use(Settings);
 	const skills = serverServices.use(Skills);
@@ -778,6 +786,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let attachmentSequence = 0;
 	/** The roster's filter text; the page owns it so creating or attaching never clears it. */
 	let rosterFilter = "";
+	let selectedProjectId: string | undefined;
+	let showArchived = false;
+	let selectionRevision = 0;
+	const rememberProject = (): void => {
+		try {
+			if (selectedProjectId !== undefined) sessionStorage.setItem(`amazme.project.${manifest.server.id}`, selectedProjectId);
+			else sessionStorage.removeItem(`amazme.project.${manifest.server.id}`);
+		} catch { /* A restricted webview may not provide session storage. */ }
+	};
 	/** The dock: whether it is open, and which tab it shows. Both belong to this page. */
 	let dockOpen = false;
 	let dockTab = "files";
@@ -837,8 +854,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	/** The composer offers work actions; model, account and session management use click controls. */
-	const composerCommands = (): readonly CommandLike[] => painter.commands.filter(command =>
-		command.source !== "builtin" && (command.source !== "skill" || settingValue("enableSkillCommands") !== "false"));
+	const composerCommands = (): readonly CommandLike[] => painter.sessionId === desiredSessionId && painter.ready
+		? painter.commands.filter(command => command.source !== "builtin" && (command.source !== "skill" || settingValue("enableSkillCommands") !== "false")) : [];
 
 	/** The session's root conversation id, as the host's conversation list reports it. */
 	const rootId = (): string | undefined => painter.conversations?.conversations.find((entry) => entry.root)?.id;
@@ -891,7 +908,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const paint = (): void => {
 		const bound = client.connected && painter.ready && painter.sessionId === desiredSessionId;
 		// The root id comes from the host's list; the cache keeps submit routing stable across paints.
-		rootConversationId = rootId() ?? rootConversationId;
+		if (bound) rootConversationId = rootId() ?? rootConversationId;
 		locale = resolveLocale(settingValue("locale") ?? locale, navigator.languages);
 		appearance = resolveThemePreference(settingValue("appearance") ?? appearance);
 		painter.locale = locale;
@@ -944,20 +961,22 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const built = buildWebView({
 					locale,
 					creatingSession: creating,
+					selectedProjectId,
+					showArchived,
 					directory: directory.state.value,
 					transcript: shownTranscript(),
-					focus: focusedLabel(),
-					...(painter.conversations?.lane === undefined ? {} : { lane: painter.conversations.lane }),
-					history,
-					historyMore: !historyLoaded || historyCursor !== null,
-					historyLoading,
+					focus: bound ? focusedLabel() : undefined,
+					...(!bound || painter.conversations?.lane === undefined ? {} : { lane: painter.conversations.lane }),
+					history: bound ? history : [],
+					historyMore: bound && (!historyLoaded || historyCursor !== null),
+					historyLoading: bound && historyLoading,
 					attachedId: client.connected && painter.ready && painter.sessionId === desiredSessionId ? painter.sessionId : undefined,
 					now: Date.now(),
 					models: bound ? painter.modelsValue : undefined,
 					thinkingLevels: bound ? painter.levels : undefined,
 					submitMode,
-					attachments: pending,
-					approvals: painter.approvals,
+					attachments: bound ? pending : [],
+					approvals: bound ? painter.approvals : undefined,
 					feedback: feedback.state.value,
 					// Durable entry ids are per conversation, so the ratings are scoped to the one shown.
 					feedbackScope: {
@@ -974,10 +993,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					dock: {
 						open: dockOpen,
 						tab: dockTab,
-						cwd: painter.workspace?.cwd ?? "",
-						workspace: painter.workspace,
-						terminal: painter.terminal,
-						conversations: painter.conversations,
+						cwd: bound ? painter.workspace?.cwd ?? "" : "",
+						workspace: bound ? painter.workspace : undefined,
+						terminal: bound ? painter.terminal : undefined,
+						conversations: bound ? painter.conversations : undefined,
 					},
 					// The panel inherits this view's language, so one resolution serves the whole page.
 					panel: {
@@ -990,15 +1009,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						} : modal }),
 						settings: { state: desiredSessionId === undefined || bound ? effectiveSettings() : undefined, models: {
 							available: client.connected && painter.ready && painter.sessionId === desiredSessionId && painter.modelsService !== undefined,
-							authentication: Boolean(painter.modelsValue?.authentication),
-							selected: Boolean(painter.modelsValue?.configuration.model),
+							authentication: bound && Boolean(painter.modelsValue?.authentication),
+							selected: bound && Boolean(painter.modelsValue?.configuration.model),
 						} },
 						skills: { state: skills.state.value },
 						plugins: { state: plugins.state.value, runtime: desiredSessionId === undefined ? undefined
 							: client.connected && painter.sessionId === desiredSessionId ? (painter.mcpValue ?? null) : null },
 						...(schedules === undefined ? {} : { automation: {
 							state: schedules.state.value,
-							sessionId: painter.sessionId,
+							sessionId: bound ? painter.sessionId : undefined,
 							now: Date.now(),
 						} }),
 						// The page's own management state: what is in flight, and what it last said.
@@ -1012,11 +1031,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		paintSafely(() => renderer.render(withReturnPoints(
 			{
 				...displayed,
-				mirrorWarning: painter.mirrorWarning,
+				mirrorWarning: bound ? painter.mirrorWarning : undefined,
 				newSession: { ...displayed.newSession, enabled: client.connected && displayed.newSession.enabled },
 			},
-			returnPoints,
-			painter.conversations?.branchSummarySkipPrompt === true,
+			bound ? returnPoints : [],
+			bound && painter.conversations?.branchSummarySkipPrompt === true,
 		)));
 		refreshReturnPoints();
 	};
@@ -1046,7 +1065,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			},
 		);
 	};
-	directory.state.subscribe(() => paint());
+	directory.state.subscribe(() => {
+		const state = directory.state.value;
+		if (!state) return;
+		const available = state.projects?.filter(project => showArchived || !project.removed) ?? [];
+		if (!available.some(project => project.id === selectedProjectId)) {
+			selectedProjectId = available.find(project => project.id === state.defaultProjectId)?.id ?? available[0]?.id;
+			if (booted) rememberProject();
+		}
+		if (booted && !showArchived && state.sessions.some(session => session.sessionId === desiredSessionId && session.archivedAt !== undefined)) {
+			void clearSession().catch(report);
+		}
+		paint();
+	});
 	// A rating given here, or by another tab, repaints the transcript's controls.
 	feedback.state.subscribe(() => paint());
 	settings.state.subscribe(() => {
@@ -1101,8 +1132,39 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * disposing the bindings that bind is using.
 	 */
 	const transition = sessionTransitions();
+	const clearSession = async (): Promise<void> => {
+		selectionRevision += 1;
+		desiredSessionId = undefined;
+		saveDraft();
+		await transition(async () => {
+			if (desiredSessionId !== undefined) return;
+			await painter.detach();
+			await management.detach(BACKGROUND_CONTEXT);
+			try { sessionStorage.removeItem(`amazme.session.${manifest.server.id}`); } catch { /* Optional storage. */ }
+			draftSessionId = undefined;
+			pending = [];
+			completions = [];
+			completionSequence += 1;
+			history = [];
+			historyRequest += 1;
+			historyLoading = false;
+			historyCursor = null;
+			historyLoaded = false;
+			rootConversationId = "";
+			returnPoints = [];
+			returnPointsKey = "";
+			returnPointsRequest += 1;
+			reconnectTranscript = undefined;
+			renderer.setDraft("", false);
+			paint();
+		});
+	};
 	const selectSession = (sessionId: string, resume = false): Promise<void> => {
 		if (!resume) {
+			selectionRevision += 1;
+			const summary = directory.state.value?.sessions.find(session => session.sessionId === sessionId);
+			if (summary?.projectId !== undefined) selectedProjectId = summary.projectId;
+			rememberProject();
 			desiredSessionId = sessionId;
 			reconnectTranscript = undefined;
 		}
@@ -1162,11 +1224,21 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** Create a session and attach it; one path serves the sidebar's bar and the shortcut. */
 	const createSession = (): void => {
 		if (creating || !client.connected) return;
+		const known = directory.state.value?.projects;
+		if (known !== undefined && !known.some(project => project.id === selectedProjectId)) selectedProjectId = known.find(project => !project.removed)?.id;
+		if (known !== undefined && selectedProjectId === undefined) { modal = addProjectModal(locale); paint(); return; }
+		const projectId = selectedProjectId;
+		const project = known?.find(project => project.id === projectId);
+		desiredSessionId = undefined;
+		const selection = ++selectionRevision;
+		showArchived = false;
 		creating = true;
 		paint();
-		void management
-			.create({ reuseEmpty: true }, BACKGROUND_CONTEXT)
+		const preparation = project?.removed ? projects.create({ cwd: project.cwd, name: project.name }, BACKGROUND_CONTEXT) : Promise.resolve();
+		void preparation
+			.then(() => management.create({ reuseEmpty: true, ...(projectId === undefined ? {} : { projectId }) }, BACKGROUND_CONTEXT))
 			.then(async (created) => {
+				if (selectionRevision !== selection) return;
 				await selectSession(created.sessionId);
 				view = CHAT_VIEW;
 				modal = undefined;
@@ -1680,6 +1752,46 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			case "command":
 				switch (action.id) {
+					case PROJECT_ADD_ACTION:
+						openModal(addProjectModal(locale), action); return;
+					case PROJECT_RENAME_ACTION: {
+						const project = directory.state.value?.projects?.find(project => project.id === action.data);
+						if (project) openModal(renameProjectModal(locale, project.id, project.name), action); return;
+					}
+					case PROJECT_REMOVE_ACTION: {
+						const project = directory.state.value?.projects?.find(project => project.id === action.data);
+						if (project) openModal(removeProjectModal(locale, project.id, project.name), action); return;
+					}
+					case PROJECT_SELECT_ACTION: {
+						selectedProjectId = action.data;
+						rememberProject();
+						const session = rosterItems(locale, directory.state.value, undefined, Date.now(), "", showArchived).find(item => item.projectId === action.data);
+						view = CHAT_VIEW;
+						void (session ? selectSession(session.id) : clearSession()).catch(report); paint(); return;
+					}
+					case ARCHIVE_TOGGLE_ACTION:
+						selectionRevision += 1;
+						showArchived = !showArchived;
+						if (!showArchived) {
+							const state = directory.state.value;
+							const available = state?.projects?.filter(project => !project.removed) ?? [];
+							if (!available.some(project => project.id === selectedProjectId)) {
+								selectedProjectId = available.find(project => project.id === state?.defaultProjectId)?.id ?? available[0]?.id;
+								rememberProject();
+							}
+						}
+						if (!showArchived && directory.state.value?.sessions.some(session => session.sessionId === desiredSessionId && session.archivedAt !== undefined)) void clearSession().catch(report);
+						paint(); return;
+					case SESSION_ARCHIVE_ACTION:
+					case SESSION_RESTORE_ACTION: {
+						const selection = selectionRevision;
+						runPanelCall({ id: action.id, data: action.data, call: async () => {
+							const id = action.data ?? "";
+							await archives.set(id, action.id === SESSION_ARCHIVE_ACTION, BACKGROUND_CONTEXT);
+							if (action.id === SESSION_RESTORE_ACTION && selectionRevision === selection) { showArchived = false; await selectSession(id); }
+							return { ok: true as const };
+						} }); return;
+					}
 					case PLUGIN_MCP_PROJECT_ACTION: {
 						const runtime = painter.mcpValue;
 						const server = runtime?.servers.find(server => server.name === action.data && server.scope === "global");
@@ -2130,6 +2242,23 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "modal-submit": {
 				const fields = action.fields;
 				switch (action.id) {
+					case PROJECT_ADD_MODAL: {
+						if (!fields.cwd?.trim()) { refuseInModal(copy("project.directoryRequired")); return; }
+						const selection = selectionRevision;
+						const dialog = modal;
+						runPanelCall({ id: action.id, inModal: true, call: async () => {
+							const project = await projects.create({ cwd: (fields.cwd ?? "").trim(), ...(fields.name?.trim() ? { name: fields.name.trim() } : {}) }, BACKGROUND_CONTEXT);
+							if (selectionRevision === selection && modal === dialog) {
+								selectedProjectId = project.id; rememberProject(); showArchived = false; await clearSession();
+							}
+							return { ok: true as const };
+						} }); return;
+					}
+					case PROJECT_RENAME_MODAL:
+						if (!fields.name?.trim()) { refuseInModal(copy("project.nameRequired")); return; }
+						runPanelCall({ id: action.id, data: action.data, inModal: true, call: () => projects.rename(action.data ?? "", fields.name ?? "", BACKGROUND_CONTEXT).then(done) }); return;
+					case PROJECT_REMOVE_MODAL:
+						runPanelCall({ id: action.id, data: action.data, inModal: true, call: () => projects.remove(action.data ?? "", BACKGROUND_CONTEXT).then(done) }); return;
 					case PLUGIN_MCP_PROJECT_MODAL: {
 						const owner = mcpView;
 						if (!owner || modal?.id !== action.id || action.data !== owner.target || modalPending) return;
@@ -2157,6 +2286,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					}
 					case SESSION_REMOVE_MODAL: {
 						const sessionId = action.data ?? "";
+						const projectId = selectedProjectId;
+						let selection = selectionRevision;
 						runPanelCall({
 							id: action.id,
 							data: sessionId,
@@ -2165,18 +2296,17 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								// A session that was just attached is let go of first, and the removal waits
 								// for that to settle: the host releases this attachment either way, and a call
 								// in flight across the transition would lose its binding.
-								const wasCurrent = painter.sessionId === sessionId;
+								const wasCurrent = desiredSessionId === sessionId;
 								if (wasCurrent) {
-									saveDraft();
-									await painter.detach();
+									const clearing = clearSession();
+									selection = selectionRevision;
+									await clearing;
 								}
 								await management.remove(sessionId, BACKGROUND_CONTEXT);
 								sessionDrafts.delete(sessionId);
-								if (wasCurrent) {
-									draftSessionId = undefined;
-									pending = [];
-									renderer.setDraft("");
-									const next = rosterItems(locale, directory.state.value, undefined, Date.now()).find((item) => item.id !== sessionId);
+								if (wasCurrent && selectionRevision === selection) {
+									const next = rosterItems(locale, directory.state.value, undefined, Date.now(), "", showArchived)
+										.find(item => item.id !== sessionId && (projectId === undefined || item.projectId === projectId));
 									if (next !== undefined) await selectSession(next.id);
 								}
 								return { ok: true as const };
@@ -2388,7 +2518,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let retrying: Promise<void> | undefined;
 	const retryConnection = (): void => {
 		if (leaving || retrying !== undefined) return;
-		const wanted = desiredSessionId ?? painter.sessionId;
 		retrying = (async () => {
 			let waitMs = 500;
 			while (!leaving && !client.connected) {
@@ -2407,13 +2536,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			}
 			if (!client.connected) return;
 			await scheduleDiscovery;
-			if (wanted === undefined) return;
+			if (desiredSessionId === undefined) { await clearSession(); return; }
 			// An attachment lives with the connection, so the reader's session is bound again. The
 			// bindings of the old connection are released first: their handles are gone with it.
 			for (let attempt = 0; !leaving; attempt += 1) {
 				try {
 					if (!client.connected) await client.reconnect();
-					const target = desiredSessionId ?? wanted;
+					const target = desiredSessionId;
+					if (target === undefined) return;
 					await selectSession(target, true);
 					if (!client.connected) throw new Error(copy("connection.hostGone"));
 					if (painter.sessionId !== desiredSessionId || !painter.ready) continue;
@@ -2494,13 +2624,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	booted = true;
 	// Restore this tab's last selection when it still exists; otherwise use the newest session.
 	let remembered: string | null = null;
+	let rememberedProject: string | null = null;
 	try {
 		remembered = sessionStorage.getItem(`amazme.session.${manifest.server.id}`);
+		rememberedProject = sessionStorage.getItem(`amazme.project.${manifest.server.id}`);
 	} catch {
 		// Fall back to the newest session when this browser cannot retain a selection.
 	}
 	const listed = rosterItems(locale, directory.state.value, undefined, Date.now());
-	const initial = listed.find((item) => item.id === remembered) ?? listed[0];
+	const project = directory.state.value?.projects?.find(project => project.id === rememberedProject && !project.removed);
+	if (project) selectedProjectId = project.id;
+	const candidates = project ? listed.filter(item => item.projectId === project.id) : listed;
+	const initial = candidates.find((item) => item.id === remembered) ?? candidates[0];
 	if (initial !== undefined) {
 		await selectSession(initial.id).catch((error: unknown) => {
 			renderer.setConnection(

@@ -1,5 +1,6 @@
 import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
 import type { ServerId } from "@amazme/protocol";
+import type { ProjectSummary } from "./projects.ts";
 
 export interface SessionAddress {
 	serverId: ServerId;
@@ -13,6 +14,8 @@ export interface SessionSummary extends SessionAddress {
 	createdAt: number;
 	/** The working directory the Session's agent runs in, as its catalog metadata records it. */
 	cwd: string;
+	projectId?: string;
+	archivedAt?: number;
 	/**
 	 * `host` for a Session this server owns, `local` for a terminal session that no host has opened
 	 * yet. Attaching a `local` one adopts it: the host stores it and seeds it from its transcript.
@@ -24,6 +27,7 @@ export interface SessionSummary extends SessionAddress {
 
 export interface SessionCreateOptions {
 	id?: string;
+	projectId?: string;
 	/** UI new-session intent: reuse the latest empty session in this workspace. Cannot accompany `id`. */
 	reuseEmpty?: boolean;
 }
@@ -31,6 +35,8 @@ export interface SessionCreateOptions {
 export interface SessionDirectoryState {
 	revision: number;
 	sessions: SessionSummary[];
+	projects?: ProjectSummary[];
+	defaultProjectId?: string;
 }
 
 export interface SessionDirectory {

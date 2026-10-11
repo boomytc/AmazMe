@@ -759,6 +759,7 @@ export function findMostRecentSession(sessionDir: string, cwd?: string): string 
 		const files = readdirSync(resolvedSessionDir)
 			.filter((file) => file.endsWith(".jsonl"))
 			.map((file) => join(resolvedSessionDir, file))
+			.filter(path => !existsSync(`${path}${SESSION_ARCHIVE_SUFFIX}`))
 			.map((path) => ({ path, mtime: statSync(path).mtimeMs }))
 			.sort((a, b) => b.mtime - a.mtime);
 
@@ -925,6 +926,9 @@ export type SessionListProgress = (
 	partialSessions?: readonly SessionInfo[],
 ) => void;
 
+/** Separate from append-only history so archiving never rewrites a live terminal transcript. */
+export const SESSION_ARCHIVE_SUFFIX = ".archived";
+
 const MAX_CONCURRENT_SESSION_INFO_LOADS = 10;
 const MAX_CONCURRENT_SESSION_DISCOVERY_LOADS = 64;
 const CURRENT_SESSION_LIST_PUBLISH_INTERVAL = 10;
@@ -979,14 +983,16 @@ async function listSessionsFromDir(
 	dir: string,
 	onProgress?: SessionListProgress,
 	signal?: AbortSignal,
+	includeArchived = false,
 ): Promise<SessionInfo[]> {
 	signal?.throwIfAborted();
 	if (!existsSync(dir)) return [];
 
 	try {
 		const dirEntries = await readdir(dir);
+		const names = new Set(dirEntries);
 		const files = dirEntries
-			.filter((file) => file.endsWith(".jsonl"))
+			.filter((file) => file.endsWith(".jsonl") && (includeArchived || !names.has(`${file}${SESSION_ARCHIVE_SUFFIX}`)))
 			.sort((a, b) => b.localeCompare(a))
 			.map((file) => ({ path: join(dir, file) }));
 		const total = files.length;
@@ -1974,6 +1980,7 @@ export class SessionManager {
 		sessionDir?: string,
 		onProgress?: SessionListProgress,
 		signal?: AbortSignal,
+		includeArchived = false,
 	): Promise<SessionInfo[]> {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
@@ -1982,7 +1989,7 @@ export class SessionManager {
 		const progress: SessionListProgress | undefined = onProgress
 			? (loaded, total, partialSessions) => onProgress(loaded, total, partialSessions?.filter(includeSession))
 			: undefined;
-		const sessions = (await listSessionsFromDir(dir, progress, signal)).filter(includeSession);
+		const sessions = (await listSessionsFromDir(dir, progress, signal, includeArchived)).filter(includeSession);
 		return sortSessionInfos(sessions);
 	}
 
@@ -1995,11 +2002,13 @@ export class SessionManager {
 		sessionDir?: string,
 		onProgress?: SessionListProgress,
 		signal?: AbortSignal,
+		includeArchived?: boolean,
 	): Promise<SessionInfo[]>;
 	static async listAll(
 		sessionDirOrOnProgress?: string | SessionListProgress,
 		onProgressOrSignal?: SessionListProgress | AbortSignal,
 		signal?: AbortSignal,
+		includeArchived = false,
 	): Promise<SessionInfo[]> {
 		const customSessionDir =
 			typeof sessionDirOrOnProgress === "string" ? normalizePath(sessionDirOrOnProgress) : undefined;
@@ -2015,7 +2024,7 @@ export class SessionManager {
 				: (onProgressOrSignal ?? signal);
 		abortSignal?.throwIfAborted();
 		if (customSessionDir) {
-			return sortSessionInfos(await listSessionsFromDir(customSessionDir, progress, abortSignal));
+			return sortSessionInfos(await listSessionsFromDir(customSessionDir, progress, abortSignal, includeArchived));
 		}
 
 		const sessionsDir = getSessionsDir();
@@ -2032,7 +2041,8 @@ export class SessionManager {
 				MAX_CONCURRENT_SESSION_DISCOVERY_LOADS,
 				async (dir) => {
 					try {
-						return (await readdir(dir)).filter((file) => file.endsWith(".jsonl")).map((file) => join(dir, file));
+						const names = new Set(await readdir(dir));
+						return [...names].filter(file => file.endsWith(".jsonl") && (includeArchived || !names.has(`${file}${SESSION_ARCHIVE_SUFFIX}`))).map(file => join(dir, file));
 					} catch {
 						return [];
 					}

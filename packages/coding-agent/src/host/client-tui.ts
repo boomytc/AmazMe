@@ -1033,7 +1033,7 @@ async function prepareClientSession(command: ClientCommand, servers: readonly Cl
 		} else if (command.continue === true || command.resume === true) {
 			selected = features
 				.flatMap((feature) =>
-					(feature.directory.state.value?.sessions ?? []).map((summary) => ({
+					(feature.directory.state.value?.sessions ?? []).filter(summary => summary.archivedAt === undefined).map((summary) => ({
 						server: feature.server,
 						management: feature.management,
 						plugins: feature.plugins,

@@ -8,6 +8,8 @@
  * block title is copy.
  */
 import type { AssistantMessage, Message, ToolCall, UserMessage } from "@amazme/ai";
+import { projectGroups } from "./projects.ts";
+import type { ProjectGroup } from "./projects.ts";
 import {
 	AssistantEntry,
 	CompactionEntry,
@@ -81,6 +83,8 @@ export interface TranscriptBlock {
 
 export interface RosterItem {
 	readonly id: string;
+	readonly projectId?: string;
+	readonly archived?: boolean;
 	/** The session's title, or the localized new-session label. */
 	readonly label: string;
 	/** The session's working directory, shown so two sessions are tellable apart. */
@@ -414,6 +418,8 @@ export interface WebView {
 	readonly transcriptScope?: string;
 	/** The roster, narrowed by the reader's filter. */
 	readonly roster: readonly RosterItem[];
+	readonly projects?: readonly ProjectGroup[];
+	readonly archived?: boolean;
 	/** The filter text itself, so the input keeps what the reader typed. */
 	readonly rosterFilter: string;
 	readonly blocks: readonly TranscriptBlock[];
@@ -474,6 +480,8 @@ export function inboxOf(view: ConversationView): InboxState {
 
 /** One hosted Session as the host publishes it; only the fields the roster shows. */
 export interface SessionSummaryLike {
+	readonly projectId?: string;
+	readonly archivedAt?: number;
 	readonly serverId?: string;
 	readonly sessionId: string;
 	readonly createdAt: number;
@@ -487,6 +495,8 @@ export interface SessionSummaryLike {
 /** The host's replicated session directory, as this package reads it. */
 export interface SessionDirectoryLike {
 	readonly sessions: readonly SessionSummaryLike[];
+	readonly projects?: readonly { readonly id: string; readonly name: string; readonly cwd: string; readonly createdAt: number; readonly removed?: true }[];
+	readonly defaultProjectId?: string;
 }
 
 /** One catalog entry of the host's `amazme.models` state; only the fields the picker shows. */
@@ -527,6 +537,8 @@ export interface WebViewInput {
 	/** The reader's language, resolved from the stored preference and the browser. */
 	readonly locale: Locale;
 	readonly directory: SessionDirectoryLike | undefined;
+	readonly selectedProjectId?: string;
+	readonly showArchived?: boolean;
 	readonly transcript: ConversationView | undefined;
 	readonly attachedId: string | undefined;
 	readonly now: number;
@@ -682,16 +694,18 @@ function displayName(session: SessionSummaryLike): string | undefined {
  * The roster, newest first, narrowed by the reader's filter. A filter matches the title the row
  * shows (the stored name, or the untitled label), its id, or its working directory.
  */
-export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefined, attachedId: string | undefined, now: number, filter = ""): RosterItem[] {
+export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefined, attachedId: string | undefined, now: number, filter = "", archived = false): RosterItem[] {
 	const sessions = state?.sessions ?? [];
 	const needle = filter.trim().toLowerCase();
 	const untitled = translate(locale, "sidebar.untitled").toLowerCase();
 	return [...sessions]
+		.filter(session => (session.archivedAt !== undefined) === archived)
 		.filter((session) => {
 			if (needle.length === 0) return true;
 			const name = displayName(session)?.toLowerCase() ?? "";
 			const title = name.length === 0 ? untitled : name;
-			return title.includes(needle) || session.sessionId.toLowerCase().includes(needle) || (session.cwd ?? "").toLowerCase().includes(needle);
+			const project = state?.projects?.find(project => project.id === session.projectId);
+			return title.includes(needle) || session.sessionId.toLowerCase().includes(needle) || (session.cwd ?? "").toLowerCase().includes(needle) || (project?.name ?? "").toLowerCase().includes(needle);
 		})
 		.sort(
 			(left: SessionSummaryLike, right: SessionSummaryLike) =>
@@ -699,6 +713,8 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 		)
 		.map((session) => ({
 			id: session.sessionId,
+			projectId: session.projectId,
+			archived: session.archivedAt !== undefined,
 			label: displayName(session) ?? translate(locale, "sidebar.untitled"),
 			cwd: session.cwd,
 			age: formatAge(session.createdAt, now),
@@ -1446,7 +1462,7 @@ export function buildWebView(input: WebViewInput): WebView {
 	const { locale } = input;
 	const forkable = shownCanFork(input);
 	const blocks = transcriptBlocks(locale, input.transcript, [], input.feedback?.records, input.feedbackScope);
-	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter);
+	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter, input.showArchived);
 	const empty =
 		input.directory === undefined
 			? translate(locale, "header.connecting")
@@ -1458,6 +1474,8 @@ export function buildWebView(input: WebViewInput): WebView {
 	return {
 		locale,
 		roster,
+		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.showArchived ?? false, input.rosterFilter),
+		archived: input.showArchived,
 		rosterFilter: input.rosterFilter,
 		...(input.attachedId === undefined ? {} : { transcriptScope: `${input.attachedId}:${input.transcript?.conversation.id ?? input.feedbackScope?.conversationId ?? "root"}` }),
 		focus: input.focus,

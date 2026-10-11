@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { defineFacet } from "@amazme/chord";
@@ -49,6 +49,7 @@ import { AgentController } from "../core/plugins/agent-controller.ts";
 import type { AgentPromptResult } from "../core/plugins/agent-controller.ts";
 import { automaticSessionName } from "./session-lifecycle.ts";
 import type { SessionCreateOptions, SessionSource, SessionSummary } from "./services/sessions.ts";
+import { ProjectCatalog } from "./project-catalog.ts";
 import {
 	createSession as createCatalogSession,
 	deleteSession,
@@ -58,13 +59,16 @@ import {
 	readSession,
 	type SessionCatalogMetadata,
 	writeSessionName,
+	writeSessionArchive,
 } from "./session-catalog.ts";
 import { SessionPluginSelectionConflictError, SessionWorkerManager } from "./session-worker-manager.ts";
 import {
 	deleteLocalSessionFiles,
 	findLocalSessionPath,
 	listLocalSessions,
+	listProjectLocalSessions,
 	writeLocalSessionName,
+	setLocalSessionArchived,
 } from "./session-store.ts";
 
 export const ENV_SERVER_DIR = "AMAZME_SERVER_DIR";
@@ -410,6 +414,17 @@ async function startServerBackend(
 	void hostReady.catch(() => {});
 	const activateHostSessions = (): void => resolveHostReady();
 	const sessionDir = resolveSessionDirectory(options.sessionDir);
+	const projects = new ProjectCatalog(sessionDir);
+	let projectRows = await projects.initialize([process.cwd(), ...(await listCatalogSessions(sessionDir)).map(session => session.cwd)]);
+	const defaultCwd = await realpath(process.cwd());
+	const defaultProjectId = projectRows.find(project => project.cwd === defaultCwd)!.id;
+	const projectForCwd = async (cwd: string) => {
+		const path = await realpath(cwd).catch(() => cwd);
+		return projectRows.find(project => project.cwd === path);
+	};
+	const localSessions = async () => {
+		return listProjectLocalSessions([process.cwd(), ...projectRows.map(project => project.cwd)]);
+	};
 	const listSessions = async (): Promise<SessionCatalogMetadata[]> => {
 		const sessions = new Map((await listCatalogSessions(sessionDir)).map((metadata) => [metadata.path, metadata]));
 		// A running worker replaces its catalog row. The display name stays the catalog's.
@@ -425,31 +440,38 @@ async function startServerBackend(
 		if (metadata !== undefined) return metadata;
 		// A terminal session the host has not opened yet: adopting it stores it under its own id with
 		// the working directory its header records, and its worker seeds the transcript from the file.
-		const local = (await listLocalSessions(process.cwd())).find((session) => session.id === sessionId);
+		const local = (await localSessions()).find((session) => session.id === sessionId);
 		if (local === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd, name: local.name });
+		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd, name: local.name, projectId: (await projectForCwd(local.cwd))?.id });
 		return adopted;
 	};
 	const createSession = async (createOptions: SessionCreateOptions, context: Context): Promise<SessionCatalogMetadata> => {
 		if (createOptions.reuseEmpty && createOptions.id !== undefined) throw new Error("An explicit session ID cannot reuse an empty session");
+		projectRows = await projects.list();
+		let project = projectRows.find(project => project.id === (createOptions.projectId ?? defaultProjectId));
+		if (project === undefined || (createOptions.projectId !== undefined && project.removed)) throw new Error("Unknown project");
+		if (project.removed) project = await projects.create(project.cwd, project.name);
+		const cwd = createOptions.projectId === undefined ? process.cwd() : project.cwd;
 		if (createOptions.reuseEmpty) {
 			const latest = (await listSessions())
-				.filter((metadata) => metadata.cwd === process.cwd())
+				.filter((metadata) => metadata.cwd === cwd && metadata.archivedAt === undefined)
 				.sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id))[0];
 			if (latest !== undefined) {
 				const selected = await options.resolveSessionPlugins(latest, undefined, context);
 				if (await workers.isSessionEmpty(latest, context, selected.manifestPaths)) return latest;
 			}
 		}
-		return createCatalogSession(sessionDir, { ...(createOptions.id === undefined ? {} : { id: createOptions.id }), cwd: process.cwd() });
+		return createCatalogSession(sessionDir, { ...(createOptions.id === undefined ? {} : { id: createOptions.id }), cwd, projectId: project.id });
 	};
-	const summarize = (metadata: SessionCatalogMetadata, source: SessionSource = "host", name?: string): SessionSummary => {
+	const summarize = async (metadata: SessionCatalogMetadata, source: SessionSource = "host", name?: string): Promise<SessionSummary> => {
 		const display = (name ?? metadata.name)?.trim() ?? "";
 		return {
 			serverId,
 			sessionId: metadata.id,
 			createdAt: metadata.createdAt,
 			cwd: metadata.cwd,
+			projectId: metadata.projectId ?? (await projectForCwd(metadata.cwd))?.id,
+			...(metadata.archivedAt === undefined ? {} : { archivedAt: metadata.archivedAt }),
 			source,
 			...(display.length === 0 ? {} : { name: display }),
 		};
@@ -461,13 +483,14 @@ async function startServerBackend(
 	 * one row whichever side made it.
 	 */
 	const listSummaries = async (): Promise<SessionSummary[]> => {
-		const locals = await listLocalSessions(process.cwd());
+		projectRows = await projects.list();
+		const locals = await localSessions();
 		const localName = new Map(locals.map((session) => [session.id, session.name]));
 		// A hosted session keeps the name in its catalog. Until that is set, the terminal file's
 		// `/name` is what the roster shows, so a session named in the terminal stays readable.
-		const hosted = (await listSessions()).map((metadata) => summarize(metadata, "host", metadata.name ?? localName.get(metadata.id)));
+		const hosted = await Promise.all((await listSessions()).map((metadata) => summarize(metadata, "host", metadata.name ?? localName.get(metadata.id))));
 		const owned = new Set(hosted.map((summary) => summary.sessionId));
-		const unowned = locals
+		const unowned = await Promise.all(locals
 			.filter((session) => !owned.has(session.id))
 			.map((session) =>
 				summarize(
@@ -480,7 +503,7 @@ async function startServerBackend(
 					},
 					"local",
 				),
-			);
+			));
 		return [...hosted, ...unowned].sort(
 			(left, right) => left.sessionId.localeCompare(right.sessionId) || left.createdAt - right.createdAt,
 		);
@@ -500,7 +523,7 @@ async function startServerBackend(
 			await refreshMirror(updated, normalized);
 			return summarize(updated);
 		}
-		const local = (await listLocalSessions(process.cwd())).find((session) => session.id === sessionId);
+		const local = (await localSessions()).find((session) => session.id === sessionId);
 		if (local === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
 		const stored = await writeLocalSessionName(local.path, normalized);
 		return summarize(
@@ -642,9 +665,34 @@ async function startServerBackend(
 			},
 		}),
 	], pluginLoader);
+	const archiveSession = async (sessionId: string, archived: boolean, context: Context): Promise<void> => {
+		context.abortSignal?.throwIfAborted();
+		const metadata = await resolveSession(sessionId, context);
+		if (!archived) {
+			projectRows = await projects.list();
+			const project = await projectForCwd(metadata.cwd);
+			if (project?.removed) await projects.create(project.cwd, project.name);
+		}
+		await writeSessionArchive(sessionDir, sessionId, archived);
+		await setLocalSessionArchived(metadata.cwd, metadata.id, metadata.createdAt, archived);
+	};
 	const serverServices = await createExperimentalServerServices({
 		...(plugins === undefined ? {} : { plugins }),
 		administration,
+		projects: {
+			defaultId: defaultProjectId,
+			list: () => projects.list(),
+			create: (cwd, name) => projects.create(cwd, name),
+			rename: (id, name) => projects.rename(id, name),
+			archive: archiveSession,
+			remove: async (id, context) => {
+				context.abortSignal?.throwIfAborted();
+				for (const session of (await listSummaries()).filter(session => session.projectId === id)) {
+					await archiveSession(session.sessionId, true, context);
+				}
+				await projects.remove(id);
+			},
+		},
 		list: () => listSummaries(),
 		create: async (createOptions, context) => summarize(await createSession(createOptions, context)),
 		rename: (sessionId, name) => renameSession(sessionId, name),

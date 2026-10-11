@@ -11,16 +11,18 @@
  * same every time.
  */
 import { randomUUID } from "node:crypto";
-import { link, mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { link, mkdir, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { durableEntriesToSessionFile, type SessionInteropReport } from "../core/session-interop.ts";
 import { assertSessionFileUnchanged, readSessionFileSnapshot, SessionMirrorConflict } from "./session-mirror-file.ts";
 import type { SessionFileFingerprint } from "./session-mirror-file.ts";
 import {
 	getDefaultSessionDir,
 	SessionManager,
+	SESSION_ARCHIVE_SUFFIX,
 	type SessionEntry,
 	type SessionHeader,
+	type SessionInfo,
 } from "../core/session-manager.ts";
 
 /** One terminal session, as a host lists it. */
@@ -37,14 +39,32 @@ export interface LocalSession {
  * terminal's own picker would, not every session in the agent directory.
  */
 export async function listLocalSessions(cwd: string): Promise<readonly LocalSession[]> {
-	const sessions = await SessionManager.list(cwd);
-	return sessions.map((session) => ({
+	const sessions = await SessionManager.list(cwd, undefined, undefined, undefined, true);
+	return sessions.map(localSession);
+}
+
+/** Match headers by their real directory, including history created through a symlink. */
+export async function listProjectLocalSessions(directories: readonly string[]): Promise<readonly LocalSession[]> {
+	const paths = new Map<string, Promise<string>>();
+	const canonical = (cwd: string): Promise<string> => {
+		let path = paths.get(cwd);
+		if (!path) { path = realpath(cwd).catch(() => resolve(cwd)); paths.set(cwd, path); }
+		return path;
+	};
+	const allowed = new Set(await Promise.all(directories.map(canonical)));
+	const sessions = await SessionManager.listAll(undefined, undefined, undefined, true);
+	const matches = await Promise.all(sessions.map(async session => allowed.has(await canonical(session.cwd)) ? localSession(session) : undefined));
+	return matches.filter(session => session !== undefined);
+}
+
+function localSession(session: SessionInfo): LocalSession {
+	return {
 		id: session.id,
 		cwd: session.cwd,
 		createdAt: session.created.getTime(),
 		path: session.path,
 		...(session.name === undefined ? {} : { name: session.name }),
-	}));
+	};
 }
 
 /** One terminal session's header and entries, read with the terminal's own reader. */
@@ -157,7 +177,23 @@ export async function writeLocalSessionName(path: string, name: string): Promise
  */
 export async function deleteLocalSessionFiles(cwd: string, id: string): Promise<void> {
 	const paths = (await listLocalSessions(cwd)).filter((session) => session.id === id).map((session) => session.path);
-	await Promise.all(paths.map((path) => rm(path, { force: true })));
+	const directory = getDefaultSessionDir(cwd);
+	const markers = (await readdir(directory)).filter(name => name.endsWith(`_${id}.jsonl${SESSION_ARCHIVE_SUFFIX}`));
+	await Promise.all([
+		...paths.flatMap(path => [rm(path, { force: true }), rm(`${path}${SESSION_ARCHIVE_SUFFIX}`, { force: true })]),
+		...markers.map(name => rm(join(directory, name), { force: true })),
+	]);
+}
+
+/** A discovery marker hides the mirror in /resume without touching its append-only history. */
+export async function setLocalSessionArchived(cwd: string, id: string, createdAt: number, archived: boolean): Promise<void> {
+	const found = (await listLocalSessions(cwd)).filter(session => session.id === id).map(session => session.path);
+	const paths = found.length > 0 ? found : [mirrorPath(cwd, id, createdAt)];
+	for (const path of paths) {
+		const marker = `${path}${SESSION_ARCHIVE_SUFFIX}`;
+		if (archived) { await mkdir(dirname(marker), { recursive: true }); await writeFile(marker, ""); }
+		else await rm(marker, { force: true });
+	}
 }
 
 /** Append the name the terminal's `/name` reads. A blank name leaves the file without one. */

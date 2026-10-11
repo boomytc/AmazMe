@@ -56,6 +56,8 @@ node /path/to/AmazMe/packages/coding-agent/dist/bundle/cli.js
 | 宿主终端客户端 | `amazme client` | 连接同一宿主的会话与实时状态 |
 | 诊断 | `amazme doctor` | 只读检查配置、凭据可用性和运行资源 |
 
+Web 和桌面侧栏按项目管理多个会话。添加项目后，新会话在该项目的工作目录运行；会话可归档、恢复。移除项目会归档其中所有会话，保留历史和目录文件。
+
 例如，从源码构建产物启动 Web：
 
 ```bash

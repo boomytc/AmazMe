@@ -6,6 +6,7 @@
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
+import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_REMOVE_ACTION, ARCHIVE_TOGGLE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
 import { transcriptPosition } from "./transcript-position.ts";
@@ -1341,6 +1342,7 @@ export function createRenderer(
 		menu.setAttribute("aria-label", copy("sidebar.more"));
 		const actions = [
 			{ id: SESSION_RENAME_ACTION, label: copy("sidebar.rename"), glyph: "square-pen" as const },
+			...(lastView?.projects === undefined ? [] : [{ id: item.archived ? SESSION_RESTORE_ACTION : SESSION_ARCHIVE_ACTION, label: copy(item.archived ? "project.restore" : "project.archive"), glyph: "folder" as const }]),
 			{ id: SESSION_COPY_ID_ACTION, label: copy("sidebar.copyId"), glyph: "copy" as const },
 			{ id: item.remove.id, label: item.remove.label, glyph: "x" as const },
 		];
@@ -1870,20 +1872,57 @@ export function createRenderer(
 			if (label !== null) label.textContent = newLabel;
 
 			// Streaming repaints keep the roster's nodes and keyboard focus when it has not changed.
-			const nextRosterKey = JSON.stringify([view.locale, view.roster, view.empty]);
+			const nextRosterKey = JSON.stringify([view.locale, view.roster, view.projects, view.archived, view.empty]);
 			if (rosterKey !== nextRosterKey) {
 				rosterKey = nextRosterKey;
 				const focused = document.activeElement;
 				const focusedRow = focused instanceof HTMLElement ? focused.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId : undefined;
 				const focusedMore = focused instanceof HTMLElement && focused.classList.contains("session-more");
 				elements.roster.replaceChildren();
-				for (const group of rosterGroups(view.locale, view.roster)) {
+				const heading = elements.sidebar.querySelector(".sidebar-label");
+				if (heading) {
+					heading.replaceChildren(document.createTextNode(copy(view.projects === undefined ? "sidebar.sessions" : view.archived ? "project.archived" : "project.projects")));
+					if (view.projects !== undefined) {
+						const add = button("project-add"); add.title = copy("project.add"); add.setAttribute("aria-label", add.title); add.append(icon("plus"));
+						add.addEventListener("click", () => report({ kind: "command", id: PROJECT_ADD_ACTION, data: undefined })); heading.append(add);
+					}
+				}
+				if (view.projects !== undefined) {
+					const archive = button("project-archive-toggle"); archive.textContent = copy(view.archived ? "project.active" : "project.archived");
+					archive.setAttribute("aria-pressed", String(view.archived === true));
+					archive.addEventListener("click", () => report({ kind: "command", id: ARCHIVE_TOGGLE_ACTION, data: undefined }));
+					for (const group of view.projects) {
+						const section = element("div", "project-group"); section.dataset.projectId = group.id;
+						const head = element("div", "project-heading");
+						const select = button(group.selected ? "project-select selected" : "project-select"); select.title = group.cwd;
+						select.setAttribute("aria-expanded", String(group.selected || view.archived));
+						select.append(icon("folder"), element("span", "project-name", group.name), element("span", "project-count", String(group.items.length)));
+						select.addEventListener("click", () => report({ kind: "command", id: PROJECT_SELECT_ACTION, data: group.id })); head.append(select);
+						if (!view.archived) {
+							for (const [id, label, glyph] of [[PROJECT_RENAME_ACTION, "project.rename", "square-pen"], [PROJECT_REMOVE_ACTION, "project.remove", "x"]] as const) {
+								const action = button("project-action"); action.title = copy(label); action.setAttribute("aria-label", `${action.title}: ${group.name}`); action.append(icon(glyph));
+								action.addEventListener("click", () => report({ kind: "command", id, data: group.id })); head.append(action);
+							}
+						}
+						section.append(head);
+						if (group.selected || view.archived) {
+							const items = element("div", "project-sessions");
+							for (const item of group.items) items.append(sessionRow(item));
+							if (group.items.length === 0) items.append(element("p", "empty-state", copy("project.empty")));
+							section.append(items);
+						}
+						elements.roster.append(section);
+					}
+					const grouped = new Set(view.projects.flatMap(group => group.items.map(item => item.id)));
+					for (const item of view.roster.filter(item => !grouped.has(item.id))) elements.roster.append(sessionRow(item));
+					elements.roster.append(archive);
+				} else for (const group of rosterGroups(view.locale, view.roster)) {
 					const section = element("div", "session-group");
 					section.append(element("p", "session-group-label", group.label));
 					for (const item of group.items) section.append(sessionRow(item));
 					elements.roster.append(section);
 				}
-				if (view.roster.length === 0) {
+				if (view.roster.length === 0 && (view.projects === undefined || view.archived || view.projects.length === 0)) {
 					const empty = element("p", "empty-state", view.empty ?? copy("header.rosterEmpty"));
 					empty.id = "roster-empty";
 					elements.roster.append(empty);

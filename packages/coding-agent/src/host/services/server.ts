@@ -26,6 +26,8 @@ import {
 import { applySetting, describeSettings, publishSettings, settingsErrors } from "./settings-provider.ts";
 import { Skills, type Skills as SkillsService } from "./skills.ts";
 import { createSkillsService } from "./skills-provider.ts";
+import { ProjectManagement, SessionArchive } from "./projects.ts";
+import type { ProjectSummary } from "./projects.ts";
 import {
 	type SessionCreateOptions,
 	SessionDirectory,
@@ -78,8 +80,16 @@ export async function createExperimentalServerServices(options: {
 	administration: ServerAdministrationOptions;
 	/** Selected server facets own their services and resources. Absent means no plugin host. */
 	plugins?: PluginRuntime;
+	projects?: {
+		list(): Promise<ProjectSummary[]>;
+		defaultId: string;
+		create(cwd: string, name?: string): Promise<ProjectSummary>;
+		rename(id: string, name: string): Promise<ProjectSummary>;
+		remove(id: string, context: Context): Promise<void>;
+		archive(sessionId: string, archived: boolean, context: Context): Promise<void>;
+	};
 }): Promise<ExperimentalServerServices> {
-	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics]
+	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ...(options.projects ? [ProjectManagement, SessionArchive] : [])]
 		.map(service => ({ service, mode: "singleton" as const }));
 	const builtinIds = new Set(definitions.map(({ service }) => service.id));
 	if (options.plugins?.services.catalogue.some(entry => builtinIds.has(entry.serviceId))) {
@@ -89,6 +99,7 @@ export async function createExperimentalServerServices(options: {
 	const directory = replicatedState<SessionDirectoryState>({
 		revision,
 		sessions: await options.list(BACKGROUND_CONTEXT),
+		...(options.projects === undefined ? {} : { projects: await options.projects.list(), defaultProjectId: options.projects.defaultId }),
 	});
 	const attachments = new Set<RoutedServerServiceAttachment>();
 	let disposed = false;
@@ -132,10 +143,12 @@ export async function createExperimentalServerServices(options: {
 
 	const refreshNow = async (context: Context): Promise<void> => {
 		const sessions = await options.list(context);
+		const projects = await options.projects?.list();
 		revision += 1;
 		directory.change(context, (draft) => {
 			draft.revision = revision;
 			draft.sessions = sessions;
+			if (projects !== undefined) draft.projects = projects;
 		});
 	};
 	const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -154,9 +167,20 @@ export async function createExperimentalServerServices(options: {
 				let preparedPluginPackagePaths: readonly string[] | undefined;
 				// A client that just arrived sees the sessions that exist now, including terminal ones
 				// created while this host was running.
-				void refreshNow(BACKGROUND_CONTEXT).catch(() => undefined);
+				void serialize(() => refreshNow(BACKGROUND_CONTEXT)).catch(() => undefined);
 				const provider = new RemoteServiceProvider(definitions);
 				provider.provide(SessionDirectory, { state: directory });
+				if (options.projects !== undefined) {
+					const projects = options.projects;
+					provider.provide(ProjectManagement, {
+						create: (input, context) => serialize(async () => { context.abortSignal?.throwIfAborted(); const project = await projects.create(input.cwd, input.name); await refreshNow(context); return project; }),
+						rename: (id, name, context) => serialize(async () => { context.abortSignal?.throwIfAborted(); const project = await projects.rename(id, name); await refreshNow(context); return project; }),
+						remove: (id, context) => serialize(async () => { await projects.remove(id, context); await refreshNow(context); }),
+					});
+					provider.provide(SessionArchive, {
+						set: (id, archived, context) => serialize(async () => { await projects.archive(id, archived, context); await refreshNow(context); }),
+					});
+				}
 				provider.provide(Diagnostics, {
 					async report(context) {
 						context.abortSignal?.throwIfAborted();
