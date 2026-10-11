@@ -257,6 +257,12 @@ const SkillsInputSchema = Type.Union(
 
 export const SettingsSchema = Type.Object(
 	{
+		executionMode: Type.Optional(Type.Union([Type.Literal("read-only"), Type.Literal("workspace-write"), Type.Literal("full-access")], { default: SETTINGS_DEFAULTS.executionMode, description: "Unix file-write isolation. Global only; writable project settings cannot relax this boundary." })),
+		repeatToolReminder: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.repeatToolReminder })),
+		reviewChanges: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.reviewChanges })),
+		contextCleanup: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.contextCleanup })),
+		runLimits: Type.Optional(Type.Object({ calls: Type.Optional(nonNegativeSafeInteger()), seconds: Type.Optional(nonNegativeSafeInteger()), cost: Type.Optional(Type.Number({ minimum: 0 })) })),
+		archiveRetentionDays: Type.Optional(nonNegativeSafeInteger({ default: 0 })),
 		$schema: Type.Optional(
 			Type.String({ description: "JSON Schema reference." }),
 		),

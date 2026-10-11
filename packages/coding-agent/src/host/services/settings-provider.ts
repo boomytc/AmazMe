@@ -26,6 +26,7 @@ interface SettingSpec {
 	readonly kind: SettingDescriptor["kind"];
 	/** The settings.json key this field lives under. */
 	readonly field: string;
+	readonly globalOnly?: true;
 	/** The nested key, for a field inside an object such as `compaction`. */
 	readonly nested?: string;
 	/** An enum's stored values, in presentation order. */
@@ -50,6 +51,14 @@ function enumValue(options: readonly string[], value: string): string {
 }
 
 const SPECS: readonly SettingSpec[] = [
+	{ id: "executionMode", group: "approvals", kind: "enum", field: "executionMode", globalOnly: true, options: ["full-access", "workspace-write", "read-only"], read: manager => manager.getSettings().executionMode ?? "full-access", write: (manager, value) => manager.setExecutionMode(value as "full-access" | "workspace-write" | "read-only") },
+	{ id: "repeatToolReminder", group: "conversation", kind: "boolean", field: "repeatToolReminder", read: manager => String(manager.getSettings().repeatToolReminder !== false), write: (manager, value) => manager.setRunFeature("repeatToolReminder", value === "true") },
+	{ id: "reviewChanges", group: "conversation", kind: "boolean", field: "reviewChanges", read: manager => String(manager.getSettings().reviewChanges !== false), write: (manager, value) => manager.setRunFeature("reviewChanges", value === "true") },
+	{ id: "contextCleanup", group: "conversation", kind: "boolean", field: "contextCleanup", read: manager => String(manager.getSettings().contextCleanup !== false), write: (manager, value) => manager.setRunFeature("contextCleanup", value === "true") },
+	{ id: "runCalls", group: "conversation", kind: "number", field: "runLimits", nested: "calls", min: 0, step: 1, read: manager => String(manager.getSettings().runLimits?.calls ?? 0), write: (manager, value) => manager.setRunLimits({ calls: Number(value) }) },
+	{ id: "runSeconds", group: "conversation", kind: "number", field: "runLimits", nested: "seconds", min: 0, step: 1, read: manager => String(manager.getSettings().runLimits?.seconds ?? 0), write: (manager, value) => manager.setRunLimits({ seconds: Number(value) }) },
+	{ id: "runCost", group: "conversation", kind: "number", field: "runLimits", nested: "cost", min: 0, step: 0.001, read: manager => String(manager.getSettings().runLimits?.cost ?? 0), write: (manager, value) => manager.setRunLimits({ cost: Number(value) }) },
+	{ id: "archiveRetentionDays", group: "projects", kind: "number", field: "archiveRetentionDays", min: 0, step: 1, read: manager => String(manager.getSettings().archiveRetentionDays ?? 0), write: (manager, value) => manager.setArchiveRetentionDays(Number(value)) },
 	{
 		id: "locale",
 		group: "interface",
@@ -270,7 +279,7 @@ export function describeSettings(manager: SettingsManager): SettingDescriptor[] 
 		...(spec.min === undefined ? {} : { min: spec.min }),
 		...(spec.step === undefined ? {} : { step: spec.step }),
 		field: spec.nested === undefined ? spec.field : `${spec.field}.${spec.nested}`,
-		explicit: hasField(globalSettings, spec) || hasField(projectSettings, spec),
+		explicit: hasField(globalSettings, spec) || (!spec.globalOnly && hasField(projectSettings, spec)),
 		value: spec.read(manager),
 	}));
 }
@@ -282,8 +291,8 @@ function coerce(spec: SettingSpec, value: string): string {
 			return value;
 		case "number": {
 			const parsed = Number(value);
-			if (!Number.isSafeInteger(parsed) || parsed < (spec.min ?? Number.NEGATIVE_INFINITY)) {
-				throw new Error(`${spec.id} takes a whole number${spec.min === undefined ? "" : ` ≥ ${spec.min}`}`);
+			if (!Number.isFinite(parsed) || ((spec.step ?? 1) >= 1 && !Number.isSafeInteger(parsed)) || parsed < (spec.min ?? Number.NEGATIVE_INFINITY)) {
+				throw new Error(`${spec.id} takes ${(spec.step ?? 1) >= 1 ? "a whole number" : "a number"}${spec.min === undefined ? "" : ` ≥ ${spec.min}`}`);
 			}
 			return String(parsed);
 		}

@@ -94,6 +94,8 @@ export type {
 	CompactionReason,
 	CompactionResult,
 	ContextView,
+	ContextProjectionHooks,
+	ModelAdmissionHooks,
 	Conversation,
 	ConversationAbortOptions,
 	ConversationCreateOptions,

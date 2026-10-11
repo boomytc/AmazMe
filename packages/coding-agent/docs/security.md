@@ -18,6 +18,8 @@ Different ways of running AmazMe place different limits on what generated comman
 
 The working folder controls resource discovery and the default location for tools, but it does not prevent commands from accessing other paths available to the AmazMe process.
 
+The default Durable runtime offers optional Unix **file-write** isolation through `executionMode`: `read-only`, `workspace-write`, or the default `full-access`. Restricted shell processes and descendants use macOS `sandbox-exec` or Linux Bubblewrap; built-in filesystem capabilities check canonical paths against current project folders. Missing backends fail closed. Reading and network are unrestricted, and the host process, native plugins and independent MCP servers remain outside this shell boundary. Mode and workspace edits apply to subsequent starts; stop existing tasks for immediate revocation. See [Run controls](run-controls.md).
+
 Whichever option you choose, only provide the files and services required for the task. Keep credentials outside the environment where possible, or use narrowly scoped, short-lived credentials. Restrict network access when commands do not need it.
 
 For setup instructions and the limitations of each isolation method, see [Run AmazMe in an isolated environment](containerization.md).
@@ -30,7 +32,7 @@ Project trust controls whether AmazMe loads most settings and resources supplied
 
 Project trust is not a complete startup boundary. AmazMe reads the project `sessionDir` setting while selecting or creating a session, before it resolves project trust. Declining trust prevents the remaining project settings and protected resources from loading, but it cannot undo that initial session-directory lookup.
 
-Project trust does not limit what tool calls can access or affect. After AmazMe starts, enabled tools still use the operating-system permissions of the AmazMe process. Instructions and other content in the folder can also influence the model.
+Project trust itself does not limit what tool calls can access or affect. With the default `full-access`, enabled tools use the operating-system permissions of the AmazMe process. The optional file-write policy is a separate setting. Instructions and other content in the folder can also influence the model.
 
 ### Resources protected by project trust
 
@@ -96,4 +98,4 @@ These practices do not replace isolation, but they reduce exposure or make recov
 
 Follow the repository [Security Policy](https://github.com/earendil-works/pi/blob/main/SECURITY.md). Do not open a public issue for a security-sensitive report.
 
-Expected local-agent behavior, prompt injection from untrusted content, lack of a built-in sandbox, and behavior from user-installed extensions or skills are generally outside the security boundary unless the report demonstrates a privilege-boundary bypass or access that the local user did not already have.
+Expected local-agent behavior, prompt injection from untrusted content, and behavior from user-installed extensions or skills are generally outside the security boundary unless the report demonstrates a documented isolation-boundary bypass or access that the local user did not already have.

@@ -6,7 +6,7 @@
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
-import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, ARCHIVE_TOGGLE_ACTION, ARCHIVE_MANAGE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
+import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, ARCHIVE_TOGGLE_ACTION, ARCHIVE_MANAGE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION, SESSION_END_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
@@ -456,7 +456,7 @@ function atBottom(target: HTMLElement): boolean {
 /** Whether a number control's value is a whole number inside the range the host accepts. */
 function inRange(control: PanelControl, value: string): boolean {
 	const parsed = Number(value);
-	if (!Number.isSafeInteger(parsed)) return false;
+	if (!Number.isFinite(parsed) || ((control.step ?? 1) >= 1 && !Number.isSafeInteger(parsed))) return false;
 	return parsed >= (control.min ?? Number.NEGATIVE_INFINITY);
 }
 
@@ -481,6 +481,7 @@ const DOCK_ICONS: Record<DockTabId, IconName> = {
 	terminal: "terminal",
 	conversations: "message",
 	tasks: "activity",
+	changes: "git-fork",
 };
 
 /** Below 1024px the sidebar and the dock are drawers over the conversation, not columns. */
@@ -676,7 +677,7 @@ export function createRenderer(
 			// A number outside the host's range is answered here, in the reader's language, and
 			// keeps the draft so the reader can correct it instead of losing what they typed.
 			if (control.kind === "number" && !inRange(control, input.value)) {
-				input.title = copy("panel.settings.invalidNumber", {
+				input.title = copy((control.step ?? 1) < 1 ? "panel.settings.invalidDecimal" : "panel.settings.invalidNumber", {
 					min: String(control.min ?? 0),
 				});
 				input.classList.add("invalid");
@@ -1046,7 +1047,7 @@ export function createRenderer(
 	/** Send stays send. It is disabled when there is nothing to send. */
 	const renderPrimary = (): void => {
 		const pending = lastView?.attachments.length ?? 0;
-		elements.primary.disabled = lastView?.attachedId === undefined || (draft().length === 0 && pending === 0);
+		elements.primary.disabled = lastView?.attachedId === undefined || lastView?.readOnly === true || (draft().length === 0 && pending === 0);
 	};
 
 	/** The stop control is on screen for the whole turn, whether or not the draft is empty. */
@@ -1408,6 +1409,7 @@ export function createRenderer(
 	const openSessionMenu = (item: RosterItem): void => openRosterMenu(item.id, item.id, copy("sidebar.more"), [
 		{ id: SESSION_RENAME_ACTION, label: copy("sidebar.rename"), glyph: "square-pen" },
 		...(lastView?.projects === undefined ? [] : [{ id: item.archived ? SESSION_RESTORE_ACTION : SESSION_ARCHIVE_ACTION, label: copy(item.archived ? "project.restore" : "project.archive"), glyph: "folder" as const }]),
+		...(lastView?.projects === undefined || item.workEnded ? [] : [{ id: SESSION_END_ACTION, label: copy("project.endWork"), glyph: "x" as const }]),
 		{ id: SESSION_COPY_ID_ACTION, label: copy("sidebar.copyId"), glyph: "copy" },
 		{ id: item.remove.id, label: item.remove.label, glyph: "x", danger: true },
 	]);
@@ -1988,7 +1990,7 @@ export function createRenderer(
 			reconcileChildren(elements.column, flow);
 			flowCache.finish();
 
-			const detached = view.attachedId === undefined;
+			const detached = view.attachedId === undefined || view.readOnly === true;
 			if (!scopeChanged && detached && !elements.prompt.disabled && document.activeElement === elements.prompt) {
 				heldPromptFocus = {
 					start: elements.prompt.selectionStart,
@@ -2049,7 +2051,7 @@ export function createRenderer(
 
 	elements.composer.addEventListener("submit", (event) => {
 		event.preventDefault();
-		if (lastView?.attachedId === undefined) return;
+		if (lastView?.attachedId === undefined || lastView?.readOnly === true) return;
 		const text = draft();
 		if (text.startsWith("/") && lastView?.palette.open === true) {
 			const selected = lastView.palette.rows.find((row) => row.selected);

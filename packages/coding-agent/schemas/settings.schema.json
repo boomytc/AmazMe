@@ -4,6 +4,61 @@
   "$comment": "This file is generated from TypeScript source. Do not edit it manually; run npm run generate:schemas.",
   "type": "object",
   "properties": {
+    "executionMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "read-only"
+        },
+        {
+          "type": "string",
+          "const": "workspace-write"
+        },
+        {
+          "type": "string",
+          "const": "full-access"
+        }
+      ],
+      "default": "full-access",
+      "description": "Unix file-write isolation. Global only; writable project settings cannot relax this boundary."
+    },
+    "repeatToolReminder": {
+      "type": "boolean",
+      "default": true
+    },
+    "reviewChanges": {
+      "type": "boolean",
+      "default": true
+    },
+    "contextCleanup": {
+      "type": "boolean",
+      "default": true
+    },
+    "runLimits": {
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cost": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "archiveRetentionDays": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "default": 0
+    },
     "$schema": {
       "type": "string",
       "description": "JSON Schema reference."

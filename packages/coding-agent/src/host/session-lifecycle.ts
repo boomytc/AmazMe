@@ -53,6 +53,16 @@ export function isSessionEmpty(harness: Harness, context: Context): Promise<bool
 	}, context);
 }
 
+/** Cancel stored queues and every conversation, including background and ownerless forks. */
+export async function abortSessionWork(harness: Harness, context: Context): Promise<void> {
+	let cursor: Cursor | undefined;
+	do {
+		const page = await harness.commit(tx => tx.scanConversations({}, 100, cursor), context);
+		for (const record of page.items) await (await harness.conversation(record.id, context))?.abort(context, { background: true });
+		cursor = page.next;
+	} while (cursor !== undefined);
+}
+
 /** Only committed user input names a session. Reopening also recovers a missed notification. */
 export function watchSessionTitle(
 	harness: Harness,

@@ -10,6 +10,8 @@ export interface SessionCatalogMetadata {
 	readonly cwd: string;
 	readonly projectId?: string;
 	readonly archivedAt?: number;
+	/** Explicit end-work archive; ordinary archives continue to accept work. */
+	readonly workEndedAt?: number;
 	/** The Session directory. Workers lock it and own the storage inside it. */
 	readonly path: string;
 	/**
@@ -38,10 +40,11 @@ export function mergeTrackedSession(
 	worker: SessionCatalogMetadata,
 ): SessionCatalogMetadata {
 	const name = normalizeSessionName(catalog?.name ?? "");
-	const { name: _name, nameSource: _nameSource, archivedAt: _workerArchive, ...rest } = worker;
+	const { name: _name, nameSource: _nameSource, archivedAt: _workerArchive, workEndedAt: _workerEnd, ...rest } = worker;
 	return {
 		...rest,
 		...(catalog?.archivedAt === undefined ? {} : { archivedAt: catalog.archivedAt }),
+		...(catalog?.workEndedAt === undefined ? {} : { workEndedAt: catalog.workEndedAt }),
 		...((catalog?.projectId ?? worker.projectId) === undefined ? {} : { projectId: catalog?.projectId ?? worker.projectId }),
 		...(name.length === 0 ? {} : { name }),
 		...(catalog?.nameSource === undefined ? {} : { nameSource: catalog.nameSource }),
@@ -85,13 +88,14 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 		return undefined;
 	}
 	if (typeof value !== "object" || value === null) return undefined;
-	const { createdAt, cwd, name, nameSource, projectId, archivedAt } = value as {
+	const { createdAt, cwd, name, nameSource, projectId, archivedAt, workEndedAt } = value as {
 		createdAt?: unknown;
 		cwd?: unknown;
 		name?: unknown;
 		nameSource?: unknown;
 		projectId?: unknown;
 		archivedAt?: unknown;
+		workEndedAt?: unknown;
 	};
 	if (typeof createdAt !== "number" || typeof cwd !== "string") return undefined;
 	const display = typeof name === "string" ? normalizeSessionName(name) : "";
@@ -102,6 +106,7 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 		path,
 		...(typeof projectId === "string" ? { projectId } : {}),
 		...(typeof archivedAt === "number" && Number.isFinite(archivedAt) ? { archivedAt } : {}),
+		...(typeof workEndedAt === "number" && Number.isFinite(workEndedAt) ? { workEndedAt } : {}),
 		...(display.length === 0 ? {} : { name: display }),
 		...(nameSource === "manual" || nameSource === "automatic" ? { nameSource } : {}),
 	};
@@ -158,11 +163,11 @@ export async function writeSessionName(
 	return metadata;
 }
 
-export async function writeSessionArchive(sessionDir: string, id: string, archived: boolean): Promise<SessionCatalogMetadata> {
+export async function writeSessionArchive(sessionDir: string, id: string, archived: boolean, endWork = false): Promise<SessionCatalogMetadata> {
 	const current = await readSession(sessionDir, id);
 	if (current === undefined) throw new Error(`Unknown session: ${id}`);
-	const { archivedAt: _previousArchive, ...rest } = current;
-	const metadata: SessionCatalogMetadata = { ...rest, ...(archived ? { archivedAt: current.archivedAt ?? Date.now() } : {}) };
+	const { archivedAt: _previousArchive, workEndedAt: _previousEnd, ...rest } = current;
+	const metadata: SessionCatalogMetadata = { ...rest, ...(archived ? { archivedAt: current.archivedAt ?? Date.now(), ...((endWork || current.workEndedAt !== undefined) ? { workEndedAt: current.workEndedAt ?? Date.now() } : {}) } : {}) };
 	await writeMetadata(metadata);
 	return metadata;
 }
@@ -192,6 +197,7 @@ function metadataFile(metadata: SessionCatalogMetadata): {
 	cwd: string;
 	projectId?: string;
 	archivedAt?: number;
+	workEndedAt?: number;
 	name?: string;
 	nameSource?: "manual" | "automatic";
 } {
@@ -200,6 +206,7 @@ function metadataFile(metadata: SessionCatalogMetadata): {
 		cwd: metadata.cwd,
 		...(metadata.projectId === undefined ? {} : { projectId: metadata.projectId }),
 		...(metadata.archivedAt === undefined ? {} : { archivedAt: metadata.archivedAt }),
+		...(metadata.workEndedAt === undefined ? {} : { workEndedAt: metadata.workEndedAt }),
 		...(metadata.name === undefined ? {} : { name: metadata.name }),
 		...(metadata.nameSource === undefined ? {} : { nameSource: metadata.nameSource }),
 	};

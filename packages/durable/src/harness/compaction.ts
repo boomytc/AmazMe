@@ -113,7 +113,8 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			const model = ref === undefined ? undefined : runtime.models.getModel(ref.provider, ref.modelId);
 			if (ref === undefined || model === undefined) return failNoModel(runtime, ref, context);
 			const policy = settings.compaction;
-			const view = await runtime.context(conversationId, context);
+			let view = await runtime.context(conversationId, context);
+			await runtime.hooks.each("projectContext", async hook => { view = await hook(view, runtime, context) ?? view; });
 			const cut = selectCut(view, policy.keepRecentTokens);
 			if (cut === undefined) return complete(runtime, context);
 			const firstKept = view.entries[cut]!.id;
@@ -150,8 +151,12 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			const { model: ref, thinkingLevel, streamOptions, maxTokens, tail, firstKept, attempt } = request;
 			const model = runtime.models.getModel(ref.provider, ref.modelId);
 			if (model === undefined) return failNoModel(runtime, ref, context);
+			let admission: { readonly block: string } | undefined;
+			await runtime.hooks.each("beforeModel", async hook => { admission ??= await hook(runtime, context); });
+			if (admission) { runtime.report(new Error(admission.block)); return complete(runtime, context); }
 			// The context at `tail` is immutable, so this is the range `select` chose.
-			const view = await runtime.context(runtime.conversationId, context, { at: tail });
+			let view = await runtime.context(runtime.conversationId, context, { at: tail });
+			await runtime.hooks.each("projectContext", async hook => { view = await hook(view, runtime, context) ?? view; });
 			const cut = view.entries.findIndex((entry) => entry.id === firstKept);
 			const now = runtime.now();
 			const messages: Message[] = [
@@ -305,6 +310,7 @@ export function summarizedMessages(view: ContextView, cut: number): Message[] {
  * every message.
  */
 export function estimateContext(view: ContextView, extra: readonly Message[]): number {
+	if (view.estimatedTokens !== undefined) return view.estimatedTokens + extra.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
 	let measured: AssistantMessage | undefined;
 	const after = view.head?.id ?? Number.NEGATIVE_INFINITY;
 	for (let index = view.entries.length - 1; index >= 0 && measured === undefined; index--) {

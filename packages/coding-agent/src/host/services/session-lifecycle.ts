@@ -4,6 +4,7 @@ import { type Context, defineService } from "@amazme/chord";
 export interface SessionLifecycle {
 	isEmpty(context: Context): Promise<boolean>;
 	refreshMirror(context: Context): Promise<void>;
+	stopWork(context: Context): Promise<void>;
 }
 
 export const SessionLifecycle = defineService<SessionLifecycle>("amazme.session-lifecycle");

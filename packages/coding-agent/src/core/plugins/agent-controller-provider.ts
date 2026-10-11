@@ -15,7 +15,7 @@ class UnknownConversation extends Error {}
 export function createAgentController(
 	harness: Harness,
 	conversation: (context: Context) => Conversation | Promise<Conversation>,
-	admission?: () => AgentOperationError | undefined,
+	admission?: (context: Context) => AgentOperationError | undefined | Promise<AgentOperationError | undefined>,
 ): AgentControllerService {
 	const target = async (request: AgentPromptRequest, context: Context): Promise<Conversation> => {
 		if (request.conversationId === undefined) return conversation(context);
@@ -29,7 +29,7 @@ export function createAgentController(
 		request: AgentPromptRequest,
 		context: Context,
 	): Promise<AgentQueueResponse> => {
-		const refusal = admission?.();
+		const refusal = await admission?.(context);
 		if (refusal !== undefined) return { accepted: false, entryId: null, error: refusal };
 		try {
 			const submission = await (await target(request, context)).submit(
@@ -49,7 +49,7 @@ export function createAgentController(
 
 	return {
 		async prompt(request, context) {
-			const refusal = admission?.();
+			const refusal = await admission?.(context);
 			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
 				const submission = await (await target(request, context)).submit(
@@ -95,7 +95,7 @@ export function createAgentController(
 			};
 		},
 		async compact(request, context) {
-			const refusal = admission?.();
+			const refusal = await admission?.(context);
 			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
 				const id = await (await conversation(context)).compact(request.customInstructions ?? undefined, context);

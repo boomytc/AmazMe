@@ -34,6 +34,8 @@ import { createSlashCommandsRuntimeFacet } from "../core/plugins/command-registr
 import { liveOf, Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
 import { formatLane } from "../durable/session-surface.ts";
 import { Commands } from "./services/commands.ts";
+import { SessionInsights } from "./services/insights.ts";
+import { createInsightsCommandsFacet } from "./services/insights-commands.ts";
 
 /** Commands owned by the terminal presentation, not by the worker. */
 const TERMINAL_COMMANDS = [
@@ -258,6 +260,7 @@ export class ExperimentalClientTui implements Component {
 
 	async #start(prepared: PreparedClientSession): Promise<void> {
 		const server = prepared.server;
+		const hasInsights = (await server.session.catalogue(BACKGROUND_CONTEXT)).some(entry => entry.serviceId === SessionInsights.id);
 		let presentationFacets = await combineFacetLoaders(createPresentationFacetLoaders(prepared.presentationPlugins)).load();
 		this.#presentationFacets = presentationFacets;
 		let facetHost!: FacetHost;
@@ -352,6 +355,7 @@ export class ExperimentalClientTui implements Component {
 				createSlashCommandsRuntimeFacet(),
 				presentationBridgeFacet,
 				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins, authenticate: (mode, provider) => this.#authenticate(mode, provider) }),
+				...(hasInsights ? [createInsightsCommandsFacet()] : []),
 				...this.#sharedFacets.facets,
 				...presentationFacets.facets,
 			],

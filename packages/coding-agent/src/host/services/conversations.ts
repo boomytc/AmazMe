@@ -16,6 +16,8 @@ import type {
 
 /** The Session's conversations, its live task graph, stored history, and how to talk to any of them. */
 export interface Conversations {
+	/** Cancel and join branch-summary requests, which run outside the durable task graph. */
+	cancelSummaries(context: Context): Promise<void>;
 	readonly state: ReplicatedState<ConversationsState>;
 	/** Focus one conversation: publish its view (or clear it for the root) and make it the target. */
 	select(conversationId: string, context: Context): Promise<void>;

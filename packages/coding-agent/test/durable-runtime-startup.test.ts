@@ -114,14 +114,14 @@ describe("durable startup over SQLite", () => {
 	});
 
 	it.each([
-		[{}, ["bash", "edit", "read", "subagent", "write"]],
-		[{ tools: ["+grep", "-write"] }, ["bash", "edit", "grep", "read", "subagent"]],
+		[{}, ["bash", "context_detail", "edit", "read", "subagent", "write"]],
+		[{ tools: ["+grep", "-write"] }, ["bash", "context_detail", "edit", "grep", "read", "subagent"]],
 		[{ tools: ["g*", "read"], excludeTools: ["read"] }, ["grep"]],
-		[{ noTools: "builtin" as const, tools: ["+grep"] }, ["grep", "subagent"]],
+		[{ noTools: "builtin" as const, tools: ["+grep"] }, ["context_detail", "grep", "subagent"]],
 		[{ noTools: "all" as const, tools: ["+grep"] }, ["grep"]],
 		[{ tools: [] }, []],
 		[{ noTools: "all" as const }, []],
-		[{ tools: ["+write"], excludeTools: ["*write*", "subagent"] }, ["bash", "edit", "read"]],
+		[{ tools: ["+write"], excludeTools: ["*write*", "subagent"] }, ["bash", "context_detail", "edit", "read"]],
 	])("declares the actual selected tools to the model: %j", async (options, expected) => {
 		const session = await open(options);
 		let declared: string[] | undefined;
@@ -154,7 +154,7 @@ describe("durable startup over SQLite", () => {
 			},
 		]);
 		await session.controller.submit("question", "steer");
-		await vi.waitFor(() => expect(declared).toEqual(["bash", "edit", "ls", "read"]));
+		await vi.waitFor(() => expect(declared).toEqual(["bash", "context_detail", "edit", "ls", "read"]));
 	});
 
 	it("persists a focused branch's selection without applying it to its siblings", async () => {

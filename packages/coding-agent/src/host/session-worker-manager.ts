@@ -222,6 +222,13 @@ export class SessionWorkerManager {
 		const worker = this.#workersBySession.get(metadata.path) ?? (await this.#pending.get(metadata.path)?.promise);
 		if (worker !== undefined) await this.#stopWorker(worker, context);
 	}
+	async stopSessionWork(metadata: SessionCatalogMetadata, context: Context): Promise<void> {
+		const worker = this.#workersBySession.get(metadata.path) ?? (await this.#pending.get(metadata.path)?.promise);
+		if (!worker) return;
+		const scope = { serverConnectionId: this.#coordinator.serverConnectionId, attachmentId: SESSION_INSPECTION_ATTACHMENT_ID };
+		try { await this.#invoke(worker, scope, { serviceId: SessionLifecycle.id, member: "stopWork", args: [] }, context); }
+		catch { await this.#stopWorker(worker, context); }
+	}
 
 	#routedHandle(worker: WorkerRecord): RoutedSessionHandle {
 		return {

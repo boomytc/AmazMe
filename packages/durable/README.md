@@ -185,7 +185,7 @@ const count = defineTool({
 registry.install(defineExtension({ name: "count", tools: [count] }));
 ```
 
-Each call runs as its own durable task. Its intent is committed before `execute()` runs. If the process dies mid-call, the tool reruns on reopen only when it is declared `replay: "safe"`; otherwise the model gets an `interrupted` error result with the output committed so far. Throwing from `execute()` gives the model an error result. A result can also return `usage`, which is added to the conversation's [usage](#usage-and-cost). It can also return `control: { terminate: true }`: when every result of the round asks for it, the run ends without another model request.
+Each call runs as its own durable task. Final arguments are retained in `admit` while execution admission waits; reopening this phase continues admission without rerunning argument hooks, including for unsafe tools that have not started. Restored admission and safe replay check those exact retained values against the current schema, without conversion, defaulting or optional-null cleanup. Incompatible values refuse execution and require a new call with confirmed arguments. Only after admission is the `execute` intent committed, immediately before `execute()` runs. If the process dies after that intent, the tool reruns on reopen only when both its stored and current policies say `replay: "safe"`; otherwise the model gets an `interrupted` error result with the output committed so far. Throwing from `execute()` gives the model an error result. A result can also return `usage`, which is added to the conversation's [usage](#usage-and-cost). It can also return `control: { terminate: true }`: when every result of the round asks for it, the run ends without another model request.
 
 A result has three channels: `output` for the model, `structuredOutput` for programs that call the tool (see [Calling tools from tools](#calling-tools-from-tools)), and `details` for UIs. A tool that declares `structuredOutputSchema` returns a matching `structuredOutput`, which the Harness validates. Programs calling a tool without one get its bounded output: one text item as a string, one image as its `ImageContent`, nothing as `""`, and anything else as the content list, for errors too. The transcript stores only `output` and `details`:
 
@@ -259,7 +259,7 @@ await root.configure({ modelTools: { remove: [bash] } }, context);
 
 `exposure` and the persisted name/pattern selectors remain host activation controls. Active `direct` tools are callable, `model-only` tools are only offered to models, `codemode` and `deferred` tools are callable without model activation, and `hidden` tools are unavailable. `callers` further narrows these permissions. `agent.catalog` exposes the permitted catalog; `allow` and `exclude` bound all three views. An `afterTool` output rewrite that leaves the original structured payload unchanged drops that payload, so redaction cannot expose it to nested callers.
 
-Live version 1 AmazMe tool tasks migrate once to the tagged input. A task that had already started executing is treated as unsafe to replay, because its old nested calls cannot be reliably reattached. Queued calls use the new executor; there is no second executor for old tasks.
+Live version 1 AmazMe tool tasks migrate once to the tagged input. A task that had already recorded execution intent is treated as unsafe to replay, because its old nested calls cannot be reliably reattached. Version 2 tasks keep their input and replay policy; an old `execute` record cannot prove that execution never started and is never converted to `admit`. Queued calls use the new executor; there is no second executor for old tasks.
 
 ### Tasks a restart abandons
 
@@ -486,8 +486,8 @@ const Guard = defineExtension({
 });
 ```
 
-- **Generation:** `beforeRequest` (replace the messages of one request), `afterResponse`, `onYield` (continue the run with another user message), and `afterTools` (runs once a round's tools are done).
-- **Tools:** `beforeTool` (block or rewrite arguments) and `afterTool` (replace the result).
+- **Generation:** `beforeModel` (explicitly block a provider request), `projectContext` (project retained input before estimation or request), `beforeRequest` (replace the messages of one request), `afterResponse`, `onYield` (continue the run with another user message), and `afterTools` (runs once a round's tools are done). Compaction also uses `projectContext` before selecting or summarizing a range, and `beforeModel` before a summary request. Projection changes never rewrite raw entries; a projection that invalidates provider measurements can supply `estimatedTokens`. Admission returns `{ block: reason }`; thrown hook errors retain the usual report-and-skip behavior.
+- **Tools:** `beforeTool` (block or rewrite arguments before retaining them; replacements are checked without coercion), `beforeExecute` (admission before execution intent; each hook receives a detached argument copy, and its fourth argument exposes `recovery` for restored admission or safe replay), and `afterTool` (replace the result). Admission hooks fail closed when they throw. Refusing a safe replay also cancels its owned work and retains the interrupted attempt's output.
 
 To limit a hook to some conversations, select its extension only there, for example with `configure({ extensions: { add: [Guard] } })`.
 
@@ -683,7 +683,7 @@ Three rules decide what an error does:
 
 1. **A storage error ends the Harness.** The call that hit it rejects with the error. Everything after it, and every pending wait, rejects with `SessionFailed` (its `cause` is that error); watches and event streams end with `session_failed`; running tasks get their abort signal; `onReport` gets the error once. The Harness then closes itself. Nothing is retried; a custom storage retries its own transient failures. Reopen to recover: commits are atomic, so the store is consistent, and resubmitting with the same `requestId` finds a submission that was already admitted.
 2. **An invalid request fails only that call:** a storage throws `StorageRequestError` for a bad cursor, an unknown conversation, or history a document does not keep. A read you cancelled fails only itself too.
-3. **Your code fails only its own unit:** a throwing task phase faults that task, a throwing tool gets an error result, a throwing hook is reported and skipped (`beforeTool` blocks the call), and a throwing commit callback rolls back that commit. Listeners that throw, or return a rejected promise, are reported and the others still run. The exception is a host `RegistryReader` whose `snapshot()` throws: the Harness cannot schedule without it, so it fails the Harness like a storage error.
+3. **Your code fails only its own unit:** a throwing task phase faults that task, a throwing tool gets an error result, a throwing hook is reported and skipped (`beforeTool` and `beforeExecute` block the call), and a throwing commit callback rolls back that commit. Listeners that throw, or return a rejected promise, are reported and the others still run. The exception is a host `RegistryReader` whose `snapshot()` throws: the Harness cannot schedule without it, so it fails the Harness like a storage error.
 
 `harness.closed` settles once the Harness has closed, by `close()` or after a storage error, so a host restarts on failure like this:
 

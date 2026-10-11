@@ -52,6 +52,8 @@ export const ProjectManagement = defineService<ProjectManagement>("amazme.projec
 
 export interface SessionArchive {
 	set(sessionId: string, archived: boolean, context: Context): Promise<void>;
+	/** Explicitly stop all work, discard queues, and reject future inputs until restored. */
+	end(sessionId: string, context: Context): Promise<void>;
 }
 
 export const SessionArchive = defineService<SessionArchive>("amazme.session-archive");

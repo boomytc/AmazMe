@@ -69,10 +69,14 @@ export type ToolTaskInput =
 export const MAX_NESTED_TOOL_CALLS = 256;
 export const MAX_NESTED_TOOL_DEPTH = 8;
 
+type ToolIntent = { arguments: JsonObject; replay: "safe" | "unsafe" };
+
 export type ToolTaskCheckpoint =
 	| { phase: "call" }
-	/** Durable intent: the final arguments and the replay policy recorded before execution. */
-	| { phase: "execute"; arguments: JsonObject; replay: "safe" | "unsafe" };
+	/** Final arguments retained while admission may wait; execution has not started. */
+	| ({ phase: "admit" } & ToolIntent)
+	/** Durable execution intent; a crash after this point may have left external effects. */
+	| ({ phase: "execute" } & ToolIntent);
 
 /**
  * A model-issued call's result is its transcript entry; a nested call's result is in its caller's
@@ -177,17 +181,19 @@ type Runtime = TaskRuntime<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, To
 type Content = (TextContent | ImageContent)[];
 
 /**
- * Built-in tool task: resolves the called tool among its phase agent's tools, validates, runs `beforeTool`, records intent,
- * executes, runs `afterTool`, and settles the result, all in one `call` handler so nothing separates resolution from
- * settlement. `execute` is reached only by recovery and applies the replay rule. A model-issued call settles by
- * appending its result entry; a nested call by writing its result to its caller's `NestedCallDoc`.
+ * Resolve, validate and run `beforeTool`, then retain final arguments in `admit` while execution admission waits.
+ * Record `execute` only after admission, immediately before running. Recovery of `admit` never replays an external
+ * effect; recovery of `execute` requires a safe replay policy and fresh admission. Model-issued calls append their
+ * result entry; nested calls write their result to their caller's `NestedCallDoc`.
  */
 export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, ToolHooks>({
 	name: "amazme.tool",
-	version: 2,
+	version: 3,
 	initial: () => ({ phase: "call" }),
 	// Upgrade persisted AmazMe v1 tasks once; their old nested executor cannot safely reattach calls.
-	migrate: (input, checkpoint, _version, record) => {
+	migrate: (input, checkpoint, fromVersion, record) => {
+		// Version 2 execute records cannot prove whether the tool started; retain their replay policy.
+		if (fromVersion === 2) return { input: input as ToolTaskInput, checkpoint: checkpoint as ToolTaskCheckpoint };
 		const prior = input as unknown as {
 			assistant: EntryId;
 			callId: string;
@@ -237,28 +243,31 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 				const blocked = harnessError("blocked", `Tool call blocked: ${block}`);
 				return settle(runtime, task.input, call, COMPLETED, () => blocked, context);
 			}
-			const validated = validate(tool, call, args);
+			const validated = validateConfirmed(tool, args);
 			if ("error" in validated)
 				return settle(runtime, task.input, call, COMPLETED, () => invalid(validated.error), context);
 			// Strict JSON: repair may set optional properties to undefined, which the slot and checkpoint cannot hold.
 			const final = copyJson(validated.args, {
 				omitUndefinedProperties: true,
 			}) as JsonObject;
-			await runtime.commit(async (tx) => {
-				const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
-				if (slot !== undefined) slot.status = "running";
-				// A nested slot shows the arguments the call runs with, which repair, hooks, and coercion may have changed.
-				// Compared with the input, which the slot got at admission: reading the draft would track every leaf.
-				const changed = task.input.kind === "nested" && !jsonEqual(task.input.call.arguments as JsonValue, final);
-				if (changed && slot !== undefined && "parentTaskId" in slot) slot.arguments = final;
-				const intent = {
-					phase: "execute",
-					arguments: final,
-					replay: tool.replay ?? "unsafe",
-				} as const;
-				return { status: "running", checkpoint: intent };
-			}, context);
-			await run(runtime, task.input, call, tool, final, context);
+			const intent: ToolIntent = { arguments: final, replay: tool.replay ?? "unsafe" };
+			await runtime.commit(() => ({ status: "running", checkpoint: { phase: "admit", ...intent } }), context);
+			await admitAndRun(runtime, task.input, call, tool, intent, context, "initial");
+		},
+		/** Recovery before execution: preserve confirmed arguments, but resolve availability and admission afresh. */
+		admit: async (task, runtime, context) => {
+			const call = await readCall(runtime, task.input, context);
+			const tool = await resolveTool(runtime, task.input, call.name, context);
+			if (tool === undefined)
+				return settle(runtime, task.input, call, COMPLETED, () => harnessError("tool_unavailable", `Tool ${call.name} is not available`), context);
+			const checked = validateConfirmed(tool, task.state.checkpoint.arguments);
+			if ("error" in checked)
+				return settle(runtime, task.input, call, COMPLETED, () => invalid(checked.error), context);
+			const intent: ToolIntent = {
+				arguments: copyJson(checked.args, { omitUndefinedProperties: true }) as JsonObject,
+				replay: task.state.checkpoint.replay,
+			};
+			await admitAndRun(runtime, task.input, call, tool, intent, context, "admit");
 		},
 		/** Recovery after intent: rerun only when the stored and the current policy both say `safe`. */
 		execute: async (task, runtime, context) => {
@@ -266,13 +275,14 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			const call = await readCall(runtime, task.input, context);
 			const tool = await resolveTool(runtime, task.input, call.name, context);
 			if (replay === "safe" && tool?.replay === "safe") {
-				// The rerun reports from scratch; clear what the interrupted attempt published.
-				await runtime.commit(async (tx) => {
-					const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
-					if (slot !== undefined) clearProgress(slot);
-					return undefined;
-				}, context);
-				return run(runtime, task.input, call, tool, args, context);
+				const checked = validateConfirmed(tool, args);
+				if ("error" in checked) {
+					// A call that cannot resume can no longer supervise work it started in its prior attempt.
+					const ending = { status: "failed", message: checked.error } as const;
+					return settle(runtime, task.input, call, ending, slot => fromSlot(slot, "invalid_arguments", checked.error), context);
+				}
+				const retained = copyJson(checked.args) as JsonObject;
+				return admitAndRun(runtime, task.input, call, tool, { arguments: retained, replay }, context, "replay");
 			}
 			const message = `Tool ${call.name} was interrupted and may have partially run`;
 			// `failed` records cancellation intent, so the call's owned conversations, left unsupervised, are aborted.
@@ -369,6 +379,20 @@ function validate(tool: ToolRegistration, call: ToolCall, args: JsonObject): Che
 	}
 }
 
+/** Once hooks confirm arguments, validation must not convert, default or otherwise repair them. */
+function validateConfirmed(tool: ToolRegistration, args: JsonObject): Checked {
+	try {
+		// Compile afresh: a plugin may have updated the schema in place since the previous attempt.
+		const validator = Compile(tool.parameters);
+		if (validator.Check(args)) return { args };
+		const [first] = validator.Errors(args);
+		const path = first?.instancePath.replace(/^\//, "").replace(/\//g, ".") || "root";
+		return { error: `Validation failed for tool ${tool.name}: confirmed arguments do not match its current schema: ${path}: ${first?.message ?? "invalid"}. Start a new call to confirm updated arguments.` };
+	} catch (error) {
+		return { error: `Cannot validate confirmed arguments for tool ${tool.name}: ${errorMessage(error)}` };
+	}
+}
+
 function invalid(message: string): ToolExecutionResult {
 	return harnessError("invalid_arguments", message);
 }
@@ -380,6 +404,57 @@ type Reported = {
 	readonly diagnostics: ToolDiagnostic[];
 	details: JsonValue | undefined;
 };
+
+/** Admission can wait without claiming execution; an existing execution intent is never downgraded. */
+async function admitAndRun(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	call: ToolHookCall,
+	tool: ToolRegistration,
+	intent: ToolIntent,
+	context: Context,
+	attempt: "initial" | "admit" | "replay",
+): Promise<void> {
+	let block: string | undefined;
+	await runtime.hooks.each("beforeExecute", async (hook) => {
+		if (block !== undefined) return;
+		try {
+			// Admission can only block; give each hook its own copy so it cannot alter the confirmed intent.
+			const argumentsCopy = copyJson(intent.arguments) as JsonObject;
+			block = (await hook({ ...call, arguments: argumentsCopy }, runtime, context, { recovery: attempt !== "initial" }))?.block;
+		} catch (error) {
+			if (runtime.signal.aborted) throw error;
+			block = errorMessage(error);
+		}
+	});
+	if (block !== undefined) {
+		const message = `Tool call blocked: ${block}`;
+		const ending = attempt === "replay" ? { status: "failed", message } as const : COMPLETED;
+		return settle(runtime, input, call, ending, slot => fromSlot(slot, "blocked", message), context);
+	}
+	// Admission may have waited while the schema changed. Check again without touching the confirmed values.
+	const checked = validateConfirmed(tool, intent.arguments);
+	if ("error" in checked) {
+		const ending = attempt === "replay" ? { status: "failed", message: checked.error } as const : COMPLETED;
+		return settle(runtime, input, call, ending, slot => fromSlot(slot, "invalid_arguments", checked.error), context);
+	}
+	await runtime.commit(async tx => {
+		const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+		if (slot !== undefined) {
+			// Keep the interrupted attempt's output until replay is actually admitted.
+			if (attempt === "replay") clearProgress(slot);
+			slot.status = "running";
+		}
+		// A nested slot shows final arguments; compare with the input rather than tracking every draft leaf.
+		const changed = input.kind === "nested" && !jsonEqual(input.call.arguments as JsonValue, intent.arguments);
+		if (changed && slot !== undefined && "parentTaskId" in slot) slot.arguments = intent.arguments;
+		return { status: "running", checkpoint: {
+			phase: "execute", arguments: intent.arguments,
+			replay: intent.replay === "safe" && tool.replay === "safe" ? "safe" : "unsafe",
+		} };
+	}, context);
+	await run(runtime, input, call, tool, intent.arguments, context);
+}
 
 /** Execute with the resolved implementation, then settle its result. */
 async function run(
@@ -725,15 +800,25 @@ async function settle(
 	context: Context,
 	durationMs?: number,
 ): Promise<void> {
-	// A crash in between leaves the call in `execute`: a safe rerun reattaches to the calls, an interruption ends here.
-	// Every live nested call the task owns, also those an earlier attempt made and this one never called again.
-	const nestedIds = (await runtime.ownedTasks(context))
-		.filter((record) => record.kind === ToolTask.definition.name && (record.input as ToolTaskInput).kind === "nested")
+	// A crash after execution leaves its intent in `execute`; pre-execution refusals retain their earlier phase.
+	// Failed calls cannot supervise ordinary owned work. Stop it alongside nested calls, before joining cleanup:
+	// one child's cleanup may wait for another child to receive cancellation. Background boundaries still apply.
+	const stopIds = (await runtime.ownedTasks(context))
+		.filter((record) => (record.kind === ToolTask.definition.name && (record.input as ToolTaskInput).kind === "nested")
+			|| (ending.status === "failed" && !record.background))
 		.map((record) => record.id);
+	let ownedConversations: ConversationId[] = [];
+	if (ending.status === "failed") await runtime.commit(async tx => {
+		ownedConversations = (await scanAll(cursor => tx.scanConversations({ ownerTaskId: runtime.taskId }, 256, cursor)))
+			.map(record => record.id);
+	}, context);
 	// Read before the settling commit: no admission starts after `ended`, and those underway were awaited.
 	const madeNested = (await runtime.memo(MADE_NESTED_CALLS, context)) === true;
 	// Mark them all before waiting for any: one may run until a sibling is cancelled.
-	await Promise.all(nestedIds.map((id) => runtime.abortOwned(id, context)));
+	await Promise.all([
+		...stopIds.map(id => runtime.abortOwned(id, context)),
+		...ownedConversations.map(async id => (await runtime.conversation(id, context))?.abort(context)),
+	]);
 	await runtime.commit(async (tx) => {
 		const conversationId = runtime.conversationId;
 		const live = await tx.doc(LiveDoc, conversationId);

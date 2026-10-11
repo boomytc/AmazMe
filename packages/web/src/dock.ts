@@ -23,7 +23,7 @@ import type { MessageKey } from "./strings.ts";
 import { taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
 
 /** The dock's tabs, in the order it shows them. */
-export type DockTabId = "files" | "terminal" | "conversations" | "tasks";
+export type DockTabId = "files" | "terminal" | "conversations" | "tasks" | "changes";
 
 const TAB_IDS: readonly DockTabId[] = ["files", "terminal", "conversations", "tasks"];
 const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = {
@@ -31,6 +31,7 @@ const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = {
 	terminal: "dock.terminal",
 	conversations: "dock.conversations",
 	tasks: "dock.tasks",
+	changes: "review.tab",
 };
 
 export interface DockTab {
@@ -132,6 +133,39 @@ export interface DockViewInput {
 	readonly workspace: WorkspaceStateLike | undefined;
 	readonly terminal: TerminalStateLike | undefined;
 	readonly conversations: ConversationsStateLike | undefined;
+	readonly insights?: InsightsStateLike;
+	readonly reviewDiff?: string;
+	readonly readOnly?: boolean;
+}
+
+export interface InsightsStateLike {
+	readonly conversationId: string;
+	readonly paused: "calls" | "seconds" | "cost" | null;
+	readonly calls: number;
+	readonly cleanup: { readonly tools: number; readonly images: number };
+	readonly files: readonly { readonly root: string; readonly path: string; readonly kind: "added" | "removed" | "modified"; readonly added: number; readonly removed: number; readonly binary: boolean }[];
+	readonly verification: readonly { readonly command: string; readonly exitCode: number | null; readonly at: number }[];
+	readonly notes: readonly string[];
+	readonly skipped: number;
+}
+
+export function changesPanel(locale: Locale, state: InsightsStateLike | undefined, diff?: string): PanelSpec {
+	const title = translate(locale, "review.title");
+	if (!state) return { id: "changes", title, notices: [], groups: [] };
+	return { id: "changes", title, description: translate(locale, "review.description"),
+		notices: [...(state.paused ? [{ tone: "info" as const, text: translate(locale, `review.paused.${state.paused}`) }] : []),
+			...state.notes.map(text => ({ tone: "info" as const, text })), ...(state.skipped ? [{ tone: "info" as const, text: translate(locale, "review.skipped", { count: String(state.skipped) }) }] : []),
+			...(state.cleanup.tools || state.cleanup.images ? [{ tone: "info" as const, text: translate(locale, "review.cleanup", { tools: String(state.cleanup.tools), images: String(state.cleanup.images) }) }] : [])],
+		groups: [{ id: "changes:files", title: translate(locale, "dock.files"), actions: [
+			{ id: "insights:refresh", label: translate(locale, "dock.reload"), tone: "default" },
+			...(state.paused ? [{ id: "insights:resume", data: state.conversationId, label: translate(locale, "review.resume"), tone: "primary" as const }] : []),
+		], rows: state.files.map(file => ({ id: `change:${file.root}/${file.path}`, title: file.path, description: file.root,
+			badges: [translate(locale, `review.${file.kind}`), ...(file.binary ? [translate(locale, "review.binary")] : [`+${file.added} −${file.removed}`])],
+			actions: [{ id: "insights:diff", data: JSON.stringify([state.conversationId, file.root, file.path]), label: translate(locale, "review.diff"), tone: "default" }],
+		})), empty: translate(locale, "review.empty") },
+		{ id: "changes:verification", title: translate(locale, "review.verification"), rows: state.verification.map((item, index) => ({ id: `verification:${index}`, title: item.command, description: translate(locale, item.exitCode === null ? "review.unknown" : item.exitCode === 0 ? "review.passed" : "review.failed", { code: String(item.exitCode) }) })), empty: translate(locale, "review.noVerification") }],
+		...(diff === undefined ? {} : { texts: [{ id: "changes:diff", text: diff }] }),
+	};
 }
 
 /**
@@ -506,7 +540,7 @@ export function terminalPanel(
 
 /** The dock the main area shows beside the conversation. */
 export function dockView(locale: Locale, input: DockViewInput): DockView {
-	const tab = (TAB_IDS as readonly string[]).includes(input.tab) ? (input.tab as DockTabId) : "files";
+	const tab = input.tab === "changes" && input.insights ? "changes" : (TAB_IDS as readonly string[]).includes(input.tab) ? (input.tab as DockTabId) : "files";
 	const panel =
 		tab === "files"
 			? filesPanel(locale, input.workspace)
@@ -514,11 +548,11 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 				? terminalPanel(locale, { cwd: input.cwd, state: input.terminal })
 				: tab === "conversations"
 					? conversationsPanel(locale, input.conversations)
-					: tasksPanel(locale, input.conversations);
+					: tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff) : tasksPanel(locale, input.conversations);
 	return {
 		open: input.open,
-		tabs: dockTabs(locale, tab),
-		panel,
+		tabs: [...dockTabs(locale, tab), ...(input.insights ? [{ id: "changes" as const, label: translate(locale, "review.tab"), active: tab === "changes" }] : [])],
+		panel: input.readOnly && tab === "terminal" ? { ...panel, inputs: panel.inputs?.map(item => ({ ...item, submit: { ...item.submit, disabled: true } })) } : panel,
 		toggle: { label: translate(locale, "dock.toggle"), pressed: input.open },
 	};
 }

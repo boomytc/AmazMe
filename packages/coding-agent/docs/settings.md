@@ -26,6 +26,8 @@ See [Choose a Model](models.md) for model selection and thinking controls.
 
 ## Interaction
 
+The default Durable TUI, Web and desktop also support `repeatToolReminder`, `reviewChanges`, `contextCleanup` (all default `true`), `runLimits: { calls: 0, seconds: 0, cost: 0 }`, `executionMode: "full-access"`, and `archiveRetentionDays: 0`. `executionMode` is global only; project settings cannot override it. Zero budgets are unlimited; zero retention keeps archives indefinitely. Retention is a manual-review reminder and never deletes files. See [Run controls](run-controls.md) for pause/resume, review limits, persisted context decisions and Unix write-isolation boundaries.
+
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `steeringMode` | `"all" \| "one-at-a-time"` | `"one-at-a-time"` | How queued steering messages are delivered. |

@@ -378,10 +378,13 @@ export class SettingsManager {
 			return undefined;
 		});
 
-		if (!content) {
+		if (content === undefined) {
 			return {};
 		}
 		const settings = JSON.parse(stripBom(content));
+		if (settings === null || typeof settings !== "object" || Array.isArray(settings)) {
+			throw new Error("设置文件必须是 JSON 对象");
+		}
 		return SettingsManager.migrateSettings(settings);
 	}
 
@@ -463,6 +466,34 @@ export class SettingsManager {
 	getSettings(): Settings {
 		return structuredClone(this.settings);
 	}
+	/** Execution cannot infer full access from an unreadable or invalid global policy. Does not drain diagnostics. */
+	getExecutionMode(): NonNullable<Settings["executionMode"]> {
+		if (this.globalSettingsLoadError) throw new Error("全局设置无法读取；修复 settings.json 后再执行。", { cause: this.globalSettingsLoadError });
+		const mode = this.settings.executionMode;
+		if (mode === undefined) return "full-access";
+		if (mode === "read-only" || mode === "workspace-write" || mode === "full-access") return mode;
+		throw new Error("全局执行隔离模式无效；修复 executionMode 后再执行。");
+	}
+	setRunLimits(limits: NonNullable<Settings["runLimits"]>): void {
+		this.globalSettings.runLimits = { ...this.globalSettings.runLimits, ...limits };
+		this.markModified("runLimits");
+		this.save();
+	}
+	setExecutionMode(mode: NonNullable<Settings["executionMode"]>): void {
+		this.globalSettings.executionMode = mode;
+		this.markModified("executionMode");
+		this.save();
+	}
+	setRunFeature(field: "repeatToolReminder" | "reviewChanges" | "contextCleanup", value: boolean): void {
+		this.globalSettings[field] = value;
+		this.markModified(field);
+		this.save();
+	}
+	setArchiveRetentionDays(days: number): void {
+		this.globalSettings.archiveRetentionDays = days;
+		this.markModified("archiveRetentionDays");
+		this.save();
+	}
 
 	getGlobalSettings(): Settings {
 		return structuredClone(this.globalSettings);
@@ -530,7 +561,9 @@ export class SettingsManager {
 	}
 
 	private resolveSettings(): Settings {
-		return deepMergeSettings(deepMergeSettings(this.globalSettings, this.projectSettings), this.overrides);
+		// Writable project configuration cannot relax the host's execution boundary.
+		const { executionMode: _projectExecutionMode, ...projectSettings } = this.projectSettings;
+		return deepMergeSettings(deepMergeSettings(this.globalSettings, projectSettings), this.overrides);
 	}
 
 	/** Apply process-local overrides; reloads preserve them and scoped writes never persist them. */

@@ -13,6 +13,8 @@ import {
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
 import type { Conversation, ConversationId, Harness, Registry } from "@amazme/durable";
+import type { ExecutionEnv } from "@amazme/durable/env";
+import type { AgentOperationError } from "../../core/plugins/agent-controller.ts";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
@@ -39,12 +41,17 @@ import { SessionLifecycle } from "./session-lifecycle.ts";
 import { SessionMirror } from "./session-mirror.ts";
 import type { SessionMirrorStatus } from "./session-mirror.ts";
 import type { SessionHandoff } from "../session-handoff.ts";
-import { isSessionEmpty } from "../session-lifecycle.ts";
+import { abortSessionWork, isSessionEmpty } from "../session-lifecycle.ts";
 import { createTerminalFacet } from "./terminal-provider.ts";
+import { Terminal } from "./terminal.ts";
 import { createTranscriptServiceFacet } from "./transcript-provider.ts";
 import { createWorkspaceFacet } from "./workspace-provider.ts";
+import { createInsightsFacet } from "./insights-provider.ts";
 
 export interface SessionWorkerRuntime {
+	readonly admission?: (context: Context) => Promise<AgentOperationError | undefined>;
+	readonly executionEnv?: ExecutionEnv;
+	readonly stopExecution?: (context: Context) => Promise<void>;
 	/** The working directory the Session's agent runs in: the workspace and terminal root. */
 	readonly cwd: string;
 	readonly workspaceDirectories?: () => Promise<readonly string[]>;
@@ -84,6 +91,9 @@ export interface SessionWorkerServices {
 }
 
 export async function createSessionWorkerServices(options: {
+	readonly admission?: (context: Context) => Promise<AgentOperationError | undefined>;
+	readonly executionEnv?: ExecutionEnv;
+	readonly stopExecution?: (context: Context) => Promise<void>;
 	readonly cwd: string;
 	readonly workspaceDirectories?: () => Promise<readonly string[]>;
 	readonly harness: Harness;
@@ -107,6 +117,7 @@ export async function createSessionWorkerServices(options: {
 		id: "@pi/agent-controller-runtime",
 		setup(env) {
 			const conversations = env.use(Conversations);
+			const terminal = options.settingsManager === undefined ? undefined : env.use(Terminal);
 			const runtime = createAgentRuntime(
 				options.harness,
 				() => Number(conversations.state.value?.selected ?? options.conversation.id) as ConversationId,
@@ -116,13 +127,19 @@ export async function createSessionWorkerServices(options: {
 			env.provide(AgentController, createAgentController(
 				options.harness,
 				async (context) => (await runtime.current(context)).conversation,
-				() => pluginRuntime?.changing === true
+				async context => pluginRuntime?.changing === true
 					? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
-					: undefined,
+					: options.admission?.(context),
 			));
 			env.provide(SessionLifecycle, {
 				isEmpty: (context) => isSessionEmpty(options.harness, context),
 				refreshMirror: async () => { await options.refreshMirror?.(); },
+				async stopWork(context) {
+					await conversations.cancelSummaries(context);
+					await terminal?.stop(context);
+					await abortSessionWork(options.harness, context);
+					await options.stopExecution?.(context);
+				},
 			});
 			const mirrorState = env.replicatedState<SessionMirrorStatus>({
 				warning: options.mirror?.warning ?? null,
@@ -184,6 +201,7 @@ export async function createSessionWorkerServices(options: {
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 		createCommandsFacet({ cwd: options.cwd, settings: options.settingsManager, resourceLoader: options.resources }),
 		createConversationsFacet({
+			admission: options.admission,
 			harness: options.harness,
 			root: options.conversation,
 			...(options.settingsManager === undefined ? {} : { settings: options.settingsManager }),
@@ -193,9 +211,10 @@ export async function createSessionWorkerServices(options: {
 		}),
 		...(options.approvalGate === undefined ? [] : [createApprovalsFacet(options.approvalGate)]),
 		createWorkspaceFacet({ cwd: options.cwd, directories: options.workspaceDirectories }),
+		...(options.registry === undefined ? [] : [createInsightsFacet(options.harness, options.conversation.id, options.admission)]),
 		...(options.settingsManager === undefined
 			? []
-			: [createTerminalFacet({ cwd: options.cwd, settings: options.settingsManager })]),
+			: [createTerminalFacet({ cwd: options.cwd, settings: options.settingsManager, env: options.executionEnv, admission: options.admission })]),
 	];
 	const pluginLoader = options.facetLoader ?? createStaticFacetLoader([]);
 	try {

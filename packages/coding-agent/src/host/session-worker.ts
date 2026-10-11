@@ -1,6 +1,6 @@
 import { createConnection, type Socket } from "node:net";
 import { realpath } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
 	type AttachedReplicatedState,
 	isJsonValue,
@@ -13,7 +13,8 @@ import {
 	type ServiceProviderUpdate,
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT, withCancel } from "@amazme/chord/context";
-import { AgentDoc, defineExtension, Harness, ROOT_CONVERSATION_ID, section } from "@amazme/durable";
+import { AgentDoc, CompactionTask, defineExtension, GenerationTask, Harness, hook, ROOT_CONVERSATION_ID, section, ToolTask } from "@amazme/durable";
+import type { AgentOperationError } from "../core/plugins/agent-controller.ts";
 import type { TaskGraph } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import lockfile from "proper-lockfile";
@@ -52,7 +53,7 @@ import {
 import { readSession, sessionStoragePath } from "./session-catalog.ts";
 import { ProjectCatalog } from "./project-catalog.ts";
 import { startSessionHandoff } from "./session-handoff.ts";
-import { firstSessionTitle, isSessionEmpty, watchSessionTitle } from "./session-lifecycle.ts";
+import { abortSessionWork, firstSessionTitle, isSessionEmpty, watchSessionTitle } from "./session-lifecycle.ts";
 import { SessionLifecycle } from "./services/session-lifecycle.ts";
 
 export const SESSION_INSPECTION_ATTACHMENT_ID = "@amazme/session-inspection";
@@ -555,8 +556,12 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 	let taskGraph: AttachedReplicatedState<TaskGraph> | undefined;
 	try {
 		runtime = await createHarness(sessionStoragePath(metadata), options);
+		if ((await readSession(options.sessionDir, metadata.id))?.workEndedAt !== undefined) await abortSessionWork(runtime.harness, BACKGROUND_CONTEXT);
 		taskGraph = await runtime.harness.taskGraph(TODO_CONTEXT);
 		services = await createSessionWorkerServices({
+			admission: runtime.admission,
+			executionEnv: runtime.executionEnv,
+			stopExecution: runtime.stopExecution,
 			cwd: runtime.cwd,
 			workspaceDirectories: runtime.workspaceDirectories,
 			harness: runtime.harness,
@@ -669,7 +674,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			const inspection =
 				request.scope.attachmentId === SESSION_INSPECTION_ATTACHMENT_ID &&
 				request.call.serviceId === SessionLifecycle.id &&
-				(request.call.member === "isEmpty" || request.call.member === "refreshMirror") &&
+				(request.call.member === "isEmpty" || request.call.member === "refreshMirror" || request.call.member === "stopWork") &&
 				request.call.args.length === 0;
 			releaseRequest = inspection
 				? lifecycle!.beginServerRequest(request.scope.serverConnectionId)
@@ -678,7 +683,8 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			const result = inspection
 				? request.call.member === "isEmpty"
 					? await isSessionEmpty(harness, cancellable.context)
-					: await runtime.handoff?.refresh()
+					: request.call.member === "refreshMirror" ? await runtime.handoff?.refresh()
+						: await services.invoke(request.call, request.scope, cancellable.context)
 				: await services.invoke(request.call, request.scope, cancellable.context);
 			if (result !== undefined && !isJsonValue(result)) throw new Error("Service produced a non-JSON result");
 			await control.send({
@@ -866,7 +872,6 @@ async function createCodingAgentHarness(
 	const modelRuntime = await ModelRuntime.create();
 	const settingsManager = createCodingSettings(cwd);
 	configureHarnessHttp(settingsManager);
-	const envs = new ExecutionEnvs(cwd);
 	const resources = await loadCodingResources(settingsManager, cwd);
 	const projectCatalog = new ProjectCatalog(options.sessionDir);
 	const workspaceDirectories = async (): Promise<readonly string[]> => {
@@ -880,7 +885,22 @@ async function createCodingAgentHarness(
 		if (project?.removed || (metadata?.projectId !== undefined && project === undefined)) return [];
 		return project?.workspaces ?? [cwd];
 	};
-	const registry = createCodingRegistry(settingsManager, cwd, resources, workspaceDirectories);
+	const envs = new ExecutionEnvs(cwd, settingsManager, workspaceDirectories);
+	const registry = createCodingRegistry(settingsManager, cwd, resources, workspaceDirectories, join(options.metadata.path, "artifacts", "review"));
+	const admission = async (): Promise<AgentOperationError | undefined> => {
+		const metadata = await readSession(options.sessionDir, options.metadata.id);
+		if (!metadata) return { code: "session_unavailable", message: "会话状态不可用，请重新连接宿主。" };
+		return metadata.workEndedAt === undefined ? undefined : { code: "session_ended", message: "会话已结束并归档；请恢复会话后再开始工作。" };
+	};
+	const beforeModel = async () => {
+		try { const refusal = await admission(); return refusal ? { block: refusal.message } : undefined; }
+		catch { return { block: "无法确认会话状态，请恢复宿主连接后重试。" }; }
+	};
+	registry.install(defineExtension({ name: "ended-session-gate", hooks: [
+		hook(GenerationTask, { beforeModel }),
+		hook(CompactionTask, { beforeModel }),
+		hook(ToolTask, { beforeTool: beforeModel, beforeExecute: beforeModel }),
+	] }));
 	if (options.pluginManifestPaths.length > 0) {
 		registry.install(defineExtension({
 			name: "plugin-development",
@@ -945,6 +965,9 @@ async function createCodingAgentHarness(
 			sessionName: async () => (await readSession(options.sessionDir, options.metadata.id))?.name,
 		});
 		return {
+			admission,
+			executionEnv: envs.env({ cwd, conversationId: conversation.id, read: harness }),
+			stopExecution: context => envs.cleanup(context),
 			cwd,
 			workspaceDirectories,
 			approvalGate,

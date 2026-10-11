@@ -16,6 +16,7 @@ export interface SessionSummary extends SessionAddress {
 	cwd: string;
 	projectId?: string;
 	archivedAt?: number;
+	workEndedAt?: number;
 	/**
 	 * `host` for a Session this server owns, `local` for a terminal session that no host has opened
 	 * yet. Attaching a `local` one adopts it: the host stores it and seeds it from its transcript.

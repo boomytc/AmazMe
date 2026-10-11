@@ -43,7 +43,7 @@ export type NestedToolSlot = SlotProgress & {
 	parentTaskId: TaskId;
 	taskId: TaskId;
 	/**
-	 * What the call was made with, replaced by the arguments it runs with, after repair, `beforeTool`, and coercion,
+	 * What the call was made with, replaced by the arguments it runs with, after repair, coercion, and `beforeTool`,
 	 * once it starts executing. A model-issued call's arguments are in its assistant entry instead.
 	 */
 	arguments: JsonObject;

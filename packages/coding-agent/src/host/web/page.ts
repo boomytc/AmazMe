@@ -15,6 +15,7 @@ import {
 	PROJECT_ADD_ACTION, PROJECT_ADD_MODAL, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_RENAME_MODAL,
 	PROJECT_EDIT_ACTION, PROJECT_EDIT_MODAL, PROJECT_NEW_SESSION_ACTION,
 	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, ARCHIVE_TOGGLE_ACTION, ARCHIVE_MANAGE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
+	SESSION_END_ACTION, SESSION_END_MODAL, endSessionModal,
 	addProjectModal, editProjectModal, renameProjectModal, removeProjectModal,
 } from "@amazme/web";
 import {
@@ -169,6 +170,7 @@ import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { isProjectSelection, ProjectManagement, SessionArchive } from "../services/projects.ts";
 import type { ProjectSelection } from "../services/projects.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
+import { SessionInsights } from "../services/insights.ts";
 import { SessionMirror } from "../services/session-mirror.ts";
 import type { SessionMirrorWarning } from "../services/session-mirror.ts";
 import { Skills } from "../services/skills.ts";
@@ -294,6 +296,10 @@ class SessionPainter {
 	#models: Models | undefined;
 	#mcp: McpService | undefined;
 	#sessionSettings: SessionSettings | undefined;
+	#insights: SessionInsights | undefined;
+	#reviewDiff: string | undefined;
+	#reviewRequest = 0;
+	#reviewIdentity: string | undefined;
 	#mirror: SessionMirror | undefined;
 	#commands: CommandsService | undefined;
 	#workspace: WorkspaceService | undefined;
@@ -327,6 +333,18 @@ class SessionPainter {
 	}
 	get settingsService(): SessionSettings | undefined {
 		return this.#sessionSettings;
+	}
+	get insightsService(): SessionInsights | undefined { return this.#insights; }
+	get insights(): SessionInsights["state"]["value"] {
+		const value = this.#insights?.state.value;
+		return value?.conversationId === this.#conversations?.state.value?.selected ? value : undefined;
+	}
+	get reviewDiff(): string | undefined { return this.#reviewDiff; }
+	async inspectDiff(conversation: string, root: string, path: string): Promise<void> {
+		const service = this.#insights, request = ++this.#reviewRequest;
+		if (!service) return;
+		const diff = await service.diff(conversation, root, path, BACKGROUND_CONTEXT);
+		if (this.#insights === service && this.#reviewRequest === request && this.insights?.conversationId === conversation) this.#reviewDiff = diff;
 	}
 
 	get mirrorWarning(): SessionMirrorWarning | null | undefined {
@@ -628,8 +646,9 @@ class SessionPainter {
 		}
 		const catalogue = await this.#sessionSource.catalogue(BACKGROUND_CONTEXT);
 		const hasMcp = catalogue.some(entry => entry.serviceId === Mcp.id);
+		const hasInsights = catalogue.some(entry => entry.serviceId === SessionInsights.id);
 		const services = this.#sessionSource.open({
-			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals, ...(hasMcp ? [Mcp] : []), SessionMirror],
+			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals, ...(hasMcp ? [Mcp] : []), ...(hasInsights ? [SessionInsights] : []), SessionMirror],
 			assertAccess(): void {},
 			onError: (error: Error) => {
 				if (this.#services !== services || this.#sessionId !== sessionId) return;
@@ -662,6 +681,13 @@ class SessionPainter {
 		this.#workspace = services.use(Workspace);
 		this.#terminal = services.use(Terminal);
 		this.#conversations = services.use(Conversations);
+		this.#insights = hasInsights ? services.use(SessionInsights) : undefined;
+		this.#insights?.state.subscribe(() => {
+			const value = this.#insights?.state.value;
+			const identity = value === undefined ? undefined : `${value.conversationId}:${value.reviewRevision}`;
+			if (identity !== this.#reviewIdentity) { this.#reviewIdentity = identity; this.#reviewDiff = undefined; this.#reviewRequest++; }
+			paint();
+		});
 		this.#approvals = services.use(Approvals);
 		// A listing, a file, or terminal output lands here; the page repaints the dock from it.
 		this.#workspace.state.subscribe(() => paint());
@@ -708,6 +734,10 @@ class SessionPainter {
 		this.#models = undefined;
 		this.#mcp = undefined;
 		this.#sessionSettings = undefined;
+		this.#insights = undefined;
+		this.#reviewDiff = undefined;
+		this.#reviewIdentity = undefined;
+		this.#reviewRequest++;
 		this.#mirror = undefined;
 		this.#commands = undefined;
 		this.#workspace = undefined;
@@ -1010,6 +1040,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						workspace: bound ? painter.workspace : undefined,
 						terminal: bound ? painter.terminal : undefined,
 						conversations: bound ? painter.conversations : undefined,
+						...(bound && painter.insights ? { insights: painter.insights, reviewDiff: painter.reviewDiff } : {}),
 					},
 					// The panel inherits this view's language, so one resolution serves the whole page.
 					panel: {
@@ -1451,6 +1482,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * connection line.
 	 */
 	const runCommandLine = (name: string, args: string): void => {
+		if (name === "changes" && painter.insightsService) { view = CHAT_VIEW; dockOpen = true; dockTab = "changes"; paint(); return; }
+		if (name === "limits" || name === "execution") { view = SETTINGS_VIEW; paint(); return; }
+		if (name === "resume_run" && painter.insightsService && painter.insights) { void painter.insightsService.resume(painter.insights.conversationId, BACKGROUND_CONTEXT).catch(report); return; }
 		const command = composerCommands().find((candidate) => candidate.name === name);
 		if (!command) {
 			const key: MessageKey = ["model", "thinking", "scoped_models", "login", "logout"].includes(name) ? "model.commandInstead"
@@ -1826,6 +1860,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			case "command":
 				switch (action.id) {
+					case "insights:refresh":
+						if (painter.insightsService) { const service = painter.insightsService; runPanelCall({ id: action.id, sessionId: painter.sessionId, retry: false, call: () => service.refresh(BACKGROUND_CONTEXT).then(done) }); } return;
+					case "insights:resume":
+						if (painter.insightsService && action.data) { const service = painter.insightsService; runPanelCall({ id: action.id, sessionId: painter.sessionId, retry: false, call: () => service.resume(action.data!, BACKGROUND_CONTEXT).then(done) }); } return;
+					case "insights:diff": {
+						if (!action.data || !painter.insightsService) return;
+						const values: unknown = JSON.parse(action.data);
+						if (Array.isArray(values) && values.length === 3 && values.every(value => typeof value === "string")) void painter.inspectDiff(values[0], values[1], values[2]).then(paint, report);
+						return;
+					}
+					case SESSION_END_ACTION:
+						if (action.data) openModal(endSessionModal(locale, action.data), action); return;
 					case PROJECT_ADD_ACTION:
 						openModal(addProjectModal(locale), action); return;
 					case PROJECT_NEW_SESSION_ACTION:
@@ -2359,6 +2405,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({ id: action.id, data: action.data, inModal: true, call: () => projects.rename(action.data ?? "", fields.name ?? "", BACKGROUND_CONTEXT).then(done) }); return;
 					case PROJECT_REMOVE_MODAL:
 						runPanelCall({ id: action.id, data: action.data, inModal: true, call: () => projects.remove(action.data ?? "", BACKGROUND_CONTEXT).then(done) }); return;
+					case SESSION_END_MODAL:
+						runPanelCall({ id: action.id, data: action.data, inModal: true, retry: false, call: () => archives.end(action.data ?? "", BACKGROUND_CONTEXT).then(done) }); return;
 					case PLUGIN_MCP_PROJECT_MODAL: {
 						const owner = mcpView;
 						if (!owner || modal?.id !== action.id || action.data !== owner.target || modalPending) return;

@@ -1242,7 +1242,7 @@ describe("tool task version 1 records", () => {
 		expect((await harness.getTask(id, context))?.version).toBe(1);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(2);
+		expect(settled.version).toBe(3);
 		expect(settled.input).toMatchObject({ kind: "model", callId: "c1" });
 		expect(settled.state.outcome).toMatchObject({ status: "completed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(1);
@@ -1260,7 +1260,7 @@ describe("tool task version 1 records", () => {
 		const { harness, root } = await openChat(await openNodeSqliteStorage(path), setup);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(2);
+		expect(settled.version).toBe(3);
 		expect(settled.state.outcome).toMatchObject({ status: "failed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(0);
 		const [result] = results(await allEntries(root));

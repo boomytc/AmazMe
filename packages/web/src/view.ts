@@ -85,6 +85,7 @@ export interface RosterItem {
 	readonly id: string;
 	readonly projectId?: string;
 	readonly archived?: boolean;
+	readonly workEnded?: boolean;
 	/** The session's title, or the localized new-session label. */
 	readonly label: string;
 	/** The session's working directory, shown so two sessions are tellable apart. */
@@ -420,6 +421,7 @@ export interface WebView {
 	readonly roster: readonly RosterItem[];
 	readonly projects?: readonly ProjectGroup[];
 	readonly archived?: boolean;
+	readonly readOnly?: boolean;
 	/** The filter text itself, so the input keeps what the reader typed. */
 	readonly rosterFilter: string;
 	readonly blocks: readonly TranscriptBlock[];
@@ -482,6 +484,7 @@ export function inboxOf(view: ConversationView): InboxState {
 export interface SessionSummaryLike {
 	readonly projectId?: string;
 	readonly archivedAt?: number;
+	readonly workEndedAt?: number;
 	readonly serverId?: string;
 	readonly sessionId: string;
 	readonly createdAt: number;
@@ -694,7 +697,7 @@ function displayName(session: SessionSummaryLike): string | undefined {
  * The roster, newest first, narrowed by the reader's filter. A filter matches the title the row
  * shows (the stored name, or the untitled label), its id, or its working directory.
  */
-export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefined, attachedId: string | undefined, now: number, filter = "", archived = false): RosterItem[] {
+export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefined, attachedId: string | undefined, now: number, filter = "", archived = false, retentionDays = 0): RosterItem[] {
 	const sessions = state?.sessions ?? [];
 	const needle = filter.trim().toLowerCase();
 	const untitled = translate(locale, "sidebar.untitled").toLowerCase();
@@ -715,10 +718,11 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 			id: session.sessionId,
 			projectId: session.projectId,
 			archived: session.archivedAt !== undefined,
+			...(session.workEndedAt === undefined ? {} : { workEnded: true }),
 			label: displayName(session) ?? translate(locale, "sidebar.untitled"),
 			cwd: session.cwd,
-			age: formatAge(session.createdAt, now),
-			ageIso: new Date(session.createdAt).toISOString(),
+			age: session.archivedAt === undefined ? formatAge(session.createdAt, now) : translate(locale, retentionDays > 0 && now - session.archivedAt >= retentionDays * 86400000 ? "project.retentionDue" : "project.archivedAge", { age: formatAge(session.archivedAt, now) }),
+			ageIso: new Date(session.archivedAt ?? session.createdAt).toISOString(),
 			attached: attachedId === session.sessionId,
 			source: session.source ?? "host",
 			group: rosterGroupOf(session.createdAt, now),
@@ -1462,8 +1466,10 @@ export function buildWebView(input: WebViewInput): WebView {
 	const { locale } = input;
 	const forkable = shownCanFork(input);
 	const blocks = transcriptBlocks(locale, input.transcript, [], input.feedback?.records, input.feedbackScope);
-	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter, input.showArchived);
+	const retention = Number(input.panel.settings?.state?.descriptors.find(descriptor => descriptor.id === "archiveRetentionDays")?.value ?? 0);
+	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter, input.showArchived, retention);
 	const archived = input.attachedId !== undefined && input.directory?.sessions.some(session => session.sessionId === input.attachedId && session.archivedAt !== undefined);
+	const ended = input.attachedId !== undefined && input.directory?.sessions.some(session => session.sessionId === input.attachedId && session.workEndedAt !== undefined);
 	const empty =
 		input.directory === undefined
 			? translate(locale, "header.connecting")
@@ -1477,10 +1483,11 @@ export function buildWebView(input: WebViewInput): WebView {
 		roster,
 		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.showArchived ?? false, input.rosterFilter),
 		archived: input.showArchived,
+		...(ended ? { readOnly: true } : {}),
 		rosterFilter: input.rosterFilter,
 		...(input.attachedId === undefined ? {} : { transcriptScope: `${input.attachedId}:${input.transcript?.conversation.id ?? input.feedbackScope?.conversationId ?? "root"}` }),
 		focus: input.focus,
-		lane: [archived ? translate(locale, "project.archived") : "", input.lane === undefined ? "" : laneLine(locale, input.lane)].filter(Boolean).join(" · "),
+		lane: [ended ? translate(locale, "project.workEnded") : archived ? translate(locale, "project.archived") : "", input.dock.insights?.paused ? translate(locale, `review.paused.${input.dock.insights.paused}`) : "", input.lane === undefined ? "" : laneLine(locale, input.lane)].filter(Boolean).join(" · "),
 		history: {
 			blocks: historyPageBlocks(locale, input.history),
 			more: input.historyMore,
@@ -1504,7 +1511,7 @@ export function buildWebView(input: WebViewInput): WebView {
 			// Only a host that answered offers the guide, and a session means the reader is past it.
 			show: input.showWelcome && input.directory !== undefined && (input.directory.sessions.length ?? 0) === 0,
 		}),
-		run: runControls(locale, input.submitMode, input.attachedId !== undefined, forkable),
+		run: runControls(locale, input.submitMode, input.attachedId !== undefined && !ended, forkable),
 		attachedId: input.attachedId,
 		sessionLabel: attachedSessionLabel(input.directory, input.attachedId, locale),
 		meter: statusMeter(input.transcript, input.models),
@@ -1514,6 +1521,6 @@ export function buildWebView(input: WebViewInput): WebView {
 		newSession: { enabled: input.directory !== undefined && !input.creatingSession, ...(input.creatingSession ? { pending: true } : {}) },
 		model: modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined),
 		panel: panelView({ ...input.panel, locale }),
-		dock: dockView(locale, dockWithShownEntries(input, forkable)),
+		dock: dockView(locale, { ...dockWithShownEntries(input, forkable), ...(ended ? { readOnly: true } : {}) }),
 	};
 }

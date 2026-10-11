@@ -670,6 +670,8 @@ export type HarnessInspection = {
 
 /** Raw active transcript and derived model context. */
 export type ContextView = {
+	/** A projection can invalidate older provider measurements by replacing retained payloads. */
+	readonly estimatedTokens?: number;
 	/** Newest applicable head marker, if any. */
 	readonly head: EntryRecord | undefined;
 	/** Raw active entries: the head marker followed by non-head entries from its head through the tail. */
@@ -842,7 +844,17 @@ export interface HookApi extends DocumentReader, BackgroundTasks {
 export type HookResult<T> = T | undefined | Promise<T | undefined>;
 
 /** Hooks of the built-in generation task. */
-export interface GenerationHooks {
+export interface ModelAdmissionHooks {
+	/** Refuse a provider request explicitly. Hook exceptions retain the usual report-and-skip policy. */
+	beforeModel(api: HookApi, context: Context): HookResult<{ readonly block: string }>;
+}
+
+export interface ContextProjectionHooks {
+	/** Project retained context before estimating, requesting, or summarizing; raw entries stay intact. */
+	projectContext(view: ContextView, api: HookApi, context: Context): HookResult<ContextView>;
+}
+
+export interface GenerationHooks extends ContextProjectionHooks, ModelAdmissionHooks {
 	/** Before every request attempt, including recovery; the result is used for that request only. */
 	beforeRequest(
 		request: { readonly messages: readonly Message[] },
@@ -864,12 +876,19 @@ export type ToolHookCall = ToolCall & {
 
 /** Hooks of the built-in tool task, for model-issued and nested calls. */
 export interface ToolHooks {
-	/** Before intent; the first `block` wins, otherwise `arguments` replace the call's arguments. A throw blocks. */
+	/** Before retaining final arguments; the first `block` wins, otherwise `arguments` replace them. Replacements are checked without coercion. A throw blocks. */
 	beforeTool(
 		call: ToolHookCall,
 		api: HookApi,
 		context: Context,
 	): HookResult<{ readonly arguments?: JsonObject; readonly block?: string }>;
+	/** Before execution intent; arguments are a detached copy. `attempt.recovery` is true for restored admission or safe replay. A throw blocks. */
+	beforeExecute(
+		call: ToolHookCall,
+		api: HookApi,
+		context: Context,
+		attempt: { readonly recovery: boolean },
+	): HookResult<{ readonly block: string }>;
 	/** After execution, before the result is committed; replaces the result. */
 	afterTool(
 		call: ToolHookCall,
@@ -880,7 +899,7 @@ export interface ToolHooks {
 }
 
 /** Hooks of the built-in compaction task. */
-export interface CompactionHooks {
+export interface CompactionHooks extends ContextProjectionHooks, ModelAdmissionHooks {
 	/**
 	 * After range selection, before summarizing; the first decision wins. `entries` are the active entries the summary
 	 * replaces, the head marker first, and `messages` their model context, the summarizer's source; `firstKept` is the

@@ -147,7 +147,8 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 					return failModelError(runtime, overflow, context);
 				}
 			}
-			const view = await runtime.context(conversationId, context);
+			let view = await runtime.context(conversationId, context);
+			await runtime.hooks.each("projectContext", async hook => { view = await hook(view, runtime, context) ?? view; });
 			const shown = replaySections(view.messages);
 			const report = (error: unknown) => runtime.report(error);
 			let env: ExecutionEnv | undefined;
@@ -203,7 +204,11 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			}, context);
 			const model = runtime.models.getModel(ref.provider, ref.modelId);
 			if (model === undefined) return failNoModel(runtime, ref, context);
-			const view = await runtime.context(conversationId, context, { at: cutoff });
+			let admission: { readonly block: string } | undefined;
+			await runtime.hooks.each("beforeModel", async hook => { admission ??= await hook(runtime, context); });
+			if (admission) return failModelError(runtime, admission.block, context);
+			let view = await runtime.context(conversationId, context, { at: cutoff });
+			await runtime.hooks.each("projectContext", async hook => { view = await hook(view, runtime, context) ?? view; });
 			let messages = view.messages;
 			await runtime.hooks.each("beforeRequest", async (hook) => {
 				const replaced = await hook({ messages }, runtime, context);

@@ -303,7 +303,7 @@ describe("the session dock", () => {
 		const rows = panel.groups[0]?.rows ?? [];
 		expect(rows.map((row) => [row.title, row.description])).toEqual([
 			["Generate response #7", "Waiting for model response · main"],
-			["Run tool #9", "Running tool · child task marker"],
+			["Run tool #9", "Preparing tool · child task marker"],
 		]);
 		expect(rows[1]?.badges).toEqual(["Waiting for tasks: 1", "Related conversations: 1"]);
 		expect(rows[0]?.badges).toEqual(["In progress", "background", "Related conversations: 1"]);

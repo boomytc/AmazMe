@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { getSupportedThinkingLevels, type ImageContent, type ModelThinkingLevel, type TextContent } from "@amazme/ai";
 import { defineFacet } from "@amazme/chord";
 import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
@@ -11,6 +11,7 @@ import {
 	type ConversationView,
 	type EntryRecord,
 	AgentDoc,
+	LiveDoc,
 	Harness,
 	section,
 	type ModelRef,
@@ -60,6 +61,9 @@ import {
 	loadCodingResources,
 } from "./harness-setup.ts";
 import type { CodingResourceOptions } from "./prompt.ts";
+import { readReview, refreshReview } from "./insights/workspace-review.ts";
+import { resumeRun } from "./insights/run-policy.ts";
+import { RunStateDoc } from "./insights/state.ts";
 import { expandResourceCommand } from "../core/resource-command.ts";
 import type { ResourceLoader } from "../core/resource-loader.ts";
 import { selectSession } from "./sessions.ts";
@@ -245,7 +249,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		noSession: options.noSession,
 		sessionDir: options.sessionDir ?? settingsManager.getSessionDir(),
 	});
-	const envs = new ExecutionEnvs(location.cwd);
+	const envs = new ExecutionEnvs(location.cwd, settingsManager);
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;
 	let plugins: PluginRuntime | undefined;
@@ -254,7 +258,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	try {
 		configureHarnessHttp(settingsManager);
 		const settings = createHarnessSettings(settingsManager);
-		const registry = createCodingRegistry(settingsManager, location.cwd, resources);
+		const registry = createCodingRegistry(settingsManager, location.cwd, resources, async () => [location.cwd], location.directory === undefined ? undefined : join(location.directory, "artifacts", "review"));
 		registry.install(Subagent);
 
 		const pendingReports: unknown[] = [];
@@ -347,6 +351,12 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			});
 		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
+		const reportPausedRun = async (): Promise<void> => {
+			const id = current.id;
+			const [policy, live] = await Promise.all([opened.snapshot(RunStateDoc, id, context), opened.snapshot(LiveDoc, id, context)]);
+			if (current.id === id && policy?.paused && policy.run === String(live?.run?.inputs[0] ?? "")) notice("warning", "本轮预算已用完，已暂停于执行边界。/resume_run 追加预算继续，或按停止键取消。");
+		};
+		await reportPausedRun();
 		const reportResources = (): void => {
 			for (const diagnostic of [...resources.getSkills().diagnostics, ...resources.getPrompts().diagnostics, ...resources.getThemes().diagnostics]) {
 				notice(diagnostic.type === "error" ? "error" : "warning", `${diagnostic.path === undefined ? "" : `${diagnostic.path}: `}${diagnostic.message}`);
@@ -381,6 +391,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		// A commit only schedules a re-read; no Session API is called from the listener.
 		const unsubscribeCommits = harness.subscribeCommits((publication) => {
 			for (const change of publication.changes) {
+				if (change.type === "document" && change.conversationId === current.id && change.record.kind === RunStateDoc.definition.kind
+					&& change.value?.paused && change.ops.some(op => Array.isArray(op[1]) && op[1][0] === "paused")) notice("warning", "本轮预算已用完，已暂停于执行边界。/resume_run 追加预算继续，或按停止键取消。");
 				if (change.type === "conversation" || change.type === "entry") {
 					refreshList();
 					return;
@@ -479,6 +491,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				historyMore: true,
 				lane: laneNow(),
 			});
+			await reportPausedRun();
 		};
 		const pluginCommands = facetLoader === undefined ? undefined : new SlashCommandRegistry(NATIVE_COMMANDS.map(({ name }) => name));
 		const reservedCommands = new Set<string>(NATIVE_COMMANDS.map(({ name }) => name));
@@ -597,6 +610,31 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					return;
 				}
 				if (name === "thinking") { await selectThinking(args.trim()); return; }
+				if (name === "changes") {
+					await refreshReview(opened, current.id, context);
+					const review = await readReview(opened, current.id, context);
+					const query = args.trim();
+					const selected = review.files.filter(file => file.path === query || `${file.root}/${file.path}` === query);
+					notice("info", query ? selected.map(file => file.diff).join("\n") || "没有匹配的变更文件。"
+						: ["本轮工作区变更（可能包含人工并发修改）：", ...review.files.map(file => `${file.root}/${file.path} +${file.added} -${file.removed}`), ...review.state?.notes ?? [], ...(review.state?.verification ?? []).map(item => `${item.command}: ${item.exitCode === null ? "结果未知" : `退出码 ${item.exitCode}`}`), `跳过 ${review.state?.skipped ?? 0} 个文件；/changes 文件路径 查看差异。`].join("\n"));
+					return;
+				}
+				if (name === "resume_run") { await resumeRun(opened, current.id, context); notice("info", "已允许继续当前回合。"); return; }
+				if (name === "limits") {
+					if (args.trim()) {
+						const parts = args.trim().split(/\s+/).map(Number);
+						if (parts.length !== 3 || !parts.every(value => Number.isFinite(value) && value >= 0) || !parts.slice(0, 2).every(Number.isSafeInteger)) throw new Error("用法：/limits 工具次数 秒数 美元；0 表示不限。");
+						settingsManager.setRunLimits({ calls: parts[0], seconds: parts[1], cost: parts[2] }); await settingsManager.flush();
+					}
+					const limits = settingsManager.getSettings().runLimits;
+					notice("info", `单个对话每轮预算：工具 ${limits?.calls ?? 0} 次，${limits?.seconds ?? 0} 秒，$${limits?.cost ?? 0}；0 表示不限。暂停后 /resume_run 继续。`); return;
+				}
+				if (name === "execution") {
+					const mode = args.trim();
+					if (mode && mode !== "full-access" && mode !== "workspace-write" && mode !== "read-only") throw new Error("用法：/execution full-access|workspace-write|read-only");
+					if (mode) { settingsManager.setExecutionMode(mode as "full-access" | "workspace-write" | "read-only"); await settingsManager.flush(); }
+					notice("info", `执行模式：${settingsManager.getSettings().executionMode ?? "full-access"}。限制模式约束文件写入，不限制读取和网络；从下一次工具执行生效。`); return;
+				}
 				if (reservedCommands.has(name) || !state.commands?.some((candidate) => candidate.name === name)) throw new Error(`Unknown command: /${name}`);
 				await submitInput(`/${name}${args.length === 0 ? "" : ` ${args}`}`, "steer");
 			}),

@@ -1,4 +1,7 @@
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import { withAbortSignal } from "@amazme/chord/context";
+import type { ExecutionEnv } from "@amazme/durable/env";
+import type { AgentOperationError } from "../../core/plugins/agent-controller.ts";
 import { executeBashWithOperations } from "../../core/bash-executor.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { createLocalBashOperations } from "../../core/tools/bash.ts";
@@ -10,6 +13,8 @@ export const TERMINAL_MAX_BYTES = 64 * 1024;
 export const TERMINAL_PUBLISH_MS = 200;
 
 export interface TerminalServiceOptions {
+	readonly env?: ExecutionEnv;
+	readonly admission?: (context: Context) => Promise<AgentOperationError | undefined>;
 	/** The Session's working directory; every command runs there. */
 	readonly cwd: string;
 	/** Shell path and command prefix come from the same settings the agent's bash tool reads. */
@@ -37,6 +42,7 @@ export function createTerminalService(
 		error: null,
 	});
 	let running: AbortController | undefined;
+	let finished: Promise<void> | undefined;
 	/** Output received but not yet published; the state carries the tail the reader sees. */
 	let pending = "";
 	let truncated = false;
@@ -95,6 +101,9 @@ export function createTerminalService(
 		service: {
 			state,
 			async run(command: string, context: Context): Promise<TerminalRunResult> {
+				await options.settings.reload();
+				const refusal = await options.admission?.(context);
+				if (refusal) return { ok: false, problem: refusal.message };
 				const trimmed = command.trim();
 				if (trimmed.length === 0) return { ok: false, problem: "Type a command to run." };
 				if (running !== undefined) return { ok: false, problem: "A command is already running." };
@@ -102,6 +111,8 @@ export function createTerminalService(
 				const resolved = prefix === undefined || prefix.length === 0 ? trimmed : `${prefix}\n${trimmed}`;
 				const controller = new AbortController();
 				running = controller;
+				let finish!: () => void;
+				finished = new Promise<void>(resolve => { finish = resolve; });
 				pending = "";
 				truncated = false;
 				liveContext = context;
@@ -114,18 +125,14 @@ export function createTerminalService(
 					draft.error = null;
 				});
 				try {
-					const result = await executeBashWithOperations(
-						resolved,
-						options.cwd,
-						createLocalBashOperations({ shellPath: options.settings.getShellPath() }),
-						{
-							signal: controller.signal,
-							onChunk: (chunk) => {
-								pending += chunk;
-								scheduleFlush();
-							},
-						},
-					);
+					const onChunk = (chunk: string): void => { pending += chunk; scheduleFlush(); };
+					const execute = async () => {
+						if (!options.env) return executeBashWithOperations(resolved, options.cwd, createLocalBashOperations({ shellPath: options.settings.getShellPath() }), { signal: controller.signal, onChunk });
+						const outcome = await options.env.exec(resolved, { onOutput: onChunk }, withAbortSignal(controller.signal, context));
+						if (!outcome.ok) throw outcome.error;
+						return { output: "", exitCode: outcome.value.exitCode, cancelled: controller.signal.aborted, truncated: false };
+					};
+					const result = await execute();
 					flush();
 					publish(context, (draft) => {
 						draft.status = result.cancelled ? "cancelled" : "done";
@@ -137,6 +144,10 @@ export function createTerminalService(
 					return { ok: true };
 				} catch (error) {
 					flush();
+					if (controller.signal.aborted) {
+						publish(context, draft => { draft.status = "cancelled"; draft.exitCode = null; draft.error = null; });
+						return { ok: true };
+					}
 					const problem = error instanceof Error ? error.message : String(error);
 					publish(context, (draft) => {
 						draft.status = "done";
@@ -144,6 +155,7 @@ export function createTerminalService(
 					});
 					return { ok: false, problem };
 				} finally {
+					finish(); finished = undefined;
 					flush();
 					running = undefined;
 					liveContext = undefined;
@@ -151,6 +163,7 @@ export function createTerminalService(
 			},
 			async stop(_context: Context): Promise<void> {
 				running?.abort();
+				await finished;
 			},
 		} satisfies Terminal,
 	};

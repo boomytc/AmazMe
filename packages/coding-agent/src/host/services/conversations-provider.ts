@@ -17,6 +17,7 @@ import {
 	type TreeNavigationDeps,
 } from "../../durable/session-surface.ts";
 import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest, AgentQueueResponse } from "../../core/plugins/agent-controller.ts";
+import type { AgentOperationError } from "../../core/plugins/agent-controller.ts";
 import { createAgentController } from "../../core/plugins/agent-controller-provider.ts";
 import { Conversations } from "./conversations.ts";
 import { type ConversationsState, type HistoryPage, IDLE_LANE, type LaneStatus, type LeaveResult, type ReturnPoint, type TaskSummary } from "../../durable/conversation-view.ts";
@@ -70,6 +71,7 @@ export interface BranchSummaryModelRequest {
 }
 
 export interface ConversationsServiceOptions {
+	readonly admission?: (context: Context) => Promise<AgentOperationError | undefined>;
 	readonly harness: Harness;
 	/** The Session's root conversation: the one a presentation shows without focusing another. */
 	readonly root: Conversation;
@@ -113,6 +115,7 @@ export function createConversationsService(
 	let graph: Awaited<ReturnType<Harness["taskGraph"]>> | undefined;
 	let graphUnsubscribe: (() => void) | undefined;
 	let listTimer: NodeJS.Timeout | undefined;
+	const summariesInFlight = new Map<AbortController, Promise<void>>();
 
 	const conversationOf = (id: string): Promise<Conversation | undefined> => options.harness.conversation(Number(id) as ConversationId, TODO_CONTEXT);
 
@@ -122,7 +125,7 @@ export function createConversationsService(
 		if (existing !== undefined) return existing;
 		const conversation = await conversationOf(id);
 		if (conversation === undefined) return undefined;
-		const created = createAgentController(options.harness, () => conversation);
+		const created = createAgentController(options.harness, () => conversation, options.admission);
 		controllers.set(id, created);
 		return created;
 	};
@@ -265,7 +268,12 @@ export function createConversationsService(
 		context: Context,
 	): Promise<LeaveResult> => {
 		const signal = new AbortController();
+		let settled!: () => void;
+		summariesInFlight.set(signal, new Promise<void>(resolve => { settled = resolve; }));
+		const abort = (): void => signal.abort(context.abortSignal?.reason);
+		context.abortSignal?.addEventListener("abort", abort, { once: true });
 		try {
+			if (choice.summarize) { const error = await options.admission?.(context); if (error) return { conversationId: null, summarized: false, cancelled: false, error }; }
 			const custom = choice.customInstructions?.trim();
 			const result = await navigateTree(
 				options.harness,
@@ -288,9 +296,10 @@ export function createConversationsService(
 				error: null,
 			};
 		} catch (error) {
+			if (signal.signal.aborted) return { conversationId: null, summarized: false, cancelled: true, error: null };
 			const message = error instanceof Error ? error.message : String(error);
 			return { conversationId: null, summarized: false, cancelled: false, error: { code: "leave", message } };
-		}
+		} finally { context.abortSignal?.removeEventListener("abort", abort); summariesInFlight.delete(signal); settled(); }
 	};
 
 	const fork = async (conversationId: string, at: string | null, context: Context): Promise<Awaited<ReturnType<Conversations["fork"]>>> => {
@@ -381,6 +390,7 @@ export function createConversationsService(
 
 	return {
 		service: {
+			async cancelSummaries() { const pending = [...summariesInFlight]; for (const [signal] of pending) signal.abort(); await Promise.all(pending.map(([, settled]) => settled)); },
 			state,
 			select,
 			fork,

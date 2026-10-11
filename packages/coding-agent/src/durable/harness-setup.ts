@@ -10,6 +10,7 @@ import {
 	type Registry,
 } from "@amazme/durable";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import type { ExecutionEnv } from "@amazme/durable/env";
 import {
 	createCodingTools,
 	createFindTool,
@@ -29,6 +30,10 @@ import { getAgentDir } from "../config.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../core/trust-manager.ts";
 import { createPiPrompt, type CodingResourceOptions } from "./prompt.ts";
 import { createDurableCodemode } from "./codemode.ts";
+import { createRunPolicy } from "./insights/run-policy.ts";
+import { createContextCleanup } from "./insights/context-cleanup.ts";
+import { createWorkspaceReview } from "./insights/workspace-review.ts";
+import { createPolicyEnv } from "./insights/execution-policy.ts";
 
 /** A headless host uses saved project trust and the global policy; it cannot prompt for trust. */
 export function createCodingSettings(cwd: string): SettingsManager {
@@ -108,7 +113,7 @@ export async function loadCodingResources(
 
 /** A registry with Pi's coding tools and one resource-backed system prompt. */
 export function createCodingRegistry(settingsManager: SettingsManager, cwd: string, resources: ResourceLoader,
-	workspaces: () => Promise<readonly string[]> = async () => [cwd]): Registry {
+	workspaces: () => Promise<readonly string[]> = async () => [cwd], artifactDirectory?: string): Registry {
 	const registry = createRegistry();
 	registry.install(
 		createCodingTools({
@@ -125,6 +130,9 @@ export function createCodingRegistry(settingsManager: SettingsManager, cwd: stri
 		}),
 	);
 	registry.install(createDurableCodemode(settingsManager));
+	registry.install(createRunPolicy(settingsManager));
+	registry.install(createContextCleanup(settingsManager));
+	registry.install(createWorkspaceReview(settingsManager, workspaces, artifactDirectory));
 	const program =
 		(name: "rg" | "fd"): SearchProgramOptions["program"] =>
 		async (api) => {
@@ -156,16 +164,20 @@ export function createCodingRegistry(settingsManager: SettingsManager, cwd: stri
 /** One execution environment per directory, shared by every conversation in it. */
 export class ExecutionEnvs {
 	readonly #defaultCwd: string;
-	readonly #envs = new Map<string, NodeExecutionEnv>();
+	readonly #envs = new Map<string, ExecutionEnv>();
+	readonly #settings: SettingsManager | undefined;
+	readonly #workspaces: () => Promise<readonly string[]>;
 
-	constructor(defaultCwd: string) {
+	constructor(defaultCwd: string, settings?: SettingsManager, workspaces: () => Promise<readonly string[]> = async () => [defaultCwd]) {
 		this.#defaultCwd = defaultCwd;
+		this.#settings = settings;
+		this.#workspaces = workspaces;
 	}
 
-	readonly env = ({ cwd = this.#defaultCwd }: EnvTarget): NodeExecutionEnv => {
+	readonly env = ({ cwd = this.#defaultCwd }: EnvTarget): ExecutionEnv => {
 		let env = this.#envs.get(cwd);
 		if (env === undefined) {
-			env = new NodeExecutionEnv({ cwd });
+			env = this.#settings ? createPolicyEnv(cwd, this.#settings, this.#workspaces) : new NodeExecutionEnv({ cwd });
 			this.#envs.set(cwd, env);
 		}
 		return env;

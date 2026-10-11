@@ -401,6 +401,8 @@ interface StartServerBackendOptions {
 	setServerPluginPackages(packagePaths: readonly string[]): Promise<readonly string[]>;
 }
 
+class SessionWorkEndedError extends Error {}
+
 interface RunningServerBackend extends RunningServer {
 	refreshSessions(): Promise<void>;
 	activateHostSessions(): void;
@@ -492,6 +494,7 @@ async function startServerBackend(
 			cwd: metadata.cwd,
 			...(projectId === undefined ? {} : { projectId }),
 			...(metadata.archivedAt === undefined ? {} : { archivedAt: metadata.archivedAt }),
+			...(metadata.workEndedAt === undefined ? {} : { workEndedAt: metadata.workEndedAt }),
 			source,
 			...(display.length === 0 ? {} : { name: display }),
 		};
@@ -566,9 +569,10 @@ async function startServerBackend(
 	 * Join one plugin-owned prompt through the existing worker and its durable receipt.
 	 * Session routing must be ready before a server facet can open an attachment.
 	 */
-	const openPromptSession = async (sessionId: string, context: Context) => {
+	const openPromptSession = async (sessionId: string, context: Context, allowEnded = false) => {
 		await awaitWithContext(hostReady, context);
 		const metadata = await resolveSession(sessionId, context);
+		if (!allowEnded && metadata.workEndedAt !== undefined) throw new SessionWorkEndedError("会话已结束并归档；恢复后才能开始工作。");
 		const selected = await options.resolveSessionPlugins(metadata, undefined, context);
 		const handle = await workers.openSession(metadata, context, selected.manifestPaths);
 		return handle.attachClient(context);
@@ -579,11 +583,13 @@ async function startServerBackend(
 		accepted: (operationId: string) => Promise<void>,
 		context: Context,
 	): Promise<HostPromptResult> => {
+		let ended = false;
 		const attachment = await openPromptSession(sessionId, context).catch((error: unknown) => {
+			if (error instanceof SessionWorkEndedError) { ended = true; return null; }
 			if (error instanceof SessionNotFoundError) return null;
 			throw error;
 		});
-		if (attachment === null) return { status: "refused", code: "target_missing", message: `Unknown session: ${sessionId}` };
+		if (attachment === null) return { status: "refused", code: ended ? "session_ended" : "target_missing", message: ended ? "会话已结束并归档；恢复后才能开始工作。" : `Unknown session: ${sessionId}` };
 		const cleanupContext = withoutAbortSignal(context);
 		let operationId: string | undefined;
 		try {
@@ -636,7 +642,7 @@ async function startServerBackend(
 		}
 	};
 	const cancelHostPrompt = async (sessionId: string, request: HostPromptRequest, context: Context): Promise<AgentPromptResult | null> => {
-		const attachment = await openPromptSession(sessionId, context).catch((error: unknown) => {
+		const attachment = await openPromptSession(sessionId, context, true).catch((error: unknown) => {
 			if (error instanceof SessionNotFoundError) return null;
 			throw error;
 		});
@@ -690,7 +696,7 @@ async function startServerBackend(
 			},
 		}),
 	], pluginLoader);
-	const archiveSession = async (sessionId: string, archived: boolean, context: Context): Promise<void> => {
+	const archiveSession = async (sessionId: string, archived: boolean, context: Context, endWork = false): Promise<void> => {
 		context.abortSignal?.throwIfAborted();
 		const metadata = await resolveSession(sessionId, context);
 		if (!archived) {
@@ -698,7 +704,8 @@ async function startServerBackend(
 			const project = projectRows.find(project => project.id === metadata.projectId) ?? await projectForCwd(metadata.cwd);
 			if (project?.removed) await projects.restore(project.id);
 		}
-		await writeSessionArchive(sessionDir, sessionId, archived);
+		await writeSessionArchive(sessionDir, sessionId, archived, endWork);
+		if (endWork) await workers.stopSessionWork(metadata, BACKGROUND_CONTEXT);
 		await setLocalSessionArchived(metadata.cwd, metadata.id, metadata.createdAt, archived);
 	};
 	const serverServices = await createExperimentalServerServices({
@@ -725,6 +732,7 @@ async function startServerBackend(
 			},
 			rename: (id, name) => projects.rename(id, name),
 			archive: archiveSession,
+			end: (id, context) => archiveSession(id, true, context, true),
 			remove: async (id, context) => {
 				context.abortSignal?.throwIfAborted();
 				for (const session of (await listSummaries()).filter(session => session.projectId === id)) {
