@@ -3,6 +3,8 @@ import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { resolvePath } from "../utils/paths.ts";
+import { isProjectSelection } from "./services/projects.ts";
+import type { ProjectSelection } from "./services/projects.ts";
 
 export interface ProjectMetadata {
 	readonly id: string;
@@ -29,6 +31,25 @@ export class ProjectCatalog {
 		}
 		if (!Array.isArray(value) || value.some(row => !isProject(row))) throw new Error("Invalid project catalog");
 		return value as ProjectMetadata[];
+	}
+	async selection(): Promise<ProjectSelection | undefined> {
+		try {
+			const value: unknown = JSON.parse(await readFile(join(this.#directory, ".selection.json"), "utf8"));
+			return isProjectSelection(value) ? value : undefined;
+		} catch (error: unknown) {
+			if (error instanceof SyntaxError || (error instanceof Error && "code" in error && error.code === "ENOENT")) return undefined;
+			throw error;
+		}
+	}
+	/** The host serializes writes; replacement is atomic even if it stops during a selection. */
+	async remember(selection: ProjectSelection): Promise<void> {
+		if (!isProjectSelection(selection)) throw new Error("Invalid project selection");
+		const file = join(this.#directory, ".selection.json");
+		const temporary = `${file}.${randomUUID()}.tmp`;
+		try {
+			await writeFile(temporary, `${JSON.stringify(selection)}\n`);
+			await rename(temporary, file);
+		} finally { await rm(temporary, { force: true }); }
 	}
 	async initialize(directories: readonly string[]): Promise<ProjectMetadata[]> {
 		const paths = await Promise.all(directories.map(async cwd => {

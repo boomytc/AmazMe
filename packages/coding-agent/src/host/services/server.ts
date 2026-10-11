@@ -27,7 +27,7 @@ import { applySetting, describeSettings, publishSettings, settingsErrors } from 
 import { Skills, type Skills as SkillsService } from "./skills.ts";
 import { createSkillsService } from "./skills-provider.ts";
 import { ProjectManagement, SessionArchive } from "./projects.ts";
-import type { ProjectSummary } from "./projects.ts";
+import type { ProjectSelection, ProjectSummary } from "./projects.ts";
 import {
 	type SessionCreateOptions,
 	SessionDirectory,
@@ -81,6 +81,8 @@ export async function createExperimentalServerServices(options: {
 	/** Selected server facets own their services and resources. Absent means no plugin host. */
 	plugins?: PluginRuntime;
 	projects?: {
+		selection(): Promise<ProjectSelection | undefined>;
+		remember(selection: ProjectSelection): Promise<void>;
 		list(): Promise<ProjectSummary[]>;
 		defaultId: string;
 		create(cwd: string, name?: string): Promise<ProjectSummary>;
@@ -179,6 +181,8 @@ export async function createExperimentalServerServices(options: {
 				if (options.projects !== undefined) {
 					const projects = options.projects;
 					provider.provide(ProjectManagement, {
+						selection: () => serialize(() => projects.selection()),
+						remember: (selection, context) => serialize(async () => { context.abortSignal?.throwIfAborted(); await projects.remember(selection); }),
 						create: (input, context) => updateDirectory(async () => { context.abortSignal?.throwIfAborted(); return projects.create(input.cwd, input.name); }),
 						rename: (id, name, context) => updateDirectory(async () => { context.abortSignal?.throwIfAborted(); return projects.rename(id, name); }),
 						remove: (id, context) => updateDirectory(() => projects.remove(id, context)),

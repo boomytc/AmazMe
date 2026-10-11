@@ -165,7 +165,8 @@ import { Models, type Models as ModelsService, type ModelsState } from "../servi
 import { Plugins, PresentationPlugins } from "../services/plugins.ts";
 import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
-import { ProjectManagement, SessionArchive } from "../services/projects.ts";
+import { isProjectSelection, ProjectManagement, SessionArchive } from "../services/projects.ts";
+import type { ProjectSelection } from "../services/projects.ts";
 import { SessionSettings, Settings } from "../services/settings.ts";
 import { SessionMirror } from "../services/session-mirror.ts";
 import type { SessionMirrorWarning } from "../services/session-mirror.ts";
@@ -790,11 +791,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let selectedProjectId: string | undefined;
 	let showArchived = false;
 	let selectionRevision = 0;
-	const rememberProject = (): void => {
-		try {
-			if (selectedProjectId !== undefined) sessionStorage.setItem(`amazme.project.${manifest.server.id}`, selectedProjectId);
-			else sessionStorage.removeItem(`amazme.project.${manifest.server.id}`);
-		} catch { /* A restricted webview may not provide session storage. */ }
+	const selectionKey = `amazme.selection.${manifest.server.id}`;
+	const rememberSelection = (): void => {
+		const session = directory.state.value?.sessions.find(session => session.sessionId === desiredSessionId);
+		const selection: ProjectSelection = {
+			...(selectedProjectId === undefined ? {} : { projectId: selectedProjectId }),
+			...(session === undefined || session.projectId !== selectedProjectId ? {} : {
+				sessionId: session.sessionId,
+				...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
+			}),
+			showArchived,
+		};
+		try { sessionStorage.setItem(selectionKey, JSON.stringify(selection)); }
+		catch { /* A restricted webview may not provide session storage. */ }
+		if (booted && directoryReady && client.connected) void projects.remember(selection, BACKGROUND_CONTEXT).catch(report);
 	};
 	/** The dock: whether it is open, and which tab it shows. Both belong to this page. */
 	let dockOpen = false;
@@ -1088,13 +1098,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				showArchived = false;
 				selectedProjectId = current.projectId;
 				reconnectTranscript = undefined;
-				rememberProject();
+				rememberSelection();
 			}
 		}
 		const available = state.projects?.filter(project => showArchived || !project.removed) ?? [];
 		if (!available.some(project => project.id === selectedProjectId)) {
 			selectedProjectId = available.find(project => project.id === state.defaultProjectId)?.id ?? available[0]?.id;
-			if (booted) { selectionRevision += 1; rememberProject(); }
+			if (booted) { selectionRevision += 1; rememberSelection(); }
 		}
 		paint();
 	});
@@ -1156,12 +1166,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		selectionRevision += 1;
 		desiredSessionId = undefined;
 		reconnectTranscript = undefined;
+		rememberSelection();
 		saveDraft();
 		await transition(async () => {
 			if (desiredSessionId !== undefined) return;
 			await painter.detach();
 			if (client.connected && client.attachment !== undefined) await management.detach(BACKGROUND_CONTEXT);
-			try { sessionStorage.removeItem(`amazme.session.${manifest.server.id}`); } catch { /* Optional storage. */ }
 			draftSessionId = undefined;
 			pending = [];
 			completions = [];
@@ -1184,7 +1194,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const state = directory.state.value;
 		const session = state?.sessions.find(session => session.sessionId === sessionId);
 		const project = state?.projects?.find(project => project.id === session?.projectId);
-		return directoryReady && session !== undefined && !project?.removed
+		return directoryReady && session !== undefined
+			&& (!project?.removed || (showArchived && session.archivedAt !== undefined))
 			&& (session.archivedAt === undefined || showArchived);
 	};
 	const selectSession = (sessionId: string, resume = false): Promise<void> => {
@@ -1192,8 +1203,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			selectionRevision += 1;
 			const summary = directory.state.value?.sessions.find(session => session.sessionId === sessionId);
 			if (summary?.projectId !== undefined) selectedProjectId = summary.projectId;
-			rememberProject();
 			desiredSessionId = sessionId;
+			rememberSelection();
 			reconnectTranscript = undefined;
 		}
 		return transition(async () => {
@@ -1230,11 +1241,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			reconnectTranscript = undefined;
 			restoreDraft(sessionId, !resume);
 			paint();
-			try {
-				sessionStorage.setItem(`amazme.session.${manifest.server.id}`, sessionId);
-			} catch {
-				// Storage may be unavailable in a restricted browser or desktop webview.
-			}
 		});
 	};
 	renderer.onSelect = (sessionId) => {
@@ -1262,6 +1268,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		desiredSessionId = undefined;
 		const selection = ++selectionRevision;
 		showArchived = false;
+		rememberSelection();
 		creating = true;
 		paint();
 		const preparation = project?.removed ? projects.create({ cwd: project.cwd, name: project.name }, BACKGROUND_CONTEXT) : Promise.resolve();
@@ -1794,7 +1801,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					}
 					case PROJECT_SELECT_ACTION: {
 						selectedProjectId = action.data;
-						rememberProject();
 						const session = rosterItems(locale, directory.state.value, undefined, Date.now(), "", showArchived).find(item => item.projectId === action.data);
 						view = CHAT_VIEW;
 						void (session ? selectSession(session.id) : clearSession()).catch(report); paint(); return;
@@ -1807,9 +1813,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							const available = state?.projects?.filter(project => !project.removed) ?? [];
 							if (!available.some(project => project.id === selectedProjectId)) {
 								selectedProjectId = available.find(project => project.id === state?.defaultProjectId)?.id ?? available[0]?.id;
-								rememberProject();
 							}
 						}
+						rememberSelection();
 						if (!showArchived && directory.state.value?.sessions.some(session => session.sessionId === desiredSessionId && session.archivedAt !== undefined)) void clearSession().catch(report);
 						paint(); return;
 					case SESSION_ARCHIVE_ACTION:
@@ -2279,7 +2285,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({ id: action.id, inModal: true, call: async () => {
 							const project = await projects.create({ cwd: (fields.cwd ?? "").trim(), ...(fields.name?.trim() ? { name: fields.name.trim() } : {}) }, BACKGROUND_CONTEXT);
 							if (selectionRevision === selection && modal === dialog) {
-								selectedProjectId = project.id; rememberProject(); showArchived = false; await clearSession();
+								selectedProjectId = project.id; showArchived = false; await clearSession();
 							}
 							return { ok: true as const };
 						} }); return;
@@ -2654,30 +2660,42 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	await serverServices.ready(BACKGROUND_CONTEXT);
 	scheduleDiscovery = discoverSchedules();
 	await scheduleDiscovery;
-	booted = true;
-	// Restore this tab's last selection when it still exists; otherwise use the newest session.
-	let remembered: string | null = null;
-	let rememberedProject: string | null = null;
+	// The tab remains independent. A new origin/window uses the host's last saved selection.
+	const selection = selectionRevision;
+	let remembered: ProjectSelection | undefined;
 	try {
-		remembered = sessionStorage.getItem(`amazme.session.${manifest.server.id}`);
-		rememberedProject = sessionStorage.getItem(`amazme.project.${manifest.server.id}`);
-	} catch {
-		// Fall back to the newest session when this browser cannot retain a selection.
-	}
-	const listed = rosterItems(locale, directory.state.value, undefined, Date.now());
-	const project = directory.state.value?.projects?.find(project => project.id === rememberedProject && !project.removed);
-	if (project) selectedProjectId = project.id;
-	const candidates = project ? listed.filter(item => item.projectId === project.id) : listed;
-	const initial = candidates.find((item) => item.id === remembered) ?? candidates[0];
-	if (initial !== undefined) {
-		await selectSession(initial.id).catch((error: unknown) => {
+		const value: unknown = JSON.parse(sessionStorage.getItem(selectionKey) ?? "null");
+		if (isProjectSelection(value)) remembered = value;
+		else {
+			const projectId = sessionStorage.getItem(`amazme.project.${manifest.server.id}`);
+			const sessionId = sessionStorage.getItem(`amazme.session.${manifest.server.id}`);
+			if (projectId || sessionId) remembered = { ...(projectId ? { projectId } : {}), ...(sessionId ? { sessionId } : {}), showArchived: false };
+		}
+	} catch { /* The host fallback also works without browser storage. */ }
+	remembered ??= await projects.selection(BACKGROUND_CONTEXT).catch((error: unknown) => { report(error instanceof Error ? error : new Error(String(error))); return undefined; });
+	booted = true;
+	if (selectionRevision === selection) {
+		const state = directory.state.value;
+		showArchived = remembered?.showArchived ?? false;
+		const previous = state?.sessions.find(session => session.sessionId === remembered?.sessionId);
+		if (previous !== undefined && previous.archivedAt === undefined && remembered?.archivedAt !== undefined) showArchived = false;
+		const available = state?.projects?.filter(project => showArchived || !project.removed) ?? [];
+		const project = available.find(project => project.id === (remembered?.projectId ?? previous?.projectId))
+			?? available.find(project => project.id === state?.defaultProjectId) ?? available[0];
+		selectedProjectId = project?.id;
+		let initial: string | undefined;
+		if (remembered === undefined) initial = rosterItems(locale, state, undefined, Date.now()).find(item => project === undefined || item.projectId === project.id)?.id;
+		else if (previous !== undefined && previous.projectId === selectedProjectId && canResumeSession(previous.sessionId)
+			&& (previous.archivedAt === undefined || previous.archivedAt === remembered.archivedAt)) initial = previous.sessionId;
+		if (initial === undefined) await clearSession();
+		else await selectSession(initial).catch((error: unknown) => {
 			renderer.setConnection(
 				(language) => translate(language, "page.attachFailed", { error: message(error) }),
 				"error",
 				(language) => translate(language, "page.attachFailedShort"),
 			);
 		});
-	}
+	} else rememberSelection();
 	paint();
 
 	globalThis.addEventListener("pagehide", () => {

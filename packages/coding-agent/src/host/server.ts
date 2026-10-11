@@ -680,6 +680,8 @@ async function startServerBackend(
 		...(plugins === undefined ? {} : { plugins }),
 		administration,
 		projects: {
+			selection: () => projects.selection(),
+			remember: selection => projects.remember(selection),
 			defaultId: defaultProjectId,
 			list: () => projects.list(),
 			create: (cwd, name) => projects.create(cwd, name),
