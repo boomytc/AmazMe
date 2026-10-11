@@ -245,6 +245,14 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 					]
 				: []),
 		],
+		actions: [...new Set([task.conversationId, ...task.conversations])]
+			.filter((id) => state.conversations.some((conversation) => conversation.id === id))
+			.map((id) => ({
+				id: CONVERSATION_SELECT_ACTION,
+				label: translate(locale, id === task.conversationId ? "dock.viewTaskConversation" : "dock.viewOwnedConversation", { id }),
+				data: id,
+				tone: "default" as const,
+			})),
 	}));
 	return {
 		id: "tasks",

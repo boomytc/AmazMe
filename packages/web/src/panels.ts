@@ -301,6 +301,7 @@ export interface SkillsPanelInput {
 
 export interface McpRuntimeLike {
 	readonly disabled: boolean;
+	readonly canOverrideProject: boolean;
 	readonly errors: readonly string[];
 	readonly servers: readonly {
 		readonly name: string;
@@ -414,6 +415,8 @@ export const PLUGIN_MCP_LOGIN_REDIRECT_ACTION = "plugins:mcp-login-redirect";
 export const PLUGIN_MCP_LOGIN_CANCEL_ACTION = "plugins:mcp-login-cancel";
 export const PLUGIN_MCP_LOGIN_MODAL = "plugins:mcp-login-response";
 export const PLUGIN_MCP_MODAL = "plugins:mcp-entry";
+export const PLUGIN_MCP_PROJECT_ACTION = "plugins:mcp-project";
+export const PLUGIN_MCP_PROJECT_MODAL = "plugins:mcp-project-submit";
 
 function settingsControls(locale: Locale, descriptor: SettingDescriptorLike): PanelControl[] {
 	const base = { id: SETTINGS_FIELD_ACTION, data: descriptor.id, value: descriptor.value };
@@ -716,6 +719,9 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 									}
 								: {}),
 							actions: [
+								...(live?.scope === "global" && runtime?.canOverrideProject && server.editable
+									? [{ id: PLUGIN_MCP_PROJECT_ACTION, label: translate(locale, "panel.plugins.projectSettings"), data: server.name, tone: "default" as const }]
+									: []),
 								...(live?.enabled
 									? [
 											{
@@ -1118,6 +1124,21 @@ export function addMcpServerModal(locale: Locale): PanelModal {
 			},
 		],
 		submit: translate(locale, "modal.add"),
+	};
+}
+
+/** Project overrides change only the settings supported by the shared MCP manager. */
+export function mcpProjectModal(locale: Locale, server: { readonly name: string; readonly enabled: boolean; readonly exposure: string }): PanelModal {
+	return {
+		id: PLUGIN_MCP_PROJECT_MODAL,
+		data: server.name,
+		title: translate(locale, "panel.plugins.projectSettings"),
+		description: translate(locale, "panel.plugins.projectSettingsHelp", { server: server.name }),
+		fields: [
+			{ id: "enabled", label: translate(locale, "panel.plugins.enabled"), kind: "checkbox", value: String(server.enabled) },
+			{ id: "exposure", label: translate(locale, "panel.plugins.exposure"), kind: "select", value: server.exposure, options: mcpExposures(locale) },
+		],
+		submit: translate(locale, "modal.save"),
 	};
 }
 

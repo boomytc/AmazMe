@@ -24,28 +24,37 @@ The default terminal runs on Durable. Its local commands are:
 
 The terminal favors commands and shortcuts. `Ctrl+L` opens the model selector and `Shift+Tab` cycles the current model's supported reasoning levels in both terminal clients. The composer shows the current selection and a short key guide; typing `/` discovers the other commands. Configure resource selection through `amazme config` and preferences in the settings files. Start or resume sessions through CLI options; see [CLI](cli.md), [Sessions](sessions.md) and [Keybindings](keybindings.md). `Ctrl+C` exits; `Ctrl+D` exits when the editor is empty.
 
-## Hosted terminal and Web
+## Hosted terminal
 
-`amazme client` and the Web client use the worker's shared Commands service for model/thinking selection, compaction, plugin commands and resource expansion. The hosted terminal also uses its local plugin command registry for presentation commands and dialogs.
-
-| Command | Behavior |
-|---|---|
-| `/model [provider/model]` | Select a model; the hosted terminal opens a selector when omitted |
-| `/thinking [level]` | Select a reasoning level; the hosted terminal opens a selector when omitted |
-| `/scoped_models` | Hosted terminal model-list configuration |
-| `/compact [instructions]` | Compact the focused conversation |
-| `/reload` | Rebuild the worker's plugin generation and refresh command resources; the hosted terminal also reloads its presentation plugins |
-| `/login [provider]`, `/logout [provider]` | Open that client's provider authentication flow |
-| `/tree`, `/agents`, `/fork`, `/older` | Hosted terminal navigation; Web uses its conversation controls |
-| `/name [name]` | Set or show the Web session name |
-
-Templates and enabled `/skill:<name>` entries come from the attached worker's resource loader, so a client in another directory uses the session's selected files. The hosted terminal and Web expand these on the host before submitting through the focused conversation's existing prompt path. Session plugin commands execute through the same command service. Presentation commands and the hosted terminal's navigation take precedence in that terminal.
-
-The worker catalogue marks its four terminal navigation commands `terminal`; a Web client refuses those slash commands instead of submitting them as prose. SDK-only commands such as `/export` and `/dashboard` are absent. Authentication commands and Web naming are added by the client that owns their interaction.
-
-Use `/reload` after adding or changing resource files. Skill changes made in the Web management panel also refresh the attached session's command resources. See [Usage](usage.md) for the hosted interfaces.
+`amazme client` uses local menus for model/thinking selection, scoped models, authentication and conversation navigation. It uses the worker's shared Commands service for compaction, reload, plugin commands and resource expansion. Its presentation plugins can add local commands and dialogs.
 
 In both terminals, `/scoped_models` reuses the searchable model configuration list. Enter toggles a row, Ctrl+A enables all, Ctrl+X clears all, and Ctrl+S saves the current scope as the default for new sessions. Changes affect the current terminal/session immediately; Esc closes the list. An empty scope stays empty. Hiding the active model changes the list and cycling choices without switching the active model.
+
+## Web and desktop
+
+Web and desktop share the same clickable controls. The composer lists plugin commands, prompt templates and enabled skills. Built-in settings and navigation use these controls:
+
+| Terminal command | Web / desktop entry |
+|---|---|
+| `/model`, `/thinking` | Model menu in the composer |
+| `/scoped_models` | Configure model list in the model menu or Settings |
+| `/login`, `/logout` | Accounts in the model menu or Settings |
+| `/attachments` | Remove button on each draft attachment thumbnail |
+| `/agents` | Session tools → Conversations → Open |
+| `/tree` | Session tools → Conversations → Return to; optionally summarize the branch |
+| `/fork` | Fork above the conversation or in Session tools → Conversations |
+| `/older` | Load older above the transcript |
+| `/tasks` | Session tools → Tasks; open a task's conversation or child conversation from its row |
+| `/mcp` | Sidebar Plugins → MCP servers; enable, choose exposure, reconnect, sign in, reload or configure a global server only for the attached trusted project |
+| `/plugins` | Sidebar Plugins → Plugin packages |
+| `/compact` | Compact context above the conversation |
+| `/reload` | Reload session resources in Settings |
+
+The sidebar session menu provides rename, delete and copy ID; New session creates and attaches a session. Session switching, fork, history and task navigation operate on the attached session's Conversations service. MCP project settings use that session's trusted project directory.
+
+Templates and enabled `/skill:<name>` entries come from the attached worker's resource loader, so a client in another directory uses the session's selected files. The hosted terminal and Web expand these before submitting through the focused conversation's existing prompt path. Session plugin commands execute through the same command service. The shared built-in commands are `compact` and `reload`; the Web composer directs users to the corresponding controls instead of running them as slash commands.
+
+Use Reload session resources after adding or changing resource files. Skill changes made in the Web management panel also refresh the attached session's command resources. See [Usage](usage.md) for the hosted interfaces.
 
 ## SDK interactive mode
 

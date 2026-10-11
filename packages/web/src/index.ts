@@ -112,6 +112,7 @@ export {
 } from "./shortcuts.ts";
 export {
 	addMcpServerModal,
+	mcpProjectModal,
 	addPackageModal,
 	addScheduleModal,
 	editScheduleModal,
@@ -138,6 +139,8 @@ export {
 	PLUGIN_MCP_ENABLED_ACTION,
 	PLUGIN_MCP_EXPOSURE_ACTION,
 	PLUGIN_MCP_MODAL,
+	PLUGIN_MCP_PROJECT_ACTION,
+	PLUGIN_MCP_PROJECT_MODAL,
 	PLUGIN_MCP_REMOVE_ACTION,
 	PLUGIN_PACKAGE_ADD_ACTION,
 	PLUGIN_PACKAGE_MODAL,

@@ -17,6 +17,7 @@ import {
 	APPROVAL_DENY_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
 	addMcpServerModal,
+	mcpProjectModal,
 	addPackageModal,
 	addScheduleModal,
 	editScheduleModal,
@@ -70,6 +71,8 @@ import {
 	PLUGIN_MCP_ENABLED_ACTION,
 	PLUGIN_MCP_EXPOSURE_ACTION,
 	PLUGIN_MCP_MODAL,
+	PLUGIN_MCP_PROJECT_ACTION,
+	PLUGIN_MCP_PROJECT_MODAL,
 	PLUGIN_MCP_REMOVE_ACTION,
 	PLUGIN_PACKAGE_ADD_ACTION,
 	PLUGIN_PACKAGE_MODAL,
@@ -228,23 +231,24 @@ const LEAVE_CUSTOM_MODAL = "conversation:leave-custom-submit";
 /** Return-point rows on the conversations dock, sharing the host's leave path with `/tree`. */
 function withReturnPoints(view: WebView, points: readonly { readonly id: string; readonly label: string }[], skipPrompt: boolean): WebView {
 	if (view.dock.panel.id !== "conversations" || points.length === 0) return view;
+	const copy = (key: MessageKey): string => translate(view.locale, key);
 	const actions = (id: string): PanelRow["actions"] =>
 		skipPrompt
-			? [{ id: LEAVE_ACTION, label: "Return", tone: "default", data: id }]
+			? [{ id: LEAVE_ACTION, label: copy("history.return"), tone: "default", data: id }]
 			: [
-					{ id: LEAVE_ACTION, label: "No summary", tone: "default", data: id },
-					{ id: LEAVE_SUMMARY_ACTION, label: "Summarize", tone: "default", data: id },
-					{ id: LEAVE_CUSTOM_ACTION, label: "Custom", tone: "default", data: id },
+					{ id: LEAVE_ACTION, label: copy("history.noSummary"), tone: "default", data: id },
+					{ id: LEAVE_SUMMARY_ACTION, label: copy("history.summarize"), tone: "default", data: id },
+					{ id: LEAVE_CUSTOM_ACTION, label: copy("history.custom"), tone: "default", data: id },
 				];
 	const rows: PanelRow[] = points.map((point) => ({
 		id: `return:${point.id}`,
 		title: point.label,
-		description: "Continue from here",
+		description: copy("history.continue"),
 		actions: actions(point.id),
 	}));
 	const group: PanelGroup = {
 		id: "conversations:return",
-		title: "Return to",
+		title: copy("history.returnTo"),
 		rows,
 		empty: "",
 	};
@@ -740,6 +744,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let creating = false;
 	let modal: PanelModal | undefined;
 	let modelScopeView: { readonly service: ModelsService; readonly sessionId: string } | undefined;
+	let mcpProjectView: { readonly service: McpService; readonly sessionId: string; readonly name: string } | undefined;
 	/** Only the modal's binding and expected ids are local; interaction state stays on Models. */
 	let providerAuthView: {
 		readonly service: ModelsService;
@@ -872,6 +877,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		applyTheme(appearance);
 		document.documentElement.lang = documentLanguage(locale);
 		refreshCommandResources();
+		if (mcpProjectView && (!client.connected || painter.mcpService !== mcpProjectView.service || painter.sessionId !== mcpProjectView.sessionId || desiredSessionId !== mcpProjectView.sessionId)) {
+			mcpProjectView = undefined;
+			modal = undefined;
+			modalPending = false;
+			modalNotice = undefined;
+			panelPending = undefined;
+		}
 		if (modelScopeView && (!client.connected || painter.modelsService !== modelScopeView.service || painter.sessionId !== modelScopeView.sessionId || desiredSessionId !== modelScopeView.sessionId)) {
 			modelScopeView = undefined;
 			modal = undefined;
@@ -1259,6 +1271,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		if (!command) {
 			const key: MessageKey = ["model", "thinking", "scoped_models", "login", "logout"].includes(name) ? "model.commandInstead"
 				: ["name", "tree", "agents", "fork", "older"].includes(name) ? "page.sessionCommandInstead"
+				: name === "tasks" ? "page.tasksCommandInstead" : ["mcp", "plugins"].includes(name) ? "page.pluginsCommandInstead"
+				: name === "attachments" ? "page.attachmentsCommandInstead"
 				: name === "reload" ? "page.reloadCommandInstead" : name === "compact" ? "page.compactCommandInstead" : "page.commandUnknown";
 			renderer.setConnection(copy(key, { name }), "error");
 			return;
@@ -1363,6 +1377,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const openModal = (spec: PanelModal, opener?: { readonly id: string; readonly data?: string }): void => {
 		if (spec.id !== PROVIDER_AUTH_MODAL) providerAuthView = undefined;
 		if (spec.id !== MODEL_SCOPE_MODAL) modelScopeView = undefined;
+		if (spec.id !== PLUGIN_MCP_PROJECT_MODAL) mcpProjectView = undefined;
 		modal = spec;
 		modalOpener = opener;
 		modalPending = false;
@@ -1375,6 +1390,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		if (modalPending) panelPending = undefined;
 		providerAuthView = undefined;
 		modelScopeView = undefined;
+		mcpProjectView = undefined;
 		diagnosticRequest += 1;
 		diagnosticReport = undefined;
 		modal = undefined;
@@ -1393,6 +1409,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		try {
 			const node = document.querySelector(attribute);
 			if (node instanceof HTMLElement && node.getClientRects().length > 0) node.focus();
+			else if (opener.id === PLUGIN_MCP_PROJECT_ACTION) {
+				const row = [...document.querySelectorAll<HTMLElement>("[data-row-id]")].find(control => control.dataset.rowId === `mcp:${opener.data}`);
+				row?.querySelector<HTMLElement>("input, select, button")?.focus();
+			}
 			else if (opener.id === MODEL_SCOPE_ACTION || opener.id === PROVIDER_AUTH_ACTION) document.getElementById("model-trigger")?.focus();
 		} catch {
 			// A selector the page cannot express leaves the focus where it is.
@@ -1608,6 +1628,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			case "command":
 				switch (action.id) {
+					case PLUGIN_MCP_PROJECT_ACTION: {
+						const runtime = painter.mcpValue;
+						const server = runtime?.servers.find(server => server.name === action.data && server.scope === "global");
+						if (!mcp || !mcpSession || !server || !runtime?.canOverrideProject || !client.connected || mcpSession !== desiredSessionId) return;
+						mcpProjectView = { service: mcp, sessionId: mcpSession, name: server.name };
+						openModal(mcpProjectModal(locale, server), action);
+						return;
+					}
 					case MODEL_SELECTOR_ACTION:
 						view = CHAT_VIEW;
 						closeModal();
@@ -1793,6 +1821,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					}
 					case CONVERSATION_SELECT_ACTION: {
 						const id = action.data ?? "";
+						view = CHAT_VIEW;
 						// A page of history belongs to the conversation it was paged from.
 						history = [];
 						historyRequest += 1;
@@ -1814,18 +1843,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						openModal(
 							{
 								id: LEAVE_CUSTOM_MODAL,
-								title: "Summarize branch?",
-								description: "Custom instructions are added to the default summary. Leave them empty for the default.",
+								title: copy("history.customTitle"),
+								description: copy("history.customHelp"),
 								data: action.data,
 								fields: [
 									{
 										id: "instructions",
-										label: "Custom instructions",
+										label: copy("modal.compact.instructions"),
 										kind: "textarea",
 										value: "",
 									},
 								],
-								submit: "Summarize",
+								submit: copy("history.summarize"),
 							},
 							action,
 						);
@@ -2042,6 +2071,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "modal-submit": {
 				const fields = action.fields;
 				switch (action.id) {
+					case PLUGIN_MCP_PROJECT_MODAL: {
+						const owner = mcpProjectView;
+						if (!owner || modal?.id !== action.id || action.data !== owner.name || modalPending) return;
+						const current = () => mcpProjectView === owner && painter.mcpService === owner.service && painter.sessionId === owner.sessionId && desiredSessionId === owner.sessionId && client.connected;
+						if (!current() || !painter.mcpValue?.canOverrideProject) return;
+						const exposure = fields.exposure;
+						if (!exposure || !["direct", "codemode", "deferred", "hidden"].includes(exposure)) return;
+						runPanelCall({ id: action.id, inModal: true, sessionId: owner.sessionId, retry: false, current,
+							call: () => owner.service.configure(owner.name, { enabled: fields.enabled === "true", exposure: exposure as McpExposure }, true, BACKGROUND_CONTEXT)
+								.then(() => plugins.reload(BACKGROUND_CONTEXT)).then(done, () => ({ ok: false as const, problem: copy("panel.plugins.projectSettingsFailed") })),
+						});
+						return;
+					}
 					case SESSION_RENAME_MODAL: {
 						const name = (fields.name ?? "").trim();
 						if (name.length === 0) {
