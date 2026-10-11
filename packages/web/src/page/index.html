@@ -173,20 +173,11 @@
 							<div class="submit-modes" id="submit-modes" hidden></div>
 						</div>
 						<div class="composer-trailing">
-							<!-- The attached session's model and reasoning level. The renderer fills the chip and the card it opens. -->
-							<button
-								class="model-trigger"
-								type="button"
-								id="model-trigger"
-								aria-haspopup="dialog"
-								aria-expanded="false"
-								aria-label="{{model.menuAria}}"
-								disabled
-							>
-								<span class="model-label" id="model-label">{{model.none}}</span>
-								<span class="model-effort" id="model-effort" hidden></span>
-								<svg class="icon model-chevron" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
-							</button>
+							<!-- Single-choice controls follow the session's model scope and supported reasoning levels. -->
+							<select class="composer-select model-select" id="model-select" aria-label="{{model.heading}}" disabled>
+								<option value="">{{model.none}}</option>
+							</select>
+							<select class="composer-select thinking-select" id="thinking-select" aria-label="{{model.effort}}" disabled hidden></select>
 							<!-- One stop control for the whole turn. Ctrl+C does the same thing. -->
 							<button class="stop" type="button" id="stop" aria-label="{{composer.stop}}" title="{{shortcut.stop}}" hidden>
 								<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stop"></use></svg>
@@ -194,7 +185,6 @@
 							<button class="primary" type="submit" id="primary" aria-label="{{composer.send}}" disabled>
 								<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow-up"></use></svg>
 							</button>
-							<div class="model-menu" id="model-menu" role="dialog" aria-label="{{model.menuAria}}" hidden></div>
 						</div>
 					</div>
 				</form>

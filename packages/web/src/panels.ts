@@ -11,7 +11,9 @@
 import {
 	COMPACT_MODAL,
 	MODEL_SCOPE_ACTION,
-	MODEL_SELECTOR_ACTION,
+	REFRESH_MODELS_ACTION,
+	MODEL_SELECT_ACTION,
+	MODEL_THINKING_ACTION,
 	MODEL_DEFAULTS_ACTION,
 	PROVIDER_AUTH_ACTION,
 	SESSION_RELOAD_ACTION,
@@ -29,6 +31,7 @@ import {
 	SESSION_REMOVE_MODAL,
 	SESSION_RENAME_MODAL,
 } from "./actions.ts";
+import type { ModelPicker } from "./view.ts";
 import type { Locale } from "./locale.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { ARCHIVE_MANAGE_ACTION } from "./projects.ts";
@@ -61,6 +64,8 @@ export interface NavItem {
 }
 
 export interface PanelOption {
+	readonly group?: string;
+	readonly disabled?: boolean;
 	readonly value: string;
 	readonly label: string;
 }
@@ -298,7 +303,7 @@ export interface PluginsStateLike {
 
 export interface SettingsPanelInput {
 	readonly state: SettingsStateLike | undefined;
-	readonly models?: { readonly available: boolean; readonly authentication: boolean; readonly selected: boolean };
+	readonly models?: { readonly available: boolean; readonly authentication: boolean; readonly selected: boolean; readonly picker: ModelPicker };
 	readonly archives?: boolean;
 }
 
@@ -496,16 +501,38 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		return unavailablePanel(locale, "settings", title, translate(locale, "panel.settings.description"));
 	}
 	const groups: PanelGroup[] = [];
-	if (input.models !== undefined) groups.push({
-		id: "settings:models", title: translate(locale, "model.manage"),
-		description: translate(locale, input.models.available ? "model.manageHelp" : "model.needsSession"),
-		actions: [
-			{ id: MODEL_SELECTOR_ACTION, label: translate(locale, "model.menuAria"), tone: "default", disabled: !input.models.available },
-			{ id: MODEL_SCOPE_ACTION, label: translate(locale, "model.scope"), tone: "default", disabled: !input.models.available },
-			{ id: PROVIDER_AUTH_ACTION, label: translate(locale, "auth.title"), tone: "default", disabled: !input.models.available || !input.models.authentication },
-			{ id: MODEL_DEFAULTS_ACTION, label: translate(locale, "model.defaults"), tone: "default", disabled: !input.models.available || !input.models.selected },
-		], rows: [], empty: "",
-	});
+	if (input.models !== undefined) {
+		const { picker, available, authentication, selected: hasSelected } = input.models;
+		const selected = picker.groups.flatMap(group => group.options).find(option => option.selected);
+		groups.push({
+			id: "settings:models", title: translate(locale, "model.manage"),
+			description: translate(locale, available ? "model.manageHelp" : "model.needsSession"),
+			actions: [
+				{ id: REFRESH_MODELS_ACTION, label: picker.refresh.label, tone: "default", disabled: !available || picker.refresh.busy },
+				{ id: MODEL_SCOPE_ACTION, label: translate(locale, "model.scope"), tone: "default", disabled: !available },
+				{ id: PROVIDER_AUTH_ACTION, label: translate(locale, "auth.title"), tone: "default", disabled: !available || !authentication },
+				{ id: MODEL_DEFAULTS_ACTION, label: translate(locale, "model.defaults"), tone: "default", disabled: !available || picker.disabled || !hasSelected },
+			], rows: [
+				{
+					id: "models:selection", title: translate(locale, "model.current"),
+					description: picker.scopeNotice ?? translate(locale, "model.nextRequest"),
+					...(picker.scopeNotice ? { value: picker.label } : {}),
+					controls: [{
+						id: MODEL_SELECT_ACTION, kind: "select", value: selected ? JSON.stringify([selected.provider, selected.modelId]) : "",
+						disabled: !available || picker.disabled || picker.groups.length === 0,
+						options: [{ value: "", label: translate(locale, picker.empty ? "model.configure" : "model.choose"), disabled: true },
+							...picker.groups.flatMap(group => group.options.map(option => ({ value: JSON.stringify([option.provider, option.modelId]), label: option.label, group: group.provider })))],
+					}],
+				},
+				...(picker.levels.length <= 1 ? [] : [{
+					id: "models:thinking", title: translate(locale, "model.effort"),
+					description: translate(locale, "model.supportedLevels"),
+					controls: [{ id: MODEL_THINKING_ACTION, kind: "select" as const, value: picker.levels.find(level => level.selected)?.level ?? "", disabled: !available || picker.disabled,
+						options: picker.levels.map(level => ({ value: level.level, label: level.label })) }],
+				}]),
+			], empty: "", footnote: picker.refresh.status,
+		});
+	}
 	const rowsByGroup = new Map<string, PanelRow[]>();
 	for (const descriptor of state.descriptors) {
 		const rows = rowsByGroup.get(descriptor.group) ?? [];

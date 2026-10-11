@@ -99,14 +99,14 @@ turn is running it queues as the next input. `Shift+Enter` inserts a newline; th
 up to the composer's cap and scrolls after that. The circular action on the right sends the draft. While a turn runs, an outlined `Stop` button sits beside it and
 stops the turn, the same as `Ctrl+C`.
 Committed entries appear without reloading, and any other attached presentation — a second browser tab or the
-client TUI — sees the same committed state. The chip beside that action carries the attached session's model and,
-for a model that reasons, its thinking level; it opens a card listing the host's model catalog grouped by
-provider and the levels that model supports, and either choice lands in that session's configuration on the host,
-so the next turn resolves its model and level from it.
+client TUI — sees the same committed state. Compact model and thinking dropdowns sit beside the send action.
+The model dropdown only lists the session's scoped models, grouped by provider. The thinking dropdown offers
+only levels supported by the current model and hides when there is no choice. Changes apply to the current
+conversation's next model request.
 
 A draft that starts with `/` opens the work-action palette: plugin commands, prompt templates and skills (`/skill:<name>`). `Tab` completes the highlighted row and `Enter` runs it. Plugins run through `Commands.run`; templates and skills expand through `Commands.expand` and use the page's normal submit path, preserving the focused conversation and Steer/Queue mode. Unknown names are refused without sending them to the model. Changes in **Skills** or **Skills as commands** refresh the catalog; use **Settings → Reload session resources** for new files or plugin changes.
 
-Model, reasoning and provider accounts use the model button or **Settings → Models and accounts**. The searchable checkbox model list controls the picker and model cycling, without switching a hidden current model. Scope changes apply to this session unless **Use this list for new sessions too** is checked. Choosing a model or reasoning level changes the current conversation; **Use current model and reasoning as defaults** explicitly saves new-session defaults. Session naming, branching, history and compaction have their own click controls.
+Choose models and reasoning with the composer dropdowns or **Settings → Models and connections**. Manage provider accounts in that settings page. The searchable checkbox model list controls the picker and model cycling, without switching a hidden current model. Scope changes apply to this session unless **Use this list by default for new sessions** is checked. Choosing a model or reasoning level changes the current conversation; the defaults action explicitly saves new-session defaults. Session naming, branching, history and compaction have their own click controls.
 
 Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
 served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of
@@ -122,9 +122,9 @@ reused, so a fresh load shows the committed entries again. Published packages an
 ### Run the conversation
 
 The header carries **Compact context** (an optional instruction steers the summary; the host compacts
-in the background and appends the summary entry to the transcript), and the model chip's card ends
-with **Refresh models** plus the host's last refresh outcome. While a turn runs, the composer shows a
-**Steer / Queue** toggle: a message sent in steer mode joins the running turn at its next boundary, and
+in the background and appends the summary entry to the transcript), and **Settings → Models and connections** offers
+**Refresh models** plus the host's last refresh outcome. While a turn runs, the composer shows an
+**Adjust task / Continue after** dropdown: a message sent in steer mode joins the running turn at its next boundary, and
 one sent in queue mode waits for the turn to finish. Each queued input is one strip above the composer
 with its own **Withdraw**, which cancels exactly that submission and leaves the others.
 

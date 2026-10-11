@@ -23,7 +23,8 @@ export const PROVIDER_AUTH_OPEN_ACTION = "run:provider-auth-open";
 export const PROVIDER_AUTH_CANCEL_ACTION = "run:provider-auth-cancel";
 export const MODEL_SCOPE_ACTION = "run:model-scope";
 export const MODEL_SCOPE_MODAL = "run:model-scope-submit";
-export const MODEL_SELECTOR_ACTION = "run:model-selector";
+export const MODEL_SELECT_ACTION = "run:model-select";
+export const MODEL_THINKING_ACTION = "run:model-thinking";
 export const MODEL_DEFAULTS_ACTION = "run:model-defaults";
 export const SESSION_RELOAD_ACTION = "session:reload-resources";
 /** How the next submit is applied while a turn runs: `data` is `steer` or `followUp`. */

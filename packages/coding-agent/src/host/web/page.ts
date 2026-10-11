@@ -88,7 +88,9 @@ import {
 	parseCommandLine,
 	QUEUE_CANCEL_ACTION,
 	REFRESH_MODELS_ACTION,
-	MODEL_SELECTOR_ACTION,
+	MODEL_SELECT_ACTION,
+	MODEL_THINKING_ACTION,
+	modelPicker,
 	MODEL_SCOPE_ACTION,
 	MODEL_SCOPE_MODAL,
 	MODEL_DEFAULTS_ACTION,
@@ -616,7 +618,7 @@ class SessionPainter {
 	async #refreshLevels(paint: () => void): Promise<void> {
 		const service = this.#models;
 		const configuration = service?.state.value?.configuration.model;
-		const model = configuration === undefined || configuration === null ? "" : `${configuration.provider}/${configuration.modelId}`;
+		const model = `${service?.state.value?.catalog.revision}:${configuration === undefined || configuration === null ? "" : `${configuration.provider}/${configuration.modelId}`}`;
 		if (service === undefined || model === this.#levelsModel) return;
 		this.#levelsModel = model;
 		this.#levels = undefined;
@@ -790,6 +792,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const diagnostics = serverServices.use(Diagnostics);
 	let diagnosticReport: DiagnosticReport | undefined;
 	let diagnosticRequest = 0;
+	let modelSelection: { readonly binding: object | undefined } | undefined;
 	let schedules: SchedulesService | undefined;
 	let scheduleServices: RemoteServices | undefined;
 	let removeScheduleObserver: (() => void) | undefined;
@@ -1017,6 +1020,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					now: Date.now(),
 					models: bound ? painter.modelsValue : undefined,
 					thinkingLevels: bound ? painter.levels : undefined,
+					modelPending: modelSelection !== undefined && modelSelection.binding === painter.binding,
 					submitMode,
 					attachments: bound ? pending : [],
 					approvals: bound ? painter.approvals : undefined,
@@ -1055,6 +1059,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							available: client.connected && painter.ready && painter.sessionId === desiredSessionId && painter.modelsService !== undefined,
 							authentication: bound && Boolean(painter.modelsValue?.authentication),
 							selected: bound && Boolean(painter.modelsValue?.configuration.model),
+							picker: { ...modelPicker(locale, bound ? painter.modelsValue : undefined, bound ? painter.levels : undefined, bound), disabled: !bound || modelSelection?.binding === painter.binding },
 						} },
 						skills: { state: skills.state.value },
 						plugins: { state: plugins.state.value, runtime: desiredSessionId === undefined ? undefined
@@ -1370,22 +1375,24 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		modal = undefined;
 		paint();
 	};
-	renderer.onSelectModel = (provider, modelId) => {
-		if (!client.connected || !painter.ready || painter.sessionId !== desiredSessionId) return;
+	/** A single in-flight selection prevents reasoning from racing a model switch. */
+	const selectModelSetting = (apply: () => Promise<void>, errorKey: "page.modelChangeFailed" | "page.thinkingFailed"): void => {
+		if (!client.connected || !painter.ready || painter.sessionId !== desiredSessionId || modelSelection?.binding === painter.binding) return;
 		const binding = painter.binding;
-		void painter.selectModel(provider, modelId).catch((error: unknown) => {
+		const operation = { binding };
+		modelSelection = operation;
+		paint();
+		void apply().catch((error: unknown) => {
 			if (painter.binding !== binding || painter.sessionId !== desiredSessionId) return;
-			renderer.setConnection(copy("page.modelChangeFailed", { error: message(error) }), "error");
+			renderer.setConnection(copy(errorKey, { error: message(error) }), "error");
+		}).finally(() => {
+			if (modelSelection !== operation) return;
+			modelSelection = undefined;
+			paint();
 		});
 	};
-	renderer.onSelectThinking = (level) => {
-		if (!client.connected || !painter.ready || painter.sessionId !== desiredSessionId) return;
-		const binding = painter.binding;
-		void painter.selectThinking(level).catch((error: unknown) => {
-			if (painter.binding !== binding || painter.sessionId !== desiredSessionId) return;
-			renderer.setConnection(copy("page.thinkingFailed", { error: message(error) }), "error");
-		});
-	};
+	renderer.onSelectModel = (provider, modelId) => selectModelSetting(() => painter.selectModel(provider, modelId), "page.modelChangeFailed");
+	renderer.onSelectThinking = (level) => selectModelSetting(() => painter.selectThinking(level), "page.thinkingFailed");
 	/**
 	 * Add picked, pasted, or dropped images. An image the page cannot send is refused with the
 	 * reason instead of being dropped silently, and the rest of the batch still arrives.
@@ -1636,7 +1643,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				const row = [...document.querySelectorAll<HTMLElement>("[data-row-id]")].find(control => control.dataset.rowId === `mcp:${opener.data}`);
 				row?.querySelector<HTMLElement>("input, select, button")?.focus();
 			}
-			else if (opener.id === MODEL_SCOPE_ACTION || opener.id === PROVIDER_AUTH_ACTION) document.getElementById("model-trigger")?.focus();
 		} catch {
 			// A selector the page cannot express leaves the focus where it is.
 		}
@@ -1808,6 +1814,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				closeModal();
 				return;
 			case "control":
+				if (action.id === MODEL_SELECT_ACTION) {
+					const option = renderer.view?.model.groups.flatMap(group => group.options).find(option => JSON.stringify([option.provider, option.modelId]) === action.value);
+					if (option) renderer.onSelectModel(option.provider, option.modelId);
+					return;
+				}
+				if (action.id === MODEL_THINKING_ACTION) {
+					renderer.onSelectThinking(action.value);
+					return;
+				}
 				if (action.id === WORKSPACE_OPEN_ACTION) {
 					void painter.workspaceOpen(action.value).catch(report); return;
 				}
@@ -1941,11 +1956,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						openModal(mcpProjectModal(locale, server), action);
 						return;
 					}
-					case MODEL_SELECTOR_ACTION:
-						view = CHAT_VIEW;
-						closeModal();
-						renderer.openModelSelector();
-						return;
 					case MODEL_SCOPE_ACTION: {
 						const service = painter.modelsService;
 						const sessionId = painter.sessionId;

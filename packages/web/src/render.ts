@@ -4,7 +4,7 @@
  * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, ARCHIVE_TOGGLE_ACTION, ARCHIVE_MANAGE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION, SESSION_END_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
@@ -103,11 +103,9 @@ export interface PageElements {
 	readonly attachments: HTMLElement;
 	readonly attach: HTMLButtonElement;
 	readonly fileInput: HTMLInputElement;
-	/** The model and effort chip, and the card it opens. */
-	readonly modelTrigger: HTMLButtonElement;
-	readonly modelLabel: HTMLElement;
-	readonly modelEffort: HTMLElement;
-	readonly modelMenu: HTMLElement;
+	/** The scoped model and supported thinking selectors. */
+	readonly modelSelect: HTMLSelectElement;
+	readonly thinkingSelect: HTMLSelectElement;
 }
 
 /** Host diagnostics may be literal; connection status copy follows the current locale. */
@@ -140,7 +138,6 @@ export interface PageRenderer {
 	onCommandPick: (value: string) => void;
 	/** Put text in the composer, the way a completion does. */
 	setDraft(text: string, focus?: boolean): void;
-	openModelSelector(): void;
 	/** Every navigation, control, and modal report from the management surface. */
 	onPanelAction: (action: PanelAction) => void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
@@ -193,10 +190,8 @@ export function collectPageElements(): PageElements {
 		meterTokens: pick("meter-tokens"),
 		meterCost: pick("meter-cost"),
 		submitModes: pick("submit-modes"),
-		modelTrigger: pickElement("model-trigger", HTMLButtonElement),
-		modelLabel: pick("model-label"),
-		modelEffort: pick("model-effort"),
-		modelMenu: pick("model-menu"),
+		modelSelect: pickElement("model-select", HTMLSelectElement),
+		thinkingSelect: pickElement("thinking-select", HTMLSelectElement),
 	};
 }
 
@@ -629,7 +624,8 @@ export function createRenderer(
 			[elements.attach, "composer.attach"],
 			[elements.primary, "composer.send"],
 			[elements.stop, "composer.stop"],
-			[elements.modelMenu, "model.menuAria"],
+			[elements.modelSelect, "model.heading"],
+			[elements.thinkingSelect, "model.effort"],
 		] as const) node.setAttribute("aria-label", copy(key));
 		elements.nav.parentElement?.setAttribute("aria-label", copy("sidebar.management"));
 		for (const [node, key] of [
@@ -687,12 +683,24 @@ export function createRenderer(
 			select.className = "panel-select";
 			select.dataset.controlKey = key;
 			select.setAttribute("aria-label", name);
+			const groups = new Map<string, HTMLOptGroupElement>();
 			for (const option of control.options ?? []) {
 				const node = document.createElement("option");
 				node.value = option.value;
 				node.textContent = option.label;
 				node.selected = option.value === control.value;
-				select.append(node);
+				node.disabled = option.disabled === true;
+				if (option.group === undefined) select.append(node);
+				else {
+					let group = groups.get(option.group);
+					if (!group) {
+						group = document.createElement("optgroup");
+						group.label = option.group;
+						groups.set(option.group, group);
+						select.append(group);
+					}
+					group.append(node);
+				}
 			}
 			select.disabled = control.disabled === true;
 			select.addEventListener("change", () => emit(select.value));
@@ -1815,32 +1823,25 @@ export function createRenderer(
 			elements.submitModes.hidden = true;
 			return;
 		}
+		let select = elements.submitModes.querySelector("select");
 		const labelsChanged = changed("submit-mode-labels", [view.locale, view.run.submitModes.map(option => [option.mode, option.label])]);
-		if (!elements.submitModes.firstElementChild || labelsChanged) {
-			const group = element("div", "mode-group");
-			group.setAttribute("role", "radiogroup");
-			group.setAttribute("aria-label", copy("composer.modesAria"));
-			for (const option of view.run.submitModes) {
-				const node = button("mode-option");
-				node.dataset.mode = option.mode;
-				node.title = copy(option.mode === "steer" ? "composer.steerHelp" : "composer.queueHelp");
-				node.setAttribute("role", "radio");
+		if (!select) {
+			select = document.createElement("select");
+			select.className = "composer-select";
+			select.addEventListener("change", () => report({ kind: "command", id: SUBMIT_MODE_ACTION, data: select?.value }));
+			elements.submitModes.replaceChildren(select);
+		}
+		if (labelsChanged || select.options.length === 0) {
+			select.replaceChildren(...view.run.submitModes.map(option => {
+				const node = document.createElement("option");
+				node.value = option.mode;
 				node.textContent = option.label;
-				node.addEventListener("click", () => report({ kind: "command", id: SUBMIT_MODE_ACTION, data: option.mode }));
-				node.addEventListener("keydown", event => {
-					const target = groupKeyTarget(event, node);
-					if (target) { target.focus(); report({ kind: "command", id: SUBMIT_MODE_ACTION, data: target.dataset.mode }); }
-				});
-				group.append(node);
-			}
-			elements.submitModes.replaceChildren(group);
+				return node;
+			}));
 		}
-		for (const node of elements.submitModes.querySelectorAll<HTMLButtonElement>("button")) {
-			const selected = view.run.submitModes.some(option => option.selected && option.mode === node.dataset.mode);
-			node.classList.toggle("selected", selected);
-			node.setAttribute("aria-checked", String(selected));
-			node.tabIndex = selected ? 0 : -1;
-		}
+		select.setAttribute("aria-label", copy("composer.modesAria"));
+		select.value = view.run.submitModes.find(option => option.selected)?.mode ?? "";
+		select.title = copy(select.value === "steer" ? "composer.steerHelp" : "composer.queueHelp");
 		elements.submitModes.hidden = false;
 	};
 
@@ -1910,125 +1911,47 @@ export function createRenderer(
 		return flow;
 	};
 
-	/** One picker row; the selected one carries the trailing check. */
-	const pickerRow = (label: string, selected: boolean, choose: () => void): HTMLButtonElement => {
-		const row = button(selected ? "menu-item selected" : "menu-item");
-		row.setAttribute("aria-pressed", String(selected));
-		row.append(element("span", "menu-item-name", label));
-		if (selected) {
-			const check = element("span", "menu-check");
-			check.append(icon("check"));
-			row.append(check);
-		}
-		row.addEventListener("click", () => {
-			closeModelMenu(true);
-			choose();
-		});
-		return row;
-	};
-
-	let modelMenuKey: string | undefined;
-	/** A searchable model list, with effort and account controls always within reach. */
-	const renderModelMenu = (view: WebView): void => {
+	/** Retain the native controls during state updates so keyboard focus survives. */
+	const renderModelSelectors = (view: WebView): void => {
 		const picker = view.model;
-		const key = JSON.stringify([view.locale, picker]);
-		if (key === modelMenuKey) return;
-		modelMenuKey = key;
-		const previousSearch = elements.modelMenu.querySelector<HTMLInputElement>(".model-search");
-		const hadSearchFocus = previousSearch === document.activeElement;
-		const query = previousSearch?.value ?? "";
-		const previousScroll = elements.modelMenu.querySelector(".menu-scroll")?.scrollTop ?? 0;
-		const search = document.createElement("input");
-		search.type = "search";
-		search.className = "modal-input model-search";
-		search.placeholder = copy("model.search");
-		search.setAttribute("aria-label", search.placeholder);
-		search.value = query;
-		const scroll = element("div", "menu-scroll");
-		const groups = picker.groups.map(group => {
-			const heading = element("p", "menu-heading", group.provider);
-			const options = group.options.map(option => ({
-				search: `${option.label} ${option.provider}/${option.modelId}`.toLocaleLowerCase(),
-				row: pickerRow(option.label, option.selected, () => renderer.onSelectModel(option.provider, option.modelId)),
-			}));
-			scroll.append(heading, ...options.map(option => option.row));
-			return { heading, options };
-		});
-		const empty = element("p", "menu-empty");
-		scroll.append(empty);
-		const filter = (): void => {
-			const value = search.value.trim().toLocaleLowerCase();
-			for (const group of groups) {
-				for (const option of group.options) option.row.hidden = !option.search.includes(value);
-				group.heading.hidden = group.options.every(option => option.row.hidden);
+		const options = picker.groups.flatMap(group => group.options);
+		if (changed("model-options", [view.locale, picker.groups.map(group => [group.provider, group.options.map(option => [option.modelId, option.label])]), picker.empty, picker.scopeNotice])) {
+			const placeholder = document.createElement("option");
+			placeholder.value = "";
+			placeholder.disabled = true;
+			placeholder.textContent = picker.empty ? copy("model.configure") : copy("model.choose");
+			elements.modelSelect.replaceChildren(placeholder);
+			for (const group of picker.groups) {
+				const optgroup = document.createElement("optgroup");
+				optgroup.label = group.provider;
+				for (const option of group.options) {
+					const node = document.createElement("option");
+					node.value = JSON.stringify([option.provider, option.modelId]);
+					node.textContent = option.label;
+					optgroup.append(node);
+				}
+				elements.modelSelect.append(optgroup);
 			}
-			empty.hidden = groups.some(group => !group.heading.hidden);
-			empty.textContent = picker.empty ?? copy("model.noMatches");
-		};
-		search.addEventListener("input", filter);
-		filter();
-		const controls = element("div", "model-controls");
-		if (picker.scopeNotice) controls.append(element("p", "menu-empty", picker.scopeNotice));
-		if (picker.levels.length > 0 || picker.levelsEmpty !== undefined) {
-			controls.append(element("p", "menu-heading", copy("model.effort")));
-			const effort = element("div", "menu-effort");
-			for (const level of picker.levels) effort.append(pickerRow(level.label, level.selected, () => renderer.onSelectThinking(level.level)));
-			controls.append(effort);
-			if (picker.levelsEmpty !== undefined) controls.append(element("p", "menu-empty", picker.levelsEmpty));
 		}
-		controls.append(element("p", "menu-empty", copy("model.nextRequest")));
-		if (picker.refresh.status) controls.append(element("p", "menu-empty", picker.refresh.status));
-		const actions = element("div", "menu-refresh");
-		const action = (id: string, label: string): HTMLButtonElement => {
-			const row = button("panel-button default");
-			row.dataset.action = id;
-			row.textContent = label;
-			row.addEventListener("click", () => {
-				closeModelMenu(true);
-				report({ kind: "command", id, data: undefined });
-			});
-			return row;
-		};
-		const refresh = action(REFRESH_MODELS_ACTION, picker.refresh.label);
-		refresh.disabled = picker.refresh.busy;
-		actions.append(action(MODEL_SCOPE_ACTION, picker.scope ?? copy("model.scope")), refresh);
-		if (picker.authentication) actions.append(action(PROVIDER_AUTH_ACTION, picker.authentication));
-		controls.append(actions);
-		elements.modelMenu.replaceChildren(search, scroll, controls);
-		scroll.scrollTop = previousScroll;
-		if (hadSearchFocus) search.focus();
+		const selected = options.find(option => option.selected);
+		elements.modelSelect.value = selected ? JSON.stringify([selected.provider, selected.modelId]) : "";
+		elements.modelSelect.disabled = picker.disabled || options.length === 0;
+		elements.modelSelect.setAttribute("aria-busy", String(view.modelPending === true));
+		elements.modelSelect.title = [picker.label, picker.scopeNotice, picker.empty, picker.refresh.status, copy("model.nextRequest")].filter(Boolean).join("\n");
+		if (changed("thinking-options", [view.locale, picker.levels.map(level => [level.level, level.label])])) {
+			elements.thinkingSelect.replaceChildren(...picker.levels.map(level => {
+				const option = document.createElement("option");
+				option.value = level.level;
+				option.textContent = level.label;
+				return option;
+			}));
+		}
+		elements.thinkingSelect.value = picker.levels.find(level => level.selected)?.level ?? "";
+		elements.thinkingSelect.hidden = picker.levels.length <= 1;
+		elements.thinkingSelect.disabled = picker.disabled || picker.levels.length <= 1;
+		elements.thinkingSelect.title = [picker.effort, picker.levelsEmpty ?? copy("model.nextRequest")].filter(Boolean).join("\n");
 	};
 
-	const closeModelMenu = (restoreFocus = false): void => {
-		if (elements.modelMenu.hidden) return;
-		elements.modelMenu.hidden = true;
-		modelMenuKey = undefined;
-		elements.modelMenu.replaceChildren();
-		elements.modelTrigger.setAttribute("aria-expanded", "false");
-		if (restoreFocus) elements.modelTrigger.focus();
-	};
-
-	const openModelMenu = (): void => {
-		if (lastView === undefined || lastView.model.disabled) return;
-		renderModelMenu(lastView);
-		elements.modelMenu.hidden = false;
-		elements.modelTrigger.setAttribute("aria-expanded", "true");
-		elements.modelMenu.querySelector<HTMLInputElement>(".model-search")?.focus();
-	};
-
-	/** The chip's text follows the host's replicated configuration on every render. */
-	const renderModelChip = (view: WebView): void => {
-		const picker = view.model;
-		elements.modelTrigger.disabled = picker.disabled;
-		elements.modelLabel.textContent = picker.label;
-		elements.modelEffort.textContent = picker.effort ?? "";
-		elements.modelEffort.hidden = picker.effort === undefined;
-		const name = picker.effort === undefined ? picker.label : `${picker.label} · ${picker.effort}`;
-		elements.modelTrigger.title = name;
-		elements.modelTrigger.setAttribute("aria-label", copy("model.chipAria", { name }));
-		if (picker.disabled) closeModelMenu();
-		else if (!elements.modelMenu.hidden) renderModelMenu(view);
-	};
 
 	const renderer: PageRenderer = {
 		onSelect,
@@ -2044,7 +1967,6 @@ export function createRenderer(
 		onDraftChange: () => {},
 		onCommandPick: () => {},
 		onPanelAction: () => {},
-		openModelSelector: openModelMenu,
 		get view(): WebView | undefined {
 			return lastView;
 		},
@@ -2066,7 +1988,6 @@ export function createRenderer(
 				: transcriptPosition(elements.column, elements.transcript, stick);
 			if (scopeChanged) {
 				restoreChatPosition = undefined;
-				closeModelMenu();
 				expanded.clear();
 				chromeValues.clear();
 				elements.column.replaceChildren();
@@ -2206,7 +2127,7 @@ export function createRenderer(
 				for (const item of view.queue) elements.queue.append(queueElement(item));
 			}
 
-			if (changed("model", [view.locale, view.model])) renderModelChip(view);
+			if (changed("model", [view.locale, view.model])) renderModelSelectors(view);
 			if (changed("attachments", view.attachments)) renderAttachments(view);
 			if (changed("palette", [view.locale, view.palette, view.attachedId !== undefined])) renderPalette(view);
 			if (changed("approvals", [view.locale, view.approvals])) renderApprovals(view);
@@ -2337,26 +2258,20 @@ export function createRenderer(
 		closeSidebarDrawer();
 		if (!elements.dock.hidden) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
 	});
-	elements.modelTrigger.addEventListener("click", () => {
-		if (elements.modelMenu.hidden) openModelMenu();
-		else closeModelMenu();
+	elements.modelSelect.addEventListener("change", () => {
+		if (elements.modelSelect.disabled) return;
+		const option = lastView?.model.groups.flatMap(group => group.options).find(option => JSON.stringify([option.provider, option.modelId]) === elements.modelSelect.value);
+		if (option) renderer.onSelectModel(option.provider, option.modelId);
 	});
-	// The card closes on a click elsewhere and on Escape, so it can never strand the pointer.
+	elements.thinkingSelect.addEventListener("change", () => {
+		if (!elements.thinkingSelect.disabled) renderer.onSelectThinking(elements.thinkingSelect.value);
+	});
+	// Session menus close when their roster moves.
 	elements.roster.addEventListener("scroll", () => closeSessionMenu());
 	window.addEventListener("resize", () => { closeSessionMenu(); syncSidebarToggle(); });
 	document.addEventListener("pointerdown", (event) => {
 		const target = event.target;
 		if (sessionMenu !== undefined && target instanceof Node && !sessionMenu.node.contains(target) && !sessionMenuTrigger(sessionMenu.id)?.contains(target)) closeSessionMenu();
-	});
-	document.addEventListener("pointerdown", (event) => {
-		if (elements.modelMenu.hidden) return;
-		const target = event.target;
-		if (target instanceof Node && (elements.modelMenu.contains(target) || elements.modelTrigger.contains(target))) return;
-		closeModelMenu();
-	});
-	elements.modelMenu.addEventListener("focusout", (event) => {
-		const target = event.relatedTarget;
-		if (target instanceof Node && !elements.modelMenu.contains(target) && !elements.modelTrigger.contains(target)) closeModelMenu();
 	});
 	const gestureOf = (event: KeyboardEvent): ShortcutGesture => {
 		if (isStopChord(event)) return { code: event.code, primary: false, alt: false, shift: false, control: true };
@@ -2404,11 +2319,6 @@ export function createRenderer(
 		if (document.body.classList.contains("sidebar-open")) {
 			closeSidebarDrawer();
 			elements.sidebarToggle.focus();
-			return;
-		}
-		if (!elements.modelMenu.hidden) {
-			closeModelMenu();
-			elements.modelTrigger.focus();
 			return;
 		}
 		// Escape never cancels a turn. While one is running it points at the stop control.

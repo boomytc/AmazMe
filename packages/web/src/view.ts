@@ -109,7 +109,7 @@ export interface ModelOption {
 	readonly selected: boolean;
 }
 
-/** Catalog entries under their provider, the way the picker's card lists them. */
+/** Catalog entries grouped by provider for the model selectors. */
 export interface ModelGroup {
 	readonly provider: string;
 	readonly options: readonly ModelOption[];
@@ -122,15 +122,15 @@ export interface ThinkingOption {
 	readonly selected: boolean;
 }
 
-/** The composer's model and effort control: the chip's text plus the card it opens. */
+/** The composer and settings selectors share the scoped catalog and supported thinking levels. */
 export interface ModelPicker {
-	/** The chip's primary text: the configured model's name. */
+	/** The configured model name, including when hidden from the selectable scope. */
 	readonly label: string;
-	/** The chip's secondary text: the configured level, for a model that reports levels. */
+	/** The configured thinking level for a model that reports levels. */
 	readonly effort: string | undefined;
 	readonly groups: readonly ModelGroup[];
 	readonly levels: readonly ThinkingOption[];
-	/** The card's line when the host's catalog is empty, so the control never looks broken. */
+	/** Explain an empty catalog or model scope. */
 	readonly empty: string | undefined;
 	/** The effort group's line when the attached model reports nothing above `off`. */
 	readonly levelsEmpty: string | undefined;
@@ -138,12 +138,10 @@ export interface ModelPicker {
 	readonly disabled: boolean;
 	/** The catalog's refresh state: the control to ask for one, and the host's last word. */
 	readonly refresh: ModelRefresh;
-	readonly authentication?: string;
-	readonly scope?: string;
 	readonly scopeNotice?: string;
 }
 
-/** The model card's refresh row: a button plus the status the host's state reports. */
+/** Refresh state shared by the model selectors and settings. */
 export interface ModelRefresh {
 	readonly label: string;
 	/** The host's last refresh outcome, or undefined while it has never refreshed. */
@@ -464,6 +462,7 @@ export interface WebView {
 	readonly busy: boolean;
 	readonly newSession: NewSessionAffordance;
 	readonly model: ModelPicker;
+	readonly modelPending?: boolean;
 	/** The sidebar's navigation and the management panel the main area shows. */
 	readonly panel: PanelView;
 	/** The session dock beside the conversation. */
@@ -546,6 +545,7 @@ export interface WebViewInput {
 	readonly attachedId: string | undefined;
 	readonly now: number;
 	readonly models: ModelsStateLike | undefined;
+	readonly modelPending?: boolean;
 	/** The levels the host reports for the attached model; `undefined` until the page has read them. */
 	readonly thinkingLevels: readonly string[] | undefined;
 	/** How the page would submit while a turn runs; the page owns this choice. */
@@ -627,7 +627,7 @@ function refreshStatus(locale: Locale, refresh: ModelsStateLike["refresh"]): str
 }
 
 /**
- * The picker the composer chip opens: the host's catalog grouped by provider, the levels the
+ * Scoped choices grouped by provider, the levels the
  * attached model reports, and the two empty states that keep the control explainable.
  */
 export function modelPicker(locale: Locale, models: ModelsStateLike | undefined, levels: readonly string[] | undefined, attached: boolean): ModelPicker {
@@ -665,8 +665,6 @@ export function modelPicker(locale: Locale, models: ModelsStateLike | undefined,
 		empty: groups.length === 0 ? translate(locale, models.catalog.enabledModelIds === null ? "model.empty" : "model.scopeEmpty") : undefined,
 		levelsEmpty: levels === undefined || reasoned ? undefined : translate(locale, "model.levelsEmpty"),
 		disabled: false,
-		...(models.authentication ? { authentication: translate(locale, "auth.title") } : {}),
-		scope: translate(locale, "model.scope"),
 		...(configured && models.catalog.enabledModelIds !== null && !models.catalog.enabledModelIds.includes(`${configured.provider}/${configured.modelId}`)
 			? { scopeNotice: translate(locale, "model.scopeHidden") } : {}),
 		refresh: {
@@ -1519,7 +1517,8 @@ export function buildWebView(input: WebViewInput): WebView {
 		busy: isBusy(input.transcript),
 		// Only a reachable host can take a create; the roster appears with the same state.
 		newSession: { enabled: input.directory !== undefined && !input.creatingSession, ...(input.creatingSession ? { pending: true } : {}) },
-		model: modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined),
+		model: { ...modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined), ...(input.modelPending ? { disabled: true } : {}) },
+		...(input.modelPending ? { modelPending: true } : {}),
 		panel: panelView({ ...input.panel, locale }),
 		dock: dockView(locale, { ...dockWithShownEntries(input, forkable), ...(ended ? { readOnly: true } : {}) }),
 	};
