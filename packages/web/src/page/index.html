@@ -48,6 +48,8 @@
 				<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></symbol>
 				<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></symbol>
 				<symbol id="i-message" viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-8l-4.5 3.5V17H5a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2Z" /></symbol>
+				<symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9" /></symbol>
+				<symbol id="i-settings" viewBox="0 0 24 24"><path d="m9 3-.6 2.2-1.6.9-2.2-.6-3 5.1L3.3 12l-1.7 1.4 3 5.1 2.2-.6 1.6.9L9 21h6l.6-2.2 1.6-.9 2.2.6 3-5.1-1.7-1.4 1.7-1.4-3-5.1-2.2.6-1.6-.9L15 3Z" /><circle cx="12" cy="12" r="3" /></symbol>
 				<symbol id="i-panel-left" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="3" /><path d="M9.5 4v16" /></symbol>
 				<symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="3" /><path d="M14.5 4v16" /></symbol>
 				<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.4l2 2.2H18a2.5 2.5 0 0 1 2.5 2.5v7.8A2.5 2.5 0 0 1 18 19.5H6a2.5 2.5 0 0 1-2.5-2.5Z" /></symbol>
@@ -72,37 +74,35 @@
 				<symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.5 2.9 17.2a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.5a2 2 0 0 0-3.4 0Z" /><path d="M12 9.5v4M12 17h.01" /></symbol>
 			</defs>
 		</svg>
-		<aside class="sidebar" id="sidebar">
-			<div class="brand">
+		<nav class="app-rail" aria-label="{{sidebar.management}}">
+			<div class="rail-brand" title="AmazMe">
 				<span class="brand-mark" aria-hidden="true"><svg class="pixel-logo" viewBox="0 0 10 4" aria-hidden="true"><use href="#i-logo-a" class="pixel-a"></use><use href="#i-logo-m" class="pixel-m"></use></svg></span>
-				<span class="brand-name">AmazMe</span>
 			</div>
-			<!-- The new-session action: the host creates the session, and the page attaches it as soon as the
-			     directory carries it. It stays inert until then. -->
-			<button class="new-session" type="button" id="new-session" aria-label="{{sidebar.newSession}}" disabled>
-				<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-square-pen"></use></svg>
-				<span class="new-session-label">{{sidebar.newSession}}</span>
-			</button>
-			<!-- The management views. The renderer fills this from the host's panel model. -->
-			<nav class="sidebar-nav" id="nav" aria-label="{{sidebar.management}}"></nav>
-			<p class="sidebar-label">{{sidebar.sessions}}</p>
-			<label class="roster-filter">
-				<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
-				<input
-					class="roster-filter-input"
-					id="roster-filter"
-					type="search"
-					autocomplete="off"
-					spellcheck="false"
-					placeholder="{{sidebar.filter}}"
-					aria-label="{{sidebar.filter}}"
-				/>
-			</label>
-			<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
-			<div class="sidebar-footer">
-				<button class="sidebar-footer-btn" type="button" id="settings-button">
-					<span class="nav-label">{{nav.settings}}</span>
+			<div class="rail-nav" id="nav"></div>
+			<div class="rail-footer">
+				<button class="rail-button" type="button" id="settings-button" aria-label="{{nav.settings}}" title="{{nav.settings}}">
+					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"></use></svg>
 				</button>
+			</div>
+		</nav>
+		<aside class="sidebar" id="sidebar">
+			<div class="session-sidebar" id="session-sidebar">
+				<div class="brand"><span class="brand-name">AmazMe</span></div>
+				<!-- The host creates a session in the last project and the page attaches it. -->
+				<button class="new-session" type="button" id="new-session" aria-label="{{sidebar.newSession}}" disabled>
+					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-square-pen"></use></svg>
+					<span class="new-session-label">{{sidebar.newSession}}</span>
+				</button>
+				<p class="sidebar-label">{{sidebar.sessions}}</p>
+				<label class="roster-filter">
+					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
+					<input class="roster-filter-input" id="roster-filter" type="search" autocomplete="off" spellcheck="false" placeholder="{{sidebar.filter}}" aria-label="{{sidebar.filter}}" />
+				</label>
+				<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
+			</div>
+			<div class="section-sidebar" id="section-sidebar" hidden>
+				<h2 class="section-sidebar-title" id="section-title">{{nav.settings}}</h2>
+				<nav class="section-nav" id="section-nav" aria-labelledby="section-title"></nav>
 			</div>
 		</aside>
 		<div class="scrim" id="scrim" aria-hidden="true"></div>

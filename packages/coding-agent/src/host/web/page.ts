@@ -1796,8 +1796,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		switch (action.kind) {
 			case "open":
 				if (action.panel === AUTOMATION_VIEW && schedule === undefined) return;
-				// The row of the view already open returns to the conversation.
-				view = action.panel === view ? CHAT_VIEW : action.panel;
+				view = action.panel;
 				closeModal();
 				return;
 			case "modal-close":

@@ -50,9 +50,13 @@ export interface PageElements {
 	readonly laneStatus: HTMLElement;
 	/** The sidebar's new-session bar. */
 	readonly newSession: HTMLButtonElement;
-	/** The sidebar's panel rows, and the settings entry in its footer. */
+	/** The persistent navigation rail and its settings entry. */
 	readonly nav: HTMLElement;
 	readonly settingsButton: HTMLButtonElement;
+	readonly sessionSidebar: HTMLElement;
+	readonly sectionSidebar: HTMLElement;
+	readonly sectionTitle: HTMLElement;
+	readonly sectionNav: HTMLElement;
 	/** The sidebar, its toggle in the header, and the scrim behind it while it is a drawer. */
 	readonly sidebar: HTMLElement;
 	readonly sidebarToggle: HTMLButtonElement;
@@ -152,6 +156,10 @@ export function collectPageElements(): PageElements {
 		newSession: pickElement("new-session", HTMLButtonElement),
 		nav: pick("nav"),
 		settingsButton: pickElement("settings-button", HTMLButtonElement),
+		sessionSidebar: pick("session-sidebar"),
+		sectionSidebar: pick("section-sidebar"),
+		sectionTitle: pick("section-title"),
+		sectionNav: pick("section-nav"),
 		sidebar: pick("sidebar"),
 		sidebarToggle: pickElement("sidebar-toggle", HTMLButtonElement),
 		scrim: pick("scrim"),
@@ -246,6 +254,8 @@ type IconName =
 	| "clock"
 	| "sliders"
 	| "message"
+	| "home"
+	| "settings"
 	| "panel-left"
 	| "panel-right"
 	| "folder"
@@ -468,11 +478,11 @@ function fitPrompt(prompt: HTMLTextAreaElement): void {
 
 /** The icon each navigation row carries. */
 const NAV_ICONS: Record<NavItem["glyph"], IconName> = {
-	chat: "message",
+	chat: "home",
 	plugins: "package",
 	skills: "sparkles",
 	automation: "clock",
-	settings: "sliders",
+	settings: "settings",
 };
 
 /** The icon each dock tab carries. */
@@ -567,6 +577,9 @@ export function createRenderer(
 	let sessionMenu: { id: string; node: HTMLElement } | undefined;
 	let heldPromptFocus: { start: number; end: number; direction: "forward" | "backward" | "none" } | undefined;
 	let connectionCopy: { text: ConnectionText; kind: "state" | "error"; label?: ConnectionText } | undefined;
+	/** Presentation-only category selection; changing pages never detaches the current session. */
+	const sections = new Map<string, string>();
+	let restoreChatPosition: (() => void) | undefined;
 
 	const draft = (): string => elements.prompt.value.trim();
 
@@ -601,6 +614,7 @@ export function createRenderer(
 			[elements.stop, "composer.stop"],
 			[elements.modelMenu, "model.menuAria"],
 		] as const) node.setAttribute("aria-label", copy(key));
+		elements.nav.parentElement?.setAttribute("aria-label", copy("sidebar.management"));
 		for (const [node, key] of [
 			[elements.sidebarToggle, "sidebar.toggle"],
 			[elements.attach, "composer.attach"],
@@ -721,15 +735,15 @@ export function createRenderer(
 		node.dataset.groupId = group.id;
 		const head = element("header", "panel-group-head");
 		const titles = element("div", "panel-group-titles");
-		titles.append(element("h2", "panel-group-title", group.title));
+		if (group.title) titles.append(element("h2", "panel-group-title", group.title));
 		if (group.description !== undefined) titles.append(element("p", "panel-group-desc", group.description));
-		head.append(titles);
+		if (titles.childElementCount > 0) head.append(titles);
 		if (group.actions !== undefined && group.actions.length > 0) {
 			const actions = element("div", "panel-actions");
 			for (const action of group.actions) actions.append(panelButton(action, report, pending));
 			head.append(actions);
 		}
-		node.append(head);
+		if (head.childElementCount > 0) node.append(head);
 		const rows = element("div", "panel-rows");
 		if (group.rows.length === 0 && group.empty !== "") rows.append(element("p", "panel-empty", group.empty ?? copy("panel.empty")));
 		else for (const row of group.rows) rows.append(rowElementOf(row, pending));
@@ -973,22 +987,31 @@ export function createRenderer(
 		}
 	};
 
-	/** The sidebar's navigation and the settings entry: one row per management view. */
+	/** Global destinations stay reachable when the contextual sidebar is collapsed. */
 	const renderNav = (view: WebView): void => {
 		elements.nav.replaceChildren();
-		for (const item of view.panel.nav) {
-			if (item.id === SETTINGS_VIEW) continue; // The settings row lives in the sidebar footer.
-			const row = button(item.active ? "nav-row active" : "nav-row");
+		const home: NavItem = { id: CHAT_VIEW, label: copy("nav.chat"), glyph: "chat", active: view.panel.current === CHAT_VIEW };
+		for (const item of [home, ...view.panel.nav]) {
+			if (item.id === SETTINGS_VIEW) continue;
+			const row = button(item.active ? "rail-button active" : "rail-button");
 			row.dataset.view = item.id;
-			row.append(icon(NAV_ICONS[item.glyph]), element("span", "nav-label", item.label));
+			row.title = item.label;
+			row.setAttribute("aria-label", item.label);
+			if (item.active) row.setAttribute("aria-current", "page");
+			row.append(icon(NAV_ICONS[item.glyph]));
 			row.addEventListener("click", () => {
 				closeSidebarDrawer();
 				report({ kind: "open", panel: item.id });
 			});
 			elements.nav.append(row);
 		}
-		elements.settingsButton.replaceChildren(icon(NAV_ICONS.settings), element("span", "nav-label", copy("nav.settings")));
+		elements.settingsButton.replaceChildren(icon(NAV_ICONS.settings));
+		elements.settingsButton.title = copy("nav.settings");
+		elements.settingsButton.setAttribute("aria-label", copy("nav.settings"));
 		elements.settingsButton.classList.toggle("active", view.panel.current === SETTINGS_VIEW);
+		elements.settingsButton.hidden = !view.panel.nav.some(item => item.id === SETTINGS_VIEW);
+		if (view.panel.current === SETTINGS_VIEW) elements.settingsButton.setAttribute("aria-current", "page");
+		else elements.settingsButton.removeAttribute("aria-current");
 	};
 
 	/** The sidebar is a column on a wide window and a drawer on a narrow one; this reads which. */
@@ -997,8 +1020,7 @@ export function createRenderer(
 
 	const syncSidebarToggle = (): void => {
 		elements.sidebarToggle.setAttribute("aria-expanded", String(sidebarExpanded()));
-		const sidebar = elements.nav.closest<HTMLElement>(".sidebar");
-		if (sidebar) sidebar.inert = !sidebarExpanded();
+		elements.sidebar.inert = !sidebarExpanded();
 	};
 
 	/** The header's toggle: a column collapses and expands, a drawer slides in and out. */
@@ -1023,6 +1045,12 @@ export function createRenderer(
 	const renderPanelView = (view: WebView): void => {
 		const panel = view.panel.panel;
 		const open = panel !== undefined;
+		document.body.classList.toggle("management-page", open);
+		elements.sessionSidebar.hidden = open;
+		elements.sectionSidebar.hidden = !open;
+		elements.meter.hidden = open;
+		elements.runActions.hidden = open;
+		elements.laneStatus.hidden = open || view.lane.length === 0;
 		elements.view.hidden = !open;
 		elements.transcript.hidden = open;
 		elements.composerDock.hidden = open;
@@ -1041,7 +1069,35 @@ export function createRenderer(
 			return;
 		}
 		writeSessionTitle(panel.title);
-		elements.viewBody.replaceChildren(panelElement(panel));
+		elements.sectionTitle.textContent = panel.title;
+		const groups = panel.id === SETTINGS_VIEW
+			? [...panel.groups.filter(group => group.id === "settings:interface"), ...panel.groups.filter(group => group.id !== "settings:interface")]
+			: panel.groups;
+		const selected = groups.find(group => group.id === sections.get(panel.id)) ?? groups[0];
+		if (selected) sections.set(panel.id, selected.id);
+		if (changed("sections", [view.locale, panel.id, groups.map(group => [group.id, group.title])])) {
+			elements.sectionNav.replaceChildren();
+			for (const group of groups) {
+				const row = button("nav-row");
+				row.dataset.groupId = group.id;
+				row.textContent = group.title;
+				row.addEventListener("click", () => {
+					if (lastView?.panel.panel?.id !== panel.id) return;
+					sections.set(panel.id, group.id);
+					closeSidebarDrawer();
+					renderPanelView(lastView);
+					elements.view.scrollTop = 0;
+				});
+				elements.sectionNav.append(row);
+			}
+		}
+		for (const row of elements.sectionNav.querySelectorAll<HTMLButtonElement>("button")) {
+			const active = row.dataset.groupId === selected?.id;
+			row.classList.toggle("active", active);
+			if (active) row.setAttribute("aria-current", "true");
+			else row.removeAttribute("aria-current");
+		}
+		elements.viewBody.replaceChildren(panelElement(selected ? { ...panel, title: selected.title, groups: [{ ...selected, title: "" }] } : panel));
 	};
 
 	/** Send stays send. It is disabled when there is nothing to send. */
@@ -1591,9 +1647,10 @@ export function createRenderer(
 
 	/** The dock: the tabs, the open tab's panel, and the class that gives it a column. */
 	const renderDock = (view: WebView): void => {
-		elements.dock.hidden = !view.dock.open;
-		document.body.classList.toggle("dock-open", view.dock.open);
-		if (!view.dock.open) {
+		const open = view.dock.open && view.panel.current === CHAT_VIEW;
+		elements.dock.hidden = !open;
+		document.body.classList.toggle("dock-open", open);
+		if (!open) {
 			elements.dockTabs.replaceChildren();
 			elements.dockBody.replaceChildren();
 			return;
@@ -1629,7 +1686,7 @@ export function createRenderer(
 		dock.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
 		elements.runActions.replaceChildren(compact, fork, dock);
 		elements.laneStatus.textContent = view.lane;
-		elements.laneStatus.hidden = view.lane.length === 0;
+		elements.laneStatus.hidden = view.panel.current !== CHAT_VIEW || view.lane.length === 0;
 		if (view.lane.length === 0) elements.laneStatus.removeAttribute("title");
 		else elements.laneStatus.title = view.lane;
 	};
@@ -1868,15 +1925,17 @@ export function createRenderer(
 			if (languageChanged) renderShellCopy();
 			elements.sessionWarning.hidden = view.mirrorWarning == null;
 			elements.sessionWarning.textContent = view.mirrorWarning == null ? "" : copy("page.mirrorWarning", view.mirrorWarning);
-			if (app !== undefined) writeWindowTitle(app, view);
+			if (app !== undefined) writeWindowTitle(app, { ...view, sessionLabel: view.panel.panel?.title ?? view.sessionLabel });
+			const transcriptVisible = !elements.transcript.hidden;
 			const stick = atBottom(elements.transcript);
 			const scopeChanged = flowCache.begin(view.transcriptScope ?? view.attachedId ?? "");
-			const restorePosition = scopeChanged
+			const restorePosition = scopeChanged || !transcriptVisible
 				? () => {
 					elements.transcript.scrollTop = elements.transcript.scrollHeight;
 				}
 				: transcriptPosition(elements.column, elements.transcript, stick);
 			if (scopeChanged) {
+				restoreChatPosition = undefined;
 				closeModelMenu();
 				expanded.clear();
 				chromeValues.clear();
@@ -2021,15 +2080,18 @@ export function createRenderer(
 			if (changed("attachments", view.attachments)) renderAttachments(view);
 			if (changed("palette", [view.locale, view.palette, view.attachedId !== undefined])) renderPalette(view);
 			if (changed("approvals", [view.locale, view.approvals])) renderApprovals(view);
-			if (changed("run", [view.locale, view.run, view.dock.toggle, view.lane])) renderRunActions(view);
-			if (changed("dock", [view.locale, view.dock])) renderDock(view);
+			if (changed("run", [view.locale, view.run, view.dock.toggle, view.lane, view.panel.current])) renderRunActions(view);
+			if (changed("dock", [view.locale, view.dock, view.panel.current])) renderDock(view);
 			if (changed("submit", [view.locale, view.busy, view.run.submitModes])) renderSubmitModes(view);
 			if (changed("nav", [view.locale, view.panel.nav, view.panel.current])) renderNav(view);
 			if (changed("panel", [view.locale, view.panel.panel, view.sessionLabel, view.focus])) renderPanelView(view);
 			renderModal(view.panel.modal);
 			// The composer's dock may have grown (an approval, a queued input) and shrunk the transcript
 			// under the reader; a reader who was at the bottom stays there.
-			restorePosition();
+			if (view.panel.current === CHAT_VIEW) {
+				(restoreChatPosition ?? restorePosition)();
+				restoreChatPosition = undefined;
+			} else if (transcriptVisible) restoreChatPosition = restorePosition;
 		},
 		setDraft(text: string, focus = true): void {
 			if (elements.prompt.value !== text) elements.prompt.value = text;
@@ -2130,12 +2192,12 @@ export function createRenderer(
 		closeSidebarDrawer();
 		renderer.onCreateSession();
 	});
-	// The footer entry toggles the settings panel, the same way its sidebar row does.
+	// Selecting the current destination keeps that page open; the home icon returns to the conversation.
 	elements.settingsButton.addEventListener("click", () => {
 		closeSidebarDrawer();
 		report({
 			kind: "open",
-			panel: lastView?.panel.current === SETTINGS_VIEW ? CHAT_VIEW : SETTINGS_VIEW,
+			panel: SETTINGS_VIEW,
 		});
 	});
 	elements.viewBack.addEventListener("click", () => report({ kind: "open", panel: CHAT_VIEW }));
@@ -2143,7 +2205,7 @@ export function createRenderer(
 	// A click on the scrim closes whichever drawer is open: the sidebar here, the dock through the page.
 	elements.scrim.addEventListener("click", () => {
 		closeSidebarDrawer();
-		if (lastView?.dock.open === true) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
+		if (!elements.dock.hidden) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
 	});
 	elements.modelTrigger.addEventListener("click", () => {
 		if (elements.modelMenu.hidden) openModelMenu();

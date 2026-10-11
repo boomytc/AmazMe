@@ -1,11 +1,11 @@
 /*
- * Page shell. Three columns on a wide window: the sidebar (sessions and the management views), the
- * conversation (header, transcript, composer), and the session dock on the right when it is open.
+ * Page shell. A persistent icon rail, a contextual sidebar, the main page, and an optional session dock.
  * Below 1024px the sidebar and the dock become drawers over the conversation. Colours, radii, and
  * type sizes come from tokens.css; nothing here names a colour literal.
  */
 
 :root {
+	--rail-width: 56px;
 	--sidebar-width: 268px;
 	--dock-width: 380px;
 	--column-max: 768px;
@@ -29,7 +29,7 @@ body {
 body {
 	margin: 0;
 	display: grid;
-	grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+	grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
 	height: 100vh;
 	height: 100dvh;
 	overflow: hidden;
@@ -43,15 +43,15 @@ body {
 }
 
 body.dock-open {
-	grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--dock-width);
+	grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--dock-width);
 }
 
 body.sidebar-collapsed {
-	grid-template-columns: minmax(0, 1fr);
+	grid-template-columns: var(--rail-width) minmax(0, 1fr);
 }
 
 body.sidebar-collapsed.dock-open {
-	grid-template-columns: minmax(0, 1fr) var(--dock-width);
+	grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--dock-width);
 }
 
 @media (min-width: 1024px) {
@@ -142,6 +142,75 @@ p {
 	}
 }
 
+/* ----------------------------------------------------------- navigation rail */
+
+.app-rail {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 14px;
+	min-height: 0;
+	padding: 10px 6px 12px;
+	background: var(--sidebar);
+	border-right: 1px solid var(--line);
+	z-index: 1060;
+}
+
+.rail-brand {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 40px;
+	height: 40px;
+}
+
+.rail-nav,
+.rail-footer {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+}
+
+.rail-nav {
+	flex: 1;
+}
+
+.rail-footer {
+	padding-top: 12px;
+	border-top: 1px solid var(--line);
+}
+
+.rail-button {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 40px;
+	height: 40px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-md);
+	background: transparent;
+	color: var(--text-2);
+	cursor: pointer;
+	transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.rail-button .icon {
+	width: 21px;
+	height: 21px;
+}
+
+.rail-button:hover {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.rail-button.active {
+	background: var(--active);
+	color: var(--text);
+}
+
 /* ------------------------------------------------------------------ sidebar */
 
 .sidebar {
@@ -152,6 +221,31 @@ p {
 	overflow: hidden;
 	padding: 10px 10px 12px;
 	background: var(--sidebar);
+}
+
+.session-sidebar,
+.section-sidebar {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.section-sidebar-title {
+	flex: none;
+	margin: 8px 10px 22px;
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 32px;
+}
+
+.section-nav {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 
 .brand {
@@ -237,21 +331,13 @@ p {
 	white-space: nowrap;
 }
 
-.sidebar-nav {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	flex: none;
-	margin-top: 2px;
-}
-
-.nav-row,
-.sidebar-footer-btn {
+.nav-row {
 	display: flex;
 	align-items: center;
 	gap: 10px;
 	width: 100%;
-	height: 34px;
+	min-height: 38px;
+	flex: none;
 	padding: 0 10px;
 	border: 0;
 	border-radius: var(--radius-md);
@@ -265,20 +351,17 @@ p {
 		color var(--dur-fast) var(--ease);
 }
 
-.nav-row .icon,
-.sidebar-footer-btn .icon {
+.nav-row .icon {
 	width: 18px;
 	height: 18px;
 }
 
-.nav-row:hover,
-.sidebar-footer-btn:hover {
+.nav-row:hover {
 	background: var(--hover);
 	color: var(--text);
 }
 
-.nav-row.active,
-.sidebar-footer-btn.active {
+.nav-row.active {
 	background: var(--active);
 	color: var(--text);
 }
@@ -497,16 +580,6 @@ p {
 	.session-menu-item {
 		min-height: 44px;
 	}
-}
-
-.sidebar-footer {
-	flex: none;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	padding-top: 8px;
-	margin-top: 6px;
-	border-top: 1px solid var(--line);
 }
 
 .empty-state {
@@ -2320,6 +2393,11 @@ p {
 	padding: 28px 32px 64px;
 }
 
+.management-page .view-body {
+	max-width: 840px;
+	padding-top: 40px;
+}
+
 .panel-head {
 	margin-bottom: 24px;
 }
@@ -2829,16 +2907,16 @@ p {
 	body.dock-open,
 	body.sidebar-collapsed,
 	body.sidebar-collapsed.dock-open {
-		grid-template-columns: minmax(0, 1fr);
+		grid-template-columns: var(--rail-width) minmax(0, 1fr);
 	}
 
 	.sidebar {
 		position: fixed;
 		top: 0;
 		bottom: 0;
-		left: 0;
+		left: var(--rail-width);
 		z-index: 1050;
-		width: min(300px, 86vw);
+		width: min(300px, calc(100vw - var(--rail-width) - 24px));
 		transform: translateX(-104%);
 		transition: transform 200ms var(--ease);
 		background: var(--sidebar);
@@ -2855,7 +2933,7 @@ p {
 		right: 0;
 		bottom: 0;
 		z-index: 1050;
-		width: min(400px, 92vw);
+		width: min(400px, calc(100vw - var(--rail-width)));
 		box-shadow: var(--shadow-popover);
 	}
 
@@ -2870,6 +2948,9 @@ p {
 }
 
 @media (max-width: 640px) {
+	:root { --rail-width: 48px; }
+	.app-rail { padding-inline: 4px; }
+	.rail-button { width: 38px; height: 40px; }
 	.header {
 		flex-wrap: wrap;
 		height: auto;
@@ -2933,6 +3014,7 @@ p {
 	.view-body {
 		padding: 20px 16px 48px;
 	}
+	.management-page .view-body { padding-top: 24px; }
 
 	/* Management rows with several actions keep prose readable on narrow screens. */
 	.panel-row:has(.panel-actions) {
