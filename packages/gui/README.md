@@ -2,6 +2,10 @@
 
 Electron 窗口。它拉起已安装 AmazMe CLI 的网页宿主，再把那个回环页面装进窗口。会话、工具和模型调用仍在宿主里，走同一套 durable，这里没有第二套界面，也没有第二套会话协议。右键菜单和出错弹框的中英文案用 `@amazme/web` 的 `desktop.*` 键（`./locale` 与 `./strings`），不另留一份目录。
 
+窗口图标与 macOS Dock 图标使用 Web 包的 `dist/page/app-icon.png`，网页标签使用同源 SVG favicon，并提供 32 像素 PNG 备用。图标沿用界面里的 AM 像素标记，资源随 Web 包构建复制，不依赖运行时生成。
+
+macOS 启动时在 `~/Library/Caches/AmazMe/desktop` 中缓存独立的 `AmazMe.app`，使用 AmazMe 的应用名称、标识和 ICNS 图标，确保 Dock 悬停与应用菜单显示正确名称。缓存应用绑定当前安装目录的桌面入口与系统 Node，退出后也能从 Dock 重新打开；没有指定工作目录时从用户主目录启动。它不是可独立移动的安装包。Electron、Node 路径或图标、启动脚本更新后重新生成；共享的 Electron 安装不被修改。Linux 和 Windows 沿用 Electron 的标准启动方式。
+
 做法对齐 deepseek-harness 的 `apps/desktop`：子进程跑产品自己的 web 命令，读到就绪行再 `loadURL`，窗口开 `contextIsolation`、`sandbox`、`nodeIntegration: false`。关窗口就结束宿主。桌面壳负责窗口和宿主生命周期，运行依赖由发布流程提供。
 
 宿主入口通过应用依赖解析 `@amazme/coding-agent` 的已安装 CLI，运行 `amazme web`，不查找仓库或源码解析器。就绪行是宿主打印的 `Web: http://127.0.0.1:<port>/`。端口用 `0`，避免和已经开着的 `dev:web` 抢 4310；同一目录里若已有宿主，这条命令会附着上去，窗口看到的仍是那一份会话。子进程用系统 Node，不用 Electron 当 Node：宿主的会话 worker 会再执行 `process.execPath`，并且存储用 `node:sqlite`。

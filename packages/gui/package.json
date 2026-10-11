@@ -8,7 +8,7 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsc -p tsconfig.build.json",
-		"start": "electron .",
+		"start": "node dist/start.js",
 		"test": "vitest --run --exclude test/smoke.test.ts --exclude test/desktop-lifecycle.smoke.test.ts",
 		"test:smoke": "vitest --run --no-file-parallelism test/smoke.test.ts test/desktop-lifecycle.smoke.test.ts",
 		"typecheck": "tsc -p tsconfig.test.json"
@@ -27,6 +27,7 @@
 	},
 	"files": [
 		"dist",
+		"assets",
 		"README.md"
 	]
 }

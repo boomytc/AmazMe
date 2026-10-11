@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { PAGE_DIRECTORY } from "@amazme/web/assets";
 import {
 	app,
 	BrowserWindow,
@@ -23,6 +25,8 @@ import { createShellController, type ShellController } from "./shell.ts";
 import { attentionOnTitle } from "./title.ts";
 
 const APP_NAME = "AmazMe";
+const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
+app.setName(APP_NAME);
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
 if (SMOKE && process.env.AMAZME_GUI_SMOKE_DATA_DIR) app.setPath("userData", process.env.AMAZME_GUI_SMOKE_DATA_DIR);
 
@@ -231,6 +235,7 @@ async function openWindow(pageUrl: string): Promise<void> {
 		minHeight: 640,
 		show: false,
 		title: APP_NAME,
+		icon: APP_ICON,
 		autoHideMenuBar: true,
 		webPreferences: {
 			contextIsolation: true,
@@ -299,6 +304,7 @@ async function openWindow(pageUrl: string): Promise<void> {
 }
 
 async function boot(): Promise<void> {
+	app.dock?.setIcon(APP_ICON);
 	const cliEntry = resolveHostCli();
 	const launch = webHostLaunch({
 		nodeExecutable: resolveNodeExecutable(process.env),
