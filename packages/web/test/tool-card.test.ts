@@ -88,9 +88,9 @@ describe("tool card row", () => {
 		]);
 		expect(details.open).toBe(false);
 		expect(details.className).not.toContain("error");
-		expect(details.querySelector(".disclosure-title")?.textContent).toBe("bash");
-		expect(summaryOf(details)).toBe('command="ls" cwd="/tmp"');
-		expect(details.querySelector(".tool-args")?.textContent).toBe("command: ls\ncwd: /tmp");
+		expect(details.querySelector(".disclosure-title")?.textContent).toBe("Run command");
+		expect(summaryOf(details)).toBe('command="ls" directory="/tmp"');
+		expect(details.querySelector(".tool-args")?.textContent).toBe("command: ls\ndirectory: /tmp");
 		expect(details.querySelector(".tool-output")?.textContent).toBe("exit 0");
 	});
 
@@ -214,7 +214,7 @@ describe("tool card row", () => {
 		});
 		const renderer = createRenderer(collectPageElements());
 		renderer.render({ ...failureView("en", ""), attachedId: "session", blocks });
-		const details = [...document.querySelectorAll("details.disclosure")].find((node) => node.querySelector(".disclosure-title")?.textContent === "read");
+		const details = [...document.querySelectorAll("details.disclosure")].find((node) => node.querySelector(".disclosure-title")?.textContent === "Read file");
 		if (!(details instanceof HTMLDetailsElement)) throw new Error("missing running tool row");
 		expect(details.open).toBe(true);
 		expect(details.classList.contains("running")).toBe(true);

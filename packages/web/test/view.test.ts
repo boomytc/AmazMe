@@ -364,7 +364,7 @@ describe("web view model", () => {
 			["user", "You"],
 			["thinking", "Thinking"],
 			["assistant", "AmazMe"],
-			["tool", "bash"],
+			["tool", "Run command"],
 			["notice", "Compaction"],
 			["notice", "New context"],
 		]);
@@ -381,7 +381,7 @@ describe("web view model", () => {
 			viewOf([assistantEntry(1, [{ type: "text", text: "…" }, toolCall("call-1")], "aborted")]),
 		);
 		expect(interrupted.find((block) => block.kind === "tool")).toMatchObject({
-			title: "bash",
+			title: "Run command",
 			text: "Not run: the answer was interrupted.",
 			tone: "plain",
 			running: false,
@@ -405,8 +405,8 @@ describe("web view model", () => {
 			]),
 		);
 		const tool = withArgs.find((block) => block.kind === "tool");
-		expect(tool?.toolArgs).toEqual({ collapsed: 'command="ls" cwd="/tmp"', expanded: "command: ls\ncwd: /tmp" });
-		expect(tool).toMatchObject({ title: "bash", text: "exit 0", tone: "plain", running: false });
+		expect(tool?.toolArgs).toEqual({ collapsed: 'command="ls" directory="/tmp"', expanded: "command: ls\ndirectory: /tmp" });
+		expect(tool).toMatchObject({ title: "Run command", text: "exit 0", tone: "plain", running: false });
 		expect(tool?.toolArgs?.collapsed.startsWith("{")).toBe(false);
 
 		const huge = "x".repeat(400);
@@ -431,7 +431,7 @@ describe("web view model", () => {
 			]),
 		);
 		expect(noArgs.find((block) => block.kind === "tool")).toMatchObject({
-			title: "bash",
+			title: "Run command",
 			text: "exit 0",
 			tone: "plain",
 			running: false,
@@ -443,7 +443,7 @@ describe("web view model", () => {
 			viewOf([assistantEntry(1, [toolCall("call-1", "bash", { command: "ls" })], "aborted")]),
 		);
 		expect(interrupted.find((block) => block.kind === "tool")).toMatchObject({
-			title: "bash",
+			title: "Run command",
 			text: "Not run: the answer was interrupted.",
 			tone: "plain",
 			running: false,
@@ -478,7 +478,7 @@ describe("web view model", () => {
 
 		const withReason = transcriptBlocks("en", viewOf([assistantEntry(1, [], "error", "no credentials")]));
 		expect(withReason).toHaveLength(1);
-		expect(withReason[0]).toMatchObject({ title: "Error", text: "no credentials", tone: "error" });
+		expect(withReason[0]).toMatchObject({ title: "Error", text: "Sign in to the provider or check the API key", tone: "error" });
 
 		const aborted = transcriptBlocks("en", viewOf([assistantEntry(1, [{ type: "text", text: "half" }], "aborted")]));
 		expect(aborted[1]).toMatchObject({ title: "Aborted", text: "Operation aborted", tone: "error" });
@@ -526,7 +526,7 @@ describe("web view model", () => {
 		const blocks = transcriptBlocks("en", view);
 		expect(blocks.map((block) => block.kind)).toEqual(["user", "assistant", "tool"]);
 		expect(blocks[1]).toMatchObject({ text: "streamed so far", running: true });
-		expect(blocks[2]).toMatchObject({ title: "read", text: "partial output", running: true });
+		expect(blocks[2]).toMatchObject({ title: "Read file", text: "partial output", running: true });
 		expect(sessionStatus("en", view)).toBe("Reading file…");
 		// Every strip carries its own withdraw, addressed by the inbox submission id.
 		expect(queuedInputs("en", view).map((item) => item.text)).toEqual([
@@ -1016,8 +1016,8 @@ describe("web view model", () => {
 			],
 		});
 		expect(cards.map((card) => [card.id, card.tool, card.detail])).toEqual([
-			["approval-1", "bash", '{"command":"rm -rf build"}'],
-			["approval-2", "write", '{"path":"notes.md"}'],
+			["approval-1", "Run command", '{"command":"rm -rf build"}'],
+			["approval-2", "Write file", '{"path":"notes.md"}'],
 		]);
 		expect(cards[0]?.approve).toEqual({
 			id: APPROVAL_APPROVE_ACTION,
@@ -1294,7 +1294,7 @@ describe("web view model", () => {
 				toolResultEntry(3, "call-1", ""),
 			]),
 		);
-		expect(blocks.map((block) => block.title)).toEqual(["你", "思考", "AmazMe", "bash"]);
+		expect(blocks.map((block) => block.title)).toEqual(["你", "思考", "AmazMe", "运行命令"]);
 		expect(blocks[2]?.text).toBe("试一下。");
 		expect(blocks[3]?.text).toBe("（无输出）");
 

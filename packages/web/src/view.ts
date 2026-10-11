@@ -38,10 +38,11 @@ import {
 import { type CommandCompletionLike, type CommandLike, type CommandPalette, commandPalette, parseCommandLine } from "./commands.ts";
 import { type DockView, type DockViewInput, dockView } from "./dock.ts";
 import type { Locale } from "./locale.ts";
+import { errorMessageCopy } from "./errors.ts";
 import type { ProviderAuthLike } from "./provider-auth.ts";
 import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panelView } from "./panels.ts";
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
-import { compactionReasonCopy, type MessageKey, thinkingLevelCopy, toolActivityCopy, translate } from "./strings.ts";
+import { compactionReasonCopy, type MessageKey, thinkingLevelCopy, toolActivityCopy, toolArgumentCopy, toolTitleCopy, translate } from "./strings.ts";
 import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
 import { toolImages, toolOutputText, toolResultView } from "./tool-results.ts";
 import type { ToolOutcome, ToolResultView } from "./tool-results.ts";
@@ -53,6 +54,8 @@ export interface TranscriptBlock {
 	readonly id: EntryId | string;
 	readonly kind: "user" | "assistant" | "thinking" | "tool" | "notice";
 	readonly title: string;
+	/** Registered identity stays available when the visible tool name is localized. */
+	readonly toolName?: string;
 	readonly text: string;
 	/**
 	 * A tool call's arguments, in the shapes the TUI's `formatToolCallWithArgs` uses. The collapsed
@@ -286,7 +289,7 @@ export interface ApprovalsStateLike {
 export function approvalCards(locale: Locale, state: ApprovalsStateLike | undefined): ApprovalCard[] {
 	return (state?.pending ?? []).map((request) => ({
 		id: request.id,
-		tool: request.tool,
+		tool: toolTitleCopy(locale, request.tool),
 		detail: request.detail,
 		approve: {
 			id: APPROVAL_APPROVE_ACTION,
@@ -929,13 +932,13 @@ function failureNotice(locale: Locale, message: AssistantMessage): { title: stri
 		const detail = message.errorMessage;
 		return {
 			title: translate(locale, "block.aborted"),
-			text: detail !== undefined && detail !== "Request was aborted" ? detail : translate(locale, "block.abortedText"),
+			text: detail !== undefined && detail !== "Request was aborted" ? errorMessageCopy(locale, detail) : translate(locale, "block.abortedText"),
 		};
 	}
 	if (message.stopReason === "error") {
 		return {
 			title: translate(locale, "block.error"),
-			text: message.errorMessage ?? translate(locale, "block.errorText"),
+			text: message.errorMessage === undefined ? translate(locale, "block.errorText") : errorMessageCopy(locale, message.errorMessage),
 		};
 	}
 	return undefined;
@@ -1134,11 +1137,12 @@ function pushToolBlock(
 	const result = outcome ?? results.get(key);
 	const running = result === undefined && (streaming || live.running.has(key));
 	const text = result !== undefined ? toolOutputText(locale, result) : running ? (live.output.get(key) ?? "") : ran ? "" : translate(locale, "tool.notRun");
-	const toolArgs = toolArgsView(call.arguments);
+	const toolArgs = toolArgsView(locale, call);
 	blocks.push({
 		id: key,
 		kind: "tool",
-		title: call.name,
+		title: toolTitleCopy(locale, call.name),
+		toolName: call.name,
 		text,
 		...(toolArgs === undefined ? {} : { toolArgs }),
 		...(result === undefined ? {} : { result: toolResultView(locale, call.name, call.arguments, result, nested), images: toolImages(result.content) }),
@@ -1148,10 +1152,11 @@ function pushToolBlock(
 }
 
 /** The short args digest, or nothing when the call has no arguments to show. */
-function toolArgsView(args: ToolCall["arguments"]): TranscriptBlock["toolArgs"] {
-	const collapsed = collapsedToolArgs(args);
+function toolArgsView(locale: Locale, call: ToolCall): TranscriptBlock["toolArgs"] {
+	const label = (key: string): string => toolArgumentCopy(locale, call.name, key);
+	const collapsed = collapsedToolArgs(call.arguments, label);
 	if (collapsed.length === 0) return undefined;
-	return { collapsed, expanded: expandedToolArgs(args) };
+	return { collapsed, expanded: expandedToolArgs(call.arguments, label) };
 }
 
 /**
@@ -1242,7 +1247,8 @@ export function transcriptBlocks(
 		blocks.push({
 			id: slotKey(slot),
 			kind: "tool",
-			title: slot.name,
+			title: toolTitleCopy(locale, slot.name),
+			toolName: slot.name,
 			text: slot.output ?? "",
 			tone: "plain",
 			running: true,
@@ -1288,7 +1294,7 @@ export function sessionStatus(locale: Locale, view: ConversationView | undefined
 	if (generation?.retry !== undefined) {
 		return translate(locale, "status.retrying", {
 			attempt: String(generation.attempt + 1),
-			error: generation.retry.error,
+			error: errorMessageCopy(locale, generation.retry.error),
 		});
 	}
 	if (generation?.deferred !== undefined) return translate(locale, "status.deferred");

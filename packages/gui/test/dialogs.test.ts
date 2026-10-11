@@ -18,9 +18,9 @@ describe("render failure dialog", () => {
 		expect(copy.buttons).toEqual(["重新加载", "退出"]);
 	});
 
-	test("keeps an unknown renderer reason as the raw token", () => {
+	test("uses a neutral explanation for an unknown renderer reason", () => {
 		const copy = renderFailureCopy("en", { kind: "render-process-gone", reason: "solar-flare", exitCode: 0 });
-		expect(copy.message).toBe("The page process exited (solar-flare, exit code 0).");
+		expect(copy.message).toBe("The page process exited (unexpected exit, exit code 0).");
 		expect(copy.buttons).toEqual(["Reload", "Quit"]);
 	});
 
@@ -33,7 +33,7 @@ describe("render failure dialog", () => {
 			validatedURL: "http://127.0.0.1:4310/",
 		});
 		expect(copy.title).toBe("页面加载失败");
-		expect(copy.message).toBe("页面没有加载成功（-105 ERR_NAME_NOT_RESOLVED）。");
+		expect(copy.message).toBe("页面没有加载成功。无法识别服务地址，请检查地址配置");
 		expect(copy.detail).toBe("http://127.0.0.1:4310/");
 		expect(copy.buttons).toEqual(["重新加载", "退出"]);
 	});

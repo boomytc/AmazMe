@@ -1,6 +1,7 @@
 import type { ImagesOutputContent } from "@amazme/ai";
 import type { ToolDiagnostic } from "@amazme/durable";
 import type { Locale } from "./locale.ts";
+import { toolDiagnosticCopy } from "./errors.ts";
 import { translate } from "./strings.ts";
 
 export interface ToolOutcome {
@@ -69,7 +70,7 @@ export function toolResultView(
 				}),
 		diagnostics: (result.diagnostics ?? []).map((item) => ({
 			tone: item.severity === "error" ? "error" : "muted",
-			text: item.message,
+			text: toolDiagnosticCopy(locale, item.code, item.message),
 		})),
 	};
 }
@@ -101,7 +102,7 @@ export function toolOutputText(locale: Locale, result: ToolOutcome): string {
 		.trim();
 	return (
 		output ||
-		(toolImages(result.content).length > 0
+		(toolImages(result.content).length > 0 || diagnostics.length > 0
 			? ""
 			: translate(locale, result.isError ? "tool.errorText" : "tool.noOutput"))
 	);

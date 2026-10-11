@@ -6,6 +6,7 @@
  * button quits.
  */
 import type { Locale } from "@amazme/web/locale";
+import { errorCodeCopy } from "@amazme/web";
 import { translate, type MessageKey } from "@amazme/web/strings";
 import type { HostExitDetail, HostStartupFailure } from "./host.ts";
 
@@ -119,8 +120,8 @@ export function visibleOutputTail(tail: string): string {
 }
 
 function renderReason(locale: Locale, reason: string): string {
-	const key = RENDER_REASONS[reason as keyof typeof RENDER_REASONS];
-	return key === undefined ? reason : translate(locale, key);
+	const key = Object.hasOwn(RENDER_REASONS, reason) ? RENDER_REASONS[reason as keyof typeof RENDER_REASONS] : undefined;
+	return key === undefined ? translate(locale, "desktop.render.reason.unknown") : translate(locale, key);
 }
 
 function shownCode(locale: Locale, code: number | null): string {
@@ -148,8 +149,7 @@ export function renderFailureCopy(locale: Locale, failure: RenderFailure): Rende
 	return {
 		title: translate(locale, "desktop.render.load.title"),
 		message: translate(locale, "desktop.render.load.message", {
-			errorCode: String(failure.errorCode),
-			errorDescription: failure.errorDescription,
+			reason: errorCodeCopy(locale, failure.errorDescription) ?? translate(locale, "desktop.render.load.retry"),
 		}),
 		detail: failure.validatedURL,
 		buttons,

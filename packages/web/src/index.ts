@@ -51,6 +51,7 @@ export {
 	WELCOME_SETTINGS_ACTION,
 } from "./actions.ts";
 export { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
+export { errorCodeCopy, errorMessageCopy } from "./errors.ts";
 export { modelScopeModal, type ModelScopeLike } from "./model-scope.ts";
 export {
 	BOOT_GLOBAL,

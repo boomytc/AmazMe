@@ -18,22 +18,22 @@ function entriesOf(args: unknown): [string, unknown][] {
 }
 
 /** One line for the collapsed tool row. Empty when the call has no arguments. */
-export function collapsedToolArgs(args: unknown): string {
+export function collapsedToolArgs(args: unknown, label: (key: string) => string = (key) => key): string {
 	const entries = entriesOf(args);
 	if (entries.length === 0) return "";
-	const pairs = entries.map(([key, value]) => `${key}=${JSON.stringify(value) ?? String(value)}`).join(" ");
+	const pairs = entries.map(([key, value]) => `${label(key)}=${JSON.stringify(value) ?? String(value)}`).join(" ");
 	return pairs.length > COLLAPSED_ARGS_CHARS ? `${pairs.slice(0, COLLAPSED_ARGS_CHARS - 3)}...` : pairs;
 }
 
 /** `key: value` lines for the open tool card. Empty when the call has no arguments. */
-export function expandedToolArgs(args: unknown): string {
+export function expandedToolArgs(args: unknown, label: (key: string) => string = (key) => key): string {
 	const entries = entriesOf(args);
 	if (entries.length === 0) return "";
 	return entries
 		.map(([key, value]) => {
 			const text = typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? String(value));
 			const body = replaceTabs(text).replace(/\r/g, "").split("\n").join("\n  ");
-			return `${key}: ${body}`;
+			return `${label(key)}: ${body}`;
 		})
 		.join("\n");
 }

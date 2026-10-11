@@ -6,6 +6,7 @@
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
+import { errorMessageCopy } from "./errors.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
 import { transcriptPosition } from "./transcript-position.ts";
 import { createMultiselect } from "./multiselect.ts";
@@ -570,7 +571,8 @@ export function createRenderer(
 		if (connectionCopy === undefined) return;
 		const locale = lastView?.locale ?? FALLBACK_LOCALE;
 		const resolve = (value: ConnectionText): string => typeof value === "string" ? value : value(locale);
-		const text = resolve(connectionCopy.text);
+		const raw = resolve(connectionCopy.text);
+		const text = connectionCopy.kind === "error" ? errorMessageCopy(locale, raw) : raw;
 		elements.connection.className = `connection ${connectionCopy.kind}`;
 		elements.connection.title = text;
 		elements.connection.setAttribute("aria-label", text);
@@ -778,7 +780,7 @@ export function createRenderer(
 		head.append(element("h1", "panel-title", panel.title));
 		if (panel.description !== undefined) head.append(element("p", "panel-desc", panel.description));
 		node.append(head);
-		for (const notice of panel.notices) node.append(element("p", `panel-notice ${notice.tone}`, notice.text));
+		for (const notice of panel.notices) node.append(element("p", `panel-notice ${notice.tone}`, notice.tone === "error" ? errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, notice.text) : notice.text));
 		const previousInput = container?.querySelector<HTMLElement>("form[data-input-row]") ?? undefined;
 		for (const input of panel.inputs ?? []) node.append(inputElement(input, previousInput));
 		for (const group of panel.groups) node.append(groupElement(group, panel.pending));
@@ -815,7 +817,7 @@ export function createRenderer(
 		}
 		if (modalMessage !== undefined) {
 			const notice = modal.notice;
-			modalMessage.textContent = notice?.text ?? "";
+			modalMessage.textContent = notice === undefined ? "" : notice.tone === "error" ? errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, notice.text) : notice.text;
 			modalMessage.className = notice === undefined ? "modal-notice" : `modal-notice ${notice.tone}`;
 			modalMessage.hidden = notice === undefined;
 		}
@@ -1241,9 +1243,11 @@ export function createRenderer(
 		const details = disclosure(block, tone, block.running);
 		details.dataset.blockId = String(block.id);
 		const digest = block.toolArgs?.collapsed;
-		const summary = digest !== undefined && digest.length > 0 ? digest : firstLine(block.text);
+		const summary = digest !== undefined && digest.length > 0 ? digest : firstLine(block.text || block.result?.diagnostics[0]?.text || "");
 		const mark = block.running ? icon("spinner", "icon spin") : block.tone === "error" ? icon("alert") : icon("wrench");
-		details.append(disclosureSummary(mark, block.title, summary));
+		const heading = disclosureSummary(mark, block.title, summary);
+		if (block.toolName !== undefined) heading.title = block.toolName;
+		details.append(heading);
 		if (block.toolArgs !== undefined && block.toolArgs.expanded.length > 0) {
 			const args = element("div", "tool-args", block.toolArgs.expanded);
 			args.dataset.textKey = "args";
@@ -1267,7 +1271,7 @@ export function createRenderer(
 			const output = element("div", block.result?.terminal === undefined ? "tool-output" : "tool-output terminal-output", block.text);
 			output.dataset.textKey = "output";
 			details.append(output);
-		} else if (!block.running && (block.images?.length ?? 0) === 0) {
+		} else if (!block.running && (block.images?.length ?? 0) === 0 && (block.result?.diagnostics.length ?? 0) === 0) {
 			details.append(element("div", "tool-output empty", copy("tool.noOutput")));
 		}
 		if (block.images && block.images.length > 0) {
@@ -1643,7 +1647,7 @@ export function createRenderer(
 	const errorElement = (block: TranscriptBlock): HTMLElement => {
 		const line = element("div", "error-row");
 		const body = element("div", "error-copy");
-		body.append(element("span", "error-title", block.title), element("span", "error-message", block.text));
+		body.append(element("span", "error-title", block.title), element("span", "error-message", errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, block.text)));
 		line.append(icon("alert", "icon error-icon"), body);
 		return line;
 	};
