@@ -167,12 +167,13 @@ export async function createExperimentalServerServices(options: {
 
 	return {
 		host: {
-			attachClient(presentation) {
+			async attachClient(presentation) {
 				if (disposed) throw new Error("Server services are disposed");
 				let preparedPluginPackagePaths: readonly string[] | undefined;
 				// A client that just arrived sees the sessions that exist now, including terminal ones
 				// created while this host was running.
-				void serialize(() => refreshNow(BACKGROUND_CONTEXT)).catch(() => undefined);
+				await serialize(() => refreshNow(BACKGROUND_CONTEXT));
+				if (disposed) throw new Error("Server services are disposed");
 				const provider = new RemoteServiceProvider(definitions);
 				provider.provide(SessionDirectory, { state: directory });
 				if (options.projects !== undefined) {

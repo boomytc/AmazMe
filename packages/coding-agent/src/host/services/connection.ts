@@ -11,7 +11,7 @@ import {
 	type Service,
 	type ServiceCatalogueEntry,
 } from "@amazme/chord";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { awaitWithContext, BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { type Client, createClientServiceTransport } from "@amazme/client";
 import type { SessionTarget } from "@amazme/protocol";
 
@@ -45,6 +45,7 @@ export interface ServiceSourceOptions {
 class RoutedServiceBinding implements RemoteServices {
 	readonly #services: RemoteServiceBinding;
 	readonly #getBound: () => boolean;
+	readonly #beforeReady: (context: Context) => Promise<void>;
 	readonly #onActivate: (context: Context) => Promise<void>;
 	readonly #remove: () => void;
 	#activated = false;
@@ -56,6 +57,7 @@ class RoutedServiceBinding implements RemoteServices {
 		readonly getBound: () => boolean;
 		readonly assertAccess: () => void;
 		readonly onError: (error: Error) => void;
+		readonly beforeReady?: (context: Context) => Promise<void>;
 		readonly onActivate?: (context: Context) => Promise<void>;
 		readonly remove: () => void;
 	}) {
@@ -67,6 +69,7 @@ class RoutedServiceBinding implements RemoteServices {
 			onError: options.onError,
 		});
 		this.#getBound = options.getBound;
+		this.#beforeReady = options.beforeReady ?? (() => Promise.resolve());
 		this.#onActivate = options.onActivate ?? (() => Promise.resolve());
 		this.#remove = options.remove;
 	}
@@ -80,6 +83,7 @@ class RoutedServiceBinding implements RemoteServices {
 	}
 
 	async ready(context: Context): Promise<void> {
+		await this.#beforeReady(context);
 		if (!this.#activated) {
 			this.#activated = true;
 			await this.#services.rebind(this.#getBound(), context);
@@ -164,6 +168,14 @@ class ServerServiceSourceImpl implements ServerServiceSource {
 			getBound: () => this.#client.connected,
 			assertAccess: options.assertAccess,
 			onError: options.onError,
+			beforeReady: async (context) => {
+				// Include source transitions that have not reached the binding yet.
+				let transition: Promise<void>;
+				do {
+					transition = this.#transition;
+					await awaitWithContext(transition, context);
+				} while (transition !== this.#transition);
+			},
 			remove: () => this.#bindings.delete(binding),
 		});
 		this.#bindings.add(binding);
