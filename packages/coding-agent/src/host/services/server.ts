@@ -159,6 +159,11 @@ export async function createExperimentalServerServices(options: {
 		);
 		return result;
 	};
+	const updateDirectory = <T>(operation: () => Promise<T>): Promise<T> => serialize(async () => {
+		try { return await operation(); }
+		// A failed or cancelled request may already have written metadata; every peer needs that state.
+		finally { await refreshNow(BACKGROUND_CONTEXT); }
+	});
 
 	return {
 		host: {
@@ -173,12 +178,12 @@ export async function createExperimentalServerServices(options: {
 				if (options.projects !== undefined) {
 					const projects = options.projects;
 					provider.provide(ProjectManagement, {
-						create: (input, context) => serialize(async () => { context.abortSignal?.throwIfAborted(); const project = await projects.create(input.cwd, input.name); await refreshNow(context); return project; }),
-						rename: (id, name, context) => serialize(async () => { context.abortSignal?.throwIfAborted(); const project = await projects.rename(id, name); await refreshNow(context); return project; }),
-						remove: (id, context) => serialize(async () => { await projects.remove(id, context); await refreshNow(context); }),
+						create: (input, context) => updateDirectory(async () => { context.abortSignal?.throwIfAborted(); return projects.create(input.cwd, input.name); }),
+						rename: (id, name, context) => updateDirectory(async () => { context.abortSignal?.throwIfAborted(); return projects.rename(id, name); }),
+						remove: (id, context) => updateDirectory(() => projects.remove(id, context)),
 					});
 					provider.provide(SessionArchive, {
-						set: (id, archived, context) => serialize(async () => { await projects.archive(id, archived, context); await refreshNow(context); }),
+						set: (id, archived, context) => updateDirectory(() => projects.archive(id, archived, context)),
 					});
 				}
 				provider.provide(Diagnostics, {
@@ -250,23 +255,17 @@ export async function createExperimentalServerServices(options: {
 				});
 				provider.provide(SessionManagement, {
 					create: (createOptions, context) =>
-						serialize(async () => {
-							const created = await options.create(createOptions, context);
-							await refreshNow(context);
-							return created;
-						}),
+						updateDirectory(() => options.create(createOptions, context)),
 					remove: (sessionId, context) =>
-						serialize(async () => {
+						updateDirectory(async () => {
 							await presentation.prepareSessionRemoval(sessionId, context);
 							await options.remove(sessionId, context);
-							await refreshNow(context);
 						}),
 					attach: (sessionId, context) =>
-						serialize(async () => {
-							await presentation.attachSession(sessionId, context);
+						updateDirectory(async () => {
 							// Attaching can adopt a terminal session, which moves it into the host's own
 							// list: the roster reports what a session is now, not what it was at startup.
-							await refreshNow(context);
+							await presentation.attachSession(sessionId, context);
 						}),
 					detach: (context) =>
 						serialize(async () => {
@@ -274,11 +273,7 @@ export async function createExperimentalServerServices(options: {
 							preparedPluginPackagePaths = undefined;
 						}),
 					rename: (sessionId, name, context) =>
-						serialize(async () => {
-							const renamed = await options.rename(sessionId, name, context);
-							await refreshNow(context);
-							return renamed;
-						}),
+						updateDirectory(() => options.rename(sessionId, name, context)),
 				});
 				const attachment = createProviderAttachment(provider, () => attachments.delete(attachment), options.plugins?.services);
 				attachments.add(attachment);
@@ -286,10 +281,7 @@ export async function createExperimentalServerServices(options: {
 			},
 		},
 		refresh: (context = BACKGROUND_CONTEXT) => serialize(() => refreshNow(context)),
-		nameAutomatically: (sessionId, name, context = BACKGROUND_CONTEXT) => serialize(async () => {
-			await options.nameAutomatically(sessionId, name, context);
-			await refreshNow(context);
-		}),
+		nameAutomatically: (sessionId, name, context = BACKGROUND_CONTEXT) => updateDirectory(() => options.nameAutomatically(sessionId, name, context)),
 		dispose() {
 			if (disposePromise !== undefined) return disposePromise;
 			disposed = true;

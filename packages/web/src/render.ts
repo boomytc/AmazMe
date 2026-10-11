@@ -1164,13 +1164,6 @@ export function createRenderer(
 			element("h2", "greeting", copy(hasSessions ? "greeting.pickTitle" : "greeting.startTitle")),
 			element("p", "greeting-hint", copy(hasSessions ? "greeting.pickHint" : "greeting.startHint")),
 		);
-		const steps = element("div", "welcome-steps");
-		const create = button("panel-button tone-primary");
-		create.textContent = copy("sidebar.newSession");
-		create.disabled = !view.newSession.enabled;
-		create.addEventListener("click", () => renderer.onCreateSession());
-		steps.append(create);
-		block.append(steps);
 		return block;
 	};
 
@@ -1960,7 +1953,7 @@ export function createRenderer(
 			// The empty layout centres the greeting and the composer; anything in the transcript brings the conversation layout.
 			elements.center.dataset.state = hasConversation || view.status.length > 0 ? "chat" : "empty";
 			if (view.blocks.length === 0) {
-				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter, view.newSession], () => view.welcome !== undefined ? welcomeElement(view.welcome) : emptyElement(view)));
+				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter], () => view.welcome !== undefined ? welcomeElement(view.welcome) : emptyElement(view)));
 			}
 			if (view.status.length > 0) flow.push(flowCache.get("status", view.status, () => runningElement(view.status)));
 			reconcileChildren(elements.column, flow);

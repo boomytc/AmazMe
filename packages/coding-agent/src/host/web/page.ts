@@ -1065,16 +1065,25 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			},
 		);
 	};
-	directory.state.subscribe(() => {
-		const state = directory.state.value;
-		if (!state) return;
+	let observedDirectory = directory.state.value;
+	directory.state.subscribe((state) => {
+		const previous = observedDirectory?.sessions.find(session => session.sessionId === desiredSessionId);
+		const current = state.sessions.find(session => session.sessionId === desiredSessionId);
+		observedDirectory = state;
+		if (booted && desiredSessionId !== undefined) {
+			if ((previous !== undefined && current === undefined)
+				|| (current?.archivedAt !== undefined && (!showArchived || previous?.archivedAt === undefined))) {
+				void clearSession().catch(report);
+			} else if (current !== undefined && previous?.archivedAt !== undefined && current.archivedAt === undefined) {
+				showArchived = false;
+				selectedProjectId = current.projectId;
+				rememberProject();
+			}
+		}
 		const available = state.projects?.filter(project => showArchived || !project.removed) ?? [];
 		if (!available.some(project => project.id === selectedProjectId)) {
 			selectedProjectId = available.find(project => project.id === state.defaultProjectId)?.id ?? available[0]?.id;
-			if (booted) rememberProject();
-		}
-		if (booted && !showArchived && state.sessions.some(session => session.sessionId === desiredSessionId && session.archivedAt !== undefined)) {
-			void clearSession().catch(report);
+			if (booted) { selectionRevision += 1; rememberProject(); }
 		}
 		paint();
 	});
@@ -1135,11 +1144,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const clearSession = async (): Promise<void> => {
 		selectionRevision += 1;
 		desiredSessionId = undefined;
+		reconnectTranscript = undefined;
 		saveDraft();
 		await transition(async () => {
 			if (desiredSessionId !== undefined) return;
 			await painter.detach();
-			await management.detach(BACKGROUND_CONTEXT);
+			if (client.connected) await management.detach(BACKGROUND_CONTEXT);
 			try { sessionStorage.removeItem(`amazme.session.${manifest.server.id}`); } catch { /* Optional storage. */ }
 			draftSessionId = undefined;
 			pending = [];

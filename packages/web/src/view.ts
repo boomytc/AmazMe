@@ -1463,6 +1463,7 @@ export function buildWebView(input: WebViewInput): WebView {
 	const forkable = shownCanFork(input);
 	const blocks = transcriptBlocks(locale, input.transcript, [], input.feedback?.records, input.feedbackScope);
 	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter, input.showArchived);
+	const archived = input.attachedId !== undefined && input.directory?.sessions.some(session => session.sessionId === input.attachedId && session.archivedAt !== undefined);
 	const empty =
 		input.directory === undefined
 			? translate(locale, "header.connecting")
@@ -1479,7 +1480,7 @@ export function buildWebView(input: WebViewInput): WebView {
 		rosterFilter: input.rosterFilter,
 		...(input.attachedId === undefined ? {} : { transcriptScope: `${input.attachedId}:${input.transcript?.conversation.id ?? input.feedbackScope?.conversationId ?? "root"}` }),
 		focus: input.focus,
-		lane: input.lane === undefined ? "" : laneLine(locale, input.lane),
+		lane: [archived ? translate(locale, "project.archived") : "", input.lane === undefined ? "" : laneLine(locale, input.lane)].filter(Boolean).join(" · "),
 		history: {
 			blocks: historyPageBlocks(locale, input.history),
 			more: input.historyMore,
