@@ -489,16 +489,17 @@ describe("AgentSession compaction characterization", () => {
 			const order: string[] = [];
 			const observedSettings: unknown[] = [];
 			const harness = await createHarness({
-				models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
+				// Keep the 2800-token threshold between the pre-compaction context and the retained tool result.
+				models: [{ id: "faux-1", contextWindow: 4000, maxTokens: 100 }],
 				settings: {
 					compaction: modelOverride
 						? {
 								enabled: true,
 								reserveTokens: 0,
 								keepRecentTokens: 20000,
-								modelOverrides: { "faux/faux-1": { reserveTokens: 400, keepRecentTokens: 1750 } },
+								modelOverrides: { "faux/faux-1": { reserveTokens: 1200, keepRecentTokens: 1750 } },
 							}
-						: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 },
+						: { enabled: true, reserveTokens: 1200, keepRecentTokens: 1750 },
 				},
 				tools: [largeTool],
 				extensionFactories: [
@@ -519,6 +520,10 @@ describe("AgentSession compaction characterization", () => {
 				],
 			});
 			harnesses.push(harness);
+			// Cache usage is covered separately; this case measures one threshold compaction.
+			const stream = harness.session.agent.streamFunction;
+			harness.session.agent.streamFunction = (model, context, options) =>
+				stream(model, context, { ...options, cacheRetention: "none" });
 			let resumedRequest = "";
 			harness.setResponses([
 				fauxAssistantMessage(`old-history:${"a".repeat(800)}`),
@@ -537,12 +542,12 @@ describe("AgentSession compaction characterization", () => {
 			await harness.session.prompt("run the large tool");
 
 			expect(order.slice(0, 2)).toEqual(["compaction", "provider"]);
-			expect(observedSettings[0]).toEqual({ enabled: true, reserveTokens: 400, keepRecentTokens: 1750 });
+			expect(observedSettings[0]).toEqual({ enabled: true, reserveTokens: 1200, keepRecentTokens: 1750 });
 			expect(harness.eventsOfType("agent_start")).toHaveLength(agentStartsBefore + 1);
-			expect(harness.eventsOfType("compaction_start").at(-1)).toEqual({
+			expect(harness.eventsOfType("compaction_start")).toEqual([{
 				type: "compaction_start",
 				reason: "threshold",
-			});
+			}]);
 			expect(resumedRequest).toContain("compacted history");
 			expect(resumedRequest).toContain("large-tool-result");
 			expect(harness.session.getLastAssistantText()).toBe("finished after compaction");

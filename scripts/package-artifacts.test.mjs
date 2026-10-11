@@ -187,6 +187,54 @@ test("real npm pack and offline install use the complete local closure without r
 	);
 });
 
+// Pi #10633: exercise both JSON formats regardless of the installed npm version.
+for (const format of ["array", "package-keyed"]) {
+	test(`npm pack accepts ${format} JSON and rejects a mismatched package`, () => {
+		const root = fixture();
+		packageFixture(root, "base");
+		const npmCli = join(root, "npm-fixture.cjs");
+		writeFileSync(
+			npmCli,
+			`
+const { readFileSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+const destination = process.argv[process.argv.indexOf("--pack-destination") + 1];
+writeFileSync(join(destination, "base.tgz"), "fixture");
+const packed = { name: manifest.name, filename: "base.tgz", files: [{ path: "dist/index.js" }, { path: "dist/index.d.ts" }] };
+process.stdout.write(JSON.stringify(${format === "array" ? "[packed]" : "{ [manifest.name]: packed }"}));
+`,
+		);
+		const previous = process.env.npm_execpath;
+		process.env.npm_execpath = npmCli;
+		try {
+			const artifacts = createPackageArtifacts({
+				repoRoot: root,
+				directory: join(root, "valid"),
+				packageNames: ["@amazme/base"],
+			});
+			assert.equal(artifacts.get("@amazme/base").version, "1.0.0");
+			const source = readFileSync(npmCli, "utf8");
+			writeFileSync(
+				npmCli,
+				source.replace("name: manifest.name", 'name: "@amazme/wrong"'),
+			);
+			assert.throws(
+				() =>
+					createPackageArtifacts({
+						repoRoot: root,
+						directory: join(root, "invalid"),
+						packageNames: ["@amazme/base"],
+					}),
+				/Unexpected npm pack result/,
+			);
+		} finally {
+			if (previous === undefined) delete process.env.npm_execpath;
+			else process.env.npm_execpath = previous;
+		}
+	});
+}
+
 test("locked consumers refuse absent required dependencies instead of resolving an untested version", () => {
 	assert.throws(
 		() => consumerLock({ lockfileVersion: 3, packages: {} }, new Map(), { dependencies: { missing: "1.0.0" } }),

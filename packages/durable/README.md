@@ -164,7 +164,7 @@ import { createCodingTools } from "@amazme/durable/tools";
 registry.install(createCodingTools({ images: await createNodePhotonImages() }));
 ```
 
-A model without image input sees a placeholder instead of the image, and `read` says so in a diagnostic. The Photon processor works on the calling thread, about a second and a half for a 12-megapixel photo, and decoding takes the image's full size in WebAssembly memory, which does not shrink again; leave it out on memory-constrained hosts such as Cloudflare Workers unless images stay small.
+A model without image input sees a placeholder instead of the image, and `read` says so in a diagnostic. With an image processor, AmazMe refuses source files larger than 10 MiB before reading the whole file or decoding it; the model's encoded byte and dimension limits still apply separately. The Photon processor works on the calling thread, about a second and a half for a 12-megapixel photo, and decoding takes the image's full size in WebAssembly memory, which does not shrink again; leave it out on memory-constrained hosts such as Cloudflare Workers unless images stay small.
 
 Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `output`:
 

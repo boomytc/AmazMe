@@ -120,7 +120,9 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 	const root = fixture();
 	const ai = packageFixture(root, "ai", "export const value = 1;");
 	writeFileSync(join(ai, "src/models.ts"), 'export { value } from "./index.ts";');
-	packageFixture(root, "durable", 'import fs from "node:fs"; export const read = fs.readFileSync;');
+	const durable = packageFixture(root, "durable", 'import fs from "node:fs"; export const read = fs.readFileSync;');
+	mkdirSync(join(durable, "src/tools"), { recursive: true });
+	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
 	const agent = packageFixture(root, "coding-agent", "export const value = 1;");
 	mkdirSync(join(agent, "src/host/web"), { recursive: true });
 	writeFileSync(
@@ -138,4 +140,27 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 				failure.startsWith("packages/coding-agent/src/host/web/page.ts:") && failure.includes("node:fs"),
 		),
 	);
+});
+
+test("Durable root and file tools keep the optional Photon processor in its own entry", async () => {
+	const root = fixture();
+	const ai = packageFixture(root, "ai", "export const value = 1;");
+	writeFileSync(join(ai, "src/models.ts"), "export const value = 1;");
+	const codemode = packageFixture(root, "codemode", "export const value = 1;");
+	for (const name of ["portable", "cloudflare"])
+		writeFileSync(join(codemode, `src/${name}.ts`), "export const value = 1;");
+	const agent = packageFixture(root, "coding-agent", "export const value = 1;");
+	mkdirSync(join(agent, "src/host/web"), { recursive: true });
+	writeFileSync(join(agent, "src/host/web/page.ts"), "export const value = 1;");
+	const durable = packageFixture(root, "durable", 'export { photon } from "./images/index.ts";');
+	mkdirSync(join(durable, "src/images"), { recursive: true });
+	mkdirSync(join(durable, "src/tools"), { recursive: true });
+	writeFileSync(join(durable, "src/images/index.ts"), "export const photon = 1;");
+	writeFileSync(join(durable, "src/tools/index.ts"), 'export { photon } from "../images/index.ts";');
+	const { failures } = await checkEntryContracts(root);
+	for (const entry of ["index.ts", "tools/index.ts"])
+		assert.ok(failures.some((failure) => failure.startsWith(`packages/durable/src/${entry}:`) && failure.includes("forbidden runtime import packages/durable/src/images/index.ts")));
+	writeFileSync(join(durable, "src/index.ts"), "export const value = 1;");
+	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
+	assert.deepEqual((await checkEntryContracts(root)).failures, []);
 });

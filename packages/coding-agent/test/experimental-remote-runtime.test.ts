@@ -441,7 +441,38 @@ describe("experimental durable server composition", () => {
 		}
 	});
 
-	test("uses the most recently selected model for a new Session", async () => {
+	test("keeps a model selection in its Session without changing new Session defaults", async () => {
+		const directory = await mkdtemp(join("/tmp", "pes-model-selection-"));
+		directories.add(directory);
+		const runtime = await startServer({ directory });
+		servers.add(runtime);
+		const firstClient = await attachClient(runtime, "demo-1");
+		const firstServices = createSessionServiceBinding(firstClient, { services: [Models] });
+		await firstServices.ready(BACKGROUND_CONTEXT);
+		const firstModels = firstServices.use(Models);
+		await firstModels.saveDefaults({ provider: "anthropic", modelId: "claude-sonnet-4-5" }, "off", BACKGROUND_CONTEXT);
+		await firstModels.select({ provider: "anthropic", modelId: "claude-opus-4-6" }, BACKGROUND_CONTEXT);
+		await expect.poll(() => firstModels.state.value?.configuration.model).toEqual({
+			provider: "anthropic", modelId: "claude-opus-4-6",
+		});
+		await firstServices.dispose(BACKGROUND_CONTEXT);
+		await firstClient.dispose();
+		clients.delete(firstClient);
+		await expect.poll(() => runtime.workerPids.has("demo-1")).toBe(false);
+		expect((await readExperimentalSessionState(join(agentDir, "experimental", "sessions"), "demo-1")).model).toEqual({
+			provider: "anthropic", modelId: "claude-opus-4-6",
+		});
+
+		const secondClient = await attachClient(runtime, "demo-2");
+		const secondServices = createSessionServiceBinding(secondClient, { services: [Models] });
+		await secondServices.ready(BACKGROUND_CONTEXT);
+		await expect.poll(() => secondServices.use(Models).state.value?.configuration.model).toEqual({
+			provider: "anthropic", modelId: "claude-sonnet-4-5",
+		});
+		await secondServices.dispose(BACKGROUND_CONTEXT);
+	});
+
+	test("uses explicitly saved model and thinking defaults for a new Session", async () => {
 		const directory = await mkdtemp(join("/tmp", "pes-model-default-"));
 		directories.add(directory);
 		const runtime = await startServer({ directory });
@@ -451,6 +482,7 @@ describe("experimental durable server composition", () => {
 		const firstModels = firstServices.use(Models);
 		await firstServices.ready(BACKGROUND_CONTEXT);
 		await firstModels.select({ provider: "anthropic", modelId: "claude-opus-4-6" }, BACKGROUND_CONTEXT);
+		await firstModels.saveDefaults({ provider: "anthropic", modelId: "claude-opus-4-6" }, "high", BACKGROUND_CONTEXT);
 		await firstServices.dispose(BACKGROUND_CONTEXT);
 		await firstClient.dispose();
 		clients.delete(firstClient);
@@ -460,10 +492,11 @@ describe("experimental durable server composition", () => {
 		const secondServices = createSessionServiceBinding(secondClient, { services: [Models] });
 		const secondModels = secondServices.use(Models);
 		await secondServices.ready(BACKGROUND_CONTEXT);
-		expect(secondModels.state.value?.configuration.model).toEqual({
+		await expect.poll(() => secondModels.state.value?.configuration.model).toEqual({
 			provider: "anthropic",
 			modelId: "claude-opus-4-6",
 		});
+		expect(secondModels.state.value?.configuration.thinkingLevel).toBe("high");
 		await secondServices.dispose(BACKGROUND_CONTEXT);
 	});
 

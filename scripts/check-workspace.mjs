@@ -244,7 +244,13 @@ export async function checkEntryContracts(repoRoot) {
 		{
 			entry: "packages/durable/src/index.ts",
 			maxFiles: 67,
-			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
+			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts", "packages/durable/src/images/"],
+		},
+		{
+			entry: "packages/durable/src/tools/index.ts",
+			// File observations and portable search tools add their document and environment helpers.
+			maxFiles: 47,
+			forbid: ["packages/durable/src/images/"],
 		},
 	]) {
 		const result = await build({
@@ -269,6 +275,7 @@ export async function checkEntryContracts(repoRoot) {
 	for (const entry of [
 		"packages/ai/src/models.ts",
 		"packages/durable/src/index.ts",
+		"packages/durable/src/tools/index.ts",
 		"packages/coding-agent/src/host/web/page.ts",
 	]) {
 		try {

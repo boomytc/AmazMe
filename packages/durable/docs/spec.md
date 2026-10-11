@@ -3340,6 +3340,11 @@ conversation model's `inputLimits.images.resize`, each absent one
 when the file size puts their base64 within the byte limit (checked before
 reading the file) and their header declares dimensions within the limits;
 otherwise, and for BMP, it returns an error result (code `unsupported_image`).
+
+With a processor, AmazMe rejects original files larger than 10 MiB before
+reading the whole file or calling `prepare`. This source-file bound is separate
+from the model's encoded-byte and dimension limits, and bounds the input passed
+to the decoder.
 With one, `await processor.prepare(bytes, mimeType, limits)` returns the image fitted to the limits, or `undefined` for an error result; the
 diagnostic says when its format changed or it was resized, with the factor that
 maps coordinates back. The Photon processor decodes every image, returns it as
