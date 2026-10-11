@@ -30,6 +30,7 @@ import {
 	SESSION_RENAME_MODAL,
 } from "./actions.ts";
 import type { Locale } from "./locale.ts";
+import { ARCHIVE_MANAGE_ACTION } from "./projects.ts";
 import {
 	type MessageKey,
 	mcpExposureCopy,
@@ -294,6 +295,7 @@ export interface PluginsStateLike {
 export interface SettingsPanelInput {
 	readonly state: SettingsStateLike | undefined;
 	readonly models?: { readonly available: boolean; readonly authentication: boolean; readonly selected: boolean };
+	readonly archives?: boolean;
 }
 
 export interface SkillsPanelInput {
@@ -509,6 +511,14 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 	for (const [group, rows] of rowsByGroup) {
 		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), rows });
 	}
+	if (input.archives) groups.push({
+		id: "settings:archives", title: translate(locale, "project.archived"),
+		rows: [{
+			id: "settings:archived-sessions", title: translate(locale, "panel.settings.archivedSessions"),
+			description: translate(locale, "panel.settings.archivedSessionsHelp"),
+			actions: [{ id: ARCHIVE_MANAGE_ACTION, label: translate(locale, "panel.settings.manageArchives"), tone: "default" }],
+		}],
+	});
 	groups.push({
 		id: "settings:files",
 		title: translate(locale, "panel.settings.filesTitle"),

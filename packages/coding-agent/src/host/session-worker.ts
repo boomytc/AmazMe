@@ -31,6 +31,7 @@ import {
 	ExecutionEnvs,
 	findInitialAgentModel,
 	loadCodingResources,
+	refreshCodingProjectTrust,
 } from "../durable/harness-setup.ts";
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
 import { createApprovalGate } from "./services/approvals-provider.ts";
@@ -872,8 +873,11 @@ async function createCodingAgentHarness(
 		const metadata = await readSession(options.sessionDir, options.metadata.id);
 		const projects = await projectCatalog.list();
 		const path = await realpath(cwd).catch(() => cwd);
-		const project = projects.find(project => project.id === metadata?.projectId)
-			?? projects.find(project => (project.workspaces ?? [project.cwd]).includes(path));
+		const project = metadata?.projectId === undefined
+			? projects.find(project => !project.removed && (project.workspaces ?? [project.cwd]).includes(path))
+				?? projects.find(project => (project.workspaces ?? [project.cwd]).includes(path))
+			: projects.find(project => project.id === metadata.projectId);
+		if (project?.removed || (metadata?.projectId !== undefined && project === undefined)) return [];
 		return project?.workspaces ?? [cwd];
 	};
 	const registry = createCodingRegistry(settingsManager, cwd, resources, workspaceDirectories);
@@ -887,7 +891,12 @@ async function createCodingAgentHarness(
 	// agent, so a session opened here can delegate to a subagent the way the TUI's does.
 	registry.install(Subagent);
 	// The approval gate is a tool hook, so it belongs to the registry the Harness takes.
-	const approvalGate = createApprovalGate({ mode: () => settingsManager.getToolApprovalMode() });
+	const approvalGate = createApprovalGate({ mode: async () => {
+		// A running task may have no attached client to reload its configuration.
+		await settingsManager.reload();
+		refreshCodingProjectTrust(settingsManager, cwd);
+		return settingsManager.getToolApprovalMode();
+	} });
 	registry.install(approvalGate.extension);
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;

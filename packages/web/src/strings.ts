@@ -475,6 +475,9 @@ export const EN = {
 	"panel.dismiss": "Close",
 
 	"panel.settings.title": "Settings",
+	"panel.settings.archivedSessions": "Archived sessions",
+	"panel.settings.archivedSessionsHelp": "View archived sessions and restore them to their projects.",
+	"panel.settings.manageArchives": "Manage",
 	"panel.settings.description":
 		"The agent's settings: provider behaviour, reasoning, tools, and the shell.",
 	"panel.settings.filesTitle": "Files",
@@ -488,7 +491,7 @@ export const EN = {
 	"panel.settings.projectPath": "Project settings",
 	"panel.settings.untrusted": "The project is not trusted, so its settings are not read.",
 	"panel.settings.footnote":
-		"A write goes to the global settings file. Other processes pick it up at their next start.",
+		"Changes go to global settings. Hosted sessions re-read them before each tool call; project overrides still take priority.",
 	"panel.settings.notice": "{scope} settings ({path}): {message}",
 	"panel.settings.noticePlain": "{scope} settings: {message}",
 	"panel.settings.badgeDefault": "default",
@@ -1158,6 +1161,9 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.dismiss": "关闭",
 
 	"panel.settings.title": "设置",
+	"panel.settings.archivedSessions": "归档会话",
+	"panel.settings.archivedSessionsHelp": "查看已归档会话，恢复到所属项目。",
+	"panel.settings.manageArchives": "管理",
 	"panel.settings.description": "智能体的设置：供应商行为、推理、工具与 shell。",
 	"panel.settings.filesTitle": "文件",
 	"panel.settings.filesDescription": "以上取值的读写位置。",
@@ -1169,7 +1175,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.settings.globalPath": "全局设置",
 	"panel.settings.projectPath": "项目设置",
 	"panel.settings.untrusted": "项目未受信任，因此不读取其设置。",
-	"panel.settings.footnote": "写入落到全局设置文件，其他进程在下次启动时读取。",
+	"panel.settings.footnote": "写入全局设置，托管会话在每次工具调用前重读；项目配置仍优先。",
 	"panel.settings.notice": "{scope}设置（{path}）：{message}",
 	"panel.settings.noticePlain": "{scope}设置：{message}",
 	"panel.settings.badgeDefault": "默认",

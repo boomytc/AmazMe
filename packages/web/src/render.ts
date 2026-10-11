@@ -6,7 +6,7 @@
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
-import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, ARCHIVE_TOGGLE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
+import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, ARCHIVE_TOGGLE_ACTION, ARCHIVE_MANAGE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
@@ -610,7 +610,15 @@ export function createRenderer(
 		renderConnection();
 	};
 
-	const report = (action: PanelAction): void => renderer.onPanelAction(action);
+	const report = (action: PanelAction): void => {
+		renderer.onPanelAction(action);
+		if (action.kind === "command" && action.id === ARCHIVE_MANAGE_ACTION) {
+			document.body.classList.remove("sidebar-collapsed");
+			if (isNarrow()) document.body.classList.add("sidebar-open");
+			syncSidebarToggle();
+			elements.rosterFilter.focus();
+		}
+	};
 
 	const controlKey = (control: PanelControl): string => `${control.id}\u0000${control.data ?? ""}`;
 

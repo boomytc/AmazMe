@@ -14,6 +14,7 @@ export const PROJECT_RENAME_MODAL = "project:rename-submit";
 export const PROJECT_REMOVE_ACTION = "project:remove";
 export const PROJECT_REMOVE_MODAL = "project:remove-confirm";
 export const ARCHIVE_TOGGLE_ACTION = "session:show-archived";
+export const ARCHIVE_MANAGE_ACTION = "session:manage-archived";
 export const SESSION_ARCHIVE_ACTION = "session:archive";
 export const SESSION_RESTORE_ACTION = "session:restore";
 

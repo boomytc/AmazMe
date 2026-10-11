@@ -36,7 +36,7 @@ export function describeCall(call: ToolCall): string {
  */
 export function createApprovalGate(options: {
 	/** Read at every call, so a settings change applies to the next tool. */
-	readonly mode: () => ToolApprovalMode;
+	readonly mode: () => ToolApprovalMode | Promise<ToolApprovalMode>;
 	/** The clock, for the request's timestamp. */
 	readonly now?: () => number;
 }) {
@@ -76,13 +76,15 @@ export function createApprovalGate(options: {
 				hook(ToolTask, {
 					// The handler's parameters come from the tool task's own hook shape.
 					async beforeTool(call, api, context) {
-						const mode = options.mode();
+						const mode = await options.mode();
+						context.abortSignal?.throwIfAborted();
 						if (mode === "off") return undefined;
 						const annotations =
 							mode === "dangerous"
 								? (await api.agent(context)).catalog.find((tool) => tool.name === call.name)?.annotations
 								: undefined;
 						if (!toolNeedsApproval(mode, call.name, annotations)) return undefined;
+						context.abortSignal?.throwIfAborted();
 						const id = `approval-${++sequence}`;
 						const request: ApprovalRequest = {
 							id,

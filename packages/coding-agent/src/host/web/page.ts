@@ -14,7 +14,7 @@ import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
 	PROJECT_ADD_ACTION, PROJECT_ADD_MODAL, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_RENAME_MODAL,
 	PROJECT_EDIT_ACTION, PROJECT_EDIT_MODAL, PROJECT_NEW_SESSION_ACTION,
-	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, ARCHIVE_TOGGLE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
+	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, ARCHIVE_TOGGLE_ACTION, ARCHIVE_MANAGE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
 	addProjectModal, editProjectModal, renameProjectModal, removeProjectModal,
 } from "@amazme/web";
 import {
@@ -391,14 +391,7 @@ class SessionPainter {
 
 	async runTerminal(command: string): Promise<void> {
 		const result = await this.#terminal?.run(command, BACKGROUND_CONTEXT);
-		if (result !== undefined && !result.ok) {
-			this.#renderer.setConnection(
-				translate(this.locale, "dock.terminalFailed", {
-					error: result.problem,
-				}),
-				"error",
-			);
-		}
+		if (result !== undefined && !result.ok) throw new Error(result.problem);
 	}
 
 	async stopTerminal(): Promise<void> {
@@ -1027,7 +1020,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							...modal, title: copy("panel.settings.diagnostics"), description: copy("panel.settings.diagnosticsHelp"), submit: copy("modal.close"),
 							fields: [{ id: "report", label: copy("panel.settings.diagnostics"), kind: "textarea" as const, readOnly: true, value: diagnosticReport === undefined ? copy(modalNotice?.tone === "error" ? "panel.settings.diagnosticsFailed" : "panel.settings.diagnosticsLoading") : formatDiagnosticReport(diagnosticReport, locale) }],
 						} : modal }),
-						settings: { state: desiredSessionId === undefined || bound ? effectiveSettings() : undefined, models: {
+						settings: { archives: directoryReady, state: desiredSessionId === undefined || bound ? effectiveSettings() : undefined, models: {
 							available: client.connected && painter.ready && painter.sessionId === desiredSessionId && painter.modelsService !== undefined,
 							authentication: bound && Boolean(painter.modelsValue?.authentication),
 							selected: bound && Boolean(painter.modelsValue?.configuration.model),
@@ -1115,8 +1108,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		}
 		const available = state.projects?.filter(project => showArchived || !project.removed) ?? [];
 		if (booted && delivery.kind !== "hydrate" && sessionReady() && current !== undefined) {
-			if (previousProject && currentProject && JSON.stringify(previousProject.workspaces ?? [previousProject.cwd]) !== JSON.stringify(currentProject.workspaces ?? [currentProject.cwd])) {
-				void painter.workspaceOpen(".").catch(report);
+			if (previousProject && currentProject && (previousProject.removed !== currentProject.removed
+				|| JSON.stringify(previousProject.workspaces ?? [previousProject.cwd]) !== JSON.stringify(currentProject.workspaces ?? [currentProject.cwd]))) {
+				const service = painter.conversationsService;
+				void painter.workspaceOpen(".").catch(error => {
+					if (sessionReady() && painter.conversationsService === service && painter.sessionId === current.sessionId) report(error);
+				});
 			}
 			// Trust is stored by path, so a saved folder can also affect sessions in another project.
 			if (foldersSaved) {
@@ -1124,7 +1121,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				const mcp = painter.mcpService;
 				void settings?.reload(BACKGROUND_CONTEXT).then(async () => {
 					if (client.connected && painter.settingsService === settings && desiredSessionId === current.sessionId) await mcp?.reload(BACKGROUND_CONTEXT);
-				}).catch(report);
+				}).catch(error => {
+					if (sessionReady() && painter.settingsService === settings && desiredSessionId === current.sessionId) report(error);
+				});
 			}
 		}
 		if (!available.some(project => project.id === selectedProjectId)) {
@@ -1733,16 +1732,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		settle(
 			service.leave(id, at, { summarize, customInstructions }, BACKGROUND_CONTEXT).then((result) => {
 				if (result.error !== null) throw new Error(result.error.message);
-				if (result.cancelled) renderer.setConnection("Branch summarization cancelled", "state");
+				if (result.cancelled && sessionReady() && painter.conversationsService === service) renderer.setConnection("Branch summarization cancelled", "state");
 			}),
 		);
 	};
 
 	const settle = (operation: Promise<unknown> | undefined): void => {
 		if (operation === undefined) return;
+		const sessionId = painter.sessionId;
+		const service = painter.conversationsService;
 		void operation.then(
 			() => paint(),
 			(error: unknown) => {
+				if (!sessionReady() || painter.sessionId !== sessionId || painter.conversationsService !== service) return;
 				renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error");
 				paint();
 			},
@@ -1847,6 +1849,17 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						view = CHAT_VIEW;
 						void (session ? selectSession(session.id) : clearSession()).catch(report); paint(); return;
 					}
+					case ARCHIVE_MANAGE_ACTION:
+						if (!client.connected || !directoryReady) return;
+						selectionRevision += 1;
+						showArchived = true;
+						view = CHAT_VIEW;
+						dockOpen = false;
+						modal = undefined;
+						rosterFilter = "";
+						rememberSelection();
+						if (directory.state.value?.sessions.some(session => session.sessionId === desiredSessionId && session.archivedAt === undefined)) void clearSession().catch(report);
+						paint(); return;
 					case ARCHIVE_TOGGLE_ACTION:
 						selectionRevision += 1;
 						showArchived = !showArchived;
@@ -2026,7 +2039,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								: feedback.rate({ sessionId, conversationId, entryId, rating }, BACKGROUND_CONTEXT);
 						settle(
 							operation.then((result) => {
-								if (!result.ok) renderer.setConnection(result.problem, "error");
+								if (!result.ok && sessionReady() && painter.sessionId === sessionId && targetConversation() === conversationId) renderer.setConnection(result.problem, "error");
 							}),
 						);
 						return;
@@ -2037,7 +2050,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						const service = painter.approvalsService;
 						settle(
 							service?.decide(id, action.id === APPROVAL_APPROVE_ACTION, BACKGROUND_CONTEXT).then((known) => {
-								if (!known) {
+								if (!known && sessionReady() && painter.approvalsService === service) {
 									renderer.setConnection(copy("page.queueGone"), "error");
 								}
 							}),
