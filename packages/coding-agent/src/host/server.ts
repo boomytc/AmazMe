@@ -417,9 +417,14 @@ async function startServerBackend(
 	const activateHostSessions = (): void => resolveHostReady();
 	const sessionDir = resolveSessionDirectory(options.sessionDir);
 	const projects = new ProjectCatalog(sessionDir);
-	let projectRows = await projects.initialize([process.cwd(), ...(await listCatalogSessions(sessionDir)).filter(session => session.projectId === undefined).map(session => session.cwd)]);
+	const previousProjects = await projects.list();
+	let projectRows = await projects.initialize([
+		...(previousProjects.length === 0 ? [process.cwd()] : []),
+		...(await listCatalogSessions(sessionDir)).filter(session => session.projectId === undefined).map(session => session.cwd),
+	]);
 	const defaultCwd = await realpath(process.cwd());
-	const defaultProjectId = projectRows.find(project => (project.workspaces ?? [project.cwd]).includes(defaultCwd))!.id;
+	const defaultProjectId = (projectRows.find(project => !project.removed && (project.workspaces ?? [project.cwd]).includes(defaultCwd))
+		?? projectRows.find(project => !project.removed) ?? projectRows[0]!).id;
 	const projectForCwd = async (cwd: string) => {
 		const path = await realpath(cwd).catch(() => cwd);
 		return projectRows.find(project => !project.removed && (project.workspaces ?? [project.cwd]).includes(path))
@@ -479,12 +484,13 @@ async function startServerBackend(
 	};
 	const summarize = async (metadata: SessionCatalogMetadata, source: SessionSource = "host", name?: string): Promise<SessionSummary> => {
 		const display = (name ?? metadata.name)?.trim() ?? "";
+		const projectId = metadata.projectId ?? (await projectForCwd(metadata.cwd))?.id;
 		return {
 			serverId,
 			sessionId: metadata.id,
 			createdAt: metadata.createdAt,
 			cwd: metadata.cwd,
-			projectId: metadata.projectId ?? (await projectForCwd(metadata.cwd))?.id,
+			...(projectId === undefined ? {} : { projectId }),
 			...(metadata.archivedAt === undefined ? {} : { archivedAt: metadata.archivedAt }),
 			source,
 			...(display.length === 0 ? {} : { name: display }),
@@ -500,12 +506,17 @@ async function startServerBackend(
 		projectRows = await projects.list();
 		const locals = await localSessions();
 		const localName = new Map(locals.map((session) => [session.id, session.name]));
+		const metadata = await listSessions();
+		const owned = new Set(metadata.map(session => session.id));
+		const unownedLocals = locals.filter(session => !owned.has(session.id));
+		// New terminal history can register its launch directory. Restarting a Web host alone cannot.
+		const missingDirectories = (await Promise.all(unownedLocals.map(async session =>
+			await projectForCwd(session.cwd) === undefined ? session.cwd : undefined))).filter(path => path !== undefined);
+		if (missingDirectories.length > 0) projectRows = await projects.initialize(missingDirectories);
 		// A hosted session keeps the name in its catalog. Until that is set, the terminal file's
 		// `/name` is what the roster shows, so a session named in the terminal stays readable.
-		const hosted = await Promise.all((await listSessions()).map((metadata) => summarize(metadata, "host", metadata.name ?? localName.get(metadata.id))));
-		const owned = new Set(hosted.map((summary) => summary.sessionId));
-		const unowned = await Promise.all(locals
-			.filter((session) => !owned.has(session.id))
+		const hosted = await Promise.all(metadata.map((metadata) => summarize(metadata, "host", metadata.name ?? localName.get(metadata.id))));
+		const unowned = await Promise.all(unownedLocals
 			.map((session) =>
 				summarize(
 					{

@@ -305,6 +305,7 @@ class SessionPainter {
 	#levelsRequest = 0;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
 	#sessionId: string | undefined;
+	#ready = false;
 
 	constructor(sessionSource: SessionServiceSource, renderer: PageRenderer, plugins: PresentationPlugins) {
 		this.#sessionSource = sessionSource;
@@ -316,7 +317,7 @@ class SessionPainter {
 		return this.#sessionId;
 	}
 	get ready(): boolean {
-		return this.#services !== undefined && this.#controller !== undefined && this.#conversations !== undefined;
+		return this.#ready;
 	}
 	get binding(): object | undefined {
 		return this.#services;
@@ -637,13 +638,15 @@ class SessionPainter {
 		const services = this.#sessionSource.open({
 			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals, ...(hasMcp ? [Mcp] : []), SessionMirror],
 			assertAccess(): void {},
-			onError: (error: Error) =>
+			onError: (error: Error) => {
+				if (this.#services !== services || this.#sessionId !== sessionId) return;
 				this.#renderer.setConnection(
 					translate(this.locale, "page.streamFailed", {
 						error: message(error),
 					}),
 					"error",
-				),
+				);
+			},
 		});
 		this.#services = services;
 		try {
@@ -692,10 +695,12 @@ class SessionPainter {
 		// Reused workers re-read the files changed by another client or the native terminal.
 		await this.#sessionSettings.reload(BACKGROUND_CONTEXT);
 		await this.#mcp?.reload(BACKGROUND_CONTEXT);
+		await this.#workspace.open(".", BACKGROUND_CONTEXT);
 		await this.#refreshLevels(paint);
 		// The catalogue is re-read once per attachment: a plugin that registered a command while this
 		// session started is in it, without the reader doing anything.
 		await this.refreshCommands().catch(() => undefined);
+		this.#ready = true;
 		paint();
 	}
 
@@ -703,6 +708,7 @@ class SessionPainter {
 		// The bindings go first, then their release: a paint that lands while the release is in
 		// flight reads an unattached page instead of a disposed handle.
 		const services = this.#services;
+		this.#ready = false;
 		this.#services = undefined;
 		this.#transcript = undefined;
 		this.#controller = undefined;
@@ -820,6 +826,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The session's root conversation, once the conversation list has published it. */
 	let rootConversationId = "";
 	let desiredSessionId: string | undefined;
+	const sessionReady = (): boolean => directoryReady && client.connected && painter.ready
+		&& painter.sessionId === desiredSessionId && client.attachment?.sessionId === desiredSessionId;
 	/** A read-only display cache while connection-bound services are released and rebound. */
 	let reconnectTranscript:
 		| Pick<WebView, "blocks" | "history" | "transcriptScope" | "sessionLabel" | "focus" | "lane" | "model">
@@ -918,7 +926,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * language and palette follow the host's value, so both tabs agree without a reload.
 	 */
 	const paint = (): void => {
-		const bound = directoryReady && client.connected && painter.ready && painter.sessionId === desiredSessionId;
+		const bound = sessionReady();
 		// The root id comes from the host's list; the cache keeps submit routing stable across paints.
 		if (bound) rootConversationId = rootId() ?? rootConversationId;
 		locale = resolveLocale(settingValue("locale") ?? locale, navigator.languages);
@@ -1106,7 +1114,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			}
 		}
 		const available = state.projects?.filter(project => showArchived || !project.removed) ?? [];
-		if (booted && current !== undefined && desiredSessionId === painter.sessionId) {
+		if (booted && delivery.kind !== "hydrate" && sessionReady() && current !== undefined) {
 			if (previousProject && currentProject && JSON.stringify(previousProject.workspaces ?? [previousProject.cwd]) !== JSON.stringify(currentProject.workspaces ?? [currentProject.cwd])) {
 				void painter.workspaceOpen(".").catch(report);
 			}
@@ -1130,7 +1138,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	settings.state.subscribe(() => {
 		paint();
 		const service = painter.settingsService;
-		if (service && client.connected && painter.sessionId === desiredSessionId) void service.reload(BACKGROUND_CONTEXT).catch(() => undefined);
+		if (service && sessionReady()) void service.reload(BACKGROUND_CONTEXT).catch(() => undefined);
 	});
 	skills.state.subscribe(() => paint());
 	// The catalogue itself moves when the host re-reads the session's templates and skills.
@@ -1138,7 +1146,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	plugins.state.subscribe(() => {
 		paint();
 		const service = painter.mcpService;
-		if (service && client.connected && painter.sessionId === desiredSessionId) void service.reload(BACKGROUND_CONTEXT).catch(() => undefined);
+		if (service && sessionReady()) void service.reload(BACKGROUND_CONTEXT).catch(() => undefined);
 	});
 	const clearSchedules = async (): Promise<number> => {
 		const epoch = ++scheduleEpoch;
@@ -1252,9 +1260,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					|| (resume && !canResumeSession(sessionId))) return;
 				await management.attach(sessionId, BACKGROUND_CONTEXT);
 				await sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
+				if (!client.connected || desiredSessionId !== sessionId || !canResumeSession(sessionId)) return;
 				await painter.attach(sessionId, paint);
 			});
-			if (desiredSessionId !== sessionId || client.attachment?.sessionId !== sessionId) return;
+			if (desiredSessionId !== sessionId || client.attachment?.sessionId !== sessionId || !painter.ready) return;
 			reconnectTranscript = undefined;
 			restoreDraft(sessionId, !resume);
 			paint();
@@ -2629,6 +2638,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					await selectSession(target, true);
 					if (!client.connected) throw new Error(copy("connection.hostGone"));
 					if (painter.sessionId !== desiredSessionId || !painter.ready) continue;
+					renderer.setConnection(copy("connection.connected"), "state", copy("connection.stateConnected"));
 					paint();
 					return;
 				} catch (error: unknown) {
@@ -2677,6 +2687,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					model: { ...previous.model, disabled: true },
 				};
 			}
+			saveDraft();
+			void transition(() => painter.detach()).catch(report);
 			renderer.setConnection(
 				(language) => translate(language, "connection.disconnected", {
 					error: change.error?.message ?? translate(language, "connection.hostGone"),
