@@ -6,7 +6,8 @@
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
-import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_REMOVE_ACTION, ARCHIVE_TOGGLE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
+import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, ARCHIVE_TOGGLE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
+import { createDirectoryField, type DirectoryListing } from "./directories.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
 import { transcriptPosition } from "./transcript-position.ts";
@@ -115,6 +116,8 @@ export interface PageRenderer {
 	/** Handlers the page entry fills in once it can drive the host. */
 	onSelect: (sessionId: string) => void;
 	onCreateSession: () => void;
+	onBrowseDirectories?: (path?: string) => Promise<DirectoryListing>;
+	onPickDirectories?: () => Promise<readonly string[] | undefined>;
 	onSubmit: (text: string) => void;
 	onAbort: () => void;
 	onSelectModel: (provider: string, modelId: string) => void;
@@ -638,6 +641,7 @@ export function createRenderer(
 		if (control.kind === "select") {
 			const select = document.createElement("select");
 			select.className = "panel-select";
+			if (control.label) select.setAttribute("aria-label", control.label);
 			for (const option of control.options ?? []) {
 				const node = document.createElement("option");
 				node.value = option.value;
@@ -842,6 +846,8 @@ export function createRenderer(
 		const backdrop = element("div", "modal-backdrop");
 		backdrop.addEventListener("click", () => report({ kind: "modal-close" }));
 		const card = element("div", "modal-card");
+		const projectForm = modal.fields.some(field => field.kind === "directories");
+		if (projectForm) card.classList.add("modal-project");
 		card.setAttribute("role", "dialog");
 		card.setAttribute("aria-modal", "true");
 		card.setAttribute("aria-label", modal.title);
@@ -858,8 +864,18 @@ export function createRenderer(
 		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>();
 		let firstField: HTMLElement | undefined;
 		for (const field of modal.fields) {
-			const label = element(field.kind === "multiselect" ? "div" : "label", "modal-field");
+			const label = element(field.kind === "multiselect" || field.kind === "directories" ? "div" : "label", "modal-field");
 			label.append(element("span", "modal-field-label", field.label));
+			if (field.kind === "directories") {
+				const control = createDirectoryField(field, lastView?.locale ?? FALLBACK_LOCALE, {
+					browse: path => renderer.onBrowseDirectories?.(path) ?? Promise.reject(new Error("Folder selection is unavailable")),
+					pick: () => renderer.onPickDirectories?.() ?? Promise.resolve(undefined),
+					folderIcon: () => icon("folder"),
+				});
+				label.append(control.body); inputs.set(field.id, control.value); firstField ??= control.focus;
+				body.append(label); continue;
+			}
+			if (projectForm && field.id === "name") { label.classList.add("project-name-field"); label.append(icon("folder")); }
 			if (field.kind === "multiselect") {
 				const control = createMultiselect(field, lastView?.locale ?? FALLBACK_LOCALE);
 				label.append(control.body); inputs.set(field.id, control.value);
@@ -1297,7 +1313,7 @@ export function createRenderer(
 	};
 
 	const sessionMenuTrigger = (id: string): HTMLButtonElement | undefined =>
-		[...elements.roster.querySelectorAll<HTMLButtonElement>(".session-more")].find((node) => node.dataset.actionData === id);
+		[...elements.roster.querySelectorAll<HTMLButtonElement>(".session-more, .project-more")].find((node) => (node.dataset.menuId ?? node.dataset.actionData) === id);
 
 	const closeSessionMenu = (restoreFocus = false): void => {
 		const opened = sessionMenu;
@@ -1323,8 +1339,9 @@ export function createRenderer(
 		sessionMenu.node.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - height - 8))}px`;
 	};
 
-	const openSessionMenu = (item: RosterItem): void => {
-		if (sessionMenu?.id === item.id) {
+	const openRosterMenu = (id: string, data: string, label: string,
+		actions: readonly { readonly id: string; readonly label: string; readonly glyph: IconName; readonly danger?: boolean }[]): void => {
+		if (sessionMenu?.id === id) {
 			closeSessionMenu(true);
 			return;
 		}
@@ -1332,24 +1349,18 @@ export function createRenderer(
 		const menu = element("div", "session-menu");
 		menu.id = "session-actions";
 		menu.setAttribute("role", "menu");
-		menu.setAttribute("aria-label", copy("sidebar.more"));
-		const actions = [
-			{ id: SESSION_RENAME_ACTION, label: copy("sidebar.rename"), glyph: "square-pen" as const },
-			...(lastView?.projects === undefined ? [] : [{ id: item.archived ? SESSION_RESTORE_ACTION : SESSION_ARCHIVE_ACTION, label: copy(item.archived ? "project.restore" : "project.archive"), glyph: "folder" as const }]),
-			{ id: SESSION_COPY_ID_ACTION, label: copy("sidebar.copyId"), glyph: "copy" as const },
-			{ id: item.remove.id, label: item.remove.label, glyph: "x" as const },
-		];
+		menu.setAttribute("aria-label", label);
 		for (const action of actions) {
-			const control = button(action.id === item.remove.id ? "session-menu-item danger" : "session-menu-item");
+			const control = button(action.danger ? "session-menu-item danger" : "session-menu-item");
 			control.dataset.action = action.id;
-			control.dataset.actionData = item.id;
+			control.dataset.actionData = data;
 			control.setAttribute("role", "menuitem");
 			control.tabIndex = -1;
 			const label = element("span", "", action.label);
 			control.append(icon(action.glyph), label);
 			control.addEventListener("click", () => {
 				if (action.id === SESSION_COPY_ID_ACTION) {
-					const result = navigator.clipboard?.writeText(item.id);
+					const result = navigator.clipboard?.writeText(data);
 					label.setAttribute("aria-live", "polite");
 					if (result === undefined) label.textContent = copy("copy.failed");
 					else void result.then(
@@ -1359,7 +1370,7 @@ export function createRenderer(
 					return;
 				}
 				closeSessionMenu(true);
-				report({ kind: "command", id: action.id, data: item.id });
+				report({ kind: "command", id: action.id, data });
 			});
 			menu.append(control);
 		}
@@ -1381,11 +1392,17 @@ export function createRenderer(
 			const next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + controls.length) % controls.length;
 			controls[next]?.focus();
 		});
-		sessionMenu = { id: item.id, node: menu };
+		sessionMenu = { id, node: menu };
 		document.body.append(menu);
 		positionSessionMenu();
 		menu.querySelector<HTMLButtonElement>("button")?.focus();
 	};
+	const openSessionMenu = (item: RosterItem): void => openRosterMenu(item.id, item.id, copy("sidebar.more"), [
+		{ id: SESSION_RENAME_ACTION, label: copy("sidebar.rename"), glyph: "square-pen" },
+		...(lastView?.projects === undefined ? [] : [{ id: item.archived ? SESSION_RESTORE_ACTION : SESSION_ARCHIVE_ACTION, label: copy(item.archived ? "project.restore" : "project.archive"), glyph: "folder" as const }]),
+		{ id: SESSION_COPY_ID_ACTION, label: copy("sidebar.copyId"), glyph: "copy" },
+		{ id: item.remove.id, label: item.remove.label, glyph: "x", danger: true },
+	]);
 
 	/** Selection and the menu are sibling buttons, so neither nests an interactive control. */
 	const sessionRow = (item: RosterItem): HTMLElement => {
@@ -1865,7 +1882,7 @@ export function createRenderer(
 			if (label !== null) label.textContent = newLabel;
 
 			// Streaming repaints keep the roster's nodes and keyboard focus when it has not changed.
-			const nextRosterKey = JSON.stringify([view.locale, view.roster, view.projects, view.archived, view.empty]);
+			const nextRosterKey = JSON.stringify([view.locale, view.roster, view.projects, view.archived, view.empty, view.newSession.enabled]);
 			if (rosterKey !== nextRosterKey) {
 				rosterKey = nextRosterKey;
 				const focused = document.activeElement;
@@ -1887,15 +1904,19 @@ export function createRenderer(
 					for (const group of view.projects) {
 						const section = element("div", "project-group"); section.dataset.projectId = group.id;
 						const head = element("div", "project-heading");
-						const select = button(group.selected ? "project-select selected" : "project-select"); select.title = group.cwd;
+						const select = button(group.selected ? "project-select selected" : "project-select"); select.title = (group.workspaces ?? [group.cwd]).join("\n");
 						select.setAttribute("aria-expanded", String(group.selected || view.archived));
-						select.append(icon("folder"), element("span", "project-name", group.name), element("span", "project-count", String(group.items.length)));
+						select.append(icon("folder"), element("span", "project-name", group.name));
 						select.addEventListener("click", () => report({ kind: "command", id: PROJECT_SELECT_ACTION, data: group.id })); head.append(select);
 						if (!view.archived) {
-							for (const [id, label, glyph] of [[PROJECT_RENAME_ACTION, "project.rename", "square-pen"], [PROJECT_REMOVE_ACTION, "project.remove", "x"]] as const) {
-								const action = button("project-action"); action.title = copy(label); action.setAttribute("aria-label", `${action.title}: ${group.name}`); action.append(icon(glyph));
-								action.addEventListener("click", () => report({ kind: "command", id, data: group.id })); head.append(action);
-							}
+							const more = button("project-action project-more"); more.title = copy("project.actions"); more.setAttribute("aria-label", `${more.title}: ${group.name}`);
+							more.dataset.menuId = `project:${group.id}`; more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false"); more.append(icon("more"));
+							more.addEventListener("click", () => openRosterMenu(`project:${group.id}`, group.id, copy("project.actions"), [
+								{ id: PROJECT_EDIT_ACTION, label: copy("project.edit"), glyph: "square-pen" },
+								{ id: PROJECT_REMOVE_ACTION, label: copy("project.remove"), glyph: "x", danger: true },
+							]));
+							const create = button("project-action"); create.disabled = !view.newSession.enabled; create.title = copy("sidebar.newSession"); create.setAttribute("aria-label", `${create.title}: ${group.name}`); create.append(icon("square-pen"));
+							create.addEventListener("click", () => report({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: group.id })); head.append(more, create);
 						}
 						section.append(head);
 						if (group.selected || view.archived) {

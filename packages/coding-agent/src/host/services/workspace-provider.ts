@@ -1,4 +1,4 @@
-import { stat, readdir, readFile, open } from "node:fs/promises";
+import { stat, readdir, readFile, open, realpath } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
@@ -10,31 +10,39 @@ export const WORKSPACE_MAX_BYTES = 256 * 1024;
 const SNIFF_BYTES = 8 * 1024;
 
 export interface WorkspaceServiceOptions {
-	/** The Session's working directory: the root the workspace browses and never leaves. */
+	/** The session's execution directory, initially selected in the file browser. */
 	readonly cwd: string;
+	readonly directories?: () => Promise<readonly string[]>;
 }
 
 /**
- * The workspace over the Session's working directory. Paths are relative to that directory and
- * anything that would resolve outside it is refused, so a presentation cannot walk the machine's
- * filesystem through this service.
+ * Paths are relative to the selected project folder. Absolute paths can switch folders; resolved
+ * paths and symlinks must remain inside one of the project's folders.
  */
 export function createWorkspaceService(
 	options: WorkspaceServiceOptions,
 	createState: (initial: WorkspaceState) => MutableReplicatedState<WorkspaceState>,
 ) {
-	const root = resolve(options.cwd);
+	let root = resolve(options.cwd);
+	let roots = [root];
+	let tail = Promise.resolve();
 	const state = createState({
 		revision: 0,
 		cwd: root,
 		view: { kind: "listing", path: ".", parent: null, entries: [] },
 	});
 
-	/** The absolute path for a workspace-relative one, or undefined when it leaves the root. */
-	const resolveInside = (path: string): string | undefined => {
+	/** Resolve a browser path and select its authorized root. */
+	const inside = (path: string, directory: string): boolean => path === directory || path.startsWith(directory.endsWith(sep) ? directory : `${directory}${sep}`);
+	const resolveInside = async (path: string): Promise<string | undefined> => {
+		roots = await Promise.all((await options.directories?.() ?? [options.cwd]).map(directory => realpath(directory).catch(() => resolve(directory))));
+		if (roots.length === 0) return undefined;
+		if (!roots.includes(root)) root = roots[0]!;
 		const trimmed = path.trim();
-		const candidate = trimmed === "" || trimmed === "." ? root : resolve(root, trimmed);
-		if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) return undefined;
+		const candidate = await realpath(trimmed === "" || trimmed === "." ? root : resolve(root, trimmed)).catch(() => resolve(root, trimmed));
+		const selected = roots.filter(directory => inside(candidate, directory)).sort((a, b) => b.length - a.length)[0];
+		if (selected === undefined) return undefined;
+		root = selected;
 		return candidate;
 	};
 
@@ -47,6 +55,7 @@ export function createWorkspaceService(
 		state.change(context, (draft) => {
 			draft.revision += 1;
 			draft.cwd = root;
+			draft.workspaces = [...roots];
 			draft.view = view;
 		});
 	};
@@ -125,39 +134,20 @@ export function createWorkspaceService(
 		publish(context, { kind: "text", path, text: bytes.toString("utf8"), truncated });
 	};
 
-	return {
-		service: {
-			state,
-			async open(path: string, context: Context): Promise<void> {
-				const absolute = resolveInside(path);
-				if (absolute === undefined) {
-					publish(context, {
-						kind: "denied",
-						path,
-						reason: "The workspace stays inside the session's working directory.",
-					});
-					return;
-				}
-				await list(absolute, context);
-			},
-			async read(path: string, context: Context): Promise<void> {
-				const absolute = resolveInside(path);
-				if (absolute === undefined) {
-					publish(context, {
-						kind: "denied",
-						path,
-						reason: "The workspace stays inside the session's working directory.",
-					});
-					return;
-				}
-				await read(absolute, context);
-			},
-		} satisfies Workspace,
-		/** The starting view: the working directory itself, listed. */
-		async refresh(context: Context): Promise<void> {
-			await list(root, context);
-		},
+	const visit = (path: string, context: Context, operation: typeof list): Promise<void> => {
+		const result = tail.catch(() => {}).then(async () => {
+			context.abortSignal?.throwIfAborted();
+			const absolute = await resolveInside(path);
+			if (absolute === undefined) { publish(context, { kind: "denied", path, reason: "Folder is outside project workspaces." }); return; }
+			await operation(absolute, context);
+		});
+		tail = result;
+		return result;
 	};
+	return { service: { state,
+		open: (path: string, context: Context) => visit(path, context, list),
+		read: (path: string, context: Context) => visit(path, context, read),
+	} satisfies Workspace, refresh: (context: Context) => visit(".", context, list) };
 }
 
 /** The workspace as a facet: the service, and the working directory listed when it activates. */

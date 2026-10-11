@@ -495,7 +495,7 @@ export interface SessionSummaryLike {
 /** The host's replicated session directory, as this package reads it. */
 export interface SessionDirectoryLike {
 	readonly sessions: readonly SessionSummaryLike[];
-	readonly projects?: readonly { readonly id: string; readonly name: string; readonly cwd: string; readonly createdAt: number; readonly removed?: true }[];
+	readonly projects?: readonly { readonly id: string; readonly name: string; readonly cwd: string; readonly workspaces?: readonly string[]; readonly revision?: number; readonly createdAt: number; readonly removed?: true }[];
 	readonly defaultProjectId?: string;
 }
 

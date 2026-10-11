@@ -2965,14 +2965,52 @@ p {
 .sidebar-label { display: flex; align-items: center; justify-content: space-between; }
 .project-add, .project-action { border: 0; background: transparent; color: var(--text-3); padding: 4px; cursor: pointer; border-radius: 5px; }
 .project-add .icon, .project-action .icon { width: 15px; height: 15px; }
-.project-heading { display: flex; align-items: center; gap: 2px; }
-.project-select { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 8px; color: inherit; border: 0; border-radius: 6px; background: transparent; cursor: pointer; text-align: left; }
+.project-heading { display: flex; align-items: center; gap: 2px; padding-right: 6px; border-radius: 12px; }
+.project-select { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 11px 10px; color: inherit; border: 0; border-radius: 12px; background: transparent; cursor: pointer; text-align: left; }
 .project-select .icon { width: 16px; height: 16px; flex-shrink: 0; }
 .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-count { color: var(--text-3); font-size: 11px; margin-left: auto; }
-.project-select:hover, .project-select.selected, .project-action:hover, .project-add:hover { background: var(--hover); }
+.project-heading:hover, .project-heading:has(.project-select.selected), .project-action:hover, .project-add:hover { background: var(--hover); }
 .project-action { opacity: 0; }
 .project-heading:hover .project-action, .project-heading:focus-within .project-action { opacity: 1; }
 .project-sessions { padding-left: 14px; }
+.project-sessions .session-row { border-radius: 12px; }
 .project-archive-toggle { background: transparent; border: 0; color: var(--text-3); padding: 10px 8px; cursor: pointer; font: inherit; }
 .project-archive-toggle:hover { color: var(--text); }
+
+.modal-project { width: min(640px, calc(100vw - 40px)); max-width: 640px; border-radius: 22px; padding: 28px; }
+.modal-project .modal-head, .modal-project .modal-body, .modal-project .modal-foot { padding: 0; }
+.modal-project .modal-head { margin-bottom: 24px; }
+.modal-project .modal-title { font-size: 26px; font-weight: 600; }
+.modal-project .modal-field-label { font-size: 15px; }
+.modal-project .modal-foot { margin-top: 30px; gap: 14px; }
+.modal-project .project-name-field { position: relative; }
+.modal-project .project-name-field .modal-field-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.modal-project .project-name-field > .icon { position: absolute; left: 16px; top: 19px; width: 22px; height: 22px; pointer-events: none; }
+.modal-project .project-name-field input { padding: 16px 16px 16px 52px; border-radius: 14px; font-size: 17px; }
+.directory-field { border: 1px solid var(--line-strong); border-radius: 14px; padding: 16px; }
+.directory-field.empty { min-height: 146px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.directory-selections { width: 100%; }
+.directory-selection { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.directory-primary { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; text-align: left; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+.directory-primary:hover, .directory-entry:hover { background: var(--hover); }
+.directory-primary .icon { flex-shrink: 0; }
+.directory-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.directory-text span, .directory-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.directory-text small, .directory-help { color: var(--text-3); font-size: 12px; }
+.directory-default { font-size: 11px; color: var(--text-3); }
+.directory-remove { border: 0; background: transparent; color: var(--text-3); font-size: 23px; cursor: pointer; padding: 4px 8px; }
+.directory-help { margin: 8px 0 14px; line-height: 1.6; }
+.directory-field.empty .directory-help { max-width: 320px; text-align: center; }
+.directory-add { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 24px; padding: 8px 14px; background: var(--hover); color: var(--text); font: inherit; cursor: pointer; }
+.directory-add .icon { width: 17px; height: 17px; }
+.directory-browser { margin-top: 16px; width: 100%; border-top: 1px solid var(--line); padding-top: 14px; }
+.directory-browser[hidden] { display: none; }
+.directory-navigation, .directory-browser-foot { display: flex; align-items: center; gap: 8px; }
+.directory-navigation input { flex: 1; min-width: 0; }
+.directory-browser button { border: 0; background: var(--hover); color: inherit; border-radius: 6px; padding: 8px 10px; font: inherit; cursor: pointer; }
+.directory-contents { max-height: 180px; overflow: auto; padding: 8px 0; }
+.directory-contents .directory-entry { display: flex; align-items: center; gap: 8px; background: transparent; width: 100%; text-align: left; }
+.directory-browser-foot { justify-content: space-between; }
+.directory-error { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
+.directory-error:empty { display: none; }

@@ -6,6 +6,9 @@ import type { RosterItem, SessionDirectoryLike } from "./view.ts";
 export const PROJECT_ADD_ACTION = "project:add";
 export const PROJECT_ADD_MODAL = "project:add-submit";
 export const PROJECT_SELECT_ACTION = "project:select";
+export const PROJECT_NEW_SESSION_ACTION = "project:new-session";
+export const PROJECT_EDIT_ACTION = "project:edit";
+export const PROJECT_EDIT_MODAL = "project:edit-submit";
 export const PROJECT_RENAME_ACTION = "project:rename";
 export const PROJECT_RENAME_MODAL = "project:rename-submit";
 export const PROJECT_REMOVE_ACTION = "project:remove";
@@ -18,6 +21,7 @@ export interface ProjectGroup {
 	readonly id: string;
 	readonly name: string;
 	readonly cwd: string;
+	readonly workspaces?: readonly string[];
 	readonly selected: boolean;
 	readonly items: readonly RosterItem[];
 	readonly removed?: true;
@@ -30,14 +34,21 @@ export function projectGroups(directory: SessionDirectoryLike | undefined, items
 		...project,
 		selected: project.id === selectedId,
 		items: items.filter(item => item.projectId === project.id),
-	})).filter(group => archived ? group.items.length > 0 : !needle || group.items.length > 0 || `${group.name} ${group.cwd}`.toLowerCase().includes(needle));
+	})).filter(group => archived ? group.items.length > 0 : !needle || group.items.length > 0 || `${group.name} ${(group.workspaces ?? [group.cwd]).join(" ")}`.toLowerCase().includes(needle));
 }
 
 export function addProjectModal(locale: Locale): PanelModal {
-	return { id: PROJECT_ADD_MODAL, title: translate(locale, "project.add"), description: translate(locale, "project.directoryHint"),
-		fields: [{ id: "cwd", label: translate(locale, "project.directory"), kind: "text", value: "" },
-			{ id: "name", label: translate(locale, "project.nameOptional"), kind: "text", value: "" }],
-		submit: translate(locale, "project.add") };
+	return { id: PROJECT_ADD_MODAL, title: translate(locale, "project.create"),
+		fields: [{ id: "name", label: translate(locale, "project.name"), placeholder: translate(locale, "project.name"), kind: "text", value: "" },
+			{ id: "workspaces", label: translate(locale, "project.folders"), kind: "directories", value: "[]" }],
+		submit: translate(locale, "project.create") };
+}
+
+export function editProjectModal(locale: Locale, project: { id: string; name: string; cwd: string; workspaces?: readonly string[] }): PanelModal {
+	return { ...addProjectModal(locale), id: PROJECT_EDIT_MODAL, title: translate(locale, "project.edit"), data: project.id,
+		fields: [{ id: "name", label: translate(locale, "project.name"), placeholder: translate(locale, "project.name"), kind: "text", value: project.name },
+			{ id: "workspaces", label: translate(locale, "project.folders"), kind: "directories", value: JSON.stringify(project.workspaces ?? [project.cwd]) }],
+		submit: translate(locale, "modal.save") };
 }
 
 export function renameProjectModal(locale: Locale, id: string, name: string): PanelModal {

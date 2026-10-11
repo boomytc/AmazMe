@@ -58,6 +58,7 @@ export interface WorkspaceEntryLike {
 /** What the host's workspace state carries, as this package reads it. */
 export interface WorkspaceStateLike {
 	readonly cwd: string;
+	readonly workspaces?: readonly string[];
 	readonly view: WorkspaceViewLike;
 }
 
@@ -328,6 +329,17 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		return { id: "files", title, notices: [], groups: [] };
 	}
 	const view = state.view;
+	const folders: PanelGroup[] = (state.workspaces?.length ?? 0) > 1 ? [{
+		id: "files:workspaces", title: translate(locale, "project.folders"), rows: [{
+			id: "files:workspace", title: translate(locale, "project.directory"), controls: [{
+				id: WORKSPACE_OPEN_ACTION, kind: "select", value: state.cwd, label: translate(locale, "project.directory"),
+				options: state.workspaces!.map(path => {
+					const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+					return { value: path, label: state.workspaces!.filter(folder => (folder.split(/[\\/]/).filter(Boolean).at(-1) ?? folder) === name).length === 1 ? name : path };
+				}),
+			}],
+		}],
+	}] : [];
 	if (view.kind === "text") {
 		// The file's own directory is the parent of its path, so the reader can step back out.
 		const parent = view.path.includes("/") ? view.path.slice(0, view.path.lastIndexOf("/")) : ".";
@@ -337,6 +349,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 			description: state.cwd,
 			notices: view.truncated ? [{ tone: "info", text: translate(locale, "dock.truncated") }] : [],
 			groups: [
+				...folders,
 				{
 					id: "files:back",
 					title: translate(locale, "dock.contents"),
@@ -348,13 +361,14 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		};
 	}
 	if (view.kind !== "listing") {
-		const notice = view.kind === "denied" ? view.reason : view.kind === "binary" ? translate(locale, "dock.binary") : translate(locale, "dock.missing");
+		const notice = view.kind === "denied" ? (view.reason === "Folder is outside project workspaces." ? translate(locale, "project.outsideWorkspace") : view.reason) : view.kind === "binary" ? translate(locale, "dock.binary") : translate(locale, "dock.missing");
 		return {
 			id: "files",
 			title: view.path,
 			description: state.cwd,
 			notices: [{ tone: view.kind === "denied" ? "error" : "info", text: notice }],
 			groups: [
+				...folders,
 				{
 					id: "files:back",
 					title: translate(locale, "dock.contents"),
@@ -403,7 +417,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		title,
 		description: state.cwd,
 		notices: [],
-		groups: [group],
+		groups: [...folders, group],
 	};
 }
 

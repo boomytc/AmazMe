@@ -10,8 +10,7 @@ export interface WorkspaceEntry {
 
 /**
  * What the workspace is showing: a listing, the text of one file, or why neither could be produced.
- * The workspace never leaves the Session's working directory, so a path above it is `denied` rather
- * than resolved.
+ * Paths outside the project folders are denied; paths are relative to the browser's selected folder.
  */
 export type WorkspaceView =
 	| {
@@ -29,12 +28,14 @@ export type WorkspaceView =
 
 export interface WorkspaceState {
 	revision: number;
-	/** The Session's working directory: the root the workspace browses. */
+	/** The browser's currently selected project folder. */
 	cwd: string;
+	/** Project folders available to the file browser. cwd is its currently selected folder. */
+	workspaces?: string[];
 	view: WorkspaceView;
 }
 
-/** The attached Session's working directory, as a browsable tree and a text reader. */
+/** The attached session's project folders, as a browsable tree and a text reader. */
 export interface Workspace {
 	readonly state: ReplicatedState<WorkspaceState>;
 	/** List a directory; `""` and `"."` mean the working directory. */

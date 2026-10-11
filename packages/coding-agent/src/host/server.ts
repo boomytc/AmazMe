@@ -21,6 +21,7 @@ import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/host/command-options.ts";
 import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "../config.ts";
 import { createCodingSettings } from "../durable/harness-setup.ts";
+import { ProjectTrustStore } from "../core/trust-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import { createPresentationFacetData, createServerPluginFacetLoader } from "./plugins/bundled.ts";
@@ -60,6 +61,7 @@ import {
 	type SessionCatalogMetadata,
 	writeSessionName,
 	writeSessionArchive,
+	writeSessionProject,
 } from "./session-catalog.ts";
 import { SessionPluginSelectionConflictError, SessionWorkerManager } from "./session-worker-manager.ts";
 import {
@@ -415,15 +417,23 @@ async function startServerBackend(
 	const activateHostSessions = (): void => resolveHostReady();
 	const sessionDir = resolveSessionDirectory(options.sessionDir);
 	const projects = new ProjectCatalog(sessionDir);
-	let projectRows = await projects.initialize([process.cwd(), ...(await listCatalogSessions(sessionDir)).map(session => session.cwd)]);
+	let projectRows = await projects.initialize([process.cwd(), ...(await listCatalogSessions(sessionDir)).filter(session => session.projectId === undefined).map(session => session.cwd)]);
 	const defaultCwd = await realpath(process.cwd());
-	const defaultProjectId = projectRows.find(project => project.cwd === defaultCwd)!.id;
+	const defaultProjectId = projectRows.find(project => (project.workspaces ?? [project.cwd]).includes(defaultCwd))!.id;
 	const projectForCwd = async (cwd: string) => {
 		const path = await realpath(cwd).catch(() => cwd);
-		return projectRows.find(project => project.cwd === path);
+		return projectRows.find(project => !project.removed && (project.workspaces ?? [project.cwd]).includes(path))
+			?? projectRows.find(project => (project.workspaces ?? [project.cwd]).includes(path));
+	};
+	const bindSessionProject = async (metadata: SessionCatalogMetadata): Promise<SessionCatalogMetadata> => {
+		if (metadata.projectId !== undefined) return metadata;
+		const project = await projectForCwd(metadata.cwd);
+		// A replacement host can retain workers owned by another session catalog.
+		if (project === undefined || await readSession(sessionDir, metadata.id) === undefined) return metadata;
+		return writeSessionProject(sessionDir, metadata.id, project.id);
 	};
 	const localSessions = async () => {
-		return listProjectLocalSessions([process.cwd(), ...projectRows.map(project => project.cwd)]);
+		return listProjectLocalSessions([process.cwd(), ...projectRows.flatMap(project => project.workspaces ?? [project.cwd])]);
 	};
 	const listSessions = async (): Promise<SessionCatalogMetadata[]> => {
 		const sessions = new Map((await listCatalogSessions(sessionDir)).map((metadata) => [metadata.path, metadata]));
@@ -431,30 +441,34 @@ async function startServerBackend(
 		for (const metadata of workers.trackedSessions) {
 			sessions.set(metadata.path, mergeTrackedSession(sessions.get(metadata.path), metadata));
 		}
-		return [...sessions.values()];
+		return Promise.all([...sessions.values()].map(bindSessionProject));
 	};
 	const resolveSession = async (sessionId: string, _context: Context): Promise<SessionCatalogMetadata> => {
-		const metadata =
-			workers.trackedSessions.find((candidate) => candidate.id === sessionId) ??
-			(await readSession(sessionDir, sessionId));
-		if (metadata !== undefined) return metadata;
+		const catalog = await readSession(sessionDir, sessionId);
+		const worker = workers.trackedSessions.find((candidate) => candidate.id === sessionId);
+		const metadata = worker === undefined ? catalog : mergeTrackedSession(catalog, worker);
+		if (metadata !== undefined) return bindSessionProject(metadata);
 		// A terminal session the host has not opened yet: adopting it stores it under its own id with
 		// the working directory its header records, and its worker seeds the transcript from the file.
 		const local = (await localSessions()).find((session) => session.id === sessionId);
 		if (local === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd, name: local.name, projectId: (await projectForCwd(local.cwd))?.id });
+		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd, createdAt: local.createdAt, name: local.name, projectId: (await projectForCwd(local.cwd))?.id });
 		return adopted;
 	};
 	const createSession = async (createOptions: SessionCreateOptions, context: Context): Promise<SessionCatalogMetadata> => {
 		if (createOptions.reuseEmpty && createOptions.id !== undefined) throw new Error("An explicit session ID cannot reuse an empty session");
 		projectRows = await projects.list();
-		let project = projectRows.find(project => project.id === (createOptions.projectId ?? defaultProjectId));
+		let project = createOptions.projectId === undefined ? await projectForCwd(process.cwd()) : projectRows.find(project => project.id === createOptions.projectId);
+		if (project === undefined && createOptions.projectId === undefined) project = await projects.create(process.cwd());
 		if (project === undefined || (createOptions.projectId !== undefined && project.removed)) throw new Error("Unknown project");
-		if (project.removed) project = await projects.create(project.cwd, project.name);
+		if (project.removed) project = await projects.restore(project.id);
 		const cwd = createOptions.projectId === undefined ? process.cwd() : project.cwd;
+		const projectId = project.id;
 		if (createOptions.reuseEmpty) {
-			const latest = (await listSessions())
-				.filter((metadata) => metadata.cwd === cwd && metadata.archivedAt === undefined)
+			const path = await realpath(cwd).catch(() => resolvePath(cwd));
+			const candidates = await Promise.all((await listSessions()).filter(metadata => metadata.archivedAt === undefined && metadata.projectId === projectId).map(async metadata =>
+				(await realpath(metadata.cwd).catch(() => resolvePath(metadata.cwd))) === path ? metadata : undefined));
+			const latest = candidates.filter(metadata => metadata !== undefined)
 				.sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id))[0];
 			if (latest !== undefined) {
 				const selected = await options.resolveSessionPlugins(latest, undefined, context);
@@ -670,8 +684,8 @@ async function startServerBackend(
 		const metadata = await resolveSession(sessionId, context);
 		if (!archived) {
 			projectRows = await projects.list();
-			const project = await projectForCwd(metadata.cwd);
-			if (project?.removed) await projects.create(project.cwd, project.name);
+			const project = projectRows.find(project => project.id === metadata.projectId) ?? await projectForCwd(metadata.cwd);
+			if (project?.removed) await projects.restore(project.id);
 		}
 		await writeSessionArchive(sessionDir, sessionId, archived);
 		await setLocalSessionArchived(metadata.cwd, metadata.id, metadata.createdAt, archived);
@@ -684,7 +698,20 @@ async function startServerBackend(
 			remember: selection => projects.remember(selection),
 			defaultId: defaultProjectId,
 			list: () => projects.list(),
-			create: (cwd, name) => projects.create(cwd, name),
+			create: async (cwd, name, workspaces, projectId) => {
+				const project = projectId === undefined ? await projects.create(cwd, name, workspaces) : await projects.restore(projectId);
+				new ProjectTrustStore(getAgentDir()).setMany((project.workspaces ?? [project.cwd]).map(path => ({ path, decision: true })));
+				return project;
+			},
+			update: async (id, name, workspaces) => {
+				// Terminal history has no project id. Adopt its metadata before removing a source folder.
+				for (const session of (await listSummaries()).filter(session => session.projectId === id)) {
+					await resolveSession(session.sessionId, BACKGROUND_CONTEXT);
+				}
+				const project = await projects.update(id, name, workspaces);
+				new ProjectTrustStore(getAgentDir()).setMany((project.workspaces ?? [project.cwd]).map(path => ({ path, decision: true })));
+				return project;
+			},
 			rename: (id, name) => projects.rename(id, name),
 			archive: archiveSession,
 			remove: async (id, context) => {

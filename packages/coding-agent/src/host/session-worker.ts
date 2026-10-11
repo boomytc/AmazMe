@@ -1,4 +1,5 @@
 import { createConnection, type Socket } from "node:net";
+import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import {
 	type AttachedReplicatedState,
@@ -48,6 +49,7 @@ import {
 	type WorkerServiceScope,
 } from "./services/worker.ts";
 import { readSession, sessionStoragePath } from "./session-catalog.ts";
+import { ProjectCatalog } from "./project-catalog.ts";
 import { startSessionHandoff } from "./session-handoff.ts";
 import { firstSessionTitle, isSessionEmpty, watchSessionTitle } from "./session-lifecycle.ts";
 import { SessionLifecycle } from "./services/session-lifecycle.ts";
@@ -555,6 +557,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		taskGraph = await runtime.harness.taskGraph(TODO_CONTEXT);
 		services = await createSessionWorkerServices({
 			cwd: runtime.cwd,
+			workspaceDirectories: runtime.workspaceDirectories,
 			harness: runtime.harness,
 			registry: runtime.registry,
 			conversation: runtime.conversation,
@@ -864,7 +867,16 @@ async function createCodingAgentHarness(
 	configureHarnessHttp(settingsManager);
 	const envs = new ExecutionEnvs(cwd);
 	const resources = await loadCodingResources(settingsManager, cwd);
-	const registry = createCodingRegistry(settingsManager, cwd, resources);
+	const projectCatalog = new ProjectCatalog(options.sessionDir);
+	const workspaceDirectories = async (): Promise<readonly string[]> => {
+		const metadata = await readSession(options.sessionDir, options.metadata.id);
+		const projects = await projectCatalog.list();
+		const path = await realpath(cwd).catch(() => cwd);
+		const project = projects.find(project => project.id === metadata?.projectId)
+			?? projects.find(project => (project.workspaces ?? [project.cwd]).includes(path));
+		return project?.workspaces ?? [cwd];
+	};
+	const registry = createCodingRegistry(settingsManager, cwd, resources, workspaceDirectories);
 	if (options.pluginManifestPaths.length > 0) {
 		registry.install(defineExtension({
 			name: "plugin-development",
@@ -925,6 +937,7 @@ async function createCodingAgentHarness(
 		});
 		return {
 			cwd,
+			workspaceDirectories,
 			approvalGate,
 			harness,
 			registry,

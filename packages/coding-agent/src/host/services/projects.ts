@@ -4,6 +4,10 @@ export interface ProjectSummary {
 	id: string;
 	name: string;
 	cwd: string;
+	/** Authorized project folders; cwd is the default execution directory. */
+	workspaces?: string[];
+	/** Changes whenever source folders are saved, including renewed consent for the same folders. */
+	revision?: number;
 	createdAt: number;
 	removed?: true;
 }
@@ -29,10 +33,19 @@ export function isProjectSelection(value: unknown): value is ProjectSelection {
 export interface ProjectManagement {
 	selection(context: Context): Promise<ProjectSelection | undefined>;
 	remember(selection: ProjectSelection, context: Context): Promise<void>;
-	create(options: { cwd: string; name?: string }, context: Context): Promise<ProjectSummary>;
+	create(options: { cwd: string; name?: string; workspaces?: string[]; projectId?: string }, context: Context): Promise<ProjectSummary>;
+	update(projectId: string, options: { name: string; workspaces: string[] }, context: Context): Promise<ProjectSummary>;
+	/** Folder selection on the machine running the host, including for a remote Web client. */
+	folders(options: { path?: string }, context: Context): Promise<ProjectFolders>;
 	rename(projectId: string, name: string, context: Context): Promise<ProjectSummary>;
 	/** Archive all project sessions, preserving their history and working directory. */
 	remove(projectId: string, context: Context): Promise<void>;
+}
+
+export interface ProjectFolders {
+	path: string;
+	parent: string | null;
+	entries: { name: string; path: string }[];
 }
 
 export const ProjectManagement = defineService<ProjectManagement>("amazme.project-management");

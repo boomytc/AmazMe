@@ -12,6 +12,7 @@ import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { PluginRuntime } from "../../core/plugins/runtime.ts";
 import { collectDiagnostics, type DiagnosticOptions } from "../../core/local-diagnostics.ts";
 import { loadCodingResources } from "../../durable/harness-setup.ts";
+import { listProjectFolders } from "../project-catalog.ts";
 import { Diagnostics } from "./diagnostics.ts";
 import { Plugins, PresentationPlugins, type Plugins as PluginsService } from "./plugins.ts";
 import { createFeedbackService } from "./feedback-provider.ts";
@@ -85,7 +86,8 @@ export async function createExperimentalServerServices(options: {
 		remember(selection: ProjectSelection): Promise<void>;
 		list(): Promise<ProjectSummary[]>;
 		defaultId: string;
-		create(cwd: string, name?: string): Promise<ProjectSummary>;
+		update?(id: string, name: string, workspaces: string[]): Promise<ProjectSummary>;
+		create(cwd: string, name?: string, workspaces?: string[], projectId?: string): Promise<ProjectSummary>;
 		rename(id: string, name: string): Promise<ProjectSummary>;
 		remove(id: string, context: Context): Promise<void>;
 		archive(sessionId: string, archived: boolean, context: Context): Promise<void>;
@@ -183,7 +185,18 @@ export async function createExperimentalServerServices(options: {
 					provider.provide(ProjectManagement, {
 						selection: () => serialize(() => projects.selection()),
 						remember: (selection, context) => serialize(async () => { context.abortSignal?.throwIfAborted(); await projects.remember(selection); }),
-						create: (input, context) => updateDirectory(async () => { context.abortSignal?.throwIfAborted(); return projects.create(input.cwd, input.name); }),
+						create: (input, context) => updateDirectory(async () => { context.abortSignal?.throwIfAborted(); return projects.create(input.cwd, input.name, input.workspaces, input.projectId); }),
+						update: (id, input, context) => updateDirectory(async () => {
+							context.abortSignal?.throwIfAborted();
+							if (!projects.update) throw new Error("Project editing is unavailable");
+							return projects.update(id, input.name, input.workspaces);
+						}),
+						folders: async (input, context) => {
+							context.abortSignal?.throwIfAborted();
+							const folders = await listProjectFolders(input.path);
+							context.abortSignal?.throwIfAborted();
+							return folders;
+						},
 						rename: (id, name, context) => updateDirectory(async () => { context.abortSignal?.throwIfAborted(); return projects.rename(id, name); }),
 						remove: (id, context) => updateDirectory(() => projects.remove(id, context)),
 					});

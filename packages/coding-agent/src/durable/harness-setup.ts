@@ -3,6 +3,7 @@ import { clampThinkingLevel, type Model, type ModelThinkingLevel } from "@amazme
 import {
 	createRegistry,
 	defineExtension,
+	section,
 	type EnvTarget,
 	type HarnessSettings,
 	type ModelRef,
@@ -33,10 +34,17 @@ import { createDurableCodemode } from "./codemode.ts";
 export function createCodingSettings(cwd: string): SettingsManager {
 	const agentDir = getAgentDir();
 	const settings = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
-	const trusted = !hasTrustRequiringProjectResources(cwd) ||
-		(new ProjectTrustStore(agentDir).get(cwd) ?? settings.getDefaultProjectTrust() === "always");
-	settings.setProjectTrusted(trusted);
+	refreshCodingProjectTrust(settings, cwd);
 	return settings;
+}
+
+/** Re-read saved consent when an already opened hosted session reloads its configuration. */
+export function refreshCodingProjectTrust(settings: SettingsManager, cwd: string): boolean {
+	const trusted = !hasTrustRequiringProjectResources(cwd) ||
+		(new ProjectTrustStore(getAgentDir()).get(cwd) ?? settings.getDefaultProjectTrust() === "always");
+	const changed = settings.isProjectTrusted() !== trusted;
+	settings.setProjectTrusted(trusted);
+	return changed;
 }
 
 /** pi's HTTP setup: proxy, idle timeouts, and one undici for fetch. Without it, some provider streams break off. */
@@ -99,7 +107,8 @@ export async function loadCodingResources(
 }
 
 /** A registry with Pi's coding tools and one resource-backed system prompt. */
-export function createCodingRegistry(settingsManager: SettingsManager, cwd: string, resources: ResourceLoader): Registry {
+export function createCodingRegistry(settingsManager: SettingsManager, cwd: string, resources: ResourceLoader,
+	workspaces: () => Promise<readonly string[]> = async () => [cwd]): Registry {
 	const registry = createRegistry();
 	registry.install(
 		createCodingTools({
@@ -138,6 +147,9 @@ export function createCodingRegistry(settingsManager: SettingsManager, cwd: stri
 		defineExtension({ name: "powershell", tools: [{ ...createPowerShellTool(), defaultActive: false }] }),
 	);
 	registry.install(createPiPrompt(resources, cwd));
+	registry.install(defineExtension({ name: "project-workspaces", sections: [section("project_workspaces", async () =>
+		`Authorized project workspace folders:\n${(await workspaces()).map(path => `- ${path}`).join("\n")}\n`
+		+ `The session's execution directory is ${cwd}. Use absolute paths for other workspace folders. Before working in another folder, read its AGENTS.md. Tool approvals follow the configured policy.`)] }));
 	return registry;
 }
 

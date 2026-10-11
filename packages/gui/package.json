@@ -7,7 +7,7 @@
 	"main": "./dist/main.js",
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsc -p tsconfig.build.json",
+		"build": "tsc -p tsconfig.build.json && shx cp src/preload.cjs dist/preload.cjs",
 		"start": "node dist/start.js",
 		"test": "vitest --run --exclude test/smoke.test.ts --exclude test/desktop-lifecycle.smoke.test.ts",
 		"test:smoke": "vitest --run --no-file-parallelism test/smoke.test.ts test/desktop-lifecycle.smoke.test.ts",

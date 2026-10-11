@@ -17,7 +17,7 @@ import type { ModelRuntime } from "../../core/model-runtime.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { ResourceLoader } from "../../core/resource-loader.ts";
-import { configureHarnessHttp } from "../../durable/harness-setup.ts";
+import { configureHarnessHttp, refreshCodingProjectTrust } from "../../durable/harness-setup.ts";
 import { createAgentExtensionsFacet } from "../../core/plugins/agent-extensions.ts";
 import { AgentRuntime, createAgentRuntime } from "../../core/plugins/agent-runtime.ts";
 import { Conversations } from "./conversations.ts";
@@ -47,6 +47,7 @@ import { createWorkspaceFacet } from "./workspace-provider.ts";
 export interface SessionWorkerRuntime {
 	/** The working directory the Session's agent runs in: the workspace and terminal root. */
 	readonly cwd: string;
+	readonly workspaceDirectories?: () => Promise<readonly string[]>;
 	readonly harness: Harness;
 	readonly registry?: Registry;
 	/** The root conversation the services expose. */
@@ -84,6 +85,7 @@ export interface SessionWorkerServices {
 
 export async function createSessionWorkerServices(options: {
 	readonly cwd: string;
+	readonly workspaceDirectories?: () => Promise<readonly string[]>;
 	readonly harness: Harness;
 	readonly registry?: Registry;
 	readonly conversation: Conversation;
@@ -159,6 +161,7 @@ export async function createSessionWorkerServices(options: {
 								const operation = tail.then(async () => {
 									context.abortSignal?.throwIfAborted();
 									await (options.resources?.reload() ?? settingsManager.reload());
+									if (refreshCodingProjectTrust(settingsManager, options.cwd)) await options.resources?.reload();
 									configureHarnessHttp(settingsManager);
 									publishSettings(state, context, snapshot());
 								});
@@ -189,7 +192,7 @@ export async function createSessionWorkerServices(options: {
 				: { summaryModel: summaryModelFromRuntime(options.harness, options.modelRuntime) }),
 		}),
 		...(options.approvalGate === undefined ? [] : [createApprovalsFacet(options.approvalGate)]),
-		createWorkspaceFacet({ cwd: options.cwd }),
+		createWorkspaceFacet({ cwd: options.cwd, directories: options.workspaceDirectories }),
 		...(options.settingsManager === undefined
 			? []
 			: [createTerminalFacet({ cwd: options.cwd, settings: options.settingsManager })]),

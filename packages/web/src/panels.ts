@@ -65,6 +65,7 @@ export interface PanelOption {
 /** One editable control on a row. Changing it reports its action id with `data` and the new value. */
 export interface PanelControl {
 	readonly id: string;
+	readonly label?: string;
 	readonly kind: "switch" | "select" | "number" | "text";
 	readonly value: string;
 	/** The identifier the action belongs to: a setting field, a target name, a path. */
@@ -150,7 +151,7 @@ export interface PanelSpec {
 export interface PanelField {
 	readonly id: string;
 	readonly label: string;
-	readonly kind: "text" | "textarea" | "select" | "checkbox" | "multiselect";
+	readonly kind: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "directories";
 	readonly inputType?: "number" | "datetime-local" | "password";
 	readonly options?: readonly { readonly value: string; readonly label: string }[];
 	readonly visibleWhen?: { readonly field: string; readonly values: readonly string[] };

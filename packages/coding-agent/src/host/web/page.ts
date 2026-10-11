@@ -13,8 +13,9 @@ import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
 	PROJECT_ADD_ACTION, PROJECT_ADD_MODAL, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_RENAME_MODAL,
+	PROJECT_EDIT_ACTION, PROJECT_EDIT_MODAL, PROJECT_NEW_SESSION_ACTION,
 	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, ARCHIVE_TOGGLE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
-	addProjectModal, renameProjectModal, removeProjectModal,
+	addProjectModal, editProjectModal, renameProjectModal, removeProjectModal,
 } from "@amazme/web";
 import {
 	AUTOMATION_VIEW,
@@ -369,7 +370,7 @@ class SessionPainter {
 		return this.#levels;
 	}
 
-	/** The attached session's working directory, as the host publishes it. */
+	/** The attached session's file browser, including its selected project folder. */
 	get workspace(): WorkspaceState | undefined {
 		return this.#workspace?.state.value;
 	}
@@ -1004,7 +1005,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					dock: {
 						open: dockOpen,
 						tab: dockTab,
-						cwd: bound ? painter.workspace?.cwd ?? "" : "",
+						cwd: bound ? directory.state.value?.sessions.find(session => session.sessionId === desiredSessionId)?.cwd ?? painter.workspace?.cwd ?? "" : "",
 						workspace: bound ? painter.workspace : undefined,
 						terminal: bound ? painter.terminal : undefined,
 						conversations: bound ? painter.conversations : undefined,
@@ -1089,6 +1090,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		}
 		const previous = observedDirectory?.sessions.find(session => session.sessionId === desiredSessionId);
 		const current = state.sessions.find(session => session.sessionId === desiredSessionId);
+		const previousProject = observedDirectory?.projects?.find(project => project.id === current?.projectId);
+		const currentProject = state.projects?.find(project => project.id === current?.projectId);
+		const foldersSaved = state.projects?.some(project => project.revision !== observedDirectory?.projects?.find(previous => previous.id === project.id)?.revision);
 		observedDirectory = state;
 		if (booted && desiredSessionId !== undefined) {
 			if ((previous !== undefined && current === undefined)
@@ -1102,6 +1106,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			}
 		}
 		const available = state.projects?.filter(project => showArchived || !project.removed) ?? [];
+		if (booted && current !== undefined && desiredSessionId === painter.sessionId) {
+			if (previousProject && currentProject && JSON.stringify(previousProject.workspaces ?? [previousProject.cwd]) !== JSON.stringify(currentProject.workspaces ?? [currentProject.cwd])) {
+				void painter.workspaceOpen(".").catch(report);
+			}
+			// Trust is stored by path, so a saved folder can also affect sessions in another project.
+			if (foldersSaved) {
+				const settings = painter.settingsService;
+				const mcp = painter.mcpService;
+				void settings?.reload(BACKGROUND_CONTEXT).then(async () => {
+					if (client.connected && painter.settingsService === settings && desiredSessionId === current.sessionId) await mcp?.reload(BACKGROUND_CONTEXT);
+				}).catch(report);
+			}
+		}
 		if (!available.some(project => project.id === selectedProjectId)) {
 			selectedProjectId = available.find(project => project.id === state.defaultProjectId)?.id ?? available[0]?.id;
 			if (booted) { selectionRevision += 1; rememberSelection(); }
@@ -1271,7 +1288,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		rememberSelection();
 		creating = true;
 		paint();
-		const preparation = project?.removed ? projects.create({ cwd: project.cwd, name: project.name }, BACKGROUND_CONTEXT) : Promise.resolve();
+		const preparation = project?.removed ? projects.create({ cwd: project.cwd, name: project.name, workspaces: project.workspaces, projectId: project.id }, BACKGROUND_CONTEXT) : Promise.resolve();
 		void preparation
 			.then(() => management.create({ reuseEmpty: true, ...(projectId === undefined ? {} : { projectId }) }, BACKGROUND_CONTEXT))
 			.then(async (created) => {
@@ -1289,6 +1306,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			});
 	};
 	renderer.onCreateSession = createSession;
+	renderer.onBrowseDirectories = async path => {
+		if (!client.connected) throw new Error(copy("connection.hostGone"));
+		await serverServices.ready(BACKGROUND_CONTEXT);
+		return projects.folders(path === undefined ? {} : { path }, BACKGROUND_CONTEXT);
+	};
+	renderer.onPickDirectories = async () => window.amazmeDesktop?.pickDirectories();
 	renderer.onShortcut = (id: ShortcutId) => {
 		if (id === "session.new") {
 			createSession();
@@ -1736,6 +1759,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				closeModal();
 				return;
 			case "control":
+				if (action.id === WORKSPACE_OPEN_ACTION) {
+					void painter.workspaceOpen(action.value).catch(report); return;
+				}
 				if (action.id === SETTINGS_FIELD_ACTION && action.data !== undefined) {
 					const id = action.data;
 					const service = painter.settingsService;
@@ -1791,6 +1817,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				switch (action.id) {
 					case PROJECT_ADD_ACTION:
 						openModal(addProjectModal(locale), action); return;
+					case PROJECT_NEW_SESSION_ACTION:
+						if (creating || !directoryReady || !client.connected) return;
+						selectedProjectId = action.data; rememberSelection(); createSession(); return;
+					case PROJECT_EDIT_ACTION: {
+						const project = directory.state.value?.projects?.find(project => project.id === action.data);
+						if (project) openModal(editProjectModal(locale, project), action); return;
+					}
 					case PROJECT_RENAME_ACTION: {
 						const project = directory.state.value?.projects?.find(project => project.id === action.data);
 						if (project) openModal(renameProjectModal(locale, project.id, project.name), action); return;
@@ -2278,13 +2311,22 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "modal-submit": {
 				const fields = action.fields;
 				switch (action.id) {
-					case PROJECT_ADD_MODAL: {
-						if (!fields.cwd?.trim()) { refuseInModal(copy("project.directoryRequired")); return; }
+					case PROJECT_ADD_MODAL:
+					case PROJECT_EDIT_MODAL: {
+						if (!fields.name?.trim()) { refuseInModal(copy("project.nameRequired")); return; }
+						let workspaces: unknown;
+						try { workspaces = JSON.parse(fields.workspaces ?? "[]"); } catch { workspaces = undefined; }
+						if (!Array.isArray(workspaces) || workspaces.length === 0 || !workspaces.every((path: unknown): path is string => typeof path === "string" && path.trim().length > 0)) {
+							refuseInModal(copy("project.directoryRequired")); return;
+						}
+						const folders: string[] = workspaces;
 						const selection = selectionRevision;
 						const dialog = modal;
 						runPanelCall({ id: action.id, inModal: true, call: async () => {
-							const project = await projects.create({ cwd: (fields.cwd ?? "").trim(), ...(fields.name?.trim() ? { name: fields.name.trim() } : {}) }, BACKGROUND_CONTEXT);
-							if (selectionRevision === selection && modal === dialog) {
+							const project = action.id === PROJECT_EDIT_MODAL
+								? await projects.update(action.data ?? "", { name: fields.name!.trim(), workspaces: folders }, BACKGROUND_CONTEXT)
+								: await projects.create({ cwd: folders[0]!, name: fields.name!.trim(), workspaces: folders }, BACKGROUND_CONTEXT);
+							if (action.id === PROJECT_ADD_MODAL && selectionRevision === selection && modal === dialog) {
 								selectedProjectId = project.id; showArchived = false; await clearSession();
 							}
 							return { ok: true as const };

@@ -110,7 +110,7 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 /** Create an empty Session. Its worker creates the storage on first open. */
 export async function createSession(
 	sessionDir: string,
-	options: { readonly id?: string; readonly cwd: string; readonly name?: string; readonly projectId?: string },
+	options: { readonly id?: string; readonly cwd: string; readonly name?: string; readonly projectId?: string; readonly createdAt?: number },
 ): Promise<SessionCatalogMetadata> {
 	const id = options.id ?? randomUUID();
 	if (!isSessionId(id)) throw new Error(`Invalid session ID: ${id}`);
@@ -125,7 +125,7 @@ export async function createSession(
 	const display = options.name === undefined ? "" : normalizeSessionName(options.name);
 	const metadata: SessionCatalogMetadata = {
 		id,
-		createdAt: Date.now(),
+		createdAt: options.createdAt ?? Date.now(),
 		cwd: options.cwd,
 		...(options.projectId === undefined ? {} : { projectId: options.projectId }),
 		path,
@@ -163,6 +163,16 @@ export async function writeSessionArchive(sessionDir: string, id: string, archiv
 	if (current === undefined) throw new Error(`Unknown session: ${id}`);
 	const { archivedAt: _previousArchive, ...rest } = current;
 	const metadata: SessionCatalogMetadata = { ...rest, ...(archived ? { archivedAt: current.archivedAt ?? Date.now() } : {}) };
+	await writeMetadata(metadata);
+	return metadata;
+}
+
+/** Fix legacy ownership before a project's folders change; the execution directory stays intact. */
+export async function writeSessionProject(sessionDir: string, id: string, projectId: string): Promise<SessionCatalogMetadata> {
+	const current = await readSession(sessionDir, id);
+	if (current === undefined) throw new Error(`Unknown session: ${id}`);
+	if (current.projectId !== undefined) return current;
+	const metadata: SessionCatalogMetadata = { ...current, projectId };
 	await writeMetadata(metadata);
 	return metadata;
 }

@@ -1,9 +1,11 @@
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PAGE_DIRECTORY } from "@amazme/web/assets";
 import {
 	app,
 	BrowserWindow,
 	dialog,
+	ipcMain,
 	Menu,
 	shell,
 	type Event as ElectronEvent,
@@ -23,6 +25,7 @@ import { editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
 import { attentionOnTitle } from "./title.ts";
+import { translate } from "@amazme/web/strings";
 
 const APP_NAME = "AmazMe";
 const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
@@ -51,6 +54,7 @@ let quitRequested = false;
 let showingDialog = false;
 let deferredHost: HostFailure | undefined;
 let startupFailure: HostStartupFailure | undefined;
+let folderPicker: Promise<readonly string[]> | undefined;
 let notices: ShellController;
 
 function readinessTimeout(): number | undefined {
@@ -83,6 +87,22 @@ function liveWindow(): BrowserWindow | undefined {
 	if (window === undefined || window.isDestroyed()) return undefined;
 	return window;
 }
+
+ipcMain.handle("amazme:pick-directories", async event => {
+	const current = liveWindow();
+	if (!current || event.sender !== current.webContents || event.senderFrame !== current.webContents.mainFrame
+		|| hostPageUrl === undefined || current.webContents.getURL() !== hostPageUrl || notices.quitting) return [];
+	const pending = folderPicker ??= (async () => {
+		const locale = await currentLocale();
+		if (current.isDestroyed() || notices.quitting) return [];
+		const result = await dialog.showOpenDialog(current, {
+			title: translate(locale, "project.folders"), buttonLabel: translate(locale, "project.chooseFolder"),
+			defaultPath: hostWorkingDirectory(process.env, process.cwd()), properties: ["openDirectory", "multiSelections"],
+		});
+		return result.filePaths;
+	})();
+	try { return await pending; } finally { if (folderPicker === pending) folderPicker = undefined; }
+});
 
 /** A hidden window cannot parent a modal. Show it before the dialog so the buttons are reachable. */
 function revealWindow(): void {
@@ -238,6 +258,7 @@ async function openWindow(pageUrl: string): Promise<void> {
 		icon: APP_ICON,
 		autoHideMenuBar: true,
 		webPreferences: {
+			preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
