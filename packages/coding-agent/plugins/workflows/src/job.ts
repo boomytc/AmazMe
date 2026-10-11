@@ -1,5 +1,5 @@
 import type { Context } from "@amazme/chord";
-import { AgentDoc, AssistantEntry, defineTask, NestedResultDoc, ToolTask, UsageDoc } from "@amazme/durable";
+import { AgentDoc, AssistantEntry, defineTask, NestedCallDoc, ToolTask, UsageDoc } from "@amazme/durable";
 import type { ConversationId, EntryId, TaskId, TaskRuntime, ToolTaskResult } from "@amazme/durable";
 import type { JobSpec } from "./plan.ts";
 import type { Evidence } from "./state.ts";
@@ -207,7 +207,7 @@ export const Job = defineTask<JobInput, State, JobResult>({
 			if ("expired" in first) await runtime.abortOwned(child, context);
 			const settled = "record" in first ? first.record : await waiting,
 				outcome = settled.state.outcome;
-			const nested = (await runtime.snapshot(NestedResultDoc, runtime.taskId, String(child), context))?.result;
+			const nested = (await runtime.snapshot(NestedCallDoc, runtime.taskId, "command", context))?.result;
 			const facts = nested?.details;
 			const details = facts !== null && typeof facts === "object" && !Array.isArray(facts) ? facts : undefined;
 			const interrupted = nested?.diagnostics?.some((item) => item.code === "interrupted") === true;

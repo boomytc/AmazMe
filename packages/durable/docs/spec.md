@@ -1755,6 +1755,8 @@ interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver, Docum
   waitForTask<T>(id: TaskId<T>, context: Context): Promise<SettledTask<T>>;
   /** `abortTask()` of a task this task owns, resolving once it is terminal; rejects for a task another owns. */
   abortOwned(id: TaskId, context: Context): Promise<void>;
+  /** Live tasks this task owns directly, in ID order, whichever invocation created them; not those in its conversations. */
+  ownedTasks(context: Context): Promise<TaskRecord<JsonValue, JsonValue, JsonValue>[]>;
   /** Outcomes of terminal tasks, in order; rejects when one is not terminal. Used after a wait (section 5.5). */
   outcomes<T>(ids: readonly TaskId<T>[], context: Context): Promise<TaskOutcome<T>[]>;
   /** Committed entry visible from the task's conversation. */
@@ -2902,15 +2904,18 @@ unavailable, invalid, blocked, throws, is interrupted, or is aborted returns
 an `isError` result; a nested task the scheduler faulted or orphaned returns a
 synthesized one.
 
-AmazMe also supports a nested `ToolTask` created directly by an ordinary owning task. Before execution, the tool kernel verifies its live owner, registers its unique key in the same task-scoped index, and enforces the per-parent bound. Workflow and verification tasks use this path; they read `NestedResultDoc` before settling and retain only their own bounded evidence. There is one tool executor and result store.
+AmazMe also supports a nested `ToolTask` created directly by an ordinary owning task. Before execution, the tool kernel verifies its live owner, registers its unique key in `NestedCallDoc`, and enforces the per-parent bound with a task-scoped counter rather than a growing key index. Workflow and verification tasks use this path; they read `NestedCallDoc` by call key before settling and retain only their own bounded evidence. There is one tool executor and result store.
+
+Before scheduling on open, AmazMe atomically migrates each live caller's older `amazme.tool.nested` index and `amazme.tool.nested-result` members to `NestedCallDoc`, preserving task IDs and completed results, then retires the old documents. Reopening after migration does not repeat it or execute completed tools again; unfinished calls still follow their stored replay policy. Ordinary workflow callers already waiting for a completed child use the same migration.
 
 The nested call's key names it within its caller; the nested call ID is
 `<callId>/<key>`. By default the key is the call's position among the
 invocation's nested calls, `1`, `2`, ... An explicit `key` must be non-empty,
 without `/`, not `__proto__`, and not a positive integer, so call IDs never
-collide. One commit creates the nested task, its slot, and an index entry from
-the key to the task in `amazme.tool.nested`, a task-scoped document of the caller,
-which retires with it. A caller that is not replay-safe creates its nested
+collide. One commit creates the nested task, its slot, and its member of
+`NestedCallDoc` (`amazme.tool.nested-call`), a task-scoped document family of the
+caller keyed by the call's key, holding `{ taskId }`; it retires with the
+caller. One document per call, so admitting a call rewrites no other call's. A caller that is not replay-safe creates its nested
 calls, and the child tasks it creates through `api.createTask()` unless the
 options say otherwise, with `abandonOnRestart` (section 5.4): it never resumes
 after a restart, so neither do they. With `progress: false`, a nested call
@@ -2923,15 +2928,14 @@ Nested calls can run concurrently; callers await them in order when needed.
 `callers` keeps a tool from being called by tools at all.
 
 The nested call's result does not go into its receipt, which stays
-`{ kind: "nested" }`. Its terminal commit writes the result to
-`NestedResultDoc` (`amazme.tool.nested-result`), a task-scoped document family of
-the caller keyed by the nested task ID, one member per result, and sets its
+`{ kind: "nested" }`. Its terminal commit writes the result as `result` into
+its `NestedCallDoc` member and sets its
 slot's `summary` (`isError`, `durationMs`, `usage`, bounded error text). The
 stored result is exactly what `executeTool()` returns: it keeps no `output`,
 which only the model reads, so each result, an image or a `bash` tail, is stored
 once. The caller is
 never terminal before its owned nested calls, so the write always finds its
-documents open; a nested call missing from the caller's index throws. The
+documents open; a member that names another task throws. The
 caller reads the result after the wait, and every nested result is gone from
 storage once its caller is terminal. A nested call the scheduler faulted or
 orphaned has no stored result; the caller gets a synthesized `isError` one.
@@ -2951,8 +2955,9 @@ settles (section 8.6); a caller that passes it on in its own result counts it
 again.
 
 Before a caller settles, by any path, it lets nested call admissions its
-invocation started commit, then aborts every nested call it left running with
-`runtime.abortOwned()`, all at once, and waits for them, so they settle into
+invocation started commit, then aborts every live nested call it owns, found
+with `runtime.ownedTasks()`, so also one an earlier attempt made and a rerun
+never made again, with `runtime.abortOwned()`, all at once, and waits for them, so they settle into
 their slots before the caller's settlement removes them. `executeTool()` throws
 once `execute()` has returned, and rejects when the caller is aborted or the
 Harness closes; cancelling its `context` stops only the wait. An abort that
@@ -2968,7 +2973,10 @@ caller runs again and finds its nested calls by key; any other caller settles
 Programs that call a tool get its `structuredOutput`. A tool that declares
 `structuredOutputSchema` must return a `structuredOutput` matching it, except
 on an error result, where it may omit it; the Harness validates it after the
-`afterTool` chain, like arguments. A tool without a schema must not return one;
+`afterTool` chain, like arguments. If a hook replaces `output` while leaving the
+original `structuredOutput` value unchanged, AmazMe drops that payload before
+validation; a schema tool must supply a safe replacement if programs still need
+a structured value. A tool without a schema must not return one;
 programs get its bounded output, the content the model sees without the
 rendered diagnostics, for a success and for an error alike: one text item as
 its string, one image as its `ImageContent`, no items as `""`, and anything
@@ -3698,7 +3706,7 @@ with the arguments the caller passed, runs like a tool slot, gets the arguments
 it executes with in its intent commit when they differ (a model-issued call's
 are in its assistant entry), and in its terminal commit becomes `done`, with its progress
 removed like a tool slot's and its `summary` set, enough for a status line; its
-result is in the caller's `NestedResultDoc`, never in `amazme.live` (section 7.3). When any call settles, its terminal commit
+result is in the caller's `NestedCallDoc`, never in `amazme.live` (section 7.3). When any call settles, its terminal commit
 removes the nested slots below it, transitively by `parentTaskId`; its
 left-running nested calls were aborted first. `endRun` and the generation's
 `tools` phase remove `nestedTools` with `tools`.
@@ -3896,7 +3904,7 @@ because the terminal record keeps it; the call is read from the assistant
 entry. A nested call (section 7.3) carries its call, since no entry holds it,
 and settles differently: its result commit records the result's `usage`
 (section 8.6), writes its result for programs to the caller's
-`NestedResultDoc` (section 7.3), marks its nested slot `done` with its
+`NestedCallDoc` (section 7.3), marks its nested slot `done` with its
 summary, appends no entry, and ends with `{ kind: "nested" }`; `control` does
 not apply.
 Below, `{ entryId }` is a model-issued call's result.
@@ -4505,11 +4513,11 @@ Events derive from committed changes:
   result entry appended in the same commit, as for the unstarted calls of an
   aborted round, directly before its `message_start`, or without an entry.
   Nested slots produce the same events with `parentToolCallId`; a nested call
-  ends with its `result`, taken from the `NestedResultDoc` value its terminal
+  ends with its `result`, taken from the `NestedCallDoc` value its terminal
   commit published, or without one after a fault or orphan or when its slot
   disappears unfinished. Snapshots show done nested slots with their summary,
   not their result; a late subscriber reads a live caller's results from its
-  `NestedResultDoc`.
+  `NestedCallDoc`, keyed by call key (the slot's `callId` after `<parentCallId>/`).
 - `inbox_update`, `agent_changed`, `usage_changed`: the document changed; a
   retired one reads as its initial value, as in a snapshot. Registry installs
   and settings changes make no commit and emit nothing; a UI showing resolved
@@ -5037,6 +5045,11 @@ These are contracts, not invitations to add defensive machinery:
 - **Long transactions:** an async commit callback holds the Session mutation
   line. Never await models, tools, processes, network calls, humans, a nested
   Session commit, or a Session waiter inside it. Use methods on the current `Tx`.
+- **Reads inside a commit:** `snapshot()`, `documentState()`, `watchDoc()`,
+  `getTask()`, and the other Session, Harness, and runtime reads may queue on the
+  mutation line, for example to load a document not in memory. Inside a commit
+  callback, which holds that line, such a read never resolves, and the line stays
+  held. Only a cache hit returns, so the hang is intermittent. Read through `tx`.
 - **Explicit creation:** only typed `tx.doc()` creates an absent document. Snapshot,
   state, and watch lookup return `undefined` instead.
 - **Family initialization:** the first acquisition of an absent family address

@@ -9,7 +9,7 @@ import {
 	GenerationTask,
 	hook,
 	LiveDoc,
-	NestedResultDoc,
+	NestedCallDoc,
 	section,
 	ToolTask,
 } from "@amazme/durable";
@@ -229,9 +229,9 @@ export const Verification = defineExtension({
 				}, context);
 				if (receipt !== undefined) {
 					const reported = await api.waitForTask(receipt, context);
-					const report = await api.snapshot(NestedResultDoc, api.taskId, String(receipt), context);
+					const report = await api.snapshot(NestedCallDoc, api.taskId, "receipt", context);
 					const reportedResult =
-						reported.state.outcome.status === "completed" && report?.result.structuredOutput !== undefined;
+						reported.state.outcome.status === "completed" && report?.result?.structuredOutput !== undefined;
 					// A disabled or blocked reporting tool cannot silently trigger more command execution.
 					if (!reportedResult) return;
 				}

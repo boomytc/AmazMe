@@ -129,7 +129,7 @@ export function checkSourceContracts(repoRoot) {
 						failures.push(`${location}: published source imports a build-excluded module: ${value}`);
 					return;
 				}
-				if (value.startsWith("/") || isBuiltin(value)) return;
+				if (value.startsWith("/") || value.startsWith("cloudflare:") || isBuiltin(value)) return;
 				const name = value
 					.split("/")
 					.slice(0, value.startsWith("@") ? 2 : 1)
@@ -240,6 +240,21 @@ export async function checkEntryContracts(repoRoot) {
 			maxFiles: 15,
 			forbid: ["packages/ai/src/providers/", "packages/ai/src/models.generated.ts", "packages/ai/src/index.ts"],
 		},
+		{
+			entry: "packages/codemode/src/index.ts",
+			maxFiles: 12,
+			forbid: ["packages/codemode/src/cloudflare.ts"],
+		},
+		...["portable", "cloudflare"].map((name) => ({
+			entry: `packages/codemode/src/${name}.ts`,
+			maxFiles: name === "portable" ? 8 : 9,
+			forbid: [
+				"packages/codemode/src/index.ts",
+				"packages/codemode/src/runtime/host.ts",
+				"packages/codemode/src/runtime/worker.ts",
+				"packages/codemode/src/wasm.ts",
+			],
+		})),
 		// Branch summaries, the name matcher, and the leaf file-error contract add three modules to Pi's 63-module root.
 		{
 			entry: "packages/durable/src/index.ts",
@@ -276,6 +291,8 @@ export async function checkEntryContracts(repoRoot) {
 		"packages/ai/src/models.ts",
 		"packages/durable/src/index.ts",
 		"packages/durable/src/tools/index.ts",
+		"packages/codemode/src/portable.ts",
+		"packages/codemode/src/cloudflare.ts",
 		"packages/coding-agent/src/host/web/page.ts",
 	]) {
 		try {
@@ -285,6 +302,8 @@ export async function checkEntryContracts(repoRoot) {
 				bundle: true,
 				write: false,
 				platform: "browser",
+				// Wrangler supplies these two modules, but still reject all Node dependencies in Workers entries.
+				external: entry.endsWith("/cloudflare.ts") ? ["cloudflare:workers", "quickjs-wasi/quickjs.wasm"] : [],
 				format: "esm",
 				logLevel: "silent",
 				plugins: [workspaceResolver(packages, false)],

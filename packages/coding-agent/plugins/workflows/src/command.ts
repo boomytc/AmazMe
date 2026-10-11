@@ -1,4 +1,4 @@
-import { defineTask, NestedResultDoc, ToolTask } from "@amazme/durable";
+import { defineTask, NestedCallDoc, ToolTask } from "@amazme/durable";
 import type { JsonObject, TaskId, ToolTaskResult } from "@amazme/durable";
 
 type Input = { callId: string; name: string; args: JsonObject };
@@ -35,7 +35,7 @@ export const Command = defineTask<Input, State, Result, object>({
 		async wait(task, runtime, context) {
 			const settled = await runtime.waitForTask(task.state.checkpoint.child, context);
 			const result = (
-				await runtime.snapshot(NestedResultDoc, runtime.taskId, String(task.state.checkpoint.child), context)
+				await runtime.snapshot(NestedCallDoc, runtime.taskId, "command", context)
 			)?.result;
 			await runtime.commit(
 				() => ({

@@ -13,6 +13,8 @@
 			"@amazme/telemetry": ["./packages/telemetry/src/index.ts"],
 			"@amazme/telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
 			"@amazme/codemode": ["./packages/codemode/src/index.ts"],
+			"@amazme/codemode/cloudflare": ["./packages/codemode/src/cloudflare.ts"],
+			"@amazme/codemode/portable": ["./packages/codemode/src/portable.ts"],
 			"@amazme/codemode/declarations": ["./packages/codemode/src/declarations.ts"],
 			"@amazme/codemode/source": ["./packages/codemode/src/source.ts"],
 			"@amazme/codemode/worker": ["./packages/codemode/src/runtime/worker.ts"],

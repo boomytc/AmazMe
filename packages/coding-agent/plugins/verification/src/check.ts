@@ -1,6 +1,6 @@
 import type { Context } from "@amazme/chord";
 import type { TaskId, TaskRuntime, ToolTaskResult } from "@amazme/durable";
-import { defineTask, LiveDoc, NestedResultDoc, ToolTask } from "@amazme/durable";
+import { defineTask, LiveDoc, NestedCallDoc, ToolTask } from "@amazme/durable";
 import type { CommandCheck } from "./state.ts";
 
 export type Candidate = { text: string; limited: boolean; stopReason: string };
@@ -156,7 +156,7 @@ export const Check = defineTask<Input, State, CheckResult>({
 			if ("expired" in first) await runtime.abortOwned(state.child!, context);
 			const record = "record" in first ? first.record : await completed;
 			const outcome = record.state.outcome;
-			const result = (await runtime.snapshot(NestedResultDoc, runtime.taskId, String(state.child), context))?.result;
+			const result = (await runtime.snapshot(NestedCallDoc, runtime.taskId, `check-${state.next}`, context))?.result;
 			const output = [
 				typeof result?.structuredOutput === "string"
 					? result.structuredOutput

@@ -31,6 +31,7 @@ import { BUILTIN_TASKS } from "./registry.ts";
 import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
 import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
+import { migrateNestedCalls } from "./tool.ts";
 import type {
 	Agent,
 	AgentChange,
@@ -81,6 +82,9 @@ type ConversationHost<Tool extends ToolRegistration> = {
 	readonly now: () => number;
 	create(target: CreateTarget, options: CreateOptions, context: Context): Promise<Conversation>;
 };
+
+/** Key of the Harness's internal index-size getter, for tests. */
+export const SCHEDULER_INDEX_SIZES = Symbol.for("amazme-durable.schedulerIndexSizes");
 
 class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 	readonly id: ConversationId;
@@ -259,8 +263,9 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	}
 
 	/** Reconcile surviving `running` tasks to `pending`; part of open. */
-	openTasks(context: Context): Promise<void> {
-		return this.#tasks.open(context);
+	async openTasks(context: Context): Promise<void> {
+		await migrateNestedCalls(this, context);
+		await this.#tasks.open(context);
 	}
 
 	resume(): void {
@@ -272,6 +277,11 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.readOnLine(() => this.storage.task(id, context)) as Promise<
 			TaskRecord<JsonValue, JsonValue, R> | undefined
 		>;
+	}
+
+	/** Internal, for tests: sizes of the scheduler's ownership indexes. */
+	get [SCHEDULER_INDEX_SIZES](): TaskScheduler["indexSizes"] {
+		return this.#tasks.indexSizes;
 	}
 
 	inspect(context: Context): Promise<HarnessInspection> {

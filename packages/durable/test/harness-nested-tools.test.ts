@@ -8,7 +8,7 @@ import {
 	defineTool,
 	LiveDoc,
 	MemoryStorage,
-	NestedResultDoc,
+	NestedCallDoc,
 	ToolResultEntry,
 	ToolTask,
 	defineTask,
@@ -152,7 +152,7 @@ describe("nested tool execution", () => {
 			result: { kind: "nested" },
 		});
 		expect(
-			await harness.snapshot(NestedResultDoc, parentEntry.byTaskId!, String(received!.taskId), context),
+			await harness.snapshot(NestedCallDoc, parentEntry.byTaskId!, "1", context),
 		).toBeUndefined();
 		expect(entries.filter(ToolResultEntry.is)).toHaveLength(1);
 		expect((await root.context(context)).messages.filter((message) => message.role === "toolResult")).toHaveLength(1);

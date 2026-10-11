@@ -71,7 +71,8 @@ export type {
 	TaskGraphWatch,
 } from "./harness/task-graph.ts";
 export {
-	NestedResultDoc,
+	NestedCallDoc,
+	type NestedCallState,
 	ToolTask,
 	type ToolTaskCheckpoint,
 	type ToolTaskInput,

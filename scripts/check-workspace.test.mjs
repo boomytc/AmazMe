@@ -43,6 +43,16 @@ test("syntax checks distinguish type-only imports from runtime dependencies and 
 	assert.deepEqual(checkSourceContracts(root), []);
 });
 
+test("Cloudflare runtime modules are built-ins, not npm dependencies", () => {
+	const root = fixture();
+	packageFixture(
+		root,
+		"codemode",
+		'import { DurableObject } from "cloudflare:workers"; export class Sandbox extends DurableObject {}',
+	);
+	assert.deepEqual(checkSourceContracts(root), []);
+});
+
 test("side effects, mixed imports, re-exports, dynamic imports and require must declare runtime dependencies", () => {
 	const root = fixture();
 	packageFixture(
@@ -118,6 +128,14 @@ test("published entries cannot pull excluded implementation modules back into th
 
 test("production entry checks reject Node-only browser imports and heavy lean-entry graphs", async () => {
 	const root = fixture();
+	const codemode = packageFixture(root, "codemode", 'export { value } from "./cloudflare.ts";');
+	mkdirSync(join(codemode, "src/runtime"), { recursive: true });
+	writeFileSync(
+		join(codemode, "src/runtime/host.ts"),
+		'import fs from "node:fs"; export const value = fs.readFileSync;',
+	);
+	writeFileSync(join(codemode, "src/portable.ts"), 'export { value } from "./runtime/host.ts";');
+	writeFileSync(join(codemode, "src/cloudflare.ts"), 'export { value } from "./portable.ts";');
 	const ai = packageFixture(root, "ai", "export const value = 1;");
 	writeFileSync(join(ai, "src/models.ts"), 'export { value } from "./index.ts";');
 	const durable = packageFixture(root, "durable", 'import fs from "node:fs"; export const read = fs.readFileSync;');
@@ -125,19 +143,36 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
 	const agent = packageFixture(root, "coding-agent", "export const value = 1;");
 	mkdirSync(join(agent, "src/host/web"), { recursive: true });
-	writeFileSync(
-		join(agent, "src/host/web/page.ts"),
-		'import fs from "node:fs"; export const read = fs.readFileSync;',
-	);
+	writeFileSync(join(agent, "src/host/web/page.ts"), 'import fs from "node:fs"; export const read = fs.readFileSync;');
 	const { failures } = await checkEntryContracts(root);
 	assert.ok(failures.some((failure) => failure.includes("forbidden runtime import packages/ai/src/index.ts")));
+	assert.ok(
+		failures.some(
+			(failure) =>
+				failure.startsWith("packages/codemode/src/index.ts:") &&
+				failure.includes("forbidden runtime import packages/codemode/src/cloudflare.ts"),
+		),
+	);
+	for (const name of ["portable", "cloudflare"]) {
+		assert.ok(
+			failures.some(
+				(failure) =>
+					failure.startsWith(`packages/codemode/src/${name}.ts:`) &&
+					failure.includes("forbidden runtime import packages/codemode/src/runtime/host.ts"),
+			),
+		);
+		assert.ok(
+			failures.some(
+				(failure) => failure.startsWith(`packages/codemode/src/${name}.ts:`) && failure.includes("node:fs"),
+			),
+		);
+	}
 	assert.ok(
 		failures.some((failure) => failure.startsWith("packages/durable/src/index.ts:") && failure.includes("node:fs")),
 	);
 	assert.ok(
 		failures.some(
-			(failure) =>
-				failure.startsWith("packages/coding-agent/src/host/web/page.ts:") && failure.includes("node:fs"),
+			(failure) => failure.startsWith("packages/coding-agent/src/host/web/page.ts:") && failure.includes("node:fs"),
 		),
 	);
 });
