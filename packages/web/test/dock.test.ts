@@ -202,8 +202,8 @@ describe("the session dock", () => {
 			["child task marker", ["subagent"]],
 		]);
 		// A child names the task and the conversation that made it.
-		expect(rows[1]?.description).toBe("owned by task 9 in conversation 1");
-		expect(rows[0]?.description).toBe("1");
+		expect(rows[1]?.description).toBe("Created by Run tool in main");
+		expect(rows[0]?.description).toBe("The main conversation for this session.");
 		expect(rows[1]?.actions?.[0]).toEqual({
 			id: CONVERSATION_SELECT_ACTION,
 			label: "Open",
@@ -232,7 +232,7 @@ describe("the session dock", () => {
 		});
 		expect(fork.groups[0]?.rows[1]).toMatchObject({
 			title: "  try another plan",
-			description: "forked from conversation 1 at entry 4",
+			description: "Branched from main",
 			badges: ["fork", "selected"],
 		});
 		const empty = conversationsPanel("en", {
@@ -249,7 +249,7 @@ describe("the session dock", () => {
 		expect(empty.groups[0]?.rows[0]?.actions?.[0]?.disabled).toBeUndefined();
 		// The root is named in the reader's language, even when the host label is the raw id.
 		expect(empty.groups[0]?.rows[0]?.title).toBe("main");
-		expect(empty.groups[0]?.rows[0]?.description).toBe("4");
+		expect(empty.groups[0]?.rows[0]?.description).toBe("The main conversation for this session.");
 		const unnamed = conversationsPanel("en", {
 			selected: "5",
 			conversations: [
@@ -270,7 +270,7 @@ describe("the session dock", () => {
 		});
 		expect(unnamed.groups[0]?.rows[1]).toMatchObject({
 			title: "  New conversation",
-			description: "forked from conversation 1 at entry 2",
+			description: "Branched from main",
 		});
 		// The Chinese labels reach the same rows. The root title follows the badge, not the host word "main".
 		const zh = conversationsPanel("zh", CONVERSATIONS).groups[0]?.rows[0];

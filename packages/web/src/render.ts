@@ -465,9 +465,22 @@ function atBottom(target: HTMLElement): boolean {
 
 /** Whether a number control's value is a whole number inside the range the host accepts. */
 function inRange(control: PanelControl, value: string): boolean {
+	if (value.trim().length === 0) return false;
 	const parsed = Number(value);
 	if (!Number.isFinite(parsed) || ((control.step ?? 1) >= 1 && !Number.isSafeInteger(parsed))) return false;
 	return parsed >= (control.min ?? Number.NEGATIVE_INFINITY);
+}
+
+/** Arrow keys move within tabs and radio groups; modified arrows belong to the browser. */
+function groupKeyTarget(event: KeyboardEvent, current: HTMLButtonElement): HTMLButtonElement | undefined {
+	if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+	if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+	const nodes = [...(current.parentElement?.querySelectorAll<HTMLButtonElement>("button") ?? [])].filter(node => !node.disabled);
+	const offset = event.key === "ArrowLeft" ? -1 : 1;
+	const index = event.key === "Home" ? 0 : event.key === "End" ? nodes.length - 1 : (nodes.indexOf(current) + offset + nodes.length) % nodes.length;
+	const target = nodes[index];
+	if (target) event.preventDefault();
+	return target;
 }
 
 function fitPrompt(prompt: HTMLTextAreaElement): void {
@@ -528,6 +541,7 @@ function panelButton(action: PanelButton, report: (action: PanelAction) => void,
 	node.dataset.action = action.id;
 	if (action.data !== undefined) node.dataset.actionData = action.data;
 	node.textContent = action.label;
+	node.title = action.label;
 	node.disabled = action.disabled === true;
 	markPending(node, pending, action);
 	node.addEventListener("click", () => report({ kind: "command", id: action.id, data: action.data }));
@@ -568,6 +582,8 @@ export function createRenderer(
 	};
 	/** Text a reader is typing into a panel control, keyed by action id and target. */
 	const drafts = new Map<string, string>();
+	/** Unsubmitted panel inputs belong to a session, unlike global settings drafts. */
+	const inputDrafts = new Map<string, string>();
 	/** The modal already in the DOM; a rebuild would drop what the reader typed into it. */
 	let modalKey: string | undefined;
 	/** The open modal's submit and message line, so a state flip updates them without a rebuild. */
@@ -580,6 +596,7 @@ export function createRenderer(
 	/** Presentation-only category selection; changing pages never detaches the current session. */
 	const sections = new Map<string, string>();
 	let restoreChatPosition: (() => void) | undefined;
+	let shownSection = "";
 
 	const draft = (): string => elements.prompt.value.trim();
 
@@ -638,16 +655,20 @@ export function createRenderer(
 	const controlKey = (control: PanelControl): string => `${control.id}\u0000${control.data ?? ""}`;
 
 	/** One control: a switch applies at once, a select at once, text and numbers on commit. */
-	const controlElement = (control: PanelControl, pending?: PanelPending): HTMLElement => {
+	const controlElement = (control: PanelControl, pending: PanelPending | undefined, rowTitle: string): HTMLElement => {
 		const key = controlKey(control);
+		const name = control.label === undefined ? rowTitle : `${rowTitle} · ${control.label}`;
 		const emit = (value: string): void => {
-			drafts.delete(key);
+			if (control.kind === "text" || control.kind === "number") drafts.set(key, value);
+			else drafts.delete(key);
 			report({ kind: "control", id: control.id, data: control.data, value });
 		};
 		if (control.kind === "switch") {
 			const label = element("label", "panel-switch");
 			const input = document.createElement("input");
 			input.type = "checkbox";
+			input.dataset.controlKey = key;
+			input.setAttribute("aria-label", name);
 			input.checked = control.value === "true";
 			input.disabled = control.disabled === true;
 			input.addEventListener("change", () => emit(String(input.checked)));
@@ -664,7 +685,8 @@ export function createRenderer(
 		if (control.kind === "select") {
 			const select = document.createElement("select");
 			select.className = "panel-select";
-			if (control.label) select.setAttribute("aria-label", control.label);
+			select.dataset.controlKey = key;
+			select.setAttribute("aria-label", name);
 			for (const option of control.options ?? []) {
 				const node = document.createElement("option");
 				node.value = option.value;
@@ -678,8 +700,12 @@ export function createRenderer(
 			return select;
 		}
 		const input = document.createElement("input");
+		input.dataset.controlKey = key;
+		input.setAttribute("aria-label", name);
 		input.className = control.kind === "number" ? "panel-input panel-number" : "panel-input";
 		input.type = control.kind === "number" ? "number" : "text";
+		const saved = drafts.get(key);
+		if (saved !== undefined && (control.kind === "number" ? saved.trim() !== "" && Number(saved) === Number(control.value) : saved === control.value)) drafts.delete(key);
 		input.value = drafts.get(key) ?? control.value;
 		if (control.placeholder !== undefined) input.placeholder = control.placeholder;
 		if (control.min !== undefined) input.min = String(control.min);
@@ -687,23 +713,43 @@ export function createRenderer(
 		input.disabled = control.disabled === true;
 		input.addEventListener("input", () => drafts.set(key, input.value));
 		markPending(input, pending, control);
-		input.addEventListener("change", () => {
+		const field = element("div", "panel-field");
+		const error = element("p", "panel-field-error");
+		error.id = `field-error-${encodeURIComponent(key)}`;
+		error.setAttribute("role", "alert");
+		error.hidden = true;
+		const validate = (): boolean => {
+			const invalid = control.kind === "number" && !inRange(control, input.value);
+			error.hidden = !invalid;
+			input.classList.toggle("invalid", invalid);
+			if (invalid) {
+				error.textContent = copy((control.step ?? 1) < 1 ? "panel.settings.invalidDecimal" : "panel.settings.invalidNumber", { min: String(control.min ?? 0) });
+				input.setAttribute("aria-invalid", "true");
+				input.setAttribute("aria-describedby", error.id);
+			} else {
+				input.removeAttribute("aria-invalid");
+				input.removeAttribute("aria-describedby");
+			}
+			return !invalid;
+		};
+		if (drafts.has(key)) validate();
+		let submitted = control.value;
+		const commit = (): void => {
 			// A number outside the host's range is answered here, in the reader's language, and
 			// keeps the draft so the reader can correct it instead of losing what they typed.
-			if (control.kind === "number" && !inRange(control, input.value)) {
-				input.title = copy((control.step ?? 1) < 1 ? "panel.settings.invalidDecimal" : "panel.settings.invalidNumber", {
-					min: String(control.min ?? 0),
-				});
-				input.classList.add("invalid");
-				input.setAttribute("aria-invalid", "true");
-				return;
-			}
-			input.title = "";
-			input.classList.remove("invalid");
-			input.removeAttribute("aria-invalid");
+			if (!validate()) return;
+			if (input.value === submitted) return;
+			submitted = input.value;
 			emit(input.value);
+		};
+		input.addEventListener("change", commit);
+		input.addEventListener("keydown", event => {
+			if (event.key !== "Enter" || event.isComposing) return;
+			event.preventDefault();
+			commit();
 		});
-		return input;
+		field.append(input, error);
+		return field;
 	};
 
 	const rowElementOf = (row: PanelRow, pending?: PanelPending): HTMLElement => {
@@ -719,7 +765,7 @@ export function createRenderer(
 		node.append(text);
 		if (row.controls !== undefined && row.controls.length > 0) {
 			const controls = element("div", "panel-controls");
-			for (const control of row.controls) controls.append(controlElement(control, pending));
+			for (const control of row.controls) controls.append(controlElement(control, pending, row.title));
 			node.append(controls);
 		}
 		if (row.actions !== undefined && row.actions.length > 0) {
@@ -758,20 +804,29 @@ export function createRenderer(
 	 * landing underneath it.
 	 */
 	const inputElement = (input: PanelInput, existing?: HTMLElement): HTMLElement => {
-		if (existing !== undefined && existing.dataset.inputRow === input.id) {
+		const scope = lastView?.attachedId ?? "";
+		if (existing !== undefined && existing.dataset.inputRow === input.id && existing.dataset.inputScope === scope) {
 			const field = existing.querySelector("input");
-			if (field !== null) field.placeholder = input.placeholder;
+			if (field !== null) { field.placeholder = input.placeholder; field.setAttribute("aria-label", input.placeholder); }
 			const submit = existing.querySelector("button");
-			if (submit !== null) submit.disabled = input.submit.disabled === true;
+			if (submit !== null) {
+				submit.disabled = input.submit.disabled === true;
+				submit.textContent = input.submit.label;
+			}
 			return existing;
 		}
 		const form = element("form", "panel-input-row");
 		form.dataset.inputRow = input.id;
+		form.dataset.inputScope = scope;
 		const field = document.createElement("input");
 		field.type = "text";
 		field.className = "panel-input panel-input-wide";
 		field.placeholder = input.placeholder;
-		field.value = input.value;
+		field.setAttribute("aria-label", input.placeholder);
+		const key = `input:${scope}:${input.id}`;
+		field.value = inputDrafts.get(key) ?? input.value;
+		field.dataset.controlKey = key;
+		field.addEventListener("input", () => inputDrafts.set(key, field.value));
 		field.autocomplete = "off";
 		field.spellcheck = false;
 		// The submit control carries what the reader typed, which is why it does not go through
@@ -780,7 +835,9 @@ export function createRenderer(
 		submit.dataset.action = input.submit.id;
 		submit.textContent = input.submit.label;
 		submit.disabled = input.submit.disabled === true;
-		const run = (): void => report({ kind: "command", id: input.submit.id, data: field.value });
+		const run = (): void => {
+			if (!submit.disabled) report({ kind: "command", id: input.submit.id, data: field.value });
+		};
 		submit.addEventListener("click", run);
 		form.addEventListener("submit", (event) => {
 			event.preventDefault();
@@ -805,8 +862,15 @@ export function createRenderer(
 	const panelElement = (panel: PanelSpec, container?: HTMLElement): HTMLElement => {
 		const node = element("div", "panel");
 		const head = element("header", "panel-head");
-		head.append(element("h1", "panel-title", panel.title));
-		if (panel.description !== undefined) head.append(element("p", "panel-desc", panel.description));
+		const titles = element("div", "panel-titles");
+		titles.append(element("h1", "panel-title", panel.title));
+		if (panel.description) titles.append(element("p", "panel-desc", panel.description));
+		head.append(titles);
+		if (panel.actions?.length) {
+			const actions = element("div", "panel-actions");
+			for (const action of panel.actions) actions.append(panelButton(action, report, panel.pending));
+			head.append(actions);
+		}
 		node.append(head);
 		for (const notice of panel.notices) node.append(element("p", `panel-notice ${notice.tone}`, notice.tone === "error" ? errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, notice.text) : notice.text));
 		const previousInput = container?.querySelector<HTMLElement>("form[data-input-row]") ?? undefined;
@@ -814,6 +878,28 @@ export function createRenderer(
 		for (const group of panel.groups) node.append(groupElement(group, panel.pending));
 		for (const text of panel.texts ?? []) node.append(textElement(text));
 		return node;
+	};
+
+	/** Replicated settings may repaint during typing; keep focus and the text selection on that field. */
+	const panelFocus = new WeakMap<HTMLElement, { scope: string; key: string; start: number | null; end: number | null }>();
+	const replacePanel = (container: HTMLElement, panel: PanelSpec): void => {
+		const scope = `${lastView?.attachedId ?? ""}:${panel.id}:${panel.groups.map(group => group.id).join(",")}`;
+		const active = document.activeElement;
+		if ((active instanceof HTMLInputElement || active instanceof HTMLSelectElement) && container.contains(active) && active.dataset.controlKey) {
+			panelFocus.set(container, { scope: container.dataset.panelScope ?? scope, key: active.dataset.controlKey,
+				start: active instanceof HTMLInputElement ? active.selectionStart : null,
+				end: active instanceof HTMLInputElement ? active.selectionEnd : null });
+		} else if (active !== document.body) panelFocus.delete(container);
+		const focus = panelFocus.get(container);
+		container.replaceChildren(panelElement(panel, container));
+		container.dataset.panelScope = scope;
+		if (!focus || focus.scope !== scope) { panelFocus.delete(container); return; }
+		const target = [...container.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-control-key]")].find(node => node.dataset.controlKey === focus.key);
+		if (!target) { panelFocus.delete(container); return; }
+		if (target.disabled) return;
+		target.focus({ preventScroll: true });
+		if (target instanceof HTMLInputElement && focus.start !== null && focus.end !== null) target.setSelectionRange(focus.start, focus.end);
+		panelFocus.delete(container);
 	};
 
 	/**
@@ -1056,6 +1142,8 @@ export function createRenderer(
 		elements.composerDock.hidden = open;
 		elements.viewBack.hidden = !open;
 		if (panel === undefined) {
+			panelFocus.delete(elements.viewBody);
+			shownSection = "";
 			elements.viewBody.replaceChildren();
 			const label = view.sessionLabel ?? copy("header.noSession");
 			writeSessionTitle(
@@ -1097,7 +1185,13 @@ export function createRenderer(
 			if (active) row.setAttribute("aria-current", "true");
 			else row.removeAttribute("aria-current");
 		}
-		elements.viewBody.replaceChildren(panelElement(selected ? { ...panel, title: selected.title, groups: [{ ...selected, title: "" }] } : panel));
+		const section = `${panel.id}:${selected?.id ?? ""}`;
+		if (shownSection !== section) elements.view.scrollTop = 0;
+		shownSection = section;
+		if (selected) {
+			const { title, description, actions, ...content } = selected;
+			replacePanel(elements.viewBody, { ...panel, title, description: description ?? panel.description, actions, groups: [{ ...content, title: "" }] });
+		} else replacePanel(elements.viewBody, panel);
 	};
 
 	/** Send stays send. It is disabled when there is nothing to send. */
@@ -1651,22 +1745,45 @@ export function createRenderer(
 		elements.dock.hidden = !open;
 		document.body.classList.toggle("dock-open", open);
 		if (!open) {
+			panelFocus.delete(elements.dockBody);
 			elements.dockTabs.replaceChildren();
 			elements.dockBody.replaceChildren();
 			return;
 		}
-		const tabs = element("div", "dock-tab-row");
-		for (const tab of view.dock.tabs) {
-			const node = button(tab.active ? "dock-tab active" : "dock-tab");
-			node.dataset.tab = tab.id;
-			node.setAttribute("role", "tab");
-			node.setAttribute("aria-selected", String(tab.active));
-			node.append(icon(DOCK_ICONS[tab.id]), element("span", "dock-tab-label", tab.label));
-			node.addEventListener("click", () => report({ kind: "command", id: DOCK_TAB_ACTION, data: tab.id }));
-			tabs.append(node);
+		const tabsChanged = changed("dock-tab-labels", [view.locale, view.dock.tabs.map(tab => [tab.id, tab.label])]);
+		if (!elements.dockTabs.firstElementChild || tabsChanged) {
+			const tabs = element("div", "dock-tab-row");
+			tabs.setAttribute("role", "tablist");
+			for (const tab of view.dock.tabs) {
+				const node = button("dock-tab");
+				node.dataset.tab = tab.id;
+				node.id = `dock-tab-${tab.id}`;
+				node.title = tab.label;
+				node.setAttribute("role", "tab");
+				node.setAttribute("aria-controls", elements.dockBody.id);
+				node.append(icon(DOCK_ICONS[tab.id]), element("span", "dock-tab-label", tab.label));
+				node.addEventListener("click", () => report({ kind: "command", id: DOCK_TAB_ACTION, data: tab.id }));
+				node.addEventListener("keydown", event => {
+					const target = groupKeyTarget(event, node);
+					if (target) { target.focus(); report({ kind: "command", id: DOCK_TAB_ACTION, data: target.dataset.tab }); }
+				});
+				tabs.append(node);
+			}
+			elements.dockTabs.replaceChildren(tabs);
 		}
-		elements.dockTabs.replaceChildren(tabs);
-		elements.dockBody.replaceChildren(panelElement(view.dock.panel, elements.dockBody));
+		for (const node of elements.dockTabs.querySelectorAll<HTMLButtonElement>("button")) {
+			const active = view.dock.tabs.some(tab => tab.active && tab.id === node.dataset.tab);
+			node.classList.toggle("active", active);
+			node.setAttribute("aria-selected", String(active));
+			node.tabIndex = active ? 0 : -1;
+			if (active) elements.dockBody.setAttribute("aria-labelledby", node.id);
+		}
+		elements.dockBody.setAttribute("role", "tabpanel");
+		const panel = view.dock.panel;
+		const onlyGroup = panel.groups.length === 1 ? panel.groups[0] : undefined;
+		replacePanel(elements.dockBody, onlyGroup?.title === panel.title
+			? { ...panel, actions: onlyGroup.actions, groups: [{ ...onlyGroup, title: "", actions: undefined }] }
+			: panel);
 	};
 
 	/** The header's run controls: one icon per action the view offers, each named on its title and in its label. */
@@ -1698,19 +1815,32 @@ export function createRenderer(
 			elements.submitModes.hidden = true;
 			return;
 		}
-		const group = element("div", "mode-group");
-		group.setAttribute("role", "radiogroup");
-		group.setAttribute("aria-label", copy("composer.modesAria"));
-		for (const option of view.run.submitModes) {
-			const node = button(option.selected ? "mode-option selected" : "mode-option");
-			node.dataset.mode = option.mode;
-			node.setAttribute("role", "radio");
-			node.setAttribute("aria-checked", String(option.selected));
-			node.textContent = option.label;
-			node.addEventListener("click", () => report({ kind: "command", id: SUBMIT_MODE_ACTION, data: option.mode }));
-			group.append(node);
+		const labelsChanged = changed("submit-mode-labels", [view.locale, view.run.submitModes.map(option => [option.mode, option.label])]);
+		if (!elements.submitModes.firstElementChild || labelsChanged) {
+			const group = element("div", "mode-group");
+			group.setAttribute("role", "radiogroup");
+			group.setAttribute("aria-label", copy("composer.modesAria"));
+			for (const option of view.run.submitModes) {
+				const node = button("mode-option");
+				node.dataset.mode = option.mode;
+				node.title = copy(option.mode === "steer" ? "composer.steerHelp" : "composer.queueHelp");
+				node.setAttribute("role", "radio");
+				node.textContent = option.label;
+				node.addEventListener("click", () => report({ kind: "command", id: SUBMIT_MODE_ACTION, data: option.mode }));
+				node.addEventListener("keydown", event => {
+					const target = groupKeyTarget(event, node);
+					if (target) { target.focus(); report({ kind: "command", id: SUBMIT_MODE_ACTION, data: target.dataset.mode }); }
+				});
+				group.append(node);
+			}
+			elements.submitModes.replaceChildren(group);
 		}
-		elements.submitModes.replaceChildren(group);
+		for (const node of elements.submitModes.querySelectorAll<HTMLButtonElement>("button")) {
+			const selected = view.run.submitModes.some(option => option.selected && option.mode === node.dataset.mode);
+			node.classList.toggle("selected", selected);
+			node.setAttribute("aria-checked", String(selected));
+			node.tabIndex = selected ? 0 : -1;
+		}
 		elements.submitModes.hidden = false;
 	};
 
@@ -2250,13 +2380,13 @@ export function createRenderer(
 			return;
 		}
 		const target = event.target;
-		if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+		if (target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) {
 			// A field owns the unmodified keys; the product shortcuts below still apply.
 			if (!(event.altKey && (event.metaKey || event.ctrlKey))) return;
 		}
 		if (id === undefined) return;
 		event.preventDefault();
-		if (id === "composer.focus") elements.prompt.focus();
+		if (id === "composer.focus" && lastView?.panel.current === CHAT_VIEW) elements.prompt.focus();
 		renderer.onShortcut(id);
 	});
 	document.addEventListener("keydown", (event) => {

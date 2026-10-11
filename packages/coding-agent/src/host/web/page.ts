@@ -1356,7 +1356,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			createSession();
 			return;
 		}
-		if (id === "composer.focus") return;
+		if (id === "composer.focus") {
+			view = CHAT_VIEW;
+			closeModal();
+			document.getElementById("prompt")?.focus();
+			return;
+		}
 		// Cycle the main area through the conversation and every management view.
 		const views = [CHAT_VIEW, ...panelNav(locale, CHAT_VIEW, availableViews()).map((item) => item.id)];
 		const index = views.indexOf(view);

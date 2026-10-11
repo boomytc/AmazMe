@@ -530,7 +530,7 @@ describe("web view model", () => {
 		expect(sessionStatus("en", view)).toBe("Reading file…");
 		// Every strip carries its own withdraw, addressed by the inbox submission id.
 		expect(queuedInputs("en", view).map((item) => item.text)).toEqual([
-			"[steer] also do this",
+			"[adjust task] also do this",
 			"[write] <amazme.note>",
 		]);
 		expect(queuedInputs("en", view).map((item) => [item.id, item.cancel.id, item.cancel.data])).toEqual([
@@ -1104,8 +1104,8 @@ describe("web view model", () => {
 		expect(attached.compact).toMatchObject({ id: COMPACT_ACTION, label: "Compact context", disabled: false });
 		expect(attached.fork).toMatchObject({ label: "Fork", disabled: false });
 		expect(attached.submitModes).toEqual([
-			{ mode: "steer", label: "Steer", selected: true },
-			{ mode: "followUp", label: "Queue", selected: false },
+			{ mode: "steer", label: "Adjust task", selected: true },
+			{ mode: "followUp", label: "Continue after", selected: false },
 		]);
 		// A detached page has nothing to compact, and the toggle follows the page's own choice.
 		expect(runControls("en", "followUp", false, true).compact.disabled).toBe(true);
@@ -1133,8 +1133,8 @@ describe("web view model", () => {
 			}),
 		).toBe("子对话 · child · 未选模型 · 推理关闭 · 正在运行命令");
 		expect(runControls("zh", "followUp", true, true).submitModes).toEqual([
-			{ mode: "steer", label: "介入", selected: false },
-			{ mode: "followUp", label: "排队", selected: true },
+			{ mode: "steer", label: "调整任务", selected: false },
+			{ mode: "followUp", label: "完成后继续", selected: true },
 		]);
 
 		const page = (transcript: ConversationView | undefined, hasEntries: boolean) =>
@@ -1304,7 +1304,7 @@ describe("web view model", () => {
 		});
 		expect(sessionStatus("zh", live)).toBe("正在运行命令…");
 		expect(queuedInputs("zh", live).map((item) => [item.text, item.cancel.label])).toEqual([
-			["[介入] 再改一下", "撤回"],
+			["[调整任务] 再改一下", "撤回"],
 		]);
 	});
 });

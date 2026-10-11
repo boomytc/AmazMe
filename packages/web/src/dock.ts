@@ -187,21 +187,24 @@ function conversationTitle(locale: Locale, conversation: ConversationSummaryLike
 export function conversationsPanel(locale: Locale, state: ConversationsStateLike | undefined): PanelSpec {
 	const title = translate(locale, "dock.conversations");
 	if (state === undefined) return { id: "conversations", title, notices: [], groups: [] };
+	const nameOf = (id: string): string => {
+		const conversation = state.conversations.find(item => item.id === id);
+		return conversation ? conversationTitle(locale, conversation).trim() : translate(locale, "dock.untitled");
+	};
 	const rows: PanelRow[] = state.conversations.map((conversation) => ({
 		id: `conversation:${conversation.id}`,
 		title: conversationTitle(locale, conversation),
 		description:
 			conversation.ownerConversationId !== undefined && conversation.ownerTaskId !== undefined
 				? translate(locale, "dock.owner", {
-						task: `task ${conversation.ownerTaskId}`,
-						conversation: `conversation ${conversation.ownerConversationId}`,
+						task: taskKindCopy(locale, state.tasks.find(task => task.id === conversation.ownerTaskId)?.kind ?? ""),
+						conversation: nameOf(conversation.ownerConversationId),
 					})
 				: conversation.parentConversationId !== undefined
 					? translate(locale, "dock.forkedFrom", {
-							conversation: conversation.parentConversationId,
-							entry: conversation.parentEntryId ?? "",
+							conversation: nameOf(conversation.parentConversationId),
 						})
-					: conversation.id,
+					: conversation.root || conversation.role === "main" ? translate(locale, "dock.mainHelp") : undefined,
 		badges: [
 			translate(locale, conversation.role === "fork" ? "dock.fork" : conversation.role === "subagent" || !conversation.root ? "dock.child" : "dock.main"),
 			...(conversation.children > 0
@@ -505,6 +508,7 @@ export function terminalPanel(
 				id: "terminal:controls",
 				title: translate(locale, "dock.command"),
 				rows: [],
+				empty: "",
 				actions: [
 					{
 						id: TERMINAL_STOP_ACTION,

@@ -159,9 +159,9 @@ describe("settings panel", () => {
 
 	test("groups the host's descriptors in the order they arrive", () => {
 		const panel = settingsPanel("en", { state: SETTINGS  });
-		expect(panel.groups.map((group) => group.title)).toEqual(["Conversation", "Network & retries", "Shell", "Files"]);
+		expect(panel.groups.map((group) => group.title)).toEqual(["Conversation", "Network & retries", "Shell", "Configuration & diagnostics"]);
 		const conversation = panel.groups[0];
-		expect(conversation?.rows.map((row) => row.title)).toEqual(["Steering mode", "Auto-compact"]);
+		expect(conversation?.rows.map((row) => row.title)).toEqual(["Messages during a task", "Auto-compact"]);
 		expect(conversation?.rows[0]?.controls).toEqual([
 			{
 				id: SETTINGS_FIELD_ACTION,
@@ -169,8 +169,8 @@ describe("settings panel", () => {
 				value: "all",
 				kind: "select",
 				options: [
-					{ value: "one-at-a-time", label: "One at a time" },
-					{ value: "all", label: "All at once" },
+					{ value: "one-at-a-time", label: "Add one per step" },
+					{ value: "all", label: "Add all pending" },
 				],
 			},
 		]);
@@ -183,12 +183,12 @@ describe("settings panel", () => {
 
 	test("names the catalogue in the reader's language, falling back to the field's id", () => {
 		const zh = settingsPanel("zh", { state: SETTINGS  });
-		expect(zh.groups.map((group) => group.title)).toEqual(["对话", "网络与重试", "Shell", "文件"]);
-		expect(zh.groups[0]?.rows.map((row) => row.title)).toEqual(["介入方式", "自动压缩"]);
+		expect(zh.groups.map((group) => group.title)).toEqual(["对话", "网络与重试", "命令环境", "配置与诊断"]);
+		expect(zh.groups[0]?.rows.map((row) => row.title)).toEqual(["运行中补充消息", "自动压缩"]);
 		expect(zh.groups[0]?.rows[1]?.badges).toEqual(["默认"]);
 		expect(zh.groups[0]?.rows[0]?.controls?.[0]?.options?.map((option) => option.label)).toEqual([
-			"逐条应用",
-			"全部应用",
+			"每次加入一条",
+			"一次加入全部",
 		]);
 		expect(zh.groups[2]?.rows[0]?.controls?.[0]).toMatchObject({ kind: "text", placeholder: "系统默认" });
 		// A heading or field the dictionaries do not know shows its own token rather than nothing.
@@ -225,7 +225,7 @@ describe("settings panel", () => {
 	test("lists the files it reads and offers a re-read", () => {
 		const files = settingsPanel("en", { state: SETTINGS  }).groups.at(-1);
 		expect(files?.id).toBe("settings:files");
-		expect(files?.actions).toEqual([{ id: SETTINGS_RELOAD_ACTION, label: "Re-read files", tone: "default" }, { id: "settings:diagnostics", label: "Read-only diagnostics", tone: "default" }]);
+		expect(files?.actions).toEqual([{ id: SETTINGS_RELOAD_ACTION, label: "Reload settings", tone: "default" }, { id: "settings:diagnostics", label: "View diagnostic report", tone: "default" }]);
 		expect(files?.rows).toEqual([
 			{ id: "settings:global-path", title: "Global settings", value: "/agent/settings.json" },
 			{ id: "settings:project-path", title: "Project settings", value: "/project/.amazme/settings.json" },
@@ -266,7 +266,7 @@ describe("skills panel", () => {
 		expect(panel.notices).toEqual([
 			{ tone: "error", text: "/agent/skills/broken/SKILL.md: description is required" },
 		]);
-		expect(panel.groups[0]?.actions?.map((action) => action.label)).toEqual(["New skill", "Import…"]);
+		expect(panel.groups[0]?.actions?.map((action) => action.label)).toEqual(["New skill", "Import skill…"]);
 		expect(panel.groups[0]?.footnote).toContain("/agent/skills");
 	});
 
@@ -277,7 +277,7 @@ describe("skills panel", () => {
 		expect(rows[1]?.badges).toEqual(["项目", "仅命令"]);
 		expect(rows[0]?.actions?.map((action) => action.label)).toEqual(["编辑", "删除"]);
 		expect(rows[1]?.actions?.map((action) => action.label)).toEqual(["查看"]);
-		expect(zh.groups[0]?.actions?.map((action) => action.label)).toEqual(["新建技能", "导入…"]);
+		expect(zh.groups[0]?.actions?.map((action) => action.label)).toEqual(["新建技能", "导入技能…"]);
 		// The host's own diagnostic message stays as the host wrote it.
 		expect(zh.notices[0]?.text).toBe("/agent/skills/broken/SKILL.md: description is required");
 	});
@@ -352,7 +352,8 @@ describe("plugins panel", () => {
 		expect(group?.actions?.[0]?.label).toBe("Add package…");
 		expect(group?.rows[0]).toEqual({
 			id: "package:/tmp/example-plugin",
-			title: "/tmp/example-plugin",
+			title: "example-plugin",
+			value: "/tmp/example-plugin",
 			actions: [{ id: PLUGIN_PACKAGE_REMOVE_ACTION, label: "Remove", data: "/tmp/example-plugin", tone: "danger" }],
 		});
 	});
@@ -360,9 +361,10 @@ describe("plugins panel", () => {
 	test("gives a configurable MCP server a switch and an exposure, and locks one from an extension", () => {
 		const rows = pluginsPanel("en", { state: PLUGINS }).groups[1]?.rows ?? [];
 		expect(rows[0]?.controls).toEqual([
-			{ id: PLUGIN_MCP_ENABLED_ACTION, kind: "switch", data: "filesystem", value: "false" },
+			{ id: PLUGIN_MCP_ENABLED_ACTION, label: "Enabled", kind: "switch", data: "filesystem", value: "false" },
 			{
 				id: PLUGIN_MCP_EXPOSURE_ACTION,
+				label: "Tool exposure",
 				kind: "select",
 				data: "filesystem",
 				value: "direct",
@@ -392,8 +394,8 @@ describe("plugins panel", () => {
 		]);
 		const empty = pluginsPanel("en", { state: { packages: [], mcp: { ...PLUGINS.mcp, servers: [], errors: [] } } });
 		expect(empty.groups[0]?.empty).toContain("Built-in features are available");
-		expect(empty.groups[1]?.empty).toContain("/agent/mcp.json");
-		expect(empty.groups[1]?.footnote).toContain("attached session owns its live connections");
+		expect(empty.groups[1]?.empty).toContain("Add a server");
+		expect(empty.groups[1]?.footnote).toContain("/agent/mcp.json");
 	});
 
 	test("explains itself while the host offers no service", () => {
@@ -475,12 +477,12 @@ describe("automation panel", () => {
 	test("asks for a session, and explains the empty state and a missing service", () => {
 		const withoutSession = automationPanel("en", { state: SCHEDULES, now: 1_000 });
 		expect(withoutSession.notices).toEqual([
-			{ tone: "info", text: "Attach a session to plan a prompt for it." },
+			{ tone: "info", text: "Open a session before creating a scheduled task for it." },
 		]);
 		expect(withoutSession.groups[0]?.actions?.[0]?.disabled).toBe(true);
 		const empty = automationPanel("en", { state: { ...SCHEDULES, schedules: [] }, sessionId: "web-loop" });
 		expect(empty.groups[0]?.rows).toEqual([]);
-		expect(empty.groups[0]?.empty).toContain("No planned prompts");
+		expect(empty.groups[0]?.empty).toContain("No scheduled tasks");
 		expect(automationPanel("en", { state: undefined }).notices[0]?.text).toBe(UNAVAILABLE_EN);
 	});
 

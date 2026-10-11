@@ -1936,6 +1936,7 @@ p {
 
 .composer-row {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
@@ -2175,6 +2176,7 @@ p {
 }
 
 .mode-option {
+	white-space: nowrap;
 	height: 26px;
 	padding: 0 12px;
 	border: 0;
@@ -2286,15 +2288,16 @@ p {
 	padding: 3px;
 	border-radius: var(--radius-md);
 	background: var(--hover);
+	overflow-x: auto;
 }
 
 .dock-tab {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	flex: 1 1 0;
+	flex: 1 0 auto;
 	gap: 6px;
-	min-width: 0;
+	min-width: 62px;
 	height: 28px;
 	padding: 0 8px;
 	border: 0;
@@ -2306,9 +2309,12 @@ p {
 }
 
 .dock-tab .icon {
+	flex: none;
 	width: 14px;
 	height: 14px;
 }
+
+.dock-tab-label { white-space: nowrap; }
 
 .dock-tab:hover:not(.active) {
 	color: var(--text);
@@ -2336,6 +2342,18 @@ p {
 
 .dock-body .panel-title {
 	font-size: 15px;
+}
+
+.dock-body .panel-row:has(.panel-actions) {
+	flex-wrap: wrap;
+}
+
+.dock-body .panel-row:has(.panel-actions) > .panel-row-text {
+	flex-basis: 100%;
+}
+
+.dock-body .panel-head {
+	flex-wrap: wrap;
 }
 
 .panel-input-row {
@@ -2399,8 +2417,16 @@ p {
 }
 
 .panel-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
 	margin-bottom: 24px;
 }
+
+.panel-titles { min-width: 0; }
+
+.panel-head > .panel-actions { padding-top: 2px; }
 
 .panel-title {
 	margin: 0;
@@ -2543,6 +2569,19 @@ p {
 	align-items: center;
 	flex: none;
 	gap: 8px;
+	max-width: 100%;
+}
+
+.panel-actions { flex-wrap: wrap; }
+
+.panel-field { min-width: 0; }
+
+.panel-field-error {
+	max-width: 180px;
+	margin: 6px 0 0;
+	color: var(--danger);
+	font-size: 12px;
+	line-height: 18px;
 }
 
 .panel-empty {
@@ -2551,6 +2590,20 @@ p {
 	color: var(--text-3);
 	font-size: 14px;
 	line-height: 20px;
+}
+
+.panel-rows:empty { display: none; }
+
+.panel-rows:has(> .panel-empty:only-child) {
+	border: 1px dashed var(--line-strong);
+	background: transparent;
+	box-shadow: none;
+}
+
+.panel-rows > .panel-empty:only-child {
+	padding: 32px 24px;
+	text-align: center;
+	line-height: 1.6;
 }
 
 .panel-footnote {
@@ -2571,6 +2624,9 @@ p {
 	font-weight: 500;
 	line-height: 1;
 	white-space: nowrap;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	cursor: pointer;
 	transition: background var(--dur-fast) var(--ease);
 }
@@ -3015,6 +3071,12 @@ p {
 		padding: 20px 16px 48px;
 	}
 	.management-page .view-body { padding-top: 24px; }
+	.panel-head { flex-direction: column; gap: 12px; }
+	.panel-controls { flex-wrap: wrap; }
+	.panel-row:has(.panel-select),
+	.panel-row:has(.panel-field) { flex-wrap: wrap; }
+	.panel-row:has(.panel-select) > .panel-row-text,
+	.panel-row:has(.panel-field) > .panel-row-text { flex-basis: 100%; }
 
 	/* Management rows with several actions keep prose readable on narrow screens. */
 	.panel-row:has(.panel-actions) {

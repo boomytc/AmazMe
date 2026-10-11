@@ -30,6 +30,7 @@ import {
 	SESSION_RENAME_MODAL,
 } from "./actions.ts";
 import type { Locale } from "./locale.ts";
+import { errorMessageCopy } from "./errors.ts";
 import { ARCHIVE_MANAGE_ACTION } from "./projects.ts";
 import {
 	type MessageKey,
@@ -40,6 +41,7 @@ import {
 	scheduleDueCopy,
 	settingFieldCopy,
 	settingGroupCopy,
+	settingGroupDescriptionCopy,
 	settingOptionCopy,
 	settingScopeCopy,
 	skillScopeCopy,
@@ -139,6 +141,8 @@ export interface PanelSpec {
 	readonly id: string;
 	readonly title: string;
 	readonly description?: string;
+	/** Page-level actions, shown beside the title. */
+	readonly actions?: readonly PanelButton[];
 	readonly notices: readonly PanelNotice[];
 	readonly groups: readonly PanelGroup[];
 	/** The action whose call is in flight, so its own control reports itself busy. */
@@ -509,10 +513,11 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		rows.push(settingRow(locale, descriptor));
 	}
 	for (const [group, rows] of rowsByGroup) {
-		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), rows });
+		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), description: settingGroupDescriptionCopy(locale, group), rows });
 	}
 	if (input.archives) groups.push({
 		id: "settings:archives", title: translate(locale, "project.archived"),
+		description: translate(locale, "panel.settings.archivedSessionsHelp"),
 		rows: [{
 			id: "settings:archived-sessions", title: translate(locale, "panel.settings.archivedSessions"),
 			description: translate(locale, "panel.settings.archivedSessionsHelp"),
@@ -550,12 +555,13 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		description: translate(locale, "panel.settings.description"),
 		notices: state.errors.map((error) => {
 			const scope = settingScopeCopy(locale, error.scope);
+			const message = errorMessageCopy(locale, error.message);
 			return {
 				tone: "error" as const,
 				text:
 					error.path === undefined
-						? translate(locale, "panel.settings.noticePlain", { scope, message: error.message })
-						: translate(locale, "panel.settings.notice", { scope, path: error.path, message: error.message }),
+						? translate(locale, "panel.settings.noticePlain", { scope, message })
+						: translate(locale, "panel.settings.notice", { scope, path: error.path, message }),
 			};
 		}),
 		groups,
@@ -653,7 +659,8 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 				],
 				rows: state.packages.map((path) => ({
 					id: `package:${path}`,
-					title: path,
+					title: path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || path,
+					value: path,
 					actions: [
 						{
 							id: PLUGIN_PACKAGE_REMOVE_ACTION,
@@ -706,12 +713,14 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 										controls: [
 											{
 												id: PLUGIN_MCP_ENABLED_ACTION,
+												label: translate(locale, "panel.plugins.enabled"),
 												kind: "switch" as const,
 												data: server.name,
 												value: String(server.enabled),
 											},
 											{
 												id: PLUGIN_MCP_EXPOSURE_ACTION,
+												label: translate(locale, "panel.plugins.exposure"),
 												kind: "select" as const,
 												data: server.name,
 												value: server.exposure,
@@ -793,7 +802,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 						: []),
 				],
 				empty: runtime === null ? translate(locale, "panel.plugins.mcpUnavailable") : translate(locale, "panel.plugins.mcpEmpty", { path: state.mcp.globalPath }),
-				footnote: translate(locale, "panel.plugins.mcpFootnote"),
+				footnote: translate(locale, "panel.plugins.mcpFootnote", { path: state.mcp.globalPath }),
 			},
 		],
 	};
