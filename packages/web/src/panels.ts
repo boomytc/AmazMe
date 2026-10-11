@@ -305,6 +305,7 @@ export interface McpRuntimeLike {
 	readonly errors: readonly string[];
 	readonly servers: readonly {
 		readonly name: string;
+		readonly detail: string;
 		readonly state: string;
 		readonly tools: number;
 		readonly enabled: boolean;
@@ -324,7 +325,8 @@ export interface McpRuntimeLike {
 
 export interface PluginsPanelInput {
 	readonly state: PluginsStateLike | undefined;
-	readonly runtime?: McpRuntimeLike;
+	/** null means a selected session has no usable MCP binding yet. */
+	readonly runtime?: McpRuntimeLike | null;
 }
 
 export type ScheduleRuleLike =
@@ -472,7 +474,6 @@ function settingRow(locale: Locale, descriptor: SettingDescriptorLike): PanelRow
 		title: copy.label,
 		...(copy.description.length === 0 ? {} : { description: copy.description }),
 		...(descriptor.explicit ? {} : { badges: [translate(locale, "panel.settings.badgeDefault")] }),
-		value: descriptor.field,
 		controls: settingsControls(locale, descriptor),
 	};
 }
@@ -617,27 +618,17 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 	}
 	const remove = translate(locale, "panel.plugins.fromExtension");
 	const liveServers = new Map(runtime?.servers.map((server) => [server.name, server]));
-	const servers: McpServerLike[] = state.mcp.servers.map((server) => {
-		const live = liveServers.get(server.name);
-		return live
-			? {
-					...server,
-					enabled: live.enabled,
-					exposure: live.exposure,
-					scope: live.scope,
-					removable: server.scope === "global" && live.scope === "global",
-				}
-			: server;
-	});
-	for (const live of liveServers.values()) {
-		if (!servers.some((server) => server.name === live.name))
-			servers.push({ ...live, detail: "", editable: true, removable: false });
-	}
+	const servers: readonly McpServerLike[] = runtime === undefined ? state.mcp.servers
+		: (runtime?.servers ?? []).map((live) => ({
+			...live,
+			editable: true,
+			removable: live.scope === "global",
+		}));
 	return {
 		id: "plugins",
 		title,
 		description: translate(locale, "panel.plugins.description"),
-		notices: [...new Set([...state.mcp.errors, ...(runtime?.errors ?? [])])].map((error) => ({
+		notices: [...new Set(runtime === undefined ? state.mcp.errors : (runtime?.errors ?? []))].map((error) => ({
 			tone: "error" as const,
 			text: error,
 		})),
@@ -790,7 +781,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 							]
 						: []),
 				],
-				empty: translate(locale, "panel.plugins.mcpEmpty", { path: state.mcp.globalPath }),
+				empty: runtime === null ? translate(locale, "panel.plugins.mcpUnavailable") : translate(locale, "panel.plugins.mcpEmpty", { path: state.mcp.globalPath }),
 				footnote: translate(locale, "panel.plugins.mcpFootnote"),
 			},
 		],

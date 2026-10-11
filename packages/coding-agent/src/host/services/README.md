@@ -38,7 +38,7 @@ page take effect after the host restarts.
 | selected server plugin | `Schedules` | `plugins/automation` owns the plan file, timer and cleanup; the host runs its prompts through the existing Session workers. The service and Web entry are absent when the package is not selected | implement calendar rules, bounded delivery records and restart recovery in the plugin |
 | server | `PresentationPlugins` | prepares the selected Session branch's matching TUI artifacts and reloads that branch | add authenticated plugin policy |
 | session | `SessionPlugins` | reloads the configured Session facet generation | add coordinated multi-worker reload reporting |
-| session | `SessionSettings` | asks the worker to re-read the settings files, so a change made elsewhere reaches the running Session | invalidate the per-directory prompt cache so newly written skills apply to a running Session |
+| session | `SessionSettings` | publishes this session's effective settings and paths; re-reads files so changes made elsewhere reach the running Session | invalidate the per-directory prompt cache so newly written skills apply to a running Session |
 | session | `Commands` | the session's own command catalogue (model, thinking, compact, reload) with textual arguments, argument completions, and a value-shaped result | add skill and prompt-template commands to this catalogue |
 | session | `Workspace` | the Session's working directory as a listing and a text reader, with paths confined to that directory | add file writing, git status, and a diff view |
 | session | `Terminal` | one shell per Session over the same execution path as the bash tool, with streamed output in replicated state and a stop control | add a persistent shell session and per-command timeouts |

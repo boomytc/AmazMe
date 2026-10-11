@@ -509,15 +509,6 @@ p {
 	border-top: 1px solid var(--line);
 }
 
-.brand-mode {
-	padding: 4px 10px 2px;
-	overflow: hidden;
-	color: var(--text-3);
-	font-size: 11px;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
 .empty-state {
 	margin: 0;
 	padding: 6px 10px;

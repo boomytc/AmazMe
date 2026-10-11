@@ -294,6 +294,7 @@ class SessionPainter {
 	#approvals: ApprovalsService | undefined;
 	#levels: readonly string[] | undefined;
 	#levelsModel: string | undefined;
+	#levelsRequest = 0;
 	#services: ReturnType<SessionServiceSource["open"]> | undefined;
 	#sessionId: string | undefined;
 
@@ -308,6 +309,15 @@ class SessionPainter {
 	}
 	get ready(): boolean {
 		return this.#services !== undefined && this.#controller !== undefined && this.#conversations !== undefined;
+	}
+	get binding(): object | undefined {
+		return this.#services;
+	}
+	get settingsValue(): SessionSettings["state"]["value"] {
+		return this.#sessionSettings?.state.value;
+	}
+	get settingsService(): SessionSettings | undefined {
+		return this.#sessionSettings;
 	}
 
 	get mirrorWarning(): SessionMirrorWarning | null | undefined {
@@ -580,14 +590,6 @@ class SessionPainter {
 	}
 
 	/**
-	 * Make the attached session re-read the settings files, so a change made from the management
-	 * panel reaches this running session instead of waiting for its worker to restart.
-	 */
-	async reloadSettings(): Promise<void> {
-		await this.#sessionSettings?.reload(BACKGROUND_CONTEXT);
-	}
-
-	/**
 	 * Read the levels the host supports for the attached model, once per model. The models state is
 	 * replicated, so a switch made anywhere — this page, the TUI, another tab — lands here.
 	 */
@@ -597,7 +599,18 @@ class SessionPainter {
 		const model = configuration === undefined || configuration === null ? "" : `${configuration.provider}/${configuration.modelId}`;
 		if (service === undefined || model === this.#levelsModel) return;
 		this.#levelsModel = model;
-		this.#levels = await service.getThinkingLevels(BACKGROUND_CONTEXT);
+		this.#levels = undefined;
+		const request = ++this.#levelsRequest;
+		const current = () => this.#models === service && this.#levelsRequest === request;
+		try {
+			const levels = await service.getThinkingLevels(BACKGROUND_CONTEXT);
+			if (!current()) return;
+			this.#levels = levels;
+		} catch (error) {
+			if (!current()) return;
+			this.#levelsModel = undefined;
+			throw error;
+		}
 		paint();
 	}
 
@@ -638,6 +651,7 @@ class SessionPainter {
 		this.#mcp = hasMcp ? services.use(Mcp) : undefined;
 		this.#mcp?.state.subscribe(() => paint());
 		this.#sessionSettings = services.use(SessionSettings);
+		this.#sessionSettings.state.subscribe(() => paint());
 		this.#mirror = services.use(SessionMirror);
 		this.#mirror.state.subscribe(() => paint());
 		this.#commands = services.use(Commands);
@@ -667,6 +681,9 @@ class SessionPainter {
 			});
 		});
 		transcript.state.subscribe(() => paint());
+		// Reused workers re-read the files changed by another client or the native terminal.
+		await this.#sessionSettings.reload(BACKGROUND_CONTEXT);
+		await this.#mcp?.reload(BACKGROUND_CONTEXT);
 		await this.#refreshLevels(paint);
 		// The catalogue is re-read once per attachment: a plugin that registered a command while this
 		// session started is in it, without the reader doing anything.
@@ -693,6 +710,7 @@ class SessionPainter {
 		this.#levels = undefined;
 		this.#levelsModel = undefined;
 		this.#sessionId = undefined;
+		this.#levelsRequest += 1;
 		await services?.dispose(BACKGROUND_CONTEXT);
 	}
 }
@@ -744,7 +762,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let creating = false;
 	let modal: PanelModal | undefined;
 	let modelScopeView: { readonly service: ModelsService; readonly sessionId: string } | undefined;
-	let mcpProjectView: { readonly service: McpService; readonly sessionId: string; readonly name: string } | undefined;
+	let mcpView: { readonly service: McpService; readonly sessionId: string; readonly target: string } | undefined;
 	/** Only the modal's binding and expected ids are local; interaction state stays on Models. */
 	let providerAuthView: {
 		readonly service: ModelsService;
@@ -847,8 +865,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	/** The catalogue's value for one field, once the host has published it. */
+	const effectiveSettings = () => desiredSessionId === undefined ? settings.state.value
+		: painter.sessionId === desiredSessionId ? painter.settingsValue : undefined;
 	const settingValue = (id: string): string | undefined =>
-		settings.state.value?.descriptors.find((descriptor) => descriptor.id === id)?.value;
+		effectiveSettings()?.descriptors.find((descriptor) => descriptor.id === id)?.value;
 
 	/**
 	 * The host read the session's command resources when it attached. A skill written, removed, or
@@ -869,16 +889,23 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * language and palette follow the host's value, so both tabs agree without a reload.
 	 */
 	const paint = (): void => {
+		const bound = client.connected && painter.ready && painter.sessionId === desiredSessionId;
 		// The root id comes from the host's list; the cache keeps submit routing stable across paints.
 		rootConversationId = rootId() ?? rootConversationId;
-		locale = resolveLocale(settingValue("locale") ?? manifest.preferences?.locale, navigator.languages);
-		appearance = resolveThemePreference(settingValue("appearance") ?? manifest.preferences?.appearance);
+		locale = resolveLocale(settingValue("locale") ?? locale, navigator.languages);
+		appearance = resolveThemePreference(settingValue("appearance") ?? appearance);
 		painter.locale = locale;
 		applyTheme(appearance);
 		document.documentElement.lang = documentLanguage(locale);
 		refreshCommandResources();
-		if (mcpProjectView && (!client.connected || painter.mcpService !== mcpProjectView.service || painter.sessionId !== mcpProjectView.sessionId || desiredSessionId !== mcpProjectView.sessionId)) {
-			mcpProjectView = undefined;
+		if (panelCurrent && !panelCurrent()) {
+			panelCurrent = undefined;
+			panelPending = undefined;
+			modalPending = false;
+			modalNotice = undefined;
+		}
+		if (mcpView && (!client.connected || painter.mcpService !== mcpView.service || painter.sessionId !== mcpView.sessionId || desiredSessionId !== mcpView.sessionId)) {
+			mcpView = undefined;
 			modal = undefined;
 			modalPending = false;
 			modalNotice = undefined;
@@ -926,8 +953,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					historyLoading,
 					attachedId: client.connected && painter.ready && painter.sessionId === desiredSessionId ? painter.sessionId : undefined,
 					now: Date.now(),
-					models: painter.modelsValue,
-					thinkingLevels: painter.levels,
+					models: bound ? painter.modelsValue : undefined,
+					thinkingLevels: bound ? painter.levels : undefined,
 					submitMode,
 					attachments: pending,
 					approvals: painter.approvals,
@@ -961,13 +988,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							...modal, title: copy("panel.settings.diagnostics"), description: copy("panel.settings.diagnosticsHelp"), submit: copy("modal.close"),
 							fields: [{ id: "report", label: copy("panel.settings.diagnostics"), kind: "textarea" as const, readOnly: true, value: diagnosticReport === undefined ? copy(modalNotice?.tone === "error" ? "panel.settings.diagnosticsFailed" : "panel.settings.diagnosticsLoading") : formatDiagnosticReport(diagnosticReport, locale) }],
 						} : modal }),
-						settings: { state: settings.state.value, models: {
+						settings: { state: desiredSessionId === undefined || bound ? effectiveSettings() : undefined, models: {
 							available: client.connected && painter.ready && painter.sessionId === desiredSessionId && painter.modelsService !== undefined,
 							authentication: Boolean(painter.modelsValue?.authentication),
 							selected: Boolean(painter.modelsValue?.configuration.model),
 						} },
 						skills: { state: skills.state.value },
-						plugins: { state: plugins.state.value, runtime: painter.mcpValue },
+						plugins: { state: plugins.state.value, runtime: desiredSessionId === undefined ? undefined
+							: client.connected && painter.sessionId === desiredSessionId ? (painter.mcpValue ?? null) : null },
 						...(schedules === undefined ? {} : { automation: {
 							state: schedules.state.value,
 							sessionId: painter.sessionId,
@@ -1021,11 +1049,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	directory.state.subscribe(() => paint());
 	// A rating given here, or by another tab, repaints the transcript's controls.
 	feedback.state.subscribe(() => paint());
-	settings.state.subscribe(() => paint());
+	settings.state.subscribe(() => {
+		paint();
+		const service = painter.settingsService;
+		if (service && client.connected && painter.sessionId === desiredSessionId) void service.reload(BACKGROUND_CONTEXT).catch(() => undefined);
+	});
 	skills.state.subscribe(() => paint());
 	// The catalogue itself moves when the host re-reads the session's templates and skills.
 	painter.commandsState?.subscribe(() => paint());
-	plugins.state.subscribe(() => paint());
+	plugins.state.subscribe(() => {
+		paint();
+		const service = painter.mcpService;
+		if (service && client.connected && painter.sessionId === desiredSessionId) void service.reload(BACKGROUND_CONTEXT).catch(() => undefined);
+	});
 	const clearSchedules = async (): Promise<number> => {
 		const epoch = ++scheduleEpoch;
 		const previous = scheduleServices;
@@ -1077,6 +1113,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			}
 			saveDraft();
+			panelNotice = undefined;
+			modalNotice = undefined;
 			historyRequest += 1;
 			await painter.detach();
 			if (!resume) {
@@ -1157,12 +1195,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		paint();
 	};
 	renderer.onSelectModel = (provider, modelId) => {
+		if (!client.connected || !painter.ready || painter.sessionId !== desiredSessionId) return;
+		const binding = painter.binding;
 		void painter.selectModel(provider, modelId).catch((error: unknown) => {
+			if (painter.binding !== binding || painter.sessionId !== desiredSessionId) return;
 			renderer.setConnection(copy("page.modelChangeFailed", { error: message(error) }), "error");
 		});
 	};
 	renderer.onSelectThinking = (level) => {
+		if (!client.connected || !painter.ready || painter.sessionId !== desiredSessionId) return;
+		const binding = painter.binding;
 		void painter.selectThinking(level).catch((error: unknown) => {
+			if (painter.binding !== binding || painter.sessionId !== desiredSessionId) return;
 			renderer.setConnection(copy("page.thinkingFailed", { error: message(error) }), "error");
 		});
 	};
@@ -1377,7 +1421,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const openModal = (spec: PanelModal, opener?: { readonly id: string; readonly data?: string }): void => {
 		if (spec.id !== PROVIDER_AUTH_MODAL) providerAuthView = undefined;
 		if (spec.id !== MODEL_SCOPE_MODAL) modelScopeView = undefined;
-		if (spec.id !== PLUGIN_MCP_PROJECT_MODAL) mcpProjectView = undefined;
+		if (spec.id !== PLUGIN_MCP_PROJECT_MODAL && spec.id !== PLUGIN_MCP_LOGIN_MODAL) mcpView = undefined;
 		modal = spec;
 		modalOpener = opener;
 		modalPending = false;
@@ -1390,7 +1434,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		if (modalPending) panelPending = undefined;
 		providerAuthView = undefined;
 		modelScopeView = undefined;
-		mcpProjectView = undefined;
+		mcpView = undefined;
 		diagnosticRequest += 1;
 		diagnosticReport = undefined;
 		modal = undefined;
@@ -1438,6 +1482,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * failure lands beside that control instead of only on the header's connection line.
 	 */
 	let panelCall = 0;
+	let panelCurrent: (() => boolean) | undefined;
 	const runPanelCall = (request: {
 		readonly id: string;
 		readonly data?: string;
@@ -1450,9 +1495,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		readonly call: () => Promise<PanelCallResult | void>;
 	}): void => {
 		const invocation = ++panelCall;
-		const current = () => invocation === panelCall &&
-			(request.sessionId === undefined || request.sessionId === painter.sessionId) && (request.current?.() ?? true);
+		const binding = painter.binding;
 		const inModal = request.inModal === true;
+		const dialog = inModal && !request.current ? modal : undefined;
+		const current = () => invocation === panelCall &&
+			(request.sessionId === undefined || (client.connected && request.sessionId === desiredSessionId &&
+				request.sessionId === painter.sessionId && binding === painter.binding)) &&
+			(dialog === undefined || modal === dialog) && (request.current?.() ?? true);
+		if (!current()) return;
+		panelCurrent = current;
 		panelPending = request.data === undefined ? { id: request.id } : { id: request.id, data: request.data };
 		if (inModal) {
 			modalPending = true;
@@ -1464,6 +1515,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		void (request.retry === false ? request.call() : retryOnRebind(request.call)).then(
 			(result) => {
 				if (!current()) return;
+				panelCurrent = undefined;
 				panelPending = undefined;
 				modalPending = false;
 				if (result !== undefined && result.ok === false) {
@@ -1486,6 +1538,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			},
 			(error: unknown) => {
 				if (!current()) return;
+				panelCurrent = undefined;
 				panelPending = undefined;
 				modalPending = false;
 				const notice: PanelNotice = { tone: "error", text: message(error) };
@@ -1560,8 +1613,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	renderer.onPanelAction = (action: PanelAction): void => {
 		const schedule = schedules;
-		const mcp = painter.mcpService;
-		const mcpSession = painter.sessionId;
+		const mcp = client.connected && painter.sessionId === desiredSessionId ? painter.mcpService : undefined;
+		const mcpSession = mcp ? painter.sessionId : undefined;
 		const hasMcpServer = (name: string): boolean => mcp !== undefined && painter.mcpValue?.servers.some(server => server.name === name) === true;
 		switch (action.kind) {
 			case "open":
@@ -1576,21 +1629,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "control":
 				if (action.id === SETTINGS_FIELD_ACTION && action.data !== undefined) {
 					const id = action.data;
+					const service = painter.settingsService;
+					const sessionId = desiredSessionId;
+					if (sessionId !== undefined && (!service || !client.connected || painter.sessionId !== sessionId)) return;
 					runPanelCall({
-						id: action.id,
-						data: id,
-						call: () =>
-							settings
-								.set(id, action.value, BACKGROUND_CONTEXT)
-								// A running session holds the settings it loaded, so ask it to re-read them;
-								// a session that is already gone is not a settings failure.
-								.then(() => painter.reloadSettings().catch(() => undefined))
-								.then(() => ({ ok: true as const })),
+						id: action.id, data: id, sessionId, retry: sessionId === undefined,
+						call: () => settings.set(id, action.value, BACKGROUND_CONTEXT)
+							.then(() => service?.reload(BACKGROUND_CONTEXT)).then(done),
 					});
 					return;
 				}
 				if (action.id === PLUGIN_MCP_ENABLED_ACTION && action.data !== undefined) {
 					const name = action.data;
+					if (desiredSessionId !== undefined && !hasMcpServer(name)) return;
 					runPanelCall({
 						id: action.id,
 						data: name,
@@ -1605,6 +1656,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				}
 				if (action.id === PLUGIN_MCP_EXPOSURE_ACTION && action.data !== undefined) {
 					const name = action.data;
+					if (desiredSessionId !== undefined && !hasMcpServer(name)) return;
 					runPanelCall({
 						id: action.id,
 						data: name,
@@ -1632,7 +1684,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						const runtime = painter.mcpValue;
 						const server = runtime?.servers.find(server => server.name === action.data && server.scope === "global");
 						if (!mcp || !mcpSession || !server || !runtime?.canOverrideProject || !client.connected || mcpSession !== desiredSessionId) return;
-						mcpProjectView = { service: mcp, sessionId: mcpSession, name: server.name };
+						mcpView = { service: mcp, sessionId: mcpSession, target: server.name };
 						openModal(mcpProjectModal(locale, server), action);
 						return;
 					}
@@ -1703,7 +1755,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					}
 					case PLUGIN_MCP_RELOAD_ACTION:
-						if (mcp) runPanelCall({ id: action.id, sessionId: mcpSession, retry: false, call: () => mcp.reload(BACKGROUND_CONTEXT).then(done) }); return;
+						if (mcp) runPanelCall({ id: action.id, sessionId: mcpSession, retry: false, call: () => mcp.reload(BACKGROUND_CONTEXT).then(() => plugins.reload(BACKGROUND_CONTEXT)).then(done) }); return;
 					case PLUGIN_MCP_RECONNECT_ACTION: {
 						const data = action.data;
 						if (data !== undefined && mcp !== undefined) runPanelCall({
@@ -1723,13 +1775,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case PLUGIN_MCP_LOGIN_OPEN_ACTION:
 						if (action.data && URL.canParse(action.data) && ["http:", "https:"].includes(new URL(action.data).protocol)) window.open(action.data, "_blank", "noopener,noreferrer"); return;
 					case PLUGIN_MCP_LOGIN_REDIRECT_ACTION:
-						modal = {
+						if (!mcp || !mcpSession || !action.data || painter.mcpValue?.login?.id !== action.data) return;
+						mcpView = { service: mcp, sessionId: mcpSession, target: action.data };
+						openModal({
 							id: PLUGIN_MCP_LOGIN_MODAL, data: action.data,
 							title: copy("panel.plugins.pasteRedirect"), description: copy("panel.plugins.redirectHelp"),
 							submit: copy("panel.plugins.login"),
 							fields: [{ id: "url", label: copy("panel.plugins.pasteRedirect"), kind: "text", value: "" }],
-						};
-						paint();
+						}, action);
 						return;
 					case PLUGIN_MCP_LOGIN_CANCEL_ACTION: {
 						const data = action.data;
@@ -1982,12 +2035,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						settle(painter.cancelQueued(entryId, focused));
 						return;
 					}
-					case SETTINGS_RELOAD_ACTION:
-						runPanelCall({
-							id: action.id,
-							call: () => settings.reload(BACKGROUND_CONTEXT).then(done),
+					case SETTINGS_RELOAD_ACTION: {
+						const service = painter.settingsService;
+						const sessionId = desiredSessionId;
+						if (sessionId !== undefined && (!service || !client.connected || painter.sessionId !== sessionId)) return;
+						runPanelCall({ id: action.id, sessionId, retry: sessionId === undefined,
+							call: () => settings.reload(BACKGROUND_CONTEXT).then(() => service?.reload(BACKGROUND_CONTEXT)).then(done),
 						});
 						return;
+					}
 					case DIAGNOSTICS_ACTION: {
 						const request = ++diagnosticRequest;
 						diagnosticReport = undefined;
@@ -2056,6 +2112,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					case PLUGIN_MCP_REMOVE_ACTION: {
 						const name = action.data ?? "";
+						const server = desiredSessionId === undefined ? plugins.state.value?.mcp.servers.find(server => server.name === name)
+							: mcp ? painter.mcpValue?.servers.find(server => server.name === name) : undefined;
+						if (server?.scope !== "global") return;
 						runPanelCall({
 							id: action.id,
 							data: name,
@@ -2072,14 +2131,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				const fields = action.fields;
 				switch (action.id) {
 					case PLUGIN_MCP_PROJECT_MODAL: {
-						const owner = mcpProjectView;
-						if (!owner || modal?.id !== action.id || action.data !== owner.name || modalPending) return;
-						const current = () => mcpProjectView === owner && painter.mcpService === owner.service && painter.sessionId === owner.sessionId && desiredSessionId === owner.sessionId && client.connected;
+						const owner = mcpView;
+						if (!owner || modal?.id !== action.id || action.data !== owner.target || modalPending) return;
+						const current = () => mcpView === owner && painter.mcpService === owner.service && painter.sessionId === owner.sessionId && desiredSessionId === owner.sessionId && client.connected;
 						if (!current() || !painter.mcpValue?.canOverrideProject) return;
 						const exposure = fields.exposure;
 						if (!exposure || !["direct", "codemode", "deferred", "hidden"].includes(exposure)) return;
 						runPanelCall({ id: action.id, inModal: true, sessionId: owner.sessionId, retry: false, current,
-							call: () => owner.service.configure(owner.name, { enabled: fields.enabled === "true", exposure: exposure as McpExposure }, true, BACKGROUND_CONTEXT)
+							call: () => owner.service.configure(owner.target, { enabled: fields.enabled === "true", exposure: exposure as McpExposure }, true, BACKGROUND_CONTEXT)
 								.then(() => plugins.reload(BACKGROUND_CONTEXT)).then(done, () => ({ ok: false as const, problem: copy("panel.plugins.projectSettingsFailed") })),
 						});
 						return;
@@ -2245,11 +2304,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					}
 					case PLUGIN_MCP_LOGIN_MODAL: {
-						const id = action.data;
-						if (id !== undefined && mcp !== undefined) runPanelCall({
-							id: action.id, inModal: true, sessionId: mcpSession, retry: false,
+						const owner = mcpView;
+						if (!owner || modal?.id !== action.id || action.data !== owner.target || modalPending) return;
+						const current = () => mcpView === owner && painter.mcpService === owner.service &&
+							painter.sessionId === owner.sessionId && desiredSessionId === owner.sessionId && client.connected;
+						if (!current()) return;
+						if (painter.mcpValue?.login?.id !== owner.target) { refuseInModal(copy("panel.plugins.loginExpired")); return; }
+						runPanelCall({
+							id: action.id, inModal: true, sessionId: owner.sessionId, retry: false, current,
 							call: async () => {
-								if (!await mcp.submitRedirect(id, fields.url ?? "", BACKGROUND_CONTEXT))
+								if (!await owner.service.submitRedirect(owner.target, fields.url ?? "", BACKGROUND_CONTEXT))
 									throw new Error(copy("panel.plugins.loginExpired"));
 								return done();
 							},
@@ -2381,7 +2445,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		if (change.state === "connected") {
 			if (booted) scheduleDiscovery = discoverSchedules().catch(report);
 			renderer.setConnection(
-				(language) => translate(language, "connection.connected", { id: manifest.server.id }),
+				(language) => translate(language, "connection.connected"),
 				"state",
 				(language) => translate(language, "connection.stateConnected"),
 			);
@@ -2485,7 +2549,6 @@ export async function main(): Promise<void> {
 		});
 		return;
 	}
-	if (manifest !== undefined) elements.mode.textContent = `${manifest.mode} · ${manifest.transport.url}`;
 	try {
 		await startPage(renderer);
 	} catch (error) {

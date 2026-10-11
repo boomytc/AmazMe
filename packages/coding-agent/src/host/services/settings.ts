@@ -59,6 +59,8 @@ export const Settings = defineService<Settings>("amazme.settings");
  * running turn keeps using the copy it loaded.
  */
 export interface SessionSettings {
+	/** Effective settings and paths of this session, including its trusted project overrides. */
+	readonly state: ReplicatedState<SettingsState>;
 	reload(context: Context): Promise<void>;
 }
 

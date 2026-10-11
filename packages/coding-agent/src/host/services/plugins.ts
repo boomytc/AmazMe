@@ -29,6 +29,7 @@ export interface McpServerSummary {
 	exposure: string;
 	/** A `mcp.json` entry can be changed; one an extension registered cannot. */
 	editable: boolean;
+	removable?: boolean;
 }
 
 export interface McpServerPatch {
@@ -60,6 +61,7 @@ export interface Plugins {
 	setMcpServer(name: string, patch: McpServerPatch, context: Context): Promise<void>;
 	/** Add or replace an MCP server in the agent's `mcp.json`; `json` is the server's entry. */
 	addMcpServer(name: string, json: string, context: Context): Promise<void>;
+	/** Remove a global entry only; host project overrides are never a removal target. */
 	removeMcpServer(name: string, context: Context): Promise<void>;
 	reload(context: Context): Promise<void>;
 }

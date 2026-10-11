@@ -391,7 +391,7 @@ describe("plugins panel", () => {
 			{ tone: "error", text: '/project/.amazme/mcp.json: server "x" needs either "command" or "url"' },
 		]);
 		const empty = pluginsPanel("en", { state: { packages: [], mcp: { ...PLUGINS.mcp, servers: [], errors: [] } } });
-		expect(empty.groups[0]?.empty).toContain("built-in facets only");
+		expect(empty.groups[0]?.empty).toContain("Built-in features are available");
 		expect(empty.groups[1]?.empty).toContain("/agent/mcp.json");
 		expect(empty.groups[1]?.footnote).toContain("attached session owns its live connections");
 	});

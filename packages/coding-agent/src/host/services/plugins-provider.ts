@@ -31,10 +31,11 @@ function summarize(entry: McpServerEntry): McpServerSummary {
 	return {
 		name: entry.name,
 		detail: detailOf(entry.config),
-		scope: entry.scope ?? "global",
+		scope: entry.override !== undefined ? "project" : (entry.scope ?? "global"),
 		enabled: entry.config.enabled !== false,
 		exposure: entry.config.exposure ?? "codemode",
 		editable: entry.scope !== "extension",
+		removable: entry.scope !== "project" && entry.override === undefined,
 	};
 }
 
@@ -123,8 +124,9 @@ export function createPluginsService(
 				reload(context);
 			},
 			async removeMcpServer(name: string, context: Context): Promise<void> {
-				const entry = entryOf(name);
-				const { path } = fileFor(entry);
+				const global = loadMcpConfig({ agentDir: options.agentDir, cwd: options.cwd, projectTrusted: false });
+				if (!global.servers.some(entry => entry.name === name)) throw new Error(`Unknown MCP server: ${name}`);
+				const path = globalPath;
 				if (!removeMcpServerConfig(path, name)) throw new Error(`MCP server ${name} is not defined in ${path}`);
 				reload(context);
 			},

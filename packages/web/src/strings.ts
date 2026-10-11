@@ -108,7 +108,7 @@ export const EN = {
 
 	"connection.starting": "starting…",
 	"connection.connecting": "connecting…",
-	"connection.connected": "connected · {id}",
+	"connection.connected": "Connected",
 	"connection.stateConnected": "connected",
 	"connection.stateDisconnected": "disconnected",
 	"connection.disconnected": "disconnected: {error}",
@@ -377,12 +377,12 @@ export const EN = {
 
 	"panel.plugins.title": "Plugins",
 	"panel.plugins.description":
-		"Plugin packages the host builds, and the MCP servers the coding agent's tools read.",
+		"Manage session plugins and MCP servers.",
 	"panel.plugins.packages": "Plugin packages",
 	"panel.plugins.packagesDescription":
-		"A package is built into the Session's facet generation when a worker starts.",
+		"Plugin packages add tools and commands to sessions.",
 	"panel.plugins.addPackage": "Add package…",
-	"panel.plugins.packagesEmpty": "No plugin packages: sessions load the built-in facets only.",
+	"panel.plugins.packagesEmpty": "No plugin packages. Built-in features are available.",
 	"panel.plugins.packagesFootnote":
 		"Session packages apply to newly opened sessions. Host services apply after restarting the host. A running session keeps its current version.",
 	"panel.plugins.reloadMcp": "Reload connections",
@@ -405,6 +405,7 @@ export const EN = {
 	"panel.plugins.projectSettingsFailed": "Could not save project settings. Check project trust and write access, then retry.",
 	"panel.plugins.remove": "Remove",
 	"panel.plugins.mcpEmpty": "No MCP servers configured in {path}.",
+	"panel.plugins.mcpUnavailable": "MCP management is unavailable for the selected session.",
 	"panel.plugins.mcpFootnote":
 		"Configuration is shared with the CLI and TUI. The attached session owns its live connections.",
 	"panel.plugins.fromExtension": "From extension",
@@ -654,7 +655,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 
 	"connection.starting": "启动中…",
 	"connection.connecting": "连接中…",
-	"connection.connected": "已连接 · {id}",
+	"connection.connected": "已连接",
 	"connection.stateConnected": "已连接",
 	"connection.stateDisconnected": "已断开",
 	"connection.disconnected": "连接断开：{error}",
@@ -917,11 +918,11 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.skills.footnote": "新建和编辑的技能写入 {directory}。与 CLI 一样，智能体在会话启动时加载技能。",
 
 	"panel.plugins.title": "插件",
-	"panel.plugins.description": "宿主构建的插件包，以及编码智能体工具读取的 MCP 服务。",
+	"panel.plugins.description": "管理会话插件与 MCP 服务。",
 	"panel.plugins.packages": "插件包",
-	"panel.plugins.packagesDescription": "工作进程启动时，插件包会被构建进会话的 facet 代际。",
+	"panel.plugins.packagesDescription": "插件包为会话提供工具和命令。",
 	"panel.plugins.addPackage": "添加插件包…",
-	"panel.plugins.packagesEmpty": "还没有插件包：会话只加载内置 facet。",
+	"panel.plugins.packagesEmpty": "还没有插件包，仍可使用内置功能。",
 	"panel.plugins.packagesFootnote": "会话插件作用于之后打开的会话，宿主服务在重启宿主后生效；运行中的会话保留当前版本。",
 	"panel.plugins.reloadMcp": "重新加载连接",
 	"panel.plugins.reconnect": "重连",
@@ -943,6 +944,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.plugins.projectSettingsFailed": "无法保存项目配置。请检查项目是否可信、配置文件是否可写，然后重试。",
 	"panel.plugins.remove": "删除",
 	"panel.plugins.mcpEmpty": "还没有在 {path} 中配置 MCP 服务。",
+	"panel.plugins.mcpUnavailable": "当前会话的 MCP 管理暂不可用。",
 	"panel.plugins.mcpFootnote": "配置与 CLI 和 TUI 共用，已附加的会话拥有实际连接。",
 	"panel.plugins.fromExtension": "来自扩展",
 

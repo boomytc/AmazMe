@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
 	type Context,
 	createRemoteServiceEndpoint,
@@ -10,6 +11,7 @@ import {
 	type ServiceProviderUpdate,
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
 import type { Conversation, ConversationId, Harness, Registry } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
@@ -32,6 +34,7 @@ import { SessionPlugins } from "./plugins.ts";
 import { NATIVE_COMMANDS } from "../../durable/commands.ts";
 import { createSlashCommandsRuntimeFacet, SlashCommandRegistry } from "../../core/plugins/command-registry.ts";
 import { SessionSettings } from "./settings.ts";
+import { publishSettings, settingsErrors, settingsSnapshot } from "./settings-provider.ts";
 import { SessionLifecycle } from "./session-lifecycle.ts";
 import { SessionMirror } from "./session-mirror.ts";
 import type { SessionMirrorStatus } from "./session-mirror.ts";
@@ -145,10 +148,22 @@ export async function createSessionWorkerServices(options: {
 			: defineFacet({
 					id: "@pi/session-settings-runtime",
 					setup(env) {
+						const agentDir = getAgentDir();
+						const paths = { global: join(agentDir, "settings.json"), project: join(options.cwd, CONFIG_DIR_NAME, "settings.json") };
+						const snapshot = () => ({ manager: settingsManager, agentDir, cwd: options.cwd, paths, errors: settingsErrors(settingsManager) });
+						const state = env.replicatedState({ revision: 0, ...settingsSnapshot(snapshot()) });
+						let tail = Promise.resolve();
 						env.provide(SessionSettings, {
-							reload: async () => {
-								await (options.resources?.reload() ?? settingsManager.reload());
-								configureHarnessHttp(settingsManager);
+							state,
+							reload: (context) => {
+								const operation = tail.then(async () => {
+									context.abortSignal?.throwIfAborted();
+									await (options.resources?.reload() ?? settingsManager.reload());
+									configureHarnessHttp(settingsManager);
+									publishSettings(state, context, snapshot());
+								});
+								tail = operation.catch(() => {});
+								return operation;
 							},
 						});
 					},

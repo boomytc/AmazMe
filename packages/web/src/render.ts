@@ -42,7 +42,6 @@ import {
 
 export interface PageElements {
 	readonly connection: HTMLElement;
-	readonly mode: HTMLElement;
 	readonly sessionTitle: HTMLElement;
 	readonly sessionWarning: HTMLElement;
 	readonly laneStatus: HTMLElement;
@@ -142,7 +141,6 @@ export interface PageRenderer {
 export function collectPageElements(): PageElements {
 	return {
 		connection: pick("connection"),
-		mode: pick("mode"),
 		sessionTitle: pick("session-title"),
 		sessionWarning: pick("session-warning"),
 		laneStatus: laneStatusElement(),
@@ -1395,7 +1393,7 @@ export function createRenderer(
 		const row = element("div", item.attached ? "session-row attached" : "session-row");
 		row.dataset.sessionId = item.id;
 		const select = button("session-select");
-		select.title = [item.label, item.cwd, item.id].filter(Boolean).join(" · ");
+		select.title = [item.label, item.cwd].filter(Boolean).join(" · ");
 		if (item.attached) select.setAttribute("aria-current", "true");
 		const name = element("span", "session-name", item.label);
 		if (item.source === "local") name.append(element("span", "session-source", copy("sidebar.localSession")));
@@ -1839,6 +1837,7 @@ export function createRenderer(
 		},
 		render(view: WebView): void {
 			const languageChanged = lastView?.locale !== view.locale;
+			if (lastView?.attachedId !== view.attachedId) drafts.clear();
 			lastView = view;
 			if (languageChanged) renderShellCopy();
 			elements.sessionWarning.hidden = view.mirrorWarning == null;

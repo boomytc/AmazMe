@@ -5,6 +5,8 @@ import type { McpServerConnection } from "../../extensions/mcp/runtime.ts";
 
 export interface McpServerStatus {
 	name: string;
+	/** Public endpoint or executable description from this session's effective configuration. */
+	detail: string;
 	enabled: boolean;
 	exposure: McpExposure;
 	state: "disabled" | McpServerConnection["state"];

@@ -95,6 +95,7 @@ export class McpManager implements McpManagement {
 			errors: this.#config.errors.map(publicError),
 			servers: this.servers.map(({ entry, connection }) => ({
 				name: entry.name,
+				detail: "url" in entry.config ? publicError(entry.config.url) : entry.config.command,
 				enabled: entry.config.enabled !== false,
 				exposure: entry.config.exposure ?? "codemode",
 				state:
