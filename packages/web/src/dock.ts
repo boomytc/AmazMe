@@ -20,7 +20,7 @@ import {
 import type { Locale } from "./locale.ts";
 import type { PanelGroup, PanelRow, PanelSpec } from "./panels.ts";
 import type { MessageKey } from "./strings.ts";
-import { translate } from "./strings.ts";
+import { taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
 
 /** The dock's tabs, in the order it shows them. */
 export type DockTabId = "files" | "terminal" | "conversations" | "tasks";
@@ -223,24 +223,23 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 export function tasksPanel(locale: Locale, state: ConversationsStateLike | undefined): PanelSpec {
 	const title = translate(locale, "dock.tasks");
 	if (state === undefined) return { id: "tasks", title, notices: [], groups: [] };
+	const conversationName = (id: string): string => {
+		const conversation = state.conversations.find((item) => item.id === id);
+		return conversation === undefined ? translate(locale, "dock.untitled") : conversationTitle(locale, conversation).trim();
+	};
 	const rows: PanelRow[] = state.tasks.map((task) => ({
 		id: `task:${task.id}`,
-		title: `${task.kind} ${task.id}`,
-		description: `${translate(locale, "dock.taskPhase", { phase: task.phase })} · ${task.conversationId}`,
+		title: `${taskKindCopy(locale, task.kind)} #${task.id}`,
+		description: `${taskPhaseCopy(locale, task.phase)} · ${conversationName(task.conversationId)}`,
 		badges: [
-			task.status,
+			task.status === "waiting" && task.waitsOn.length > 0
+				? translate(locale, "dock.taskWaitsOn", { count: String(task.waitsOn.length) })
+				: taskStatusCopy(locale, task.status),
 			...(task.background ? [translate(locale, "dock.background")] : []),
-			...(task.waitsOn.length > 0
-				? [
-						translate(locale, "dock.taskWaitsOn", {
-							tasks: task.waitsOn.join(", "),
-						}),
-					]
-				: []),
 			...(task.conversations.length > 0
 				? [
 						translate(locale, "dock.taskOwns", {
-							conversations: task.conversations.join(", "),
+							count: String(task.conversations.length),
 						}),
 					]
 				: []),
@@ -249,7 +248,7 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 			.filter((id) => state.conversations.some((conversation) => conversation.id === id))
 			.map((id) => ({
 				id: CONVERSATION_SELECT_ACTION,
-				label: translate(locale, id === task.conversationId ? "dock.viewTaskConversation" : "dock.viewOwnedConversation", { id }),
+				label: translate(locale, id === task.conversationId ? "dock.viewTaskConversation" : "dock.viewOwnedConversation", { name: conversationName(id) }),
 				data: id,
 				tone: "default" as const,
 			})),

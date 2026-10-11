@@ -224,22 +224,22 @@ export const EN = {
 	"queue.write": "write",
 
 	"status.retrying": "Retrying (attempt {attempt}): {error}",
-	"status.deferred": "Waiting for deferred response…",
-	"status.compactingRetry": "Retrying {reason} compaction (attempt {attempt})…",
-	"status.compacting": "Compacting ({reason})…",
-	"status.runningTool": "Running {name}…",
+	"status.deferred": "Waiting for model response…",
+	"status.compactingRetry": "Retrying context summary ({reason}, attempt {attempt})…",
+	"status.compacting": "Summarizing context ({reason})…",
+	"status.runningTool": "{activity}…",
 	"status.working": "Working…",
 
 	"lane.main": "Main",
 	"lane.fork": "Fork",
-	"lane.subagent": "Subagent",
+	"lane.subagent": "Child conversation",
 	"lane.noModel": "no model",
 	"lane.thinking": "thinking {level}",
 	"lane.idle": "Idle",
-	"lane.retrying": "retrying {detail}",
-	"lane.deferred": "waiting",
-	"lane.compacting": "compacting ({detail})",
-	"lane.tool": "running {detail}",
+	"lane.retrying": "Retrying",
+	"lane.deferred": "Waiting for model response",
+	"lane.compacting": "Summarizing context ({detail})",
+	"lane.tool": "{detail}",
 	"lane.working": "working",
 
 	"dock.toggle": "Session tools",
@@ -257,11 +257,51 @@ export const EN = {
 	"dock.noConversations": "This session has no conversations yet.",
 	"dock.noTasks": "No task is running.",
 	"dock.viewTaskConversation": "View conversation",
-	"dock.viewOwnedConversation": "View child conversation {id}",
-	"dock.taskWaitsOn": "waits on {tasks}",
-	"dock.taskOwns": "owns {conversations}",
-	"dock.taskPhase": "phase {phase}",
+	"dock.viewOwnedConversation": "View child conversation · {name}",
+	"dock.taskWaitsOn": "Waiting for tasks: {count}",
+	"dock.taskOwns": "Related conversations: {count}",
 	"dock.background": "background",
+	"task.kind.generation": "Generate response",
+	"task.kind.compaction": "Summarize context",
+	"task.kind.tool": "Run tool",
+	"task.kind.other": "Task",
+	"task.phase.prepare": "Preparing request",
+	"task.phase.request": "Waiting for model response",
+	"task.phase.retry": "Retrying",
+	"task.phase.yield": "Saving response",
+	"task.phase.poll": "Waiting for model response",
+	"task.phase.tools": "Running tools",
+	"task.phase.select": "Selecting conversation history",
+	"task.phase.summarize": "Generating summary",
+	"task.phase.call": "Running tool",
+	"task.phase.execute": "Resuming tool execution",
+	"task.phase.other": "Processing",
+	"task.status.pending": "Queued",
+	"task.status.running": "In progress",
+	"task.status.waiting": "Waiting for other tasks",
+	"task.status.completing": "Finishing up",
+	"task.status.completed": "Completed",
+	"task.status.failed": "Failed",
+	"task.status.aborted": "Stopped",
+	"task.status.orphaned": "Unable to resume",
+	"task.status.faulted": "Execution error",
+	"task.status.terminal": "Finished",
+	"task.status.other": "Updating status",
+	"compaction.manual": "requested",
+	"compaction.threshold": "long conversation",
+	"compaction.overflow": "context limit reached",
+	"compaction.other": "conversation history",
+	"activity.read": "Reading file",
+	"activity.bash": "Running command",
+	"activity.edit": "Editing file",
+	"activity.write": "Writing file",
+	"activity.grep": "Searching contents",
+	"activity.find": "Finding files",
+	"activity.ls": "Listing files",
+	"activity.codemode": "Running code",
+	"activity.tool_search": "Finding tools",
+	"activity.subagent": "Running child task",
+	"activity.other": "Running tool",
 	"dock.files": "Files",
 	"dock.terminal": "Terminal",
 	"dock.cwd": "Working directory",
@@ -771,22 +811,22 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"queue.write": "写入",
 
 	"status.retrying": "重试中（第 {attempt} 次）：{error}",
-	"status.deferred": "等待延迟响应…",
-	"status.compactingRetry": "重试{reason}压缩（第 {attempt} 次）…",
-	"status.compacting": "压缩中（{reason}）…",
-	"status.runningTool": "正在运行 {name}…",
+	"status.deferred": "等待模型回复…",
+	"status.compactingRetry": "重试整理上下文（{reason}，第 {attempt} 次）…",
+	"status.compacting": "整理上下文（{reason}）…",
+	"status.runningTool": "正在{activity}…",
 	"status.working": "处理中…",
 
 	"lane.main": "主线",
-	"lane.fork": "分叉",
-	"lane.subagent": "子代理",
+	"lane.fork": "分支对话",
+	"lane.subagent": "子对话",
 	"lane.noModel": "未选模型",
-	"lane.thinking": "推理 {level}",
+	"lane.thinking": "推理{level}",
 	"lane.idle": "空闲",
-	"lane.retrying": "重试 {detail}",
-	"lane.deferred": "等待",
-	"lane.compacting": "压缩中（{detail}）",
-	"lane.tool": "正在运行 {detail}",
+	"lane.retrying": "重试中",
+	"lane.deferred": "等待模型回复",
+	"lane.compacting": "整理上下文（{detail}）",
+	"lane.tool": "正在{detail}",
 	"lane.working": "处理中",
 
 	"dock.toggle": "会话工具",
@@ -804,11 +844,51 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"dock.noConversations": "这个会话还没有其他会话。",
 	"dock.noTasks": "当前没有运行中的任务。",
 	"dock.viewTaskConversation": "查看对话",
-	"dock.viewOwnedConversation": "查看子对话 {id}",
-	"dock.taskWaitsOn": "等待 {tasks}",
-	"dock.taskOwns": "拥有 {conversations}",
-	"dock.taskPhase": "阶段 {phase}",
+	"dock.viewOwnedConversation": "查看子对话 · {name}",
+	"dock.taskWaitsOn": "等待 {count} 个任务",
+	"dock.taskOwns": "关联 {count} 个对话",
 	"dock.background": "后台",
+	"task.kind.generation": "生成回答",
+	"task.kind.compaction": "整理上下文",
+	"task.kind.tool": "执行工具",
+	"task.kind.other": "任务",
+	"task.phase.prepare": "准备请求",
+	"task.phase.request": "等待模型回复",
+	"task.phase.retry": "重试中",
+	"task.phase.yield": "保存回复",
+	"task.phase.poll": "等待模型回复",
+	"task.phase.tools": "执行工具",
+	"task.phase.select": "选择历史消息",
+	"task.phase.summarize": "生成摘要",
+	"task.phase.call": "执行工具",
+	"task.phase.execute": "恢复工具执行",
+	"task.phase.other": "处理中",
+	"task.status.pending": "等待执行",
+	"task.status.running": "执行中",
+	"task.status.waiting": "等待其他任务",
+	"task.status.completing": "收尾中",
+	"task.status.completed": "已完成",
+	"task.status.failed": "失败",
+	"task.status.aborted": "已停止",
+	"task.status.orphaned": "无法继续",
+	"task.status.faulted": "执行异常",
+	"task.status.terminal": "已结束",
+	"task.status.other": "状态待更新",
+	"compaction.manual": "手动",
+	"compaction.threshold": "对话较长",
+	"compaction.overflow": "已达上下文上限",
+	"compaction.other": "历史消息",
+	"activity.read": "读取文件",
+	"activity.bash": "运行命令",
+	"activity.edit": "修改文件",
+	"activity.write": "写入文件",
+	"activity.grep": "搜索内容",
+	"activity.find": "查找文件",
+	"activity.ls": "查看目录",
+	"activity.codemode": "执行代码",
+	"activity.tool_search": "查找工具",
+	"activity.subagent": "执行子任务",
+	"activity.other": "执行工具",
 	"dock.files": "文件",
 	"dock.terminal": "终端",
 	"dock.cwd": "工作目录",
@@ -1465,6 +1545,37 @@ export function scheduleDueCopy(locale: Locale, nextRunAt: number | null, now: n
 	const minutes = Math.floor(seconds / 60);
 	if (minutes < 60) return translate(locale, "panel.automation.inMinutes", { count: String(minutes) });
 	return translate(locale, "panel.automation.inHours", { count: String(Math.floor(minutes / 60)) });
+}
+
+/** Runtime codes stay in the protocol; unknown extension codes get neutral page copy. */
+function runtimeCodeCopy(locale: Locale, group: "task.phase" | "task.status" | "compaction" | "activity", code: string): string {
+	const key = `${group}.${code}`;
+	return translate(locale, (Object.hasOwn(EN, key) ? key : `${group}.other`) as MessageKey);
+}
+
+export function taskKindCopy(locale: Locale, kind: string): string {
+	const key = kind === "amazme.generation" ? "task.kind.generation"
+		: kind === "amazme.compaction" ? "task.kind.compaction"
+		: kind === "amazme.tool" ? "task.kind.tool" : "task.kind.other";
+	return translate(locale, key);
+}
+
+export function taskStatusCopy(locale: Locale, status: string): string {
+	return runtimeCodeCopy(locale, "task.status", status);
+}
+
+export function taskPhaseCopy(locale: Locale, phase: string): string {
+	// A completing task reports its outcome in place of a checkpoint phase.
+	return Object.hasOwn(EN, `task.status.${phase}`)
+		? taskStatusCopy(locale, phase) : runtimeCodeCopy(locale, "task.phase", phase);
+}
+
+export function compactionReasonCopy(locale: Locale, reason: string): string {
+	return runtimeCodeCopy(locale, "compaction", reason);
+}
+
+export function toolActivityCopy(locale: Locale, name: string): string {
+	return runtimeCodeCopy(locale, "activity", name === "powershell" ? "bash" : name);
 }
 
 /** A reasoning effort's name; a level the dictionaries do not know is shown capitalized. */

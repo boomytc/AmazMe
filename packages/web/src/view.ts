@@ -41,7 +41,7 @@ import type { Locale } from "./locale.ts";
 import type { ProviderAuthLike } from "./provider-auth.ts";
 import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panelView } from "./panels.ts";
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
-import { type MessageKey, thinkingLevelCopy, translate } from "./strings.ts";
+import { compactionReasonCopy, type MessageKey, thinkingLevelCopy, toolActivityCopy, translate } from "./strings.ts";
 import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
 import { toolImages, toolOutputText, toolResultView } from "./tool-results.ts";
 import type { ToolOutcome, ToolResultView } from "./tool-results.ts";
@@ -1266,17 +1266,17 @@ export function laneLine(locale: Locale, lane: LaneLike): string {
 	const model = lane.model.length === 0 ? translate(locale, "lane.noModel") : lane.model;
 	const run =
 		lane.run === "retrying"
-			? translate(locale, "lane.retrying", { detail: lane.detail })
+			? translate(locale, "lane.retrying")
 			: lane.run === "compacting"
-				? translate(locale, "lane.compacting", { detail: lane.detail })
+				? translate(locale, "lane.compacting", { detail: compactionReasonCopy(locale, lane.detail) })
 				: lane.run === "tool"
-					? translate(locale, "lane.tool", { detail: lane.detail })
+					? translate(locale, "lane.tool", { detail: toolActivityCopy(locale, lane.detail) })
 					: lane.run === "deferred"
 						? translate(locale, "lane.deferred")
 						: lane.run === "working"
 							? translate(locale, "lane.working")
 							: translate(locale, "lane.idle");
-	return `${name} · ${model} · ${translate(locale, "lane.thinking", { level: lane.thinking })} · ${run}`;
+	return `${name} · ${model} · ${translate(locale, "lane.thinking", { level: thinkingLevelCopy(locale, lane.thinking) })} · ${run}`;
 }
 
 export function sessionStatus(locale: Locale, view: ConversationView | undefined): string {
@@ -1295,12 +1295,12 @@ export function sessionStatus(locale: Locale, view: ConversationView | undefined
 	if (compaction !== undefined) {
 		return compaction.retry
 			? translate(locale, "status.compactingRetry", {
-					reason: compaction.reason,
+					reason: compactionReasonCopy(locale, compaction.reason),
 					attempt: String(compaction.attempt + 1),
 				})
-			: translate(locale, "status.compacting", { reason: compaction.reason });
+			: translate(locale, "status.compacting", { reason: compactionReasonCopy(locale, compaction.reason) });
 	}
-	if (runningTool !== undefined) return translate(locale, "status.runningTool", { name: runningTool.name });
+	if (runningTool !== undefined) return translate(locale, "status.runningTool", { activity: toolActivityCopy(locale, runningTool.name) });
 	if (live.run !== undefined) return translate(locale, "status.working");
 	return "";
 }

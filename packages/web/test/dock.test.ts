@@ -56,7 +56,7 @@ const CONVERSATIONS = {
 			conversationId: "1",
 			background: true,
 			status: "running",
-			phase: "running",
+			phase: "request",
 			waitsOn: [],
 			conversations: ["1"],
 		},
@@ -66,7 +66,7 @@ const CONVERSATIONS = {
 			conversationId: "2",
 			background: false,
 			status: "waiting",
-			phase: "waiting",
+			phase: "call",
 			waitsOn: ["7"],
 			conversations: ["2"],
 		},
@@ -302,11 +302,11 @@ describe("the session dock", () => {
 		const panel = tasksPanel("en", CONVERSATIONS);
 		const rows = panel.groups[0]?.rows ?? [];
 		expect(rows.map((row) => [row.title, row.description])).toEqual([
-			["amazme.generation 7", "phase running · 1"],
-			["amazme.tool 9", "phase waiting · 2"],
+			["Generate response #7", "Waiting for model response · main"],
+			["Run tool #9", "Running tool · child task marker"],
 		]);
-		expect(rows[1]?.badges).toEqual(["waiting", "waits on 7", "owns 2"]);
-		expect(rows[0]?.badges).toEqual(["running", "background", "owns 1"]);
+		expect(rows[1]?.badges).toEqual(["Waiting for tasks: 1", "Related conversations: 1"]);
+		expect(rows[0]?.badges).toEqual(["In progress", "background", "Related conversations: 1"]);
 		// With nothing live the panel says so instead of looking broken.
 		expect(
 			tasksPanel("en", { conversations: [], tasks: [], selected: "1" }).groups[0]?.empty,

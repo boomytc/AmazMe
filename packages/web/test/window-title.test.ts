@@ -260,8 +260,8 @@ describe("lane status", () => {
 		);
 		const lane = document.getElementById("lane-status");
 		expect(lane?.hidden).toBe(false);
-		expect(lane?.textContent).toBe("Main · claude-sonnet · thinking medium · Idle");
-		expect(lane?.getAttribute("title")).toBe("Main · claude-sonnet · thinking medium · Idle");
+		expect(lane?.textContent).toBe("Main · claude-sonnet · thinking Medium · Idle");
+		expect(lane?.getAttribute("title")).toBe("Main · claude-sonnet · thinking Medium · Idle");
 		const title = document.getElementById("session-title");
 		expect(title?.textContent).toBe("Weekly report");
 		expect(title?.getAttribute("title")).toBe("Weekly report");

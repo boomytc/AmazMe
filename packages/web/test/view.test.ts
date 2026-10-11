@@ -527,7 +527,7 @@ describe("web view model", () => {
 		expect(blocks.map((block) => block.kind)).toEqual(["user", "assistant", "tool"]);
 		expect(blocks[1]).toMatchObject({ text: "streamed so far", running: true });
 		expect(blocks[2]).toMatchObject({ title: "read", text: "partial output", running: true });
-		expect(sessionStatus("en", view)).toBe("Running read…");
+		expect(sessionStatus("en", view)).toBe("Reading file…");
 		// Every strip carries its own withdraw, addressed by the inbox submission id.
 		expect(queuedInputs("en", view).map((item) => item.text)).toEqual([
 			"[steer] also do this",
@@ -548,14 +548,14 @@ describe("web view model", () => {
 			"Retrying (attempt 1): overloaded",
 		);
 		expect(sessionStatus("en", withLive({ generation: { attempt: 0, deferred: { pollAt: 1 } } }))).toBe(
-			"Waiting for deferred response…",
+			"Waiting for model response…",
 		);
 		expect(sessionStatus("en", withLive({ compactions: [{ taskId: 1, reason: "manual", attempt: 0 }] }))).toBe(
-			"Compacting (manual)…",
+			"Summarizing context (requested)…",
 		);
 		expect(
 			sessionStatus("en", withLive({ compactions: [{ taskId: 1, reason: "manual", attempt: 1, retry: { at: 1, error: "x" } }] })),
-		).toBe("Retrying manual compaction (attempt 2)…");
+		).toBe("Retrying context summary (requested, attempt 2)…");
 		expect(
 			sessionStatus("en", 
 				withLive({
@@ -563,7 +563,7 @@ describe("web view model", () => {
 					tools: [{ callId: "c", name: "bash", status: "running" }],
 				}),
 			),
-		).toBe("Running bash…");
+		).toBe("Running command…");
 		expect(sessionStatus("en", withLive({ tools: [{ callId: "c", name: "bash", status: "pending" }] }))).toBe("");
 	});
 
@@ -1121,7 +1121,7 @@ describe("web view model", () => {
 				run: "working",
 				detail: "",
 			}),
-		).toBe("Fork · plan · faux/faux-1 · thinking high · working");
+		).toBe("Fork · plan · faux/faux-1 · thinking High · working");
 		expect(
 			laneLine("zh", {
 				role: "subagent",
@@ -1131,7 +1131,7 @@ describe("web view model", () => {
 				run: "tool",
 				detail: "bash",
 			}),
-		).toBe("子代理 · child · 未选模型 · 推理 off · 正在运行 bash");
+		).toBe("子对话 · child · 未选模型 · 推理关闭 · 正在运行命令");
 		expect(runControls("zh", "followUp", true, true).submitModes).toEqual([
 			{ mode: "steer", label: "介入", selected: false },
 			{ mode: "followUp", label: "排队", selected: true },
@@ -1302,7 +1302,7 @@ describe("web view model", () => {
 			"amazme.live": { run: { taskId: 1, inputs: [] }, tools: [{ callId: "c", name: "bash", status: "running" }] } as unknown as JsonObject,
 			"amazme.inbox": { items: [{ id: 3, mode: "steer", content: "再改一下" }] } as unknown as JsonObject,
 		});
-		expect(sessionStatus("zh", live)).toBe("正在运行 bash…");
+		expect(sessionStatus("zh", live)).toBe("正在运行命令…");
 		expect(queuedInputs("zh", live).map((item) => [item.text, item.cancel.label])).toEqual([
 			["[介入] 再改一下", "撤回"],
 		]);
