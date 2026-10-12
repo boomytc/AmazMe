@@ -114,6 +114,8 @@ harness.resume(); // continue any run the last process left unfinished
 
 Work interrupted by a crash or close stays pending. `resume()` starts the task scheduler; submitting or waiting starts it too. Each conversation has its own persisted UUIDv7 in `amazme.provider`, forwarded to @amazme/ai as `sessionId` for provider prompt-cache and session affinity. It survives reopen, retries, reset, compaction, and model changes; a child or fork receives a fresh identity. A legacy conversation receives and persists one before its first generation or compaction request.
 
+If a vision request receives a definite image-payload rejection, generation can make one request-only retry without images, within the enabled retry budget. Images become explicit omission placeholders; original transcript entries and model capabilities are unchanged. Authentication, safety, quota, context, and transient failures do not trigger this fallback. The recovery checkpoint survives reopen, and the response carries an `image_payload_recovery` diagnostic with the omission count so clients can warn that the answer could not see the images. A new generation starts with its original images again.
+
 A retried submission with the same `requestId` returns the existing submission instead of submitting twice:
 
 ```typescript

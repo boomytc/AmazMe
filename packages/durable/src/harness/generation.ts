@@ -9,6 +9,7 @@ import type {
 	SimpleStreamOptions,
 	ToolCall,
 } from "@amazme/ai";
+import { appendImageRecoveryDiagnostic, hasRequestImages, IMAGE_RECOVERY_RETRY_MESSAGE, isImagePayloadRejection, omitRequestImages } from "@amazme/ai/utils/image-recovery";
 import { isContextOverflow } from "@amazme/ai/utils/overflow";
 import { isRetryableAssistantError, retryDelayMs } from "@amazme/ai/utils/retry";
 import { getCurrentTools } from "@amazme/ai/utils/transcript";
@@ -49,7 +50,13 @@ import { recordUsage } from "./usage.ts";
 
 export type GenerationInput = Record<string, never>;
 
-export type GenerationCheckpoint =
+export type GenerationCheckpoint = {
+	/** A single request-level payload recovery; never changes stored messages or model capabilities. */
+	omitImages?: true;
+	/** The actual request projection, retained across deferred polling. */
+	hadImages?: boolean;
+	omittedImages?: number;
+} & (
 	| {
 			phase: "prepare";
 			attempt: number;
@@ -91,7 +98,7 @@ export type GenerationCheckpoint =
 			tools: TaskId<ToolTaskResult>[];
 			/** Calls of a sequential round not started yet, in call order. */
 			pending: string[];
-	  };
+	  });
 
 export type GenerationResult = { entryId: EntryId };
 
@@ -108,6 +115,9 @@ type Request = {
 	readonly messages?: readonly Message[];
 	/** Set when the message came from polling, so a still deferred result polls strictly later. */
 	readonly pollAt?: number;
+	readonly omitImages?: true;
+	readonly hadImages?: boolean;
+	readonly omittedImages?: number;
 };
 
 const DEFAULT_POLL_AFTER_MS = 5000;
@@ -118,15 +128,15 @@ const DEFAULT_POLL_AFTER_MS = 5000;
  */
 export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, GenerationResult, GenerationHooks>({
 	name: "amazme.generation",
-	version: 2,
-	// Existing phases retain their shape. Promote stored v1 work; older executors must not take a v2 yield phase.
+	version: 3,
+	// Older executors must not resend raw images from a stored recovery checkpoint.
 	migrate(input, checkpoint, version) {
-		if (version !== 1) throw new Error(`Unsupported generation version: ${version}`);
+		if (version !== 1 && version !== 2) throw new Error(`Unsupported generation version: ${version}`);
 		if (
 			checkpoint === null || typeof checkpoint !== "object" || Array.isArray(checkpoint) ||
-			!(["prepare", "request", "retry", "poll", "tools"] as const).some(phase => phase === checkpoint.phase)
+			!(["prepare", "request", "retry", "poll", "tools", ...(version === 2 ? ["yield"] : [])] as const).some(phase => phase === checkpoint.phase)
 		)
-			throw new Error("Invalid v1 generation checkpoint");
+			throw new Error(`Invalid v${version} generation checkpoint`);
 		return { input: input as GenerationInput, checkpoint: checkpoint as GenerationCheckpoint };
 	},
 	initial: () => ({ phase: "prepare", attempt: 1 }),
@@ -144,7 +154,8 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const { model, thinkingLevel } = agent;
 			const resolved = model === undefined ? undefined : runtime.models.getModel(model.provider, model.modelId);
 			if (model === undefined || resolved === undefined) return failNoModel(runtime, model, context);
-			const { attempt, compacted, overflow, threshold: blocked } = task.state.checkpoint;
+			const { attempt, compacted, overflow, threshold: blocked, omitImages } = task.state.checkpoint;
+			const recovery = omitImages === true ? { omitImages } : {};
 			if (compacted !== undefined && overflow !== undefined) {
 				const [outcome] = await runtime.outcomes([compacted], context);
 				if (outcome?.status !== "completed" || outcome.result.entryId === undefined) {
@@ -181,7 +192,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				// Compact first and prepare again; the transcript is unchanged until the compaction appends.
 				await runtime.commit(async (tx): Promise<Next> => {
 					const child = await createCompaction(tx, conversationId, { reason: "threshold" }, runtime.taskId);
-					const checkpoint = { phase: "prepare", attempt, compacted: child, threshold: true } as const;
+					const checkpoint = { phase: "prepare", attempt, compacted: child, threshold: true, ...recovery } as const;
 					return { status: "waiting", checkpoint, on: [child], policy: "allSettled" };
 				}, context);
 				return;
@@ -195,6 +206,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 					await createCompaction(tx, conversationId, { reason: "threshold" });
 				}
 				const request = {
+					...recovery,
 					attempt,
 					...(compacted === undefined ? {} : { compacted }),
 					model,
@@ -206,7 +218,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			}, context);
 		},
 		request: async (task, runtime, context) => {
-			const { attempt, compacted, model: ref, thinkingLevel, streamOptions, cutoff } = task.state.checkpoint;
+			const { attempt, compacted, model: ref, thinkingLevel, streamOptions, cutoff, omitImages } = task.state.checkpoint;
 			const conversationId = runtime.conversationId;
 			await runtime.commit(async (tx) => {
 				const live = await tx.doc(LiveDoc, conversationId);
@@ -226,23 +238,28 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				const replaced = await hook({ messages }, runtime, context);
 				if (replaced !== undefined) messages = replaced.messages;
 			});
+			const hadImages = model.input.includes("image") && hasRequestImages(messages);
+			const projection = omitImages ? omitRequestImages(messages) : undefined;
+			if (projection) messages = projection.messages;
 			const options: SimpleStreamOptions = {
 				...streamOptions,
 				signal: runtime.signal,
 				sessionId: await ensureProviderSessionId(runtime, context),
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
-			const message = await streamResponse(runtime, model, messages, options, attempt, context);
-			const request = { attempt, compacted, model: ref, cutoff, messages: view.messages };
+			const message = await streamResponse(runtime, model, messages, options, attempt, context, projection?.omittedImages ?? 0);
+			const request = { attempt, compacted, model: ref, cutoff, messages: view.messages, hadImages,
+				...(omitImages ? { omitImages, omittedImages: projection?.omittedImages ?? 0 } : {}) };
 			await classify(runtime, request, message, context);
 		},
 		retry: async (task, runtime, context) => {
-			const { attempt, compacted, until } = task.state.checkpoint;
+			const { attempt, compacted, until, omitImages } = task.state.checkpoint;
 			await runtime.sleep(until, context);
 			await runtime.commit(async (tx) => {
 				(await tx.doc(LiveDoc, runtime.conversationId)).generation = { attempt: attempt + 1 };
 				const checkpoint: GenerationCheckpoint = {
 					phase: "prepare",
+					...(omitImages ? { omitImages } : {}),
 					attempt: attempt + 1,
 					...(compacted === undefined ? {} : { compacted }),
 				};
@@ -250,12 +267,14 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			}, context);
 		},
 		poll: async (task, runtime, context) => {
-			const { attempt, compacted, model: ref, cutoff, handle, pollAt } = task.state.checkpoint;
+			const { attempt, compacted, model: ref, cutoff, handle, pollAt, omitImages, hadImages, omittedImages } = task.state.checkpoint;
 			const model = runtime.models.getModel(ref.provider, ref.modelId);
 			if (model === undefined) return failNoModel(runtime, ref, context);
 			await runtime.sleep(pollAt, context);
 			const message = await runtime.models.fetchDeferred(model, handle, { signal: runtime.signal });
-			const request = { attempt, compacted, model: ref, cutoff, pollAt };
+			const request = { attempt, compacted, model: ref, cutoff, pollAt,
+				...(hadImages === undefined ? {} : { hadImages }),
+				...(omitImages ? { omitImages, omittedImages: omittedImages ?? 0 } : {}) };
 			await classify(runtime, request, message, context);
 		},
 		yield: async (task, runtime, context) => answer(runtime, task.state.checkpoint.message, context),
@@ -422,6 +441,7 @@ async function streamResponse(
 	options: SimpleStreamOptions,
 	attempt: number,
 	context: Context,
+	omittedImages = 0,
 ): Promise<AssistantMessage> {
 	const interval = runtime.settings.progress.partialIntervalMs;
 	let pending: AssistantMessage | undefined;
@@ -435,6 +455,7 @@ async function streamResponse(
 		if (partial === undefined || stopped) return;
 		inFlight = (async () => {
 			// Copy synchronously: the provider keeps mutating its partial.
+			appendImageRecoveryDiagnostic(partial, omittedImages);
 			const message = copyJson(partial, { omitUndefinedProperties: true });
 			await runtime.commit(async (tx) => {
 				const live = await tx.doc(LiveDoc, runtime.conversationId);
@@ -480,6 +501,7 @@ async function classify(
 	runtime.signal.throwIfAborted();
 	const conversationId = runtime.conversationId;
 	const { attempt, compacted, model: ref, cutoff } = request;
+	appendImageRecoveryDiagnostic(message, request.omittedImages ?? 0);
 	if (message.stopReason === "deferred" && message.deferred !== undefined) {
 		const handle = message.deferred;
 		const pollAt = Math.max(
@@ -490,6 +512,8 @@ async function classify(
 			(await tx.doc(LiveDoc, conversationId)).generation = { attempt, deferred: { pollAt } };
 			const checkpoint = {
 				phase: "poll",
+				...(request.hadImages === undefined ? {} : { hadImages: request.hadImages }),
+				...(request.omitImages ? { omitImages: request.omitImages, omittedImages: request.omittedImages ?? 0 } : {}),
 				attempt,
 				...(compacted === undefined ? {} : { compacted }),
 				model: ref,
@@ -530,18 +554,21 @@ async function classify(
 				await appendAssistant(tx, conversationId, message);
 				delete live.generation;
 				const child = await createCompaction(tx, conversationId, { reason: "overflow" }, runtime.taskId);
-				const checkpoint = { phase: "prepare", attempt, compacted: child, overflow: text } as const;
+				const checkpoint = { phase: "prepare", attempt, compacted: child, overflow: text,
+					...(request.omitImages ? { omitImages: request.omitImages } : {}) } as const;
 				return { status: "waiting", checkpoint, on: [child], policy: "allSettled" };
 			}, context);
 			return;
 		}
 	}
 	const policy = settings.retry;
+	const recoverImage = !request.omitImages && request.hadImages === true && isImagePayloadRejection(message);
+	const omitImages = request.omitImages === true || recoverImage;
 	// An overflow is never retried: only a compaction can make the next request fit.
 	const retry =
 		message.stopReason === "error" &&
 		!overflow &&
-		isRetryableAssistantError(message) &&
+		(isRetryableAssistantError(message) || recoverImage) &&
 		policy.enabled &&
 		attempt <= policy.maxRetries;
 	const until = retry ? runtime.now() + retryDelayMs(policy, attempt) : 0;
@@ -549,9 +576,10 @@ async function classify(
 		const live = await tx.doc(LiveDoc, conversationId);
 		await appendAssistant(tx, conversationId, message);
 		if (retry) {
-			live.generation = { attempt, retry: { at: until, error: message.errorMessage ?? "" } };
+			live.generation = { attempt, retry: { at: until, error: recoverImage ? IMAGE_RECOVERY_RETRY_MESSAGE : message.errorMessage ?? "" } };
 			const checkpoint = {
 				phase: "retry",
+				...(omitImages ? { omitImages: true } as const : {}),
 				attempt,
 				...(compacted === undefined ? {} : { compacted }),
 				until,

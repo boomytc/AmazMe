@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, type AgentEvent, type AgentTool } from "@amazme/agent";
-import { type AssistantMessage, createAssistantMessageEventStream, getModel } from "@amazme/ai/compat";
+import { type AssistantMessage, type Message, createAssistantMessageEventStream, getModel } from "@amazme/ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
@@ -57,6 +57,7 @@ describe("AgentSession retry", () => {
 
 	async function createSession(options?: {
 		failCount?: number;
+		errorMessage?: string;
 		maxRetries?: number;
 		maxAgentDelayMs?: number;
 		delayAssistantMessageEndMs?: number;
@@ -66,19 +67,21 @@ describe("AgentSession retry", () => {
 		const maxAgentDelayMs = options?.maxAgentDelayMs ?? 60000;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
 		let callCount = 0;
+		const requests: Message[][] = [];
 
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: "Test", tools: [] },
-			streamFn: () => {
+			streamFn: (_model, context) => {
+				requests.push(structuredClone(context.messages));
 				callCount++;
 				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					if (callCount <= failCount) {
 						const msg = createAssistantMessage("", {
 							stopReason: "error",
-							errorMessage: "overloaded_error",
+							errorMessage: options?.errorMessage ?? "overloaded_error",
 						});
 						stream.push({ type: "start", partial: msg });
 						stream.push({ type: "error", reason: "error", error: msg });
@@ -119,8 +122,38 @@ describe("AgentSession retry", () => {
 			};
 		}
 
-		return { session, getCallCount: () => callCount };
+		return { session, requests, getCallCount: () => callCount };
 	}
+
+	it("recovers a rejected image once without changing history or model capabilities", async () => {
+		const created = await createSession({ failCount: 1, errorMessage: "400 Invalid image: dimensions exceed the supported limit" });
+		const image = { type: "image", mimeType: "image/png", data: "original-image" } as const;
+		const user = { role: "user", content: [image], timestamp: 1 } satisfies Message;
+		created.session.sessionManager.appendMessage(user);
+		created.session.agent.state.messages = [...created.session.agent.state.messages, user];
+		await created.session.prompt("question");
+		expect(created.getCallCount()).toBe(2);
+		expect(JSON.stringify(created.requests[0])).toContain("original-image");
+		expect(JSON.stringify(created.requests[1])).not.toContain("original-image");
+		expect(JSON.stringify(created.requests[1])).toContain("This request cannot see the image");
+		expect(JSON.stringify(created.session.sessionManager.getBranch())).toContain("original-image");
+		expect(created.session.messages.at(-1)).toMatchObject({ diagnostics: [{ type: "image_payload_recovery", details: { omittedImages: 1 } }] });
+		await created.session.prompt("next");
+		expect(JSON.stringify(created.requests[2])).toContain("original-image");
+		expect(created.session.model?.input).toContain("image");
+	});
+
+	it("does not repeat image recovery or ignore a zero retry budget", async () => {
+		const created = await createSession({ failCount: 99, errorMessage: "400 Invalid image: unsupported format" });
+		const user = { role: "user", content: [{ type: "image", mimeType: "image/png", data: "original-image" }], timestamp: 1 } satisfies Message;
+		created.session.sessionManager.appendMessage(user);
+		created.session.agent.state.messages = [...created.session.agent.state.messages, user];
+		await created.session.prompt("question");
+		expect(created.getCallCount()).toBe(2);
+		created.session.settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 0 } });
+		await created.session.prompt("next");
+		expect(created.getCallCount()).toBe(3);
+	});
 
 	it("retries after a transient error and succeeds", async () => {
 		const created = await createSession({ failCount: 1 });

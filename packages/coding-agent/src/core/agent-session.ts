@@ -54,6 +54,7 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@amazme/ai/compat";
+import { appendImageRecoveryDiagnostic, hasRequestImages, IMAGE_RECOVERY_RETRY_MESSAGE, isImagePayloadRejection, omitRequestImages } from "@amazme/ai/utils/image-recovery";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { normalizePromptImages } from "../utils/prompt-images.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -411,6 +412,9 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private _omitRequestImages = false;
+	private _lastRequestHadImages = false;
+	private _requestOmittedImages = 0;
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
 	 * retry is routed with it as `failed`, since the context no longer contains it.
@@ -532,6 +536,14 @@ export class AgentSession {
 		this._installAgentBoundaryHooks();
 		this._installHiddenDeclarationsProjection();
 		this._installAgentForcedPromptProjection();
+		const convert = this.agent.convertToLlm;
+		this.agent.convertToLlm = async messages => {
+			const projected = await convert(messages);
+			this._lastRequestHadImages = hasRequestImages(projected);
+			const recovery = this._omitRequestImages ? omitRequestImages(projected) : undefined;
+			this._requestOmittedImages = recovery?.omittedImages ?? 0;
+			return recovery?.messages ?? projected;
+		};
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -1116,6 +1128,10 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		if ((event.type === "message_start" || event.type === "message_update" || event.type === "message_end") && event.message.role === "assistant") {
+			appendImageRecoveryDiagnostic(event.message, this._requestOmittedImages);
+			if (event.type === "message_end" && event.message.stopReason !== "error") this._omitRequestImages = false;
+		}
 		// Record the calls a tool made through ctx.executeTool() and their usage on its result message.
 		if (this._nestedToolCalls) {
 			if (event.type === "message_start" && event.message.role === "toolResult") {
@@ -1836,6 +1852,8 @@ export class AgentSession {
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._agentRunAbortRequested = false;
+		this._omitRequestImages = false;
+		this._requestOmittedImages = 0;
 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
 		this._failedResponse = undefined;
 		this._recordSelection();
@@ -1859,6 +1877,8 @@ export class AgentSession {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
 			this._failedResponse = undefined;
 			this._runSystemPromptOptions = undefined;
+			this._omitRequestImages = false;
+			this._requestOmittedImages = 0;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
 			await this._emitAgentSettled();
@@ -3701,7 +3721,13 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0)) return false;
-		return isRetryableAssistantError(message);
+		return isRetryableAssistantError(message) || this._canRecoverImage(message);
+	}
+
+	private _canRecoverImage(message: AssistantMessage): boolean {
+		return !this._omitRequestImages && this._lastRequestHadImages &&
+			(this._modelForMessage(message) ?? this.model)?.input.includes("image") === true &&
+			isImagePayloadRejection(message);
 	}
 
 	/**
@@ -3765,6 +3791,7 @@ export class AgentSession {
 			return false;
 		}
 
+		if (this._canRecoverImage(message)) this._omitRequestImages = true;
 		const delayMs = retryDelayMs(settings, this._retryAttempt);
 
 		this._emit({
@@ -3772,7 +3799,7 @@ export class AgentSession {
 			attempt: this._retryAttempt,
 			maxAttempts: settings.maxRetries,
 			delayMs,
-			errorMessage: message.errorMessage || "Unknown error",
+			errorMessage: this._omitRequestImages ? IMAGE_RECOVERY_RETRY_MESSAGE : message.errorMessage || "Unknown error",
 		});
 
 		// Keep the failed attempt in raw history while durably omitting it from model projection.

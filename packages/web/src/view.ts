@@ -1013,6 +1013,13 @@ function toolResults(entries: readonly EntryRecord[]): ToolResults {
 	return { outcomes, orphans };
 }
 
+function pushImageRecoveryNotice(locale: Locale, message: AssistantMessage, id: EntryId | string, blocks: TranscriptBlock[]): void {
+	if (!message.diagnostics?.some(diagnostic => diagnostic.type === "image_payload_recovery")) return;
+	blocks.push({ id: `${id}:image-recovery`, kind: "notice",
+		title: translate(locale, "block.imageRecovery"), text: translate(locale, "block.imageRecoveryText"),
+		tone: "muted", running: false });
+}
+
 /**
  * The per-entry projection: one block per user, assistant, thinking, tool, and notice entry. Both
  * the live transcript and a page of stored history run this, so the two read the same.
@@ -1057,6 +1064,7 @@ function entryBlocks(
 							running: false,
 						});
 					}
+					pushImageRecoveryNotice(locale, message, answerKey(entry), blocks);
 					const answer = assistantText(message.content);
 					const failure = failureNotice(locale, message);
 					// A failed answer with no text is the failure notice alone, not an empty card above it.
@@ -1227,6 +1235,7 @@ export function transcriptBlocks(
 	const partial = live.generation?.message as AssistantMessage | undefined;
 	if (partial !== undefined) {
 		const id = live.run?.taskId === undefined ? "live:generation" : `answer:${live.run.taskId}`;
+		pushImageRecoveryNotice(locale, partial, id, blocks);
 		const thinking = thinkingText(partial.content);
 		if (thinking.length > 0) blocks.push({ id: `${id}:thinking`, kind: "thinking", title: translate(locale, "block.thinking"), text: thinking, tone: "muted", running: true });
 		blocks.push({

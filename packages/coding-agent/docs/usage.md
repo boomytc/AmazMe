@@ -80,7 +80,10 @@ or a project's new-session button to create one and return to chat.
 The transcript
 renders the same durable state the TUI shows: user and assistant blocks, thinking, tool calls with their
 results or a "Not run" notice, compaction and reset notices, and an error notice for an answer that failed,
-was aborted, or was truncated. A turn in flight adds its live status (working, running a tool, retrying,
+was aborted, or was truncated. A definite image-payload rejection may trigger one request-only retry without images,
+within the enabled retry budget. The transcript explicitly warns that the reply could not see them; original
+attachments and model capabilities remain unchanged. Authentication and safety rejections never trigger this fallback.
+Resize or convert the images, or switch models before asking about their contents again. A turn in flight adds its live status (working, running a tool, retrying,
 compacting) as the transcript's last row, and the inputs the session has queued but not started sit as one
 strip each above the composer. Assistant answers are formatted: headings, lists, emphasis, links, fenced code
 blocks, and pipe tables become elements — a table column that holds only numbers is right-aligned with figures of

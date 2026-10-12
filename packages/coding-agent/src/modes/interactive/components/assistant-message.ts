@@ -103,6 +103,10 @@ export class AssistantMessageComponent extends Container {
 			this.contentContainer.addChild(new Spacer(1));
 		}
 
+		if (message.diagnostics?.some(diagnostic => diagnostic.type === "image_payload_recovery")) {
+			this.contentContainer.addChild(new Text(theme.fg("warning", "Retried without images. This response cannot see them; original attachments are preserved."), this.outputPad, 0));
+		}
+
 		// Render content in order
 		let thinkingRunIndex = 0;
 		for (let i = 0; i < message.content.length; i++) {

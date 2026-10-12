@@ -34,6 +34,15 @@ function createAssistantMessage(
 }
 
 describe("AssistantMessageComponent", () => {
+	test("renders a persisted image recovery warning before the answer", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([{ type: "text", text: "text-only answer" }]);
+		message.diagnostics = [{ type: "image_payload_recovery", timestamp: message.timestamp, details: { omittedImages: 1 } }];
+		const rendered = new AssistantMessageComponent(message).render(100).map(stripAnsi).join("\n");
+		expect(rendered).toContain("Retried without images");
+		expect(rendered).toContain("original attachments are preserved");
+		expect(rendered.indexOf("Retried")).toBeLessThan(rendered.indexOf("text-only answer"));
+	});
 	test("adds OSC 133 zone markers to assistant messages without tool calls", () => {
 		initTheme("dark");
 

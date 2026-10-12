@@ -140,6 +140,19 @@ function directoryOf(
 }
 
 describe("web view model", () => {
+	test("projects a persisted image recovery diagnostic in both languages", () => {
+		const entry = assistantEntry(1, [{ type: "text", text: "text-only answer" }]);
+		const message = entry.model![0] as AssistantMessage;
+		message.diagnostics = [{ type: "image_payload_recovery", timestamp: message.timestamp, details: { omittedImages: 1 } }];
+		for (const locale of ["en", "zh"] as const) {
+			const blocks = transcriptBlocks(locale, viewOf([entry]));
+			expect(blocks[0]).toMatchObject({ id: "1:image-recovery", kind: "notice", tone: "muted" });
+			expect(blocks[0]?.text).toContain(locale === "en" ? "original attachments are preserved" : "原始附件仍保留");
+			expect(blocks[1]).toMatchObject({ kind: "assistant", text: "text-only answer" });
+			const partial = transcriptBlocks(locale, viewOf([], { "amazme.live": { generation: { attempt: 2, message: message as unknown as JsonObject } } }));
+			expect(partial.some(block => block.id === "live:generation:image-recovery")).toBe(true);
+		}
+	});
 	test("formats ages the way the roster shows them", () => {
 		expect(formatAge(NOW, NOW)).toBe("0s");
 		expect(formatAge(NOW - 59_000, NOW)).toBe("59s");
