@@ -104,6 +104,12 @@ export interface PanelRow {
 	readonly value?: string;
 	readonly controls?: readonly PanelControl[];
 	readonly actions?: readonly PanelButton[];
+	/** Secondary management actions stay in a keyboard-accessible menu instead of repeating buttons. */
+	readonly menu?: {
+		readonly label: string;
+		readonly data: string;
+		readonly actions: readonly (PanelButton & { readonly glyph: "square-pen" | "folder" })[];
+	};
 }
 
 export interface PanelGroup {

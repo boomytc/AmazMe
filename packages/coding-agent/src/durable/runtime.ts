@@ -50,6 +50,7 @@ import {
 	SessionViewDoc,
 	type TreeNavigationDeps,
 } from "./session-surface.ts";
+import { abortArchivedForks } from "./fork-management.ts";
 import {
 	configureHarnessHttp,
 	createCodingRegistry,
@@ -288,6 +289,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			},
 		});
 		const opened = harness;
+		await abortArchivedForks(opened);
 		if (name !== undefined) {
 			await opened.commit(async (tx) => {
 				(await tx.doc(SessionViewDoc)).name = name;

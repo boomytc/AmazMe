@@ -15,6 +15,7 @@ import {
 import { BACKGROUND_CONTEXT, TODO_CONTEXT, withCancel } from "@amazme/chord/context";
 import { AgentDoc, CompactionTask, defineExtension, GenerationTask, Harness, hook, ROOT_CONVERSATION_ID, section, ToolTask } from "@amazme/durable";
 import type { AgentOperationError } from "../core/plugins/agent-controller.ts";
+import { abortArchivedForks } from "../durable/fork-management.ts";
 import type { TaskGraph } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import lockfile from "proper-lockfile";
@@ -557,6 +558,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 	try {
 		runtime = await createHarness(sessionStoragePath(metadata), options);
 		if ((await readSession(options.sessionDir, metadata.id))?.archivedAt !== undefined) await abortSessionWork(runtime.harness, BACKGROUND_CONTEXT);
+		else await abortArchivedForks(runtime.harness);
 		taskGraph = await runtime.harness.taskGraph(TODO_CONTEXT);
 		services = await createSessionWorkerServices({
 			admission: runtime.admission,

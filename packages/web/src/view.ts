@@ -1488,6 +1488,9 @@ export function buildWebView(input: WebViewInput): WebView {
 	const retention = Number(input.panel.settings?.state?.descriptors.find(descriptor => descriptor.id === "archiveRetentionDays")?.value ?? 0);
 	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter, false, retention);
 	const archived = input.attachedId !== undefined && input.directory?.sessions.some(session => session.sessionId === input.attachedId && session.archivedAt !== undefined);
+	const selectedConversation = input.dock.conversations?.conversations.find(item => item.id === input.dock.conversations?.selected);
+	const archivedConversation = selectedConversation?.readOnly === true || selectedConversation?.archivedAt !== undefined;
+	const readOnly = archived || archivedConversation;
 	const archivedAttached = archived
 		? rosterItems(locale, input.directory, input.attachedId, input.now, "", true, retention).find(item => item.id === input.attachedId)
 		: undefined;
@@ -1508,11 +1511,11 @@ export function buildWebView(input: WebViewInput): WebView {
 		roster,
 		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.rosterFilter),
 		...(archivedAttached === undefined ? {} : { archivedAttached }),
-		...(archived ? { readOnly: true } : {}),
+		...(readOnly ? { readOnly: true } : {}),
 		rosterFilter: input.rosterFilter,
 		...(input.attachedId === undefined ? {} : { transcriptScope: `${input.attachedId}:${input.transcript?.conversation.id ?? input.feedbackScope?.conversationId ?? "root"}` }),
 		focus: input.focus,
-		lane: [archived ? translate(locale, "project.archivedReadOnly") : "", input.dock.insights?.paused ? translate(locale, `review.paused.${input.dock.insights.paused}`) : "", input.lane === undefined ? "" : laneLine(locale, input.lane)].filter(Boolean).join(" · "),
+		lane: [archived ? translate(locale, "project.archivedReadOnly") : archivedConversation ? translate(locale, "dock.forkReadOnly") : "", input.dock.insights?.paused ? translate(locale, `review.paused.${input.dock.insights.paused}`) : "", input.lane === undefined ? "" : laneLine(locale, input.lane)].filter(Boolean).join(" · "),
 		history: {
 			blocks: historyPageBlocks(locale, input.history),
 			more: input.historyMore,
@@ -1536,7 +1539,7 @@ export function buildWebView(input: WebViewInput): WebView {
 			// Only a host that answered offers the guide, and a session means the reader is past it.
 			show: input.showWelcome && input.directory !== undefined && (input.directory.sessions.length ?? 0) === 0,
 		}),
-		run: runControls(locale, input.submitMode, input.attachedId !== undefined && !archived, forkable),
+		run: runControls(locale, input.submitMode, input.attachedId !== undefined && !readOnly, forkable),
 		attachedId: input.attachedId,
 		sessionLabel: attachedSessionLabel(input.directory, input.attachedId, locale),
 		meter: statusMeter(input.transcript, input.models),

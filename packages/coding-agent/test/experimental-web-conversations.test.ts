@@ -5,7 +5,7 @@ import type { StreamFn } from "@amazme/agent";
 import { createAssistantMessageEventStream, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Model } from "@amazme/ai";
 import { replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
-import { BranchSummaryEntry, createRegistry, Harness, type Conversation, type EntryRecord, UserEntry } from "@amazme/durable";
+import { AgentDoc, BranchSummaryEntry, createRegistry, defineExtension, defineTask, Harness, InboxDoc, LiveDoc, type Conversation, type EntryRecord, UserEntry } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
 import { Subagent } from "../src/durable/subagent.ts";
@@ -13,6 +13,8 @@ import { createAgentController } from "../src/core/plugins/agent-controller-prov
 import { type ConversationsState, IDLE_LANE } from "../src/durable/conversation-view.ts";
 import { createConversationsService } from "../src/host/services/conversations-provider.ts";
 import { navigateTree, readReturnPoints, readSummaries } from "../src/durable/session-surface.ts";
+import { abortArchivedForks, createForkArchiveGate, ForkManagementDoc, parseConversationId } from "../src/durable/fork-management.ts";
+import { pendingResponse } from "./experimental-durable-support.ts";
 
 /**
  * The conversation list, the live task graph, and stored history, over a real Harness driven by the
@@ -21,6 +23,13 @@ import { navigateTree, readReturnPoints, readSummaries } from "../src/durable/se
  * what the list and the task graph must report.
  */
 const directories = new Set<string>();
+const Hold = defineTask<Record<string, never>, { phase: "hold" }, null>({
+	name: "test.fork.hold", version: 1, initial: () => ({ phase: "hold" }),
+	phases: { hold: async (_task, runtime) => {
+		if (!runtime.signal.aborted) await new Promise<void>(resolve => runtime.signal.addEventListener("abort", () => resolve(), { once: true }));
+	} },
+	abort: async (_task, runtime, context) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
+});
 
 async function makeDirectory(prefix: string): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -91,7 +100,10 @@ async function openConversations(
 	models.setProvider(faux.provider);
 	const registry = createRegistry();
 	registry.install(Subagent);
+	registry.install(createForkArchiveGate());
+	registry.install(defineExtension({ name: "fork-fixtures", tasks: [Hold] }));
 	const harness = await Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")), { models, registry }, TODO_CONTEXT);
+	await abortArchivedForks(harness);
 	const root = await harness.root(TODO_CONTEXT, {
 		agent: {
 			cwd: process.cwd(),
@@ -340,6 +352,216 @@ async function entryKinds(conversation: Conversation): Promise<string[]> {
 	} while (cursor !== undefined);
 	return kinds;
 }
+
+describe("manual fork management", () => {
+	test("stores names and archive stamps across reopen without inheriting them onto another fork", async () => {
+		const setup = await openConversations();
+		let id = "";
+		let siblingId = "";
+		try {
+			const root = await setup.harness.conversation(parseConversationId(setup.rootId), TODO_CONTEXT);
+			if (!root) throw new Error("Missing root");
+			await writeUsers(root, "seed");
+			id = (await setup.service.service.fork(setup.rootId, null, BACKGROUND_CONTEXT)).conversationId ?? "";
+			await setup.service.service.rename(id, "  尝试\n方案 A  ", BACKGROUND_CONTEXT);
+			expect(setup.state.value.conversations.find(item => item.id === id)?.label).toBe("尝试 方案 A");
+			siblingId = (await setup.service.service.fork(id, null, BACKGROUND_CONTEXT)).conversationId ?? "";
+			await setup.service.service.setArchived(id, true, BACKGROUND_CONTEXT);
+			const list = await readSummaries(setup.harness, setup.rootId);
+			expect(list.find(item => item.id === id)).toMatchObject({ label: "尝试 方案 A", archivedAt: expect.any(Number), readOnly: true, run: "idle", queued: 0 });
+			expect(list.find(item => item.id === siblingId)).toMatchObject({ label: "seed" });
+			expect(list.find(item => item.id === siblingId)?.readOnly).toBeUndefined();
+			const stamp = (await setup.harness.snapshot(ForkManagementDoc, TODO_CONTEXT))?.forks[id]?.archivedAt;
+			await setup.service.service.setArchived(id, true, BACKGROUND_CONTEXT);
+			expect((await setup.harness.snapshot(ForkManagementDoc, TODO_CONTEXT))?.forks[id]?.archivedAt).toBe(stamp);
+		} finally { await setup.close(); }
+		const again = await openConversations(setup.directory);
+		try {
+			expect(again.state.value.conversations.find(item => item.id === id)).toMatchObject({ label: "尝试 方案 A", readOnly: true });
+			expect(again.state.value.conversations.find(item => item.id === siblingId)?.archivedAt).toBeUndefined();
+			await again.service.service.setArchived(id, false, BACKGROUND_CONTEXT);
+			expect(again.state.value.conversations.find(item => item.id === id)).toMatchObject({ label: "尝试 方案 A", queued: 0 });
+			expect(again.state.value.conversations.find(item => item.id === id)?.readOnly).toBeUndefined();
+		} finally { await again.close(); }
+	});
+
+	test("archives only its ownership scope, including background work and queued input, not history descendants", async () => {
+		const setup = await openConversations();
+		try {
+			const root = await setup.harness.conversation(parseConversationId(setup.rootId), TODO_CONTEXT);
+			if (!root) throw new Error("Missing root");
+			await writeUsers(root, "seed");
+			const id = (await setup.service.service.fork(setup.rootId, null, BACKGROUND_CONTEXT)).conversationId ?? "";
+			const other = (await setup.service.service.fork(id, null, BACKGROUND_CONTEXT)).conversationId ?? "";
+			const fork = await setup.harness.conversation(parseConversationId(id), TODO_CONTEXT);
+			if (!fork) throw new Error("Missing fork");
+			const rootPending = pendingResponse();
+			const forkPending = pendingResponse();
+			const otherPending = pendingResponse();
+			const childPending = pendingResponse();
+			setup.faux.setResponses([rootPending.step, forkPending.step, otherPending.step, childPending.step]);
+			await setup.service.service.prompt(setup.rootId, { message: "root live", images: null }, BACKGROUND_CONTEXT);
+			await rootPending.reached;
+			await setup.service.service.prompt(id, { message: "fork live", images: null }, BACKGROUND_CONTEXT);
+			await forkPending.reached;
+			await setup.service.service.prompt(other, { message: "other live", images: null }, BACKGROUND_CONTEXT);
+			await otherPending.reached;
+			const owned = await fork.commit(async tx => {
+				const task = await tx.createTask(Hold, {}, { ownership: { kind: "conversation" }, background: true });
+				const child = await tx.createConversation({ ownership: { kind: "task", taskId: task } });
+				return { task, child: child.id };
+			}, TODO_CONTEXT);
+			const childId = String(owned.child);
+			await (await setup.harness.conversation(owned.child, TODO_CONTEXT))?.configure({ extensions: { remove: [createForkArchiveGate()] } }, TODO_CONTEXT);
+			await setup.service.service.prompt(childId, { message: "owned child live", images: null }, BACKGROUND_CONTEXT);
+			await childPending.reached;
+			const child = await setup.harness.conversation(owned.child, TODO_CONTEXT);
+			const independent = await setup.harness.conversation(parseConversationId(other), TODO_CONTEXT);
+			if (!child || !independent) throw new Error("Missing test conversation");
+			const childWrite = await child.submit({ type: "write", entry: { kind: "test.child-write", model: [{ role: "user", content: "owned pending write", timestamp: 1 }] } }, TODO_CONTEXT);
+			const independentWrite = await independent.submit({ type: "write", entry: { kind: "test.independent-write", model: [{ role: "user", content: "independent pending write", timestamp: 1 }] } }, TODO_CONTEXT);
+			const queuedWrite = await fork.submit({ type: "write", entry: { kind: "test.queued-summary", model: [{ role: "user", content: "must not place this old summary", timestamp: 1 }] } }, TODO_CONTEXT);
+			expect((await queuedWrite.status(TODO_CONTEXT)).status).toBe("queued");
+			const queued = await setup.service.service.followUp(id, { message: "cancel this queue", images: null }, BACKGROUND_CONTEXT);
+			const childQueue = await setup.service.service.followUp(childId, { message: "cancel child queue", images: null }, BACKGROUND_CONTEXT);
+			expect(queued.accepted && childQueue.accepted).toBe(true);
+			await setup.service.service.refresh(BACKGROUND_CONTEXT);
+			expect(setup.state.value.conversations.find(item => item.id === id)).toMatchObject({ run: "working", queued: 1 });
+			await setup.service.service.setArchived(id, true, BACKGROUND_CONTEXT);
+			expect((await setup.harness.getTask(owned.task, TODO_CONTEXT))?.state).toMatchObject({ status: "terminal", outcome: { status: "aborted" } });
+			expect(await setup.harness.snapshot(InboxDoc, fork.id, TODO_CONTEXT)).toMatchObject({ items: [] });
+			expect((await queuedWrite.wait(TODO_CONTEXT)).status).toBe("unanswered");
+			expect((await childWrite.wait(TODO_CONTEXT)).status).toBe("unanswered");
+			expect((await independentWrite.status(TODO_CONTEXT)).status).toBe("queued");
+			expect((await entryKinds(fork)).includes("test.queued-summary")).toBe(false);
+			expect(await setup.harness.snapshot(InboxDoc, owned.child, TODO_CONTEXT)).toMatchObject({ items: [] });
+			expect(setup.state.value.conversations.find(item => item.id === childId)?.readOnly).toBe(true);
+			expect((await setup.harness.snapshot(AgentDoc, owned.child, TODO_CONTEXT))?.extensions).toMatchObject({ add: ["archived-fork-gate"], remove: [] });
+			expect((await setup.harness.snapshot(LiveDoc, root.id, TODO_CONTEXT))?.run).toBeDefined();
+			expect((await setup.harness.snapshot(LiveDoc, parseConversationId(other), TODO_CONTEXT))?.run).toBeDefined();
+			expect(setup.state.value.conversations.find(item => item.id === other)?.readOnly).toBeUndefined();
+			for (const submission of [queued.accepted ? queued.entryId : "", childQueue.accepted ? childQueue.entryId : ""]) {
+				expect((await (await setup.harness.submission(Number(submission) as never, TODO_CONTEXT))?.status(TODO_CONTEXT))?.status).toBe("unanswered");
+			}
+			await setup.service.service.setArchived(id, false, BACKGROUND_CONTEXT);
+			expect((await setup.harness.snapshot(LiveDoc, fork.id, TODO_CONTEXT))?.run).toBeUndefined();
+			expect((await setup.harness.snapshot(InboxDoc, fork.id, TODO_CONTEXT))?.items).toEqual([]);
+		} finally { await setup.close(); }
+	});
+
+	test("recovery clears queued work if shutdown happened after the archive stamp but before cancellation", async () => {
+		const setup = await openConversations();
+		let id = "";
+		try {
+			const root = await setup.harness.conversation(parseConversationId(setup.rootId), TODO_CONTEXT);
+			if (!root) throw new Error("Missing root");
+			await writeUsers(root, "seed");
+			id = (await setup.service.service.fork(setup.rootId, null, BACKGROUND_CONTEXT)).conversationId ?? "";
+			const pending = pendingResponse();
+			setup.faux.setResponses([pending.step]);
+			await setup.service.service.prompt(id, { message: "interrupted", images: null }, BACKGROUND_CONTEXT);
+			await pending.reached;
+			await setup.service.service.followUp(id, { message: "must not replay", images: null }, BACKGROUND_CONTEXT);
+			const fork = await setup.harness.conversation(parseConversationId(id), TODO_CONTEXT);
+			await fork?.submit({ type: "write", entry: { kind: "test.queued-recovery", model: [{ role: "user", content: "old write", timestamp: 1 }] } }, TODO_CONTEXT);
+			await setup.harness.commit(async tx => {
+				const doc = await tx.doc(ForkManagementDoc);
+				doc.forks[id] = { archivedAt: 1 };
+			}, TODO_CONTEXT);
+		} finally { await setup.close(); }
+		const again = await openConversations(setup.directory);
+		try {
+			expect((await again.harness.snapshot(InboxDoc, parseConversationId(id), TODO_CONTEXT))?.items).toEqual([]);
+			expect((await again.harness.snapshot(LiveDoc, parseConversationId(id), TODO_CONTEXT))?.run).toBeUndefined();
+			expect(again.faux.state.callCount).toBe(0);
+			const fork = await again.harness.conversation(parseConversationId(id), TODO_CONTEXT);
+			if (!fork) throw new Error("Missing recovered fork");
+			expect((await entryKinds(fork)).includes("test.queued-recovery")).toBe(false);
+			await again.service.service.setArchived(id, false, BACKGROUND_CONTEXT);
+			expect(again.faux.state.callCount).toBe(0);
+		} finally { await again.close(); }
+	});
+
+	test("fences late queued input against archive admission and restoration never replays it", async () => {
+		const setup = await openConversations();
+		try {
+			const root = await setup.harness.conversation(parseConversationId(setup.rootId), TODO_CONTEXT);
+			if (!root) throw new Error("Missing root");
+			await writeUsers(root, "seed");
+			const id = (await setup.service.service.fork(setup.rootId, null, BACKGROUND_CONTEXT)).conversationId ?? "";
+			const fork = await setup.harness.conversation(parseConversationId(id), TODO_CONTEXT);
+			if (!fork) throw new Error("Missing fork");
+			const pending = pendingResponse();
+			setup.faux.setResponses([pending.step]);
+			await setup.service.service.prompt(id, { message: "live", images: null }, BACKGROUND_CONTEXT);
+			await pending.reached;
+			let release = () => {};
+			let reached = () => {};
+			const gate = new Promise<void>(resolve => { release = resolve; });
+			const entering = new Promise<void>(resolve => { reached = resolve; });
+			const controller = createAgentController(setup.harness, () => fork, async () => { reached(); await gate; return undefined; });
+			const late = controller.followUp({ message: "late queue", images: null }, BACKGROUND_CONTEXT);
+			await entering;
+			const archive = setup.service.service.setArchived(id, true, BACKGROUND_CONTEXT);
+			release();
+			const [accepted] = await Promise.all([late, archive]);
+			expect(accepted.accepted).toBe(true);
+			expect((await setup.harness.snapshot(InboxDoc, fork.id, TODO_CONTEXT))?.items).toEqual([]);
+			await setup.service.service.setArchived(id, false, BACKGROUND_CONTEXT);
+			expect((await setup.harness.snapshot(LiveDoc, fork.id, TODO_CONTEXT))?.run).toBeUndefined();
+			setup.faux.setResponses([fauxAssistantMessage("new work")]);
+			const fresh = await setup.service.service.prompt(id, { message: "explicit new work", images: null }, BACKGROUND_CONTEXT);
+			expect(fresh.accepted).toBe(true);
+			if (!fresh.accepted) throw new Error("Prompt refused");
+			expect((await (await setup.harness.submission(Number(fresh.operationId) as never, TODO_CONTEXT))?.wait(TODO_CONTEXT))?.status).toBe("done");
+		} finally { await setup.close(); }
+	});
+
+	test("rejects root, subagent and invalid metadata operations, and blocks every archived work entry", async () => {
+		const setup = await openConversations();
+		try {
+			const root = await setup.harness.conversation(parseConversationId(setup.rootId), TODO_CONTEXT);
+			if (!root) throw new Error("Missing root");
+			await writeUsers(root, "seed", "next");
+			const id = (await setup.service.service.fork(setup.rootId, null, BACKGROUND_CONTEXT)).conversationId ?? "";
+			const owned = await root.commit(async tx => {
+				const task = await tx.createTask(Hold, {}, { ownership: { kind: "conversation" }, background: true });
+				return (await tx.createConversation({ ownership: { kind: "task", taskId: task } })).id;
+			}, TODO_CONTEXT);
+			for (const invalid of [setup.rootId, String(owned)]) {
+				await expect(setup.service.service.rename(invalid, "no", BACKGROUND_CONTEXT)).rejects.toThrow("只能管理人工分叉");
+				await expect(setup.service.service.setArchived(invalid, true, BACKGROUND_CONTEXT)).rejects.toThrow("只能管理人工分叉");
+			}
+			await expect(setup.service.service.rename(id, " ", BACKGROUND_CONTEXT)).rejects.toThrow("1–200");
+			await expect(setup.service.service.rename(id, "x".repeat(201), BACKGROUND_CONTEXT)).rejects.toThrow("1–200");
+			await expect(setup.service.service.setArchived("NaN", true, BACKGROUND_CONTEXT)).rejects.toThrow("无效");
+			await (await setup.harness.conversation(parseConversationId(id), TODO_CONTEXT))?.configure({ extensions: [] }, TODO_CONTEXT);
+			await setup.service.service.setArchived(id, true, BACKGROUND_CONTEXT);
+			await expect(setup.service.service.rename(id, "archived rename", BACKGROUND_CONTEXT)).rejects.toThrow("分叉已归档");
+			expect((await setup.harness.snapshot(AgentDoc, parseConversationId(id), TODO_CONTEXT))?.extensions).toEqual(["archived-fork-gate"]);
+			for (const call of ["prompt", "steer", "followUp"] as const) {
+				expect(await setup.service.service[call](id, { message: "blocked", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: false, error: { code: "conversation_archived" } });
+			}
+			expect(await setup.service.service.compact(id, { customInstructions: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: false, error: { code: "conversation_archived" } });
+			expect((await setup.service.service.fork(id, null, BACKGROUND_CONTEXT)).error).not.toBeNull();
+			const points = await setup.service.service.returnPoints(id, BACKGROUND_CONTEXT);
+			const at = points[0]?.id;
+			if (!at) throw new Error("Missing return point");
+			expect((await setup.service.service.leave(id, at, { summarize: false }, BACKGROUND_CONTEXT)).error).not.toBeNull();
+			const controller = createAgentController(setup.harness, () => root);
+			expect(await controller.prompt({ conversationId: id, message: "bypass attempt", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: false, error: { code: "conversation_archived" } });
+			setup.faux.setResponses([fauxAssistantMessage("should not reach provider")]);
+			const archived = await setup.harness.conversation(parseConversationId(id), TODO_CONTEXT);
+			if (!archived) throw new Error("Missing fork");
+			const direct = await archived.submit({ type: "input", content: "raw harness attempt" }, TODO_CONTEXT);
+			expect((await direct.wait(TODO_CONTEXT)).status).toBe("unanswered");
+			expect(setup.faux.state.callCount).toBe(0);
+			await setup.service.service.select(id, BACKGROUND_CONTEXT);
+			expect(setup.state.value.selected).toBe(id);
+			expect(setup.state.value.view?.entries.length).toBeGreaterThan(0);
+		} finally { await setup.close(); }
+	});
+});
 
 describe("tree navigation on the session surface", () => {
 	test("uses a placed application input for conversation labels and return points", async () => {

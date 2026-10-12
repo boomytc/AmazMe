@@ -14,6 +14,11 @@ export {
 	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
+	CONVERSATION_RENAME_ACTION,
+	CONVERSATION_RENAME_MODAL,
+	CONVERSATION_ARCHIVE_ACTION,
+	CONVERSATION_ARCHIVE_MODAL,
+	CONVERSATION_RESTORE_ACTION,
 	DOCK_TAB_ACTION,
 	DOCK_TOGGLE_ACTION,
 	FEEDBACK_DOWN_ACTION,
@@ -60,6 +65,7 @@ export {
 	WELCOME_SESSION_ACTION,
 	WELCOME_SETTINGS_ACTION,
 } from "./actions.ts";
+export { renameForkModal, archiveForkModal } from "./fork-management.ts";
 export { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 export { errorCodeCopy, errorMessageCopy } from "./errors.ts";
 export { modelScopeModal, type ModelScopeLike } from "./model-scope.ts";

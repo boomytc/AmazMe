@@ -52,6 +52,12 @@ export const CONVERSATION_SELECT_ACTION = "conversation:select";
 export const CONVERSATION_FORK_ACTION = "conversation:fork";
 /** Re-read the conversation list, the task graph, and the focused view. */
 export const CONVERSATIONS_REFRESH_ACTION = "conversation:refresh";
+/** Metadata-only management of manual forks, never the main line or task-owned children. */
+export const CONVERSATION_RENAME_ACTION = "conversation:rename";
+export const CONVERSATION_RENAME_MODAL = "conversation:rename-submit";
+export const CONVERSATION_ARCHIVE_ACTION = "conversation:archive";
+export const CONVERSATION_ARCHIVE_MODAL = "conversation:archive-confirm";
+export const CONVERSATION_RESTORE_ACTION = "conversation:restore";
 /** Approve one pending tool call: `data` is the approval id. */
 export const APPROVAL_APPROVE_ACTION = "approval:approve";
 /** Deny one pending tool call: `data` is the approval id. */

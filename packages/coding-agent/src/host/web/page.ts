@@ -40,6 +40,13 @@ import {
 	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
+	CONVERSATION_RENAME_ACTION,
+	CONVERSATION_RENAME_MODAL,
+	CONVERSATION_ARCHIVE_ACTION,
+	CONVERSATION_ARCHIVE_MODAL,
+	CONVERSATION_RESTORE_ACTION,
+	renameForkModal,
+	archiveForkModal,
 	collectPageElements,
 	commandPalette,
 	compactModal,
@@ -245,7 +252,7 @@ const LEAVE_CUSTOM_MODAL = "conversation:leave-custom-submit";
 
 /** Return-point rows on the conversations dock, sharing the host's leave path with `/tree`. */
 function withReturnPoints(view: WebView, points: readonly { readonly id: string; readonly label: string }[], skipPrompt: boolean): WebView {
-	if (view.dock.panel.id !== "conversations" || points.length === 0) return view;
+	if (view.readOnly || view.dock.panel.id !== "conversations" || points.length === 0) return view;
 	const copy = (key: MessageKey): string => translate(view.locale, key);
 	const actions = (id: string): PanelRow["actions"] =>
 		skipPrompt
@@ -811,6 +818,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let diagnosticReport: DiagnosticReport | undefined;
 	let diagnosticRequest = 0;
 	let modelSelection: { readonly binding: object | undefined } | undefined;
+	let forkModalOwner: { readonly service: ConversationsService; readonly sessionId: string; readonly conversationId: string } | undefined;
 	let schedules: SchedulesService | undefined;
 	let scheduleServices: RemoteServices | undefined;
 	let removeScheduleObserver: (() => void) | undefined;
@@ -999,6 +1007,17 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			modalPending = false;
 			modalNotice = undefined;
 		}
+		if (forkModalOwner && (!client.connected || painter.conversationsService !== forkModalOwner.service
+			|| painter.sessionId !== forkModalOwner.sessionId || desiredSessionId !== forkModalOwner.sessionId
+			|| modal === undefined || ![CONVERSATION_RENAME_MODAL, CONVERSATION_ARCHIVE_MODAL].includes(modal.id)
+			|| (modal.id === CONVERSATION_RENAME_MODAL && (painter.conversations?.conversations.find(item => item.id === forkModalOwner?.conversationId)?.archivedAt !== undefined
+				|| directory.state.value?.sessions.find(item => item.sessionId === forkModalOwner?.sessionId)?.archivedAt !== undefined)))) {
+			forkModalOwner = undefined;
+			if (modal && [CONVERSATION_RENAME_MODAL, CONVERSATION_ARCHIVE_MODAL].includes(modal.id)) modal = undefined;
+			modalPending = false;
+			modalNotice = undefined;
+			panelPending = undefined;
+		}
 		if (mcpView && (!client.connected || painter.mcpService !== mcpView.service || painter.sessionId !== mcpView.sessionId || desiredSessionId !== mcpView.sessionId)) {
 			mcpView = undefined;
 			modal = undefined;
@@ -1077,6 +1096,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						workspace: bound ? painter.workspace : undefined,
 						terminal: bound ? painter.terminal : undefined,
 						conversations: bound ? painter.conversations : undefined,
+						...(panelPending === undefined ? {} : { pending: panelPending }),
 						...(bound && painter.insights ? { insights: painter.insights, reviewDiff: painter.reviewDiff } : {}),
 					},
 					// The panel inherits this view's language, so one resolution serves the whole page.
@@ -1666,6 +1686,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		providerAuthView = undefined;
 		modelScopeView = undefined;
 		mcpView = undefined;
+		forkModalOwner = undefined;
 		diagnosticRequest += 1;
 		diagnosticReport = undefined;
 		modal = undefined;
@@ -1675,6 +1696,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		modalOpener = undefined;
 		paint();
 		if (opener === undefined) return;
+		if (opener.id === CONVERSATION_RENAME_ACTION || opener.id === CONVERSATION_ARCHIVE_ACTION) {
+			const controls = [...document.querySelectorAll<HTMLButtonElement>("#dock-body .panel-more, #dock-body [data-action]")];
+			controls.find(node => node.dataset.actionData === opener.data && (node.classList.contains("panel-more") || node.dataset.action === CONVERSATION_RESTORE_ACTION))?.focus();
+			return;
+		}
 		if (opener.id === SESSION_RENAME_ACTION || opener.id === SESSION_REMOVE_ACTION) {
 			const trigger = [...document.querySelectorAll<HTMLButtonElement>(".session-more")].find((node) => node.dataset.actionData === opener.data);
 			trigger?.focus();
@@ -2160,6 +2186,31 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						);
 						return;
 					}
+					case CONVERSATION_RENAME_ACTION:
+					case CONVERSATION_ARCHIVE_ACTION: {
+						const service = painter.conversationsService;
+						const sessionId = painter.sessionId;
+						const item = painter.conversations?.conversations.find(item => item.id === action.data);
+						if (!sessionReady() || !service || !sessionId || item?.role !== "fork" || item.archivedAt !== undefined
+							|| directory.state.value?.sessions.find(item => item.sessionId === sessionId)?.archivedAt !== undefined) return;
+						forkModalOwner = { service, sessionId, conversationId: item.id };
+						openModal(action.id === CONVERSATION_RENAME_ACTION ? renameForkModal(locale, item.id, item.label) : archiveForkModal(locale, item.id), action);
+						return;
+					}
+					case CONVERSATION_RESTORE_ACTION: {
+						const service = painter.conversationsService;
+						const sessionId = painter.sessionId;
+						const item = painter.conversations?.conversations.find(item => item.id === action.data);
+						if (!sessionReady() || !service || !sessionId || item?.role !== "fork" || item.archivedAt === undefined) return;
+						const selected = painter.conversations?.selected;
+						const current = () => client.connected && painter.conversationsService === service && painter.sessionId === sessionId && desiredSessionId === sessionId;
+						runPanelCall({ id: action.id, data: item.id, sessionId, retry: false, current, call: async () => {
+							await service.setArchived(item.id, false, BACKGROUND_CONTEXT);
+							if (current() && painter.conversations?.selected === selected && selected !== item.id) await service.select(item.id, BACKGROUND_CONTEXT);
+							return { ok: true as const };
+						} });
+						return;
+					}
 					case CONVERSATION_FORK_ACTION: {
 						const id = action.data ?? targetConversation();
 						const service = painter.conversationsService;
@@ -2486,6 +2537,22 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({ id: action.id, inModal: true, sessionId: owner.sessionId, retry: false, current,
 							call: () => owner.service.configure(owner.target, { enabled: fields.enabled === "true", exposure: exposure as McpExposure }, true, BACKGROUND_CONTEXT)
 								.then(() => plugins.reload(BACKGROUND_CONTEXT)).then(done, () => ({ ok: false as const, problem: copy("panel.plugins.projectSettingsFailed") })),
+						});
+						return;
+					}
+					case CONVERSATION_RENAME_MODAL:
+					case CONVERSATION_ARCHIVE_MODAL: {
+						const owner = forkModalOwner;
+						if (!owner || modalPending || modal?.id !== action.id || modal.data !== action.data || owner.conversationId !== action.data) return;
+						const current = () => forkModalOwner === owner && client.connected && painter.conversationsService === owner.service
+							&& painter.sessionId === owner.sessionId && desiredSessionId === owner.sessionId;
+						if (!current()) return;
+						const name = (fields.name ?? "").replace(/\s+/g, " ").trim();
+						if (action.id === CONVERSATION_RENAME_MODAL && (name.length === 0 || name.length > 200)) { refuseInModal(copy("dock.forkNameRequired")); return; }
+						runPanelCall({ id: action.id, data: owner.conversationId, sessionId: owner.sessionId, inModal: true, retry: false, current,
+							call: () => (action.id === CONVERSATION_RENAME_MODAL
+								? owner.service.rename(owner.conversationId, name, BACKGROUND_CONTEXT)
+								: owner.service.setArchived(owner.conversationId, true, BACKGROUND_CONTEXT)).then(done),
 						});
 						return;
 					}

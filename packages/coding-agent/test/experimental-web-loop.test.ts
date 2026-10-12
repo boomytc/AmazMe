@@ -13,6 +13,12 @@ import type { ConversationView } from "@amazme/durable";
 import type { PageRenderer, WebView } from "@amazme/web";
 import {
 	BOOT_GLOBAL,
+	CONVERSATION_RENAME_ACTION,
+	CONVERSATION_RENAME_MODAL,
+	CONVERSATION_ARCHIVE_ACTION,
+	CONVERSATION_ARCHIVE_MODAL,
+	CONVERSATION_RESTORE_ACTION,
+	DOCK_TAB_ACTION,
 	SESSION_ARCHIVE_OPEN_ACTION,
 	SESSION_RESTORE_ACTION,
 	SETTINGS_VIEW,
@@ -1056,6 +1062,68 @@ describe("web client interactive loop", () => {
 		await attachedTwo.dispose();
 		await first.dispose();
 		await second.dispose();
+	}, 240_000);
+
+	test("the page manages a fork without stopping the main line or shared terminal and rejects a stale modal", async () => {
+		const host = await startLoopHost(true);
+		const presentation = await openPresentation(host);
+		const session = await presentation.management.create({ id: "page-fork-management" }, BACKGROUND_CONTEXT);
+		const attached = await attachSession(presentation, session.sessionId);
+		await waitFor(() => attached.conversations.state.value?.conversations.some(item => item.root) === true, "the root to publish");
+		const rootId = attached.conversations.state.value?.conversations.find(item => item.root)?.id;
+		if (!rootId) throw new Error("Missing root");
+		await attached.controller.prompt({ conversationId: rootId, message: "root stays running", images: null }, BACKGROUND_CONTEXT);
+		await waitFor(() => isBusy(attached.transcript.state.value), "the main line to run");
+		const forkId = (await attached.conversations.fork(rootId, null, BACKGROUND_CONTEXT)).conversationId;
+		if (!forkId) throw new Error("Missing fork");
+		await waitFor(() => attached.conversations.state.value?.conversations.some(item => item.id === forkId) === true, "the fork to publish");
+		const page = await openPage(host);
+		page.renderer.onPanelAction({ kind: "command", id: CONVERSATION_RENAME_ACTION, data: forkId });
+		expect(page.renderer.view?.panel.modal?.id).toBe(CONVERSATION_RENAME_MODAL);
+		const other = await presentation.management.create({ id: "page-fork-neighbor" }, BACKGROUND_CONTEXT);
+		page.renderer.onSelect(other.sessionId);
+		await waitFor(() => page.renderer.view?.attachedId === other.sessionId, "the second session to attach");
+		page.renderer.onPanelAction({ kind: "modal-submit", id: CONVERSATION_RENAME_MODAL, data: forkId, fields: { name: "stale mutation" } });
+		expect(attached.conversations.state.value?.conversations.find(item => item.id === forkId)?.label).not.toBe("stale mutation");
+		page.renderer.onSelect(session.sessionId);
+		await waitFor(() => page.renderer.view?.attachedId === session.sessionId, "the fork session to return");
+		page.renderer.onPanelAction({ kind: "command", id: DOCK_TAB_ACTION, data: "conversations" });
+		page.renderer.onPanelAction({ kind: "command", id: CONVERSATION_RENAME_ACTION, data: forkId });
+		page.renderer.onPanelAction({ kind: "modal-submit", id: CONVERSATION_RENAME_MODAL, data: forkId, fields: { name: "方案 A" } });
+		await waitFor(() => page.renderer.view?.focus === "方案 A", "the fork name to update");
+		page.renderer.onPanelAction({ kind: "command", id: CONVERSATION_RENAME_ACTION, data: forkId });
+		await attached.conversations.setArchived(forkId, true, BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.readOnly === true && page.renderer.view.panel.modal === undefined, "external archiving to dismiss rename");
+		page.renderer.onPanelAction({ kind: "modal-submit", id: CONVERSATION_RENAME_MODAL, data: forkId, fields: { name: "archived stale rename" } });
+		expect(attached.conversations.state.value?.conversations.find(item => item.id === forkId)?.label).toBe("方案 A");
+		await attached.conversations.setArchived(forkId, false, BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.readOnly !== true, "the external restoration");
+		page.renderer.onSubmit("fork work");
+		await waitFor(() => page.renderer.view?.busy === true, "the fork to run");
+		page.renderer.onSubmit("queued fork input");
+		await waitFor(() => (page.renderer.view?.queue.length ?? 0) === 1, "the fork queue");
+		const terminal = attached.terminal.run("sleep 120", BACKGROUND_CONTEXT);
+		void terminal.catch(() => {});
+		await waitFor(() => attached.terminal.state.value?.status === "running", "the shared terminal to run");
+		page.renderer.onPanelAction({ kind: "command", id: CONVERSATION_ARCHIVE_ACTION, data: forkId });
+		expect(page.renderer.view?.panel.modal?.id).toBe(CONVERSATION_ARCHIVE_MODAL);
+		page.renderer.onPanelAction({ kind: "modal-submit", id: CONVERSATION_ARCHIVE_MODAL, data: forkId, fields: {} });
+		await waitFor(() => page.renderer.view?.readOnly === true && page.renderer.view.panel.modal === undefined, "the fork archive to finish");
+		expect(page.renderer.view?.queue).toEqual([]);
+		expect(page.renderer.view?.run.fork.disabled).toBe(true);
+		expect(page.renderer.view?.dock.panel.groups.some(group => group.id === "conversations:archived")).toBe(true);
+		expect(isBusy(attached.transcript.state.value)).toBe(true);
+		expect(attached.terminal.state.value?.status).toBe("running");
+		page.renderer.onPanelAction({ kind: "command", id: CONVERSATION_RESTORE_ACTION, data: forkId });
+		await waitFor(() => page.renderer.view?.readOnly !== true && page.renderer.view?.focus === "方案 A", "the fork to restore");
+		expect(page.renderer.view?.busy).toBe(false);
+		expect(page.renderer.view?.queue).toEqual([]);
+		await attached.terminal.stop(BACKGROUND_CONTEXT);
+		await terminal;
+		await attached.conversations.abort(rootId, BACKGROUND_CONTEXT);
+		await page.dispose();
+		await attached.dispose();
+		await presentation.dispose();
 	}, 240_000);
 
 	test("accepts current and legacy archive selections without trusting malformed archive stamps", () => {

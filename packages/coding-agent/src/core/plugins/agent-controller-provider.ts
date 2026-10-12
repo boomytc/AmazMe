@@ -2,9 +2,11 @@ import type { Context } from "@amazme/chord";
 import type { ImageContent, TextContent } from "@amazme/ai";
 import { ConversationBusy } from "@amazme/durable";
 import type { Conversation, ConversationId, Harness, SubmissionId, UserInput } from "@amazme/durable";
+import { assertConversationWritable, ForkArchivedError, withConversationAdmission } from "../../durable/fork-management.ts";
 import type {
 	AgentController as AgentControllerService,
 	AgentOperationError,
+	AgentOperationResponse,
 	AgentPromptRequest,
 	AgentPromptResult,
 	AgentQueueResponse,
@@ -29,19 +31,18 @@ export function createAgentController(
 		request: AgentPromptRequest,
 		context: Context,
 	): Promise<AgentQueueResponse> => {
-		const refusal = await admission?.(context);
-		if (refusal !== undefined) return { accepted: false, entryId: null, error: refusal };
 		try {
-			const submission = await (await target(request, context)).submit(
-				{
-					type: "input",
-					content: toInput(request),
-					whenBusy,
+			return await withConversationAdmission<AgentQueueResponse>(harness, context, async () => {
+				const refusal = await admission?.(context);
+				if (refusal !== undefined) return { accepted: false, entryId: null, error: refusal };
+				const selected = await target(request, context);
+				await assertConversationWritable(harness, selected.id, context);
+				const submission = await selected.submit({
+					type: "input", content: toInput(request), whenBusy,
 					...(request.requestId === undefined ? {} : { requestId: request.requestId }),
-				},
-				context,
-			);
-			return { accepted: true, entryId: String(submission.id), error: null };
+				}, context);
+				return { accepted: true, entryId: String(submission.id), error: null };
+			});
 		} catch (error) {
 			return { accepted: false, entryId: null, error: toAgentError(error) };
 		}
@@ -49,23 +50,18 @@ export function createAgentController(
 
 	return {
 		async prompt(request, context) {
-			const refusal = await admission?.(context);
-			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
-				const submission = await (await target(request, context)).submit(
-					{
-						type: "input",
-						content: toInput(request),
-						whenBusy: request.whenBusy ?? "reject",
+				return await withConversationAdmission<AgentOperationResponse>(harness, context, async () => {
+					const refusal = await admission?.(context);
+					if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
+					const selected = await target(request, context);
+					await assertConversationWritable(harness, selected.id, context);
+					const submission = await selected.submit({
+						type: "input", content: toInput(request), whenBusy: request.whenBusy ?? "reject",
 						...(request.requestId === undefined ? {} : { requestId: request.requestId }),
-					},
-					context,
-				);
-				return {
-					accepted: true,
-					operationId: String(submission.id),
-					error: null,
-				};
+					}, context);
+					return { accepted: true, operationId: String(submission.id), error: null };
+				});
 			} catch (error) {
 				return {
 					accepted: false,
@@ -95,11 +91,15 @@ export function createAgentController(
 			};
 		},
 		async compact(request, context) {
-			const refusal = await admission?.(context);
-			if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
 			try {
-				const id = await (await conversation(context)).compact(request.customInstructions ?? undefined, context);
-				return { accepted: true, operationId: String(id), error: null };
+				return await withConversationAdmission<AgentOperationResponse>(harness, context, async () => {
+					const refusal = await admission?.(context);
+					if (refusal !== undefined) return { accepted: false, operationId: null, error: refusal };
+					const selected = await conversation(context);
+					await assertConversationWritable(harness, selected.id, context);
+					const id = await selected.compact(request.customInstructions ?? undefined, context);
+					return { accepted: true, operationId: String(id), error: null };
+				});
 			} catch (error) {
 				return {
 					accepted: false,
@@ -145,6 +145,7 @@ function toInput(request: AgentPromptRequest): UserInput {
 
 function toAgentError(error: unknown): AgentOperationError {
 	if (error instanceof ConversationBusy) return { code: "busy", message: error.message };
+	if (error instanceof ForkArchivedError) return { code: "conversation_archived", message: error.message };
 	if (error instanceof UnknownConversation) return { code: "target_missing", message: error.message };
 	return {
 		code: "operation_failed",

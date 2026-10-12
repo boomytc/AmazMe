@@ -20,6 +20,7 @@ import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest
 import type { AgentOperationError } from "../../core/plugins/agent-controller.ts";
 import { createAgentController } from "../../core/plugins/agent-controller-provider.ts";
 import { Conversations } from "./conversations.ts";
+import { assertConversationWritable, changeForkMetadata, ForkManagementDoc, ownedConversationIds, parseConversationId, stopArchivedForkWork, ForkArchivedError, withConversationAdmission, withForkMutation } from "../../durable/fork-management.ts";
 import { type ConversationsState, type HistoryPage, IDLE_LANE, type LaneStatus, type LeaveResult, type ReturnPoint, type TaskSummary } from "../../durable/conversation-view.ts";
 
 /** The gap between two publications while a focused conversation streams. */
@@ -115,7 +116,9 @@ export function createConversationsService(
 	let graph: Awaited<ReturnType<Harness["taskGraph"]>> | undefined;
 	let graphUnsubscribe: (() => void) | undefined;
 	let listTimer: NodeJS.Timeout | undefined;
-	const summariesInFlight = new Map<AbortController, Promise<void>>();
+	const summariesInFlight = new Map<AbortController, { readonly conversationId: string; readonly settled: Promise<void> }>();
+	let listRequest = 0;
+	let selectionRequest = 0;
 
 	const conversationOf = (id: string): Promise<Conversation | undefined> => options.harness.conversation(Number(id) as ConversationId, TODO_CONTEXT);
 
@@ -185,23 +188,33 @@ export function createConversationsService(
 		focus = undefined;
 	};
 
-	/** Refresh the conversation list, coalescing bursts of commits. */
+	/** Discard an older scan that finishes after a rename, archive, or newer state refresh. */
+	const publishList = async (): Promise<void> => {
+		const request = ++listRequest;
+		const conversations = await readList();
+		if (request !== listRequest) return;
+		publish(draft => {
+			draft.conversations = conversations;
+			const summary = conversations.find(item => item.id === draft.selected);
+			const view = draft.selected === rootId ? rootView?.value : (draft.view ?? undefined);
+			draft.lane = laneFrom(view, summary);
+		});
+	};
+	/** Refresh labels, archive flags, running state and input counts without streaming repaints. */
 	const scheduleListRefresh = (): void => {
 		if (listTimer !== undefined) return;
-		listTimer = setTimeout(() => {
-			listTimer = undefined;
-			void readList().then(
-				(conversations) =>
-					publish((draft) => {
-						draft.conversations = conversations;
-						const summary = conversations.find((item) => item.id === draft.selected);
-						const view = draft.selected === rootId ? rootView?.value : (draft.view ?? undefined);
-						draft.lane = laneFrom(view ?? undefined, summary);
-					}),
-				() => {},
-			);
-		}, 200);
+		listTimer = setTimeout(() => { listTimer = undefined; void publishList().catch(() => {}); }, 200);
 		listTimer.unref?.();
+	};
+	const assertWritable = async (conversationId: string, context: Context): Promise<void> => {
+		const refusal = await options.admission?.(context);
+		if (refusal) throw new Error(refusal.message);
+		await assertConversationWritable(options.harness, parseConversationId(conversationId), context);
+	};
+	const cancelSummaries = async (scope?: ReadonlySet<string>): Promise<void> => {
+		const pending = [...summariesInFlight].filter(([, entry]) => scope === undefined || scope.has(entry.conversationId));
+		for (const [signal] of pending) signal.abort();
+		await Promise.all(pending.map(([, entry]) => entry.settled));
 	};
 
 	const skipPrompt = (): boolean => options.settings?.getBranchSummarySettings().skipPrompt ?? false;
@@ -227,12 +240,13 @@ export function createConversationsService(
 	};
 
 	const select = async (conversationId: string, context: Context): Promise<void> => {
+		const request = ++selectionRequest;
 		const existing = await conversationOf(conversationId);
-		if (existing === undefined) return;
+		if (existing === undefined || request !== selectionRequest) return;
 		closeFocus();
 		// Focus-only: an existing conversation, no summary, no new conversation.
 		const focused = await focusConversation(options.harness, conversationId, context);
-		if (focused === undefined) return;
+		if (focused === undefined || request !== selectionRequest) return;
 		const known = (id: string) =>
 			state.value.conversations.find((summary) => summary.id === id) ?? {
 				role: id === rootId ? ("main" as const) : ("fork" as const),
@@ -247,6 +261,7 @@ export function createConversationsService(
 		if (conversationId === rootId) return;
 		focusContext = context;
 		const attached = await focused.viewState(context);
+		if (request !== selectionRequest) { attached.dispose(); return; }
 		focus = { id: conversationId, state: attached };
 		focus.state.subscribe(() => publishFocus());
 		publish((draft) => {
@@ -269,11 +284,11 @@ export function createConversationsService(
 	): Promise<LeaveResult> => {
 		const signal = new AbortController();
 		let settled!: () => void;
-		summariesInFlight.set(signal, new Promise<void>(resolve => { settled = resolve; }));
+		summariesInFlight.set(signal, { conversationId, settled: new Promise<void>(resolve => { settled = resolve; }) });
 		const abort = (): void => signal.abort(context.abortSignal?.reason);
 		context.abortSignal?.addEventListener("abort", abort, { once: true });
 		try {
-			if (choice.summarize) { const error = await options.admission?.(context); if (error) return { conversationId: null, summarized: false, cancelled: false, error }; }
+			await assertWritable(conversationId, context);
 			const custom = choice.customInstructions?.trim();
 			const result = await navigateTree(
 				options.harness,
@@ -285,7 +300,11 @@ export function createConversationsService(
 					...(custom === undefined || custom.length === 0 ? {} : { customInstructions: custom }),
 				},
 				context,
-				await summaryDeps(conversationId, signal.signal),
+				{ ...await summaryDeps(conversationId, signal.signal), admit: run => withConversationAdmission(options.harness, context, async () => {
+					await assertWritable(conversationId, context);
+					signal.signal.throwIfAborted();
+					return run();
+				}) },
 			);
 			if (result.cancelled) return { conversationId: null, summarized: false, cancelled: true, error: null };
 			await select(String(result.conversation.id), context);
@@ -304,7 +323,10 @@ export function createConversationsService(
 
 	const fork = async (conversationId: string, at: string | null, context: Context): Promise<Awaited<ReturnType<Conversations["fork"]>>> => {
 		try {
-			const created = await forkAt(options.harness, conversationId, at, context);
+			const created = await withConversationAdmission(options.harness, context, async () => {
+				await assertWritable(conversationId, context);
+				return forkAt(options.harness, conversationId, at, context);
+			});
 			await select(String(created.id), context);
 			return { conversationId: String(created.id), error: null };
 		} catch (error) {
@@ -314,20 +336,19 @@ export function createConversationsService(
 	};
 
 	const refresh = async (context: Context): Promise<void> => {
-		const conversations = await readList();
-		publish((draft) => {
-			draft.conversations = conversations;
-			draft.branchSummarySkipPrompt = skipPrompt();
-		});
-		if (focus !== undefined && focus.id !== rootId) {
-			const attached = await (await conversationOf(focus.id))?.viewState(context);
+		await publishList();
+		publish(draft => { draft.branchSummarySkipPrompt = skipPrompt(); });
+		const previousFocus = focus;
+		if (previousFocus !== undefined && previousFocus.id !== rootId) {
+			const attached = await (await conversationOf(previousFocus.id))?.viewState(context);
 			if (attached !== undefined) {
+				if (focus !== previousFocus) { attached.dispose(); return; }
 				publish((draft) => {
 					draft.view = attached.value;
 				});
 				// A fresh read is the point of a refresh, so the old attachment is replaced.
-				focus.state.dispose();
-				focus = { id: focus.id, state: attached };
+				previousFocus.state.dispose();
+				focus = { id: previousFocus.id, state: attached };
 				focus.state.subscribe(() => publishFocus());
 			}
 		}
@@ -338,6 +359,45 @@ export function createConversationsService(
 		if (conversation === undefined) return { entries: [] };
 		return pageOlder(conversation, before, cursor, limit, context);
 	};
+
+	const rename = async (conversationId: string, name: string, context: Context): Promise<void> => {
+		const trimmed = name.replace(/\s+/g, " ").trim();
+		if (trimmed.length === 0 || trimmed.length > 200) throw new Error("分叉名称需为 1–200 个字符。");
+		await withForkMutation(options.harness, conversationId, async () => {
+			const refusal = await options.admission?.(context);
+			if (refusal) throw new Error(refusal.message);
+			await changeForkMetadata(options.harness, conversationId, metadata => {
+				if (metadata.archivedAt !== undefined) throw new ForkArchivedError();
+				metadata.name = trimmed;
+			}, context);
+		});
+		await refresh(context);
+	};
+	const stopFork = async (conversationId: string): Promise<void> => {
+		await cancelSummaries(await ownedConversationIds(options.harness, conversationId));
+		await stopArchivedForkWork(options.harness, conversationId);
+	};
+	const setArchived = (conversationId: string, archived: boolean, context: Context): Promise<void> => withForkMutation(options.harness, conversationId, async () => {
+		if (!archived && (await options.harness.snapshot(ForkManagementDoc, context))?.forks[conversationId]?.archivedAt !== undefined) {
+			const refusal = await options.admission?.(context);
+			if (refusal) throw new Error(refusal.message);
+			// Also recover a previously failed/interrupted archive before allowing new work.
+			await stopFork(conversationId);
+		}
+		await withConversationAdmission(options.harness, context, async () => {
+			if (!archived) { const refusal = await options.admission?.(context); if (refusal) throw new Error(refusal.message); }
+			await changeForkMetadata(options.harness, conversationId, metadata => {
+				if (archived) metadata.archivedAt ??= Date.now();
+				else delete metadata.archivedAt;
+			}, context, archived);
+		});
+		// Once stamped, cancellation finishes even if a repaint fails or the page disconnects.
+		if (archived) {
+			try { await refresh(BACKGROUND_CONTEXT); }
+			finally { await stopFork(conversationId); }
+		}
+		await refresh(BACKGROUND_CONTEXT);
+	});
 
 	/** Wire the harness's commit stream and task graph into this state. */
 	const activate = async (context: Context): Promise<void> => {
@@ -367,7 +427,8 @@ export function createConversationsService(
 		commitUnsubscribe = options.harness.subscribeCommits((publication) => {
 			// A commit only schedules a re-read; no Session API is called from the listener.
 			for (const change of publication.changes) {
-				if (change.type === "conversation" || change.type === "entry") {
+				if (change.type === "conversation" || change.type === "entry"
+					|| (change.type === "document" && ["amazme.forks", "amazme.inbox", "amazme.live"].includes(change.record.kind))) {
 					scheduleListRefresh();
 					return;
 				}
@@ -390,10 +451,12 @@ export function createConversationsService(
 
 	return {
 		service: {
-			async cancelSummaries() { const pending = [...summariesInFlight]; for (const [signal] of pending) signal.abort(); await Promise.all(pending.map(([, settled]) => settled)); },
+			cancelSummaries: () => cancelSummaries(),
 			state,
 			select,
 			fork,
+			rename,
+			setArchived,
 			returnPoints,
 			leave,
 			refresh,
@@ -465,6 +528,8 @@ export function createConversationsService(
 		} satisfies Conversations,
 		activate,
 		dispose(): void {
+			listRequest += 1;
+			selectionRequest += 1;
 			commitUnsubscribe?.();
 			commitUnsubscribe = undefined;
 			graphUnsubscribe?.();

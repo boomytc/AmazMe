@@ -18,11 +18,14 @@ import {
 	type EntryRecord,
 	type Harness,
 	type LiveState,
+	LiveDoc,
+	InboxDoc,
 } from "@amazme/durable";
 import { generateBranchSummary, type GenerateBranchSummaryOptions } from "../core/compaction/branch-summarization.ts";
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX } from "../core/messages.ts";
 import type { SessionEntry } from "../core/session-manager.ts";
 import type { ConversationRole, ConversationSummary, HistoryPage, LaneStatus, ReturnPoint } from "./conversation-view.ts";
+import { archivedForkInScope, ForkManagementDoc } from "./fork-management.ts";
 
 /** How many conversations or entries one scan page holds. Callers loop until the scan is exhausted. */
 const SCAN_PAGE = 256;
@@ -90,14 +93,27 @@ export async function readSummaries(harness: Harness, rootId: string): Promise<C
 		return depthOf(parent, new Set([...seen, id])) + 1;
 	};
 
+	const metadata = await harness.snapshot(ForkManagementDoc, TODO_CONTEXT);
+	const forks = metadata?.forks ?? {};
+	const owners = new Map(records.flatMap(record => record.owner === undefined ? [] : [[String(record.id), String(record.owner.conversationId)] as const]));
 	const summaries: ConversationSummary[] = [];
 	for (const record of records) {
 		const id = String(record.id);
 		const role = roleOf(id, rootId, record);
 		const described = await describeConversation(harness, id, id === rootId);
+		const saved = role === "fork" ? forks[id] : undefined;
+		const live = await harness.snapshot(LiveDoc, record.id, TODO_CONTEXT);
+		const inbox = await harness.snapshot(InboxDoc, record.id, TODO_CONTEXT);
+		const run = live?.generation?.retry ? "retrying" : live?.generation?.deferred ? "deferred"
+			: live?.compactions?.length ? "compacting" : live?.tools?.some(tool => tool.status === "running") ? "tool"
+				: live?.run ? "working" : "idle";
 		summaries.push({
 			id,
-			label: described.label,
+			label: saved?.name ?? described.label,
+			...(saved?.archivedAt === undefined ? {} : { archivedAt: saved.archivedAt }),
+			...(archivedForkInScope(id, forks, owners) === undefined ? {} : { readOnly: true }),
+			run,
+			queued: inbox?.items.filter(item => item.mode !== "write").length ?? 0,
 			root: id === rootId,
 			role,
 			depth: depthOf(id),
@@ -264,6 +280,8 @@ export type TreeNavigation =
 /** What `generateBranchSummary` needs, plus the Pi `branchSummary` settings that gate it. */
 export interface TreeNavigationDeps {
 	readonly skipPrompt: boolean;
+	/** Fence only continuation creation; provider summarization must remain cancellable outside the lock. */
+	readonly admit?: <T>(run: () => Promise<T>) => Promise<T>;
 	readonly reserveTokens: number;
 	readonly signal: AbortSignal;
 	readonly model?: GenerateBranchSummaryOptions["model"];
@@ -340,17 +358,18 @@ export async function navigateTree(
 		return { conversation, created: false, summarized: false, cancelled: true, aborted: true };
 	}
 
+	const admit = <T>(run: () => Promise<T>): Promise<T> => deps.admit ? deps.admit(run) : run();
 	const at = Number(navigation.at) as EntryId;
 	const summarize = navigation.summarize && !deps.skipPrompt;
 	if (!summarize) {
-		const created = await conversation.fork(at, { ownership: { kind: "ownerless" } }, context);
+		const created = await admit(() => conversation.fork(at, { ownership: { kind: "ownerless" } }, context));
 		await writeFocus(harness, String(created.id), context);
 		return { conversation: created, created: true, summarized: false, cancelled: false };
 	}
 
 	const abandoned = (await visibleEntries(conversation, context)).filter((entry) => entry.id > at);
 	if (abandoned.length === 0) {
-		const created = await conversation.fork(at, { ownership: { kind: "ownerless" } }, context);
+		const created = await admit(() => conversation.fork(at, { ownership: { kind: "ownerless" } }, context));
 		await writeFocus(harness, String(created.id), context);
 		return { conversation: created, created: true, summarized: false, cancelled: false };
 	}
@@ -383,7 +402,7 @@ export async function navigateTree(
 			modifiedFiles: result.modifiedFiles ?? [],
 		} satisfies JsonValue,
 	};
-	const continued = await conversation.branchSummary(at, input, { ownership: { kind: "ownerless" } }, context);
+	const continued = await admit(() => conversation.branchSummary(at, input, { ownership: { kind: "ownerless" } }, context));
 	await writeFocus(harness, String(continued.id), context);
 	return { conversation: continued, created: true, summarized: true, cancelled: false };
 }

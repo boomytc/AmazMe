@@ -11,6 +11,9 @@ import {
 	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
+	CONVERSATION_RENAME_ACTION,
+	CONVERSATION_ARCHIVE_ACTION,
+	CONVERSATION_RESTORE_ACTION,
 	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
 	WORKSPACE_OPEN_ACTION,
@@ -19,7 +22,7 @@ import {
 	WORKSPACE_PAGE_ACTION,
 } from "./actions.ts";
 import type { Locale } from "./locale.ts";
-import type { PanelGroup, PanelRow, PanelSpec } from "./panels.ts";
+import type { PanelGroup, PanelPending, PanelRow, PanelSpec } from "./panels.ts";
 import type { MessageKey } from "./strings.ts";
 import { taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
 
@@ -106,6 +109,10 @@ export interface ConversationSummaryLike {
 	readonly children: number;
 	/** True when this conversation has an entry a fork can start from. */
 	readonly hasEntries: boolean;
+	readonly archivedAt?: number;
+	readonly readOnly?: boolean;
+	readonly run?: "idle" | "working" | "retrying" | "deferred" | "compacting" | "tool";
+	readonly queued?: number;
 }
 
 /** One live task of the session's task graph, as the host publishes it. */
@@ -138,6 +145,7 @@ export interface DockViewInput {
 	readonly insights?: InsightsStateLike;
 	readonly reviewDiff?: string;
 	readonly readOnly?: boolean;
+	readonly pending?: PanelPending;
 }
 
 export interface InsightsStateLike {
@@ -186,7 +194,7 @@ function conversationTitle(locale: Locale, conversation: ConversationSummaryLike
  * The conversations panel: every conversation of the session, the root named in the reader's language,
  * a subagent's child naming the task and conversation that made it, and the focused one marked as selected.
  */
-export function conversationsPanel(locale: Locale, state: ConversationsStateLike | undefined): PanelSpec {
+export function conversationsPanel(locale: Locale, state: ConversationsStateLike | undefined, sessionReadOnly = false): PanelSpec {
 	const title = translate(locale, "dock.conversations");
 	if (state === undefined) return { id: "conversations", title, notices: [], groups: [] };
 	const nameOf = (id: string): string => {
@@ -217,7 +225,17 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 					]
 				: []),
 			...(conversation.id === state.selected ? [translate(locale, "dock.selected")] : []),
+			...(conversation.readOnly || conversation.archivedAt !== undefined ? [translate(locale, "project.archived")] : []),
+			...(conversation.run && conversation.run !== "idle" ? [translate(locale, conversation.run === "compacting" ? "dock.summarizing" : conversation.run === "tool" ? "dock.runningTool" : `lane.${conversation.run}`)] : []),
+			...((conversation.queued ?? 0) > 0 ? [translate(locale, "dock.queuedCount", { count: String(conversation.queued) })] : []),
 		],
+		...(conversation.role !== "fork" || conversation.archivedAt !== undefined ? {} : { menu: {
+			label: translate(locale, "dock.forkActions"), data: conversation.id,
+			actions: [
+				{ id: CONVERSATION_RENAME_ACTION, label: translate(locale, "sidebar.rename"), tone: "default" as const, data: conversation.id, glyph: "square-pen" as const, disabled: sessionReadOnly },
+				{ id: CONVERSATION_ARCHIVE_ACTION, label: translate(locale, "project.archive"), tone: "danger" as const, data: conversation.id, glyph: "folder" as const, disabled: sessionReadOnly },
+			],
+		} }),
 		actions: [
 			{
 				id: CONVERSATION_SELECT_ACTION,
@@ -225,13 +243,14 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 				tone: "default",
 				data: conversation.id,
 			},
-			{
-				id: CONVERSATION_FORK_ACTION,
-				label: translate(locale, "header.fork"),
-				tone: "default",
-				data: conversation.id,
-				disabled: !conversation.hasEntries,
-			},
+			...(conversation.readOnly || conversation.archivedAt !== undefined ? [] : [{
+				id: CONVERSATION_FORK_ACTION, label: translate(locale, "header.fork"), tone: "default" as const,
+				data: conversation.id, disabled: sessionReadOnly || !conversation.hasEntries,
+			}]),
+			...(conversation.role === "fork" && conversation.archivedAt !== undefined ? [{
+				id: CONVERSATION_RESTORE_ACTION, label: translate(locale, "dock.restoreFork"), tone: "default" as const,
+				data: conversation.id, disabled: sessionReadOnly,
+			}] : []),
 		],
 	}));
 	return {
@@ -241,7 +260,7 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 		groups: [
 			{
 				id: "conversations:list",
-				title: translate(locale, "dock.conversations"),
+				title: translate(locale, state.conversations.some(item => item.readOnly || item.archivedAt !== undefined) ? "dock.activeConversations" : "dock.conversations"),
 				actions: [
 					{
 						id: CONVERSATIONS_REFRESH_ACTION,
@@ -249,9 +268,14 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 						tone: "default",
 					},
 				],
-				rows,
+				rows: rows.filter((_, index) => !state.conversations[index]?.readOnly && state.conversations[index]?.archivedAt === undefined),
 				empty: translate(locale, "dock.noConversations"),
+				footnote: translate(locale, "dock.forkSharedFiles"),
 			},
+			...(state.conversations.some(item => item.readOnly || item.archivedAt !== undefined) ? [{
+				id: "conversations:archived", title: translate(locale, "dock.archivedForks"),
+				rows: rows.filter((_, index) => state.conversations[index]?.readOnly || state.conversations[index]?.archivedAt !== undefined),
+			}] : []),
 		],
 	};
 }
@@ -559,12 +583,14 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 			: tab === "terminal"
 				? terminalPanel(locale, { cwd: input.cwd, state: input.terminal })
 				: tab === "conversations"
-					? conversationsPanel(locale, input.conversations)
+					? conversationsPanel(locale, input.conversations, input.readOnly)
 					: tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff) : tasksPanel(locale, input.conversations);
 	return {
 		open: input.open,
 		tabs: [...dockTabs(locale, tab), ...(input.insights ? [{ id: "changes" as const, label: translate(locale, "review.tab"), active: tab === "changes" }] : [])],
-		panel: input.readOnly && tab === "terminal" ? { ...panel, inputs: panel.inputs?.map(item => ({ ...item, submit: { ...item.submit, disabled: true } })) } : panel,
+		panel: { ...(input.readOnly && tab === "terminal" ? { ...panel, inputs: panel.inputs?.map(item => ({ ...item, submit: { ...item.submit, disabled: true } })) } : panel),
+			...(input.pending === undefined ? {} : { pending: input.pending }),
+		},
 		toggle: { label: translate(locale, "dock.toggle"), pressed: input.open },
 	};
 }

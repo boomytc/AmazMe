@@ -810,9 +810,26 @@ export function createRenderer(
 			for (const control of row.controls) controls.append(controlElement(control, pending, row.title));
 			node.append(controls);
 		}
-		if (row.actions !== undefined && row.actions.length > 0) {
+		if ((row.actions?.length ?? 0) > 0 || row.menu !== undefined) {
 			const actions = element("div", "panel-actions");
-			for (const action of row.actions) actions.append(panelButton(action, report, pending));
+			for (const action of row.actions ?? []) actions.append(panelButton(action, report, pending));
+			if (row.menu !== undefined) {
+				const menu = row.menu;
+				const choices = menu.actions.map(action => ({ ...action, danger: action.tone === "danger", disabled: action.disabled || isPending(pending, action) }));
+				const id = `panel:${row.id}:${JSON.stringify(choices.map(action => [action.id, action.disabled === true]))}`;
+				const more = button("panel-button panel-more");
+				more.dataset.menuId = id;
+				more.dataset.action = "panel:more";
+				more.dataset.actionData = menu.data;
+				more.title = menu.label;
+				more.setAttribute("aria-label", `${menu.label}: ${row.title.trim()}`);
+				more.setAttribute("aria-haspopup", "menu");
+				more.setAttribute("aria-expanded", String(sessionMenu?.id === id));
+				more.disabled = choices.every(action => action.disabled);
+				more.append(icon("more"));
+				more.addEventListener("click", () => openRosterMenu(id, menu.data, menu.label, choices));
+				actions.append(more);
+			}
 			node.append(actions);
 		}
 		return node;
@@ -1636,7 +1653,7 @@ export function createRenderer(
 	};
 
 	const sessionMenuTrigger = (id: string): HTMLButtonElement | undefined =>
-		[...elements.roster.querySelectorAll<HTMLButtonElement>(".session-more, .project-more")].find((node) => (node.dataset.menuId ?? node.dataset.actionData) === id);
+		[...document.querySelectorAll<HTMLButtonElement>(".session-more, .project-more, .panel-more")].find((node) => (node.dataset.menuId ?? node.dataset.actionData) === id);
 
 	const closeSessionMenu = (restoreFocus = false): void => {
 		const opened = sessionMenu;
@@ -1651,7 +1668,7 @@ export function createRenderer(
 	const positionSessionMenu = (): void => {
 		if (sessionMenu === undefined) return;
 		const trigger = sessionMenuTrigger(sessionMenu.id);
-		if (trigger === undefined) {
+		if (trigger === undefined || trigger.closest("[hidden]") !== null) {
 			closeSessionMenu();
 			return;
 		}
@@ -1663,7 +1680,7 @@ export function createRenderer(
 	};
 
 	const openRosterMenu = (id: string, data: string, label: string,
-		actions: readonly { readonly id: string; readonly label: string; readonly glyph: IconName; readonly danger?: boolean }[]): void => {
+		actions: readonly { readonly id: string; readonly label: string; readonly glyph: IconName; readonly danger?: boolean; readonly disabled?: boolean }[]): void => {
 		if (sessionMenu?.id === id) {
 			closeSessionMenu(true);
 			return;
@@ -1678,6 +1695,7 @@ export function createRenderer(
 			control.dataset.action = action.id;
 			control.dataset.actionData = data;
 			control.setAttribute("role", "menuitem");
+			control.disabled = action.disabled === true;
 			control.tabIndex = -1;
 			const label = element("span", "", action.label);
 			control.append(icon(action.glyph), label);
@@ -1710,7 +1728,7 @@ export function createRenderer(
 			}
 			if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
 			event.preventDefault();
-			const controls = [...menu.querySelectorAll<HTMLButtonElement>("button")];
+			const controls = [...menu.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
 			const index = controls.findIndex((node) => node === document.activeElement);
 			const next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + controls.length) % controls.length;
 			controls[next]?.focus();
@@ -1718,7 +1736,7 @@ export function createRenderer(
 		sessionMenu = { id, node: menu };
 		document.body.append(menu);
 		positionSessionMenu();
-		menu.querySelector<HTMLButtonElement>("button")?.focus();
+		menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 	};
 	const openSessionMenu = (item: RosterItem): void => openRosterMenu(item.id, item.id, copy("sidebar.more"), [
 		{ id: SESSION_RENAME_ACTION, label: copy("sidebar.rename"), glyph: "square-pen" },
@@ -1941,6 +1959,7 @@ export function createRenderer(
 			panelFocus.delete(elements.dockBody);
 			elements.dockTabs.replaceChildren();
 			elements.dockBody.replaceChildren();
+			positionSessionMenu();
 			return;
 		}
 		const tabsChanged = changed("dock-tab-labels", [view.locale, view.dock.tabs.map(tab => [tab.id, tab.label])]);
@@ -1977,6 +1996,7 @@ export function createRenderer(
 		replacePanel(elements.dockBody, onlyGroup?.title === panel.title
 			? { ...panel, actions: onlyGroup.actions, groups: [{ ...onlyGroup, title: "", actions: undefined }] }
 			: panel);
+		positionSessionMenu();
 	};
 
 	/** The header's run controls: one icon per action the view offers, each named on its title and in its label. */

@@ -43,6 +43,14 @@ The model receives the focused conversation's context rather than every branch. 
 
 `amazme web`, `amazme server` and `amazme client` use the shared host. Its session controls create, select and name sessions. Conversation selection, forks, tools and task state belong to the selected hosted session; clients observe the same server state.
 
+Web/desktop **Session tools → Conversations** also supports naming and archiving manual forks. Archived forks
+remain readable in that panel and can be restored; the main line and task-owned subagent conversations are not
+independently managed. Archive cancellation follows task ownership, including background children, not fork
+history ancestry. Other forks, the main line and the session's shared terminal are unaffected. Restoration does
+not replay cancelled work. Each conversation's management metadata lives in the session-scoped `amazme.forks`
+document in `session.sqlite`, so new forks do not inherit a parent's name or archive state. All forks share files;
+archiving neither rolls them back nor creates an isolated working directory. See [Run controls](run-controls.md).
+
 The host's `--session-dir` selects its server storage root. Default terminal flags do not select a hosted session. See [CLI Integration](cli-integration.md) for host commands.
 
 ## JSONL API and print/RPC

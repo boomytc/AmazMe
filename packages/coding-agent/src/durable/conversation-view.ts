@@ -53,6 +53,11 @@ export interface ConversationSummary {
 	children: number;
 	/** True when this conversation has an entry a fork can start from. */
 	hasEntries: boolean;
+	/** Manual fork archive stamp. Task-owned children inherit read-only state, not this stamp. */
+	archivedAt?: number;
+	readOnly?: boolean;
+	run?: LaneStatus["run"];
+	queued?: number;
 }
 
 /** One live task of the Session's task graph, as a list shows it. */

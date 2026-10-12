@@ -26,6 +26,10 @@ export interface Conversations {
 	 * conversation, then focus it. The fork and the focus are both in `session.sqlite`.
 	 */
 	fork(conversationId: string, at: string | null, context: Context): Promise<ForkResult>;
+	/** Metadata-only management of manual forks; root and task-owned conversations are rejected. */
+	rename(conversationId: string, name: string, context: Context): Promise<void>;
+	/** Archive joins this fork's owned work, including background children, but not history descendants. */
+	setArchived(conversationId: string, archived: boolean, context: Context): Promise<void>;
 	/** User entries before the tip of `conversationId`. Selecting one leaves that branch. */
 	returnPoints(conversationId: string, context: Context): Promise<readonly ReturnPoint[]>;
 	/**

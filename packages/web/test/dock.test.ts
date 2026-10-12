@@ -289,7 +289,7 @@ describe("the session dock", () => {
 		// The Chinese labels reach the same rows. The root title follows the badge, not the host word "main".
 		const zh = conversationsPanel("zh", CONVERSATIONS).groups[0]?.rows[0];
 		expect(zh?.title).toBe("主线");
-		expect(zh?.badges).toEqual(["主线", "1 个子会话", "当前"]);
+		expect(zh?.badges).toEqual(["主线", "1 个子对话", "当前"]);
 		expect(
 			conversationsPanel("zh", {
 				selected: "5",

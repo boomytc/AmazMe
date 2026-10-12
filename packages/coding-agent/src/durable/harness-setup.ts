@@ -34,6 +34,7 @@ import { createRunPolicy } from "./insights/run-policy.ts";
 import { createContextCleanup } from "./insights/context-cleanup.ts";
 import { createWorkspaceReview } from "./insights/workspace-review.ts";
 import { createPolicyEnv } from "./insights/execution-policy.ts";
+import { createForkArchiveGate } from "./fork-management.ts";
 
 /** A headless host uses saved project trust and the global policy; it cannot prompt for trust. */
 export function createCodingSettings(cwd: string): SettingsManager {
@@ -129,6 +130,7 @@ export function createCodingRegistry(settingsManager: SettingsManager, cwd: stri
 			},
 		}),
 	);
+	registry.install(createForkArchiveGate());
 	registry.install(createDurableCodemode(settingsManager));
 	registry.install(createRunPolicy(settingsManager));
 	registry.install(createContextCleanup(settingsManager));

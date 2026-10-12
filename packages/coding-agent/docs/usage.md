@@ -155,6 +155,20 @@ new window or changed Web port, but checks current project and archive metadata 
 between chat and settings retains the attached session, draft and chat scroll position; changing a setting leaves
 you on that settings page.
 
+### Manage conversation forks
+
+**Session tools → Conversations** shows the main line, manual forks and task-owned subagent conversations,
+including running state and queued-input counts. A manual fork's more menu offers **Rename** and confirmed
+**Archive**. Only manual forks are managed this way; the main line is managed through the session itself.
+Archived forks and their owned children stay in the panel's **Archived forks** group for read-only viewing;
+manual forks offer **Restore fork**. Restoring an archived session is required before restoring one of its forks.
+
+Fork archiving stops that fork's task-owned work, including background children, and withdraws queued input.
+It does not follow history ancestry to cancel the main line or other forks, and does not stop the shared session
+terminal. Restoring waits for cancellation and never replays cancelled work. Names and archive state survive
+restart without being inherited by newly created forks. Forks share project files: there is no automatic file
+rollback, isolated workspace, hard deletion or merge action.
+
 ### Review changes and continue a paused run
 
 **Session tools → Changes** shows file changes, read-only diffs and recognized validation-command results.
