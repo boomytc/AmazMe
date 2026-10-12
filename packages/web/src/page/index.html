@@ -161,11 +161,15 @@
 				<div class="column" id="column"><p class="empty-state">{{header.noSessionAttached}}</p></div>
 			</div>
 			<div class="composer-dock" id="composer-dock">
-				<!-- Tool calls waiting for a decision, above everything the composer sends. -->
-				<div class="approvals" id="approvals" hidden></div>
-				<div class="queue" id="queue"></div>
-				<!-- The command palette: the host's commands for the draft. -->
-				<div class="command-palette" id="command-palette" hidden></div>
+				<!-- Everything the composer says before it sends: approvals, queued inputs and the palette share
+				     one scrollable block above the card. -->
+				<div class="composer-extras" id="composer-extras">
+					<!-- Tool calls waiting for a decision, above everything the composer sends. -->
+					<div class="approvals" id="approvals" hidden></div>
+					<div class="queue" id="queue"></div>
+					<!-- The command palette: the host's commands for the draft. -->
+					<div class="command-palette" id="command-palette" hidden></div>
+				</div>
 				<form class="composer" id="composer">
 					<!-- The images attached but not sent yet; the renderer fills this. -->
 					<div class="attachments" id="attachments" hidden></div>

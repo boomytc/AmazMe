@@ -66,7 +66,7 @@
 
 	--shadow-composer: 0 0 0 1px rgba(13, 13, 13, 0.07), 0 1px 2px rgba(13, 13, 13, 0.04), 0 8px 24px rgba(13, 13, 13, 0.06);
 	--shadow-composer-focus:
-		0 0 0 1px rgba(13, 13, 13, 0.1), 0 0 0 4px var(--accent-soft), 0 8px 24px rgba(13, 13, 13, 0.08);
+		0 0 0 1px var(--accent), 0 0 0 4px var(--accent-soft), 0 8px 24px rgba(13, 13, 13, 0.08);
 	--shadow-popover: 0 0 0 1px rgba(13, 13, 13, 0.06), 0 10px 32px rgba(13, 13, 13, 0.14);
 	--shadow-card: 0 0 0 1px rgba(13, 13, 13, 0.07), 0 1px 2px rgba(13, 13, 13, 0.03);
 
@@ -116,7 +116,7 @@
 	--warn: #f5b84a;
 
 	--shadow-composer: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.28);
-	--shadow-composer-focus: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 0 4px var(--accent-soft), 0 8px 24px rgba(0, 0, 0, 0.3);
+	--shadow-composer-focus: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-soft), 0 8px 24px rgba(0, 0, 0, 0.3);
 	--shadow-popover: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 12px 36px rgba(0, 0, 0, 0.5);
 	--shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06);
 

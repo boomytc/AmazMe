@@ -1531,7 +1531,7 @@ export function createRenderer(
 		return line;
 	};
 
-	const showImage = (source: string, alt: string): void => {
+	const showImage = (source: string, alt: string): HTMLDialogElement => {
 		const dialog = document.createElement("dialog");
 		dialog.className = "tool-image-dialog";
 		dialog.setAttribute("aria-label", copy("tool.viewImage"));
@@ -1547,6 +1547,7 @@ export function createRenderer(
 		dialog.addEventListener("click", event => { if (event.target === dialog) dialog.close(); });
 		document.body.append(dialog);
 		dialog.showModal();
+		return dialog;
 	};
 
 	/** A persisted file change. Line numbers and signs come from the recorded diff, not a preview. */
@@ -1860,6 +1861,15 @@ export function createRenderer(
 		elements.palette.hidden = false;
 	};
 
+	/** The open preview, so taking the picture away or leaving the session closes it. */
+	let attachmentPreview: { readonly attachmentId: string; readonly scope: string; readonly dialog: HTMLDialogElement } | undefined;
+	const attachmentScope = (view: WebView): string => view.transcriptScope ?? view.attachedId ?? "";
+	const closeAttachmentPreview = (): void => {
+		const preview = attachmentPreview;
+		attachmentPreview = undefined;
+		preview?.dialog.close();
+	};
+
 	/** The pending images: each thumbnail carries its own remove, and none is sent until submit. */
 	const renderAttachments = (view: WebView): void => {
 		elements.attachments.replaceChildren();
@@ -1874,10 +1884,31 @@ export function createRenderer(
 	const attachmentElement = (attachment: Attachment): HTMLElement => {
 		const card = element("figure", "attachment");
 		card.dataset.attachmentId = attachment.id;
+		// The picture is the control: a button, so Enter and Space open the preview too.
+		const preview = button("attachment-preview");
+		preview.title = copy("composer.previewAttachment");
+		preview.setAttribute("aria-label", preview.title);
 		const image = document.createElement("img");
 		image.src = attachment.dataUrl;
 		image.alt = attachment.name;
-		card.append(image);
+		preview.append(image);
+		preview.addEventListener("click", () => {
+			closeAttachmentPreview();
+			if (lastView === undefined) return;
+			const dialog = showImage(attachment.dataUrl, attachment.name);
+			const scope = attachmentScope(lastView);
+			attachmentPreview = { attachmentId: attachment.id, scope, dialog };
+			dialog.addEventListener("close", () => {
+				if (attachmentPreview?.dialog !== dialog) return;
+				attachmentPreview = undefined;
+				// Another file may finish reading while the dialog is open and replace the opener.
+				if (lastView === undefined || attachmentScope(lastView) !== scope || elements.composerDock.hidden) return;
+				const card = Array.from(elements.attachments.querySelectorAll<HTMLElement>("[data-attachment-id]"))
+					.find(node => node.dataset.attachmentId === attachment.id);
+				card?.querySelector<HTMLButtonElement>(".attachment-preview")?.focus({ preventScroll: true });
+			}, { once: true });
+		});
+		card.append(preview);
 		const meta = element("figcaption", "attachment-meta");
 		meta.append(element("span", "attachment-name", attachment.name), element("span", "attachment-size", attachment.size));
 		card.append(meta);
@@ -2129,8 +2160,12 @@ export function createRenderer(
 		},
 		render(view: WebView): void {
 			const languageChanged = lastView?.locale !== view.locale;
-			if (lastView?.attachedId !== view.attachedId) drafts.clear();
+			const sessionChanged = lastView?.attachedId !== view.attachedId;
+			if (sessionChanged) drafts.clear();
 			lastView = view;
+			const preview = attachmentPreview;
+			if (preview !== undefined && (attachmentScope(view) !== preview.scope || view.panel.current !== CHAT_VIEW ||
+				!view.attachments.some(attachment => attachment.id === preview.attachmentId))) closeAttachmentPreview();
 			if (languageChanged) renderShellCopy();
 			elements.sessionWarning.hidden = view.mirrorWarning == null;
 			elements.sessionWarning.textContent = view.mirrorWarning == null ? "" : copy("page.mirrorWarning", view.mirrorWarning);
@@ -2286,7 +2321,8 @@ export function createRenderer(
 
 			if (changed("model", [view.locale, view.model])) renderModelSelectors(view);
 			if (changed("attachments", view.attachments)) renderAttachments(view);
-			if (changed("palette", [view.locale, view.palette, view.attachedId !== undefined])) renderPalette(view);
+			const paletteChanged = changed("palette", [view.locale, view.palette, view.attachedId !== undefined]);
+			if (paletteChanged) renderPalette(view);
 			if (changed("approvals", [view.locale, view.approvals])) renderApprovals(view);
 			if (changed("run", [view.locale, view.run, view.dock.toggle, view.lane, view.panel.current])) renderRunActions(view);
 			if (changed("dock", [view.locale, view.dock, view.panel.current])) renderDock(view);
@@ -2300,6 +2336,9 @@ export function createRenderer(
 			if (view.panel.current === CHAT_VIEW) {
 				(restoreChatPosition ?? restorePosition)();
 				restoreChatPosition = undefined;
+				// The palette shares the scroll area with approvals and queued inputs. Its keyboard
+				// selection must remain visible after those preceding cards have been painted.
+				if (paletteChanged && view.palette.open) elements.palette.querySelector<HTMLElement>(".palette-row.selected")?.scrollIntoView({ block: "nearest" });
 			} else if (transcriptVisible) restoreChatPosition = restorePosition;
 		},
 		setDraft(text: string, focus = true): void {

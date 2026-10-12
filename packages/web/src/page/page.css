@@ -1081,7 +1081,7 @@ p {
 }
 
 .center[data-state="empty"] .composer-dock {
-	flex: 1 1 0;
+	flex: 1 1 auto;
 	min-height: 0;
 	justify-content: flex-start;
 	padding-top: 16px;
@@ -1782,13 +1782,46 @@ p {
 
 /* ---------------------------------------------------------------- composer */
 
+/* The bottom stack sizes to its content and yields to the transcript; a short window takes the room
+   from the queued cards and the draft box, never from the controls that send or stop. */
 .composer-dock {
-	flex: none;
+	flex: 0 1 auto;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	min-height: 0;
-	padding: 0 16px 16px;
+	padding: 4px 16px 16px;
+	/* If even the controls' minimum heights cannot fit, keep them reachable by scrolling. */
+	overflow-y: auto;
+}
+
+/* Approvals, the queued inputs and the command palette share one scrollable block: a long draft plus
+   several cards cannot push the composer off the bottom of a short window. */
+.composer-extras {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	width: 100%;
+	max-width: min(var(--column-max), calc(100cqi - 32px));
+	/* Leave enough room to scroll a decision button into view, even with a long draft. */
+	min-height: 32px;
+	max-height: min(42dvh, 320px);
+	margin-bottom: 8px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+/* Nothing waits above the composer: the block takes no room at all. */
+.composer-extras:not(:has(> :not([hidden]):not(:empty))) {
+	display: none;
+}
+
+/* Inside the block the cards own the width, and the block owns the spacing. */
+.composer-extras > .approvals,
+.composer-extras > .queue,
+.composer-extras > .command-palette {
+	max-width: none;
+	margin-bottom: 0;
 }
 
 /* Everything the composer sends or answers sits in one column of the same width as the card. */
@@ -2013,12 +2046,17 @@ p {
 /* The composer card: one rounded surface with the draft, and a toolbar under it. The focus ring is
    the card's own edge, so the draft and the controls read as one object. */
 .composer {
+	/* One 28px draft line, the 32px toolbar, the gap and vertical padding. */
+	--composer-min-height: 88px;
 	position: relative;
 	display: flex;
+	flex: 0 1 auto;
 	flex-direction: column;
 	gap: 6px;
 	width: 100%;
 	max-width: min(var(--column-max), calc(100cqi - 32px));
+	min-height: var(--composer-min-height);
+	max-height: min(62dvh, 420px);
 	padding: 12px 12px 10px 18px;
 	border-radius: 26px;
 	background: var(--raised);
@@ -2034,11 +2072,21 @@ p {
 	box-shadow: 0 0 0 2px var(--accent), var(--shadow-composer);
 }
 
+.composer:has(> .attachments:not([hidden])) {
+	/* A complete thumbnail row and its gap must remain usable before the draft grows. */
+	min-height: calc(var(--composer-min-height) + 54px);
+}
+
 .attachments {
 	display: flex;
+	flex: 0 1 auto;
 	flex-wrap: wrap;
 	gap: 8px;
+	min-height: 48px;
+	max-height: min(24dvh, 120px);
 	padding: 0 0 2px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 
 .attachment {
@@ -2046,10 +2094,28 @@ p {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	max-width: 100%;
 	margin: 0;
 	padding: 4px 6px 4px 4px;
 	border-radius: var(--radius-lg);
 	background: var(--hover);
+}
+
+/* The thumbnail is its own button: clicking it, or pressing Enter or Space, opens the same dialog
+   the tool images use, so a picture can be checked before the prompt carries it. */
+.attachment-preview {
+	display: block;
+	flex: none;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-md);
+	background: transparent;
+	cursor: zoom-in;
+}
+
+.attachment-preview:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
 }
 
 .attachment img {
@@ -2107,9 +2173,12 @@ p {
 .composer-input {
 	display: block;
 	box-sizing: border-box;
+	flex: 0 1 auto;
 	width: 100%;
 	min-height: 28px;
 	max-height: 240px;
+	/* A short window gives the room back to the transcript; the draft scrolls instead. */
+	max-height: min(240px, 34dvh);
 	margin: 0;
 	padding: 4px 0 0;
 	border: 0;
@@ -2133,6 +2202,7 @@ p {
 
 .composer-row {
 	display: flex;
+	flex: none;
 	flex-wrap: wrap;
 	align-items: center;
 	justify-content: space-between;
@@ -2229,6 +2299,7 @@ p {
 	background: var(--raised);
 	color: var(--text);
 	cursor: pointer;
+	transition: transform var(--dur-fast) var(--ease);
 }
 
 .stop .icon {
@@ -2260,7 +2331,13 @@ p {
 	background: var(--ink);
 	color: var(--on-ink);
 	cursor: pointer;
-	transition: opacity var(--dur-fast) var(--ease);
+	transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+/* Both round controls answer the press the same way. */
+.stop:active:not(:disabled),
+.primary:active:not(:disabled) {
+	transform: scale(0.96);
 }
 
 .primary .icon {
@@ -3080,7 +3157,7 @@ p {
 	}
 
 	.composer-dock {
-		padding: 0 10px 10px;
+		padding: 4px 10px 10px;
 	}
 
 	.composer {
@@ -3128,6 +3205,70 @@ p {
 		transition-duration: 1ms !important;
 		animation-duration: 1ms !important;
 		animation-iteration-count: 1 !important;
+	}
+
+	/* No press movement when motion is reduced. */
+	.stop:active:not(:disabled),
+	.primary:active:not(:disabled) {
+		transform: none;
+	}
+}
+
+/* A very short window: the padding around the transcript is the last room it can give back. */
+@media (max-height: 420px) {
+	.transcript {
+		padding: 0;
+	}
+
+	.center[data-state="empty"] .composer-dock {
+		padding-top: 8px;
+	}
+}
+
+/* A narrow chat column (a phone, or both side panels open) stacks the composer's controls by the
+   column's own width: the picture and the two pickers keep the first line, the send controls the
+   second. The markup stays one row, so nothing has to move in the template. */
+@container (max-width: 600px) {
+	.composer {
+		/* The toolbar gains a second 32px row and a 6px gap. */
+		--composer-min-height: 126px;
+	}
+
+	.composer-row {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto auto;
+		align-items: center;
+		gap: 6px 8px;
+	}
+
+	.composer-leading,
+	.composer-trailing {
+		display: contents;
+	}
+
+	.composer-attach {
+		grid-area: 1 / 1;
+	}
+
+	.model-select {
+		grid-area: 1 / 2;
+		max-width: none;
+	}
+
+	.thinking-select {
+		grid-area: 1 / 3;
+	}
+
+	.submit-modes {
+		grid-area: 2 / 1 / auto / 3;
+	}
+
+	.stop {
+		grid-area: 2 / 3;
+	}
+
+	.primary {
+		grid-area: 2 / 4;
 	}
 }
 
