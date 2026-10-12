@@ -90,6 +90,12 @@
 			<div class="session-sidebar" id="session-sidebar">
 				<div class="brand">
 					<span class="brand-name">AmazMe</span>
+					<div class="brand-filter" id="roster-filter-field">
+						<button class="icon-button" type="button" id="roster-filter-toggle" aria-label="{{sidebar.filter}}" title="{{sidebar.filter}}" aria-expanded="false" aria-controls="roster-filter">
+							<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
+						</button>
+						<input class="roster-filter-input" id="roster-filter" type="search" autocomplete="off" spellcheck="false" placeholder="{{sidebar.filter}}" aria-label="{{sidebar.filter}}" hidden />
+					</div>
 					<!-- While this column is open the collapse control lives here. The renderer moves it to the main header when the column is collapsed, narrow, or replaced. -->
 					<button
 						class="icon-button"
@@ -108,10 +114,6 @@
 					<span class="new-session-label">{{sidebar.newSession}}</span>
 				</button>
 				<p class="sidebar-label">{{sidebar.sessions}}</p>
-				<label class="roster-filter">
-					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
-					<input class="roster-filter-input" id="roster-filter" type="search" autocomplete="off" spellcheck="false" placeholder="{{sidebar.filter}}" aria-label="{{sidebar.filter}}" />
-				</label>
 				<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
 			</div>
 			<div class="section-sidebar" id="section-sidebar" hidden>

@@ -106,7 +106,9 @@ export interface PageElements {
 	readonly runActions: HTMLElement;
 	/** The composer's submit-mode toggle, filled while a turn runs. */
 	readonly submitModes: HTMLElement;
-	/** The roster's filter, and the images attached but not sent yet, with the controls that add them. */
+	/** The roster's filter. It stays an icon in the brand row until opened. */
+	readonly rosterFilterField: HTMLElement;
+	readonly rosterFilterToggle: HTMLButtonElement;
 	readonly rosterFilter: HTMLInputElement;
 	readonly attachments: HTMLElement;
 	readonly attach: HTMLButtonElement;
@@ -189,6 +191,8 @@ export function collectPageElements(): PageElements {
 		dock: pick("dock"),
 		dockTabs: pick("dock-tabs"),
 		dockBody: pick("dock-body"),
+		rosterFilterField: pick("roster-filter-field"),
+		rosterFilterToggle: pickElement("roster-filter-toggle", HTMLButtonElement),
 		rosterFilter: pickElement("roster-filter", HTMLInputElement),
 		attachments: pick("attachments"),
 		attach: pickElement("attach", HTMLButtonElement),
@@ -653,6 +657,7 @@ export function createRenderer(
 		for (const [node, key] of [
 			[elements.nav, "sidebar.management"],
 			[elements.rosterFilter, "sidebar.filter"],
+			[elements.rosterFilterToggle, "sidebar.filter"],
 			[elements.sidebarToggle, "sidebar.toggle"],
 			[elements.viewBack, "header.back"],
 			[elements.attach, "composer.attach"],
@@ -664,6 +669,7 @@ export function createRenderer(
 		elements.nav.parentElement?.setAttribute("aria-label", copy("sidebar.management"));
 		for (const [node, key] of [
 			[elements.sidebarToggle, "sidebar.toggle"],
+			[elements.rosterFilterToggle, "sidebar.filter"],
 			[elements.attach, "composer.attach"],
 		] as const) node.title = copy(key);
 		elements.rosterFilter.placeholder = copy("sidebar.filter");
@@ -2259,7 +2265,11 @@ export function createRenderer(
 				}
 				positionSessionMenu();
 			}
-			if (document.activeElement !== elements.rosterFilter) elements.rosterFilter.value = view.rosterFilter;
+			if (document.activeElement !== elements.rosterFilter) {
+				elements.rosterFilter.value = view.rosterFilter;
+				if (view.rosterFilter.length === 0) setRosterFilterOpen(false);
+			}
+			if (view.rosterFilter.length > 0) setRosterFilterOpen(true);
 
 			const flow = flowElements(view.blocks, "current");
 			const hasConversation = view.blocks.length > 0 || view.history.blocks.length > 0;
@@ -2414,7 +2424,37 @@ export function createRenderer(
 		event.preventDefault();
 		elements.composer.requestSubmit();
 	});
+	/** The filter occupies the brand row only while it is open or holding a query. */
+	const setRosterFilterOpen = (open: boolean): void => {
+		elements.rosterFilterField.dataset.open = String(open);
+		elements.rosterFilter.hidden = !open;
+		elements.rosterFilterToggle.setAttribute("aria-expanded", String(open));
+	};
+	const openRosterFilter = (): void => {
+		setRosterFilterOpen(true);
+		elements.rosterFilter.focus();
+	};
+	elements.rosterFilterToggle.addEventListener("click", () => {
+		if (elements.rosterFilter.hidden) openRosterFilter();
+		else elements.rosterFilter.focus();
+	});
 	elements.rosterFilter.addEventListener("input", () => renderer.onFilterRoster(elements.rosterFilter.value));
+	elements.rosterFilter.addEventListener("keydown", (event) => {
+		if (event.key !== "Escape") return;
+		event.preventDefault();
+		event.stopPropagation();
+		if (elements.rosterFilter.value.length > 0) {
+			elements.rosterFilter.value = "";
+			renderer.onFilterRoster("");
+		}
+		setRosterFilterOpen(false);
+		elements.rosterFilterToggle.focus();
+	});
+	elements.rosterFilter.addEventListener("focusout", (event) => {
+		const next = event.relatedTarget;
+		if (next instanceof Node && elements.rosterFilterField.contains(next)) return;
+		if (elements.rosterFilter.value.length === 0) setRosterFilterOpen(false);
+	});
 	const clearSettingsQuery = (): void => {
 		settingsQuery = "";
 		settingsHighlight = -1;
