@@ -44,8 +44,8 @@ Web and desktop share the same clickable controls. The composer lists plugin com
 | `/scoped_models` | Settings → Models and connections → Model list. Typing the command is refused |
 | `/login`, `/logout` | Settings → Models and connections → Provider accounts. Typing either command is refused |
 | `/changes` | Session tools → Changes. Typing `/changes` opens that tab when change review is available; a file argument is not applied |
-| `/limits [calls seconds USD]` | Settings → Conversation. Typing `/limits` opens Settings and does not apply arguments |
-| `/execution [mode]` | Settings → Approvals → File write isolation. Typing `/execution` opens Settings and does not apply a mode |
+| `/limits [calls seconds USD]` | Typing `/limits` only switches to Settings and ignores arguments. Manually choose Conversation to edit budgets |
+| `/execution [mode]` | Typing `/execution` only switches to Settings and ignores the mode argument. Manually choose Approvals → File write isolation to change the policy |
 | `/resume_run` | Session tools → Changes → Continue with another budget. Typing `/resume_run` continues the paused turn when change review is available |
 | `/attachments` | Remove button on each draft attachment thumbnail. Typing the command is refused |
 | `/agents` | Session tools → Conversations → Open |
@@ -57,6 +57,8 @@ Web and desktop share the same clickable controls. The composer lists plugin com
 | `/plugins` | Plugins in the navigation rail → Plugin packages |
 | `/compact` | Compact context above the conversation. Typing the command is refused |
 | `/reload` | Settings → Configuration & diagnostics → Reload session resources. Typing the command is refused |
+
+`/limits` and `/execution` keep the last selected Settings category, or Interface on first use. Neither selects a category or writes settings.
 
 The sidebar session menu provides rename, delete and copy ID; New session creates and attaches a session. Session switching, fork, history and task navigation operate on the attached session's Conversations service. MCP project settings use that session's trusted project directory.
 
