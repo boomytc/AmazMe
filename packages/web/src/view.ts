@@ -382,7 +382,11 @@ export interface SubmitModeOption {
 	readonly selected: boolean;
 }
 
-/** The focused conversation's lane. The same fields the host publishes. */
+/**
+ * The focused conversation's lane. The same fields the host publishes. The chrome shows the
+ * conversation and whether it is running; model and thinking are carried for other consumers,
+ * since the composer's picker is where they are displayed and changed.
+ */
 export interface LaneLike {
 	readonly role: "main" | "fork" | "subagent";
 	readonly label: string;
@@ -1301,11 +1305,10 @@ export function historyPageBlocks(locale: Locale, entries: readonly EntryRecord[
 	return blocks;
 }
 
-/** One line of chrome: which conversation, which model, which thinking level, and whether it is running. */
+/** One line of chrome: which conversation, and whether it is running. */
 export function laneLine(locale: Locale, lane: LaneLike): string {
 	const role = translate(locale, `lane.${lane.role}`);
 	const name = lane.role === "main" ? role : `${role} · ${lane.label}`;
-	const model = lane.model.length === 0 ? translate(locale, "lane.noModel") : lane.model;
 	const run =
 		lane.run === "retrying"
 			? translate(locale, "lane.retrying")
@@ -1318,7 +1321,7 @@ export function laneLine(locale: Locale, lane: LaneLike): string {
 						: lane.run === "working"
 							? translate(locale, "lane.working")
 							: translate(locale, "lane.idle");
-	return `${name} · ${model} · ${translate(locale, "lane.thinking", { level: thinkingLevelCopy(locale, lane.thinking) })} · ${run}`;
+	return `${name} · ${run}`;
 }
 
 export function sessionStatus(locale: Locale, view: ConversationView | undefined): string {

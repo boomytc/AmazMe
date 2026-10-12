@@ -1150,7 +1150,7 @@ describe("web view model", () => {
 				run: "working",
 				detail: "",
 			}),
-		).toBe("Fork · plan · faux/faux-1 · thinking High · working");
+		).toBe("Fork · plan · working");
 		expect(
 			laneLine("zh", {
 				role: "subagent",
@@ -1160,7 +1160,7 @@ describe("web view model", () => {
 				run: "tool",
 				detail: "bash",
 			}),
-		).toBe("子对话 · child · 未选模型 · 推理关闭 · 正在运行命令");
+		).toBe("子对话 · child · 正在运行命令");
 		expect(runControls("zh", "followUp", true, true).submitModes).toEqual([
 			{ mode: "steer", label: "调整任务", selected: false },
 			{ mode: "followUp", label: "完成后继续", selected: true },

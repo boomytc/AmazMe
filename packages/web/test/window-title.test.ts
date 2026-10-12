@@ -241,7 +241,7 @@ describe("composer placeholder", () => {
 });
 
 describe("lane status", () => {
-	test("keeps the full model line on the title so a truncated header can still be read", () => {
+	test("keeps the full lane line on the title so a truncated header can still be read", () => {
 		const renderer = createRenderer(collectPageElements(), () => {}, APP);
 		renderer.render(
 			buildWebView(
@@ -260,8 +260,8 @@ describe("lane status", () => {
 		);
 		const lane = document.getElementById("lane-status");
 		expect(lane?.hidden).toBe(false);
-		expect(lane?.textContent).toBe("Main · claude-sonnet · thinking Medium · Idle");
-		expect(lane?.getAttribute("title")).toBe("Main · claude-sonnet · thinking Medium · Idle");
+		expect(lane?.textContent).toBe("Main · Idle");
+		expect(lane?.getAttribute("title")).toBe("Main · Idle");
 		const title = document.getElementById("session-title");
 		expect(title?.textContent).toBe("Weekly report");
 		expect(title?.getAttribute("title")).toBe("Weekly report");

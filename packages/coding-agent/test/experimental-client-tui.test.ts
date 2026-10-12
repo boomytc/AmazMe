@@ -343,7 +343,7 @@ describe("experimental client TUI", () => {
 				expect(select).not.toHaveBeenCalled();
 				expect(component.render(80).join("\n")).toContain(`Server: ${serverId}`);
 				expect(component.render(80).join("\n")).toContain(`Session: ${sessionId}`);
-				expect(component.render(80).join("\n")).toContain("faux/faux-1");
+				expect(component.render(80).join("\n")).toContain("Main · idle");
 				expect(component.render(80).join("\n")).not.toContain("Experimental Sessions");
 				expect(component.render(80).join("\n")).not.toContain("Experimental Models");
 

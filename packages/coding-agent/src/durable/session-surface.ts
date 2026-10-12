@@ -221,11 +221,13 @@ export function laneFrom(view: ConversationView | undefined, summary: { readonly
 	};
 }
 
-/** One English line. The web translates the same fields; the TUI prints this. */
+/**
+ * One English line: which conversation, and whether it is running. The web translates the same
+ * fields; the TUI prints this. The composer shows the model and thinking level.
+ */
 export function formatLane(lane: LaneStatus): string {
 	const role = lane.role === "main" ? "Main" : lane.role === "fork" ? "Fork" : "Subagent";
 	const name = lane.role === "main" ? role : `${role} · ${lane.label}`;
-	const model = lane.model.length === 0 ? "no model" : lane.model;
 	const run =
 		lane.run === "idle"
 			? "idle"
@@ -240,7 +242,7 @@ export function formatLane(lane: LaneStatus): string {
 							: lane.run === "working"
 								? "working"
 								: lane.run;
-	return `${name} · ${model} · thinking ${lane.thinking} · ${run}`;
+	return `${name} · ${run}`;
 }
 
 /** Where tree navigation goes. Focus stays on a conversation that already exists. Leave abandons the tail after `at`. */
