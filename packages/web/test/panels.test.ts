@@ -32,6 +32,7 @@ import {
 	SETTINGS_FIELD_ACTION,
 	SETTINGS_RELOAD_ACTION,
 	SETTINGS_VIEW,
+	searchSettings,
 	settingsPanel,
 	skillModal,
 	skillsPanel,
@@ -197,6 +198,21 @@ describe("settings panel", () => {
 		});
 		expect(unknown.groups[0]?.title).toBe("future-group");
 		expect(unknown.groups[0]?.rows[0]?.title).toBe("futureField");
+	});
+
+	test("finds a setting by its label or option, without listing every row of a matching category", () => {
+		const panel = settingsPanel("zh", { state: SETTINGS });
+		expect(searchSettings(panel.groups, "   ")).toEqual([]);
+		expect(searchSettings(panel.groups, "自动压缩")).toEqual([
+			{ groupId: "settings:conversation", rowId: "setting:compactionEnabled", label: "自动压缩", panelLabel: "对话" },
+		]);
+		expect(searchSettings(panel.groups, "一次加入全部")).toEqual([
+			{ groupId: "settings:conversation", rowId: "setting:steeringMode", label: "运行中补充消息", panelLabel: "对话" },
+		]);
+		expect(searchSettings(panel.groups, "自动 窗口").map((hit) => hit.rowId)).toEqual(["setting:compactionEnabled"]);
+		expect(searchSettings(panel.groups, "对话").map((hit) => hit.rowId ?? hit.label)).toEqual(["对话", "setting:compactionEnabled"]);
+		expect(searchSettings(panel.groups, "命令环境").map((hit) => hit.rowId ?? hit.label)).toEqual(["命令环境"]);
+		expect(searchSettings(panel.groups, "自动 不存在")).toEqual([]);
 	});
 
 	test("names the reasoning levels with the shared effort names", () => {

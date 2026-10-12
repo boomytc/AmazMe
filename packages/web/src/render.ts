@@ -27,7 +27,9 @@ import {
 	type PanelRow,
 	type PanelSpec,
 	type PanelText,
+	searchSettings,
 	SETTINGS_VIEW,
+	type SettingsSearchHit,
 } from "./panels.ts";
 import { isApplePlatform, isStopChord, matchShortcut, type ShortcutGesture, type ShortcutId } from "./shortcuts.ts";
 import { type MessageKey, translate } from "./strings.ts";
@@ -57,6 +59,10 @@ export interface PageElements {
 	readonly sectionSidebar: HTMLElement;
 	readonly sectionTitle: HTMLElement;
 	readonly sectionNav: HTMLElement;
+	/** The settings sidebar's search field. Other management pages leave it hidden. */
+	readonly sectionSearch: HTMLElement;
+	readonly sectionSearchInput: HTMLInputElement;
+	readonly sectionSearchClear: HTMLButtonElement;
 	/** The sidebar, its toggle in the header, and the scrim behind it while it is a drawer. */
 	readonly sidebar: HTMLElement;
 	readonly sidebarToggle: HTMLButtonElement;
@@ -157,6 +163,9 @@ export function collectPageElements(): PageElements {
 		sectionSidebar: pick("section-sidebar"),
 		sectionTitle: pick("section-title"),
 		sectionNav: pick("section-nav"),
+		sectionSearch: pick("section-search"),
+		sectionSearchInput: pickElement("section-search-input", HTMLInputElement),
+		sectionSearchClear: pickElement("section-search-clear", HTMLButtonElement),
 		sidebar: pick("sidebar"),
 		sidebarToggle: pickElement("sidebar-toggle", HTMLButtonElement),
 		scrim: pick("scrim"),
@@ -590,6 +599,15 @@ export function createRenderer(
 	let connectionCopy: { text: ConnectionText; kind: "state" | "error"; label?: ConnectionText } | undefined;
 	/** Presentation-only category selection; changing pages never detaches the current session. */
 	const sections = new Map<string, string>();
+	/** The settings query, the highlighted result, and the row a result asked to reveal. */
+	let settingsQuery = "";
+	let settingsHighlight = -1;
+	let settingsHighlightFollow = false;
+	let settingsHits: SettingsSearchHit[] = [];
+	let locatedRow: { groupId: string; rowId: string } | undefined;
+	let locatedScrolled = false;
+	/** The conversation sidebar's collapsed state, restored when the reader leaves settings. */
+	let restoreSidebarCollapsed = false;
 	let restoreChatPosition: (() => void) | undefined;
 	let shownSection = "";
 
@@ -633,6 +651,9 @@ export function createRenderer(
 			[elements.attach, "composer.attach"],
 		] as const) node.title = copy(key);
 		elements.rosterFilter.placeholder = copy("sidebar.filter");
+		elements.sectionSearchInput.placeholder = copy("panel.settings.search");
+		elements.sectionSearchInput.setAttribute("aria-label", copy("panel.settings.searchLabel"));
+		elements.sectionSearchClear.setAttribute("aria-label", copy("panel.settings.searchClear"));
 		const sessions = elements.sidebar.querySelector(".sidebar-label");
 		if (sessions !== null) sessions.textContent = copy("sidebar.sessions");
 		renderConnection();
@@ -1119,6 +1140,8 @@ export function createRenderer(
 
 	/** The header's toggle: a column collapses and expands, a drawer slides in and out. */
 	const toggleSidebar = (): void => {
+		// Settings keeps its category column on a wide window. A narrow window still opens the drawer.
+		if (document.body.classList.contains("settings-open") && !isNarrow()) return;
 		document.body.classList.toggle(isNarrow() ? "sidebar-open" : "sidebar-collapsed");
 		syncSidebarToggle();
 	};
@@ -1135,6 +1158,118 @@ export function createRenderer(
 		elements.sessionTitle.title = text;
 	};
 
+	/** Interface settings lead the settings list; every other panel keeps the host's order. */
+	const orderedGroups = (panel: PanelSpec): readonly PanelGroup[] =>
+		panel.id === SETTINGS_VIEW
+			? [...panel.groups.filter((group) => group.id === "settings:interface"), ...panel.groups.filter((group) => group.id !== "settings:interface")]
+			: panel.groups;
+
+	const revealLocatedRow = (groupId: string | undefined): void => {
+		if (locatedRow === undefined || locatedRow.groupId !== groupId || locatedScrolled) return;
+		const row = elements.viewBody.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(locatedRow.rowId)}"]`);
+		if (row === null) return;
+		row.classList.add("panel-row-located");
+		const viewTop = elements.view.getBoundingClientRect().top;
+		const viewBottom = elements.view.getBoundingClientRect().bottom;
+		const rowBox = row.getBoundingClientRect();
+		// Keep the matched row fully inside the pane. Centering can leave a sliver of the section title.
+		if (rowBox.top < viewTop + 8 || rowBox.bottom > viewBottom - 8) elements.view.scrollTop += rowBox.top - viewTop - 8;
+		locatedScrolled = true;
+	};
+
+	const markSectionNav = (selectedId: string | undefined): void => {
+		const searching = !elements.sectionSearch.hidden && settingsQuery.trim().length > 0;
+		const buttons = [...elements.sectionNav.querySelectorAll<HTMLButtonElement>("button")];
+		if (searching) {
+			for (const [index, row] of buttons.entries()) {
+				const active = index === settingsHighlight;
+				row.classList.toggle("active", active);
+				row.setAttribute("aria-selected", String(active));
+				row.removeAttribute("aria-current");
+			}
+			if (settingsHighlightFollow) {
+				buttons[settingsHighlight]?.scrollIntoView({ block: "nearest" });
+				settingsHighlightFollow = false;
+			}
+			return;
+		}
+		for (const row of buttons) {
+			const active = row.dataset.groupId === selectedId;
+			row.classList.toggle("active", active);
+			if (active) row.setAttribute("aria-current", "true");
+			else row.removeAttribute("aria-current");
+			row.removeAttribute("aria-selected");
+		}
+	};
+
+	const openSection = (panelId: string, groupId: string, rowId?: string): void => {
+		const current = lastView;
+		if (current?.panel.panel?.id !== panelId) return;
+		sections.set(panelId, groupId);
+		locatedRow = rowId === undefined ? undefined : { groupId, rowId };
+		locatedScrolled = false;
+		closeSidebarDrawer();
+		renderPanelView(current);
+		if (rowId === undefined) elements.view.scrollTop = 0;
+	};
+
+	/** Categories, or the settings the query names. The search field itself stays put, so typing keeps focus. */
+	const paintSectionNav = (view: WebView): void => {
+		const panel = view.panel.panel;
+		if (panel === undefined) return;
+		const groups = orderedGroups(panel);
+		const searching = panel.id === SETTINGS_VIEW && settingsQuery.trim().length > 0;
+		elements.sectionSearch.hidden = panel.id !== SETTINGS_VIEW;
+		elements.sectionSearchClear.hidden = settingsQuery.length === 0;
+		if (changed("sections", [view.locale, panel.id, settingsQuery, groups])) {
+			elements.sectionNav.replaceChildren();
+			if (searching) {
+				settingsHits = searchSettings(groups, settingsQuery);
+				if (settingsHits.length === 0) elements.sectionNav.append(element("p", "empty-state", copy("panel.settings.searchEmpty")));
+				else {
+					for (const [index, hit] of settingsHits.entries()) {
+						const stacked = hit.rowId !== undefined && hit.label !== hit.panelLabel;
+						const row = button(stacked ? "nav-row nav-row-stack" : "nav-row");
+						row.dataset.groupId = hit.groupId;
+						row.dataset.searchIndex = String(index);
+						if (hit.rowId !== undefined) row.dataset.rowId = hit.rowId;
+						row.append(element("span", "nav-label", hit.label));
+						if (stacked) row.append(element("span", "nav-detail", hit.panelLabel));
+						row.setAttribute("aria-label", stacked ? copy("panel.settings.searchResult", { destination: hit.label, panel: hit.panelLabel }) : hit.label);
+						row.addEventListener("click", () => {
+							settingsHighlight = index;
+							openSection(panel.id, hit.groupId, hit.rowId);
+						});
+						elements.sectionNav.append(row);
+					}
+				}
+			} else {
+				settingsHits = [];
+				for (const group of groups) {
+					const row = button("nav-row");
+					row.dataset.groupId = group.id;
+					row.append(element("span", "nav-label", group.title));
+					row.addEventListener("click", () => openSection(panel.id, group.id));
+					elements.sectionNav.append(row);
+				}
+			}
+		}
+		markSectionNav(sections.get(panel.id));
+	};
+
+	/** Settings does not collapse its category column. A narrow window still uses the drawer toggle. */
+	const syncSettingsChrome = (view: WebView): void => {
+		const settings = view.panel.current === SETTINGS_VIEW && view.panel.panel !== undefined;
+		const was = document.body.classList.contains("settings-open");
+		if (settings && !was) restoreSidebarCollapsed = document.body.classList.contains("sidebar-collapsed");
+		if (settings && !isNarrow()) document.body.classList.remove("sidebar-collapsed");
+		else if (!settings && was && restoreSidebarCollapsed) document.body.classList.add("sidebar-collapsed");
+		document.body.classList.toggle("settings-open", settings);
+		elements.sidebarToggle.hidden = settings && !isNarrow();
+		syncSidebarToggle();
+		if (settings && !was && !isNarrow() && !elements.sectionSearch.hidden) elements.sectionSearchInput.focus({ preventScroll: true });
+	};
+
 	/** Switch the main area between the conversation and one panel, and paint the panel. */
 	const renderPanelView = (view: WebView): void => {
 		const panel = view.panel.panel;
@@ -1148,10 +1283,14 @@ export function createRenderer(
 		elements.view.hidden = !open;
 		elements.transcript.hidden = open;
 		elements.composerDock.hidden = open;
-		elements.viewBack.hidden = !open;
+		const titledInSidebar = panel?.id === "plugins" || panel?.id === "skills" || panel?.id === SETTINGS_VIEW;
+		elements.viewBack.hidden = !open || titledInSidebar;
+		elements.sessionTitle.hidden = titledInSidebar;
 		if (panel === undefined) {
 			panelFocus.delete(elements.viewBody);
 			shownSection = "";
+			locatedRow = undefined;
+			locatedScrolled = false;
 			elements.viewBody.replaceChildren();
 			const label = view.sessionLabel ?? copy("header.noSession");
 			writeSessionTitle(
@@ -1164,35 +1303,12 @@ export function createRenderer(
 			);
 			return;
 		}
-		writeSessionTitle(panel.title);
+		if (panel.id !== "plugins" && panel.id !== "skills" && panel.id !== SETTINGS_VIEW) writeSessionTitle(panel.title);
 		elements.sectionTitle.textContent = panel.title;
-		const groups = panel.id === SETTINGS_VIEW
-			? [...panel.groups.filter(group => group.id === "settings:interface"), ...panel.groups.filter(group => group.id !== "settings:interface")]
-			: panel.groups;
-		const selected = groups.find(group => group.id === sections.get(panel.id)) ?? groups[0];
+		const groups = orderedGroups(panel);
+		const selected = groups.find((group) => group.id === sections.get(panel.id)) ?? groups[0];
 		if (selected) sections.set(panel.id, selected.id);
-		if (changed("sections", [view.locale, panel.id, groups.map(group => [group.id, group.title])])) {
-			elements.sectionNav.replaceChildren();
-			for (const group of groups) {
-				const row = button("nav-row");
-				row.dataset.groupId = group.id;
-				row.textContent = group.title;
-				row.addEventListener("click", () => {
-					if (lastView?.panel.panel?.id !== panel.id) return;
-					sections.set(panel.id, group.id);
-					closeSidebarDrawer();
-					renderPanelView(lastView);
-					elements.view.scrollTop = 0;
-				});
-				elements.sectionNav.append(row);
-			}
-		}
-		for (const row of elements.sectionNav.querySelectorAll<HTMLButtonElement>("button")) {
-			const active = row.dataset.groupId === selected?.id;
-			row.classList.toggle("active", active);
-			if (active) row.setAttribute("aria-current", "true");
-			else row.removeAttribute("aria-current");
-		}
+		paintSectionNav(view);
 		const section = `${panel.id}:${selected?.id ?? ""}`;
 		if (shownSection !== section) elements.view.scrollTop = 0;
 		shownSection = section;
@@ -1200,6 +1316,7 @@ export function createRenderer(
 			const { title, description, actions, ...content } = selected;
 			replacePanel(elements.viewBody, { ...panel, title, description: description ?? panel.description, actions, groups: [{ ...content, title: "" }] });
 		} else replacePanel(elements.viewBody, panel);
+		revealLocatedRow(selected?.id);
 	};
 
 	/** Send stays send. It is disabled when there is nothing to send. */
@@ -2136,6 +2253,7 @@ export function createRenderer(
 			if (changed("submit", [view.locale, view.busy, view.run.submitModes])) renderSubmitModes(view);
 			if (changed("nav", [view.locale, view.panel.nav, view.panel.current])) renderNav(view);
 			if (changed("panel", [view.locale, view.panel.panel, view.sessionLabel, view.focus])) renderPanelView(view);
+			syncSettingsChrome(view);
 			renderModal(view.panel.modal);
 			// The composer's dock may have grown (an approval, a queued input) and shrunk the transcript
 			// under the reader; a reader who was at the bottom stays there.
@@ -2213,6 +2331,46 @@ export function createRenderer(
 		elements.composer.requestSubmit();
 	});
 	elements.rosterFilter.addEventListener("input", () => renderer.onFilterRoster(elements.rosterFilter.value));
+	const clearSettingsQuery = (): void => {
+		settingsQuery = "";
+		settingsHighlight = -1;
+		elements.sectionSearchInput.value = "";
+		elements.sectionSearchClear.hidden = true;
+		if (lastView?.panel.current === SETTINGS_VIEW) paintSectionNav(lastView);
+	};
+	elements.sectionSearchInput.addEventListener("input", () => {
+		settingsQuery = elements.sectionSearchInput.value;
+		settingsHighlight = -1;
+		elements.sectionSearchClear.hidden = settingsQuery.length === 0;
+		if (lastView?.panel.current === SETTINGS_VIEW) paintSectionNav(lastView);
+	});
+	elements.sectionSearchClear.addEventListener("click", () => {
+		clearSettingsQuery();
+		elements.sectionSearchInput.focus();
+	});
+	elements.sectionSearchInput.addEventListener("keydown", (event) => {
+		if (event.isComposing) return;
+		if (event.key === "Escape") {
+			if (settingsQuery.length === 0) return;
+			event.preventDefault();
+			event.stopPropagation();
+			clearSettingsQuery();
+			return;
+		}
+		if (settingsHits.length === 0) return;
+		if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+			event.preventDefault();
+			const delta = event.key === "ArrowDown" ? 1 : -1;
+			settingsHighlight = settingsHighlight < 0 ? (delta > 0 ? 0 : settingsHits.length - 1) : (settingsHighlight + delta + settingsHits.length) % settingsHits.length;
+			settingsHighlightFollow = true;
+			if (lastView?.panel.panel !== undefined) markSectionNav(sections.get(lastView.panel.panel.id));
+			return;
+		}
+		if (event.key !== "Enter") return;
+		event.preventDefault();
+		const hit = settingsHits[settingsHighlight] ?? settingsHits[0];
+		if (hit !== undefined && lastView?.panel.panel !== undefined) openSection(lastView.panel.panel.id, hit.groupId, hit.rowId);
+	});
 	elements.attach.addEventListener("click", () => elements.fileInput.click());
 	elements.fileInput.addEventListener("change", () => {
 		const files = [...(elements.fileInput.files ?? [])];
@@ -2268,7 +2426,11 @@ export function createRenderer(
 	});
 	// Session menus close when their roster moves.
 	elements.roster.addEventListener("scroll", () => closeSessionMenu());
-	window.addEventListener("resize", () => { closeSessionMenu(); syncSidebarToggle(); });
+	window.addEventListener("resize", () => {
+		closeSessionMenu();
+		if (lastView !== undefined) syncSettingsChrome(lastView);
+		else syncSidebarToggle();
+	});
 	document.addEventListener("pointerdown", (event) => {
 		const target = event.target;
 		if (sessionMenu !== undefined && target instanceof Node && !sessionMenu.node.contains(target) && !sessionMenuTrigger(sessionMenu.id)?.contains(target)) closeSessionMenu();
@@ -2287,6 +2449,22 @@ export function createRenderer(
 	};
 	document.addEventListener("keydown", (event) => {
 		if (event.defaultPrevented || event.isComposing) return;
+		// Settings search takes the find chord, the same way the settings page owns that field.
+		if (
+			lastView?.panel.current === SETTINGS_VIEW &&
+			event.code === "KeyF" &&
+			(event.metaKey || event.ctrlKey) &&
+			!event.altKey &&
+			!event.shiftKey &&
+			elements.modalRoot.hidden
+		) {
+			event.preventDefault();
+			if (isNarrow()) document.body.classList.add("sidebar-open");
+			syncSidebarToggle();
+			elements.sectionSearchInput.focus();
+			elements.sectionSearchInput.select();
+			return;
+		}
 		const id = matchShortcut(gestureOf(event));
 		if (id === "run.stop") {
 			if (copying(event) || lastView?.busy !== true) return;
@@ -2314,6 +2492,13 @@ export function createRenderer(
 		if (elements.modalRoot.hidden === false) {
 			event.preventDefault();
 			report({ kind: "modal-close" });
+			return;
+		}
+		const searchResultFocused = document.activeElement instanceof HTMLElement && elements.sectionNav.contains(document.activeElement);
+		if (lastView?.panel.current === SETTINGS_VIEW && settingsQuery.length > 0 && searchResultFocused) {
+			event.preventDefault();
+			clearSettingsQuery();
+			elements.sectionSearchInput.focus();
 			return;
 		}
 		if (document.body.classList.contains("sidebar-open")) {

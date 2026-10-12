@@ -527,6 +527,11 @@ export const EN = {
 	"panel.settings.notice": "{scope} settings ({path}): {message}",
 	"panel.settings.noticePlain": "{scope} settings: {message}",
 	"panel.settings.badgeDefault": "default",
+	"panel.settings.search": "Search",
+	"panel.settings.searchLabel": "Search settings",
+	"panel.settings.searchClear": "Clear settings search",
+	"panel.settings.searchEmpty": "No results found",
+	"panel.settings.searchResult": "{destination}, {panel}",
 	"panel.settings.invalidNumber": "Enter a whole number of at least {min}.",
 	"panel.settings.invalidDecimal": "Enter a number of at least {min}.",
 
@@ -1244,6 +1249,11 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.settings.notice": "{scope}设置（{path}）：{message}",
 	"panel.settings.noticePlain": "{scope}设置：{message}",
 	"panel.settings.badgeDefault": "默认",
+	"panel.settings.search": "搜索",
+	"panel.settings.searchLabel": "搜索设置",
+	"panel.settings.searchClear": "清除设置搜索",
+	"panel.settings.searchEmpty": "没有匹配的设置",
+	"panel.settings.searchResult": "{destination}，{panel}",
 	"panel.settings.invalidNumber": "请输入不小于 {min} 的整数。",
 	"panel.settings.invalidDecimal": "请输入不小于 {min} 的数值。",
 

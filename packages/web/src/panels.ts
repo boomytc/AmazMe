@@ -595,6 +595,70 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 	};
 }
 
+/** One settings search result. A category match has no `rowId`; a setting match names the row to reveal. */
+export interface SettingsSearchHit {
+	readonly groupId: string;
+	readonly rowId?: string;
+	readonly label: string;
+	/** The category name. A setting result shows it under the setting's own name. */
+	readonly panelLabel: string;
+}
+
+function visibleText(parts: readonly (string | undefined)[]): string {
+	return parts.filter((part) => part !== undefined && part.length > 0).join("\n").toLocaleLowerCase();
+}
+
+function matchesTokens(text: string, tokens: readonly string[]): boolean {
+	return tokens.every((token) => text.includes(token));
+}
+
+function groupSearchText(group: PanelGroup): string {
+	return visibleText([
+		group.title,
+		group.description,
+		group.footnote,
+		group.empty,
+		...(group.actions ?? []).map((action) => action.label),
+	]);
+}
+
+function rowSearchText(row: PanelRow): string {
+	return visibleText([
+		row.title,
+		row.description,
+		row.value,
+		...(row.badges ?? []),
+		...(row.actions ?? []).map((action) => action.label),
+		...(row.controls ?? []).flatMap((control) => [
+			control.label,
+			control.placeholder,
+			control.kind === "number" || control.kind === "text" ? control.value : undefined,
+			...(control.options ?? []).flatMap((option) => [option.label, option.group]),
+		]),
+	]);
+}
+
+/**
+ * Settings the query names, in catalogue order. A blank query matches nothing, so the sidebar keeps
+ * its categories. A category matches on its heading and explanation; a setting matches on the text
+ * that row shows, including option names. Matching a category does not list every setting inside it.
+ */
+export function searchSettings(groups: readonly PanelGroup[], query: string): SettingsSearchHit[] {
+	const tokens = query.trim().toLocaleLowerCase().split(/\s+/).filter((token) => token.length > 0);
+	if (tokens.length === 0) return [];
+	const hits: SettingsSearchHit[] = [];
+	for (const group of groups) {
+		if (matchesTokens(groupSearchText(group), tokens)) {
+			hits.push({ groupId: group.id, label: group.title, panelLabel: group.title });
+		}
+		for (const row of group.rows) {
+			if (!matchesTokens(rowSearchText(row), tokens)) continue;
+			hits.push({ groupId: group.id, rowId: row.id, label: row.title, panelLabel: group.title });
+		}
+	}
+	return hits;
+}
+
 /** The skills panel: what the agent loads, and the editing surface for the agent directory's own. */
 export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec {
 	const { state } = input;

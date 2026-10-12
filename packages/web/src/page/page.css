@@ -1,7 +1,8 @@
 /*
  * Page shell. A persistent icon rail, a contextual sidebar, the main page, and an optional session dock.
- * Below 1024px the sidebar and the dock become drawers over the conversation. Colours, radii, and
- * type sizes come from tokens.css; nothing here names a colour literal.
+ * Below 1024px the sidebar and the dock become drawers over the conversation. On a wide window the
+ * conversation sidebar can collapse; the settings page keeps its category column. Colours, radii,
+ * and type sizes come from tokens.css; nothing here names a colour literal.
  */
 
 :root {
@@ -56,6 +57,25 @@ body.sidebar-collapsed.dock-open {
 
 @media (min-width: 1024px) {
 	body.sidebar-collapsed .sidebar {
+		display: none;
+	}
+
+	/* Settings keeps the category column and does not offer the collapse control. */
+	body.settings-open,
+	body.settings-open.sidebar-collapsed {
+		grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
+	}
+
+	body.settings-open.dock-open,
+	body.settings-open.sidebar-collapsed.dock-open {
+		grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--dock-width);
+	}
+
+	body.settings-open .sidebar {
+		display: flex;
+	}
+
+	body.settings-open #sidebar-toggle {
 		display: none;
 	}
 }
@@ -366,6 +386,28 @@ p {
 	color: var(--text);
 }
 
+.nav-row-stack {
+	flex-direction: column;
+	align-items: stretch;
+	justify-content: center;
+	min-height: 44px;
+	padding-top: 6px;
+	padding-bottom: 6px;
+}
+
+.nav-detail {
+	color: var(--text-3);
+	font-size: 12px;
+	line-height: 16px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.nav-row.active .nav-detail {
+	color: var(--text-2);
+}
+
 .nav-label {
 	min-width: 0;
 	overflow: hidden;
@@ -415,6 +457,52 @@ p {
 .roster-filter-input:focus {
 	outline: none;
 	box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.section-sidebar:has(#section-search:not([hidden])) .section-sidebar-title {
+	margin-bottom: 10px;
+}
+
+.section-search {
+	margin: 0 2px 12px;
+}
+
+.section-search-clear {
+	position: absolute;
+	right: 4px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-xs);
+	background: transparent;
+	color: var(--text-3);
+	cursor: pointer;
+}
+
+.section-search-clear .icon {
+	position: static;
+	width: 14px;
+	height: 14px;
+}
+
+.section-search-clear:hover {
+	background: var(--active);
+	color: var(--text);
+}
+
+.section-search:has(.section-search-clear:not([hidden])) .roster-filter-input {
+	padding-right: 28px;
+}
+
+.section-search .roster-filter-input::-webkit-search-cancel-button,
+.section-search .roster-filter-input::-webkit-search-decoration {
+	-webkit-appearance: none;
+	appearance: none;
+	display: none;
 }
 
 .session-list {
@@ -2330,6 +2418,20 @@ p {
 
 .panel-row + .panel-row {
 	border-top: 1px solid var(--line);
+}
+
+.panel-row-located {
+	animation: settings-locate 1.6s var(--ease);
+}
+
+@keyframes settings-locate {
+	0%,
+	35% {
+		background: var(--accent-soft);
+	}
+	100% {
+		background: transparent;
+	}
 }
 
 .panel-row-text {

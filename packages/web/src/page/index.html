@@ -102,6 +102,13 @@
 			</div>
 			<div class="section-sidebar" id="section-sidebar" hidden>
 				<h2 class="section-sidebar-title" id="section-title">{{nav.settings}}</h2>
+				<div class="roster-filter section-search" id="section-search" hidden>
+					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
+					<input class="roster-filter-input" id="section-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="{{panel.settings.search}}" aria-label="{{panel.settings.searchLabel}}" />
+					<button class="section-search-clear" type="button" id="section-search-clear" hidden aria-label="{{panel.settings.searchClear}}">
+						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg>
+					</button>
+				</div>
 				<nav class="section-nav" id="section-nav" aria-labelledby="section-title"></nav>
 			</div>
 		</aside>
