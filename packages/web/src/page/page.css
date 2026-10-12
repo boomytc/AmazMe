@@ -2433,11 +2433,16 @@ p {
 
 .dock-head {
 	flex: none;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
 	padding: 10px 12px;
 	border-bottom: 1px solid var(--line);
 }
 
 .dock-tab-row {
+	min-width: 0;
 	display: flex;
 	gap: 2px;
 	padding: 3px;
@@ -2470,6 +2475,7 @@ p {
 }
 
 .dock-tab-label { white-space: nowrap; }
+.dock-close { flex: none; }
 
 .dock-tab:hover:not(.active) {
 	color: var(--text);
@@ -3419,6 +3425,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 /* Touch controls remain usable without making desktop settings unnecessarily tall. */
 @media (pointer: coarse) {
+	.dock-close,
+	.dock-tab,
 	.panel-button,
 	.panel-input,
 	.panel-select,

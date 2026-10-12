@@ -99,7 +99,7 @@
 						</button>
 						<input class="roster-filter-input" id="roster-filter" type="search" autocomplete="off" spellcheck="false" placeholder="{{sidebar.filter}}" aria-label="{{sidebar.filter}}" hidden />
 					</div>
-					<!-- While this column is open the collapse control lives here. The renderer moves it to the main header when the column is collapsed, narrow, or replaced. -->
+					<!-- Open columns and drawers own their close control. A closed sidebar leaves its toggle in the main header. -->
 					<button
 						class="icon-button"
 						type="button"
@@ -107,6 +107,7 @@
 						aria-label="{{sidebar.toggle}}"
 						title="{{sidebar.toggle}}"
 						aria-expanded="true"
+						aria-controls="sidebar"
 					>
 						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-panel-left"></use></svg>
 					</button>

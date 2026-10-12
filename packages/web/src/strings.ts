@@ -356,6 +356,7 @@ export const EN = {
 	"lane.working": "working",
 
 	"dock.toggle": "Session tools",
+	"dock.close": "Close session tools",
 	"dock.conversations": "Conversations",
 	"dock.tasks": "Tasks",
 	"review.title": "Changes",
@@ -1126,6 +1127,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"lane.working": "处理中",
 
 	"dock.toggle": "会话工具",
+	"dock.close": "关闭会话工具",
 	"dock.conversations": "对话",
 	"dock.tasks": "任务",
 	"review.title": "本轮变更",

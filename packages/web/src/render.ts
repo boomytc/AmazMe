@@ -1185,6 +1185,8 @@ export function createRenderer(
 
 	/** Global destinations stay reachable when the contextual sidebar is collapsed. */
 	const renderNav = (view: WebView): void => {
+		const active = document.activeElement;
+		const focusedView = active instanceof HTMLElement && elements.nav.contains(active) ? active.dataset.view : undefined;
 		elements.nav.replaceChildren();
 		const home: NavItem = { id: CHAT_VIEW, label: copy("nav.chat"), glyph: "chat", active: view.panel.current === CHAT_VIEW };
 		for (const item of [home, ...view.panel.nav]) {
@@ -1200,6 +1202,7 @@ export function createRenderer(
 				report({ kind: "open", panel: item.id });
 			});
 			elements.nav.append(row);
+			if (item.id === focusedView) row.focus({ preventScroll: true });
 		}
 		elements.settingsButton.replaceChildren(icon(NAV_ICONS.settings));
 		elements.settingsButton.title = copy("nav.settings");
@@ -1216,14 +1219,14 @@ export function createRenderer(
 
 	/**
 	 * An open sidebar column holds the toggle in its own header: the session brand, or the section
-	 * title. A collapsed column and a narrow drawer leave the control in the main header.
+	 * title. A closed drawer leaves it in the main header; an open drawer owns its close control.
 	 */
 	const placeSidebarToggle = (): void => {
 		const headerStart = elements.sessionTitle.closest(".header-start");
 		const brand = elements.sessionSidebar.querySelector(":scope > .brand");
 		const sectionHead = elements.sectionSidebar.querySelector(":scope > .section-sidebar-head");
 		if (!(headerStart instanceof HTMLElement) || !(brand instanceof HTMLElement) || !(sectionHead instanceof HTMLElement)) return;
-		const inColumn = !isNarrow() && sidebarExpanded();
+		const inColumn = sidebarExpanded();
 		const host = !inColumn
 			? headerStart
 			: !elements.sessionSidebar.hidden
@@ -1235,19 +1238,37 @@ export function createRenderer(
 		else host.append(elements.sidebarToggle);
 	};
 
+	let activeDrawer: HTMLElement | undefined;
 	const syncSidebarToggle = (): void => {
 		const expanded = sidebarExpanded();
+		const drawer = !isNarrow() ? undefined : !elements.dock.hidden ? elements.dock : expanded ? elements.sidebar : undefined;
+		const previous = activeDrawer;
+		activeDrawer = drawer;
 		elements.sidebarToggle.setAttribute("aria-expanded", String(expanded));
-		// Clear inert before the control moves in, and move it out before the column becomes inert.
+		// Move the close control into an open drawer before making the covered page inert.
 		if (expanded) elements.sidebar.inert = false;
 		placeSidebarToggle();
-		elements.sidebar.inert = !expanded;
+		elements.center.inert = drawer !== undefined;
+		elements.sidebar.inert = !expanded || drawer === elements.dock;
+		elements.dock.inert = drawer === elements.sidebar;
+		if (drawer === previous || elements.modalRoot.open) return;
+		if (drawer === elements.dock) elements.dockTabs.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
+		else if (drawer === elements.sidebar) {
+			if (!elements.sectionSearch.hidden) elements.sectionSearchInput.focus({ preventScroll: true });
+			else elements.sidebarToggle.focus({ preventScroll: true });
+		} else if (previous && (previous === elements.dock ? elements.dock.hidden : !expanded) && (previous.contains(document.activeElement) || document.activeElement === document.body)) {
+			const trigger = previous === elements.dock
+				? elements.runActions.querySelector<HTMLButtonElement>(`[data-action="${DOCK_TOGGLE_ACTION}"]`)
+				: elements.sidebarToggle;
+			if (trigger && !trigger.closest("[hidden], [inert]")) trigger.focus({ preventScroll: true });
+		}
 	};
 
 	/** A column collapses and expands; a drawer slides in and out. */
 	const toggleSidebar = (): void => {
 		// Settings keeps its category column on a wide window. A narrow window still opens the drawer.
 		if (document.body.classList.contains("settings-open") && !isNarrow()) return;
+		if (isNarrow() && !sidebarExpanded() && !elements.dock.hidden) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
 		document.body.classList.toggle(isNarrow() ? "sidebar-open" : "sidebar-collapsed");
 		syncSidebarToggle();
 	};
@@ -2044,6 +2065,8 @@ export function createRenderer(
 	/** The dock: the tabs, the open tab's panel, and the class that gives it a column. */
 	const renderDock = (view: WebView): void => {
 		const open = view.dock.open && view.panel.current === CHAT_VIEW;
+		if (open && elements.dock.hidden && isNarrow()) document.body.classList.remove("sidebar-open");
+		elements.dock.setAttribute("aria-label", copy("dock.toggle"));
 		elements.dock.hidden = !open;
 		document.body.classList.toggle("dock-open", open);
 		if (!open) {
@@ -2072,14 +2095,24 @@ export function createRenderer(
 				});
 				tabs.append(node);
 			}
-			elements.dockTabs.replaceChildren(tabs);
+			const close = button("icon-button dock-close");
+			close.id = "dock-close";
+			close.title = copy("dock.close");
+			close.setAttribute("aria-label", close.title);
+			close.append(icon("x"));
+			close.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
+			elements.dockTabs.replaceChildren(tabs, close);
 		}
-		for (const node of elements.dockTabs.querySelectorAll<HTMLButtonElement>("button")) {
+		const selectionChanged = changed("dock-tab-selection", view.dock.tabs.find(tab => tab.active)?.id);
+		for (const node of elements.dockTabs.querySelectorAll<HTMLButtonElement>(".dock-tab")) {
 			const active = view.dock.tabs.some(tab => tab.active && tab.id === node.dataset.tab);
 			node.classList.toggle("active", active);
 			node.setAttribute("aria-selected", String(active));
 			node.tabIndex = active ? 0 : -1;
-			if (active) elements.dockBody.setAttribute("aria-labelledby", node.id);
+			if (active) {
+				elements.dockBody.setAttribute("aria-labelledby", node.id);
+				if (selectionChanged || tabsChanged) node.scrollIntoView({ block: "nearest", inline: "nearest" });
+			}
 		}
 		elements.dockBody.setAttribute("role", "tabpanel");
 		const panel = view.dock.panel;
@@ -2103,6 +2136,8 @@ export function createRenderer(
 		const dock = button(view.dock.toggle.pressed ? "header-action pressed" : "header-action");
 		dock.dataset.action = DOCK_TOGGLE_ACTION;
 		dock.setAttribute("aria-pressed", String(view.dock.toggle.pressed));
+		dock.setAttribute("aria-expanded", String(view.dock.toggle.pressed));
+		dock.setAttribute("aria-controls", elements.dock.id);
 		placeHeaderAction(dock, view.dock.toggle.label, "panel-right");
 		dock.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
 		elements.runActions.replaceChildren(compact, fork, dock);
@@ -2745,8 +2780,14 @@ export function createRenderer(
 			return;
 		}
 		if (document.body.classList.contains("sidebar-open")) {
+			event.preventDefault();
 			closeSidebarDrawer();
 			elements.sidebarToggle.focus();
+			return;
+		}
+		if (isNarrow() && !elements.dock.hidden) {
+			event.preventDefault();
+			report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
 			return;
 		}
 		// Escape never cancels a turn. While one is running it points at the stop control.
