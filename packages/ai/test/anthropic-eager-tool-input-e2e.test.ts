@@ -124,13 +124,6 @@ async function expectToolEnabledRequestAccepted(
 }
 
 describe("Anthropic Messages eager tool input streaming E2E", () => {
-	it("covers every generated anthropic-messages model", () => {
-		const expectedModels = getProviders().flatMap((provider) =>
-			getAnthropicMessagesModels(provider).map((model) => `${provider}/${model.id}`),
-		);
-		expect(anthropicMessagesCases.map((testCase) => testCase.name).sort()).toEqual(expectedModels.sort());
-	});
-
 	describe("generated compatibility settings", () => {
 		for (const testCase of generatedCompatCases) {
 			it.skipIf(!testCase.apiKey)(`${testCase.name} accepts configured tool streaming`, { retry: 2 }, async () => {

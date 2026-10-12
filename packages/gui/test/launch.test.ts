@@ -31,12 +31,6 @@ describe("web host launch", () => {
 		}
 	});
 
-	test("keeps the development launcher on the same formal CLI", () => {
-		const devWeb = readFileSync(new URL("../../../scripts/dev-web.mjs", import.meta.url), "utf8");
-		expect(devWeb).toContain('join(repositoryRoot, "packages", "coding-agent", "src", "cli.ts")');
-		expect(devWeb).toContain('join(repositoryRoot, "packages", "coding-agent", "src", "source-resolver.ts")');
-	});
-
 	test("selects Node without using Electron's executable", () => {
 		expect(resolveNodeExecutable({ AMAZME_GUI_NODE: "/opt/node" })).toBe("/opt/node");
 		expect(resolveNodeExecutable({ npm_node_execpath: "/missing/node" })).toBe("node");

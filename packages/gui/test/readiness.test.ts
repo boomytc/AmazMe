@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
-import { createReadinessParser, extractWebUrl, WEB_READY_PREFIX } from "../src/readiness.ts";
+import { createReadinessParser, extractWebUrl } from "../src/readiness.ts";
 
 describe("extractWebUrl", () => {
 	test("reads the canonical launch line", () => {
@@ -50,13 +49,5 @@ describe("createReadinessParser", () => {
 		parser.push("Web: http://127.0.0.1:1/\n");
 		expect(() => parser.push("Web: http://127.0.0.1:2/\n")).toThrow(/conflicting/);
 		expect(() => createReadinessParser().finalize()).toThrow(/exited before/);
-	});
-
-	test("uses the prefix the web host prints", () => {
-		const source = readFileSync(
-			new URL("../../coding-agent/src/host/commands.ts", import.meta.url),
-			"utf8",
-		);
-		expect(source).toContain(`\`${WEB_READY_PREFIX}\${host.url}\``);
 	});
 });

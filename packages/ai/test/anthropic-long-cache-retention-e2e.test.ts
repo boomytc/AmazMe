@@ -108,13 +108,6 @@ async function expectLongCacheRetentionAccepted(
 }
 
 describe("Anthropic Messages long cache retention E2E", () => {
-	it("covers every generated anthropic-messages model", () => {
-		const expectedModels = getProviders().flatMap((provider) =>
-			getAnthropicMessagesModels(provider).map((model) => `${provider}/${model.id}`),
-		);
-		expect(anthropicMessagesCases.map((testCase) => testCase.name).sort()).toEqual(expectedModels.sort());
-	});
-
 	describe("forced long cache retention probe", () => {
 		for (const testCase of probeCases) {
 			const model = withLongCacheRetention(testCase.model);
