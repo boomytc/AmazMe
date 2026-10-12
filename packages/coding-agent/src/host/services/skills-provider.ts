@@ -1,4 +1,6 @@
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import { withFileMutationQueue } from "@amazme/durable/file-operations";
 import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { type Context, type MutableReplicatedState } from "@amazme/chord";
@@ -61,6 +63,11 @@ export function createSkillsService(
 	createState: (initial: SkillsState) => MutableReplicatedState<SkillsState>,
 ) {
 	const userDirectory = join(options.agentDir, "skills");
+	const files = new NodeExecutionEnv({ cwd: options.cwd });
+	// Share the canonical-directory barrier across service instances and path aliases. Reload must
+	// see a completed mutation, and cancelling a waiter must not release its predecessor's slot.
+	const mutate = <T>(context: Context, operation: () => Promise<T>): Promise<T> =>
+		withFileMutationQueue(files, userDirectory, operation, context);
 	const service = {
 		state: createState({ revision: 0, directory: userDirectory, skills: [], diagnostics: [] }),
 	};
@@ -95,65 +102,96 @@ export function createSkillsService(
 			async write(request: { readonly name: string; readonly content: string }, context: Context): Promise<void> {
 				const name = requireName(request.name);
 				const filePath = join(userDirectory, name, "SKILL.md");
-				const { frontmatter } = parseFrontmatter<SkillFrontmatter>(request.content);
+				const content = request.content;
+				const { frontmatter } = parseFrontmatter<SkillFrontmatter>(content);
 				if (typeof frontmatter.name === "string" && frontmatter.name !== name) {
 					throw new Error(`Frontmatter name "${frontmatter.name}" does not match "${name}"`);
 				}
 				requireDescription(frontmatter, filePath);
-				await mkdir(dirname(filePath), { recursive: true });
-				await writeFile(filePath, request.content.endsWith("\n") ? request.content : `${request.content}\n`, "utf8");
-				await reload(context);
+				return mutate(context, async () => {
+					context.abortSignal?.throwIfAborted();
+					await mkdir(dirname(filePath), { recursive: true });
+					await writeFile(filePath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
+					await reload(context);
+				});
 			},
 			async remove(name: string, context: Context): Promise<void> {
 				requireName(name);
-				const skill = found(name);
-				if (!isInside(userDirectory, skill.filePath) || basename(skill.filePath) !== "SKILL.md") {
-					throw new Error(`Skill ${name} is not an agent-directory skill; remove ${skill.filePath} where it lives`);
-				}
-				await rm(dirname(skill.filePath), { recursive: true, force: true });
-				await reload(context);
+				return mutate(context, async () => {
+					context.abortSignal?.throwIfAborted();
+					const skill = found(name);
+					if (!isInside(userDirectory, skill.filePath) || basename(skill.filePath) !== "SKILL.md") {
+						throw new Error(`Skill ${name} is not an agent-directory skill; remove ${skill.filePath} where it lives`);
+					}
+					await rm(dirname(skill.filePath), { recursive: true, force: true });
+					await reload(context);
+				});
 			},
 			async importSkill(path: string, context: Context): Promise<void> {
 				const source = resolvePath(path, options.cwd, { trim: true });
-				let stats;
-				try {
-					stats = await stat(source);
-				} catch {
-					throw new Error(`Skill path does not exist: ${source}`);
-				}
-				let name: string;
-				let copy: () => Promise<void>;
-				if (stats.isDirectory()) {
-					const skillFile = join(source, "SKILL.md");
-					if (!existsSync(skillFile)) throw new Error(`${source} does not contain a SKILL.md`);
-					const { frontmatter } = parseFrontmatter<SkillFrontmatter>(await readFile(skillFile, "utf8"));
+				return mutate(context, async () => {
+					context.abortSignal?.throwIfAborted();
+					let stats;
+					try {
+						stats = await stat(source);
+					} catch {
+						throw new Error(`Skill path does not exist: ${source}`);
+					}
+					const folder = stats.isDirectory();
+					if (!folder && !(stats.isFile() && source.endsWith(".md"))) {
+						throw new Error("A skill path must be a directory containing SKILL.md, or a markdown file");
+					}
+					const skillFile = folder ? join(source, "SKILL.md") : source;
+					if (folder && !existsSync(skillFile)) throw new Error(`${source} does not contain a SKILL.md`);
+					const content = await readFile(skillFile, "utf8");
+					const { frontmatter } = parseFrontmatter<SkillFrontmatter>(content);
 					requireDescription(frontmatter, skillFile);
-					name = requireName(typeof frontmatter.name === "string" ? frontmatter.name : basename(source));
-					const target = join(userDirectory, name);
-					copy = async () => {
-						await mkdir(userDirectory, { recursive: true });
-						await cp(source, target, { recursive: true });
-					};
-				} else if (stats.isFile() && source.endsWith(".md")) {
-					const { frontmatter } = parseFrontmatter<SkillFrontmatter>(await readFile(source, "utf8"));
-					requireDescription(frontmatter, source);
-					name = requireName(typeof frontmatter.name === "string" ? frontmatter.name : basename(source, ".md"));
-					const target = join(userDirectory, name, "SKILL.md");
-					copy = async () => {
-						await mkdir(dirname(target), { recursive: true });
-						await cp(source, target);
-					};
-				} else {
-					throw new Error("A skill path must be a directory containing SKILL.md, or a markdown file");
-				}
-				if (existsSync(join(userDirectory, name))) {
-					throw new Error(`A skill named ${name} already exists in ${userDirectory}`);
-				}
-				await copy();
-				await reload(context);
+					const name = requireName(typeof frontmatter.name === "string" ? frontmatter.name : basename(source, folder ? undefined : ".md"));
+					context.abortSignal?.throwIfAborted();
+					await mkdir(userDirectory, { recursive: true });
+					const target = join(await realpath(userDirectory), name);
+					if (folder && isInside(await realpath(source), target)) throw new Error("Cannot import a skill into itself");
+					context.abortSignal?.throwIfAborted();
+					// Exclusive reservation also rejects other processes and dangling symlinks. Never merge
+					// an import into a directory another caller already owns.
+					try {
+						await mkdir(target);
+					} catch (error) {
+						if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST") {
+							throw new Error(`A skill named ${name} already exists in ${userDirectory}`);
+						}
+						throw error;
+					}
+					const owned = await lstat(target);
+					try {
+						if (folder) for (const entry of await readdir(source)) {
+							if (entry === "SKILL.md") continue;
+							await cp(join(source, entry), join(target, entry), {
+								recursive: true, force: false, errorOnExist: true,
+								filter: () => { context.abortSignal?.throwIfAborted(); return true; },
+							});
+						}
+						context.abortSignal?.throwIfAborted();
+						// Publish the validated manifest last; a partial asset copy is not an active skill.
+						await writeFile(join(target, "SKILL.md"), content, { encoding: "utf8", flag: "wx", signal: context.abortSignal });
+					} catch (error) {
+						try {
+							const current = await lstat(target).catch((failure: unknown) => {
+								if (typeof failure === "object" && failure !== null && "code" in failure && failure.code === "ENOENT") return undefined;
+								throw failure;
+							});
+							if (current?.dev === owned.dev && current.ino === owned.ino) await rm(target, { recursive: true, force: true });
+						} catch (cleanup) {
+							throw new AggregateError([error, cleanup], "Skill import and cleanup failed");
+						}
+						throw error;
+					}
+					// A failed reload does not undo an already published skill.
+					await reload(context);
+				});
 			},
 			async reload(context: Context): Promise<void> {
-				await reload(context);
+				return mutate(context, () => reload(context));
 			},
 		},
 		/** Publish the loaded set; the host calls this once the service is reachable. */

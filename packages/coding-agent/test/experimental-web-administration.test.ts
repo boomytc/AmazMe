@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -211,6 +211,49 @@ describe("skills surface", () => {
 		// The whole folder is copied, so a skill's referenced files come with it.
 		await expect(readFile(join(agentDir, "skills", "imported-skill", "notes.md"), "utf8")).resolves.toBe("extra\n");
 		await expect(runtime.service.importSkill(source, BACKGROUND_CONTEXT)).rejects.toThrow(/already exists/);
+	});
+
+	test("concurrent service owners cannot overwrite a same-name import, including directory aliases", async () => {
+		const { runtime, agentDir, cwd } = await service();
+		const aliasRoot = await makeDirectory("skills-alias-");
+		const alias = join(aliasRoot, "agent");
+		await symlink(agentDir, alias, "dir");
+		const options = { agentDir: alias, cwd, skillPaths: [], includeDefaults: true };
+		const other = createSkillsService({ agentDir: alias, cwd, resources: {
+			getSkills: () => loadSkills(options), reload: async () => {},
+		} }, replicatedState<SkillsState>);
+		const sourceA = join(cwd, "source-a.md");
+		const sourceB = join(cwd, "source-b.md");
+		const contents = [skillFile("shared-skill", "first"), skillFile("shared-skill", "second")];
+		await Promise.all([writeFile(sourceA, contents[0]!), writeFile(sourceB, contents[1]!)]);
+		const imports = await Promise.allSettled([
+			runtime.service.importSkill(sourceA, BACKGROUND_CONTEXT),
+			other.service.importSkill(sourceB, BACKGROUND_CONTEXT),
+		]);
+		expect(imports.filter(result => result.status === "fulfilled")).toHaveLength(1);
+		const rejected = imports.find(result => result.status === "rejected");
+		expect(rejected?.status === "rejected" ? String(rejected.reason) : "").toContain("already exists");
+		const winner = imports.findIndex(result => result.status === "fulfilled");
+		await expect(readFile(join(agentDir, "skills", "shared-skill", "SKILL.md"), "utf8")).resolves.toBe(contents[winner]);
+		await runtime.service.reload(BACKGROUND_CONTEXT);
+		expect(runtime.service.state.value.skills).toHaveLength(1);
+	});
+
+	test("rejects dangling destination links and recursive imports without modifying existing files", async () => {
+		const { runtime, agentDir, cwd } = await service();
+		const userDirectory = join(agentDir, "skills");
+		await mkdir(userDirectory);
+		const source = join(cwd, "source.md");
+		await writeFile(source, skillFile("linked-skill"));
+		const link = join(userDirectory, "linked-skill");
+		await symlink(join(cwd, "missing"), link, "dir");
+		await expect(runtime.service.importSkill(source, BACKGROUND_CONTEXT)).rejects.toThrow(/already exists/);
+		expect((await lstat(link)).isSymbolicLink()).toBe(true);
+		const manifest = skillFile("recursive-import");
+		await writeFile(join(userDirectory, "SKILL.md"), manifest);
+		await expect(runtime.service.importSkill(userDirectory, BACKGROUND_CONTEXT)).rejects.toThrow();
+		await expect(stat(join(userDirectory, "recursive-import"))).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(readFile(join(userDirectory, "SKILL.md"), "utf8")).resolves.toBe(manifest);
 	});
 
 	test("lists a project skill as read-only and refuses to remove it", async () => {
