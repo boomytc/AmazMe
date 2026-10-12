@@ -82,7 +82,7 @@ export function createDirectoryField(field: PanelField, locale: Locale, options:
 		}
 	};
 	go.addEventListener("click", () => { void browse(path.value); });
-	path.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); void browse(path.value); } });
+	path.addEventListener("keydown", event => { if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); event.stopPropagation(); void browse(path.value); } });
 	up.addEventListener("click", () => { if (listing?.parent) void browse(listing.parent); });
 	choose.addEventListener("click", () => { if (listing) { append([listing.path]); browser.hidden = true; add.focus(); } });
 	add.addEventListener("click", () => {

@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { renameSessionModal } from "../src/panels.ts";
+import { addProjectModal } from "../src/projects.ts";
+import type { DirectoryListing } from "../src/directories.ts";
 import type { PanelModal } from "../src/panels.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView } from "../src/view.ts";
@@ -86,7 +88,9 @@ describe("native management modal", () => {
 		const field = input();
 		field.value = "Unsubmitted";
 		paint({ ...modal, pending: true });
-		for (const node of elements.modalRoot.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) expect(node.disabled).toBe(true);
+		// happy-dom does not implement inherited :disabled; assert the native fieldset boundary here.
+		expect(elements.modalRoot.querySelector<HTMLFieldSetElement>(".modal-body")?.disabled).toBe(true);
+		for (const node of elements.modalRoot.querySelectorAll<HTMLButtonElement>(".modal-head button, .modal-foot button")) expect(node.disabled).toBe(true);
 		escape();
 		elements.modalRoot.dispatchEvent(new Event("cancel", { cancelable: true }));
 		backdrop(elements.modalRoot);
@@ -129,6 +133,41 @@ describe("native management modal", () => {
 		expect(document.activeElement).toBe(field);
 		expect(field?.getAttribute("aria-describedby")).toBe("modal-help-mode");
 		expect(input().closest(".modal-field")?.hasAttribute("hidden")).toBe(true);
+	});
+
+	test("late directory results cannot unlock a pending form or corrupt its settled control state", async () => {
+		const { renderer, paint } = setup();
+		const modal = addProjectModal("en");
+		let finish: ((listing: DirectoryListing) => void) | undefined;
+		const browse = vi.fn(() => new Promise<DirectoryListing>(resolve => { finish = resolve; }));
+		renderer.onBrowseDirectories = browse;
+		renderer.onPickDirectories = () => Promise.resolve(undefined);
+		paint(modal);
+		button(".directory-add").click();
+		await vi.waitFor(() => expect(browse).toHaveBeenCalledOnce());
+		paint({ ...modal, pending: true });
+		finish!({ path: "/work", parent: null, entries: [{ name: "src", path: "/work/src" }] });
+		await vi.waitFor(() => expect(document.querySelector(".directory-entry")).not.toBeNull());
+		expect(button(".directory-entry").closest<HTMLFieldSetElement>("fieldset")?.disabled).toBe(true);
+		expect(button(".directory-choose").closest<HTMLFieldSetElement>("fieldset")?.disabled).toBe(true);
+		paint(modal);
+		expect(button(".directory-entry").closest<HTMLFieldSetElement>("fieldset")?.disabled).toBe(false);
+		expect(button(".directory-choose").disabled).toBe(false);
+	});
+
+	test("directory navigation waits for committed Enter rather than IME confirmation", async () => {
+		const { renderer, paint } = setup();
+		const browse = vi.fn(() => Promise.resolve({ path: "/work", parent: null, entries: [] }));
+		renderer.onBrowseDirectories = browse;
+		renderer.onPickDirectories = () => Promise.resolve(undefined);
+		paint(addProjectModal("en"));
+		button(".directory-add").click();
+		await vi.waitFor(() => expect(browse).toHaveBeenCalledOnce());
+		const path = document.querySelector<HTMLInputElement>(".directory-path")!;
+		for (const composition of [{ isComposing: true }, { keyCode: 229 }]) path.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...composition }));
+		expect(browse).toHaveBeenCalledOnce();
+		path.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+		expect(browse).toHaveBeenCalledTimes(2);
 	});
 
 	test("does not send IME Enter or global shortcuts through the modal", () => {

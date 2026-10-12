@@ -1007,7 +1007,9 @@ export function createRenderer(
 	 * reader typed, so the submit and the message line are updated in place instead.
 	 */
 	const applyModalState = (modal: PanelModal): void => {
-		for (const control of elements.modalRoot.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>("input, textarea, select, button")) {
+		// A fieldset also disables controls added by a directory response that arrives during submit.
+		elements.modalRoot.querySelector<HTMLFieldSetElement>(".modal-body")!.disabled = modal.pending === true;
+		for (const control of elements.modalRoot.querySelectorAll<HTMLButtonElement>(".modal-head button, .modal-foot button")) {
 			if (modal.pending === true) {
 				control.dataset.pendingDisabled ??= String(control.disabled);
 				control.disabled = true;
@@ -1080,7 +1082,7 @@ export function createRenderer(
 		close.append(icon("x"));
 		close.addEventListener("click", requestModalClose);
 		head.append(titles, close);
-		const body = element("div", "modal-body");
+		const body = element("fieldset", "modal-body");
 		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>();
 		const fieldContainers = new Map<string, HTMLElement>();
 		const fieldFocuses: HTMLElement[] = [];
@@ -1240,8 +1242,11 @@ export function createRenderer(
 
 	let activeDrawer: HTMLElement | undefined;
 	const syncSidebarToggle = (): void => {
+		const narrow = isNarrow();
+		// Drawer flags do not apply to wide columns or coexist with the visible dock.
+		if (!narrow || !elements.dock.hidden) document.body.classList.remove("sidebar-open");
 		const expanded = sidebarExpanded();
-		const drawer = !isNarrow() ? undefined : !elements.dock.hidden ? elements.dock : expanded ? elements.sidebar : undefined;
+		const drawer = !narrow ? undefined : !elements.dock.hidden ? elements.dock : expanded ? elements.sidebar : undefined;
 		const previous = activeDrawer;
 		activeDrawer = drawer;
 		elements.sidebarToggle.setAttribute("aria-expanded", String(expanded));
@@ -1561,9 +1566,9 @@ export function createRenderer(
 	};
 
 	/** One creation control for welcome and detached states; it follows the host's availability. */
-	const createSessionButton = (view: WebView, tone: PanelButton["tone"] = "primary"): HTMLButtonElement => {
+	const createSessionButton = (view: WebView, action: PanelButton): HTMLButtonElement => {
 		const pending = view.newSession.pending === true;
-		const control = panelButton({ id: WELCOME_SESSION_ACTION, label: copy(pending ? "sidebar.creating" : "sidebar.newSession"), tone, disabled: !view.newSession.enabled || pending }, report);
+		const control = panelButton({ ...action, label: pending ? copy("sidebar.creating") : action.label, disabled: action.disabled === true || !view.newSession.enabled || pending }, report);
 		control.setAttribute("aria-busy", String(pending));
 		if (pending) control.prepend(icon("spinner", "icon spin"));
 		return control;
@@ -1576,7 +1581,7 @@ export function createRenderer(
 		mark.append(pixelLogo());
 		card.append(mark, element("h2", "welcome-title", welcome.title), element("p", "welcome-body", welcome.body));
 		const steps = element("div", "welcome-steps");
-		for (const step of welcome.steps) steps.append(step.id === WELCOME_SESSION_ACTION ? createSessionButton(view, step.tone) : panelButton(step, report));
+		for (const step of welcome.steps) steps.append(step.id === WELCOME_SESSION_ACTION ? createSessionButton(view, step) : panelButton(step, report));
 		card.append(steps, element("p", "welcome-note", welcome.note));
 		const dismiss = panelButton(welcome.dismiss, report);
 		dismiss.className = "welcome-dismiss";
@@ -1628,7 +1633,7 @@ export function createRenderer(
 				});
 				actions.append(pick);
 			}
-			actions.append(createSessionButton(view, hasSessions ? "default" : "primary"));
+			actions.append(createSessionButton(view, { id: WELCOME_SESSION_ACTION, label: copy("sidebar.newSession"), tone: hasSessions ? "default" : "primary" }));
 		}
 		block.append(actions);
 		return block;
@@ -2065,7 +2070,6 @@ export function createRenderer(
 	/** The dock: the tabs, the open tab's panel, and the class that gives it a column. */
 	const renderDock = (view: WebView): void => {
 		const open = view.dock.open && view.panel.current === CHAT_VIEW;
-		if (open && elements.dock.hidden && isNarrow()) document.body.classList.remove("sidebar-open");
 		elements.dock.setAttribute("aria-label", copy("dock.toggle"));
 		elements.dock.hidden = !open;
 		document.body.classList.toggle("dock-open", open);

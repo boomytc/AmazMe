@@ -103,6 +103,9 @@ test("welcome offers no unattached file tools and follows host availability", ()
 	const view = buildWebView({ ...input(""), showWelcome: true, directory: { sessions: [] } });
 	renderer.render(view);
 	expect(document.querySelectorAll(".welcome-steps button")).toHaveLength(2);
+	const english = buildWebView({ ...input(""), locale: "en", showWelcome: true, directory: { sessions: [] } });
+	renderer.render(english);
+	expect(document.querySelector<HTMLButtonElement>(`.welcome-steps [data-action="${WELCOME_SESSION_ACTION}"]`)?.textContent).toBe(english.welcome?.steps[0]?.label);
 	expect(document.querySelector('.welcome-steps [data-action="welcome:files"]')).toBeNull();
 	renderer.render({ ...view, newSession: { enabled: false } });
 	expect(document.querySelector<HTMLButtonElement>(`.welcome-steps [data-action="${WELCOME_SESSION_ACTION}"]`)?.disabled).toBe(true);

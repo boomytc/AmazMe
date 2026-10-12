@@ -105,6 +105,23 @@ test("wide columns do not lock the conversation or move focus when resized", () 
 	expect(elements.dock.hidden).toBe(false);
 });
 
+test("resizing from a sidebar drawer through wide columns cannot leave overlapping drawers", () => {
+	const { elements, paint } = setup();
+	elements.sidebarToggle.click();
+	expect(document.body.classList.contains("sidebar-open")).toBe(true);
+	narrow = false;
+	window.dispatchEvent(new Event("resize"));
+	expect(document.body.classList.contains("sidebar-open")).toBe(false);
+	paint(true);
+	narrow = true;
+	window.dispatchEvent(new Event("resize"));
+	expect(document.body.classList.contains("sidebar-open")).toBe(false);
+	expect(elements.sidebar.inert).toBe(true);
+	escape();
+	expect(elements.dock.hidden).toBe(true);
+	expect(elements.center.inert).toBe(false);
+});
+
 test("persistent rail navigation keeps keyboard focus while a destination repaints", () => {
 	const { elements, renderer, paint } = setup();
 	paint(true);

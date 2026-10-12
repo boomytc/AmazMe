@@ -2475,7 +2475,6 @@ p {
 }
 
 .dock-tab-label { white-space: nowrap; }
-.dock-close { flex: none; }
 
 .dock-tab:hover:not(.active) {
 	color: var(--text);
@@ -2877,7 +2876,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	flex: 0 1 auto;
+	flex: none;
 	gap: 8px;
 	min-width: 0;
 	max-width: 100%;
@@ -2905,8 +2904,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 		flex-basis: 100%;
 	}
 
-	.panel-controls { width: 100%; }
-	.panel-select { max-width: 100%; }
 	.panel-input { max-width: 100%; }
 }
 
@@ -3200,6 +3197,9 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .modal-body {
+	margin: 0;
+	border: 0;
+	min-width: 0;
 	flex: 1 1 auto;
 	display: flex;
 	flex-direction: column;
@@ -3531,7 +3531,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .project-select { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 11px 10px; color: inherit; border: 0; border-radius: 12px; background: transparent; cursor: pointer; text-align: left; }
 .project-select .icon { width: 16px; height: 16px; flex-shrink: 0; }
 .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-count { color: var(--text-3); font-size: 11px; margin-left: auto; }
 .project-heading:hover, .project-heading:has(.project-select.selected), .project-action:hover, .project-add:hover { background: var(--hover); }
 .project-action { opacity: 0; }
 .project-heading:hover .project-action,
