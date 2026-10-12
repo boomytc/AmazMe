@@ -231,6 +231,9 @@ export const EN = {
 	"auth.required": "Enter a credential to continue.",
 	"auth.invalid": "Choose an available provider and sign-in method.",
 
+	"page.entryFailed": "AmazMe could not load",
+	"page.entryFailedHelp": "The page entry could not be loaded or evaluated. Check that the local host is running, then reload. No session data has been cleared.",
+	"page.entryRetry": "Reload page",
 	"block.you": "You",
 	"block.thinking": "Thinking",
 	"block.compaction": "Compaction",
@@ -957,6 +960,9 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"auth.required": "请输入凭据后继续。",
 	"auth.invalid": "请选择可用的供应商和登录方式。",
 
+	"page.entryFailed": "AmazMe 未能加载",
+	"page.entryFailedHelp": "页面入口未能加载或执行。请确认本地宿主正在运行后重新加载，会话数据不会被清除。",
+	"page.entryRetry": "重新加载页面",
 	"block.you": "你",
 	"block.thinking": "思考",
 	"block.compaction": "上下文压缩",

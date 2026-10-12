@@ -8,8 +8,10 @@ import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 import { webLaunchLines } from "../src/host/commands.ts";
-import { buildBootManifest, injectBootManifest, requestLanguages } from "../src/host/web/boot.ts";
+import { buildBootManifest, injectBootManifest, requestLanguages, serveDocument } from "../src/host/web/boot.ts";
 import type { WebBootManifest } from "@amazme/web";
+import { readPageDocument } from "@amazme/web/assets";
+import { Script } from "node:vm";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 
 const hosts = new Set<WebHost>();
@@ -55,6 +57,16 @@ describe("web boot manifest", () => {
 		serverId: "00000000-0000-4000-8000-000000000001",
 		transportUrl: "ws://127.0.0.1:1234/amazme",
 		transportPath: "/amazme",
+	});
+
+	test("serves a localized standalone guard before the page entry", async () => {
+		const document = serveDocument(await readPageDocument(), manifest, "zh-CN");
+		const inline = [...document.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)?.[1];
+		expect(document.lastIndexOf("<script>")).toBeLessThan(document.indexOf('<script id="amazme-page-entry"'));
+		expect(inline).toBeDefined();
+		expect(() => new Script(inline!)).not.toThrow();
+		expect(inline).toContain("AmazMe 未能加载");
+		expect(document).not.toContain("<!--amazme-startup-guard-->");
 	});
 
 	test("carries the app identity, mode, protocol version, transport, and preferences", () => {

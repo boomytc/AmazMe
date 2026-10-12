@@ -2,6 +2,8 @@ import { extname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+export { STARTUP_PLACEHOLDER, startupScript } from "./startup.ts";
+
 /** The document and its stylesheets live in `src/page`; the host serves them from the tree. */
 export const PAGE_DIRECTORY = fileURLToPath(new URL("./page/", import.meta.url));
 export const PAGE_DOCUMENT = "index.html";

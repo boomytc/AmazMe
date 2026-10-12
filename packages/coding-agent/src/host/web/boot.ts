@@ -1,4 +1,5 @@
 import { PROTOCOL_VERSION } from "@amazme/protocol";
+import { PAGE_SCRIPT, STARTUP_PLACEHOLDER, startupScript } from "@amazme/web/assets";
 import {
 	BOOT_GLOBAL,
 	BOOT_PLACEHOLDER,
@@ -88,5 +89,6 @@ export function serveDocument(
 	acceptLanguage: string | undefined,
 ): string {
 	const locale = documentLocale(manifest?.preferences, acceptLanguage);
-	return injectBootManifest(localizeDocument(html, locale), manifest);
+	const document = localizeDocument(html, locale).replace(STARTUP_PLACEHOLDER, `<script>${startupScript(locale, PAGE_SCRIPT)}</script>`);
+	return injectBootManifest(document, manifest);
 }

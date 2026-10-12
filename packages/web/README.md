@@ -24,6 +24,8 @@
 - `src/theme.ts`：外观偏好（`system`／`light`／`dark`）与 `<html data-theme>` 的对应；文档的启动脚本在首帧前写同一个属性，
   `tokens.css` 的深色配色挂在 `:root[data-theme="dark"]` 上。`system` 时跟随系统且响应系统切换，固定值时忽略系统。
 - `src/assets.ts`：宿主用来定位页面目录、文档与静态资源（仅供 Node 侧，浏览器入口不引用它）。
+- `src/startup.ts`：宿主在入口之前注入的轻量失败兜底。`/page.js` 加载或执行失败时显示本地化诊断和手动重载，
+  不清理会话数据、不自动重载；入口正常加载后撤销监听，不接管应用运行期错误。
 - `src/page/`：页面静态资源。`index.html` 是文档骨架（启动清单注入在 `<!--amazme-boot-->` 处，SVG sprite 放在 `<body>` 开头），
   `tokens.css` 是页面自己的设计令牌（配色、圆角、字体、动效与投影，浅色一套，`:root[data-theme="dark"]` 深色一套），
   `page.css` 是用这些令牌拼出的外壳与组件样式。
