@@ -48,6 +48,11 @@ export function labelOf(entry: EntryRecord | undefined): string | undefined {
 	return trimmed.length === 0 ? undefined : trimmed;
 }
 
+/** Default user input or an application entry carrying exactly one user message; summaries are not inputs. */
+function isInput(entry: EntryRecord): boolean {
+	return UserEntry.is(entry) || (!entry.kind.startsWith("amazme.") && entry.model?.length === 1 && entry.model[0]?.role === "user");
+}
+
 function roleOf(id: string, rootId: string, record: { parent?: unknown; owner?: unknown }): ConversationRole {
 	if (id === rootId) return "main";
 	if (record.owner !== undefined) return "subagent";
@@ -134,7 +139,7 @@ async function describeConversation(harness: Harness, id: string, root: boolean)
 	do {
 		const page = await conversation.entries({}, SCAN_PAGE, cursor, TODO_CONTEXT);
 		if (page.items.length > 0) hasEntries = true;
-		first = page.items.findLast((entry) => entry.kind === "amazme.user") ?? first;
+		first = page.items.findLast(isInput) ?? first;
 		cursor = page.next;
 	} while (cursor !== undefined);
 	return { label: labelOf(first) ?? id, hasEntries };
@@ -296,7 +301,7 @@ export async function readReturnPoints(conversation: Conversation, context: Cont
 	if (newest === undefined) return [];
 	const points: ReturnPoint[] = [];
 	for (const entry of entries) {
-		if (entry.id === newest.id || !UserEntry.is(entry)) continue;
+		if (entry.id === newest.id || !isInput(entry)) continue;
 		const label = labelOf(entry);
 		if (label === undefined) continue;
 		points.push({ id: String(entry.id), label });

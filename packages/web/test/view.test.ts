@@ -376,6 +376,22 @@ describe("web view model", () => {
 		expect(blocks[4]?.tone).toBe("muted");
 	});
 
+	test("shows application inputs in live and stored history without treating internal summaries as inputs", () => {
+		const input = { ...userEntry(1, "ann: check the build"), kind: "chat.mention", data: { author: "ann" } };
+		const summary = { ...userEntry(2, "internal summary"), kind: "amazme.branch-summary" };
+		const display = { id: entryId(3), conversationId: CONVERSATION, kind: "chat.message", data: { text: "display only" } };
+		const current = transcriptBlocks("en", viewOf([input, summary, display]));
+		expect(current).toMatchObject([{ id: input.id, kind: "user", text: "ann: check the build" }]);
+		expect(transcriptBlocks("en", viewOf([]), [input, summary, display])).toEqual(current);
+	});
+
+	test("keeps a compaction failure visible after its task ends and clears it when the live document does", () => {
+		const failed = viewOf([], { "amazme.live": { compactionFailure: { taskId: 7, reason: "manual", error: "summary provider failed" } } });
+		expect(transcriptBlocks("en", failed)).toMatchObject([{ id: "compaction-failure:7", title: "Compaction failed", text: "summary provider failed", tone: "error", running: false }]);
+		expect(transcriptBlocks("zh", failed)[0]?.title).toBe("上下文压缩失败");
+		expect(transcriptBlocks("en", viewOf([]))).toEqual([]);
+	});
+
 	test("marks a tool call the answer never ran, and one whose result failed", () => {
 		const interrupted = transcriptBlocks("en", 
 			viewOf([assistantEntry(1, [{ type: "text", text: "…" }, toolCall("call-1")], "aborted")]),

@@ -223,6 +223,7 @@ describe("experimental client TUI", () => {
 			sessionProvider.provide(Transcript, { state: transcriptState });
 			sessionProvider.provide(Conversations, {
 				state: conversationsState,
+				async cancelSummaries() {},
 				async select() {},
 				async returnPoints() { return []; },
 				async leave() { throw new Error("Fixture does not leave branches"); },

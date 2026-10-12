@@ -55,6 +55,7 @@ export {
 export { Harness } from "./harness/harness.ts";
 export { InboxDoc, type InboxItem, type InboxState } from "./harness/inbox.ts";
 export {
+	type CompactionFailure,
 	type CompactionStatus,
 	LiveDoc,
 	type LiveState,
@@ -114,6 +115,7 @@ export type {
 	HookRegistration,
 	HookResult,
 	HooksOf,
+	InputEntry,
 	InputSubmissionDraft,
 	ModelRef,
 	NestedToolExecutionResult,

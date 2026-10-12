@@ -342,6 +342,20 @@ async function entryKinds(conversation: Conversation): Promise<string[]> {
 }
 
 describe("tree navigation on the session surface", () => {
+	test("uses a placed application input for conversation labels and return points", async () => {
+		const setup = await openConversations();
+		try {
+			const child = await setup.harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: { provider: "faux", modelId: "faux-1" } } }, TODO_CONTEXT);
+			const input = await child.submit({ type: "input", content: "ann: check the build", entry: { kind: "chat.mention", data: { author: "ann" } } }, TODO_CONTEXT);
+			await input.wait(TODO_CONTEXT);
+			const summary = (await readSummaries(setup.harness, setup.rootId)).find((item) => item.id === String(child.id));
+			expect(summary?.label).toBe("ann: check the build");
+			expect((await readReturnPoints(child, TODO_CONTEXT)).map((point) => point.label)).toEqual(["ann: check the build"]);
+		} finally {
+			await setup.close();
+		}
+	});
+
 	test("focuses an existing conversation without a summary or a new conversation", async () => {
 		const setup = await openConversations();
 		try {

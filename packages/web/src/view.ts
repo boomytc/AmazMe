@@ -1028,7 +1028,8 @@ function entryBlocks(
 ): void {
 	for (const entry of entries) {
 		const message = textOf(entry);
-		switch (entry.kind) {
+		const kind = !entry.kind.startsWith("amazme.") && entry.model?.length === 1 && message?.role === "user" ? UserEntry.kind : entry.kind;
+		switch (kind) {
 			case UserEntry.kind:
 				if (message?.role === "user") {
 					const images = userImages(message.content);
@@ -1212,6 +1213,16 @@ export function transcriptBlocks(
 		output: new Map(slots.map((slot) => [slotKey(slot), slot.output ?? ""])),
 	};
 	entryBlocks(locale, view.entries, results, blocks, calls, feedback, scope);
+	if (live.compactionFailure !== undefined) {
+		blocks.push({
+			id: `compaction-failure:${live.compactionFailure.taskId}`,
+			kind: "notice",
+			title: translate(locale, "block.compactionFailed"),
+			text: errorMessageCopy(locale, live.compactionFailure.error),
+			tone: "error",
+			running: false,
+		});
+	}
 
 	const partial = live.generation?.message as AssistantMessage | undefined;
 	if (partial !== undefined) {

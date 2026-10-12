@@ -8,6 +8,7 @@ mod exec;
 mod frame;
 mod fs;
 mod output;
+mod pty;
 mod scan;
 mod sys;
 mod watch;
@@ -78,6 +79,7 @@ struct Server {
     groups: exec::Groups,
     checked_publish: Mutex<()>,
     closed: AtomicBool,
+    terminals: pty::Terminals,
 }
 
 fn now_ms() -> u64 {
@@ -184,7 +186,11 @@ impl Server {
             "fileRevision" => plain(checked::revision(field(json, "path")?)),
             "checkedRemove" => {
                 let _publication = self.checked_publish.lock().unwrap();
-                plain(checked::remove(field(json, "path")?, &json["revision"], control))
+                plain(checked::remove(
+                    field(json, "path")?,
+                    &json["revision"],
+                    control,
+                ))
             }
             "fileVersion" => {
                 let handle = self.file(json)?;
@@ -321,6 +327,14 @@ impl Server {
                 &self.groups,
             )),
             "watch" => plain(watch::run(id, json, &self.output, control)),
+            "pty" => plain(pty::run(
+                id,
+                pty::PtyRequest::from_json(json)?,
+                &self.output,
+                control,
+                &self.groups,
+                &self.terminals,
+            )),
             _ => Err(Failure::new("EINVAL", format!("unknown operation {op}"))),
         }
     }
@@ -413,7 +427,7 @@ fn start_workers() -> Sender<Job> {
 }
 
 fn respond(server: &Server, id: u32, request: Frame, control: Arc<Control>) {
-    let is_exec = request.json["op"].as_str() == Some("exec");
+    let is_exec = matches!(request.json["op"].as_str(), Some("exec" | "pty"));
     let reply = match server.dispatch(id, &request.json, request.payload, &control) {
         Ok((json, payload)) => Frame::with_payload(RESULT, id, json, payload),
         Err(failure) => Frame::new(ERROR, id, failure.to_json()),
@@ -458,13 +472,32 @@ fn serve_frames(server: &Arc<Server>, input: &mut impl Read) -> io::Result<()> {
     let jobs = start_workers();
     while let Some(request) = frame::read_frame(input)? {
         match request.kind {
+            REQUEST
+                if matches!(
+                    request.json["op"].as_str(),
+                    Some("ptyWrite" | "ptyResize" | "ptyForeground")
+                ) =>
+            {
+                // Answered here, in arrival order: through the worker pool, two writes could swap.
+                let reply = match request.json["op"].as_str() {
+                    Some("ptyWrite") => {
+                        pty::write(&server.terminals, &request.json, request.payload)
+                    }
+                    Some("ptyResize") => pty::resize(&server.terminals, &request.json),
+                    _ => pty::foreground(&server.terminals, &request.json),
+                };
+                server.output.control(match reply {
+                    Ok(json) => Frame::new(RESULT, request.id, json),
+                    Err(failure) => Frame::new(ERROR, request.id, failure.to_json()),
+                });
+            }
             REQUEST => {
                 let id = request.id;
                 // Registered before the request runs, so a cancel right behind it is not lost.
                 let control = Arc::new(Control::default());
                 server.controls.lock().unwrap().insert(id, control.clone());
                 // Commands and watchers last; they get their own threads (watchers recurse through trees).
-                if matches!(request.json["op"].as_str(), Some("exec" | "watch")) {
+                if matches!(request.json["op"].as_str(), Some("exec" | "watch" | "pty")) {
                     let worker = server.clone();
                     let spawned = thread::Builder::new()
                         .stack_size(16 * 1024 * 1024)
@@ -525,6 +558,7 @@ fn serve(token: &str) -> io::Result<()> {
         groups: Arc::new(Mutex::new(Default::default())),
         checked_publish: Mutex::new(()),
         closed: AtomicBool::new(false),
+        terminals: Arc::new(Mutex::new(HashMap::new())),
     });
     let last_seen = Arc::new(AtomicU64::new(now_ms()));
     {

@@ -291,6 +291,7 @@ export async function checkEntryContracts(repoRoot) {
 		"packages/ai/src/models.ts",
 		"packages/durable/src/index.ts",
 		"packages/durable/src/tools/index.ts",
+		"packages/durable/src/codemode/index.ts",
 		"packages/codemode/src/portable.ts",
 		"packages/codemode/src/cloudflare.ts",
 		"packages/coding-agent/src/host/web/page.ts",

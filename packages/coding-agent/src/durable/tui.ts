@@ -464,6 +464,8 @@ class DurableTui {
 
 	#syncNotices(view: DurableView): void {
 		this.#notices.clear();
+		const failure = (view.conversation.docs["amazme.live"] as LiveState | undefined)?.compactionFailure;
+		if (failure !== undefined) this.#notices.addChild(new TruncatedText(theme.fg("error", `Compaction failed: ${failure.error}`), 1, 0));
 		for (const item of view.notices.slice(-4)) {
 			const color = item.level === "error" ? "error" : item.level === "warning" ? "warning" : "muted";
 			this.#notices.addChild(new TruncatedText(theme.fg(color, item.message), 1, 0));
@@ -544,7 +546,7 @@ class DurableTui {
 
 	#addEntry(entry: EntryRecord): void {
 		const message = entry.model?.[0];
-		if (entry.kind === "amazme.user" && message?.role === "user") {
+		if ((entry.kind === "amazme.user" || (!entry.kind.startsWith("amazme.") && entry.model?.length === 1)) && message?.role === "user") {
 			this.#chat.addChild(new Spacer(1));
 			this.#chat.addChild(new UserMessageComponent(userText(message.content)));
 		} else if (entry.kind === "amazme.assistant" && message?.role === "assistant") {

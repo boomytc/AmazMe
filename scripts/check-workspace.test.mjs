@@ -139,6 +139,8 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 	const ai = packageFixture(root, "ai", "export const value = 1;");
 	writeFileSync(join(ai, "src/models.ts"), 'export { value } from "./index.ts";');
 	const durable = packageFixture(root, "durable", 'import fs from "node:fs"; export const read = fs.readFileSync;');
+	mkdirSync(join(durable, "src/codemode"), { recursive: true });
+	writeFileSync(join(durable, "src/codemode/index.ts"), 'import fs from "node:fs"; export const read = fs.readFileSync;');
 	mkdirSync(join(durable, "src/tools"), { recursive: true });
 	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
 	const agent = packageFixture(root, "coding-agent", "export const value = 1;");
@@ -167,9 +169,9 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 			),
 		);
 	}
-	assert.ok(
-		failures.some((failure) => failure.startsWith("packages/durable/src/index.ts:") && failure.includes("node:fs")),
-	);
+	for (const entry of ["index.ts", "codemode/index.ts"]) {
+		assert.ok(failures.some((failure) => failure.startsWith(`packages/durable/src/${entry}:`) && failure.includes("node:fs")));
+	}
 	assert.ok(
 		failures.some(
 			(failure) => failure.startsWith("packages/coding-agent/src/host/web/page.ts:") && failure.includes("node:fs"),
@@ -188,6 +190,8 @@ test("Durable root and file tools keep the optional Photon processor in its own 
 	mkdirSync(join(agent, "src/host/web"), { recursive: true });
 	writeFileSync(join(agent, "src/host/web/page.ts"), "export const value = 1;");
 	const durable = packageFixture(root, "durable", 'export { photon } from "./images/index.ts";');
+	mkdirSync(join(durable, "src/codemode"), { recursive: true });
+	writeFileSync(join(durable, "src/codemode/index.ts"), "export const value = 1;");
 	mkdirSync(join(durable, "src/images"), { recursive: true });
 	mkdirSync(join(durable, "src/tools"), { recursive: true });
 	writeFileSync(join(durable, "src/images/index.ts"), "export const photon = 1;");
