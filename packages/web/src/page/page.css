@@ -237,8 +237,9 @@ p {
 
 .connection-dot {
 	position: absolute;
-	right: -3px;
-	bottom: -8px;
+	/* Outside the M's top-right corner. The 2px ring meets the mark and the green stays clear of the pixels. */
+	top: -10px;
+	right: -10px;
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
