@@ -161,6 +161,8 @@ import {
 	WORKSPACE_READ_ACTION,
 	WORKSPACE_RELOAD_ACTION,
 	WORKSPACE_PAGE_ACTION,
+	workspacePath,
+	parseWorkspaceAction,
 	type CommandLike,
 } from "@amazme/web";
 import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
@@ -411,6 +413,8 @@ class SessionPainter {
 		return this.#terminal?.state.value;
 	}
 
+	get workspaceService(): WorkspaceService | undefined { return this.#workspace; }
+
 	async workspaceOpen(path: WorkspaceOpenInput): Promise<void> {
 		await this.#workspace?.open(path, BACKGROUND_CONTEXT);
 	}
@@ -419,19 +423,10 @@ class SessionPainter {
 		await this.#workspace?.read(path, BACKGROUND_CONTEXT);
 	}
 
-	async workspacePage(offset: number): Promise<boolean> {
-		const workspace = this.#workspace;
-		const view = workspace?.state.value?.view;
-		if (workspace === undefined || view?.kind !== "listing" || view.page === undefined) return false;
-		if (!Number.isSafeInteger(offset) || offset < 0) throw new TypeError("Invalid workspace directory page");
-		await workspace.open({ path: view.path, offset }, BACKGROUND_CONTEXT);
-		return workspace === this.#workspace;
-	}
-
-	async workspaceReload(): Promise<void> {
-		const view = this.workspace?.view;
-		if (view !== undefined && view.kind !== "listing") await this.workspaceRead(view.path);
-		else await this.workspaceOpen(view?.path ?? ".");
+	async workspaceNavigate(data: string | undefined): Promise<void> {
+		const target = parseWorkspaceAction(data);
+		if (target.kind === "read") await this.workspaceRead(target.path);
+		else await this.workspaceOpen(target.offset === undefined ? target.path : { path: target.path, offset: target.offset });
 	}
 
 	async runTerminal(command: string): Promise<void> {
@@ -1097,6 +1092,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						terminal: bound ? painter.terminal : undefined,
 						conversations: bound ? painter.conversations : undefined,
 						...(panelPending === undefined ? {} : { pending: panelPending }),
+						...(panelNoticeDock !== dockTab || panelNotice === undefined ? {} : { notice: panelNotice }),
 						...(bound && painter.insights ? { insights: painter.insights, reviewDiff: painter.reviewDiff } : {}),
 					},
 					// The panel inherits this view's language, so one resolution serves the whole page.
@@ -1666,6 +1662,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The management call in flight, and what it last said; a repaint carries both to its panel. */
 	let panelPending: { readonly id: string; readonly data?: string } | undefined;
 	let panelNotice: PanelNotice | undefined;
+	let panelNoticeDock: string | undefined;
 	let modalPending = false;
 	let modalNotice: PanelNotice | undefined;
 
@@ -1749,6 +1746,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		/** Extra ownership check for an interaction whose modal or binding may have changed. */
 		readonly current?: () => boolean;
 		readonly call: () => Promise<PanelCallResult | void>;
+		readonly afterSuccess?: () => void;
+		readonly dock?: string;
 	}): void => {
 		const invocation = ++panelCall;
 		const binding = painter.binding;
@@ -1760,6 +1759,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			(dialog === undefined || modal === dialog) && (request.current?.() ?? true);
 		if (!current()) return;
 		panelCurrent = current;
+		panelNoticeDock = request.dock;
 		panelPending = request.data === undefined ? { id: request.id } : { id: request.id, data: request.data };
 		if (inModal) {
 			modalPending = true;
@@ -1791,6 +1791,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					else panelNotice = notice;
 				}
 				paint();
+				request.afterSuccess?.();
 			},
 			(error: unknown) => {
 				if (!current()) return;
@@ -1870,6 +1871,35 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const pluginPackages = (): readonly string[] => plugins.state.value?.packages ?? [];
 	const skillOf = (name: string): { readonly editable: boolean } | undefined => skills.state.value?.skills.find((candidate) => candidate.name === name);
 
+	const runWorkspaceCall = (id: string, data: string | undefined, operation: () => Promise<void>): void => {
+		const service = painter.workspaceService;
+		const sessionId = painter.sessionId;
+		if (!service || !sessionId || !sessionReady() || panelPending?.id.startsWith("workspace:")) return;
+		const focused = document.activeElement;
+		const restore = focused instanceof HTMLButtonElement && focused.dataset.action?.startsWith("workspace:");
+		const label = focused?.textContent;
+		const previous = painter.workspace;
+		const previousPath = previous && workspacePath(previous.cwd, previous.view.path);
+		const current = () => client.connected && painter.workspaceService === service && painter.sessionId === sessionId && desiredSessionId === sessionId;
+		runPanelCall({ id, ...(data === undefined ? {} : { data }), sessionId, retry: false, current, dock: "files",
+			call: () => current() ? operation() : Promise.resolve(),
+			afterSuccess: () => {
+				// Continue keyboard navigation only if focus has not moved elsewhere during I/O.
+				if (!restore || document.activeElement !== document.body || !dockOpen || dockTab !== "files") return;
+				if (id === WORKSPACE_PAGE_ACTION) {
+					const paging = [...document.querySelectorAll<HTMLButtonElement>(`#dock-body [data-action="${WORKSPACE_PAGE_ACTION}"]`)];
+					const continuation = paging.find(button => button.textContent === label) ?? paging[0];
+					if (continuation) { continuation.focus(); return; }
+				}
+				const entries = [...document.querySelectorAll<HTMLButtonElement>("#dock-body .file-entry:not([hidden]):not(:disabled)")];
+				const target = entries.find(button => button.dataset.actionData === previousPath) ?? entries[0]
+					?? document.querySelector<HTMLElement>("#dock-body .file-source-code")
+					?? document.querySelector<HTMLButtonElement>(`#dock-body [data-action="${WORKSPACE_RELOAD_ACTION}"]`);
+				target?.focus({ preventScroll: true });
+			},
+		});
+	};
+
 	renderer.onPanelAction = (action: PanelAction): void => {
 		const schedule = schedules;
 		const mcp = client.connected && painter.sessionId === desiredSessionId ? painter.mcpService : undefined;
@@ -1895,7 +1925,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					return;
 				}
 				if (action.id === WORKSPACE_OPEN_ACTION) {
-					void painter.workspaceOpen(action.value).catch(report); return;
+					runWorkspaceCall(action.id, action.value, () => painter.workspaceOpen(action.value)); return;
 				}
 				if (action.id === SETTINGS_FIELD_ACTION && action.data !== undefined) {
 					const id = action.data;
@@ -2312,27 +2342,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						paint();
 						return;
 					case WORKSPACE_RELOAD_ACTION:
-						settle(painter.workspaceReload());
+						runWorkspaceCall(action.id, action.data, () => painter.workspaceNavigate(action.data));
 						return;
-					case WORKSPACE_PAGE_ACTION: {
-						const focused = document.activeElement;
-						const restore = focused instanceof HTMLButtonElement && focused.dataset.action === WORKSPACE_PAGE_ACTION;
-						const label = focused?.textContent;
-						settle(painter.workspacePage(Number(action.data)).then(current => {
-							if (!current) return;
-							paint();
-							// Preserve keyboard continuation, but never steal focus moved elsewhere during I/O.
-							if (!restore || document.activeElement !== document.body || !dockOpen || dockTab !== "files") return;
-							const buttons = [...document.querySelectorAll<HTMLButtonElement>(`#dock-body [data-action="${WORKSPACE_PAGE_ACTION}"]`)];
-							(buttons.find(button => button.textContent === label) ?? buttons[0] ?? document.querySelector<HTMLButtonElement>(`#dock-body [data-action="${WORKSPACE_RELOAD_ACTION}"]`))?.focus();
-						}));
+					case WORKSPACE_PAGE_ACTION:
+						runWorkspaceCall(action.id, action.data, () => painter.workspaceNavigate(action.data));
 						return;
-					}
 					case WORKSPACE_OPEN_ACTION:
-						settle(painter.workspaceOpen(action.data ?? "."));
+						runWorkspaceCall(action.id, action.data, () => painter.workspaceOpen(action.data ?? "."));
 						return;
 					case WORKSPACE_READ_ACTION:
-						settle(painter.workspaceRead(action.data ?? ""));
+						runWorkspaceCall(action.id, action.data, () => painter.workspaceRead(action.data ?? ""));
 						return;
 					case TERMINAL_RUN_ACTION:
 						settle(painter.runTerminal(action.data ?? ""));

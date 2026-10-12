@@ -104,6 +104,8 @@ export {
 	tasksPanel,
 	terminalPanel,
 	workspaceSize,
+	workspacePath,
+	parseWorkspaceAction,
 	type ConversationSummaryLike,
 	type ConversationsStateLike,
 	type DockTab,

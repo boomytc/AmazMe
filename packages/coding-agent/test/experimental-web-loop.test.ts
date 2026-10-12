@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
@@ -19,6 +19,10 @@ import {
 	CONVERSATION_ARCHIVE_MODAL,
 	CONVERSATION_RESTORE_ACTION,
 	DOCK_TAB_ACTION,
+	WORKSPACE_OPEN_ACTION,
+	WORKSPACE_READ_ACTION,
+	WORKSPACE_PAGE_ACTION,
+	WORKSPACE_RELOAD_ACTION,
 	SESSION_ARCHIVE_OPEN_ACTION,
 	SESSION_RESTORE_ACTION,
 	SETTINGS_VIEW,
@@ -99,6 +103,7 @@ async function openPage(host: WebHost, storage = new Map<string, string>()) {
 		preferences: { locale: "zh", appearance: "light" },
 	});
 	vi.stubGlobal("navigator", { languages: ["zh-CN"], platform: "" });
+	vi.stubGlobal("HTMLButtonElement", class {});
 	vi.stubGlobal("document", {
 		documentElement: { dataset: {}, style: {}, lang: "" },
 		getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
@@ -1606,6 +1611,72 @@ describe("web client interactive loop", () => {
 		},
 		240_000,
 	);
+
+	test("file paging and refresh retain displayed targets after another client switches the shared workspace", async () => {
+		const host = await startLoopHost();
+		const presentation = await openPresentation(host);
+		const first = await realpath(await makeDirectory("file-target-a-"));
+		const second = await realpath(await makeDirectory("file-target-b-"));
+		for (const root of [first, second]) await mkdir(join(root, "src"));
+		await Promise.all(Array.from({ length: 101 }, (_, index) => writeFile(join(first, "src", `file-${String(index).padStart(3, "0")}.txt`), "first")));
+		await writeFile(join(second, "src", "file-000.txt"), "second");
+		const project = await presentation.projects.create({ cwd: first, workspaces: [first, second] }, BACKGROUND_CONTEXT);
+		const session = await presentation.management.create({ id: "file-bound-targets", projectId: project.id }, BACKGROUND_CONTEXT);
+		const attached = await attachSession(presentation, session.sessionId);
+		const page = await openPage(host);
+		page.renderer.onSelect(session.sessionId);
+		page.renderer.onPanelAction({ kind: "command", id: DOCK_TAB_ACTION, data: "files" });
+		await waitFor(() => page.renderer.view?.attachedId === session.sessionId && page.renderer.view.dock.panel.files !== undefined, "the bound file browser", 5_000);
+		await attached.workspace.open(join(first, "src"), BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.dock.panel.files?.cwd === project.cwd && page.renderer.view.dock.panel.files.path === "src", "the first workspace listing", 5_000);
+		const next = page.renderer.view?.dock.panel.groups.at(-1)?.actions?.find(action => action.id === WORKSPACE_PAGE_ACTION);
+		if (!next?.data) throw new Error("Missing bound directory page");
+		await attached.workspace.open(join(second, "src"), BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.dock.panel.files?.cwd !== project.cwd, "the other client's workspace switch", 5_000);
+		page.renderer.onPanelAction({ kind: "command", id: next.id, data: next.data });
+		await waitFor(() => page.renderer.view?.dock.panel.files?.cwd === project.cwd && page.renderer.view.dock.panel.files.filterScope?.includes("100") === true && page.renderer.view.dock.panel.pending === undefined, "the original workspace's second page", 5_000);
+		await attached.workspace.read(join(first, "src", "file-000.txt"), BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.dock.panel.texts?.[0]?.text === "first", "the first file preview", 5_000);
+		const reload = page.renderer.view?.dock.panel.groups.at(-1)?.actions?.find(action => action.id === WORKSPACE_RELOAD_ACTION);
+		if (!reload?.data) throw new Error("Missing bound refresh");
+		await attached.workspace.read(join(second, "src", "file-000.txt"), BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.dock.panel.texts?.[0]?.text === "second", "the other file preview", 5_000);
+		page.renderer.onPanelAction({ kind: "command", id: reload.id, data: reload.data });
+		await waitFor(() => page.renderer.view?.dock.panel.files?.cwd === project.cwd && page.renderer.view.dock.panel.texts?.[0]?.text === "first" && page.renderer.view.dock.panel.pending === undefined, "the original file refresh", 5_000);
+		await page.dispose(); await attached.dispose(); await presentation.dispose();
+	});
+
+	test("file navigation coordinates pending state, preview, return paths and session switching", async () => {
+		const host = await startLoopHost();
+		const presentation = await openPresentation(host);
+		const first = await presentation.management.create({ id: "file-page-first" }, BACKGROUND_CONTEXT);
+		const second = await presentation.management.create({ id: "file-page-second" }, BACKGROUND_CONTEXT);
+		await presentation.management.attach(first.sessionId, BACKGROUND_CONTEXT);
+		const page = await openPage(host);
+		page.renderer.onSelect(first.sessionId);
+		await waitFor(() => page.renderer.view?.attachedId === first.sessionId, "the first file browser");
+		page.renderer.onPanelAction({ kind: "command", id: DOCK_TAB_ACTION, data: "files" });
+		await waitFor(() => page.renderer.view?.dock.panel.files?.cwd === process.cwd(), "the file navigation root");
+		page.renderer.onPanelAction({ kind: "command", id: WORKSPACE_OPEN_ACTION, data: join(process.cwd(), "src") });
+		expect(page.renderer.view?.dock.panel.pending?.id).toBe(WORKSPACE_OPEN_ACTION);
+		await waitFor(() => page.renderer.view?.dock.panel.files?.path === "src" && page.renderer.view.dock.panel.pending === undefined, "the opened directory");
+		expect(page.renderer.view?.dock.panel.files?.breadcrumbs.at(-1)?.label).toBe("src");
+		const target = join(process.cwd(), "src", "index.ts");
+		page.renderer.onPanelAction({ kind: "command", id: WORKSPACE_READ_ACTION, data: target });
+		expect(page.renderer.view?.dock.panel.pending?.id).toBe(WORKSPACE_READ_ACTION);
+		await waitFor(() => page.renderer.view?.dock.panel.texts?.[0]?.source === true && page.renderer.view.dock.panel.pending === undefined, "the source preview");
+		expect(page.renderer.view?.dock.panel.files?.breadcrumbs.at(-1)?.path).toBe(target);
+		expect(page.renderer.view?.dock.panel.groups[0]?.rows[0]?.file?.action.data).toBe(join(process.cwd(), "src"));
+		page.renderer.onPanelAction({ kind: "command", id: WORKSPACE_OPEN_ACTION, data: join(process.cwd(), "src") });
+		await waitFor(() => page.renderer.view?.dock.panel.files?.path === "src" && page.renderer.view.dock.panel.pending === undefined, "return to the source folder");
+		page.renderer.onPanelAction({ kind: "command", id: WORKSPACE_READ_ACTION, data: target });
+		page.renderer.onSelect(second.sessionId);
+		await waitFor(() => page.renderer.view?.attachedId === second.sessionId && page.renderer.view.dock.panel.files?.path === ".", "the second file browser");
+		expect(page.renderer.view?.dock.panel.pending).toBeUndefined();
+		expect(page.renderer.view?.dock.panel.texts).toBeUndefined();
+		expect(page.renderer.view?.dock.panel.notices).toEqual([]);
+		await page.dispose(); await presentation.dispose();
+	});
 
 	test(
 		"browses the session's working directory and runs a command in it",

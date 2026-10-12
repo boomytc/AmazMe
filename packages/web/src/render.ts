@@ -12,6 +12,7 @@ import { errorMessageCopy } from "./errors.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
 import { transcriptPosition } from "./transcript-position.ts";
 import { createMultiselect } from "./multiselect.ts";
+import { createFileBrowser } from "./file-browser.ts";
 import { FALLBACK_LOCALE, type Locale } from "./locale.ts";
 import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
@@ -26,7 +27,6 @@ import {
 	type PanelPending,
 	type PanelRow,
 	type PanelSpec,
-	type PanelText,
 	searchSettings,
 	SETTINGS_VIEW,
 	type SettingsSearchHit,
@@ -271,6 +271,7 @@ type IconName =
 	| "panel-left"
 	| "panel-right"
 	| "folder"
+	| "file"
 	| "terminal"
 	| "activity"
 	| "git-fork"
@@ -795,6 +796,19 @@ export function createRenderer(
 	};
 
 	const rowElementOf = (row: PanelRow, pending?: PanelPending): HTMLElement => {
+		if (row.file) {
+			const node = panelButton(row.file.action, report, pending);
+			node.className = `file-entry file-entry-${row.file.kind}`;
+			node.dataset.rowId = row.id;
+			node.dataset.fileName = row.title;
+			node.dataset.controlKey = `file:${row.file.action.data ?? row.id}`;
+			node.title = row.file.action.data ?? row.title;
+			node.setAttribute("aria-label", `${row.file.action.label}: ${row.title}`);
+			node.replaceChildren(icon(row.file.kind === "up" ? "arrow-up" : row.file.kind === "dir" ? "folder" : "file"), element("span", "file-entry-name", row.title));
+			if (row.value) node.append(element("span", "file-entry-size", row.value));
+			if (row.file.kind === "dir") node.append(icon("chevron-down", "icon file-entry-chevron"));
+			return node;
+		}
 		const node = element("div", "panel-row");
 		node.dataset.rowId = row.id;
 		const text = element("div", "panel-row-text");
@@ -850,6 +864,18 @@ export function createRenderer(
 		}
 		if (head.childElementCount > 0) node.append(head);
 		const rows = element("div", "panel-rows");
+		if (group.id === "files:entries" || group.rows.some(row => row.file)) {
+			rows.classList.add("file-entries");
+			rows.addEventListener("keydown", event => {
+				if (event.isComposing || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+				const controls = [...rows.querySelectorAll<HTMLButtonElement>(".file-entry:not(:disabled):not([hidden])")];
+				const index = controls.indexOf(document.activeElement as HTMLButtonElement);
+				if (index < 0) return;
+				event.preventDefault();
+				const next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1 : Math.max(0, Math.min(controls.length - 1, index + (event.key === "ArrowUp" ? -1 : 1)));
+				controls[next]?.focus();
+			});
+		}
 		if (group.rows.length === 0 && group.empty !== "") rows.append(element("p", "panel-empty", group.empty ?? copy("panel.empty")));
 		else for (const row of group.rows) rows.append(rowElementOf(row, pending));
 		node.append(rows);
@@ -906,20 +932,14 @@ export function createRenderer(
 		return form;
 	};
 
-	/** One text block: a file's content or a terminal's output, kept as text. */
-	const textElement = (text: PanelText): HTMLElement => {
-		const block = element("div", "panel-text-block");
-		if (text.title !== undefined) block.append(element("p", "panel-text-title", text.title));
-		if (text.text.length === 0 && text.empty !== undefined) {
-			block.append(element("p", "panel-empty", text.empty));
-			return block;
-		}
-		block.append(element("pre", "panel-text", text.text));
-		return block;
-	};
+	const fileBrowser = createFileBrowser({ icon, copy, actionButton: (action, pending) => panelButton(action, report, pending),
+		headerAction: placeHeaderAction, copyText: (control, text, label) => copyAnswer(control, text, label),
+	});
+	const textElement = fileBrowser.text;
 
 	const panelElement = (panel: PanelSpec, container?: HTMLElement): HTMLElement => {
 		const node = element("div", "panel");
+		node.dataset.panelId = panel.id;
 		const head = element("header", "panel-head");
 		const titles = element("div", "panel-titles");
 		titles.append(element("h1", "panel-title", panel.title));
@@ -936,6 +956,7 @@ export function createRenderer(
 		for (const input of panel.inputs ?? []) node.append(inputElement(input, previousInput));
 		for (const group of panel.groups) node.append(groupElement(group, panel.pending));
 		for (const text of panel.texts ?? []) node.append(textElement(text));
+		if (panel.files) head.after(fileBrowser.navigation(panel, node, lastView?.attachedId ?? ""));
 		return node;
 	};
 
@@ -944,7 +965,7 @@ export function createRenderer(
 	const replacePanel = (container: HTMLElement, panel: PanelSpec): void => {
 		const scope = `${lastView?.attachedId ?? ""}:${panel.id}:${panel.groups.map(group => group.id).join(",")}`;
 		const active = document.activeElement;
-		if ((active instanceof HTMLInputElement || active instanceof HTMLSelectElement) && container.contains(active) && active.dataset.controlKey) {
+		if ((active instanceof HTMLInputElement || active instanceof HTMLSelectElement || active instanceof HTMLButtonElement) && container.contains(active) && active.dataset.controlKey) {
 			panelFocus.set(container, { scope: container.dataset.panelScope ?? scope, key: active.dataset.controlKey,
 				start: active instanceof HTMLInputElement ? active.selectionStart : null,
 				end: active instanceof HTMLInputElement ? active.selectionEnd : null });
@@ -953,7 +974,7 @@ export function createRenderer(
 		container.replaceChildren(panelElement(panel, container));
 		container.dataset.panelScope = scope;
 		if (!focus || focus.scope !== scope) { panelFocus.delete(container); return; }
-		const target = [...container.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-control-key]")].find(node => node.dataset.controlKey === focus.key);
+		const target = [...container.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("[data-control-key]")].find(node => node.dataset.controlKey === focus.key);
 		if (!target) { panelFocus.delete(container); return; }
 		if (target.disabled) return;
 		target.focus({ preventScroll: true });

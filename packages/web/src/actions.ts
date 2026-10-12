@@ -33,13 +33,13 @@ export const SUBMIT_MODE_ACTION = "run:submit-mode";
 export const DOCK_TOGGLE_ACTION = "dock:toggle";
 /** Switch the dock to one tab: `data` is the tab id. */
 export const DOCK_TAB_ACTION = "dock:tab";
-/** List a directory in the workspace: `data` is the path relative to the working directory. */
+/** List a directory: `data` is the absolute path bound to the displayed project folder. */
 export const WORKSPACE_OPEN_ACTION = "workspace:open";
-/** Reload the workspace's current directory page or file. */
+/** Reload a displayed directory or file: `data` encodes its kind and absolute path. */
 export const WORKSPACE_RELOAD_ACTION = "workspace:reload";
-/** Request another bounded page of the directory currently shown. */
+/** Request a bounded page: `data` encodes the displayed absolute directory and offset. */
 export const WORKSPACE_PAGE_ACTION = "workspace:page";
-/** Read one file as text: `data` is the path relative to the working directory. */
+/** Read one file as text: `data` is its displayed project-folder-bound absolute path. */
 export const WORKSPACE_READ_ACTION = "workspace:read";
 /** Run a terminal command: `data` is the command line. */
 export const TERMINAL_RUN_ACTION = "terminal:run";

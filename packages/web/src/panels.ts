@@ -104,6 +104,8 @@ export interface PanelRow {
 	readonly value?: string;
 	readonly controls?: readonly PanelControl[];
 	readonly actions?: readonly PanelButton[];
+	/** A compact, whole-row navigation target; never wraps other interactive controls. */
+	readonly file?: { readonly kind: "dir" | "file" | "up"; readonly action: PanelButton };
 	/** Secondary management actions stay in a keyboard-accessible menu instead of repeating buttons. */
 	readonly menu?: {
 		readonly label: string;
@@ -137,6 +139,8 @@ export interface PanelText {
 	/** The line shown in place of the text when there is none. */
 	readonly empty?: string;
 	readonly text: string;
+	/** Read-only source preview, with line numbers and copy/wrap controls. */
+	readonly source?: boolean;
 }
 
 /** A one-line input a panel needs, such as the terminal's command line. */
@@ -163,6 +167,13 @@ export interface PanelSpec {
 	readonly inputs?: readonly PanelInput[];
 	/** Text blocks the panel shows, below its groups. */
 	readonly texts?: readonly PanelText[];
+	/** File navigation is presentation-only; the host remains authoritative about accessible paths. */
+	readonly files?: {
+		readonly cwd: string;
+		readonly path: string;
+		readonly breadcrumbs: readonly { readonly label: string; readonly path: string; readonly current: boolean }[];
+		readonly filterScope?: string;
+	};
 }
 
 export interface PanelField {

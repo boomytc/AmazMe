@@ -22,7 +22,7 @@ import {
 	WORKSPACE_PAGE_ACTION,
 } from "./actions.ts";
 import type { Locale } from "./locale.ts";
-import type { PanelGroup, PanelPending, PanelRow, PanelSpec } from "./panels.ts";
+import type { PanelGroup, PanelNotice, PanelPending, PanelRow, PanelSpec } from "./panels.ts";
 import type { MessageKey } from "./strings.ts";
 import { taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
 
@@ -146,6 +146,7 @@ export interface DockViewInput {
 	readonly reviewDiff?: string;
 	readonly readOnly?: boolean;
 	readonly pending?: PanelPending;
+	readonly notice?: PanelNotice;
 }
 
 export interface InsightsStateLike {
@@ -354,11 +355,20 @@ export function workspaceSize(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function reloadAction(locale: Locale) {
-	return {
-		id: WORKSPACE_RELOAD_ACTION,
-		label: translate(locale, "dock.reload"),
-		tone: "default" as const,
+type WorkspaceActionTarget = { readonly kind: "open" | "read"; readonly path: string; readonly offset?: number };
+
+/** Decode a presentation-bound target without consulting the service's mutable selected directory. */
+export function parseWorkspaceAction(data: string | undefined): WorkspaceActionTarget {
+	const target: unknown = data === undefined ? undefined : JSON.parse(data);
+	if (target === null || typeof target !== "object" || !("path" in target) || typeof target.path !== "string" || target.path.length === 0
+		|| !("kind" in target) || (target.kind !== "open" && target.kind !== "read")) throw new TypeError("Invalid workspace navigation target");
+	if ("offset" in target && (target.kind !== "open" || typeof target.offset !== "number" || !Number.isSafeInteger(target.offset) || target.offset < 0)) throw new TypeError("Invalid workspace directory page");
+	return { kind: target.kind, path: target.path, ...("offset" in target ? { offset: target.offset as number } : {}) };
+}
+
+function reloadAction(locale: Locale, path: string, read: boolean) {
+	return { id: WORKSPACE_RELOAD_ACTION, label: translate(locale, "dock.reload"), tone: "default" as const,
+		data: JSON.stringify({ kind: read ? "read" : "open", path }),
 	};
 }
 
@@ -371,14 +381,14 @@ function openAction(locale: Locale, path: string) {
 	};
 }
 
-/** The row that walks back out of a file's directory to the directory itself. */
-function rootRow(locale: Locale, title: string, path: string): PanelRow {
-	return {
-		id: "files:root",
-		title,
-		description: path,
-		actions: [openAction(locale, path)],
-	};
+/** Bind navigation to the displayed workspace, even if another client switches its selected root. */
+export function workspacePath(cwd: string, path: string): string {
+	return path === "." ? cwd : `${cwd.replace(/[\\/]+$/, "")}/${path}`;
+}
+
+function rootRow(locale: Locale, title: string, path: string, cwd: string): PanelRow {
+	const action = openAction(locale, workspacePath(cwd, path));
+	return { id: "files:root", title, description: path, actions: [action], file: { kind: "up", action } };
 }
 
 /**
@@ -392,6 +402,16 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		return { id: "files", title, notices: [], groups: [] };
 	}
 	const view = state.view;
+	const segments = view.kind === "denied" ? [] : view.path.split(/[\\/]/).filter(part => part !== "." && part !== "");
+	const files: NonNullable<PanelSpec["files"]> = {
+		cwd: state.cwd, path: view.path,
+		breadcrumbs: [
+			{ label: state.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? state.cwd, path: state.cwd, current: segments.length === 0 },
+			...segments.map((label, index) => ({ label, path: workspacePath(state.cwd, segments.slice(0, index + 1).join("/")), current: index === segments.length - 1 })),
+		],
+		...(view.kind === "listing" ? { filterScope: JSON.stringify([state.cwd, view.path, view.page?.offset ?? 0]) } : {}),
+	};
+	const reload = reloadAction(locale, workspacePath(state.cwd, view.kind === "denied" ? "." : view.path), view.kind !== "listing" && view.kind !== "denied");
 	const folders: PanelGroup[] = (state.workspaces?.length ?? 0) > 1 ? [{
 		id: "files:workspaces", title: translate(locale, "project.folders"), rows: [{
 			id: "files:workspace", title: translate(locale, "project.directory"), controls: [{
@@ -405,38 +425,38 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 	}] : [];
 	if (view.kind === "text") {
 		// The file's own directory is the parent of its path, so the reader can step back out.
-		const parent = view.path.includes("/") ? view.path.slice(0, view.path.lastIndexOf("/")) : ".";
+		const parent = segments.slice(0, -1).join("/") || ".";
 		return {
 			id: "files",
-			title: view.path,
-			description: state.cwd,
+			title: segments.at(-1) ?? view.path,
+			files,
 			notices: view.truncated ? [{ tone: "info", text: translate(locale, "dock.truncated") }] : [],
 			groups: [
 				...folders,
 				{
 					id: "files:back",
 					title: translate(locale, "dock.contents"),
-					actions: [reloadAction(locale)],
-					rows: [rootRow(locale, parent === "." ? translate(locale, "dock.cwd") : parent, parent)],
+					actions: [reload],
+					rows: [rootRow(locale, translate(locale, "dock.backToFolder"), parent, state.cwd)],
 				},
 			],
-			texts: [{ id: "files:text", text: view.text }],
+			texts: [{ id: "files:text", text: view.text, source: true }],
 		};
 	}
 	if (view.kind !== "listing") {
 		const notice = view.kind === "denied" ? (view.reason === "Folder is outside project workspaces." ? translate(locale, "project.outsideWorkspace") : view.reason) : view.kind === "binary" ? translate(locale, "dock.binary") : translate(locale, "dock.missing");
 		return {
 			id: "files",
-			title: view.path,
-			description: state.cwd,
+			title: segments.at(-1) ?? title,
+			files,
 			notices: [{ tone: view.kind === "denied" ? "error" : "info", text: notice }],
 			groups: [
 				...folders,
 				{
 					id: "files:back",
 					title: translate(locale, "dock.contents"),
-					actions: [reloadAction(locale)],
-					rows: [rootRow(locale, translate(locale, "dock.cwd"), ".")],
+					actions: [reload],
+					rows: [rootRow(locale, translate(locale, "dock.cwd"), ".", state.cwd)],
 				},
 			],
 		};
@@ -447,36 +467,30 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 			id: "files:up",
 			title: translate(locale, "dock.parent"),
 			description: view.parent,
-			actions: [openAction(locale, view.parent)],
+			actions: [openAction(locale, workspacePath(state.cwd, view.parent))],
+			file: { kind: "up", action: openAction(locale, workspacePath(state.cwd, view.parent)) },
 		});
 	}
 	for (const entry of view.entries) {
 		const path = view.path === "." ? entry.name : `${view.path}/${entry.name}`;
+		const action = entry.kind === "dir" ? openAction(locale, workspacePath(state.cwd, path)) : {
+			id: WORKSPACE_READ_ACTION, label: translate(locale, "dock.read"), tone: "default" as const, data: workspacePath(state.cwd, path),
+		};
 		rows.push({
-			id: `files:${path}`,
-			title: entry.name,
+			id: `files:${path}`, title: entry.name,
 			...(entry.kind === "dir" ? { badges: [translate(locale, "dock.directory")] } : { value: workspaceSize(entry.size) }),
-			actions: [
-				entry.kind === "dir"
-					? openAction(locale, path)
-					: {
-							id: WORKSPACE_READ_ACTION,
-							label: translate(locale, "dock.read"),
-							tone: "default" as const,
-							data: path,
-						},
-			],
+			actions: [action], file: { kind: entry.kind, action },
 		});
 	}
 	const page = view.page;
 	const paging = page === undefined ? [] : [
-		...(page.offset > 0 ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.previousPage"), data: String(Math.max(0, page.offset - page.limit)), tone: "default" as const }] : []),
-		...(page.offset + page.limit < page.total ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.nextPage"), data: String(page.offset + page.limit), tone: "default" as const }] : []),
+		...(page.offset > 0 ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.previousPage"), data: JSON.stringify({ kind: "open", path: workspacePath(state.cwd, view.path), offset: Math.max(0, page.offset - page.limit) }), tone: "default" as const }] : []),
+		...(page.offset + page.limit < page.total ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.nextPage"), data: JSON.stringify({ kind: "open", path: workspacePath(state.cwd, view.path), offset: page.offset + page.limit }), tone: "default" as const }] : []),
 	];
 	const group: PanelGroup = {
 		id: "files:entries",
-		title: view.path === "." ? translate(locale, "dock.cwd") : view.path,
-		actions: [reloadAction(locale), ...paging],
+		title: translate(locale, "dock.entries"),
+		actions: [reload, ...paging],
 		...(page === undefined ? {} : { description: translate(locale, "dock.pageRange", { from: String(page.total === 0 ? 0 : page.offset + 1), to: String(Math.min(page.offset + page.limit, page.total)), total: String(page.total) }) }),
 		rows,
 		empty: translate(locale, page !== undefined && page.total > 0 ? "dock.emptyPage" : "dock.emptyDirectory"),
@@ -484,7 +498,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 	return {
 		id: "files",
 		title,
-		description: state.cwd,
+		files,
 		notices: [],
 		groups: [...folders, group],
 	};
@@ -590,6 +604,7 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 		tabs: [...dockTabs(locale, tab), ...(input.insights ? [{ id: "changes" as const, label: translate(locale, "review.tab"), active: tab === "changes" }] : [])],
 		panel: { ...(input.readOnly && tab === "terminal" ? { ...panel, inputs: panel.inputs?.map(item => ({ ...item, submit: { ...item.submit, disabled: true } })) } : panel),
 			...(input.pending === undefined ? {} : { pending: input.pending }),
+			...(input.notice === undefined ? {} : { notices: [...panel.notices, input.notice] }),
 		},
 		toggle: { label: translate(locale, "dock.toggle"), pressed: input.open },
 	};

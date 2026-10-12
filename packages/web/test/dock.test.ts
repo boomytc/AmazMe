@@ -18,6 +18,7 @@ import {
 	tasksPanel,
 	terminalPanel,
 	workspaceSize,
+	parseWorkspaceAction,
 } from "../src/dock.ts";
 import type { TerminalStateLike, WorkspaceStateLike } from "../src/dock.ts";
 
@@ -116,12 +117,12 @@ describe("the session dock", () => {
 			["README.md", undefined, "2 KB"],
 			["logo.png", undefined, "2.0 MB"],
 		]);
-		expect(rows[0]?.actions?.[0]).toEqual({ id: WORKSPACE_OPEN_ACTION, label: "Open", tone: "default", data: "src" });
+		expect(rows[0]?.actions?.[0]).toEqual({ id: WORKSPACE_OPEN_ACTION, label: "Open", tone: "default", data: "/workspace/AmazMe/src" });
 		expect(rows[1]?.actions?.[0]).toEqual({
 			id: WORKSPACE_READ_ACTION,
 			label: "Read",
 			tone: "default",
-			data: "README.md",
+			data: "/workspace/AmazMe/README.md",
 		});
 		expect(panel.groups[0]?.actions?.[0]?.id).toBe(WORKSPACE_RELOAD_ACTION);
 		// The working directory itself has no parent row; a subdirectory does.
@@ -137,7 +138,7 @@ describe("the session dock", () => {
 		});
 		expect(nested.groups[0]?.rows[0]).toMatchObject({ id: "files:up", description: ".", title: "Up" });
 		// An entry's action names the path it resolves to, not only its own name.
-		expect(nested.groups[0]?.rows[1]?.actions?.[0]).toMatchObject({ id: WORKSPACE_READ_ACTION, data: "src/index.ts" });
+		expect(nested.groups[0]?.rows[1]?.actions?.[0]).toMatchObject({ id: WORKSPACE_READ_ACTION, data: "/w/src/index.ts" });
 	});
 
 	test("shows bounded directory paging and leaves older hosts without page actions", () => {
@@ -145,12 +146,12 @@ describe("the session dock", () => {
 		for (const locale of ["en", "zh"] as const) {
 			const panel = filesPanel(locale, { ...LISTING, view: { ...LISTING.view, page: { offset: 100, limit: 100, total: 250 } } });
 			const group = panel.groups[0]!;
-			expect(group.actions?.filter(action => action.id === WORKSPACE_PAGE_ACTION).map(action => action.data)).toEqual(["0", "200"]);
+			expect(group.actions?.filter(action => action.id === WORKSPACE_PAGE_ACTION).map(action => parseWorkspaceAction(action.data).offset)).toEqual([0, 200]);
 			expect(group.description).toContain("101");
 			expect(group.description).toContain("250");
 		}
 		expect(filesPanel("en", LISTING).groups[0]?.actions?.some(action => action.id === WORKSPACE_PAGE_ACTION)).toBe(false);
-		expect(filesPanel("en", { ...LISTING, view: { ...LISTING.view, page: { offset: 200, limit: 100, total: 250 } } }).groups[0]?.actions?.filter(action => action.id === WORKSPACE_PAGE_ACTION).map(action => action.data)).toEqual(["100"]);
+		expect(filesPanel("en", { ...LISTING, view: { ...LISTING.view, page: { offset: 200, limit: 100, total: 250 } } }).groups[0]?.actions?.filter(action => action.id === WORKSPACE_PAGE_ACTION).map(action => parseWorkspaceAction(action.data).offset)).toEqual([100]);
 	});
 
 	test("shows a file's text, and says when it is not text or not there", () => {
@@ -158,9 +159,9 @@ describe("the session dock", () => {
 			cwd: "/w",
 			view: { kind: "text", path: "src/index.ts", text: "export const marker = 1;\n", truncated: false },
 		});
-		expect(text.title).toBe("src/index.ts");
+		expect(text.title).toBe("index.ts");
 		expect(text.texts?.[0]?.text).toContain("marker = 1");
-		expect(text.groups[0]?.rows[0]?.actions?.[0]?.data).toBe("src");
+		expect(text.groups[0]?.rows[0]?.actions?.[0]?.data).toBe("/w/src");
 		expect(
 			filesPanel("en", { cwd: "/w", view: { kind: "text", path: "big.txt", text: "…", truncated: true } }).notices[0],
 		).toEqual({ tone: "info", text: "Only the beginning of this text is shown." });
@@ -173,7 +174,7 @@ describe("the session dock", () => {
 		);
 		const denied = filesPanel("en", { cwd: "/w", view: { kind: "denied", path: "../etc", reason: "outside it" } });
 		expect(denied.notices[0]).toEqual({ tone: "error", text: "outside it" });
-		expect(denied.groups[0]?.rows[0]?.actions?.[0]?.data).toBe(".");
+		expect(denied.groups[0]?.rows[0]?.actions?.[0]?.data).toBe("/w");
 	});
 
 	test("gives the terminal one command line, a run, a stop, and the buffer", () => {
