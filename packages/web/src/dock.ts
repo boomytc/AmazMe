@@ -16,6 +16,7 @@ import {
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
 	WORKSPACE_RELOAD_ACTION,
+	WORKSPACE_PAGE_ACTION,
 } from "./actions.ts";
 import type { Locale } from "./locale.ts";
 import type { PanelGroup, PanelRow, PanelSpec } from "./panels.ts";
@@ -69,6 +70,7 @@ export type WorkspaceViewLike =
 			readonly path: string;
 			readonly parent: string | null;
 			readonly entries: readonly WorkspaceEntryLike[];
+			readonly page?: { readonly offset: number; readonly limit: number; readonly total: number };
 	  }
 	| {
 			readonly kind: "text";
@@ -442,12 +444,18 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 			],
 		});
 	}
+	const page = view.page;
+	const paging = page === undefined ? [] : [
+		...(page.offset > 0 ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.previousPage"), data: String(Math.max(0, page.offset - page.limit)), tone: "default" as const }] : []),
+		...(page.offset + page.limit < page.total ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.nextPage"), data: String(page.offset + page.limit), tone: "default" as const }] : []),
+	];
 	const group: PanelGroup = {
 		id: "files:entries",
 		title: view.path === "." ? translate(locale, "dock.cwd") : view.path,
-		actions: [reloadAction(locale)],
+		actions: [reloadAction(locale), ...paging],
+		...(page === undefined ? {} : { description: translate(locale, "dock.pageRange", { from: String(page.total === 0 ? 0 : page.offset + 1), to: String(Math.min(page.offset + page.limit, page.total)), total: String(page.total) }) }),
 		rows,
-		empty: translate(locale, "dock.emptyDirectory"),
+		empty: translate(locale, page !== undefined && page.total > 0 ? "dock.emptyPage" : "dock.emptyDirectory"),
 	};
 	return {
 		id: "files",

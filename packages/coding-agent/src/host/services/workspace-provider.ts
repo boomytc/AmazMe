@@ -1,13 +1,17 @@
+import type { Dirent } from "node:fs";
 import { stat, readdir, readFile, open, realpath } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
-import { Workspace, type WorkspaceEntry, type WorkspaceState, type WorkspaceView } from "./workspace.ts";
+import { Workspace } from "./workspace.ts";
+import type { WorkspaceEntry, WorkspaceOpenInput, WorkspaceState, WorkspaceView } from "./workspace.ts";
 
 /** How much of one file the reader is shown; beyond it the view says the text is truncated. */
 export const WORKSPACE_MAX_BYTES = 256 * 1024;
 /** How much of a file is inspected for binary content. */
 const SNIFF_BYTES = 8 * 1024;
+/** Bound replicated rows and per-page metadata reads, not the directory-name enumeration itself. */
+export const WORKSPACE_PAGE_SIZE = 100;
 
 export interface WorkspaceServiceOptions {
 	/** The session's execution directory, initially selected in the file browser. */
@@ -26,19 +30,20 @@ export function createWorkspaceService(
 	let root = resolve(options.cwd);
 	let roots = [root];
 	let tail = Promise.resolve();
+	let listed: { absolute: string; offset: number } | undefined;
 	const state = createState({
 		revision: 0,
 		cwd: root,
-		view: { kind: "listing", path: ".", parent: null, entries: [] },
+		view: { kind: "listing", path: ".", parent: null, entries: [], page: { offset: 0, limit: WORKSPACE_PAGE_SIZE, total: 0 } },
 	});
 
 	/** Resolve a browser path and select its authorized root. */
 	const inside = (path: string, directory: string): boolean => path === directory || path.startsWith(directory.endsWith(sep) ? directory : `${directory}${sep}`);
-	const resolveInside = async (path: string): Promise<string | undefined> => {
+	const resolveInside = async (path: string, reopenListed = false): Promise<string | undefined> => {
 		roots = await Promise.all((await options.directories?.() ?? [options.cwd]).map(directory => realpath(directory).catch(() => resolve(directory))));
 		if (roots.length === 0) return undefined;
 		if (!roots.includes(root)) root = roots[0]!;
-		const trimmed = path.trim();
+		const trimmed = reopenListed && listed && inside(listed.absolute, root) ? listed.absolute : path.trim();
 		const candidate = await realpath(trimmed === "" || trimmed === "." ? root : resolve(root, trimmed)).catch(() => resolve(root, trimmed));
 		const selected = roots.filter(directory => inside(candidate, directory)).sort((a, b) => b.length - a.length)[0];
 		if (selected === undefined) return undefined;
@@ -52,6 +57,7 @@ export function createWorkspaceService(
 	};
 
 	const publish = (context: Context, view: WorkspaceView): void => {
+		context.abortSignal?.throwIfAborted();
 		state.change(context, (draft) => {
 			draft.revision += 1;
 			draft.cwd = root;
@@ -60,24 +66,36 @@ export function createWorkspaceService(
 		});
 	};
 
-	const list = async (absolute: string, context: Context): Promise<void> => {
+	const list = async (absolute: string, context: Context, requestedOffset?: number): Promise<void> => {
 		const path = workspaceRelative(absolute);
-		let names: string[];
+		let names: Dirent[];
 		try {
-			names = await readdir(absolute);
+			names = await readdir(absolute, { withFileTypes: true });
 		} catch {
 			publish(context, { kind: "missing", path });
 			return;
 		}
+		names.sort((left, right) => left.isDirectory() === right.isDirectory() ? left.name.localeCompare(right.name) : left.isDirectory() ? -1 : 1);
+		const requested = requestedOffset ?? (listed?.absolute === absolute ? listed.offset : 0);
+		const last = Math.max(0, Math.ceil(names.length / WORKSPACE_PAGE_SIZE) - 1) * WORKSPACE_PAGE_SIZE;
+		const offset = Math.min(Math.floor(requested / WORKSPACE_PAGE_SIZE) * WORKSPACE_PAGE_SIZE, last);
 		const entries: WorkspaceEntry[] = [];
-		for (const name of names) {
+		for (const item of names.slice(offset, offset + WORKSPACE_PAGE_SIZE)) {
+			context.abortSignal?.throwIfAborted();
+			const name = item.name;
 			try {
-				const info = await stat(join(absolute, name));
-				entries.push({
-					name,
-					kind: info.isDirectory() ? "dir" : "file",
-					size: info.isDirectory() ? 0 : info.size,
-				});
+				let file = join(absolute, name);
+				if (item.isSymbolicLink()) {
+					const target = await realpath(file);
+					if (!roots.some(directory => inside(target, directory))) {
+						// Keep the local name, but do not read metadata outside the authorized folders.
+						entries.push({ name, kind: "file", size: 0 });
+						continue;
+					}
+					file = target;
+				}
+				const info = await stat(file);
+				entries.push({ name, kind: info.isDirectory() ? "dir" : "file", size: info.isDirectory() ? 0 : info.size });
 			} catch {
 				// A name that vanished between the listing and the stat is left out rather than failing it.
 			}
@@ -85,12 +103,15 @@ export function createWorkspaceService(
 		entries.sort((left, right) =>
 			left.kind === right.kind ? left.name.localeCompare(right.name) : left.kind === "dir" ? -1 : 1,
 		);
+		context.abortSignal?.throwIfAborted();
 		publish(context, {
 			kind: "listing",
 			path,
 			parent: absolute === root ? null : workspaceRelative(resolve(absolute, "..")),
 			entries,
+			page: { offset, limit: WORKSPACE_PAGE_SIZE, total: names.length },
 		});
+		listed = { absolute, offset };
 	};
 
 	const read = async (absolute: string, context: Context): Promise<void> => {
@@ -134,20 +155,33 @@ export function createWorkspaceService(
 		publish(context, { kind: "text", path, text: bytes.toString("utf8"), truncated });
 	};
 
-	const visit = (path: string, context: Context, operation: typeof list): Promise<void> => {
+	const visit = (path: string, context: Context, operation: typeof list, reopenListed = false): Promise<void> => {
 		const result = tail.catch(() => {}).then(async () => {
-			context.abortSignal?.throwIfAborted();
-			const absolute = await resolveInside(path);
-			if (absolute === undefined) { publish(context, { kind: "denied", path, reason: "Folder is outside project workspaces." }); return; }
-			await operation(absolute, context);
+			const before = root;
+			try {
+				context.abortSignal?.throwIfAborted();
+				const absolute = await resolveInside(path, reopenListed);
+				context.abortSignal?.throwIfAborted();
+				if (absolute === undefined) { publish(context, { kind: "denied", path, reason: "Folder is outside project workspaces." }); return; }
+				await operation(absolute, context);
+			} catch (error) {
+				root = before;
+				throw error;
+			}
 		});
 		tail = result;
 		return result;
 	};
 	return { service: { state,
-		open: (path: string, context: Context) => visit(path, context, list),
+		open: (input: WorkspaceOpenInput, context: Context) => {
+			if (typeof input === "string") return visit(input, context, list);
+			if (input === null || typeof input !== "object") return Promise.reject(new TypeError("Invalid workspace directory page"));
+			const { path, offset } = input;
+			if (typeof path !== "string" || !Number.isSafeInteger(offset) || offset < 0) return Promise.reject(new TypeError("Invalid workspace directory page"));
+			return visit(path, context, (absolute, context) => list(absolute, context, offset));
+		},
 		read: (path: string, context: Context) => visit(path, context, read),
-	} satisfies Workspace, refresh: (context: Context) => visit(".", context, list) };
+	} satisfies Workspace, refresh: (context: Context) => visit(".", context, list, true) };
 }
 
 /** The workspace as a facet: the service, and the working directory listed when it activates. */

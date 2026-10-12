@@ -1252,6 +1252,15 @@ describe("web client interactive loop", () => {
 			expect(listed.length).toBeGreaterThan(0);
 			expect(listed.every((name) => onDisk.includes(name))).toBe(true);
 			expect(listed.length).toBeLessThanOrEqual(onDisk.length);
+			expect(listing.page).toMatchObject({ limit: 100, total: onDisk.length });
+			const revision = attached.workspace.state.value!.revision;
+			await attached.workspace.open({ path: ".", offset: Number.MAX_SAFE_INTEGER }, BACKGROUND_CONTEXT);
+			await waitFor(() => attached.workspace.state.value!.revision > revision, "the remote directory page");
+			const paged = attached.workspace.state.value!.view;
+			if (paged.kind !== "listing") throw new Error("Expected a remote directory page");
+			expect(paged.page?.offset).toBe(Math.max(0, Math.ceil(onDisk.length / 100) - 1) * 100);
+			await attached.workspace.open({ path: ".", offset: 0 }, BACKGROUND_CONTEXT);
+			await waitFor(() => attached.workspace.state.value!.view.kind === "listing" && attached.workspace.state.value!.view.page?.offset === 0, "the first remote page");
 
 			// Reading a file returns its real bytes, and walking into a directory lists that one.
 			const target = listing.entries.find((entry) => entry.kind === "file");

@@ -153,6 +153,7 @@ import {
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
 	WORKSPACE_RELOAD_ACTION,
+	WORKSPACE_PAGE_ACTION,
 	type CommandLike,
 } from "@amazme/web";
 import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
@@ -180,7 +181,8 @@ import { Diagnostics } from "../services/diagnostics.ts";
 import { formatDiagnosticReport, type DiagnosticReport } from "../../core/diagnostics-types.ts";
 import { Terminal, type Terminal as TerminalService, type TerminalState } from "../services/terminal.ts";
 import { Transcript } from "../services/transcript.ts";
-import { Workspace, type Workspace as WorkspaceService, type WorkspaceState } from "../services/workspace.ts";
+import { Workspace } from "../services/workspace.ts";
+import type { Workspace as WorkspaceService, WorkspaceOpenInput, WorkspaceState } from "../services/workspace.ts";
 
 function readManifest(): WebBootManifest | undefined {
 	const candidate = (globalThis as Record<string, unknown>)[BOOT_GLOBAL];
@@ -401,12 +403,27 @@ class SessionPainter {
 		return this.#terminal?.state.value;
 	}
 
-	async workspaceOpen(path: string): Promise<void> {
+	async workspaceOpen(path: WorkspaceOpenInput): Promise<void> {
 		await this.#workspace?.open(path, BACKGROUND_CONTEXT);
 	}
 
 	async workspaceRead(path: string): Promise<void> {
 		await this.#workspace?.read(path, BACKGROUND_CONTEXT);
+	}
+
+	async workspacePage(offset: number): Promise<boolean> {
+		const workspace = this.#workspace;
+		const view = workspace?.state.value?.view;
+		if (workspace === undefined || view?.kind !== "listing" || view.page === undefined) return false;
+		if (!Number.isSafeInteger(offset) || offset < 0) throw new TypeError("Invalid workspace directory page");
+		await workspace.open({ path: view.path, offset }, BACKGROUND_CONTEXT);
+		return workspace === this.#workspace;
+	}
+
+	async workspaceReload(): Promise<void> {
+		const view = this.workspace?.view;
+		if (view !== undefined && view.kind !== "listing") await this.workspaceRead(view.path);
+		else await this.workspaceOpen(view?.path ?? ".");
 	}
 
 	async runTerminal(command: string): Promise<void> {
@@ -2217,9 +2234,21 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						dockOpen = true;
 						paint();
 						return;
-					case WORKSPACE_RELOAD_ACTION: {
-						const view = painter.workspace?.view;
-						settle(painter.workspaceOpen(view !== undefined && view.kind === "text" ? view.path : (view?.path ?? ".")));
+					case WORKSPACE_RELOAD_ACTION:
+						settle(painter.workspaceReload());
+						return;
+					case WORKSPACE_PAGE_ACTION: {
+						const focused = document.activeElement;
+						const restore = focused instanceof HTMLButtonElement && focused.dataset.action === WORKSPACE_PAGE_ACTION;
+						const label = focused?.textContent;
+						settle(painter.workspacePage(Number(action.data)).then(current => {
+							if (!current) return;
+							paint();
+							// Preserve keyboard continuation, but never steal focus moved elsewhere during I/O.
+							if (!restore || document.activeElement !== document.body || !dockOpen || dockTab !== "files") return;
+							const buttons = [...document.querySelectorAll<HTMLButtonElement>(`#dock-body [data-action="${WORKSPACE_PAGE_ACTION}"]`)];
+							(buttons.find(button => button.textContent === label) ?? buttons[0] ?? document.querySelector<HTMLButtonElement>(`#dock-body [data-action="${WORKSPACE_RELOAD_ACTION}"]`))?.focus();
+						}));
 						return;
 					}
 					case WORKSPACE_OPEN_ACTION:

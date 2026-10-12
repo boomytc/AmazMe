@@ -8,6 +8,16 @@ export interface WorkspaceEntry {
 	size: number;
 }
 
+/** Request a bounded directory page; a plain path preserves the current page when reopening the same directory. */
+export type WorkspaceOpenInput = string | { readonly path: string; readonly offset: number };
+
+export interface WorkspacePage {
+	readonly offset: number;
+	readonly limit: number;
+	/** Enumerated names, including entries that may vanish before their metadata is read. */
+	readonly total: number;
+}
+
 /**
  * What the workspace is showing: a listing, the text of one file, or why neither could be produced.
  * Paths outside the project folders are denied; paths are relative to the browser's selected folder.
@@ -20,6 +30,8 @@ export type WorkspaceView =
 			/** The directory one level up, or null at the working directory itself. */
 			readonly parent: string | null;
 			readonly entries: WorkspaceEntry[];
+			/** Absent in older hosts; only this page is replicated. */
+			readonly page?: WorkspacePage;
 	  }
 	| { readonly kind: "text"; readonly path: string; readonly text: string; readonly truncated: boolean }
 	| { readonly kind: "binary"; readonly path: string }
@@ -39,7 +51,7 @@ export interface WorkspaceState {
 export interface Workspace {
 	readonly state: ReplicatedState<WorkspaceState>;
 	/** List a directory; `""` and `"."` mean the working directory. */
-	open(path: string, context: Context): Promise<void>;
+	open(path: WorkspaceOpenInput, context: Context): Promise<void>;
 	/** Read one file as text, or report why it cannot be shown. */
 	read(path: string, context: Context): Promise<void>;
 }

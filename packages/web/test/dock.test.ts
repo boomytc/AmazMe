@@ -8,6 +8,7 @@ import {
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
 	WORKSPACE_RELOAD_ACTION,
+	WORKSPACE_PAGE_ACTION,
 } from "../src/actions.ts";
 import {
 	conversationsPanel,
@@ -137,6 +138,19 @@ describe("the session dock", () => {
 		expect(nested.groups[0]?.rows[0]).toMatchObject({ id: "files:up", description: ".", title: "Up" });
 		// An entry's action names the path it resolves to, not only its own name.
 		expect(nested.groups[0]?.rows[1]?.actions?.[0]).toMatchObject({ id: WORKSPACE_READ_ACTION, data: "src/index.ts" });
+	});
+
+	test("shows bounded directory paging and leaves older hosts without page actions", () => {
+		if (LISTING.view.kind !== "listing") throw new Error("Expected listing");
+		for (const locale of ["en", "zh"] as const) {
+			const panel = filesPanel(locale, { ...LISTING, view: { ...LISTING.view, page: { offset: 100, limit: 100, total: 250 } } });
+			const group = panel.groups[0]!;
+			expect(group.actions?.filter(action => action.id === WORKSPACE_PAGE_ACTION).map(action => action.data)).toEqual(["0", "200"]);
+			expect(group.description).toContain("101");
+			expect(group.description).toContain("250");
+		}
+		expect(filesPanel("en", LISTING).groups[0]?.actions?.some(action => action.id === WORKSPACE_PAGE_ACTION)).toBe(false);
+		expect(filesPanel("en", { ...LISTING, view: { ...LISTING.view, page: { offset: 200, limit: 100, total: 250 } } }).groups[0]?.actions?.filter(action => action.id === WORKSPACE_PAGE_ACTION).map(action => action.data)).toEqual(["100"]);
 	});
 
 	test("shows a file's text, and says when it is not text or not there", () => {

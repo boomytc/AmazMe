@@ -35,8 +35,10 @@ export const DOCK_TOGGLE_ACTION = "dock:toggle";
 export const DOCK_TAB_ACTION = "dock:tab";
 /** List a directory in the workspace: `data` is the path relative to the working directory. */
 export const WORKSPACE_OPEN_ACTION = "workspace:open";
-/** Re-list the workspace's current directory. */
+/** Reload the workspace's current directory page or file. */
 export const WORKSPACE_RELOAD_ACTION = "workspace:reload";
+/** Request another bounded page of the directory currently shown. */
+export const WORKSPACE_PAGE_ACTION = "workspace:page";
 /** Read one file as text: `data` is the path relative to the working directory. */
 export const WORKSPACE_READ_ACTION = "workspace:read";
 /** Run a terminal command: `data` is the command line. */
