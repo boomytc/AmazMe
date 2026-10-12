@@ -11,6 +11,7 @@ Follow the [Quickstart](quickstart.md) to install a complete release or run from
 - [Continue or branch a session](sessions.md) without losing existing history.
 - [Configure AmazMe](configuration.md) for defaults, project instructions and reusable resources.
 - [Understand the runtime](how-pi-works.md) for context, owned tasks, storage and plugin lifecycles.
+- [Review changes and control runs](run-controls.md) for budgets, pause/resume, archive semantics, context cleanup and optional file-write isolation.
 
 The default terminal uses Durable storage. `amazme web` and `amazme client` share a persistent host and its session roster. Print/RPC and the TypeScript SDK use their documented JSONL session API; see [Sessions](sessions.md) for each storage format and supported selectors.
 
@@ -30,6 +31,6 @@ Choose the smallest resource that fits the change: [prompt templates](prompt-tem
 
 ## Reference and diagnostics
 
-Use [read-only diagnostics](diagnostics.md), `amazme doctor`, or Web Settings → Files to inspect configuration and credential availability without provider requests. Reference pages cover [CLI options](cli.md), [settings](settings.md), [providers](providers.md), [keybindings](keybindings.md) and [environment variables](environment-variables.md).
+Use [read-only diagnostics](diagnostics.md), `amazme doctor`, or Web Settings → Configuration & diagnostics to inspect configuration and credential availability without provider requests. Reference pages cover [CLI options](cli.md), [settings](settings.md), [providers](providers.md), [keybindings](keybindings.md) and [environment variables](environment-variables.md).
 
 Tools and plugins run with the process's operating-system permissions. [Project trust](security.md#understand-project-trust) controls resource loading; it does not sandbox tool execution. OAuth preserves Pi's provider identity while the product, package scope and command remain AmazMe.

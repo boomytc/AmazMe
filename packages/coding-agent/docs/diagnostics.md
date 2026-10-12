@@ -1,6 +1,6 @@
 # 只读诊断
 
-执行 `amazme doctor`，或在 Web 的「设置 → 文件 → 只读诊断」打开同一份本地报告。
+执行 `amazme doctor`，或在 Web 的「设置 → 配置与诊断 → 查看诊断报告」打开同一份本地报告。
 
 ```bash
 amazme doctor --zh

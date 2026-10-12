@@ -18,6 +18,8 @@ The transcript shows prompts, streamed answers, tool arguments, results and fail
 
 The footer shows the focused conversation, saved title, working directory, context usage, cost and keyboard hints. The editor identifies the selected model and thinking level. Resource counts appear at startup unless `quietStartup` hides them; `--verbose` shows them for the current process. Diagnostics remain visible in quiet mode.
 
+`/changes` reviews the latest turn's file changes; `/limits` configures tool-call, elapsed-time and reported-cost budgets; `/resume_run` grants another budget tranche. `/execution` selects the global file-write policy. See [Run controls](run-controls.md) for arguments, persisted pauses and isolation limits.
+
 ## Models, authentication and resources
 
 | Action | Command or key |
@@ -70,9 +72,11 @@ session's model, thinking level, and labels do not), and from then on keeps that
 list shows the same session with everything committed on the host. What a projection cannot carry is counted in the
 host's log rather than dropped quietly.
 
-The page lists the host's sessions on the left and the attached session's transcript on the right. The roster
-groups the sessions by when they were made (today, yesterday, the previous seven days, earlier), shows each session's age, and marks the attached one; click a row to attach another session, or use the sidebar's
-**New session** bar to have the host create one — it appears in the roster, attaches at once, and accepts input.
+A persistent navigation rail separates chat from management pages. In chat, the sidebar groups sessions by
+**Project → Session**, shows each session's age, and marks the attached one. Projects can contain multiple source
+folders; the first folder supplies the execution directory for new sessions, while existing sessions retain theirs.
+Create a project or edit its folders from the project controls. Click a session to attach it, or use **New session**
+or a project's new-session button to create one and return to chat.
 The transcript
 renders the same durable state the TUI shows: user and assistant blocks, thinking, tool calls with their
 results or a "Not run" notice, compaction and reset notices, and an error notice for an answer that failed,
@@ -83,7 +87,7 @@ blocks, and pipe tables become elements — a table column that holds only numbe
 one width, so the numbers can be compared down the column — while anything the model writes that looks like markup
 stays text. The page's own design is a neutral grey scale with one accent and the primary action in ink, following the
 conventions of the Claude, ChatGPT, and Grok chat clients: a centred conversation column, a rounded composer card,
-a time-grouped sidebar, and answer actions that show on hover. Its appearance follows the stored preference (see
+a project-grouped sidebar, and answer actions that show on hover. Its appearance follows the stored preference (see
 below), defaulting to the system's light and dark appearance.
 
 The page's language is a stored preference too. With no choice made, a browser asking for Chinese gets Chinese and any
@@ -111,9 +115,9 @@ Choose models and reasoning with the composer dropdowns or **Settings → Models
 Failures stay visible: losing the host shows `disconnected: …` in the header within seconds, and a document
 served without its boot manifest reports `cannot boot: …` in the header, the roster and the body instead of
 rendering an empty shell. A page that lost its host keeps the session it was on and retries the connection with
-backoff, saying `disconnected: … — retrying` while it does; when the host answers again — a restart on the same port
-and server directory — it attaches that session again and repaints, so two tabs on one session pick up where they
-were. An interrupted turn is recovered by the host's own runtime, so the session stays busy until that settles and a
+backoff, saying `disconnected: … — retrying` while it does. When the host answers again, it synchronizes the latest
+project and session catalogue before restoring an eligible saved selection. A session newly archived or removed
+while disconnected is not automatically attached; one already being viewed in the archive can be restored. An interrupted turn is recovered by the host's own runtime, so the session stays busy until that settles and a
 prompt sent in the meantime is refused with the reason rather than queued silently. A document request that arrives before the host runtime exists waits for its manifest
 instead of serving an unbootable page. Restarting the host keeps sessions: the same server ID and the durable
 storage are
@@ -133,10 +137,28 @@ name and size with its own remove, and the prompt carries them as image content,
 the durable entry and come back after a reload. PNG, JPEG, WebP, and GIF up to 8 MB are accepted; an
 unsupported or oversized file is refused with the reason.
 
-The sidebar filters sessions by id or working directory, names each session's working directory under
-its id, and removes one from a hover control behind a confirmation: its storage is deleted from the
-host's session directory while the working directory itself is left alone. A draft in the composer,
-the filter text, and the open management view survive attaching, creating, and removing sessions.
+The sidebar filters sessions by name, ID, working directory and project. Each session's more menu offers
+rename, ordinary archive, **Stop work and archive**, copy ID and confirmed deletion. Ordinary archives hide the
+session without stopping work; removing a project also archives its sessions without deleting source folders.
+Stopping and archiving cancels current and queued work and refuses new work until the session is restored;
+cancelled tasks are not automatically replayed. **Archived** opens the archive, also reachable through
+**Settings → Archived → Manage**. Deleting a session removes its history, not its project folders.
+
+Project, session and archive selection survive refresh in the current tab. The host also saves a fallback for a
+new window or changed Web port, but checks current project and archive metadata before attaching. Switching
+between chat and settings retains the attached session, draft and chat scroll position; changing a setting leaves
+you on that settings page.
+
+### Review changes and continue a paused run
+
+**Session tools → Changes** shows file changes, read-only diffs and recognized validation-command results.
+Changes can include concurrent human edits; a successful command is not proof that the result is correct.
+
+Configure tool-call, elapsed-time and reported-cost budgets in **Settings → Conversation**. Zero means unlimited.
+Budgets pause before the next model or tool execution, including nested tools, rather than killing a command
+already running. **Continue with another budget** in the changes tab resets the current tranche without
+repeating completed calls. The pause survives restart and still requires explicit continuation. See
+[Run controls](run-controls.md) for replay rules, snapshot limits, context cleanup and file-write isolation.
 
 ### Confirming tool calls
 **Settings → Approvals → Tool confirmation** decides which tool calls wait for you: `Run without asking`,
@@ -161,12 +183,11 @@ writes `showWelcome: false` to the agent's `settings.json`. Turn it back on any 
 
 ### Watching a long run, and older history
 
-The dock's **Conversations** tab lists every conversation of the session: `main`, and each subagent
-child with the task and conversation that created it. **Open** switches the main area to that
-conversation — the root keeps its live transcript, another one is read from the host — and the
-composer then talks to whichever conversation is focused. **Tasks** shows the live task graph: each
-task's kind, its phase, its status, what it waits on, and the conversations it owns, which is what
-makes a long delegation legible while it runs.
+The dock's **Conversations** tab lists the main conversation, branches and subagent conversations with their
+origin and focus. **Open** focuses an existing conversation without starting another task, and the composer then
+talks to that conversation. **Tasks** shows readable task kinds and phases, status, waited-task counts and ownership.
+**View conversation** and **View child conversation** have separate labels and focus the named conversation;
+they do not restart its task.
 
 **Load older** at the top of the transcript pages stored history in, twenty entries at a time. The
 first page starts strictly below the oldest entry the transcript still shows (so a page never repeats
@@ -175,50 +196,53 @@ host's cursor. The pages read exactly like the transcript above them.
 
 ### The session's files and a shell
 
-The **Session tools** control in the header opens a dock beside the conversation with two tabs. **Files**
-browses the attached session's working directory: directories open, files read, **Up** steps back out,
-and a text file's content is shown whole (a large file says it is truncated). A binary file, a path that
-is not there any more, and a path above the working directory each say so — the workspace never resolves
-outside the session's directory.
+The **Session tools** control in the header opens a dock with **Files**, **Terminal**, **Conversations**, **Tasks**
+and, when available, **Changes**. **Files** can switch between the project's source folders: directories open,
+files read, and **Up** steps back out. Large text files are marked as truncated; binary and missing files have
+separate notices. Relative paths resolve from the selected folder, and absolute paths can select another project
+folder. Canonical paths and symlink targets must remain inside a project source folder. This browser boundary
+is not a tool sandbox. The separate file-write policy limits tool writes, not reading or network access.
 
-**Terminal** runs a command in that same directory with the shell path and command prefix from settings,
-streams its output into the panel, and reports the exit code. **Stop** cancels the running command and
-keeps what it printed. One command runs at a time, and the dock answers a second one instead of queueing
-it. The terminal uses the same execution path as the agent's own bash tool, so what you run by hand
-behaves like what the model runs.
+**Terminal** runs in the session's execution directory using the configured command prefix and the shared host
+execution environment, including its file-write policy. It streams bounded output and reports the exit code.
+**Stop** cancels the command and keeps its output. One command runs at a time; a second is refused, not queued.
 
 ### Commands, shortcuts, and copying
 
-Type `/` in the composer to open the command palette. It lists the session's own commands — `model`,
-`thinking`, `compact`, and `reload` — and narrows as you type; after a space it lists the host's
-completions for that argument (model ids, reasoning levels). `Tab` completes the highlighted row and
-`Enter` runs the line. When the agent registers skills as commands (the **Skills as commands**
-setting), each loaded skill appears as `/skill:<name>`; running it expands the skill's own file the
-way the CLI does and sends it as the prompt. A command's outcome appears on the header's connection
-line.
+Type `/` in the composer to open the work-action palette for plugin commands, prompt templates and enabled
+`/skill:<name>` commands. It filters by prefix and offers plugin argument completions; `Tab` completes a row and
+`Enter` runs it. Resource expansion retains the focused conversation and the chosen Steer/Queue mode.
+
+Use the model and thinking dropdowns, provider-account controls, and the session's history, branch and compaction
+controls instead of typing terminal settings commands. `/model`, `/thinking`, `/scoped_models` and `/login` are not
+Web model-setting commands. **Settings → Configuration & diagnostics → Reload session resources** picks up new templates or plugin
+changes; unknown command names are refused rather than submitted to the model.
 
 The product shortcuts follow the same convention DSH uses on the web: `⌘⌥N` (`Ctrl+Alt+N`) creates
 and attaches a session, `⌘⌥M` (`Ctrl+Alt+M`) cycles the main area through the conversation and the
 management views, and `/` with the focus outside a text field moves it to the composer. While a turn
-runs, two `Escape` presses within half a second stop it, the same double-escape the TUI uses; a
-single `Escape` still closes the open modal, view card, or model card. Every fenced code block in an
+runs, **Stop** or `Ctrl+C` cancels it; `Ctrl+C` remains copy when text is selected. `Escape` closes menus,
+modals or the sidebar drawer, and otherwise focuses the stop control during a run; it never cancels the turn. Every fenced code block in an
 answer carries a copy control whose clipboard content is exactly that code.
 
 ### Manage plugins, skills, settings, and automation
 
-The sidebar's **Plugins**, **Skills**, and **Automation** rows and the **Settings** entry at the sidebar's bottom
-switch the main area to a management panel; the header then carries the panel's name and a back arrow, and the
-conversation and composer return with it. Every panel is a list of groups built from the host's own state, so the
-page never shows a field the host cannot read or write.
+The persistent navigation rail opens **Plugins**, **Skills**, **Settings** and other management pages provided by
+the host. Each management page has a category sidebar and shows only the selected category. Settings starts at
+**Interface** and remembers category choices while navigating. The back arrow or chat navigation returns to the
+same attached session, draft and scroll position; no detach or new session is needed. Settings edits, including
+model and reasoning changes, stay on the current page.
 
 **Plugins** lists the plugin packages the host builds into a Session's facet generation. **Add package…** takes an
-absolute path to a package with `src/session.ts`; the host builds it before the selection lands, and a package that
+absolute path to a native plugin package; the host builds it before the selection lands, and a package that
 cannot build is rejected with the panel's error notice. The selection is the server default, so sessions opened
 after the change load it while a running session keeps the generation it started with. The **MCP servers** group
 shows the effective `mcp.json` entries with their scope, enabled state, and exposure; a row's switch and exposure
 select write the same files the CLI and the TUI read, and **Add server…** takes a name plus the server entry as
-JSON (a `command` for stdio, a `url` for HTTP). Entries an extension registered are read-only here, and this host
-does not connect MCP servers itself, so the panel says so.
+JSON (a `command` for stdio, a `url` for HTTP). With an attached session, the panel shows that worker's effective
+configuration, connection state, tool count and errors, and offers reconnect and login where supported. Trusted
+projects can override supported settings for their own servers. Without a session, the panel manages global
+configuration; the browser itself never connects to MCP servers.
 
 **Skills** lists the host working directory's selected resources using the same loader as session workers:
 user and project skills, configured paths and package resources, with project trust and resource filters applied.
@@ -230,13 +254,14 @@ session's own resources and command catalogue after its revision changes. `/relo
 session's resources. New sessions load the current files.
 
 **Settings** is the host's own field catalogue: each row is a field the host can read and write, grouped under its
-own heading (the first group, **Interface**, holds **Language** and **Appearance**), with the settings key it maps to,
+own category (**Interface** holds **Language** and **Appearance**), with a readable label and description,
 a `default` marker when no settings file sets it, and a control
 that matches its kind — a switch, a select, a number, or a text field. A number outside the host's range is refused in
 the page, keeping what was typed. A change writes the global
 `settings.json` with the same merge semantics the CLI uses, and the attached session is asked to re-read its
-settings, so fields read per turn (compaction, retries, steering, follow-up) apply immediately. The **Files** group
-names the global and project settings paths, shows a parse error the files carry, and offers **Re-read files**.
+settings, so fields read per turn (compaction, retries, steering, follow-up) apply immediately. **Configuration & diagnostics**
+names the global and project settings paths, shows parse errors, and offers **Reload settings**, **Reload session resources**
+and **View diagnostic report**.
 List-valued settings such as `defaultTools` stay in the settings file; the panel edits the scalar surface. The labels,
 headings, and option names come from the page's own dictionaries keyed by the catalogue's ids and tokens, so a field the
 dictionaries do not know is still listed, under its id, rather than hidden.
@@ -248,13 +273,17 @@ what you typed. Closing a modal with `Esc` or its close control returns the focu
 opened it. Hovering any control paints a state from the design tokens, and every control the page
 renders can be reached with `Tab` and shows a focus ring.
 
-**Automation** lists the prompts the host runs on its own. Each row names the prompt, its cadence (at least one
-minute), the session it belongs to, when it is next due, and what its last run produced; **Run now** runs it
-immediately, the switch pauses or resumes the host's own timer, and **Remove** deletes it behind a confirmation.
-**Plan a prompt…** asks for the text and the gap in minutes and attaches the schedule to the session the page has
-open, so a tab has to be attached to plan one. The schedules live in `schedules.json` in the agent directory, and
-each run goes through the real session — the answer lands in that session's transcript whether or not a browser is
-open. A run that the model cannot answer records why instead of a false success.
+**Automation** appears only when the host selects the [optional automation plugin](../plugins/automation/README.md)
+and restarts. Plans support positive-integer minute intervals, one-time local dates or five-field cron with an IANA
+time zone. Creation captures the session and conversation; later focus changes do not redirect the plan. Configure
+busy and missed-run handling, grace time and an execution timeout in the same form.
+
+Rows provide **Run now**, edit, enable/pause, cancel, recent execution records and confirmed removal. Pausing stops
+future triggers but still permits manual runs. One plan cannot overlap itself; the host holds at most four runs.
+Deleting waits for cancellation of that plan's admitted work without cancelling other user inputs. The agent-directory
+`schedules.json` preserves delivery IDs and pending receipts across restart, and records refusal, cancellation or
+timeout rather than a false success. Invalid or older files remain read-only until repaired. The target conversation
+owns the actual answer, so execution does not depend on an open browser.
 
 ## Run tools and copy output
 

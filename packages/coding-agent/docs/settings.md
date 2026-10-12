@@ -26,8 +26,6 @@ See [Choose a Model](models.md) for model selection and thinking controls.
 
 ## Interaction
 
-The default Durable TUI, Web and desktop also support `repeatToolReminder`, `reviewChanges`, `contextCleanup` (all default `true`), `runLimits: { calls: 0, seconds: 0, cost: 0 }`, `executionMode: "full-access"`, and `archiveRetentionDays: 0`. `executionMode` is global only; project settings cannot override it. Zero budgets are unlimited; zero retention keeps archives indefinitely. Retention is a manual-review reminder and never deletes files. See [Run controls](run-controls.md) for pause/resume, review limits, persisted context decisions and Unix write-isolation boundaries.
-
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `steeringMode` | `"all" \| "one-at-a-time"` | `"one-at-a-time"` | How queued steering messages are delivered. |
@@ -36,6 +34,25 @@ The default Durable TUI, Web and desktop also support `repeatToolReminder`, `rev
 | `doubleEscapeAction` | `"tree" \| "fork" \| "none"` | `"tree"` | Action for double Escape with an empty editor. |
 | `treeFilterMode` | `"default" \| "no-tools" \| "user-only" \| "labeled-only" \| "all"` | `"default"` | Initial filter used by `/tree`. |
 | `defaultProjectTrust` | `"ask" \| "always" \| "never"` | `"ask"` | Fallback project-trust behavior. **Can only be set in agent-directory settings.** |
+
+## Durable run controls
+
+These controls apply to the default Durable TUI, Web and desktop, not the SDK's JSONL AgentSession loop.
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `repeatToolReminder` | boolean | `true` | Remind after repeated identical tool calls and results; does not force a stop. |
+| `reviewChanges` | boolean | `true` | Capture per-turn workspace changes for review, including shell changes and possible concurrent human edits. |
+| `contextCleanup` | boolean | `true` | Persist projections that shorten old tool text and offload old images without deleting history. Disabling stops new decisions, not existing ones. |
+| `runLimits.calls` | non-negative integer | `0` | Agent tool-task quota per conversation and budget tranche; nested calls count, the same task is not charged twice. |
+| `runLimits.seconds` | non-negative integer | `0` | Elapsed-time budget checked before the next execution; does not kill an already running command. |
+| `runLimits.cost` | non-negative number | `0` | Budget in USD for reported model and tool costs, checked before the next execution. |
+| `executionMode` | `"full-access" \| "workspace-write" \| "read-only"` | `"full-access"` | Optional Unix file-write isolation. Global only; project settings cannot override it. Reading and network remain unrestricted. |
+| `archiveRetentionDays` | non-negative integer | `0` | Age threshold for manual archive review; never automatically deletes sessions or source folders. |
+
+Zero budgets are unlimited; zero retention keeps archives indefinitely. Pauses persist across restart and require
+explicit continuation. Resuming resets the current quota, elapsed-time and cost baselines while retaining counted
+task identities. See [Run controls](run-controls.md) for commands, replay rules, review limits and isolation backends.
 
 ## Tools
 

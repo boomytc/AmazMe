@@ -50,7 +50,7 @@ Granting project trust allows AmazMe to load:
 
 - project settings
 - project MCP servers from `.amazme/mcp.json`
-- extensions, skills, prompt templates, themes, and system-prompt files under `.pi`
+- extensions, skills, prompt templates, themes, and system-prompt files under `.amazme`
 - missing packages configured through project settings
 - project-local and project-package extensions
 
