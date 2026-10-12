@@ -24,6 +24,24 @@ Cache warming runs only when the model declares a cache lifetime and Pi estimate
 
 See [Choose a Model](models.md) for model selection and thinking controls.
 
+## Interface
+
+Web and desktop read these values from agent-directory settings. Project settings cannot override them. The terminal palette is `theme`.
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `locale` | `"auto" \| "zh" \| "en"` | `"auto"` | Web and desktop language. `auto` follows the browser: Chinese when the browser asks for Chinese, otherwise English. |
+| `appearance` | `"system" \| "light" \| "dark"` | `"system"` | Web and desktop palette. `system` follows the operating system. |
+| `showWelcome` | boolean | `true` | Show the first-run guide while the host has no sessions. |
+
+## Host tool confirmation
+
+The host worker reads `toolApproval` from agent-directory settings. Project settings cannot override it. Web and desktop show **Approve** or **Deny** for a matching call. Filesystem and network access remain the process permissions.
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `toolApproval` | `"off" \| "dangerous" \| "all"` | `"off"` | `off` runs the call. `dangerous` waits for `bash`, `powershell`, `write`, `edit`, and tools marked destructive or not read-only. `all` waits before every call. |
+
 ## Interaction
 
 | Setting | Type | Default | Description |

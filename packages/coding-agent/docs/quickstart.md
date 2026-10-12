@@ -71,7 +71,7 @@ amazme web
 amazme client
 ```
 
-Open the loopback URL printed by `web`. The page and hosted terminal use the same server's state. Choose **Provider accounts** from the model menu, or use `/login` and `/logout`. Web **Close** keeps the flow available to reopen until its five-minute deadline; **Cancel sign-in** ends it.
+Open the loopback URL printed by `web`. The page and hosted terminal use the same server's state. In the default terminal or `amazme client`, use `/login` and `/logout`. In Web and desktop, open **Settings → Models and connections → Provider accounts**. **Close** keeps the flow available to reopen until its five-minute deadline; **Cancel sign-in** ends it. Select a model from the dropdown beside the send button.
 
 Native terminal sessions use Durable SQLite storage. Print/JSON/RPC and the SDK use their own JSONL session interface; their session selectors and export commands are documented separately in [CLI Integration](cli-integration.md) and [Sessions](sessions.md).
 

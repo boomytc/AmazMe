@@ -13,7 +13,11 @@ amazme update [target] [options]
 amazme list
 amazme config [options]
 amazme auth <login|logout|check|print-api-key|print-bearer-token> [options]
-amazme mcp <list|login|logout> [options]
+amazme mcp <add|remove|list|login|logout> [options]
+amazme server [options]
+amazme web [--port <port>]
+amazme client [options] [text]
+amazme doctor [--json] [--zh]
 ```
 
 <a id="modes"></a>
@@ -270,6 +274,32 @@ These prompt options apply to the default terminal's actual model requests. With
 The default terminal uses the commands in [Use AmazMe in the terminal](usage.md). `dashboard` is ordinary prompt text; `--dashboard` is unsupported. Use `amazme web` or `amazme client` to browse the hosted session roster.
 
 Extensions may register additional long-form options. Unknown short options are rejected.
+
+## Host and diagnostics
+
+```sh
+amazme server [options]
+amazme web [--port <port>]
+amazme client [options] [text]
+amazme doctor [--json] [--zh]
+```
+
+`amazme server` runs the durable host. `amazme web` serves the Web client on loopback and reuses a host already running for the same server id. `--port 0` requests an OS-assigned port. `amazme client` attaches a terminal to that host. A prompt argument is sent only while the attached conversation is idle. Projects, the page, and session behavior are in [Usage](usage.md).
+
+| Option | Commands | Behavior |
+|---|---|---|
+| `--server-id <uuid>` | `server`, `web` | Select a lowercase UUIDv4 server id |
+| `--session-dir <dir>` | `server`, `web` | Host session storage root |
+| `-e <path>` | `server`, `web`, `client` | Native plugin package. Repeatable |
+| `--model <pattern>` | `server`, `client` | Startup model. `--provider <name>` requires `--model` |
+| `--connect <address>` | `client` | Attach to `unix:///<path>` or `radius://<uuid>` |
+| `--session-id <id>`, `-c`/`--continue`, `-r`/`--resume` | `client` | Session selectors. Mutually exclusive |
+| `--json` | `doctor` | Write the diagnostic report as JSON |
+| `--zh` | `doctor` | Write the text report in Chinese |
+
+`server` and `client` also accept `--auth-token <token>` or `--auth-token-file <path>` for an experimental Radius relay. The two options are mutually exclusive. A client accepts that authentication only with `--connect radius://<uuid>`. Model selection on `client` applies when it activates a local server; it is rejected together with `--connect`.
+
+`amazme doctor` reads local configuration without creating files, running commands, or contacting providers. Exit status `0` means the report has no error-level entry, `1` means it has one, and `2` means the arguments are invalid. The report boundary is in [Diagnostics](diagnostics.md).
 
 ## Package commands
 
