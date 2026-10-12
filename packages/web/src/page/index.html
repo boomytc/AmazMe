@@ -77,7 +77,10 @@
 		<nav class="app-rail" aria-label="{{sidebar.management}}">
 			<div class="rail-brand" id="connection-status" data-state="connecting" tabindex="0" role="status" aria-live="polite" aria-atomic="true" aria-label="AmazMe" aria-describedby="connection-status-text">
 				<span class="brand-mark" aria-hidden="true"><svg class="pixel-logo" viewBox="0 0 10 4" aria-hidden="true"><use href="#i-logo-a" class="pixel-a"></use><use href="#i-logo-m" class="pixel-m"></use></svg><span class="connection-dot" aria-hidden="true"></span></span>
-				<span class="connection-tooltip" id="connection-status-text">{{connection.starting}}</span>
+				<span class="connection-tooltip">
+					<span class="connection-tooltip-name">AmazMe</span>
+					<span id="connection-status-text">{{connection.starting}}</span>
+				</span>
 			</div>
 			<div class="rail-nav" id="nav"></div>
 			<div class="rail-footer">
@@ -89,7 +92,6 @@
 		<aside class="sidebar" id="sidebar">
 			<div class="session-sidebar" id="session-sidebar">
 				<div class="brand">
-					<span class="brand-name">AmazMe</span>
 					<div class="brand-filter" id="roster-filter-field">
 						<button class="icon-button" type="button" id="roster-filter-toggle" aria-label="{{sidebar.filter}}" title="{{sidebar.filter}}" aria-expanded="false" aria-controls="roster-filter">
 							<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>

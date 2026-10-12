@@ -20,6 +20,8 @@ test("startup status lives on the persistent brand mark, not the main header", (
 	expect(elements.connectionStatus.closest(".app-rail")).not.toBeNull();
 	expect(elements.connectionStatus.dataset.state).toBe("connecting");
 	expect(elements.connectionStatusText.textContent).toBe(translate("zh", "connection.starting"));
+	expect(elements.connectionStatus.querySelector(".connection-tooltip-name")?.textContent).toBe("AmazMe");
+	expect(document.querySelector(".brand-name")).toBeNull();
 	expect(elements.connectionStatus.getAttribute("tabindex")).toBe("0");
 	expect(elements.connectionStatus.getAttribute("aria-describedby")).toBe(elements.connectionStatusText.id);
 	expect(elements.connectionStatus.getAttribute("aria-live")).toBe("polite");

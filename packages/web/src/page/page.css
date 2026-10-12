@@ -261,6 +261,9 @@ p {
 	top: 4px;
 	left: calc(100% + 8px);
 	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
 	width: max-content;
 	max-width: min(360px, calc(100vw - var(--rail-width) - 24px));
 	padding: 8px 10px;
@@ -274,6 +277,17 @@ p {
 	pointer-events: none;
 	opacity: 0;
 	transition: opacity var(--dur-fast) var(--ease);
+}
+
+.connection-tooltip-name {
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 18px;
+}
+
+#connection-status-text {
+	color: var(--text-2);
 }
 
 .rail-brand:hover .connection-tooltip,
@@ -409,10 +423,6 @@ p {
 	background: var(--hover);
 }
 
-.brand:has(.brand-filter[data-open="true"]) .brand-name {
-	display: none;
-}
-
 .brand:has(.brand-filter[data-open="true"]) .brand-filter {
 	margin-left: 0;
 }
@@ -461,16 +471,6 @@ p {
 
 .pixel-m {
 	color: var(--logo-yellow);
-}
-
-.brand-name {
-	min-width: 0;
-	overflow: hidden;
-	font-size: 15px;
-	font-weight: 600;
-	letter-spacing: -0.01em;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 /* The new-session row: the one action the sidebar leads with. */
