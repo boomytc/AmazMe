@@ -81,6 +81,33 @@ beforeAll(() => {
 });
 
 describe("tool card row", () => {
+	test("blank answers do not add response controls or split the tool flow", () => {
+		paint([
+			assistantEntry(1, [{ type: "text", text: " \n\t " }, toolCall("first", "bash", {})], "toolUse"),
+			toolResultEntry(2, "first", "first result"),
+			assistantEntry(3, [{ type: "text", text: "\u00a0" }, toolCall("second", "bash", {})], "toolUse"),
+			toolResultEntry(4, "second", "second result", true),
+		]);
+		expect(document.querySelectorAll(".turn-response")).toHaveLength(0);
+		expect(document.querySelectorAll(".turn-process")).toHaveLength(1);
+		expect(document.querySelectorAll("details.disclosure")).toHaveLength(2);
+		expect(document.querySelector("details.error .tool-output")?.textContent).toBe("second result");
+	});
+
+	test("filters blank history and live responses without hiding status or later streamed text", () => {
+		const renderer = createRenderer(collectPageElements());
+		const blank = transcriptBlocks("en", viewOf([assistantEntry(1, [{ type: "text", text: " \n " }], "stop")]));
+		const view = { ...failureView("en", ""), attachedId: "session", status: "Generating…", blocks: blank,
+			history: { blocks: blank, more: true, loading: false } };
+		renderer.render(view);
+		expect(document.querySelectorAll(".turn-response")).toHaveLength(0);
+		expect(document.querySelector(".column")?.textContent).toContain("Generating…");
+		expect(document.querySelector(".history-more-button")).not.toBeNull();
+		renderer.render({ ...view, blocks: blank.map(block => ({ ...block, text: "Useful answer", running: true })) });
+		expect(document.querySelectorAll(".turn-response")).toHaveLength(1);
+		expect(document.querySelector(".turn-response")?.textContent).toContain("Useful answer");
+	});
+
 	test("shows the args digest on the collapsed row and the short args plus result when open", () => {
 		const details = paint([
 			assistantEntry(1, [toolCall("call-1", "bash", { command: "ls", cwd: "/tmp" })], "toolUse"),

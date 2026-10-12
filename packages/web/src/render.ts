@@ -1999,6 +1999,9 @@ export function createRenderer(
 			if (process !== undefined) reconcileChildren(process, children);
 		};
 		for (const block of blocks) {
+			// A blank answer is not a response card or a boundary between process rows. Keep the
+			// original entry and its tool/notice blocks; only the presentation is filtered.
+			if (block.kind === "assistant" && block.text.trim().length === 0) continue;
 			const key = `block:${block.id}`;
 			if (isProcess(block)) {
 				if (process === undefined) {
@@ -2013,15 +2016,12 @@ export function createRenderer(
 			process = undefined;
 			if (block.kind === "user") flow.push(flowCache.get(key, [lastView?.locale, block], () => wrap("turn-user", userBubble(block))));
 			else if (block.kind === "assistant") {
-				// A tool-only answer has no text of its own: its calls are the process rows above it.
-				if (block.text.length > 0) {
-					const answer = flowCache.get(key, [lastView?.locale, block], () => {
-						const answer = wrap("turn-response", markdownElement(block.text, markdown));
-						answer.append(answerActions(block));
-						return answer;
-					});
-					flow.push(answer);
-				}
+				const answer = flowCache.get(key, [lastView?.locale, block], () => {
+					const answer = wrap("turn-response", markdownElement(block.text, markdown));
+					answer.append(answerActions(block));
+					return answer;
+				});
+				flow.push(answer);
 			} else if (block.kind === "notice") flow.push(flowCache.get(key, [lastView?.locale, block], () => block.tone === "error" ? errorElement(block) : noticeElement(block)));
 		}
 		finishProcess();
