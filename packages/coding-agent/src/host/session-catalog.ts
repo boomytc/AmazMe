@@ -10,7 +10,7 @@ export interface SessionCatalogMetadata {
 	readonly cwd: string;
 	readonly projectId?: string;
 	readonly archivedAt?: number;
-	/** Explicit end-work archive; ordinary archives continue to accept work. */
+	/** Retained for existing metadata readers; every archive now stops work. */
 	readonly workEndedAt?: number;
 	/** The Session directory. Workers lock it and own the storage inside it. */
 	readonly path: string;
@@ -163,11 +163,11 @@ export async function writeSessionName(
 	return metadata;
 }
 
-export async function writeSessionArchive(sessionDir: string, id: string, archived: boolean, endWork = false): Promise<SessionCatalogMetadata> {
+export async function writeSessionArchive(sessionDir: string, id: string, archived: boolean): Promise<SessionCatalogMetadata> {
 	const current = await readSession(sessionDir, id);
 	if (current === undefined) throw new Error(`Unknown session: ${id}`);
 	const { archivedAt: _previousArchive, workEndedAt: _previousEnd, ...rest } = current;
-	const metadata: SessionCatalogMetadata = { ...rest, ...(archived ? { archivedAt: current.archivedAt ?? Date.now(), ...((endWork || current.workEndedAt !== undefined) ? { workEndedAt: current.workEndedAt ?? Date.now() } : {}) } : {}) };
+	const metadata: SessionCatalogMetadata = { ...rest, ...(archived ? { archivedAt: current.archivedAt ?? Date.now(), workEndedAt: current.workEndedAt ?? Date.now() } : {}) };
 	await writeMetadata(metadata);
 	return metadata;
 }

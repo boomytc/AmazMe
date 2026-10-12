@@ -91,7 +91,6 @@ export async function createExperimentalServerServices(options: {
 		rename(id: string, name: string): Promise<ProjectSummary>;
 		remove(id: string, context: Context): Promise<void>;
 		archive(sessionId: string, archived: boolean, context: Context): Promise<void>;
-		end?(sessionId: string, context: Context): Promise<void>;
 	};
 }): Promise<ExperimentalServerServices> {
 	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ...(options.projects ? [ProjectManagement, SessionArchive] : [])]
@@ -203,10 +202,6 @@ export async function createExperimentalServerServices(options: {
 					});
 					provider.provide(SessionArchive, {
 						set: (id, archived, context) => updateDirectory(() => projects.archive(id, archived, context)),
-						end: (id, context) => updateDirectory(async () => {
-							if (!projects.end) throw new Error("Ending work is unavailable on this host");
-							await projects.end(id, context);
-						}),
 					});
 				}
 				provider.provide(Diagnostics, {

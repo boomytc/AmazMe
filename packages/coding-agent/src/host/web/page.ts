@@ -15,7 +15,7 @@ import {
 	PROJECT_ADD_ACTION, PROJECT_ADD_MODAL, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_RENAME_MODAL,
 	PROJECT_EDIT_ACTION, PROJECT_EDIT_MODAL, PROJECT_NEW_SESSION_ACTION,
 	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, ARCHIVE_TOGGLE_ACTION, ARCHIVE_MANAGE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
-	SESSION_END_ACTION, SESSION_END_MODAL, endSessionModal,
+	SESSION_ARCHIVE_MODAL, archiveSessionModal,
 	addProjectModal, editProjectModal, renameProjectModal, removeProjectModal,
 } from "@amazme/web";
 import {
@@ -1919,8 +1919,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						if (Array.isArray(values) && values.length === 3 && values.every(value => typeof value === "string")) void painter.inspectDiff(values[0], values[1], values[2]).then(paint, report);
 						return;
 					}
-					case SESSION_END_ACTION:
-						if (action.data) openModal(endSessionModal(locale, action.data), action); return;
+					case SESSION_ARCHIVE_ACTION:
+						if (action.data) openModal(archiveSessionModal(locale, action.data), action); return;
 					case PROJECT_ADD_ACTION:
 						openModal(addProjectModal(locale), action); return;
 					case PROJECT_NEW_SESSION_ACTION:
@@ -1968,13 +1968,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						rememberSelection();
 						if (!showArchived && directory.state.value?.sessions.some(session => session.sessionId === desiredSessionId && session.archivedAt !== undefined)) void clearSession().catch(report);
 						paint(); return;
-					case SESSION_ARCHIVE_ACTION:
 					case SESSION_RESTORE_ACTION: {
 						const selection = selectionRevision;
 						runPanelCall({ id: action.id, data: action.data, call: async () => {
 							const id = action.data ?? "";
-							await archives.set(id, action.id === SESSION_ARCHIVE_ACTION, BACKGROUND_CONTEXT);
-							if (action.id === SESSION_RESTORE_ACTION && selectionRevision === selection) { showArchived = false; await selectSession(id); }
+							await archives.set(id, false, BACKGROUND_CONTEXT);
+							if (selectionRevision === selection) { showArchived = false; await selectSession(id); }
 							return { ok: true as const };
 						} }); return;
 					}
@@ -2461,8 +2460,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						runPanelCall({ id: action.id, data: action.data, inModal: true, call: () => projects.rename(action.data ?? "", fields.name ?? "", BACKGROUND_CONTEXT).then(done) }); return;
 					case PROJECT_REMOVE_MODAL:
 						runPanelCall({ id: action.id, data: action.data, inModal: true, call: () => projects.remove(action.data ?? "", BACKGROUND_CONTEXT).then(done) }); return;
-					case SESSION_END_MODAL:
-						runPanelCall({ id: action.id, data: action.data, inModal: true, retry: false, call: () => archives.end(action.data ?? "", BACKGROUND_CONTEXT).then(done) }); return;
+					case SESSION_ARCHIVE_MODAL:
+						runPanelCall({ id: action.id, data: action.data, inModal: true, retry: false, call: () => archives.set(action.data ?? "", true, BACKGROUND_CONTEXT).then(done) }); return;
 					case PLUGIN_MCP_PROJECT_MODAL: {
 						const owner = mcpView;
 						if (!owner || modal?.id !== action.id || action.data !== owner.target || modalPending) return;

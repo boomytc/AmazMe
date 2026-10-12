@@ -38,7 +38,7 @@ export interface ProjectManagement {
 	/** Folder selection on the machine running the host, including for a remote Web client. */
 	folders(options: { path?: string }, context: Context): Promise<ProjectFolders>;
 	rename(projectId: string, name: string, context: Context): Promise<ProjectSummary>;
-	/** Archive all project sessions, preserving their history and working directory. */
+	/** Archive and stop all project sessions, preserving their history and working directory. */
 	remove(projectId: string, context: Context): Promise<void>;
 }
 
@@ -51,9 +51,8 @@ export interface ProjectFolders {
 export const ProjectManagement = defineService<ProjectManagement>("amazme.project-management");
 
 export interface SessionArchive {
+	/** Archiving stops all work, discards queues, and rejects future inputs until restored. */
 	set(sessionId: string, archived: boolean, context: Context): Promise<void>;
-	/** Explicitly stop all work, discard queues, and reject future inputs until restored. */
-	end(sessionId: string, context: Context): Promise<void>;
 }
 
 export const SessionArchive = defineService<SessionArchive>("amazme.session-archive");

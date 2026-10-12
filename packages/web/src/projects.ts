@@ -16,8 +16,7 @@ export const PROJECT_REMOVE_MODAL = "project:remove-confirm";
 export const ARCHIVE_TOGGLE_ACTION = "session:show-archived";
 export const ARCHIVE_MANAGE_ACTION = "session:manage-archived";
 export const SESSION_ARCHIVE_ACTION = "session:archive";
-export const SESSION_END_ACTION = "session:end-work";
-export const SESSION_END_MODAL = "session:end-work-confirm";
+export const SESSION_ARCHIVE_MODAL = "session:archive-confirm";
 export const SESSION_RESTORE_ACTION = "session:restore";
 
 export interface ProjectGroup {
@@ -64,6 +63,6 @@ export function removeProjectModal(locale: Locale, id: string, name: string): Pa
 		description: translate(locale, "project.removeHint"), fields: [], submit: translate(locale, "project.remove"), danger: true };
 }
 
-export function endSessionModal(locale: Locale, id: string): PanelModal {
-	return { id: SESSION_END_MODAL, title: translate(locale, "project.endWork"), data: id, description: translate(locale, "project.endWorkHint"), fields: [], submit: translate(locale, "project.endWork"), danger: true };
+export function archiveSessionModal(locale: Locale, id: string): PanelModal {
+	return { id: SESSION_ARCHIVE_MODAL, title: translate(locale, "project.archive"), data: id, description: translate(locale, "project.archiveHint"), fields: [], submit: translate(locale, "project.archive"), danger: true };
 }

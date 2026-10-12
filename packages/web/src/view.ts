@@ -85,7 +85,6 @@ export interface RosterItem {
 	readonly id: string;
 	readonly projectId?: string;
 	readonly archived?: boolean;
-	readonly workEnded?: boolean;
 	/** The session's title, or the localized new-session label. */
 	readonly label: string;
 	/** The session's working directory, shown so two sessions are tellable apart. */
@@ -716,7 +715,6 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 			id: session.sessionId,
 			projectId: session.projectId,
 			archived: session.archivedAt !== undefined,
-			...(session.workEndedAt === undefined ? {} : { workEnded: true }),
 			label: displayName(session) ?? translate(locale, "sidebar.untitled"),
 			cwd: session.cwd,
 			age: session.archivedAt === undefined ? formatAge(session.createdAt, now) : translate(locale, retentionDays > 0 && now - session.archivedAt >= retentionDays * 86400000 ? "project.retentionDue" : "project.archivedAge", { age: formatAge(session.archivedAt, now) }),
@@ -1487,7 +1485,6 @@ export function buildWebView(input: WebViewInput): WebView {
 	const retention = Number(input.panel.settings?.state?.descriptors.find(descriptor => descriptor.id === "archiveRetentionDays")?.value ?? 0);
 	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter, input.showArchived, retention);
 	const archived = input.attachedId !== undefined && input.directory?.sessions.some(session => session.sessionId === input.attachedId && session.archivedAt !== undefined);
-	const ended = input.attachedId !== undefined && input.directory?.sessions.some(session => session.sessionId === input.attachedId && session.workEndedAt !== undefined);
 	const empty =
 		input.directory === undefined
 			? translate(locale, "header.connecting")
@@ -1501,11 +1498,11 @@ export function buildWebView(input: WebViewInput): WebView {
 		roster,
 		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.showArchived ?? false, input.rosterFilter),
 		archived: input.showArchived,
-		...(ended ? { readOnly: true } : {}),
+		...(archived ? { readOnly: true } : {}),
 		rosterFilter: input.rosterFilter,
 		...(input.attachedId === undefined ? {} : { transcriptScope: `${input.attachedId}:${input.transcript?.conversation.id ?? input.feedbackScope?.conversationId ?? "root"}` }),
 		focus: input.focus,
-		lane: [ended ? translate(locale, "project.workEnded") : archived ? translate(locale, "project.archived") : "", input.dock.insights?.paused ? translate(locale, `review.paused.${input.dock.insights.paused}`) : "", input.lane === undefined ? "" : laneLine(locale, input.lane)].filter(Boolean).join(" · "),
+		lane: [archived ? translate(locale, "project.archivedReadOnly") : "", input.dock.insights?.paused ? translate(locale, `review.paused.${input.dock.insights.paused}`) : "", input.lane === undefined ? "" : laneLine(locale, input.lane)].filter(Boolean).join(" · "),
 		history: {
 			blocks: historyPageBlocks(locale, input.history),
 			more: input.historyMore,
@@ -1529,7 +1526,7 @@ export function buildWebView(input: WebViewInput): WebView {
 			// Only a host that answered offers the guide, and a session means the reader is past it.
 			show: input.showWelcome && input.directory !== undefined && (input.directory.sessions.length ?? 0) === 0,
 		}),
-		run: runControls(locale, input.submitMode, input.attachedId !== undefined && !ended, forkable),
+		run: runControls(locale, input.submitMode, input.attachedId !== undefined && !archived, forkable),
 		attachedId: input.attachedId,
 		sessionLabel: attachedSessionLabel(input.directory, input.attachedId, locale),
 		meter: statusMeter(input.transcript, input.models),
@@ -1540,6 +1537,6 @@ export function buildWebView(input: WebViewInput): WebView {
 		model: { ...modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined), ...(input.modelPending ? { disabled: true } : {}) },
 		...(input.modelPending ? { modelPending: true } : {}),
 		panel: panelView({ ...input.panel, locale }),
-		dock: dockView(locale, { ...dockWithShownEntries(input, forkable), ...(ended ? { readOnly: true } : {}) }),
+		dock: dockView(locale, { ...dockWithShownEntries(input, forkable), ...(archived ? { readOnly: true } : {}) }),
 	};
 }

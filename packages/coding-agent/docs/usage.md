@@ -141,10 +141,10 @@ the durable entry and come back after a reload. PNG, JPEG, WebP, and GIF up to 8
 unsupported or oversized file is refused with the reason.
 
 The sidebar filters sessions by name, ID, working directory and project. Each session's more menu offers
-rename, ordinary archive, **Stop work and archive**, copy ID and confirmed deletion. Ordinary archives hide the
-session without stopping work; removing a project also archives its sessions without deleting source folders.
-Stopping and archiving cancels current and queued work and refuses new work until the session is restored;
-cancelled tasks are not automatically replayed. **Archived** opens the archive, also reachable through
+rename, **Archive**, copy ID and confirmed deletion. Archiving confirms that running tasks, background work,
+queued inputs and terminal commands will stop. History and file changes are kept, and new work is refused until
+the session is restored; cancelled tasks are not automatically replayed. Removing a project also archives and
+stops its sessions without deleting source folders. **Archived** opens the archive, also reachable through
 **Settings → Archived → Manage**. Deleting a session removes its history, not its project folders.
 
 Project, session and archive selection survive refresh in the current tab. The host also saves a fallback for a

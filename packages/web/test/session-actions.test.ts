@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SESSION_RENAME_ACTION } from "../src/actions.ts";
 import { removeSessionModal, renameSessionModal } from "../src/panels.ts";
+import { archiveSessionModal, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView, rosterItems } from "../src/view.ts";
 
@@ -51,6 +52,45 @@ describe("session actions", () => {
 		expect(report).toHaveBeenCalledWith({ kind: "command", id: SESSION_RENAME_ACTION, data: "stable-session-id" });
 		expect(select).not.toHaveBeenCalled();
 		expect(document.querySelector(".session-menu")).toBeNull();
+	});
+
+	test("project sessions expose one archive action, replaced by restore when archived", () => {
+		const { renderer, view } = paint();
+		const report = vi.fn();
+		renderer.onPanelAction = report;
+		renderer.render({ ...view, locale: "zh", projects: [] });
+		control(".session-more").click();
+		expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
+		expect(control(`[data-action="${SESSION_ARCHIVE_ACTION}"]`).textContent).toBe("归档");
+		expect(document.querySelector('[data-action="session:end-work"]')).toBeNull();
+		control(`[data-action="${SESSION_ARCHIVE_ACTION}"]`).click();
+		expect(report).toHaveBeenCalledWith({ kind: "command", id: SESSION_ARCHIVE_ACTION, data: "stable-session-id" });
+
+		renderer.render({ ...view, projects: [], archived: true, roster: view.roster.map(item => ({ ...item, archived: true })) });
+		control(".session-more").click();
+		expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
+		expect(document.querySelector(`[data-action="${SESSION_ARCHIVE_ACTION}"]`)).toBeNull();
+		expect(document.querySelector('[data-action="session:end-work"]')).toBeNull();
+		control(`[data-action="${SESSION_RESTORE_ACTION}"]`).click();
+		expect(report).toHaveBeenCalledWith({ kind: "command", id: SESSION_RESTORE_ACTION, data: "stable-session-id" });
+	});
+
+	test("archive confirmation explains cancellation, keeps a safe focus, and submits the unified action", () => {
+		const { renderer, view } = paint();
+		const report = vi.fn();
+		renderer.onPanelAction = report;
+		const modal = archiveSessionModal("zh", "stable-session-id");
+		expect(modal.title).toBe("归档");
+		expect(modal.submit).toBe("归档");
+		expect(modal.description).toContain("停止运行中的任务、排队输入和终端命令");
+		expect(modal.description).toContain("文件修改不会回滚");
+		expect(modal.description).toContain("已取消的任务不会自动重放");
+		renderer.render({ ...view, locale: "zh", panel: { ...view.panel, modal } });
+		expect(document.activeElement).toBe(control(".modal-foot button:first-child"));
+		control(".modal-foot button:first-child").click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "modal-close" });
+		control(".modal-foot button:last-child").click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "modal-submit", id: SESSION_ARCHIVE_MODAL, data: "stable-session-id", fields: {} });
 	});
 
 	test("copies the full immutable ID and reports failure or success in place", async () => {

@@ -569,10 +569,10 @@ async function startServerBackend(
 	 * Join one plugin-owned prompt through the existing worker and its durable receipt.
 	 * Session routing must be ready before a server facet can open an attachment.
 	 */
-	const openPromptSession = async (sessionId: string, context: Context, allowEnded = false) => {
+	const openPromptSession = async (sessionId: string, context: Context, allowArchived = false) => {
 		await awaitWithContext(hostReady, context);
 		const metadata = await resolveSession(sessionId, context);
-		if (!allowEnded && metadata.workEndedAt !== undefined) throw new SessionWorkEndedError("会话已结束并归档；恢复后才能开始工作。");
+		if (!allowArchived && metadata.archivedAt !== undefined) throw new SessionWorkEndedError("会话已归档；恢复后才能开始工作。");
 		const selected = await options.resolveSessionPlugins(metadata, undefined, context);
 		const handle = await workers.openSession(metadata, context, selected.manifestPaths);
 		return handle.attachClient(context);
@@ -696,7 +696,7 @@ async function startServerBackend(
 			},
 		}),
 	], pluginLoader);
-	const archiveSession = async (sessionId: string, archived: boolean, context: Context, endWork = false): Promise<void> => {
+	const archiveSession = async (sessionId: string, archived: boolean, context: Context): Promise<void> => {
 		context.abortSignal?.throwIfAborted();
 		const metadata = await resolveSession(sessionId, context);
 		if (!archived) {
@@ -704,8 +704,8 @@ async function startServerBackend(
 			const project = projectRows.find(project => project.id === metadata.projectId) ?? await projectForCwd(metadata.cwd);
 			if (project?.removed) await projects.restore(project.id);
 		}
-		await writeSessionArchive(sessionDir, sessionId, archived, endWork);
-		if (endWork) await workers.stopSessionWork(metadata, BACKGROUND_CONTEXT);
+		await writeSessionArchive(sessionDir, sessionId, archived);
+		if (archived) await workers.stopSessionWork(metadata, BACKGROUND_CONTEXT);
 		await setLocalSessionArchived(metadata.cwd, metadata.id, metadata.createdAt, archived);
 	};
 	const serverServices = await createExperimentalServerServices({
@@ -732,7 +732,6 @@ async function startServerBackend(
 			},
 			rename: (id, name) => projects.rename(id, name),
 			archive: archiveSession,
-			end: (id, context) => archiveSession(id, true, context, true),
 			remove: async (id, context) => {
 				context.abortSignal?.throwIfAborted();
 				for (const session of (await listSummaries()).filter(session => session.projectId === id)) {

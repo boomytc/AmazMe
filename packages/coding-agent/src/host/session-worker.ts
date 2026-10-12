@@ -556,7 +556,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 	let taskGraph: AttachedReplicatedState<TaskGraph> | undefined;
 	try {
 		runtime = await createHarness(sessionStoragePath(metadata), options);
-		if ((await readSession(options.sessionDir, metadata.id))?.workEndedAt !== undefined) await abortSessionWork(runtime.harness, BACKGROUND_CONTEXT);
+		if ((await readSession(options.sessionDir, metadata.id))?.archivedAt !== undefined) await abortSessionWork(runtime.harness, BACKGROUND_CONTEXT);
 		taskGraph = await runtime.harness.taskGraph(TODO_CONTEXT);
 		services = await createSessionWorkerServices({
 			admission: runtime.admission,
@@ -890,7 +890,7 @@ async function createCodingAgentHarness(
 	const admission = async (): Promise<AgentOperationError | undefined> => {
 		const metadata = await readSession(options.sessionDir, options.metadata.id);
 		if (!metadata) return { code: "session_unavailable", message: "会话状态不可用，请重新连接宿主。" };
-		return metadata.workEndedAt === undefined ? undefined : { code: "session_ended", message: "会话已结束并归档；请恢复会话后再开始工作。" };
+		return metadata.archivedAt === undefined ? undefined : { code: "session_ended", message: "会话已归档；请恢复后再开始工作。" };
 	};
 	const beforeModel = async () => {
 		try { const refusal = await admission(); return refusal ? { block: refusal.message } : undefined; }

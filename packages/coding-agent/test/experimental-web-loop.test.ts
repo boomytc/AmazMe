@@ -38,6 +38,7 @@ import { Models, type Models as ModelsService } from "../src/host/services/model
 import { Plugins, type Plugins as PluginsService } from "../src/host/services/plugins.ts";
 import { Schedules, type Schedules as SchedulesService } from "../src/core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../src/host/services/sessions.ts";
+import { ProjectManagement, SessionArchive } from "../src/host/services/projects.ts";
 import { Settings, type Settings as SettingsService } from "../src/host/services/settings.ts";
 import { Skills, type Skills as SkillsService } from "../src/host/services/skills.ts";
 import { Transcript } from "../src/host/services/transcript.ts";
@@ -50,6 +51,8 @@ interface Presentation {
 	readonly client: Client;
 	readonly management: SessionManagement;
 	readonly directory: SessionDirectory;
+	readonly archives: SessionArchive;
+	readonly projects: ProjectManagement;
 	/** The server-scoped surfaces the page binds: the reader's ratings live here. */
 	readonly feedback: FeedbackService;
 	/** The planned prompts the host runs on their own. */
@@ -164,7 +167,7 @@ async function openPresentation(host: WebHost): Promise<Presentation> {
 	const serverSource = createServerServiceSource(client);
 	const sessionSource = createSessionServiceSource(client);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, Feedback, Schedules],
+		services: [SessionDirectory, SessionManagement, SessionArchive, ProjectManagement, Feedback, Schedules],
 		assertAccess(): void {},
 		onError(): void {},
 	});
@@ -173,6 +176,8 @@ async function openPresentation(host: WebHost): Promise<Presentation> {
 		client,
 		management: serverServices.use(SessionManagement),
 		directory: serverServices.use(SessionDirectory),
+		archives: serverServices.use(SessionArchive),
+		projects: serverServices.use(ProjectManagement),
 		feedback: serverServices.use(Feedback),
 		schedules: serverServices.use(Schedules),
 		sessionSource,
@@ -898,6 +903,89 @@ describe("web client interactive loop", () => {
 		},
 		240_000,
 	);
+
+	test("archiving stops root and fork work, clears queues and terminal commands, and restores without replay", async () => {
+		const { host, sessionDir } = await startHostWithDirectories(true);
+		const presentation = await openPresentation(host);
+		const created = await presentation.management.create({ id: "archive-running-work" }, BACKGROUND_CONTEXT);
+		const attached = await attachSession(presentation, created.sessionId);
+		expect(await attached.controller.prompt({ message: "keep this history", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: true });
+		await waitFor(() => isBusy(attached.transcript.state.value) && sawUserText(attached.transcript.state.value, "keep this history"), "the root task");
+		expect(await attached.controller.followUp({ message: "must not replay", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: true });
+		await waitFor(() => queuedInputs("en", attached.transcript.state.value).length === 1, "the queued input");
+		const rootId = attached.conversations.state.value?.conversations.find(item => item.root)?.id;
+		if (rootId === undefined) throw new Error("Missing root conversation");
+		const fork = await attached.conversations.fork(rootId, null, BACKGROUND_CONTEXT);
+		if (fork.conversationId === null) throw new Error(fork.error.message);
+		expect(await attached.conversations.prompt(fork.conversationId, { message: "fork work", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: true });
+		await waitFor(() => isBusy(attached.conversations.state.value?.view ?? undefined), "the fork task");
+		const terminal = attached.terminal.run("sleep 30; echo must-not-finish", BACKGROUND_CONTEXT);
+		await waitFor(() => attached.terminal.state.value?.status === "running", "the terminal command");
+
+		await presentation.archives.set(created.sessionId, true, BACKGROUND_CONTEXT);
+		await waitFor(() => !isBusy(attached.transcript.state.value)
+			&& !isBusy(attached.conversations.state.value?.view ?? undefined)
+			&& queuedInputs("en", attached.transcript.state.value).length === 0
+			&& attached.terminal.state.value?.status === "cancelled", "archived work to settle");
+		expect(await terminal).toEqual({ ok: true });
+		expect(attached.terminal.state.value?.output).not.toContain("must-not-finish");
+		expect(sawUserText(attached.transcript.state.value, "keep this history")).toBe(true);
+		expect(sawUserText(attached.transcript.state.value, "must not replay")).toBe(false);
+		const archived = await readSession(sessionDir, created.sessionId);
+		if (archived === undefined) throw new Error("Missing archived metadata");
+		expect(archived.archivedAt).toEqual(expect.any(Number));
+		expect(archived.workEndedAt).toEqual(expect.any(Number));
+
+		// Old ordinary archives have no end-work marker; archive state alone must block every entry point.
+		const { workEndedAt: _compatibilityMarker, ...legacy } = archived;
+		await writeFile(join(archived.path, "meta.json"), JSON.stringify(legacy));
+		expect(await attached.controller.prompt({ message: "blocked", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: false, error: { code: "session_ended" } });
+		expect(await attached.controller.compact({ customInstructions: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: false, error: { code: "session_ended" } });
+		expect(await attached.conversations.prompt(fork.conversationId, { message: "blocked fork", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: false, error: { code: "session_ended" } });
+		expect(await attached.terminal.run("echo blocked", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
+
+		await presentation.archives.set(created.sessionId, false, BACKGROUND_CONTEXT);
+		expect(await readSession(sessionDir, created.sessionId)).toMatchObject({ id: created.sessionId });
+		expect((await readSession(sessionDir, created.sessionId))?.archivedAt).toBeUndefined();
+		expect((await readSession(sessionDir, created.sessionId))?.workEndedAt).toBeUndefined();
+		expect(queuedInputs("en", attached.transcript.state.value)).toEqual([]);
+		expect(isBusy(attached.transcript.state.value)).toBe(false);
+		expect(await attached.terminal.run("echo restored", BACKGROUND_CONTEXT)).toEqual({ ok: true });
+		await waitFor(() => attached.terminal.state.value?.status === "done", "the restored terminal");
+		expect(await attached.controller.prompt({ message: "new work after restore", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: true });
+		await attached.controller.abort(BACKGROUND_CONTEXT);
+		await attached.dispose();
+		await presentation.dispose();
+	}, 240_000);
+
+	test("removing a project uses the same stopping archive semantics for all its sessions", async () => {
+		const { host, sessionDir } = await startHostWithDirectories(true);
+		const first = await openPresentation(host);
+		const second = await openPresentation(host);
+		const projectId = first.directory.state.value?.defaultProjectId;
+		if (projectId === undefined) throw new Error("Missing default project");
+		const one = await first.management.create({ id: "archive-project-one", projectId }, BACKGROUND_CONTEXT);
+		const two = await second.management.create({ id: "archive-project-two", projectId }, BACKGROUND_CONTEXT);
+		const attachedOne = await attachSession(first, one.sessionId);
+		const attachedTwo = await attachSession(second, two.sessionId);
+		for (const attached of [attachedOne, attachedTwo]) {
+			expect(await attached.controller.prompt({ message: "project work", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: true });
+			await waitFor(() => isBusy(attached.transcript.state.value), "the project task");
+		}
+		await first.projects.remove(projectId, BACKGROUND_CONTEXT);
+		await waitFor(() => !isBusy(attachedOne.transcript.state.value) && !isBusy(attachedTwo.transcript.state.value), "all project work to stop");
+		for (const session of [one, two]) {
+			expect(await readSession(sessionDir, session.sessionId)).toMatchObject({ archivedAt: expect.any(Number), workEndedAt: expect.any(Number) });
+		}
+		expect(existsSync(process.cwd())).toBe(true);
+		await first.archives.set(one.sessionId, false, BACKGROUND_CONTEXT);
+		await waitFor(() => first.directory.state.value?.projects?.find(item => item.id === projectId)?.removed !== true, "the project to restore");
+		expect((await readSession(sessionDir, two.sessionId))?.archivedAt).toEqual(expect.any(Number));
+		await attachedOne.dispose();
+		await attachedTwo.dispose();
+		await first.dispose();
+		await second.dispose();
+	}, 240_000);
 
 	test(
 		"accepts a follow-up while a turn runs, lists it as queued, and settles on abort",
