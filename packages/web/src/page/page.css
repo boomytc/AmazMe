@@ -987,11 +987,6 @@ p {
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
-
-	.crumb {
-		/* 96px of text, plus the crumb's horizontal padding. */
-		min-width: 108px;
-	}
 }
 
 @container (max-width: 680px) {
