@@ -2469,18 +2469,6 @@ p {
 	font-size: 15px;
 }
 
-.dock-body .panel-row:has(.panel-actions) {
-	flex-wrap: wrap;
-}
-
-.dock-body .panel-row:has(.panel-actions) > .panel-row-text {
-	flex-basis: 100%;
-}
-
-.dock-body .panel-head {
-	flex-wrap: wrap;
-}
-
 .panel-input-row {
 	display: flex;
 	align-items: center;
@@ -2673,12 +2661,18 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	width: 100%;
 	max-width: 720px;
 	margin: 0 auto;
-	padding: 28px 32px 64px;
+	padding: 28px clamp(16px, 4cqi, 32px) 64px;
 }
 
 .management-page .view-body {
 	max-width: 840px;
 	padding-top: 40px;
+}
+
+/* The same panel can occupy the page or a narrow dock. Respond to its content width, not the window. */
+.panel {
+	container: panel / inline-size;
+	min-width: 0;
 }
 
 .panel-head {
@@ -2845,15 +2839,40 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .panel-controls,
 .panel-actions {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	flex: none;
+	flex: 0 1 auto;
 	gap: 8px;
+	min-width: 0;
 	max-width: 100%;
 }
 
-.panel-actions { flex-wrap: wrap; }
+.panel-field { min-width: 0; max-width: 100%; }
 
-.panel-field { min-width: 0; }
+/* LightUI's reading line: prose keeps its left edge, actions get a separate line only when needed. */
+@container panel (max-width: 520px) {
+	.panel-head,
+	.panel-group-head {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 12px;
+	}
+
+	.panel-head > .panel-actions { padding-top: 0; }
+
+	.panel-row:has(.panel-select, .panel-field, .panel-actions) {
+		flex-wrap: wrap;
+		gap: 12px;
+	}
+
+	.panel-row:has(.panel-select, .panel-field, .panel-actions) > .panel-row-text {
+		flex-basis: 100%;
+	}
+
+	.panel-controls { width: 100%; }
+	.panel-select { max-width: 100%; }
+	.panel-input { max-width: 100%; }
+}
 
 .panel-field-error {
 	max-width: 180px;
@@ -3092,6 +3111,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .modal-head {
+	flex: none;
 	display: flex;
 	align-items: flex-start;
 	justify-content: space-between;
@@ -3138,15 +3158,19 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .modal-body {
+	flex: 1 1 auto;
 	display: flex;
 	flex-direction: column;
 	gap: 14px;
 	min-height: 0;
 	overflow-y: auto;
+	overscroll-behavior: contain;
 	padding: 8px 20px 16px;
 }
 
 .modal-field {
+	flex: none;
+	min-width: 0;
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
@@ -3221,6 +3245,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .modal-foot {
+	flex: none;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
@@ -3349,26 +3374,27 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 		padding: 20px 16px 48px;
 	}
 	.management-page .view-body { padding-top: 24px; }
-	.panel-head { flex-direction: column; gap: 12px; }
-	.panel-controls { flex-wrap: wrap; }
-	.panel-row:has(.panel-select),
-	.panel-row:has(.panel-field) { flex-wrap: wrap; }
-	.panel-row:has(.panel-select) > .panel-row-text,
-	.panel-row:has(.panel-field) > .panel-row-text { flex-basis: 100%; }
+	.modal-root { padding: 12px; }
+}
 
-	/* Management rows with several actions keep prose readable on narrow screens. */
-	.panel-row:has(.panel-actions) {
-		flex-wrap: wrap;
+/* Touch controls remain usable without making desktop settings unnecessarily tall. */
+@media (pointer: coarse) {
+	.panel-button,
+	.panel-input,
+	.panel-select,
+	.modal-close,
+	.project-add,
+	.project-action {
+		min-width: 44px;
+		min-height: 44px;
 	}
 
-	.panel-row:has(.panel-actions) > .panel-row-text {
-		flex-basis: 100%;
-	}
+	.panel-input,
+	.panel-select,
+	.modal-input,
+	.modal-textarea { font-size: 16px; }
 
-	.panel-actions {
-		flex-wrap: wrap;
-		max-width: 100%;
-	}
+	.project-action { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3467,12 +3493,12 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .project-group.archived .project-heading:hover { background: transparent; }
 .project-group.archived .session-age { flex-basis: auto; white-space: nowrap; }
 
-.modal-project { width: min(640px, calc(100vw - 40px)); max-width: 640px; border-radius: 22px; padding: 28px; }
+.modal-project { max-width: 640px; padding: clamp(16px, 4vw, 28px); }
 .modal-project .modal-head, .modal-project .modal-body, .modal-project .modal-foot { padding: 0; }
-.modal-project .modal-head { margin-bottom: 24px; }
+.modal-project .modal-head { margin-bottom: 20px; }
 .modal-project .modal-title { font-size: 26px; font-weight: 600; }
 .modal-project .modal-field-label { font-size: 15px; }
-.modal-project .modal-foot { margin-top: 30px; gap: 14px; }
+.modal-project .modal-foot { margin-top: 20px; gap: 12px; }
 .modal-project .project-name-field { position: relative; }
 .modal-project .project-name-field .modal-field-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .modal-project .project-name-field > .icon { position: absolute; left: 16px; top: 19px; width: 22px; height: 22px; pointer-events: none; }
