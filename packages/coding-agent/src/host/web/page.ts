@@ -157,6 +157,7 @@ import {
 	type CommandLike,
 } from "@amazme/web";
 import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
+import { HistoryAvailability } from "./history-availability.ts";
 import { AgentController, type AgentPromptImage } from "../../core/plugins/agent-controller.ts";
 import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
@@ -864,8 +865,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let historyCursor: string | null = null;
 	let historyLoading = false;
 	let historyRequest = 0;
-	/** Whether a page has been asked for; until then "load older" is offered for any history. */
+	/** Whether the reader has paged in history; later availability comes from its cursor. */
 	let historyLoaded = false;
+	const historyAvailability = new HistoryAvailability(
+		() => paint(),
+		(error) => renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error"),
+	);
 	/** The session's root conversation, once the conversation list has published it. */
 	let rootConversationId = "";
 	let desiredSessionId: string | undefined;
@@ -970,6 +975,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 */
 	const paint = (): void => {
 		const bound = sessionReady();
+		const transcript = shownTranscript();
+		const service = bound && !historyLoaded && !historyLoading ? painter.conversationsService : undefined;
+		const conversationId = painter.conversations?.selected;
+		const before = oldestPresentedEntryId(transcript?.entries);
+		const historyAvailable = historyAvailability.update(
+			service === undefined || painter.sessionId === undefined || conversationId === undefined || before === null
+				? undefined
+				: { service, sessionId: painter.sessionId, conversationId, before, revision: historyRequest },
+		);
 		// The root id comes from the host's list; the cache keeps submit routing stable across paints.
 		if (bound) rootConversationId = rootId() ?? rootConversationId;
 		locale = resolveLocale(settingValue("locale") ?? locale, navigator.languages);
@@ -1027,11 +1041,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					selectedProjectId,
 					showArchived,
 					directory: directoryReady ? directory.state.value : undefined,
-					transcript: shownTranscript(),
+					transcript,
 					focus: bound ? focusedLabel() : undefined,
 					...(!bound || painter.conversations?.lane === undefined ? {} : { lane: painter.conversations.lane }),
 					history: bound ? history : [],
-					historyMore: bound && (!historyLoaded || historyCursor !== null),
+					historyMore: bound && (historyLoaded ? historyCursor !== null : historyAvailable),
 					historyLoading: bound && historyLoading,
 					attachedId: bound ? painter.sessionId : undefined,
 					now: Date.now(),
