@@ -4,7 +4,7 @@
  * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
@@ -1219,7 +1219,7 @@ export function createRenderer(
 	 * title. A collapsed column and a narrow drawer leave the control in the main header.
 	 */
 	const placeSidebarToggle = (): void => {
-		const headerStart = elements.sessionTitle.parentElement;
+		const headerStart = elements.sessionTitle.closest(".header-start");
 		const brand = elements.sessionSidebar.querySelector(":scope > .brand");
 		const sectionHead = elements.sectionSidebar.querySelector(":scope > .section-sidebar-head");
 		if (!(headerStart instanceof HTMLElement) || !(brand instanceof HTMLElement) || !(sectionHead instanceof HTMLElement)) return;
@@ -1539,14 +1539,23 @@ export function createRenderer(
 		return row;
 	};
 
-	/** The first-run guide: what the page is, and the three steps that make it useful. */
-	const welcomeElement = (welcome: WelcomeCard): HTMLElement => {
+	/** One creation control for welcome and detached states; it follows the host's availability. */
+	const createSessionButton = (view: WebView, tone: PanelButton["tone"] = "primary"): HTMLButtonElement => {
+		const pending = view.newSession.pending === true;
+		const control = panelButton({ id: WELCOME_SESSION_ACTION, label: copy(pending ? "sidebar.creating" : "sidebar.newSession"), tone, disabled: !view.newSession.enabled || pending }, report);
+		control.setAttribute("aria-busy", String(pending));
+		if (pending) control.prepend(icon("spinner", "icon spin"));
+		return control;
+	};
+
+	/** The first-run guide offers only actions that work before a session is attached. */
+	const welcomeElement = (view: WebView, welcome: WelcomeCard): HTMLElement => {
 		const card = element("div", "welcome-card");
 		const mark = element("span", "brand-mark welcome-mark");
 		mark.append(pixelLogo());
 		card.append(mark, element("h2", "welcome-title", welcome.title), element("p", "welcome-body", welcome.body));
 		const steps = element("div", "welcome-steps");
-		for (const step of welcome.steps) steps.append(panelButton(step, report));
+		for (const step of welcome.steps) steps.append(step.id === WELCOME_SESSION_ACTION ? createSessionButton(view, step.tone) : panelButton(step, report));
 		card.append(steps, element("p", "welcome-note", welcome.note));
 		const dismiss = panelButton(welcome.dismiss, report);
 		dismiss.className = "welcome-dismiss";
@@ -1562,14 +1571,45 @@ export function createRenderer(
 		const block = element("div", "empty-block");
 		block.id = "transcript-empty";
 		if (view.attachedId !== undefined) {
-			block.append(element("h2", "greeting", copy("greeting.title")), element("p", "greeting-hint", copy("greeting.hint")));
+			block.append(element("h2", "greeting", copy(view.readOnly ? "greeting.readOnlyTitle" : "greeting.title")), element("p", "greeting-hint", copy(view.readOnly ? "greeting.readOnlyHint" : "greeting.hint")));
+			if (view.readOnly) {
+				const actions = element("div", "welcome-steps");
+				actions.append(panelButton(view.archivedAttached
+					? { id: SESSION_RESTORE_ACTION, data: view.attachedId, label: copy("project.restore"), tone: "primary" }
+					: { id: DOCK_TAB_ACTION, data: "conversations", label: copy("greeting.openConversations"), tone: "primary" }, report));
+				block.append(actions);
+			}
 			return block;
 		}
-		const hasSessions = view.roster.length > 0 || view.rosterFilter.length > 0;
-		block.append(
-			element("h2", "greeting", copy(hasSessions ? "greeting.pickTitle" : "greeting.startTitle")),
-			element("p", "greeting-hint", copy(hasSessions ? "greeting.pickHint" : "greeting.startHint")),
-		);
+		const unavailable = !view.newSession.enabled && view.newSession.pending !== true;
+		const filtered = view.rosterFilter.trim().length > 0 && view.roster.length === 0;
+		const hasSessions = view.roster.length > 0;
+		const title = unavailable ? "greeting.waitTitle" : filtered ? "greeting.filterTitle" : hasSessions ? "greeting.pickTitle" : "greeting.startTitle";
+		const hint = unavailable ? "greeting.waitHint" : filtered ? "greeting.filterHint" : hasSessions ? "greeting.pickHint" : "greeting.startHint";
+		block.append(element("h2", "greeting", copy(title)), element("p", "greeting-hint", copy(hint)));
+		if (unavailable) return block;
+		const actions = element("div", "welcome-steps");
+		if (filtered) {
+			const clear = button("panel-button");
+			clear.textContent = copy("greeting.clearFilter");
+			clear.addEventListener("click", () => {
+				elements.rosterFilter.value = "";
+				renderer.onFilterRoster("");
+			});
+			actions.append(clear);
+		} else {
+			if (hasSessions) {
+				const pick = button("panel-button tone-primary");
+				pick.textContent = copy("greeting.pickAction");
+				pick.addEventListener("click", () => {
+					if (!sidebarExpanded()) toggleSidebar();
+					elements.roster.querySelector<HTMLButtonElement>(".session-select")?.focus();
+				});
+				actions.append(pick);
+			}
+			actions.append(createSessionButton(view, hasSessions ? "default" : "primary"));
+		}
+		block.append(actions);
 		return block;
 	};
 
@@ -2298,7 +2338,7 @@ export function createRenderer(
 						if (group.selected) {
 							const items = element("div", "project-sessions");
 							for (const item of group.items) items.append(sessionRow(item));
-							if (group.items.length === 0) items.append(element("p", "empty-state", copy("project.empty")));
+							if (group.items.length === 0) items.append(element("p", "empty-state", view.empty ?? copy("project.empty")));
 							section.append(items);
 						}
 						elements.roster.append(section);
@@ -2323,7 +2363,7 @@ export function createRenderer(
 					section.append(items);
 					elements.roster.append(section);
 				}
-				if (view.roster.length === 0 && (view.empty !== undefined || view.projects === undefined || view.projects.length === 0)) {
+				if (view.roster.length === 0 && !view.projects?.some(group => group.selected && group.items.length === 0) && (view.empty !== undefined || view.projects === undefined || view.projects.length === 0)) {
 					const empty = element("p", "empty-state", view.empty ?? copy("header.rosterEmpty"));
 					empty.id = "roster-empty";
 					elements.roster.append(empty);
@@ -2364,8 +2404,10 @@ export function createRenderer(
 			}
 			// The empty layout centres the greeting and the composer; anything in the transcript brings the conversation layout.
 			elements.center.dataset.state = hasConversation || view.status.length > 0 ? "chat" : "empty";
+			elements.center.dataset.attached = String(view.attachedId !== undefined);
+			elements.center.dataset.readOnly = String(view.readOnly === true);
 			if (view.blocks.length === 0) {
-				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter], () => view.welcome !== undefined ? welcomeElement(view.welcome) : emptyElement(view)));
+				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter, view.newSession, view.readOnly, view.archivedAttached], () => view.welcome !== undefined ? welcomeElement(view, view.welcome) : emptyElement(view)));
 			}
 			if (view.status.length > 0) flow.push(flowCache.get("status", view.status, () => runningElement(view.status)));
 			reconcileChildren(elements.column, flow);

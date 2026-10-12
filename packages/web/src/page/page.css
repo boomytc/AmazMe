@@ -874,6 +874,15 @@ p {
 	gap: 4px;
 }
 
+.header-titles {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	min-width: 0;
+}
+
 .icon-button,
 .crumb-back,
 .header-action {
@@ -917,18 +926,22 @@ p {
 
 .crumb {
 	min-width: 0;
-	max-width: 46ch;
+	max-width: min(46ch, 100%);
 	padding: 0 6px;
 	overflow: hidden;
 	color: var(--text);
 	font-size: 14px;
 	font-weight: 500;
+	line-height: 20px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .lane-status {
 	min-width: 0;
+	max-width: 100%;
+	padding-inline: 6px;
+	line-height: 16px;
 	overflow: hidden;
 	color: var(--text-3);
 	font-size: 12px;
@@ -1120,6 +1133,18 @@ p {
 	padding-top: 16px;
 }
 
+/* No task can be sent before attachment. Give this state an actionable focus, not a disabled editor. */
+.center[data-attached="false"] .composer-dock,
+.center[data-read-only="true"] .composer-dock,
+.center[data-attached="false"] .header-end { display: none; }
+
+.center[data-state="empty"]:is([data-attached="false"], [data-read-only="true"]) .column {
+	flex: 0 0 auto;
+	margin-block: auto;
+}
+
+.center[data-state="empty"]:is([data-attached="false"], [data-read-only="true"]) .transcript { padding-block: 32px; }
+
 .empty-block {
 	display: flex;
 	flex-direction: column;
@@ -1175,6 +1200,7 @@ p {
 
 .welcome-body {
 	margin: 10px 0 0;
+	text-align: left;
 	color: var(--text-2);
 	font-size: 14px;
 	line-height: 1.7;
@@ -1190,7 +1216,11 @@ p {
 }
 
 .welcome-steps .panel-button {
-	height: 34px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	height: 36px;
 	padding: 0 16px;
 	border-radius: var(--radius-pill);
 	font-size: 13px;
@@ -2588,7 +2618,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .file-filter-status, .file-operation-status { grid-column: 1 / -1; margin: 0; color: var(--text-3); font-size: 12px; }
 .file-entry:disabled { cursor: wait; color: var(--text-3); }
 .dock-body [data-panel-id="files"] .panel-group { margin-bottom: 16px; }
-.dock-body [data-panel-id="files"] .panel-group-head { align-items: center; flex-wrap: wrap; gap: 6px; }
+.dock-body [data-panel-id="files"] .panel-group-head { gap: 8px; }
 .dock-body [data-panel-id="files"] .panel-group-desc { font-size: 11px; font-variant-numeric: tabular-nums; }
 .file-entries { padding: 4px; border-radius: var(--radius-md); }
 .file-entries:has(> .panel-empty:not([hidden])) { padding: 0; border: 1px dashed var(--line-strong); background: transparent; box-shadow: none; }
@@ -3394,7 +3424,9 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	.panel-select,
 	.modal-close,
 	.project-add,
-	.project-action {
+	.project-action,
+	.welcome-dismiss,
+	.panel-switch {
 		min-width: 44px;
 		min-height: 44px;
 	}

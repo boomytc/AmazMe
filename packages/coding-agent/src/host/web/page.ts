@@ -153,7 +153,6 @@ import {
 	type ThemePreference,
 	translate,
 	WELCOME_DISMISS_ACTION,
-	WELCOME_FILES_ACTION,
 	WELCOME_SESSION_ACTION,
 	WELCOME_SETTINGS_ACTION,
 	type WebBootManifest,
@@ -2166,11 +2165,6 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					case WELCOME_SESSION_ACTION:
 						createSession();
-						return;
-					case WELCOME_FILES_ACTION:
-						dockOpen = true;
-						dockTab = "files";
-						paint();
 						return;
 					case WELCOME_SETTINGS_ACTION:
 						view = SETTINGS_VIEW;

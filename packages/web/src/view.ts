@@ -33,7 +33,6 @@ import {
 	QUEUE_CANCEL_ACTION,
 	SESSION_REMOVE_ACTION,
 	WELCOME_DISMISS_ACTION,
-	WELCOME_FILES_ACTION,
 	WELCOME_SESSION_ACTION,
 	WELCOME_SETTINGS_ACTION,
 } from "./actions.ts";
@@ -174,7 +173,7 @@ export function formatBytes(bytes: number): string {
 export type MessageRatingLike = "up" | "down";
 
 /**
- * The first-run guide: what the page is, and the three steps that make it useful. It is offered
+ * The first-run guide: create a session or configure the interface. It is offered
  * while the host has no sessions and the reader has not dismissed it.
  */
 export interface WelcomeCard {
@@ -196,11 +195,6 @@ export function welcomeCard(locale: Locale, input: { readonly show: boolean }): 
 				id: WELCOME_SESSION_ACTION,
 				label: translate(locale, "welcome.step.session"),
 				tone: "primary",
-			},
-			{
-				id: WELCOME_FILES_ACTION,
-				label: translate(locale, "welcome.step.files"),
-				tone: "default",
 			},
 			{
 				id: WELCOME_SETTINGS_ACTION,

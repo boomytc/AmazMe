@@ -46,7 +46,6 @@ import {
 	FEEDBACK_DOWN_ACTION,
 	FEEDBACK_UP_ACTION,
 	WELCOME_DISMISS_ACTION,
-	WELCOME_FILES_ACTION,
 	WELCOME_SESSION_ACTION,
 	WELCOME_SETTINGS_ACTION,
 	ATTACHMENT_REMOVE_ACTION,
@@ -979,10 +978,9 @@ describe("web view model", () => {
 			panel: CHAT_PANEL,
 		});
 		const offered = buildWebView(input({ showWelcome: true, directory: empty })).welcome;
-		expect(offered?.title).toContain("Welcome");
+		expect(offered?.title).toContain("AmazMe");
 		expect(offered?.steps.map((step) => [step.id, step.tone])).toEqual([
 			[WELCOME_SESSION_ACTION, "primary"],
-			[WELCOME_FILES_ACTION, "default"],
 			[WELCOME_SETTINGS_ACTION, "default"],
 		]);
 		expect(offered?.dismiss.id).toBe(WELCOME_DISMISS_ACTION);
