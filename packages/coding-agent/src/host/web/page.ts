@@ -14,7 +14,7 @@ import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
 	PROJECT_ADD_ACTION, PROJECT_ADD_MODAL, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_RENAME_MODAL,
 	PROJECT_EDIT_ACTION, PROJECT_EDIT_MODAL, PROJECT_NEW_SESSION_ACTION,
-	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, ARCHIVE_TOGGLE_ACTION, ARCHIVE_MANAGE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
+	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, SESSION_ARCHIVE_OPEN_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
 	SESSION_ARCHIVE_MODAL, archiveSessionModal,
 	addProjectModal, editProjectModal, renameProjectModal, removeProjectModal,
 } from "@amazme/web";
@@ -840,18 +840,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The roster's filter text; the page owns it so creating or attaching never clears it. */
 	let rosterFilter = "";
 	let selectedProjectId: string | undefined;
-	let showArchived = false;
+	/** Lets the open archived session stay attached. It does not browse the archive list. */
+	let allowArchivedAttach = false;
 	let selectionRevision = 0;
 	const selectionKey = `amazme.selection.${manifest.server.id}`;
 	const rememberSelection = (): void => {
 		const session = directory.state.value?.sessions.find(session => session.sessionId === desiredSessionId);
+		const pinned = session !== undefined && (session.projectId === selectedProjectId || session.archivedAt !== undefined);
 		const selection: ProjectSelection = {
 			...(selectedProjectId === undefined ? {} : { projectId: selectedProjectId }),
-			...(session === undefined || session.projectId !== selectedProjectId ? {} : {
+			...(pinned && session !== undefined ? {
 				sessionId: session.sessionId,
 				...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
-			}),
-			showArchived,
+			} : {}),
 		};
 		try { sessionStorage.setItem(selectionKey, JSON.stringify(selection)); }
 		catch { /* A restricted webview may not provide session storage. */ }
@@ -1035,11 +1036,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				modal = next;
 			}
 		}
+		const now = Date.now();
+		const retentionDays = Number(effectiveSettings()?.descriptors.find(descriptor => descriptor.id === "archiveRetentionDays")?.value ?? 0);
 		const built = buildWebView({
 					locale,
 					creatingSession: creating,
 					selectedProjectId,
-					showArchived,
 					directory: directoryReady ? directory.state.value : undefined,
 					transcript,
 					focus: bound ? focusedLabel() : undefined,
@@ -1048,7 +1050,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					historyMore: bound && (historyLoaded ? historyCursor !== null : historyAvailable),
 					historyLoading: bound && historyLoading,
 					attachedId: bound ? painter.sessionId : undefined,
-					now: Date.now(),
+					now,
 					models: bound ? painter.modelsValue : undefined,
 					thinkingLevels: bound ? painter.levels : undefined,
 					modelPending: modelSelection !== undefined && modelSelection.binding === painter.binding,
@@ -1086,7 +1088,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							...modal, title: copy("panel.settings.diagnostics"), description: copy("panel.settings.diagnosticsHelp"), submit: copy("modal.close"),
 							fields: [{ id: "report", label: copy("panel.settings.diagnostics"), kind: "textarea" as const, readOnly: true, value: diagnosticReport === undefined ? copy(modalNotice?.tone === "error" ? "panel.settings.diagnosticsFailed" : "panel.settings.diagnosticsLoading") : formatDiagnosticReport(diagnosticReport, locale) }],
 						} : modal }),
-						settings: { archives: directoryReady, state: desiredSessionId === undefined || bound ? effectiveSettings() : undefined, models: {
+						settings: {
+							...(directoryReady ? { archives: {
+								sessions: directory.state.value?.sessions ?? [],
+								projects: directory.state.value?.projects ?? [],
+								retentionDays: Number.isFinite(retentionDays) ? retentionDays : 0,
+								now,
+							} } : {}),
+							state: desiredSessionId === undefined || bound ? effectiveSettings() : undefined, models: {
 							available: client.connected && painter.ready && painter.sessionId === desiredSessionId && painter.modelsService !== undefined,
 							authentication: bound && Boolean(painter.modelsValue?.authentication),
 							selected: bound && Boolean(painter.modelsValue?.configuration.model),
@@ -1148,6 +1157,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let observedDirectory = directory.state.value;
 	directory.state.subscribe((state, _context, delivery) => {
 		if (!client.connected) return;
+		const reconnectHydrate = booted && delivery.kind === "hydrate" && !directoryReady;
 		if (delivery.kind === "hydrate") {
 			directoryReady = true;
 			renderer.setConnectionState(
@@ -1163,16 +1173,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		observedDirectory = state;
 		if (booted && desiredSessionId !== undefined) {
 			if ((previous !== undefined && current === undefined)
-				|| (current?.archivedAt !== undefined && (!showArchived || previous?.archivedAt === undefined))) {
+				|| (reconnectHydrate && current?.archivedAt !== undefined && previous?.archivedAt !== current.archivedAt)) {
 				void clearSession().catch(report);
+			} else if (current?.archivedAt !== undefined && previous !== undefined && previous.archivedAt === undefined) {
+				allowArchivedAttach = true;
+				rememberSelection();
 			} else if (current !== undefined && previous?.archivedAt !== undefined && current.archivedAt === undefined) {
-				showArchived = false;
+				allowArchivedAttach = false;
+				rosterFilter = "";
 				selectedProjectId = current.projectId;
 				reconnectTranscript = undefined;
 				rememberSelection();
 			}
 		}
-		const available = state.projects?.filter(project => showArchived || !project.removed) ?? [];
+		const available = state.projects?.filter(project => !project.removed) ?? [];
 		if (booted && delivery.kind !== "hydrate" && sessionReady() && current !== undefined) {
 			if (previousProject && currentProject && (previousProject.removed !== currentProject.removed
 				|| JSON.stringify(previousProject.workspaces ?? [previousProject.cwd]) !== JSON.stringify(currentProject.workspaces ?? [currentProject.cwd]))) {
@@ -1254,6 +1268,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const transition = sessionTransitions();
 	const clearSession = async (): Promise<void> => {
 		selectionRevision += 1;
+		allowArchivedAttach = false;
 		desiredSessionId = undefined;
 		reconnectTranscript = undefined;
 		rememberSelection();
@@ -1285,13 +1300,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const session = state?.sessions.find(session => session.sessionId === sessionId);
 		const project = state?.projects?.find(project => project.id === session?.projectId);
 		return directoryReady && session !== undefined
-			&& (!project?.removed || (showArchived && session.archivedAt !== undefined))
-			&& (session.archivedAt === undefined || showArchived);
+			&& (!project?.removed || (allowArchivedAttach && session.archivedAt !== undefined))
+			&& (session.archivedAt === undefined || allowArchivedAttach);
 	};
 	const selectSession = (sessionId: string, resume = false): Promise<void> => {
 		if (!resume) {
 			selectionRevision += 1;
 			const summary = directory.state.value?.sessions.find(session => session.sessionId === sessionId);
+			if (summary?.archivedAt === undefined) allowArchivedAttach = false;
 			if (summary?.projectId !== undefined) selectedProjectId = summary.projectId;
 			desiredSessionId = sessionId;
 			rememberSelection();
@@ -1352,19 +1368,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const createSession = (): void => {
 		if (creating || !client.connected || !directoryReady) return;
 		const known = directory.state.value?.projects;
-		if (known !== undefined && !known.some(project => project.id === selectedProjectId)) selectedProjectId = known.find(project => !project.removed)?.id;
+		if (known !== undefined && !known.some(project => project.id === selectedProjectId && !project.removed)) {
+			selectedProjectId = known.find(project => !project.removed)?.id;
+		}
 		if (known !== undefined && selectedProjectId === undefined) { modal = addProjectModal(locale); paint(); return; }
 		const projectId = selectedProjectId;
-		const project = known?.find(project => project.id === projectId);
 		desiredSessionId = undefined;
 		const selection = ++selectionRevision;
-		showArchived = false;
+		allowArchivedAttach = false;
 		rememberSelection();
 		creating = true;
 		paint();
-		const preparation = project?.removed ? projects.create({ cwd: project.cwd, name: project.name, workspaces: project.workspaces, projectId: project.id }, BACKGROUND_CONTEXT) : Promise.resolve();
-		void preparation
-			.then(() => management.create({ reuseEmpty: true, ...(projectId === undefined ? {} : { projectId }) }, BACKGROUND_CONTEXT))
+		void management.create({ reuseEmpty: true, ...(projectId === undefined ? {} : { projectId }) }, BACKGROUND_CONTEXT)
 			.then(async (created) => {
 				if (selectionRevision !== selection) return;
 				await selectSession(created.sessionId);
@@ -1940,40 +1955,39 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					}
 					case PROJECT_SELECT_ACTION: {
 						selectedProjectId = action.data;
-						const session = rosterItems(locale, directory.state.value, undefined, Date.now(), "", showArchived).find(item => item.projectId === action.data);
+						const session = rosterItems(locale, directory.state.value, undefined, Date.now(), "", false).find(item => item.projectId === action.data);
 						view = CHAT_VIEW;
 						void (session ? selectSession(session.id) : clearSession()).catch(report); paint(); return;
 					}
-					case ARCHIVE_MANAGE_ACTION:
-						if (!client.connected || !directoryReady) return;
+					case SESSION_ARCHIVE_OPEN_ACTION: {
+						const id = action.data;
+						if (!client.connected || !directoryReady || id === undefined) return;
 						selectionRevision += 1;
-						showArchived = true;
+						allowArchivedAttach = true;
 						view = CHAT_VIEW;
-						dockOpen = false;
+						providerAuthView = undefined;
 						modal = undefined;
-						rosterFilter = "";
-						rememberSelection();
-						if (directory.state.value?.sessions.some(session => session.sessionId === desiredSessionId && session.archivedAt === undefined)) void clearSession().catch(report);
-						paint(); return;
-					case ARCHIVE_TOGGLE_ACTION:
-						selectionRevision += 1;
-						showArchived = !showArchived;
-						if (!showArchived) {
-							const state = directory.state.value;
-							const available = state?.projects?.filter(project => !project.removed) ?? [];
-							if (!available.some(project => project.id === selectedProjectId)) {
-								selectedProjectId = available.find(project => project.id === state?.defaultProjectId)?.id ?? available[0]?.id;
-							}
-						}
-						rememberSelection();
-						if (!showArchived && directory.state.value?.sessions.some(session => session.sessionId === desiredSessionId && session.archivedAt !== undefined)) void clearSession().catch(report);
-						paint(); return;
+						paint();
+						void selectSession(id).catch((error: unknown) => {
+							renderer.setConnection(
+								(language) => translate(language, "page.attachFailed", { error: message(error) }),
+								"error",
+								(language) => translate(language, "page.attachFailedShort"),
+							);
+						});
+						return;
+					}
 					case SESSION_RESTORE_ACTION: {
 						const selection = selectionRevision;
 						runPanelCall({ id: action.id, data: action.data, call: async () => {
 							const id = action.data ?? "";
 							await archives.set(id, false, BACKGROUND_CONTEXT);
-							if (selectionRevision === selection) { showArchived = false; await selectSession(id); }
+							if (selectionRevision === selection) {
+								allowArchivedAttach = false;
+								rosterFilter = "";
+								view = CHAT_VIEW;
+								await selectSession(id);
+							}
 							return { ok: true as const };
 						} }); return;
 					}
@@ -2450,7 +2464,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								? await projects.update(action.data ?? "", { name: fields.name!.trim(), workspaces: folders }, BACKGROUND_CONTEXT)
 								: await projects.create({ cwd: folders[0]!, name: fields.name!.trim(), workspaces: folders }, BACKGROUND_CONTEXT);
 							if (action.id === PROJECT_ADD_MODAL && selectionRevision === selection && modal === dialog) {
-								selectedProjectId = project.id; showArchived = false; await clearSession();
+								selectedProjectId = project.id; allowArchivedAttach = false; await clearSession();
 							}
 							return { ok: true as const };
 						} }); return;
@@ -2508,7 +2522,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								await management.remove(sessionId, BACKGROUND_CONTEXT);
 								sessionDrafts.delete(sessionId);
 								if (wasCurrent && selectionRevision === selection) {
-									const next = rosterItems(locale, directory.state.value, undefined, Date.now(), "", showArchived)
+									const next = rosterItems(locale, directory.state.value, undefined, Date.now(), "", false)
 										.find(item => item.id !== sessionId && (projectId === undefined || item.projectId === projectId));
 									if (next !== undefined) await selectSession(next.id);
 								}
@@ -2836,24 +2850,25 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		else {
 			const projectId = sessionStorage.getItem(`amazme.project.${manifest.server.id}`);
 			const sessionId = sessionStorage.getItem(`amazme.session.${manifest.server.id}`);
-			if (projectId || sessionId) remembered = { ...(projectId ? { projectId } : {}), ...(sessionId ? { sessionId } : {}), showArchived: false };
+			if (projectId || sessionId) remembered = { ...(projectId ? { projectId } : {}), ...(sessionId ? { sessionId } : {}) };
 		}
 	} catch { /* The host fallback also works without browser storage. */ }
 	remembered ??= await projects.selection(BACKGROUND_CONTEXT).catch((error: unknown) => { report(error instanceof Error ? error : new Error(String(error))); return undefined; });
 	booted = true;
 	if (selectionRevision === selection) {
 		const state = directory.state.value;
-		showArchived = remembered?.showArchived ?? false;
 		const previous = state?.sessions.find(session => session.sessionId === remembered?.sessionId);
-		if (previous !== undefined && previous.archivedAt === undefined && remembered?.archivedAt !== undefined) showArchived = false;
-		const available = state?.projects?.filter(project => showArchived || !project.removed) ?? [];
+		const sameArchive = previous?.archivedAt !== undefined && previous.archivedAt === remembered?.archivedAt;
+		allowArchivedAttach = sameArchive;
+		const available = state?.projects?.filter(project => !project.removed) ?? [];
 		const project = available.find(project => project.id === (remembered?.projectId ?? previous?.projectId))
 			?? available.find(project => project.id === state?.defaultProjectId) ?? available[0];
 		selectedProjectId = project?.id;
 		let initial: string | undefined;
 		if (remembered === undefined) initial = rosterItems(locale, state, undefined, Date.now()).find(item => project === undefined || item.projectId === project.id)?.id;
-		else if (previous !== undefined && previous.projectId === selectedProjectId && canResumeSession(previous.sessionId)
-			&& (previous.archivedAt === undefined || previous.archivedAt === remembered.archivedAt)) initial = previous.sessionId;
+		else if (previous !== undefined && canResumeSession(previous.sessionId)
+			&& (previous.archivedAt === undefined || previous.archivedAt === remembered.archivedAt)
+			&& (previous.projectId === selectedProjectId || sameArchive)) initial = previous.sessionId;
 		if (initial === undefined) await clearSession();
 		else await selectSession(initial).catch((error: unknown) => {
 			renderer.setConnection(

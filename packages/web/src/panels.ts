@@ -31,10 +31,11 @@ import {
 	SESSION_REMOVE_MODAL,
 	SESSION_RENAME_MODAL,
 } from "./actions.ts";
-import type { ModelPicker } from "./view.ts";
+import type { ModelPicker, SessionDirectoryLike } from "./view.ts";
+import { rosterItems } from "./view.ts";
 import type { Locale } from "./locale.ts";
 import { errorMessageCopy } from "./errors.ts";
-import { ARCHIVE_MANAGE_ACTION } from "./projects.ts";
+import { SESSION_ARCHIVE_OPEN_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import {
 	type MessageKey,
 	mcpExposureCopy,
@@ -304,7 +305,13 @@ export interface PluginsStateLike {
 export interface SettingsPanelInput {
 	readonly state: SettingsStateLike | undefined;
 	readonly models?: { readonly available: boolean; readonly authentication: boolean; readonly selected: boolean; readonly picker: ModelPicker };
-	readonly archives?: boolean;
+	/** Archived sessions the settings list owns. Absent until the host has published a directory. */
+	readonly archives?: {
+		readonly sessions: SessionDirectoryLike["sessions"];
+		readonly projects: NonNullable<SessionDirectoryLike["projects"]>;
+		readonly retentionDays: number;
+		readonly now: number;
+	};
 }
 
 export interface SkillsPanelInput {
@@ -542,15 +549,34 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 	for (const [group, rows] of rowsByGroup) {
 		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), description: settingGroupDescriptionCopy(locale, group), rows });
 	}
-	if (input.archives) groups.push({
-		id: "settings:archives", title: translate(locale, "project.archived"),
-		description: translate(locale, "panel.settings.archivedSessionsHelp"),
-		rows: [{
-			id: "settings:archived-sessions", title: translate(locale, "panel.settings.archivedSessions"),
+	if (input.archives) {
+		const archives = input.archives;
+		const dueAt = (archivedAt: number): boolean => archives.retentionDays > 0 && archives.now - archivedAt >= archives.retentionDays * 86400000;
+		const rows = rosterItems(locale, { sessions: archives.sessions, projects: archives.projects }, undefined, archives.now, "", true, 0).map(item => {
+			const session = archives.sessions.find(candidate => candidate.sessionId === item.id);
+			const projectName = archives.projects.find(project => project.id === item.projectId)?.name ?? item.cwd ?? "";
+			const due = session?.archivedAt !== undefined && dueAt(session.archivedAt);
+			return {
+				id: `settings:archive:${item.id}`,
+				title: item.label,
+				...(projectName.length === 0 ? { description: item.age } : { description: `${projectName} · ${item.age}` }),
+				...(due ? { badges: [translate(locale, "project.retentionDue")] } : {}),
+				actions: [
+					{ id: SESSION_ARCHIVE_OPEN_ACTION, label: translate(locale, "panel.settings.archivedSessionsOpen"), tone: "default" as const, data: item.id },
+					{ id: SESSION_RESTORE_ACTION, label: translate(locale, "project.restore"), tone: "default" as const, data: item.id },
+				],
+			};
+		});
+		groups.push({
+			id: "settings:archives", title: translate(locale, "project.archived"),
 			description: translate(locale, "panel.settings.archivedSessionsHelp"),
-			actions: [{ id: ARCHIVE_MANAGE_ACTION, label: translate(locale, "panel.settings.manageArchives"), tone: "default" }],
-		}],
-	});
+			rows,
+			...(rows.length === 0 ? { empty: translate(locale, "panel.settings.archivedGroupEmpty") } : {}),
+			footnote: archives.retentionDays > 0
+				? translate(locale, "panel.settings.archivedFootnote", { days: String(archives.retentionDays) })
+				: translate(locale, "panel.settings.archivedKeepForever"),
+		});
+	}
 	groups.push({
 		id: "settings:files",
 		title: translate(locale, "panel.settings.filesTitle"),

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { SESSION_ARCHIVE_OPEN_ACTION, SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import {
 	COMPACT_MODAL,
 	SCHEDULE_ADD_MODAL,
@@ -260,6 +261,48 @@ describe("settings panel", () => {
 			state: { ...SETTINGS, projectTrusted: false, paths: { global: "/agent/settings.json" } },
 		});
 		expect(untrusted.groups.at(-1)?.rows[1]?.description).toBe("The project is not trusted, so its settings are not read.");
+	});
+
+	test("lists each archived session, marks one that is due, and keeps a removed project's name", () => {
+		const now = 10 * 86_400_000;
+		const archives = {
+			now,
+			retentionDays: 1,
+			projects: [
+				{ id: "p", name: "应用", cwd: "/work", createdAt: 1 },
+				{ id: "gone", name: "旧项目", cwd: "/old", createdAt: 1, removed: true as const },
+			],
+			sessions: [
+				{ sessionId: "fresh", createdAt: 2, cwd: "/work", projectId: "p", name: "刚归档", archivedAt: now - 1000 },
+				{ sessionId: "due", createdAt: 1, cwd: "/old", projectId: "gone", name: "已到期", archivedAt: now - 2 * 86_400_000 },
+			],
+		};
+		const group = settingsPanel("zh", { state: SETTINGS, archives }).groups.find(item => item.id === "settings:archives");
+		expect(group?.title).toBe("已归档");
+		expect(group?.description).toBe("查看已归档会话，恢复到所属项目。");
+		expect(group?.rows.map(row => row.title)).toEqual(["刚归档", "已到期"]);
+		expect(group?.rows[0]).toMatchObject({
+			description: "应用 · 归档于 1s",
+			actions: [
+				{ id: SESSION_ARCHIVE_OPEN_ACTION, data: "fresh", label: "打开" },
+				{ id: SESSION_RESTORE_ACTION, data: "fresh", label: "恢复会话" },
+			],
+		});
+		expect(group?.rows[0]?.badges).toBeUndefined();
+		expect(group?.rows[1]).toMatchObject({
+			description: "旧项目 · 归档于 2d",
+			badges: ["到期，请检查是否保留"],
+		});
+		expect(group?.rows[1]?.actions?.map(action => action.data)).toEqual(["due", "due"]);
+		expect(group?.footnote).toBe("保留提醒为 1 天。到期只做标记，不自动删除。");
+
+		const empty = settingsPanel("zh", { state: SETTINGS, archives: { ...archives, sessions: [] } }).groups.find(item => item.id === "settings:archives");
+		expect(empty?.rows).toEqual([]);
+		expect(empty?.empty).toBe("没有归档会话。");
+		const forever = settingsPanel("zh", { state: SETTINGS, archives: { ...archives, retentionDays: 0 } }).groups.find(item => item.id === "settings:archives");
+		expect(forever?.footnote).toBe("长期保留，不自动删除。");
+		expect(forever?.rows.some(row => row.badges !== undefined)).toBe(false);
+		expect(settingsPanel("zh", { state: SETTINGS }).groups.some(item => item.id === "settings:archives")).toBe(false);
 	});
 });
 

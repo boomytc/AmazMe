@@ -13,8 +13,7 @@ export const PROJECT_RENAME_ACTION = "project:rename";
 export const PROJECT_RENAME_MODAL = "project:rename-submit";
 export const PROJECT_REMOVE_ACTION = "project:remove";
 export const PROJECT_REMOVE_MODAL = "project:remove-confirm";
-export const ARCHIVE_TOGGLE_ACTION = "session:show-archived";
-export const ARCHIVE_MANAGE_ACTION = "session:manage-archived";
+export const SESSION_ARCHIVE_OPEN_ACTION = "session:open-archived";
 export const SESSION_ARCHIVE_ACTION = "session:archive";
 export const SESSION_ARCHIVE_MODAL = "session:archive-confirm";
 export const SESSION_RESTORE_ACTION = "session:restore";
@@ -29,14 +28,14 @@ export interface ProjectGroup {
 	readonly removed?: true;
 }
 
-export function projectGroups(directory: SessionDirectoryLike | undefined, items: readonly RosterItem[], selectedId: string | undefined, archived: boolean, filter: string): ProjectGroup[] | undefined {
+export function projectGroups(directory: SessionDirectoryLike | undefined, items: readonly RosterItem[], selectedId: string | undefined, filter: string): ProjectGroup[] | undefined {
 	if (directory?.projects === undefined) return undefined;
 	const needle = filter.trim().toLowerCase();
-	return directory.projects.filter(project => archived || !project.removed).map(project => ({
+	return directory.projects.filter(project => !project.removed).map(project => ({
 		...project,
 		selected: project.id === selectedId,
 		items: items.filter(item => item.projectId === project.id),
-	})).filter(group => archived ? group.items.length > 0 : !needle || group.items.length > 0 || `${group.name} ${(group.workspaces ?? [group.cwd]).join(" ")}`.toLowerCase().includes(needle));
+	})).filter(group => !needle || group.items.length > 0 || `${group.name} ${(group.workspaces ?? [group.cwd]).join(" ")}`.toLowerCase().includes(needle));
 }
 
 export function addProjectModal(locale: Locale): PanelModal {

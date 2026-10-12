@@ -3283,8 +3283,9 @@ p {
 .project-heading:hover .project-action, .project-heading:focus-within .project-action { opacity: 1; }
 .project-sessions { padding-left: 14px; }
 .project-sessions .session-row { border-radius: 12px; }
-.project-archive-toggle { background: transparent; border: 0; color: var(--text-3); padding: 10px 8px; cursor: pointer; font: inherit; }
-.project-archive-toggle:hover { color: var(--text); }
+.project-archived-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 11px 10px; cursor: default; }
+.project-group.archived .project-heading:hover { background: transparent; }
+.project-group.archived .session-age { flex-basis: auto; white-space: nowrap; }
 
 .modal-project { width: min(640px, calc(100vw - 40px)); max-width: 640px; border-radius: 22px; padding: 28px; }
 .modal-project .modal-head, .modal-project .modal-body, .modal-project .modal-foot { padding: 0; }

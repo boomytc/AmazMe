@@ -16,7 +16,11 @@ export interface ProjectSummary {
 export interface ProjectSelection {
 	projectId?: string;
 	sessionId?: string;
-	showArchived: boolean;
+	/**
+	 * Older pages stored the archive browser here. New pages omit it. Readers ignore the value
+	 * and decide from the session's own archive stamp.
+	 */
+	showArchived?: boolean;
 	/** The archive state when selected, so an offline archive does not reopen an active session. */
 	archivedAt?: number;
 }
@@ -24,7 +28,7 @@ export interface ProjectSelection {
 export function isProjectSelection(value: unknown): value is ProjectSelection {
 	if (typeof value !== "object" || value === null) return false;
 	const row = value as Record<string, unknown>;
-	return typeof row.showArchived === "boolean"
+	return (row.showArchived === undefined || typeof row.showArchived === "boolean")
 		&& (row.projectId === undefined || typeof row.projectId === "string")
 		&& (row.sessionId === undefined || typeof row.sessionId === "string")
 		&& (row.archivedAt === undefined || (typeof row.archivedAt === "number" && Number.isFinite(row.archivedAt)));

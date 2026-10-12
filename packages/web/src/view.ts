@@ -421,7 +421,8 @@ export interface WebView {
 	/** The roster, narrowed by the reader's filter. */
 	readonly roster: readonly RosterItem[];
 	readonly projects?: readonly ProjectGroup[];
-	readonly archived?: boolean;
+	/** The one archived session the reader currently has open, pinned under the projects. */
+	readonly archivedAttached?: RosterItem;
 	readonly readOnly?: boolean;
 	/** The filter text itself, so the input keeps what the reader typed. */
 	readonly rosterFilter: string;
@@ -543,7 +544,6 @@ export interface WebViewInput {
 	readonly locale: Locale;
 	readonly directory: SessionDirectoryLike | undefined;
 	readonly selectedProjectId?: string;
-	readonly showArchived?: boolean;
 	readonly transcript: ConversationView | undefined;
 	readonly attachedId: string | undefined;
 	readonly now: number;
@@ -1486,21 +1486,28 @@ export function buildWebView(input: WebViewInput): WebView {
 	const forkable = shownCanFork(input);
 	const blocks = transcriptBlocks(locale, input.transcript, [], input.feedback?.records, input.feedbackScope);
 	const retention = Number(input.panel.settings?.state?.descriptors.find(descriptor => descriptor.id === "archiveRetentionDays")?.value ?? 0);
-	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter, input.showArchived, retention);
+	const roster = rosterItems(locale, input.directory, input.attachedId, input.now, input.rosterFilter, false, retention);
 	const archived = input.attachedId !== undefined && input.directory?.sessions.some(session => session.sessionId === input.attachedId && session.archivedAt !== undefined);
+	const archivedAttached = archived
+		? rosterItems(locale, input.directory, input.attachedId, input.now, "", true, retention).find(item => item.id === input.attachedId)
+		: undefined;
+	const activeCount = input.directory?.sessions.filter(session => session.archivedAt === undefined).length ?? 0;
+	const archivedCount = (input.directory?.sessions.length ?? 0) - activeCount;
 	const empty =
 		input.directory === undefined
 			? translate(locale, "header.connecting")
 			: input.directory.sessions.length === 0
 				? translate(locale, "header.rosterEmpty")
-				: roster.length === 0
-					? translate(locale, "header.rosterNoMatch")
-					: undefined;
+				: roster.length === 0 && activeCount === 0 && archivedCount > 0
+					? translate(locale, "header.rosterArchivedOnly")
+					: roster.length === 0
+						? translate(locale, "header.rosterNoMatch")
+						: undefined;
 	return {
 		locale,
 		roster,
-		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.showArchived ?? false, input.rosterFilter),
-		archived: input.showArchived,
+		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.rosterFilter),
+		...(archivedAttached === undefined ? {} : { archivedAttached }),
 		...(archived ? { readOnly: true } : {}),
 		rosterFilter: input.rosterFilter,
 		...(input.attachedId === undefined ? {} : { transcriptScope: `${input.attachedId}:${input.transcript?.conversation.id ?? input.feedbackScope?.conversationId ?? "root"}` }),

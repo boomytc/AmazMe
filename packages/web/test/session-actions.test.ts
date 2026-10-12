@@ -59,6 +59,9 @@ describe("session actions", () => {
 		const report = vi.fn();
 		renderer.onPanelAction = report;
 		renderer.render({ ...view, locale: "zh", projects: [] });
+		expect(document.querySelector(".project-archive-toggle")).toBeNull();
+		expect(document.querySelector(".sidebar-label")?.textContent).toContain("项目");
+		expect(document.querySelector(".project-group.archived")).toBeNull();
 		control(".session-more").click();
 		expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
 		expect(control(`[data-action="${SESSION_ARCHIVE_ACTION}"]`).textContent).toBe("归档");
@@ -66,8 +69,22 @@ describe("session actions", () => {
 		control(`[data-action="${SESSION_ARCHIVE_ACTION}"]`).click();
 		expect(report).toHaveBeenCalledWith({ kind: "command", id: SESSION_ARCHIVE_ACTION, data: "stable-session-id" });
 
-		renderer.render({ ...view, projects: [], archived: true, roster: view.roster.map(item => ({ ...item, archived: true })) });
-		control(".session-more").click();
+		const pinned = view.roster[0];
+		if (pinned === undefined) throw new Error("Missing roster row");
+		renderer.render({
+			...view,
+			locale: "zh",
+			projects: [{ id: "p", name: "App", cwd: "/work", selected: true, items: [] }],
+			roster: [],
+			archivedAttached: { ...pinned, archived: true, attached: true },
+		});
+		expect(document.querySelector(".project-archive-toggle")).toBeNull();
+		expect(document.querySelector(".sidebar-label")?.textContent).toContain("项目");
+		const archived = document.querySelector(".project-group.archived");
+		expect(archived?.querySelector(".project-select")).toBeNull();
+		expect(archived?.querySelectorAll("[data-session-id]")).toHaveLength(1);
+		expect(archived?.querySelector("[data-session-id]")?.getAttribute("data-session-id")).toBe("stable-session-id");
+		archived?.querySelector<HTMLButtonElement>(".session-more")?.click();
 		expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
 		expect(document.querySelector(`[data-action="${SESSION_ARCHIVE_ACTION}"]`)).toBeNull();
 		expect(document.querySelector('[data-action="session:end-work"]')).toBeNull();

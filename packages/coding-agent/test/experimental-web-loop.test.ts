@@ -10,7 +10,12 @@ import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ConversationView } from "@amazme/durable";
+import type { PageRenderer, WebView } from "@amazme/web";
 import {
+	BOOT_GLOBAL,
+	SESSION_ARCHIVE_OPEN_ACTION,
+	SESSION_RESTORE_ACTION,
+	SETTINGS_VIEW,
 	inboxOf,
 	isBusy,
 	liveOf,
@@ -21,7 +26,7 @@ import {
 	SESSION_REMOVE_ACTION,
 	transcriptBlocks,
 } from "@amazme/web";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { AgentController } from "../src/core/plugins/agent-controller.ts";
 import {
 	createServerServiceSource,
@@ -38,7 +43,7 @@ import { Models, type Models as ModelsService } from "../src/host/services/model
 import { Plugins, type Plugins as PluginsService } from "../src/host/services/plugins.ts";
 import { Schedules, type Schedules as SchedulesService } from "../src/core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../src/host/services/sessions.ts";
-import { ProjectManagement, SessionArchive } from "../src/host/services/projects.ts";
+import { isProjectSelection, ProjectManagement, SessionArchive } from "../src/host/services/projects.ts";
 import { Settings, type Settings as SettingsService } from "../src/host/services/settings.ts";
 import { Skills, type Skills as SkillsService } from "../src/host/services/skills.ts";
 import { Transcript } from "../src/host/services/transcript.ts";
@@ -46,6 +51,7 @@ import { runClient } from "../src/host/client.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { listSessions, readSession, writeSessionName } from "../src/host/session-catalog.ts";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
+import { startPage } from "../src/host/web/page.ts";
 
 interface Presentation {
 	readonly client: Client;
@@ -77,6 +83,68 @@ const hosts = new Set<WebHost>();
 const modelServers = new Set<Server>();
 const directories = new Set<string>();
 const previousAgentDir = process.env.AMAZME_CODING_AGENT_DIR;
+const pageDisposers = new Set<() => Promise<void>>();
+
+/** Drive the real page lifecycle without a DOM renderer or additional browser dependencies. */
+async function openPage(host: WebHost, storage = new Map<string, string>()) {
+	const lifetime = new EventTarget();
+	vi.stubGlobal(BOOT_GLOBAL, {
+		server: { id: host.serverId }, transport: { url: host.webSocketUrl },
+		preferences: { locale: "zh", appearance: "light" },
+	});
+	vi.stubGlobal("navigator", { languages: ["zh-CN"], platform: "" });
+	vi.stubGlobal("document", {
+		documentElement: { dataset: {}, style: {}, lang: "" },
+		getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
+	});
+	vi.stubGlobal("sessionStorage", {
+		getItem: (key: string) => storage.get(key) ?? null,
+		setItem: (key: string, value: string) => storage.set(key, value),
+	});
+	vi.stubGlobal("addEventListener", lifetime.addEventListener.bind(lifetime));
+	let rendered: WebView | undefined;
+	const noop = () => {};
+	const renderer: PageRenderer = {
+		render: view => { rendered = view; }, get view() { return rendered; },
+		setConnection: vi.fn(), setConnectionState: vi.fn(),
+		onSelect: noop, onCreateSession: noop, onSubmit: noop, onAbort: noop,
+		onSelectModel: noop, onSelectThinking: noop, onAttachFiles: noop,
+		onFilterRoster: noop, onShortcut: noop, onPaletteSelection: noop,
+		onDraftChange: noop, onCommandPick: noop, onPanelAction: noop,
+		setDraft: text => renderer.onDraftChange(text),
+	};
+	const releases = new Set<Promise<void>>();
+	const subscribe = Client.prototype.subscribeService;
+	const subscriptionSpy = vi.spyOn(Client.prototype, "subscribeService").mockImplementation(async function (this: Client, ...args) {
+		const subscription = await subscribe.apply(this, args);
+		return { ...subscription, dispose: async () => {
+			const releasing = subscription.dispose();
+			releases.add(releasing);
+			try { await releasing; } finally { releases.delete(releasing); }
+		} };
+	});
+	let client: Client | undefined;
+	try { client = await startPage(renderer); } catch (error) { subscriptionSpy.mockRestore(); throw error; }
+	if (client === undefined) { subscriptionSpy.mockRestore(); throw new Error("Page did not connect"); }
+	const connection = client;
+	let closed = () => {};
+	const closing = new Promise<void>(resolve => { closed = resolve; });
+	const disposeClient = connection.dispose.bind(connection);
+	vi.spyOn(connection, "dispose").mockImplementation(async () => {
+		// A fake window must await concurrent session/server releases before closing its connection.
+		await Promise.allSettled([...releases]);
+		await disposeClient();
+		closed();
+	});
+	const dispose = async () => {
+		lifetime.dispatchEvent(new Event("pagehide"));
+		await closing;
+		subscriptionSpy.mockRestore();
+		pageDisposers.delete(dispose);
+	};
+	pageDisposers.add(dispose);
+	return { client, renderer, storage, dispose };
+}
 
 async function makeDirectory(prefix: string): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -253,6 +321,8 @@ async function openAdministration(host: WebHost): Promise<Administration> {
 }
 
 afterEach(async () => {
+	await Promise.allSettled([...pageDisposers].map(dispose => dispose()));
+	pageDisposers.clear();
 	await Promise.allSettled([...hosts].map((host) => host.close()));
 	hosts.clear();
 	await Promise.all(
@@ -269,6 +339,7 @@ afterEach(async () => {
 	directories.clear();
 	if (previousAgentDir === undefined) delete process.env.AMAZME_CODING_AGENT_DIR;
 	else process.env.AMAZME_CODING_AGENT_DIR = previousAgentDir;
+	vi.unstubAllGlobals();
 });
 
 describe("web client interactive loop", () => {
@@ -985,6 +1056,157 @@ describe("web client interactive loop", () => {
 		await attachedTwo.dispose();
 		await first.dispose();
 		await second.dispose();
+	}, 240_000);
+
+	test("accepts current and legacy archive selections without trusting malformed archive stamps", () => {
+		expect(isProjectSelection({ projectId: "p", sessionId: "s", archivedAt: 3 })).toBe(true);
+		expect(isProjectSelection({ projectId: "p" })).toBe(true);
+		expect(isProjectSelection({ projectId: "p", sessionId: "s", archivedAt: 3, showArchived: true })).toBe(true);
+		expect(isProjectSelection({ showArchived: false })).toBe(true);
+		expect(isProjectSelection({ showArchived: "true" })).toBe(false);
+		expect(isProjectSelection({ archivedAt: Infinity })).toBe(false);
+		expect(isProjectSelection({ archivedAt: "3" })).toBe(false);
+	});
+
+	test("the page opens an archive through settings and reveals the restored session despite an old filter", async () => {
+		const host = await startLoopHost();
+		const presentation = await openPresentation(host);
+		const active = await presentation.management.create({ id: "page-active" }, BACKGROUND_CONTEXT);
+		const stored = await presentation.management.create({ id: "page-archived" }, BACKGROUND_CONTEXT);
+		await presentation.archives.set(stored.sessionId, true, BACKGROUND_CONTEXT);
+		const page = await openPage(host);
+		expect(page.renderer.view?.attachedId).toBe(active.sessionId);
+		page.renderer.onFilterRoster("does-not-match");
+		page.renderer.onPanelAction({ kind: "open", panel: SETTINGS_VIEW });
+		page.renderer.onPanelAction({ kind: "command", id: SESSION_ARCHIVE_OPEN_ACTION, data: stored.sessionId });
+		await waitFor(() => page.renderer.view?.archivedAttached?.id === stored.sessionId, "the page to open the archive");
+		expect(page.renderer.view?.readOnly).toBe(true);
+		expect(page.renderer.view?.rosterFilter).toBe("does-not-match");
+
+		page.renderer.onPanelAction({ kind: "command", id: SESSION_RESTORE_ACTION, data: stored.sessionId });
+		await waitFor(() => page.renderer.view?.attachedId === stored.sessionId && page.renderer.view.readOnly !== true, "the page to restore the archive");
+		expect(page.renderer.view?.rosterFilter).toBe("");
+		expect(page.renderer.view?.roster.find(item => item.id === stored.sessionId)?.attached).toBe(true);
+		expect(page.renderer.view?.projects?.some(project => project.selected && project.items.some(item => item.id === stored.sessionId))).toBe(true);
+		await page.dispose();
+		await presentation.dispose();
+	}, 240_000);
+
+	test("the page does not reattach a session archived while disconnected", async () => {
+		const host = await startLoopHost();
+		const presentation = await openPresentation(host);
+		const active = await presentation.management.create({ id: "page-offline-archive" }, BACKGROUND_CONTEXT);
+		const page = await openPage(host);
+		expect(page.renderer.view?.attachedId).toBe(active.sessionId);
+		let release = () => {};
+		const gate = new Promise<void>(resolve => { release = resolve; });
+		const reconnect = page.client.reconnect.bind(page.client);
+		vi.spyOn(page.client, "reconnect").mockImplementation(async () => { await gate; return reconnect(); });
+		page.client.disconnect();
+		await presentation.archives.set(active.sessionId, true, BACKGROUND_CONTEXT);
+		expect(page.client.connected).toBe(false);
+		release();
+		await waitFor(() => page.client.connected && page.renderer.view?.empty === "归档会话在设置 → 已归档。", "the refreshed archive directory");
+		await expect.poll(async () => (await presentation.projects.selection(BACKGROUND_CONTEXT))?.sessionId, { timeout: 2000 }).toBeUndefined();
+		expect(page.renderer.view?.attachedId).toBeUndefined();
+		expect(page.renderer.view?.archivedAttached).toBeUndefined();
+		await page.dispose();
+		await presentation.dispose();
+	}, 240_000);
+
+	test("the page keeps an online archive read-only across reload and reconnect, then follows restoration", async () => {
+		const host = await startLoopHost();
+		const presentation = await openPresentation(host);
+		const active = await presentation.management.create({ id: "page-online-archive" }, BACKGROUND_CONTEXT);
+		// Keep a second attachment so this test isolates selection from idle-worker retirement.
+		const anchor = await attachSession(presentation, active.sessionId);
+		const first = await openPage(host);
+		await presentation.archives.set(active.sessionId, true, BACKGROUND_CONTEXT);
+		await waitFor(() => first.renderer.view?.archivedAttached?.id === active.sessionId, "the online archive to remain open");
+		expect(first.renderer.view?.readOnly).toBe(true);
+		await first.dispose();
+		expect(JSON.parse(first.storage.get(`amazme.selection.${host.serverId}`) ?? "null")).toMatchObject({ sessionId: active.sessionId, archivedAt: expect.any(Number) });
+		const page = await openPage(host, first.storage);
+		expect(page.renderer.view?.archivedAttached?.id).toBe(active.sessionId);
+		page.client.disconnect();
+		await waitFor(() => page.client.connected && page.renderer.view?.archivedAttached?.id === active.sessionId, "the same archive to reconnect");
+		expect(page.renderer.view?.readOnly).toBe(true);
+		page.renderer.onFilterRoster("does-not-match");
+		expect(page.renderer.view?.archivedAttached?.id).toBe(active.sessionId);
+		await presentation.archives.set(active.sessionId, false, BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.attachedId === active.sessionId && page.renderer.view.readOnly !== true, "the external restoration to publish");
+		expect(page.renderer.view?.rosterFilter).toBe("");
+		expect(page.renderer.view?.archivedAttached).toBeUndefined();
+		expect(page.renderer.view?.projects?.some(project => project.selected && project.items.some(item => item.id === active.sessionId))).toBe(true);
+		await page.dispose();
+		await anchor.dispose();
+		await presentation.dispose();
+	}, 240_000);
+
+	test("the page opens a removed project's archive, restores its project, and clears a deleted archive", async () => {
+		const host = await startLoopHost();
+		const presentation = await openPresentation(host);
+		const active = await presentation.management.create({ id: "page-neighbor" }, BACKGROUND_CONTEXT);
+		const folder = await makeDirectory("page-removed-project-");
+		const project = await presentation.projects.create({ cwd: folder, name: "旧项目" }, BACKGROUND_CONTEXT);
+		const stored = await presentation.management.create({ id: "page-removed-archive", projectId: project.id }, BACKGROUND_CONTEXT);
+		await presentation.projects.remove(project.id, BACKGROUND_CONTEXT);
+		const page = await openPage(host);
+		expect(page.renderer.view?.attachedId).toBe(active.sessionId);
+		page.renderer.onPanelAction({ kind: "open", panel: SETTINGS_VIEW });
+		expect(page.renderer.view?.panel.panel?.groups.find(group => group.id === "settings:archives")?.rows.find(row => row.id === `settings:archive:${stored.sessionId}`)?.description).toContain("旧项目");
+		page.renderer.onPanelAction({ kind: "command", id: SESSION_ARCHIVE_OPEN_ACTION, data: stored.sessionId });
+		await waitFor(() => page.renderer.view?.archivedAttached?.id === stored.sessionId, "the removed project's archive to open");
+		expect(page.renderer.view?.readOnly).toBe(true);
+		expect(page.renderer.view?.projects?.some(group => group.id === project.id)).toBe(false);
+		page.renderer.onPanelAction({ kind: "command", id: SESSION_RESTORE_ACTION, data: stored.sessionId });
+		await waitFor(() => page.renderer.view?.attachedId === stored.sessionId && page.renderer.view.readOnly !== true, "the removed project to return");
+		expect(page.renderer.view?.projects?.find(group => group.id === project.id)?.selected).toBe(true);
+		await presentation.archives.set(stored.sessionId, true, BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.archivedAttached?.id === stored.sessionId, "the restored session to archive again");
+		await presentation.management.remove(stored.sessionId, BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.attachedId === undefined && page.renderer.view?.archivedAttached === undefined, "the deleted archive to clear");
+		expect(page.renderer.view?.roster.map(item => item.id)).toContain(active.sessionId);
+		await page.dispose();
+		await presentation.dispose();
+	}, 240_000);
+
+	test("attaches an already archived session read-only without archiving its neighbor, then restores it", async () => {
+		const host = await startLoopHost(true);
+		const presentation = await openPresentation(host);
+		const active = await presentation.management.create({ id: "archive-open-active" }, BACKGROUND_CONTEXT);
+		const stored = await presentation.management.create({ id: "archive-open-stored" }, BACKGROUND_CONTEXT);
+		await waitFor(
+			() => {
+				const sessions = presentation.directory.state.value?.sessions ?? [];
+				return sessions.some(session => session.sessionId === active.sessionId) && sessions.some(session => session.sessionId === stored.sessionId);
+			},
+			"both sessions to publish",
+		);
+		const projectId = presentation.directory.state.value?.sessions.find(session => session.sessionId === active.sessionId)?.projectId;
+		if (projectId === undefined) throw new Error("Missing session project");
+		await presentation.archives.set(stored.sessionId, true, BACKGROUND_CONTEXT);
+		await waitFor(
+			() => presentation.directory.state.value?.sessions.find(session => session.sessionId === stored.sessionId)?.archivedAt !== undefined,
+			"the archive to publish",
+		);
+		const sessions = presentation.directory.state.value?.sessions ?? [];
+		expect(sessions.find(session => session.sessionId === active.sessionId)?.archivedAt).toBeUndefined();
+		expect(sessions.find(session => session.sessionId === stored.sessionId)?.projectId).toBe(projectId);
+
+		const attached = await attachSession(presentation, stored.sessionId);
+		expect(await attached.controller.prompt({ message: "blocked", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: false, error: { code: "session_ended" } });
+
+		await presentation.archives.set(stored.sessionId, false, BACKGROUND_CONTEXT);
+		await waitFor(
+			() => presentation.directory.state.value?.sessions.find(session => session.sessionId === stored.sessionId)?.archivedAt === undefined,
+			"the session to return",
+		);
+		expect(presentation.directory.state.value?.projects?.find(project => project.id === projectId)?.removed).not.toBe(true);
+		expect(await attached.controller.prompt({ message: "new work after restore", images: null }, BACKGROUND_CONTEXT)).toMatchObject({ accepted: true });
+		await attached.controller.abort(BACKGROUND_CONTEXT);
+		await attached.dispose();
+		await presentation.dispose();
 	}, 240_000);
 
 	test(

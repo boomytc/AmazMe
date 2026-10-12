@@ -144,10 +144,13 @@ The sidebar filters sessions by name, ID, working directory and project. Each se
 rename, **Archive**, copy ID and confirmed deletion. Archiving confirms that running tasks, background work,
 queued inputs and terminal commands will stop. History and file changes are kept, and new work is refused until
 the session is restored; cancelled tasks are not automatically replayed. Removing a project also archives and
-stops its sessions without deleting source folders. **Archived** opens the archive, also reachable through
-**Settings → Archived → Manage**. Deleting a session removes its history, not its project folders.
+stops its sessions without deleting source folders. **Settings → Archived** lists all archived sessions, including
+those in removed projects, with their project, archive time and retention reminder. **Open** shows history read-only
+and pins only that archive beneath the sidebar projects. **Restore session** returns it to its project and clears the
+old sidebar filter so the restored session remains visible. An open archive's more menu offers confirmed deletion;
+deleting a session removes its history, not its project folders. Retention reminders never delete automatically.
 
-Project, session and archive selection survive refresh in the current tab. The host also saves a fallback for a
+Project and current session selection, including an open archive, survive refresh in the current tab. The host also saves a fallback for a
 new window or changed Web port, but checks current project and archive metadata before attaching. Switching
 between chat and settings retains the attached session, draft and chat scroll position; changing a setting leaves
 you on that settings page.
