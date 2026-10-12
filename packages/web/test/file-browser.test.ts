@@ -16,7 +16,7 @@ const listing: WorkspaceStateLike = { cwd: "/workspace/project", view: { kind: "
 ], page: { offset: 0, limit: 100, total: 3 } } };
 
 function view(workspace = listing, sessionId = "s") {
-	const input: WebViewInput = { locale: "zh", submitMode: "prompt", attachments: [], rosterFilter: "", approvals: undefined,
+	const input: WebViewInput = { locale: "zh", submitMode: "followUp", attachments: [], rosterFilter: "", approvals: undefined,
 		feedback: undefined, showWelcome: false, focus: "main", history: [], historyMore: false, historyLoading: false,
 		draft: "", commands: [], completions: [], paletteSelection: 0, platform: "", models: undefined, thinkingLevels: [],
 		directory: { sessions: [{ sessionId, cwd: workspace.cwd, createdAt: 1 }] }, attachedId: sessionId, transcript: undefined, now: 2,

@@ -210,7 +210,7 @@ export interface PanelModal {
 	readonly data?: string;
 	/** A destructive submit, such as a remove confirmation. */
 	readonly danger?: boolean;
-	/** Whether the submit's call is in flight: the submit is disabled until it settles. */
+	/** A submit is in flight: fields, actions and dismissal stay locked until it settles. */
 	readonly pending?: boolean;
 	/** What the last submit said; a refused input is reported here, inside the modal. */
 	readonly notice?: PanelNotice;

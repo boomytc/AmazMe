@@ -107,6 +107,6 @@ test("archiving a fork confirms with cancel focused by default", () => {
 	const view = buildWebView(input());
 	renderer.render({ ...view, panel: { ...view.panel, modal: archiveForkModal("zh", "2") } });
 	expect(document.activeElement?.textContent).toBe("取消");
-	expect(document.querySelector('[role="dialog"]')?.textContent).toContain("不影响主线和其他分叉");
-	expect(document.querySelector('[role="dialog"]')?.textContent).toContain("恢复不会重放");
+	expect(document.querySelector("dialog#modal-root")?.textContent).toContain("不影响主线和其他分叉");
+	expect(document.querySelector("dialog#modal-root")?.textContent).toContain("恢复不会重放");
 });

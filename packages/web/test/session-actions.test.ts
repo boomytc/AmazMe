@@ -159,7 +159,7 @@ describe("session actions", () => {
 		expect(create.getAttribute("aria-label")).toContain("Opening session");
 	});
 
-	test("rename submits with Enter and keeps keyboard focus inside the dialog", () => {
+	test("rename submits with Enter in a native modal dialog", () => {
 		const { renderer, view } = paint();
 		const report = vi.fn();
 		renderer.onPanelAction = report;
@@ -176,13 +176,10 @@ describe("session actions", () => {
 			data: modal.data,
 			fields: { name: "New title" },
 		});
-		const first = control(".modal-close");
-		const last = control(".modal-foot button:last-child");
-		last.focus();
-		last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
-		expect(document.activeElement).toBe(first);
-		first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
-		expect(document.activeElement).toBe(last);
+		const dialog = document.querySelector("dialog#modal-root");
+		expect(dialog).toBeInstanceOf(HTMLDialogElement);
+		expect(dialog?.hasAttribute("open")).toBe(true);
+		expect(dialog?.getAttribute("aria-labelledby")).toBe("modal-title");
 	});
 
 	test("a removal confirmation initially focuses its safe cancel action", () => {

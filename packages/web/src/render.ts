@@ -77,7 +77,7 @@ export interface PageElements {
 	readonly viewBody: HTMLElement;
 	readonly viewBack: HTMLButtonElement;
 	readonly composerDock: HTMLElement;
-	readonly modalRoot: HTMLElement;
+	readonly modalRoot: HTMLDialogElement;
 	readonly queue: HTMLElement;
 	readonly composer: HTMLFormElement;
 	readonly prompt: HTMLTextAreaElement;
@@ -195,7 +195,7 @@ export function collectPageElements(): PageElements {
 		attach: pickElement("attach", HTMLButtonElement),
 		fileInput: pickElement("file-input", HTMLInputElement),
 		composerDock: pick("composer-dock"),
-		modalRoot: pick("modal-root"),
+		modalRoot: pickElement("modal-root", HTMLDialogElement),
 		queue: pick("queue"),
 		composer: pickElement("composer", HTMLFormElement),
 		prompt: pickElement("prompt", HTMLTextAreaElement),
@@ -602,6 +602,21 @@ export function createRenderer(
 	/** The open modal's submit and message line, so a state flip updates them without a rebuild. */
 	let modalSubmit: HTMLButtonElement | undefined;
 	let modalMessage: HTMLParagraphElement | undefined;
+	/** Native dialogs isolate the page; the logical trigger also survives replicated DOM replacements. */
+	let modalReturnFocus: { node: HTMLElement; selector?: string } | undefined;
+	const captureModalFocus = (): void => {
+		const node = document.activeElement;
+		if (!(node instanceof HTMLElement) || elements.modalRoot.contains(node)) return;
+		const selector = node.id ? `#${CSS.escape(node.id)}`
+			: node.dataset.controlKey ? `[data-control-key="${CSS.escape(node.dataset.controlKey)}"]`
+			: node.dataset.menuId ? `[data-menu-id="${CSS.escape(node.dataset.menuId)}"]`
+			: node.classList.contains("session-more") && node.dataset.actionData ? `.session-more[data-action-data="${CSS.escape(node.dataset.actionData)}"]`
+			: node.dataset.action ? `[data-action="${CSS.escape(node.dataset.action)}"]${node.dataset.actionData === undefined ? "" : `[data-action-data="${CSS.escape(node.dataset.actionData)}"]`}` : undefined;
+		modalReturnFocus = { node, selector };
+	};
+	const requestModalClose = (): void => {
+		if (lastView?.panel.modal?.pending !== true) report({ kind: "modal-close" });
+	};
 	let rosterKey = "";
 	let sessionMenu: { id: string; node: HTMLElement } | undefined;
 	let heldPromptFocus: { start: number; end: number; direction: "forward" | "backward" | "none" } | undefined;
@@ -992,7 +1007,7 @@ export function createRenderer(
 	 * reader typed, so the submit and the message line are updated in place instead.
 	 */
 	const applyModalState = (modal: PanelModal): void => {
-		for (const control of elements.modalRoot.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>(".modal-body input, .modal-body textarea, .modal-body select, .modal-body button")) {
+		for (const control of elements.modalRoot.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>("input, textarea, select, button")) {
 			if (modal.pending === true) {
 				control.dataset.pendingDisabled ??= String(control.disabled);
 				control.disabled = true;
@@ -1001,17 +1016,19 @@ export function createRenderer(
 				delete control.dataset.pendingDisabled;
 			}
 		}
+		const wasPending = elements.modalRoot.getAttribute("aria-busy") === "true";
+		elements.modalRoot.setAttribute("aria-busy", String(modal.pending === true));
 		if (modalSubmit !== undefined) {
-			const wasPending = modalSubmit.disabled;
-			modalSubmit.disabled = modal.pending === true;
 			modalSubmit.classList.toggle("pending", modal.pending === true);
-			if (wasPending && !modalSubmit.disabled && document.activeElement === document.body) modalSubmit.focus();
-			if (modal.pending === true) modalSubmit.setAttribute("aria-busy", "true");
-			else modalSubmit.removeAttribute("aria-busy");
+			if (wasPending && !modalSubmit.disabled && document.activeElement === elements.modalRoot.querySelector(".modal-card")) modalSubmit.focus();
 		}
+		// A disabled field cannot own keyboard focus while its call is running.
+		if (modal.pending === true) elements.modalRoot.querySelector<HTMLElement>(".modal-card")?.focus({ preventScroll: true });
 		if (modalMessage !== undefined) {
 			const notice = modal.notice;
-			modalMessage.textContent = notice === undefined ? "" : notice.tone === "error" ? errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, notice.text) : notice.text;
+			const text = notice === undefined ? "" : notice.tone === "error" ? errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, notice.text) : notice.text;
+			modalMessage.setAttribute("role", notice?.tone === "error" ? "alert" : "status");
+			if (modalMessage.textContent !== text) modalMessage.textContent = text;
 			modalMessage.className = notice === undefined ? "modal-notice" : `modal-notice ${notice.tone}`;
 			modalMessage.hidden = notice === undefined;
 		}
@@ -1028,47 +1045,63 @@ export function createRenderer(
 		if (modal === undefined) {
 			modalSubmit = undefined;
 			modalMessage = undefined;
+			elements.modalRoot.close();
 			elements.modalRoot.replaceChildren();
 			elements.modalRoot.hidden = true;
+			elements.modalRoot.removeAttribute("aria-busy");
+			const saved = modalReturnFocus;
+			modalReturnFocus = undefined;
+			const target = saved?.node.isConnected ? saved.node : saved?.selector ? document.querySelector<HTMLElement>(saved.selector) : undefined;
+			if (target && target !== document.body && !target.closest("[hidden], [inert]") && !target.matches(":disabled")) target.focus({ preventScroll: true });
+			else if (!elements.prompt.disabled && !elements.composerDock.hidden) elements.prompt.focus({ preventScroll: true });
+			else if (!elements.settingsButton.hidden) elements.settingsButton.focus({ preventScroll: true });
+			else elements.sidebarToggle.focus({ preventScroll: true });
 			return;
 		}
-		const backdrop = element("div", "modal-backdrop");
-		backdrop.addEventListener("click", () => report({ kind: "modal-close" }));
 		const card = element("div", "modal-card");
+		card.tabIndex = -1;
 		const projectForm = modal.fields.some(field => field.kind === "directories");
 		if (projectForm) card.classList.add("modal-project");
-		card.setAttribute("role", "dialog");
-		card.setAttribute("aria-modal", "true");
-		card.setAttribute("aria-label", modal.title);
+		elements.modalRoot.setAttribute("aria-labelledby", "modal-title");
+		if (modal.description !== undefined) elements.modalRoot.setAttribute("aria-describedby", "modal-description");
+		else elements.modalRoot.removeAttribute("aria-describedby");
 		const head = element("header", "modal-head");
 		const titles = element("div", "modal-titles");
-		titles.append(element("h2", "modal-title", modal.title));
-		if (modal.description !== undefined) titles.append(element("p", "modal-desc", modal.description));
+		const title = element("h2", "modal-title", modal.title);
+		title.id = "modal-title";
+		titles.append(title);
+		if (modal.description !== undefined) {
+			const description = element("p", "modal-desc", modal.description);
+			description.id = "modal-description";
+			titles.append(description);
+		}
 		const close = button("modal-close");
 		close.setAttribute("aria-label", copy("panel.dismiss"));
 		close.append(icon("x"));
-		close.addEventListener("click", () => report({ kind: "modal-close" }));
+		close.addEventListener("click", requestModalClose);
 		head.append(titles, close);
 		const body = element("div", "modal-body");
 		const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>();
-		let firstField: HTMLElement | undefined;
+		const fieldContainers = new Map<string, HTMLElement>();
+		const fieldFocuses: HTMLElement[] = [];
 		for (const field of modal.fields) {
 			const label = element(field.kind === "multiselect" || field.kind === "directories" ? "div" : "label", "modal-field");
 			label.append(element("span", "modal-field-label", field.label));
+			fieldContainers.set(field.id, label);
 			if (field.kind === "directories") {
 				const control = createDirectoryField(field, lastView?.locale ?? FALLBACK_LOCALE, {
 					browse: path => renderer.onBrowseDirectories?.(path) ?? Promise.reject(new Error("Folder selection is unavailable")),
 					pick: () => renderer.onPickDirectories?.() ?? Promise.resolve(undefined),
 					folderIcon: () => icon("folder"),
 				});
-				label.append(control.body); inputs.set(field.id, control.value); firstField ??= control.focus;
+				label.append(control.body); inputs.set(field.id, control.value); fieldFocuses.push(control.focus);
 				body.append(label); continue;
 			}
 			if (projectForm && field.id === "name") { label.classList.add("project-name-field"); label.append(icon("folder")); }
 			if (field.kind === "multiselect") {
 				const control = createMultiselect(field, lastView?.locale ?? FALLBACK_LOCALE);
 				label.append(control.body); inputs.set(field.id, control.value);
-				firstField ??= control.focus;
+				fieldFocuses.push(control.focus);
 				body.append(label); continue;
 			}
 			const input = field.kind === "textarea" ? document.createElement("textarea") : field.kind === "select" ? document.createElement("select") : document.createElement("input");
@@ -1089,9 +1122,14 @@ export function createRenderer(
 			input.value = field.value;
 			if (field.placeholder !== undefined && !(input instanceof HTMLSelectElement)) input.placeholder = field.placeholder;
 			inputs.set(field.id, input);
-			firstField ??= input;
+			fieldFocuses.push(input);
 			label.append(input);
-			if (field.description !== undefined) label.append(element("small", "modal-field-help", field.description));
+			if (field.description !== undefined) {
+				const help = element("small", "modal-field-help", field.description);
+				help.id = `modal-help-${field.id}`;
+				input.setAttribute("aria-describedby", help.id);
+				label.append(help);
+			}
 			body.append(label);
 		}
 		const visibility = (): void => {
@@ -1099,7 +1137,7 @@ export function createRenderer(
 				const input = inputs.get(field.id)!;
 				const visible = field.visibleWhen === undefined || field.visibleWhen.values.includes(inputs.get(field.visibleWhen.field)?.value ?? "");
 				input.disabled = !visible;
-				input.parentElement!.style.display = visible ? "" : "none";
+				fieldContainers.get(field.id)!.hidden = !visible;
 			}
 		};
 		for (const input of inputs.values()) input.addEventListener("change", visibility);
@@ -1108,29 +1146,20 @@ export function createRenderer(
 		const foot = element("footer", "modal-foot");
 		const cancel = button("panel-button default");
 		cancel.textContent = modal.dismiss ?? copy("panel.cancel");
-		cancel.addEventListener("click", () => report({ kind: "modal-close" }));
+		cancel.addEventListener("click", requestModalClose);
 		const submit = button(`panel-button ${modal.danger === true ? "tone-danger" : "tone-primary"}`);
 		submit.textContent = modal.submit ?? "";
 		submit.addEventListener("click", () => {
+			if (lastView?.panel.modal?.pending === true) return;
 			const fields: Record<string, string> = {};
 			for (const [id, input] of inputs) fields[id] = input instanceof HTMLInputElement && input.type === "checkbox" ? String(input.checked) : input.value;
 			report({ kind: "modal-submit", id: modal.id, data: modal.data, fields });
 		});
 		card.addEventListener("keydown", (event) => {
-			if (modal.submit !== undefined && event.key === "Enter" && !event.isComposing && event.target instanceof HTMLInputElement && !event.target.readOnly && !event.target.closest(".modal-multiselect")) {
+			if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+			if (modal.submit !== undefined && event.key === "Enter" && event.target instanceof HTMLInputElement && !event.target.readOnly && !event.target.closest(".modal-multiselect, .directory-browser")) {
 				event.preventDefault();
 				submit.click();
-			}
-			if (event.key !== "Tab") return;
-			const controls = [...card.querySelectorAll<HTMLElement>("button:not(:disabled), input:not([type=hidden]):not(:disabled), textarea:not(:disabled), select:not(:disabled)")].filter((node) => node.getClientRects().length > 0);
-			const first = controls[0];
-			const last = controls.at(-1);
-			if (event.shiftKey && document.activeElement === first) {
-				event.preventDefault();
-				last?.focus();
-			} else if (!event.shiftKey && document.activeElement === last) {
-				event.preventDefault();
-				first?.focus();
 			}
 		});
 		foot.append(cancel);
@@ -1140,13 +1169,14 @@ export function createRenderer(
 		message.className = "modal-notice";
 		message.hidden = true;
 		card.append(head, body, message, foot);
-		elements.modalRoot.replaceChildren(backdrop, card);
+		elements.modalRoot.replaceChildren(card);
 		elements.modalRoot.hidden = false;
+		if (!elements.modalRoot.open) elements.modalRoot.showModal();
 		modalSubmit = modal.submit === undefined ? undefined : submit;
 		modalMessage = message;
 		applyModalState(modal);
-		const first = firstField;
-		(first ?? cancel).focus();
+		const first = modal.danger === true ? undefined : fieldFocuses.find(node => !node.closest("[hidden]") && !node.matches(":disabled"));
+		if (modal.pending !== true) (first ?? cancel).focus();
 		if (first instanceof HTMLTextAreaElement && first.readOnly) {
 			first.setSelectionRange(0, 0);
 			first.scrollTop = 0;
@@ -2197,6 +2227,7 @@ export function createRenderer(
 			return lastView;
 		},
 		render(view: WebView): void {
+			if (view.panel.modal !== undefined && elements.modalRoot.hidden) captureModalFocus();
 			const languageChanged = lastView?.locale !== view.locale;
 			const sessionChanged = lastView?.attachedId !== view.attachedId;
 			if (sessionChanged) drafts.clear();
@@ -2236,7 +2267,7 @@ export function createRenderer(
 				if (heading) {
 					heading.replaceChildren(document.createTextNode(copy(view.projects === undefined ? "sidebar.sessions" : "project.projects")));
 					if (view.projects !== undefined) {
-						const add = button("project-add"); add.title = copy("project.add"); add.setAttribute("aria-label", add.title); add.append(icon("plus"));
+						const add = button("project-add"); add.id = "project-add"; add.title = copy("project.add"); add.setAttribute("aria-label", add.title); add.append(icon("plus"));
 						add.addEventListener("click", () => report({ kind: "command", id: PROJECT_ADD_ACTION, data: undefined })); heading.append(add);
 					}
 				}
@@ -2567,6 +2598,18 @@ export function createRenderer(
 			panel: SETTINGS_VIEW,
 		});
 	});
+	elements.modalRoot.addEventListener("cancel", (event) => {
+		event.preventDefault();
+		requestModalClose();
+	});
+	let backdropPressed = false;
+	elements.modalRoot.addEventListener("pointerdown", (event) => {
+		backdropPressed = event.target === elements.modalRoot;
+	});
+	elements.modalRoot.addEventListener("click", (event) => {
+		if (backdropPressed && event.target === elements.modalRoot && lastView?.panel.modal?.danger !== true) requestModalClose();
+		backdropPressed = false;
+	});
 	elements.viewBack.addEventListener("click", () => report({ kind: "open", panel: CHAT_VIEW }));
 	elements.sidebarToggle.addEventListener("click", toggleSidebar);
 	// A click on the scrim closes whichever drawer is open: the sidebar here, the dock through the page.
@@ -2606,7 +2649,7 @@ export function createRenderer(
 		return selected.length > 0;
 	};
 	document.addEventListener("keydown", (event) => {
-		if (event.defaultPrevented || event.isComposing) return;
+		if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || elements.modalRoot.open) return;
 		// Settings search takes the find chord, the same way the settings page owns that field.
 		if (
 			lastView?.panel.current === SETTINGS_VIEW &&
@@ -2641,7 +2684,7 @@ export function createRenderer(
 		renderer.onShortcut(id);
 	});
 	document.addEventListener("keydown", (event) => {
-		if (event.key !== "Escape" || event.defaultPrevented) return;
+		if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
 		if (sessionMenu !== undefined) {
 			event.preventDefault();
 			closeSessionMenu(true);
@@ -2649,7 +2692,7 @@ export function createRenderer(
 		}
 		if (elements.modalRoot.hidden === false) {
 			event.preventDefault();
-			report({ kind: "modal-close" });
+			requestModalClose();
 			return;
 		}
 		const searchResultFocused = document.activeElement instanceof HTMLElement && elements.sectionNav.contains(document.activeElement);

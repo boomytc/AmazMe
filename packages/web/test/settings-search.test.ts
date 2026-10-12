@@ -113,7 +113,7 @@ describe("settings page", () => {
 		expect(document.activeElement).toBe(elements.sectionSearchInput);
 		expect(inertAtFocus).toEqual([false]);
 
-		const toggle = document.getElementById("sidebar-toggle");
+		const toggle = elements.sidebarToggle;
 		expect(toggle).toBeInstanceOf(HTMLButtonElement);
 		expect(document.body.classList.contains("settings-open")).toBe(true);
 		expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
