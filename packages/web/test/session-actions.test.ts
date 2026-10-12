@@ -148,10 +148,15 @@ describe("session actions", () => {
 		const menu = document.querySelector(".session-menu");
 		renderer.render({ ...view, status: "Working" });
 		expect(document.querySelector(".session-menu")).toBe(menu);
-		renderer.render({ ...view, newSession: { enabled: false, pending: true } });
-		expect(control("#new-session").disabled).toBe(true);
-		expect(control("#new-session").getAttribute("aria-busy")).toBe("true");
-		expect(control("#new-session").textContent).toContain("Opening session");
+		renderer.render({
+			...view,
+			projects: [{ id: "p", name: "App", cwd: "/work", selected: true, items: view.roster }],
+			newSession: { enabled: false, pending: true },
+		});
+		const create = control(".project-new-session");
+		expect(create.disabled).toBe(true);
+		expect(create.getAttribute("aria-busy")).toBe("true");
+		expect(create.getAttribute("aria-label")).toContain("Opening session");
 	});
 
 	test("rename submits with Enter and keeps keyboard focus inside the dialog", () => {

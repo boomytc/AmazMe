@@ -1364,7 +1364,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	// The host creates the session; the roster shows it from the replicated directory. A second
 	// click while the first create is in flight would make a second session, so this one is one-shot.
-	/** Create a session and attach it; one path serves the sidebar's bar and the shortcut. */
+	/** Create a session and attach it. The project row and the shortcut share this path. */
 	const createSession = (): void => {
 		if (creating || !client.connected || !directoryReady) return;
 		const known = directory.state.value?.projects;

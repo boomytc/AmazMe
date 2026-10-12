@@ -179,14 +179,14 @@ describe("web host", () => {
 				expect(plainHtml).toContain('<html lang="en">');
 				expect(plainHtml).toContain("globalThis.__AMAZME_BOOT__=");
 				expect(plainHtml).toContain('"preferences":{"locale":"auto","appearance":"system"}');
-				expect(plainHtml).toContain("New session");
+				expect(plainHtml).toContain("Filter sessions");
 				expect(plainHtml).not.toContain("{{");
 
 				// A browser asking in Chinese gets the Chinese shell even while the preference is auto.
 				const asked = await fetch(host.url, { headers: { "accept-language": "zh-CN,zh;q=0.9" } });
 				const askedHtml = await asked.text();
 				expect(askedHtml).toContain('<html lang="zh-Hans">');
-				expect(askedHtml).toContain("新建会话");
+				expect(askedHtml).toContain("过滤会话");
 				expect(askedHtml).toContain('"preferences":{"locale":"auto","appearance":"system"}');
 
 				// A stored choice overrides the request and reaches the palette script.
@@ -204,7 +204,7 @@ describe("web host", () => {
 
 				// The raw document keeps its markers: it is the unbootable page, not the served one.
 				const raw = await fetch(new URL("/index.html", host.url));
-				expect(await raw.text()).toContain("{{sidebar.newSession}}");
+				expect(await raw.text()).toContain("{{sidebar.filter}}");
 			} finally {
 				if (previousAgentDir === undefined) delete process.env.AMAZME_CODING_AGENT_DIR;
 				else process.env.AMAZME_CODING_AGENT_DIR = previousAgentDir;

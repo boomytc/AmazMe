@@ -52,8 +52,6 @@ export interface PageElements {
 	readonly sessionTitle: HTMLElement;
 	readonly sessionWarning: HTMLElement;
 	readonly laneStatus: HTMLElement;
-	/** The sidebar's new-session bar. */
-	readonly newSession: HTMLButtonElement;
 	/** The persistent navigation rail and its settings entry. */
 	readonly nav: HTMLElement;
 	readonly settingsButton: HTMLButtonElement;
@@ -165,7 +163,6 @@ export function collectPageElements(): PageElements {
 		sessionTitle: pick("session-title"),
 		sessionWarning: pick("session-warning"),
 		laneStatus: laneStatusElement(),
-		newSession: pickElement("new-session", HTMLButtonElement),
 		nav: pick("nav"),
 		settingsButton: pickElement("settings-button", HTMLButtonElement),
 		sessionSidebar: pick("session-sidebar"),
@@ -2186,15 +2183,8 @@ export function createRenderer(
 				heldPromptFocus = undefined;
 			}
 
-			elements.newSession.disabled = !view.newSession.enabled;
-			elements.newSession.setAttribute("aria-busy", String(view.newSession.pending === true));
-			const newLabel = copy(view.newSession.pending ? "sidebar.creating" : "sidebar.newSession");
-			elements.newSession.setAttribute("aria-label", newLabel);
-			const label = elements.newSession.querySelector(".new-session-label");
-			if (label !== null) label.textContent = newLabel;
-
 			// Streaming repaints keep the roster's nodes and keyboard focus when it has not changed.
-			const nextRosterKey = JSON.stringify([view.locale, view.roster, view.projects, view.archivedAttached, view.empty, view.newSession.enabled]);
+			const nextRosterKey = JSON.stringify([view.locale, view.roster, view.projects, view.archivedAttached, view.empty, view.newSession]);
 			if (rosterKey !== nextRosterKey) {
 				rosterKey = nextRosterKey;
 				const focused = document.activeElement;
@@ -2223,7 +2213,14 @@ export function createRenderer(
 							{ id: PROJECT_EDIT_ACTION, label: copy("project.edit"), glyph: "square-pen" },
 							{ id: PROJECT_REMOVE_ACTION, label: copy("project.remove"), glyph: "x", danger: true },
 						]));
-						const create = button("project-action"); create.disabled = !view.newSession.enabled; create.title = copy("sidebar.newSession"); create.setAttribute("aria-label", `${create.title}: ${group.name}`); create.append(icon("square-pen"));
+						const creating = view.newSession.pending === true;
+						const newLabel = copy(creating ? "sidebar.creating" : "sidebar.newSession");
+						const create = button("project-action project-new-session");
+						create.disabled = !view.newSession.enabled;
+						create.title = newLabel;
+						create.setAttribute("aria-label", `${newLabel}: ${group.name}`);
+						create.setAttribute("aria-busy", String(creating));
+						create.append(icon("square-pen"));
 						create.addEventListener("click", () => report({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: group.id })); head.append(more, create);
 						section.append(head);
 						if (group.selected) {
@@ -2520,10 +2517,6 @@ export function createRenderer(
 		if (files.length === 0) return;
 		event.preventDefault();
 		renderer.onAttachFiles(files);
-	});
-	elements.newSession.addEventListener("click", () => {
-		closeSidebarDrawer();
-		renderer.onCreateSession();
 	});
 	// Selecting the current destination keeps that page open; the home icon returns to the conversation.
 	elements.settingsButton.addEventListener("click", () => {

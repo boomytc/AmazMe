@@ -362,6 +362,40 @@ p {
 	min-height: 0;
 }
 
+/* The filter and collapse controls share the section label's line. The label yields while the filter is open. */
+.session-sidebar {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-rows: auto minmax(0, 1fr);
+	align-items: center;
+	column-gap: 2px;
+}
+
+.session-sidebar > .brand {
+	grid-column: 2;
+	grid-row: 1;
+}
+
+.session-sidebar > .sidebar-label {
+	grid-column: 1;
+	grid-row: 1;
+	margin: 0 0 0 10px;
+}
+
+.session-sidebar > .session-list {
+	grid-column: 1 / -1;
+	grid-row: 2;
+	align-self: stretch;
+}
+
+.session-sidebar:has(.brand-filter[data-open="true"]) > .brand {
+	grid-column: 1 / -1;
+}
+
+.session-sidebar:has(.brand-filter[data-open="true"]) > .sidebar-label {
+	display: none;
+}
+
 .section-sidebar-head {
 	display: flex;
 	align-items: center;
@@ -400,10 +434,10 @@ p {
 .brand {
 	display: flex;
 	align-items: center;
-	gap: 4px;
-	height: 40px;
-	padding: 0 0 0 8px;
-	margin-bottom: 4px;
+	gap: 2px;
+	height: 32px;
+	margin: 0;
+	padding: 0;
 }
 
 /* The session filter is an icon until it is opened. An active query keeps the field in this row.
@@ -473,47 +507,6 @@ p {
 	color: var(--logo-yellow);
 }
 
-/* The new-session row: the one action the sidebar leads with. */
-.new-session {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	flex: none;
-	width: 100%;
-	height: 36px;
-	padding: 0 10px;
-	border: 0;
-	border-radius: var(--radius-md);
-	background: transparent;
-	color: var(--text);
-	font-size: 14px;
-	font-weight: 500;
-	text-align: left;
-	cursor: pointer;
-	transition: background var(--dur-fast) var(--ease);
-}
-
-.new-session .icon {
-	width: 18px;
-	height: 18px;
-	color: var(--text-2);
-}
-
-.new-session:hover:not(:disabled) {
-	background: var(--hover);
-}
-
-.new-session:disabled {
-	color: var(--text-3);
-	cursor: default;
-}
-
-.new-session-label {
-	min-width: 0;
-	overflow: hidden;
-	white-space: nowrap;
-}
-
 .nav-row {
 	display: flex;
 	align-items: center;
@@ -579,7 +572,7 @@ p {
 }
 
 .sidebar-label {
-	margin: 18px 10px 6px;
+	margin: 8px 10px 6px;
 	color: var(--text-3);
 	font-size: 12px;
 	font-weight: 500;
@@ -3325,7 +3318,9 @@ p {
 .project-count { color: var(--text-3); font-size: 11px; margin-left: auto; }
 .project-heading:hover, .project-heading:has(.project-select.selected), .project-action:hover, .project-add:hover { background: var(--hover); }
 .project-action { opacity: 0; }
-.project-heading:hover .project-action, .project-heading:focus-within .project-action { opacity: 1; }
+.project-heading:hover .project-action,
+.project-heading:focus-within .project-action,
+.project-heading:has(.project-select.selected) .project-new-session { opacity: 1; }
 .project-sessions { padding-left: 14px; }
 .project-sessions .session-row { border-radius: 12px; }
 .project-archived-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 11px 10px; cursor: default; }
