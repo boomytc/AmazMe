@@ -63,7 +63,7 @@ export interface PageElements {
 	readonly sectionSearch: HTMLElement;
 	readonly sectionSearchInput: HTMLInputElement;
 	readonly sectionSearchClear: HTMLButtonElement;
-	/** The sidebar, its toggle in the header, and the scrim behind it while it is a drawer. */
+	/** The sidebar, the control that collapses it, and the scrim behind it while it is a drawer. */
 	readonly sidebar: HTMLElement;
 	readonly sidebarToggle: HTMLButtonElement;
 	readonly scrim: HTMLElement;
@@ -1133,12 +1133,37 @@ export function createRenderer(
 	const sidebarExpanded = (): boolean =>
 		isNarrow() ? document.body.classList.contains("sidebar-open") : !document.body.classList.contains("sidebar-collapsed");
 
-	const syncSidebarToggle = (): void => {
-		elements.sidebarToggle.setAttribute("aria-expanded", String(sidebarExpanded()));
-		elements.sidebar.inert = !sidebarExpanded();
+	/**
+	 * An open sidebar column holds the toggle in its own header: the session brand, or the section
+	 * title. A collapsed column and a narrow drawer leave the control in the main header.
+	 */
+	const placeSidebarToggle = (): void => {
+		const headerStart = elements.sessionTitle.parentElement;
+		const brand = elements.sessionSidebar.querySelector(":scope > .brand");
+		const sectionHead = elements.sectionSidebar.querySelector(":scope > .section-sidebar-head");
+		if (!(headerStart instanceof HTMLElement) || !(brand instanceof HTMLElement) || !(sectionHead instanceof HTMLElement)) return;
+		const inColumn = !isNarrow() && sidebarExpanded();
+		const host = !inColumn
+			? headerStart
+			: !elements.sessionSidebar.hidden
+				? brand
+				: !elements.sectionSidebar.hidden
+					? sectionHead
+					: headerStart;
+		if (host === headerStart) headerStart.prepend(elements.sidebarToggle);
+		else host.append(elements.sidebarToggle);
 	};
 
-	/** The header's toggle: a column collapses and expands, a drawer slides in and out. */
+	const syncSidebarToggle = (): void => {
+		const expanded = sidebarExpanded();
+		elements.sidebarToggle.setAttribute("aria-expanded", String(expanded));
+		// Clear inert before the control moves in, and move it out before the column becomes inert.
+		if (expanded) elements.sidebar.inert = false;
+		placeSidebarToggle();
+		elements.sidebar.inert = !expanded;
+	};
+
+	/** A column collapses and expands; a drawer slides in and out. */
 	const toggleSidebar = (): void => {
 		// Settings keeps its category column on a wide window. A narrow window still opens the drawer.
 		if (document.body.classList.contains("settings-open") && !isNarrow()) return;

@@ -296,12 +296,30 @@ p {
 	min-height: 0;
 }
 
-.section-sidebar-title {
+.section-sidebar-head {
+	display: flex;
+	align-items: center;
+	gap: 4px;
 	flex: none;
-	margin: 8px 10px 22px;
+	height: 40px;
+	margin: 0 0 22px;
+	padding: 0 0 0 8px;
+}
+
+.section-sidebar-title {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
 	font-size: 20px;
 	font-weight: 600;
 	line-height: 32px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.section-sidebar-head .icon-button {
+	margin-left: auto;
 }
 
 .section-nav {
@@ -316,10 +334,14 @@ p {
 .brand {
 	display: flex;
 	align-items: center;
-	gap: 9px;
+	gap: 4px;
 	height: 40px;
-	padding: 0 8px;
+	padding: 0 0 0 8px;
 	margin-bottom: 4px;
+}
+
+.brand .icon-button {
+	margin-left: auto;
 }
 
 /* The brand mark is the terminal's pixel AM (`components/am-logo.ts`): a ten-by-four grid, a coral A and
@@ -504,7 +526,7 @@ p {
 	box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-.section-sidebar:has(#section-search:not([hidden])) .section-sidebar-title {
+.section-sidebar:has(#section-search:not([hidden])) .section-sidebar-head {
 	margin-bottom: 10px;
 }
 

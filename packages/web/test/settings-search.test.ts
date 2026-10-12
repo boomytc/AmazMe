@@ -106,6 +106,8 @@ describe("settings page", () => {
 		const renderer = createRenderer(elements);
 		renderer.render(buildWebView(chat));
 		expect(elements.sidebar.inert).toBe(true);
+		expect(elements.sidebarToggle.closest("#session-sidebar")).toBeNull();
+		expect(elements.sidebarToggle.closest(".header")).not.toBeNull();
 		renderer.render(buildWebView(settings));
 		expect(elements.sidebar.inert).toBe(false);
 		expect(document.activeElement).toBe(elements.sectionSearchInput);
@@ -154,11 +156,25 @@ describe("settings page", () => {
 		expect(document.body.classList.contains("settings-open")).toBe(false);
 		expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
 		expect((toggle as HTMLButtonElement).hidden).toBe(false);
+		expect(toggle.closest(".header")).not.toBeNull();
+		(toggle as HTMLButtonElement).click();
+		expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
+		expect(toggle.closest("#session-sidebar")).toBe(elements.sessionSidebar);
+		(toggle as HTMLButtonElement).click();
+		expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
+		expect(toggle.closest(".header")).not.toBeNull();
 		expect(document.getElementById("view-back")?.hidden).toBe(true);
 		expect(document.getElementById("session-title")?.hidden).toBe(false);
 
 		renderer.render(buildWebView(shell({ locale: "zh", current: "plugins" })));
 		expect(document.body.classList.contains("settings-open")).toBe(false);
+		expect(elements.sidebarToggle.closest(".header")).not.toBeNull();
+		(toggle as HTMLButtonElement).click();
+		expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
+		expect(toggle.closest("#section-sidebar")).toBe(elements.sectionSidebar);
+		(toggle as HTMLButtonElement).click();
+		expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
+		expect(toggle.closest(".header")).not.toBeNull();
 		expect(document.getElementById("section-search")?.hidden).toBe(true);
 		expect(document.getElementById("view-back")?.hidden).toBe(true);
 		expect(document.getElementById("session-title")?.hidden).toBe(true);

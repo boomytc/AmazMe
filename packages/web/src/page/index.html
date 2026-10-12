@@ -87,7 +87,20 @@
 		</nav>
 		<aside class="sidebar" id="sidebar">
 			<div class="session-sidebar" id="session-sidebar">
-				<div class="brand"><span class="brand-name">AmazMe</span></div>
+				<div class="brand">
+					<span class="brand-name">AmazMe</span>
+					<!-- While this column is open the collapse control lives here. The renderer moves it to the main header when the column is collapsed, narrow, or replaced. -->
+					<button
+						class="icon-button"
+						type="button"
+						id="sidebar-toggle"
+						aria-label="{{sidebar.toggle}}"
+						title="{{sidebar.toggle}}"
+						aria-expanded="true"
+					>
+						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-panel-left"></use></svg>
+					</button>
+				</div>
 				<!-- The host creates a session in the last project and the page attaches it. -->
 				<button class="new-session" type="button" id="new-session" aria-label="{{sidebar.newSession}}" disabled>
 					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-square-pen"></use></svg>
@@ -101,7 +114,9 @@
 				<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
 			</div>
 			<div class="section-sidebar" id="section-sidebar" hidden>
-				<h2 class="section-sidebar-title" id="section-title">{{nav.settings}}</h2>
+				<div class="section-sidebar-head">
+					<h2 class="section-sidebar-title" id="section-title">{{nav.settings}}</h2>
+				</div>
 				<div class="roster-filter section-search" id="section-search" hidden>
 					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
 					<input class="roster-filter-input" id="section-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="{{panel.settings.search}}" aria-label="{{panel.settings.searchLabel}}" />
@@ -116,16 +131,6 @@
 		<main class="center" id="center" data-state="empty">
 			<header class="header">
 				<div class="header-start">
-					<button
-						class="icon-button"
-						type="button"
-						id="sidebar-toggle"
-						aria-label="{{sidebar.toggle}}"
-						title="{{sidebar.toggle}}"
-						aria-expanded="true"
-					>
-						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-panel-left"></use></svg>
-					</button>
 					<button class="crumb-back" type="button" id="view-back" aria-label="{{header.back}}" hidden>
 						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
 					</button>
