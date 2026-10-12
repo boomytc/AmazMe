@@ -222,11 +222,62 @@ p {
 }
 
 .rail-brand {
+	position: relative;
 	display: grid;
 	place-items: center;
 	flex: none;
 	width: 40px;
 	height: 40px;
+	border-radius: var(--radius-sm);
+}
+
+.rail-brand .brand-mark {
+	position: relative;
+}
+
+.connection-dot {
+	position: absolute;
+	right: -3px;
+	bottom: -8px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--warn);
+	box-shadow: 0 0 0 2px var(--sidebar);
+	transition: background var(--dur-fast) var(--ease);
+}
+
+.rail-brand[data-state="connected"] .connection-dot {
+	background: var(--diff-add);
+}
+
+.rail-brand[data-state="disconnected"] .connection-dot {
+	background: var(--danger);
+}
+
+.connection-tooltip {
+	position: absolute;
+	top: 4px;
+	left: calc(100% + 8px);
+	z-index: 1;
+	width: max-content;
+	max-width: min(360px, calc(100vw - var(--rail-width) - 24px));
+	padding: 8px 10px;
+	border-radius: var(--radius-sm);
+	background: var(--raised);
+	color: var(--text);
+	box-shadow: var(--shadow-popover);
+	font-size: 12px;
+	line-height: 18px;
+	overflow-wrap: anywhere;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity var(--dur-fast) var(--ease);
+}
+
+.rail-brand:hover .connection-tooltip,
+.rail-brand:focus .connection-tooltip {
+	opacity: 1;
 }
 
 .rail-nav,
@@ -904,20 +955,11 @@ p {
 .connection {
 	display: inline-flex;
 	align-items: center;
-	gap: 6px;
 	flex: none;
 	margin-left: 4px;
 	color: var(--text-3);
 	font-size: 12px;
 	white-space: nowrap;
-}
-
-.connection-dot {
-	flex: none;
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: currentColor;
 }
 
 .connection.error {
@@ -933,7 +975,7 @@ p {
 	overflow-wrap: anywhere;
 }
 
-/* Header priority: usage contracts first, then connection copy, then the session name.
+/* Header priority: usage contracts first, then action diagnostics, then the session name.
    The center can be much narrower than the window when both side panels are columns. */
 @container (max-width: 880px) {
 	#meter-tokens {

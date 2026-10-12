@@ -75,8 +75,9 @@
 			</defs>
 		</svg>
 		<nav class="app-rail" aria-label="{{sidebar.management}}">
-			<div class="rail-brand" title="AmazMe">
-				<span class="brand-mark" aria-hidden="true"><svg class="pixel-logo" viewBox="0 0 10 4" aria-hidden="true"><use href="#i-logo-a" class="pixel-a"></use><use href="#i-logo-m" class="pixel-m"></use></svg></span>
+			<div class="rail-brand" id="connection-status" data-state="connecting" tabindex="0" role="status" aria-live="polite" aria-atomic="true" aria-label="AmazMe" aria-describedby="connection-status-text">
+				<span class="brand-mark" aria-hidden="true"><svg class="pixel-logo" viewBox="0 0 10 4" aria-hidden="true"><use href="#i-logo-a" class="pixel-a"></use><use href="#i-logo-m" class="pixel-m"></use></svg><span class="connection-dot" aria-hidden="true"></span></span>
+				<span class="connection-tooltip" id="connection-status-text">{{connection.starting}}</span>
 			</div>
 			<div class="rail-nav" id="nav"></div>
 			<div class="rail-footer">
@@ -148,7 +149,8 @@
 					<!-- The session's run controls (compaction, fork, the session tools); the renderer fills this. -->
 					<div class="header-actions" id="run-actions"></div>
 				</div>
-				<span class="connection" id="connection">{{connection.starting}}</span>
+				<!-- Action diagnostics stay visible; connectivity is shown on the rail's brand mark. -->
+				<span class="connection" id="connection" role="status" aria-live="polite" hidden></span>
 			</header>
 			<div class="session-warning" id="session-warning" role="alert" hidden></div>
 			<!-- The management panel: it replaces the conversation while a view other than chat is open. -->

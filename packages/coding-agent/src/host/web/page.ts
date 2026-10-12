@@ -1136,10 +1136,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		if (!client.connected) return;
 		if (delivery.kind === "hydrate") {
 			directoryReady = true;
-			renderer.setConnection(
+			renderer.setConnectionState(
 				(language) => translate(language, "connection.connected"),
-				"state",
-				(language) => translate(language, "connection.stateConnected"),
+				"connected",
 			);
 		}
 		const previous = observedDirectory?.sessions.find(session => session.sessionId === desiredSessionId);
@@ -2703,8 +2702,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/**
 	 * A host can go away and come back: a restart, a crash, a machine waking up. The page keeps the
 	 * session the reader was on, retries the connection with backoff, re-attaches that session, and
-	 * repaints. Each step is stated on the connection line, so a page that cannot get through says
-	 * so rather than looking attached.
+	 * repaints. The brand's connection indicator retains each step's details, so a page that cannot
+	 * get through says so rather than looking attached.
 	 */
 	let retrying: Promise<void> | undefined;
 	const retryConnection = (): void => {
@@ -2717,10 +2716,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				try {
 					await client.reconnect();
 				} catch (error: unknown) {
-					renderer.setConnection(
+					renderer.setConnectionState(
 						(language) => translate(language, "connection.retrying", { error: message(error) }),
-						"error",
-						(language) => translate(language, "connection.stateDisconnected"),
+						"disconnected",
 					);
 					waitMs = Math.min(waitMs * 2, 10_000);
 				}
@@ -2742,7 +2740,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					await selectSession(target, true);
 					if (!client.connected) throw new Error(copy("connection.hostGone"));
 					if (painter.sessionId !== desiredSessionId || !painter.ready) continue;
-					renderer.setConnection(copy("connection.connected"), "state", copy("connection.stateConnected"));
+					renderer.setConnectionState(copy("connection.connected"), "connected");
 					paint();
 					return;
 				} catch (error: unknown) {
@@ -2754,10 +2752,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						);
 						return;
 					}
-					renderer.setConnection(
+					renderer.setConnectionState(
 						(language) => translate(language, "connection.retrying", { error: message(error) }),
-						"error",
-						(language) => translate(language, "connection.stateDisconnected"),
+						client.connected ? "connecting" : "disconnected",
 					);
 					await new Promise((resolve) => setTimeout(resolve, waitMs));
 					waitMs = Math.min(waitMs * 2, 10_000);
@@ -2771,7 +2768,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		directoryReady = false;
 		if (change.state === "connected") {
 			if (booted) scheduleDiscovery = discoverSchedules().catch(report);
-			renderer.setConnection((language) => translate(language, "connection.connecting"), "state");
+			renderer.setConnectionState((language) => translate(language, "connection.connecting"), "connecting");
 			paint();
 			return;
 		}
@@ -2793,19 +2790,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			}
 			saveDraft();
 			void transition(() => painter.detach()).catch(report);
-			renderer.setConnection(
+			renderer.setConnectionState(
 				(language) => translate(language, "connection.disconnected", {
 					error: change.error?.message ?? translate(language, "connection.hostGone"),
 				}),
-				"error",
-				(language) => translate(language, "connection.stateDisconnected"),
+				"disconnected",
 			);
 			paint();
 			retryConnection();
 			return;
 		}
 		// Any other state the client reports is its own word for an unfinished connection.
-		renderer.setConnection((language) => translate(language, "connection.connecting"), "state");
+		renderer.setConnectionState((language) => translate(language, "connection.connecting"), "connecting");
 		paint();
 	});
 	try {
@@ -2867,7 +2863,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 function fail(renderer: PageRenderer, error: unknown, locale: Locale): void {
 	const text = translate(locale, "page.cannotBoot", { error: message(error) });
-	renderer.setConnection(text, "error");
+	renderer.setConnectionState(text, "disconnected");
 	renderer.render(failureView(locale, text));
 }
 

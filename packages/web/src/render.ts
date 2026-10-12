@@ -47,6 +47,8 @@ import {
 
 export interface PageElements {
 	readonly connection: HTMLElement;
+	readonly connectionStatus: HTMLElement;
+	readonly connectionStatusText: HTMLElement;
 	readonly sessionTitle: HTMLElement;
 	readonly sessionWarning: HTMLElement;
 	readonly laneStatus: HTMLElement;
@@ -116,11 +118,14 @@ export interface PageElements {
 
 /** Host diagnostics may be literal; connection status copy follows the current locale. */
 type ConnectionText = string | ((locale: Locale) => string);
+type ConnectionState = "connecting" | "connected" | "disconnected";
 
 export interface PageRenderer {
 	render(view: WebView): void;
-	/** `text` is the full status (title and aria-label). `label`, when set, is the visible state. */
+	/** Show an action diagnostic without changing the rail's connectivity indicator. */
 	setConnection(text: ConnectionText, kind: "state" | "error", label?: ConnectionText): void;
+	/** Show connectivity on the brand mark and clear stale action diagnostics. */
+	setConnectionState(text: ConnectionText, state: ConnectionState): void;
 	/** Handlers the page entry fills in once it can drive the host. */
 	onSelect: (sessionId: string) => void;
 	onCreateSession: () => void;
@@ -153,6 +158,8 @@ export interface PageRenderer {
 export function collectPageElements(): PageElements {
 	return {
 		connection: pick("connection"),
+		connectionStatus: pick("connection-status"),
+		connectionStatusText: pick("connection-status-text"),
 		sessionTitle: pick("session-title"),
 		sessionWarning: pick("session-warning"),
 		laneStatus: laneStatusElement(),
@@ -597,6 +604,10 @@ export function createRenderer(
 	let sessionMenu: { id: string; node: HTMLElement } | undefined;
 	let heldPromptFocus: { start: number; end: number; direction: "forward" | "backward" | "none" } | undefined;
 	let connectionCopy: { text: ConnectionText; kind: "state" | "error"; label?: ConnectionText } | undefined;
+	let connectionStateCopy: { text: ConnectionText; state: ConnectionState } = {
+		text: (locale) => translate(locale, "connection.starting"),
+		state: "connecting",
+	};
 	/** Presentation-only category selection; changing pages never detaches the current session. */
 	const sections = new Map<string, string>();
 	/** The settings query, the highlighted result, and the row a result asked to reveal. */
@@ -616,21 +627,26 @@ export function createRenderer(
 	/** The language of the view being painted; the fallback only applies before the first paint. */
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(lastView?.locale ?? FALLBACK_LOCALE, key, values);
 	const renderConnection = (): void => {
-		if (connectionCopy === undefined) return;
 		const locale = lastView?.locale ?? FALLBACK_LOCALE;
 		const resolve = (value: ConnectionText): string => typeof value === "string" ? value : value(locale);
+		elements.connectionStatus.dataset.state = connectionStateCopy.state;
+		const status = resolve(connectionStateCopy.text);
+		// Retain the logo and dot; only changed copy should announce a live-region update.
+		if (elements.connectionStatusText.textContent !== status) elements.connectionStatusText.textContent = status;
+		elements.connection.hidden = connectionCopy === undefined;
+		if (connectionCopy === undefined) {
+			elements.connection.textContent = "";
+			elements.connection.removeAttribute("title");
+			elements.connection.removeAttribute("aria-label");
+			return;
+		}
 		const raw = resolve(connectionCopy.text);
 		const text = connectionCopy.kind === "error" ? errorMessageCopy(locale, raw) : raw;
 		elements.connection.className = `connection ${connectionCopy.kind}`;
 		elements.connection.title = text;
 		elements.connection.setAttribute("aria-label", text);
-		if (connectionCopy.label === undefined) {
-			elements.connection.textContent = text;
-			return;
-		}
-		const dot = element("span", "connection-dot");
-		dot.setAttribute("aria-hidden", "true");
-		elements.connection.replaceChildren(dot, document.createTextNode(resolve(connectionCopy.label)));
+		const label = connectionCopy.label === undefined ? text : resolve(connectionCopy.label);
+		if (elements.connection.textContent !== label) elements.connection.textContent = label;
 	};
 	/** The document is localized at startup; its retained controls follow later language changes. */
 	const renderShellCopy = (): void => {
@@ -2296,6 +2312,11 @@ export function createRenderer(
 		},
 		setConnection(text: ConnectionText, kind: "state" | "error", label?: ConnectionText): void {
 			connectionCopy = { text, kind, ...(label === undefined ? {} : { label }) };
+			renderConnection();
+		},
+		setConnectionState(text: ConnectionText, state: ConnectionState): void {
+			connectionStateCopy = { text, state };
+			connectionCopy = undefined;
 			renderConnection();
 		},
 	};
