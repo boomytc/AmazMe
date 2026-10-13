@@ -1,4 +1,6 @@
-import { createFacetHost, defineFacet } from "@amazme/chord";
+import { openTestHost } from "./native-host-support.ts";
+import { activationFacet, disposeResources } from "@amazme/protocol/services";
+import { } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { fauxAssistantMessage } from "@amazme/ai";
 import type { ConversationView } from "@amazme/durable";
@@ -11,16 +13,20 @@ describe("Transcript service", () => {
 	test("replicates the conversation view as it changes", async () => {
 		const { conversation, close } = await openFauxConversation([fauxAssistantMessage("answer")]);
 		const views: ConversationView[] = [];
-		const consumer = defineFacet({
-			id: "test-transcript-consumer",
-			setup(env) {
-				const transcript = env.use(Transcript);
-				env.onActivate(() => env.own(transcript.state.subscribe((value) => void views.push(value))));
-			},
+		const consumer = activationFacet("test-transcript-consumer", [Transcript], async (services) => {
+			const disposers: Array<() => void | Promise<void>> = [];
+			try {
+				const transcript = services.get(Transcript);
+				await (() => disposers.push(transcript.state.subscribe((value) => void views.push(value))))();
+
+				return () => disposeResources(disposers);
+			} catch (error) {
+				await disposeResources(disposers);
+				throw error;
+			}
 		});
-		const host = await createFacetHost({
-			facets: [await createTranscriptServiceFacet(conversation, BACKGROUND_CONTEXT), consumer],
-		});
+		const host = await openTestHost({
+			facets: [await createTranscriptServiceFacet(conversation, BACKGROUND_CONTEXT), consumer] });
 		try {
 			expect(views[0]?.entries).toEqual([]);
 			const submission = await conversation.submit({ type: "input", content: "question" }, BACKGROUND_CONTEXT);

@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 import type { AuthType, ModelThinkingLevel } from "@amazme/ai";
 import type { ProviderAuthState } from "../../core/provider-login.ts";
 import type { ModelScopeConfig } from "../../core/model-scope.ts";
@@ -49,7 +50,7 @@ export interface Models {
 	logout(provider: string, context: Context): Promise<void>;
 }
 
-export const Models = defineService<Models>("amazme.models");
+export const Models = remoteService<Models>("amazme.models", {"cycleThinking":0,"cycleModel":1,"getModelScope":0,"setModelScope":2,"saveDefaults":2,"getThinkingLevels":0,"refresh":0,"select":1,"selectThinking":1,"startLogin":2,"submitLoginPrompt":3,"cancelLogin":1,"logout":1}, ["state"]);
 
 export function selectableModels(state: ModelsState | undefined): ModelSummary[] {
 	if (!state) return [];

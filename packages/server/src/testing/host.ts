@@ -1,4 +1,5 @@
-import type { Context, JsonValue, ServiceCall } from "@amazme/chord";
+import type { ChannelCall } from "@amazme/protocol";
+import type { Context, JsonValue } from "@amazme/chord";
 import { SessionNotFoundError } from "../errors.ts";
 import type { RoutedServerServiceHost, RoutedSessionHandle, ServerHost, SessionMetadata } from "../types.ts";
 
@@ -30,7 +31,7 @@ export class TestHarness {
 	attachedClients = 0;
 	attachmentReleaseCount = 0;
 	closeCount = 0;
-	readonly serviceCalls: ServiceCall[] = [];
+	readonly serviceCalls: ChannelCall[] = [];
 	failAttachmentRelease?: Error;
 	failClose?: Error;
 	nextServiceError?: Error;
@@ -43,13 +44,13 @@ export class TestHarness {
 	}
 
 	attachClient(_context: Context): {
-		invokeService: TestHarness["invokeService"];
+		invokeChannel: TestHarness["invokeChannel"];
 		release(context: Context): void;
 	} {
 		this.attachedClients += 1;
 		let released = false;
 		return {
-			invokeService: (call) => this.invokeService(call),
+			invokeChannel: (call) => this.invokeChannel(call),
 			release: (_context) => {
 				if (released) return;
 				this.attachmentReleaseCount += 1;
@@ -60,7 +61,7 @@ export class TestHarness {
 		};
 	}
 
-	async invokeService(call: ServiceCall): Promise<JsonValue | undefined> {
+	async invokeChannel(call: ChannelCall): Promise<JsonValue | undefined> {
 		this.serviceCalls.push(call);
 		if (this.nextServiceError) {
 			const error = this.nextServiceError;
@@ -105,7 +106,7 @@ export class TestHarness {
 		return gate;
 	}
 
-	gateNextServiceCall(): OpenGate {
+	gateNextChannelCall(): OpenGate {
 		const gate = { entered: new Deferred<void>(), release: new Deferred<void>() };
 		this.nextServiceGate = gate;
 		return gate;
@@ -116,27 +117,14 @@ export function createTestServerServices(): RoutedServerServiceHost {
 	return {
 		attachClient(presentation) {
 			return {
-				async invokeService(call, _publish, context) {
-					if (
-						call.instance === undefined &&
-						call.serviceId === "amazme.session-management" &&
-						call.member === "attach" &&
-						call.args.length === 1 &&
-						typeof call.args[0] === "string"
-					) {
-						await presentation.attachSession(call.args[0], context);
-						return null;
+				async invokeChannel(call, _publish, context) {
+					if (call.kind === "open" && call.channel === "attachment" && call.host) {
+						await presentation.attachSession(call.host, context); return null;
 					}
-					if (
-						call.instance === undefined &&
-						call.serviceId === "amazme.session-management" &&
-						call.member === "detach" &&
-						call.args.length === 0
-					) {
-						await presentation.detachSession(context);
-						return null;
+					if (call.kind === "close" && call.channel === "attachment") {
+						await presentation.detachSession(context); return null;
 					}
-					throw new Error(`Unsupported test server service ${call.serviceId}.${call.member}`);
+					throw new Error("Unknown test channel operation");
 				},
 				release() {},
 			};

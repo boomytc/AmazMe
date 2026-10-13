@@ -2,17 +2,19 @@
 
 Runtime-neutral routed envelopes, CBOR encoding, and byte-stream framing for the experimental AmazMe protocol.
 
-Protocol version `8` defines:
+Protocol version `9` defines:
 
 - a version handshake that identifies the logical `serverId`;
 - explicit server and Session request targets;
 - correlated requests and responses with opaque strict-JSON payloads;
-- request cancellation, opaque subscription updates, and out-of-band attachment changes;
+- request cancellation, native Chord frame and channel-close events, and out-of-band attachment changes;
 - non-empty opaque error codes and bounded transport messages.
 
 A server target contains `{ serverId }`; a Session target contains `{ serverId, sessionId, attachmentId }`. The combined route fences calls to one logical server, durable Session, and live presentation attachment. Management `attach()` and `detach()` return no routing identifiers; the server publishes the selected live route in an out-of-band `attachment` message. Disconnecting releases only that presentation's attachment after admitted calls settle.
 
-Chord owns the payload semantics carried inside these envelopes: `{ serviceId, instance?, member, args }` calls, the `$chord.service` control vocabulary, service catalogues, subscription snapshots and updates, service error codes, and the independent Delta path codecs for replicated states. `@amazme/protocol` validates that each opaque payload is strict JSON but does not validate or export its Chord grammar. Clients and servers parse those values through `@amazme/chord` at the service adapter boundary.
+Channel requests use the discriminant `kind`: `catalogue`, `open`, `frame` and `close`. Open returns the Chord host name; frame transports one native Chord Frame. Server events `channel_frame` and `channel_closed` address the channel ID. A closed endpoint must notify the receiver even when a worker exits unexpectedly, so in-flight method roots cannot wait forever.
+
+`ChannelEndpoint` binds links to an authenticated attachment and distinct principal. It releases and cancels records when channels close. `openChannel()` adapts an application-owned invoker to a native Chord Link. `@amazme/protocol/services` declares the product's domain interfaces and resource ownership on Chord Host; Chord owns contract checking, calls, state deltas and reload. No previous service-control grammar is accepted.
 
 Session-directory state, management results, transcripts, models, plugins, and all other application values remain opaque service data. The durable Session and its Harness remain local to the Session worker process. Server and Session calls route opaquely to their owning providers, where Chord and the application validate and invoke them.
 

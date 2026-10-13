@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 
 /** One tool call waiting for a decision. */
 export interface ApprovalRequest {
@@ -28,4 +29,4 @@ export interface Approvals {
 	decide(id: string, approved: boolean, context: Context): Promise<boolean>;
 }
 
-export const Approvals = defineService<Approvals>("amazme.approvals");
+export const Approvals = remoteService<Approvals>("amazme.approvals", {"decide":2}, ["state"]);

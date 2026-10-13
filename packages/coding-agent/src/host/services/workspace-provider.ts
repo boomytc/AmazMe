@@ -1,8 +1,10 @@
+import { serviceFacet, type ServiceValue } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
 import type { Dirent } from "node:fs";
 import { stat, readdir, readFile, open, realpath } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import { type Context, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { Workspace } from "./workspace.ts";
 import type { WorkspaceEntry, WorkspaceOpenInput, WorkspaceState, WorkspaceView } from "./workspace.ts";
 
@@ -34,8 +36,7 @@ export function createWorkspaceService(
 	const state = createState({
 		revision: 0,
 		cwd: root,
-		view: { kind: "listing", path: ".", parent: null, entries: [], page: { offset: 0, limit: WORKSPACE_PAGE_SIZE, total: 0 } },
-	});
+		view: { kind: "listing", path: ".", parent: null, entries: [], page: { offset: 0, limit: WORKSPACE_PAGE_SIZE, total: 0 } } });
 
 	/** Resolve a browser path and select its authorized root. */
 	const inside = (path: string, directory: string): boolean => path === directory || path.startsWith(directory.endsWith(sep) ? directory : `${directory}${sep}`);
@@ -109,8 +110,7 @@ export function createWorkspaceService(
 			path,
 			parent: absolute === root ? null : workspaceRelative(resolve(absolute, "..")),
 			entries,
-			page: { offset, limit: WORKSPACE_PAGE_SIZE, total: names.length },
-		});
+			page: { offset, limit: WORKSPACE_PAGE_SIZE, total: names.length } });
 		listed = { absolute, offset };
 	};
 
@@ -180,18 +180,16 @@ export function createWorkspaceService(
 			if (typeof path !== "string" || !Number.isSafeInteger(offset) || offset < 0) return Promise.reject(new TypeError("Invalid workspace directory page"));
 			return visit(path, context, (absolute, context) => list(absolute, context, offset));
 		},
-		read: (path: string, context: Context) => visit(path, context, read),
-	} satisfies Workspace, refresh: (context: Context) => visit(".", context, list, true) };
+		read: (path: string, context: Context) => visit(path, context, read) } satisfies Workspace, refresh: (context: Context) => visit(".", context, list, true) };
 }
 
 /** The workspace as a facet: the service, and the working directory listed when it activates. */
 export function createWorkspaceFacet(options: WorkspaceServiceOptions): Facet {
-	return defineFacet({
-		id: "@pi/workspace",
-		setup(env) {
-			const runtime = createWorkspaceService(options, (initial) => env.replicatedState(initial));
-			env.provide(Workspace, runtime.service);
-			env.onActivate(() => runtime.refresh(BACKGROUND_CONTEXT));
-		},
+	return serviceFacet("@pi/workspace", Workspace, [], async (services) => {
+		const runtime = createWorkspaceService(options, (initial) => replicatedState(initial));
+		const implementation: ServiceValue<typeof Workspace> = runtime.service;
+		await (() => runtime.refresh(BACKGROUND_CONTEXT))();
+
+		return { value: implementation };
 	});
 }

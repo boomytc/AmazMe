@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 import type { ServerId } from "@amazme/protocol";
 import type { ProjectSummary } from "./projects.ts";
 
@@ -44,7 +45,7 @@ export interface SessionDirectory {
 	readonly state: ReplicatedState<SessionDirectoryState>;
 }
 
-export const SessionDirectory = defineService<SessionDirectory>("amazme.session-directory");
+export const SessionDirectory = remoteService<SessionDirectory>("amazme.session-directory", {}, ["state"]);
 
 export interface SessionManagement {
 	create(options: SessionCreateOptions, context: Context): Promise<SessionSummary>;
@@ -58,4 +59,4 @@ export interface SessionManagement {
 	rename(sessionId: string, name: string, context: Context): Promise<SessionSummary>;
 }
 
-export const SessionManagement = defineService<SessionManagement>("amazme.session-management");
+export const SessionManagement = remoteService<SessionManagement>("amazme.session-management", {"create":1,"remove":1,"attach":1,"detach":0,"rename":2}, []);

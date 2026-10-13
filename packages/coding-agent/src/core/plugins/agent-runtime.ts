@@ -1,4 +1,4 @@
-import { defineService } from "@amazme/chord";
+import { localService } from "@amazme/protocol/services";
 import type { Context } from "@amazme/chord";
 import type { Conversation, ConversationId, Harness } from "@amazme/durable";
 
@@ -7,7 +7,7 @@ export interface AgentRuntime {
 	current(context: Context): Promise<{ harness: Harness; conversation: Conversation }>;
 }
 
-export const AgentRuntime = defineService<AgentRuntime>("amazme.local.agent-runtime", { local: true });
+export const AgentRuntime = localService<AgentRuntime>("amazme.local.agent-runtime");
 
 export function createAgentRuntime(
 	harness: Harness,
@@ -21,6 +21,5 @@ export function createAgentRuntime(
 			const conversation = await harness.conversation(selected(), context);
 			if (conversation === undefined) throw new Error("Selected conversation is unavailable");
 			return { harness, conversation };
-		},
-	};
+		} };
 }

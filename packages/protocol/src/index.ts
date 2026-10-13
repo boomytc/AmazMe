@@ -17,6 +17,8 @@ export {
 	type ServerHelloError,
 	type ServerId,
 	type ServerMessage,
-	type ServiceEventEnvelope,
+	type ChannelEventEnvelope,
 	type SessionTarget,
 } from "./protocol.ts";
+
+export * from "./channels.ts";

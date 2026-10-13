@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { readFacetBundleManifest } from "@amazme/chord/node";
+import { readPluginBuild } from "../src/core/plugins/artifact.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	activateBuiltinClientServices,
@@ -70,29 +70,27 @@ describe("server-selected presentation facets", () => {
 		const sourcePath = join(packagePath, "src", "tui.ts");
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet({ id: "built-a", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet(() => { void "built-a"; }, { uses: [SlashCommands.contract] });\n',
 		);
 		const plugin = createServerPluginPackage(directory, serverId, packagePath);
 
 		const first = await plugin.build();
 		expect(first).toHaveLength(1);
 		expect(plugin.manifestPath).toMatch(
-			new RegExp(`/plugin-builds/${serverId}/amazme-example-plugin-[a-f0-9]{12}/chord-facets\\.json$`, "u"),
+			new RegExp(`/plugin-builds/${serverId}/amazme-example-plugin-[a-f0-9]{12}/plugin\\.json$`, "u"),
 		);
-		expect(first[0]?.plugin).toEqual({ id: "@amazme/test-plugin", version: "1.0.0" });
-		const firstLoaded = await createPresentationFacetLoaders(createPresentationFacetData(first))[0]!.load();
-		expect(firstLoaded.facets.map(({ id }) => id)).toEqual(["built-a"]);
-		await firstLoaded.dispose();
+		expect(first[0]?.name).toBe("@amazme/test-plugin/tui");
+		const firstLoaded = await createPresentationFacetLoaders(createPresentationFacetData(first))[0]!([]);
+		expect(firstLoaded.map(({ name }) => name)).toEqual(["@amazme/test-plugin/tui"]);
 
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet({ id: "built-b", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet(() => { void "built-b"; }, { uses: [SlashCommands.contract] });\n',
 		);
 		const second = await plugin.build();
-		expect(second[0]?.source).not.toBe(first[0]?.source);
-		const secondLoaded = await createPresentationFacetLoaders(createPresentationFacetData(second))[0]!.load();
-		expect(secondLoaded.facets.map(({ id }) => id)).toEqual(["built-b"]);
-		await secondLoaded.dispose();
+		expect(second[0]?.code).not.toBe(first[0]?.code);
+		const secondLoaded = await createPresentationFacetLoaders(createPresentationFacetData(second))[0]!([]);
+		expect(secondLoaded.map(({ name }) => name)).toEqual(["@amazme/test-plugin/tui"]);
 
 		const secondPackagePath = join(directory, "second-plugin");
 		await mkdir(join(secondPackagePath, "src"), { recursive: true });
@@ -107,7 +105,7 @@ describe("server-selected presentation facets", () => {
 			),
 			writeFile(
 				join(secondPackagePath, "src", "tui.ts"),
-				'import { defineFacet } from "@amazme/chord"; export default defineFacet({ id: "second-built", setup() {} });\n',
+				'import { defineFacet } from "@amazme/chord"; export default defineFacet(() => {});\n',
 			),
 		]);
 		const running = await startServer({
@@ -130,14 +128,13 @@ describe("server-selected presentation facets", () => {
 		);
 		await expect(restoreServerPluginPackageProfile(join(directory, "server"), running.serverId)).resolves.toEqual([]);
 		const serverLoaded = await Promise.all(
-			createPresentationFacetLoaders(presentationPlugins).map((loader) => loader.load()),
+			createPresentationFacetLoaders(presentationPlugins).map((loader) => loader([])),
 		);
-		expect(serverLoaded.flatMap(({ facets }) => facets.map(({ id }) => id))).toEqual(["built-b", "second-built"]);
-		await Promise.all(serverLoaded.map((loaded) => loaded.dispose()));
+		expect(serverLoaded.flatMap(facets => facets.map(({ name }) => name))).toEqual(["@amazme/test-plugin/tui", "@amazme/second-test-plugin/tui"]);
 
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet({ id: "built-c", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@amazme/chord"; import { SlashCommands } from "@amazme/coding-agent/host/plugin"; export default defineFacet(() => { void "built-c"; }, { uses: [SlashCommands.contract] });\n',
 		);
 		const services = runtime.servers[0]!.server.open({
 			services: [PresentationPlugins],
@@ -146,10 +143,9 @@ describe("server-selected presentation facets", () => {
 		});
 		try {
 			await services.ready(BACKGROUND_CONTEXT);
-			const data = await services.use(PresentationPlugins).reload(BACKGROUND_CONTEXT);
-			const reloaded = await Promise.all(createPresentationFacetLoaders(data).map((loader) => loader.load()));
-			expect(reloaded.flatMap(({ facets }) => facets.map(({ id }) => id))).toEqual(["built-c", "second-built"]);
-			await Promise.all(reloaded.map((loaded) => loaded.dispose()));
+			const data = await services.get(PresentationPlugins).reload(BACKGROUND_CONTEXT);
+			const reloaded = await Promise.all(createPresentationFacetLoaders(data).map((loader) => loader([])));
+			expect(reloaded.flatMap(facets => facets.map(({ name }) => name))).toEqual(["@amazme/test-plugin/tui", "@amazme/second-test-plugin/tui"]);
 		} finally {
 			await services.dispose(BACKGROUND_CONTEXT);
 		}
@@ -163,11 +159,10 @@ describe("server-selected presentation facets", () => {
 		const plugin = createServerPluginPackage(directory, serverId, packagePath);
 
 		const artifacts = await plugin.build();
-		const manifest = await readFacetBundleManifest(plugin.manifestPath);
-		expect(manifest.plugin).toEqual({ id: "@amazme/example-plugin", version: "1.0.0" });
+		const manifest = await readPluginBuild(plugin.manifestPath);
+		expect(manifest.name).toBe("@amazme/example-plugin");
 		expect(Object.keys(manifest.entries)).toEqual(["session", "tui"]);
-		const loaded = await createPresentationFacetLoaders(createPresentationFacetData(artifacts))[0]!.load();
-		expect(loaded.facets.map(({ id }) => id)).toEqual(["@amazme/example-plugin/tui"]);
-		await loaded.dispose();
+		const loaded = await createPresentationFacetLoaders(createPresentationFacetData(artifacts))[0]!([]);
+		expect(loaded.map(({ name }) => name)).toEqual(["@amazme/example-plugin/tui"]);
 	});
 });

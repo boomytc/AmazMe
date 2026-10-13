@@ -1,7 +1,10 @@
-import type { RemoteServiceErrorCode } from "@amazme/chord";
+import type { ChordErrorCode } from "@amazme/chord";
 
 type ServerOperationErrorCode =
-	| RemoteServiceErrorCode
+	| ChordErrorCode
+	| "invalid_request"
+	| "cancelled"
+	| "internal"
 	| "wrong_server"
 	| "session_not_found"
 	| "session_ambiguous"

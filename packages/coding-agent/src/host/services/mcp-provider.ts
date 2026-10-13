@@ -1,18 +1,20 @@
-import { defineFacet, type Facet } from "@amazme/chord";
+import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
+import { type Facet } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { McpManagement } from "../../core/mcp/management.ts";
 import { Mcp } from "./mcp.ts";
 
 /** This replica projects the session's connection owner; it never creates connections or stores credentials. */
 export function createMcpFacet(manager: McpManagement): Facet {
-	return defineFacet({
-		id: "@amazme/mcp-runtime",
-		setup(env) {
-			const state = env.replicatedState(manager.snapshot());
-			env.own(
+	return serviceFacet("@amazme/mcp-runtime", Mcp, [], async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			const state = replicatedState(manager.snapshot());
+			disposers.push(
 				manager.subscribe(() => state.change(BACKGROUND_CONTEXT, (draft) => Object.assign(draft, manager.snapshot()))),
 			);
-			env.provide(Mcp, {
+			const implementation: ServiceValue<typeof Mcp> = {
 				state,
 				reload: (context) => manager.reload(context),
 				reconnect: (name, context) => manager.reconnect(name, context),
@@ -23,7 +25,12 @@ export function createMcpFacet(manager: McpManagement): Facet {
 					context.abortSignal?.throwIfAborted();
 					return manager.cancelLogin(id);
 				},
-			});
-		},
+			};
+
+			return { value: implementation, close: () => disposeResources(disposers) };
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	});
 }

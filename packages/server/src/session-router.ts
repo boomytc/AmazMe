@@ -1,5 +1,6 @@
+import type { ChannelCall } from "@amazme/protocol";
 import { randomUUID } from "node:crypto";
-import type { Context, JsonValue, ServiceCall, ServiceProviderUpdate } from "@amazme/chord";
+import type { Context, JsonValue, Frame } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { RpcTarget, SessionTarget } from "@amazme/protocol";
 import { ServerDrainingError, SessionNotAttachedError } from "./errors.ts";
@@ -44,15 +45,15 @@ export class SessionRouter<TMetadata extends SessionMetadata = SessionMetadata> 
 		this.options = options;
 	}
 
-	async executeServiceCall(
-		call: ServiceCall,
+	async executeChannelCall(
+		call: ChannelCall,
 		target: RpcTarget,
 		client: object,
-		publish: (subscriptionId: string, update: ServiceProviderUpdate, context: Context) => Promise<void>,
+		publish: (subscriptionId: string, update: Frame | undefined, context: Context) => Promise<void>,
 		context: Context,
 	): Promise<JsonValue | undefined> {
 		const admitted = await this.runForClient(client, () =>
-			this.startServiceCall(client, target, call, publish, context),
+			this.startChannelCall(client, target, call, publish, context),
 		);
 		return admitted.result;
 	}
@@ -196,15 +197,15 @@ export class SessionRouter<TMetadata extends SessionMetadata = SessionMetadata> 
 		);
 	}
 
-	private async startServiceCall(
+	private async startChannelCall(
 		client: object,
 		target: RpcTarget,
-		call: ServiceCall,
-		publish: (subscriptionId: string, update: ServiceProviderUpdate, context: Context) => Promise<void>,
+		call: ChannelCall,
+		publish: (subscriptionId: string, update: Frame | undefined, context: Context) => Promise<void>,
 		context: Context,
 	): Promise<{ result: Promise<JsonValue | undefined> }> {
 		const attachment = this.requireAttachment(client, target);
-		const result = attachment.lease!.invokeService(
+		const result = attachment.lease!.invokeChannel(
 			call,
 			(subscriptionId, update, updateContext) => publish(subscriptionId, update, updateContext),
 			context,

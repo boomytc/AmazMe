@@ -1,6 +1,6 @@
+import { activationFacet, disposeResources } from "@amazme/protocol/services";
 import { randomUUID } from "node:crypto";
 import { Type } from "@amazme/ai";
-import { defineFacet } from "@amazme/chord";
 import type { JsonValue } from "@amazme/chord";
 import { AgentController, AgentExtensions, SlashCommands } from "@amazme/coding-agent/plugin";
 import { defineExtension, defineTool } from "@amazme/durable";
@@ -47,8 +47,7 @@ const checkpoint = defineTool({
 		name: Type.Optional(Type.String({ maxLength: 80 })),
 		paths: Type.Optional(paths),
 		id: Type.Optional(uuid),
-		plan: Type.Optional(uuid),
-	}),
+		plan: Type.Optional(uuid) }),
 	replay: "safe",
 	executionMode: "sequential",
 	async execute(args, api, context) {
@@ -77,8 +76,7 @@ const checkpoint = defineTool({
 							error: outcome?.error?.message ?? null,
 							reason: outcome?.reason ?? null,
 							backup,
-							result: outcome?.result ?? null,
-						};
+							result: outcome?.result ?? null };
 		} else if (args.action === "create") {
 			await available(api, context);
 			if (args.paths === undefined) throw new Error("Creating a checkpoint requires explicit paths");
@@ -93,8 +91,7 @@ const checkpoint = defineTool({
 					...(await scope(env, context)),
 					name: args.name ?? "Checkpoint",
 					createdAt: Date.now(),
-					files,
-				};
+					files };
 				value = await lockImages(
 					env,
 					files,
@@ -124,8 +121,7 @@ const checkpoint = defineTool({
 				throw new Error("Restore plan is unavailable; preview the checkpoint again");
 			const plan = {
 				...selected.plan,
-				files: selected.plan.files.filter(({ before }) => args.paths!.includes(before.path)),
-			};
+				files: selected.plan.files.filter(({ before }) => args.paths!.includes(before.path)) };
 			if (plan.files.length !== args.paths.length || new Set(args.paths).size !== args.paths.length)
 				throw new Error("Every selected path must occur exactly once in the preview");
 			let id: TaskId;
@@ -155,8 +151,7 @@ const checkpoint = defineTool({
 						envId: plan.envId,
 						name: `Before restore ${plan.snapshot}`,
 						createdAt: Date.now(),
-						files: plan.files.map(({ before }) => before),
-					};
+						files: plan.files.map(({ before }) => before) };
 					await tx.doc(Snapshots, api.conversationId, backup, snapshot);
 					current.snapshots = [...current.snapshots, summary(backup, snapshot)];
 					const task = await tx.createTask(
@@ -176,8 +171,7 @@ const checkpoint = defineTool({
 			return {
 				output: [{ type: "text", text: JSON.stringify(value) }],
 				structuredOutput: value,
-				isError: result?.status !== "restored",
-			};
+				isError: result?.status !== "restored" };
 		} else {
 			await available(api, context);
 			if (args.id === undefined || !index?.snapshots.some((entry) => entry.id === args.id))
@@ -216,8 +210,7 @@ const checkpoint = defineTool({
 					...currentScope,
 					id: await api.memo("checkpoint.preview", randomUUID(), context),
 					snapshot: args.id,
-					files,
-				};
+					files };
 				await api.commit(async (tx) => {
 					await availableIn(tx);
 					const pending = await tx.doc(Preview, api.conversationId);
@@ -229,35 +222,44 @@ const checkpoint = defineTool({
 		}
 		return {
 			output: [{ type: "text", text: JSON.stringify(value) }],
-			structuredOutput: value,
-		};
-	},
-});
+			structuredOutput: value };
+	} });
 
-export default defineFacet({
-	id: "@amazme/checkpoint/session",
-	setup(env) {
-		const extensions = env.use(AgentExtensions),
-			commands = env.use(SlashCommands),
-			agent = env.use(AgentController);
-		env.onActivate(() => {
-			env.own(extensions.install(defineExtension({ name: "file-checkpoint", tools: [checkpoint], tasks: [Restore] })));
-			env.own(
-				commands.replace({
-					name: "checkpoint",
-					description: "Create or preview selected-file checkpoints",
-					argumentHint: "<request>",
-					run(request, context) {
-						return agent.prompt(
-							{
-								message: `Use file_checkpoint to ${request.trim() || "list current checkpoints"}. Preview before restoring. Only restore files explicitly selected and approved by the user; report the backup ID and any conflicts.`,
-								images: null,
-							},
-							context,
-						);
-					},
-				}),
-			);
-		});
+export default activationFacet(
+	"@amazme/checkpoint/session",
+	[AgentExtensions, SlashCommands, AgentController],
+	async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			const extensions = services.get(AgentExtensions),
+				commands = services.get(SlashCommands),
+				agent = services.get(AgentController);
+			await (() => {
+				disposers.push(
+					extensions.install(defineExtension({ name: "file-checkpoint", tools: [checkpoint], tasks: [Restore] })),
+				);
+				disposers.push(
+					commands.replace({
+						name: "checkpoint",
+						description: "Create or preview selected-file checkpoints",
+						argumentHint: "<request>",
+						run(request, context) {
+							return agent.prompt(
+								{
+									message: `Use file_checkpoint to ${request.trim() || "list current checkpoints"}. Preview before restoring. Only restore files explicitly selected and approved by the user; report the backup ID and any conflicts.`,
+									images: null,
+								},
+								context,
+							);
+						},
+					}),
+				);
+			})();
+
+			return () => disposeResources(disposers);
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	},
-});
+);

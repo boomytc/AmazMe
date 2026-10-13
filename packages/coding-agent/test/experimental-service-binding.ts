@@ -1,4 +1,6 @@
-import type { Context, RemoteServices } from "@amazme/chord";
+import type { Context } from "@amazme/chord";
+import type { ApplicationService } from "@amazme/protocol/services";
+import type { RoutedServices } from "../src/host/services/connection.ts";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { Client } from "@amazme/client";
 import {
@@ -10,14 +12,14 @@ import {
 } from "../src/host/services/connection.ts";
 
 interface ServiceBindingOptions extends ServiceSourceOptions {
-	readonly services: readonly { readonly id: string }[];
+	readonly services: readonly ApplicationService[];
 }
 
 /** Test helper for binding server services without a facet host. */
 export function createServerServiceBinding(
 	client: Client,
 	options: ServiceBindingOptions,
-): ServerServiceSource & RemoteServices {
+): ServerServiceSource & RoutedServices {
 	const source = createServerServiceSource(client, options);
 	const services = source.open({
 		services: options.services,
@@ -31,12 +33,10 @@ export function createServerServiceBinding(
 		await services.ready(context);
 	};
 	return {
-		acceptsUnavailableServices: source.acceptsUnavailableServices,
 		connection: source.connection,
 		catalogue: (context) => source.catalogue(context),
 		open: (openOptions) => source.open(openOptions),
-		use: (service) => services.use(service),
-		observe: (service, handler) => services.observe(service, handler),
+		get: (service) => services.get(service),
 		ready,
 		async dispose(context) {
 			const results = await Promise.allSettled([services.dispose(context), source.dispose(context)]);
@@ -49,7 +49,7 @@ export function createServerServiceBinding(
 export function createSessionServiceBinding(
 	client: Client,
 	options: ServiceBindingOptions,
-): SessionServiceSource & RemoteServices {
+): SessionServiceSource & RoutedServices {
 	const source = createSessionServiceSource(client, options);
 	const services = source.open({
 		services: options.services,
@@ -65,14 +65,10 @@ export function createSessionServiceBinding(
 		else if (attachment !== undefined) await source.whenAttached(attachment.sessionId, context);
 	};
 	return {
-		get acceptsUnavailableServices() {
-			return source.acceptsUnavailableServices;
-		},
 		attachment: source.attachment,
 		catalogue: (context) => source.catalogue(context),
 		open: (openOptions) => source.open(openOptions),
-		use: (service) => services.use(service),
-		observe: (service, handler) => services.observe(service, handler),
+		get: (service) => services.get(service),
 		ready,
 		whenAttached: (sessionId, context) => source.whenAttached(sessionId, context),
 		whenDetached: (context) => source.whenDetached(context),

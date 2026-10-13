@@ -143,7 +143,7 @@ describe("WebSocket client transport", () => {
 		expect(client.hello).toMatchObject({ serverId });
 		await client.request(
 			{ serverId },
-			{ serviceId: "amazme.session-management", member: "attach", args: ["session-1"] },
+			{ kind: "open", channel: "attachment", host: "session-1" },
 		);
 		expect(client.attachment).toMatchObject({ sessionId: "session-1" });
 		await client.dispose();

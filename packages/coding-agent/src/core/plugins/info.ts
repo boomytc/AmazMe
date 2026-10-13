@@ -21,7 +21,7 @@ export function describePluginManifests(manifestPaths: readonly string[]): strin
 	return describePluginDevelopment([
 		"Native plugin manifests for this session:",
 		...manifestPaths.map((path) => `- ${path}`),
-		"Read the manifest's session entry and its sourceMap to locate original files. Resolve source-map sources relative to that map, applying sourceRoot if present. Edit original source files, not generated bundles. A bundle without a source map does not identify editable source; use the configured package's source location.",
+		"Read plugin.json entries.session.code and its inline source map to locate original files. Apply sourceRoot if present. Edit original source files, not generated bundles. A bundle without a source map does not identify editable source; use the configured package's source location.",
 	]);
 }
 

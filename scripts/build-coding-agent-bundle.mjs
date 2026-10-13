@@ -17,7 +17,6 @@ const banner = {
 };
 const allowedExternalPackages = new Set([
 	"@amazme/chord",
-	"@amazme/chord/bundler",
 	"@amazme/chord/context",
 	"@amazme/chord/delta",
 	"@amazme/chord/node",

@@ -1,4 +1,5 @@
-import { type Context, defineService } from "@amazme/chord";
+import { localService } from "@amazme/protocol/services";
+import { type Context } from "@amazme/chord";
 
 export interface PresentationSelectItem {
 	readonly value: string;
@@ -17,4 +18,4 @@ export interface PresentationUI {
 	showStatus(message: string, context: Context): void;
 }
 
-export const PresentationUI = defineService<PresentationUI>("amazme.local.presentation-ui", { local: true });
+export const PresentationUI = localService<PresentationUI>("amazme.local.presentation-ui");

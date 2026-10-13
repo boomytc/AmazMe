@@ -159,7 +159,7 @@ export async function openClientRuntime(
 					assertAccess() {},
 					onError() {},
 				});
-				const reconnectManagement = reconnectServices.use(SessionManagement);
+				const reconnectManagement = reconnectServices.get(SessionManagement);
 				reconnectors.push(
 					new RadiusClientReconnect(client, async (sessionId) => {
 						await reconnectServices.ready(BACKGROUND_CONTEXT);
@@ -196,8 +196,8 @@ export async function activateBuiltinClientServices(
 		assertAccess() {},
 		onError() {},
 	});
-	const directory = serverServices.use(SessionDirectory);
-	const remoteManagement = serverServices.use(SessionManagement);
+	const directory = serverServices.get(SessionDirectory);
+	const remoteManagement = serverServices.get(SessionManagement);
 	const management: SessionManagement = {
 		create: (options, context) => remoteManagement.create(options, context),
 		async remove(sessionId, context) {
@@ -215,10 +215,10 @@ export async function activateBuiltinClientServices(
 		},
 		rename: (sessionId, name, context) => remoteManagement.rename(sessionId, name, context),
 	};
-	const plugins = serverServices.use(PresentationPlugins);
-	const models = sessionServices.use(Models);
-	const agent = sessionServices.use(AgentController);
-	const transcript = sessionServices.use(Transcript);
+	const plugins = serverServices.get(PresentationPlugins);
+	const models = sessionServices.get(Models);
+	const agent = sessionServices.get(AgentController);
+	const transcript = sessionServices.get(Transcript);
 	await Promise.all([serverServices.ready(BACKGROUND_CONTEXT), sessionServices.ready(BACKGROUND_CONTEXT)]);
 	return { ...server, directory, management, plugins, models, agent, transcript };
 }

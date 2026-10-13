@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 
 export interface SessionInsightsState {
 	revision: number;
@@ -22,4 +23,4 @@ export interface SessionInsights {
 	resume(conversationId: string, context: Context): Promise<void>;
 }
 
-export const SessionInsights = defineService<SessionInsights>("amazme.session-insights");
+export const SessionInsights = remoteService<SessionInsights>("amazme.session-insights", {"refresh":0,"diff":3,"resume":1}, ["state"]);

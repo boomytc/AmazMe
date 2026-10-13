@@ -766,8 +766,6 @@ Examples that call OpenAI need `OPENAI_API_KEY`; most use the faux provider othe
 ## Design Documents
 
 - [`docs/spec.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/spec.md): the normative specification
-- [`docs/pico-v5-handoff.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/pico-v5-handoff.md): the implementation plan
-- [`docs/pico-v5-chord-usage.md`](https://github.com/earendil-works/pi/blob/main/packages/durable/docs/pico-v5-chord-usage.md): how the package uses Chord
 
 Benchmarks: `npm run bench:storage`, `npm run bench:storage:memory`, `npm run bench:tool-output`, `npm run bench:nested-images`, `npm run bench:scheduler-fanout`, and `npm run bench:scheduler-memory`. Fan-out sizes are limited to AmazMe's 256 nested calls per invocation; the image benchmark permits at most 128 read/classify pairs.
 

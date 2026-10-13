@@ -1,4 +1,5 @@
-import { defineService, type Context, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 import type { McpManagementState } from "../../core/mcp/management.ts";
 import type { McpServerConfigPatch } from "../../extensions/mcp/config.ts";
 
@@ -12,4 +13,4 @@ export interface Mcp {
 	cancelLogin(id: string, context: Context): Promise<boolean>;
 }
 
-export const Mcp = defineService<Mcp>("amazme.mcp");
+export const Mcp = remoteService<Mcp>("amazme.mcp", {"reload":0,"reconnect":1,"configure":3,"startLogin":1,"submitRedirect":2,"cancelLogin":1}, ["state"]);

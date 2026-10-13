@@ -4,7 +4,6 @@
 		"outDir": "./dist",
 		"paths": {
 			"@amazme/chord": ["../chord/dist/index.d.ts"],
-			"@amazme/chord/bundler": ["../chord/dist/bundler.d.ts"],
 			"@amazme/chord/node": ["../chord/dist/node.d.ts"],
 			"@amazme/agent": ["../agent/dist/index.d.ts"],
 			"@amazme/agent/*": ["../agent/dist/*.d.ts"],

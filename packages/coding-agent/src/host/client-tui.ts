@@ -1,5 +1,7 @@
+import { sourceFacets } from "./services/connection.ts";
+import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
 import { resolve } from "node:path";
-import { combineFacetLoaders, createFacetHost, defineFacet, type FacetHost, type FacetLoader, type JsonValue, type LoadedFacets } from "@amazme/chord";
+import { createHost, type Host, type Facet, type FacetLoader, type JsonValue } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import type { AgentState, ConversationView, EntryRecord } from "@amazme/durable";
 import { CombinedAutocompleteProvider, type Component, Container, isFocusable, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
@@ -21,7 +23,7 @@ import { InteractiveThemeController } from "../modes/interactive/theme/theme-con
 import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
 import { type OpenClientRuntimeOptions, openClientRuntime } from "./client-runtime.ts";
 import { ExperimentalChatView } from "./client-tui-chat.ts";
-import { createPresentationFacetLoaders } from "./plugins/bundled.ts";
+import { loadFacets, createPresentationFacetLoaders } from "./plugins/bundled.ts";
 import { AgentController, type AgentOperationResponse, type AgentQueueResponse } from "../core/plugins/agent-controller.ts";
 import type { ServerConnectionState, ServerServiceSource, SessionAttachmentState, SessionServiceSource } from "./services/connection.ts";
 import { Conversations, type Conversations as ConversationsService } from "./services/conversations.ts";
@@ -81,8 +83,7 @@ const selectTheme = {
 	selectedText: (text: string) => theme.fg("accent", text),
 	description: (text: string) => theme.fg("muted", text),
 	scrollInfo: (text: string) => theme.fg("dim", text),
-	noMatch: (text: string) => theme.fg("warning", text),
-};
+	noMatch: (text: string) => theme.fg("warning", text) };
 
 /** Service-only presentation driven by a replicated main-lane snapshot. */
 export class ExperimentalClientTui implements Component {
@@ -96,10 +97,9 @@ export class ExperimentalClientTui implements Component {
 	readonly #editorContainer = new Container();
 	readonly #footerComponent = new Text("", 1, 0);
 	readonly #layoutRoot: Component;
-	readonly #sharedFacets: LoadedFacets;
+	readonly #sharedFacets: readonly Facet[];
 	readonly #keybindings = KeybindingsManager.create();
-	#presentationFacets: LoadedFacets | undefined;
-	#facetHost: FacetHost | undefined;
+	#facetHost: Host | undefined;
 	#facetReloadTail = Promise.resolve();
 	#session: SessionFeature | undefined;
 	#slashCommands: SlashCommands | undefined;
@@ -130,7 +130,7 @@ export class ExperimentalClientTui implements Component {
 	#laneUnsubscribe: (() => void) | undefined;
 	#chatView: ExperimentalChatView | undefined;
 
-	private constructor(ui: TUI, requestRender: () => void, finish: () => void, loadedFacets: LoadedFacets) {
+	private constructor(ui: TUI, requestRender: () => void, finish: () => void, loadedFacets: readonly Facet[]) {
 		this.#ui = ui;
 		this.#requestRender = requestRender;
 		this.#finish = finish;
@@ -163,8 +163,7 @@ export class ExperimentalClientTui implements Component {
 			editor: this.#editorContainer,
 			footer: this.#footerComponent,
 			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
-			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
-		}).root;
+			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text) }).root;
 		this.#rebuild();
 	}
 
@@ -177,7 +176,7 @@ export class ExperimentalClientTui implements Component {
 		finish(): void;
 	}): Promise<ExperimentalClientTui> {
 		const prepared = await prepareClientSession(options.command, options.servers);
-		const loadedFacets = await combineFacetLoaders(options.facetLoader === undefined ? [] : [options.facetLoader]).load();
+		const loadedFacets = await loadFacets(options.facetLoader === undefined ? [] : [options.facetLoader]);
 		const component = new ExperimentalClientTui(options.ui, options.requestRender, options.finish, loadedFacets);
 		try {
 			await component.#start(prepared);
@@ -260,107 +259,116 @@ export class ExperimentalClientTui implements Component {
 
 	async #start(prepared: PreparedClientSession): Promise<void> {
 		const server = prepared.server;
-		const hasInsights = (await server.session.catalogue(BACKGROUND_CONTEXT)).some(entry => entry.serviceId === SessionInsights.id);
-		let presentationFacets = await combineFacetLoaders(createPresentationFacetLoaders(prepared.presentationPlugins)).load();
-		this.#presentationFacets = presentationFacets;
-		let facetHost!: FacetHost;
+		const hasInsights = (await server.session.catalogue(BACKGROUND_CONTEXT)).some(entry => entry.serviceId === SessionInsights.name);
+		let presentationFacets = await loadFacets(createPresentationFacetLoaders(prepared.presentationPlugins));
+		let facetHost!: Host;
 		const reloadPresentationPlugins = (data: JsonValue): Promise<void> => {
 			const operation = this.#facetReloadTail.then(async () => {
 				if (this.#authFlow) await this.#stopAuthentication();
-				const candidate = await combineFacetLoaders(createPresentationFacetLoaders(data)).load();
-				try {
-					await facetHost.reload(candidate.facets);
-				} catch (error) {
-					try {
-						await candidate.dispose();
-					} catch (cleanupError) {
-						throw new AggregateError([error, cleanupError], "TUI plugin reload and cleanup failed");
-					}
-					throw error;
-				}
-				const retired = presentationFacets;
-				presentationFacets = candidate;
-				this.#presentationFacets = candidate;
-				await retired.dispose();
+				const candidate = await loadFacets(createPresentationFacetLoaders(data));
+				const previousNames = new Set(presentationFacets.map(facet => facet.name));
+    const names = new Set(candidate.map(facet => facet.name));
+    const bridges = await sourceFacets([...builtins, ...candidate], [server.server, server.session]);
+    await facetHost.reload([...bridges, ...candidate], { remove: [...previousNames].filter(name => !names.has(name)) });
+    presentationFacets = candidate;
 			});
 			this.#facetReloadTail = operation.catch(() => {});
 			return operation;
 		};
-		const presentationBridgeFacet = defineFacet({
-			id: "@pi/presentation-bridge",
-			setup: (env) => {
-				env.provide(PresentationUI, {
-					select: (title, items, selectedValue) =>
-						this.#select(
-							title,
-							items.map((item) => ({ ...item })),
-							selectedValue,
-						),
-					showStatus: (status) => {
-						this.#status = status;
-						this.#rebuild();
-					},
-				});
-				const commands = env.use(SlashCommands);
-				const catalog = env.use(Commands);
-				const controller = env.use(AgentController);
-				const transcript = env.use(Transcript);
-				const conversations = env.use(Conversations);
-				const models = env.use(Models);
-				const sessionFeature: SessionFeature = {
-					serverId: server.serverId,
-					session: server.session,
-					transcript,
-				};
-				env.onActivate(() => {
-					if (this.#session !== undefined || this.#slashCommands !== undefined || this.#controller !== undefined) {
-						throw new Error("Presentation services are already active");
-					}
-					this.#session = sessionFeature;
-					this.#slashCommands = commands;
-					this.#commands = catalog;
-					this.#controller = controller;
-					this.#conversations = conversations;
-					this.#models = models;
-					env.own(() => {
-						if (this.#session === sessionFeature) this.#session = undefined;
-						if (this.#slashCommands === commands) this.#slashCommands = undefined;
-						if (this.#commands === catalog) this.#commands = undefined;
-						if (this.#controller === controller) this.#controller = undefined;
-						if (this.#conversations === conversations) this.#conversations = undefined;
-						if (this.#models === models) this.#models = undefined;
-					});
-					env.own(
-						conversations.state.subscribe(() => {
-							const shown = this.#conversationView();
-							if (shown !== undefined) this.#chatView?.apply(this.#withHistory(shown));
+		const presentationBridgeFacet = serviceFacet(
+			"@pi/presentation-bridge",
+			PresentationUI,
+			[SlashCommands, Commands, AgentController, Transcript, Conversations, Models],
+			async (services) => {
+				const disposers: Array<() => void | Promise<void>> = [];
+				try {
+					const implementation: ServiceValue<typeof PresentationUI> = {
+						select: (title, items, selectedValue) =>
+							this.#select(
+								title,
+								items.map((item) => ({ ...item })),
+								selectedValue,
+							),
+						showStatus: (status) => {
+							this.#status = status;
 							this.#rebuild();
-						}),
-					);
-					env.own(commands.subscribe(() => this.#updateAutocomplete()));
-					env.own(catalog.state.subscribe(() => this.#updateAutocomplete()));
-					env.own(models.state.subscribe(() => { this.#updateAutocomplete(); this.#rebuild(); }));
-					env.own(server.session.attachment.subscribe((state) => {
-						if (state.status !== "attached" || state.sessionId !== this.#sessionId) this.#authFlow?.controller.abort();
-					}));
-					if (server.radius) {
-						env.own(server.server.connection.subscribe((state) => this.#handleConnectionState(server.serverId, state)));
-						env.own(server.session.attachment.subscribe((state) => this.#handleAttachmentState(sessionFeature, state)));
-					}
-				});
+						},
+					};
+					const commands = services.get(SlashCommands);
+					const catalog = services.get(Commands);
+					const controller = services.get(AgentController);
+					const transcript = services.get(Transcript);
+					const conversations = services.get(Conversations);
+					const models = services.get(Models);
+					const sessionFeature: SessionFeature = {
+						serverId: server.serverId,
+						session: server.session,
+						transcript,
+					};
+					await (() => {
+						if (this.#session !== undefined || this.#slashCommands !== undefined || this.#controller !== undefined) {
+							throw new Error("Presentation services are already active");
+						}
+						this.#session = sessionFeature;
+						this.#slashCommands = commands;
+						this.#commands = catalog;
+						this.#controller = controller;
+						this.#conversations = conversations;
+						this.#models = models;
+						disposers.push(() => {
+							if (this.#session === sessionFeature) this.#session = undefined;
+							if (this.#slashCommands === commands) this.#slashCommands = undefined;
+							if (this.#commands === catalog) this.#commands = undefined;
+							if (this.#controller === controller) this.#controller = undefined;
+							if (this.#conversations === conversations) this.#conversations = undefined;
+							if (this.#models === models) this.#models = undefined;
+						});
+						disposers.push(
+							conversations.state.subscribe(() => {
+								const shown = this.#conversationView();
+								if (shown !== undefined) this.#chatView?.apply(this.#withHistory(shown));
+								this.#rebuild();
+							}),
+						);
+						disposers.push(commands.subscribe(() => this.#updateAutocomplete()));
+						disposers.push(catalog.state.subscribe(() => this.#updateAutocomplete()));
+						disposers.push(
+							models.state.subscribe(() => {
+								this.#updateAutocomplete();
+								this.#rebuild();
+							}),
+						);
+						disposers.push(
+							server.session.attachment.subscribe((state) => {
+								if (state.status !== "attached" || state.sessionId !== this.#sessionId) this.#authFlow?.controller.abort();
+							}),
+						);
+						if (server.radius) {
+							disposers.push(
+								server.server.connection.subscribe((state) => this.#handleConnectionState(server.serverId, state)),
+							);
+							disposers.push(
+								server.session.attachment.subscribe((state) => this.#handleAttachmentState(sessionFeature, state)),
+							);
+						}
+					})();
+
+					return { value: implementation, close: () => disposeResources(disposers) };
+				} catch (error) {
+					await disposeResources(disposers);
+					throw error;
+				}
 			},
-		});
-		facetHost = await createFacetHost({
-			facets: [
-				createSlashCommandsRuntimeFacet(),
-				presentationBridgeFacet,
-				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins, authenticate: (mode, provider) => this.#authenticate(mode, provider) }),
-				...(hasInsights ? [createInsightsCommandsFacet()] : []),
-				...this.#sharedFacets.facets,
-				...presentationFacets.facets,
-			],
-			serviceSources: [server.server, server.session],
-		});
+		);
+		const builtins = [
+   createSlashCommandsRuntimeFacet(), presentationBridgeFacet,
+   createBuiltInSlashCommandsFacet({ reloadPresentationPlugins, authenticate: (mode, provider) => this.#authenticate(mode, provider) }),
+   ...(hasInsights ? [createInsightsCommandsFacet()] : []), ...this.#sharedFacets,
+  ];
+  facetHost = createHost({ name: "presentation" });
+  this.#facetHost = facetHost;
+  const bridges = await sourceFacets([...builtins, ...presentationFacets], [server.server, server.session]);
+  await facetHost.load([...bridges, ...builtins, ...presentationFacets]);
 		this.#facetHost = facetHost;
 	}
 
@@ -391,16 +399,13 @@ export class ExperimentalClientTui implements Component {
 		}
 		if (this.#facetHost !== undefined) {
 			try {
-				await this.#facetHost.dispose();
+				await this.#facetHost.close();
 			} catch (error) {
 				errors.push(error);
 			}
 			this.#facetHost = undefined;
 		}
-		const generations = [this.#presentationFacets, this.#sharedFacets].filter((generation): generation is LoadedFacets => generation !== undefined);
-		this.#presentationFacets = undefined;
-		const results = await Promise.allSettled(generations.map((generation) => generation.dispose()));
-		errors.push(...results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])));
+
 		if (errors.length === 1) throw errors[0];
 		if (errors.length > 1) throw new AggregateError(errors, "Failed to dispose experimental TUI facets");
 	}
@@ -460,8 +465,7 @@ export class ExperimentalClientTui implements Component {
 				title,
 				items,
 				...(selectedValue === undefined ? {} : { selectedValue }),
-				resolve,
-			};
+				resolve };
 			this.#screen = "select";
 			this.#rebuild();
 		});
@@ -513,8 +517,7 @@ export class ExperimentalClientTui implements Component {
 			startLogin: (id, method) => models.startLogin(id, method, context()),
 			submitPrompt: (id, promptId, value) => models.submitLoginPrompt(id, promptId, value, context()),
 			cancelLogin: (id) => sameTarget() ? models.cancelLogin(id, withAbortSignal(AbortSignal.timeout(5_000), BACKGROUND_CONTEXT)) : Promise.resolve(false),
-			logout: (id) => models.logout(id, context()),
-		}, mode, provider, {
+			logout: (id) => models.logout(id, context()) }, mode, provider, {
 			ui: this.#ui,
 			mount,
 			select: (title, items, confirm, cancel) => mount(new ListSelector(title, items, confirm, cancel)),
@@ -525,8 +528,7 @@ export class ExperimentalClientTui implements Component {
 				back.onSelect = close; back.onCancel = close;
 				panel.addChild(back);
 				mount({ render: width => panel.render(width), invalidate: () => panel.invalidate(), handleInput: data => back.handleInput(data) });
-			},
-		}, owner.signal).then((result) => {
+			} }, owner.signal).then((result) => {
 			if (this.#closed || this.#busy || !sameTarget()) return;
 			const login = models.state.value?.authentication?.login;
 			this.#status = result && "loggedOut" in result ? "Saved credentials removed; environment credentials remain available."
@@ -556,8 +558,7 @@ export class ExperimentalClientTui implements Component {
 				getArgumentCompletions: async (prefix: string) => {
 					const items = await catalog.complete(command.name, prefix, BACKGROUND_CONTEXT);
 					return this.#closed || catalog !== this.#commands ? [] : [...items];
-				},
-			}));
+				} }));
 		this.#chatInput.setAutocompleteProvider(
 			new CombinedAutocompleteProvider(
 				[...TERMINAL_COMMANDS, ...commands.filter(command => !TERMINAL_COMMANDS.some(local => local.name === command.name)).map((command) => ({
@@ -570,9 +571,7 @@ export class ExperimentalClientTui implements Component {
 								getArgumentCompletions: async (prefix: string) => {
 									const items = await command.getArgumentCompletions!(prefix);
 									return items === null ? null : [...items];
-								},
-							}),
-				})), ...remote],
+								} }) })), ...remote],
 				process.cwd(),
 			),
 		);
@@ -774,13 +773,11 @@ export class ExperimentalClientTui implements Component {
 			};
 			this.#modelScopeSelector = new ScopedModelsSelectorComponent({
 				allModels: config.allModels,
-				enabledModelIds: config.enabledModelIds === null ? null : [...config.enabledModelIds],
-			}, {
+				enabledModelIds: config.enabledModelIds === null ? null : [...config.enabledModelIds] }, {
 				onChange: (ids) => configure(ids, false),
 				onPersist: (ids) => configure(ids, true),
 				onCancel: () => { this.#modelScopeSelector = undefined; this.#rebuild(); },
-				requestRender: this.#requestRender,
-			});
+				requestRender: this.#requestRender });
 			this.#rebuild();
 		} catch (error) { if (current()) this.showError(message(error)); }
 	}
@@ -897,13 +894,11 @@ export class ExperimentalClientTui implements Component {
 				...listed.conversations.map((summary) => ({
 					value: `focus:${summary.id}`,
 					label: `${"  ".repeat(summary.depth)}${summary.label}`,
-					description: summary.role,
-				})),
+					description: summary.role })),
 				...points.map((point) => ({
 					value: `leave:${point.id}`,
 					label: point.label,
-					description: "return",
-				})),
+					description: "return" })),
 			],
 			`focus:${listed.selected}`,
 		);
@@ -990,16 +985,13 @@ async function prepareClientSession(command: ClientCommand, servers: readonly Cl
 		services: server.server.open({
 			services: [SessionDirectory, SessionManagement, PresentationPlugins],
 			assertAccess() {},
-			onError() {},
-		}),
-	}));
+			onError() {} }) }));
 	try {
 		const features = opened.map(({ server, services }) => ({
 			server,
-			directory: services.use(SessionDirectory),
-			management: services.use(SessionManagement),
-			plugins: services.use(PresentationPlugins),
-		}));
+			directory: services.get(SessionDirectory),
+			management: services.get(SessionManagement),
+			plugins: services.get(PresentationPlugins) }));
 		await Promise.all(opened.map(({ services }) => services.ready(BACKGROUND_CONTEXT)));
 		let selected:
 			| {
@@ -1017,8 +1009,7 @@ async function prepareClientSession(command: ClientCommand, servers: readonly Cl
 						server: feature.server,
 						management: feature.management,
 						plugins: feature.plugins,
-						summary,
-					})),
+						summary })),
 			);
 			if (matches.length > 1) throw new Error(`Session ${command.sessionId} is available from more than one server`);
 			selected = matches[0];
@@ -1031,8 +1022,7 @@ async function prepareClientSession(command: ClientCommand, servers: readonly Cl
 					server: feature.server,
 					management: feature.management,
 					plugins: feature.plugins,
-					summary: await feature.management.create({ id: command.sessionId }, BACKGROUND_CONTEXT),
-				};
+					summary: await feature.management.create({ id: command.sessionId }, BACKGROUND_CONTEXT) };
 			}
 		} else if (command.continue === true || command.resume === true) {
 			selected = features
@@ -1041,8 +1031,7 @@ async function prepareClientSession(command: ClientCommand, servers: readonly Cl
 						server: feature.server,
 						management: feature.management,
 						plugins: feature.plugins,
-						summary,
-					})),
+						summary })),
 				)
 				.sort(
 					(left, right) =>
@@ -1057,14 +1046,12 @@ async function prepareClientSession(command: ClientCommand, servers: readonly Cl
 				server: feature.server,
 				management: feature.management,
 				plugins: feature.plugins,
-				summary: await feature.management.create({}, BACKGROUND_CONTEXT),
-			};
+				summary: await feature.management.create({}, BACKGROUND_CONTEXT) };
 		}
 		const presentationPlugins = await selected.plugins.prepareSession(
 			{
 				sessionId: selected.summary.sessionId,
-				packagePaths: command.pluginPackages?.map((packagePath) => resolve(packagePath)) ?? null,
-			},
+				packagePaths: command.pluginPackages?.map((packagePath) => resolve(packagePath)) ?? null },
 			BACKGROUND_CONTEXT,
 		);
 		await selected.management.attach(selected.summary.sessionId, BACKGROUND_CONTEXT);
@@ -1072,8 +1059,7 @@ async function prepareClientSession(command: ClientCommand, servers: readonly Cl
 		return {
 			server: selected.server,
 			summary: selected.summary,
-			presentationPlugins,
-		};
+			presentationPlugins };
 	} finally {
 		await Promise.allSettled(opened.map(({ services }) => services.dispose(BACKGROUND_CONTEXT)));
 	}
@@ -1090,8 +1076,7 @@ export async function runClientTui(command: ClientCommand, options: RunClientTui
 		noExtensions: true,
 		noSkills: true,
 		noPromptTemplates: true,
-		noContextFiles: true,
-	});
+		noContextFiles: true });
 	await resourceLoader.reload();
 	setRegisteredThemes(resourceLoader.getThemes().themes);
 	const runtime = await openClientRuntime(command, options);
@@ -1099,16 +1084,14 @@ export async function runClientTui(command: ClientCommand, options: RunClientTui
 		tuiMode: "fullscreen",
 		showHardwareCursor: settingsManager.getShowHardwareCursor(),
 		logDirectory: agentDir,
-		fullscreenWheelScrollLines: settingsManager.getFullscreenWheelScrollLines(),
-	});
+		fullscreenWheelScrollLines: settingsManager.getFullscreenWheelScrollLines() });
 	tui.setClearOnShrink(settingsManager.getClearOnShrink());
 	let component: ExperimentalClientTui | undefined;
 	let tuiStarted = false;
 	const themeController = new InteractiveThemeController(tui, {
 		getSettingsManager: () => settingsManager,
 		showError: (error) => component?.showError(error),
-		onChanged: () => component?.refreshTheme(),
-	});
+		onChanged: () => component?.refreshTheme() });
 	try {
 		let finish!: () => void;
 		const finished = new Promise<void>((resolve) => {
@@ -1128,12 +1111,10 @@ export async function runClientTui(command: ClientCommand, options: RunClientTui
 				serverId: server.route.serverId,
 				radius: server.route.transport === "radius",
 				server: server.server,
-				session: server.session,
-			})),
+				session: server.session })),
 			facetLoader: options.facetLoader,
 			requestRender: () => tui.requestRender(),
-			finish,
-		});
+			finish });
 		tui.addChild(component);
 		tui.setLayoutRoot(component.layoutRoot);
 		tui.setFocus(component);

@@ -182,12 +182,8 @@ async function pluginCandidates(path: string): Promise<PluginCandidate[]> {
 			return result;
 		}
 	}
-	const { inspectFacetPackage } = await import("@amazme/chord/bundler");
-	const pkg = await inspectFacetPackage({
-		packagePath: path,
-		defaultFacets: { session: "src/session.ts" },
-		entryNames: ["session"],
-	});
+	const { inspectPluginPackage } = await import("./package.ts");
+ const pkg = await inspectPluginPackage(path);
 	const entry = pkg.entries.session;
 	if (entry === undefined) return [];
 	const logicalRoot = info.isDirectory() ? path : dirname(path);

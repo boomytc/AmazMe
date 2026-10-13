@@ -1,4 +1,6 @@
-import { createFacetHost, defineFacet } from "@amazme/chord";
+import { openTestHost } from "./native-host-support.ts";
+import { serviceFacet, type ServiceValue } from "@amazme/protocol/services";
+import { } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { fauxAssistantMessage } from "@amazme/ai";
 import type { InboxState, LiveState } from "@amazme/durable";
@@ -10,29 +12,23 @@ import { openFauxConversation, pendingResponse } from "./experimental-durable-su
 describe("AgentController service", () => {
 	test("prompts the root conversation through the service catalogue", async () => {
 		const { harness, conversation, close } = await openFauxConversation([fauxAssistantMessage("hello back")]);
-		const host = await createFacetHost({
+		const host = await openTestHost({
 			facets: [
-				defineFacet({
-					id: "test-agent-controller",
-					setup(env) {
-						env.provide(AgentController, createAgentController(harness, () => conversation));
-					},
+				serviceFacet("test-agent-controller", AgentController, [], async (services) => {
+					const implementation: ServiceValue<typeof AgentController> = createAgentController(harness, () => conversation);
+
+					return { value: implementation };
 				}),
-			],
-		});
+			] });
 		try {
-			expect(host.services.catalogue).toEqual([{ serviceId: AgentController.id, mode: "singleton" }]);
-			const response = await host.services.invoke(
-				{ serviceId: AgentController.id, member: "prompt", args: [{ message: "hello", images: null }] },
-				BACKGROUND_CONTEXT,
-			);
+			expect(host.services.catalogue.filter(entry => !entry.local)).toEqual([{ serviceId: AgentController.name }]);
+			const controller = host.services.get(AgentController);
+   await host.services.scope.ready();
+   const response = await controller.prompt({ message: "hello", images: null }, BACKGROUND_CONTEXT);
 			expect(response).toEqual({ accepted: true, operationId: expect.any(String), error: null });
 			const operationId = (response as { operationId: string }).operationId;
 			await expect(
-				host.services.invoke(
-					{ serviceId: AgentController.id, member: "waitForPrompt", args: [operationId] },
-					BACKGROUND_CONTEXT,
-				),
+				controller.waitForPrompt(operationId, BACKGROUND_CONTEXT),
 			).resolves.toEqual({ status: "done", text: "hello back", reason: null });
 		} finally {
 			await host.dispose();
@@ -52,8 +48,7 @@ describe("AgentController service", () => {
 			await expect(controller.prompt({ message: "second", images: null }, BACKGROUND_CONTEXT)).resolves.toEqual({
 				accepted: false,
 				operationId: null,
-				error: { code: "busy", message: expect.stringContaining("busy") },
-			});
+				error: { code: "busy", message: expect.stringContaining("busy") } });
 			const steer = await controller.steer({ message: "steer", images: null }, BACKGROUND_CONTEXT);
 			const followUp = await controller.followUp({ message: "later", images: null }, BACKGROUND_CONTEXT);
 			expect(steer).toEqual({ accepted: true, entryId: expect.any(String), error: null });
@@ -70,15 +65,12 @@ describe("AgentController service", () => {
 
 			if (!followUp.accepted) throw new Error("Follow-up was rejected");
 			await expect(controller.cancelQueued(followUp.entryId, BACKGROUND_CONTEXT)).resolves.toEqual({
-				outcome: "cancelled",
-			});
+				outcome: "cancelled" });
 			await expect(controller.cancelQueued(followUp.entryId, BACKGROUND_CONTEXT)).resolves.toEqual({
-				outcome: "already_consumed",
-			});
+				outcome: "already_consumed" });
 			await expect(controller.cancelQueued("999", BACKGROUND_CONTEXT)).resolves.toEqual({ outcome: "not_found" });
 			await expect(controller.cancelQueued("not-an-id", BACKGROUND_CONTEXT)).resolves.toEqual({
-				outcome: "not_found",
-			});
+				outcome: "not_found" });
 
 			await controller.abort(BACKGROUND_CONTEXT);
 			const view = await conversation.viewState(BACKGROUND_CONTEXT);
@@ -90,8 +82,7 @@ describe("AgentController service", () => {
 			if (!first.accepted) throw new Error("Prompt was rejected");
 			await expect(controller.waitForPrompt(first.operationId, BACKGROUND_CONTEXT)).resolves.toMatchObject({
 				status: "unanswered",
-				text: null,
-			});
+				text: null });
 		} finally {
 			await close();
 		}
@@ -104,8 +95,7 @@ describe("AgentController service", () => {
 			await expect(controller.compact({ customInstructions: "short" }, BACKGROUND_CONTEXT)).resolves.toEqual({
 				accepted: true,
 				operationId: expect.any(String),
-				error: null,
-			});
+				error: null });
 		} finally {
 			await close();
 		}

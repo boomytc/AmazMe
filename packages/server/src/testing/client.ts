@@ -1,6 +1,7 @@
+import type { ChannelCall } from "@amazme/protocol";
 import { once } from "node:events";
 import { createConnection, type Socket } from "node:net";
-import type { JsonValue, ServiceCall } from "@amazme/chord";
+import type { JsonValue } from "@amazme/chord";
 import {
 	type ClientMessage,
 	encodeClientMessage,
@@ -48,9 +49,9 @@ export class ProtocolTestClient {
 		return response;
 	}
 
-	async requestService(
+	async requestChannel(
 		target: RpcTarget,
-		call: ServiceCall,
+		call: ChannelCall,
 		id = `request-${++this.requestSequence}`,
 	): Promise<ResponseEnvelope> {
 		const response = this.next(
@@ -61,16 +62,16 @@ export class ProtocolTestClient {
 	}
 
 	attach(serverId: string, sessionId: string): Promise<ResponseEnvelope> {
-		return this.requestService(
+		return this.requestChannel(
 			{ serverId },
-			{ serviceId: "amazme.session-management", member: "attach", args: [sessionId] },
+			{ kind: "open", channel: "attachment", host: sessionId },
 		);
 	}
 
 	requestSessionService(
 		serverId: string,
 		sessionId: string,
-		call: ServiceCall,
+		call: ChannelCall,
 		id?: string,
 	): Promise<ResponseEnvelope> {
 		const attachment = this.attachment;
@@ -78,7 +79,7 @@ export class ProtocolTestClient {
 			attachment === undefined || attachment.sessionId !== sessionId
 				? { serverId, sessionId, attachmentId: "missing-attachment" }
 				: { serverId, ...attachment };
-		return this.requestService(target, call, id);
+		return this.requestChannel(target, call, id);
 	}
 
 	sendMessage(message: ClientMessage): Promise<void> {

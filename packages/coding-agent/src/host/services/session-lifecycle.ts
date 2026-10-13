@@ -1,4 +1,5 @@
-import { type Context, defineService } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context } from "@amazme/chord";
 
 /** A fresh worker-owned check; the host never opens a running worker's SQLite file. */
 export interface SessionLifecycle {
@@ -7,4 +8,4 @@ export interface SessionLifecycle {
 	stopWork(context: Context): Promise<void>;
 }
 
-export const SessionLifecycle = defineService<SessionLifecycle>("amazme.session-lifecycle");
+export const SessionLifecycle = remoteService<SessionLifecycle>("amazme.session-lifecycle", {"isEmpty":0,"refreshMirror":0,"stopWork":0}, []);

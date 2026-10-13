@@ -1,18 +1,17 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 import type {
 	AgentCompactionRequest,
 	AgentOperationResponse,
 	AgentPromptRequest,
-	AgentQueueResponse,
-} from "../../core/plugins/agent-controller.ts";
+	AgentQueueResponse } from "../../core/plugins/agent-controller.ts";
 
 import type {
 	ConversationsState,
 	ForkResult,
 	ReturnPoint,
 	LeaveResult,
-	HistoryPage,
-} from "../../durable/conversation-view.ts";
+	HistoryPage } from "../../durable/conversation-view.ts";
 
 /** The Session's conversations, its live task graph, stored history, and how to talk to any of them. */
 export interface Conversations {
@@ -75,4 +74,4 @@ export interface Conversations {
 	compact(conversationId: string, request: AgentCompactionRequest, context: Context): Promise<AgentOperationResponse>;
 }
 
-export const Conversations = defineService<Conversations>("amazme.conversations");
+export const Conversations = remoteService<Conversations>("amazme.conversations", {"cancelSummaries":0,"select":1,"fork":2,"rename":2,"setArchived":2,"returnPoints":1,"leave":3,"refresh":0,"older":4,"prompt":2,"steer":2,"followUp":2,"abort":1,"cancelQueued":2,"compact":2}, ["state"]);

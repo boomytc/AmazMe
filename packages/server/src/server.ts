@@ -1,13 +1,5 @@
-import {
-	createServiceStateEncoder,
-	decodeServiceControlCall,
-	type JsonValue,
-	parseServiceCall,
-	parseServiceSubscriptionSnapshot,
-	RemoteServiceError,
-	type ServiceCall,
-	type ServiceProviderUpdate,
-} from "@amazme/chord";
+import { ChordError, type Frame, type JsonValue } from "@amazme/chord";
+import { frameJson, parseChannelCall, type ChannelCall } from "@amazme/protocol";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import {
 	type CancelEnvelope,
@@ -154,7 +146,6 @@ export class Server<TMetadata extends SessionMetadata = SessionMetadata> {
 		state = {
 			connection,
 			decoder: new ClientMessageDecoder({ maxFrameLength: this.maxFrameLength }),
-			serviceStateEncoders: new Map(),
 			stage: "awaitingHello",
 			disconnected: false,
 			handshakeTimeout,
@@ -313,9 +304,9 @@ export class Server<TMetadata extends SessionMetadata = SessionMetadata> {
 			} satisfies ResponseEnvelope);
 			return;
 		}
-		let call: ServiceCall;
+		let call: ChannelCall;
 		try {
-			call = parseServiceCall(envelope.call);
+			call = parseChannelCall(envelope.call);
 		} catch {
 			await this.sendMessage(state, {
 				type: "response",
@@ -329,75 +320,16 @@ export class Server<TMetadata extends SessionMetadata = SessionMetadata> {
 		const active = { controller, target: envelope.target };
 		state.activeRequests.set(envelope.id, active);
 		const context = withAbortSignal(controller.signal, TODO_CONTEXT);
-		const control = decodeServiceControlCall(call);
-		const subscribing = control?.type === "subscribe" ? control : undefined;
-		const pendingUpdates: { readonly update: ServiceProviderUpdate }[] = [];
-		let subscriptionReady = subscribing === undefined;
-		let installedSubscriptionEncoder = false;
-		let responded = false;
-		const publish = async (subscriptionId: string, update: ServiceProviderUpdate): Promise<void> => {
-			if (subscribing !== undefined && subscriptionId === subscribing.subscriptionId && !subscriptionReady) {
-				pendingUpdates.push({ update });
-				return;
-			}
-			await this.sendServiceUpdate(state, subscriptionId, update);
-		};
+		const publish = (channelId: string, frame: Frame | undefined): Promise<void> => this.sendChannelFrame(state, channelId, frame);
 		try {
 			if (envelope.target.serverId !== this.serverId) throw new WrongServerError();
-			if (subscribing !== undefined && state.serviceStateEncoders.has(subscribing.subscriptionId)) {
-				throw new ProtocolValidationError(`Duplicate service subscription ${subscribing.subscriptionId}`);
-			}
 			let result: JsonValue | undefined;
-			if ("sessionId" in envelope.target) {
-				result = await this.sessions.executeServiceCall(call, envelope.target, state, publish, context);
-			} else if (state.serverServices !== undefined) {
-				result = await state.serverServices.invokeService(call, publish, context);
-			} else {
-				throw new ProtocolValidationError(`Unknown service member ${call.serviceId}.${call.member}`);
-			}
-			if (subscribing !== undefined) {
-				if (result === undefined)
-					throw new ProtocolValidationError("Service subscription did not return a snapshot");
-				const stateEncoder = createServiceStateEncoder();
-				result = stateEncoder.encodeSnapshot(parseServiceSubscriptionSnapshot(result)) as unknown as JsonValue;
-				state.serviceStateEncoders.set(subscribing.subscriptionId, stateEncoder);
-				installedSubscriptionEncoder = true;
-			} else if (control?.type === "unsubscribe") {
-				state.serviceStateEncoders.delete(control.subscriptionId);
-			}
-			await this.sendMessage(
-				state,
-				result === undefined
-					? { type: "response", id: envelope.id, ok: true }
-					: { type: "response", id: envelope.id, ok: true, result },
-			);
-			responded = true;
-			if (subscribing !== undefined) {
-				while (pendingUpdates.length > 0) {
-					const pending = pendingUpdates.shift();
-					if (pending !== undefined)
-						await this.sendServiceUpdate(state, subscribing.subscriptionId, pending.update);
-				}
-				subscriptionReady = true;
-			}
+			if ("sessionId" in envelope.target) result = await this.sessions.executeChannelCall(call, envelope.target, state, publish, context);
+			else if (state.serverServices) result = await state.serverServices.invokeChannel(call, publish, context);
+			else throw new ProtocolValidationError("Server channel is unavailable");
+			await this.sendMessage(state, result === undefined ? { type: "response", id: envelope.id, ok: true } : { type: "response", id: envelope.id, ok: true, result });
 		} catch (error) {
-			if (subscribing !== undefined && installedSubscriptionEncoder && !responded) {
-				state.serviceStateEncoders.delete(subscribing.subscriptionId);
-			}
-			if (responded) {
-				this.reportError(error);
-				await this.closeConnection(state.connection);
-				this.disconnect(state);
-			} else {
-				await this.sendMessage(state, {
-					type: "response",
-					id: envelope.id,
-					ok: false,
-					error: controller.signal.aborted
-						? { code: "cancelled", message: "RPC request cancelled" }
-						: this.toProtocolError(error),
-				} satisfies ResponseEnvelope);
-			}
+			await this.sendMessage(state, { type: "response", id: envelope.id, ok: false, error: controller.signal.aborted ? { code: "cancelled", message: "RPC request cancelled" } : this.toProtocolError(error) });
 		} finally {
 			if (state.activeRequests.get(envelope.id) === active) state.activeRequests.delete(envelope.id);
 		}
@@ -423,7 +355,6 @@ export class Server<TMetadata extends SessionMetadata = SessionMetadata> {
 			controller.abort(new Error("Client disconnected"));
 		}
 		connection.activeRequests.clear();
-		connection.serviceStateEncoders.clear();
 		if (this.connections.delete(connection)) this.notifyConnectionCountChanged();
 		const serverServices = connection.serverServices;
 		delete connection.serverServices;
@@ -435,18 +366,8 @@ export class Server<TMetadata extends SessionMetadata = SessionMetadata> {
 		});
 	}
 
-	private async sendServiceUpdate(
-		connection: ConnectionState,
-		subscriptionId: string,
-		update: ServiceProviderUpdate,
-	): Promise<void> {
-		const stateEncoder = connection.serviceStateEncoders.get(subscriptionId);
-		if (stateEncoder === undefined) return;
-		await this.sendMessage(connection, {
-			type: "service_update",
-			subscriptionId,
-			update: stateEncoder.encodeUpdate(update) as unknown as JsonValue,
-		});
+	private async sendChannelFrame(connection: ConnectionState, channelId: string, frame: Frame | undefined): Promise<void> {
+		await this.sendMessage(connection, frame === undefined ? { type: "channel_closed", channelId } : { type: "channel_frame", channelId, frame: frameJson(frame) });
 	}
 
 	private async sendMessage(connection: ConnectionState, message: ServerMessage): Promise<boolean> {
@@ -510,7 +431,7 @@ export class Server<TMetadata extends SessionMetadata = SessionMetadata> {
 	}
 
 	private toProtocolError(error: unknown): ProtocolError {
-		if (error instanceof ServerError || error instanceof RemoteServiceError) {
+		if (error instanceof ServerError || error instanceof ChordError) {
 			return { code: error.code, message: error.message };
 		}
 		if (error instanceof ProtocolValidationError) {

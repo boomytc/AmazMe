@@ -1,4 +1,4 @@
-import { defineService } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
 import type { Context } from "@amazme/chord";
 
 export interface AgentPromptImage {
@@ -65,4 +65,4 @@ export interface AgentController {
 	cancelPrompt(operationId: string, context: Context): Promise<{ outcome: "cancelled" | "settled" | "not_found" }>;
 }
 
-export const AgentController = defineService<AgentController>("amazme.agent-controller");
+export const AgentController = remoteService<AgentController>("amazme.agent-controller", {"prompt":1,"steer":1,"followUp":1,"cancelQueued":1,"abort":0,"compact":1,"waitForPrompt":1,"findPrompt":2,"cancelPrompt":1}, []);

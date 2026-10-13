@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 
 export interface ExampleFacetReply {
 	readonly message: string;
@@ -10,4 +11,4 @@ export interface ExampleFacetService {
 	greet(input: { readonly name: string }, context: Context): Promise<ExampleFacetReply>;
 }
 
-export const ExampleFacetService = defineService<ExampleFacetService>("amazme.example-plugin.greeting");
+export const ExampleFacetService = remoteService<ExampleFacetService>("amazme.example-plugin.greeting", { greet: 1 }, ["workerActivations"]);

@@ -1,4 +1,4 @@
-import { defineService } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
 import type { Context, ReplicatedState } from "@amazme/chord";
 
 export type ScheduleRule =
@@ -99,4 +99,4 @@ export interface Schedules {
 	reload(context: Context): Promise<void>;
 }
 
-export const Schedules = defineService<Schedules>("amazme.schedules");
+export const Schedules = remoteService<Schedules>("amazme.schedules", {"add":1,"update":2,"remove":1,"setEnabled":2,"runNow":2,"cancel":1,"reload":0}, ["state"]);

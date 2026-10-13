@@ -3,6 +3,16 @@
 	"version": "1.1.0",
 	"private": true,
 	"type": "module",
-	"peerDependencies": { "@amazme/ai": "*", "@amazme/chord": "*", "@amazme/coding-agent": "*", "@amazme/durable": "*" },
-	"chord": { "facets": { "session": "src/session.ts" } }
+	"peerDependencies": {
+		"@amazme/ai": "*",
+		"@amazme/chord": "^1.2.0",
+		"@amazme/coding-agent": "^1.2.0",
+		"@amazme/durable": "*",
+		"@amazme/protocol": "^1.2.0"
+	},
+	"chord": {
+		"facets": {
+			"session": "src/session.ts"
+		}
+	}
 }

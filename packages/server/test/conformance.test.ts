@@ -1,4 +1,4 @@
-import type { ServiceCall } from "@amazme/chord";
+import type { ChannelCall } from "@amazme/protocol";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ByteConnection, ByteConnectionHandler } from "../src/connection.ts";
@@ -59,8 +59,8 @@ function connect(server: Server): ProtocolTestClient {
 	return client;
 }
 
-function sessionCall(member: string, args: ServiceCall["args"] = []): ServiceCall {
-	return { serviceId: "test.session", member, args };
+function sessionCall(channel: string, _args: unknown[] = []): ChannelCall {
+ return { kind: "open", channel };
 }
 
 function latestAttachmentId(client: ProtocolTestClient, sessionId: string): string {
@@ -115,7 +115,7 @@ describe("Session protocol", () => {
 			openSession: async (candidate) => {
 				received = candidate;
 				return {
-					attachClient: () => ({ invokeService: async () => undefined, release() {} }),
+					attachClient: () => ({ invokeChannel: async () => undefined, release() {} }),
 					close: async () => {},
 				};
 			},
@@ -137,13 +137,13 @@ describe("Session protocol", () => {
 			serverServices: {
 				attachClient(presentation) {
 					return {
-						async invokeService(call, _publish, context) {
-							if (call.serviceId !== "amazme.session-management") throw new Error("Unexpected service");
-							if (call.member === "attach" && typeof call.args[0] === "string") {
-								await presentation.attachSession(call.args[0], context);
+						async invokeChannel(call, _publish, context) {
+							if (!("channel" in call) || call.channel !== "attachment") throw new Error("Unexpected channel");
+							if (call.kind === "open" && typeof call.host === "string") {
+								await presentation.attachSession(call.host, context);
 								return null;
 							}
-							if (call.member === "detach") {
+							if (call.kind === "close") {
 								await presentation.detachSession(context);
 								return null;
 							}
@@ -168,7 +168,7 @@ describe("Session protocol", () => {
 
 		const detached = client.next((message) => message.type === "attachment" && message.attachment === null);
 		await expect(
-			client.requestService({ serverId }, { serviceId: "amazme.session-management", member: "detach", args: [] }),
+			client.requestChannel({ serverId }, { kind: "close", channel: "attachment" }),
 		).resolves.toMatchObject({ ok: true });
 		await expect(detached).resolves.toMatchObject({ type: "attachment", attachment: null });
 		expect(backing.latestHarness("session-1").attachedClients).toBe(0);
@@ -250,7 +250,7 @@ describe("Session protocol", () => {
 		await client.attach(serverId, "session-2");
 
 		await expect(
-			client.requestService(
+			client.requestChannel(
 				{ serverId, sessionId: "session-1", attachmentId: firstAttachmentId },
 				sessionCall("run", ["stale"]),
 			),
@@ -285,7 +285,7 @@ describe("Session protocol", () => {
 		await client.hello();
 		await client.attach(serverId, "session-1");
 		const harness = host.latestHarness("session-1");
-		const gate = harness.gateNextServiceCall();
+		const gate = harness.gateNextChannelCall();
 		const first = client.requestSessionService(serverId, "session-1", sessionCall("run", ["first"]));
 		await gate.entered.promise;
 		const second = client.requestSessionService(serverId, "session-1", sessionCall("run", ["second"]));
@@ -303,7 +303,7 @@ describe("Session protocol", () => {
 		await client.hello();
 		await client.attach(serverId, "session-1");
 		const harness = host.latestHarness("session-1");
-		const gate = harness.gateNextServiceCall();
+		const gate = harness.gateNextChannelCall();
 		const calling = client.requestSessionService(serverId, "session-1", sessionCall("run"));
 		const disconnectedCall = expect(calling).rejects.toThrow(/closed/i);
 		await gate.entered.promise;
@@ -410,7 +410,7 @@ describe("routed Session acquisition failures", () => {
 					acquiring.resolve(undefined);
 					await continueAcquiring.promise;
 					return {
-						invokeService: async () => undefined,
+						invokeChannel: async () => undefined,
 						release: () => {
 							releaseCount += 1;
 						},

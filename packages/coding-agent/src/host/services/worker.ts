@@ -1,15 +1,12 @@
+import { ChannelEndpoint, type ChannelCall } from "@amazme/protocol";
+import { serviceFacet, serviceSetFacet, type ApplicationService, type ServiceValue, disposeResources } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
 import { join } from "node:path";
 import {
 	type Context,
-	createRemoteServiceEndpoint,
-	createStaticFacetLoader,
-	defineFacet,
 	type FacetLoader,
 	type JsonValue,
-	type RemoteServiceEndpoint,
-	type ServiceCall,
-	type ServiceProviderUpdate,
-} from "@amazme/chord";
+	type Frame } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
 import type { Conversation, ConversationId, Harness, Registry } from "@amazme/durable";
@@ -79,12 +76,12 @@ export interface WorkerServiceScope {
 
 interface ScopedServiceEndpoint {
 	readonly scope: WorkerServiceScope;
-	readonly endpoint: RemoteServiceEndpoint;
+	readonly endpoint: ChannelEndpoint;
 }
 
 export interface SessionWorkerServices {
-	invoke(call: ServiceCall, scope: WorkerServiceScope, context: Context): Promise<JsonValue | undefined>;
-	removeSubscriptions(matches: (scope: WorkerServiceScope) => boolean): void;
+	invoke(call: ChannelCall, scope: WorkerServiceScope, context: Context): Promise<JsonValue | undefined>;
+	closeChannels(matches: (scope: WorkerServiceScope) => boolean): Promise<void>;
 	dispose(): Promise<void>;
 	authenticationActive(): boolean;
 	subscribeAuthentication(listener: () => void): () => void;
@@ -108,55 +105,74 @@ export async function createSessionWorkerServices(options: {
 	readonly facetLoader?: FacetLoader;
 	readonly refreshMirror?: () => Promise<void>;
 	readonly mirror?: SessionHandoff;
-	publish(scope: WorkerServiceScope, subscriptionId: string, update: ServiceProviderUpdate): Promise<void>;
+	publish(scope: WorkerServiceScope, subscriptionId: string, update: Frame | undefined): Promise<void>;
 }): Promise<SessionWorkerServices> {
 	let pluginRuntime: PluginRuntime | undefined;
 	const authentication = options.modelRuntime === undefined ? undefined : new ProviderLogin(options.modelRuntime,
 		options.settingsManager === undefined ? {} : { getDeviceId: () => options.settingsManager!.getOrCreateDeviceId() });
-	const agentControllerRuntimeFacet = defineFacet({
-		id: "@pi/agent-controller-runtime",
-		setup(env) {
-			const conversations = env.use(Conversations);
-			const terminal = options.settingsManager === undefined ? undefined : env.use(Terminal);
-			const runtime = createAgentRuntime(
-				options.harness,
-				() => Number(conversations.state.value?.selected ?? options.conversation.id) as ConversationId,
-				() => pluginRuntime?.changing === true,
-			);
-			env.provide(AgentRuntime, runtime);
-			env.provide(AgentController, createAgentController(
-				options.harness,
-				async (context) => (await runtime.current(context)).conversation,
-				async context => pluginRuntime?.changing === true
-					? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
-					: options.admission?.(context),
-			));
-			env.provide(SessionLifecycle, {
-				isEmpty: (context) => isSessionEmpty(options.harness, context),
-				refreshMirror: async () => { await options.refreshMirror?.(); },
-				async stopWork(context) {
-					await conversations.cancelSummaries(context);
-					await terminal?.stop(context);
-					await abortSessionWork(options.harness, context);
-					await options.stopExecution?.(context);
-				},
-			});
-			const mirrorState = env.replicatedState<SessionMirrorStatus>({
-				warning: options.mirror?.warning ?? null,
-			});
-			const stopMirror = options.mirror?.subscribeWarning((warning) => {
-				mirrorState.change(BACKGROUND_CONTEXT, (draft) => { draft.warning = warning; });
-			});
-			env.own(() => stopMirror?.());
-			env.provide(SessionMirror, { state: mirrorState });
+	const agentControllerRuntimeFacet = serviceSetFacet(
+		"@pi/agent-controller-runtime",
+		[AgentRuntime, AgentController, SessionLifecycle, SessionMirror],
+		[Conversations, ...(options.settingsManager === undefined ? [] : [Terminal])],
+		async (services) => {
+			const values = new Map<ApplicationService, unknown>();
+			const disposers: Array<() => void | Promise<void>> = [];
+			try {
+				const conversations = services.get(Conversations);
+				const terminal = options.settingsManager === undefined ? undefined : services.get(Terminal);
+				const runtime = createAgentRuntime(
+					options.harness,
+					() => Number(conversations.state.value?.selected ?? options.conversation.id) as ConversationId,
+					() => pluginRuntime?.changing === true,
+				);
+				const provided0: ServiceValue<typeof AgentRuntime> = runtime;
+				values.set(AgentRuntime, provided0);
+				const provided1: ServiceValue<typeof AgentController> = createAgentController(
+					options.harness,
+					async (context) => (await runtime.current(context)).conversation,
+					async (context) =>
+						pluginRuntime?.changing === true
+							? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
+							: options.admission?.(context),
+				);
+				values.set(AgentController, provided1);
+				const provided2: ServiceValue<typeof SessionLifecycle> = {
+					isEmpty: (context) => isSessionEmpty(options.harness, context),
+					refreshMirror: async () => {
+						await options.refreshMirror?.();
+					},
+					async stopWork(context) {
+						await conversations.cancelSummaries(context);
+						await terminal?.stop(context);
+						await abortSessionWork(options.harness, context);
+						await options.stopExecution?.(context);
+					},
+				};
+				values.set(SessionLifecycle, provided2);
+				const mirrorState = replicatedState<SessionMirrorStatus>({
+					warning: options.mirror?.warning ?? null,
+				});
+				const stopMirror = options.mirror?.subscribeWarning((warning) => {
+					mirrorState.change(BACKGROUND_CONTEXT, (draft) => {
+						draft.warning = warning;
+					});
+				});
+				disposers.push(() => stopMirror?.());
+				const provided3: ServiceValue<typeof SessionMirror> = { state: mirrorState };
+				values.set(SessionMirror, provided3);
+
+				return { value: values, close: () => disposeResources(disposers) };
+			} catch (error) {
+				await disposeResources(disposers);
+				throw error;
+			}
 		},
-	});
+	);
 	let reloadPlugins = (): Promise<void> => Promise.reject(new Error("Session plugins are not ready"));
-	const pluginRuntimeFacet = defineFacet({
-		id: "@pi/session-plugins-runtime",
-		setup(env) {
-			env.provide(SessionPlugins, { reload: () => reloadPlugins() });
-		},
+	const pluginRuntimeFacet = serviceFacet("@pi/session-plugins-runtime", SessionPlugins, [], async (services) => {
+		const implementation: ServiceValue<typeof SessionPlugins> = { reload: () => reloadPlugins() };
+
+		return { value: implementation };
 	});
 	// A settings change made by another process (the web client, another CLI) reaches this Session
 	// through a reload; the worker otherwise keeps the copy it loaded when it started.
@@ -164,30 +180,38 @@ export async function createSessionWorkerServices(options: {
 	const settingsRuntimeFacet =
 		settingsManager === undefined
 			? undefined
-			: defineFacet({
-					id: "@pi/session-settings-runtime",
-					setup(env) {
-						const agentDir = getAgentDir();
-						const paths = { global: join(agentDir, "settings.json"), project: join(options.cwd, CONFIG_DIR_NAME, "settings.json") };
-						const snapshot = () => ({ manager: settingsManager, agentDir, cwd: options.cwd, paths, errors: settingsErrors(settingsManager) });
-						const state = env.replicatedState({ revision: 0, ...settingsSnapshot(snapshot()) });
-						let tail = Promise.resolve();
-						env.provide(SessionSettings, {
-							state,
-							reload: (context) => {
-								const operation = tail.then(async () => {
-									context.abortSignal?.throwIfAborted();
-									await (options.resources?.reload() ?? settingsManager.reload());
-									if (refreshCodingProjectTrust(settingsManager, options.cwd)) await options.resources?.reload();
-									configureHarnessHttp(settingsManager);
-									publishSettings(state, context, snapshot());
-								});
-								tail = operation.catch(() => {});
-								return operation;
-							},
-						});
-					},
+			: serviceFacet("@pi/session-settings-runtime", SessionSettings, [], async (services) => {
+				const agentDir = getAgentDir();
+				const paths = {
+					global: join(agentDir, "settings.json"),
+					project: join(options.cwd, CONFIG_DIR_NAME, "settings.json"),
+				};
+				const snapshot = () => ({
+					manager: settingsManager,
+					agentDir,
+					cwd: options.cwd,
+					paths,
+					errors: settingsErrors(settingsManager),
 				});
+				const state = replicatedState({ revision: 0, ...settingsSnapshot(snapshot()) });
+				let tail = Promise.resolve();
+				const implementation: ServiceValue<typeof SessionSettings> = {
+					state,
+					reload: (context) => {
+						const operation = tail.then(async () => {
+							context.abortSignal?.throwIfAborted();
+							await (options.resources?.reload() ?? settingsManager.reload());
+							if (refreshCodingProjectTrust(settingsManager, options.cwd)) await options.resources?.reload();
+							configureHarnessHttp(settingsManager);
+							publishSettings(state, context, snapshot());
+						});
+						tail = operation.catch(() => {});
+						return operation;
+					},
+				};
+
+				return { value: implementation };
+			});
 	const builtins = [
 		agentControllerRuntimeFacet,
 		...(options.registry === undefined ? [] : [createAgentExtensionsFacet(options.registry)]),
@@ -207,8 +231,7 @@ export async function createSessionWorkerServices(options: {
 			...(options.settingsManager === undefined ? {} : { settings: options.settingsManager }),
 			...(options.modelRuntime === undefined
 				? {}
-				: { summaryModel: summaryModelFromRuntime(options.harness, options.modelRuntime) }),
-		}),
+				: { summaryModel: summaryModelFromRuntime(options.harness, options.modelRuntime) }) }),
 		...(options.approvalGate === undefined ? [] : [createApprovalsFacet(options.approvalGate)]),
 		createWorkspaceFacet({ cwd: options.cwd, directories: options.workspaceDirectories }),
 		...(options.registry === undefined ? [] : [createInsightsFacet(options.harness, options.conversation.id, options.admission)]),
@@ -216,7 +239,7 @@ export async function createSessionWorkerServices(options: {
 			? []
 			: [createTerminalFacet({ cwd: options.cwd, settings: options.settingsManager, env: options.executionEnv, admission: options.admission })]),
 	];
-	const pluginLoader = options.facetLoader ?? createStaticFacetLoader([]);
+	const pluginLoader = options.facetLoader ?? (async () => []);
 	try {
 		pluginRuntime = await openPluginRuntime(builtins, pluginLoader, async () => {
 			await assertPluginsIdle(options.harness);
@@ -230,13 +253,19 @@ export async function createSessionWorkerServices(options: {
 	const provider = pluginRuntime.services;
 
 	const endpoints = new Map<string, ScopedServiceEndpoint>();
-	const removeSubscriptions = (matches: (scope: WorkerServiceScope) => boolean): void => {
-		for (const [key, entry] of endpoints) {
-			if (!matches(entry.scope)) continue;
-			entry.endpoint.dispose();
-			endpoints.delete(key);
-		}
-	};
+	const retiring = new Set<{ scope: WorkerServiceScope; closed: Promise<void> }>();
+ const closeChannels = async (matches: (scope: WorkerServiceScope) => boolean): Promise<void> => {
+  for (const [key, entry] of endpoints) {
+   if (!matches(entry.scope)) continue;
+   endpoints.delete(key);
+   const retirement = { scope: entry.scope, closed: entry.endpoint.dispose() };
+   retiring.add(retirement);
+   void retirement.closed.finally(() => retiring.delete(retirement)).catch(() => {});
+  }
+  const results = await Promise.allSettled([...retiring].filter(entry => matches(entry.scope)).map(entry => entry.closed));
+  const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+  if (errors.length) throw new AggregateError(errors, "Session channel cleanup failed");
+ };
 
 	return {
 		authenticationActive: () => authentication?.active ?? false,
@@ -245,7 +274,7 @@ export async function createSessionWorkerServices(options: {
 			const key = serviceScopeKey(scope);
 			let entry = endpoints.get(key);
 			if (entry === undefined) {
-				entry = { scope, endpoint: createRemoteServiceEndpoint(provider) };
+				entry = { scope, endpoint: new ChannelEndpoint(provider.host, () => provider.catalogue.filter(entry => !entry.local)) };
 				endpoints.set(key, entry);
 			}
 			return entry.endpoint.invoke(
@@ -254,13 +283,12 @@ export async function createSessionWorkerServices(options: {
 				context,
 			);
 		},
-		removeSubscriptions,
+		closeChannels,
 		async dispose() {
-			removeSubscriptions(() => true);
+			await closeChannels(() => true);
 			try { await authentication?.close(); await options.settingsManager?.flush(); }
 			finally { await pluginRuntime!.close(); }
-		},
-	};
+		} };
 }
 
 function serviceScopeKey(scope: WorkerServiceScope): string {

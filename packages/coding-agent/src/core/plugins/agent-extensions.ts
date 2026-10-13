@@ -1,4 +1,6 @@
-import { defineFacet, defineService, type Facet } from "@amazme/chord";
+import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
+import { localService } from "@amazme/protocol/services";
+import { type Facet } from "@amazme/chord";
 import type { Extension, Registry } from "@amazme/durable";
 
 export interface AgentExtensionInfo {
@@ -10,12 +12,12 @@ export interface AgentExtensionInfo {
 
 /** Process-local contributions to the same registry the agent executes. */
 export interface AgentExtensions {
-	/** Own this installation with env.own(); a replacement becomes visible when its predecessor retires. */
+	/** Return this installation lease from an activationFacet; a replacement becomes visible when its predecessor retires. */
 	install(extension: Extension): () => void;
 	list(): readonly AgentExtensionInfo[];
 }
 
-export const AgentExtensions = defineService<AgentExtensions>("amazme.local.agent-extensions", { local: true });
+export const AgentExtensions = localService<AgentExtensions>("amazme.local.agent-extensions");
 
 type Installation = { readonly extension: Extension; closed: boolean };
 
@@ -34,8 +36,7 @@ class AgentExtensionRegistry implements AgentExtensions {
 			...(extension.sections === undefined ? {} : { sections: Object.freeze([...extension.sections]) }),
 			...(extension.tasks === undefined ? {} : { tasks: Object.freeze([...extension.tasks]) }),
 			...(extension.hooks === undefined ? {} : { hooks: Object.freeze([...extension.hooks]) }),
-			...(extension.wraps === undefined ? {} : { wraps: Object.freeze([...extension.wraps]) }),
-		});
+			...(extension.wraps === undefined ? {} : { wraps: Object.freeze([...extension.wraps]) }) });
 		const entries = this.#installed.get(extension.name);
 		if (entries === undefined && this.#registry.snapshot().extension(extension.name) !== undefined) {
 			throw new Error(`Extension ${extension.name} belongs to the application`);
@@ -65,8 +66,7 @@ class AgentExtensionRegistry implements AgentExtensions {
 			name: extension.name,
 			tools: (extension.tools ?? []).map((tool) => tool.name),
 			sections: (extension.sections ?? []).map((section) => section.key),
-			tasks: (extension.tasks ?? []).map((task) => task.definition.name),
-		}));
+			tasks: (extension.tasks ?? []).map((task) => task.definition.name) }));
 	}
 
 	close(): void {
@@ -81,12 +81,17 @@ class AgentExtensionRegistry implements AgentExtensions {
 }
 
 export function createAgentExtensionsFacet(registry: Registry): Facet {
-	return defineFacet({
-		id: "@amazme/agent-extensions-runtime",
-		setup(env) {
+	return serviceFacet("@amazme/agent-extensions-runtime", AgentExtensions, [], async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
 			const extensions = new AgentExtensionRegistry(registry);
-			env.provide(AgentExtensions, extensions);
-			env.own(() => extensions.close());
-		},
+			const implementation: ServiceValue<typeof AgentExtensions> = extensions;
+			disposers.push(() => extensions.close());
+
+			return { value: implementation, close: () => disposeResources(disposers) };
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	});
 }

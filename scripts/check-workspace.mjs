@@ -255,16 +255,16 @@ export async function checkEntryContracts(repoRoot) {
 				"packages/codemode/src/wasm.ts",
 			],
 		})),
-		// Branch summaries, the name matcher, and the leaf file-error contract add three modules to Pi's 63-module root.
+		// Product branch summaries/search/file contracts and the new Chord host graph are included.
 		{
 			entry: "packages/durable/src/index.ts",
-			maxFiles: 67,
+			maxFiles: 70,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts", "packages/durable/src/images/"],
 		},
 		{
 			entry: "packages/durable/src/tools/index.ts",
 			// File observations and portable search tools add their document and environment helpers.
-			maxFiles: 47,
+			maxFiles: 50,
 			forbid: ["packages/durable/src/images/"],
 		},
 	]) {

@@ -1,22 +1,6 @@
-import {
-	createServiceCatalogueCall,
-	createServiceStateDecoder,
-	createServiceSubscribeCall,
-	createServiceUnsubscribeCall,
-	type JsonValue,
-	parseServiceCall,
-	parseServiceCatalogue,
-	parseWireServiceProviderUpdate,
-	parseWireServiceSubscriptionSnapshot,
-	type RemoteServiceTransport,
-	type ServiceCall,
-	type ServiceCatalogueEntry,
-	type ServiceMode,
-	type ServiceProviderUpdate,
-	type ServiceStateDecoder,
-	type ServiceSubscriptionSnapshot,
-} from "@amazme/chord";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { memoryLinkPair, type Link, type JsonValue } from "@amazme/chord";
+import { frameJson, parseChannelFrame, parseChannelCall, type ChannelCall } from "@amazme/protocol";
+import type { ServiceDescription } from "@amazme/protocol/services";
 import {
 	type AttachmentEnvelope,
 	encodeClientMessage,
@@ -25,7 +9,7 @@ import {
 	type ResponseEnvelope,
 	type RpcTarget,
 	type ServerHello,
-	type ServiceEventEnvelope,
+	type ChannelEventEnvelope,
 	type SessionTarget,
 } from "@amazme/protocol";
 import { Connection } from "./connection.ts";
@@ -36,7 +20,6 @@ import type {
 	ClientOptions,
 	ConnectionState,
 	ConnectionStateChange,
-	ServiceSubscription,
 	Unsubscribe,
 } from "./types.ts";
 
@@ -48,26 +31,15 @@ interface PendingRequest {
 	cleanup(): void;
 }
 
-interface ActiveServiceListener {
-	readonly target: RpcTarget;
-	readonly listener: (update: ServiceProviderUpdate) => void | Promise<void>;
-	readonly decoder: ServiceStateDecoder;
-	readonly queuedWireUpdates: JsonValue[];
-	readonly queued: ServiceProviderUpdate[];
-	deliveryTail: Promise<void>;
-	hydrated: boolean;
-	ready: boolean;
-}
-
 export class Client {
 	readonly #options: ClientOptions;
 	readonly #connection: Connection;
 	readonly #pendingRequests = new Map<string, PendingRequest>();
 	readonly #connectionStateListeners = new Set<(change: ConnectionStateChange) => void>();
 	readonly #attachmentListeners = new Set<AttachmentChangeListener>();
-	readonly #serviceListeners = new Map<string, ActiveServiceListener>();
+	readonly #channels = new Map<string, { target: RpcTarget; wire: Link }>();
 	#requestSequence = 0;
-	#serviceSubscriptionSequence = 0;
+	#channelSequence = 0;
 	#hello: ServerHello | undefined;
 	#attachment: SessionTarget | undefined;
 	#disposed = false;
@@ -151,93 +123,81 @@ export class Client {
 		return () => this.#attachmentListeners.delete(listener);
 	}
 
-	/** Invoke one low-level protocol call against an explicit routed target. */
-	request(target: RpcTarget, call: ServiceCall, signal?: AbortSignal): Promise<ServiceResult> {
+	/** Deliver a Chord channel operation to an explicit attachment-fenced target. */
+	request(target: RpcTarget, call: ChannelCall, signal?: AbortSignal): Promise<ServiceResult> {
 		return this.#request(target, call, signal);
 	}
 
-	async serviceCatalogue(target: RpcTarget, signal?: AbortSignal): Promise<readonly ServiceCatalogueEntry[]> {
-		const result = await this.#request(target, createServiceCatalogueCall(), signal);
-		try {
-			return parseServiceCatalogue(result);
-		} catch (error) {
-			const validationError = new ProtocolValidationError(
-				error instanceof Error ? error.message : "Invalid service catalogue",
-			);
-			this.#connection.fail(validationError);
-			throw validationError;
+	async describeServices(target: RpcTarget, signal?: AbortSignal): Promise<readonly ServiceDescription[]> {
+		const value = await this.#request(target, { kind: "catalogue" }, signal);
+		if (
+			!Array.isArray(value) ||
+			value.some(
+				(entry) =>
+					entry === null || typeof entry !== "object" || !("serviceId" in entry) || typeof entry.serviceId !== "string",
+			)
+		) {
+			throw new ProtocolValidationError("Invalid application service catalogue");
 		}
+		return value as unknown as ServiceDescription[];
 	}
 
-	async subscribeService(
+	async openLink(
 		target: RpcTarget,
-		serviceId: string,
-		mode: ServiceMode,
-		listener: (update: ServiceProviderUpdate) => void | Promise<void>,
+		host?: string,
 		signal?: AbortSignal,
-	): Promise<ServiceSubscription> {
-		const subscriptionId = `service-${++this.#serviceSubscriptionSequence}`;
-		const active: ActiveServiceListener = {
-			target,
-			listener,
-			decoder: createServiceStateDecoder(),
-			queuedWireUpdates: [],
-			queued: [],
-			deliveryTail: Promise.resolve(),
-			hydrated: false,
-			ready: false,
-		};
-		this.#serviceListeners.set(subscriptionId, active);
-		let snapshot: ServiceSubscriptionSnapshot;
+	): Promise<{ link: Link; host: string; close(): Promise<void> }> {
+		if (!this.#targetIsCurrent(target)) throw new DisconnectedError();
+		signal?.throwIfAborted();
+		const channel = `chord-${++this.#channelSequence}`;
+		const [link, wire] = memoryLinkPair();
+		this.#channels.set(channel, { target, wire });
 		try {
-			snapshot = await this.#request(
+			const opened = await this.#request(
 				target,
-				createServiceSubscribeCall(subscriptionId, serviceId, mode),
+				{ kind: "open", channel, ...(host === undefined ? {} : { host }) },
 				signal,
-				(result) => {
-					const decoded = active.decoder.decodeSnapshot(parseWireServiceSubscriptionSnapshot(result));
-					active.hydrated = true;
-					for (const update of active.queuedWireUpdates.splice(0)) {
-						active.queued.push(active.decoder.decodeUpdate(parseWireServiceProviderUpdate(update)));
-					}
-					return decoded;
-				},
 			);
+			if (opened === null || typeof opened !== "object" || !("host" in opened) || typeof opened.host !== "string")
+				throw new ProtocolValidationError("Invalid Chord channel response");
+			if (!this.#targetIsCurrent(target) || !this.#channels.has(channel)) throw new DisconnectedError();
+			let tail = Promise.resolve();
+			wire.receive((frame) => {
+				tail = tail
+					.then(async () => {
+						if (this.#channels.has(channel) && this.#targetIsCurrent(target))
+							await this.#request(target, { kind: "frame", channel, frame: parseChannelFrame(frameJson(frame)) });
+					})
+					.catch((error: unknown) => {
+						wire.close(String(error));
+						this.#reportListenerError(error);
+					});
+			});
+			let closing: Promise<void> | undefined;
+			const close = (): Promise<void> =>
+				(closing ??= Promise.resolve().then(async () => {
+					const present = this.#channels.delete(channel);
+					wire.close();
+					await tail;
+					if (present && this.connected && this.#targetIsCurrent(target))
+						await this.#request(target, { kind: "close", channel });
+				}));
+			wire.onClose(() => {
+				void close().catch((error: unknown) => this.#reportListenerError(error));
+			});
+			return { link, host: opened.host, close };
 		} catch (error) {
-			if (this.#serviceListeners.get(subscriptionId) === active) this.#serviceListeners.delete(subscriptionId);
+			this.#channels.delete(channel);
+			wire.close();
+			if (this.connected && this.#targetIsCurrent(target))
+				void this.#request(target, { kind: "close", channel }).catch((error) => this.#reportListenerError(error));
 			throw error;
 		}
-		if (this.#serviceListeners.get(subscriptionId) !== active) throw new DisconnectedError();
-		let disposed = false;
-		return {
-			id: subscriptionId,
-			target,
-			snapshot,
-			start: () => {
-				if (disposed || active.ready) return;
-				active.ready = true;
-				for (const update of active.queued.splice(0)) this.#deliverServiceUpdate(active, update);
-			},
-			dispose: async () => {
-				if (disposed) return;
-				disposed = true;
-				if (this.#serviceListeners.get(subscriptionId) === active) this.#serviceListeners.delete(subscriptionId);
-				try {
-					if (this.connected && this.#targetIsCurrent(target)) {
-						await this.#request(target, createServiceUnsubscribeCall(subscriptionId));
-					}
-					await active.deliveryTail;
-				} finally {
-					active.queuedWireUpdates.length = 0;
-					active.queued.length = 0;
-				}
-			},
-		};
 	}
 
 	#request<T = ServiceResult>(
 		target: RpcTarget,
-		call: ServiceCall,
+		call: ChannelCall,
 		signal?: AbortSignal,
 		transform?: (result: ServiceResult) => T,
 	): Promise<T> {
@@ -288,7 +248,7 @@ export class Client {
 		let frame: Uint8Array;
 		try {
 			frame = encodeClientMessage(
-				{ type: "request", id, target, call: parseServiceCall(call) as unknown as JsonValue },
+				{ type: "request", id, target, call: parseChannelCall(call) as unknown as JsonValue },
 				{ maxFrameLength: this.#connection.maxFrameLength },
 			);
 		} catch (error) {
@@ -301,7 +261,7 @@ export class Client {
 		return promise;
 	}
 
-	#handleMessage(message: ResponseEnvelope | ServiceEventEnvelope | AttachmentEnvelope): void {
+	#handleMessage(message: ResponseEnvelope | ChannelEventEnvelope | AttachmentEnvelope): void {
 		if (message.type === "attachment") {
 			if (message.attachment !== null && message.attachment.serverId !== this.#options.serverId) {
 				this.#connection.fail(new ProtocolValidationError("Attachment update belongs to another server"));
@@ -310,24 +270,23 @@ export class Client {
 			this.#setAttachment(message.attachment ?? undefined);
 			return;
 		}
-		if (message.type === "service_update") {
-			const active = this.#serviceListeners.get(message.subscriptionId);
-			if (active === undefined) return;
-			if (!active.hydrated) {
-				active.queuedWireUpdates.push(message.update);
-				return;
+		if (message.type === "channel_closed") {
+			const channel = this.#channels.get(message.channelId);
+			if (channel) {
+				this.#channels.delete(message.channelId);
+				channel.wire.close("Remote channel closed");
 			}
-			let update: ServiceProviderUpdate;
-			try {
-				update = active.decoder.decodeUpdate(parseWireServiceProviderUpdate(message.update));
-			} catch (error) {
-				this.#connection.fail(
-					new ProtocolValidationError(error instanceof Error ? error.message : "Invalid service operation stream"),
-				);
-				return;
+			return;
+		}
+		if (message.type === "channel_frame") {
+			const channel = this.#channels.get(message.channelId);
+			if (channel && this.#targetIsCurrent(channel.target)) {
+				try {
+					channel.wire.send(parseChannelFrame(message.frame));
+				} catch (error) {
+					this.#connection.fail(toError(error));
+				}
 			}
-			if (active.ready) this.#deliverServiceUpdate(active, update);
-			else active.queued.push(update);
 			return;
 		}
 		const pending = this.#takePendingRequest(message.id);
@@ -347,7 +306,8 @@ export class Client {
 			this.#hello = undefined;
 			this.#setAttachment(undefined);
 			this.#rejectPendingRequests(change.error ?? new DisconnectedError());
-			this.#serviceListeners.clear();
+			for (const channel of [...this.#channels.values()]) channel.wire.close("transport closed");
+			this.#channels.clear();
 		}
 		for (const listener of this.#connectionStateListeners) {
 			try {
@@ -387,7 +347,8 @@ export class Client {
 		this.#setAttachment(undefined);
 		this.#connectionStateListeners.clear();
 		this.#attachmentListeners.clear();
-		this.#serviceListeners.clear();
+		for (const channel of [...this.#channels.values()]) channel.wire.close("transport closed");
+		this.#channels.clear();
 		return this.#disposePromise;
 	}
 
@@ -405,6 +366,8 @@ export class Client {
 			return;
 		}
 		this.#attachment = attachment;
+		for (const channel of [...this.#channels.values()])
+			if (!this.#targetIsCurrent(channel.target)) channel.wire.close("attachment changed");
 		for (const listener of this.#attachmentListeners) {
 			try {
 				listener(attachment);
@@ -412,12 +375,6 @@ export class Client {
 				this.#reportListenerError(error);
 			}
 		}
-	}
-
-	#deliverServiceUpdate(active: ActiveServiceListener, update: ServiceProviderUpdate): void {
-		active.deliveryTail = active.deliveryTail
-			.then(() => active.listener(update))
-			.catch((error: unknown) => this.#reportListenerError(error));
 	}
 
 	#targetIsCurrent(target: RpcTarget): boolean {
@@ -442,35 +399,6 @@ export class Client {
 			// Diagnostics cannot affect protocol or transport state.
 		}
 	}
-}
-
-/** Adapts a lazily resolved routed client target to a Chord service transport. */
-export function createClientServiceTransport(
-	client: Client,
-	getTarget: () => RpcTarget | undefined,
-): RemoteServiceTransport {
-	const target = (): RpcTarget => {
-		const resolved = getTarget();
-		if (resolved === undefined) throw new Error("Remote service target is unavailable");
-		return resolved;
-	};
-	return {
-		invoke: async (call, context) => client.request(target(), call, context.abortSignal),
-		async subscribe(serviceId, mode, listener, context) {
-			const subscription = await client.subscribeService(
-				target(),
-				serviceId,
-				mode,
-				(update) => listener(update, BACKGROUND_CONTEXT),
-				context.abortSignal,
-			);
-			return {
-				snapshot: subscription.snapshot,
-				activate: () => subscription.start(),
-				close: () => subscription.dispose(),
-			};
-		},
-	};
 }
 
 function abortError(signal: AbortSignal): Error {

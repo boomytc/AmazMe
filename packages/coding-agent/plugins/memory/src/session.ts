@@ -1,6 +1,6 @@
+import { activationFacet, disposeResources } from "@amazme/protocol/services";
 import { randomUUID } from "node:crypto";
 import { contentText, Type } from "@amazme/ai";
-import { defineFacet } from "@amazme/chord";
 import type { JsonValue } from "@amazme/chord";
 import { AgentController, AgentExtensions, SlashCommands } from "@amazme/coding-agent/plugin";
 import { defineExtension, defineTool, GenerationTask, hook, section } from "@amazme/durable";
@@ -13,8 +13,7 @@ import {
 	candidatePath,
 	memoryPath,
 	readMemoryFile,
-	replaceMemoryFile,
-} from "./files.ts";
+	replaceMemoryFile } from "./files.ts";
 import { MemoryCapture } from "./capture.ts";
 
 const memory = defineTool({
@@ -35,8 +34,7 @@ const memory = defineTool({
 		content: Type.Optional(Type.String({ maxLength: 32768 })),
 		version: Type.Optional(Type.Union([Type.String(), Type.Null()])),
 		candidate: Type.Optional(Type.String()),
-		candidateVersion: Type.Optional(Type.String()),
-	}),
+		candidateVersion: Type.Optional(Type.String()) }),
 	executionMode: "sequential",
 	async execute(args, api, context) {
 		const env = api.env;
@@ -54,8 +52,7 @@ const memory = defineTool({
 				: [];
 			value = {
 				candidates: entries.slice(0, 20).map((entry) => ({ id: entry.name.slice(0, -3), path: entry.path })),
-				more: entries.length > 20,
-			};
+				more: entries.length > 20 };
 		} else if (args.action === "read_candidate") {
 			const candidate = await readMemoryFile(env, await candidatePath(env, args.candidate ?? "", context), context);
 			if (candidate.revision === undefined) throw new Error("Memory candidate does not exist");
@@ -75,8 +72,7 @@ const memory = defineTool({
 				path,
 				content: file.text,
 				version: file.revision?.version ?? null,
-				autoCapture: file.text.startsWith(AUTO_CAPTURE),
-			};
+				autoCapture: file.text.startsWith(AUTO_CAPTURE) };
 		} else {
 			let content: string;
 			if (args.action === "auto_on" || args.action === "auto_off")
@@ -101,10 +97,8 @@ const memory = defineTool({
 		}
 		return {
 			output: [{ type: "text", text: JSON.stringify(value) }],
-			structuredOutput: value,
-		};
-	},
-});
+			structuredOutput: value };
+	} });
 
 const extension = defineExtension({
 	name: "project-memory",
@@ -142,8 +136,7 @@ const extension = defineExtension({
 					{
 						enabled,
 						id: randomUUID(),
-						user: user === undefined ? "" : contentText(user.content).slice(0, 8000),
-					},
+						user: user === undefined ? "" : contentText(user.content).slice(0, 8000) },
 					context,
 				);
 			},
@@ -156,35 +149,42 @@ const extension = defineExtension({
 					{ id: saved.id, user: saved.user, answer: contentText(answer.content).slice(0, 8000) },
 					context,
 				);
-			},
-		}),
-	],
-});
+			} }),
+	] });
 
-export default defineFacet({
-	id: "@amazme/memory/session",
-	setup(env) {
-		const extensions = env.use(AgentExtensions),
-			commands = env.use(SlashCommands),
-			agent = env.use(AgentController);
-		env.onActivate(() => {
-			env.own(extensions.install(extension));
-			env.own(
-				commands.replace({
-					name: "memory",
-					description: "Read or manage project Markdown memory",
-					argumentHint: "<request>",
-					run(request, context) {
-						return agent.prompt(
-							{
-								message: `Use project_memory to ${request.trim() || "read the current project notes"}. Read before replacing or accepting; current user instructions take priority over stored notes.`,
-								images: null,
-							},
-							context,
-						);
-					},
-				}),
-			);
-		});
+export default activationFacet(
+	"@amazme/memory/session",
+	[AgentExtensions, SlashCommands, AgentController],
+	async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			const extensions = services.get(AgentExtensions),
+				commands = services.get(SlashCommands),
+				agent = services.get(AgentController);
+			await (() => {
+				disposers.push(extensions.install(extension));
+				disposers.push(
+					commands.replace({
+						name: "memory",
+						description: "Read or manage project Markdown memory",
+						argumentHint: "<request>",
+						run(request, context) {
+							return agent.prompt(
+								{
+									message: `Use project_memory to ${request.trim() || "read the current project notes"}. Read before replacing or accepting; current user instructions take priority over stored notes.`,
+									images: null,
+								},
+								context,
+							);
+						},
+					}),
+				);
+			})();
+
+			return () => disposeResources(disposers);
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	},
-});
+);

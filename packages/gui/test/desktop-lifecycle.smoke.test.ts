@@ -1,3 +1,6 @@
+import { createServerServiceSource } from "../../coding-agent/src/host/services/connection.ts";
+import { SessionManagement } from "../../coding-agent/src/host/services/sessions.ts";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -64,9 +67,14 @@ async function attachFixtureWorker(running: Awaited<ReturnType<typeof desktop>>,
 	const previous = new Set((await processRows()).map((row) => row.pid));
 	const client = await Client.connect({ serverId: report.serverId, transportFactory: createWebSocketTransportFactory({ url: (options.url ?? running.url).replace(/^http/u, "ws") + "amazme" }) });
 	try {
-		const target = { serverId: report.serverId };
-		await client.request(target, { serviceId: "amazme.session-management", member: "create", args: [{ id: "desktop-fixture" }] });
-		await client.request(target, { serviceId: "amazme.session-management", member: "attach", args: ["desktop-fixture"] });
+		const source = createServerServiceSource(client);
+  const binding = source.open({ services: [SessionManagement], assertAccess() {}, onError(error) { throw error; } });
+  try {
+   await binding.ready(BACKGROUND_CONTEXT);
+   const sessions = binding.get(SessionManagement);
+   await sessions.create({ id: "desktop-fixture" }, BACKGROUND_CONTEXT);
+   await sessions.attach("desktop-fixture", BACKGROUND_CONTEXT);
+  } finally { await source.dispose(BACKGROUND_CONTEXT); }
 		const rows = await processRows();
 		const tree = processTree(rows, running.pid);
 		const workers = rows.filter((row) => row.ppid === (options.parentPid ?? running.host.pid) && !previous.has(row.pid));

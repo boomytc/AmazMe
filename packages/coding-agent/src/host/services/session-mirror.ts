@@ -1,4 +1,4 @@
-import { defineService } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
 import type { ReplicatedState } from "@amazme/chord";
 
 export interface SessionMirrorWarning {
@@ -15,4 +15,4 @@ export interface SessionMirror {
 	readonly state: ReplicatedState<SessionMirrorStatus>;
 }
 
-export const SessionMirror = defineService<SessionMirror>("amazme.session-mirror");
+export const SessionMirror = remoteService<SessionMirror>("amazme.session-mirror", {}, ["state"]);

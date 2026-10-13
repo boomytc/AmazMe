@@ -1,18 +1,9 @@
-import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import {
-	createRemoteServiceBinding,
-	type MutableReplicatedState,
-	RemoteServiceProvider,
-	type RemoteServiceTransport,
-	replicatedState,
-} from "@amazme/chord";
+import { type MutableReplicatedState, replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import {
-	FACET_BUNDLE_ARTIFACT_FORMAT,
-	FACET_BUNDLE_ARTIFACT_FORMAT_VERSION,
-	type FacetBundleArtifact,
-} from "@amazme/chord/node";
+import { ServiceHost } from "@amazme/protocol/services";
+import type { PluginArtifact } from "../src/core/plugins/artifact.ts";
+import { connectTestHost } from "./native-host-support.ts";
 import { fauxAssistantMessage } from "@amazme/ai";
 import { ProcessTerminal, TuiMainScreen } from "@amazme/tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
@@ -47,18 +38,16 @@ function session(sessionId: string, createdAt: number, cwd = "/tmp/session-cwd")
 	return { serverId, sessionId, createdAt, cwd, source: "host" };
 }
 
-function createLoopbackServiceTransport(provider: RemoteServiceProvider): RemoteServiceTransport {
-	return {
-		invoke: (call, context) => provider.invoke(call, context),
-		subscribe: async (serviceId, mode, listener) => {
-			const subscription = provider.subscribe(serviceId, mode, (update) => listener(update, BACKGROUND_CONTEXT));
-			return {
-				snapshot: subscription.snapshot,
-				activate: () => subscription.activate(),
-				close: () => subscription.close(),
-			};
-		},
-	};
+function testSource(provider: ServiceHost) {
+ return {
+  async catalogue() { await provider.ready(); return provider.catalogue.filter(entry => !entry.local); },
+  open(options: Parameters<ServerServiceSource["open"]>[0]) {
+   const peer = connectTestHost(provider.host);
+   for (const service of options.services) peer.scope.get(service);
+   return { get: peer.scope.get.bind(peer.scope), ready: peer.scope.ready.bind(peer.scope), dispose: () => peer.close() };
+  },
+  async dispose() {},
+ };
 }
 
 function publishReplacement<T extends object>(state: MutableReplicatedState<T>, value: T): void {
@@ -126,25 +115,15 @@ describe("experimental client TUI", () => {
 			]);
 			const transcriptState = await durable.conversation.viewState(BACKGROUND_CONTEXT);
 
-			const reloadSource =
-				'"use strict";\nconst { defineFacet, defineService } = require("@amazme/chord");\nconst Models = defineService("amazme.models");\nmodule.exports = { __esModule: true, default: defineFacet({ id: "test-tui-facet", setup(env) { env.use(Models); } }) };\n';
-			const reloadArtifact: FacetBundleArtifact = {
-				format: FACET_BUNDLE_ARTIFACT_FORMAT,
-				formatVersion: FACET_BUNDLE_ARTIFACT_FORMAT_VERSION,
-				plugin: { id: "test-tui-plugin" },
-				entryName: "tui",
-				entry: {
-					file: "tui.cjs",
-					integrity: `sha256-${createHash("sha256").update(reloadSource).digest("base64")}`,
-					externalImports: ["@amazme/chord"],
-				},
-				source: reloadSource,
-			};
+			const reloadArtifact: PluginArtifact = {
+    name: "test-tui-plugin/tui",
+    code: 'import { defineFacet } from "@amazme/chord"; import { AgentController } from "@amazme/coding-agent/host/plugin"; export default defineFacet(() => {}, { uses: [AgentController.contract] });',
+   };
 			const reloadData = createPresentationFacetData([reloadArtifact]);
 			const prepareSessionPlugins = vi.fn(async () => reloadData);
 			const reloadPresentationPlugins = vi.fn(async () => reloadData);
 			const reloadSessionPlugins = vi.fn(async () => {});
-			const serverProvider = new RemoteServiceProvider([SessionDirectory, SessionManagement, PresentationPlugins]);
+			const serverProvider = new ServiceHost("server");
 			serverProvider.provide(SessionDirectory, { state: directoryState });
 			serverProvider.provide(PresentationPlugins, {
 				prepareSession: prepareSessionPlugins,
@@ -185,14 +164,7 @@ describe("experimental client TUI", () => {
 				tasks: [],
 				view: null,
 			});
-			const sessionProvider = new RemoteServiceProvider([
-				Models,
-				AgentController,
-				SessionPlugins,
-				Commands,
-				Transcript,
-				Conversations,
-			]);
+			const sessionProvider = new ServiceHost("session");
 			sessionProvider.provide(SessionPlugins, { reload: reloadSessionPlugins });
 			sessionProvider.provide(Commands, {
 				state: replicatedState({ revision: 1, commands: [] }),
@@ -254,63 +226,13 @@ describe("experimental client TUI", () => {
 				},
 			});
 
-			const serverNamespace = createRemoteServiceBinding({
-				services: [SessionDirectory, SessionManagement, PresentationPlugins],
-				transport: createLoopbackServiceTransport(serverProvider),
-				bound: false,
-			});
-			const serverNamespaceReady = serverNamespace.ready.bind(serverNamespace);
-			const serverServices: ServerServiceSource = Object.assign(serverNamespace, {
-				acceptsUnavailableServices: false,
-				connection: connectionState,
-				async catalogue() {
-					return serverProvider.catalogue;
-				},
-				open() {
-					return {
-						use: serverNamespace.use.bind(serverNamespace),
-						observe: serverNamespace.observe.bind(serverNamespace),
-						async ready() {
-							await serverNamespace.rebind(true, BACKGROUND_CONTEXT);
-							await serverNamespaceReady(BACKGROUND_CONTEXT);
-						},
-						async dispose() {},
-					};
-				},
-				async ready() {
-					await serverNamespace.rebind(true, BACKGROUND_CONTEXT);
-					await serverNamespaceReady(BACKGROUND_CONTEXT);
-				},
-			});
-			const sessionNamespace = createRemoteServiceBinding({
-				services: [Models, AgentController, SessionPlugins, Commands, Transcript, Conversations],
-				transport: createLoopbackServiceTransport(sessionProvider),
-				bound: false,
-			});
-			const sessionServices: SessionServiceSource = Object.assign(sessionNamespace, {
-				acceptsUnavailableServices: true,
-				attachment,
-				async catalogue() {
-					return [];
-				},
-				open() {
-					return {
-						use: sessionNamespace.use.bind(sessionNamespace),
-						observe: sessionNamespace.observe.bind(sessionNamespace),
-						ready: sessionNamespace.ready.bind(sessionNamespace),
-						async dispose() {},
-					};
-				},
-				async whenAttached(sessionId: string) {
-					await sessionNamespace.rebind(true, BACKGROUND_CONTEXT);
-					await sessionNamespace.ready(BACKGROUND_CONTEXT);
-					publishReplacement(attachment, { status: "attached", sessionId });
-				},
-				async whenDetached() {
-					await sessionNamespace.rebind(false, BACKGROUND_CONTEXT);
-					publishReplacement(attachment, { status: "detached" });
-				},
-			});
+			await Promise.all([serverProvider.ready(), sessionProvider.ready()]);
+   const serverServices: ServerServiceSource = { ...testSource(serverProvider), connection: connectionState };
+   const sessionServices: SessionServiceSource = {
+    ...testSource(sessionProvider), attachment,
+    async whenAttached(sessionId) { publishReplacement(attachment, { status: "attached", sessionId }); },
+    async whenDetached() { publishReplacement(attachment, { status: "detached" }); },
+   };
 			const server: ClientTuiServer = {
 				serverId,
 				radius: true,
@@ -426,12 +348,7 @@ describe("experimental client TUI", () => {
 				expect(requestRender).toHaveBeenCalledTimes(rendersAfterClose);
 			} finally {
 				await component.close();
-				await Promise.all([
-					serverNamespace.dispose(BACKGROUND_CONTEXT),
-					sessionNamespace.dispose(BACKGROUND_CONTEXT),
-				]);
-				serverProvider.dispose();
-				sessionProvider.dispose();
+				await Promise.all([serverProvider.dispose(), sessionProvider.dispose()]);
 				transcriptState.dispose();
 				await durable.close();
 			}

@@ -2,7 +2,7 @@ import type { JsonValue } from "@amazme/chord";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
 
-export const PROTOCOL_VERSION = 8 as const;
+export const PROTOCOL_VERSION = 9 as const;
 
 const IdSchema = Type.String({ minLength: 1 });
 const OpaqueJsonValueSchema = Type.Unsafe<JsonValue>(Type.Unknown());
@@ -85,11 +85,14 @@ const ResponseEnvelopeSchema = Type.Union([
 		error: ProtocolErrorSchema,
 	}),
 ]);
-const ServiceEventEnvelopeSchema = StrictObject({
-	type: Type.Literal("service_update"),
-	subscriptionId: IdSchema,
-	update: OpaqueJsonValueSchema,
-});
+const ChannelEventEnvelopeSchema = Type.Union([
+	StrictObject({
+		type: Type.Literal("channel_frame"),
+		channelId: IdSchema,
+		frame: OpaqueJsonValueSchema,
+	}),
+	StrictObject({ type: Type.Literal("channel_closed"), channelId: IdSchema }),
+]);
 /** Out-of-band update to this presentation's selected Session route. */
 const AttachmentEnvelopeSchema = StrictObject({
 	type: Type.Literal("attachment"),
@@ -99,12 +102,12 @@ export const ServerMessageSchema = Type.Union([
 	ServerHelloSchema,
 	ServerHelloErrorSchema,
 	ResponseEnvelopeSchema,
-	ServiceEventEnvelopeSchema,
+	ChannelEventEnvelopeSchema,
 	AttachmentEnvelopeSchema,
 ]);
 export type ServerHello = Static<typeof ServerHelloSchema>;
 export type ServerHelloError = Static<typeof ServerHelloErrorSchema>;
 export type ResponseEnvelope = Static<typeof ResponseEnvelopeSchema>;
-export type ServiceEventEnvelope = Static<typeof ServiceEventEnvelopeSchema>;
+export type ChannelEventEnvelope = Static<typeof ChannelEventEnvelopeSchema>;
 export type AttachmentEnvelope = Static<typeof AttachmentEnvelopeSchema>;
 export type ServerMessage = Static<typeof ServerMessageSchema>;

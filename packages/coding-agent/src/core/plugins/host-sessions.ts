@@ -1,4 +1,4 @@
-import { defineService } from "@amazme/chord";
+import { localService } from "@amazme/protocol/services";
 import type { Context } from "@amazme/chord";
 import type { AgentPromptResult } from "./agent-controller.ts";
 
@@ -26,4 +26,4 @@ export interface HostSessions {
 	cancelPrompt(sessionId: string, request: HostPromptRequest, context: Context): Promise<AgentPromptResult | null>;
 }
 
-export const HostSessions = defineService<HostSessions>("amazme.host-sessions", { local: true });
+export const HostSessions = localService<HostSessions>("amazme.host-sessions");

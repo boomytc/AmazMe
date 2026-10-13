@@ -1,4 +1,6 @@
-import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import { serviceFacet, type ServiceValue } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
+import { type Context, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { withAbortSignal } from "@amazme/chord/context";
 import type { ExecutionEnv } from "@amazme/durable/env";
 import type { AgentOperationError } from "../../core/plugins/agent-controller.ts";
@@ -39,8 +41,7 @@ export function createTerminalService(
 		exitCode: null,
 		output: "",
 		truncated: false,
-		error: null,
-	});
+		error: null });
 	let running: AbortController | undefined;
 	let finished: Promise<void> | undefined;
 	/** Output received but not yet published; the state carries the tail the reader sees. */
@@ -164,18 +165,15 @@ export function createTerminalService(
 			async stop(_context: Context): Promise<void> {
 				running?.abort();
 				await finished;
-			},
-		} satisfies Terminal,
-	};
+			} } satisfies Terminal };
 }
 
 /** The terminal as a facet: one shell for the Session's working directory. */
 export function createTerminalFacet(options: TerminalServiceOptions): Facet {
-	return defineFacet({
-		id: "@pi/terminal",
-		setup(env) {
-			const runtime = createTerminalService(options, (initial) => env.replicatedState(initial));
-			env.provide(Terminal, runtime.service);
-		},
+	return serviceFacet("@pi/terminal", Terminal, [], async (services) => {
+		const runtime = createTerminalService(options, (initial) => replicatedState(initial));
+		const implementation: ServiceValue<typeof Terminal> = runtime.service;
+
+		return { value: implementation };
 	});
 }

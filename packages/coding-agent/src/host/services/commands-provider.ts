@@ -1,4 +1,6 @@
-import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
+import { type Context, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { getAgentDir } from "../../config.ts";
 import { loadPromptTemplates } from "../../core/prompt-templates.ts";
@@ -12,8 +14,7 @@ import {
 	type CommandExpansion,
 	type CommandResult,
 	type CommandSummary,
-	type CommandsState,
-} from "./commands.ts";
+	type CommandsState } from "./commands.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { SlashCommands } from "../../core/plugins/slash-commands.ts";
 
@@ -62,22 +63,19 @@ export function loadCommandResources(options: CommandsServiceOptions): CommandRe
 	if (options.resourceLoader !== undefined) {
 		return {
 			templates: options.resourceLoader.getPrompts().prompts,
-			skills: settings?.getEnableSkillCommands() === false ? [] : options.resourceLoader.getSkills().skills,
-		};
+			skills: settings?.getEnableSkillCommands() === false ? [] : options.resourceLoader.getSkills().skills };
 	}
 	const templates = loadPromptTemplates({
 		cwd: options.cwd,
 		agentDir,
 		promptPaths: settings?.getPromptTemplatePaths() ?? [],
-		includeDefaults: true,
-	}).templates;
+		includeDefaults: true }).templates;
 	if (settings !== undefined && !settings.getEnableSkillCommands()) return { templates, skills: [] };
 	const skills = loadSkills({
 		cwd: options.cwd,
 		agentDir,
 		skillPaths: settings?.getSkillPaths() ?? [],
-		includeDefaults: true,
-	}).skills;
+		includeDefaults: true }).skills;
 	return { templates, skills };
 }
 
@@ -88,116 +86,124 @@ export function commandCatalog(
 ): CommandSummary[] {
 	const builtins: CommandSummary[] = BUILTIN_COMMANDS.map((command) => ({
 		...command,
-		source: "builtin",
-	}));
+		source: "builtin" }));
 	const plugins: CommandSummary[] = pluginCommands.map((command) => ({
 		name: command.name,
 		description: command.description ?? "",
 		...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
-		source: "plugin",
-	}));
+		source: "plugin" }));
 	const templates: CommandSummary[] = resources.templates.map((template) => ({
 		name: template.name,
 		description: template.description,
 		...(template.argumentHint === undefined ? {} : { argumentHint: template.argumentHint }),
-		source: "template",
-	}));
+		source: "template" }));
 	const skills: CommandSummary[] = resources.skills.map((skill) => ({
 		name: `skill:${skill.name}`,
 		description: skill.description,
 		argumentHint: "[args]",
-		source: "skill",
-	}));
+		source: "skill" }));
 	return [...builtins, ...plugins, ...templates, ...skills];
 }
 
 export function createCommandsFacet(options: CommandsServiceOptions): Facet {
-	return defineFacet({
-		id: "@pi/commands",
-		setup(env) {
-			const controller = env.use(AgentController);
-			const sessionPlugins = env.use(SessionPlugins);
-			const slashCommands = env.use(SlashCommands);
-			let resources = loadCommandResources(options);
-			const pluginCommands = (): PluginCommandSummary[] =>
-				slashCommands.list().map((command) => ({
-					name: command.name,
-					...(command.description === undefined ? {} : { description: command.description }),
-					...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
-				}));
-			// The catalogue is published once and revised whenever the session's resources or the
-			// plugin registrations move. Plugin registrations are read after activation: a facet
-			// cannot use another facet's service while it is still starting.
-			const state: MutableReplicatedState<CommandsState> = env.replicatedState<CommandsState>({
-				revision: 1,
-				commands: commandCatalog(resources),
-			});
-			const republish = async (context: Context, resourcesReloaded = false): Promise<void> => {
-				// A catalogue built from settings the session has not re-read would answer with the
-				// previous switch, so the settings files are read again before the resources are.
-				if (!resourcesReloaded || options.resourceLoader === undefined) {
-					if (options.resourceLoader === undefined) await options.settings?.reload().catch(() => undefined);
-					else await options.resourceLoader.reload();
-				}
-				resources = loadCommandResources(options);
-				state.change(context, (draft) => {
-					draft.revision += 1;
-					draft.commands = commandCatalog(resources, pluginCommands());
+	return serviceFacet(
+		"@pi/commands",
+		Commands,
+		[AgentController, SessionPlugins, SlashCommands],
+		async (services) => {
+			const disposers: Array<() => void | Promise<void>> = [];
+			try {
+				const controller = services.get(AgentController);
+				const sessionPlugins = services.get(SessionPlugins);
+				const slashCommands = services.get(SlashCommands);
+				let resources = loadCommandResources(options);
+				const pluginCommands = (): PluginCommandSummary[] =>
+					slashCommands.list().map((command) => ({
+						name: command.name,
+						...(command.description === undefined ? {} : { description: command.description }),
+						...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
+					}));
+				// The catalogue is published once and revised whenever the session's resources or the
+				// plugin registrations move. Plugin registrations are read after activation: a facet
+				// cannot use another facet's service while it is still starting.
+				const state: MutableReplicatedState<CommandsState> = replicatedState<CommandsState>({
+					revision: 1,
+					commands: commandCatalog(resources),
 				});
-			};
-			// Publish actual registrations at activation and retirement, using the existing registry.
-			env.onActivate(() => {
-				env.own(slashCommands.subscribe(() => {
-					state.change(BACKGROUND_CONTEXT, (draft) => {
+				const republish = async (context: Context, resourcesReloaded = false): Promise<void> => {
+					// A catalogue built from settings the session has not re-read would answer with the
+					// previous switch, so the settings files are read again before the resources are.
+					if (!resourcesReloaded || options.resourceLoader === undefined) {
+						if (options.resourceLoader === undefined) await options.settings?.reload().catch(() => undefined);
+						else await options.resourceLoader.reload();
+					}
+					resources = loadCommandResources(options);
+					state.change(context, (draft) => {
 						draft.revision += 1;
 						draft.commands = commandCatalog(resources, pluginCommands());
 					});
-				}));
-			});
-			env.provide(Commands, {
-				state,
-				async run(name: string, args: string, callContext: Context): Promise<CommandResult> {
-					switch (name) {
-						case "compact": {
-							const trimmed = args.trim();
-							const response = await controller.compact(
-								{ customInstructions: trimmed.length === 0 ? null : trimmed },
-								callContext,
-							);
-							return response.accepted
-								? { ok: true, note: "Compacting the conversation." }
-								: failure(response.error.message);
-						}
-						case "reload": {
-							await sessionPlugins.reload(callContext);
-							// A template or skill added since startup becomes a command with the reload.
-							await republish(callContext, true);
-							return { ok: true, note: "Reloaded this session's plugins and command resources." };
-						}
-						default: {
-							// A plugin's command runs here, with the same call the client TUI makes.
-							const contribution = slashCommands.list().find((command) => command.name === name);
-							if (contribution !== undefined) {
-								const outcome = await contribution.run(args, callContext);
-								return { ok: true, note: describeRun(outcome) };
+				};
+				// Publish actual registrations at activation and retirement, using the existing registry.
+				await (() => {
+					disposers.push(
+						slashCommands.subscribe(() => {
+							state.change(BACKGROUND_CONTEXT, (draft) => {
+								draft.revision += 1;
+								draft.commands = commandCatalog(resources, pluginCommands());
+							});
+						}),
+					);
+				})();
+				const implementation: ServiceValue<typeof Commands> = {
+					state,
+					async run(name: string, args: string, callContext: Context): Promise<CommandResult> {
+						switch (name) {
+							case "compact": {
+								const trimmed = args.trim();
+								const response = await controller.compact(
+									{ customInstructions: trimmed.length === 0 ? null : trimmed },
+									callContext,
+								);
+								return response.accepted
+									? { ok: true, note: "Compacting the conversation." }
+									: failure(response.error.message);
 							}
-							return failure(`Unknown command: /${name}`);
+							case "reload": {
+								await sessionPlugins.reload(callContext);
+								// A template or skill added since startup becomes a command with the reload.
+								await republish(callContext, true);
+								return { ok: true, note: "Reloaded this session's plugins and command resources." };
+							}
+							default: {
+								// A plugin's command runs here, with the same call the client TUI makes.
+								const contribution = slashCommands.list().find((command) => command.name === name);
+								if (contribution !== undefined) {
+									const outcome = await contribution.run(args, callContext);
+									return { ok: true, note: describeRun(outcome) };
+								}
+								return failure(`Unknown command: /${name}`);
+							}
 						}
-					}
-				},
-				async complete(name: string, prefix: string, _callContext: Context): Promise<readonly CommandCompletion[]> {
-					const contribution = slashCommands.list().find((command) => command.name === name);
-					return (await contribution?.getArgumentCompletions?.(prefix)) ?? [];
-				},
-				async expand(name: string, args: string): Promise<CommandExpansion> {
-					return expandResourceCommand(resources, name, args);
-				},
-				async refresh(context: Context): Promise<void> {
-					await republish(context);
-				},
-			});
+					},
+					async complete(name: string, prefix: string, _callContext: Context): Promise<readonly CommandCompletion[]> {
+						const contribution = slashCommands.list().find((command) => command.name === name);
+						return (await contribution?.getArgumentCompletions?.(prefix)) ?? [];
+					},
+					async expand(name: string, args: string): Promise<CommandExpansion> {
+						return expandResourceCommand(resources, name, args);
+					},
+					async refresh(context: Context): Promise<void> {
+						await republish(context);
+					},
+				};
+
+				return { value: implementation, close: () => disposeResources(disposers) };
+			} catch (error) {
+				await disposeResources(disposers);
+				throw error;
+			}
 		},
-	});
+	);
 }
 
 function failure(problem: string): CommandResult {

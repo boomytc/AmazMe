@@ -1,20 +1,15 @@
-import { createHash } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { bundleFacetPackage } from "@amazme/chord/bundler";
-import {
-	FACET_BUNDLE_MANIFEST_FILE,
-	type FacetBundleArtifact,
-	readFacetBundleArtifact,
-} from "@amazme/chord/node";
+import { inspectPluginPackage } from "../../core/plugins/package.ts";
+import { buildPluginEntry, PLUGIN_BUILD_FILE, type PluginArtifact } from "../../core/plugins/artifact.ts";
 import type { ServerId } from "@amazme/protocol";
 
 const PLUGIN_PACKAGE_PROFILE_VERSION = 1;
-const DEFAULT_PLUGIN_FACETS = Object.freeze({ session: "src/session.ts", tui: "src/tui.ts", server: "src/server.ts" });
 
 export interface ConfiguredServerPluginPackage {
 	readonly manifestPath: string;
-	build(): Promise<readonly FacetBundleArtifact[]>;
+	build(): Promise<readonly PluginArtifact[]>;
 }
 
 /** Persist an explicit plugin package selection or restore it for a later server generation. */
@@ -73,19 +68,20 @@ export function createServerPluginPackage(
 ): ConfiguredServerPluginPackage {
 	const normalizedPackagePath = resolve(packagePath);
 	const outdir = join(directory, "plugin-builds", serverId, pluginBuildDirectoryName(normalizedPackagePath));
-	const manifestPath = join(outdir, FACET_BUNDLE_MANIFEST_FILE);
+	const manifestPath = join(outdir, PLUGIN_BUILD_FILE);
 	let buildTail = Promise.resolve();
 	return {
 		manifestPath,
 		build() {
 			const operation = buildTail.then(async () => {
-				const result = await bundleFacetPackage({
-					packagePath: normalizedPackagePath,
-					outdir,
-					defaultFacets: DEFAULT_PLUGIN_FACETS,
-				});
-				if (result.manifest.entries.tui === undefined) return [];
-				return [await readFacetBundleArtifact({ manifestPath: result.manifestPath, entry: "tui" })];
+				const pkg = await inspectPluginPackage(normalizedPackagePath);
+    const entries: Record<string, PluginArtifact> = {};
+    for (const [kind, path] of Object.entries(pkg.entries)) entries[kind] = await buildPluginEntry(`${pkg.name}/${kind}`, path);
+    await mkdir(outdir, { recursive: true });
+    const temporary = `${manifestPath}.${randomUUID()}.tmp`;
+    try { await writeFile(temporary, JSON.stringify({ name: pkg.name, entries }), { mode: 0o600 }); await rename(temporary, manifestPath); }
+    finally { await rm(temporary, { force: true }); }
+    return entries.tui ? [entries.tui] : [];
 			});
 			buildTail = operation.then(
 				() => undefined,

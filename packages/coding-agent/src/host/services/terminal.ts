@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 
 /** What the terminal's buffer says about the last command. */
 export type TerminalStatus = "idle" | "running" | "done" | "cancelled";
@@ -31,4 +32,4 @@ export interface Terminal {
 	stop(context: Context): Promise<void>;
 }
 
-export const Terminal = defineService<Terminal>("amazme.terminal");
+export const Terminal = remoteService<Terminal>("amazme.terminal", {"run":1,"stop":0}, ["state"]);

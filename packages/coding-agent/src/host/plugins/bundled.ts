@@ -1,57 +1,40 @@
-import { combineFacetLoaders, type FacetLoader, type JsonValue } from "@amazme/chord";
+import type { FacetLoader, JsonValue } from "@amazme/chord";
 import {
-	createFacetBundleArtifactLoader,
-	createFacetBundleLoader,
-	type FacetBundleArtifact,
-	readFacetBundleManifest,
-} from "@amazme/chord/node";
-import { resolveAgentPluginExternal } from "../../core/plugins/info.ts";
+	loadPluginArtifacts,
+	parsePluginArtifact,
+	readPluginBuild,
+	type PluginArtifact,
+} from "../../core/plugins/artifact.ts";
 
-const PRESENTATION_FACET_BUNDLES_KEY = "presentationFacetBundles";
-
-export function createSessionPluginFacetLoader(manifestPaths: readonly string[]): FacetLoader | undefined {
-	return createPluginFacetLoader(manifestPaths, "session");
+const PRESENTATION_MODULES_KEY = "presentationModules";
+export function createSessionPluginFacetLoader(paths: readonly string[]): FacetLoader | undefined {
+	return packageLoader(paths, "session");
 }
-
-export function createServerPluginFacetLoader(manifestPaths: readonly string[]): FacetLoader | undefined {
-	return createPluginFacetLoader(manifestPaths, "server");
+export function createServerPluginFacetLoader(paths: readonly string[]): FacetLoader | undefined {
+	return packageLoader(paths, "server");
 }
-
-function createPluginFacetLoader(manifestPaths: readonly string[], entry: string): FacetLoader | undefined {
-	if (manifestPaths.length === 0) return undefined;
-	return combineFacetLoaders(manifestPaths.map(path => createOptionalFacetLoader(path, entry)));
-}
-
-function createOptionalFacetLoader(manifestPath: string, entry: string): FacetLoader {
-	const loader = createFacetBundleLoader({
-		manifestPath,
-		entry,
-		resolveExternal: resolveAgentPluginExternal,
-	});
-	return {
-		async load() {
-			const manifest = await readFacetBundleManifest(manifestPath);
-			if (manifest.entries[entry] !== undefined) return loader.load();
-			return { facets: Object.freeze([]), async dispose() {} };
-		},
+function packageLoader(paths: readonly string[], kind: string): FacetLoader | undefined {
+	if (!paths.length) return undefined;
+	return async () => {
+		const artifacts: PluginArtifact[] = [];
+		for (const path of paths) {
+			const entry = (await readPluginBuild(path)).entries[kind];
+			if (entry) artifacts.push(entry);
+		}
+		return loadPluginArtifacts(artifacts);
 	};
 }
-
-export function createPresentationFacetData(artifacts: readonly FacetBundleArtifact[]): JsonValue {
-	return {
-		[PRESENTATION_FACET_BUNDLES_KEY]: artifacts.map((artifact) => artifact as unknown as JsonValue),
-	};
+export function createPresentationFacetData(artifacts: readonly PluginArtifact[]): JsonValue {
+	return { [PRESENTATION_MODULES_KEY]: artifacts.map(({ name, code }) => ({ name, code })) };
 }
-
-/** Create local loaders only from artifacts selected and sent by the connected server. */
 export function createPresentationFacetLoaders(data: JsonValue): readonly FacetLoader[] {
-	if (data === null || Array.isArray(data) || typeof data !== "object") {
-		throw new Error("Invalid presentation plugin data");
-	}
-	const artifacts = data[PRESENTATION_FACET_BUNDLES_KEY];
+	if (!data || Array.isArray(data) || typeof data !== "object") throw new Error("Invalid presentation plugin data");
+	const artifacts = data[PRESENTATION_MODULES_KEY];
 	if (artifacts === undefined) return [];
-	if (!Array.isArray(artifacts)) throw new Error("Invalid presentation plugin bundle list");
-	return artifacts.map((artifact) =>
-		createFacetBundleArtifactLoader({ artifact, resolveExternal: resolveAgentPluginExternal }),
-	);
+	if (!Array.isArray(artifacts)) throw new Error("Invalid presentation plugin list");
+	const modules = artifacts.map(parsePluginArtifact);
+	return [async () => loadPluginArtifacts(modules)];
+}
+export async function loadFacets(loaders: readonly FacetLoader[]) {
+	return (await Promise.all(loaders.map((loader) => loader([])))).flat();
 }

@@ -9,6 +9,11 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./services": {
+			"source": "./src/services.ts",
+			"types": "./dist/services.d.ts",
+			"import": "./dist/services.js"
 		}
 	},
 	"files": [

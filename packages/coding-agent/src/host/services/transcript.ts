@@ -1,4 +1,5 @@
-import { defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type ReplicatedState } from "@amazme/chord";
 import type { ConversationView, InboxState, LiveState } from "@amazme/durable";
 
 /** The root conversation's durable view: active entries and its live, inbox, agent, and usage documents. */
@@ -6,7 +7,7 @@ export interface Transcript {
 	readonly state: ReplicatedState<ConversationView>;
 }
 
-export const Transcript = defineService<Transcript>("amazme.transcript");
+export const Transcript = remoteService<Transcript>("amazme.transcript", {}, ["state"]);
 
 /** The `amazme.live` document of a view: the active run, the streaming answer, and running tools. */
 export function liveOf(view: ConversationView): LiveState {

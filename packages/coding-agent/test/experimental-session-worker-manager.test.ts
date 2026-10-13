@@ -1,4 +1,4 @@
-import type { ServiceCall } from "@amazme/chord";
+import type { ChannelCall } from "@amazme/protocol";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { CoordinatorConnectionEvent } from "../src/host/coordinator.ts";
@@ -210,7 +210,7 @@ describe("Session worker lifecycle failures", () => {
 });
 
 describe("Session worker operations", () => {
-	const serviceCall = { serviceId: "test.session", member: "run", args: ["Hello"] } satisfies ServiceCall;
+	const serviceCall = { kind: "catalogue" } satisfies ChannelCall;
 
 	test("correlates service results to the worker generation and attachment", async () => {
 		const { coordinator, workers, attachment, release } = await createAttachedWorker();
@@ -235,7 +235,7 @@ describe("Session worker operations", () => {
 				});
 			});
 		};
-		await expect(attachment.invokeService(serviceCall, () => {}, BACKGROUND_CONTEXT)).resolves.toEqual({
+		await expect(attachment.invokeChannel(serviceCall, () => {}, BACKGROUND_CONTEXT)).resolves.toEqual({
 			accepted: true,
 		});
 		const operation = coordinator.sent
@@ -271,7 +271,7 @@ describe("Session worker operations", () => {
 				}),
 			);
 		};
-		await expect(attachment.invokeService(serviceCall, () => {}, BACKGROUND_CONTEXT)).rejects.toThrow(
+		await expect(attachment.invokeChannel(serviceCall, () => {}, BACKGROUND_CONTEXT)).rejects.toThrow(
 			/mismatched operation response/,
 		);
 		workers.detach();
@@ -300,7 +300,7 @@ describe("Session worker operations", () => {
 				}),
 			);
 		};
-		await expect(attachment.invokeService(serviceCall, () => {}, BACKGROUND_CONTEXT)).rejects.toThrow(
+		await expect(attachment.invokeChannel(serviceCall, () => {}, BACKGROUND_CONTEXT)).rejects.toThrow(
 			/invalid operation response/,
 		);
 		workers.detach();
@@ -310,7 +310,7 @@ describe("Session worker operations", () => {
 	test("rejects pending service calls on replacement without stopping the worker", async () => {
 		const { coordinator, workers, attachment } = await createAttachedWorker();
 		coordinator.onSend = () => {};
-		const calling = attachment.invokeService(serviceCall, () => {}, BACKGROUND_CONTEXT);
+		const calling = attachment.invokeChannel(serviceCall, () => {}, BACKGROUND_CONTEXT);
 		workers.detach();
 
 		await expect(calling).rejects.toThrow(/replaced during a worker operation/);

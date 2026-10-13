@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 
 /** How a reader rated one answer. */
 export type MessageRating = "up" | "down";
@@ -49,4 +50,4 @@ export interface Feedback {
 	reload(context: Context): Promise<void>;
 }
 
-export const Feedback = defineService<Feedback>("amazme.feedback");
+export const Feedback = remoteService<Feedback>("amazme.feedback", {"rate":1,"retract":1,"reload":0}, ["state"]);

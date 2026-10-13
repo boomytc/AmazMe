@@ -5,9 +5,10 @@
 	"type": "module",
 	"peerDependencies": {
 		"@amazme/ai": "*",
-		"@amazme/chord": "*",
-		"@amazme/coding-agent": "*",
-		"@amazme/durable": "*"
+		"@amazme/chord": "^1.2.0",
+		"@amazme/coding-agent": "^1.2.0",
+		"@amazme/durable": "*",
+		"@amazme/protocol": "^1.2.0"
 	},
 	"chord": {
 		"facets": {

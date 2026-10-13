@@ -1,14 +1,13 @@
+import { type ChannelCall, parseChannelFrame, openChannel } from "@amazme/protocol";
+import { createHost } from "@amazme/chord";
+import { ServiceScope } from "@amazme/protocol/services";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import {
 	type Context,
-	createServiceUnsubscribeCall,
-	decodeServiceControlCall,
 	type JsonValue,
-	parseServiceProviderUpdate,
-	type ServiceCall,
-	type ServiceProviderUpdate,
+	type Frame,
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
 import { type RoutedSessionAttachment, type RoutedSessionHandle, ServerError } from "@amazme/server";
@@ -74,10 +73,10 @@ interface PendingWorkerOperation {
 	reject(error: Error): void;
 }
 
-interface WorkerServiceSubscription {
+interface WorkerChannelSubscription {
 	readonly worker: WorkerRecord;
 	readonly scope: WorkerOperationScope;
-	readonly listener: (update: ServiceProviderUpdate, context: Context) => void | Promise<void>;
+	readonly listener: (update: Frame | undefined, context: Context) => void | Promise<void>;
 	deliveryTail: Promise<void>;
 }
 
@@ -107,7 +106,7 @@ export class SessionWorkerManager {
 	readonly #pending = new Map<string, PendingLaunch>();
 	readonly #pendingDemand = new Map<string, PendingDemand>();
 	readonly #pendingOperations = new Map<string, PendingWorkerOperation>();
-	readonly #serviceSubscriptions = new Map<string, WorkerServiceSubscription>();
+	readonly #channelSubscriptions = new Map<string, WorkerChannelSubscription>();
 	readonly #titleListeners = new Set<(metadata: SessionCatalogMetadata, title: string) => void>();
 	readonly #removeListener: () => void;
 	readonly #onWorkerCountChanged: ((count: number) => void) | undefined;
@@ -204,7 +203,7 @@ export class SessionWorkerManager {
 		const worker = this.#workersBySession.get(metadata.path);
 		if (worker === undefined) throw new Error("Session worker is unavailable");
 		const scope = { serverConnectionId: this.#coordinator.serverConnectionId, attachmentId: SESSION_INSPECTION_ATTACHMENT_ID };
-		const empty = await this.#invoke(worker, scope, { serviceId: SessionLifecycle.id, member: "isEmpty", args: [] }, context);
+		const empty = await this.#inspect(worker, scope, lifecycle => lifecycle.isEmpty(context), context);
 		if (typeof empty !== "boolean") throw new Error("Session worker returned an invalid empty-session status");
 		return empty;
 	}
@@ -214,7 +213,7 @@ export class SessionWorkerManager {
 		const worker = this.#workersBySession.get(metadata.path);
 		if (worker === undefined) return false;
 		const scope = { serverConnectionId: this.#coordinator.serverConnectionId, attachmentId: SESSION_INSPECTION_ATTACHMENT_ID };
-		await this.#invoke(worker, scope, { serviceId: SessionLifecycle.id, member: "refreshMirror", args: [] }, context);
+		await this.#inspect(worker, scope, lifecycle => lifecycle.refreshMirror(context), context);
 		return true;
 	}
 
@@ -226,9 +225,21 @@ export class SessionWorkerManager {
 		const worker = this.#workersBySession.get(metadata.path) ?? (await this.#pending.get(metadata.path)?.promise);
 		if (!worker) return;
 		const scope = { serverConnectionId: this.#coordinator.serverConnectionId, attachmentId: SESSION_INSPECTION_ATTACHMENT_ID };
-		try { await this.#invoke(worker, scope, { serviceId: SessionLifecycle.id, member: "stopWork", args: [] }, context); }
+		try { await this.#inspect(worker, scope, lifecycle => lifecycle.stopWork(context), context); }
 		catch { await this.#stopWorker(worker, context); }
 	}
+
+ async #inspect<T>(worker: WorkerRecord, scope: WorkerOperationScope, fn: (lifecycle: SessionLifecycle) => Promise<T>, context: Context): Promise<T> {
+  const connection = await openChannel((call, publish, ctx) => this.#invokeChannel(worker, scope, call, publish, ctx), context);
+  const host = createHost({ kind: "client" });
+  const services = new ServiceScope(host, { at: connection.host });
+  try {
+   host.connect(connection.link);
+   const lifecycle = services.get(SessionLifecycle);
+   await services.ready(context);
+   return await fn(lifecycle);
+  } finally { services.dispose(); await host.close(); await connection.close(); }
+ }
 
 	#routedHandle(worker: WorkerRecord): RoutedSessionHandle {
 		return {
@@ -256,8 +267,8 @@ export class SessionWorkerManager {
 		const scope = this.#operationScope(worker, attachmentId);
 		let released = false;
 		return {
-			invokeService: (call, publish, serviceContext) =>
-				this.#invokeService(worker, scope, call, publish, serviceContext),
+			invokeChannel: (call, publish, serviceContext) =>
+				this.#invokeChannel(worker, scope, call, publish, serviceContext),
 			release: async (releaseContext) => {
 				if (released) return;
 				released = true;
@@ -268,28 +279,28 @@ export class SessionWorkerManager {
 					if (!this.#detached && !this.#coordinator.wasReplaced) throw error;
 				} finally {
 					worker.attachmentIds.delete(attachmentId);
-					this.#removeServiceSubscriptions((entry) => entry.worker === worker && sameScope(entry.scope, scope));
+					this.#removeChannelSubscriptions((entry) => entry.worker === worker && sameScope(entry.scope, scope));
 				}
 			},
 		};
 	}
 
-	async #invokeService(
+	async #invokeChannel(
 		worker: WorkerRecord,
 		scope: WorkerOperationScope,
-		call: ServiceCall,
-		publish: (subscriptionId: string, update: ServiceProviderUpdate, context: Context) => void | Promise<void>,
+		call: ChannelCall,
+		publish: (channelId: string, update: Frame | undefined, context: Context) => void | Promise<void>,
 		context: Context,
 	): Promise<JsonValue | undefined> {
-		const control = decodeServiceControlCall(call);
+		const control = call;
 		let addedSubscriptionKey: string | undefined;
-		if (control?.type === "subscribe") {
-			const key = scopedServiceSubscriptionKey(scope, control.subscriptionId);
-			if (this.#serviceSubscriptions.has(key)) throw new Error("Service subscription ID is already active");
-			this.#serviceSubscriptions.set(key, {
+		if (control.kind === "open") {
+			const key = scopedChannelSubscriptionKey(scope, control.channel);
+			if (this.#channelSubscriptions.has(key)) throw new Error("Service subscription ID is already active");
+			this.#channelSubscriptions.set(key, {
 				worker,
 				scope,
-				listener: (update, updateContext) => publish(control.subscriptionId, update, updateContext),
+				listener: (update, updateContext) => publish(control.channel, update, updateContext),
 				deliveryTail: Promise.resolve(),
 			});
 			addedSubscriptionKey = key;
@@ -298,19 +309,19 @@ export class SessionWorkerManager {
 		try {
 			response = await this.#invoke(worker, scope, call, context);
 		} catch (error) {
-			if (addedSubscriptionKey !== undefined && control?.type === "subscribe") {
-				this.#serviceSubscriptions.delete(addedSubscriptionKey);
+			if (addedSubscriptionKey !== undefined && control.kind === "open") {
+				this.#channelSubscriptions.delete(addedSubscriptionKey);
 				void this.#invoke(
 					worker,
 					scope,
-					createServiceUnsubscribeCall(control.subscriptionId),
+					{ kind: "close", channel: control.channel },
 					BACKGROUND_CONTEXT,
 				).catch(() => {});
 			}
 			throw error;
 		}
-		if (control?.type === "unsubscribe") {
-			this.#serviceSubscriptions.delete(scopedServiceSubscriptionKey(scope, control.subscriptionId));
+		if (control.kind === "close") {
+			this.#channelSubscriptions.delete(scopedChannelSubscriptionKey(scope, control.channel));
 		}
 		return response;
 	}
@@ -357,7 +368,7 @@ export class SessionWorkerManager {
 	#invoke(
 		worker: WorkerRecord,
 		scope: WorkerOperationScope,
-		call: ServiceCall,
+		call: ChannelCall,
 		context: Context,
 	): Promise<JsonValue | undefined> {
 		try {
@@ -611,14 +622,14 @@ export class SessionWorkerManager {
 			this.#handleOperationResponse(event.from, message.token, message.sessionKey, message.response);
 			return;
 		}
-		if (message.type === "service_update") {
+		if (message.type === "channel_frame" || message.type === "channel_closed") {
 			this.#handleServiceEvent(
 				event.from,
 				message.token,
 				message.sessionKey,
 				message.scope,
-				message.subscriptionId,
-				message.update,
+				message.channelId,
+				message.type === "channel_closed" ? undefined : message.update,
 			);
 			return;
 		}
@@ -664,10 +675,10 @@ export class SessionWorkerManager {
 		token: string,
 		sessionKey: string,
 		scope: WorkerOperationScope,
-		subscriptionId: string,
+		channelId: string,
 		update: unknown,
 	): void {
-		const entry = this.#serviceSubscriptions.get(scopedServiceSubscriptionKey(scope, subscriptionId));
+		const entry = this.#channelSubscriptions.get(scopedChannelSubscriptionKey(scope, channelId));
 		if (
 			entry === undefined ||
 			entry.worker.peerId !== peerId ||
@@ -677,13 +688,13 @@ export class SessionWorkerManager {
 		) {
 			return;
 		}
-		let parsed: ServiceProviderUpdate;
+		let parsed: Frame | undefined;
 		try {
-			parsed = parseServiceProviderUpdate(update);
+			parsed = update === undefined ? undefined : parseChannelFrame(update);
 		} catch {
 			return;
 		}
-		entry.deliveryTail = entry.deliveryTail.then(() => entry.listener(parsed, TODO_CONTEXT)).catch(() => {});
+		entry.deliveryTail = entry.deliveryTail.then(() => this.#channelSubscriptions.get(scopedChannelSubscriptionKey(scope, channelId)) === entry ? entry.listener(parsed, TODO_CONTEXT) : undefined).catch(() => {});
 	}
 
 	#recordReadyWorker(peerId: string, message: Extract<SessionWorkerEvent, { type: "worker_ready" }>): void {
@@ -825,7 +836,7 @@ export class SessionWorkerManager {
 	#removeWorker(worker: WorkerRecord, error: Error | undefined): void {
 		if (this.#workersByPeer.get(worker.peerId) !== worker) return;
 		this.#rejectWorkerOperations(worker, new Error("Session worker disconnected during an operation"));
-		this.#removeServiceSubscriptions((entry) => entry.worker === worker);
+		this.#removeChannelSubscriptions((entry) => entry.worker === worker);
 		for (const pending of [...this.#pendingDemand.values()]) {
 			if (pending.worker === worker) {
 				this.#rejectDemand(pending.requestId, new Error("Session worker disconnected during demand update"));
@@ -838,9 +849,12 @@ export class SessionWorkerManager {
 		this.#notifyWorkerCountChanged();
 	}
 
-	#removeServiceSubscriptions(matches: (entry: WorkerServiceSubscription) => boolean): void {
-		for (const [key, entry] of this.#serviceSubscriptions) {
-			if (matches(entry)) this.#serviceSubscriptions.delete(key);
+	#removeChannelSubscriptions(matches: (entry: WorkerChannelSubscription) => boolean): void {
+		for (const [key, entry] of this.#channelSubscriptions) {
+			if (matches(entry)) {
+				this.#channelSubscriptions.delete(key);
+				void Promise.resolve(entry.listener(undefined, BACKGROUND_CONTEXT)).catch(() => {});
+			}
 		}
 	}
 
@@ -868,7 +882,7 @@ export class SessionWorkerManager {
 			pending.resolve();
 		}
 		this.#pending.clear();
-		this.#serviceSubscriptions.clear();
+		this.#removeChannelSubscriptions(() => true);
 		this.#workersByPeer.clear();
 		this.#workersBySession.clear();
 		this.workerPids.clear();
@@ -886,8 +900,8 @@ function sameScope(left: WorkerOperationScope, right: WorkerOperationScope): boo
 	return left.serverConnectionId === right.serverConnectionId && left.attachmentId === right.attachmentId;
 }
 
-function scopedServiceSubscriptionKey(scope: WorkerOperationScope, subscriptionId: string): string {
-	return `${scope.serverConnectionId}\0${scope.attachmentId}\0${subscriptionId}`;
+function scopedChannelSubscriptionKey(scope: WorkerOperationScope, channelId: string): string {
+	return `${scope.serverConnectionId}\0${scope.attachmentId}\0${channelId}`;
 }
 
 function abortError(signal: AbortSignal): Error {

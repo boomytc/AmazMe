@@ -8,26 +8,21 @@ AmazMe 复用 Chord 的 facets 加载和资源生命周期、Durable 的执行�
 
 ```ts
 import { Type } from "@amazme/ai";
-import { defineFacet } from "@amazme/chord";
+import { activationFacet } from "@amazme/protocol/services";
 import { AgentExtensions } from "@amazme/coding-agent/plugin";
 import { defineExtension, defineTool } from "@amazme/durable";
 
-export default defineFacet({
-  id: "example/session",
-  setup(env) {
-    const extensions = env.use(AgentExtensions);
-    env.onActivate(() => {
-      env.own(extensions.install(defineExtension({
-        name: "example",
-        tools: [defineTool({
-          name: "echo",
-          description: "返回输入文字",
-          parameters: Type.Object({ text: Type.String() }),
-          execute: async (args) => ({ output: [{ type: "text", text: args.text }] }),
-        })],
-      })));
-    });
-  },
+export default activationFacet("example/session", [AgentExtensions], (services) => {
+  const extensions = services.get(AgentExtensions);
+  return extensions.install(defineExtension({
+    name: "example",
+    tools: [defineTool({
+      name: "echo",
+      description: "返回输入文字",
+      parameters: Type.Object({ text: Type.String() }),
+      execute: async (args) => ({ output: [{ type: "text", text: args.text }] }),
+    })],
+  }));
 });
 ```
 
@@ -40,35 +35,32 @@ export default defineFacet({
 `prompt`、`steer` 和 `followUp` 可以传入稳定的 `requestId`，相同对话中的重试返回原提交，即使对话正在运行或曾经重启，也不会创建第二个输入。持久请求编号用于 `waitForPrompt` 和 `cancelPrompt`；`cancelPrompt` 只取消该输入所在的当前轮次，并等待其工具及所属工作清理。其他排队输入保留并继续，已结束的编号不会取消后来的轮次。同一轮次中已经放置的 steering 输入共享取消结果。
 
 ```ts
-import { defineFacet } from "@amazme/chord";
+import { activationFacet } from "@amazme/protocol/services";
 import { AgentController, SlashCommands } from "@amazme/coding-agent/plugin";
 
-export default defineFacet({
-  id: "example/commands",
-  setup(env) {
-    const commands = env.use(SlashCommands);
-    const agent = env.use(AgentController);
-    env.onActivate(() => {
-      env.own(commands.replace({
-        name: "explain",
-        description: "解释指定内容",
-        argumentHint: "<内容>",
-        run: (args, context) => agent.prompt({ message: `解释：${args}`, images: null }, context),
-      }));
-    });
-  },
+export default activationFacet("example/commands", [SlashCommands, AgentController], (services) => {
+  const commands = services.get(SlashCommands);
+  const agent = services.get(AgentController);
+  return commands.replace({
+    name: "explain",
+    description: "解释指定内容",
+    argumentHint: "<内容>",
+    run: (args, context) => agent.prompt({ message: `解释：${args}`, images: null }, context),
+  });
 });
 ```
 
-重载使用 `replace()` 暂存同名候选；旧注册退出后候选生效，候选失败则旧注册仍可执行。静态新注册可用 `register()`，名称重复时拒绝。两者均返回需要交给 `env.own()` 的清理函数。
+重载使用 `replace()` 暂存同名候选；旧注册退出后候选生效，候选失败则旧注册仍可执行。静态新注册可用 `register()`，名称重复时拒绝。两者均返回清理函数，由 `activationFacet` 返回给 Chord 资源所有者。多个租约在关闭时逆序释放，打开失败也必须清理已经取得的租约。
 
 `AgentController` 提供 prompt、steer、followUp、取消排队、abort、compact 和等待结果。原生入口与宿主在每次调用时取得当前对话；宿主与 `AgentRuntime.current(context)` 共用焦点解析。取消排队只操作当前对话所属的输入，停止和压缩也使用该对话。传入 `conversationId` 的投递固定到指定对话，已准入操作和等待回执继续使用其原编号。命令异步等待时应传递收到的 `context` 并响应其取消信号；Esc 会取消当前命令及当前会话任务，关闭时先取消并等待命令退出，再关闭 Harness 和插件资源。
 
-需要准入自定义持久任务的进程内插件可使用 `AgentRuntime.current(context)`，取得当前选中对话与现有 Harness。原生与 session worker 都提供该服务；后台任务准入后保持自己的对话归属，焦点切换不会迁移它。该服务为 `{ local: true }`，不发布到 RPC，也不创建另一套执行器。插件应通过普通所属任务、对话、提交和工具边界执行，并传递取消上下文。
+需要准入自定义持久任务的进程内插件可使用 `AgentRuntime.current(context)`，取得当前选中对话与现有 Harness。原生与 session worker 都提供该服务；后台任务准入后保持自己的对话归属，焦点切换不会迁移它。该服务使用 Chord 的 local opaque 成员，不发布到 RPC，也不创建另一套执行器。插件应通过普通所属任务、对话、提交和工具边界执行，并传递取消上下文。
 
 宿主的 `Models` 服务同样使用当前选中对话。模型与推理强度存于该对话的 `AgentDoc`，其他分叉保持各自配置；读取可用推理强度、循环和显式选择都以实际目标文档为准。选择模型同时沿用 Pi 的新会话默认设置保存行为，重启已有会话时仍恢复其持久配置。
 
-自定义服务直接使用 Chord 的 `defineService()`、`env.provide()` 和 `env.use()`，进程内服务指定 `{ local: true }`。提供者和消费者使用各自 facet，资源仍由其 `env.own()`/生命周期回调清理；不需要额外的插件服务容器。
+自定义 Chord 服务使用 `remote()` / `local()` 契约、同步 `defineFacet(api => ...)` 和 `api.serve()`。工厂通过 `self.get()` 声明依赖，通过 `self.resources()`、`self.listen()` 管理资源和监听器，通过 `host.root()` 传递调用取消与代际上下文。详见 [Chord 文档](../../chord/README.md)。
+
+产品现有领域接口使用 `@amazme/protocol/services`：`remoteService<T>(名称, 方法参数个数表, 状态成员名)` 声明位置参数与 Context 契约，`localService<T>(名称)` 声明本机对象，`serviceFacet()` 创建并持有一个实现，`activationFacet()` 持有注册租约。依赖列表必须明确列出；框架直接调用 Chord Host、句柄和资源，不提供另一套 RPC 或热重载运行时。接口中最后一个 `Context` 不计入位置参数表。公开方法与状态由 Chord 传输；本机对象不会进入远程目录。
 
 完成检查可使用 `hook(GenerationTask, { onYield })`。最终响应先写入 Durable 检查点，再运行该钩子；检查期间关闭并重开会继续处理原响应。`api.commit()` 可更新插件文档或创建 `ownership: { kind: "task", taskId: api.taskId }` 的所属任务，回调返回 `undefined`；`api.waitForTask()` 等待其终态。检查失败可返回 `{ continue: "具体反馈" }`，沿用原输入继续；用户跟进或 reset 被最终边界选中时，既有队列策略优先。检查的次数上限、超时与结果属于插件自己的持久状态，不把模型的原始响应当成验证结果。
 
@@ -82,7 +74,7 @@ export default defineFacet({
 
 ## 源码选择
 
-单文件导出 `defineFacet(...)`，扩展目录也支持 `index.ts`/`index.js` 入口或直接放置的源码文件。包目录包含 `package.json`，session 入口默认为 `src/session.ts`，可用 `chord.facets.session` 指定或设为 `false`。包名称和版本必填。原生入口只检查和构建 session，其他 facet 不会在这里运行。AmazMe 提供 AI、Chord、Durable 和插件 API，普通包依赖仍由插件自行声明和安装。
+单文件默认导出新版 Chord facet（例如 `defineFacet(...)` 或 `activationFacet(...)`），扩展目录也支持 `index.ts`/`index.js` 入口或直接放置的源码文件。包目录包含 `package.json`，session 入口默认为 `src/session.ts`，可用 `chord.facets.session` 指定或设为 `false`。包名称必填。原生入口只构建和加载 session，其他 facet 不会在这里运行。AmazMe 提供 AI、Chord、Durable、Protocol 和插件 API，普通包依赖仍由插件自行声明和安装。
 
 用户 `settings.json` 的 `extensions` 路径相对用户 agent 目录；项目 `.amazme/settings.json` 的路径相对 `.amazme`，只在项目已信任时加载。本地路径和 glob 增加发现来源，`!pattern` 排除，`+path` 强制包含，`-path` 强制排除且优先于包含；精确包路径和它的 session 文件选择同一个模块。实际来源按规范路径去重，项目决定优先，显式 `-e` 强制包含。
 
@@ -107,15 +99,15 @@ export default defineFacet({
 
 [workflows](../plugins/workflows/README.md) 提供 JSON 阶段计划、独立上下文、有界后台并发、持久暂停/恢复和独立命令检查证据。`/workflows` 在原生和 Web 都调用同一工具任务；命令目录订阅实际注册与退役变化，插件命令直接执行，只有提示词模板和技能转换为模型输入。
 
-直接加载源码的原生入口通过 `/plugins` 和模型提示提供已选源码、当前安装中的 API 类型位置与本指南。宿主会话的模型提示使用同一 API 与指南，并列出该会话实际选中的 manifest；读取 session 条目的 `sourceMap`，将 `sources` 按 map 所在目录和 `sourceRoot` 解析，可定位原文件。修改原源码，不修改生成的 bundle；没有源码映射的产物需使用其配置的包源码位置。
+直接加载源码的原生入口通过 `/plugins` 和模型提示提供已选源码、当前安装中的 API 类型位置与本指南。宿主会话的模型提示使用同一 API 与指南，并列出该会话实际选中的 manifest；构建文件 `plugin.json` 按角色保存 ESM 代码，代码带内联 source map，可据其中的 `sources` 与 `sourceRoot` 定位原文件。修改原源码，不修改生成的 bundle；没有源码映射的产物需使用其配置的包源码位置。
 
 修改后，在任务结束或取消时运行 `/reload`，会重新构建并加载候选版本，不要求先手工构建。修改包声明或来源选择后需重启，重载沿用本次启动选中的来源。没有选中插件时，不注册插件开发提示段或插件贡献的命令。
 
 ## 修改后生效
 
-重载串行处理，只在会话任务结束或取消后进行。加载和切换期间拒绝新的模型操作。候选版本准备失败时，清理候选并保留旧版；切换完成后的清理失败可能使 Chord 宿主失效，此时拒绝继续运行，需重启会话。关闭会话先等待 Harness 结束工具调用，再释放插件资源和加载产物。
+重载串行处理，只在会话任务结束或取消后进行。加载和切换期间拒绝新的模型操作。候选版本准备失败时，清理候选并保留旧版；切换完成后的清理失败可能使 Chord 宿主失效，此时拒绝继续运行，需重启会话。关闭会话先等待 Harness 结束工具调用，再关闭 Chord Host 并释放插件资源。临时导入文件在导入完成或失败后立即删除。
 
-CLI 源码插件由重载入口重新构建；Web 的 `/reload` 先请求既有宿主构建服务重建当前会话选中的包，再由 worker 加载产物。构建失败时原版本继续可用，修复源码后可重试；活动任务需先结束或取消。重载期间切换会话不会把迟到的产物用于新会话。应用直接提供 manifest loader 时仍需先生成新的 facet 产物。Facet ID 和服务形状沿用 Chord 的重载约束。浏览器构建、应用壳及内核源码仍有各自的构建与重启边界，不承诺所有源码热替换。
+CLI 源码插件由重载入口重新构建；Web 的 `/reload` 先请求既有宿主构建服务重建当前会话选中的包，再由 worker 加载产物。构建失败时原版本继续可用，修复源码后可重试；活动任务需先结束或取消。重载期间切换会话不会把迟到的产物用于新会话。应用直接提供 manifest loader 时仍需先生成新的 facet 产物。Facet 名称、契约版本与输入遵循 Chord 的重载约束。服务接口变更必须同步修改消费者；产品协议版本为 9，不保留旧服务消息解析。浏览器构建、应用壳及内核源码仍有各自的构建与重启边界，不承诺所有源码热替换。
 
 ## 工具结果与嵌套调用
 

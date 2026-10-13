@@ -1,7 +1,10 @@
+import { openTestHost } from "./native-host-support.ts";
+import { activationFacet, disposeResources } from "@amazme/protocol/services";
 import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Context, createFacetHost, defineFacet, defineService } from "@amazme/chord";
+import { createHost, type Context } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { Client, ServerError as ClientServerError } from "@amazme/client";
 import { createUnixTransportFactory } from "@amazme/client/unix";
@@ -28,8 +31,7 @@ import { createServerServiceBinding, createSessionServiceBinding } from "./exper
 import {
 	configureExperimentalWorkerModel,
 	createExperimentalSessions,
-	readExperimentalSessionState,
-} from "./experimental-session-support.ts";
+	readExperimentalSessionState } from "./experimental-session-support.ts";
 import { KeyedProbe } from "./fixtures/keyed-service.ts";
 
 const servers = new Set<RunningServer>();
@@ -38,7 +40,7 @@ const directories = new Set<string>();
 const fauxWorkerEntryUrl = new URL("fixtures/faux-session-worker.ts", import.meta.url);
 const realSpawnInternalProcess = processRuntime.spawnInternalProcess;
 const sessionWorkerModel = { provider: "anthropic", model: "claude-sonnet-4-5" } as const;
-const SecondPluginService = defineService<{ read(context: Context): Promise<string> }>("test.second-plugin");
+const SecondPluginService = remoteService<{ read(context: Context): Promise<string> }>("test.second-plugin", { read: 0 });
 let agentDir: string;
 
 beforeEach(async () => {
@@ -61,7 +63,7 @@ async function attachSession(client: Client, sessionId: string): Promise<void> {
 	const services = createServerServiceBinding(client, { services: [SessionManagement] });
 	try {
 		await services.ready(BACKGROUND_CONTEXT);
-		await services.use(SessionManagement).attach(sessionId, BACKGROUND_CONTEXT);
+		await services.get(SessionManagement).attach(sessionId, BACKGROUND_CONTEXT);
 	} finally {
 		await services.dispose(BACKGROUND_CONTEXT);
 	}
@@ -70,8 +72,7 @@ async function attachSession(client: Client, sessionId: string): Promise<void> {
 async function attachClient(runtime: RunningServer, sessionId: string): Promise<Client> {
 	const client = await Client.connect({
 		serverId: runtime.serverId,
-		transportFactory: createUnixTransportFactory({ path: runtime.socketPath }),
-	});
+		transportFactory: createUnixTransportFactory({ path: runtime.socketPath }) });
 	clients.add(client);
 	await attachSession(client, sessionId);
 	return client;
@@ -114,8 +115,7 @@ describe("experimental durable server composition", () => {
 		expect(entries).toContainEqual(expect.stringMatching(new RegExp(`^server-${serverId}-[0-9a-f]{12}\\.sock$`)));
 		await expect(runClient({ command: "client" })).resolves.toMatchObject({
 			kind: "list",
-			sessions: [{ sessionId: "demo-1" }, { sessionId: "demo-2" }],
-		});
+			sessions: [{ sessionId: "demo-1" }, { sessionId: "demo-2" }] });
 	});
 
 	test("rejects a provider without a model", async () => {
@@ -184,15 +184,13 @@ describe("experimental durable server composition", () => {
 				sessions: [
 					{ serverId, sessionId: "demo-1" },
 					{ serverId, sessionId: "demo-2" },
-				],
-			},
+				] },
 			{
 				kind: "list",
 				sessions: [
 					{ serverId, sessionId: "demo-1" },
 					{ serverId, sessionId: "demo-2" },
-				],
-			},
+				] },
 		]);
 		expect(await pathExists(join(directory, `${serverId}.sock`))).toBe(true);
 		await expect.poll(() => pathExists(join(directory, `${serverId}.sock`)), { timeout: 5_000 }).toBe(false);
@@ -215,9 +213,9 @@ describe("experimental durable server composition", () => {
 				BACKGROUND_CONTEXT,
 			);
 			await activated.management.attach("demo-1", BACKGROUND_CONTEXT);
-			const loaded = await createPresentationFacetLoaders(presentationPlugins)[0]!.load();
-			expect(loaded.facets.map(({ id }) => id)).toEqual(["@amazme/example-plugin/tui"]);
-			await loaded.dispose();
+			const loaded = await createPresentationFacetLoaders(presentationPlugins)[0]!([]);
+			expect(loaded.map(({ name }) => name)).toEqual(["@amazme/example-plugin/tui"]);
+
 		} finally {
 			await first.dispose();
 		}
@@ -247,8 +245,7 @@ describe("experimental durable server composition", () => {
 		await expect(runClient({ command: "client", sessionId: "demo-1", ...sessionWorkerModel })).resolves.toEqual({
 			kind: "attached",
 			serverId,
-			sessionId: "demo-1",
-		});
+			sessionId: "demo-1" });
 		await expect.poll(() => pathExists(join(directory, `${serverId}.sock`)), { timeout: 5_000 }).toBe(false);
 		await expect.poll(() => pathExists(join(directory, `control-${serverId}.sock`)), { timeout: 5_000 }).toBe(false);
 	});
@@ -274,8 +271,7 @@ describe("experimental durable server composition", () => {
 				{ serverId: firstId, sessionId: "demo-2" },
 				{ serverId: secondId, sessionId: "demo-1" },
 				{ serverId: secondId, sessionId: "demo-2" },
-			],
-		});
+			] });
 
 		await first.close();
 		await expect.poll(() => pathExists(first.socketPath)).toBe(false);
@@ -284,50 +280,35 @@ describe("experimental durable server composition", () => {
 			sessions: [
 				{ serverId: secondId, sessionId: "demo-1" },
 				{ serverId: secondId, sessionId: "demo-2" },
-			],
-		});
+			] });
 	});
 
 	test("hydrates and mutates server Session services across framed clients", async () => {
 		const { runtime } = await makeServer([fileURLToPath(new URL("../plugins/automation", import.meta.url))]);
 		const firstClient = await Client.connect({
 			serverId: runtime.serverId,
-			transportFactory: createUnixTransportFactory({ path: runtime.socketPath }),
-		});
+			transportFactory: createUnixTransportFactory({ path: runtime.socketPath }) });
 		const secondClient = await Client.connect({
 			serverId: runtime.serverId,
-			transportFactory: createUnixTransportFactory({ path: runtime.socketPath }),
-		});
+			transportFactory: createUnixTransportFactory({ path: runtime.socketPath }) });
 		clients.add(firstClient);
 		clients.add(secondClient);
 		const errors: Error[] = [];
 		const firstServices = createServerServiceBinding(firstClient, {
 			services: [SessionDirectory, SessionManagement],
-			onError: (error) => errors.push(error),
-		});
+			onError: (error) => errors.push(error) });
 		const secondServices = createServerServiceBinding(secondClient, {
 			services: [SessionDirectory, SessionManagement],
-			onError: (error) => errors.push(error),
-		});
+			onError: (error) => errors.push(error) });
 		expect(firstServices.connection.value).toMatchObject({ status: "connected" });
 		expect(secondServices.connection.value).toMatchObject({ status: "connected" });
-		await expect(firstServices.catalogue(BACKGROUND_CONTEXT)).resolves.toEqual([
-			{ serviceId: SessionDirectory.id, mode: "singleton" },
-			{ serviceId: SessionManagement.id, mode: "singleton" },
-			{ serviceId: PresentationPlugins.id, mode: "singleton" },
-			{ serviceId: Settings.id, mode: "singleton" },
-			{ serviceId: Skills.id, mode: "singleton" },
-			{ serviceId: Plugins.id, mode: "singleton" },
-			{ serviceId: Feedback.id, mode: "singleton" },
-			{ serviceId: Diagnostics.id, mode: "singleton" },
-			{ serviceId: ProjectManagement.id, mode: "singleton" },
-			{ serviceId: SessionArchive.id, mode: "singleton" },
-			{ serviceId: Schedules.id, mode: "singleton" },
-		]);
-		const firstDirectory = firstServices.use(SessionDirectory);
-		const secondDirectory = secondServices.use(SessionDirectory);
-		const firstManagement = firstServices.use(SessionManagement);
-		const secondManagement = secondServices.use(SessionManagement);
+		expect((await firstServices.catalogue(BACKGROUND_CONTEXT)).map(entry => entry.serviceId).sort()).toEqual([
+   SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ProjectManagement, SessionArchive, Schedules,
+  ].map(service => service.name).sort());
+		const firstDirectory = firstServices.get(SessionDirectory);
+		const secondDirectory = secondServices.get(SessionDirectory);
+		const firstManagement = firstServices.get(SessionManagement);
+		const secondManagement = secondServices.get(SessionManagement);
 
 		await Promise.all([firstServices.ready(BACKGROUND_CONTEXT), secondServices.ready(BACKGROUND_CONTEXT)]);
 		expect(firstDirectory.state.value?.sessions.map(({ sessionId }) => sessionId)).toEqual(["demo-1", "demo-2"]);
@@ -367,22 +348,19 @@ describe("experimental durable server composition", () => {
 		const errors: Error[] = [];
 		const firstServices = createSessionServiceBinding(firstClient, {
 			services: [Models],
-			onError: (error) => errors.push(error),
-		});
+			onError: (error) => errors.push(error) });
 		const secondServices = createSessionServiceBinding(secondClient, {
 			services: [Models],
-			onError: (error) => errors.push(error),
-		});
-		const firstModels = firstServices.use(Models);
-		const secondModels = secondServices.use(Models);
+			onError: (error) => errors.push(error) });
+		const firstModels = firstServices.get(Models);
+		const secondModels = secondServices.get(Models);
 
 		await Promise.all([firstServices.ready(BACKGROUND_CONTEXT), secondServices.ready(BACKGROUND_CONTEXT)]);
 		expect(firstServices.attachment.value).toEqual({ status: "attached", sessionId: "demo-1" });
 		expect(secondServices.attachment.value).toEqual({ status: "attached", sessionId: "demo-1" });
 		expect(firstModels.state.value?.configuration.model).toEqual({
 			provider: "anthropic",
-			modelId: "claude-sonnet-4-5",
-		});
+			modelId: "claude-sonnet-4-5" });
 		expect(secondModels.state.value).toEqual(firstModels.state.value);
 		const previousThinking = firstModels.state.value!.configuration.thinkingLevel;
 		await firstModels.cycleThinking(BACKGROUND_CONTEXT);
@@ -406,13 +384,11 @@ describe("experimental durable server composition", () => {
 				`${JSON.stringify({
 					name: "@amazme/second-session-plugin",
 					version: "1.0.0",
-					peerDependencies: { "@amazme/chord": "^0.84.4" },
-				})}\n`,
+					peerDependencies: { "@amazme/chord": "^0.84.4" } })}\n`,
 			),
 			writeFile(
 				join(secondPackagePath, "src", "session.ts"),
-				'import { defineFacet, defineService } from "@amazme/chord"; const Service = defineService("test.second-plugin"); export default defineFacet({ id: "second-session-plugin", setup(env) { env.provide(Service, { async read() { return "second"; } }); } });\n',
-			),
+				'import { remoteService, serviceFacet } from "@amazme/protocol/services"; const Service = remoteService("test.second-plugin", { read: 0 }); export default serviceFacet("second-session-plugin", Service, [], () => ({ value: { async read() { return "second"; } } }));\n',			),
 		]);
 		const runtime = await startServer({ ...sessionWorkerModel, directory });
 		servers.add(runtime);
@@ -424,20 +400,18 @@ describe("experimental durable server composition", () => {
 				packagePaths: [
 					fileURLToPath(new URL("../examples/plugins/amazme-example-plugin", import.meta.url)),
 					secondPackagePath,
-				],
-			},
+				] },
 			BACKGROUND_CONTEXT,
 		);
 		await activated.management.attach("demo-1", BACKGROUND_CONTEXT);
 		const services = createSessionServiceBinding(clientRuntime.servers[0]!.client, {
-			services: [ExampleFacetService, SecondPluginService],
-		});
+			services: [ExampleFacetService, SecondPluginService] });
 		try {
 			await services.ready(BACKGROUND_CONTEXT);
 			await expect(
-				services.use(ExampleFacetService).greet({ name: "Armin" }, BACKGROUND_CONTEXT),
+				services.get(ExampleFacetService).greet({ name: "Armin" }, BACKGROUND_CONTEXT),
 			).resolves.toMatchObject({ workerActivations: 1 });
-			await expect(services.use(SecondPluginService).read(BACKGROUND_CONTEXT)).resolves.toBe("second");
+			await expect(services.get(SecondPluginService).read(BACKGROUND_CONTEXT)).resolves.toBe("second");
 		} finally {
 			await services.dispose(BACKGROUND_CONTEXT);
 			await clientRuntime.dispose();
@@ -452,26 +426,23 @@ describe("experimental durable server composition", () => {
 		const firstClient = await attachClient(runtime, "demo-1");
 		const firstServices = createSessionServiceBinding(firstClient, { services: [Models] });
 		await firstServices.ready(BACKGROUND_CONTEXT);
-		const firstModels = firstServices.use(Models);
+		const firstModels = firstServices.get(Models);
 		await firstModels.saveDefaults({ provider: "anthropic", modelId: "claude-sonnet-4-5" }, "off", BACKGROUND_CONTEXT);
 		await firstModels.select({ provider: "anthropic", modelId: "claude-opus-4-6" }, BACKGROUND_CONTEXT);
 		await expect.poll(() => firstModels.state.value?.configuration.model).toEqual({
-			provider: "anthropic", modelId: "claude-opus-4-6",
-		});
+			provider: "anthropic", modelId: "claude-opus-4-6" });
 		await firstServices.dispose(BACKGROUND_CONTEXT);
 		await firstClient.dispose();
 		clients.delete(firstClient);
 		await expect.poll(() => runtime.workerPids.has("demo-1")).toBe(false);
 		expect((await readExperimentalSessionState(join(agentDir, "experimental", "sessions"), "demo-1")).model).toEqual({
-			provider: "anthropic", modelId: "claude-opus-4-6",
-		});
+			provider: "anthropic", modelId: "claude-opus-4-6" });
 
 		const secondClient = await attachClient(runtime, "demo-2");
 		const secondServices = createSessionServiceBinding(secondClient, { services: [Models] });
 		await secondServices.ready(BACKGROUND_CONTEXT);
-		await expect.poll(() => secondServices.use(Models).state.value?.configuration.model).toEqual({
-			provider: "anthropic", modelId: "claude-sonnet-4-5",
-		});
+		await expect.poll(() => secondServices.get(Models).state.value?.configuration.model).toEqual({
+			provider: "anthropic", modelId: "claude-sonnet-4-5" });
 		await secondServices.dispose(BACKGROUND_CONTEXT);
 	});
 
@@ -482,7 +453,7 @@ describe("experimental durable server composition", () => {
 		servers.add(runtime);
 		const firstClient = await attachClient(runtime, "demo-1");
 		const firstServices = createSessionServiceBinding(firstClient, { services: [Models] });
-		const firstModels = firstServices.use(Models);
+		const firstModels = firstServices.get(Models);
 		await firstServices.ready(BACKGROUND_CONTEXT);
 		await firstModels.select({ provider: "anthropic", modelId: "claude-opus-4-6" }, BACKGROUND_CONTEXT);
 		await firstModels.saveDefaults({ provider: "anthropic", modelId: "claude-opus-4-6" }, "high", BACKGROUND_CONTEXT);
@@ -493,12 +464,11 @@ describe("experimental durable server composition", () => {
 
 		const secondClient = await attachClient(runtime, "demo-2");
 		const secondServices = createSessionServiceBinding(secondClient, { services: [Models] });
-		const secondModels = secondServices.use(Models);
+		const secondModels = secondServices.get(Models);
 		await secondServices.ready(BACKGROUND_CONTEXT);
 		await expect.poll(() => secondModels.state.value?.configuration.model).toEqual({
 			provider: "anthropic",
-			modelId: "claude-opus-4-6",
-		});
+			modelId: "claude-opus-4-6" });
 		expect(secondModels.state.value?.configuration.thinkingLevel).toBe("high");
 		await secondServices.dispose(BACKGROUND_CONTEXT);
 	});
@@ -507,8 +477,7 @@ describe("experimental durable server composition", () => {
 		const { runtime } = await makeServer();
 		const clientRuntime = await openClientRuntime({
 			command: "client",
-			connect: { transport: "unix", path: runtime.socketPath },
-		});
+			connect: { transport: "unix", path: runtime.socketPath } });
 		try {
 			const server = await activateBuiltinClientServices(clientRuntime.servers[0]!);
 			await server.plugins.prepareSession({ sessionId: "demo-1", packagePaths: null }, BACKGROUND_CONTEXT);
@@ -517,8 +486,7 @@ describe("experimental durable server composition", () => {
 			expect(server.session.attachment.value).toEqual({ status: "attached", sessionId: "demo-1" });
 			expect(server.models.state.value?.configuration.model).toEqual({
 				provider: "anthropic",
-				modelId: "claude-sonnet-4-5",
-			});
+				modelId: "claude-sonnet-4-5" });
 		} finally {
 			await clientRuntime.dispose();
 		}
@@ -528,15 +496,13 @@ describe("experimental durable server composition", () => {
 		const { runtime } = await makeServer();
 		const client = await Client.connect({
 			serverId: runtime.serverId,
-			transportFactory: createUnixTransportFactory({ path: runtime.socketPath }),
-		});
+			transportFactory: createUnixTransportFactory({ path: runtime.socketPath }) });
 		clients.add(client);
 		const errors: Error[] = [];
 		const services = createSessionServiceBinding(client, {
 			services: [Models],
-			onError: (error) => errors.push(error),
-		});
-		const models = services.use(Models);
+			onError: (error) => errors.push(error) });
+		const models = services.get(Models);
 		await services.ready(BACKGROUND_CONTEXT);
 		const states: SessionAttachmentState[] = [];
 		const removeStateListener = services.attachment.subscribe((state) => states.push(state));
@@ -544,14 +510,14 @@ describe("experimental durable server composition", () => {
 		const delayed = new Promise<void>((resolve) => {
 			releaseDelay = resolve;
 		});
-		const subscribeService = client.subscribeService.bind(client);
+		const openLink = client.openLink.bind(client);
 		const subscribe = vi
-			.spyOn(client, "subscribeService")
-			.mockImplementation(async (target, serviceId, mode, listener, signal) => {
-				if ("sessionId" in target && target.sessionId === "demo-2" && serviceId === Models.id) {
+			.spyOn(client, "openLink")
+			.mockImplementation(async (target, host, signal) => {
+				if ("sessionId" in target && target.sessionId === "demo-2") {
 					await delayed;
 				}
-				return subscribeService(target, serviceId, mode, listener, signal);
+				return openLink(target, host, signal);
 			});
 		onTestFinished(() => subscribe.mockRestore());
 
@@ -563,8 +529,7 @@ describe("experimental durable server composition", () => {
 			expect(services.attachment.value).toEqual({ status: "attached", sessionId: "demo-1" });
 			expect(models.state.value?.configuration.model).toEqual({
 				provider: "anthropic",
-				modelId: "claude-sonnet-4-5",
-			});
+				modelId: "claude-sonnet-4-5" });
 		} finally {
 			releaseDelay();
 			removeStateListener();
@@ -580,61 +545,28 @@ describe("experimental durable server composition", () => {
 		expect(errors).toEqual([]);
 	});
 
-	test("observes keyed service instances and fences replacement generations over framed transport", async ({
-		onTestFinished,
-	}) => {
-		const spawn = vi
-			.spyOn(processRuntime, "spawnInternalProcess")
-			.mockImplementation((role, args, options) =>
-				realSpawnInternalProcess(
-					role,
-					args,
-					role === "session-worker" ? { ...options, entryUrl: fauxWorkerEntryUrl } : options,
-				),
-			);
-		onTestFinished(() => spawn.mockRestore());
-		const { runtime } = await makeServer();
-		const client = await attachClient(runtime, "demo-1");
-		const errors: Error[] = [];
-		const services = createSessionServiceSource(client, {
-			onError: (error) => errors.push(error),
-		});
-		await expect(services.catalogue(BACKGROUND_CONTEXT)).resolves.toContainEqual({
-			serviceId: KeyedProbe.id,
-			mode: "keyed",
-		});
-		const observed: { service: KeyedProbe; value: string | undefined }[] = [];
-		const consumer = defineFacet({
-			id: "@test/keyed-probe-consumer",
-			setup(env) {
-				env.observe(KeyedProbe, (service) => {
-					observed.push({ service, value: service.state.value?.value });
-				});
-			},
-		});
-		const facetHost = await createFacetHost({ facets: [consumer], serviceSources: [services] });
-
-		expect(services.attachment.value).toEqual({ status: "attached", sessionId: "demo-1" });
-		await vi.waitFor(() => expect(observed).toHaveLength(1));
-		expect(observed[0]!.value).toBe("first");
-		const staleReplace = observed[0]!.service.replace;
-		await expect(staleReplace("second", BACKGROUND_CONTEXT)).resolves.toBeUndefined();
-		await vi.waitFor(() => expect(observed).toHaveLength(2));
-		expect(observed[1]!.value).toBe("second");
-		expect(() => staleReplace("late", BACKGROUND_CONTEXT)).toThrow("observation is closed");
-
-		const replacedReplace = observed[1]!.service.replace;
-		await expect(attachSession(client, "demo-2")).resolves.toBeUndefined();
-		await services.whenAttached("demo-2", BACKGROUND_CONTEXT);
-		expect(observed).toHaveLength(3);
-		expect(services.attachment.value).toEqual({ status: "attached", sessionId: "demo-2" });
-		expect(observed[2]!.value).toBe("first");
-		expect(() => replacedReplace("late", BACKGROUND_CONTEXT)).toThrow("observation is closed");
-		expect(errors).toEqual([]);
-
-		await facetHost.dispose();
-		await expect(services.dispose(BACKGROUND_CONTEXT)).resolves.toBeUndefined();
-	});
+	test("isolates Chord records by input and releases handles after attachment replacement", async ({ onTestFinished }) => {
+  const spawn = vi.spyOn(processRuntime, "spawnInternalProcess").mockImplementation((role, args, options) => realSpawnInternalProcess(role, args, role === "session-worker" ? { ...options, entryUrl: fauxWorkerEntryUrl } : options));
+  onTestFinished(() => spawn.mockRestore());
+  const { runtime } = await makeServer(); const client = await attachClient(runtime, "demo-1");
+  const channel = await client.openLink(client.attachment!);
+  const host = createHost({ kind: "client" }); host.connect(channel.link);
+  try {
+   const first = host.get(KeyedProbe, { key: "first" }, { at: channel.host });
+   const second = host.get(KeyedProbe, { key: "second" }, { at: channel.host });
+   const stopFirst = first.state.subscribe(() => {}); const stopSecond = second.state.subscribe(() => {});
+   await Promise.all([first.ready, second.ready]);
+   await host.root(ctx => first.replace("changed", ctx));
+   await expect.poll(() => first.state.value).toEqual({ value: "changed" });
+   await expect.poll(() => second.state.value).toEqual({ value: "first" });
+   first.release();
+   await expect(host.root(ctx => first.replace("late", ctx))).rejects.toMatchObject({ code: "released" });
+   let closed = false; channel.link.onClose(() => { closed = true; });
+   await attachSession(client, "demo-2");
+   await expect.poll(() => closed).toBe(true);
+   stopFirst(); stopSecond(); second.release();
+  } finally { await host.close(); await channel.close(); }
+ });
 
 	test("answers a client prompt through the worker-owned service provider", async ({ onTestFinished }) => {
 		const spawn = vi
@@ -668,10 +600,10 @@ describe("experimental durable server composition", () => {
 		const { runtime } = await makeServer();
 		const client = await attachClient(runtime, "demo-1");
 		const services = createSessionServiceBinding(client, { services: [AgentController, SessionPlugins, Transcript] });
-		const controller = services.use(AgentController);
-		const transcript = services.use(Transcript);
+		const controller = services.get(AgentController);
+		const transcript = services.get(Transcript);
 		await services.ready(BACKGROUND_CONTEXT);
-		await services.use(SessionPlugins).reload(BACKGROUND_CONTEXT);
+		await services.get(SessionPlugins).reload(BACKGROUND_CONTEXT);
 		try {
 			for (const message of ["first question", "second question"]) {
 				const response = await controller.prompt({ message, images: null }, BACKGROUND_CONTEXT);
@@ -680,8 +612,7 @@ describe("experimental durable server composition", () => {
 				await expect(controller.waitForPrompt(response.operationId, BACKGROUND_CONTEXT)).resolves.toEqual({
 					status: "done",
 					text: "deterministic remote answer",
-					reason: null,
-				});
+					reason: null });
 				await vi.waitFor(() => {
 					expect(transcript.state.value?.entries.filter((entry) => entry.kind === "amazme.assistant")).toHaveLength(
 						message === "first question" ? 1 : 2,
@@ -759,8 +690,7 @@ describe("experimental durable server composition", () => {
 			sessions: [
 				{ serverId: first.serverId, sessionId: "demo-1" },
 				{ serverId: first.serverId, sessionId: "demo-2" },
-			],
-		});
+			] });
 		await attachClient(replacement, "demo-1");
 		expect(replacement.workerPids.get("demo-1")).toBe(firstWorkerPid);
 		await attachClient(replacement, "demo-2");
@@ -800,15 +730,13 @@ describe("experimental durable server composition", () => {
 		const replacement = await startServer({
 			...sessionWorkerModel,
 			directory,
-			sessionDir: emptySessionDir,
-		});
+			sessionDir: emptySessionDir });
 		servers.add(replacement);
 		await first.closed;
 
 		await expect(runClient({ command: "client" }, { directory })).resolves.toEqual({
 			kind: "list",
-			sessions: [{ serverId: first.serverId, sessionId: "demo-1" }],
-		});
+			sessions: [{ serverId: first.serverId, sessionId: "demo-1" }] });
 		await attachClient(replacement, "demo-1");
 		expect(replacement.workerPids.get("demo-1")).toBe(workerPid);
 	});
@@ -819,13 +747,11 @@ describe("experimental durable server composition", () => {
 		const firstShared = await startServer({
 			...sessionWorkerModel,
 			directory: sharedDirectory,
-			serverId: "00000000-0000-4000-8000-000000000001",
-		});
+			serverId: "00000000-0000-4000-8000-000000000001" });
 		const secondShared = await startServer({
 			...sessionWorkerModel,
 			directory: sharedDirectory,
-			serverId: "00000000-0000-4000-8000-000000000002",
-		});
+			serverId: "00000000-0000-4000-8000-000000000002" });
 		servers.add(firstShared);
 		servers.add(secondShared);
 

@@ -1,4 +1,4 @@
-import { defineService } from "@amazme/chord";
+import { localService } from "@amazme/protocol/services";
 import type { Context } from "@amazme/chord";
 import type { AgentOperationResponse, AgentQueueResponse } from "./agent-controller.ts";
 
@@ -29,4 +29,4 @@ export interface SlashCommands {
 	subscribe(listener: (commands: readonly SlashCommandContribution[]) => void): () => void;
 }
 
-export const SlashCommands = defineService<SlashCommands>("amazme.local.slash-commands", { local: true });
+export const SlashCommands = localService<SlashCommands>("amazme.local.slash-commands");

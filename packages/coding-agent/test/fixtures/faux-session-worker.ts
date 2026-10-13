@@ -1,6 +1,7 @@
+import { cell, type Facet } from "@amazme/chord";
+import { Type } from "typebox";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createStaticFacetLoader, defineFacet } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@amazme/ai";
 import { createRegistry, Harness } from "@amazme/durable";
@@ -28,35 +29,20 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 		);
 		const model = faux.getModel();
 		const conversation = await harness.root(BACKGROUND_CONTEXT, {
-			agent: { cwd: options.metadata.cwd, model: { provider: model.provider, modelId: model.id } },
-		});
-		const keyedProbeFacet = defineFacet({
-			id: "@test/keyed-probe",
-			setup(env) {
-				const probes = env.provideMany(KeyedProbe);
-				const spawn = (value: string): void => {
-					const state = env.replicatedState({ value });
-					let close = (): void => {};
-					close = probes.spawn("probe", {
-						state,
-						async replace(next) {
-							close();
-							spawn(next);
-						},
-						async wait(context) {
-							const signal = context.abortSignal;
-							if (signal === undefined) throw new Error("Probe wait requires cancellation");
-							if (signal.aborted) throw abortError(signal);
-							await new Promise<void>((_resolve, reject) => {
-								signal.addEventListener("abort", () => reject(abortError(signal)), { once: true });
-							});
-						},
-					});
-				};
-				env.onActivate(() => spawn("first"));
-			},
-		});
-		return { cwd: options.metadata.cwd, harness, conversation, facetLoader: createStaticFacetLoader([keyedProbeFacet]) };
+			agent: { cwd: options.metadata.cwd, model: { provider: model.provider, modelId: model.id } } });
+		const keyedProbeFacet: Facet = { name: "keyed-probe", setup(api) {
+   api.serve(KeyedProbe, (_input, _principal, self) => {
+    const state = self.state({ state: cell(Type.Object({ value: Type.String() }), { value: "first" }) });
+    return { kind: "default", state: state.state,
+     replace(value, context) { state.state.change(context, draft => { draft.value = value; }); return null; },
+     wait(_input, context) { return new Promise<null>((_resolve, reject) => {
+      if (context.signal.aborted) reject(abortError(context.signal));
+      else context.signal.addEventListener("abort", () => reject(abortError(context.signal)), { once: true });
+     }); },
+    };
+   });
+  } };
+		return { cwd: options.metadata.cwd, harness, conversation, facetLoader: async () => [keyedProbeFacet] };
 	}).catch((error: unknown) => {
 		console.error(error);
 		process.exit(1);

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
-import { parseServiceCall } from "@amazme/chord";
+import { parseChannelCall } from "@amazme/protocol";
 import { ClientMessageDecoder, encodeServerMessage, PROTOCOL_VERSION } from "@amazme/protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import { Client } from "../src/index.ts";
@@ -69,8 +69,8 @@ describe.runIf(process.platform !== "win32")("createUnixTransportFactory", () =>
 						continue;
 					}
 					if (message.type === "cancel") continue;
-					const call = parseServiceCall(message.call);
-					receivedMembers.push(`${call.serviceId}.${call.member}`);
+					const call = parseChannelCall(message.call);
+					receivedMembers.push(call.kind);
 					const frame = encodeServerMessage({
 						type: "response",
 						id: message.id,
@@ -89,9 +89,9 @@ describe.runIf(process.platform !== "win32")("createUnixTransportFactory", () =>
 		try {
 			await expect(client.connect()).resolves.toMatchObject({ serverId });
 			await expect(
-				client.request({ serverId }, { serviceId: "test.server", member: "list", args: [] }),
+				client.request({ serverId }, { kind: "catalogue" }),
 			).resolves.toEqual([]);
-			expect(receivedMembers).toEqual(["test.server.list"]);
+			expect(receivedMembers).toEqual(["catalogue"]);
 		} finally {
 			await client.dispose();
 		}
@@ -123,7 +123,7 @@ describe.runIf(process.platform !== "win32")("createUnixTransportFactory", () =>
 		try {
 			await client.connect();
 			await expect(
-				client.request({ serverId }, { serviceId: "test.server", member: "list", args: [] }),
+				client.request({ serverId }, { kind: "catalogue" }),
 			).rejects.toMatchObject({
 				name: "ProtocolValidationError",
 				message: expect.stringMatching(/truncated/i),

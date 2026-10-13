@@ -10,6 +10,7 @@ import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ConversationView } from "@amazme/durable";
+import type { ReplicatedState } from "@amazme/chord";
 import type { PageRenderer, WebView } from "@amazme/web";
 import {
 	BOOT_GLOBAL,
@@ -72,13 +73,13 @@ interface Presentation {
 	/** The server-scoped surfaces the page binds: the reader's ratings live here. */
 	readonly feedback: FeedbackService;
 	/** The planned prompts the host runs on their own. */
-	readonly schedules: SchedulesService;
+	readonly schedules: SchedulesService | undefined;
 	readonly sessionSource: SessionServiceSource;
 	dispose(): Promise<void>;
 }
 
 interface Attached {
-	readonly transcript: { readonly state: { readonly value: ConversationView | undefined } };
+	readonly transcript: { readonly state: ReplicatedState<ConversationView> };
 	readonly controller: AgentController;
 	readonly models: ModelsService;
 	readonly commands: CommandsService;
@@ -125,11 +126,11 @@ async function openPage(host: WebHost, storage = new Map<string, string>()) {
 		setDraft: text => renderer.onDraftChange(text),
 	};
 	const releases = new Set<Promise<void>>();
-	const subscribe = Client.prototype.subscribeService;
-	const subscriptionSpy = vi.spyOn(Client.prototype, "subscribeService").mockImplementation(async function (this: Client, ...args) {
+	const subscribe = Client.prototype.openLink;
+	const subscriptionSpy = vi.spyOn(Client.prototype, "openLink").mockImplementation(async function (this: Client, ...args) {
 		const subscription = await subscribe.apply(this, args);
-		return { ...subscription, dispose: async () => {
-			const releasing = subscription.dispose();
+		return { ...subscription, close: async () => {
+			const releasing = subscription.close();
 			releases.add(releasing);
 			try { await releasing; } finally { releases.delete(releasing); }
 		} };
@@ -142,8 +143,8 @@ async function openPage(host: WebHost, storage = new Map<string, string>()) {
 	const closing = new Promise<void>(resolve => { closed = resolve; });
 	const disposeClient = connection.dispose.bind(connection);
 	vi.spyOn(connection, "dispose").mockImplementation(async () => {
-		// A fake window must await concurrent session/server releases before closing its connection.
-		await Promise.allSettled([...releases]);
+		// The page must join its native channel closes before disposing the transport.
+		expect(releases.size).toBe(0);
 		await disposeClient();
 		closed();
 	});
@@ -245,23 +246,24 @@ async function openPresentation(host: WebHost): Promise<Presentation> {
 	});
 	const serverSource = createServerServiceSource(client);
 	const sessionSource = createSessionServiceSource(client);
+	const hasSchedules = (await serverSource.catalogue(BACKGROUND_CONTEXT)).some(entry => entry.serviceId === Schedules.name);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, SessionArchive, ProjectManagement, Feedback, Schedules],
+		services: [SessionDirectory, SessionManagement, SessionArchive, ProjectManagement, Feedback, ...(hasSchedules ? [Schedules] : [])],
 		assertAccess(): void {},
 		onError(): void {},
 	});
 	await serverServices.ready(BACKGROUND_CONTEXT);
 	return {
 		client,
-		management: serverServices.use(SessionManagement),
-		directory: serverServices.use(SessionDirectory),
-		archives: serverServices.use(SessionArchive),
-		projects: serverServices.use(ProjectManagement),
-		feedback: serverServices.use(Feedback),
-		schedules: serverServices.use(Schedules),
+		management: serverServices.get(SessionManagement),
+		directory: serverServices.get(SessionDirectory),
+		archives: serverServices.get(SessionArchive),
+		projects: serverServices.get(ProjectManagement),
+		feedback: serverServices.get(Feedback),
+		schedules: hasSchedules ? serverServices.get(Schedules) : undefined,
 		sessionSource,
 		async dispose() {
-			await serverServices.dispose(BACKGROUND_CONTEXT);
+			await Promise.all([serverSource.dispose(BACKGROUND_CONTEXT), sessionSource.dispose(BACKGROUND_CONTEXT)]);
 			await client.dispose();
 		},
 	};
@@ -278,14 +280,14 @@ async function attachSession(presentation: Presentation, sessionId: string): Pro
 	});
 	await services.ready(BACKGROUND_CONTEXT);
 	return {
-		transcript: services.use(Transcript),
-		controller: services.use(AgentController),
-		models: services.use(Models),
-		commands: services.use(Commands),
-		workspace: services.use(Workspace),
-		conversations: services.use(Conversations),
-		approvals: services.use(Approvals),
-		terminal: services.use(Terminal),
+		transcript: services.get(Transcript),
+		controller: services.get(AgentController),
+		models: services.get(Models),
+		commands: services.get(Commands),
+		workspace: services.get(Workspace),
+		conversations: services.get(Conversations),
+		approvals: services.get(Approvals),
+		terminal: services.get(Terminal),
 		async dispose() {
 			await services.dispose(BACKGROUND_CONTEXT);
 		},
@@ -321,9 +323,9 @@ async function openAdministration(host: WebHost): Promise<Administration> {
 	});
 	await services.ready(BACKGROUND_CONTEXT);
 	return {
-		settings: services.use(Settings),
-		skills: services.use(Skills),
-		plugins: services.use(Plugins),
+		settings: services.get(Settings),
+		skills: services.get(Skills),
+		plugins: services.get(Plugins),
 		async dispose() {
 			await services.dispose(BACKGROUND_CONTEXT);
 			await client.dispose();
@@ -641,11 +643,11 @@ describe("web client interactive loop", () => {
 				await services.ready(BACKGROUND_CONTEXT);
 				// Each service's state replicates on its own, so wait for the ones the page's panels
 				// read rather than assuming one arrival means all of them.
-				const settings = services.use(Settings);
-				const skills = services.use(Skills);
-				const plugins = services.use(Plugins);
-				const feedback = services.use(Feedback);
-				const schedules = services.use(Schedules);
+				const settings = services.get(Settings);
+				const skills = services.get(Skills);
+				const plugins = services.get(Plugins);
+				const feedback = services.get(Feedback);
+				const schedules = services.get(Schedules);
 				await waitFor(
 					() =>
 						settings.state.value !== undefined &&
@@ -658,7 +660,7 @@ describe("web client interactive loop", () => {
 				);
 				expect(settings.state.value?.descriptors.length).toBeGreaterThan(0);
 				// The first host's server is what answered: its directory lists its sessions.
-				const created = await services.use(SessionManagement).create({ id: "bridged-boot" }, BACKGROUND_CONTEXT);
+				const created = await services.get(SessionManagement).create({ id: "bridged-boot" }, BACKGROUND_CONTEXT);
 				expect(created.sessionId).toBe("bridged-boot");
 			} finally {
 				await services.dispose(BACKGROUND_CONTEXT);
@@ -1378,28 +1380,28 @@ describe("web client interactive loop", () => {
 			const presentation = await openPresentation(host);
 			const created = await presentation.management.create({ id: "web-loop-schedule" }, BACKGROUND_CONTEXT);
 			const attached = await attachSession(presentation, created.sessionId);
-			await waitFor(() => presentation.schedules.state.value !== undefined, "the schedules state");
-			expect(presentation.schedules.state.value?.schedules).toEqual([]);
-			const path = presentation.schedules.state.value?.path ?? "";
+			await waitFor(() => presentation.schedules!.state.value !== undefined, "the schedules state");
+			expect(presentation.schedules!.state.value?.schedules).toEqual([]);
+			const path = presentation.schedules!.state.value?.path ?? "";
 			expect(path.endsWith("schedules.json")).toBe(true);
 
 			// The page's add modal sends the attached session, the prompt, and the gap.
 			const marker = `web-loop-schedule-${Date.now()}`;
 			expect(
-				await presentation.schedules.add(
+				await presentation.schedules!.add(
 					{ conversationId: "1", sessionId: created.sessionId, prompt: marker, id: randomUUID(), rule: { kind: "interval", everyMinutes: 60 }, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600 },
 					BACKGROUND_CONTEXT,
 				),
 			).toEqual({ ok: true, code: "added" });
-			await waitFor(() => presentation.schedules.state.value?.schedules.length === 1, "the planned prompt");
-			const planned = presentation.schedules.state.value?.schedules[0];
+			await waitFor(() => presentation.schedules!.state.value?.schedules.length === 1, "the planned prompt");
+			const planned = presentation.schedules!.state.value?.schedules[0];
 			expect(planned).toMatchObject({ conversationId: "1", sessionId: created.sessionId, prompt: marker, rule: { kind: "interval", everyMinutes: 60 }, enabled: true });
 			// The file the CLI would read carries it.
 			const file = JSON.parse(await readFile(path, "utf8")) as { schedules: readonly { prompt: string }[] };
 			expect(file.schedules.map((schedule) => schedule.prompt)).toEqual([marker]);
 
 			// Run now goes through the host's own runner: the prompt reaches the session's transcript.
-			const run = await presentation.schedules.runNow(planned?.id ?? "", randomUUID(), BACKGROUND_CONTEXT);
+			const run = await presentation.schedules!.runNow(planned?.id ?? "", randomUUID(), BACKGROUND_CONTEXT);
 			// The scratch agent directory has no credentials, so the turn settles without an answer;
 			// what matters is that the run happened, was reported, and reached the real session.
 			expect(run.ok).toBe(false);
@@ -1408,28 +1410,28 @@ describe("web client interactive loop", () => {
 				"the planned prompt in the session's transcript",
 			);
 			await waitFor(
-				() => (presentation.schedules.state.value?.schedules[0]?.history.length ?? 0) > 0,
+				() => (presentation.schedules!.state.value?.schedules[0]?.history.length ?? 0) > 0,
 				"the recorded outcome",
 			);
-			const recorded = presentation.schedules.state.value?.schedules[0];
+			const recorded = presentation.schedules!.state.value?.schedules[0];
 			expect(recorded?.history.at(-1)?.startedAt).toBeGreaterThan(0);
 			expect(recorded?.history.at(-1)?.status).toBe("unanswered");
 			expect(JSON.parse(await readFile(path, "utf8")).schedules[0].history.at(-1).status).toBe(recorded?.history.at(-1)?.status);
 
 			// Pausing is replicated, and it keeps the outcome the run recorded.
-			expect(await presentation.schedules.setEnabled(planned?.id ?? "", false, BACKGROUND_CONTEXT)).toEqual({
+			expect(await presentation.schedules!.setEnabled(planned?.id ?? "", false, BACKGROUND_CONTEXT)).toEqual({
 				ok: true,
 				code: "paused",
 			});
-			await waitFor(() => presentation.schedules.state.value?.schedules[0]?.enabled === false, "the paused schedule");
-			await presentation.schedules.remove(planned?.id ?? "", BACKGROUND_CONTEXT);
-			await waitFor(() => presentation.schedules.state.value?.schedules.length === 0, "the removed schedule");
+			await waitFor(() => presentation.schedules!.state.value?.schedules[0]?.enabled === false, "the paused schedule");
+			await presentation.schedules!.remove(planned?.id ?? "", BACKGROUND_CONTEXT);
+			await waitFor(() => presentation.schedules!.state.value?.schedules.length === 0, "the removed schedule");
 			expect(JSON.parse(await readFile(path, "utf8")).schedules).toEqual([]);
 			// A schedule the host does not have is refused rather than silently accepted.
 			expect(
-				await presentation.schedules.add({ conversationId: "1", sessionId: "", prompt: "x", id: randomUUID(), rule: { kind: "interval", everyMinutes: 5 }, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600 }, BACKGROUND_CONTEXT),
+				await presentation.schedules!.add({ conversationId: "1", sessionId: "", prompt: "x", id: randomUUID(), rule: { kind: "interval", everyMinutes: 5 }, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600 }, BACKGROUND_CONTEXT),
 			).toMatchObject({ ok: false });
-			expect(await presentation.schedules.add({ conversationId: "1", sessionId: created.sessionId, prompt: "  ", id: randomUUID(), rule: { kind: "interval", everyMinutes: 5 }, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600 }, BACKGROUND_CONTEXT)).toMatchObject({
+			expect(await presentation.schedules!.add({ conversationId: "1", sessionId: created.sessionId, prompt: "  ", id: randomUUID(), rule: { kind: "interval", everyMinutes: 5 }, busy: "queue", missed: "latest", graceMinutes: 10, timeoutSeconds: 600 }, BACKGROUND_CONTEXT)).toMatchObject({
 				ok: false,
 			});
 
@@ -1954,14 +1956,16 @@ describe("web client interactive loop", () => {
 				"the steer in the durable inbox",
 			);
 
-			// Compaction on demand: the request reaches the durable task the live document shows.
-			expect(
-				await attached.controller.compact({ customInstructions: "keep the marker" }, BACKGROUND_CONTEXT),
-			).toMatchObject({ accepted: true });
-			await waitFor(
-				() => (liveOf(attached.transcript.state.value as ConversationView).compactions ?? []).length > 0,
-				"the compaction task in the live document",
-			);
+			// Observe the admitted task before requesting it; a short-lived live state may finish between polls.
+			const observedCompactions = new Set<string>();
+			const stopCompactions = attached.transcript.state.subscribe((view) => {
+				for (const status of liveOf(view).compactions ?? []) observedCompactions.add(String(status.taskId));
+			});
+			try {
+				const compacted = await attached.controller.compact({ customInstructions: "keep the marker" }, BACKGROUND_CONTEXT);
+				expect(compacted).toMatchObject({ accepted: true });
+				await waitFor(() => compacted.operationId !== null && observedCompactions.has(compacted.operationId), "the admitted compaction task in the live document");
+			} finally { stopCompactions(); }
 
 			// A catalog refresh settles instead of staying in flight.
 			await attached.models.refresh(BACKGROUND_CONTEXT);

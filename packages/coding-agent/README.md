@@ -29,7 +29,7 @@ amazme client
 
 原生插件入口及 API：
 
-- [插件执行与重载](docs/plugin-runtime.md)：`@amazme/coding-agent/plugin`，使用 `defineFacet`，注册由 `env.own()` 清理。
+- [插件执行与重载](docs/plugin-runtime.md)：`@amazme/coding-agent/plugin`，使用新版 Chord facet，注册由声明的资源生命周期清理。
 - [插件包示例](examples/plugins/)：宿主与客户端角色保持独立。
 - [包管理](docs/packages.md)：安装位置、来源与项目选择。
 

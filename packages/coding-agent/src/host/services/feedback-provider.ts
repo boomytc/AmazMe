@@ -1,7 +1,9 @@
+import { serviceFacet, type ServiceValue } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import { type Context, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { Feedback, type FeedbackRecord, type FeedbackResult, type FeedbackState, type MessageRating } from "./feedback.ts";
 
 /** How many ratings the store keeps; older ones fall off the end. */
@@ -40,8 +42,7 @@ function parseRecord(value: unknown): FeedbackRecord | undefined {
 		entryId: record.entryId,
 		rating: record.rating,
 		note: typeof record.note === "string" ? record.note : null,
-		at: record.at,
-	};
+		at: record.at };
 }
 
 /**
@@ -117,8 +118,7 @@ export function createFeedbackService(
 					entryId: request.entryId,
 					rating: request.rating,
 					note,
-					at: Date.now(),
-				};
+					at: Date.now() };
 				records = [record, ...records.filter((candidate) => identityOf(candidate) !== identity)].slice(
 					0,
 					FEEDBACK_MAX_RECORDS,
@@ -141,21 +141,18 @@ export function createFeedbackService(
 			},
 			async reload(context: Context): Promise<void> {
 				await load(context);
-			},
-		},
+			} },
 		/** The starting read, for the facet's activation. */
-		activate: (context: Context) => load(context),
-	};
+		activate: (context: Context) => load(context) };
 }
 
 /** The feedback service as a facet: it owns the file's state and reads it once at activation. */
 export function createFeedbackFacet(options: FeedbackServiceOptions): Facet {
-	return defineFacet({
-		id: "@pi/feedback",
-		setup(env) {
-			const runtime = createFeedbackService(options, (initial) => env.replicatedState(initial));
-			env.provide(Feedback, runtime.service);
-			env.onActivate(() => runtime.activate(BACKGROUND_CONTEXT));
-		},
+	return serviceFacet("@pi/feedback", Feedback, [], async (services) => {
+		const runtime = createFeedbackService(options, (initial) => replicatedState(initial));
+		const implementation: ServiceValue<typeof Feedback> = runtime.service;
+		await (() => runtime.activate(BACKGROUND_CONTEXT))();
+
+		return { value: implementation };
 	});
 }

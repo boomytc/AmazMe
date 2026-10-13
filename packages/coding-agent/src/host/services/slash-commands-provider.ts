@@ -1,4 +1,5 @@
-import { defineFacet, type Facet, type JsonValue } from "@amazme/chord";
+import { activationFacet, disposeResources } from "@amazme/protocol/services";
+import { type Facet, type JsonValue } from "@amazme/chord";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import type { Context } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -16,55 +17,71 @@ const THINKING_DESCRIPTIONS: Record<ModelThinkingLevel, string> = {
 	medium: "Moderate reasoning",
 	high: "Deep reasoning",
 	xhigh: "Extra-high reasoning",
-	max: "Maximum reasoning",
-};
+	max: "Maximum reasoning" };
 
 export function createBuiltInSlashCommandsFacet(options: {
 	reloadPresentationPlugins(data: JsonValue): Promise<void>;
 	authenticate?(mode: "login" | "logout", provider: string | undefined, context: Context): Promise<void>;
 }): Facet {
-	return defineFacet({
-		id: "@pi/slash-commands-builtin",
-		setup(env) {
-			const commands = env.use(SlashCommands);
-			const models = env.use(Models);
-			const controller = env.use(AgentController);
-			const ui = env.use(PresentationUI);
-			const presentationPlugins = env.use(PresentationPlugins);
-			const catalog = env.use(Commands);
-			env.onActivate(() => {
-				if (options.authenticate) for (const mode of ["login", "logout"] as const) env.own(commands.replace({
-					name: mode,
-					description: mode === "login" ? "Sign in to a model provider" : "Remove saved provider credentials",
-					argumentHint: "[provider]",
-					getArgumentCompletions(prefix) {
-						return (models.state.value?.authentication?.providers ?? [])
-							.filter(provider => provider.id.includes(prefix) && (mode === "login" ? provider.methods.length > 0 : provider.configured))
-							.map(provider => ({ value: provider.id, label: provider.name }));
-					},
-					run: (args, context) => options.authenticate!(mode, args || undefined, context).then(() => undefined),
-				}));
-				env.own(commands.replace(modelCommand(models, ui)));
-				env.own(commands.replace(thinkingCommand(models, ui)));
-				env.own(commands.replace(compactCommand(controller, ui)));
-				env.own(
-					commands.replace({
-						name: "reload",
-						description: "Reload server-selected plugins",
-						async run(_args, context) {
-							ui.showStatus("Reloading plugins…", context);
-							const data = await presentationPlugins.reload(context);
-							const result = await catalog.run("reload", "", context);
-							if (!result.ok) throw new Error(result.problem);
-							await options.reloadPresentationPlugins(data);
-							ui.showStatus("Reloaded plugins and resources.", context);
-							return undefined;
-						},
-					}),
-				);
-			});
+	return activationFacet(
+		"@pi/slash-commands-builtin",
+		[SlashCommands, Models, AgentController, PresentationUI, PresentationPlugins, Commands],
+		async (services) => {
+			const disposers: Array<() => void | Promise<void>> = [];
+			try {
+				const commands = services.get(SlashCommands);
+				const models = services.get(Models);
+				const controller = services.get(AgentController);
+				const ui = services.get(PresentationUI);
+				const presentationPlugins = services.get(PresentationPlugins);
+				const catalog = services.get(Commands);
+				await (() => {
+					if (options.authenticate)
+						for (const mode of ["login", "logout"] as const)
+							disposers.push(
+								commands.replace({
+									name: mode,
+									description: mode === "login" ? "Sign in to a model provider" : "Remove saved provider credentials",
+									argumentHint: "[provider]",
+									getArgumentCompletions(prefix) {
+										return (models.state.value?.authentication?.providers ?? [])
+											.filter(
+												(provider) =>
+													provider.id.includes(prefix) &&
+													(mode === "login" ? provider.methods.length > 0 : provider.configured),
+											)
+											.map((provider) => ({ value: provider.id, label: provider.name }));
+									},
+									run: (args, context) => options.authenticate!(mode, args || undefined, context).then(() => undefined),
+								}),
+							);
+					disposers.push(commands.replace(modelCommand(models, ui)));
+					disposers.push(commands.replace(thinkingCommand(models, ui)));
+					disposers.push(commands.replace(compactCommand(controller, ui)));
+					disposers.push(
+						commands.replace({
+							name: "reload",
+							description: "Reload server-selected plugins",
+							async run(_args, context) {
+								ui.showStatus("Reloading plugins…", context);
+								const data = await presentationPlugins.reload(context);
+								const result = await catalog.run("reload", "", context);
+								if (!result.ok) throw new Error(result.problem);
+								await options.reloadPresentationPlugins(data);
+								ui.showStatus("Reloaded plugins and resources.", context);
+								return undefined;
+							},
+						}),
+					);
+				})();
+
+				return () => disposeResources(disposers);
+			} catch (error) {
+				await disposeResources(disposers);
+				throw error;
+			}
 		},
-	});
+	);
 }
 
 function modelCommand(models: ModelsService, ui: PresentationUI): SlashCommandContribution {
@@ -79,8 +96,7 @@ function modelCommand(models: ModelsService, ui: PresentationUI): SlashCommandCo
 				.map((model) => ({
 					value: `${model.provider}/${model.modelId}`,
 					label: model.modelId,
-					description: model.provider,
-				}));
+					description: model.provider }));
 		},
 		async run(args, context) {
 			const state = models.state.value;
@@ -106,8 +122,7 @@ function modelCommand(models: ModelsService, ui: PresentationUI): SlashCommandCo
 							state.configuration.model.modelId === model.modelId
 								? `${model.name} (selected)`
 								: model.name,
-						description: `${model.provider}/${model.modelId}`,
-					})),
+						description: `${model.provider}/${model.modelId}` })),
 					state.configuration.model === null
 						? undefined
 						: `${state.configuration.model.provider}/${state.configuration.model.modelId}`,
@@ -120,8 +135,7 @@ function modelCommand(models: ModelsService, ui: PresentationUI): SlashCommandCo
 			await models.select({ provider: selected.provider, modelId: selected.modelId }, context);
 			ui.showStatus(`Selected ${selected.provider}/${selected.modelId}.`, context);
 			return undefined;
-		},
-	};
+		} };
 }
 
 function thinkingCommand(models: ModelsService, ui: PresentationUI): SlashCommandContribution {
@@ -146,8 +160,7 @@ function thinkingCommand(models: ModelsService, ui: PresentationUI): SlashComman
 					levels.map((level) => ({
 						value: level,
 						label: models.state.value?.configuration.thinkingLevel === level ? `${level} (selected)` : level,
-						description: THINKING_DESCRIPTIONS[level],
-					})),
+						description: THINKING_DESCRIPTIONS[level] })),
 					models.state.value?.configuration.thinkingLevel,
 					context,
 				);
@@ -158,8 +171,7 @@ function thinkingCommand(models: ModelsService, ui: PresentationUI): SlashComman
 			await models.selectThinking(selected, context);
 			ui.showStatus(`Thinking level: ${selected}.`, context);
 			return undefined;
-		},
-	};
+		} };
 }
 
 function compactCommand(controller: AgentController, ui: PresentationUI): SlashCommandContribution {
@@ -170,8 +182,7 @@ function compactCommand(controller: AgentController, ui: PresentationUI): SlashC
 		run(args, context) {
 			ui.showStatus("Compacting…", context);
 			return controller.compact({ customInstructions: args.length === 0 ? null : args }, context);
-		},
-	};
+		} };
 }
 
 function exactModel(models: readonly ModelSummary[], query: string): ModelSummary | undefined {

@@ -1,4 +1,6 @@
-import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import { serviceFacet, type ServiceValue } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
+import { type Context, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import type { ToolCall } from "@amazme/ai";
 import { defineExtension, hook, ToolTask } from "@amazme/durable";
 import type { ToolAnnotations } from "@amazme/durable";
@@ -93,8 +95,7 @@ export function createApprovalGate(options: {
 							callId: call.id,
 							taskId: String(api.taskId),
 							conversationId: String(api.conversationId),
-							at: options.now?.() ?? Date.now(),
-						};
+							at: options.now?.() ?? Date.now() };
 						const approved = await new Promise<boolean>((resolve) => {
 							pending.set(id, resolve);
 							publish(context, (draft) => {
@@ -111,10 +112,8 @@ export function createApprovalGate(options: {
 						});
 						if (approved) return undefined;
 						return { block: `Denied by the reader: ${call.name} was not approved.` };
-					},
-				}),
-			],
-		}),
+					} }),
+			] }),
 		/**
 		 * The one service body this gate provides. Its `state` is a data property, which is what a
 		 * remote service member must be, so it is built once the facet has attached the state.
@@ -127,23 +126,20 @@ export function createApprovalGate(options: {
 					if (!pending.has(id)) return false;
 					settle(id, approved, context);
 					return true;
-				},
-			};
+				} };
 			return created;
-		},
-	};
+		} };
 }
 
 export type ApprovalGate = ReturnType<typeof createApprovalGate>;
 
 /** The approvals service as a facet: it owns the state the gate publishes through. */
 export function createApprovalsFacet(gate: ApprovalGate): Facet {
-	return defineFacet({
-		id: "@pi/approvals",
-		setup(env) {
-			const state = env.replicatedState<ApprovalsState>({ revision: 0, pending: [] });
-			gate.attach(state);
-			env.provide(Approvals, gate.service());
-		},
+	return serviceFacet("@pi/approvals", Approvals, [], async (services) => {
+		const state = replicatedState<ApprovalsState>({ revision: 0, pending: [] });
+		gate.attach(state);
+		const implementation: ServiceValue<typeof Approvals> = gate.service();
+
+		return { value: implementation };
 	});
 }

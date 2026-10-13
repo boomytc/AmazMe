@@ -1,5 +1,6 @@
+import { serviceFacet, type ServiceResolver, type ApplicationService, type ServiceValue, disposeResources } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
 import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal, withoutAbortSignal } from "@amazme/chord/context";
-import { defineFacet } from "@amazme/chord";
 import type { Context, Facet, MutableReplicatedState } from "@amazme/chord";
 import { Schedules } from "@amazme/coding-agent/plugin";
 import type {
@@ -11,8 +12,7 @@ import type {
 	ScheduleResult,
 	ScheduleRun,
 	ScheduleRunReceipt,
-	SchedulesState,
-} from "@amazme/coding-agent/plugin";
+	SchedulesState } from "@amazme/coding-agent/plugin";
 import { createScheduleFile } from "./file.ts";
 import { conversationId, policy, SCHEDULE_MAX_PROMPT } from "./records.ts";
 import { firstTarget, latestDue, MINUTE, nextTarget, normalizeRule, timestamp } from "./rules.ts";
@@ -70,8 +70,7 @@ function result(receipt: Pick<ScheduleRunReceipt, "status" | "detail">): Schedul
 		code: receipt.status,
 		problem:
 			receipt.detail ??
-			(receipt.status === "timed_out" ? "Execution deadline expired." : "The prompt produced no answer."),
-	};
+			(receipt.status === "timed_out" ? "Execution deadline expired." : "The prompt produced no answer.") };
 }
 
 /** File admission is serialized; independent plans share a bounded set of existing worker requests. */
@@ -95,8 +94,7 @@ export function createSchedulesService(
 			tickMs,
 			onCompromised(error) {
 				for (const entry of running.values()) entry.controller.abort(error);
-			},
-		},
+			} },
 		state,
 	);
 	const { find, update } = file;
@@ -118,8 +116,7 @@ export function createSchedulesService(
 		conversationId: record.conversationId,
 		requestId: run.requestId,
 		message: record.prompt,
-		whenBusy: record.busy === "queue" ? "followUp" : "reject",
-	});
+		whenBusy: record.busy === "queue" ? "followUp" : "reject" });
 	const finish = (id: string, receipt: ScheduleRunReceipt, context: Context, retire = false): Promise<void> =>
 		mutate(
 			async () => {
@@ -137,8 +134,7 @@ export function createSchedulesService(
 						pending: null,
 						nextRunAt: next,
 						enabled: !retire && next !== null && record.enabled,
-						history: [...record.history.filter((entry) => entry.requestId !== receipt.requestId), receipt].slice(-20),
-					}),
+						history: [...record.history.filter((entry) => entry.requestId !== receipt.requestId), receipt].slice(-20) }),
 					cleanup(context),
 				);
 			},
@@ -251,8 +247,7 @@ export function createSchedulesService(
 				startedAt: pending.startedAt,
 				finishedAt: now(),
 				scheduledFor: pending.scheduledFor,
-				...outcome,
-			},
+				...outcome },
 			context,
 			retire,
 		);
@@ -295,8 +290,7 @@ export function createSchedulesService(
 				deadlineAt: at + record.timeoutSeconds * 1_000,
 				scheduledFor: occurrence,
 				cancelReason: null,
-				problem: null,
-			};
+				problem: null };
 			if (
 				record.pending === null &&
 				automatic &&
@@ -311,8 +305,7 @@ export function createSchedulesService(
 					finishedAt: at,
 					scheduledFor: occurrence,
 					status: "skipped",
-					detail: "missed",
-				};
+					detail: "missed" };
 				// Admission already owns the mutation line; do not recursively enter finish().
 				const next = nextTarget(record.rule, occurrence, at);
 				await update(
@@ -321,8 +314,7 @@ export function createSchedulesService(
 						...current,
 						nextRunAt: next,
 						enabled: next !== null && current.enabled,
-						history: [...current.history, receipt].slice(-20),
-					}),
+						history: [...current.history, receipt].slice(-20) }),
 					context,
 				);
 				return { done: Promise.resolve(result(receipt)) };
@@ -372,9 +364,7 @@ export function createSchedulesService(
 						pending: {
 							...current.pending!,
 							cancelReason:
-								current.pending!.cancelReason ?? (now() >= current.pending!.deadlineAt ? "timed_out" : "cancelled"),
-						},
-					}),
+								current.pending!.cancelReason ?? (now() >= current.pending!.deadlineAt ? "timed_out" : "cancelled") } }),
 					context,
 				);
 				return running.get(id);
@@ -498,8 +488,7 @@ export function createSchedulesService(
 								createdAt: at,
 								nextRunAt: next,
 								pending: null,
-								history: [],
-							},
+								history: [] },
 						],
 						context,
 					);
@@ -554,8 +543,7 @@ export function createSchedulesService(
 							timeoutSeconds: input.timeoutSeconds,
 							generation: current.generation + 1,
 							nextRunAt: next,
-							enabled: current.nextRunAt === null || current.enabled,
-						}),
+							enabled: current.nextRunAt === null || current.enabled }),
 						context,
 					);
 					return { ok: true, code: "updated" };
@@ -581,8 +569,7 @@ export function createSchedulesService(
 					if (enabled && record.nextRunAt === null)
 						return {
 							ok: false,
-							problem: "This plan has no remaining occurrence. Run it manually or create a new plan.",
-						};
+							problem: "This plan has no remaining occurrence. Run it manually or create a new plan." };
 					if (record.enabled !== enabled) await update(id, (current) => ({ ...current, enabled }), context);
 					return { ok: true, code: enabled ? "enabled" : "paused" };
 				}, context),
@@ -600,8 +587,7 @@ export function createSchedulesService(
 					},
 					context,
 					false,
-				),
-		},
+				) },
 		async tick(context) {
 			await Promise.allSettled(await dispatch(context));
 		},
@@ -637,9 +623,7 @@ export function createSchedulesService(
 														...record.pending,
 														cancelReason:
 															record.pending.cancelReason ??
-															(now() >= record.pending.deadlineAt ? "timed_out" : "cancelled"),
-													},
-												},
+															(now() >= record.pending.deadlineAt ? "timed_out" : "cancelled") } },
 									),
 									BACKGROUND_CONTEXT,
 								),
@@ -672,21 +656,27 @@ export function createSchedulesService(
 			})().then(resolve, reject);
 			return promise;
 		},
-		activate: (context) => mutate(() => file.activate(context), context, false),
-	};
+		activate: (context) => mutate(() => file.activate(context), context, false) };
 }
 
-export function createSchedulesFacet(options: SchedulesServiceOptions): Facet {
-	return defineFacet({
-		id: "@amazme/schedules",
-		setup(env) {
-			const runtime = createSchedulesService(options, (initial) => env.replicatedState(initial));
-			env.provide(Schedules, runtime.service);
-			env.own(() => runtime.stop());
-			env.onActivate(async () => {
+export function createSchedulesFacet(options: SchedulesServiceOptions | ((services: ServiceResolver) => SchedulesServiceOptions), dependencies: readonly ApplicationService[] = []): Facet {
+	return serviceFacet("@amazme/schedules", Schedules, dependencies, async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			const runtime = createSchedulesService(typeof options === "function" ? options(services) : options, (initial) =>
+				replicatedState(initial),
+			);
+			const implementation: ServiceValue<typeof Schedules> = runtime.service;
+			disposers.push(() => runtime.stop());
+			await (async () => {
 				await runtime.activate(BACKGROUND_CONTEXT);
 				runtime.start();
-			});
-		},
+			})();
+
+			return { value: implementation, close: () => disposeResources(disposers) };
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	});
 }

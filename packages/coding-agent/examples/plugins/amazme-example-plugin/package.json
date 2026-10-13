@@ -4,7 +4,8 @@
 	"private": true,
 	"type": "module",
 	"peerDependencies": {
-		"@amazme/chord": "^0.84.4",
-		"@amazme/coding-agent": "^0.84.4"
+		"@amazme/chord": "^1.2.0",
+		"@amazme/coding-agent": "^1.2.0",
+		"@amazme/protocol": "^1.2.0"
 	}
 }

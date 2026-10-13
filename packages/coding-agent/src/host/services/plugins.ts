@@ -1,4 +1,5 @@
-import { type Context, defineService, type JsonValue, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type JsonValue, type ReplicatedState } from "@amazme/chord";
 
 /** Server-built plugin generations available to presentations. */
 export interface PresentationPlugins {
@@ -9,14 +10,14 @@ export interface PresentationPlugins {
 	reload(context: Context): Promise<JsonValue>;
 }
 
-export const PresentationPlugins = defineService<PresentationPlugins>("amazme.presentation-plugins");
+export const PresentationPlugins = remoteService<PresentationPlugins>("amazme.presentation-plugins", {"prepareSession":1,"reload":0}, []);
 
 /** Plugin facets hosted in the currently attached Session worker. */
 export interface SessionPlugins {
 	reload(context: Context): Promise<void>;
 }
 
-export const SessionPlugins = defineService<SessionPlugins>("amazme.session-plugins");
+export const SessionPlugins = remoteService<SessionPlugins>("amazme.session-plugins", {"reload":0}, []);
 
 /** One MCP server as the effective configuration defines it. */
 export interface McpServerSummary {
@@ -66,4 +67,4 @@ export interface Plugins {
 	reload(context: Context): Promise<void>;
 }
 
-export const Plugins = defineService<Plugins>("amazme.plugins");
+export const Plugins = remoteService<Plugins>("amazme.plugins", {"setPackages":1,"setMcpServer":2,"addMcpServer":2,"removeMcpServer":1,"reload":0}, ["state"]);

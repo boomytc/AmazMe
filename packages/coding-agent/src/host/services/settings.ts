@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 
 /**
  * One editable field of the agent's settings. The host publishes the catalogue, so a presentation
@@ -51,7 +52,7 @@ export interface Settings {
 	reload(context: Context): Promise<void>;
 }
 
-export const Settings = defineService<Settings>("amazme.settings");
+export const Settings = remoteService<Settings>("amazme.settings", {"set":2,"reload":0}, ["state"]);
 
 /**
  * The attached Session worker's own settings, exposed so a write from another process can be picked
@@ -64,4 +65,4 @@ export interface SessionSettings {
 	reload(context: Context): Promise<void>;
 }
 
-export const SessionSettings = defineService<SessionSettings>("amazme.session-settings");
+export const SessionSettings = remoteService<SessionSettings>("amazme.session-settings", {"reload":0}, ["state"]);

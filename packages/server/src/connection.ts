@@ -1,4 +1,3 @@
-import type { ServiceStateEncoder } from "@amazme/chord";
 import type { ClientMessageDecoder, RpcTarget } from "@amazme/protocol";
 
 import type { MaybePromise, RoutedServerServiceAttachment } from "./types.ts";
@@ -23,7 +22,6 @@ export type ConnectionStage = "awaitingHello" | "handshaking" | "ready" | "closi
 export interface ConnectionState {
 	connection: ByteConnection;
 	decoder: ClientMessageDecoder;
-	serviceStateEncoders: Map<string, ServiceStateEncoder>;
 	stage: ConnectionStage;
 	disconnected: boolean;
 	handshake?: Promise<void>;

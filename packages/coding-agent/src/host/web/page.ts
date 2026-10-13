@@ -6,7 +6,8 @@
  * failure states.
  */
 import type { ModelThinkingLevel } from "@amazme/ai";
-import type { RemoteServices, ReplicatedState } from "@amazme/chord";
+import type { ReplicatedState } from "@amazme/chord";
+import type { RoutedServices } from "../services/connection.ts";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { Client, type ClientOptions } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
@@ -666,8 +667,8 @@ class SessionPainter {
 			throw new Error(`Host did not attach session ${sessionId}`);
 		}
 		const catalogue = await this.#sessionSource.catalogue(BACKGROUND_CONTEXT);
-		const hasMcp = catalogue.some(entry => entry.serviceId === Mcp.id);
-		const hasInsights = catalogue.some(entry => entry.serviceId === SessionInsights.id);
+		const hasMcp = catalogue.some(entry => entry.serviceId === Mcp.name);
+		const hasInsights = catalogue.some(entry => entry.serviceId === SessionInsights.name);
 		const services = this.#sessionSource.open({
 			services: [Transcript, AgentController, Models, SessionSettings, Commands, Workspace, Terminal, Conversations, Approvals, ...(hasMcp ? [Mcp] : []), ...(hasInsights ? [SessionInsights] : []), SessionMirror],
 			assertAccess(): void {},
@@ -688,28 +689,28 @@ class SessionPainter {
 			await this.detach();
 			throw error;
 		}
-		const transcript = services.use(Transcript);
+		const transcript = services.get(Transcript);
 		this.#transcript = transcript.state;
-		this.#controller = services.use(AgentController);
-		this.#models = services.use(Models);
-		this.#mcp = hasMcp ? services.use(Mcp) : undefined;
+		this.#controller = services.get(AgentController);
+		this.#models = services.get(Models);
+		this.#mcp = hasMcp ? services.get(Mcp) : undefined;
 		this.#mcp?.state.subscribe(() => paint());
-		this.#sessionSettings = services.use(SessionSettings);
+		this.#sessionSettings = services.get(SessionSettings);
 		this.#sessionSettings.state.subscribe(() => paint());
-		this.#mirror = services.use(SessionMirror);
+		this.#mirror = services.get(SessionMirror);
 		this.#mirror.state.subscribe(() => paint());
-		this.#commands = services.use(Commands);
-		this.#workspace = services.use(Workspace);
-		this.#terminal = services.use(Terminal);
-		this.#conversations = services.use(Conversations);
-		this.#insights = hasInsights ? services.use(SessionInsights) : undefined;
+		this.#commands = services.get(Commands);
+		this.#workspace = services.get(Workspace);
+		this.#terminal = services.get(Terminal);
+		this.#conversations = services.get(Conversations);
+		this.#insights = hasInsights ? services.get(SessionInsights) : undefined;
 		this.#insights?.state.subscribe(() => {
 			const value = this.#insights?.state.value;
 			const identity = value === undefined ? undefined : `${value.conversationId}:${value.reviewRevision}`;
 			if (identity !== this.#reviewIdentity) { this.#reviewIdentity = identity; this.#reviewDiff = undefined; this.#reviewRequest++; }
 			paint();
 		});
-		this.#approvals = services.use(Approvals);
+		this.#approvals = services.get(Approvals);
 		// A listing, a file, or terminal output lands here; the page repaints the dock from it.
 		this.#workspace.state.subscribe(() => paint());
 		this.#terminal.state.subscribe(() => paint());
@@ -798,23 +799,23 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		assertAccess(): void {},
 		onError: report,
 	});
-	const directory = serverServices.use(SessionDirectory);
-	const management = serverServices.use(SessionManagement);
-	const projects = serverServices.use(ProjectManagement);
-	const archives = serverServices.use(SessionArchive);
+	const directory = serverServices.get(SessionDirectory);
+	const management = serverServices.get(SessionManagement);
+	const projects = serverServices.get(ProjectManagement);
+	const archives = serverServices.get(SessionArchive);
 	/** The management surface's own services, and the view the main area shows. */
-	const settings = serverServices.use(Settings);
-	const skills = serverServices.use(Skills);
-	const plugins = serverServices.use(Plugins);
-	const painter = new SessionPainter(sessionSource, renderer, serverServices.use(PresentationPlugins));
-	const feedback = serverServices.use(Feedback);
-	const diagnostics = serverServices.use(Diagnostics);
+	const settings = serverServices.get(Settings);
+	const skills = serverServices.get(Skills);
+	const plugins = serverServices.get(Plugins);
+	const painter = new SessionPainter(sessionSource, renderer, serverServices.get(PresentationPlugins));
+	const feedback = serverServices.get(Feedback);
+	const diagnostics = serverServices.get(Diagnostics);
 	let diagnosticReport: DiagnosticReport | undefined;
 	let diagnosticRequest = 0;
 	let modelSelection: { readonly binding: object | undefined } | undefined;
 	let forkModalOwner: { readonly service: ConversationsService; readonly sessionId: string; readonly conversationId: string } | undefined;
 	let schedules: SchedulesService | undefined;
-	let scheduleServices: RemoteServices | undefined;
+	let scheduleServices: RoutedServices | undefined;
 	let removeScheduleObserver: (() => void) | undefined;
 	let scheduleEpoch = 0;
 	let scheduleDiscovery: Promise<void> = Promise.resolve();
@@ -1258,7 +1259,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		if (epoch !== scheduleEpoch || !client.connected || leaving) return;
 		const catalogue = await serverSource.catalogue(BACKGROUND_CONTEXT);
 		if (epoch !== scheduleEpoch || !client.connected || leaving) return;
-		if (catalogue.some(entry => entry.serviceId === Schedules.id)) {
+		if (catalogue.some(entry => entry.serviceId === Schedules.name)) {
 			const binding = serverSource.open({ services: [Schedules], assertAccess() {}, onError: report });
 			scheduleServices = binding;
 			try { await binding.ready(BACKGROUND_CONTEXT); }
@@ -1267,7 +1268,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				await clearSchedules(); throw error;
 			}
 			if (epoch !== scheduleEpoch || leaving || !client.connected) { await binding.dispose(BACKGROUND_CONTEXT); return; }
-			schedules = binding.use(Schedules);
+			schedules = binding.get(Schedules);
 			removeScheduleObserver = schedules.state.subscribe(() => paint());
 		}
 		paint();
@@ -2961,10 +2962,15 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	paint();
 
 	globalThis.addEventListener("pagehide", () => {
-		leaving = true;
-		void clearSchedules().catch(() => {});
-		void painter.detach();
-		void serverServices.dispose(BACKGROUND_CONTEXT).then(() => client.dispose());
+		if (leaving) return;
+  leaving = true;
+  void (async () => {
+   const views = await Promise.allSettled([clearSchedules(), painter.detach()]);
+   const sources = await Promise.allSettled([serverSource.dispose(BACKGROUND_CONTEXT), sessionSource.dispose(BACKGROUND_CONTEXT)]);
+   await client.dispose();
+   const errors = [...views, ...sources].flatMap(result => result.status === "rejected" ? [result.reason] : []);
+   if (errors.length) throw new AggregateError(errors, "Page shutdown failed");
+  })().catch(report);
 	});
 	return client;
 }

@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 
 /** One entry of a directory listing. */
 export interface WorkspaceEntry {
@@ -56,4 +57,4 @@ export interface Workspace {
 	read(path: string, context: Context): Promise<void>;
 }
 
-export const Workspace = defineService<Workspace>("amazme.workspace");
+export const Workspace = remoteService<Workspace>("amazme.workspace", {"open":1,"read":1}, ["state"]);

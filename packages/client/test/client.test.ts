@@ -7,13 +7,7 @@ import {
 	ProtocolValidationError,
 } from "@amazme/protocol";
 import { describe, expect, test, vi } from "vitest";
-import {
-	type ByteTransportFactory,
-	Client,
-	ClientDisposedError,
-	createClientServiceTransport,
-	DisconnectedError,
-} from "../src/index.ts";
+import { type ByteTransportFactory, Client, ClientDisposedError, DisconnectedError } from "../src/index.ts";
 import { MemoryByteServer } from "./support.ts";
 
 const serverId = "00000000-0000-4000-8000-000000000001";
@@ -25,11 +19,7 @@ async function connectClient(server: MemoryByteServer, expectedServerId = server
 
 async function attachClient(client: Client, server: MemoryByteServer, sessionId: string): Promise<void> {
 	const expectedMessages = server.messages.length + 1;
-	const attaching = client.request(serverTarget, {
-		serviceId: "amazme.session-management",
-		member: "attach",
-		args: [sessionId],
-	});
+	const attaching = client.request(serverTarget, { kind: "open", channel: "attachment", host: sessionId });
 	await server.waitForMessages(expectedMessages);
 	const request = server.messages.at(-1);
 	if (request?.type !== "request") throw new Error("Missing attach request");
@@ -69,7 +59,7 @@ describe("Client service operations", () => {
 		expect(server.messages[1]).toMatchObject({
 			type: "request",
 			target: serverTarget,
-			call: { serviceId: "amazme.session-management", member: "attach", args: ["session-1"] },
+			call: { kind: "open", channel: "attachment", host: "session-1" },
 		});
 
 		server.send({ type: "attachment", attachment: null });
@@ -78,98 +68,30 @@ describe("Client service operations", () => {
 		await client.dispose();
 	});
 
-	test("buffers service updates until the subscription snapshot arrives", async () => {
+	test("buffers Chord frames before open returns and waits for channel close acknowledgement", async () => {
 		const server = new MemoryByteServer();
 		const client = await connectClient(server);
-		await attachClient(client, server, "session-1");
-		const target = client.attachment!;
-		const transport = createClientServiceTransport(client, () => client.attachment);
-		const updates: Array<{ readonly type: string; readonly ops?: readonly unknown[] }> = [];
-		const opening = transport.subscribe(
-			"amazme.models",
-			"singleton",
-			(update) => {
-				updates.push(update);
-			},
-			BACKGROUND_CONTEXT,
-		);
+		const opening = client.openLink(serverTarget);
+		await server.waitForMessages(2);
+		server.send({ type: "channel_frame", channelId: "chord-1", frame: { t: "unsub", id: 7 } });
+		server.send({ type: "response", id: "request-1", ok: true, result: { host: "services" } });
+		const opened = await opening;
+		const frames: unknown[] = [];
+		opened.link.receive((frame) => frames.push(frame));
+		await vi.waitFor(() => expect(frames).toEqual([{ t: "unsub", id: 7 }]));
+		const closing = opened.close();
 		await server.waitForMessages(3);
-		expect(server.messages[2]).toMatchObject({
-			type: "request",
-			target,
-			call: {
-				serviceId: "$chord.service",
-				member: "subscribe",
-				args: ["service-1", "amazme.models", "singleton"],
-			},
-		});
-		server.send({
-			type: "service_update",
-			subscriptionId: "service-1",
-			update: { type: "state", member: "state", sequence: 1, ops: [["s", ["revision"], 1]] },
-		});
-		await Promise.resolve();
-		expect(updates).toEqual([]);
-		server.send({
-			type: "response",
-			id: "request-2",
-			ok: true,
-			result: {
-				serviceId: "amazme.models",
-				mode: "singleton",
-				instances: [{ members: [{ name: "state", kind: "state", sequence: 0, ops: [["r", { revision: 0 }]] }] }],
-			},
-		});
-		const subscription = await opening;
-		expect(updates).toEqual([]);
-		server.send({
-			type: "service_update",
-			subscriptionId: "closed-subscription",
-			update: { type: "state", member: "state", sequence: 99, ops: [["s", 99, 99]] },
-		});
-		await Promise.resolve();
-		expect(client.connected).toBe(true);
-		expect(subscription.snapshot.instances[0]?.members).toEqual([
-			{ name: "state", kind: "state", sequence: 0, ops: [["r", { revision: 0 }]] },
-		]);
-		subscription.activate();
-		await vi.waitFor(() => expect(updates.map(({ type }) => type)).toEqual(["state"]));
-		server.send({
-			type: "service_update",
-			subscriptionId: "service-1",
-			update: { type: "state", member: "state", sequence: 2, ops: [["s", ["revision"], 2]] },
-		});
-		server.send({
-			type: "service_update",
-			subscriptionId: "service-1",
-			update: {
-				type: "state",
-				member: "state",
-				sequence: 3,
-				ops: [
-					["#", 0, ["revision"]],
-					["s", 0, 3],
-				],
-			},
-		});
-		await vi.waitFor(() => expect(updates).toHaveLength(3));
-		expect(updates[2]?.ops).toEqual([["s", ["revision"], 3]]);
-
-		const disposing = subscription.close(BACKGROUND_CONTEXT);
-		await server.waitForMessages(4);
-		expect(server.messages[3]).toMatchObject({
-			call: { serviceId: "$chord.service", member: "unsubscribe", args: ["service-1"] },
-		});
-		server.send({ type: "response", id: "request-3", ok: true });
-		await disposing;
+		expect(server.messages[2]).toMatchObject({ call: { kind: "close", channel: "chord-1" } });
+		server.send({ type: "response", id: "request-2", ok: true });
+		await closing;
 		await client.dispose();
 	});
 
 	test("correlates out-of-order generic service responses", async () => {
 		const server = new MemoryByteServer();
 		const client = await connectClient(server);
-		const first = client.request(serverTarget, { serviceId: "test", member: "first", args: [] });
-		const second = client.request(serverTarget, { serviceId: "test", member: "second", args: [] });
+		const first = client.request(serverTarget, { kind: "catalogue" });
+		const second = client.request(serverTarget, { kind: "catalogue" });
 		await server.waitForMessages(3);
 		server.send({ type: "response", id: "request-2", ok: true, result: "second" });
 		server.send({ type: "response", id: "request-1", ok: true, result: "first" });
@@ -180,7 +102,7 @@ describe("Client service operations", () => {
 	test("exposes bounded server errors", async () => {
 		const server = new MemoryByteServer();
 		const client = await connectClient(server);
-		const pending = client.request(serverTarget, { serviceId: "test", member: "missing", args: [] });
+		const pending = client.request(serverTarget, { kind: "catalogue" });
 		await server.waitForMessages(2);
 		server.send({
 			type: "response",
@@ -199,9 +121,7 @@ describe("Client service operations", () => {
 		const reason = new Error("already cancelled");
 		controller.abort(reason);
 
-		await expect(
-			client.request(serverTarget, { serviceId: "test", member: "noop", args: [] }, controller.signal),
-		).rejects.toBe(reason);
+		await expect(client.request(serverTarget, { kind: "catalogue" }, controller.signal)).rejects.toBe(reason);
 		expect(server.messages).toHaveLength(1);
 		await client.dispose();
 	});
@@ -211,17 +131,13 @@ describe("Client service operations", () => {
 		const client = await connectClient(server);
 		const controller = new AbortController();
 		const reason = new Error("stop this request");
-		const pending = client.request(
-			serverTarget,
-			{ serviceId: "test", member: "mutate", args: [{ value: 42 }] },
-			controller.signal,
-		);
+		const pending = client.request(serverTarget, { kind: "catalogue" }, controller.signal);
 		await server.waitForMessages(2);
 		expect(server.messages[1]).toMatchObject({
 			type: "request",
 			id: "request-1",
 			target: serverTarget,
-			call: { serviceId: "test", member: "mutate", args: [{ value: 42 }] },
+			call: { kind: "catalogue" },
 		});
 
 		controller.abort(reason);
@@ -241,13 +157,11 @@ describe("Client service operations", () => {
 	test("rejects pending requests after disconnect or disposal", async () => {
 		const server = new MemoryByteServer();
 		const client = await connectClient(server);
-		const pending = client.request(serverTarget, { serviceId: "test", member: "pending", args: [] });
+		const pending = client.request(serverTarget, { kind: "catalogue" });
 		server.disconnect();
 		await expect(pending).rejects.toBeInstanceOf(DisconnectedError);
 		await client.dispose();
-		await expect(
-			client.request(serverTarget, { serviceId: "test", member: "disposed", args: [] }),
-		).rejects.toBeInstanceOf(ClientDisposedError);
+		await expect(client.request(serverTarget, { kind: "catalogue" })).rejects.toBeInstanceOf(ClientDisposedError);
 	});
 });
 
@@ -324,9 +238,9 @@ describe("Client connection lifecycle", () => {
 		await attachClient(client, first, "session-1");
 		const target = client.attachment;
 		if (target === undefined) throw new Error("Missing attachment");
-		const pending = client.request(target, { serviceId: "test.session", member: "run", args: [] });
+		const pending = client.request(target, { kind: "catalogue" as const });
 		await first.waitForMessages(3);
-		expect(first.messages[2]).toMatchObject({ call: { serviceId: "test.session", member: "run" } });
+		expect(first.messages[2]).toMatchObject({ call: { kind: "catalogue" as const } });
 		first.disconnect();
 
 		await expect(pending).rejects.toBeInstanceOf(DisconnectedError);
@@ -341,7 +255,7 @@ describe("Client connection lifecycle", () => {
 	test("reports transport failures without leaving requests pending", async () => {
 		const server = new MemoryByteServer();
 		const client = await connectClient(server);
-		const pending = client.request(serverTarget, { serviceId: "test", member: "pending", args: [] });
+		const pending = client.request(serverTarget, { kind: "catalogue" });
 		await server.waitForMessages(2);
 		server.error(new Error("read failed"));
 
@@ -361,7 +275,7 @@ describe("Client connection lifecycle", () => {
 
 		const truncatedServer = new MemoryByteServer();
 		const truncatedClient = await connectClient(truncatedServer);
-		const pending = truncatedClient.request(serverTarget, { serviceId: "test", member: "pending", args: [] });
+		const pending = truncatedClient.request(serverTarget, { kind: "catalogue" });
 		await truncatedServer.waitForMessages(2);
 		truncatedServer.sendRaw(new Uint8Array([0, 0, 0, 2, 1]));
 		truncatedServer.disconnect();
@@ -381,4 +295,45 @@ describe("Client connection lifecycle", () => {
 		expect(client.connectionState).toBe("disconnected");
 		expect(server.clientCloseCount).toBe(1);
 	});
+});
+
+test("closes a native link when the peer closes its channel without disconnecting the client", async () => {
+	const server = new MemoryByteServer();
+	const client = await connectClient(server);
+	try {
+		const opening = client.openLink(serverTarget);
+		await server.waitForMessages(2);
+		server.send({ type: "response", id: "request-1", ok: true, result: { host: "services" } });
+		const opened = await opening;
+		let closed = false;
+		opened.link.onClose(() => {
+			closed = true;
+		});
+		server.send({ type: "channel_closed", channelId: "chord-1" });
+		await vi.waitFor(() => expect(closed).toBe(true));
+		await opened.close();
+		expect(client.connected).toBe(true);
+		expect(server.messages).toHaveLength(2);
+	} finally {
+		await client.dispose();
+	}
+});
+
+test("releases a channel when cancellation wins its open response", async () => {
+	const server = new MemoryByteServer();
+	const client = await connectClient(server);
+	const controller = new AbortController();
+	try {
+		const opening = client.openLink(serverTarget, undefined, controller.signal);
+		await server.waitForMessages(2);
+		controller.abort(new Error("cancel open"));
+		await expect(opening).rejects.toThrow("cancel open");
+		await server.waitForMessages(4);
+		expect(server.messages[3]).toMatchObject({ call: { kind: "close", channel: "chord-1" } });
+		server.send({ type: "response", id: "request-1", ok: true, result: { host: "services" } });
+		server.send({ type: "response", id: "request-2", ok: true });
+		expect(client.connected).toBe(true);
+	} finally {
+		await client.dispose();
+	}
 });

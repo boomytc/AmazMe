@@ -1,4 +1,4 @@
-import { defineFacet } from "@amazme/chord";
+import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
 import type { Facet } from "@amazme/chord";
 import { SlashCommands } from "./slash-commands.ts";
 import type { SlashCommandContribution } from "./slash-commands.ts";
@@ -79,11 +79,16 @@ export class SlashCommandRegistry implements SlashCommands {
 }
 
 export function createSlashCommandsRuntimeFacet(registry = new SlashCommandRegistry()): Facet {
-	return defineFacet({
-		id: "@amazme/slash-commands-runtime",
-		setup(env) {
-			env.provide(SlashCommands, registry);
-			env.own(() => registry.close());
-		},
+	return serviceFacet("@amazme/slash-commands-runtime", SlashCommands, [], async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			const implementation: ServiceValue<typeof SlashCommands> = registry;
+			disposers.push(() => registry.close());
+
+			return { value: implementation, close: () => disposeResources(disposers) };
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	});
 }

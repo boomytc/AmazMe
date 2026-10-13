@@ -1,4 +1,5 @@
-import { type Context, defineService } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context } from "@amazme/chord";
 
 export interface ProjectSummary {
 	id: string;
@@ -52,11 +53,11 @@ export interface ProjectFolders {
 	entries: { name: string; path: string }[];
 }
 
-export const ProjectManagement = defineService<ProjectManagement>("amazme.project-management");
+export const ProjectManagement = remoteService<ProjectManagement>("amazme.project-management", {"selection":0,"remember":1,"create":1,"update":2,"folders":1,"rename":2,"remove":1}, []);
 
 export interface SessionArchive {
 	/** Archiving stops all work, discards queues, and rejects future inputs until restored. */
 	set(sessionId: string, archived: boolean, context: Context): Promise<void>;
 }
 
-export const SessionArchive = defineService<SessionArchive>("amazme.session-archive");
+export const SessionArchive = remoteService<SessionArchive>("amazme.session-archive", {"set":2}, []);

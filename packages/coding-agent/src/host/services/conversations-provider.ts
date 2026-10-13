@@ -1,6 +1,8 @@
+import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
 import type { StreamFn } from "@amazme/agent";
 import type { RetryPolicy } from "@amazme/ai";
-import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@amazme/chord";
+import { type Context, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
 import type { AgentState, Conversation, ConversationId, Harness, TaskGraph } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
@@ -14,8 +16,7 @@ import {
 	readFocus,
 	readReturnPoints,
 	readSummaries,
-	type TreeNavigationDeps,
-} from "../../durable/session-surface.ts";
+	type TreeNavigationDeps } from "../../durable/session-surface.ts";
 import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest, AgentQueueResponse } from "../../core/plugins/agent-controller.ts";
 import type { AgentOperationError } from "../../core/plugins/agent-controller.ts";
 import { createAgentController } from "../../core/plugins/agent-controller-provider.ts";
@@ -54,8 +55,7 @@ export function summaryModelFromRuntime(harness: Harness, modelRuntime: ModelRun
 				model: auth?.auth.baseUrl === undefined ? model : { ...model, baseUrl: auth.auth.baseUrl },
 				...(auth?.auth.apiKey === undefined ? {} : { apiKey: auth.auth.apiKey }),
 				...(headers === undefined ? {} : { headers }),
-				...(auth?.env === undefined ? {} : { env: auth.env }),
-			};
+				...(auth?.env === undefined ? {} : { env: auth.env }) };
 		} finally {
 			view.dispose();
 		}
@@ -99,8 +99,7 @@ export function createConversationsService(
 		conversations: [],
 		tasks: [],
 		branchSummarySkipPrompt: false,
-		view: null,
-	});
+		view: null });
 	const controllers = new Map<string, ReturnType<typeof createAgentController>>();
 	let focus:
 		| {
@@ -149,8 +148,7 @@ export function createConversationsService(
 				status: node.state.status,
 				phase: node.state.status === "completing" ? node.state.outcome : node.state.phase,
 				waitsOn: node.state.status === "waiting" ? node.state.on.map(String) : [],
-				conversations: node.conversations.map(String),
-			}))
+				conversations: node.conversations.map(String) }))
 			.sort((left, right) => Number(left.id) - Number(right.id));
 
 	const publish = (update: (draft: ConversationsState) => void): void => {
@@ -234,9 +232,7 @@ export function createConversationsService(
 						...(request.apiKey === undefined ? {} : { apiKey: request.apiKey }),
 						...(request.headers === undefined ? {} : { headers: request.headers }),
 						...(request.env === undefined ? {} : { env: request.env }),
-						...(request.streamFn === undefined ? {} : { streamFn: request.streamFn }),
-					}),
-		};
+						...(request.streamFn === undefined ? {} : { streamFn: request.streamFn }) }) };
 	};
 
 	const select = async (conversationId: string, context: Context): Promise<void> => {
@@ -250,8 +246,7 @@ export function createConversationsService(
 		const known = (id: string) =>
 			state.value.conversations.find((summary) => summary.id === id) ?? {
 				role: id === rootId ? ("main" as const) : ("fork" as const),
-				label: id,
-			};
+				label: id };
 		publish((draft) => {
 			draft.selected = conversationId;
 			draft.view = null;
@@ -297,8 +292,7 @@ export function createConversationsService(
 					conversationId,
 					at,
 					summarize: choice.summarize,
-					...(custom === undefined || custom.length === 0 ? {} : { customInstructions: custom }),
-				},
+					...(custom === undefined || custom.length === 0 ? {} : { customInstructions: custom }) },
 				context,
 				{ ...await summaryDeps(conversationId, signal.signal), admit: run => withConversationAdmission(options.harness, context, async () => {
 					await assertWritable(conversationId, context);
@@ -312,8 +306,7 @@ export function createConversationsService(
 				conversationId: String(result.conversation.id),
 				summarized: result.summarized,
 				cancelled: false,
-				error: null,
-			};
+				error: null };
 		} catch (error) {
 			if (signal.signal.aborted) return { conversationId: null, summarized: false, cancelled: true, error: null };
 			const message = error instanceof Error ? error.message : String(error);
@@ -469,9 +462,7 @@ export function createConversationsService(
 						operationId: null,
 						error: {
 							code: "unknown",
-							message: `Unknown conversation: ${conversationId}`,
-						},
-					};
+							message: `Unknown conversation: ${conversationId}` } };
 				}
 				return controller.prompt({ ...request, conversationId }, context);
 			},
@@ -483,9 +474,7 @@ export function createConversationsService(
 						entryId: null,
 						error: {
 							code: "unknown",
-							message: `Unknown conversation: ${conversationId}`,
-						},
-					};
+							message: `Unknown conversation: ${conversationId}` } };
 				}
 				return controller.steer({ ...request, conversationId }, context);
 			},
@@ -497,9 +486,7 @@ export function createConversationsService(
 						entryId: null,
 						error: {
 							code: "unknown",
-							message: `Unknown conversation: ${conversationId}`,
-						},
-					};
+							message: `Unknown conversation: ${conversationId}` } };
 				}
 				return controller.followUp({ ...request, conversationId }, context);
 			},
@@ -519,13 +506,10 @@ export function createConversationsService(
 						operationId: null,
 						error: {
 							code: "unknown",
-							message: `Unknown conversation: ${conversationId}`,
-						},
-					};
+							message: `Unknown conversation: ${conversationId}` } };
 				}
 				return controller.compact(request, context);
-			},
-		} satisfies Conversations,
+			} } satisfies Conversations,
 		activate,
 		dispose(): void {
 			listRequest += 1;
@@ -541,19 +525,23 @@ export function createConversationsService(
 			closeFocus();
 			rootView?.dispose();
 			rootView = undefined;
-		},
-	};
+		} };
 }
 
 /** The conversations service as a facet: it owns the harness subscriptions it opens. */
 export function createConversationsFacet(options: ConversationsServiceOptions): Facet {
-	return defineFacet({
-		id: "@pi/conversations",
-		setup(env) {
-			const runtime = createConversationsService(options, (initial) => env.replicatedState(initial));
-			env.provide(Conversations, runtime.service);
-			env.own(() => runtime.dispose());
-			env.onActivate(() => runtime.activate(BACKGROUND_CONTEXT));
-		},
+	return serviceFacet("@pi/conversations", Conversations, [], async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			const runtime = createConversationsService(options, (initial) => replicatedState(initial));
+			const implementation: ServiceValue<typeof Conversations> = runtime.service;
+			disposers.push(() => runtime.dispose());
+			await (() => runtime.activate(BACKGROUND_CONTEXT))();
+
+			return { value: implementation, close: () => disposeResources(disposers) };
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	});
 }

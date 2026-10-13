@@ -1,11 +1,12 @@
+import { openServicePeer } from "./services/peer.ts";
+import { serviceFacet, type ServiceValue } from "@amazme/protocol/services";
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { defineFacet } from "@amazme/chord";
 import type { Context } from "@amazme/chord";
 import { awaitWithContext, BACKGROUND_CONTEXT, withoutAbortSignal } from "@amazme/chord/context";
-import type { FacetBundleArtifact } from "@amazme/chord/node";
+import type { PluginArtifact } from "../core/plugins/artifact.ts";
 import { Client, ServerError as ClientServerError, DisconnectedError } from "@amazme/client";
 import { createUnixTransportFactory, type UnixServerRoute } from "@amazme/client/unix";
 import { isServerId, type ServerId } from "@amazme/protocol";
@@ -13,8 +14,7 @@ import {
 	Server,
 	ServerError as RoutedServerError,
 	type ServerHost,
-	SessionNotFoundError,
-} from "@amazme/server";
+	SessionNotFoundError } from "@amazme/server";
 import type { ServerListener } from "@amazme/server";
 import { createUnixListener, getUnixSocketPath } from "@amazme/server/unix";
 import lockfile from "proper-lockfile";
@@ -34,14 +34,12 @@ import {
 	readSessionPluginPackageProfile,
 	removeSessionPluginPackageProfile,
 	restoreServerPluginPackageProfile,
-	writeSessionPluginPackageProfile,
-} from "./plugins/package.ts";
+	writeSessionPluginPackageProfile } from "./plugins/package.ts";
 import {
 	consumeInternalProcessRole,
 	isDirectInternalProcessEntry,
 	spawnInternalProcess,
-	terminateInternalProcess,
-} from "./process.ts";
+	terminateInternalProcess } from "./process.ts";
 import { RadiusRelayAuthResolver } from "./radius-auth.ts";
 import { RadiusRelayHost, type RadiusRelayHostStatus } from "./radius-relay.ts";
 import { createExperimentalServerServices } from "./services/server.ts";
@@ -61,8 +59,7 @@ import {
 	type SessionCatalogMetadata,
 	writeSessionName,
 	writeSessionArchive,
-	writeSessionProject,
-} from "./session-catalog.ts";
+	writeSessionProject } from "./session-catalog.ts";
 import { SessionPluginSelectionConflictError, SessionWorkerManager } from "./session-worker-manager.ts";
 import {
 	deleteLocalSessionFiles,
@@ -70,8 +67,7 @@ import {
 	listLocalSessions,
 	listProjectLocalSessions,
 	writeLocalSessionName,
-	setLocalSessionArchived,
-} from "./session-store.ts";
+	setLocalSessionArchived } from "./session-store.ts";
 
 export const ENV_SERVER_DIR = "AMAZME_SERVER_DIR";
 export const ENV_SERVER_ID = "AMAZME_SERVER_ID";
@@ -144,9 +140,7 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 			factor: 1,
 			minTimeout: LOCK_RETRY_MS,
 			maxTimeout: LOCK_RETRY_MS,
-			maxRetryTime: LOCK_WAIT_MS,
-		},
-	});
+			maxRetryTime: LOCK_WAIT_MS } });
 	return { serverId, release };
 }
 
@@ -193,8 +187,7 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 				: [
 						JSON.stringify({
 							...(options.provider === undefined ? {} : { provider: options.provider }),
-							model: options.model,
-						}),
+							model: options.model }),
 					];
 		const child = spawnInternalProcess("server", [options.directory, serverId, options.sessionDir, ...modelArgs]);
 		let spawnError: Error | undefined;
@@ -232,16 +225,13 @@ export function acquireServerActivation(directory: string, serverId: ServerId): 
 			factor: 1,
 			minTimeout: 25,
 			maxTimeout: 25,
-			maxRetryTime: ACTIVATION_TIMEOUT_MS,
-		},
-	});
+			maxRetryTime: ACTIVATION_TIMEOUT_MS } });
 }
 
 async function connect(route: UnixServerRoute): Promise<Client | undefined> {
 	const client = new Client({
 		serverId: route.serverId,
-		transportFactory: createUnixTransportFactory({ path: route.path }),
-	});
+		transportFactory: createUnixTransportFactory({ path: route.path }) });
 	try {
 		await client.connect();
 		return client;
@@ -380,7 +370,7 @@ export interface StartServerOptions {
 interface ResolvedSessionPlugins {
 	readonly packagePaths: readonly string[];
 	readonly manifestPaths: readonly string[];
-	readonly presentationArtifacts: readonly FacetBundleArtifact[];
+	readonly presentationArtifacts: readonly PluginArtifact[];
 }
 
 interface StartServerBackendOptions {
@@ -395,7 +385,7 @@ interface StartServerBackendOptions {
 		context: Context,
 	): Promise<ResolvedSessionPlugins>;
 	removeSessionPlugins(metadata: SessionCatalogMetadata): Promise<void>;
-	reloadPresentationFacetBundles(packagePaths: readonly string[]): Promise<readonly FacetBundleArtifact[]>;
+	reloadPresentationFacetBundles(packagePaths: readonly string[]): Promise<readonly PluginArtifact[]>;
 	/** The server's default plugin selection, and the write that replaces it. */
 	listServerPluginPackages(): readonly string[];
 	setServerPluginPackages(packagePaths: readonly string[]): Promise<readonly string[]>;
@@ -496,8 +486,7 @@ async function startServerBackend(
 			...(metadata.archivedAt === undefined ? {} : { archivedAt: metadata.archivedAt }),
 			...(metadata.workEndedAt === undefined ? {} : { workEndedAt: metadata.workEndedAt }),
 			source,
-			...(display.length === 0 ? {} : { name: display }),
-		};
+			...(display.length === 0 ? {} : { name: display }) };
 	};
 
 	/**
@@ -527,8 +516,7 @@ async function startServerBackend(
 						createdAt: session.createdAt,
 						cwd: session.cwd,
 						path: session.path,
-						...(session.name === undefined ? {} : { name: session.name }),
-					},
+						...(session.name === undefined ? {} : { name: session.name }) },
 					"local",
 				),
 			));
@@ -560,8 +548,7 @@ async function startServerBackend(
 				createdAt: local.createdAt,
 				cwd: local.cwd,
 				path: local.path,
-				...(stored === undefined ? {} : { name: stored }),
-			},
+				...(stored === undefined ? {} : { name: stored }) },
 			"local",
 		);
 	};
@@ -591,54 +578,40 @@ async function startServerBackend(
 		});
 		if (attachment === null) return { status: "refused", code: ended ? "session_ended" : "target_missing", message: ended ? "会话已结束并归档；恢复后才能开始工作。" : `Unknown session: ${sessionId}` };
 		const cleanupContext = withoutAbortSignal(context);
+  let peer: Awaited<ReturnType<typeof openServicePeer>> | undefined;
 		let operationId: string | undefined;
+  let controller: AgentController | undefined;
 		try {
+   peer = await openServicePeer(attachment.invokeChannel.bind(attachment), context);
+   controller = peer.services.get(AgentController);
+   await peer.services.ready(context);
 			context.abortSignal?.throwIfAborted();
-			const existing: unknown = await attachment.invokeService(
-				{ serviceId: AgentController.id, member: "findPrompt", args: [request.conversationId, request.requestId] },
-				() => {},
-				cleanupContext,
-			);
+			const existing: unknown = await controller.findPrompt(request.conversationId, request.requestId, cleanupContext);
 			if (existing !== null && typeof existing !== "string") throw new Error("Invalid prompt receipt.");
 			if (existing !== null) operationId = existing;
 			else {
 				context.abortSignal?.throwIfAborted();
 				// Finish the admission receipt even if cancellation arrives after the input was committed.
-				const submitted: unknown = await attachment.invokeService(
-					{ serviceId: AgentController.id, member: "prompt", args: [{ ...request, images: null }] },
-					() => {}, cleanupContext,
-				);
+				const submitted: unknown = await controller.prompt({ ...request, images: null }, cleanupContext);
 				const submission = readSubmission(submitted);
 				if ("refusal" in submission) return { status: "refused", ...submission.refusal };
 				operationId = submission.operationId;
 			}
 			await accepted(operationId);
 			context.abortSignal?.throwIfAborted();
-			const settled: unknown = await attachment.invokeService(
-				{ serviceId: AgentController.id, member: "waitForPrompt", args: [operationId] },
-				() => {},
-				context,
-			);
+			const settled: unknown = await controller.waitForPrompt(operationId, context);
 			return readSettlement(settled);
 		} catch (error) {
-			if (operationId !== undefined) {
+			if (operationId !== undefined && controller) {
 				try {
-					await attachment.invokeService(
-						{
-							serviceId: AgentController.id,
-							member: "cancelPrompt",
-							args: [operationId],
-						},
-						() => {},
-						cleanupContext,
-					);
+					await controller.cancelPrompt(operationId, cleanupContext);
 				} catch (cleanupError) {
 					throw new AggregateError([error, cleanupError], "Scheduled prompt cancellation failed");
 				}
 			}
 			throw error;
 		} finally {
-			await attachment.release(cleanupContext);
+			try { await peer?.close(); } finally { await attachment.release(cleanupContext); }
 		}
 	};
 	const cancelHostPrompt = async (sessionId: string, request: HostPromptRequest, context: Context): Promise<AgentPromptResult | null> => {
@@ -648,23 +621,18 @@ async function startServerBackend(
 		});
 		if (attachment === null) return null;
 		const cleanupContext = withoutAbortSignal(context);
+  let peer: Awaited<ReturnType<typeof openServicePeer>> | undefined;
 		try {
-			const found: unknown = await attachment.invokeService(
-				{ serviceId: AgentController.id, member: "findPrompt", args: [request.conversationId, request.requestId] },
-				() => {}, cleanupContext,
-			);
+   peer = await openServicePeer(attachment.invokeChannel.bind(attachment), context);
+   const controller = peer.services.get(AgentController);
+   await peer.services.ready(context);
+			const found: unknown = await controller.findPrompt(request.conversationId, request.requestId, cleanupContext);
 			if (found === null) return null;
 			if (typeof found !== "string") throw new Error("Invalid prompt receipt.");
-			await attachment.invokeService(
-				{ serviceId: AgentController.id, member: "cancelPrompt", args: [found] },
-				() => {}, cleanupContext,
-			);
-			const settlement: unknown = await attachment.invokeService(
-				{ serviceId: AgentController.id, member: "waitForPrompt", args: [found] },
-				() => {}, cleanupContext,
-			);
+			await controller.cancelPrompt(found, cleanupContext);
+			const settlement: unknown = await controller.waitForPrompt(found, cleanupContext);
 			return readSettlement(settlement);
-		} finally { await attachment.release(cleanupContext); }
+		} finally { try { await peer?.close(); } finally { await attachment.release(cleanupContext); } }
 	};
 	// The administration surfaces read and write the agent directory the CLI uses, plus the
 	// checkout's project settings: one Settings, Skills, and Plugins instance per server.
@@ -678,22 +646,22 @@ async function startServerBackend(
 			cwd: administrationCwd,
 			paths: {
 				global: getSettingsPath(),
-				project: join(administrationCwd, CONFIG_DIR_NAME, "settings.json"),
-			},
-		},
+				project: join(administrationCwd, CONFIG_DIR_NAME, "settings.json") } },
 		feedback: { agentDir: getAgentDir() },
 		pluginPackages: {
 			list: () => options.listServerPluginPackages(),
-			set: (packagePaths) => options.setServerPluginPackages(packagePaths),
-		},
-	};
+			set: (packagePaths) => options.setServerPluginPackages(packagePaths) } };
 	const pluginLoader = createServerPluginFacetLoader(options.serverPluginManifestPaths);
 	const plugins = pluginLoader === undefined ? undefined : await openPluginRuntime([
-		defineFacet({
-			id: "amazme.host-sessions",
-			setup(env) {
-				env.provide(HostSessions, { agentDir: () => getAgentDir(), hostId: () => serverId, prompt: runHostPrompt, cancelPrompt: cancelHostPrompt });
-			},
+		serviceFacet("amazme.host-sessions", HostSessions, [], async (services) => {
+			const implementation: ServiceValue<typeof HostSessions> = {
+				agentDir: () => getAgentDir(),
+				hostId: () => serverId,
+				prompt: runHostPrompt,
+				cancelPrompt: cancelHostPrompt,
+			};
+
+			return { value: implementation };
 		}),
 	], pluginLoader);
 	const archiveSession = async (sessionId: string, archived: boolean, context: Context): Promise<void> => {
@@ -738,8 +706,7 @@ async function startServerBackend(
 					await archiveSession(session.sessionId, true, context);
 				}
 				await projects.remove(id);
-			},
-		},
+			} },
 		list: () => listSummaries(),
 		create: async (createOptions, context) => summarize(await createSession(createOptions, context)),
 		rename: (sessionId, name) => renameSession(sessionId, name),
@@ -769,19 +736,17 @@ async function startServerBackend(
 				workers.assertSessionPluginManifestPaths(metadata, selected.manifestPaths);
 			} catch (error) {
 				if (error instanceof SessionPluginSelectionConflictError) {
-					throw new RoutedServerError("service_invalid_value", error.message);
+					throw new RoutedServerError("invalid", error.message);
 				}
 				throw error;
 			}
 			return {
 				packagePaths: selected.packagePaths,
-				presentationPlugins: createPresentationFacetData(selected.presentationArtifacts),
-			};
+				presentationPlugins: createPresentationFacetData(selected.presentationArtifacts) };
 		},
 		async reloadPresentationPlugins(packagePaths) {
 			return createPresentationFacetData(await options.reloadPresentationFacetBundles(packagePaths));
-		},
-	}).catch(async (error: unknown) => {
+		} }).catch(async (error: unknown) => {
 		try { await plugins?.close(); }
 		catch (cleanup) { throw new AggregateError([error, cleanup], "Server services startup and cleanup failed"); }
 		throw error;
@@ -795,8 +760,7 @@ async function startServerBackend(
 		openSession: async (metadata, context) => {
 			const selected = await options.resolveSessionPlugins(metadata, undefined, context);
 			return workers.openSession(metadata, context, selected.manifestPaths);
-		},
-	};
+		} };
 	const socketPath = options.path;
 	const closeCatalog = (): Promise<void> => {
 		rejectHostReady(new Error("Host closed before Session routing became ready."));
@@ -806,8 +770,7 @@ async function startServerBackend(
 	const server = new Server(host, {
 		serverId,
 		listeners: [createUnixListener({ path: socketPath, mode: 0o600 }), ...(options.listeners ?? [])],
-		onConnectionCountChanged,
-	});
+		onConnectionCountChanged });
 	try {
 		await server.start();
 	} catch (error) {
@@ -850,8 +813,7 @@ async function startServerBackend(
 				if (errors.length > 0) throw new AggregateError(errors, "Server plugin and transport shutdown failed");
 			})();
 			return closePromise;
-		},
-	};
+		} };
 }
 
 /** Start a replaceable experimental server behind the stable coordinator endpoint. */
@@ -891,8 +853,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			return {
 				packagePaths: normalizedPackagePaths,
 				manifestPaths: plugins.map((plugin) => plugin.manifestPath),
-				presentationArtifacts: built,
-			};
+				presentationArtifacts: built };
 		};
 		let defaultPluginSelection = await buildPluginSelection(pluginPackagePaths);
 		const sessionPluginSelections = new Map<string, ResolvedSessionPlugins>();
@@ -932,7 +893,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		};
 		const reloadPresentationFacetBundles = async (
 			packagePaths: readonly string[],
-		): Promise<readonly FacetBundleArtifact[]> => {
+		): Promise<readonly PluginArtifact[]> => {
 			const reloaded = await buildPluginSelection(packagePaths);
 			if (sameStrings(defaultPluginSelection.packagePaths, reloaded.packagePaths)) {
 				defaultPluginSelection = reloaded;
@@ -973,8 +934,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 				removeSessionPlugins,
 				reloadPresentationFacetBundles,
 				listServerPluginPackages: () => defaultPluginSelection.packagePaths,
-				setServerPluginPackages,
-			},
+				setServerPluginPackages },
 			workers,
 			(count) => lifetime.setConnectionCount(count),
 		);
@@ -988,8 +948,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			serverId,
 			server: backend.server,
 			auth: new RadiusRelayAuthResolver(options.relayAuth),
-			onStatus: options.onRelayStatus,
-		});
+			onStatus: options.onRelayStatus });
 		relay.start();
 
 		const activeBackend = backend;
@@ -1029,8 +988,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 					}
 				})();
 				return closePromise;
-			},
-		};
+			} };
 		lifetime.start(() => {
 			void runtime.close().catch(() => {});
 		});
@@ -1071,8 +1029,7 @@ export async function startForegroundServer(
 			...options,
 			directory,
 			serverId,
-			keepAlive: true,
-		});
+			keepAlive: true });
 	} finally {
 		await release();
 	}
@@ -1118,8 +1075,7 @@ export async function runServerProcess(args: readonly string[]): Promise<void> {
 		serverId,
 		sessionDir,
 		keepAlive: false,
-		...workerModel,
-	});
+		...workerModel });
 	const close = (): void => {
 		void runtime.close().catch(() => {});
 	};

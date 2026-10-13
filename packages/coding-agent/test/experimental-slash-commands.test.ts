@@ -1,10 +1,11 @@
-import { createFacetHost, defineFacet } from "@amazme/chord";
+import { openTestHost } from "./native-host-support.ts";
+import { activationFacet, disposeResources } from "@amazme/protocol/services";
+import { } from "@amazme/chord";
 import { describe, expect, test, vi } from "vitest";
 import { SlashCommands } from "../src/core/plugins/slash-commands.ts";
 import {
 	createSlashCommandsRuntimeFacet,
-	SlashCommandRegistry,
-} from "../src/core/plugins/command-registry.ts";
+	SlashCommandRegistry } from "../src/core/plugins/command-registry.ts";
 
 describe("experimental slash command facets", () => {
 	test("registers and removes contributions", () => {
@@ -41,49 +42,60 @@ describe("experimental slash command facets", () => {
 	test("tracks plugin facet reload and unload", async () => {
 		const registry = new SlashCommandRegistry();
 		const originalRun = vi.fn();
-		const host = await createFacetHost({
+		const host = await openTestHost({
 			facets: [
 				createSlashCommandsRuntimeFacet(registry),
-				defineFacet({
-					id: "@test/example-hello",
-					setup(env) {
-						const commands = env.use(SlashCommands);
-						env.onActivate(() =>
-							env.own(commands.replace({ name: "hello", description: "Original", run: originalRun })),
-						);
-					},
+				activationFacet("@test/example-hello", [SlashCommands], async (services) => {
+					const disposers: Array<() => void | Promise<void>> = [];
+					try {
+						const commands = services.get(SlashCommands);
+						await (() => disposers.push(commands.replace({ name: "hello", description: "Original", run: originalRun })))();
+
+						return () => disposeResources(disposers);
+					} catch (error) {
+						await disposeResources(disposers);
+						throw error;
+					}
 				}),
-			],
-		});
+			] });
 		expect(registry.list().map(({ name }) => name)).toEqual(["hello"]);
 
 		const failure = new Error("replacement failed");
 		await expect(
 			host.reload([
-				defineFacet({
-					id: "@test/example-hello",
-					setup(env) {
-						const commands = env.use(SlashCommands);
-						env.onActivate(() => {
-							env.own(commands.replace({ name: "hello", description: "Failing", run: () => undefined }));
+				activationFacet("@test/example-hello", [SlashCommands], async (services) => {
+					const disposers: Array<() => void | Promise<void>> = [];
+					try {
+						const commands = services.get(SlashCommands);
+						await (() => {
+							disposers.push(commands.replace({ name: "hello", description: "Failing", run: () => undefined }));
 							throw failure;
-						});
-					},
+						})();
+
+						return () => disposeResources(disposers);
+					} catch (error) {
+						await disposeResources(disposers);
+						throw error;
+					}
 				}),
 			]),
-		).rejects.toBe(failure);
+		).rejects.toThrow("replacement failed");
 		expect(registry.list()).toEqual([expect.objectContaining({ name: "hello", run: originalRun })]);
 
 		const replacementRun = vi.fn();
 		await host.reload([
-			defineFacet({
-				id: "@test/example-hello",
-				setup(env) {
-					const commands = env.use(SlashCommands);
-					env.onActivate(() =>
-						env.own(commands.replace({ name: "hello", description: "Replacement", run: replacementRun })),
-					);
-				},
+			activationFacet("@test/example-hello", [SlashCommands], async (services) => {
+				const disposers: Array<() => void | Promise<void>> = [];
+				try {
+					const commands = services.get(SlashCommands);
+					await (() =>
+						disposers.push(commands.replace({ name: "hello", description: "Replacement", run: replacementRun })))();
+
+					return () => disposeResources(disposers);
+				} catch (error) {
+					await disposeResources(disposers);
+					throw error;
+				}
 			}),
 		]);
 		expect(registry.list()).toEqual([

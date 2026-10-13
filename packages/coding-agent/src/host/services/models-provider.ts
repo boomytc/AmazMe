@@ -1,8 +1,9 @@
+import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
+import { replicatedState } from "@amazme/chord";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@amazme/ai";
 import type { Context, Facet, MutableReplicatedState } from "@amazme/chord";
-import { defineFacet } from "@amazme/chord";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { withAbortSignal, BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { AgentState, Conversation, Harness } from "@amazme/durable";
 import { AgentDoc } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
@@ -40,14 +41,12 @@ export function createModelsService(
 		: new ProviderLogin(modelRuntime, settingsManager === undefined ? {} : { getDeviceId: () => settingsManager.getOrCreateDeviceId() }));
 	const configurationOf = (value: Readonly<AgentState> | null | undefined): ModelsState["configuration"] => ({
 		model: value?.model === undefined ? null : { provider: value.model.provider, modelId: value.model.modelId },
-		thinkingLevel: value?.thinkingLevel ?? "off",
-	});
+		thinkingLevel: value?.thinkingLevel ?? "off" });
 	const state = createState({
 		catalog: { revision: 0, availableModels: [], enabledModelIds: modelScope.patterns },
 		configuration: { model: null, thinkingLevel: "off" },
 		refresh: { status: "idle" },
-		authentication: authentication?.snapshot() ?? null,
-	});
+		authentication: authentication?.snapshot() ?? null });
 	const selectedModel = (agent = readAgent()) => {
 		const ref = agent?.model;
 		return ref === undefined ? undefined : modelRuntime?.getModel(ref.provider, ref.modelId);
@@ -70,9 +69,7 @@ export function createModelsService(
 				modelId: model.id,
 				name: model.name,
 				reasoning: model.reasoning,
-				contextWindow: model.contextWindow,
-			})),
-		};
+				contextWindow: model.contextWindow })) };
 	};
 	let stopAuthentication: (() => void) | undefined;
 	const authenticationOwner = (): ProviderLogin => {
@@ -183,8 +180,7 @@ export function createModelsService(
 				}
 				agent.thinkingLevel = level;
 			}, context);
-		},
-	};
+		} };
 	return {
 		service,
 		async activate(context) {
@@ -224,8 +220,7 @@ export function createModelsService(
 				draft.configuration = next;
 				if (catalog !== undefined) draft.catalog = catalog;
 			});
-		},
-	};
+		} };
 }
 
 /** Acquire the conversation's agent document, then build the facet that owns it. */
@@ -237,14 +232,14 @@ export async function createModelsServiceFacet(options: {
 	readonly context: Context;
 	readonly authentication?: ProviderLogin;
 }): Promise<Facet> {
-	const agent = await options.harness.documentState(AgentDoc, options.conversation.id, options.context);
-	if (agent === undefined) throw new Error(`Conversation ${options.conversation.id} has no agent document`);
-	return defineFacet({
-		id: "@pi/models",
-		setup(env) {
-			env.own(() => agent.dispose());
-			const conversations = env.use(Conversations);
-			const agentRuntime = env.use(AgentRuntime);
+	return serviceFacet("@amazme/models", Models, [Conversations, AgentRuntime], async (services, signal) => {
+  const agent = await options.harness.documentState(AgentDoc, options.conversation.id, withAbortSignal(signal, options.context));
+  if (agent === undefined) throw new Error(`Conversation ${options.conversation.id} has no agent document`);
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			disposers.push(() => agent.dispose());
+			const conversations = services.get(Conversations);
+			const agentRuntime = services.get(AgentRuntime);
 			const readAgent = (): Readonly<AgentState> | null | undefined => {
 				const selected = conversations.state.value?.selected ?? String(options.conversation.id);
 				if (selected === String(options.conversation.id)) return agent.value;
@@ -258,17 +253,22 @@ export async function createModelsServiceFacet(options: {
 				readAgent,
 				options.modelRuntime,
 				options.settingsManager,
-				env.replicatedState,
+				replicatedState,
 				options.authentication,
 			);
-			env.own(() => runtime.close());
-			env.provide(Models, runtime.service);
-			env.onActivate(async () => {
+			disposers.push(() => runtime.close());
+			const implementation: ServiceValue<typeof Models> = runtime.service;
+			await (async () => {
 				await runtime.activate(BACKGROUND_CONTEXT);
-				env.own(agent.subscribe((_value, context) => runtime.syncConfiguration(context)));
-				env.own(conversations.state.subscribe((_value, context) => runtime.syncConfiguration(context)));
-			});
-		},
+				disposers.push(agent.subscribe((_value, context) => runtime.syncConfiguration(context)));
+				disposers.push(conversations.state.subscribe((_value, context) => runtime.syncConfiguration(context)));
+			})();
+
+			return { value: implementation, close: () => disposeResources(disposers) };
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	});
 }
 

@@ -27,10 +27,10 @@ const serverHello: ServerHello = {
 };
 
 describe("protocol validation", () => {
-	test("negotiates protocol version 8", () => {
-		expect(PROTOCOL_VERSION).toBe(8);
-		expect(isSupportedProtocolVersion(8)).toBe(true);
-		expect(isSupportedProtocolVersion(7)).toBe(false);
+	test("negotiates protocol version 9", () => {
+		expect(PROTOCOL_VERSION).toBe(9);
+		expect(isSupportedProtocolVersion(9)).toBe(true);
+		expect(isSupportedProtocolVersion(8)).toBe(false);
 		expect(isSupportedProtocolVersion(8.5)).toBe(false);
 	});
 
@@ -89,11 +89,11 @@ describe("protocol validation", () => {
 		).toMatchObject({ call: { arbitrary: expect.any(String) } });
 		expect(
 			parseServerMessage({
-				type: "service_update",
-				subscriptionId: "subscription-1",
-				update: { applicationDefined: true },
+				type: "channel_frame",
+				channelId: "subscription-1",
+				frame: { applicationDefined: true },
 			}),
-		).toMatchObject({ update: { applicationDefined: true } });
+		).toMatchObject({ frame: { applicationDefined: true } });
 	});
 
 	test("rejects non-JSON opaque payloads", () => {

@@ -1,6 +1,6 @@
+import { activationFacet, disposeResources } from "@amazme/protocol/services";
 import { randomUUID } from "node:crypto";
 import { Type } from "@amazme/ai";
-import { defineFacet } from "@amazme/chord";
 import type { Context, JsonValue } from "@amazme/chord";
 import { withoutAbortSignal } from "@amazme/chord/context";
 import { AgentExtensions, AgentRuntime, SlashCommands } from "@amazme/coding-agent/plugin";
@@ -24,8 +24,7 @@ const Parameters = Type.Object(
 		plan: Type.Optional(PlanSchema),
 		path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
 		runId: Type.Optional(Type.String({ pattern: "^[1-9][0-9]*$" })),
-		args: Type.Optional(Type.String({ maxLength: 16000 })),
-	},
+		args: Type.Optional(Type.String({ maxLength: 16000 })) },
 	{ additionalProperties: false },
 );
 
@@ -53,8 +52,7 @@ async function describe(api: ToolExecutionApi, id: TaskId<RunResult>, context: C
 		settled: jobs.filter((job) => job.stage === index).length,
 		active: active.filter(
 			(item) => item.stage === index && !jobs.some((job) => job.stage === item.stage && job.job === item.job),
-		).length,
-	}));
+		).length }));
 	const value = {
 		runId: id,
 		name: input.plan.name,
@@ -74,8 +72,7 @@ async function describe(api: ToolExecutionApi, id: TaskId<RunResult>, context: C
 		stages,
 		jobs,
 		verification: result?.verification ?? "unverified",
-		error: record.state.outcome?.error?.message ?? record.state.outcome?.reason ?? null,
-	};
+		error: record.state.outcome?.error?.message ?? record.state.outcome?.reason ?? null };
 	const text = [
 		`Workflow ${value.name} #${id}: ${value.state}. Configured command verification: ${value.verification}.`,
 		...stages.map(
@@ -108,8 +105,7 @@ export function workflowExtension(local: AgentRuntime) {
 					{
 						plan: PlanSchema,
 						path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
-						expectedVersion: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
-					},
+						expectedVersion: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })) },
 					{ additionalProperties: false },
 				),
 				description:
@@ -121,10 +117,8 @@ export function workflowExtension(local: AgentRuntime) {
 					const value = await saveTemplate(api.env, path, plan, args.expectedVersion, context);
 					return {
 						output: [{ type: "text", text: JSON.stringify(value) }],
-						structuredOutput: value,
-					};
-				},
-			}),
+						structuredOutput: value };
+				} }),
 			defineTool({
 				name: "workflow",
 				structuredOutputSchema: Type.Object({}, { additionalProperties: true }),
@@ -155,8 +149,7 @@ export function workflowExtension(local: AgentRuntime) {
 								return {
 									output: [{ type: "text", text: report.text }],
 									structuredOutput: report.value,
-									isError: report.value.state === "failed" || report.value.state === "cancelled",
-								};
+									isError: report.value.state === "failed" || report.value.state === "cancelled" };
 							}
 							if (args.plan !== undefined && args.path !== undefined)
 								throw new Error("Give either a plan or template path, not both");
@@ -205,16 +198,13 @@ export function workflowExtension(local: AgentRuntime) {
 												? null
 												: {
 														provider: agent.model.provider,
-														modelId: agent.model.modelId,
-													},
+														modelId: agent.model.modelId },
 										instructions: agent.instructions ?? "",
-										allowed,
-									},
+										allowed },
 									{
 										ownership: { kind: "conversation" },
 										conversationId: api.conversationId,
-										background: true,
-									},
+										background: true },
 								);
 								await tx.doc(Control, task);
 								admission.run = task;
@@ -223,8 +213,7 @@ export function workflowExtension(local: AgentRuntime) {
 									task,
 									conversation: api.conversationId,
 									name: plan.name,
-									at: Date.now(),
-								});
+									at: Date.now() });
 								while (index.runs.length > 20) {
 									const oldest = index.runs.findIndex((item) => !live.includes(item.task));
 									if (oldest < 0) break;
@@ -266,12 +255,9 @@ export function workflowExtension(local: AgentRuntime) {
 					return {
 						output: [{ type: "text", text }],
 						structuredOutput: value,
-						isError: (args.action === "run" || args.action === "status") && failed,
-					};
-				},
-			}),
-		],
-	});
+						isError: (args.action === "run" || args.action === "status") && failed };
+				} }),
+		] });
 }
 
 function commandArgs(text: string): JsonValue {
@@ -282,76 +268,82 @@ function commandArgs(text: string): JsonValue {
 	if (match[1] === "templates")
 		return {
 			action: "templates",
-			...(match[2] === undefined ? {} : { path: match[2] }),
-		};
+			...(match[2] === undefined ? {} : { path: match[2] }) };
 	if (match[1] === "run" || match[1] === "load") {
 		const path = match[2];
 		if (path === undefined) throw new Error("Give a template name or path");
 		return {
 			action: match[1],
 			path: /^[a-z][a-z0-9-]{0,63}$/.test(path) ? `.amazme/workflows/${path}.json` : path,
-			...(match[3] === undefined ? {} : { args: match[3] }),
-		};
+			...(match[3] === undefined ? {} : { args: match[3] }) };
 	}
 	return {
 		action: match[1]!,
-		...(match[2] === undefined ? {} : { runId: match[2] }),
-	};
+		...(match[2] === undefined ? {} : { runId: match[2] }) };
 }
 
-export default defineFacet({
-	id: "@amazme/workflows/session",
-	setup(env) {
-		const extensions = env.use(AgentExtensions),
-			runtime = env.use(AgentRuntime),
-			commands = env.use(SlashCommands);
-		env.onActivate(() => {
-			env.own(extensions.install(workflowExtension(runtime)));
-			env.own(
-				commands.replace({
-					name: "workflows",
-					description: "Run, inspect, pause, resume or stop optional workflows",
-					argumentHint: "<list|templates|run|load|status|pause|resume|stop> [path|runId] [args]",
-					getArgumentCompletions: (prefix) =>
-						["list", "templates", "run", "load", "status", "pause", "resume", "stop"]
-							.filter((action) => action.startsWith(prefix))
-							.map((value) => ({ value, label: value })),
-					async run(args, context) {
-						const input = commandArgs(args);
-						if (input === null || typeof input !== "object" || Array.isArray(input))
-							throw new Error("Workflow command arguments must be an object");
-						const { harness, conversation } = await runtime.current(context),
-							callId = `workflow-command:${randomUUID()}`;
-						const { action, ...remaining } = input;
-						const toolName = action === "save" ? "workflow_save" : "workflow",
-							arguments_ = action === "save" ? remaining : input;
-						const id = await harness.commit(
-							(tx) =>
-								tx.createTask(
-									Command,
-									{ callId, name: toolName, args: arguments_ },
-									{
-										conversationId: conversation.id,
-										ownership: { kind: "conversation" },
-									},
-								),
-							context,
-						);
-						try {
-							const settled = await harness.waitForTask(id, context);
-							if (settled.state.outcome.status !== "completed" || settled.state.outcome.result.isError)
-								throw new Error(settled.state.outcome.result?.error ?? "Workflow command did not complete");
-						} catch (error) {
-							if (context.abortSignal?.aborted) {
-								const cleanup = withoutAbortSignal(context);
-								await harness.abortTask(id, cleanup);
-								await harness.waitForTask(id, cleanup);
+export default activationFacet(
+	"@amazme/workflows/session",
+	[AgentExtensions, AgentRuntime, SlashCommands],
+	async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			const extensions = services.get(AgentExtensions),
+				runtime = services.get(AgentRuntime),
+				commands = services.get(SlashCommands);
+			await (() => {
+				disposers.push(extensions.install(workflowExtension(runtime)));
+				disposers.push(
+					commands.replace({
+						name: "workflows",
+						description: "Run, inspect, pause, resume or stop optional workflows",
+						argumentHint: "<list|templates|run|load|status|pause|resume|stop> [path|runId] [args]",
+						getArgumentCompletions: (prefix) =>
+							["list", "templates", "run", "load", "status", "pause", "resume", "stop"]
+								.filter((action) => action.startsWith(prefix))
+								.map((value) => ({ value, label: value })),
+						async run(args, context) {
+							const input = commandArgs(args);
+							if (input === null || typeof input !== "object" || Array.isArray(input))
+								throw new Error("Workflow command arguments must be an object");
+							const { harness, conversation } = await runtime.current(context),
+								callId = `workflow-command:${randomUUID()}`;
+							const { action, ...remaining } = input;
+							const toolName = action === "save" ? "workflow_save" : "workflow",
+								arguments_ = action === "save" ? remaining : input;
+							const id = await harness.commit(
+								(tx) =>
+									tx.createTask(
+										Command,
+										{ callId, name: toolName, args: arguments_ },
+										{
+											conversationId: conversation.id,
+											ownership: { kind: "conversation" },
+										},
+									),
+								context,
+							);
+							try {
+								const settled = await harness.waitForTask(id, context);
+								if (settled.state.outcome.status !== "completed" || settled.state.outcome.result.isError)
+									throw new Error(settled.state.outcome.result?.error ?? "Workflow command did not complete");
+							} catch (error) {
+								if (context.abortSignal?.aborted) {
+									const cleanup = withoutAbortSignal(context);
+									await harness.abortTask(id, cleanup);
+									await harness.waitForTask(id, cleanup);
+								}
+								throw error;
 							}
-							throw error;
-						}
-					},
-				}),
-			);
-		});
+						},
+					}),
+				);
+			})();
+
+			return () => disposeResources(disposers);
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	},
-});
+);

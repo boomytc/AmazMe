@@ -1,9 +1,8 @@
+import { ChannelEndpoint } from "@amazme/protocol";
+import { ServiceHost } from "@amazme/protocol/services";
 import {
 	type Context,
-	createRemoteServiceEndpoint,
-	decodeServiceControlCall,
 	type JsonValue,
-	RemoteServiceProvider,
 	replicatedState,
 } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -93,9 +92,8 @@ export async function createExperimentalServerServices(options: {
 		archive(sessionId: string, archived: boolean, context: Context): Promise<void>;
 	};
 }): Promise<ExperimentalServerServices> {
-	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ...(options.projects ? [ProjectManagement, SessionArchive] : [])]
-		.map(service => ({ service, mode: "singleton" as const }));
-	const builtinIds = new Set(definitions.map(({ service }) => service.id));
+	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ...(options.projects ? [ProjectManagement, SessionArchive] : [])];
+	const builtinIds = new Set(definitions.map(service => service.name));
 	if (options.plugins?.services.catalogue.some(entry => builtinIds.has(entry.serviceId))) {
 		throw new Error("Server plugins cannot replace built-in services");
 	}
@@ -178,7 +176,7 @@ export async function createExperimentalServerServices(options: {
 				// created while this host was running.
 				await serialize(() => refreshNow(BACKGROUND_CONTEXT));
 				if (disposed) throw new Error("Server services are disposed");
-				const provider = new RemoteServiceProvider(definitions);
+				const provider = new ServiceHost("server-services");
 				provider.provide(SessionDirectory, { state: directory });
 				if (options.projects !== undefined) {
 					const projects = options.projects;
@@ -293,6 +291,7 @@ export async function createExperimentalServerServices(options: {
 					rename: (sessionId, name, context) =>
 						updateDirectory(() => options.rename(sessionId, name, context)),
 				});
+				await provider.ready();
 				const attachment = createProviderAttachment(provider, () => attachments.delete(attachment), options.plugins?.services);
 				attachments.add(attachment);
 				return attachment;
@@ -321,45 +320,18 @@ export async function createExperimentalServerServices(options: {
 	};
 }
 
-function createProviderAttachment(
-	provider: RemoteServiceProvider,
-	onRelease: () => void,
-	additional?: RemoteServiceProvider,
-): RoutedServerServiceAttachment {
-	const endpoint = createRemoteServiceEndpoint(provider);
-	const pluginEndpoint = additional === undefined ? undefined : createRemoteServiceEndpoint(additional);
-	const pluginIds = new Set(additional?.catalogue.map(entry => entry.serviceId));
-	const subscriptions = new Map<string, typeof endpoint>();
-	let released = false;
-	return {
-		async invokeService(call, publish, context) {
-			if (released) return Promise.reject(new Error("Server service attachment is released"));
-			const control = decodeServiceControlCall(call);
-			if (control?.type === "catalogue") return [...provider.catalogue, ...(additional?.catalogue ?? [])];
-			const target = control?.type === "unsubscribe"
-				? subscriptions.get(control.subscriptionId) ?? endpoint
-				: pluginIds.has(control?.type === "subscribe" ? control.serviceId : call.serviceId) ? pluginEndpoint! : endpoint;
-			if (control?.type === "subscribe") {
-				if (subscriptions.has(control.subscriptionId)) throw new Error("Service subscription ID is already active");
-				subscriptions.set(control.subscriptionId, target);
-			}
-			try {
-				const result = await target.invoke(call, publish, context);
-				if (control?.type === "unsubscribe") subscriptions.delete(control.subscriptionId);
-				return result;
-			} catch (error) {
-				if (control?.type === "subscribe") subscriptions.delete(control.subscriptionId);
-				throw error;
-			}
-		},
-		release() {
-			if (released) return;
-			released = true;
-			endpoint.dispose();
-			pluginEndpoint?.dispose();
-			subscriptions.clear();
-			provider.dispose();
-			onRelease();
-		},
-	};
+function createProviderAttachment(provider: ServiceHost, onRelease: () => void, additional?: ServiceHost): RoutedServerServiceAttachment {
+ const endpoint = new ChannelEndpoint(provider.host, () => [
+  ...provider.catalogue.filter(entry => !entry.local).map(entry => ({ ...entry, host: provider.host.name })),
+  ...(additional?.catalogue.filter(entry => !entry.local).map(entry => ({ ...entry, host: additional.host.name })) ?? []),
+ ], additional ? [additional.host] : []);
+ let released: Promise<void> | undefined;
+ return {
+  invokeChannel: (call, publish, context) => endpoint.invoke(call, publish, context),
+  release() {
+   return released ??= (async () => {
+    try { await endpoint.dispose(); } finally { try { await provider.dispose(); } finally { onRelease(); } }
+   })();
+  },
+ };
 }

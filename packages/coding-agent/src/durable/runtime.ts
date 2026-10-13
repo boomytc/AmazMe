@@ -1,7 +1,7 @@
+import { serviceSetFacet, type ApplicationService, type ServiceValue } from "@amazme/protocol/services";
 import { realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { getSupportedThinkingLevels, type ImageContent, type ModelThinkingLevel, type TextContent } from "@amazme/ai";
-import { defineFacet } from "@amazme/chord";
 import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import {
@@ -17,8 +17,7 @@ import {
 	type ModelRef,
 	type Submission,
 	type TaskGraph,
-	type SessionEnd,
-} from "@amazme/durable";
+	type SessionEnd } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
@@ -48,8 +47,7 @@ import {
 	readReturnPoints,
 	readSummaries,
 	SessionViewDoc,
-	type TreeNavigationDeps,
-} from "./session-surface.ts";
+	type TreeNavigationDeps } from "./session-surface.ts";
 import { abortArchivedForks } from "./fork-management.ts";
 import {
 	configureHarnessHttp,
@@ -59,8 +57,7 @@ import {
 	ExecutionEnvs,
 	findInitialAgentModel,
 	initialThinkingLevel,
-	loadCodingResources,
-} from "./harness-setup.ts";
+	loadCodingResources } from "./harness-setup.ts";
 import type { CodingResourceOptions } from "./prompt.ts";
 import { readReview, refreshReview } from "./insights/workspace-review.ts";
 import { resumeRun } from "./insights/run-policy.ts";
@@ -221,8 +218,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		: await findInitialAgentModel(settingsManager, modelRuntime, {
 			provider: options.provider,
 			model: options.model,
-			thinkingLevel: options.thinkingLevel,
-		});
+			thinkingLevel: options.thinkingLevel });
 	if (options.apiKey !== undefined && selected?.model !== undefined) {
 		await modelRuntime.setRuntimeApiKey(selected.model.provider, options.apiKey);
 	}
@@ -248,8 +244,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	const resources = await loadCodingResources(settingsManager, cwd, options);
 	const location = await selectSession(cwd, options.continueSession ?? false, {
 		noSession: options.noSession,
-		sessionDir: options.sessionDir ?? settingsManager.getSessionDir(),
-	});
+		sessionDir: options.sessionDir ?? settingsManager.getSessionDir() });
 	const envs = new ExecutionEnvs(location.cwd, settingsManager);
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;
@@ -273,21 +268,18 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				registry,
 				settings,
 				env: envs.env,
-				onReport: (error) => report(error),
-			},
+				onReport: (error) => report(error) },
 			context,
 		);
 		const root = await harness.root(context, {
 			agent: {
 				cwd: location.cwd,
 				...(initial?.model === undefined ? {} : { model: initial.model }),
-				...(initialThinking === undefined ? {} : { thinkingLevel: initialThinking }),
-			},
+				...(initialThinking === undefined ? {} : { thinkingLevel: initialThinking }) },
 			init: async (tx, id) => {
 				const agent = await tx.doc(AgentDoc, id);
 				agent.tools = activeMcp.selection(toolSelection);
-			},
-		});
+			} });
 		const opened = harness;
 		await abortArchivedForks(opened);
 		if (name !== undefined) {
@@ -308,32 +300,28 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				provider: model.provider,
 				modelId: model.id,
 				name: model.name,
-				contextWindow: model.contextWindow,
-			}));
+				contextWindow: model.contextWindow }));
 
 		const laneNow = (value: ConversationView = conversation.value): LaneStatus =>
 			laneFrom(
 				value,
 				state.conversations.find((summary) => String(summary.id) === String(current.id)) ?? {
 					role: current.id === root.id ? "main" : "fork",
-					label: String(current.id),
-				},
+					label: String(current.id) },
 			);
 		let state: DurableView = {
 			session: {
 				id: location.id,
 				...(location.directory === undefined ? {} : { directory: location.directory }),
 				cwd: location.cwd,
-				...(sessionName === undefined ? {} : { name: sessionName }),
-			},
+				...(sessionName === undefined ? {} : { name: sessionName }) },
 			conversation: conversation.value,
 			conversations: summaries,
 			lane: laneFrom(conversation.value, summaries.find((summary) => summary.root) ?? IDLE_LANE),
 			history: [],
 			historyMore: true,
 			models: models(),
-			notices: [],
-		};
+			notices: [] };
 		const listeners = new Set<() => void>();
 		let notifying = false;
 		// Commit listeners and Chord frames call this on the Session line; rendering runs afterwards, once per burst.
@@ -349,8 +337,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		let nextNotice = 1;
 		const notice = (level: Notice["level"], message: string): void => {
 			update({
-				notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20),
-			});
+				notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20) });
 		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
 		const reportPausedRun = async (): Promise<void> => {
@@ -452,8 +439,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				...(model === undefined ? {} : { model: auth?.auth.baseUrl === undefined ? model : { ...model, baseUrl: auth.auth.baseUrl } }),
 				...(auth?.auth.apiKey === undefined ? {} : { apiKey: auth.auth.apiKey }),
 				...(headers === undefined || Object.keys(headers).length === 0 ? {} : { headers }),
-				...(auth?.env === undefined ? {} : { env: auth.env }),
-			};
+				...(auth?.env === undefined ? {} : { env: auth.env }) };
 		};
 		let leaveAbort: AbortController | undefined;
 		const selectModel = async (ref: ModelRef, thinkingLevel?: ModelThinkingLevel): Promise<void> => {
@@ -462,8 +448,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			if (!(await modelRuntime.checkAuth(model.provider))) throw new Error(`No API key for ${ref.provider}/${ref.modelId}`);
 			await current.configure({
 				model: ref,
-				thinkingLevel: initialThinkingLevel(settingsManager, model, thinkingLevel, agentOf(state.conversation).thinkingLevel),
-			}, context);
+				thinkingLevel: initialThinkingLevel(settingsManager, model, thinkingLevel, agentOf(state.conversation).thinkingLevel) }, context);
 			notice("info", `Selected ${ref.provider}/${ref.modelId}.`);
 		};
 		const selectThinking = async (value: string): Promise<void> => {
@@ -491,8 +476,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				conversation: nextState.value,
 				history: [],
 				historyMore: true,
-				lane: laneNow(),
-			});
+				lane: laneNow() });
 			await reportPausedRun();
 		};
 		const pluginCommands = facetLoader === undefined ? undefined : new SlashCommandRegistry(NATIVE_COMMANDS.map(({ name }) => name));
@@ -512,15 +496,32 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		let unsubscribeCommands = (): void => {};
 		if (facetLoader !== undefined) {
 			if (sources.length > 0) registry.install({ name: "plugin-development", sections: [section("plugin_development", () => describePluginSources(sources))] });
-			const controllerFacet = defineFacet({
-				id: "@amazme/agent-controller-runtime",
-				setup(env) {
-					env.provide(AgentRuntime, createAgentRuntime(opened, () => current.id, () => plugins?.changing !== false));
-					env.provide(AgentController, createAgentController(opened, () => current, () => plugins?.changing !== false
-						? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
-						: undefined));
+			const controllerFacet = serviceSetFacet(
+				"@amazme/agent-controller-runtime",
+				[AgentRuntime, AgentController],
+				[],
+				async (services) => {
+					const values = new Map<ApplicationService, unknown>();
+
+					const provided0: ServiceValue<typeof AgentRuntime> = createAgentRuntime(
+						opened,
+						() => current.id,
+						() => plugins?.changing !== false,
+					);
+					values.set(AgentRuntime, provided0);
+					const provided1: ServiceValue<typeof AgentController> = createAgentController(
+						opened,
+						() => current,
+						() =>
+							plugins?.changing !== false
+								? { code: "plugins_reloading", message: "Plugins are unavailable; finish reloading or restart the session" }
+								: undefined,
+					);
+					values.set(AgentController, provided1);
+
+					return { value: values };
 				},
-			});
+			);
 			plugins = await openPluginRuntime(
 				[createAgentExtensionsFacet(registry), createSlashCommandsRuntimeFacet(pluginCommands!), controllerFacet],
 				facetLoader,
@@ -577,8 +578,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				const model = ref === undefined ? undefined : modelRuntime.getModel(ref.provider, ref.modelId);
 				const normalized = await normalizePromptImages(images, {
 					autoResizeImages: settingsManager.getImageAutoResize(),
-					resizeOptions: model?.inputLimits?.images?.resize,
-				}, operation.signal);
+					resizeOptions: model?.inputLimits?.images?.resize }, operation.signal);
 				if (normalized.hints.length > 0) expanded += `\n\n${normalized.hints.join("\n")}`;
 				const content: (TextContent | ImageContent)[] = [{ type: "text", text: expanded }, ...normalized.images];
 				operation.signal.throwIfAborted();
@@ -590,8 +590,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		const controller: DurableController = {
 			auth,
 			...(plugins === undefined ? {} : {
-				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources),
-			}),
+				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources) }),
 			completeCommand: async (name, prefix) => {
 				const query = prefix.toLowerCase();
 				if (name === "model") return modelScope.resolve(modelRuntime.getAvailableSnapshot()).map(({ model }) => model)
@@ -743,8 +742,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 								conversationId: String(current.id),
 								at,
 								summarize: choice.summarize,
-								...(choice.customInstructions === undefined ? {} : { customInstructions: choice.customInstructions }),
-							},
+								...(choice.customInstructions === undefined ? {} : { customInstructions: choice.customInstructions }) },
 							context,
 							await summaryDeps(leaveAbort.signal),
 						);
@@ -778,10 +776,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					historyCursor = page.cursor ?? null;
 					update({
 						history: [...history],
-						historyMore: historyCursor !== null,
-					});
-				}),
-		};
+						historyMore: historyCursor !== null });
+				}) };
 
 		disposeView = () => {
 			stopAuth();
@@ -812,8 +808,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			await current.configure(
 				{
 					...(selected?.model === undefined ? {} : { model: selected.model }),
-					...(thinkingLevel === undefined ? {} : { thinkingLevel }),
-				},
+					...(thinkingLevel === undefined ? {} : { thinkingLevel }) },
 				context,
 			);
 		}
@@ -845,8 +840,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				subscribe: (listener) => {
 					listeners.add(listener);
 					return () => listeners.delete(listener);
-				},
-			},
+				} },
 			controller,
 			settings: settingsManager,
 			resources,
@@ -878,8 +872,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					}
 				})();
 				return closing;
-			},
-		};
+			} };
 		void opened.closed.then((end) => (end.reason === "failed" ? result.close().catch(fail) : undefined));
 		return result;
 	} catch (error) {

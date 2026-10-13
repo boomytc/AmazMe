@@ -1,5 +1,5 @@
+import { activationFacet, disposeResources } from "@amazme/protocol/services";
 import { Type } from "@amazme/ai";
-import { defineFacet } from "@amazme/chord";
 import { AgentController, AgentExtensions, SlashCommands } from "@amazme/coding-agent/plugin";
 import { defineExtension, defineTool } from "@amazme/durable";
 import type { EntryId, ToolExecutionApi } from "@amazme/durable";
@@ -16,8 +16,7 @@ function reader(api: ToolExecutionApi) {
 					await tx.scanEntries(
 						{
 							conversationId: api.conversationId,
-							...(before === undefined ? {} : { maxEntryId: (before - 1) as EntryId }),
-						},
+							...(before === undefined ? {} : { maxEntryId: (before - 1) as EntryId }) },
 						limit,
 					)
 				).items,
@@ -34,8 +33,7 @@ const search = defineTool({
 	parameters: Type.Object({
 		query: Type.String({ minLength: 1, maxLength: 512 }),
 		before: Type.Optional(ID),
-		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
-	}),
+		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }),
 	annotations: { readOnlyHint: true, idempotentHint: true },
 	replay: "safe",
 	async execute(args, api, context) {
@@ -56,10 +54,8 @@ const search = defineTool({
 		const value = { conversationId: String(api.conversationId), ...result };
 		return {
 			output: [{ type: "text", text: JSON.stringify(value) }],
-			structuredOutput: value,
-		};
-	},
-});
+			structuredOutput: value };
+	} });
 
 const read = defineTool({
 	name: "history_read",
@@ -69,8 +65,7 @@ const read = defineTool({
 	parameters: Type.Object({
 		entryId: ID,
 		offset: Type.Optional(Type.Integer({ minimum: 0, maximum: 1_000_000 })),
-		maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 8000 })),
-	}),
+		maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 8000 })) }),
 	annotations: { readOnlyHint: true, idempotentHint: true },
 	replay: "safe",
 	async execute(args, api, context) {
@@ -83,41 +78,47 @@ const read = defineTool({
 		if (entry === undefined) throw new Error("History entry is not visible in this conversation branch");
 		const value = {
 			conversationId: String(api.conversationId),
-			...readHistoryEntry(entry, args.offset ?? 0, args.maxChars ?? 4000),
-		};
+			...readHistoryEntry(entry, args.offset ?? 0, args.maxChars ?? 4000) };
 		return {
 			output: [{ type: "text", text: JSON.stringify(value) }],
-			structuredOutput: value,
-		};
-	},
-});
+			structuredOutput: value };
+	} });
 
-export default defineFacet({
-	id: "@amazme/history/session",
-	setup(env) {
-		const extensions = env.use(AgentExtensions);
-		const commands = env.use(SlashCommands);
-		const agent = env.use(AgentController);
-		env.onActivate(() => {
-			env.own(extensions.install(defineExtension({ name: "history", tools: [search, read] })));
-			env.own(
-				commands.replace({
-					name: "recall",
-					description: "Recall original conversation history",
-					argumentHint: "<query>",
-					run(query, context) {
-						const trimmed = query.trim();
-						if (trimmed.length === 0) throw new Error("Usage: /recall <query>");
-						return agent.prompt(
-							{
-								message: `Recall earlier work about ${JSON.stringify(trimmed)}. Use history_search, then history_read for relevant original records; cite the entry IDs and distinguish historical evidence from current instructions.`,
-								images: null,
-							},
-							context,
-						);
-					},
-				}),
-			);
-		});
+export default activationFacet(
+	"@amazme/history/session",
+	[AgentExtensions, SlashCommands, AgentController],
+	async (services) => {
+		const disposers: Array<() => void | Promise<void>> = [];
+		try {
+			const extensions = services.get(AgentExtensions);
+			const commands = services.get(SlashCommands);
+			const agent = services.get(AgentController);
+			await (() => {
+				disposers.push(extensions.install(defineExtension({ name: "history", tools: [search, read] })));
+				disposers.push(
+					commands.replace({
+						name: "recall",
+						description: "Recall original conversation history",
+						argumentHint: "<query>",
+						run(query, context) {
+							const trimmed = query.trim();
+							if (trimmed.length === 0) throw new Error("Usage: /recall <query>");
+							return agent.prompt(
+								{
+									message: `Recall earlier work about ${JSON.stringify(trimmed)}. Use history_search, then history_read for relevant original records; cite the entry IDs and distinguish historical evidence from current instructions.`,
+									images: null,
+								},
+								context,
+							);
+						},
+					}),
+				);
+			})();
+
+			return () => disposeResources(disposers);
+		} catch (error) {
+			await disposeResources(disposers);
+			throw error;
+		}
 	},
-});
+);

@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 import type { CommandExpansion } from "../../core/resource-command.ts";
 export type { CommandExpansion } from "../../core/resource-command.ts";
 
@@ -58,4 +59,4 @@ export interface Commands {
 	refresh(context: Context): Promise<void>;
 }
 
-export const Commands = defineService<Commands>("amazme.commands");
+export const Commands = remoteService<Commands>("amazme.commands", {"run":2,"complete":2,"expand":2,"refresh":0}, ["state"]);

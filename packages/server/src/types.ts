@@ -1,4 +1,5 @@
-import type { Context, JsonValue, ServiceCall, ServiceProviderUpdate } from "@amazme/chord";
+import type { ChannelCall } from "@amazme/protocol";
+import type { Context, JsonValue, Frame } from "@amazme/chord";
 import type { ServerListener } from "./listener.ts";
 
 export interface ServerOptions {
@@ -21,9 +22,9 @@ export interface SessionMetadata {
 /** One presentation connection's live capability for a hosted Session. */
 export interface RoutedSessionAttachment {
 	/** Route one contract-agnostic service operation to the attached Session endpoint. */
-	invokeService(
-		call: ServiceCall,
-		publish: (subscriptionId: string, update: ServiceProviderUpdate, context: Context) => MaybePromise<void>,
+	invokeChannel(
+		call: ChannelCall,
+		publish: (subscriptionId: string, update: Frame | undefined, context: Context) => MaybePromise<void>,
 		context: Context,
 	): Promise<JsonValue | undefined>;
 	release(context: Context): MaybePromise<void>;
@@ -39,9 +40,9 @@ export interface RoutedServerPresentation {
 
 /** One connection's server-scoped service endpoint. */
 export interface RoutedServerServiceAttachment {
-	invokeService(
-		call: ServiceCall,
-		publish: (subscriptionId: string, update: ServiceProviderUpdate, context: Context) => MaybePromise<void>,
+	invokeChannel(
+		call: ChannelCall,
+		publish: (subscriptionId: string, update: Frame | undefined, context: Context) => MaybePromise<void>,
 		context: Context,
 	): Promise<JsonValue | undefined>;
 	release(context: Context): MaybePromise<void>;

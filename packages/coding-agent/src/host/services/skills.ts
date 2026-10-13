@@ -1,4 +1,5 @@
-import { type Context, defineService, type ReplicatedState } from "@amazme/chord";
+import { remoteService } from "@amazme/protocol/services";
+import { type Context, type ReplicatedState } from "@amazme/chord";
 
 /** One loaded skill, as the management surface lists it. */
 export interface SkillSummary {
@@ -44,4 +45,4 @@ export interface Skills {
 	reload(context: Context): Promise<void>;
 }
 
-export const Skills = defineService<Skills>("amazme.skills");
+export const Skills = remoteService<Skills>("amazme.skills", {"read":1,"write":1,"remove":1,"importSkill":1,"reload":0}, ["state"]);

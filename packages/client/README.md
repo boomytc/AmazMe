@@ -1,6 +1,6 @@
 # @amazme/client
 
-Transport-neutral client for the experimental Pi service protocol.
+Transport-neutral client for the AmazMe protocol and native Chord channels.
 
 ```ts
 import { Client, type ByteTransportFactory } from "@amazme/client";
@@ -19,15 +19,15 @@ const client = await Client.connect({
   serverId: "01234567-89ab-4def-8123-456789abcdef",
   transportFactory,
 });
-const result = await client.request(
-  { serverId: client.hello.serverId },
-  { serviceId: "example.service", member: "read", args: [] },
-);
+const catalogue = await client.describeServices({ serverId: client.serverId });
+const channel = await client.openLink({ serverId: client.serverId });
+// Connect a Chord client Host to channel.link and get contracts at channel.host.
+// await channel.close() joins remote cleanup when the channel is no longer needed.
 ```
 
 The client verifies that the physical endpoint reports the expected logical `serverId`. Server-wide requests carry that ID, and every Session request carries the full live target `{ serverId, sessionId, attachmentId }`. The combined durable address prevents cross-server or cross-session misrouting; the server-generated attachment ID rejects delayed frames after switching or reattaching.
 
-Typed server and Session APIs are provided by Chord service bindings owned by the application. `createClientServiceTransport()` adapts a lazily resolved server or Session route to a Chord transport; `request()` and `subscribeService()` remain its low-level primitives. The client uses Chord's service-control parsers and per-subscription state decoder; `pi-protocol` only validates the routed envelope and strict-JSON boundary. A service subscription returns a complete provider snapshot; the binding installs it and then calls `start()` to release updates buffered during hydration. `Client` applies ordered out-of-band attachment changes but deliberately does not construct typed service proxies or interpret application contracts.
+`openLink()` adapts the selected route to a native Chord Link. A Chord client Host owns typed handles, method calls, state snapshots and deltas. `describeServices()` returns the product capability catalogue; `request()` carries channel open/frame/close operations. Frames received during channel opening are buffered by the native link. A peer's `channel_closed` notification closes that link and rejects its pending calls without closing unrelated channels. `Client` tracks attachment changes and fences channels to their original route.
 
 Application observation APIs such as the coding agent's `Transcript` are ordinary Chord services. The client does not interpret their snapshots or updates.
 
@@ -53,7 +53,7 @@ import { createUnixTransportFactory } from "@amazme/client/unix";
 
 const client = new Client({
   serverId: "01234567-89ab-4def-8123-456789abcdef",
-  transportFactory: createUnixTransportFactory({ path: "/tmp/pi.sock" }),
+  transportFactory: createUnixTransportFactory({ path: "/tmp/amazme.sock" }),
 });
 await client.connect();
 ```
@@ -63,8 +63,8 @@ Unix discovery scans an explicit physical-route directory, derives each expected
 ```ts
 import { discoverUnixServers } from "@amazme/client/unix";
 
-const routes = await discoverUnixServers({ directory: "/run/user/1000/pi" });
-// [{ serverId: "...", path: "/run/user/1000/pi/<serverId>.sock" }]
+const routes = await discoverUnixServers({ directory: "/run/user/1000/amazme" });
+// [{ serverId: "...", path: "/run/user/1000/amazme/<serverId>.sock" }]
 ```
 
 Malformed entries, non-sockets, stale or unresponsive endpoints, and server-ID mismatches are ignored. Discovery is read-only and probes at most 16 sockets concurrently. Unexpected filesystem and socket errors reject discovery. Pass `timeoutMs` to override the default probe timeout.
