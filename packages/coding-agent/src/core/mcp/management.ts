@@ -12,8 +12,7 @@ export interface McpServerStatus {
 	state: "disabled" | McpServerConnection["state"];
 	transport: "stdio" | "http";
 	tools: number;
-	resources: number;
-	templates: number;
+	hasResources: boolean;
 	scope: "global" | "project";
 	canLogin: boolean;
 	error: string | null;

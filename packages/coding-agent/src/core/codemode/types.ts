@@ -8,6 +8,7 @@ export interface CodemodeToolInfo {
 }
 
 export interface CodemodeNamespace {
+	readonly aliases?: readonly string[];
 	readonly name: string;
 	readonly description?: string;
 	readonly instructions?: string;

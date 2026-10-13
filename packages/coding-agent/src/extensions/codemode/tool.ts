@@ -81,20 +81,25 @@ export interface CodemodeToolOptions {
 	getInlineBudget?: () => number | undefined;
 }
 
-/**
- * Whether a registered tool is this package's `codemode` tool rather than another extension's tool
- * with the same name. Compares the parameter schema, which the definition passes through by reference.
- */
-export function isCodemodeTool(tool: Pick<ToolInfo, "name" | "parameters">): boolean {
-	return tool.name === CODEMODE_TOOL_NAME && tool.parameters === codemodeSchema;
-}
-
 export const codemodeToolSystemPromptContribution = {
 	snippet: "Run JavaScript that calls other tools",
 	guidelines: [
 		"Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls.",
 	],
 } as const;
+
+/** Script globals that list or look up tools and namespaces, which the script may then call by any name. */
+const DISCOVERY_GLOBALS = /\b(searchTools|describeNamespace|describeTool|ALL_TOOLS)\b/;
+
+/**
+ * The tools a script may call (`ToolDefinition.reachesTools`): every tool when it uses a discovery
+ * global, else the words of its source, so `tools.mcp__docs__search` and
+ * `tools["mcp__docs__" + name]` both name the `mcp__docs` namespace.
+ */
+function getScriptReach(code: unknown): "all" | readonly string[] {
+	if (typeof code !== "string") return [];
+	return DISCOVERY_GLOBALS.test(code) ? "all" : (code.match(/\w+/g) ?? []);
+}
 
 export function createCodemodeToolDefinition(
 	options: CodemodeToolOptions = {},
@@ -112,6 +117,7 @@ export function createCodemodeToolDefinition(
 		parameters: codemodeSchema,
 		// Scripts must not start other scripts.
 		exposure: "model-only",
+		reachesTools: (input) => getScriptReach(input.code),
 		prepareLoadout: (loadout) =>
 			prepareCodemodeLoadout(loadout, {
 				mode: options.getMode?.(),

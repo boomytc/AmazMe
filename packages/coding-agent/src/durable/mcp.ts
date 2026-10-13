@@ -97,6 +97,7 @@ export async function openDurableMcp(options: {
 				const exposure = getMcpToolExposure(entry.config, tool.name);
 				const { outputSchema, ...metadata } = createMcpToolMetadata(connection.name, tool, name, exposure, {
 					name: mcpNamespace(connection.name),
+					aliases: [connection.name],
 					description: entry.config.description,
 					instructions: connection.instructions,
 				});

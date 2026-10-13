@@ -34,11 +34,6 @@ export type {
 	ToolSearchMatch,
 } from "../../core/tool-search.ts";
 
-/** Whether the tool is this `tool_search`, not another extension's tool of the same name. */
-export function isToolSearchTool(tool: Pick<ToolInfo, "name" | "parameters">): boolean {
-	return tool.name === TOOL_SEARCH_TOOL_NAME && tool.parameters === toolSearchSchema;
-}
-
 export interface ToolSearchToolDetails {
 	/** Tools loaded by this call. */
 	loaded: string[];
@@ -63,6 +58,7 @@ export function createToolSearchToolDefinition(
 		parameters: toolSearchSchema,
 		// Searching is not something scripts need; it changes what the model sees.
 		exposure: "model-only",
+		reachesTools: () => "all",
 		async execute(_toolCallId, { query, limit }) {
 			const active = options.tools?.getActiveTools() ?? [];
 			const tools = searchDeferredTools(options.tools?.getAllTools() ?? [], active, query, limit);

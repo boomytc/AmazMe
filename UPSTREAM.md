@@ -109,8 +109,15 @@
 | `ee409a85f` | OpenRouter 按凭据筛选聊天模型及额度、价格 | 吸收 AI 目录接口与 coding-agent 刷新/持久化链路；无缓存才使用内置目录，明确的空结果保持为空，不引入旧目录兼容回退 |
 | `d4d53612b` | Anthropic 严格工具限制回退 | 吸收；仅对已识别的请求拒绝将 prefer 降级一次，require、已开始的流和取消行为不变 |
 | `7bd01fb92` | 重试网关 upstream provider 错误文案 | 吸收并覆盖两种错误文案 |
-| `67996ab75` | MCP structuredContent 接受任意 JSON 值 | MCP 协议与客户端已吸收；SDK/Durable 结果接线随下一阶段核对 |
+| `67996ab75` | MCP structuredContent 接受任意 JSON 值 | 吸收协议、客户端及 SDK/Durable 共用结果接线；保留 null、数组、标量并正确搬移 schema 的局部引用 |
 | `da0eadf04` | 取消请求不在鉴权刷新后重发 | 吸收请求结束信号与发送前守卫，共享刷新不被单个请求取消 |
+| `24382bedd`、`c661bc574` | Codemode 与 MCP 解耦 | 删除共享 MCP 类型与形状探测；工具自身 schema 描述结果，reachesTools 声明发现范围，SDK/Durable 共用本地模块 |
+| `a447ba11f` | 自定义消息启动 before_agent_start | 吸收统一运行准备流程；启动期间忙碌、排队和取消闭合，保留本地图片恢复边界 |
+| `f11e50f72` | Codemode 文本连接线性化 | 吸收到 SDK/Durable 输出拼接，避免反复展开增长中的字符串 |
+| `148622bc6` | MCP 登录 timeout 覆盖整个登录 | 同步 CLI 帮助 |
+| `f4cca2dc2` | MCP 连接不预读资源列表 | 吸收按需读取；原生管理状态报告能力，不保留无意义的旧计数 |
+| `014873d7d` | Codemode 显示运行及总耗时 | 与 bash 共用计时逻辑，原生与 SDK 共用渲染器 |
+| `b6d505cd1` | 拒绝不在首行的 codemode options | 吸收解析与回归，避免静默忽略执行选项 |
 
 此前配置与修复验证：AI 构建及 52 项既有检查、coding-agent 构建及 204 项既有检查、TUI 构建及 60 项按键检查、9 项打包检查和依赖/浏览器入口检查通过。真实 HTTP 长流、4 份 schema 的生成一致性、AmazMe 设置/扩展按键/严格主题及 symlink worktree 已核对；npm 12.2.0 实际打包 14 个依赖包，包含 4 份 schema 且无旧主题校验文件。TUI 原有拖选复制失败已在后续阶段解决：编辑器选区接入共享宿主剪贴板，既有用例核对实际选区与替换行为；全包通过。未新增测试。
 

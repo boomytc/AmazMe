@@ -2,8 +2,6 @@ import { SETTINGS_DEFAULTS } from "../settings-defaults.ts";
 import { join } from "node:path";
 import type { CodemodeJsonSchema, CodemodeTool } from "@amazme/codemode";
 import {
-	MCP_TYPESCRIPT_PREAMBLE,
-	mcpStructuredContentSchema,
 	renderToolOutputType,
 	renderToolSample,
 	toCodemodeIdentifier,
@@ -137,7 +135,7 @@ function selectCatalog(groups: readonly CatalogGroup[], budget: number | undefin
 
 /**
  * Model-facing description: the helper list, guidance for finding tools that are not listed, the
- * shared MCP types when listed tools need them, the `models` API, and one section per listed tool,
+ * `models` API, and one section per listed tool,
  * grouped by namespace. Deferred tools are never listed and do not affect the description at all, so
  * it stays the same while MCP servers connect or change their tools. Tool sections are limited to
  * `inlineBudget`.
@@ -168,14 +166,6 @@ export function createCodemodeDescription(
 	const shown = selectCatalog(ordered, options.inlineBudget);
 
 	const sections = [DESCRIPTION_INTRO, describeGlobals(options.models === true)];
-	if (
-		declarations.some(
-			(declaration) =>
-				shown.has(declaration.name) && mcpStructuredContentSchema(declaration.outputSchema) !== undefined,
-		)
-	) {
-		sections.push(`Shared MCP Types:\n\`\`\`ts\n${MCP_TYPESCRIPT_PREAMBLE}\n\`\`\``);
-	}
 	if (declarations.length === 0) return sections.join("\n\n");
 
 	const toolSections = ["Nested tools:"];
@@ -202,22 +192,27 @@ export function createCodemodeDescription(
  * What a script call resolves to, in one line: `a string`, the field names of an object
  * (`{ output, exit_code, full_output_path? }`), or the rendered type for anything else.
  */
+function describeFields(schema: unknown, depth: number): string | undefined {
+	if (typeof schema !== "object" || schema === null) return undefined;
+	const { type, properties, required } = schema as Record<string, unknown>;
+	if (type !== "object" || typeof properties !== "object" || properties === null) return undefined;
+	const requiredNames = new Set(Array.isArray(required) ? required : []);
+	const fields = Object.entries(properties).map(([name, field]) => {
+		const nested = depth > 0 ? describeFields(field, depth - 1) : undefined;
+		return `${name}${requiredNames.has(name) ? "" : "?"}${nested ? `: ${nested}` : ""}`;
+	});
+	return `{ ${fields.join(", ")} }`;
+}
+
+/**
+ * What a script call resolves to, in one line: `a string`, the field names of an object (see
+ * {@link describeFields}), or the rendered type for anything else.
+ */
 function describeOutput(schema: CodemodeJsonSchema | undefined): string {
 	const type = renderToolOutputType(schema);
 	if (type === "string") return "a string";
-	const object = typeof schema === "object" ? schema : undefined;
-	const properties = object?.properties;
-	if (
-		object?.type === "object" &&
-		typeof properties === "object" &&
-		properties !== null &&
-		mcpStructuredContentSchema(schema) === undefined
-	) {
-		const required = new Set(Array.isArray(object.required) ? object.required : []);
-		const fields = Object.keys(properties).map((name) => (required.has(name) ? name : `${name}?`));
-		return `\`{ ${fields.join(", ")} }\``;
-	}
-	return `\`${type.replace(/\s+/g, " ")}\``;
+	const fields = describeFields(schema, 1);
+	return `\`${fields ?? type.replace(/\s+/g, " ")}\``;
 }
 
 /**

@@ -8,7 +8,7 @@
 
 import { Container, Spacer, Text } from "@amazme/tui";
 import type { ToolRenderers } from "../extensions/types.ts";
-import { getTextOutput, replaceTabs, str } from "../tools/render-utils.ts";
+import { getTextOutput, replaceTabs, startToolTimer, str, toolTimerText } from "../tools/render-utils.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { VisualLinePreview } from "../../modes/interactive/components/visual-truncate.ts";
 import { highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
@@ -63,6 +63,7 @@ function formatCall(call: CodemodeNestedCall, theme: Theme, expanded: boolean): 
 
 export const codemodeRenderers: ToolRenderers = {
 	renderCall(args, theme, context) {
+		startToolTimer(context);
 		// The code includes the `// @options:` line, so options show as part of the script.
 		const code = str((args as { code?: unknown } | undefined)?.code);
 		const title = theme.fg("toolTitle", theme.bold("codemode"));
@@ -89,6 +90,7 @@ export const codemodeRenderers: ToolRenderers = {
 		return component;
 	},
 	renderResult(result, options, theme, context) {
+		const timerText = toolTimerText(context, options.isPartial);
 		const component = (context.lastComponent as Container | undefined) ?? new Container();
 		component.clear();
 		const details = result.details as CodemodeToolDetails | undefined;
@@ -141,6 +143,10 @@ export const codemodeRenderers: ToolRenderers = {
 				const fullOutputPath = details?.fullOutputPath;
 				if (fullOutputPath) component.addChild(new Text(theme.fg("muted", `Full output: ${fullOutputPath}`), 0, 0));
 			}
+		}
+		if (timerText) {
+			component.addChild(new Spacer(1));
+			component.addChild(new Text(theme.fg("muted", timerText), 0, 0));
 		}
 		return component;
 	},
