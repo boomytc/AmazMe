@@ -34,6 +34,13 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it.each(["Provider returned error", "The upstream provider returned an error"])(
+		"retries transient gateway wording: %s",
+		(errorMessage) => {
+			expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+		},
+	);
+
 	it("matches Bun fetch socket drop wording", () => {
 		expect(
 			isRetryableAssistantError(
