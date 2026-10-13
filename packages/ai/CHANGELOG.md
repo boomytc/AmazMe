@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
+- OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.
+- Anthropic strict-tool `prefer` requests retry once without strict limits after a recognized rejection; `require`, cancellation and started streams retain their original behavior.
+- Gateway upstream-provider errors are recognized as retryable.
+
 - Shared compatibility and model configuration schemas now derive public types from the same contract used by models.json.
 - Mistral request deadlines apply only until response headers arrive, including when no caller cancellation signal is supplied; active streams continue beyond that deadline.
 - Claude 5.5 catalog metadata comes from models.dev instead of hardcoded fallbacks.

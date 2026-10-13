@@ -8,7 +8,7 @@ import {
 	OPENAI_PROVIDER_ID,
 } from "./acme-server.ts";
 import { inspectProvider, type ProviderRuntimeOutput } from "./configured-runtime.ts";
-import { createPiDocumentationEvalHarness } from "../src/harness.ts";
+import { createDocumentationEvalHarness } from "../src/harness.ts";
 
 const server = createAcmeServer("openai");
 
@@ -33,7 +33,7 @@ const expected: ProviderRuntimeOutput = {
 	},
 };
 
-const harness = createPiDocumentationEvalHarness({
+const harness = createDocumentationEvalHarness({
 	output: ({ session }) =>
 		inspectProvider(session.modelRuntime, {
 			providerId: OPENAI_PROVIDER_ID,

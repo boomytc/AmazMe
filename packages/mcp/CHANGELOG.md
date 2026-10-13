@@ -2,7 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
 ### Fixed
+
+- Tool `structuredContent` accepts every JSON value, including null, arrays and scalars.
+- Cancelled or settled requests cannot be resent after a shared authorization refresh.
 
 - Fixed `authorizeMcp()` exchanging an authorization code whose `iss` parameter could not be checked because no authorization server metadata was discovered. It now throws `OAuthIssuerMismatchError`, whose `expected` is `undefined` in that case (RFC 9207). Reported by [@AizenvoltPrime](https://github.com/AizenvoltPrime)
 

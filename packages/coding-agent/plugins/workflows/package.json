@@ -1,13 +1,13 @@
 {
 	"name": "@amazme/workflows",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"private": true,
 	"type": "module",
 	"peerDependencies": {
-		"@amazme/ai": "*",
+		"@amazme/ai": "^1.2.0",
 		"@amazme/chord": "^1.2.0",
 		"@amazme/coding-agent": "^1.2.0",
-		"@amazme/durable": "*",
+		"@amazme/durable": "^1.2.0",
 		"@amazme/protocol": "^1.2.0"
 	},
 	"chord": {

@@ -1,6 +1,6 @@
 import { describeEval, StructuredOutputJudge } from "vitest-evals";
 import { inspectAddedModel, type AddedModelOutput } from "./configured-runtime.ts";
-import { createPiDocumentationEvalHarness } from "../src/harness.ts";
+import { createDocumentationEvalHarness } from "../src/harness.ts";
 
 const PROVIDER_ID = "openai";
 const MODEL_ID = "fixture-chat";
@@ -22,7 +22,7 @@ const expected: AddedModelOutput = {
 	},
 };
 
-const harness = createPiDocumentationEvalHarness({
+const harness = createDocumentationEvalHarness({
 	output: ({ session }) => inspectAddedModel(session.modelRuntime, PROVIDER_ID, MODEL_ID),
 });
 const judge = StructuredOutputJudge({ expected, match: "strict", allowExtras: false });

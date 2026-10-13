@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
+### Breaking Changes
+
+- Public protocol 9 routes native Chord frames through authenticated attachment channels. Domain contracts and Host resources replace the old service invocation and state wire format.
+
 ## [1.1.0] - 2026-10-07
 
 ## [1.0.4] - 2026-10-05

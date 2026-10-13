@@ -27,7 +27,7 @@ type ReportAssertion = {
 };
 
 async function writeTaskReport(assertion: ReportAssertion = {}) {
-	const directory = await mkdtemp(join(tmpdir(), "pi-eval-report-test-"));
+	const directory = await mkdtemp(join(tmpdir(), "amazme-eval-report-test-"));
 	temporaryDirectories.push(directory);
 	const reportPath = join(directory, "vitest.json");
 	const status = assertion.status ?? "passed";

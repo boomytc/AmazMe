@@ -6,7 +6,7 @@ RUN --mount=type=bind,source=.,target=/repo,rw \
     --mount=type=cache,target=/root/.npm \
     cd /repo \
     && npm ci --ignore-scripts \
-    && npm run build:offline \
+    && node scripts/build-workspace-dependencies.mjs @amazme/evals \
     && node packages/evals/docker/install-runtime.mjs /opt/evaluator
 
 # Both variants use the same installed runtime. The control removes only the
@@ -31,8 +31,8 @@ RUN chmod -R go-rwx \
     && chmod go-rwx \
       /repo/vitest.base.ts \
       /repo/packages/evals/vitest.evals.config.ts \
-    && mkdir -p /run/pi-eval-secrets \
-    && chmod 0700 /run/pi-eval-secrets
+    && mkdir -p /run/amazme-eval-secrets \
+    && chmod 0700 /run/amazme-eval-secrets
 ENTRYPOINT ["node", "--experimental-strip-types", "docker/entrypoint.ts"]
 
 FROM evaluator AS without_docs

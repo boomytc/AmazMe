@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
 - Published settings, models, keybindings and theme schemas share runtime defaults and theme tokens. AmazMe interface settings and custom extension keybindings are included; theme validation is strict.
 - A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
 ### Added
+
+- `AMAZME_CLIPBOARD_OSC52` forces OSC 52 copies; codemode rows report execution and total elapsed time.
 
 - Native CLI image arguments and every message now reach the existing Durable input queue. Clipboard images attach to the draft, support image-only submission and `/attachments` removal, and retain input ownership across preparation, cancellation and close. Native and SDK prompts share image normalization and the clipboard content reader.
 
@@ -31,6 +35,10 @@
 
 ### Changed
 
+- Native plugins, session workers, hosted clients, Web and desktop use the new Chord Host runtime. Plugin ESM artifacts load through `nodeLoader`; resource ownership, state hydration, reload and cancellation share its lifecycle. Coordinator protocol is 4.
+- OpenRouter refreshes and persists the current key's available catalog. MCP resources are fetched on demand rather than preloaded on connect.
+- Codemode result declarations use tool-owned schemas and `reachesTools`; aliases and nested discovery share the current callable tool set.
+
 - Native CLI help and model listing bypass SDK factories; startup verbosity, settings diagnostics and model labels reflect the actual Durable session. The startup benchmark now initializes that same TUI and releases its normal resources. Removed the ineffective Dashboard CLI option and the alternate SDK terminal dispatch; SDK Print/RPC extension flags remain available in their own invocation.
 - Malformed settings/models JSON reports its file without echoing parser content fragments.
 
@@ -38,6 +46,11 @@
 - Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
 
 ### Fixed
+
+- Custom-message runs emit `before_agent_start` through the shared startup lifecycle, including busy, queued and cancelled starts.
+- Expand `~` in resource patterns, exit print mode nonzero on truncated responses, and retry transient Windows auth-lock `EPERM` within the existing bound.
+- Join codemode text linearly and describe MCP login timeout as a limit on the entire sign-in.
+- Removed unused registry and duplicate workspace-example install locks; examples use the root lock, and release consumers install verified local tarballs from its runtime dependency closure.
 
 - Native and hosted generation now honor the saved provider transport. Native shell prompts only describe the metadata their execution environment supplies.
 - Automation plugin generations share the host's lock library instead of retaining another process-exit listener for each load.

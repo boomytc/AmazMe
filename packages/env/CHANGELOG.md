@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
+### Added
+
+- Daemon and local/remote execution environments expose bounded, cancellable `listFiles()` using the same ignore-aware enumeration; `nodePlatform()` reports the actual supported platform.
+- `openTerminal()` supports interactive PTY bytes, input, resize, cancellation and exit codes; `foreground()` reports the current foreground job's process name.
+
 ### Fixed
 
 - Build and package the Linux/macOS x86-64 and arm64 release daemons used by SSH bootstrap. Packing verifies their architecture, package version, Rust source fingerprint and SHA-256 instead of publishing a package without its advertised binaries. Linux artifacts use musl; TypeScript builds and installation stay independent of Rust.

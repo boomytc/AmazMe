@@ -34,31 +34,31 @@ import {
 import type { DocumentationVariant } from "./plan.ts";
 import { AMAZME_SESSION_SNAPSHOT_ARTIFACT } from "./report.ts";
 
-type PiRunDiagnostics = {
+type RunDiagnostics = {
 	events: TranscriptEvent[];
 	metadata: Record<string, unknown>;
 	usage: UsageSummary;
 };
 
-export type PiCodingAgentInput = string | Array<{ type: "prompt"; content: string } | { type: "reload" }>;
+export type CodingAgentInput = string | Array<{ type: "prompt"; content: string } | { type: "reload" }>;
 
-export type PiCodingAgentModelSelection = {
+export type CodingAgentModelSelection = {
 	provider: string;
 	id: string;
 };
 
-export type PiCodingAgentHarnessOptions = {
+export type CodingAgentHarnessOptions = {
 	name?: string;
-	model?: PiCodingAgentModelSelection;
+	model?: CodingAgentModelSelection;
 	noTools?: CreateAgentSessionOptions["noTools"];
 	tools?: CreateAgentSessionOptions["tools"];
 	customTools?: CreateAgentSessionOptions["customTools"];
 	workspaceFiles?: Readonly<Record<string, string>>;
 	transformSystemPrompt?: (defaultPrompt: string) => string;
-	expectedPiDocumentation?: boolean;
+	expectedDocumentation?: boolean;
 };
 
-export type PiCodingAgentHarnessWithOutput<TOutput extends JsonValue> = PiCodingAgentHarnessOptions & {
+export type CodingAgentHarnessWithOutput<TOutput extends JsonValue> = CodingAgentHarnessOptions & {
 	output: (args: {
 		response: string;
 		session: AgentSession;
@@ -68,9 +68,9 @@ export type PiCodingAgentHarnessWithOutput<TOutput extends JsonValue> = PiCoding
 };
 
 export function resolveModelSelection(
-	explicitModel: PiCodingAgentModelSelection | undefined,
+	explicitModel: CodingAgentModelSelection | undefined,
 	environment: { AMAZME_PROVIDER?: string; AMAZME_MODEL?: string } = process.env,
-): PiCodingAgentModelSelection {
+): CodingAgentModelSelection {
 	const provider = (explicitModel?.provider ?? environment.AMAZME_PROVIDER)?.trim();
 	const id = (explicitModel?.id ?? environment.AMAZME_MODEL)?.trim();
 	if (!provider || !id) {
@@ -256,31 +256,31 @@ async function promptAgent(session: AgentSession, input: string, signal: AbortSi
 
 export function verifySystemPrompt(
 	systemPrompt: string,
-	options: Pick<PiCodingAgentHarnessOptions, "name" | "expectedPiDocumentation">,
+	options: Pick<CodingAgentHarnessOptions, "name" | "expectedDocumentation">,
 ): string {
-	if (options.expectedPiDocumentation === undefined) return systemPrompt;
+	if (options.expectedDocumentation === undefined) return systemPrompt;
 	if (!systemPrompt.includes("\n<rules>\n")) {
-		throw new Error(`Pi system prompt lost its rules in the ${options.name} eval variant.`);
+		throw new Error(`AmazMe system prompt lost its rules in the ${options.name} eval variant.`);
 	}
-	const hasDocumentation = systemPrompt.includes("\n<docs>\nPi documentation (read only");
-	if (hasDocumentation !== options.expectedPiDocumentation) {
-		throw new Error(`Pi system prompt does not match the ${options.name} eval variant.`);
+	const hasDocumentation = systemPrompt.includes("\n<docs>\nAmazMe documentation (read only");
+	if (hasDocumentation !== options.expectedDocumentation) {
+		throw new Error(`AmazMe system prompt does not match the ${options.name} eval variant.`);
 	}
 	return systemPrompt;
 }
 
-async function runPiCodingAgent<TOutput extends JsonValue>(
-	input: PiCodingAgentInput,
+async function runCodingAgent<TOutput extends JsonValue>(
+	input: CodingAgentInput,
 	signal: AbortSignal | undefined,
 	setArtifact: HarnessContext["setArtifact"],
-	options: PiCodingAgentHarnessOptions | PiCodingAgentHarnessWithOutput<TOutput>,
+	options: CodingAgentHarnessOptions | CodingAgentHarnessWithOutput<TOutput>,
 ): Promise<SimpleHarnessResult<string | TOutput>> {
 	const startedAt = performance.now();
 	signal?.throwIfAborted();
 	const selection = resolveModelSelection(options.model);
 	const hostAgentDir = getAgentDir();
 	const sandboxIdentity = resolveSandboxIdentity();
-	const root = await mkdtemp(join(tmpdir(), "pi-eval-"));
+	const root = await mkdtemp(join(tmpdir(), "amazme-eval-"));
 	const workspace = join(root, "workspace");
 	const isolatedHome = join(root, "home");
 	const agentDir = join(isolatedHome, ".amazme", "agent");
@@ -303,7 +303,7 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 	let sessionManager: SessionManager | undefined;
 	let session: AgentSession | undefined;
 	let result: SimpleHarnessResult<string | TOutput> | undefined;
-	let runDiagnostics: PiRunDiagnostics | undefined;
+	let runDiagnostics: RunDiagnostics | undefined;
 	let runError: unknown;
 	const cleanupErrors: unknown[] = [];
 	let hiddenCredentialEnvironment: { name: string; value: string } | undefined;
@@ -383,7 +383,7 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 			if (abortPromise) await abortPromise;
 		}
 		if (response === undefined) {
-			throw new Error("Pi eval input must include at least one prompt step.");
+			throw new Error("AmazMe eval input must include at least one prompt step.");
 		}
 		// A forced prompt is not recorded in the transcript, so use the one the transform
 		// extension sent; otherwise the replayed transcript prompt is what the provider received.
@@ -420,7 +420,7 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 		if (sessionManager) {
 			const sessionPath = sessionManager.getSessionFile();
 			if (!sessionPath || !existsSync(sessionPath)) {
-				cleanupErrors.push(new Error("Pi eval produced no session file."));
+				cleanupErrors.push(new Error("AmazMe eval produced no session file."));
 			} else {
 				try {
 					setArtifact(AMAZME_SESSION_SNAPSHOT_ARTIFACT, await readFile(sessionPath, "utf8"));
@@ -464,20 +464,20 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 		}
 		throw failure;
 	}
-	if (!result) throw new Error("Pi eval completed without a result.");
+	if (!result) throw new Error("AmazMe eval completed without a result.");
 	return { ...result, timings: { totalMs: performance.now() - startedAt } };
 }
 
-export function createPiCodingAgentHarness<TOutput extends JsonValue>(
-	options: PiCodingAgentHarnessWithOutput<TOutput>,
-): Harness<PiCodingAgentInput, TOutput>;
-export function createPiCodingAgentHarness(options?: PiCodingAgentHarnessOptions): Harness<PiCodingAgentInput, string>;
-export function createPiCodingAgentHarness<TOutput extends JsonValue>(
-	options: PiCodingAgentHarnessOptions | PiCodingAgentHarnessWithOutput<TOutput> = {},
-): Harness<PiCodingAgentInput, string | TOutput> {
-	return createHarness<PiCodingAgentInput, string | TOutput>({
-		name: options.name ?? "pi-coding-agent",
-		run: ({ input, signal, setArtifact }) => runPiCodingAgent(input, signal, setArtifact, options),
+export function createCodingAgentHarness<TOutput extends JsonValue>(
+	options: CodingAgentHarnessWithOutput<TOutput>,
+): Harness<CodingAgentInput, TOutput>;
+export function createCodingAgentHarness(options?: CodingAgentHarnessOptions): Harness<CodingAgentInput, string>;
+export function createCodingAgentHarness<TOutput extends JsonValue>(
+	options: CodingAgentHarnessOptions | CodingAgentHarnessWithOutput<TOutput> = {},
+): Harness<CodingAgentInput, string | TOutput> {
+	return createHarness<CodingAgentInput, string | TOutput>({
+		name: options.name ?? "@amazme/coding-agent",
+		run: ({ input, signal, setArtifact }) => runCodingAgent(input, signal, setArtifact, options),
 	});
 }
 
@@ -491,47 +491,47 @@ export function resolveDocumentationVariant(
 	throw new TypeError('AMAZME_EVAL_VARIANT must be "without_docs" or "with_docs".');
 }
 
-export function excludePiDocumentation(defaultPrompt: string): string {
+export function excludeDocumentation(defaultPrompt: string): string {
 	const documentationStartMarker = "\n<docs>\n";
 	const documentationEndMarker = "\n</docs>";
 	const documentationStart = defaultPrompt.indexOf(documentationStartMarker);
-	if (documentationStart === -1) throw new Error("Default Pi system prompt has no Pi documentation section.");
+	if (documentationStart === -1) throw new Error("Default AmazMe system prompt has no AmazMe documentation section.");
 	const documentationEnd = defaultPrompt.indexOf(documentationEndMarker, documentationStart);
-	if (documentationEnd === -1) throw new Error("Default Pi system prompt has no complete Pi documentation section.");
+	if (documentationEnd === -1) throw new Error("Default AmazMe system prompt has no complete AmazMe documentation section.");
 	const cwdStart = defaultPrompt.lastIndexOf("\n<cwd>\n");
-	if (cwdStart < documentationEnd) throw new Error("Default Pi system prompt has no working-directory section.");
+	if (cwdStart < documentationEnd) throw new Error("Default AmazMe system prompt has no working-directory section.");
 	return (
 		defaultPrompt.slice(0, documentationStart) + defaultPrompt.slice(documentationEnd + documentationEndMarker.length)
 	);
 }
 
 type DocumentationHarnessOptions = Omit<
-	PiCodingAgentHarnessOptions,
-	"name" | "transformSystemPrompt" | "expectedPiDocumentation"
+	CodingAgentHarnessOptions,
+	"name" | "transformSystemPrompt" | "expectedDocumentation"
 >;
 type DocumentationHarnessWithOutput<TOutput extends JsonValue> = Omit<
-	PiCodingAgentHarnessWithOutput<TOutput>,
-	"name" | "transformSystemPrompt" | "expectedPiDocumentation"
+	CodingAgentHarnessWithOutput<TOutput>,
+	"name" | "transformSystemPrompt" | "expectedDocumentation"
 >;
 
-export function createPiDocumentationEvalHarness<TOutput extends JsonValue>(
+export function createDocumentationEvalHarness<TOutput extends JsonValue>(
 	options: DocumentationHarnessWithOutput<TOutput>,
-): Harness<PiCodingAgentInput, TOutput>;
-export function createPiDocumentationEvalHarness(
+): Harness<CodingAgentInput, TOutput>;
+export function createDocumentationEvalHarness(
 	options?: DocumentationHarnessOptions,
-): Harness<PiCodingAgentInput, string>;
-export function createPiDocumentationEvalHarness<TOutput extends JsonValue>(
+): Harness<CodingAgentInput, string>;
+export function createDocumentationEvalHarness<TOutput extends JsonValue>(
 	options: DocumentationHarnessOptions | DocumentationHarnessWithOutput<TOutput> = {},
 ) {
 	if (process.env.AMAZME_EVAL_CONTAINER !== "1" || !resolveSandboxIdentity()) {
 		throw new Error("Documentation evals must run in the isolated container sandbox.");
 	}
 	const variant = resolveDocumentationVariant();
-	return createPiCodingAgentHarness({
+	return createCodingAgentHarness({
 		...options,
 		name: variant,
 		tools: options.tools ?? [...DOCUMENTATION_EVAL_TOOLS],
-		...(variant === "without_docs" ? { transformSystemPrompt: excludePiDocumentation } : {}),
-		expectedPiDocumentation: variant === "with_docs",
+		...(variant === "without_docs" ? { transformSystemPrompt: excludeDocumentation } : {}),
+		expectedDocumentation: variant === "with_docs",
 	});
 }

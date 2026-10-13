@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
+### Breaking Changes
+
+- Route native Chord channels between authenticated clients and session workers. Worker removal closes its channels so pending calls settle and cleanup can finish.
+
 ## [1.1.0] - 2026-10-07
 
 ## [1.0.4] - 2026-10-05

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
 ### Added
 
 - Added `RemoteCodemodeSandbox`, which runs each script's VM in another isolate while tools run in the caller. `CodemodeSandboxDurableObject` from the new `@amazme/codemode/cloudflare` entry is its remote end, deployed as its own Cloudflare Worker. `examples/cloudflare` shows the setup
@@ -15,6 +17,8 @@
 - The VM now polls for interrupts while it drains promise jobs, so a script such as `while (true) await null` is stopped at the same points as a synchronous loop
 
 ### Fixed
+
+- Reject `// @options:` outside the first line instead of silently ignoring execution options.
 
 - Fixed `CodemodeSandbox` failing with a broken bridge error when the host runs under `node --watch` on Node 24 or 26, which posts `watch:import`/`watch:require` messages on the worker channel ([#10725](https://github.com/earendil-works/pi/issues/10725))
 

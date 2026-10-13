@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
 ### Breaking Changes
 
 - `ToolTaskInput` and `ToolTaskResult` are tagged unions: a model-issued call is `{ kind: "model", ... }` with its previous fields, a nested call `{ kind: "nested", ... }`. `amazme.tool` is version 2 and migrates live version 1 tasks. Previously executing AmazMe tasks are marked unsafe to replay because the old nested call keys cannot be reattached.
@@ -13,6 +15,9 @@
 - A display-only write submission, one of only `kind` and `data` (no `model`, `head`, or `edits`), is appended and settled `done` at once, even while the conversation is busy or has queued items, instead of waiting in `amazme.inbox` for the next boundary; only a queued reset still holds it back, so the reset does not hide it. It changes nothing the model sees, so a chat message shows as soon as it is sent, ahead of earlier submissions still queued, and it no longer places items left queued after a failed run ([#10407](https://github.com/earendil-works/pi/issues/10407)).
 
 ### Added
+
+- `@amazme/durable/tool-search` and `tool-search/search` provide bounded tool discovery and shared ranking. AmazMe retains its existing exposure and persistent activation contract instead of adding a second deferred flag.
+- Optional `ExecutionEnv.listFiles()` enumerates file trees with explicit bounds and cancellation; environments without this capability reject the operation.
 
 - Input submissions take `entry: { kind, data }` (`InputEntry`): the input is placed as an entry of that kind carrying that data, with its content as the user message, instead of `amazme.user`, and behaves as any other input; the kind must not start with `amazme.`. Queued inputs carry it in their `amazme.inbox` item ([#10407](https://github.com/earendil-works/pi/issues/10407)).
 - Exposed the asking task's resolved agent and tool metadata to hooks through `api.agent(context)`
@@ -34,6 +39,9 @@
 - `amazme.live.compactionFailure` keeps the newest compaction failure (task, reason, error) until a compaction produces a summary; the agent events' snapshot carries it as `compactionFailure`, and `compaction_end` carries `error` for a compaction that failed. A failed background or manual compaction was invisible once its status was removed.
 
 ### Fixed
+
+- Reject waits that close a task wait cycle, including cycles through ordinary owned work.
+- Codemode declarations derive results from each tool's schema and `reachesTools`, without shared MCP types or output-shape detection; output joining is linear.
 
 - Appending to an array in a document no longer costs a walk over the whole array per commit: Chord's delta tracker plans inserts and removals that keep the remaining elements in order from the changed ranges alone, and builds an appended array in one copy instead of two. 32,000 one-item appends, one commit each, take 1.4 s instead of 11.3 s; what remains is the copy each immutable value needs (`npm run bench:document-append`).
 - A generation whose blocking threshold compaction failed, faulted, was orphaned, or was aborted directly now fails with `model_error` (`Compaction failed: <error>`) instead of sending its request anyway. The context was still above the blocking threshold, so the request at best left no room for the answer: a session at 996K of a 1M window got an empty `length` answer on every turn, with no visible error.

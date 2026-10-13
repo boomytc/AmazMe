@@ -89,11 +89,11 @@ npm test --workspace @amazme/evals
 
 ## Documentation variants
 
-`without_docs` omits the coding-agent `README.md`, `CHANGELOG.md`, `docs/`, and `examples/`, then removes the Pi documentation-routing section from the default system prompt.
+`without_docs` omits the coding-agent `README.md`, `CHANGELOG.md`, `docs/`, and `examples/`, then removes the AmazMe documentation-routing section from the default system prompt.
 
 `with_docs` includes those files and uses the unchanged default prompt.
 
-Both variants install the same local workspace tarballs. Existing npm overrides ensure coding-agent's internal Pi dependencies also come from the current repository rather than the registry. Documentation and source files from internal dependency packages are removed symmetrically so they cannot act as alternate instructions. Startup validates the image allowlist and verifies that the installed coding-agent package resolves from `dist/`. Eval definitions, evaluator helpers, fixtures, and Vitest configuration are root-owned and unreadable after the harness permanently drops to an unprivileged UID. Each run receives a new home, agent directory, workspace, session directory, and container filesystem.
+Both variants install the same local workspace tarballs. Existing npm overrides ensure coding-agent's internal AmazMe dependencies also come from the current repository rather than the registry. Documentation and source files from internal dependency packages are removed symmetrically so they cannot act as alternate instructions. Startup validates the image allowlist and verifies that the installed coding-agent package resolves from `dist/`. Eval definitions, evaluator helpers, fixtures, and Vitest configuration are root-owned and unreadable after the harness permanently drops to an unprivileged UID. Each run receives a new home, agent directory, workspace, session directory, and container filesystem.
 
 Documentation evals allow only `read`, `write`, `edit`, `grep`, `find`, and `ls` by default. They do not expose shell or web-search tools. Provider traffic still requires container network access, so Docker alone cannot prove that arbitrary code written by an agent never uses the network.
 
@@ -105,7 +105,7 @@ Each invocation creates an ignored `.eval/<timestamp>_<id>/` directory containin
 - `expected-runs.json`: the complete planned cohort.
 - `observations.jsonl`: normalized outcomes and telemetry.
 - `tasks/*/vitest.json`: native JSON for each isolated arm.
-- `<variant>/sessions/*/session.jsonl`: native Pi sessions.
+- `<variant>/sessions/*/session.jsonl`: native AmazMe sessions.
 - `report.json` and `report.txt`: paired comparisons.
 
 A pair contributes to pass-rate lift only when both arms produce exactly one score. Missing, duplicate, skipped, pending, unscored, or errored arms block the pair. If any pair in an eval set is blocked, headline pass rates are withheld. Missing telemetry remains unavailable rather than being treated as zero.
@@ -120,9 +120,9 @@ Use one ordinary `describeEval(...)` suite and one explicit `run(...)` call per 
 
 ```ts
 import { describeEval, StructuredOutputJudge } from "vitest-evals";
-import { createPiDocumentationEvalHarness } from "../src/harness.ts";
+import { createDocumentationEvalHarness } from "../src/harness.ts";
 
-const harness = createPiDocumentationEvalHarness();
+const harness = createDocumentationEvalHarness();
 const judge = StructuredOutputJudge({ expected: { ok: true }, match: "strict", allowExtras: false });
 
 describeEval("Target workflow", { harness, judges: [judge], judgeThreshold: null }, (it) => {

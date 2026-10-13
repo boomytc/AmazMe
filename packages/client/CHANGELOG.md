@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
+### Breaking Changes
+
+- `openLink()` provides native Chord links scoped to an attachment generation; acknowledged close joins pending calls and channel cleanup before disposal.
+
 ## [1.1.0] - 2026-10-07
 
 ## [1.0.4] - 2026-10-05

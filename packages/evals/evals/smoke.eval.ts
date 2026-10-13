@@ -1,8 +1,8 @@
 import { expect } from "vitest";
 import { describeEval } from "vitest-evals";
-import { createPiCodingAgentHarness } from "../src/harness.ts";
+import { createCodingAgentHarness } from "../src/harness.ts";
 
-const harness = createPiCodingAgentHarness({ noTools: "all" });
+const harness = createCodingAgentHarness({ noTools: "all" });
 
 describeEval("Answer a basic prompt", { harness }, (it) => {
 	it("returns the expected answer", async ({ run }) => {

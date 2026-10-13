@@ -12,7 +12,7 @@ import {
 import { Levenshtein } from "autoevals";
 import type { ProgramStatus, Terminal } from "@amazme/tui";
 import { createJudge, describeEval } from "vitest-evals";
-import { createPiDocumentationEvalHarness, type PiCodingAgentInput } from "../src/harness.ts";
+import { createDocumentationEvalHarness, type CodingAgentInput } from "../src/harness.ts";
 
 const CONTEXT_WINDOW = 272_000;
 const BUILT_IN_CONTEXT_PATTERN = /\d+(?:\.\d+)?%\/272k(?: \(auto\))?/;
@@ -187,11 +187,11 @@ async function inspectContextFooter(session: AgentSession, agentDir: string): Pr
 	}
 }
 
-const harness = createPiDocumentationEvalHarness({
+const harness = createDocumentationEvalHarness({
 	output: ({ session, agentDir }) => inspectContextFooter(session, agentDir),
 });
 
-const contextFooterJudge = createJudge<PiCodingAgentInput, TuiFooterOutput>(
+const contextFooterJudge = createJudge<CodingAgentInput, TuiFooterOutput>(
 	"ContextFooterJudge",
 	async ({ output }) => {
 		let valid = output.extensionErrors.length === 0;

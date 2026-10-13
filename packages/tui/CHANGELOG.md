@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-13
+
 ### Breaking Changes
 
 - `Editor.render()` and `Input.render()` now wrap the drawn cursor in zero-width APC markers instead of emitting `\x1b[7m` directly. TUI renderers resolve them; code that renders these components outside a TUI must strip them, for example with `stripTerminalSequences()`
@@ -15,6 +17,8 @@
 - Changed `showHardwareCursor` to show only the terminal cursor: focused `Editor` and `Input` components no longer draw a reverse-video cursor when it is enabled. This avoids terminals that extend edge cell colors into the window padding stretching the drawn cursor at the first or last column
 
 ### Fixed
+
+- Wheel input left unhandled by a focused overlay scrolls the transcript.
 
 - Explicit Tab completion consults slash-command argument candidates, including after a paste, and falls back to paths when no argument matches.
 

@@ -55,7 +55,6 @@ for (const file of ["package.json", "vitest.evals.config.ts"]) {
 for (const directory of ["src", "evals"]) {
 	cpSync(join(repositoryRoot, "packages/evals", directory), join(runtimeEvalRoot, directory), { recursive: true });
 }
-cpSync(
-	join(repositoryRoot, "packages/evals/docker/entrypoint.ts"),
-	join(runtimeEvalRoot, "docker/entrypoint.ts"),
-);
+for (const file of ["entrypoint.ts", "workspace.ts"]) {
+	cpSync(join(repositoryRoot, "packages/evals/docker", file), join(runtimeEvalRoot, "docker", file));
+}

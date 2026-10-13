@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { buildSystemPrompt } from "../../coding-agent/src/core/system-prompt.ts";
 import {
 	applyIsolatedEnvironment,
-	createPiDocumentationEvalHarness,
+	createDocumentationEvalHarness,
 	DOCUMENTATION_EVAL_TOOLS,
-	excludePiDocumentation,
+	excludeDocumentation,
 	resolveDocumentationVariant,
 	resolveModelSelection,
 	verifySystemPrompt,
@@ -69,21 +69,21 @@ describe("documentation variant", () => {
 		expect(() => resolveDocumentationVariant(variant)).toThrow("AMAZME_EVAL_VARIANT");
 	});
 
-	it("strips only the documentation routing section from the default Pi prompt", () => {
+	it("strips only the documentation routing section from the default AmazMe prompt", () => {
 		const prompt = buildSystemPrompt({
 			cwd: "/workspace",
 			selectedTools: [...DOCUMENTATION_EVAL_TOOLS],
 		});
-		expect(prompt).toContain("\n<docs>\nPi documentation (read only");
+		expect(prompt).toContain("\n<docs>\nAmazMe documentation (read only");
 		expect(prompt).toContain("\n<rules>\n");
 		expect(prompt).toContain("\n<cwd>\n/workspace\n</cwd>");
 		expect(prompt).toContain("docs/models.md");
 
-		const stripped = excludePiDocumentation(prompt);
+		const stripped = excludeDocumentation(prompt);
 		expect(stripped).toContain("\n<rules>\n");
 		expect(stripped).toContain("\n<cwd>\n/workspace\n</cwd>");
 		expect(stripped).not.toContain("<docs>");
-		expect(stripped).not.toContain("Pi documentation");
+		expect(stripped).not.toContain("AmazMe documentation");
 		expect(stripped).not.toContain("docs/models.md");
 		expect(stripped).not.toContain(getReadmePath());
 		expect(stripped).not.toContain(getDocsPath());
@@ -95,22 +95,26 @@ describe("documentation variant", () => {
 			cwd: "/workspace",
 			selectedTools: [...DOCUMENTATION_EVAL_TOOLS],
 		});
-		const stripped = excludePiDocumentation(prompt);
+		const stripped = excludeDocumentation(prompt);
 
-		expect(verifySystemPrompt(stripped, { name: "without_docs", expectedPiDocumentation: false })).toBe(stripped);
-		expect(() => verifySystemPrompt(prompt, { name: "without_docs", expectedPiDocumentation: false })).toThrow(
+		expect(verifySystemPrompt(stripped, { name: "without_docs", expectedDocumentation: false })).toBe(stripped);
+		expect(verifySystemPrompt(prompt, { name: "with_docs", expectedDocumentation: true })).toBe(prompt);
+		expect(() => verifySystemPrompt(stripped, { name: "with_docs", expectedDocumentation: true })).toThrow(
+			"does not match",
+		);
+		expect(() => verifySystemPrompt(prompt, { name: "without_docs", expectedDocumentation: false })).toThrow(
 			"does not match",
 		);
 	});
 
 	it("fails closed when prompt markers are missing", () => {
-		expect(() => excludePiDocumentation("Instructions")).toThrow("no Pi documentation section");
-		expect(() => excludePiDocumentation("\n<docs>\nPi documentation\n</docs>")).toThrow(
+		expect(() => excludeDocumentation("Instructions")).toThrow("no AmazMe documentation section");
+		expect(() => excludeDocumentation("\n<docs>\nAmazMe documentation\n</docs>")).toThrow(
 			"no working-directory section",
 		);
 	});
 
 	it("rejects documentation harnesses outside the container sandbox", () => {
-		expect(() => createPiDocumentationEvalHarness()).toThrow("isolated container sandbox");
+		expect(() => createDocumentationEvalHarness()).toThrow("isolated container sandbox");
 	});
 });
