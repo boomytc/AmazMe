@@ -12,9 +12,7 @@ function setup(now?: () => number) {
 	});
 	const state = replicatedState<ApprovalsState>({ revision: 0, pending: [] });
 	gate.attach(state);
-	const before = gate.extension.hooks![0]!.handlers.beforeTool as NonNullable<
-		ToolHooks["beforeTool"]
-	>;
+	const before = (gate.extension.hooks![0]!.handlers as Partial<ToolHooks>).beforeTool!;
 	// These boundary checks do not resolve tool metadata; real Harness execution is covered by experimental-web-approvals.
 	const api = { taskId: 1, conversationId: 1 } as unknown as Parameters<
 		typeof before
@@ -24,7 +22,7 @@ function setup(now?: () => number) {
 		state,
 		run: (signal: AbortSignal) =>
 			before(
-				{ id: "read-1", name: "read", arguments: {} },
+				{ type: "toolCall", id: "read-1", name: "read", arguments: {} },
 				api,
 				withAbortSignal(signal, BACKGROUND_CONTEXT),
 			),

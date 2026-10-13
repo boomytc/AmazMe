@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `hasContextRecoveryHeadroom()` shares the shrink and output-reserve checks used before retrying a rejected context.
+
 ## [1.2.0] - 2026-10-13
 
 - OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.

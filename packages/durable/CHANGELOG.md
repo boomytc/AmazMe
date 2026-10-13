@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Overflow recovery checks the final request after projection and request hooks, and retries only when it shrank and restored the configured output reserve. Generation version 4 retains the rejected request size across deferred polling and restart; an older pending recovery without that evidence ends with its original error.
+
 ## [1.2.0] - 2026-10-13
 
 ### Breaking Changes

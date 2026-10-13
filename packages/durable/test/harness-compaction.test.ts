@@ -20,6 +20,7 @@ import {
 	type Conversation,
 	defineTask,
 	defineTool,
+	GenerationTask,
 	type EntryRecord,
 	type Harness,
 	LiveDoc,
@@ -1222,6 +1223,30 @@ describe("blocking threshold compaction", () => {
 describe("overflow compaction", () => {
 	const ENABLED: CompactionPolicy = { ...MANUAL, enabled: true };
 
+	it.each(["growing summary", "insufficient reserve", "request hook growth"] as const)("does not resend an overflow after %s", async kind => {
+		const chat = await open({ contextWindow: 2000 });
+		try {
+			await history(chat);
+			let growRequest = false;
+			addHooks(chat.setup.registry, GenerationTask, { beforeRequest: ({ messages }) => growRequest ? {
+				messages: [...messages, user(text("HOOK PAYLOAD", 3000))],
+			} : undefined });
+			chat.faux.summaries.push(summary(kind === "growing summary" ? text("LONG SUMMARY", 3000) : "SUMMARY"));
+			chat.faux.agent.push(() => {
+				// Enable recovery only once the provider rejects, so this exercises overflow rather than threshold compaction.
+				chat.setup.settings.compaction = { ...ENABLED, reserveTokens: kind === "insufficient reserve" ? 1950 : 100 };
+				growRequest = kind === "request hook growth";
+				return failure(OVERFLOW);
+			});
+			const requests = chat.faux.agentRequests.length;
+			const input = await chat.root.submit({ type: "input", content: text("u4", 100) }, context);
+			expect(await input.wait(context)).toMatchObject({ status: "unanswered", reason: "model_error", detail: OVERFLOW });
+			expect(chat.faux.agentRequests).toHaveLength(requests + 1);
+			expect(chat.faux.summaryRequests).toHaveLength(1);
+			expect((await kinds(chat.root)).includes("amazme.compaction")).toBe(true);
+		} finally { await chat.harness.close(context); }
+	});
+
 	it("compacts and retries with the same attempt, leaving the error out of the retry", async () => {
 		const chat = await open();
 		await history(chat);
@@ -1621,8 +1646,7 @@ describe("compaction recovery", () => {
 		return { harness, root, setup, faux };
 	}
 
-	async function first(path: string) {
-		const setup = chatSetup();
+	async function first(path: string, setup = chatSetup()) {
 		addSection(setup.registry, "preamble", () => "You are helpful.", { tag: false });
 		const faux = script(setup);
 		const { harness, root } = await openChat(await openNodeSqliteStorage(path), setup);
@@ -1650,6 +1674,33 @@ describe("compaction recovery", () => {
 		const inspection = await chat.harness.inspect(context);
 		expect([inspection.tasks, inspection.submissions]).toEqual([[], []]);
 		await chat.harness.close(context);
+	});
+
+	it.each([false, true])("preserves the rejected request size across reopen and refuses a growing overflow summary (deferred: %s)", async deferredResponse => {
+		const path = await sqlitePath();
+		let chat = await first(path, chatSetup({ deferred: { pendingFetches: 1, pollAfterMs: 1 } }));
+		chat.setup.settings.compaction = { ...MANUAL, enabled: true };
+		if (deferredResponse) chat.setup.settings.stream = { deferred: true };
+		const reached = deferred();
+		chat.faux.summaries.push(gated(deferred(), summary(), reached));
+		chat.faux.agent.push(failure(OVERFLOW));
+		const requests = chat.faux.agentRequests.length;
+		const input = await chat.root.submit({ type: "input", content: text("u4", 100) }, context);
+		await reached.promise;
+		if (deferredResponse) expect(chat.setup.faux.state.deferredFetchCount).toBeGreaterThan(0);
+		const generation = (await live(chat)).run!.taskId;
+		expect((await chat.harness.getTask(generation, context))?.state).toMatchObject({ checkpoint: {
+			phase: "prepare", overflow: OVERFLOW, overflowTokensBefore: expect.any(Number),
+		},
+		});
+		await chat.harness.close(context);
+		chat.faux.summaries.push(summary(text("LONG SUMMARY", 3000)));
+		chat = await reopen(path, chat.setup, chat.faux);
+		try {
+			const restored = await chat.harness.submission(input.id, context);
+			expect(await restored!.wait(context)).toMatchObject({ status: "unanswered", reason: "model_error", detail: OVERFLOW });
+			expect(chat.faux.agentRequests).toHaveLength(requests + 1);
+		} finally { await chat.harness.close(context); }
 	});
 
 	it("fails an overflow run with its text when its compaction fails after reopen", async () => {

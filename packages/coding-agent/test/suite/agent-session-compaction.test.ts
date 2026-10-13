@@ -833,6 +833,33 @@ describe("AgentSession compaction characterization", () => {
 		);
 	});
 
+	it("retains a completed summary but refuses an overflow retry when its context grew", async () => {
+		const compactedRetryStates: boolean[] = [];
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [api => {
+				api.on("session_compact", event => { compactedRetryStates.push(event.willRetry); });
+				api.on("session_before_compact", event => ({ compaction: {
+					summary: "OVERSIZED SUMMARY ".repeat(2000),
+					firstKeptEntryId: event.preparation.firstKeptEntryId,
+					// The gate measures the real prior projection, not the extension's declared count.
+					tokensBefore: 1_000_000,
+					details: {},
+				} }));
+			}],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const internals = harness.session as unknown as SessionWithCompactionInternals;
+		await expect(internals._runAutoCompaction("overflow", true)).resolves.toBe(false);
+		expect(compactedRetryStates).toEqual([false]);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			willRetry: false,
+			errorMessage: "Context overflow recovery did not shrink the context below the reserved limit.",
+		});
+		expect(harness.sessionManager.getEntries().some(entry => entry.type === "compaction")).toBe(true);
+	});
+
 	it("compacts successful overflow responses without retrying", async () => {
 		const harness = await createHarness({
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },

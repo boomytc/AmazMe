@@ -179,3 +179,9 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 export function isRecoverableLength(message: AssistantMessage, desiredMaxOutput: number): boolean {
 	return message.stopReason === "length" && desiredMaxOutput > 0 && message.usage.output < desiredMaxOutput;
 }
+
+/** A rejected context is retried only after it shrank and restored the configured output reserve. */
+export function hasContextRecoveryHeadroom(before: number, after: number, contextWindow: number, reserveTokens: number): boolean {
+	return [before, after, contextWindow, reserveTokens].every(Number.isFinite) &&
+		before > 0 && after >= 0 && contextWindow > 0 && reserveTokens >= 0 && after < before && after <= contextWindow - reserveTokens;
+}

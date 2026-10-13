@@ -5,6 +5,7 @@
 ### Fixed
 
 - Approval waits observe cancellation before and during publication, release their listeners after settlement, and retain early decisions without reporting owner cancellation as reader denial.
+- SDK overflow recovery measures the real projection before and after compaction, retains completed summaries and reports insufficient recovery without resending. Ordinary truncated-output recovery retains its separate one-retry budget.
 
 ## [1.2.0] - 2026-10-13
 

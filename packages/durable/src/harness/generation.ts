@@ -10,7 +10,8 @@ import type {
 	ToolCall,
 } from "@amazme/ai";
 import { appendImageRecoveryDiagnostic, hasRequestImages, IMAGE_RECOVERY_RETRY_MESSAGE, isImagePayloadRejection, omitRequestImages } from "@amazme/ai/utils/image-recovery";
-import { isContextOverflow } from "@amazme/ai/utils/overflow";
+import { estimateMessageTokens } from "@amazme/ai/utils/estimate";
+import { hasContextRecoveryHeadroom, isContextOverflow } from "@amazme/ai/utils/overflow";
 import { isRetryableAssistantError, retryDelayMs } from "@amazme/ai/utils/retry";
 import { getCurrentTools } from "@amazme/ai/utils/transcript";
 import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "../entries.ts";
@@ -62,8 +63,10 @@ export type GenerationCheckpoint = {
 			attempt: number;
 			/** The blocking compaction this generation waited for; it starts no other compaction (spec §8.3). */
 			compacted?: TaskId<CompactionResult>;
-			/** Error text of the overflow that started `compacted`; checked once when `prepare` resumes. */
+			/** Original overflow text, reported if compaction cannot restore a valid request. */
 			overflow?: string;
+			/** Size of the rejected request after all hooks, retained across restart to verify recovery. */
+			overflowTokensBefore?: number;
 			/** Set when the blocking threshold started `compacted`; its outcome is checked once when `prepare` resumes. */
 			threshold?: true;
 	  }
@@ -77,6 +80,9 @@ export type GenerationCheckpoint = {
 			streamOptions: ConversationStreamOptions;
 			/** Newest entry included in the request. */
 			cutoff: EntryId;
+			/** A completed overflow compaction must be checked after request hooks, before sending. */
+			overflow?: string;
+			overflowTokensBefore?: number;
 	  }
 	| { phase: "retry"; attempt: number; compacted?: TaskId<CompactionResult>; until: number }
 	| { phase: "yield"; message: AssistantMessage }
@@ -88,6 +94,8 @@ export type GenerationCheckpoint = {
 			cutoff: EntryId;
 			handle: DeferredHandle;
 			pollAt: number;
+			/** Size of the actual request that produced the deferred handle. */
+			requestTokens?: number;
 	  }
 	| {
 			/** Waiting on the round's tool tasks, which the generation owns (spec §8.5). */
@@ -111,6 +119,7 @@ type Request = {
 	readonly compacted: TaskId<CompactionResult> | undefined;
 	readonly model: ModelRef;
 	readonly cutoff: EntryId;
+	readonly tokens?: number;
 	/** Committed model context through `cutoff`, when the phase already derived it. */
 	readonly messages?: readonly Message[];
 	/** Set when the message came from polling, so a still deferred result polls strictly later. */
@@ -128,13 +137,13 @@ const DEFAULT_POLL_AFTER_MS = 5000;
  */
 export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, GenerationResult, GenerationHooks>({
 	name: "amazme.generation",
-	version: 3,
+	version: 4,
 	// Older executors must not resend raw images from a stored recovery checkpoint.
 	migrate(input, checkpoint, version) {
-		if (version !== 1 && version !== 2) throw new Error(`Unsupported generation version: ${version}`);
+		if (version !== 1 && version !== 2 && version !== 3) throw new Error(`Unsupported generation version: ${version}`);
 		if (
 			checkpoint === null || typeof checkpoint !== "object" || Array.isArray(checkpoint) ||
-			!(["prepare", "request", "retry", "poll", "tools", ...(version === 2 ? ["yield"] : [])] as const).some(phase => phase === checkpoint.phase)
+			!(["prepare", "request", "retry", "poll", "tools", ...(version >= 2 ? ["yield"] : [])] as const).some(phase => phase === checkpoint.phase)
 		)
 			throw new Error(`Invalid v${version} generation checkpoint`);
 		return { input: input as GenerationInput, checkpoint: checkpoint as GenerationCheckpoint };
@@ -154,11 +163,11 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const { model, thinkingLevel } = agent;
 			const resolved = model === undefined ? undefined : runtime.models.getModel(model.provider, model.modelId);
 			if (model === undefined || resolved === undefined) return failNoModel(runtime, model, context);
-			const { attempt, compacted, overflow, threshold: blocked, omitImages } = task.state.checkpoint;
+			const { attempt, compacted, overflow, overflowTokensBefore, threshold: blocked, omitImages } = task.state.checkpoint;
 			const recovery = omitImages === true ? { omitImages } : {};
 			if (compacted !== undefined && overflow !== undefined) {
 				const [outcome] = await runtime.outcomes([compacted], context);
-				if (outcome?.status !== "completed" || outcome.result.entryId === undefined) {
+				if (outcome?.status !== "completed" || outcome.result.entryId === undefined || overflowTokensBefore === undefined) {
 					return failModelError(runtime, overflow, context);
 				}
 			}
@@ -213,12 +222,13 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 					thinkingLevel,
 					streamOptions: settings.stream,
 					cutoff,
+					...(overflow === undefined ? {} : { overflow, overflowTokensBefore }),
 				};
 				return { status: "running", checkpoint: { phase: "request", ...request } };
 			}, context);
 		},
 		request: async (task, runtime, context) => {
-			const { attempt, compacted, model: ref, thinkingLevel, streamOptions, cutoff, omitImages } = task.state.checkpoint;
+			const { attempt, compacted, model: ref, thinkingLevel, streamOptions, cutoff, omitImages, overflow, overflowTokensBefore } = task.state.checkpoint;
 			const conversationId = runtime.conversationId;
 			await runtime.commit(async (tx) => {
 				const live = await tx.doc(LiveDoc, conversationId);
@@ -241,6 +251,10 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const hadImages = model.input.includes("image") && hasRequestImages(messages);
 			const projection = omitImages ? omitRequestImages(messages) : undefined;
 			if (projection) messages = projection.messages;
+			const tokens = messages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
+			if (overflow !== undefined && (overflowTokensBefore === undefined || !hasContextRecoveryHeadroom(
+				overflowTokensBefore, tokens, model.contextWindow, runtime.settings.compaction.reserveTokens,
+			))) return failModelError(runtime, overflow, context);
 			const options: SimpleStreamOptions = {
 				...streamOptions,
 				signal: runtime.signal,
@@ -248,7 +262,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
 			const message = await streamResponse(runtime, model, messages, options, attempt, context, projection?.omittedImages ?? 0);
-			const request = { attempt, compacted, model: ref, cutoff, messages: view.messages, hadImages,
+			const request = { attempt, compacted, model: ref, cutoff, messages: view.messages, tokens, hadImages,
 				...(omitImages ? { omitImages, omittedImages: projection?.omittedImages ?? 0 } : {}) };
 			await classify(runtime, request, message, context);
 		},
@@ -267,12 +281,12 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			}, context);
 		},
 		poll: async (task, runtime, context) => {
-			const { attempt, compacted, model: ref, cutoff, handle, pollAt, omitImages, hadImages, omittedImages } = task.state.checkpoint;
+			const { attempt, compacted, model: ref, cutoff, handle, pollAt, requestTokens, omitImages, hadImages, omittedImages } = task.state.checkpoint;
 			const model = runtime.models.getModel(ref.provider, ref.modelId);
 			if (model === undefined) return failNoModel(runtime, ref, context);
 			await runtime.sleep(pollAt, context);
 			const message = await runtime.models.fetchDeferred(model, handle, { signal: runtime.signal });
-			const request = { attempt, compacted, model: ref, cutoff, pollAt,
+			const request = { attempt, compacted, model: ref, cutoff, pollAt, tokens: requestTokens,
 				...(hadImages === undefined ? {} : { hadImages }),
 				...(omitImages ? { omitImages, omittedImages: omittedImages ?? 0 } : {}) };
 			await classify(runtime, request, message, context);
@@ -520,6 +534,7 @@ async function classify(
 				cutoff,
 				handle,
 				pollAt,
+				...(request.tokens === undefined ? {} : { requestTokens: request.tokens }),
 			} as const;
 			return { status: "running", checkpoint };
 		}, context);
@@ -544,7 +559,7 @@ async function classify(
 	// The retry and compaction policies govern the next attempt, so they are read now rather than pinned at preparation.
 	const settings = runtime.settings;
 	const overflow = message.stopReason === "error" && isContextOverflow(message);
-	if (overflow && compacted === undefined && settings.compaction.enabled) {
+	if (overflow && compacted === undefined && settings.compaction.enabled && request.tokens !== undefined) {
 		const policy = settings.compaction;
 		const view = await runtime.context(conversationId, context, { at: cutoff });
 		if (selectCut(view, policy.keepRecentTokens) !== undefined) {
@@ -554,7 +569,7 @@ async function classify(
 				await appendAssistant(tx, conversationId, message);
 				delete live.generation;
 				const child = await createCompaction(tx, conversationId, { reason: "overflow" }, runtime.taskId);
-				const checkpoint = { phase: "prepare", attempt, compacted: child, overflow: text,
+				const checkpoint = { phase: "prepare", attempt, compacted: child, overflow: text, overflowTokensBefore: request.tokens,
 					...(request.omitImages ? { omitImages: request.omitImages } : {}) } as const;
 				return { status: "waiting", checkpoint, on: [child], policy: "allSettled" };
 			}, context);

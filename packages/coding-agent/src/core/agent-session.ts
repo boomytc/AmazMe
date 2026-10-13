@@ -55,6 +55,7 @@ import {
 	streamSimple,
 } from "@amazme/ai/compat";
 import { appendImageRecoveryDiagnostic, hasRequestImages, IMAGE_RECOVERY_RETRY_MESSAGE, isImagePayloadRejection, omitRequestImages } from "@amazme/ai/utils/image-recovery";
+import { hasContextRecoveryHeadroom } from "@amazme/ai/utils/overflow";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { normalizePromptImages } from "../utils/prompt-images.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -3080,7 +3081,7 @@ export class AgentSession {
 			// Persistently omit the selected final attempt before post-run recovery compaction.
 			this._overflowRecoveryAttempted = true;
 			this._omitRecoveryAttempt(assistantMessage, toolResults);
-			const retry = await this._runAutoCompaction("overflow", willRetry);
+			const retry = await this._runAutoCompaction("overflow", willRetry, contextOverflow);
 			if (retry) this._failedResponse = assistantMessage;
 			return retry;
 		}
@@ -3133,7 +3134,7 @@ export class AgentSession {
 	 * @param willRetry Whether to continue the interrupted turn after overflow compaction
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
-	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean, verifyOverflowHeadroom = true): Promise<boolean> {
 		const model = this.model;
 		const settings = this.settingsManager.getCompactionSettings(model);
 		let abortController: AbortController | undefined;
@@ -3151,6 +3152,7 @@ export class AgentSession {
 			if (!preparation) {
 				return false;
 			}
+			const recoveryTokensBefore = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
 
 			abortController = new AbortController();
 			this._autoCompactionAbortController = abortController;
@@ -3217,6 +3219,10 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
+			const recoveryError = willRetry && verifyOverflowHeadroom && !hasContextRecoveryHeadroom(
+				recoveryTokensBefore, estimatedTokensAfter, model.contextWindow, settings.reserveTokens,
+			) ? "Context overflow recovery did not shrink the context below the reserved limit." : undefined;
+			const retry = willRetry && recoveryError === undefined;
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -3229,7 +3235,7 @@ export class AgentSession {
 					compactionEntry: savedCompactionEntry,
 					fromExtension,
 					reason,
-					willRetry,
+					willRetry: retry,
 				});
 			}
 
@@ -3241,9 +3247,13 @@ export class AgentSession {
 				usage,
 				details,
 			};
-			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
+			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry: retry,
+				...(recoveryError === undefined ? {} : { errorMessage: recoveryError }) });
+			if (recoveryError !== undefined) await this._emitSessionCompactFailed({
+				reason, errorMessage: recoveryError, aborted: false, willRetry: false, fromExtension,
+			});
 
-			if (willRetry) return true;
+			if (willRetry) return recoveryError === undefined;
 
 			// Auto-compaction can complete while follow-up/steering/custom messages are waiting.
 			// Continue once so queued messages are delivered.

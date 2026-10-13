@@ -930,12 +930,13 @@ describe("durable length recovery", () => {
 		let replaced = false;
 		let overflowId: string | undefined;
 		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 1_000, maxTokens: 100 }],
-			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			models: [{ id: "faux-1", contextWindow: 20_000, maxTokens: 100 }],
+			settings: { compaction: { enabled: false, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("turn_end", (event) => {
 						if (replaced || event.outcome !== "error") return;
+						harness.settingsManager.setCompactionEnabled(true);
 						replaced = true;
 						overflowId = event.messageEntryId;
 						return {
@@ -959,12 +960,15 @@ describe("durable length recovery", () => {
 			],
 		});
 		harnesses.push(harness);
+		// Recovery must reclaim earlier history; an oversized current prompt cannot shrink by summarizing it.
+		harness.sessionManager.appendMessage({ role: "user", content: "x".repeat(5_000), timestamp: Date.now() - 2 });
+		harness.sessionManager.appendMessage(fauxAssistantMessage("earlier answer", { timestamp: Date.now() - 1 }));
 		harness.setResponses([
 			fauxAssistantMessage("retained error", { stopReason: "error", errorMessage: "prompt is too long" }),
 			fauxAssistantMessage("recovered"),
 		]);
 
-		await harness.session.prompt("x".repeat(5_000));
+		await harness.session.prompt("recover overflow");
 
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(overflowId).toBeDefined();

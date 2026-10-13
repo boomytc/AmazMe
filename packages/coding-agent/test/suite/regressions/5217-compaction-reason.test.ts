@@ -38,7 +38,8 @@ async function createCompactionHarness(recorded: RecordedCompactionEvent[]): Pro
 		extensionFactories: [recordingExtension(recorded)],
 	});
 	harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
-	await harness.session.prompt("first");
+	// The completed summary must actually shrink history before an overflow retry is announced.
+	await harness.session.prompt("first ".repeat(1000));
 	await harness.session.prompt("second");
 	return harness;
 }
