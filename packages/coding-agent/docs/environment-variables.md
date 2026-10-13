@@ -56,6 +56,7 @@ Durable's shell factories and execution environments have their own options; thi
 | `AMAZME_STARTUP_BENCHMARK` | Measure native interactive startup and exit; initial prompts are not submitted |
 | `AMAZME_SHARE_VIEWER_URL` | SDK `/share` viewer URL |
 | `AMAZME_RADIUS_GATEWAY` | Radius relay and SDK `/bug` gateway origin |
+| `AMAZME_CLIPBOARD_OSC52` | Set to `1` to also copy through OSC 52 when a remote terminal has no SSH or Mosh environment markers. |
 | `AMAZME_HARDWARE_CURSOR` | `1` enables the hardware cursor |
 | `AMAZME_HYPERLINKS` | OSC 8 override: `1`, `0`, or `auto` |
 | `AMAZME_PROGRAM_STATUS` | OSC 7501 override: `1` always reports, `0` never reports; otherwise terminal support is queried |

@@ -767,7 +767,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				if (this.applyMouseDispatchResult(event, result)) this.requestRender();
 				return { consume: true };
 			}
-			if (this.shouldDeferViewportInputToOverlay()) return undefined;
 			this.routeWheel(wheelEvent, wheelDelta);
 			return { consume: true };
 		}
