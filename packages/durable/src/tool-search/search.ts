@@ -1,5 +1,8 @@
 import { type Static, Type } from "typebox";
-import type { CodemodeToolInfo, CodemodeNamespace } from "./codemode/types.ts";
+import type { TSchema } from "typebox";
+import type { ToolNamespace } from "../harness/types.ts";
+
+interface SearchableTool { readonly name: string; readonly description: string; readonly parameters: TSchema; }
 
 export const DEFAULT_TOOL_SEARCH_LIMIT = 8;
 
@@ -89,8 +92,8 @@ function schemaText(schema: unknown, parts: string[]): void {
  * description and instructions.
  */
 export function createToolSearchDocument(
-	tool: Pick<CodemodeToolInfo, "name" | "description" | "parameters">,
-	namespace?: CodemodeNamespace,
+	tool: Pick<SearchableTool, "name" | "description" | "parameters">,
+	namespace?: ToolNamespace,
 ): ToolSearchDocument {
 	const parts = [tool.name, tool.name.replaceAll("_", " "), tool.description];
 	schemaText(tool.parameters, parts);
@@ -162,9 +165,10 @@ export interface ToolSearchResultTool {
 }
 
 export function searchDeferredTools(
-	tools: readonly (CodemodeToolInfo & {
+	tools: readonly (SearchableTool & {
 		exposure?: string;
-		namespace?: CodemodeNamespace;
+		callers?: readonly ("model" | "tools")[];
+		namespace?: ToolNamespace;
 	})[],
 	active: readonly string[],
 	query: string,
@@ -174,7 +178,7 @@ export function searchDeferredTools(
 	if (!Number.isInteger(limit) || limit <= 0) throw new Error("limit must be a positive integer");
 	const selected = new Set(active);
 	const candidates = tools.filter(
-		(tool) => (tool.exposure === "codemode" || tool.exposure === "deferred") && !selected.has(tool.name),
+		(tool) => (tool.exposure === "codemode" || tool.exposure === "deferred") && !selected.has(tool.name) && (tool.callers === undefined || tool.callers.includes("model")),
 	);
 	const documents = candidates.map((tool) => createToolSearchDocument(tool, tool.namespace));
 	return new Bm25Ranker().rank(query, documents, limit).map((match) => ({

@@ -223,6 +223,8 @@ describe("experimental client TUI", () => {
 			sessionProvider.provide(Transcript, { state: transcriptState });
 			sessionProvider.provide(Conversations, {
 				state: conversationsState,
+				async rename() { throw new Error("Fixture does not rename branches"); },
+				async setArchived() { throw new Error("Fixture does not archive branches"); },
 				async cancelSummaries() {},
 				async select() {},
 				async returnPoints() { return []; },

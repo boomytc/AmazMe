@@ -14,13 +14,7 @@ import {
 } from "../core/codemode/declarations.ts";
 import type { CodemodeHost } from "../core/codemode/types.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
-import {
-	TOOL_SEARCH_TOOL_NAME,
-	toolSearchSchema,
-	TOOL_SEARCH_DESCRIPTION,
-	searchDeferredTools,
-	renderToolSearchResult,
-} from "../core/tool-search.ts";
+import { createToolSearchTool } from "@amazme/durable/tool-search";
 
 const ImageOutput = Type.Object({
 	type: Type.Literal("image"),
@@ -149,27 +143,7 @@ export function createDurableCodemode(settings: SettingsManager) {
 					};
 				},
 			}),
-			defineTool({
-				name: TOOL_SEARCH_TOOL_NAME,
-				description: TOOL_SEARCH_DESCRIPTION,
-				parameters: toolSearchSchema,
-				exposure: "model-only",
-				defaultActive: false,
-				replay: "safe",
-				async execute({ query, limit }, api, context) {
-					const agent = await api.agent(context);
-					const matches = searchDeferredTools(
-						agent.catalog,
-						agent.tools.map((tool) => tool.name),
-						query,
-						limit,
-					);
-					return {
-						output: renderToolSearchResult(matches).content,
-						control: { addTools: matches.map((tool) => tool.name) },
-					};
-				},
-			}),
+			defineTool({ ...createToolSearchTool(), defaultActive: false }),
 		],
 	});
 }

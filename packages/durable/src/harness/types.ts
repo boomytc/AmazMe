@@ -290,7 +290,7 @@ export interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extend
 /** Where a registered tool can be offered or called. Selection cannot reveal hidden tools. */
 export type ToolExposure = "direct" | "model-only" | "codemode" | "deferred" | "hidden";
 
-export type ToolNamespace = { readonly name: string; readonly description?: string; readonly instructions?: string };
+export type ToolNamespace = { readonly name: string; readonly aliases?: readonly string[]; readonly description?: string; readonly instructions?: string };
 
 /** Source hints for discovery and presentation; they do not grant execution permission. */
 export type ToolAnnotations = {
@@ -492,6 +492,8 @@ export type Agent<Tool extends ToolRegistration = ToolRegistration> = {
 	/** The selected extensions' permitted, non-hidden tools, including inactive direct tools. */
 	readonly catalog: readonly Tool[];
 	readonly callable: readonly Tool[];
+	/** Discoverable tools not currently offered to the model, inside the host permission boundary. */
+	readonly deferred: readonly Tool[];
 	/** Extension sections, then `instructions` when set. */
 	readonly sections: readonly PromptSection<Tool>[];
 	readonly instructions?: string;

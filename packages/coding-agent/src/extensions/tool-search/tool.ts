@@ -16,7 +16,7 @@ import {
 	TOOL_SEARCH_DESCRIPTION,
 	searchDeferredTools,
 	renderToolSearchResult,
-} from "../../core/tool-search.ts";
+} from "@amazme/durable/tool-search/search";
 export {
 	TOOL_SEARCH_TOOL_NAME,
 	toolSearchSchema,
@@ -25,14 +25,14 @@ export {
 	createToolSearchDocument,
 	DEFAULT_TOOL_SEARCH_LIMIT,
 	tokenize,
-} from "../../core/tool-search.ts";
+} from "@amazme/durable/tool-search/search";
 export type {
 	ToolSearchInput,
 	ToolSearchResultTool,
 	ToolRanker,
 	ToolSearchDocument,
 	ToolSearchMatch,
-} from "../../core/tool-search.ts";
+} from "@amazme/durable/tool-search/search";
 
 export interface ToolSearchToolDetails {
 	/** Tools loaded by this call. */

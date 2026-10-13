@@ -77,7 +77,7 @@ import {
 	MODEL_CALLS,
 } from "./models.ts";
 import { DEFAULT_MAX_OUTPUT_TOKENS, formatResult, type OutputFile } from "./output.ts";
-import { rankDocuments } from "./search.ts";
+import { Bm25Ranker } from "../tool-search/search.ts";
 
 /**
  * Version of everything in this module that turns stored results into what a script sees: result mapping, globals,
@@ -943,7 +943,7 @@ class CodemodeCall {
 			];
 			return [{ name: tool.name, text: text.join(" ") }];
 		});
-		return rankDocuments(query, documents, limit).map((name) => {
+		return new Bm25Ranker().rank(query, documents, limit).map((match) => match.name).map((name) => {
 			const tool = tools.find((candidate) => candidate.name === name)!;
 			return { name: tool.jsName, description: tool.description };
 		});

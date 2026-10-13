@@ -132,6 +132,18 @@
 			"types": "./dist/images/cloudflare.d.ts",
 			"import": "./dist/images/cloudflare.js",
 			"default": "./dist/images/cloudflare.js"
+		},
+		"./tool-search": {
+			"source": "./src/tool-search/index.ts",
+			"types": "./dist/tool-search/index.d.ts",
+			"import": "./dist/tool-search/index.js",
+			"default": "./dist/tool-search/index.js"
+		},
+		"./tool-search/search": {
+			"source": "./src/tool-search/search.ts",
+			"types": "./dist/tool-search/search.d.ts",
+			"import": "./dist/tool-search/search.js",
+			"default": "./dist/tool-search/search.js"
 		}
 	},
 	"sideEffects": false,

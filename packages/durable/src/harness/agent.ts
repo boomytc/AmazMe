@@ -298,6 +298,12 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		tools,
 		catalog,
 		callable,
+		deferred: catalog.filter(
+			(tool) =>
+				(tool.exposure === "deferred" || tool.exposure === "codemode") &&
+				!tools.some((offered) => offered.name === tool.name) &&
+				(tool.callers === undefined || tool.callers.includes("model")),
+		),
 		sections: agentSections,
 		...(instructions === undefined ? {} : { instructions }),
 		...(state?.cwd === undefined ? {} : { cwd: state.cwd }),

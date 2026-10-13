@@ -26,7 +26,7 @@ import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts"
 import { formatSize } from "../tools/truncate.ts";
 import { combineUsage } from "../usage-totals.ts";
 import { writeOutputFile } from "../../utils/output-files.ts";
-import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "../tool-search.ts";
+import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "@amazme/durable/tool-search/search";
 import { CODEMODE_DOCS_PATH, toCodemodeDeclaration } from "./declarations.ts";
 import type {
 	CodemodeModelRuntime,

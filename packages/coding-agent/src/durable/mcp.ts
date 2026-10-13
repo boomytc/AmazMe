@@ -23,7 +23,7 @@ import {
 } from "../core/mcp-servers.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
-import { TOOL_SEARCH_TOOL_NAME } from "../core/tool-search.ts";
+import { TOOL_SEARCH_TOOL_NAME } from "@amazme/durable/tool-search/search";
 import type { McpServerEntry } from "../extensions/mcp/config.ts";
 import { McpManager } from "./mcp-manager.ts";
 import type { McpManagement } from "../core/mcp/management.ts";

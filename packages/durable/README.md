@@ -774,3 +774,11 @@ Benchmarks: `npm run bench:storage`, `npm run bench:storage:memory`, `npm run be
 ## License
 
 MIT
+
+## Deferred tool discovery
+
+Install `createToolSearchExtension()` from `@amazme/durable/tool-search` to expose `tool_search`.
+Tools with `exposure: "deferred"` stay callable from scripts and enter model requests only after discovery.
+Loads use the existing conversation `tools` filter, survive restart and compaction, and follow the branch on fork.
+Host `allow`/`exclude` restrictions and tool `callers` still apply. `agent.deferred` lists the remaining candidates.
+SDK, native tools and durable code mode share the portable BM25 implementation; no second deferred flag is needed.
