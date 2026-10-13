@@ -96,20 +96,25 @@ export function createApprovalGate(options: {
 							taskId: String(api.taskId),
 							conversationId: String(api.conversationId),
 							at: options.now?.() ?? Date.now() };
-						const approved = await new Promise<boolean>((resolve) => {
-							pending.set(id, resolve);
-							publish(context, (draft) => {
-								draft.pending = [...draft.pending, request];
+						const signal = context.abortSignal;
+						const onAbort = (): void => settle(id, false, context);
+						let approved: boolean;
+						try {
+							approved = await new Promise<boolean>((resolve) => {
+								pending.set(id, resolve);
+								// Admission and publication may synchronously trigger cancellation or a decision.
+								signal?.addEventListener("abort", onAbort, { once: true });
+								if (signal?.aborted) onAbort();
+								else publish(context, (draft) => {
+									draft.pending = [...draft.pending, request];
+								});
 							});
-							// A turn that is aborted while a call waits settles the request as denied.
-							context.abortSignal?.addEventListener(
-								"abort",
-								() => {
-									if (pending.has(id)) settle(id, false, context);
-								},
-								{ once: true },
-							);
-						});
+						} finally {
+							signal?.removeEventListener("abort", onAbort);
+							// A publication failure must not leave an unreachable request behind.
+							if (pending.has(id)) settle(id, false, context);
+						}
+						context.abortSignal?.throwIfAborted();
 						if (approved) return undefined;
 						return { block: `Denied by the reader: ${call.name} was not approved.` };
 					} }),

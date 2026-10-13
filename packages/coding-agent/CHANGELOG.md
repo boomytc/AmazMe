@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Approval waits observe cancellation before and during publication, release their listeners after settlement, and retain early decisions without reporting owner cancellation as reader denial.
+
 ## [1.2.0] - 2026-10-13
 
 - Published settings, models, keybindings and theme schemas share runtime defaults and theme tokens. AmazMe interface settings and custom extension keybindings are included; theme validation is strict.
