@@ -125,6 +125,8 @@
 | `3e477eab5` | 强制 OSC 52 剪贴板 | 吸收为 AMAZME_CLIPBOARD_OSC52；不保留旧产品变量别名 |
 | `77332f7a3` | Durable 延迟工具与 tool_search 子入口 | 适配吸收；沿用 exposure 与 tools 激活持久化，不新增重复 deferred 布尔配置；SDK、原生工具和 Durable Codemode 共用排序，发现不越过权限或 callers |
 | `eb2fce43d` | 拒绝闭合等待环的等待 | 吸收 live/事务覆盖层与普通拥有任务的图检查；保留背景任务不阻塞父任务的语义 |
+| `abfe62928`、`aa499c242`、`b6fda579f`、`55df12bf6` | 有界 listFiles 与平台名称 | 吸收可选环境能力、daemon 操作、LocalExecutionEnv/RemoteExecutionEnv、nodePlatform；缺少能力直接拒绝，无旧 daemon 遍历回退 |
+| `de022efd6`、`d6370b72d` | PTY 前台进程与目录取消测试稳定性 | 吸收实际前台命令名称等待、可靠取消与跨架构平台检查 |
 
 此前配置与修复验证：AI 构建及 52 项既有检查、coding-agent 构建及 204 项既有检查、TUI 构建及 60 项按键检查、9 项打包检查和依赖/浏览器入口检查通过。真实 HTTP 长流、4 份 schema 的生成一致性、AmazMe 设置/扩展按键/严格主题及 symlink worktree 已核对；npm 12.2.0 实际打包 14 个依赖包，包含 4 份 schema 且无旧主题校验文件。TUI 原有拖选复制失败已在后续阶段解决：编辑器选区接入共享宿主剪贴板，既有用例核对实际选区与替换行为；全包通过。未新增测试。
 

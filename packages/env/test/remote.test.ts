@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import { getOrThrow, type ShellOutputInfo } from "@amazme/durable/env";
-import { afterAll, describe, expect, it } from "vitest";
-import { Connection } from "../src/connection.ts";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { Connection, nodePlatform } from "../src/connection.ts";
 import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import { daemon } from "./daemon.ts";
 
@@ -68,6 +68,51 @@ describe("RemoteExecutionEnv", () => {
 			expect(result.ok ? "ok" : result.error.code).toBe("aborted");
 		}
 		expect(Date.now() - started).toBeLessThan(10_000);
+	}, 30_000);
+
+	it("reports the remote system in Node's names", async () => {
+		const { connection } = environment();
+		const { platform, arch } = nodePlatform(await connection.info());
+		expect(platform).toBe(process.platform);
+		// CI runs the darwin-x64 release daemon on arm64 macOS through Rosetta, so it reports x64 to arm64 Node.
+		const rosetta = process.platform === "darwin" && process.arch === "arm64" && arch === "x64";
+		if (!rosetta) expect(arch).toBe(process.arch);
+		expect(nodePlatform({ os: "windows", arch: "aarch64" })).toEqual({ platform: "win32", arch: "arm64" });
+		expect(nodePlatform({ os: "macos", arch: "x86_64" })).toEqual({ platform: "darwin", arch: "x64" });
+	});
+
+	it("rejects listing before dispatch when the daemon does not advertise the capability", async () => {
+		const { env, connection } = environment();
+		const info = await connection.info();
+		expect(info.features).toContain("listFiles");
+		const advertised = vi.spyOn(connection, "info").mockResolvedValue({ ...info, features: [] });
+		const request = vi.spyOn(connection, "request");
+		try {
+			const listed = await env.listFiles(".", undefined, context);
+			expect(listed.ok ? "ok" : listed.error.code).toBe("not_supported");
+			expect(request).not.toHaveBeenCalled();
+		} finally {
+			advertised.mockRestore();
+			request.mockRestore();
+		}
+	});
+
+	it("cancels a listing in the daemon", async () => {
+		const { env, connection } = environment();
+		for (let dir = 0; dir < 100; dir++) {
+			mkdirSync(join(env.cwd, `d${dir}`));
+			for (let file = 0; file < 100; file++) writeFileSync(join(env.cwd, `d${dir}`, `f${file}`), "");
+		}
+		// The cancel follows the request at once, bypassing the client's own abort check, so the daemon stops the walk.
+		const controller = new AbortController();
+		controller.abort();
+		const cancelled = connection.request("listFiles", { path: env.cwd }, { signal: controller.signal });
+		await expect(cancelled).rejects.toMatchObject({ code: "aborted" });
+		const listed = getOrThrow(await env.listFiles(".", undefined, context));
+		expect([listed.entries.length, listed.truncated]).toEqual([10_100, false]);
+		const bounded = getOrThrow(await env.listFiles(".", { maxEntries: 5000 }, context));
+		expect([bounded.entries.length, bounded.truncated]).toEqual([5000, true]);
+		// Creating 10,000 files takes several seconds on Windows CI.
 	}, 30_000);
 
 	it("times out a command that produces no output", async () => {

@@ -7,6 +7,7 @@ mod errors;
 mod exec;
 mod frame;
 mod fs;
+mod list;
 mod output;
 mod pty;
 mod scan;
@@ -30,6 +31,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PROTOCOL: u64 = 1;
+/// Operations added after protocol 1's first release; clients check `hello.features` before using them.
+const FEATURES: &[&str] = &["listFiles"];
 /// The npm package version this daemon ships with (build.rs).
 const VERSION: &str = env!("AMAZME_ENV_VERSION");
 const PING_INTERVAL: Duration = Duration::from_secs(5);
@@ -180,6 +183,7 @@ impl Server {
                 "cwd": sys::cwd(),
                 "driveCwds": sys::drive_cwds(),
                 "pid": std::process::id(),
+                "features": FEATURES,
             }))),
             "lstat" => plain(fs::lstat(field(json, "path")?)),
             "realpath" => plain(fs::realpath(field(json, "path")?)),
@@ -311,6 +315,7 @@ impl Server {
                 plain(Ok(json!({ "handle": handle })))
             }
             "readdir" => plain(self.read_dir(json)),
+            "listFiles" => list::run(json, &|| control.aborted.load(Ordering::SeqCst)),
             "close" => {
                 self.handles
                     .lock()
