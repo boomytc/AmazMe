@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Direct package dependencies are pinned to the tested release versions; the existing workspace check validates registry pins and internal version alignment.
 - Approval waits observe cancellation before and during publication, release their listeners after settlement, and retain early decisions without reporting owner cancellation as reader denial.
 - SDK overflow recovery measures the real projection before and after compaction, retains completed summaries and reports insufficient recovery without resending. Ordinary truncated-output recovery retains its separate one-retry budget.
 - Default-tool session resume restores the recorded active loadout with CLI modifiers; explicit tool selection remains authoritative.

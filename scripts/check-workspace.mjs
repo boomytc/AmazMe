@@ -51,11 +51,69 @@ function sourceFiles(directory) {
 	});
 }
 
+/** Direct registry dependencies stay exact; workspace dependencies also match their release version. */
+export function checkDependencyVersions(
+	repoRoot,
+	packages = workspacePackages(repoRoot),
+) {
+	const files = [];
+	const rootManifest = join(repoRoot, "package.json");
+	if (existsSync(rootManifest)) files.push(rootManifest);
+	const collect = (directory) => {
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			if (
+				entry.isDirectory() &&
+				!["node_modules", "dist", ".git"].includes(entry.name)
+			)
+				collect(join(directory, entry.name));
+			else if (entry.isFile() && entry.name === "package.json")
+				files.push(join(directory, entry.name));
+		}
+	};
+	collect(join(repoRoot, "packages"));
+	const failures = [];
+	const exact =
+		/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+	for (const file of files) {
+		const manifest = JSON.parse(readFileSync(file, "utf8"));
+		for (const section of [
+			"dependencies",
+			"devDependencies",
+			"optionalDependencies",
+		]) {
+			for (const [name, specifier] of Object.entries(manifest[section] ?? {})) {
+				if (
+					/^(?:workspace:|file:|link:|portal:|git\+|github:|git:|https?:|ssh:)/.test(
+						specifier,
+					)
+				)
+					continue;
+				const alias = specifier.startsWith("npm:");
+				const version = alias
+					? specifier.slice(specifier.lastIndexOf("@") + 1)
+					: specifier;
+				const location = `${relative(repoRoot, file)}: ${section}.${name}`;
+				if (!exact.test(version))
+					failures.push(`${location} must be pinned, found ${specifier}`);
+				else if (
+					!alias &&
+					packages.has(name) &&
+					version !== packages.get(name).manifest.version
+				)
+					failures.push(
+						`${location} must match workspace version ${packages.get(name).manifest.version}, found ${version}`,
+					);
+			}
+		}
+	}
+	return failures;
+}
+
 /** Syntax-aware checks over source, including development-only host and browser modules. */
 export function checkSourceContracts(repoRoot) {
 	const root = resolve(repoRoot);
 	const packages = workspacePackages(root);
-	const failures = [];
+	const failures = checkDependencyVersions(root, packages);
 	try {
 		runtimePackages(packages, [...packages.keys()]);
 	} catch (error) {

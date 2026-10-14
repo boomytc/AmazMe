@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { checkSourceContracts, checkEntryContracts } from "./check-workspace.mjs";
+import { checkDependencyVersions, checkSourceContracts, checkEntryContracts } from "./check-workspace.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -32,6 +32,40 @@ function packageFixture(root, name, source, metadata = {}) {
 	writeFileSync(join(directory, "src/index.ts"), source);
 	return directory;
 }
+
+test("dependency checks reject registry ranges in every direct section and exact mismatched workspace versions", () => {
+	const root = fixture();
+	packageFixture(root, "ai", "export {};");
+	packageFixture(root, "agent", "export {};", {
+		dependencies: { "@amazme/ai": "^1.0.0", external: "~2.0.0" },
+		devDependencies: { alias: "npm:@vendor/dep@^1.0.0" },
+		optionalDependencies: { "@amazme/ai": "0.9.0" },
+	});
+	const failures = checkDependencyVersions(root);
+	assert.equal(failures.length, 4);
+	assert.ok(
+		failures.some((message) =>
+			message.includes(
+				"optionalDependencies.@amazme/ai must match workspace version",
+			),
+		),
+	);
+});
+
+test("dependency checks preserve exact registry aliases and non-registry references", () => {
+	const root = fixture();
+	packageFixture(root, "ai", "export {};");
+	packageFixture(root, "agent", "export {};", {
+		dependencies: {
+			"@amazme/ai": "1.0.0",
+			external: "2.0.0-rc.1",
+			alias: "npm:@vendor/dep@0.9.0",
+		},
+		devDependencies: { local: "file:../local", workspace: "workspace:*" },
+		optionalDependencies: { git: "git+https://example.com/repo.git" },
+	});
+	assert.deepEqual(checkDependencyVersions(root), []);
+});
 
 test("syntax checks distinguish type-only imports from runtime dependencies and ignore source-looking strings", () => {
 	const root = fixture();

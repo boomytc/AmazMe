@@ -47,8 +47,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@amazme/chord": "^1.2.0",
-		"@amazme/durable": "^1.2.0"
+		"@amazme/chord": "1.2.0",
+		"@amazme/durable": "1.2.0"
 	},
 	"devDependencies": {
 		"shx": "0.3.4",
