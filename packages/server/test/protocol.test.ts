@@ -72,6 +72,12 @@ test("rejects unsupported protocol versions", async () => {
 	await client.waitForClose();
 });
 
+test("rejects a cached protocol 9 client before opening Chord channels", async () => {
+	const client = connect();
+	await expect(client.hello(9)).resolves.toMatchObject({ type: "hello_error", error: { code: "version" } });
+	await client.waitForClose();
+});
+
 test("accepts fragmented hello and request frames", async () => {
 	const client = connect();
 	const hello = encodeClientMessage({ type: "hello", version: PROTOCOL_VERSION });

@@ -11,7 +11,7 @@ interface Counter {
 const Counter = remoteService<Counter>("test.counter", { add: 1 }, ["state"]);
 
 describe("product services on Chord", () => {
-	it("owns implementations and preserves handles across resource reload", async () => {
+	it("owns implementations and preserves references across resource reload", async () => {
 		const closed: number[] = [];
 		const facet = (start: number) =>
 			serviceFacet("counter", Counter, [], () => {
@@ -79,7 +79,7 @@ describe("product services on Chord", () => {
 });
 
 import { activationFacet, serviceSetFacet } from "../src/services.ts";
-it("reloads a group of stateful surfaces with an eager dependent", async () => {
+it("reloads a group of stateful surfaces with a host-owned dependent", async () => {
 	const host = createHost();
 	const scope = new ServiceScope(host);
 	const facet = (value: number) =>
@@ -106,7 +106,36 @@ it("reloads a group of stateful surfaces with an eager dependent", async () => {
 	}
 });
 
-import { ChannelEndpoint, openChannel } from "../src/channels.ts";
+import { ChannelEndpoint, frameJson, openChannel, parseChannelFrame } from "../src/channels.ts";
+
+it("preserves packed snapshots, arguments and results through the attachment JSON bridge", async () => {
+	const Large = remoteService<{ state: ReplicatedState<{ text: string }>; echo(value: string, context: Context): Promise<string> }>(
+		"test.large", { echo: 1 }, ["state"],
+	);
+	const text = "large payload ".repeat(20_000);
+	const server = createHost({ name: "large-server" });
+	const endpoint = new ChannelEndpoint(server, () => []);
+	const client = createHost({ kind: "client" });
+	const scope = new ServiceScope(client, { at: server.name });
+	try {
+		await server.load([serviceFacet("large", Large, [], () => ({ value: {
+			state: replicatedState({ text }), echo: async value => value,
+		} }))]);
+		const channel = await openChannel((call, publish, ctx) => endpoint.invoke(call,
+			(name, frame, context) => publish(name, frame === undefined ? undefined : parseChannelFrame(frameJson(frame)), context), ctx), context);
+		client.connect(channel.link);
+		const large = scope.get(Large);
+		await scope.ready();
+		expect(large.state.value?.text).toBe(text);
+		expect(await large.echo(text, context)).toBe(text);
+		await channel.close();
+	} finally {
+		scope.dispose();
+		await client.close();
+		await endpoint.dispose();
+		await server.close();
+	}
+});
 it("isolates identical channel names across attachments and joins cancelled call cleanup", async () => {
 	const Pending = remoteService<{ wait(context: Context): Promise<void> }>("test.pending", { wait: 0 });
 	const server = createHost({ name: "server" });

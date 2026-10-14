@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Public protocol 10 requires Chord link protocol 2, rejecting stale consumers at the authenticated byte handshake before opening incompatible native channels.
+
+### Changed
+
+- Application service owners use Chord host lifetimes, remote variants and reference types. Channel bridges preserve compressed payloads across JSON/CBOR instead of serializing opaque packed objects as ordinary values.
+
 ## [1.2.0] - 2026-10-13
 
 ### Breaking Changes

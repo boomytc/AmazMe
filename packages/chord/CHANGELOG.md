@@ -2,7 +2,27 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Terminology follows the concepts: a reference (what `get` returns) is `Ref<C>` (was `Handle<C>`), its status `RefStatus` (was `HandleStatus`); what a factory returns is `ImplementationOf<C>` (was `BehaviorOf<C>`); a resource's options are a `ResourceDeclaration` (was `ResourceSpec`); epochs are code versions: `Ctx.codeVersion`, `RootOptions.codeVersion`, `Shape.codeVersion`, `Host.codeVersion`/`previousCodeVersion`, and the `codeVersion` fields of frames and reload reports (all were `epoch`). Docs and messages say object (was record) and reference (was handle and hold); the `hold` and `release` frame types keep their names
+- A remote object's variant is named `variant` (was `kind`): factories return `{ variant: "editor", … }`, references expose `ref.variant` and `shape.variant`, and the `shape` frame carries `variant`. `variant` is reserved as a member name; `kind` no longer is
+- Links have a protocol version (`PROTOCOL_VERSION`, now 2), announced in `hello`. Peers of different versions do not talk: the side that notices closes the link with reason `protocol-version <n>`, and both sides report it through `LinkOptions.onProtocolMismatch`. Peers without a version (older Chord) are refused
+- `serve(…, { lifetime })` replaces `eager`: `"referenced"` (the default) creates an object at the first `get` of its address and disposes it after the last reference is released (plus `linger`); `"host"` creates the type's one object when its facet loads and keeps it until the host closes or a reload removes its facet. `lifetime: "host"` is refused at `serve` for remote types, for inputs that do not accept `{}` and together with `linger`; every `get` of such a type reaches its one object, created for the host principal, and another input is `invalid/input`. `eager: { input }` and the extra objects host-principal `get`s with other inputs created are gone. Only `"host"` objects may register (reason `invalid/not_host_lifetime`, was `not_eager`). `LoadOptions.awaitHostObjects` replaces `awaitEager`
+
+### Added
+
+- `encodeFrameObject()` preserves packed payloads through application JSON/CBOR bridges. Object links inflate them in browsers in FIFO order; malformed packed frames close their link.
+
+- Links are flow controlled end to end: peers acknowledge what they processed (`ack` frames, announced with `acks` in `hello`), and while a window of frames is unacknowledged (`window` in `LinkOptions`, default 256 KiB), state frames wait at the sender, coalesced per subscription, instead of queuing in front of call results. A stalled peer costs a bounded slot per subscription; a slot that outgrows it becomes a reset. Calls, results and control frames are never held back, so under load a result can arrive before state changes made before it
+- `maxCalls` in `AcceptOptions` limits the calls a peer may have in progress on a link; further ones are answered at once with `unavailable` (reason `too_many_calls`) and the link stays open
+
+### Changed
+
+- `Link.send` returns the encoded frame's size as sent (deflated payloads count as sent) when the transport knows it (memory and WebSocket links); flow control counts these sizes, so links that return nothing (IPC, custom links) are not windowed
+
 ### Fixed
+
+- WebSocket links refusing packed messages also refuse their object envelope in a text message.
 
 - `nodeLoader` registers every facet's directory before importing any, so a facet that imports a file of a facet listed after it gets the same module copy as that facet; before, the load order could produce duplicates.
 - A link that is already closed when a host accepts or routes to it is no longer kept as a connection: before, a route that returned a dead link (a child process that exited before its link was wrapped) made every later call to that host name fail with `unavailable` until restart, and leaked the connection's ping timer.

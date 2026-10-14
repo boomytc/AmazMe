@@ -1,5 +1,5 @@
 /** Multiplex Chord links over the application's authenticated, attachment-fenced transport. */
-import { memoryLinkPair, type Context, type Frame, type Host, type JsonValue, type Link } from "@amazme/chord";
+import { encodeFrameObject, memoryLinkPair, type Context, type Frame, type Host, type JsonValue, type Link } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
@@ -28,7 +28,7 @@ export function parseChannelCall(value: unknown): ChannelCall {
 	return value;
 }
 export function frameJson(frame: Frame): JsonValue {
-	return JSON.parse(JSON.stringify(frame)) as JsonValue;
+	return JSON.parse(JSON.stringify(encodeFrameObject(frame))) as JsonValue;
 }
 export function parseChannelFrame(value: unknown): Frame {
 	if (value === null || typeof value !== "object" || !("t" in value) || typeof value.t !== "string")

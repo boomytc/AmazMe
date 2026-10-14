@@ -2,32 +2,59 @@ import { contractFromDescription, LOCAL_VARIANT } from "./contract.ts";
 import { type Encoder, encoder } from "./delta/index.ts";
 import { ChordError, invalid } from "./errors.ts";
 import type { HostImpl } from "./host.ts";
-import type { Link } from "./link.ts";
-import { type CtxImpl, HandleImpl, kindOf } from "./record.ts";
-import type { RemoteChannel, RemoteHandle, StateSink } from "./remote.ts";
+import { type Link, Packed, unpack } from "./link.ts";
+import { type CtxImpl, RefImpl, variantOf } from "./object.ts";
+import type { RemoteChannel, RemoteRef, StateSink } from "./remote.ts";
 import { assertValid } from "./schema.ts";
 import type { Ctx, Principal, Readable, StateEvent } from "./types.ts";
-import { type Frame, fromWireError, isFrame, type RootRef, toWireError } from "./wire.ts";
+import { type Frame, fromWireError, isFrame, PROTOCOL_VERSION, type RootRef, toWireError } from "./wire.ts";
 
 export interface LinkOptions {
 	/** Milliseconds between pings (default 15000). */
 	readonly pingInterval?: number;
 	/** Close the link when nothing arrived for this long (default 45000). Everything held through it is released. */
 	readonly pingTimeout?: number;
+	/**
+	 * Unacknowledged frame bytes (JSON text length) beyond which state frames wait for the peer (default 256 KiB). Only
+	 * applies when both ends acknowledge frames and the link reports sizes; `Infinity` never holds state back.
+	 */
+	readonly window?: number;
+	/**
+	 * The peer speaks another link protocol version (`peer`: undefined if it did not say): the link closes, and should
+	 * not be reconnected with the same code. A browser reloads its page, for instance.
+	 */
+	readonly onProtocolMismatch?: (versions: { readonly local: number; readonly peer: number | undefined }) => void;
 }
+
+const DEFAULT_WINDOW = 256 * 1024;
+/** A waiting subscription keeps at most this many windows of ops; beyond, its current value replaces them. */
+const PENDING_WINDOWS = 4;
+
+type StateFrame = Extract<Frame, { t: "state" }>;
+
+/**
+ * What waits for one subscription: a snapshot, reset or error (`base`), then encoded ops to apply after it, in order.
+ * Ops stay as they arrived (the receiving decoder validates them).
+ */
+type PendingState = { base: StateFrame | undefined; ops: (readonly unknown[])[]; size: number };
 
 export interface AcceptOptions extends LinkOptions {
 	/** The principal of whatever connects, from the app's authenticator. Every request on the link acts as it. */
 	readonly principal: Principal;
 	/**
-	 * What the peer is, decided here and never by its `hello`: `client` (default; a browser: no roots, no epochs, not
-	 * a reload participant, not addressable) or `host` (a child host; needs `name`).
+	 * What the peer is, decided here and never by its `hello`: `client` (default; a browser: no roots, no code versions,
+	 * not a reload participant, not addressable) or `host` (a child host; needs `name`).
 	 */
 	readonly kind?: "host" | "client";
 	/** A child host's name: its hello must match, and it is reachable `at` this name. */
 	readonly name?: string;
 	/** On `invalidatePrincipal`: a new principal keeps the link, `undefined` closes it (default: close). */
 	readonly restamp?: (principal: Principal) => Principal | undefined;
+	/**
+	 * Calls the peer may have in progress on this link (default: no limit). Further ones never run: they are answered
+	 * at once with `unavailable` (reason `too_many_calls`), and the link stays open.
+	 */
+	readonly maxCalls?: number;
 }
 
 export interface Peer {
@@ -38,8 +65,8 @@ export interface Peer {
 
 /** A hold the peer made on this host: served locally or relayed to another link. */
 type Served =
-	| { readonly kind: "local"; readonly handle: HandleImpl; readonly principal: Principal; readonly feeds: Set<number> }
-	| { readonly kind: "relay"; readonly relay: RelayHold };
+	| { readonly kind: "local"; readonly ref: RefImpl; readonly principal: Principal; readonly feeds: Set<number> }
+	| { readonly kind: "relay"; readonly relay: RelayRef };
 
 type Pending = { readonly resolve: (value: unknown) => void; readonly reject: (error: unknown) => void };
 
@@ -52,7 +79,7 @@ const unavailable = (message: string): ChordError => new ChordError("unavailable
  * calls queued while the route resolves, and the downstream twins once forwarded. `close` undoes all of it exactly
  * once (cancels calls downstream, drops subscriptions, releases the downstream hold, rejects waiters).
  */
-export class RelayHold {
+export class RelayRef {
 	readonly origin: Connection;
 	readonly frame: Extract<Frame, { t: "hold" }>;
 	readonly principal: Principal;
@@ -97,7 +124,7 @@ export class RelayHold {
 		if (this.closed) return;
 		this.down = down;
 		this.downId = down.nextId();
-		down.relayedHolds.set(this.downId, this);
+		down.relayedRefs.set(this.downId, this);
 		down.send({
 			...this.frame,
 			id: this.downId,
@@ -124,11 +151,25 @@ export class RelayHold {
 		down.send({ t: "sub", id: entry.downId, hold: this.downId, member: entry.member });
 	}
 
+	/**
+	 * The origin could not keep up and dropped what waited for this subscription: subscribe downstream anew, so the
+	 * provider's snapshot (a reset for the origin's consumer) replaces the ops that were lost.
+	 */
+	resync(originSubId: number): void {
+		const entry = this.subs.get(originSubId);
+		this.origin.dropState(originSubId);
+		if (entry?.downId === undefined || this.down === undefined) return;
+		this.down.relayedSubs.delete(entry.downId);
+		this.down.send({ t: "unsub", id: entry.downId });
+		this.#forwardSub(originSubId, entry);
+	}
+
 	unsubscribe(originSubId: number, forward = true): void {
 		const entry = this.subs.get(originSubId);
 		if (entry === undefined) return;
 		this.subs.delete(originSubId);
 		this.origin.relaySubs.delete(originSubId);
+		this.origin.dropState(originSubId);
 		if (entry.downId !== undefined && this.down !== undefined) {
 			this.down.relayedSubs.delete(entry.downId);
 			if (forward) this.down.send({ t: "unsub", id: entry.downId });
@@ -146,7 +187,7 @@ export class RelayHold {
 		for (const originSubId of [...this.subs.keys()]) this.unsubscribe(originSubId, options.releaseDown);
 		if (this.origin.served.get(this.originId)?.kind === "relay") this.origin.served.delete(this.originId);
 		if (this.down !== undefined) {
-			this.down.relayedHolds.delete(this.downId);
+			this.down.relayedRefs.delete(this.downId);
 			if (options.releaseDown) this.down.send({ t: "release", id: this.downId });
 		}
 		for (const waiter of this.#waiters) waiter.reject(error);
@@ -157,13 +198,13 @@ export class RelayHold {
 
 /** One relayed call: settles once, by result, cancellation or the relay closing; removes both mappings. */
 export class RelayCall {
-	readonly relay: RelayHold;
+	readonly relay: RelayRef;
 	readonly originId: number;
 	readonly downId: number;
 	readonly #pending: Pending;
 	#settled = false;
 
-	constructor(relay: RelayHold, originId: number, downId: number, pending: Pending) {
+	constructor(relay: RelayRef, originId: number, downId: number, pending: Pending) {
 		this.relay = relay;
 		this.originId = originId;
 		this.downId = downId;
@@ -191,7 +232,33 @@ export class RelayCall {
 
 // ─── connection ──────────────────────────────────────────────────────────────
 
-/** One end of a link on a host: consumer of remote handles, provider for the peer's holds, and relay. */
+/**
+ * One end of a link on a host: consumer of remote references, provider for the peer's holds, and relay.
+ *
+ * Flow control
+ * ------------
+ *
+ * Problem: state is pushed as fast as it changes, but a peer may read slowly (a phone behind a relay), and a relay may
+ * hide that: Cloudflare forwards to browsers without backpressure. Everything sent then queues in front of the next
+ * call result. Example: a browser opens three long transcripts (500 KiB of snapshots each) over a 5 Mbit/s path; a
+ * result sent next waits 2.4 s, and the snapshot of a transcript the user already left is still sent in full.
+ *
+ * Solution: the peer acknowledges what it processed (`ack`, a cumulative frame count), and the sender counts the sizes
+ * of the frames not yet acknowledged. While they exceed the window, *state* frames wait here, one slot per
+ * subscription: ops are appended to the slot (encoded batches of one stream may be concatenated, see `encoder`), and
+ * a snapshot, reset or error replaces it. Unsubscribing drops the slot. A slot whose ops outgrow `PENDING_WINDOWS`
+ * windows is replaced by the current value (a reset), or, on a relay, by a fresh downstream subscription (`resync`),
+ * so memory stays bounded however long the peer stalls. Acknowledgements send the slots in the order they were
+ * created, as long as the window allows.
+ *
+ * Everything else (results, shapes, gone, reload control, pings) is sent at once: it is bounded by the requests the
+ * peer makes, and it must not wait behind state. Hence the one ordering exception of a link: while state waits, a
+ * result can arrive before state changes made before it. Frames of one subscription stay in order.
+ *
+ * The window bounds what is unacknowledged when a frame is sent, so one frame (a large snapshot) may exceed it. Both
+ * hellos must announce `acks`; with an older peer nothing is acknowledged and nothing waits. Links that do not report
+ * sizes (IPC) never fill the window.
+ */
 export class Connection implements RemoteChannel {
 	readonly host: HostImpl;
 	readonly link: Link;
@@ -202,21 +269,37 @@ export class Connection implements RemoteChannel {
 	readonly restamp: ((principal: Principal) => Principal | undefined) | undefined;
 	/** Bumped when the stamped principal is revoked or re-stamped: relays from before are refused. */
 	generation = 0;
-	/** The epoch a downstream host peer runs (from its hello, then from commits). */
-	peerEpoch: number | undefined;
-	/** A downstream host peer is usable once it runs this host's current epoch (see `HostImpl.peerHello`). */
+	/** The code version a downstream host peer runs (from its hello, then from commits). */
+	peerCodeVersion: number | undefined;
+	/** A downstream host peer is usable once it runs this host's current code version (see `HostImpl.peerHello`). */
 	synced: boolean;
-	/** Epochs this child announced while behind this host (fenced): this host never ran them. */
-	readonly fencedEpochs = new Set<number>();
-	/** Roots of fenced epochs, by the epoch of this host they were admitted in. */
+	/** Code versions this child announced while behind this host (fenced): this host never ran them. */
+	readonly fencedCodeVersions = new Set<number>();
+	/** Roots of fenced code versions, by the code version of this host they were admitted in. */
 	readonly #admitted = new Map<string, number>();
 	#parentName: string | undefined;
 	readonly #syncWaiters = new Set<Pending>();
 	#nextId = 1;
 	#lastSeen = Date.now();
 	#pinger: ReturnType<typeof setInterval> | undefined;
+	readonly #maxCalls: number;
+	// flow control (see the class comment)
+	readonly #window: number;
+	/** Whether the peer acknowledges frames; until its hello is here, frames are counted in case it does. */
+	#peerAcks: boolean | undefined;
+	#sent = 0;
+	#acked = 0;
+	/** Sizes of the frames sent after the last acknowledged one. */
+	#unacked: number[] = [];
+	#unackedBytes = 0;
+	readonly #pending = new Map<number, PendingState>();
+	#received = 0;
+	#ackTimer: ReturnType<typeof setTimeout> | undefined;
+	readonly #onProtocolMismatch: LinkOptions["onProtocolMismatch"];
+	/** The peer speaks another protocol version: nothing it sends is processed any more. */
+	#mismatched = false;
 	// consumer side: what this host asked of the peer
-	readonly remotes = new Map<number, RemoteHandle>();
+	readonly remotes = new Map<number, RemoteRef>();
 	readonly calls = new Map<number, Pending>();
 	readonly subs = new Map<number, (frame: StateSink) => void>();
 	// provider side: what the peer asked of this host
@@ -224,11 +307,11 @@ export class Connection implements RemoteChannel {
 	readonly incoming = new Map<number, AbortController>();
 	readonly feeds = new Map<number, () => void>();
 	/** Origin side of relays: the peer's sub ids that are relayed. */
-	readonly relaySubs = new Map<number, RelayHold>();
+	readonly relaySubs = new Map<number, RelayRef>();
 	// downstream side of relays: ids this host used on this link
-	readonly relayedHolds = new Map<number, RelayHold>();
+	readonly relayedRefs = new Map<number, RelayRef>();
 	readonly relayedCalls = new Map<number, RelayCall>();
-	readonly relayedSubs = new Map<number, { readonly relay: RelayHold; readonly originSubId: number }>();
+	readonly relayedSubs = new Map<number, { readonly relay: RelayRef; readonly originSubId: number }>();
 	/** Reload votes awaited from this (child) peer. */
 	readonly votes = new Map<number, Pending>();
 
@@ -240,6 +323,7 @@ export class Connection implements RemoteChannel {
 			readonly principal: Principal;
 			readonly peer: Peer;
 			readonly restamp?: (principal: Principal) => Principal | undefined;
+			readonly maxCalls?: number;
 		} & LinkOptions,
 	) {
 		this.host = host;
@@ -249,9 +333,19 @@ export class Connection implements RemoteChannel {
 		this.principal = config.principal;
 		this.restamp = config.restamp;
 		this.synced = !(this.role === "downstream" && this.peer.kind === "host");
+		this.#window = config.window ?? DEFAULT_WINDOW;
+		this.#maxCalls = config.maxCalls ?? Number.POSITIVE_INFINITY;
+		this.#onProtocolMismatch = config.onProtocolMismatch;
 		link.onClose((reason) => this.#closed(reason));
 		link.receive((frame) => this.#receive(frame));
-		this.send({ t: "hello", name: host.name, kind: host.kind, epoch: host.current.id });
+		this.send({
+			t: "hello",
+			protocol: PROTOCOL_VERSION,
+			name: host.name,
+			kind: host.kind,
+			codeVersion: host.current.id,
+			acks: true,
+		});
 		const interval = config.pingInterval ?? 15_000;
 		const timeout = config.pingTimeout ?? 45_000;
 		// A link that was already closed closed this connection above; it needs no keepalive.
@@ -274,22 +368,84 @@ export class Connection implements RemoteChannel {
 	}
 
 	send(frame: Frame): void {
-		this.link.send(frame);
+		const size = this.link.send(frame) ?? 0;
+		if (this.#peerAcks === false) return;
+		this.#sent++;
+		this.#unacked.push(size);
+		this.#unackedBytes += size;
+	}
+
+	/** Sends a state frame, or keeps it waiting (see the class comment). False: the slot is full, send a reset. */
+	sendState(frame: StateFrame): boolean {
+		let slot = this.#pending.get(frame.id);
+		if (slot === undefined && !this.#full) {
+			this.send(frame);
+			return true;
+		}
+		if (slot === undefined) {
+			slot = { base: undefined, ops: [], size: 0 };
+			this.#pending.set(frame.id, slot);
+		}
+		if (frame.ops === undefined) {
+			slot.base = frame;
+			slot.ops = [];
+			slot.size = 0;
+			return true;
+		}
+		const size = JSON.stringify(frame.ops).length;
+		if (slot.size + size > this.#window * PENDING_WINDOWS) return false;
+		for (const op of frame.ops) slot.ops.push(op);
+		slot.size += size;
+		return true;
+	}
+
+	/** Forgets what waits for a subscription that ended. */
+	dropState(id: number): void {
+		this.#pending.delete(id);
+	}
+
+	get #full(): boolean {
+		return this.#peerAcks === true && this.#unackedBytes >= this.#window;
+	}
+
+	#onAck(n: number): void {
+		if (this.#peerAcks !== true || n < this.#acked || n > this.#sent) {
+			this.#violation(`ack ${n} outside ${this.#acked}..${this.#sent}`);
+			return;
+		}
+		for (const size of this.#unacked.splice(0, n - this.#acked)) this.#unackedBytes -= size;
+		this.#acked = n;
+		for (const [id, slot] of this.#pending) {
+			if (this.#full) return;
+			this.#pending.delete(id);
+			if (slot.base !== undefined) this.send(slot.base);
+			if (slot.ops.length > 0) this.send({ t: "state", id, ops: slot.ops });
+		}
+	}
+
+	/** Acknowledges once the frames that arrived together are processed: one ack per burst, not per frame. */
+	#scheduleAck(): void {
+		if (this.#peerAcks !== true || this.#ackTimer !== undefined || !this.open) return;
+		this.#ackTimer = setTimeout(() => {
+			this.#ackTimer = undefined;
+			this.link.send({ t: "ack", n: this.#received });
+		}, 0);
+		this.#ackTimer.unref?.();
 	}
 
 	nextId(): number {
 		return this.#nextId++;
 	}
 
-	/** Resolves once the peer is usable (a host peer runs this host's epoch); rejects if the link closes first. */
+	/** Resolves once the peer is usable (a host peer runs this host's code version); rejects if the link closes first. */
 	whenSynced(): Promise<void> {
 		if (!this.open) return Promise.reject(unavailable(`link to ${this.name ?? "peer"} closed`));
 		if (this.synced) return Promise.resolve();
 		return new Promise<void>((resolve, reject) => this.#syncWaiters.add({ resolve: resolve as () => void, reject }));
 	}
 
-	markSynced(epoch: number): void {
-		this.peerEpoch = epoch;
+	markSynced(codeVersion: number): void {
+		this.peerCodeVersion = codeVersion;
 		this.synced = true;
 		for (const waiter of this.#syncWaiters) waiter.resolve(undefined);
 		this.#syncWaiters.clear();
@@ -307,6 +463,21 @@ export class Connection implements RemoteChannel {
 	}
 
 	/** A protocol violation: the peer cannot be trusted with anything on this link any more. */
+	/**
+	 * Stops talking to a peer of another protocol version: reports it and closes the link. The close reason tells the
+	 * peer this side's version (`protocol-version <n>`); a peer that noticed first told us the same way (`#closed`).
+	 */
+	#protocolMismatch(peer: number | undefined, close = true): void {
+		if (this.#mismatched) return;
+		this.#mismatched = true;
+		try {
+			this.#onProtocolMismatch?.({ local: PROTOCOL_VERSION, peer });
+		} catch (error) {
+			this.host.report(error);
+		}
+		if (close) this.link.close(`protocol-version ${PROTOCOL_VERSION}`);
+	}
+
 	#violation(reason: string): void {
 		this.host.report(new ChordError("invalid", `link to ${this.name ?? "peer"}: ${reason}`, { reason: "protocol" }));
 		this.link.close(`protocol error: ${reason}`);
@@ -314,19 +485,19 @@ export class Connection implements RemoteChannel {
 
 	// ─── consumer side (RemoteChannel) ───
 
-	hold(handle: RemoteHandle): number {
+	hold(ref: RemoteRef): number {
 		const id = this.nextId();
-		this.remotes.set(id, handle);
-		handle.bound(this, id);
-		const principal = handle.principal;
+		this.remotes.set(id, ref);
+		ref.bound(this, id);
+		const principal = ref.principal;
 		this.send({
 			t: "hold",
 			id,
-			at: handle.at,
-			token: handle.contract.description,
-			input: handle.input,
+			at: ref.at,
+			token: ref.contract.description,
+			input: ref.input,
 			...(principal === undefined ? {} : { principal }),
-			...(handle.owner === "client" ? { client: true } : {}),
+			...(ref.owner === "client" ? { client: true } : {}),
 		});
 		return id;
 	}
@@ -360,7 +531,7 @@ export class Connection implements RemoteChannel {
 					reject(error);
 				},
 			});
-			// Clients never carry roots or epochs: the server starts roots for them.
+			// Clients never carry roots or code versions: the server starts roots for them.
 			const carried = root !== undefined && this.host.kind === "host";
 			if (carried) this.host.rootSent(root.rootId, this);
 			this.send({ t: "call", id, hold, member, args, ...(carried ? { root } : {}) });
@@ -381,16 +552,23 @@ export class Connection implements RemoteChannel {
 	// ─── receiving ───
 
 	#receive(frame: unknown): void {
+		if (this.#mismatched) return;
 		this.#lastSeen = Date.now();
 		if (!isFrame(frame)) {
 			this.#violation("malformed frame");
 			return;
 		}
+		if (frame.t === "ack") {
+			this.#onAck(frame.n);
+			return;
+		}
+		this.#received++;
 		try {
 			this.#dispatch(frame);
 		} catch (error) {
 			this.host.report(error);
 		}
+		this.#scheduleAck();
 	}
 
 	#dispatch(frame: Frame): void {
@@ -403,6 +581,7 @@ export class Connection implements RemoteChannel {
 				return;
 			case "pong":
 			case "bye":
+			case "ack":
 				return;
 			case "hold":
 				this.#onHold(frame);
@@ -449,7 +628,7 @@ export class Connection implements RemoteChannel {
 				}
 				if (frame.t === "invalidate") {
 					this.host.invalidatePrincipal(frame.pattern).catch((error: unknown) => this.host.report(error));
-				} else if (frame.t === "retire") this.host.allowRetire(frame.epoch);
+				} else if (frame.t === "retire") this.host.allowRetire(frame.codeVersion);
 				else this.host.onReloadFrame(this, frame);
 				return;
 			case "vote": {
@@ -467,10 +646,21 @@ export class Connection implements RemoteChannel {
 	}
 
 	/**
-	 * The peer's hello must agree with what this side decided about it. A downstream host announces its epoch: the
-	 * host either finds it in step or fences and reconciles it (never renumbers).
+	 * The peer's hello must agree with what this side decided about it. A downstream host announces its code version:
+	 * the host either finds it in step or fences and reconciles it (never renumbers).
 	 */
 	#onHello(frame: Extract<Frame, { t: "hello" }>): void {
+		if ((frame.protocol ?? 1) !== PROTOCOL_VERSION) {
+			this.#protocolMismatch(frame.protocol ?? 1);
+			return;
+		}
+		if (this.#peerAcks === undefined) {
+			this.#peerAcks = frame.acks === true;
+			if (!this.#peerAcks) {
+				this.#unacked = [];
+				this.#unackedBytes = 0;
+			}
+		}
 		if (this.role === "upstream") {
 			if (frame.kind !== "host") {
 				this.#violation("parent is not a host");
@@ -485,7 +675,7 @@ export class Connection implements RemoteChannel {
 			);
 			return;
 		}
-		if (this.peer.kind === "host") this.host.peerHello(this, frame.epoch);
+		if (this.peer.kind === "host") this.host.peerHello(this, frame.codeVersion);
 	}
 
 	/**
@@ -513,43 +703,43 @@ export class Connection implements RemoteChannel {
 				this.send({ t: "gone", id: frame.id, error: toWireError(unavailable(`${this.host.name} does not relay`)) });
 				return;
 			}
-			const relay = new RelayHold(this, frame, principal, client);
+			const relay = new RelayRef(this, frame, principal, client);
 			this.served.set(frame.id, { kind: "relay", relay });
 			this.host.relay(relay).catch((error: unknown) => relay.close(error, { releaseDown: true, notify: true }));
 			return;
 		}
-		let handle: HandleImpl;
+		let ref: RefImpl;
 		try {
 			const token = contractFromDescription(frame.token);
 			if (token.scope !== "remote") throw invalid("token", `${token.name} is local; only remote types cross links`);
 			const acquired = this.host.acquire(token, frame.input, { principal }, client ? "client" : "connection");
-			if (!(acquired instanceof HandleImpl)) throw unavailable("not a local handle");
-			handle = acquired;
+			if (!(acquired instanceof RefImpl)) throw unavailable("not a local reference");
+			ref = acquired;
 		} catch (error) {
 			this.send({ t: "gone", id: frame.id, error: toWireError(client ? clientError(error) : error) });
 			return;
 		}
-		const served: Served = { kind: "local", handle, principal, feeds: new Set() };
+		const served: Served = { kind: "local", ref, principal, feeds: new Set() };
 		this.served.set(frame.id, served);
 		const shape = (): void => {
-			const current = handle.shape;
+			const current = ref.shape;
 			if (current === undefined || this.served.get(frame.id) !== served) return;
 			this.send({
 				t: "shape",
 				id: frame.id,
-				kind: current.kind,
+				variant: current.variant,
 				members: current.members,
 				contract: current.contract,
-				epoch: current.epoch,
+				codeVersion: current.codeVersion,
 			});
 		};
-		handle.onShape(shape);
-		handle.goneListeners.add((error) => {
+		ref.onShape(shape);
+		ref.goneListeners.add((error) => {
 			if (this.served.get(frame.id) !== served) return;
 			this.#dropServed(frame.id, false);
 			this.send({ t: "gone", id: frame.id, error: toWireError(error) });
 		});
-		if (handle.status === "live") shape();
+		if (ref.status === "live") shape();
 	}
 
 	/** Forgets a served hold: unsubscribes its feeds and releases it (locally or downstream). */
@@ -565,12 +755,21 @@ export class Connection implements RemoteChannel {
 			return;
 		}
 		for (const feed of served.feeds) this.#onUnsub(feed);
-		if (release) served.handle.release();
+		if (release) served.ref.release();
 	}
 
 	#onCall(frame: Extract<Frame, { t: "call" }>): void {
 		if (this.incoming.has(frame.id)) {
 			this.#violation(`duplicate call id ${frame.id}`);
+			return;
+		}
+		if (this.incoming.size >= this.#maxCalls) {
+			const error = new ChordError(
+				"unavailable",
+				`Too many calls in progress on this connection (${this.#maxCalls}); wait for earlier ones to finish`,
+				{ reason: "too_many_calls" },
+			);
+			this.send({ t: "result", id: frame.id, error: toWireError(error) });
 			return;
 		}
 		const served = this.served.get(frame.hold);
@@ -586,19 +785,19 @@ export class Connection implements RemoteChannel {
 		const options = { principal, signal: controller.signal };
 		const run =
 			served.kind === "local"
-				? (ctx: Ctx) => served.handle.record.call(served.handle, frame.member, frame.args, ctx as CtxImpl)
+				? (ctx: Ctx) => served.ref.object.call(served.ref, frame.member, unpack(frame.args), ctx as CtxImpl)
 				: (ctx: Ctx) =>
 						relayCall(
 							served.relay,
 							frame,
-							{ rootId: ctx.rootId, epoch: ctx.epoch },
+							{ rootId: ctx.rootId, codeVersion: ctx.codeVersion },
 							controller.signal,
 							this.host,
 						);
 		const result =
 			root === undefined
 				? this.host.root(run, options)
-				: this.host.joinRoot(root.rootId, root.epoch, run, { ...options, from: this });
+				: this.host.joinRoot(root.rootId, root.codeVersion, run, { ...options, from: this });
 		result
 			.then(
 				(value) => this.send({ t: "result", id: frame.id, value }),
@@ -608,19 +807,21 @@ export class Connection implements RemoteChannel {
 	}
 
 	/**
-	 * A child that connected behind this host runs roots of an epoch this host never had (it was fenced and is being,
-	 * or was, reconciled). Such a root is admitted in this host's current epoch at its first call here, and keeps that
-	 * epoch for its later calls (`superseded` once this host retired it). Other unknown epochs stay `superseded`.
+	 * A child that connected behind this host runs roots of a code version this host never had (it was fenced and is
+	 * being, or was, reconciled). Such a root is admitted in this host's current code version at its first call here,
+	 * and keeps that code version for its later calls (`superseded` once this host retired it). Other unknown code
+	 * versions stay `superseded`.
 	 */
 	#admitRoot(root: RootRef | undefined): RootRef | undefined {
-		if (root === undefined || this.role !== "downstream" || !this.fencedEpochs.has(root.epoch)) return root;
-		if (this.host.hasEpoch(root.epoch)) return root;
-		let epoch = this.#admitted.get(root.rootId);
-		if (epoch === undefined) {
-			epoch = this.host.current.id;
-			this.#admitted.set(root.rootId, epoch);
+		if (root === undefined || this.role !== "downstream" || !this.fencedCodeVersions.has(root.codeVersion))
+			return root;
+		if (this.host.hasCodeVersion(root.codeVersion)) return root;
+		let codeVersion = this.#admitted.get(root.rootId);
+		if (codeVersion === undefined) {
+			codeVersion = this.host.current.id;
+			this.#admitted.set(root.rootId, codeVersion);
 		}
-		return { rootId: root.rootId, epoch };
+		return { rootId: root.rootId, codeVersion };
 	}
 
 	#onSub(frame: Extract<Frame, { t: "sub" }>): void {
@@ -637,7 +838,7 @@ export class Connection implements RemoteChannel {
 			served.relay.subscribe(frame.id, frame.member);
 			return;
 		}
-		const readable = served.handle.member(frame.member) as Readable<unknown> | undefined;
+		const readable = served.ref.member(frame.member) as Readable<unknown> | undefined;
 		if (readable === undefined || typeof readable.events !== "function") {
 			this.send({
 				t: "state",
@@ -649,20 +850,21 @@ export class Connection implements RemoteChannel {
 		let stream: Encoder = encoder();
 		const send = (event: StateEvent<unknown>): void => {
 			if (event.type === "ops") {
-				this.send({ t: "state", id: frame.id, ops: stream.encode(event.ops) });
-				return;
+				if (this.sendState({ t: "state", id: frame.id, ops: stream.encode(event.ops) })) return;
+				// Too many ops wait for a slow peer: the current value replaces them.
+				event = { type: "reset", value: event.value };
 			}
-			// A loading provider handle has nothing yet: the hydrated value follows as a reset.
+			// A loading provider reference has nothing yet: the hydrated value follows as a reset.
 			if (event.value === undefined) return;
 			// Snapshots are validated against the effective schema once per (re)subscription; ops only in dev mode.
 			try {
-				validateSnapshot(served.handle, frame.member, event.value);
+				validateSnapshot(served.ref, frame.member, event.value);
 			} catch (error) {
-				this.send({ t: "state", id: frame.id, error: toWireError(error) });
+				this.sendState({ t: "state", id: frame.id, error: toWireError(error) });
 				return;
 			}
 			stream = encoder();
-			this.send(
+			this.sendState(
 				event.type === "snap"
 					? { t: "state", id: frame.id, snap: event.value }
 					: { t: "state", id: frame.id, reset: event.value },
@@ -674,6 +876,7 @@ export class Connection implements RemoteChannel {
 	}
 
 	#onUnsub(id: number): void {
+		this.dropState(id);
 		const unsubscribe = this.feeds.get(id);
 		if (unsubscribe !== undefined) {
 			this.feeds.delete(id);
@@ -683,20 +886,25 @@ export class Connection implements RemoteChannel {
 	}
 
 	#onHoldReply(frame: Extract<Frame, { t: "shape" | "gone" }>): void {
-		const relay = this.relayedHolds.get(frame.id);
+		const relay = this.relayedRefs.get(frame.id);
 		if (relay !== undefined) {
 			if (frame.t === "gone") relay.close(fromWireError(frame.error), { releaseDown: false, notify: true });
 			else if (!relay.closed) relay.origin.send({ ...frame, id: relay.originId });
 			return;
 		}
-		const handle = this.remotes.get(frame.id);
-		if (handle === undefined) return;
+		const ref = this.remotes.get(frame.id);
+		if (ref === undefined) return;
 		if (frame.t === "gone") {
 			this.remotes.delete(frame.id);
-			handle.gone(fromWireError(frame.error));
+			ref.gone(fromWireError(frame.error));
 			return;
 		}
-		handle.shaped({ kind: frame.kind, members: frame.members, contract: frame.contract, epoch: frame.epoch });
+		ref.shaped({
+			variant: frame.variant,
+			members: frame.members,
+			contract: frame.contract,
+			codeVersion: frame.codeVersion,
+		});
 	}
 
 	#onResult(frame: Extract<Frame, { t: "result" }>): void {
@@ -707,23 +915,54 @@ export class Connection implements RemoteChannel {
 		}
 		const pending = this.calls.get(frame.id);
 		this.calls.delete(frame.id);
-		if (frame.error === undefined) pending?.resolve(frame.value);
-		else pending?.reject(fromWireError(frame.error));
+		if (frame.error !== undefined) {
+			pending?.reject(fromWireError(frame.error));
+			return;
+		}
+		let value: unknown;
+		try {
+			value = unpack(frame.value);
+		} catch (error) {
+			pending?.reject(error);
+			return;
+		}
+		pending?.resolve(value);
 	}
 
 	#onState(frame: Extract<Frame, { t: "state" }>): void {
 		const relayed = this.relayedSubs.get(frame.id);
 		if (relayed !== undefined) {
-			relayed.relay.origin.send({ ...frame, id: relayed.originSubId });
+			if (!relayed.relay.origin.sendState({ ...frame, id: relayed.originSubId })) {
+				relayed.relay.resync(relayed.originSubId);
+			}
 			return;
 		}
-		this.subs.get(frame.id)?.(frame);
+		const sink = this.subs.get(frame.id);
+		if (sink === undefined) return;
+		if (!(frame.snap instanceof Packed) && !(frame.reset instanceof Packed)) {
+			sink(frame);
+			return;
+		}
+		let unpacked: StateSink;
+		try {
+			unpacked =
+				frame.snap !== undefined
+					? { ...frame, snap: unpack(frame.snap) }
+					: { ...frame, reset: unpack(frame.reset) };
+		} catch (error) {
+			unpacked = { error: toWireError(error) };
+		}
+		sink(unpacked);
 	}
 
 	// ─── lifetime ───
 
 	#closed(reason: string): void {
+		const told = /^protocol-version (\d+)$/.exec(reason);
+		if (told !== null && Number(told[1]) !== PROTOCOL_VERSION) this.#protocolMismatch(Number(told[1]), false);
 		if (this.#pinger !== undefined) clearInterval(this.#pinger);
+		if (this.#ackTimer !== undefined) clearTimeout(this.#ackTimer);
+		this.#pending.clear();
 		const error = unavailable(`link to ${this.name ?? "peer"} closed: ${reason}`);
 		// As origin: everything the peer held here, relayed or not, is released (downstream calls cancelled).
 		for (const id of [...this.served.keys()]) this.#dropServed(id, true);
@@ -737,14 +976,14 @@ export class Connection implements RemoteChannel {
 		for (const waiter of this.#syncWaiters) waiter.reject(error);
 		this.#syncWaiters.clear();
 		// As downstream of relays: their origins lose the hold.
-		for (const relay of [...this.relayedHolds.values()]) relay.close(error, { releaseDown: false, notify: true });
-		this.relayedHolds.clear();
+		for (const relay of [...this.relayedRefs.values()]) relay.close(error, { releaseDown: false, notify: true });
+		this.relayedRefs.clear();
 		this.relayedCalls.clear();
 		this.relayedSubs.clear();
-		for (const handle of this.remotes.values()) {
+		for (const ref of this.remotes.values()) {
 			// An upstream link may be replaced (reconnect); a downstream host that went away is gone.
-			if (this.role === "upstream") handle.detached();
-			else handle.gone(error);
+			if (this.role === "upstream") ref.detached();
+			else ref.gone(error);
 		}
 		this.remotes.clear();
 		this.host.connectionClosed(this);
@@ -756,7 +995,7 @@ export class Connection implements RemoteChannel {
  * cancel (or the origin going away) is forwarded downstream and removes both mappings.
  */
 async function relayCall(
-	relay: RelayHold,
+	relay: RelayRef,
 	frame: Extract<Frame, { t: "call" }>,
 	root: RootRef,
 	signal: AbortSignal,
@@ -788,17 +1027,19 @@ async function relayCall(
  * Validates a snapshot against the schema the consumer is promised: the provider's own schema for a direct binding,
  * the consumer's contract for one through an `accepts` adapter (the adapter's view is what the consumer gets).
  */
-function validateSnapshot(handle: HandleImpl, member: string, value: unknown): void {
+function validateSnapshot(ref: RefImpl, member: string, value: unknown): void {
 	if (value === undefined) return;
-	const installed = handle.record.currentInstalled();
+	const installed = ref.object.currentInstalled();
 	if (installed === undefined) return;
-	const view = handle.currentView();
-	const kind = view === undefined ? kindOf(installed.behavior) : kindOf(view);
+	const view = ref.currentView();
+	const variant = view === undefined ? variantOf(installed.implementation) : variantOf(view);
 	const description =
-		view !== undefined && view !== installed.behavior
-			? handle.contract.description.variants[kind ?? LOCAL_VARIANT]?.[member]
-			: installed.service.contract.description.variants[kindOf(installed.behavior) ?? LOCAL_VARIANT]?.[member];
-	if (description?.kind === "state") assertValid("state", `${handle.address}.${member}`, description.schema, value);
+		view !== undefined && view !== installed.implementation
+			? ref.contract.description.variants[variant ?? LOCAL_VARIANT]?.[member]
+			: installed.service.contract.description.variants[variantOf(installed.implementation) ?? LOCAL_VARIANT]?.[
+					member
+				];
+	if (description?.kind === "state") assertValid("state", `${ref.address}.${member}`, description.schema, value);
 }
 
 /** Clients (browsers) holding an outdated contract are told to reload their code. */

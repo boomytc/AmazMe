@@ -14,7 +14,7 @@ import {
 	type Facet,
 	type FacetApi,
 	type Factory,
-	type Handle,
+	type Ref,
 	type Host,
 	type JsonValue,
 	type Readable,
@@ -114,15 +114,15 @@ function readable(get: () => ReplicatedState<unknown>): Readable<unknown> {
 	};
 }
 
-/** A view of a Chord handle used by the product's domain APIs. It owns no transport or execution runtime. */
+/** A view of a Chord ref used by the product's domain APIs. It owns no transport or execution runtime. */
 export function serviceView<T>(
 	service: ApplicationService<T>,
-	handle: Handle,
+	ref: Ref,
 	host: Pick<Host, "root">,
 	assertAccess = () => {},
 	onError: (error: unknown) => void = console.error,
 ): T {
-	const values = handle as unknown as Record<string, unknown>;
+	const values = ref as unknown as Record<string, unknown>;
 	if (service.contract.scope === "local") {
 		return new Proxy(
 			{},
@@ -198,7 +198,7 @@ export function serviceView<T>(
 	return result as T;
 }
 
-/** One eagerly owned implementation, with remote facades borrowing it under their caller's principal. */
+/** One host-owned implementation, with remote facades borrowing it under their caller's principal. */
 export function serveService<T>(
 	api: FacetApi,
 	service: ApplicationService<T>,
@@ -220,21 +220,21 @@ export function serveService<T>(
 			const dependencies = new Map(
 				(options.dependencies ?? []).map((dependency) => [
 					dependency.name,
-					{ dependency, handle: self.get(dependency.contract, {}, { principal: hostPrincipal }) },
+					{ dependency, ref: self.get(dependency.contract, {}, { principal: hostPrincipal }) },
 				]),
 			);
 			const implementation = self.resources({
 				instance: resource({
 					rev: revision,
 					exclusive: true,
-					deps: [...dependencies.values()].map(({ handle }) => handle),
+					deps: [...dependencies.values()].map(({ ref }) => ref),
 					open: ({ signal }) =>
 						options.open(
 							{
 								get: <U>(dependency: ApplicationService<U>): U => {
 									const found = dependencies.get(dependency.name);
 									if (!found) throw new Error(`Undeclared dependency ${dependency.name}`);
-									return serviceView(dependency, found.handle, api);
+									return serviceView(dependency, found.ref, api);
 								},
 							},
 							signal,
@@ -256,7 +256,7 @@ export function serveService<T>(
 			);
 			return { value: self.expose(implementation.instance) };
 		},
-		{ eager: true },
+		{ lifetime: "host" },
 	);
 	serveBorrowed(api, service, backing, (value) => (value as ServiceInstance<T>).value);
 }
@@ -284,21 +284,21 @@ function serveBorrowed<T>(
 					},
 				),
 			};
-		const behavior: Record<string, unknown> = { kind: "default" };
+		const members: Record<string, unknown> = { variant: "default" };
 		for (const name of service.methods)
-			behavior[name] = (args: unknown[], ctx: Ctx) => {
+			members[name] = (args: unknown[], ctx: Ctx) => {
 				const instance = get();
 				const fn = instance[name] as (...values: unknown[]) => unknown;
 				return fn.apply(instance, [...args, domainContext(ctx)]);
 			};
-		for (const name of service.states) behavior[name] = readable(() => get()[name] as ReplicatedState<unknown>);
-		return behavior;
+		for (const name of service.states) members[name] = readable(() => get()[name] as ReplicatedState<unknown>);
+		return members;
 	};
 	const serve = api.serve as (contract: AnyContract, factory: Factory<AnyContract>, options?: ServeOptions) => void;
 	serve(service.contract, factory as Factory<AnyContract>);
 }
 
-/** A product contribution is an eager Chord resource; dependencies and disposal belong to its record. */
+/** A product contribution is a host-owned Chord resource; dependencies and disposal belong to its object. */
 export function activationFacet(
 	name: string,
 	dependencies: readonly ApplicationService[],
@@ -326,7 +326,7 @@ export function activationFacet(
 export class ServiceScope implements ServiceResolver {
 	readonly #host: Host;
 	readonly #at: string | undefined;
-	readonly #handles = new Map<string, Handle>();
+	readonly #refs = new Map<string, Ref>();
 	readonly #views = new Map<string, unknown>();
 	readonly #hydrations: Promise<void>[] = [];
 	readonly #subscriptions: (() => void)[] = [];
@@ -338,10 +338,10 @@ export class ServiceScope implements ServiceResolver {
 	get<T>(service: ApplicationService<T>): T {
 		if (this.#closed) throw new Error("Service scope is closed");
 		if (!this.#views.has(service.name)) {
-			const handle = this.#host.get(service.contract, {}, this.#at === undefined ? {} : { at: this.#at });
-			this.#handles.set(service.name, handle);
+			const ref = this.#host.get(service.contract, {}, this.#at === undefined ? {} : { at: this.#at });
+			this.#refs.set(service.name, ref);
 			for (const name of service.states) {
-				const state = (handle as unknown as Record<string, Readable<unknown>>)[name]!;
+				const state = (ref as unknown as Record<string, Readable<unknown>>)[name]!;
 				const hydration = new Promise<void>((resolve, reject) => {
 					this.#subscriptions.push(
 						state.subscribe((value) => {
@@ -349,7 +349,7 @@ export class ServiceScope implements ServiceResolver {
 						}),
 					);
 					this.#subscriptions.push(
-						handle.onStatus((status, error) => {
+						ref.onStatus((status, error) => {
 							if (status === "gone" || status === "released")
 								reject(error ?? new Error("Service released before hydration"));
 						}),
@@ -360,7 +360,7 @@ export class ServiceScope implements ServiceResolver {
 			}
 			this.#views.set(
 				service.name,
-				serviceView(service, handle, this.#host, () => {
+				serviceView(service, ref, this.#host, () => {
 					if (this.#closed) throw new Error("Service scope is closed");
 				}),
 			);
@@ -370,7 +370,7 @@ export class ServiceScope implements ServiceResolver {
 	async ready(context: Context = BACKGROUND_CONTEXT): Promise<void> {
 		context.abortSignal?.throwIfAborted();
 		await awaitWithContext(
-			Promise.all([...this.#handles.values()].map((handle) => handle.ready).concat(this.#hydrations)).then(() => {}),
+			Promise.all([...this.#refs.values()].map((ref) => ref.ready).concat(this.#hydrations)).then(() => {}),
 			context,
 		);
 		context.abortSignal?.throwIfAborted();
@@ -379,8 +379,8 @@ export class ServiceScope implements ServiceResolver {
 		if (this.#closed) return;
 		this.#closed = true;
 		for (const stop of this.#subscriptions) stop();
-		for (const handle of this.#handles.values()) handle.release();
-		this.#handles.clear();
+		for (const ref of this.#refs.values()) ref.release();
+		this.#refs.clear();
 		this.#views.clear();
 	}
 }

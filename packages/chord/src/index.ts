@@ -5,17 +5,17 @@ export {
 	type Accepts,
 	type Adapter,
 	type AnyContract,
-	type BehaviorOf,
 	bind,
 	coverage,
 	type Description,
-	type Handle,
+	type ImplementationOf,
 	type InputOf,
 	type LocalContract,
 	local,
 	type MembersOf,
 	method,
 	opaque,
+	type Ref,
 	type RemoteContract,
 	remote,
 } from "./contract.ts";
@@ -28,7 +28,7 @@ export {
 	listener,
 	type Resource,
 	type ResourceDecl,
-	type ResourceSpec,
+	type ResourceDeclaration,
 	resource,
 	type Subscribable,
 } from "./declare.ts";
@@ -50,8 +50,19 @@ export {
 	type RootOptions,
 } from "./host.ts";
 export { type CopyJsonOptions, copyJson, isJsonValue, type JsonRepresentation, type JsonValue } from "./json.ts";
-export { type IpcChannel, ipcLink, type Link, memoryLinkPair, type WebSocketLike, webSocketLink } from "./link.ts";
-export type { Factory, Self, ServeOptions } from "./record.ts";
+export {
+	type IpcChannel,
+	encodeFrameObject,
+	inflateMessage,
+	ipcLink,
+	type Link,
+	memoryLinkPair,
+	PACK_THRESHOLD,
+	type WebSocketLike,
+	type WebSocketLinkOptions,
+	webSocketLink,
+} from "./link.ts";
+export type { Factory, Lifetime, Self, ServeOptions } from "./object.ts";
 export { defineRegistry, type Registry, type RegistryTable, type RegistryView } from "./registry.ts";
 export type { ReloadOptions, ReloadReport } from "./reload.ts";
 export {
@@ -65,6 +76,6 @@ export {
 	type ReplicatedStateSourceOptions,
 	replicatedState,
 } from "./state.ts";
-export type { Ctx, GetOptions, HandleStatus, Principal, Readable, Shape, StateEvent } from "./types.ts";
+export type { Ctx, GetOptions, Principal, Readable, RefStatus, Shape, StateEvent } from "./types.ts";
 export { acceptWebSockets, type WebSocketAcceptOptions, type WebSocketServerLike } from "./websocket.ts";
-export type { Frame } from "./wire.ts";
+export { type Frame, PROTOCOL_VERSION } from "./wire.ts";

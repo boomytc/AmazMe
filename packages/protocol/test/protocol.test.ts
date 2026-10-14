@@ -27,9 +27,10 @@ const serverHello: ServerHello = {
 };
 
 describe("protocol validation", () => {
-	test("negotiates protocol version 9", () => {
-		expect(PROTOCOL_VERSION).toBe(9);
-		expect(isSupportedProtocolVersion(9)).toBe(true);
+	test("negotiates protocol version 10", () => {
+		expect(PROTOCOL_VERSION).toBe(10);
+		expect(isSupportedProtocolVersion(10)).toBe(true);
+		expect(isSupportedProtocolVersion(9)).toBe(false);
 		expect(isSupportedProtocolVersion(8)).toBe(false);
 		expect(isSupportedProtocolVersion(8.5)).toBe(false);
 	});

@@ -2,7 +2,7 @@ import type { JsonValue } from "@amazme/chord";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
 
-export const PROTOCOL_VERSION = 9 as const;
+export const PROTOCOL_VERSION = 10 as const;
 
 const IdSchema = Type.String({ minLength: 1 });
 const OpaqueJsonValueSchema = Type.Unsafe<JsonValue>(Type.Unknown());

@@ -33,7 +33,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 		const keyedProbeFacet: Facet = { name: "keyed-probe", setup(api) {
    api.serve(KeyedProbe, (_input, _principal, self) => {
     const state = self.state({ state: cell(Type.Object({ value: Type.String() }), { value: "first" }) });
-    return { kind: "default", state: state.state,
+    return { variant: "default", state: state.state,
      replace(value, context) { state.state.change(context, draft => { draft.value = value; }); return null; },
      wait(_input, context) { return new Promise<null>((_resolve, reject) => {
       if (context.signal.aborted) reject(abortError(context.signal));
