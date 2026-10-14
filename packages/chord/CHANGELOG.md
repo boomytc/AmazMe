@@ -4,6 +4,7 @@
 
 ### Breaking Changes
 
+- `FacetApi.signal` describes the lifetime of each installed facet run, including replacement, removal, rollback and host close.
 - Declarations use `self.state(name, schema, initial, options)`, `self.resource(name, declaration)`, `self.on(name, source, handler)`, `self.derive(sources, fn)` and `self.task(fn)`. Removed declaration helpers and maps; resources use `version` instead of `rev`.
 - State versions and migrations belong to individual cells. Derivations are recreated on reload, and their listeners receive the current value on activation.
 - `method(args?, result?)` supports methods called with only a context and methods returning void. Missing arguments/results are omitted from descriptions and frames; a void consumer accepts a provider result and discards it.
@@ -15,6 +16,7 @@
 
 ### Added
 
+- `HostOptions.taskStopDeadline` bounds the wait for cancelled tasks before starting their replacements (default 5000 ms).
 - Exported `StateOptions`, `EventOf` and `ValueOf` for named declarations.
 - `encodeFrameObject()` preserves packed payloads through application JSON/CBOR bridges. Object links inflate them in browsers in FIFO order; malformed packed frames close their link.
 
@@ -23,10 +25,13 @@
 
 ### Changed
 
+- Reloads wait for old tasks to settle before starting replacements, up to their deadline. Forced code retirement cancels its roots before releasing their resources and gives them a bounded grace period.
 - `Link.send` returns the encoded frame's size as sent (deflated payloads count as sent) when the transport knows it (memory and WebSocket links); flow control counts these sizes, so links that return nothing (IPC, custom links) are not windowed
 
 ### Fixed
 
+- Cluster reloads reconcile children that connect during preparation, and coordinate parent/child retirement before the next prepare.
+- Disposed objects, retired service bindings and closed context cancellation listeners release their old code generations. Resources retained by a reload adopt the latest declaration; relayed calls follow retirement cancellation.
 - Method arity follows the active variant at invocation time, including calls before readiness; it is not cached from the first variant.
 - WebSocket links refusing packed messages also refuse their object envelope in a text message.
 

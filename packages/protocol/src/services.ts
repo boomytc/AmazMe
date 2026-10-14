@@ -199,7 +199,7 @@ export function serviceView<T>(
 
 /** One host-owned implementation, with remote facades borrowing it under their caller's principal. */
 export function serveService<T>(
-	api: FacetApi,
+	api: Pick<FacetApi, "serve" | "root">,
 	service: ApplicationService<T>,
 	options: {
 		dependencies?: readonly ApplicationService[];
@@ -260,7 +260,7 @@ export function serveService<T>(
 
 /** Public views borrow one owner; they do not introduce another resource generation. */
 function serveBorrowed<T>(
-	api: FacetApi,
+	api: Pick<FacetApi, "serve">,
 	service: ApplicationService<T>,
 	backing: AnyContract,
 	select: (value: unknown) => T,
