@@ -1,4 +1,4 @@
-import type { SqliteDatabase } from "./database.ts";
+import type { SqliteDatabase, SqliteExecutor } from "./database.ts";
 
 export type SqliteMigration = {
 	readonly version: number;
@@ -91,6 +91,15 @@ export const CURRENT_SQLITE_SCHEMA_VERSION = SQLITE_MIGRATIONS.at(-1)?.version ?
 
 type SchemaRow = { readonly version: number };
 
+async function readSchemaVersion(database: SqliteExecutor, currentVersion: number): Promise<number> {
+	const row = await database.get<SchemaRow>("SELECT version FROM durable_schema WHERE singleton = 1");
+	if (row === undefined) throw new Error("Durable SQLite schema metadata is missing");
+	if (!Number.isSafeInteger(row.version) || row.version < 0) throw new Error("Durable SQLite schema version is invalid");
+	if (row.version > currentVersion)
+		throw new Error(`Durable SQLite schema version ${row.version} is newer than supported version ${currentVersion}`);
+	return row.version;
+}
+
 /** Apply all pending schema migrations atomically. */
 export async function applySqliteMigrations(
 	database: SqliteDatabase,
@@ -101,6 +110,12 @@ export async function applySqliteMigrations(
 			throw new Error("Durable SQLite migrations must have contiguous versions starting at 1");
 		}
 	}
+	const currentVersion = migrations.at(-1)?.version ?? 0;
+	// An initialized store only needs reads. Reopening it must not contend with an ordinary writer.
+	const schema = await database.get<{ name: string }>(
+		"SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'durable_schema'",
+	);
+	if (schema !== undefined && (await readSchemaVersion(database, currentVersion)) === currentVersion) return;
 
 	await database.transaction(async (transaction) => {
 		await transaction.exec(`CREATE TABLE IF NOT EXISTS durable_schema (
@@ -108,16 +123,10 @@ export async function applySqliteMigrations(
 			version INTEGER NOT NULL CHECK (version >= 0)
 		) STRICT`);
 		await transaction.run("INSERT OR IGNORE INTO durable_schema (singleton, version) VALUES (1, 0)");
-		const row = await transaction.get<SchemaRow>("SELECT version FROM durable_schema WHERE singleton = 1");
-		if (row === undefined) throw new Error("Durable SQLite schema metadata is missing");
-		const currentVersion = migrations.at(-1)?.version ?? 0;
-		if (row.version > currentVersion) {
-			throw new Error(
-				`Durable SQLite schema version ${row.version} is newer than supported version ${currentVersion}`,
-			);
-		}
+		// Another opener may have migrated while this one waited for the writer: recheck under the lock.
+		const version = await readSchemaVersion(transaction, currentVersion);
 		for (const migration of migrations) {
-			if (migration.version <= row.version) continue;
+			if (migration.version <= version) continue;
 			for (const statement of migration.statements) await transaction.exec(statement);
 			await transaction.run("UPDATE durable_schema SET version = ? WHERE singleton = 1", migration.version);
 		}

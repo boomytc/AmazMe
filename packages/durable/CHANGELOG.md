@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Reopening a current SQLite schema no longer takes a writer lock. Newer or missing schema metadata is rejected before mutation; required migrations still recheck their version under the transaction lock and roll back atomically.
 - Overflow recovery checks the final request after projection and request hooks, and retries only when it shrank and restored the configured output reserve. Generation version 4 retains the rejected request size across deferred polling and restart; an older pending recovery without that evidence ends with its original error.
 
 ## [1.2.0] - 2026-10-13

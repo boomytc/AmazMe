@@ -11,6 +11,7 @@ import {
 	type SqliteMigration,
 } from "../src/storage/sqlite/index.ts";
 import { openNodeSqliteDatabase, openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import type { SqliteStorage } from "../src/storage/sqlite/index.ts";
 import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
 
 const directories = new Set<string>();
@@ -55,6 +56,48 @@ describe("durable SQLite migrations", () => {
 		await database.close();
 
 		await expect(openNodeSqliteStorage(path)).rejects.toThrow("is newer than supported version");
+	});
+
+	it("reopens a current store while another connection holds the writer lock", async () => {
+		const path = await databasePath();
+		const writer = await openNodeSqliteDatabase(path, { busyTimeoutMs: 0 });
+		await applySqliteMigrations(writer);
+		let reader: SqliteStorage | undefined;
+		await writer.exec("BEGIN IMMEDIATE");
+		try {
+			reader = await openNodeSqliteStorage(path, { busyTimeoutMs: 0 });
+			expect((await reader.scanConversations({}, 10, undefined, BACKGROUND_CONTEXT)).items).toEqual([]);
+		} finally {
+			await writer.exec("ROLLBACK");
+			await reader?.close(BACKGROUND_CONTEXT);
+			await writer.close();
+		}
+	});
+
+	it("reports a newer schema without taking a writer lock", async () => {
+		const path = await databasePath();
+		const writer = await openNodeSqliteDatabase(path, { busyTimeoutMs: 0 });
+		const reader = await openNodeSqliteDatabase(path, { busyTimeoutMs: 0 });
+		await applySqliteMigrations(writer);
+		await writer.run("UPDATE durable_schema SET version = ?", CURRENT_SQLITE_SCHEMA_VERSION + 1);
+		await writer.exec("BEGIN IMMEDIATE");
+		try {
+			await expect(applySqliteMigrations(reader)).rejects.toThrow("is newer than supported version");
+		} finally {
+			await writer.exec("ROLLBACK");
+			await reader.close();
+			await writer.close();
+		}
+	});
+
+	it("refuses missing schema metadata instead of recreating it and replaying migrations", async () => {
+		const database = await openNodeSqliteDatabase(await databasePath());
+		await applySqliteMigrations(database);
+		await database.run("DELETE FROM durable_schema");
+		try {
+			await expect(applySqliteMigrations(database)).rejects.toThrow("schema metadata is missing");
+			expect(await database.get("SELECT version FROM durable_schema")).toBeUndefined();
+		} finally { await database.close(); }
 	});
 
 	it("rolls initial bootstrap and every pending migration back together", async () => {
