@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Hosted model catalog refreshes share one service-owned operation. Failed refreshes settle their status and permit retry; cancellation of one reader leaves other readers running, while service close cancels and joins the operation without late publication.
 - Direct package dependencies are pinned to the tested release versions; the existing workspace check validates registry pins and internal version alignment.
 - Approval waits observe cancellation before and during publication, release their listeners after settlement, and retain early decisions without reporting owner cancellation as reader denial.
 - SDK overflow recovery measures the real projection before and after compaction, retains completed summaries and reports insufficient recovery without resending. Ordinary truncated-output recovery retains its separate one-retry budget.

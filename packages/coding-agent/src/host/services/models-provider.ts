@@ -3,7 +3,7 @@ import { replicatedState } from "@amazme/chord";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@amazme/ai";
 import type { Context, Facet, MutableReplicatedState } from "@amazme/chord";
-import { withAbortSignal, BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { awaitWithContext, withAbortSignal, BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { AgentState, Conversation, Harness } from "@amazme/durable";
 import { AgentDoc } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
@@ -36,6 +36,8 @@ export function createModelsService(
 	sharedAuthentication?: ProviderLogin,
 ): ModelsServiceRuntime {
 	let catalogRevision = 0;
+	const lifetime = new AbortController();
+	let refreshing: Promise<void> | undefined;
 	const modelScope = new ModelScope(settingsManager);
 	const authentication = sharedAuthentication ?? (modelRuntime === undefined ? undefined
 		: new ProviderLogin(modelRuntime, settingsManager === undefined ? {} : { getDeviceId: () => settingsManager.getOrCreateDeviceId() }));
@@ -145,20 +147,32 @@ export function createModelsService(
 			return conversation.commit(async (tx) => readThinkingLevels(await tx.doc(AgentDoc, conversation.id)), context);
 		},
 		async refresh(context) {
-			state.change(context, (draft) => {
-				draft.refresh = { status: "refreshing" };
-			});
-			const refresh = modelRuntime?.refresh({ signal: context.abortSignal });
-			const errors =
-				refresh === undefined
-					? {}
-					: Object.fromEntries([...(await refresh).errors].map(([id, error]) => [id, error.message]));
-			const catalog = readCatalog();
-			state.change(context, (draft) => {
-				draft.catalog = catalog;
-				draft.authentication = authentication?.snapshot() ?? null;
-				draft.refresh = Object.keys(errors).length === 0 ? { status: "done" } : { status: "warning", errors };
-			});
+			context.abortSignal?.throwIfAborted();
+			lifetime.signal.throwIfAborted();
+			// One service-owned refresh: readers may leave without cancelling each other's catalog request.
+			// Publish the promise before state observers can reenter refresh().
+			refreshing ??= Promise.resolve().then(async () => {
+				lifetime.signal.throwIfAborted();
+				state.change(BACKGROUND_CONTEXT, (draft) => { draft.refresh = { status: "refreshing" }; });
+				try {
+					lifetime.signal.throwIfAborted();
+					const result = await modelRuntime?.refresh({ signal: lifetime.signal });
+					lifetime.signal.throwIfAborted();
+					const errors = Object.fromEntries([...(result?.errors ?? [])].map(([id, error]) => [id, error.message]));
+					const catalog = readCatalog();
+					state.change(BACKGROUND_CONTEXT, (draft) => {
+						draft.catalog = catalog;
+						draft.authentication = authentication?.snapshot() ?? null;
+						draft.refresh = Object.keys(errors).length === 0 ? { status: "done" } : { status: "warning", errors };
+					});
+				} catch (error) {
+					if (!lifetime.signal.aborted) state.change(BACKGROUND_CONTEXT, (draft) => {
+						draft.refresh = { status: "warning", errors: { catalog: error instanceof Error ? error.message : String(error) } };
+					});
+					throw error;
+				}
+			}).finally(() => { refreshing = undefined; });
+			await awaitWithContext(refreshing, context);
 		},
 		async select(model, context) {
 			const selected = modelRuntime?.getModel(model.provider, model.modelId);
@@ -199,7 +213,9 @@ export function createModelsService(
 			});
 		},
 		async close() {
+			lifetime.abort(new Error("Models service closed"));
 			stopAuthentication?.();
+			await refreshing?.catch(() => {});
 			await modelScope.flush();
 			if (sharedAuthentication === undefined) await authentication?.close();
 		},

@@ -858,12 +858,7 @@ export class ModelRuntime implements Models {
 			...options,
 			allowNetwork: options.allowNetwork ?? this.modelNetworkEnabled,
 		};
-		// Published pi-ai builds before ModelsStore returned void and accepted a provider ID.
-		// The fallback keeps source-mode CLI tests working without rebuilding workspace dependencies.
-		const result = ((await this.models.refresh(refreshOptions)) as ModelsRefreshResult | undefined) ?? {
-			aborted: refreshOptions.signal?.aborted ?? false,
-			errors: new Map(),
-		};
+		const result = await this.models.refresh(refreshOptions);
 		const errors = new Map(result.errors);
 		this.updateModelSnapshot();
 		if (options.providers) {
