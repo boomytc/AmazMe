@@ -6,6 +6,11 @@
 
 - `hasContextRecoveryHeadroom()` shares the shrink and output-reserve checks used before retrying a rejected context.
 
+### Fixed
+
+- Invalid Unicode escapes in streaming tool arguments are retained as literal text instead of dropping later fields.
+- Anthropic error tool results replace images with a text diagnostic in the request; successful results and stored messages retain their images.
+
 ## [1.2.0] - 2026-10-13
 
 - OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.

@@ -1328,10 +1328,16 @@ function normalizeToolCallId(id: string): string {
 }
 
 function convertToolResult(msg: ToolResultMessage): ContentBlockParam {
+	// Anthropic error tool results accept text only (#10794); keep stored results unchanged.
+	const content = msg.isError
+		? msg.content.map((block) => block.type === "image"
+			? { type: "text" as const, text: "[image omitted: error tool results cannot contain images]" }
+			: block)
+		: msg.content;
 	return {
 		type: "tool_result",
 		tool_use_id: msg.toolCallId,
-		content: convertContentBlocks(msg.content),
+		content: convertContentBlocks(content),
 		is_error: msg.isError,
 	};
 }

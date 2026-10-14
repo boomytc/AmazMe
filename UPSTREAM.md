@@ -152,6 +152,13 @@ v1.2.0 收尾验证：逐包构建后复测，coding-agent 3156、AI 1330、Web 
 
 此前 25 提交验证：Chord、Codemode、Durable、Env、TUI、coding-agent、Web 及桌面壳分别构建后测试通过；Durable 默认保留和立即淘汰两轮各 1318 项通过。AI 离线构建及隔离凭据测试 1305 项通过，实网用例、真实 OAuth 登录和本地模型未跑，Radius E2E 仅同步复现。类型检查、依赖/浏览器入口检查和 25 项工程测试通过。14 个正式 tarball 离线隔离安装通过，安装版实跑了应用输入、确定性 codemode、嵌套调用、会话 store、立即淘汰、Photon 图片 worker、PTY 和 CLI 版本入口。Darwin/Linux 的 arm64/x64 daemon 均已重新构建，源码指纹与二进制校验通过；PTY 在当前 Mac 实跑，Linux 仅交叉构建，未做 Linux 实机运行验收。
 
+本轮继续核对 Pi `7d75a0e3e..2688aba7d` 的 15 个提交，分阶段记录：
+
+| pi 提交 | 说明 | 处理 |
+| --- | --- | --- |
+| `4b994d5e5` | 修复工具参数中的无效 Unicode 转义 | 吸收；非法转义保留为字面文本，合法 Unicode 和流式截断行为保持正确，后续字段不被丢弃 |
+| `34a8bb38b` | Anthropic 错误工具结果不发送图片 | 吸收；只在请求投影中用文本说明替换错误结果图片，成功结果和持久消息保持不变；离线载荷回归通过 |
+
 ## QwenPaw 改进借鉴（非源码基线）
 
 核对本地 QwenPaw 的 `f3895346..2744a976`，共 19 个提交。AmazMe 仍以 Pi 为实现基线；这里只吸收现有消费者需要的行为，不移植 Python/AgentScope、React 展开树或 Hub 管理体系。
