@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Worker sandboxes expose admission and actual-exit hooks; a reservation lasts until worker exit or constructor failure.
+
+### Fixed
+
+- Timeout, cancellation and close settle without waiting for worker termination; surviving workers are unreferenced and still count against the caller's admission limit.
+
 ## [1.2.0] - 2026-10-13
 
 ### Added

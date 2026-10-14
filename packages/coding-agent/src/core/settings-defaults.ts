@@ -13,6 +13,7 @@ export const SETTINGS_DEFAULTS = {
 	archiveRetentionDays: 0,
 	showWelcome: true,
 	transport: "auto",
+	sessionShareDestination: "auto",
 	steeringMode: "one-at-a-time",
 	followUpMode: "one-at-a-time",
 	compaction: {

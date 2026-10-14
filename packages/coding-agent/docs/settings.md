@@ -48,6 +48,7 @@ The host worker reads `toolApproval` from agent-directory settings. Project sett
 |---|---|---|---|
 | `steeringMode` | `"all" \| "one-at-a-time"` | `"one-at-a-time"` | How queued steering messages are delivered. |
 | `followUpMode` | `"all" \| "one-at-a-time"` | `"one-at-a-time"` | How queued follow-up messages are delivered. |
+| `sessionShareDestination` | `"auto" \| "gist" \| "radius"` | `"auto"` | SDK terminal `/share` destination. Auto prefers authenticated Radius; Gist always uses a private GitHub gist; Radius requires authentication and never falls back. |
 | `externalEditor` | string | `$VISUAL`, `$EDITOR`, then platform default | Command opened by the external-editor keybinding. |
 | `doubleEscapeAction` | `"tree" \| "fork" \| "none"` | `"tree"` | Action for double Escape with an empty editor. |
 | `treeFilterMode` | `"default" \| "no-tools" \| "user-only" \| "labeled-only" \| "all"` | `"default"` | Initial filter used by `/tree`. |

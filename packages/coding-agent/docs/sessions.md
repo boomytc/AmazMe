@@ -66,4 +66,6 @@ amazme --export /path/to/session.jsonl
 
 An application embedding the SDK can use its `SessionManager` and interactive UI APIs for session selection, naming, cloning and export. See [SDK](sdk.md) and [RPC](rpc.md). The default terminal's SQLite session is selected through its native continuation and conversation commands.
 
+The optional SDK terminal's `/share` uses Radius when authenticated and otherwise creates a private GitHub gist. Set [`sessionShareDestination`](settings.md#interaction) to `gist` to always use Gist, or `radius` to require Radius without fallback. This setting applies to that sharing entry point; default Durable and hosted clients do not expose it.
+
 Review exported transcripts before sharing them: they can contain prompts, responses, tool arguments, command output and file contents.

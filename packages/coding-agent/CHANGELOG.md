@@ -6,6 +6,13 @@
 
 - Approval waits observe cancellation before and during publication, release their listeners after settlement, and retain early decisions without reporting owner cancellation as reader denial.
 - SDK overflow recovery measures the real projection before and after compaction, retains completed summaries and reports insufficient recovery without resending. Ordinary truncated-output recovery retains its separate one-retry budget.
+- Default-tool session resume restores the recorded active loadout with CLI modifiers; explicit tool selection remains authoritative.
+- Codemode worker admission is shared by SDK and native sessions and stays reserved until actual exit, keeping cancellation prompt without allowing unbounded surviving workers.
+
+### Added
+
+- `sessionShareDestination` selects automatic, Radius or private GitHub Gist sharing; an explicit Radius destination never falls back to Gist.
+- NVIDIA RTX llama.cpp recipe conversion guide and prerequisites, adapted to AmazMe commands.
 
 ## [1.2.0] - 2026-10-13
 
