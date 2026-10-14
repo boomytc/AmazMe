@@ -58,7 +58,7 @@ export default activationFacet("example/commands", [SlashCommands, AgentControll
 
 宿主的 `Models` 服务同样使用当前选中对话。模型与推理强度存于该对话的 `AgentDoc`，其他分叉保持各自配置；读取可用推理强度、循环和显式选择都以实际目标文档为准。选择模型同时沿用 Pi 的新会话默认设置保存行为，重启已有会话时仍恢复其持久配置。
 
-自定义 Chord 服务使用 `remote()` / `local()` 契约、同步 `defineFacet(api => ...)` 和 `api.serve()`。工厂通过 `self.get()` 声明依赖，通过 `self.resources()`、`self.listen()` 管理资源和监听器，通过 `host.root()` 传递调用取消与代际上下文。详见 [Chord 文档](../../chord/README.md)。
+自定义 Chord 服务使用 `remote()` / `local()` 契约、同步 `defineFacet(api => ...)` 和 `api.serve()`。工厂通过 `self.get()` 声明依赖，通过 `self.resource(name, declaration)`、`self.on(name, source, handler)` 管理资源和监听器，通过 `self.state(name, schema, initial, options)` 声明各自带版本及迁移函数的状态单元；调用取消与代际上下文由 `host.root()` 传递。详见 [Chord 文档](../../chord/README.md)。
 
 产品现有领域接口使用 `@amazme/protocol/services`：`remoteService<T>(名称, 方法参数个数表, 状态成员名)` 声明位置参数与 Context 契约，`localService<T>(名称)` 声明本机对象，`serviceFacet()` 创建并持有一个实现，`activationFacet()` 持有注册租约。依赖列表必须明确列出；框架直接调用 Chord Host、句柄和资源，不提供另一套 RPC 或热重载运行时。接口中最后一个 `Context` 不计入位置参数表。公开方法与状态由 Chord 传输；本机对象不会进入远程目录。
 

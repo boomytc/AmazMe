@@ -1,5 +1,5 @@
 import { Value } from "typebox/value";
-import type { AnyContract } from "./contract.ts";
+import { type AnyContract, takesNoArgs } from "./contract.ts";
 import { applyImmutable, type Decoder, decoder } from "./delta/index.ts";
 import { ChordError } from "./errors.ts";
 import {
@@ -161,7 +161,7 @@ export class RemoteRef implements RefCore {
 	binding: { readonly channel: RemoteChannel; readonly id: number } | undefined;
 	readonly shapeListeners = new Set<(shape: Shape) => void>();
 	readonly #readables = new Map<string, RemoteReadable>();
-	readonly #callers = new Map<string, (args: unknown, ctx?: Ctx) => Promise<unknown>>();
+	readonly #callers = new Map<string, (...given: unknown[]) => Promise<unknown>>();
 	#settleReady: { resolve: () => void; reject: (error: unknown) => void } | undefined;
 	#live: { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void };
 
@@ -303,23 +303,39 @@ export class RemoteRef implements RefCore {
 		return undefined;
 	}
 
-	#caller(name: string): (args: unknown, ctx?: Ctx) => Promise<unknown> {
+	#caller(name: string): (...given: unknown[]) => Promise<unknown> {
 		let caller = this.#callers.get(name);
 		if (caller === undefined) {
-			caller = (args, ctx) => {
+			caller = (...given) => {
 				if (this.host.inFactory > 0)
 					throw new ChordError("not_ready", `${this.address}.${name} called inside a factory`);
-				if (ctx instanceof CtxImpl) {
-					try {
-						ctx.check(ctx.host);
-					} catch (error) {
-						return Promise.reject(error);
+				const invoke = (root?: Ctx): Promise<unknown> => {
+					const noArgs = takesNoArgs(this.contract, name, this.shape?.variant);
+					const [args, supplied] = (noArgs ? [undefined, given[0]] : given) as [unknown, Ctx | undefined];
+					const ctx = supplied ?? root;
+					if (ctx instanceof CtxImpl) {
+						try {
+							ctx.check(ctx.host);
+						} catch (error) {
+							return Promise.reject(error);
+						}
 					}
+					if (ctx === undefined || (ctx instanceof CtxImpl && ctx.holder)) {
+						return this.host.root((root) => this.#call(name, args, root), { signal: ctx?.signal });
+					}
+					return this.#call(name, args, ctx);
+				};
+				if (this.status === "loading") {
+					const ctx = given.at(-1);
+					const wait = async (root: Ctx): Promise<unknown> => {
+						if (root instanceof CtxImpl) root.check(root.host);
+						await raceSignal(this.#live.promise, root.signal);
+						return invoke(root);
+					};
+					return ctx instanceof CtxImpl && !ctx.holder ? wait(ctx)
+						: this.host.root(wait, { signal: ctx instanceof CtxImpl ? ctx.signal : undefined });
 				}
-				if (ctx === undefined || (ctx instanceof CtxImpl && ctx.holder)) {
-					return this.host.root((root) => this.#call(name, args, root), { signal: ctx?.signal });
-				}
-				return this.#call(name, args, ctx);
+				return invoke();
 			};
 			this.#callers.set(name, caller);
 		}
@@ -342,7 +358,12 @@ export class RemoteRef implements RefCore {
 			}
 			// Send only what the consumer's own schema knows (the additive rule's premise; see RecordImpl.call).
 			const description = this.contract.description.variants[variant]?.[name];
-			const sent = description?.kind === "method" ? Value.Clean(description.args, Value.Clone(args)) : args;
+			const sent =
+				description?.kind !== "method"
+					? args
+					: description.args === undefined
+						? undefined
+						: Value.Clean(description.args, Value.Clone(args));
 			return binding.channel.call(
 				binding.id,
 				name,

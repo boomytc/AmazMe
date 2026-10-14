@@ -4,6 +4,10 @@
 
 ### Breaking Changes
 
+- Declarations use `self.state(name, schema, initial, options)`, `self.resource(name, declaration)`, `self.on(name, source, handler)`, `self.derive(sources, fn)` and `self.task(fn)`. Removed declaration helpers and maps; resources use `version` instead of `rev`.
+- State versions and migrations belong to individual cells. Derivations are recreated on reload, and their listeners receive the current value on activation.
+- `method(args?, result?)` supports methods called with only a context and methods returning void. Missing arguments/results are omitted from descriptions and frames; a void consumer accepts a provider result and discards it.
+
 - Terminology follows the concepts: a reference (what `get` returns) is `Ref<C>` (was `Handle<C>`), its status `RefStatus` (was `HandleStatus`); what a factory returns is `ImplementationOf<C>` (was `BehaviorOf<C>`); a resource's options are a `ResourceDeclaration` (was `ResourceSpec`); epochs are code versions: `Ctx.codeVersion`, `RootOptions.codeVersion`, `Shape.codeVersion`, `Host.codeVersion`/`previousCodeVersion`, and the `codeVersion` fields of frames and reload reports (all were `epoch`). Docs and messages say object (was record) and reference (was handle and hold); the `hold` and `release` frame types keep their names
 - A remote object's variant is named `variant` (was `kind`): factories return `{ variant: "editor", … }`, references expose `ref.variant` and `shape.variant`, and the `shape` frame carries `variant`. `variant` is reserved as a member name; `kind` no longer is
 - Links have a protocol version (`PROTOCOL_VERSION`, now 2), announced in `hello`. Peers of different versions do not talk: the side that notices closes the link with reason `protocol-version <n>`, and both sides report it through `LinkOptions.onProtocolMismatch`. Peers without a version (older Chord) are refused
@@ -11,6 +15,7 @@
 
 ### Added
 
+- Exported `StateOptions`, `EventOf` and `ValueOf` for named declarations.
 - `encodeFrameObject()` preserves packed payloads through application JSON/CBOR bridges. Object links inflate them in browsers in FIFO order; malformed packed frames close their link.
 
 - Links are flow controlled end to end: peers acknowledge what they processed (`ack` frames, announced with `acks` in `hello`), and while a window of frames is unacknowledged (`window` in `LinkOptions`, default 256 KiB), state frames wait at the sender, coalesced per subscription, instead of queuing in front of call results. A stalled peer costs a bounded slot per subscription; a slot that outgrows it becomes a reset. Calls, results and control frames are never held back, so under load a result can arrive before state changes made before it
@@ -22,6 +27,7 @@
 
 ### Fixed
 
+- Method arity follows the active variant at invocation time, including calls before readiness; it is not cached from the first variant.
 - WebSocket links refusing packed messages also refuse their object envelope in a text message.
 
 - `nodeLoader` registers every facet's directory before importing any, so a facet that imports a file of a facet listed after it gets the same module copy as that facet; before, the load order could produce duplicates.

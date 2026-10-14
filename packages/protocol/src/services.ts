@@ -7,7 +7,6 @@ import {
 	method,
 	opaque,
 	remote,
-	resource,
 	type AnyContract,
 	type Context,
 	type Ctx,
@@ -37,7 +36,7 @@ export interface ServiceDescription {
 	readonly local?: boolean;
 	readonly host?: string;
 }
-let resourceRevision = 0;
+let resourceVersion = 0;
 export const ServiceDescriptions = defineRegistry<ServiceDescription>("amazme.services");
 
 /** Positional domain arguments are a single array on the wire; Context is carried by Chord's root. */
@@ -208,7 +207,7 @@ export function serveService<T>(
 		open(services: ServiceResolver, signal: AbortSignal): ServiceInstance<T> | Promise<ServiceInstance<T>>;
 	},
 ): void {
-	const revision = ++resourceRevision;
+	const version = ++resourceVersion;
 	const backing = local(`${service.name}.implementation`, {
 		version: 1,
 		input: Type.Object({}),
@@ -223,24 +222,22 @@ export function serveService<T>(
 					{ dependency, ref: self.get(dependency.contract, {}, { principal: hostPrincipal }) },
 				]),
 			);
-			const implementation = self.resources({
-				instance: resource({
-					rev: revision,
-					exclusive: true,
-					deps: [...dependencies.values()].map(({ ref }) => ref),
-					open: ({ signal }) =>
-						options.open(
-							{
-								get: <U>(dependency: ApplicationService<U>): U => {
-									const found = dependencies.get(dependency.name);
-									if (!found) throw new Error(`Undeclared dependency ${dependency.name}`);
-									return serviceView(dependency, found.ref, api);
-								},
+			const implementation = self.resource("instance", {
+				version,
+				exclusive: true,
+				deps: [...dependencies.values()].map(({ ref }) => ref),
+				open: ({ signal }) =>
+					options.open(
+						{
+							get: <U>(dependency: ApplicationService<U>): U => {
+								const found = dependencies.get(dependency.name);
+								if (!found) throw new Error(`Undeclared dependency ${dependency.name}`);
+								return serviceView(dependency, found.ref, api);
 							},
-							signal,
-						),
-					close: (instance) => instance.close?.(),
-				}),
+						},
+						signal,
+					),
+				close: (instance) => instance.close?.(),
 			});
 			self.register(
 				ServiceDescriptions,
@@ -254,7 +251,7 @@ export function serveService<T>(
 					]),
 				),
 			);
-			return { value: self.expose(implementation.instance) };
+			return { value: self.expose(implementation) };
 		},
 		{ lifetime: "host" },
 	);

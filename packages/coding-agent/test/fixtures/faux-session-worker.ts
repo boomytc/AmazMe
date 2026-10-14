@@ -1,4 +1,4 @@
-import { cell, type Facet } from "@amazme/chord";
+import type { Facet } from "@amazme/chord";
 import { Type } from "typebox";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,9 +32,9 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 			agent: { cwd: options.metadata.cwd, model: { provider: model.provider, modelId: model.id } } });
 		const keyedProbeFacet: Facet = { name: "keyed-probe", setup(api) {
    api.serve(KeyedProbe, (_input, _principal, self) => {
-    const state = self.state({ state: cell(Type.Object({ value: Type.String() }), { value: "first" }) });
-    return { variant: "default", state: state.state,
-     replace(value, context) { state.state.change(context, draft => { draft.value = value; }); return null; },
+    const state = self.state("state", Type.Object({ value: Type.String() }), { value: "first" });
+    return { variant: "default", state,
+     replace(value, context) { state.change(context, draft => { draft.value = value; }); return null; },
      wait(_input, context) { return new Promise<null>((_resolve, reject) => {
       if (context.signal.aborted) reject(abortError(context.signal));
       else context.signal.addEventListener("abort", () => reject(abortError(context.signal)), { once: true });
