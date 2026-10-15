@@ -35,6 +35,7 @@ import type { SettingsManager } from "../core/settings-manager.ts";
 import { time } from "../core/timings.ts";
 import { readClipboardContent } from "../utils/clipboard-content.ts";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
+import { getTextOutput, invalidArgText, replaceTabs, startToolTimer, str, toolTimerText } from "../core/tools/render-utils.ts";
 import { codemodeRenderers } from "../core/codemode/renderer.ts";
 import { McpManagerView } from "../core/mcp/view.ts";
 import { manageMcp } from "./mcp-menu.ts";
@@ -47,11 +48,12 @@ import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";
 import { durablePromptShortcutLine } from "../modes/interactive/composer-contract.ts";
 import { DynamicBorder } from "../modes/interactive/components/dynamic-border.ts";
 import { formatTokens } from "../modes/interactive/components/footer.ts";
-import { keyText } from "../modes/interactive/components/keybinding-hints.ts";
+import { keyHint, keyText } from "../modes/interactive/components/keybinding-hints.ts";
 import { type StatusIndicator, WorkingStatusIndicator } from "../modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent, type ToolRenderers } from "../modes/interactive/components/tool-execution.ts";
 import { UserMessageComponent } from "../modes/interactive/components/user-message.ts";
-import { getEditorTheme, getMarkdownTheme, initTheme, onThemeChange, setRegisteredThemes, theme } from "../modes/interactive/theme/theme.ts";
+import { VisualLinePreview } from "../modes/interactive/components/visual-truncate.ts";
+import { getEditorTheme, getMarkdownTheme, initTheme, onThemeChange, setRegisteredThemes, type Theme, theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceLoader } from "../core/resource-loader.ts";
 import { InteractiveThemeController } from "../modes/interactive/theme/theme-controller.ts";
 import { agentOf, type DurableController, type DurableView, type DurableViewSource, formatLane } from "./runtime.ts";
@@ -138,6 +140,106 @@ class CompactionComponent extends Box {
 	}
 }
 
+const SUBAGENT_TASK_PREVIEW_LINES = 3;
+const SUBAGENT_OUTPUT_PREVIEW_LINES = 10;
+
+function subagentExpandHint(currentTheme: Theme, hidden: number): string {
+	return `${currentTheme.fg("muted", `... (${hidden} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${currentTheme.fg("muted", ")")}`;
+}
+
+const subagentRenderers: ToolRenderers = {
+	renderCall(args, currentTheme, context) {
+		startToolTimer(context);
+		const input = (args ?? {}) as {
+			action?: unknown;
+			task?: unknown;
+			conversationId?: unknown;
+			beforeConversationId?: unknown;
+		};
+		const action = str(input.action);
+		const task = str(input.task);
+		const conversationId = str(input.conversationId);
+		const beforeConversationId = str(input.beforeConversationId);
+		const title = currentTheme.fg("toolTitle", currentTheme.bold("subagent"));
+		const component = (context.lastComponent as Container | undefined) ?? new Container();
+		component.clear();
+		if (action === "list") {
+			const suffix =
+				beforeConversationId === null
+					? ` ${invalidArgText(currentTheme)}`
+					: beforeConversationId
+						? ` ${currentTheme.fg("muted", `before #${beforeConversationId}`)}`
+						: "";
+			component.addChild(new Text(`${title} ${currentTheme.fg("accent", "list")}${suffix}`, 0, 0));
+			return component;
+		}
+		if (action !== "run" && action !== "" && action !== null) {
+			component.addChild(new Text(`${title} ${invalidArgText(currentTheme)}`, 0, 0));
+			return component;
+		}
+		const target =
+			conversationId === null
+				? ` ${invalidArgText(currentTheme)}`
+				: conversationId
+					? ` ${currentTheme.fg("accent", `#${conversationId}`)}`
+					: "";
+		component.addChild(new Text(`${title}${target}`, 0, 0));
+		if (task === null) {
+			component.addChild(new Text(invalidArgText(currentTheme), 0, 0));
+			return component;
+		}
+		const normalized = replaceTabs(task.replace(/\r/g, "").trim());
+		if (normalized) {
+			const styled = normalized
+				.split("\n")
+				.map((line) => currentTheme.fg("toolOutput", line))
+				.join("\n");
+			component.addChild(
+				context.expanded
+					? new Text(styled, 0, 0)
+					: new VisualLinePreview({
+							text: styled,
+							maxVisualLines: SUBAGENT_TASK_PREVIEW_LINES,
+							keep: "start",
+							formatHint: (hidden) => subagentExpandHint(currentTheme, hidden),
+						}),
+			);
+		}
+		return component;
+	},
+	renderResult(result, options, currentTheme, context) {
+		const timerText = toolTimerText(context, options.isPartial);
+		const component = (context.lastComponent as Container | undefined) ?? new Container();
+		component.clear();
+		const output = getTextOutput(result, context.showImages).trim();
+		if (output) {
+			const color = context.isError ? "error" : options.isPartial ? "muted" : "toolOutput";
+			const styled = replaceTabs(output)
+				.split("\n")
+				.map((line) => currentTheme.fg(color, line))
+				.join("\n");
+			component.addChild(new Spacer(1));
+			if (options.expanded || options.isPartial) {
+				component.addChild(new Text(styled, 0, 0));
+			} else {
+				component.addChild(
+					new VisualLinePreview({
+						text: styled,
+						maxVisualLines: SUBAGENT_OUTPUT_PREVIEW_LINES,
+						keep: "start",
+						formatHint: (hidden) => subagentExpandHint(currentTheme, hidden),
+					}),
+				);
+			}
+		}
+		if (timerText) {
+			component.addChild(new Spacer(1));
+			component.addChild(new Text(currentTheme.fg("muted", timerText), 0, 0));
+		}
+		return component;
+	},
+};
+
 interface Handlers {
 	readonly plugins: boolean;
 	completeCommand(name: string, prefix: string): Promise<readonly SlashCommandCompletion[] | null>;
@@ -153,8 +255,10 @@ class DurableTui {
 	static readonly #renderers: Record<string, ToolRenderers> = {
 		...createAllToolRenderers(),
 		codemode: codemodeRenderers,
+		subagent: subagentRenderers,
 	};
 	readonly #ui: TuiAltScreen | TuiMainScreen;
+	readonly #header = new Container();
 	readonly #chat = new Container();
 	readonly #tasks = new Container();
 	readonly #queue = new Container();
@@ -173,6 +277,7 @@ class DurableTui {
 	readonly #plugins: boolean;
 	readonly #completeCommand: Handlers["completeCommand"];
 	#autocompleteCommands: DurableView["commands"] | null = null;
+	#startupKey = "";
 	/** The newest card per call ID; provider call IDs may repeat across turns. */
 	readonly #tools = new Map<string, ToolExecutionComponent>();
 	/** Every card shown, also older ones whose call ID a later turn reused. */
@@ -269,11 +374,12 @@ class DurableTui {
 		this.#editorContainer.addChild(this.#editor);
 		this.#footer.addChild(this.#footerStats);
 		// One empty line between the transcript and everything below it.
-		for (const component of [this.#chat, this.#tasks, this.#queue, this.#notices, this.#attachments, this.#editorContainer, this.#footer]) {
+		for (const component of [this.#header, this.#chat, this.#tasks, this.#queue, this.#notices, this.#attachments, this.#editorContainer, this.#footer]) {
 			this.#ui.addChild(component);
 		}
 		if (this.#ui instanceof TuiAltScreen) {
 			const content = new Container();
+			content.addChild(this.#header);
 			content.addChild(this.#chat);
 			content.addChild(new Spacer(1));
 			const transcript = new ScrollView(content, { follow: "end", primary: true, overscroll: "chain" });
@@ -339,6 +445,7 @@ class DurableTui {
 	}
 
 	refreshTheme(snapshot: DurableView): void {
+		this.#startupKey = "";
 		this.#rebuild([...snapshot.history, ...snapshot.conversation.entries]);
 		this.#ui.invalidate();
 		this.apply(snapshot);
@@ -347,6 +454,7 @@ class DurableTui {
 	apply(view: DurableView): void {
 		const conversationId = String(view.conversation.conversation.id);
 		if (this.#conversationId !== conversationId) { this.#conversationId = conversationId; ++this.#pasteEpoch; }
+		this.#syncHeader(view.startup);
 		if (this.#autocompleteCommands !== view.commands) {
 			this.#autocompleteCommands = view.commands;
 			this.#editor.setAutocompleteProvider(new CombinedAutocompleteProvider([
@@ -462,13 +570,26 @@ class DurableTui {
 		}
 	}
 
+	#syncHeader(startup: readonly string[] | undefined): void {
+		const lines = startup ?? [];
+		const key = lines.join("\n");
+		if (key === this.#startupKey) return;
+		this.#startupKey = key;
+		this.#header.clear();
+		for (const line of lines) {
+			this.#header.addChild(new TruncatedText(theme.fg("muted", line), 1, 0));
+		}
+	}
+
 	#syncNotices(view: DurableView): void {
 		this.#notices.clear();
 		const failure = (view.conversation.docs["amazme.live"] as LiveState | undefined)?.compactionFailure;
 		if (failure !== undefined) this.#notices.addChild(new TruncatedText(theme.fg("error", `Compaction failed: ${failure.error}`), 1, 0));
 		for (const item of view.notices.slice(-4)) {
 			const color = item.level === "error" ? "error" : item.level === "warning" ? "warning" : "muted";
-			this.#notices.addChild(new TruncatedText(theme.fg(color, item.message), 1, 0));
+			for (const line of item.message.split("\n")) {
+				this.#notices.addChild(new TruncatedText(theme.fg(color, line), 1, 0));
+			}
 		}
 	}
 
@@ -605,7 +726,7 @@ class DurableTui {
 			if (args !== undefined) existing.updateArgs(args);
 			return existing;
 		}
-		const component = new ToolExecutionComponent(name, callId, args ?? {}, {}, DurableTui.#renderers[name], this.#ui, this.#cwd);
+		const component = new ToolExecutionComponent(name, callId, args ?? {}, {}, DurableTui.#renderers[name] ?? {}, this.#ui, this.#cwd);
 		component.setExpanded(this.#expanded);
 		this.#chat.addChild(component);
 		this.#cards.push(component);
@@ -901,6 +1022,16 @@ export async function runDurableTui(
 			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);
+			}
+			const changesCommand = /^\/changes(?:\s+(.*))?$/su.exec(trimmed);
+			if (changesCommand && controller.describeChanges !== undefined) {
+				const focused = view.ui.getFocusedComponent();
+				const conversationId = source.current().conversation.conversation.id;
+				void controller.describeChanges(changesCommand[1] ?? "").then((output) => {
+					if (output !== undefined && view.ui.getFocusedComponent() === focused && source.current().conversation.conversation.id === conversationId)
+						view.mount(new InfoPanel("Changes", output, () => view.restoreEditor()));
+				});
+				return;
 			}
 			const nativeName = /^\/([^\s]+)/u.exec(trimmed)?.[1];
 			if (["changes", "limits", "resume_run", "execution"].includes(nativeName ?? "")) return void controller.runCommand(nativeName!, trimmed.slice(nativeName!.length + 1).trim());

@@ -94,6 +94,8 @@ export interface DurableView {
 		readonly cwd: string;
 		readonly name?: string;
 	};
+	/** Startup banner lines shown at the top of the transcript. */
+	readonly startup?: readonly string[];
 	/** The conversation shown and talked to. */
 	readonly conversation: ConversationView;
 	readonly conversations: readonly ConversationSummary[];
@@ -120,6 +122,7 @@ export interface DurableViewSource {
 /** What the TUI may ask for. */
 export interface DurableController {
 	describePlugins?(): string;
+	describeChanges?(args?: string): Promise<string | undefined>;
 	runCommand(name: string, args: string): Promise<void>;
 	completeCommand?(name: string, prefix: string): Promise<readonly SlashCommandCompletion[] | null>;
 	/** Reload prompt resources and any selected application plugin facets while idle. */
@@ -337,8 +340,13 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		};
 		let nextNotice = 1;
 		const notice = (level: Notice["level"], message: string): void => {
+			const kept = level === "info" ? state.notices.filter((item) => item.level !== "info") : state.notices;
 			update({
-				notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20) });
+				notices: [...kept, { id: nextNotice++, level, message }].slice(-20) });
+		};
+		const clearNotices = (predicate: (item: Notice) => boolean): void => {
+			const next = state.notices.filter((item) => !predicate(item));
+			if (next.length !== state.notices.length) update({ notices: next });
 		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
 		const reportPausedRun = async (): Promise<void> => {
@@ -450,14 +458,17 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			await current.configure({
 				model: ref,
 				thinkingLevel: initialThinkingLevel(settingsManager, model, thinkingLevel, agentOf(state.conversation).thinkingLevel) }, context);
-			notice("info", `Selected ${ref.provider}/${ref.modelId}.`);
+			clearNotices(
+				(item) =>
+					item.message === "No model configured; select one with /model." ||
+					item.message.startsWith("Saved model is unavailable: "),
+			);
 		};
 		const selectThinking = async (value: string): Promise<void> => {
 			const levels = getSupportedThinkingLevels(agentModel());
 			const level = levels.find((candidate) => candidate === value.toLowerCase());
 			if (level === undefined) throw new Error(`Unknown thinking level "${value}". Available: ${levels.join(", ")}.`);
 			await current.configure({ thinkingLevel: level }, context);
-			notice("info", `Thinking level: ${level}.`);
 		};
 		const show = async (id: ConversationId): Promise<void> => {
 			// Focus-only. An existing conversation: no summary, no new conversation.
@@ -568,6 +579,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				return;
 			}
 			let expanded = expandInput(text);
+			clearNotices((item) => item.level === "info");
 			if (images.length === 0) {
 				watchAnswer(await current.submit({ type: "input", content: expanded, whenBusy }, context));
 				return;
@@ -588,10 +600,34 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				if (activeCommand === operation) activeCommand = undefined;
 			}
 		};
+		const describeChanges = async (args = ""): Promise<string> => {
+			await refreshReview(opened, current.id, context);
+			const review = await readReview(opened, current.id, context);
+			const query = args.trim();
+			const selected = review.files.filter((file) => file.path === query || `${file.root}/${file.path}` === query);
+			return query
+				? selected.map((file) => file.diff).join("\n") || "没有匹配的变更文件。"
+				: [
+						"本轮工作区变更（可能包含人工并发修改）：",
+						...review.files.map((file) => `${file.root}/${file.path} +${file.added} -${file.removed}`),
+						...(review.state?.notes ?? []),
+						...(review.state?.verification ?? []).map(
+							(item) => `${item.command}: ${item.exitCode === null ? "结果未知" : `退出码 ${item.exitCode}`}`,
+						),
+						`跳过 ${review.state?.skipped ?? 0} 个文件；/changes 文件路径 查看差异。`,
+					].join("\n");
+		};
 		const controller: DurableController = {
 			auth,
 			...(plugins === undefined ? {} : {
 				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources) }),
+			describeChanges: async (args = "") => {
+				let output: string | undefined;
+				await command(async () => {
+					output = await describeChanges(args);
+				});
+				return output;
+			},
 			completeCommand: async (name, prefix) => {
 				const query = prefix.toLowerCase();
 				if (name === "model") return modelScope.resolve(modelRuntime.getAvailableSnapshot()).map(({ model }) => model)
@@ -613,15 +649,15 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				}
 				if (name === "thinking") { await selectThinking(args.trim()); return; }
 				if (name === "changes") {
-					await refreshReview(opened, current.id, context);
-					const review = await readReview(opened, current.id, context);
-					const query = args.trim();
-					const selected = review.files.filter(file => file.path === query || `${file.root}/${file.path}` === query);
-					notice("info", query ? selected.map(file => file.diff).join("\n") || "没有匹配的变更文件。"
-						: ["本轮工作区变更（可能包含人工并发修改）：", ...review.files.map(file => `${file.root}/${file.path} +${file.added} -${file.removed}`), ...review.state?.notes ?? [], ...(review.state?.verification ?? []).map(item => `${item.command}: ${item.exitCode === null ? "结果未知" : `退出码 ${item.exitCode}`}`), `跳过 ${review.state?.skipped ?? 0} 个文件；/changes 文件路径 查看差异。`].join("\n"));
+					notice("info", await describeChanges(args));
 					return;
 				}
-				if (name === "resume_run") { await resumeRun(opened, current.id, context); notice("info", "已允许继续当前回合。"); return; }
+				if (name === "resume_run") {
+					await resumeRun(opened, current.id, context);
+					clearNotices((item) => item.message.startsWith("本轮预算已用完"));
+					notice("info", "已允许继续当前回合。");
+					return;
+				}
 				if (name === "limits") {
 					if (args.trim()) {
 						const parts = args.trim().split(/\s+/).map(Number);
@@ -813,11 +849,14 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				context,
 			);
 		}
-		if (settingsManager.getQuietStartup() !== true) notice("info", `${APP_NAME} v${VERSION}`);
+		const startup: string[] = [];
+		if (settingsManager.getQuietStartup() !== true) startup.push(`${APP_NAME} v${VERSION}`);
 		if (settingsManager.getQuietStartup() === false) {
-			notice("info", `Loaded resources: ${resources.getAgentsFiles().agentsFiles.length} context files, ${resources.getSkills().skills.length} skills, ${resources.getPrompts().prompts.length} templates, ${resources.getThemes().themes.length} themes, ${sources.length} plugin sources`);
-			if (modelPatterns().length > 0) notice("info", `Model scope: ${modelPatterns().join(", ")}`);
+			startup.push(`Loaded resources: ${resources.getAgentsFiles().agentsFiles.length} context files, ${resources.getSkills().skills.length} skills, ${resources.getPrompts().prompts.length} templates, ${resources.getThemes().themes.length} themes, ${sources.length} plugin sources`);
+			if (modelPatterns().length > 0) startup.push(`Model scope: ${modelPatterns().join(", ")}`);
 		}
+		if (initial?.fallbackMessage !== undefined) startup.push(initial.fallbackMessage);
+		if (startup.length > 0) update({ startup });
 		for (const diagnostic of collectSettingsDiagnostics(settingsManager)) notice(diagnostic.type, diagnostic.message);
 		const modelError = modelRuntime.getError();
 		if (modelError !== undefined) notice("warning", `Model configuration or availability has errors; run ${APP_COMMAND} doctor for local diagnostics.`);
@@ -826,7 +865,6 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		else if (modelRuntime.getModel(saved.provider, saved.modelId) === undefined) {
 			notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
 		}
-		if (initial?.fallbackMessage !== undefined) notice("info", initial.fallbackMessage);
 		for (const diagnostic of scope.diagnostics) notice("warning", diagnostic.message);
 		reportResources();
 		// The task panel starts open; /tasks hides it.

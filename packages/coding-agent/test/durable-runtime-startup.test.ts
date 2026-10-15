@@ -328,4 +328,38 @@ describe("durable startup over SQLite", () => {
 		expect(existsSync(join(profile, "auth.json"))).toBe(false);
 		expect(session.settings).toBe(settings);
 	});
+
+	it("separates startup banners from notices and keeps model/thinking switches and turns notice-free", async () => {
+		settings = SettingsManager.inMemory({
+			quietStartup: false,
+			defaultProvider: "faux",
+			defaultModel: "reason",
+			enabledModels: ["faux/reason", "faux/plain"],
+			retry: { enabled: false },
+		});
+		const session = await open();
+		expect(session.view.current().startup).toEqual([
+			expect.stringMatching(/^AmazMe v/),
+			expect.stringContaining("Loaded resources:"),
+			"Model scope: faux/reason, faux/plain",
+		]);
+		expect(session.view.current().notices).toEqual([]);
+
+		await session.controller.cycleModel("forward");
+		expect(agentOf(session.view.current().conversation).model).toEqual({ provider: "faux", modelId: "plain" });
+		await session.controller.cycleModel("forward");
+		await session.controller.cycleThinking();
+		expect(session.view.current().notices).toEqual([]);
+
+		await session.controller.runCommand("limits", "5 60 1");
+		await session.controller.runCommand("execution", "workspace-write");
+		await vi.waitFor(() =>
+			expect(session.view.current().notices.map((item) => item.message)).toEqual([
+				expect.stringContaining("执行模式：workspace-write"),
+			]),
+		);
+
+		await answer(session);
+		expect(session.view.current().notices).toEqual([]);
+	});
 });
