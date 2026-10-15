@@ -110,6 +110,20 @@ describe("pending approval indicator", () => {
 		renderer.render(emptyView);
 		expect(elements.meter.hidden).toBe(true);
 
+		const tokensOnly = {
+			...emptyView,
+			meter: {
+				context: "?",
+				tokens: "792 / ?",
+				cost: "$0.000",
+				tone: "neutral" as const,
+			},
+		};
+		renderer.render(tokensOnly);
+		expect(elements.meter.hidden).toBe(false);
+		expect(elements.meterContext.textContent).toBe("792 tokens");
+		expect(elements.meter.title).toBe("上下文 ?，token 792，费用 $0.000");
+
 		const withUsage = {
 			...emptyView,
 			meter: {

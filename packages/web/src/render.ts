@@ -1790,7 +1790,7 @@ export function createRenderer(
 			return;
 		}
 		const usedTokens = view.meter.tokens.split(" / ")[0] ?? view.meter.tokens;
-		const summaryText = hasContext ? view.meter.context : hasTokens ? usedTokens : view.meter.cost;
+		const summaryText = hasContext ? view.meter.context : hasTokens ? `${usedTokens} tokens` : view.meter.cost;
 		const displayTokens = view.meter.tokens.endsWith(" / ?") ? usedTokens : view.meter.tokens;
 		elements.meterContext.textContent = summaryText;
 		elements.meterTokens.textContent = displayTokens;
@@ -1800,7 +1800,7 @@ export function createRenderer(
 		if (elements.meterTokens.parentElement) elements.meterTokens.parentElement.hidden = !hasTokens;
 		elements.meter.dataset.tone = view.meter.tone;
 		const meterLabel = copy("header.meter", {
-			context: summaryText,
+			context: view.meter.context,
 			tokens: displayTokens,
 			cost: view.meter.cost,
 		});
