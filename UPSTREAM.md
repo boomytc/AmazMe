@@ -2,6 +2,10 @@
 
 实现来自 [Pi](https://github.com/earendil-works/pi)。本文件记录当前对齐的上游基线、基线之后已处理的提交、刻意偏离和跟进方法，供后续吸收改进时使用。
 
+## DeepSeek Harness 行为增量
+
+本批次参照本地 DeepSeek Harness 的固定区间 `5badb15009ae1756c3afe0ae0cef1faafc290ccc..571902028a75c64c1d767f4ae5fd099485f0ddf0`（1537 个提交）。按当前 AmazMe 载体吸收行为改进，沿用 Pi/Chord/Durable 的包依赖与持久状态，不合并 DSH 的框架、产品账号或旧接口。具体模块、代表提交、仅参考能力差异和本轮验证见 [增量吸收记录](docs/deepseek-harness-absorption.md)。Pi 的供应商 OAuth 身份继续保持原配置。
+
 ## 当前基线
 
 当前已处理到 Pi 的 `origin/main` 提交 `b06c1f2cf`（2026-10-15），共享包维持 v1.2.0。本轮逐项核对 `00d8d0495..b06c1f2cf` 的 21 个提交，迁入 Chord 协议 4，并迁移 Web、桌面、会话服务和原生插件消费者；产品公开协议为 11、协调协议为 5，不保留旧声明、位置参数或握手兼容实现。此前已处理 `7d75a0e3e..00d8d0495` 的 17 个提交和 `427052247..7d75a0e3e` 的 42 个提交。
