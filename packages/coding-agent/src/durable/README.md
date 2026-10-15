@@ -6,7 +6,7 @@
 
 `node packages/coding-agent/dist/bundle/cli.js` 启动新会话，追加 `--continue` 打开当前工作目录的最近会话。存储路径为 `~/.amazme/agent/experimental/durable-sessions/<cwd-hash>/<session>/session.sqlite`；文件锁防止两个进程同时写入。崩溃遗留锁在 10 秒后失效，重开会等待锁恢复。
 
-界面读取 `Conversation.viewState()`，流式内容、工具进度、输入队列、重试、压缩、模型及用量由 Durable 状态提供。子任务由调用它的工具持有，取消主任务会取消其子任务。当前焦点存入 `amazme.session.focus`，重开时恢复。
+界面读取 `Conversation.viewState()`，流式内容、工具进度、输入队列、重试、压缩、模型及用量由 Durable 状态提供。每次子代理运行由调用它的工具监督，持久子会话归属父对话；取消整个父对话会停止其所属工作。当前焦点存入 `amazme.session.focus`，重开时恢复。
 
 启动支持 `--provider`、`--model`（含 `:thinking` 后缀）、`--thinking`、`--api-key` 和 `--use-theme`。显式推理级别优先于后缀，随后按模型能力约束；新会话按模型设置、全局设置、默认级别依次取值。临时密钥要求显式 `--model`，只用于当前进程；主题覆盖同样不写入设置。
 
@@ -40,9 +40,13 @@
 | `runtime.ts` | 模型运行时、Harness、环境和控制器 |
 | `harness-setup.ts` | 共用设置、工具注册和初始模型选择 |
 | `prompt.ts` | 工具、规则、AGENTS.md、技能及工作目录提示 |
-| `subagent.ts` | 由工具调用持有的子任务 |
+| `subagent.ts`、`subagent-run.ts` | 同一子会话的创建、发现、继续与每次输入的精确取消 |
 | `tui.ts` | TUI 呈现与键盘交互 |
 | `conversation-view.ts` | TUI、Web、服务共享的会话视图和结果类型 |
 | `session-surface.ts` | 会话导航、分叉、历史分页与焦点持久化 |
 
 该目录只承载默认 TUI 及共享会话逻辑。常驻宿主服务在 `src/host/`；统一宿主、客户端及安装产物的交付要求见 `docs/product-improvements.md`。
+
+`subagent` 使用统一的 `action: "run" | "list"`：run 提供 `task`，可用返回的 `conversationId` 继续空闲孩子的同一段历史；list 仅列出当前父对话创建的子代理，并用 `beforeConversationId` 分页。新孩子继承工具选择，不继承父对话历史，不能再次委派。父模型从工具正文收到孩子编号和答案，TUI/Web 沿用同一 `details.conversationId`。
+
+子会话通过父对话的归属任务保持可追溯，每次调用使用普通 Durable 监督任务提交并等待结果；没有单独的后台代理执行器或目录状态。取消单次调用会停止承载其输入的运行，已经进入同一运行的 steer 一并取消；孩子内后来排队的 follow-up 和后续独立运行保留。取消整个父对话仍停止整个所属范围。重启复用持久任务和 requestId，取消恢复只查已有提交，绝不补发新输入。

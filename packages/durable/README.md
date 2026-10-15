@@ -129,6 +129,8 @@ const again = await root.submit({ type: "input", content: "Hello", requestId: "g
 
 `harness.cancelPrompt(id, context, conversationId?)` cancels a queued input or marks the current run carrying that input, on the same mutation line as resolving its task. It joins the run and its owned cleanup. Unrelated queued inputs remain and advance at the aborted run's final boundary; already placed steering inputs share that run's cancellation. A settled or foreign scoped ID never cancels a later run. This is distinct from `Conversation.abort()`, which withdraws the conversation's queued inputs too.
 
+Tasks and tools use the same operation through their invocation-bound `ConversationHandle.cancelPrompt(id, context)`. The handle scopes the input ID to its conversation and rejects after its invocation ends. A durable supervisor can therefore find its previously admitted input by request ID in its abort phase and cancel that input without creating new work or withdrawing a later human input.
+
 ## Extensions
 
 Code the Harness runs, other than its built-in tasks, comes in named extensions installed in a registry your process owns:

@@ -2859,6 +2859,8 @@ type ToolExecutionResult<TDetails extends JsonValue = JsonValue> = {
 interface ConversationHandle {
   readonly id: ConversationId;
   submit(submission: InputSubmissionDraft, context: Context): Promise<Submission>;
+  /** Cancel this input or its current run, preserving unrelated queued inputs and later runs. */
+  cancelPrompt(id: SubmissionId, context: Context): Promise<"cancelled" | "settled" | "not_found">;
   abort(context: Context): Promise<void>;
   waitForIdle(context: Context): Promise<void>;
 }

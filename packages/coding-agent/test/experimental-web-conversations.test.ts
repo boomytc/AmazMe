@@ -2,13 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StreamFn } from "@amazme/agent";
-import { createAssistantMessageEventStream, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Model } from "@amazme/ai";
+import { createAssistantMessageEventStream, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools, type AssistantMessage, type FauxResponseStep, type Model } from "@amazme/ai";
+import { makeStrictJsonSchema } from "@amazme/ai/api/constrained-sampling";
 import { replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
-import { AgentDoc, BranchSummaryEntry, createRegistry, defineExtension, defineTask, Harness, InboxDoc, LiveDoc, type Conversation, type EntryRecord, UserEntry } from "@amazme/durable";
+import { AgentDoc, BranchSummaryEntry, createRegistry, defineExtension, defineTask, Harness, InboxDoc, LiveDoc, type Conversation, type ConversationId, type EntryRecord, UserEntry } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
 import { Subagent } from "../src/durable/subagent.ts";
+import { SubagentOwner, SubagentRun } from "../src/durable/subagent-run.ts";
 import { createAgentController } from "../src/core/plugins/agent-controller-provider.ts";
 import { type ConversationsState, IDLE_LANE } from "../src/durable/conversation-view.ts";
 import { createConversationsService } from "../src/host/services/conversations-provider.ts";
@@ -156,12 +158,12 @@ async function openConversations(
 async function askRoot(
 	setup: Awaited<ReturnType<typeof openConversations>>,
 	text: string,
-	responses: readonly ReturnType<typeof fauxAssistantMessage>[],
+	responses: readonly FauxResponseStep[],
 ): Promise<void> {
 	setup.faux.setResponses([...responses]);
 	const root = (await setup.harness.conversation(Number(setup.rootId) as never, TODO_CONTEXT))!;
 	const submission = await root.submit({ type: "input", content: text }, TODO_CONTEXT);
-	await submission.wait(TODO_CONTEXT);
+	expect(await submission.wait(TODO_CONTEXT)).toMatchObject({ type: "input", status: "done" });
 }
 
 describe("the session's conversation list", () => {
@@ -188,7 +190,7 @@ describe("the session's conversation list", () => {
 				root: true,
 			});
 
-			// The live task graph while the call runs: the child belongs to the tool task that made it.
+			// The live task graph attributes the persistent child to its parent-owned anchor task.
 			const owners = new Map<string, string[]>();
 			setup.state.subscribe(() => {
 				for (const task of setup.state.value.tasks) {
@@ -197,7 +199,7 @@ describe("the session's conversation list", () => {
 			});
 
 			await askRoot(setup, "delegate this", [
-				fauxAssistantMessage([fauxToolCall("subagent", { task: "child task marker" })], {
+				fauxAssistantMessage([fauxToolCall("subagent", { action: "run", task: "child task marker" })], {
 					stopReason: "toolUse",
 				}),
 				fauxAssistantMessage("the child answered"),
@@ -715,5 +717,225 @@ describe("tree navigation on the session surface", () => {
 		} finally {
 			await setup.close();
 		}
+	});
+});
+
+describe("durable foreground subagents", () => {
+	const context = BACKGROUND_CONTEXT;
+	const delegate = (task: string, conversationId?: string) => fauxAssistantMessage([
+		fauxToolCall("subagent", { action: "run", task, ...(conversationId === undefined ? {} : { conversationId }) }),
+	], { stopReason: "toolUse" });
+	const parentAnswer: FauxResponseStep = request => {
+		const result = request.messages.findLast(message => message.role === "toolResult");
+		if (result?.role !== "toolResult") throw new Error("Parent received no tool result");
+		return fauxAssistantMessage(result.content.flatMap(part => part.type === "text" ? [part.text] : []).join(""));
+	};
+	const childId = async (setup: Awaited<ReturnType<typeof openConversations>>): Promise<ConversationId> => {
+		const page = await setup.harness.commit(tx => tx.scanConversations({ ownerConversationId: parseConversationId(setup.rootId) }, 50), context);
+		const child = page.items[0];
+		if (child === undefined) throw new Error("Child was not created");
+		return child.id;
+	};
+	const rootOf = async (setup: Awaited<ReturnType<typeof openConversations>>) => {
+		const root = await setup.harness.conversation(parseConversationId(setup.rootId), context);
+		if (root === undefined) throw new Error("Root is unavailable");
+		return root;
+	};
+
+	test("delivers child text and ID to the parent model, lists and continues the same history", async () => {
+		const setup = await openConversations();
+		try {
+			await askRoot(setup, "delegate", [request => {
+				const tool = getCurrentTools(request.messages).find(tool => tool.name === "subagent");
+				if (tool === undefined) throw new Error("Subagent tool was not declared");
+				expect(makeStrictJsonSchema(tool.parameters)).toMatchObject({ type: "object", properties: { action: { type: "string", enum: ["run", "list"] } } });
+				return delegate("remember alpha");
+			}, fauxAssistantMessage("alpha answer"), request => {
+				const result = request.messages.findLast(message => message.role === "toolResult");
+				expect(result?.content).toEqual([{ type: "text", text: expect.stringMatching(/^Subagent \d+\nalpha answer$/) }]);
+				return fauxAssistantMessage("parent received alpha");
+			}]);
+			const id = await childId(setup);
+			await askRoot(setup, "continue", [delegate("remember beta", String(id)), request => {
+				const messages = JSON.stringify(request.messages);
+				expect(messages).toContain("remember alpha");
+				expect(messages).toContain("alpha answer");
+				expect(messages).toContain("remember beta");
+				expect(getCurrentTools(request.messages).some(tool => tool.name === "subagent")).toBe(false);
+				return fauxAssistantMessage("beta answer");
+			}, request => {
+				const result = request.messages.findLast(message => message.role === "toolResult");
+				expect(result?.content).toEqual([{ type: "text", text: `Subagent ${id}\nbeta answer` }]);
+				return fauxAssistantMessage("parent received beta");
+			}]);
+			await askRoot(setup, "list", [fauxAssistantMessage([fauxToolCall("subagent", { action: "list" })], { stopReason: "toolUse" }), request => {
+				const result = request.messages.findLast(message => message.role === "toolResult");
+				expect(result?.content).toEqual([{ type: "text", text: `${id}: idle | remember alpha` }]);
+				return fauxAssistantMessage("listed");
+			}]);
+			expect((await setup.harness.commit(tx => tx.scanConversations({}, 50), context)).items).toHaveLength(2);
+		} finally { await setup.close(); }
+	});
+
+	test("rejects foreign and unrelated children before submitting and does not list them", async () => {
+		const setup = await openConversations();
+		try {
+			const other = await setup.harness.createConversation({ ownership: { kind: "ownerless" } }, context);
+			const foreign = await other.commit(async tx => {
+				const creator = await tx.createTask(Hold, {}, { ownership: { kind: "conversation" } });
+				const owner = await tx.createTask(SubagentOwner, { creator }, { ownership: { kind: "conversation" } });
+				return (await tx.createConversation({ ownership: { kind: "task", taskId: owner } })).id;
+			}, context);
+			const unrelated = await (await rootOf(setup)).commit(async tx => {
+				const owner = await tx.createTask(Hold, {}, { ownership: { kind: "conversation" } });
+				return (await tx.createConversation({ ownership: { kind: "task", taskId: owner } })).id;
+			}, context);
+			for (const id of [foreign, unrelated, parseConversationId(setup.rootId)]) {
+				await askRoot(setup, "invalid delegation", [delegate("must not reach a child", String(id)), request => {
+					const result = request.messages.findLast(message => message.role === "toolResult");
+					expect(result).toMatchObject({ isError: true });
+					expect(JSON.stringify(result)).toContain("does not belong");
+					return fauxAssistantMessage("refused");
+				}]);
+			}
+			await askRoot(setup, "list", [fauxAssistantMessage([fauxToolCall("subagent", { action: "list" })], { stopReason: "toolUse" }), request => {
+				const result = request.messages.findLast(message => message.role === "toolResult");
+				expect(result?.content).toEqual([{ type: "text", text: "No subagents." }]);
+				return fauxAssistantMessage("no children");
+			}]);
+			for (const id of [foreign, unrelated]) expect((await setup.harness.commit(tx => tx.scanSubmissions({ conversationId: id }, 10), context)).items).toHaveLength(0);
+		} finally { await setup.close(); }
+	});
+
+	test("rejects continuation of a busy child without a new child or input", async () => {
+		const setup = await openConversations();
+		try {
+			await askRoot(setup, "first", [delegate("first task"), fauxAssistantMessage("first answer"), parentAnswer]);
+			const id = await childId(setup);
+			const pending = pendingResponse();
+			setup.faux.setResponses([pending.step]);
+			await (await setup.harness.conversation(id, context))!.submit({ type: "input", content: "busy human input" }, context);
+			await pending.reached;
+			const before = (await setup.harness.commit(tx => tx.scanSubmissions({ conversationId: id }, 50), context)).items;
+			await askRoot(setup, "continue busy", [delegate("must not be queued", String(id)), request => {
+				const result = request.messages.findLast(message => message.role === "toolResult");
+				expect(result).toMatchObject({ isError: true });
+				expect(JSON.stringify(result)).toContain("is busy");
+				return fauxAssistantMessage("busy refusal observed");
+			}]);
+			expect((await setup.harness.commit(tx => tx.scanSubmissions({ conversationId: id }, 50), context)).items).toEqual(before);
+			expect((await setup.harness.commit(tx => tx.scanConversations({}, 50), context)).items).toHaveLength(2);
+		} finally { await setup.close(); }
+	});
+
+	test("lists bounded pages without losing a child at the cursor", async () => {
+		const setup = await openConversations();
+		try {
+			const root = await rootOf(setup);
+			const children = await root.commit(async tx => {
+				const creator = await tx.createTask(Hold, {}, { ownership: { kind: "conversation" } });
+				const result: ConversationId[] = [];
+				for (let index = 0; index < 51; index++) {
+					const owner = await tx.createTask(SubagentOwner, { creator }, { ownership: { kind: "conversation" } });
+					result.push((await tx.createConversation({ ownership: { kind: "task", taskId: owner } })).id);
+				}
+				return result.reverse();
+			}, context);
+			await askRoot(setup, "first page", [fauxAssistantMessage([fauxToolCall("subagent", { action: "list" })], { stopReason: "toolUse" }), request => {
+				const result = request.messages.findLast(message => message.role === "toolResult");
+				expect(result?.content).toEqual([{ type: "text", text: `${children.slice(0, 50).map(id => `${id}: idle | task unavailable`).join("\n")}\nMore subagents: list with beforeConversationId "${children[49]}".` }]);
+				return fauxAssistantMessage("first page received");
+			}]);
+			await askRoot(setup, "second page", [fauxAssistantMessage([fauxToolCall("subagent", { action: "list", beforeConversationId: String(children[49]) })], { stopReason: "toolUse" }), request => {
+				const result = request.messages.findLast(message => message.role === "toolResult");
+				expect(result?.content).toEqual([{ type: "text", text: `${children[50]}: idle | task unavailable` }]);
+				return fauxAssistantMessage("last page received");
+			}]);
+		} finally { await setup.close(); }
+	});
+
+	for (const continuation of [false, true]) test(`cancels only the ${continuation ? "continued" : "first"} input and preserves a later human input`, async () => {
+		const setup = await openConversations();
+		try {
+			if (continuation) await askRoot(setup, "first", [delegate("first task"), fauxAssistantMessage("first answer"), parentAnswer]);
+			const selected = continuation ? String(await childId(setup)) : undefined;
+			const pending = pendingResponse();
+			setup.faux.setResponses([delegate("held child task", selected), pending.step]);
+			const root = await rootOf(setup);
+			const parent = await root.submit({ type: "input", content: "delegate held task" }, context);
+			await pending.reached;
+			const id = await childId(setup);
+			const child = (await setup.harness.conversation(id, context))!;
+			const later = await child.submit({ type: "input", content: "later human input", whenBusy: "followUp" }, context);
+			const finish: FauxResponseStep = request => JSON.stringify(request.messages.at(-1)).includes("later human input")
+				? fauxAssistantMessage("human input survived") : fauxAssistantMessage("parent cancellation observed");
+			setup.faux.setResponses([finish, finish, finish]);
+			const tool = (await setup.harness.snapshot(LiveDoc, root.id, context))?.tools?.find(item => item.name === "subagent");
+			if (tool === undefined) throw new Error("Delegation tool is not running");
+			await setup.harness.abortTask(tool.taskId, context);
+			expect((await later.wait(context)).status).toBe("done");
+			expect((await parent.wait(context)).status).toBe("done");
+			await setup.harness.waitForIdle(context);
+			const inputs = (await setup.harness.commit(tx => tx.scanSubmissions({ conversationId: id }, 50), context)).items;
+			expect(inputs.find(input => input.requestId === `subagent:${tool.taskId}`)).toMatchObject({ status: "unanswered", reason: "aborted" });
+			expect(inputs.find(input => input.id === later.id)).toMatchObject({ status: "done" });
+		} finally { await setup.close(); }
+	});
+
+	test("reopens pending delegation without another child or duplicate input", async () => {
+		const first = await openConversations();
+		const pending = pendingResponse();
+		first.faux.setResponses([delegate("persisted child task"), pending.step]);
+		const parent = await (await rootOf(first)).submit({ type: "input", content: "delegate" }, context);
+		await pending.reached;
+		const id = await childId(first);
+		const before = await first.harness.commit(tx => tx.scanSubmissions({ conversationId: id }, 50), context);
+		await first.close();
+		const restored = await openConversations(first.directory);
+		try {
+			restored.faux.setResponses([fauxAssistantMessage("resumed child answer"), parentAnswer]);
+			const resumed = await restored.harness.submission(parent.id, context);
+			expect((await resumed!.wait(context)).status).toBe("done");
+			await restored.harness.waitForIdle(context);
+			expect(await childId(restored)).toBe(id);
+			expect((await restored.harness.commit(tx => tx.scanConversations({}, 50), context)).items).toHaveLength(2);
+			expect((await restored.harness.commit(tx => tx.scanSubmissions({ conversationId: id }, 50), context)).items.map(input => input.id)).toEqual(before.items.map(input => input.id));
+			const entries = await (await rootOf(restored)).entries({}, 50, undefined, context);
+			expect(JSON.stringify(entries.items)).toContain(`Subagent ${id}\\nresumed child answer`);
+		} finally { await restored.close(); }
+	});
+
+	test("aborting a supervisor before submission does not admit an input", async () => {
+		const setup = await openConversations();
+		try {
+			const child = await setup.harness.createConversation({ ownership: { kind: "ownerless" } }, context);
+			const supervisor = await (await rootOf(setup)).commit(tx => tx.createTask(SubagentRun,
+				{ conversationId: child.id, requestId: "never-admitted", task: "must not run" }, { ownership: { kind: "conversation" } }), context);
+			await setup.harness.abortTask(supervisor, context);
+			expect((await setup.harness.waitForTask(supervisor, context)).state.outcome.status).toBe("aborted");
+			expect((await setup.harness.commit(tx => tx.scanSubmissions({ conversationId: child.id }, 10), context)).items).toHaveLength(0);
+			expect((await child.entries({}, 10, undefined, context)).items).toHaveLength(0);
+		} finally { await setup.close(); }
+	});
+
+	test("an aborted supervisor recovers an admitted input by request ID without submitting again", async () => {
+		const first = await openConversations();
+		const pending = pendingResponse();
+		first.faux.setResponses([pending.step]);
+		const child = await first.harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: { provider: "faux", modelId: "faux-1" } } }, context);
+		const original = await child.submit({ type: "input", content: "admitted before checkpoint", requestId: "gap-input" }, context);
+		await pending.reached;
+		await first.close();
+		const restored = await openConversations(first.directory);
+		try {
+			restored.faux.setResponses([pendingResponse().step]);
+			const supervisor = await (await rootOf(restored)).commit(tx => tx.createTask(SubagentRun,
+				{ conversationId: child.id, requestId: "gap-input", task: "must not duplicate" }, { ownership: { kind: "conversation" } }), context);
+			await restored.harness.abortTask(supervisor, context);
+			expect((await restored.harness.waitForTask(supervisor, context)).state.outcome.status).toBe("aborted");
+			const inputs = (await restored.harness.commit(tx => tx.scanSubmissions({ conversationId: child.id }, 10), context)).items;
+			expect(inputs).toHaveLength(1);
+			expect(inputs[0]).toMatchObject({ id: original.id, status: "unanswered", reason: "aborted" });
+		} finally { await restored.close(); }
 	});
 });

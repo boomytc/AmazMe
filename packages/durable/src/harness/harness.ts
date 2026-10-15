@@ -459,6 +459,10 @@ function boundConversation(
 	};
 	return {
 		id,
+		cancelPrompt: async (submissionId, context) => {
+			binding.check();
+			return submissions.cancelPrompt(submissionId, tasks, bind(context), id);
+		},
 		submit: async (draft, context) => {
 			binding.check();
 			const submission = await submissions.submit(id, draft, bind(context));

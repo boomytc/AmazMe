@@ -17,6 +17,7 @@ import {
 	MemoryStorage,
 	type Storage,
 	type Submission,
+	type SubmissionId,
 	type TaskId,
 } from "@amazme/durable";
 import { afterEach, describe, expect, it } from "vitest";
@@ -1042,6 +1043,7 @@ describe("owned conversations from tools and supervisors", () => {
 		);
 		await expect(handle!.waitForIdle(context)).rejects.toThrow("invocation has ended");
 		await expect(handle!.abort(context)).rejects.toThrow("invocation has ended");
+		await expect(handle!.cancelPrompt(submission!.id, context)).rejects.toThrow("invocation has ended");
 		await expect(submission!.wait(context)).rejects.toThrow("invocation has ended");
 		// Nothing was admitted or marked after the call ended.
 		const childConversation = (await harness.conversation(handle!.id, context))!;
@@ -1053,6 +1055,50 @@ describe("owned conversations from tools and supervisors", () => {
 		expect(childTasks).toEqual([]);
 		expect((await (await harness.submission(submission!.id, context))!.status(context)).status).toBe("done");
 		await harness.close(context);
+	});
+
+	it("bounds prompt cancellation to the handle's conversation and preserves a queued human input", async () => {
+		const setup = chatSetup();
+		const childRun = gated(fauxAssistantMessage("cancelled answer"));
+		setup.faux.setResponses([childRun.step, fauxAssistantMessage("human answer")]);
+		const Cancel = defineTask<
+			{ child: ConversationId; other: ConversationId; submission: SubmissionId },
+			{ phase: "cancel" },
+			{ wrong: string; actual: string }
+		>({
+			name: "test.cancel-one-prompt", version: 1, initial: () => ({ phase: "cancel" }),
+			phases: { cancel: async (task, runtime, callContext) => {
+				const other = (await runtime.conversation(task.input.other, callContext))!;
+				const child = (await runtime.conversation(task.input.child, callContext))!;
+				const wrong = await other.cancelPrompt(task.input.submission, callContext);
+				const actual = await child.cancelPrompt(task.input.submission, callContext);
+				await runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: { wrong, actual } } }), callContext);
+			} },
+			abort: async (_task, runtime, callContext) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), callContext),
+		});
+		addTask(setup.registry, Cancel);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		try {
+			const [childId, otherId] = await root.commit(async tx => {
+				const child = await tx.createConversation({ ownership: { kind: "ownerless" } });
+				const other = await tx.createConversation({ ownership: { kind: "ownerless" } });
+				await configure(tx, child.id, { model: { provider: "faux", modelId: "faux-1" } });
+				return [child.id, other.id] as const;
+			}, context);
+			const child = (await harness.conversation(childId, context))!;
+			const first = await child.submit({ type: "input", content: "delegated input" }, context);
+			await childRun.reached;
+			const human = await child.submit({ type: "input", content: "later human input", whenBusy: "followUp" }, context);
+			const cancelling = await root.commit(tx => tx.createTask(Cancel,
+				{ child: childId, other: otherId, submission: first.id }, { ownership: { kind: "conversation" } }), context);
+			expect((await harness.waitForTask(cancelling, context)).state.outcome).toEqual({
+				status: "completed", result: { wrong: "not_found", actual: "cancelled" },
+			});
+			expect(await first.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });
+			expect(await human.wait(context)).toMatchObject({ status: "done", type: "input" });
+		} finally {
+			await harness.close(context);
+		}
 	});
 
 	it("rejects a handle operation queued on the line when the invocation ends before it runs", async () => {

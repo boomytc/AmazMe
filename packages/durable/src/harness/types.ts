@@ -128,6 +128,8 @@ export type HooksOf<K> = K extends Task<infer _I, infer _S, infer _R, infer H> ?
 export interface ConversationHandle {
 	readonly id: ConversationId;
 	submit(submission: InputSubmissionDraft, context: Context): Promise<Submission>;
+	/** Cancel this input or its current run, preserving unrelated queued inputs and later runs. */
+	cancelPrompt(id: SubmissionId, context: Context): Promise<"cancelled" | "settled" | "not_found">;
 	/** `Conversation.abort()`: withdraw queued inputs, abort the ordinary ownership scope, and wait until it is idle. */
 	abort(context: Context, options?: ConversationAbortOptions): Promise<void>;
 	/** Resolve when the conversation's ordinary ownership scope has no live non-background task. */
