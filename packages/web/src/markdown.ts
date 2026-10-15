@@ -312,3 +312,193 @@ export function formatMarkdown(text: string): MarkdownNode[] {
 	flushList();
 	return nodes;
 }
+
+export type CodeTokenKind = "plain" | "keyword" | "string" | "comment" | "number" | "type" | "property";
+
+export interface CodeToken {
+	readonly kind: CodeTokenKind;
+	readonly text: string;
+}
+
+const CODE_KEYWORDS = new Set([
+	"abstract", "and", "as", "assert", "async", "await", "break", "case", "catch", "chan", "class",
+	"const", "continue", "crate", "def", "default", "defer", "del", "delete", "do", "done", "elif",
+	"else", "enum", "esac", "except", "export", "extends", "extern", "fallthrough", "fi", "finally",
+	"fn", "for", "from", "func", "function", "global", "go", "if", "impl", "implements", "import",
+	"in", "infer", "instanceof", "interface", "is", "keyof", "lambda", "let", "local", "loop", "match",
+	"mod", "move", "mut", "namespace", "new", "nonlocal", "not", "of", "or", "override", "package",
+	"pass", "private", "protected", "pub", "public", "raise", "range", "readonly", "ref", "return",
+	"satisfies", "select", "self", "Self", "static", "struct", "super", "switch", "then", "this",
+	"throw", "trait", "try", "type", "typeof", "unsafe", "use", "var", "void", "where", "while",
+	"with", "yield", "SELECT", "FROM", "WHERE", "INSERT", "INTO", "UPDATE", "DELETE", "JOIN",
+	"LEFT", "RIGHT", "INNER", "ON", "GROUP", "BY", "ORDER", "LIMIT",
+]);
+
+const CODE_LITERALS = new Set([
+	"true", "false", "null", "undefined", "NaN", "Infinity", "None", "True", "False", "nil",
+]);
+
+const CODE_TYPES = new Set([
+	"string", "number", "boolean", "bigint", "symbol", "unknown", "never", "object",
+	"int", "float", "bool", "str", "bytes", "list", "dict", "tuple", "set",
+	"usize", "isize", "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "f32", "f64",
+	"Option", "Result", "Vec", "String", "Box", "Arc", "Rc",
+	"Promise", "Record", "Readonly", "Partial", "Array", "Map", "Set", "Error",
+]);
+
+const HASH_COMMENT_LANGUAGES = new Set([
+	"py", "python", "sh", "bash", "zsh", "shell", "console", "yaml", "yml", "toml", "ini", "rb", "ruby", "r", "perl", "dockerfile", "makefile",
+]);
+
+/**
+ * Pure, lossless line tokenizer for fenced code blocks. Every input character stays in the output
+ * tokens in exact order, so DOM construction only creates text nodes and never parses markup.
+ */
+export function tokenizeCode(text: string, language?: string): readonly (readonly CodeToken[])[] {
+	const lang = language?.toLowerCase() ?? "";
+	const rawLines = text.split("\n");
+	const result: CodeToken[][] = [];
+	let blockComment: "*/" | "-->" | undefined;
+
+	for (const line of rawLines) {
+		if (lang === "diff" || lang === "patch") {
+			if (line.startsWith("+")) {
+				result.push([{ kind: "string", text: line }]);
+				continue;
+			}
+			if (line.startsWith("-")) {
+				result.push([{ kind: "keyword", text: line }]);
+				continue;
+			}
+			if (line.startsWith("@@")) {
+				result.push([{ kind: "type", text: line }]);
+				continue;
+			}
+		}
+
+		const tokens: CodeToken[] = [];
+		const push = (kind: CodeTokenKind, slice: string): void => {
+			if (slice.length === 0) return;
+			const last = tokens.at(-1);
+			if (last !== undefined && last.kind === kind) {
+				tokens[tokens.length - 1] = { kind, text: last.text + slice };
+			} else {
+				tokens.push({ kind, text: slice });
+			}
+		};
+
+		let index = 0;
+		while (index < line.length) {
+			if (blockComment !== undefined) {
+				const close = line.indexOf(blockComment, index);
+				if (close === -1) {
+					push("comment", line.slice(index));
+					index = line.length;
+				} else {
+					const end = close + blockComment.length;
+					push("comment", line.slice(index, end));
+					index = end;
+					blockComment = undefined;
+				}
+				continue;
+			}
+
+			if (line.startsWith("/*", index)) {
+				const close = line.indexOf("*/", index + 2);
+				if (close === -1) {
+					push("comment", line.slice(index));
+					blockComment = "*/";
+					break;
+				}
+				push("comment", line.slice(index, close + 2));
+				index = close + 2;
+				continue;
+			}
+
+			if (line.startsWith("<!--", index)) {
+				const close = line.indexOf("-->", index + 4);
+				if (close === -1) {
+					push("comment", line.slice(index));
+					blockComment = "-->";
+					break;
+				}
+				push("comment", line.slice(index, close + 3));
+				index = close + 3;
+				continue;
+			}
+
+			if (line.startsWith("//", index) && lang !== "json") {
+				push("comment", line.slice(index));
+				break;
+			}
+
+			if (line[index] === "#" && (HASH_COMMENT_LANGUAGES.has(lang) || (index === 0 && line.startsWith("#!")))) {
+				push("comment", line.slice(index));
+				break;
+			}
+
+			if (line.startsWith("--", index) && lang === "sql") {
+				push("comment", line.slice(index));
+				break;
+			}
+
+			const quote = line[index];
+			if (quote === '"' || quote === "'" || quote === "`") {
+				let cursor = index + 1;
+				while (cursor < line.length) {
+					if (line[cursor] === "\\") {
+						cursor += 2;
+						continue;
+					}
+					if (line[cursor] === quote) {
+						cursor += 1;
+						break;
+					}
+					cursor += 1;
+				}
+				const slice = line.slice(index, cursor);
+				const rest = line.slice(cursor);
+				const isPropertyKey = quote === '"' && /^\s*:/.test(rest) && (lang === "json" || lang === "jsonc" || lang === "yaml" || lang === "yml");
+				push(isPropertyKey ? "property" : "string", slice);
+				index = cursor;
+				continue;
+			}
+
+			const numberMatch = /^(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|\d+(?:_\d+)*(?:\.\d+(?:_\d+)*)?(?:[eE][+-]?\d+)?n?)\b/.exec(line.slice(index));
+			if (numberMatch !== null && (index === 0 || !/[A-Za-z_$]/.test(line[index - 1] ?? ""))) {
+				push("number", numberMatch[0]);
+				index += numberMatch[0].length;
+				continue;
+			}
+
+			const identMatch = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(line.slice(index));
+			if (identMatch !== null) {
+				const word = identMatch[0];
+				const prev = index > 0 ? line[index - 1] : "";
+				const after = line.slice(index + word.length);
+				if (prev === ".") {
+					push("property", word);
+				} else if (CODE_KEYWORDS.has(word)) {
+					push("keyword", word);
+				} else if (CODE_LITERALS.has(word)) {
+					push("number", word);
+				} else if (CODE_TYPES.has(word) || /^[A-Z][A-Za-z0-9_]*$/.test(word)) {
+					push("type", word);
+				} else if (/^\s*:/.test(after) && (lang === "yaml" || lang === "yml" || lang === "css" || lang === "scss")) {
+					push("property", word);
+				} else {
+					push("plain", word);
+				}
+				index += word.length;
+				continue;
+			}
+
+			push("plain", line[index] ?? "");
+			index += 1;
+		}
+
+		result.push(tokens);
+	}
+
+	return result;
+}

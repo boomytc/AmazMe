@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatMarkdown, safeHref, type InlineNode } from "../src/markdown.ts";
+import { formatMarkdown, safeHref, tokenizeCode, type InlineNode } from "../src/markdown.ts";
 
 /** The text of an inline run, for assertions that only care about what a reader sees. */
 function textOf(nodes: readonly InlineNode[]): string {
@@ -222,5 +222,35 @@ describe("assistant markdown", () => {
 		// A heading and a list item outrank a table: their own construct wins when the line has pipes.
 		expect(formatMarkdown("# 标题 | 说明\n--- | ---")[0]).toMatchObject({ kind: "heading", level: 1 });
 		expect(formatMarkdown("- 一项 | 说明\n--- | ---")[0]).toMatchObject({ kind: "list", ordered: false });
+	});
+
+	test("tokenizes code losslessly across comments, strings, keywords, types, and numbers", () => {
+		const sample = [
+			"/* multi",
+			"   comment */ const count: number = 42;",
+			"return user.name ?? \"<script>\"; // inline comment",
+		].join("\n");
+		const lines = tokenizeCode(sample, "ts");
+		expect(lines.map((line) => line.map((token) => token.text).join("")).join("\n")).toBe(sample);
+		expect(lines[0]).toEqual([{ kind: "comment", text: "/* multi" }]);
+		expect(lines[1]).toEqual([
+			{ kind: "comment", text: "   comment */" },
+			{ kind: "plain", text: " " },
+			{ kind: "keyword", text: "const" },
+			{ kind: "plain", text: " count: " },
+			{ kind: "type", text: "number" },
+			{ kind: "plain", text: " = " },
+			{ kind: "number", text: "42" },
+			{ kind: "plain", text: ";" },
+		]);
+		expect(lines[2]).toEqual([
+			{ kind: "keyword", text: "return" },
+			{ kind: "plain", text: " user." },
+			{ kind: "property", text: "name" },
+			{ kind: "plain", text: " ?? " },
+			{ kind: "string", text: "\"<script>\"" },
+			{ kind: "plain", text: "; " },
+			{ kind: "comment", text: "// inline comment" },
+		]);
 	});
 });

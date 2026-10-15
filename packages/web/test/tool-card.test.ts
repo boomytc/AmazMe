@@ -249,4 +249,54 @@ describe("tool card row", () => {
 		expect(details.querySelector(".tool-args")?.textContent).toBe("path: notes.md");
 		expect(details.querySelector(".tool-output")?.textContent).toBe("partial output");
 	});
+
+	test("renders fenced code with syntax tokens, line numbers, and collapsible long blocks while preserving raw code text", () => {
+		const renderer = createRenderer(collectPageElements());
+		const longLines = Array.from({ length: 30 }, (_, index) => `const value${index + 1}: number = ${index + 1}; // line ${index + 1}`);
+		const codeText = longLines.join("\n");
+		const baseView = {
+			...failureView("zh", ""),
+			attachedId: "session",
+			blocks: [
+				{
+					id: "answer-1",
+					kind: "assistant" as const,
+					title: "AmazMe",
+					text: `\`\`\`ts\n${codeText}\n\`\`\``,
+					tone: "plain" as const,
+					running: false,
+				},
+			],
+		};
+		renderer.render(baseView);
+		const block = document.querySelector<HTMLElement>(".code-block");
+		expect(block?.classList.contains("collapsed")).toBe(true);
+		expect(block?.querySelector(".code-language")?.textContent).toBe("ts");
+		expect(block?.querySelector(".code-lines")?.textContent).toBe("30 行");
+		expect(block?.querySelector("code")?.textContent).toBe(codeText);
+
+		const numbered = [...(block?.querySelectorAll<HTMLElement>(".code-line") ?? [])];
+		expect(numbered).toHaveLength(30);
+		expect(numbered[0]?.dataset.line).toBe("1");
+		expect(numbered[29]?.dataset.line).toBe("30");
+		expect(numbered[0]?.querySelector(".tok-keyword")?.textContent).toBe("const");
+		expect(numbered[0]?.querySelector(".tok-type")?.textContent).toBe("number");
+		expect(numbered[0]?.querySelector(".tok-number")?.textContent).toBe("1");
+		expect(numbered[0]?.querySelector(".tok-comment")?.textContent).toBe("// line 1");
+
+		const fold = block?.querySelector<HTMLButtonElement>(".code-expand-bar");
+		expect(fold?.textContent).toBe("展开全部（30 行）");
+		expect(fold?.getAttribute("aria-expanded")).toBe("false");
+		fold?.click();
+		expect(block?.classList.contains("collapsed")).toBe(false);
+		expect(fold?.textContent).toBe("收起");
+		expect(fold?.getAttribute("aria-expanded")).toBe("true");
+
+		// A subsequent render of the same block (e.g. during streaming or rating) retains the reader's expanded state.
+		renderer.render({
+			...baseView,
+			blocks: [{ ...baseView.blocks[0]!, running: true }],
+		});
+		expect(document.querySelector(".code-block")?.classList.contains("collapsed")).toBe(false);
+	});
 });

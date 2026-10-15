@@ -81,6 +81,14 @@
 	/* The switch's knob and the shadow under it. */
 	--knob: #ffffff;
 	--shadow-knob: 0 1px 2px rgba(0, 0, 0, 0.2);
+
+	/* Syntax highlighting tokens: calm, high-contrast ink tones on --code. */
+	--syntax-keyword: #a626a4;
+	--syntax-string: #137333;
+	--syntax-comment: #6e6e6e;
+	--syntax-number: #986801;
+	--syntax-type: #0550ae;
+	--syntax-property: #0f4b8f;
 }
 
 :root[data-theme="dark"] {
@@ -125,4 +133,11 @@
 	/* The terminal's own colours on the dark surface. */
 	--logo-coral: #e48a7a;
 	--logo-yellow: #eab65d;
+
+	--syntax-keyword: #d886ff;
+	--syntax-string: #81c995;
+	--syntax-comment: #8a8a8a;
+	--syntax-number: #f5b84a;
+	--syntax-type: #7aa7ff;
+	--syntax-property: #9ec0ff;
 }

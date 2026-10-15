@@ -117,7 +117,7 @@ export {
 	type WorkspaceStateLike,
 	type WorkspaceViewLike,
 } from "./dock.ts";
-export { formatMarkdown, safeHref, type InlineNode, type MarkdownNode } from "./markdown.ts";
+export { formatMarkdown, safeHref, tokenizeCode, type CodeToken, type CodeTokenKind, type InlineNode, type MarkdownNode } from "./markdown.ts";
 export {
 	gestureKeys,
 	isApplePlatform,

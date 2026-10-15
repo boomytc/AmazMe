@@ -550,6 +550,9 @@ export const EN = {
 	"page.fontChangeFailed": "Could not change font sizes: {error}",
 
 	"copy.copy": "Copy",
+	"code.lines": "{count} lines",
+	"code.expand": "Show all ({count} lines)",
+	"code.collapse": "Collapse",
 	"secret.show": "Show",
 	"secret.hide": "Hide",
 	"secret.showAria": "Show credential",
@@ -1334,6 +1337,9 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"page.fontChangeFailed": "无法调整字号：{error}",
 
 	"copy.copy": "复制",
+	"code.lines": "{count} 行",
+	"code.expand": "展开全部（{count} 行）",
+	"code.collapse": "收起",
 	"secret.show": "显示",
 	"secret.hide": "隐藏",
 	"secret.showAria": "显示凭据",

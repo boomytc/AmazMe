@@ -15,7 +15,7 @@ import { transcriptPosition } from "./transcript-position.ts";
 import { createMultiselect } from "./multiselect.ts";
 import { createFileBrowser } from "./file-browser.ts";
 import { FALLBACK_LOCALE, type Locale } from "./locale.ts";
-import { formatMarkdown, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
+import { formatMarkdown, tokenizeCode, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
 	CHAT_VIEW,
 	type NavItem,
@@ -399,10 +399,10 @@ function inlineFragment(nodes: readonly InlineNode[]): DocumentFragment {
 /** What the markdown adapter needs from the renderer: a code block's copy control. */
 interface MarkdownContext {
 	readonly copy: (key: MessageKey) => string;
-	readonly codeBlock: (text: string, language: string | undefined) => HTMLElement;
+	readonly codeBlock: (text: string, language: string | undefined, index?: number) => HTMLElement;
 }
 
-function markdownNode(node: MarkdownNode, context: MarkdownContext): HTMLElement {
+function markdownNode(node: MarkdownNode, context: MarkdownContext, codeIndex = 0): HTMLElement {
 	switch (node.kind) {
 		case "paragraph": {
 			const paragraph = document.createElement("p");
@@ -425,7 +425,7 @@ function markdownNode(node: MarkdownNode, context: MarkdownContext): HTMLElement
 			return list;
 		}
 		case "code":
-			return context.codeBlock(node.text, node.language);
+			return context.codeBlock(node.text, node.language, codeIndex);
 		case "table":
 			return tableElement(node);
 	}
@@ -494,7 +494,10 @@ function tableElement(node: TableNode): HTMLElement {
 /** An answer as the markdown sheet expects it: one `.markdown` root per assistant block. */
 function markdownElement(text: string, context: MarkdownContext): HTMLElement {
 	const root = element("div", "markdown");
-	for (const node of formatMarkdown(text)) root.append(markdownNode(node, context));
+	let codeIndex = 0;
+	for (const node of formatMarkdown(text)) {
+		root.append(markdownNode(node, context, node.kind === "code" ? codeIndex++ : 0));
+	}
 	return root;
 }
 
@@ -2007,11 +2010,24 @@ export function createRenderer(
 		return row;
 	};
 
-	/** A fenced code block: the language, the code, and a copy control whose text is the code. */
-	const codeBlockElement = (text: string, language: string | undefined): HTMLElement => {
+	const CODE_COLLAPSE_THRESHOLD = 24;
+
+	/** A fenced code block: language and line count, syntax-highlighted numbered lines, long-code folding, and copy. */
+	const codeBlockElement = (text: string, language: string | undefined, foldKey?: string): HTMLElement => {
+		const tokenizedLines = tokenizeCode(text, language);
+		const lineCount = tokenizedLines.length;
+		const collapsible = lineCount > CODE_COLLAPSE_THRESHOLD;
 		const block = element("div", "code-block");
 		const head = element("div", "code-head");
-		if (language !== undefined) head.append(element("span", "code-language", language));
+		const meta = element("div", "code-meta");
+		if (language !== undefined) meta.append(element("span", "code-language", language));
+		meta.append(element("span", "code-lines", copy("code.lines", { count: String(lineCount) })));
+		const actions = element("div", "code-actions");
+		const foldHead = collapsible ? button("code-fold") : undefined;
+		if (foldHead !== undefined) {
+			foldHead.dataset.action = "code-fold";
+			actions.append(foldHead);
+		}
 		const control = button("code-copy");
 		control.dataset.action = "copy";
 		control.textContent = copy("copy.copy");
@@ -2033,18 +2049,56 @@ export function createRenderer(
 				},
 			);
 		});
-		head.append(control);
+		actions.append(control);
+		head.append(meta, actions);
 		block.append(head);
 		const pre = document.createElement("pre");
 		const code = document.createElement("code");
-		code.textContent = text;
+		if (language !== undefined) code.dataset.language = language;
+		for (const [lineIndex, tokens] of tokenizedLines.entries()) {
+			if (lineIndex > 0) code.append(document.createTextNode("\n"));
+			const line = element("span", "code-line");
+			line.dataset.line = String(lineIndex + 1);
+			for (const token of tokens) {
+				if (token.kind === "plain") line.append(document.createTextNode(token.text));
+				else line.append(element("span", `tok-${token.kind}`, token.text));
+			}
+			code.append(line);
+		}
 		pre.append(code);
 		block.append(pre);
+		if (collapsible && foldHead !== undefined) {
+			const foldFoot = button("code-expand-bar");
+			foldFoot.dataset.action = "code-fold";
+			const stateKey = foldKey === undefined ? undefined : `code:${foldKey}`;
+			let isExpanded = (stateKey === undefined ? undefined : expanded.get(stateKey)) ?? false;
+			const syncFold = (): void => {
+				block.classList.toggle("collapsed", !isExpanded);
+				block.dataset.collapsed = String(!isExpanded);
+				const label = isExpanded ? copy("code.collapse") : copy("code.expand", { count: String(lineCount) });
+				for (const node of [foldHead, foldFoot]) {
+					node.textContent = label;
+					node.setAttribute("aria-expanded", String(isExpanded));
+				}
+			};
+			const toggleFold = (): void => {
+				isExpanded = !isExpanded;
+				if (stateKey !== undefined) expanded.set(stateKey, isExpanded);
+				syncFold();
+			};
+			foldHead.addEventListener("click", toggleFold);
+			foldFoot.addEventListener("click", toggleFold);
+			syncFold();
+			block.append(foldFoot);
+		}
 		return block;
 	};
 
 	/** What the markdown adapter borrows from the renderer. */
-	const markdown: MarkdownContext = { copy, codeBlock: codeBlockElement };
+	const markdownFor = (blockId: string): MarkdownContext => ({
+		copy,
+		codeBlock: (text, language, index = 0) => codeBlockElement(text, language, `${blockId}:${index}`),
+	});
 
 	/** The tool calls waiting for a decision: what wants to run, and the two ways to answer. */
 	const renderApprovals = (view: WebView): void => {
@@ -2348,7 +2402,7 @@ export function createRenderer(
 			}));
 			else if (block.kind === "assistant") {
 				const answer = flowCache.get(key, [lastView?.locale, block], () => {
-					const answer = wrap("turn-response", markdownElement(block.text, markdown));
+					const answer = wrap("turn-response", markdownElement(block.text, markdownFor(String(block.id))));
 					answer.append(answerActions(block));
 					return answer;
 				});

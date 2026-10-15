@@ -1850,6 +1850,14 @@ p {
 	font-size: 12px;
 }
 
+.markdown .code-meta,
+.markdown .code-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
 .markdown .code-language {
 	min-width: 0;
 	overflow: hidden;
@@ -1857,7 +1865,23 @@ p {
 	white-space: nowrap;
 }
 
-.markdown .code-copy {
+.markdown .code-lines {
+	flex: none;
+	color: var(--text-3);
+	font-family: var(--font-sans);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.markdown .code-language + .code-lines::before {
+	content: "·";
+	margin-right: 6px;
+	opacity: 0.6;
+}
+
+.markdown .code-copy,
+.markdown .code-fold {
 	flex: none;
 	height: 24px;
 	padding: 0 8px;
@@ -1870,7 +1894,8 @@ p {
 	cursor: pointer;
 }
 
-.markdown .code-copy:hover {
+.markdown .code-copy:hover,
+.markdown .code-fold:hover {
 	background: var(--hover);
 	color: var(--text);
 }
@@ -1886,12 +1911,82 @@ p {
 	white-space: pre;
 }
 
+.markdown .code-block.collapsed pre {
+	max-height: calc(18 * 1.65em + 28px);
+	overflow-y: hidden;
+	mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+}
+
 .markdown .code-block pre code {
 	padding: 0;
 	border: 0;
 	background: none;
 	font: inherit;
 	white-space: inherit;
+}
+
+.markdown .code-line {
+	display: inline-block;
+	min-width: 100%;
+}
+
+.markdown .code-line::before {
+	content: attr(data-line);
+	display: inline-block;
+	width: 3ch;
+	margin-right: 16px;
+	color: var(--text-3);
+	opacity: 0.65;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	user-select: none;
+}
+
+.markdown .tok-keyword {
+	color: var(--syntax-keyword);
+}
+
+.markdown .tok-string {
+	color: var(--syntax-string);
+}
+
+.markdown .tok-comment {
+	color: var(--syntax-comment);
+	font-style: italic;
+}
+
+.markdown .tok-number {
+	color: var(--syntax-number);
+}
+
+.markdown .tok-type {
+	color: var(--syntax-type);
+}
+
+.markdown .tok-property {
+	color: var(--syntax-property);
+}
+
+.markdown .code-expand-bar {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 32px;
+	padding: 0 12px;
+	border: 0;
+	border-top: 1px solid var(--line);
+	background: var(--code);
+	color: var(--text-2);
+	font-family: var(--font-sans);
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.markdown .code-expand-bar:hover {
+	background: var(--hover);
+	color: var(--text);
 }
 
 .markdown .table-scroll {
