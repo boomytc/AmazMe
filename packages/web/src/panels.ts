@@ -531,6 +531,8 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 	if (input.models !== undefined) {
 		const { picker, available, authentication, selected: hasSelected } = input.models;
 		const selected = picker.groups.flatMap(group => group.options).find(option => option.selected);
+		const scopeEmpty = picker.empty === translate(locale, "model.scopeEmpty");
+		const placeholderKey = picker.empty === undefined ? "model.choose" : scopeEmpty ? "model.configure" : "model.connectProvider";
 		groups.push({
 			id: "settings:models", title: translate(locale, "model.manage"),
 			description: translate(locale, available ? "model.manageHelp" : "model.needsSession"),
@@ -542,12 +544,12 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 			], rows: [
 				{
 					id: "models:selection", title: translate(locale, "model.current"),
-					description: picker.scopeNotice ?? translate(locale, "model.nextRequest"),
+					description: picker.scopeNotice ?? picker.empty ?? translate(locale, "model.nextRequest"),
 					...(picker.scopeNotice ? { value: picker.label } : {}),
 					controls: [{
 						id: MODEL_SELECT_ACTION, kind: "select", value: selected ? JSON.stringify([selected.provider, selected.modelId]) : "",
 						disabled: !available || picker.disabled || picker.groups.length === 0,
-						options: [{ value: "", label: translate(locale, picker.empty ? "model.configure" : "model.choose"), disabled: true },
+						options: [{ value: "", label: translate(locale, placeholderKey), disabled: true },
 							...picker.groups.flatMap(group => group.options.map(option => ({ value: JSON.stringify([option.provider, option.modelId]), label: option.label, group: group.provider })))],
 					}],
 				},

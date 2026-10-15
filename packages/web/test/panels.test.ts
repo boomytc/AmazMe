@@ -304,6 +304,58 @@ describe("settings panel", () => {
 		expect(forever?.rows.some(row => row.badges !== undefined)).toBe(false);
 		expect(settingsPanel("zh", { state: SETTINGS }).groups.some(item => item.id === "settings:archives")).toBe(false);
 	});
+
+	test("distinguishes missing provider connections from a filtered-out model scope in the settings model row", () => {
+		const noProvider = settingsPanel("zh", {
+			state: SETTINGS,
+			models: {
+				available: true,
+				authentication: true,
+				selected: false,
+				picker: {
+					label: "无模型",
+					effort: undefined,
+					groups: [],
+					levels: [],
+					empty: "没有可用模型。",
+					levelsEmpty: undefined,
+					disabled: false,
+					refresh: { label: "刷新模型", status: undefined, busy: false },
+				},
+			},
+		}).groups.find(item => item.id === "settings:models");
+		expect(noProvider?.rows[0]?.description).toBe("没有可用模型。");
+		expect(noProvider?.rows[0]?.controls?.[0]?.options?.[0]).toEqual({
+			value: "",
+			label: "连接供应商",
+			disabled: true,
+		});
+
+		const filteredOut = settingsPanel("zh", {
+			state: SETTINGS,
+			models: {
+				available: true,
+				authentication: true,
+				selected: false,
+				picker: {
+					label: "无模型",
+					effort: undefined,
+					groups: [],
+					levels: [],
+					empty: "列表中没有可用模型，请在设置中勾选常用模型。",
+					levelsEmpty: undefined,
+					disabled: false,
+					refresh: { label: "刷新模型", status: undefined, busy: false },
+				},
+			},
+		}).groups.find(item => item.id === "settings:models");
+		expect(filteredOut?.rows[0]?.description).toBe("列表中没有可用模型，请在设置中勾选常用模型。");
+		expect(filteredOut?.rows[0]?.controls?.[0]?.options?.[0]).toEqual({
+			value: "",
+			label: "先配置模型列表",
+			disabled: true,
+		});
+	});
 });
 
 describe("skills panel", () => {

@@ -663,7 +663,7 @@ export function modelPicker(locale: Locale, models: ModelsStateLike | undefined,
 			label: thinkingLevelCopy(locale, level),
 			selected: level === models.configuration.thinkingLevel,
 		})),
-		empty: groups.length === 0 ? translate(locale, models.catalog.enabledModelIds === null ? "model.empty" : "model.scopeEmpty") : undefined,
+		empty: groups.length === 0 ? translate(locale, models.catalog.availableModels.length === 0 || models.catalog.enabledModelIds === null ? "model.empty" : "model.scopeEmpty") : undefined,
 		levelsEmpty: levels === undefined || reasoned ? undefined : translate(locale, "model.levelsEmpty"),
 		disabled: false,
 		...(configured && models.catalog.enabledModelIds !== null && !models.catalog.enabledModelIds.includes(`${configured.provider}/${configured.modelId}`)

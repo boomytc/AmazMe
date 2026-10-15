@@ -1,4 +1,4 @@
-import { MODEL_SCOPE_MODAL } from "./actions.ts";
+import { MODEL_SCOPE_MODAL, PROVIDER_AUTH_ACTION } from "./actions.ts";
 import type { Locale } from "./locale.ts";
 import type { PanelModal } from "./panels.ts";
 import { translate } from "./strings.ts";
@@ -27,25 +27,40 @@ export function modelScopeModal(
 				value: id,
 				label: translate(locale, "model.scopeUnavailable", { id }),
 			});
+	const noAvailableModels = scope.allModels.length === 0;
 	return {
 		id: MODEL_SCOPE_MODAL,
 		title: translate(locale, "model.scope"),
-		description: translate(locale, "model.scopeHelp"),
-		fields: [
-			{
-				id: "models",
-				label: translate(locale, "model.scopeList"),
-				kind: "multiselect",
-				options,
-				value: JSON.stringify(scope.enabledModelIds),
-			},
-			{
-				id: "persist",
-				label: translate(locale, "model.scopePersist"),
-				kind: "checkbox",
-				value: "false",
-			},
-		],
-		submit: translate(locale, "model.scopeApply"),
+		description: translate(locale, noAvailableModels ? "model.empty" : "model.scopeHelp"),
+		fields:
+			options.length === 0
+				? []
+				: [
+						{
+							id: "models",
+							label: translate(locale, "model.scopeList"),
+							kind: "multiselect",
+							options,
+							value: JSON.stringify(scope.enabledModelIds),
+						},
+						{
+							id: "persist",
+							label: translate(locale, "model.scopePersist"),
+							kind: "checkbox",
+							value: "false",
+						},
+					],
+		...(noAvailableModels
+			? {
+					actions: [
+						{
+							id: PROVIDER_AUTH_ACTION,
+							label: translate(locale, "model.connectProvider"),
+							tone: options.length === 0 ? ("primary" as const) : ("default" as const),
+						},
+					],
+				}
+			: {}),
+		...(options.length === 0 ? {} : { submit: translate(locale, "model.scopeApply") }),
 	};
 }

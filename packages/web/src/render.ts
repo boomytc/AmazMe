@@ -755,7 +755,7 @@ export function createRenderer(
 	/** Native dialogs isolate the page; the logical trigger also survives replicated DOM replacements. */
 	let modalReturnFocus: { node: HTMLElement; selector?: string } | undefined;
 	const captureModalFocus = (): void => {
-		if (modelSetupReturn !== undefined) {
+		if (modelSetupReturn !== undefined && lastView?.panel.current === CHAT_VIEW) {
 			modalReturnFocus = { node: elements.prompt, selector: "#prompt" };
 			return;
 		}
@@ -1920,10 +1920,16 @@ export function createRenderer(
 			} else if (view.model.empty !== undefined) {
 				const scopeEmpty = view.model.empty === copy("model.scopeEmpty");
 				const actions = element("div", "welcome-steps");
-				actions.append(
-					panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), tone: scopeEmpty ? "default" : "primary", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
-					panelButton({ id: MODEL_SCOPE_ACTION, label: copy("model.configureModels"), tone: scopeEmpty ? "primary" : "default", disabled: view.model.disabled }, () => triggerModelSetup(MODEL_SCOPE_ACTION)),
-				);
+				if (scopeEmpty) {
+					actions.append(
+						panelButton({ id: MODEL_SCOPE_ACTION, label: copy("model.configureModels"), tone: "primary", disabled: view.model.disabled }, () => triggerModelSetup(MODEL_SCOPE_ACTION)),
+						panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), tone: "default", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
+					);
+				} else {
+					actions.append(
+						panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), tone: "primary", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
+					);
+				}
 				block.append(element("p", "greeting-hint", view.model.empty), actions);
 			}
 			return block;
@@ -2656,7 +2662,8 @@ export function createRenderer(
 			const placeholder = document.createElement("option");
 			placeholder.value = "";
 			placeholder.disabled = true;
-			placeholder.textContent = picker.empty ? copy("model.configure") : copy("model.choose");
+			const scopeEmpty = picker.empty === copy("model.scopeEmpty");
+			placeholder.textContent = picker.empty === undefined ? copy("model.choose") : scopeEmpty ? copy("model.configure") : copy("model.connectProvider");
 			elements.modelSelect.replaceChildren(placeholder);
 			for (const group of picker.groups) {
 				const optgroup = document.createElement("optgroup");
@@ -2678,7 +2685,7 @@ export function createRenderer(
 			if (changed("model-setup", [view.locale, picker.empty, picker.disabled, view.modelPending])) {
 				const scopeEmpty = picker.empty === copy("model.scopeEmpty");
 				const makeAction = (id: string, label: string, primary: boolean): HTMLButtonElement => {
-					const node = button(primary ? "model-setup-button primary" : "model-setup-button");
+					const node = button(primary ? "model-setup-button tone-primary" : "model-setup-button");
 					node.dataset.action = id;
 					node.textContent = label;
 					node.title = [label, picker.empty].filter(Boolean).join("\n");
@@ -2688,8 +2695,12 @@ export function createRenderer(
 					return node;
 				};
 				modelSetup.replaceChildren(
-					makeAction(PROVIDER_AUTH_ACTION, copy("model.connectProvider"), !scopeEmpty),
-					makeAction(MODEL_SCOPE_ACTION, copy("model.configureModels"), scopeEmpty),
+					...(scopeEmpty
+						? [
+								makeAction(MODEL_SCOPE_ACTION, copy("model.configureModels"), true),
+								makeAction(PROVIDER_AUTH_ACTION, copy("model.connectProvider"), false),
+							]
+						: [makeAction(PROVIDER_AUTH_ACTION, copy("model.connectProvider"), true)]),
 				);
 			}
 		} else {
@@ -2973,14 +2984,14 @@ export function createRenderer(
 				view.panel.modal === undefined &&
 				!detached
 			) {
-				if (attachmentScope(view) === modelSetupReturn.scope) {
-					const start = Math.min(modelSetupReturn.start, elements.prompt.value.length);
-					const end = Math.min(modelSetupReturn.end, elements.prompt.value.length);
+				const returned = modelSetupReturn;
+				modelSetupReturn = undefined;
+				if (attachmentScope(view) === returned.scope) {
+					const start = Math.min(returned.start, elements.prompt.value.length);
+					const end = Math.min(returned.end, elements.prompt.value.length);
 					elements.prompt.focus({ preventScroll: true });
-					elements.prompt.setSelectionRange(start, end, modelSetupReturn.direction);
-				}
-				if (view.model.empty === undefined || attachmentScope(view) !== modelSetupReturn.scope) {
-					modelSetupReturn = undefined;
+					elements.prompt.setSelectionRange(start, end, returned.direction);
+					rememberPromptSelection();
 				}
 			}
 			// The composer's dock may have grown (an approval, a queued input) and shrunk the transcript
@@ -3037,6 +3048,7 @@ export function createRenderer(
 	});
 	document.addEventListener("pointerdown", (event) => {
 		if (event.target !== elements.prompt) heldPromptFocus = undefined;
+		else modelSetupReturn = undefined;
 	});
 
 	elements.composer.addEventListener("submit", (event) => {
@@ -3060,6 +3072,7 @@ export function createRenderer(
 		renderer.onSubmit(text);
 	});
 	elements.prompt.addEventListener("input", () => {
+		modelSetupReturn = undefined;
 		rememberPromptSelection();
 		fitPrompt(elements.prompt);
 		// An empty draft disables send. The text decides whether the command palette is open.
