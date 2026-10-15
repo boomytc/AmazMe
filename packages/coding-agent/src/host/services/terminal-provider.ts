@@ -9,10 +9,32 @@ import type { SettingsManager } from "../../core/settings-manager.ts";
 import { createLocalBashOperations } from "../../core/tools/bash.ts";
 import { Terminal, type TerminalRunResult, type TerminalState } from "./terminal.ts";
 
-/** How much output the buffer keeps; older output is dropped and the view says so. */
+/** UTF-8 bytes kept in each pending or published tail; older output is dropped visibly. */
 export const TERMINAL_MAX_BYTES = 64 * 1024;
 /** The shortest gap between two publications while output arrives. */
 export const TERMINAL_PUBLISH_MS = 200;
+
+/** Bound a chunk before encoding it, and never retain part of a UTF-8 character. */
+function appendTail(tail: Pick<TerminalState, "output" | "truncated">, chunk: string): void {
+	let start = Math.max(0, chunk.length - TERMINAL_MAX_BYTES);
+	if (start > 0) {
+		const character = chunk.charCodeAt(start);
+		const previous = chunk.charCodeAt(start - 1);
+		if (character >= 0xdc00 && character <= 0xdfff && previous >= 0xd800 && previous <= 0xdbff) start += 1;
+		tail.output = "";
+		tail.truncated = true;
+	}
+	const combined = tail.output + chunk.slice(start);
+	const bytes = Buffer.from(combined, "utf8");
+	if (bytes.byteLength <= TERMINAL_MAX_BYTES) {
+		tail.output = combined;
+		return;
+	}
+	let offset = bytes.byteLength - TERMINAL_MAX_BYTES;
+	while ((bytes[offset]! & 0xc0) === 0x80) offset += 1;
+	tail.output = bytes.subarray(offset).toString("utf8");
+	tail.truncated = true;
+}
 
 export interface TerminalServiceOptions {
 	readonly env?: ExecutionEnv;
@@ -45,21 +67,10 @@ export function createTerminalService(
 	let running: AbortController | undefined;
 	let finished: Promise<void> | undefined;
 	/** Output received but not yet published; the state carries the tail the reader sees. */
-	let pending = "";
-	let truncated = false;
+	let pending = { output: "", truncated: false };
 	let flushTimer: NodeJS.Timeout | undefined;
 	let lastFlushAt = 0;
 	let liveContext: Context | undefined;
-
-	const appendTail = (draft: TerminalState, chunk: string): void => {
-		const combined = draft.output + chunk;
-		if (combined.length <= TERMINAL_MAX_BYTES) {
-			draft.output = combined;
-			return;
-		}
-		draft.output = combined.slice(combined.length - TERMINAL_MAX_BYTES);
-		draft.truncated = true;
-	};
 
 	/** Move whatever arrived into the state, once. */
 	const flush = (): void => {
@@ -67,15 +78,16 @@ export function createTerminalService(
 			clearTimeout(flushTimer);
 			flushTimer = undefined;
 		}
-		const chunk = pending;
-		pending = "";
+		const tail = pending;
+		pending = { output: "", truncated: false };
 		const context = liveContext;
-		const wasTruncated = truncated;
-		truncated = false;
 		lastFlushAt = Date.now();
-		if (context === undefined || (chunk.length === 0 && !wasTruncated)) return;
+		if (context === undefined || (tail.output.length === 0 && !tail.truncated)) return;
 		state.change(context, (draft) => {
-			appendTail(draft, chunk);
+			// Pending truncation creates a gap after the old view; only the new tail is contiguous.
+			if (tail.truncated) draft.output = "";
+			appendTail(draft, tail.output);
+			draft.truncated ||= tail.truncated;
 			draft.revision += 1;
 		});
 	};
@@ -114,8 +126,7 @@ export function createTerminalService(
 				running = controller;
 				let finish!: () => void;
 				finished = new Promise<void>(resolve => { finish = resolve; });
-				pending = "";
-				truncated = false;
+				pending = { output: "", truncated: false };
 				liveContext = context;
 				publish(context, (draft) => {
 					draft.status = "running";
@@ -126,7 +137,7 @@ export function createTerminalService(
 					draft.error = null;
 				});
 				try {
-					const onChunk = (chunk: string): void => { pending += chunk; scheduleFlush(); };
+					const onChunk = (chunk: string): void => { appendTail(pending, chunk); scheduleFlush(); };
 					const execute = async () => {
 						if (!options.env) return executeBashWithOperations(resolved, options.cwd, createLocalBashOperations({ shellPath: options.settings.getShellPath() }), { signal: controller.signal, onChunk });
 						const outcome = await options.env.exec(resolved, { onOutput: onChunk }, withAbortSignal(controller.signal, context));
@@ -138,9 +149,8 @@ export function createTerminalService(
 					publish(context, (draft) => {
 						draft.status = result.cancelled ? "cancelled" : "done";
 						draft.exitCode = result.exitCode ?? null;
-						// The executor's own tail is authoritative once it has settled.
-						if (result.output.length > 0) appendTail(draft, result.output.slice(draft.output.length));
-						draft.truncated = draft.truncated || result.truncated;
+						// The executor's final decoder flush already reached onChunk. Its result uses a
+						// different tail limit and must not be merged into this independently bounded view.
 					});
 					return { ok: true };
 				} catch (error) {

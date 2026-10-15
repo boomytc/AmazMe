@@ -10,7 +10,8 @@ import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ConversationView } from "@amazme/durable";
-import type { ReplicatedState } from "@amazme/chord";
+import { replicatedState, type ReplicatedState } from "@amazme/chord";
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import type { PageRenderer, WebView } from "@amazme/web";
 import {
 	BOOT_GLOBAL,
@@ -49,6 +50,7 @@ import { Approvals, type Approvals as ApprovalsService } from "../src/host/servi
 import { Feedback, type Feedback as FeedbackService } from "../src/host/services/feedback.ts";
 import { Conversations, type Conversations as ConversationsService } from "../src/host/services/conversations.ts";
 import { Terminal, type Terminal as TerminalService } from "../src/host/services/terminal.ts";
+import { createTerminalService, TERMINAL_MAX_BYTES } from "../src/host/services/terminal-provider.ts";
 import { Workspace, type Workspace as WorkspaceService } from "../src/host/services/workspace.ts";
 import { Models, type Models as ModelsService } from "../src/host/services/models.ts";
 import { Plugins, type Plugins as PluginsService } from "../src/host/services/plugins.ts";
@@ -60,6 +62,7 @@ import { Skills, type Skills as SkillsService } from "../src/host/services/skill
 import { Transcript } from "../src/host/services/transcript.ts";
 import { runClient } from "../src/host/client.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 import { listSessions, readSession, writeSessionName } from "../src/host/session-catalog.ts";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 import { startPage } from "../src/host/web/page.ts";
@@ -353,6 +356,61 @@ afterEach(async () => {
 	if (previousAgentDir === undefined) delete process.env.AMAZME_CODING_AGENT_DIR;
 	else process.env.AMAZME_CODING_AGENT_DIR = previousAgentDir;
 	vi.unstubAllGlobals();
+});
+
+describe("web terminal output retention", () => {
+	test.each(["done", "cancelled", "failed"] as const)("keeps a bounded UTF-8 tail through %s settlement", async (ending) => {
+		const env = new NodeExecutionEnv({ cwd: process.cwd() });
+		const terminal = createTerminalService({ env, cwd: process.cwd(), settings: SettingsManager.inMemory() }, replicatedState).service;
+		const started = Promise.withResolvers<void>();
+		const finish = Promise.withResolvers<void>();
+		const suffix = "终\u{1F600}\n";
+		const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+		const execute = vi.spyOn(env, "exec").mockImplementation(async (_command, options, context) => {
+			options?.onOutput?.("start\n", context, { stream: "stdout" });
+			// Both chunks arrive in one publication interval, before the command settles.
+			options?.onOutput?.("界".repeat(TERMINAL_MAX_BYTES), context, { stream: "stdout" });
+			options?.onOutput?.(suffix, context, { stream: "stderr" });
+			const aborted = () => finish.resolve();
+			context.abortSignal?.addEventListener("abort", aborted, { once: true });
+			started.resolve();
+			try {
+				await finish.promise;
+				if (ending === "failed") throw new Error("terminal failed");
+				return { ok: true, value: { exitCode: 0 } };
+			} finally {
+				context.abortSignal?.removeEventListener("abort", aborted);
+			}
+		});
+		try {
+			const run = terminal.run("output-fixture", BACKGROUND_CONTEXT);
+			await started.promise;
+			expect(terminal.state.value.output).toBe("start\n");
+			if (ending === "cancelled") await terminal.stop(BACKGROUND_CONTEXT);
+			else finish.resolve();
+			expect(await run).toEqual(ending === "failed" ? { ok: false, problem: "terminal failed" } : { ok: true });
+			const expected = "界".repeat(Math.floor((TERMINAL_MAX_BYTES - Buffer.byteLength(suffix)) / 3)) + suffix;
+			expect(terminal.state.value).toMatchObject({
+				status: ending === "cancelled" ? "cancelled" : "done", output: expected, truncated: true,
+				error: ending === "failed" ? "terminal failed" : null,
+			});
+			expect(Buffer.byteLength(terminal.state.value.output)).toBeLessThanOrEqual(TERMINAL_MAX_BYTES);
+		} finally {
+			finish.resolve();
+			await terminal.stop(BACKGROUND_CONTEXT);
+			execute.mockRestore();
+			clock.mockRestore();
+		}
+	});
+
+	test("retains all streamed local output when only the executor's line limit truncates its result", async () => {
+		const terminal = createTerminalService({ cwd: process.cwd(), settings: SettingsManager.inMemory() }, replicatedState).service;
+		const output = "line\n".repeat(2_100) + "最后\n";
+		const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+		const command = `${quote(process.execPath)} -e ${quote(`process.stdout.write(${JSON.stringify(output)})`)}`;
+		expect(await terminal.run(command, BACKGROUND_CONTEXT)).toEqual({ ok: true });
+		expect(terminal.state.value).toMatchObject({ status: "done", exitCode: 0, output, truncated: false });
+	});
 });
 
 describe("web client interactive loop", () => {
