@@ -68,6 +68,7 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 			return {
 				transport: settingsManager.getTransport(),
 				timeoutMs: provider.timeoutMs ?? (idle === 0 ? 2147483647 : idle),
+				idleTimeoutMs: idle,
 				maxRetryDelayMs: provider.maxRetryDelayMs,
 				...(provider.maxRetries === undefined ? {} : { maxRetries: provider.maxRetries }),
 			};

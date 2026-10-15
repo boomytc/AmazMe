@@ -424,6 +424,8 @@ Header names are merged case-insensitively. Explicit headers override auth/model
 
 `transformHeaders` belongs to `Models`, not `Provider`. A `Models` implementation must consume it and remove it before calling `Provider.stream*()`. Provider implementations continue receiving ordinary `ApiStreamOptions` or `SimpleStreamOptions` and never handle the transform themselves. Use this option instead of calling `getAuth(model)` before `stream*()`, which would resolve request auth twice.
 
+`Models.stream()`, `streamSimple()`, and `streamDeferred()` also accept `idleTimeoutMs`: a maximum wait for asynchronous setup or each stream event/result. Zero or omission disables that deadline. This Models option is consumed before provider dispatch and is separate from the provider's HTTP `timeoutMs`. The shared stream boundary actively settles cancellation as `aborted` and idle expiry as a retryable `error`, even if a provider's pending read ignores its signal. It passes cancellation to the provider, observes cleanup without waiting forever for an abandoned iterator, and snapshots terminal messages so late provider cleanup cannot rewrite the result.
+
 ### Credential Store
 
 Stored credentials (API keys entered interactively, OAuth tokens) live in a `CredentialStore` — one type-tagged credential per provider. pi-ai ships an in-memory default; apps inject persistent storage:

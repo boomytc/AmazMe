@@ -519,6 +519,8 @@ export type ConversationCreateOptions = {
 export type ConversationStreamOptions = {
 	transport?: Transport;
 	timeoutMs?: number;
+	/** Models-owned maximum wait for setup or a stream event; zero disables the deadline. */
+	idleTimeoutMs?: number;
 	/** Provider/SDK retries inside one request attempt. */
 	maxRetries?: number;
 	maxRetryDelayMs?: number;

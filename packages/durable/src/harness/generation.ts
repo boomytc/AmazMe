@@ -6,7 +6,7 @@ import type {
 	Message,
 	Model,
 	ModelThinkingLevel,
-	SimpleStreamOptions,
+	ModelsSimpleStreamOptions,
 	ToolCall,
 } from "@amazme/ai";
 import { appendImageRecoveryDiagnostic, hasRequestImages, IMAGE_RECOVERY_RETRY_MESSAGE, isImagePayloadRejection, omitRequestImages } from "@amazme/ai/utils/image-recovery";
@@ -255,7 +255,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			if (overflow !== undefined && (overflowTokensBefore === undefined || !hasContextRecoveryHeadroom(
 				overflowTokensBefore, tokens, model.contextWindow, runtime.settings.compaction.reserveTokens,
 			))) return failModelError(runtime, overflow, context);
-			const options: SimpleStreamOptions = {
+			const options: ModelsSimpleStreamOptions = {
 				...streamOptions,
 				signal: runtime.signal,
 				sessionId: await ensureProviderSessionId(runtime, context),
@@ -285,7 +285,9 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const model = runtime.models.getModel(ref.provider, ref.modelId);
 			if (model === undefined) return failNoModel(runtime, ref, context);
 			await runtime.sleep(pollAt, context);
-			const message = await runtime.models.fetchDeferred(model, handle, { signal: runtime.signal });
+			const message = await runtime.models.fetchDeferred(model, handle, {
+				signal: runtime.signal, idleTimeoutMs: runtime.settings.stream.idleTimeoutMs,
+			});
 			const request = { attempt, compacted, model: ref, cutoff, pollAt, tokens: requestTokens,
 				...(hadImages === undefined ? {} : { hadImages }),
 				...(omitImages ? { omitImages, omittedImages: omittedImages ?? 0 } : {}) };
@@ -452,7 +454,7 @@ async function streamResponse(
 	runtime: Runtime,
 	model: Model<Api>,
 	messages: readonly Message[],
-	options: SimpleStreamOptions,
+	options: ModelsSimpleStreamOptions,
 	attempt: number,
 	context: Context,
 	omittedImages = 0,

@@ -328,7 +328,7 @@ const harness = await Harness.open(storage, {
 	registry,
 	settings: {
 		extensions: [CodingTools, Coding], // default selection; absent: every installed extension
-		stream: { timeoutMs: 120_000 },
+		stream: { timeoutMs: 120_000, idleTimeoutMs: 120_000 },
 		retry: { maxRetries: 3 },
 		compaction: { reserveTokens: 16384 },
 		progress: { partialIntervalMs: 100, outputIntervalMs: 100 },

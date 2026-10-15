@@ -586,21 +586,22 @@ export function composeModelProvider(
 		options: StreamOptions | undefined,
 		simple: boolean,
 	): AssistantMessageEventStream =>
-		lazyStream(model, async () => {
+		lazyStream(model, async (signal) => {
+			const requestOptions = { ...options, signal };
 			if (extension?.streamSimple && model.api === extension.api) {
-				return extension.streamSimple(model, context, options as SimpleStreamOptions);
+				return extension.streamSimple(model, context, requestOptions as SimpleStreamOptions);
 			}
 			if (base && supportsBaseApi(model)) {
 				return simple
-					? base.streamSimple(model, context, options as SimpleStreamOptions)
-					: base.stream(model, context, options);
+					? base.streamSimple(model, context, requestOptions as SimpleStreamOptions)
+					: base.stream(model, context, requestOptions);
 			}
 			const api = getApiProvider(model.api);
 			if (!api) throw new Error(`No API provider registered for api: ${model.api}`);
 			return simple
-				? api.streamSimple(model, context, options as SimpleStreamOptions)
-				: api.stream(model, context, options);
-		});
+				? api.streamSimple(model, context, requestOptions as SimpleStreamOptions)
+				: api.stream(model, context, requestOptions);
+		}, options);
 
 	const provider: Provider = {
 		id: providerId,

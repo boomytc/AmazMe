@@ -31,13 +31,13 @@ function withDeploymentName<T extends StreamOptions>(model: Model<Api>, options:
 function azureStreams(streams: ProviderStreams): ProviderStreams {
 	return {
 		stream: (model, context, options) =>
-			lazyStream(model, async () =>
-				streams.stream(resolveAzureModel(model, options), context, withDeploymentName(model, options)),
-			),
+			lazyStream(model, async (signal) =>
+				streams.stream(resolveAzureModel(model, options), context, withDeploymentName(model, { ...options, signal })),
+			options),
 		streamSimple: (model, context, options) =>
-			lazyStream(model, async () =>
-				streams.streamSimple(resolveAzureModel(model, options), context, withDeploymentName(model, options)),
-			),
+			lazyStream(model, async (signal) =>
+				streams.streamSimple(resolveAzureModel(model, options), context, withDeploymentName(model, { ...options, signal })),
+			options),
 	};
 }
 

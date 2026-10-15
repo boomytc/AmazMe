@@ -1,5 +1,5 @@
 import type { Context, Draft } from "@amazme/chord";
-import type { AssistantMessage, Message, ModelThinkingLevel, SimpleStreamOptions } from "@amazme/ai";
+import type { AssistantMessage, Message, ModelThinkingLevel, ModelsSimpleStreamOptions } from "@amazme/ai";
 import { calculateContextTokens, estimateMessageTokens } from "@amazme/ai/utils/estimate";
 import { isRetryableAssistantError, retryDelayMs } from "@amazme/ai/utils/retry";
 import { CompactionEntry } from "../entries.ts";
@@ -175,7 +175,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				},
 			];
 			const { deferred: _deferred, ...forwarded } = streamOptions;
-			const options: SimpleStreamOptions = {
+			const options: ModelsSimpleStreamOptions = {
 				...forwarded,
 				cacheRetention: "none",
 				maxTokens,
