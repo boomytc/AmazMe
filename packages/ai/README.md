@@ -894,7 +894,7 @@ Classifier models consume structured JSON state, and optionally images, and answ
 
 | Provider | Model IDs | Auth |
 | --- | --- | --- |
-| `typesafe` | `jev-latest` | `TYPESAFE_API_KEY` |
+| `typesafe` | `jev-1.14.0`, `jev-latest` | `TYPESAFE_API_KEY` |
 | `openrouter` | `typesafe/jev-1.13`, `~typesafe/jev-latest` | `OPENROUTER_API_KEY` or OpenRouter OAuth |
 | `cloudflare-workers-ai` | `typesafe/jev`, `@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
@@ -940,6 +940,39 @@ When the service reports token counts, `result.usage` carries them with their co
 `ClassifierOptions.temperature` divides the answer logits by the given value before they are normalized; values above 1 soften the distribution. APIs that cannot apply it, such as System One and OpenAI Decisions, ignore it.
 
 `ClassifierContext.images` holds image blocks (`{ type: "image", data, mimeType }`) judged together with the state. Only models whose `input` includes `"image"` accept them; `classify()` returns an error result for other models.
+
+### TypeSafe images and Box
+
+Use the pinned `jev-1.14.0` model for image localization. The TypeSafe System One adapter encodes each image in the official top-level `assets` map with `format` and `data_base64`, and adds its reference to the wire state's `images` array. Refer to the images as `images[0]`, `images[1]`, etc. Existing state fields stay in place; a state that already has an `images` field is rejected when image blocks are attached. Caller state and image blocks are not modified.
+
+```typescript
+import { readFile } from 'node:fs/promises';
+import { builtinModels } from '@amazme/ai/providers/all';
+
+const models = builtinModels();
+const model = models.getModelOfType('classifier', 'typesafe', 'jev-1.14.0')!;
+const result = await models.classify(model, {
+  state: { target: 'the save button' },
+  images: [{ type: 'image', data: (await readFile('screenshot.png')).toString('base64'), mimeType: 'image/png' }],
+  questions: {
+    present: {
+      type: 'bool',
+      instructions: 'Is the target described in `target` visible in `images[0]`?',
+      criteria: { true: 'Visible', false: 'Absent' }
+    },
+    target: { type: 'box', instructions: 'The target described in `target` in `images[0]`.' }
+  }
+});
+console.log(result.answers);
+```
+
+Image/Box requests automatically carry `TypeSafe-Danger-Zone-Images: true`, including retries; request or model header overrides cannot remove this required opt-in. Text-only requests do not add the header. PNG and JPEG are supported. Prepare images within the [official limits](https://docs.typesafe.ai/images#limits): each side 256–1568 pixels, at least 78,400 total pixels, at most 16 MiB per file, and at most 32 MiB for the request. The API does not resize rejected images; base64 adds to request size.
+
+The direct TypeSafe catalog prices all input tokens, including image tokens, at $0.042 per million tokens; output tokens are free, following the [official model pricing](https://docs.typesafe.ai/models).
+
+A Box answer is `{ type: 'box', box: { left, top, right, bottom }, confidence }`. Edges are fractions of the image dimensions measured from its top-left corner; multiply horizontal edges by width and vertical edges by height to obtain pixels. Box has no “not found” result. Ask a bool presence question alongside it and decide in application code whether to use the box, with thresholds evaluated on your own images. The adapter validates finite, ordered edges and confidence in the 0–1 range, and preserves usage when an answer is malformed.
+
+Images and Box are experimental features; see the official [Images](https://docs.typesafe.ai/images) and [Box](https://docs.typesafe.ai/primitives/box) protocols. The `jev-latest` alias remains available for existing callers. Other System One hosts must independently support the image protocol; their text-only model entries remain unchanged. Cloudflare Workers AI, OpenAI Decisions, and `llama-cpp-classify` currently reject Box questions before sending.
 
 ### OpenAI Decisions
 

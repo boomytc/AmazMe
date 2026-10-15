@@ -677,13 +677,25 @@ export interface ClassifierBoolQuestion {
 	criteria: { true: string; false: string };
 }
 
-export type ClassifierQuestion = ClassifierChoiceQuestion | ClassifierScoreQuestion | ClassifierBoolQuestion;
+/** Finds one target in an image. Ask a bool question alongside it to check target presence. */
+export interface ClassifierBoxQuestion {
+	type: "box";
+	instructions: string;
+}
+
+export type ClassifierQuestion =
+	| ClassifierChoiceQuestion
+	| ClassifierScoreQuestion
+	| ClassifierBoolQuestion
+	| ClassifierBoxQuestion;
 
 export interface ClassifierContext {
 	state: JsonObject;
 	/**
 	 * Images judged together with `state`. Only models whose `input` includes `"image"` accept them;
 	 * other models return an error result.
+	 * TypeSafe exposes these as `images[0]`, `images[1]`, etc. in the wire state;
+	 * its image requests reserve the top-level state key `images`.
 	 */
 	images?: ImageContent[];
 	questions: Record<string, ClassifierQuestion>;
@@ -707,7 +719,25 @@ export interface ClassifierBoolAnswer {
 	probability: number;
 }
 
-export type ClassifierAnswer = ClassifierChoiceAnswer | ClassifierScoreAnswer | ClassifierBoolAnswer;
+/** Edges measured from the top-left corner as fractions of image width or height. */
+export interface ClassifierBoxCoordinates {
+	left: number;
+	top: number;
+	right: number;
+	bottom: number;
+}
+
+export interface ClassifierBoxAnswer {
+	type: "box";
+	box: ClassifierBoxCoordinates;
+	confidence: number;
+}
+
+export type ClassifierAnswer =
+	| ClassifierChoiceAnswer
+	| ClassifierScoreAnswer
+	| ClassifierBoolAnswer
+	| ClassifierBoxAnswer;
 export type ClassifierStopReason = "stop" | "error" | "aborted";
 
 export interface ClassifierResult {

@@ -4,12 +4,12 @@ import type { ClassifierContext, ClassifierModel } from "../src/types.ts";
 
 const model: ClassifierModel<"typesafe-system-one"> = {
 	type: "classifier",
-	id: "jev-latest",
+	id: "jev-1.14.0",
 	name: "Jev",
 	api: "typesafe-system-one",
 	provider: "typesafe",
 	baseUrl: "https://api.typesafe.ai/v1/",
-	input: ["text"],
+	input: ["text", "image"],
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	contextWindow: 64000,
 };
@@ -53,13 +53,15 @@ describe("TypeSafe System One", () => {
 				model: string;
 				questions: Record<string, { type: string }>;
 			};
-			expect(payload.model).toBe("jev-latest");
+			expect(payload.model).toBe("jev-1.14.0");
 			expect(payload.questions.category?.type).toBe("choice");
 			expect(payload.questions.satisfaction?.type).toBe("score");
 			expect(payload.questions.approved?.type).toBe("noul");
 			// System One has no temperature field; the option is ignored.
 			expect(payload).not.toHaveProperty("temperature");
 			expect(new Headers(init?.headers).get("authorization")).toBe("Bearer secret");
+			expect(new Headers(init?.headers).get("TypeSafe-Danger-Zone-Images")).toBeNull();
+			expect(payload).not.toHaveProperty("assets");
 			return Response.json({ answers: wireAnswers });
 		});
 
@@ -120,17 +122,184 @@ describe("TypeSafe System One", () => {
 		expect(result.errorMessage).toContain("Unsupported classifier API: cloudflare-workers-ai-system-one");
 	});
 
-	it("rejects image input before sending", async () => {
+	it("sends referenced PNG and JPEG assets with the required opt-in header and parses mixed Box answers", async () => {
+		const imageContext: ClassifierContext = {
+			...context,
+			images: [
+				{ type: "image", data: "cG5n", mimeType: "image/png" },
+				{ type: "image", data: "anBlZw==", mimeType: "image/jpeg" },
+			],
+			questions: {
+				...context.questions,
+				target: { type: "box", instructions: "the save button in `images[0]`" },
+			},
+		};
+		const originalContext = structuredClone(imageContext);
+		const boxAnswer = { type: "box", box: { left: 0, top: 0.25, right: 1, bottom: 0.82 }, confidence: 0.92 };
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			const payload = JSON.parse(String(init?.body)) as {
+				model: string;
+				state: { text: string; images: string[] };
+				assets: Record<string, { type: string; format: string; data_base64: string }>;
+				questions: Record<string, unknown>;
+			};
+			expect(payload.model).toBe("jev-1.14.0");
+			expect(payload.state.text).toBe(context.state.text);
+			expect(payload.state.images).toHaveLength(2);
+			expect(new Set(payload.state.images).size).toBe(2);
+			expect(Object.keys(payload.assets)).toEqual(payload.state.images);
+			expect(payload.assets[payload.state.images[0]!]).toEqual({ type: "image", format: "png", data_base64: "cG5n" });
+			expect(payload.assets[payload.state.images[1]!]).toEqual({
+				type: "image",
+				format: "jpg",
+				data_base64: "anBlZw==",
+			});
+			expect(payload.questions.target).toEqual(imageContext.questions.target);
+			const headers = new Headers(init?.headers);
+			expect(headers.get("TypeSafe-Danger-Zone-Images")).toBe("true");
+			expect(headers.get("X-Source")).toBe("request");
+			return Response.json({
+				answers: { ...wireAnswers, target: boxAnswer },
+				usage: { input_tokens: 290, output_tokens: 21 },
+			});
+		});
+		const result = await classify({ ...model, headers: { "typesafe-danger-zone-images": "false" } }, imageContext, {
+			apiKey: "secret",
+			fetch,
+			headers: { "TYPESAFE-DANGER-ZONE-IMAGES": null, "X-Source": "request" },
+		});
+
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(result.stopReason).toBe("stop");
+		expect(result.answers.target).toEqual(boxAnswer);
+		expect(result.answers.approved).toEqual({ type: "bool", probability: 0.95 });
+		expect(result.usage).toMatchObject({ input: 290, output: 21 });
+		expect(imageContext).toEqual(originalContext);
+	});
+
+	it("reuses image references and the opt-in header on retries", async () => {
+		const payloads: string[] = [];
+		const result = await classify(
+			model,
+			{
+				...context,
+				images: [{ type: "image", data: "anBn", mimeType: "image/jpg" }],
+			},
+			{
+				apiKey: "secret",
+				maxRetries: 1,
+				fetch: async (_input, init) => {
+					expect(new Headers(init?.headers).get("TypeSafe-Danger-Zone-Images")).toBe("true");
+					payloads.push(String(init?.body));
+					return payloads.length === 1
+						? new Response("retry", { status: 503, headers: { "retry-after-ms": "0" } })
+						: Response.json({ answers: wireAnswers });
+				},
+			},
+		);
+		expect(result.stopReason).toBe("stop");
+		expect(payloads).toHaveLength(2);
+		expect(payloads[0]).toBe(payloads[1]);
+	});
+
+	it("rejects image input for text-only models before sending", async () => {
 		const fetch = vi.fn(async () => Response.json({ answers: wireAnswers }));
 		const result = await classify(
-			{ ...model, input: ["text", "image"] },
+			{ ...model, input: ["text"] },
 			{ ...context, images: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }] },
 			{ apiKey: "secret", fetch },
 		);
 
 		expect(fetch).not.toHaveBeenCalled();
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toBe("System One API does not support image input");
+		expect(result.errorMessage).toBe("Model typesafe/jev-1.14.0 does not accept image input");
+	});
+
+	it("preserves payload/response hooks and propagates image-request cancellation", async () => {
+		const controller = new AbortController();
+		const onPayload = vi.fn((payload: unknown) => payload);
+		const onResponse = vi.fn();
+		const imageContext: ClassifierContext = {
+			...context,
+			images: [{ type: "image", data: "cG5n", mimeType: "image/png" }],
+		};
+		const completed = await classify(model, imageContext, {
+			apiKey: "secret",
+			onPayload,
+			onResponse,
+			fetch: async () => Response.json({ answers: wireAnswers }),
+		});
+		expect(completed.stopReason).toBe("stop");
+		expect(onPayload).toHaveBeenCalledOnce();
+		expect(onPayload.mock.calls[0]?.[0]).toHaveProperty("assets");
+		expect(onResponse).toHaveBeenCalledWith({ status: 200, headers: expect.any(Object) }, model);
+		const aborted = await classify(model, imageContext, {
+			apiKey: "secret",
+			signal: controller.signal,
+			fetch: async (_input, init) => {
+				expect(new Headers(init?.headers).get("TypeSafe-Danger-Zone-Images")).toBe("true");
+				expect(init?.signal).toBe(controller.signal);
+				controller.abort(new Error("cancel image request"));
+				throw controller.signal.reason;
+			},
+		});
+		expect(aborted.stopReason).toBe("aborted");
+		expect(aborted.answers).toEqual({});
+	});
+
+	it.each([
+		[
+			{ ...context, questions: { target: { type: "box" as const, instructions: "the mug in the photo" } } },
+			"box questions require image input",
+		],
+		[
+			{ ...context, images: [{ type: "image" as const, data: "aW1hZ2U=", mimeType: "image/webp" }] },
+			"only supports PNG and JPEG",
+		],
+		[
+			{
+				...context,
+				state: { images: "keep this state value" },
+				images: [{ type: "image" as const, data: "cG5n", mimeType: "image/png" }],
+			},
+			"reserves the state field images",
+		],
+	])("rejects invalid image/Box requests before sending (%#)", async (invalidContext, error) => {
+		const fetch = vi.fn();
+		const result = await classify(model, invalidContext, { apiKey: "secret", fetch });
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain(error);
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ type: "noul", noul: 0.5 },
+		{ type: "box", box: null, confidence: 0.9 },
+		{ type: "box", box: { left: 0, top: 0, right: 1 }, confidence: 0.9 },
+		{ type: "box", box: { left: -0.1, top: 0, right: 1, bottom: 1 }, confidence: 0.9 },
+		{ type: "box", box: { left: 0, top: 0, right: 1.1, bottom: 1 }, confidence: 0.9 },
+		{ type: "box", box: { left: 1, top: 0, right: 0, bottom: 1 }, confidence: 0.9 },
+		{ type: "box", box: { left: 0, top: 0.5, right: 1, bottom: 0.5 }, confidence: 0.9 },
+		{ type: "box", box: { left: 0, top: 0, right: 1, bottom: 1 }, confidence: 1.1 },
+		{ type: "box", box: { left: 0, top: 0, right: 1, bottom: 1 }, confidence: null },
+	])("rejects malformed Box answers and preserves billed usage (%#)", async (answer) => {
+		const result = await classify(
+			model,
+			{
+				state: {},
+				images: [{ type: "image", data: "cG5n", mimeType: "image/png" }],
+				questions: { target: { type: "box", instructions: "the mug in `images[0]`" } },
+			},
+			{
+				apiKey: "secret",
+				fetch: async () =>
+					Response.json({ answers: { target: answer }, usage: { input_tokens: 10, output_tokens: 2 } }),
+			},
+		);
+		expect(result.stopReason).toBe("error");
+		expect(result.answers).toEqual({});
+		expect(result.errorMessage).toContain("target");
+		expect(result.usage).toMatchObject({ input: 10, output: 2 });
 	});
 
 	it("merges headers case-insensitively and supports null suppression", async () => {

@@ -78,6 +78,26 @@ const wireUsage = {
 const image: ImageContent = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
 
 describe("OpenAI Decisions", () => {
+	it("rejects Box questions before sending instead of treating them as predicates", async () => {
+		let requested = false;
+		const result = await classify(
+			model,
+			{
+				state: {},
+				questions: { target: { type: "box", instructions: "the mug in the photo" } },
+			},
+			{
+				apiKey: "secret",
+				fetch: async () => {
+					requested = true;
+					return Response.json({});
+				},
+			},
+		);
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("does not support box questions");
+		expect(requested).toBe(false);
+	});
 	it("maps questions to Decisions types and answers back by name", async () => {
 		const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
 			// Answers out of question order: they are matched by name.

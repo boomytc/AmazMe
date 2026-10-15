@@ -2593,21 +2593,23 @@ async function loadModelsDevClassifierModels(): Promise<ClassifierModel<"typesaf
 		if (!metadata || metadata.type !== "decision") {
 			throw new Error("models.dev did not return decision model typesafe/jev-latest");
 		}
-		return [
-			{
-				type: "classifier",
-				id: "jev-latest",
-				name: metadata.name,
-				api: "typesafe-system-one",
-				provider: "typesafe",
-				baseUrl: "https://api.typesafe.ai/v1/",
-				input: metadata.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-				// The canonical models.dev entry has no direct-provider pricing. System One reports token usage,
-				// so classify() results carry token counts but price them at zero.
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: metadata.limit?.context || 64000,
-			},
-		];
+		// Images are an opt-in feature on both Jev 1.13 and 1.14; models.dev only advertises text.
+		// Keep the alias for existing callers and expose a pinned release for Box questions.
+		// https://docs.typesafe.ai/images and https://docs.typesafe.ai/primitives/box
+		const latest: ClassifierModel<"typesafe-system-one"> = {
+			type: "classifier",
+			id: "jev-latest",
+			name: metadata.name,
+			api: "typesafe-system-one",
+			provider: "typesafe",
+			baseUrl: "https://api.typesafe.ai/v1/",
+			input: ["text", "image"],
+			// Direct TypeSafe pricing includes image tokens; output tokens are free.
+			// https://docs.typesafe.ai/models
+			cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: metadata.limit?.context || 64000,
+		};
+		return [latest, { ...latest, id: "jev-1.14.0", name: "Jev 1.14" }];
 	} catch (error) {
 		console.error("Failed to load models.dev classifier data:", error);
 		if (generatorOptions.strict) throw error;

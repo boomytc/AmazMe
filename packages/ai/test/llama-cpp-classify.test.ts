@@ -114,6 +114,25 @@ function wordTokens(content: string): number[] {
 }
 
 describe("llama.cpp classifier", () => {
+	it("rejects Box questions before sending or interpreting label probabilities", async () => {
+		const question = { type: "box" as const, instructions: "the mug in the photo" };
+		const server = fakeServer();
+		const result = await classify(
+			model(),
+			{ state: {}, questions: { target: question } },
+			{
+				apiKey: "secret",
+				fetch: server.fetch,
+			},
+		);
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("does not support box questions");
+		expect(server.requests).toEqual([]);
+		expect(() => answerFromProbabilities(question, ["true", "false"], [0.9, 0.1])).toThrow(
+			"does not support box questions",
+		);
+	});
+
 	it("answers choice, bool and score questions from label log-probabilities", async () => {
 		const server = fakeServer({ next: answerByPrompt, tokenize: wordTokens });
 		const classifierModel = model();

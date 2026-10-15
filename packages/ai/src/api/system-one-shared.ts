@@ -1,18 +1,21 @@
 import type {
 	ClassifierAnswer,
 	ClassifierApi,
+	ClassifierBoxAnswer,
 	ClassifierContext,
 	ClassifierModel,
 	ClassifierOptions,
 	ClassifierResult,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
+import { providerHeadersToRecord } from "../utils/headers.ts";
 import { isRecord, parseClassifierUsage, postClassifierRequest, requiredNumber } from "./classifier-shared.ts";
 
 /** TypeSafe System One request body without the transport-specific envelope. */
 export interface SystemOneWireRequest {
 	state: ClassifierContext["state"];
 	questions: Record<string, unknown>;
+	assets?: Record<string, { type: "image"; format: "png" | "jpg"; data_base64: string }>;
 }
 
 /** Differences between services that serve System One models. */
@@ -21,6 +24,8 @@ export interface SystemOneTransport {
 	api: ClassifierApi;
 	/** Service name used in error messages. */
 	label: string;
+	/** Supports TypeSafe's image assets and Box questions. Other System One hosts opt in separately. */
+	supportsImages?: boolean;
 	/** Absolute request URL. */
 	url(model: ClassifierModel<ClassifierApi>): URL;
 	/** Wraps the System One request in the service's request envelope. */
@@ -37,6 +42,27 @@ function probabilities(label: string, value: unknown, id: string): Record<string
 			requiredNumber(label, probability, `probability for ${id}.${key}`),
 		]),
 	);
+}
+
+function parseBox(label: string, answer: Record<string, unknown>, id: string): ClassifierBoxAnswer {
+	if (answer.type !== "box" || !isRecord(answer.box)) {
+		throw new Error(`${label} did not return a box answer for ${id}`);
+	}
+	const fraction = (value: unknown, field: string): number => {
+		const number = requiredNumber(label, value, `${field} for ${id}`);
+		if (number < 0 || number > 1) throw new Error(`${label} returned an invalid ${field} for ${id}`);
+		return number;
+	};
+	const box = {
+		left: fraction(answer.box.left, "left"),
+		top: fraction(answer.box.top, "top"),
+		right: fraction(answer.box.right, "right"),
+		bottom: fraction(answer.box.bottom, "bottom"),
+	};
+	if (box.left >= box.right || box.top >= box.bottom) {
+		throw new Error(`${label} returned invalid box edges for ${id}`);
+	}
+	return { type: "box", box, confidence: fraction(answer.confidence, "confidence") };
 }
 
 function parseAnswers(label: string, value: unknown, context: ClassifierContext): Record<string, ClassifierAnswer> {
@@ -68,6 +94,8 @@ function parseAnswers(label: string, value: unknown, context: ClassifierContext)
 					confidence: requiredNumber(label, answer.confidence, `confidence for ${id}`),
 				},
 			]);
+		} else if (question.type === "box") {
+			answers.push([id, parseBox(label, answer, id)]);
 		} else {
 			if (answer.type !== "noul") throw new Error(`${label} did not return a bool answer for ${id}`);
 			answers.push([
@@ -83,8 +111,8 @@ function parseAnswers(label: string, value: unknown, context: ClassifierContext)
 }
 
 /** Maps public `bool` questions to TypeSafe's wire-level `noul` type. */
-function wireRequest(context: ClassifierContext): SystemOneWireRequest {
-	return {
+function wireRequest(label: string, context: ClassifierContext): SystemOneWireRequest {
+	const request: SystemOneWireRequest = {
 		state: context.state,
 		questions: Object.fromEntries(
 			Object.entries(context.questions).map(([id, question]) => [
@@ -93,6 +121,21 @@ function wireRequest(context: ClassifierContext): SystemOneWireRequest {
 			]),
 		),
 	};
+	if (context.images?.length) {
+		if (Object.hasOwn(context.state, "images")) {
+			throw new Error(`${label} image input reserves the state field images`);
+		}
+		const assets = context.images.map((image) => {
+			const mimeType = image.mimeType.toLowerCase();
+			const format =
+				mimeType === "image/png" ? "png" : mimeType === "image/jpeg" || mimeType === "image/jpg" ? "jpg" : undefined;
+			if (!format) throw new Error(`${label} only supports PNG and JPEG images, got ${image.mimeType}`);
+			return [crypto.randomUUID(), { type: "image", format, data_base64: image.data }] as const;
+		});
+		request.assets = Object.fromEntries(assets);
+		request.state = { ...context.state, images: assets.map(([reference]) => reference) };
+	}
+	return request;
 }
 
 /** Runs one System One classification over the given transport. */
@@ -113,13 +156,31 @@ export async function classifySystemOne(
 
 	try {
 		if (model.api !== transport.api) throw new Error(`Unsupported classifier API: ${model.api}`);
-		if (context.images?.length) throw new Error(`${transport.label} does not support image input`);
+		const hasImages = Boolean(context.images?.length);
+		const hasBox = Object.values(context.questions).some((question) => question.type === "box");
+		if (hasImages) {
+			if (!transport.supportsImages) throw new Error(`${transport.label} does not support image input`);
+			if (!model.input.includes("image")) {
+				throw new Error(`Model ${model.provider}/${model.id} does not accept image input`);
+			}
+		}
+		if (hasBox) {
+			if (!transport.supportsImages) throw new Error(`${transport.label} does not support box questions`);
+			if (!hasImages) throw new Error(`${transport.label} box questions require image input`);
+		}
+		const requestOptions =
+			hasImages || hasBox
+				? {
+						...options,
+						headers: providerHeadersToRecord(options?.headers, { "TypeSafe-Danger-Zone-Images": "true" }),
+					}
+				: options;
 		const body = await postClassifierRequest(
 			transport.label,
 			transport.url(model),
 			model,
-			transport.payload(model, wireRequest(context)),
-			options,
+			transport.payload(model, wireRequest(transport.label, context)),
+			requestOptions,
 		);
 		const result = transport.output(body);
 		// Set before parsing answers: a request with malformed answers was still billed.

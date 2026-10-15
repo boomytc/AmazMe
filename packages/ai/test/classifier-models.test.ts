@@ -114,18 +114,72 @@ describe("Models with classifier models", () => {
 
 	it("exposes Jev only through classifier catalog accessors", () => {
 		const jev = getBuiltinClassifierModel("typesafe", "jev-latest");
+		const jev14 = getBuiltinClassifierModel("typesafe", "jev-1.14.0");
 		expect(jev).toMatchObject({
 			type: "classifier",
 			api: "typesafe-system-one",
 			provider: "typesafe",
 			contextWindow: 64000,
+			input: ["text", "image"],
+			cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
 		});
-		expect(getBuiltinClassifierModels("typesafe")).toEqual([jev]);
-		expect(getAllBuiltinModels("typesafe")).toEqual([jev]);
+		expect(jev14).toMatchObject({
+			id: "jev-1.14.0",
+			input: ["text", "image"],
+			api: "typesafe-system-one",
+			cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
+		});
+		expect(getBuiltinClassifierModels("typesafe")).toEqual(expect.arrayContaining([jev, jev14]));
+		expect(getAllBuiltinModels("typesafe")).toEqual(expect.arrayContaining([jev, jev14]));
 
 		const models = builtinModels();
 		expect(models.getModel("typesafe", "jev-latest")).toBeUndefined();
 		expect(models.getModelOfType("classifier", "typesafe", "jev-latest")).toEqual(jev);
+		expect(models.getModel("typesafe", "jev-1.14.0")).toBeUndefined();
+		expect(models.getModelOfType("classifier", "typesafe", "jev-1.14.0")).toEqual(jev14);
+	});
+
+	it("routes pinned TypeSafe image and Box requests through the public classifier entry point", async () => {
+		const models = builtinModels();
+		const jev = models.getModelOfType("classifier", "typesafe", "jev-1.14.0");
+		if (!jev) throw new Error("missing TypeSafe Jev 1.14 model");
+		const box = { type: "box", box: { left: 0.1, top: 0.2, right: 0.8, bottom: 0.9 }, confidence: 0.85 };
+		const result = await models.classify(
+			jev,
+			{
+				state: { task: "find the mug" },
+				images: [{ type: "image", data: "cG5n", mimeType: "image/png" }],
+				questions: {
+					present: {
+						type: "bool",
+						instructions: "Is a mug visible in `images[0]`?",
+						criteria: { true: "Visible", false: "Absent" },
+					},
+					target: { type: "box", instructions: "the mug in `images[0]`" },
+				},
+			},
+			{
+				apiKey: "secret",
+				fetch: async (_input, init) => {
+					expect(JSON.parse(String(init?.body))).toMatchObject({
+						model: "jev-1.14.0",
+						state: { task: "find the mug", images: [expect.any(String)] },
+					});
+					expect(new Headers(init?.headers).get("TypeSafe-Danger-Zone-Images")).toBe("true");
+					return Response.json({
+						answers: { present: { type: "noul", noul: 0.1 }, target: box },
+						usage: { input_tokens: 290, output_tokens: 21 },
+					});
+				},
+			},
+		);
+		expect(result.stopReason).toBe("stop");
+		expect(result.answers.present).toEqual({ type: "bool", probability: 0.1 });
+		// The adapter preserves the Box even when the presence answer is low; the caller decides whether to use it.
+		expect(result.answers.target).toEqual(box);
+		expect(result.usage?.cost.input).toBeCloseTo(0.00001218, 12);
+		expect(result.usage?.cost.output).toBe(0);
+		expect(result.usage?.cost.total).toBeCloseTo(0.00001218, 12);
 	});
 
 	it.each([

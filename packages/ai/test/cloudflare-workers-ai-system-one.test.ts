@@ -72,6 +72,29 @@ function setup() {
 const auth = { apiKey: "cf-key", env: { CLOUDFLARE_ACCOUNT_ID: "account-id" } };
 
 describe("Cloudflare Workers AI System One", () => {
+	it("rejects unsupported images and Box questions before sending", async () => {
+		const { models, jev } = setup();
+		const fetch = vi.fn();
+		const imageResult = await models.classify(
+			{ ...jev, input: ["text", "image"] },
+			{
+				...context,
+				images: [{ type: "image", data: "cG5n", mimeType: "image/png" }],
+			},
+			{ ...auth, fetch },
+		);
+		const boxResult = await models.classify(
+			jev,
+			{
+				state: {},
+				questions: { target: { type: "box", instructions: "the mug in the photo" } },
+			},
+			{ ...auth, fetch },
+		);
+		expect(imageResult.errorMessage).toContain("does not support image input");
+		expect(boxResult.errorMessage).toContain("does not support box questions");
+		expect(fetch).not.toHaveBeenCalled();
+	});
 	it("exposes Jev only through classifier catalog accessors", () => {
 		const { models, jev } = setup();
 		expect(jev).toEqual(getBuiltinClassifierModel("cloudflare-workers-ai", "typesafe/jev"));

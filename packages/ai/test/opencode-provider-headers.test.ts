@@ -1,9 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
+import { opencodeGoProvider } from "../src/providers/opencode-go.ts";
 import { withOpenCodeSessionHeader } from "../src/providers/opencode-headers.ts";
 import type { Api, Model, ProviderStreams, StreamOptions } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
+
+const googleStreams = vi.hoisted(() => ({
+	stream: vi.fn<ProviderStreams["stream"]>(),
+	streamSimple: vi.fn<ProviderStreams["streamSimple"]>(),
+}));
+
+vi.mock("../src/api/google-generative-ai.lazy.ts", () => ({ googleGenerativeAIApi: () => googleStreams }));
 
 const model: Model<Api> = {
 	id: "test-model",
@@ -42,6 +50,20 @@ function recordingStreams(capture: (options: StreamOptions | undefined) => void)
 }
 
 describe("OpenCode provider headers", () => {
+	it.each(["stream", "streamSimple"] as const)(
+		"routes OpenCode Go Google %s with the session header",
+		async (method) => {
+			googleStreams[method].mockImplementation(() => completedStream());
+			const google: Model<"google-generative-ai"> = { ...model, api: "google-generative-ai", provider: "opencode-go" };
+			const result = await opencodeGoProvider()[method](google, context, { sessionId: "google-session" }).result();
+			expect(result.stopReason).toBe("stop");
+			expect(googleStreams[method]).toHaveBeenCalledWith(google, context, {
+				sessionId: "google-session",
+				headers: { "x-opencode-session": "google-session" },
+			});
+		},
+	);
+
 	// Regression test for https://github.com/earendil-works/pi/issues/9326
 	it.each(["stream", "streamSimple"] as const)(
 		"maps sessionId for %s requests even without cache retention",
