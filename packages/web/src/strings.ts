@@ -542,6 +542,10 @@ export const EN = {
 	"shortcut.stop": "Stop the turn",
 
 	"copy.copy": "Copy",
+	"secret.show": "Show",
+	"secret.hide": "Hide",
+	"secret.showAria": "Show credential",
+	"secret.hideAria": "Hide credential",
 	"copy.copied": "Copied",
 	"copy.failed": "Copy failed",
 
@@ -1313,6 +1317,10 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"shortcut.stop": "停止回合",
 
 	"copy.copy": "复制",
+	"secret.show": "显示",
+	"secret.hide": "隐藏",
+	"secret.showAria": "显示凭据",
+	"secret.hideAria": "隐藏凭据",
 	"copy.copied": "已复制",
 	"copy.failed": "复制失败",
 

@@ -1252,7 +1252,8 @@ p {
 /* A user turn: one bubble at the trailing edge, at most a little past half the column. */
 .turn-user {
 	display: flex;
-	justify-content: flex-end;
+	flex-direction: column;
+	align-items: flex-end;
 }
 
 .bubble {
@@ -1284,6 +1285,29 @@ p {
 	overflow-wrap: anywhere;
 }
 
+.credential-toggle {
+	margin-inline-start: 4px;
+	padding: 0 4px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-3);
+	font: inherit;
+	font-size: 12px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.credential-toggle:hover {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.credential-toggle:focus-visible {
+	outline: 2px solid var(--text);
+	outline-offset: 2px;
+}
+
 /* An answer is flat text on the canvas. Its actions sit under it and show on hover or focus. */
 .turn-response {
 	min-width: 0;
@@ -1300,6 +1324,7 @@ p {
 }
 
 .turn-response:hover .turn-actions,
+.turn-user:hover .turn-actions,
 .turn-actions:focus-within {
 	opacity: 1;
 }

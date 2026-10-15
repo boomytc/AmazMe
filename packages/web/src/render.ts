@@ -6,6 +6,7 @@
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
+import { credentialRanges } from "./credentials.ts";
 import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
 import { errorMessageCopy } from "./errors.ts";
@@ -1639,7 +1640,33 @@ export function createRenderer(
 		return block;
 	};
 
-	/** A user turn: the images the entry carries, then its text. */
+	/** Original values stay in closures, never in attributes or a second transcript representation. */
+	const userText = (text: string, className: string): HTMLElement => {
+		const node = element("span", className);
+		let from = 0;
+		for (const range of credentialRanges(text)) {
+			node.append(document.createTextNode(text.slice(from, range.start)));
+			const secret = element("span", "credential-secret");
+			const value = element("span", "credential-value", range.masked);
+			const toggle = button("credential-toggle");
+			let shown = false;
+			const paint = (): void => {
+				value.textContent = shown ? text.slice(range.start, range.end) : range.masked;
+				toggle.textContent = copy(shown ? "secret.hide" : "secret.show");
+				toggle.setAttribute("aria-label", copy(shown ? "secret.hideAria" : "secret.showAria"));
+				toggle.setAttribute("aria-pressed", String(shown));
+			};
+			toggle.addEventListener("click", () => { shown = !shown; paint(); });
+			paint();
+			secret.append(value, toggle);
+			node.append(secret);
+			from = range.end;
+		}
+		node.append(document.createTextNode(text.slice(from)));
+		return node;
+	};
+
+	/** A user turn: the images the entry carries, then its display-only masked text. */
 	const userBubble = (block: TranscriptBlock): HTMLElement => {
 		const bubble = element("div", "bubble");
 		for (const image of block.images ?? []) {
@@ -1649,7 +1676,7 @@ export function createRenderer(
 			node.alt = image.alt;
 			bubble.append(node);
 		}
-		if (block.text.length > 0) bubble.append(element("span", "bubble-text", block.text));
+		if (block.text.length > 0) bubble.append(userText(block.text, "bubble-text"));
 		return bubble;
 	};
 
@@ -2058,7 +2085,7 @@ export function createRenderer(
 	const queueElement = (item: QueueItem): HTMLElement => {
 		const row = element("p", "queue-item");
 		row.dataset.submissionId = item.id;
-		row.append(element("span", "queue-text", item.text));
+		row.append(userText(item.text, "queue-text"));
 		const cancel = panelButton(item.cancel, report);
 		cancel.className = "queue-cancel";
 		cancel.title = copy("queue.cancelAria");
@@ -2219,7 +2246,7 @@ export function createRenderer(
 		for (const block of blocks) {
 			// A blank answer is not a response card or a boundary between process rows. Keep the
 			// original entry and its tool/notice blocks; only the presentation is filtered.
-			if (block.kind === "assistant" && block.text.trim().length === 0) continue;
+			if ((block.kind === "assistant" || block.kind === "thinking") && block.text.trim().length === 0) continue;
 			const key = `block:${block.id}`;
 			if (isProcess(block)) {
 				if (process === undefined) {
@@ -2232,7 +2259,11 @@ export function createRenderer(
 			}
 			finishProcess();
 			process = undefined;
-			if (block.kind === "user") flow.push(flowCache.get(key, [lastView?.locale, block], () => wrap("turn-user", userBubble(block))));
+			if (block.kind === "user") flow.push(flowCache.get(key, [lastView?.locale, block], () => {
+				const turn = wrap("turn-user", userBubble(block));
+				if (block.text.length > 0) turn.append(answerActions(block));
+				return turn;
+			}));
 			else if (block.kind === "assistant") {
 				const answer = flowCache.get(key, [lastView?.locale, block], () => {
 					const answer = wrap("turn-response", markdownElement(block.text, markdown));
