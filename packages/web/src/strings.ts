@@ -597,6 +597,13 @@ export const EN = {
 	"panel.settings.invalidNumber": "Enter a whole number of at least {min}.",
 	"panel.settings.invalidRange": "Enter a whole number from {min} to {max}.",
 	"panel.settings.invalidDecimal": "Enter a number of at least {min}.",
+	"panel.settings.commitHint": "Press Enter or leave field to save",
+	"panel.settings.saving": "Saving…",
+	"panel.settings.saved": "Saved",
+	"panel.settings.fontPreviewTitle": "Font preview",
+	"panel.settings.fontPreviewText": "Text · Conversation and composer: The quick brown fox jumps over 123.",
+	"panel.settings.fontPreviewCode": "const ready = items.filter(item => item.active);",
+	"panel.settings.fontPreviewTerminal": "$ npm test --workspace @amazme/web  ✓ passed",
 
 	"panel.skills.title": "Skills",
 	"panel.skills.description":
@@ -1382,6 +1389,13 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.settings.invalidNumber": "请输入不小于 {min} 的整数。",
 	"panel.settings.invalidRange": "请输入 {min} 至 {max} 的整数。",
 	"panel.settings.invalidDecimal": "请输入不小于 {min} 的数值。",
+	"panel.settings.commitHint": "按 Enter 或失焦保存",
+	"panel.settings.saving": "正在保存…",
+	"panel.settings.saved": "已保存",
+	"panel.settings.fontPreviewTitle": "字体效果预览",
+	"panel.settings.fontPreviewText": "正文 · 对话与输入框效果预览：春江潮水连海平，The quick brown fox 123。",
+	"panel.settings.fontPreviewCode": "const ready = items.filter(item => item.active);",
+	"panel.settings.fontPreviewTerminal": "$ npm test --workspace @amazme/web  ✓ passed",
 
 	"panel.skills.title": "技能",
 	"panel.skills.description": "为 AmazMe 添加处理特定任务的方法和操作指引。",

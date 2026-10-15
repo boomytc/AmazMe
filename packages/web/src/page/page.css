@@ -3113,7 +3113,13 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	max-width: 100%;
 }
 
-.panel-field { min-width: 0; max-width: 100%; }
+.panel-field {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	min-width: 0;
+	max-width: 100%;
+}
 
 /* LightUI's reading line: prose keeps its left edge, actions get a separate line only when needed. */
 @container panel (max-width: 520px) {
@@ -3135,6 +3141,10 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 		flex-basis: 100%;
 	}
 
+	.panel-field {
+		align-items: flex-start;
+	}
+
 	.panel-input { max-width: 100%; }
 }
 
@@ -3144,6 +3154,87 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	color: var(--danger);
 	font-size: 12px;
 	line-height: 18px;
+}
+
+.panel-field-status,
+.panel-control-status {
+	margin: 4px 0 0;
+	color: var(--text-3);
+	font-size: 11px;
+	line-height: 16px;
+}
+
+.panel-control-status {
+	margin: 0;
+	white-space: nowrap;
+}
+
+.panel-field-status[data-state="dirty"] {
+	color: var(--text-2);
+}
+
+.panel-field-status[data-state="saving"],
+.panel-control-status[data-state="saving"] {
+	color: var(--accent-text);
+}
+
+.panel-field-status[data-state="saved"],
+.panel-control-status[data-state="saved"] {
+	color: var(--diff-add);
+}
+
+.typography-preview {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 12px;
+	padding: 14px 16px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-xl);
+	background: var(--raised);
+	box-shadow: var(--shadow-card);
+}
+
+.typography-preview-title {
+	margin: 0;
+	color: var(--text-3);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.typography-preview-item {
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.typography-preview .preview-text {
+	color: var(--text);
+	font-family: var(--font-content, var(--font-sans));
+	font-size: var(--content-font-size, 15px);
+	line-height: 1.5;
+}
+
+.typography-preview .preview-code,
+.typography-preview .preview-terminal {
+	padding: 6px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--code);
+	color: var(--text-2);
+}
+
+.typography-preview .preview-code {
+	font-family: var(--font-code, var(--font-mono));
+	font-size: var(--code-font-size, 13px);
+	line-height: 1.5;
+}
+
+.typography-preview .preview-terminal {
+	font-family: var(--font-terminal, var(--font-mono));
+	font-size: var(--terminal-font-size, 12px);
+	line-height: 1.5;
 }
 
 .panel-empty {

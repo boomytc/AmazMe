@@ -29,11 +29,12 @@ import {
 	type PanelRow,
 	type PanelSpec,
 	searchSettings,
+	SETTINGS_FIELD_ACTION,
 	SETTINGS_VIEW,
 	type SettingsSearchHit,
 } from "./panels.ts";
 import { fontSizeShortcut, isApplePlatform, isStopChord, matchShortcut, type ShortcutGesture, type ShortcutId } from "./shortcuts.ts";
-import { applyTypography } from "./typography.ts";
+import { applyTypography, DEFAULT_TYPOGRAPHY, resolveTypography } from "./typography.ts";
 import { type MessageKey, translate } from "./strings.ts";
 import {
 	type Attachment,
@@ -668,6 +669,16 @@ export function createRenderer(
 	};
 	/** Text a reader is typing into a panel control, keyed by action id and target. */
 	const drafts = new Map<string, string>();
+	/** In-flight and recently settled control saves, keyed by control identity. */
+	const controlCommits = new Map<string, { value: string; status: "saving" | "saved"; timer?: number }>();
+	const TYPOGRAPHY_ROW_IDS = new Set([
+		"setting:textFont",
+		"setting:codeFont",
+		"setting:terminalFont",
+		"setting:textSize",
+		"setting:codeSize",
+		"setting:terminalSize",
+	]);
 	/** Unsubmitted panel inputs belong to a session, unlike global settings drafts. */
 	const inputDrafts = new Map<string, string>();
 	/** The modal already in the DOM; a rebuild would drop what the reader typed into it. */
@@ -777,11 +788,64 @@ export function createRenderer(
 
 	const controlKey = (control: PanelControl): string => `${control.id}\u0000${control.data ?? ""}`;
 
+	const resolveControlStatus = (control: PanelControl, pending: PanelPending | undefined): "saving" | "saved" | undefined => {
+		const key = controlKey(control);
+		const current = controlCommits.get(key);
+		const hasErrorNotice = lastView?.panel.panel?.notices.some((notice) => notice.tone === "error") === true;
+		if (isPending(pending, control)) return "saving";
+		if (current === undefined) return undefined;
+		if (hasErrorNotice) {
+			if (current.timer !== undefined) window.clearTimeout(current.timer);
+			controlCommits.delete(key);
+			return undefined;
+		}
+		const matches =
+			control.kind === "number"
+				? current.value.trim() !== "" && Number(current.value) === Number(control.value)
+				: current.value === control.value;
+		if (!matches) return current.status === "saving" ? "saving" : undefined;
+		if (current.status === "saving") {
+			const timer = window.setTimeout(() => {
+				if (controlCommits.get(key)?.timer !== timer) return;
+				controlCommits.delete(key);
+				const statusNode = elements.viewBody.querySelector<HTMLElement>(`[data-control-status="${CSS.escape(key)}"]`);
+				if (statusNode !== null) {
+					if (statusNode.dataset.defaultHint) {
+						statusNode.textContent = statusNode.dataset.defaultHint;
+						statusNode.dataset.state = "hint";
+						statusNode.hidden = false;
+					} else {
+						statusNode.textContent = "";
+						statusNode.hidden = true;
+						delete statusNode.dataset.state;
+					}
+				}
+			}, 2400);
+			controlCommits.set(key, { value: current.value, status: "saved", timer });
+		}
+		return "saved";
+	};
+
+	const applyGroupTypographyPreview = (preview: HTMLElement, groupNode?: Element | null): void => {
+		const base: Record<string, unknown> = { ...(lastView?.typography ?? DEFAULT_TYPOGRAPHY) };
+		for (const field of ["textFont", "codeFont", "terminalFont", "textSize", "codeSize", "terminalSize"] as const) {
+			const key = `${SETTINGS_FIELD_ACTION}\u0000${field}`;
+			const inputNode = groupNode?.querySelector<HTMLInputElement>(`[data-control-key="${CSS.escape(key)}"]`);
+			const raw = inputNode?.value ?? drafts.get(key);
+			if (raw === undefined) continue;
+			base[field] = field.endsWith("Size") ? (raw.trim() === "" ? Number.NaN : Number(raw)) : raw;
+		}
+		applyTypography(preview.style, resolveTypography(base));
+	};
+
 	/** One control: a switch applies at once, a select at once, text and numbers on commit. */
 	const controlElement = (control: PanelControl, pending: PanelPending | undefined, rowTitle: string): HTMLElement => {
 		const key = controlKey(control);
 		const name = control.label === undefined ? rowTitle : `${rowTitle} · ${control.label}`;
 		const emit = (value: string): void => {
+			const previousCommit = controlCommits.get(key);
+			if (previousCommit?.timer !== undefined) window.clearTimeout(previousCommit.timer);
+			controlCommits.set(key, { value, status: "saving" });
 			if (control.kind === "text" || control.kind === "number") drafts.set(key, value);
 			else drafts.delete(key);
 			report({ kind: "control", id: control.id, data: control.data, value });
@@ -847,13 +911,36 @@ export function createRenderer(
 		if (control.max !== undefined) input.max = String(control.max);
 		if (control.step !== undefined) input.step = String(control.step);
 		input.disabled = control.disabled === true;
-		input.addEventListener("input", () => drafts.set(key, input.value));
 		markPending(input, pending, control);
 		const field = element("div", "panel-field");
 		const error = element("p", "panel-field-error");
 		error.id = `field-error-${encodeURIComponent(key)}`;
 		error.setAttribute("role", "alert");
 		error.hidden = true;
+		const status = element("p", "panel-field-status");
+		const defaultHint = copy("panel.settings.commitHint");
+		status.dataset.controlStatus = key;
+		status.dataset.defaultHint = defaultHint;
+		status.setAttribute("role", "status");
+		status.setAttribute("aria-live", "polite");
+		const syncFieldStatus = (override?: "saving" | "saved"): void => {
+			if (!error.hidden) {
+				status.hidden = true;
+				return;
+			}
+			status.hidden = false;
+			const state = override ?? resolveControlStatus(control, pending);
+			if (state === "saving") {
+				status.textContent = copy("panel.settings.saving");
+				status.dataset.state = "saving";
+			} else if (state === "saved" && input.value === control.value) {
+				status.textContent = copy("panel.settings.saved");
+				status.dataset.state = "saved";
+			} else {
+				status.textContent = defaultHint;
+				status.dataset.state = input.value !== control.value ? "dirty" : "hint";
+			}
+		};
 		const validate = (): boolean => {
 			const invalid = control.kind === "number" && !inRange(control, input.value);
 			error.hidden = !invalid;
@@ -866,9 +953,19 @@ export function createRenderer(
 				input.removeAttribute("aria-invalid");
 				input.removeAttribute("aria-describedby");
 			}
+			syncFieldStatus();
 			return !invalid;
 		};
 		if (drafts.has(key)) validate();
+		else syncFieldStatus();
+		input.addEventListener("input", () => {
+			drafts.set(key, input.value);
+			if (!error.hidden) validate();
+			else syncFieldStatus();
+			const groupNode = field.closest(".panel-group");
+			const preview = groupNode?.querySelector<HTMLElement>("[data-typography-preview]");
+			if (preview) applyGroupTypographyPreview(preview, groupNode);
+		});
 		let submitted = control.value;
 		const commit = (): void => {
 			// A number outside the host's range is answered here, in the reader's language, and
@@ -876,6 +973,7 @@ export function createRenderer(
 			if (!validate()) return;
 			if (input.value === submitted) return;
 			submitted = input.value;
+			syncFieldStatus("saving");
 			emit(input.value);
 		};
 		input.addEventListener("change", commit);
@@ -884,7 +982,7 @@ export function createRenderer(
 			event.preventDefault();
 			commit();
 		});
-		field.append(input, error);
+		field.append(input, error, status);
 		return field;
 	};
 
@@ -914,7 +1012,25 @@ export function createRenderer(
 		node.append(text);
 		if (row.controls !== undefined && row.controls.length > 0) {
 			const controls = element("div", "panel-controls");
-			for (const control of row.controls) controls.append(controlElement(control, pending, row.title));
+			for (const control of row.controls) {
+				controls.append(controlElement(control, pending, row.title));
+				if (control.kind === "switch" || control.kind === "select") {
+					const key = controlKey(control);
+					const state = resolveControlStatus(control, pending);
+					const badge = element("span", "panel-control-status");
+					badge.dataset.controlStatus = key;
+					badge.setAttribute("role", "status");
+					badge.setAttribute("aria-live", "polite");
+					if (state === undefined) {
+						badge.hidden = true;
+					} else {
+						badge.hidden = false;
+						badge.dataset.state = state;
+						badge.textContent = copy(state === "saving" ? "panel.settings.saving" : "panel.settings.saved");
+					}
+					controls.append(badge);
+				}
+			}
 			node.append(controls);
 		}
 		if ((row.actions?.length ?? 0) > 0 || row.menu !== undefined) {
@@ -972,6 +1088,21 @@ export function createRenderer(
 		if (group.rows.length === 0 && group.empty !== "") rows.append(element("p", "panel-empty", group.empty ?? copy("panel.empty")));
 		else for (const row of group.rows) rows.append(rowElementOf(row, pending));
 		node.append(rows);
+		if (group.rows.some((row) => TYPOGRAPHY_ROW_IDS.has(row.id))) {
+			const preview = element("div", "typography-preview");
+			preview.dataset.typographyPreview = "true";
+			preview.setAttribute("role", "region");
+			preview.setAttribute("aria-label", copy("panel.settings.fontPreviewTitle"));
+			const title = element("p", "typography-preview-title", copy("panel.settings.fontPreviewTitle"));
+			const textSample = element("p", "typography-preview-item preview-text", copy("panel.settings.fontPreviewText"));
+			const codeSample = element("pre", "typography-preview-item preview-code");
+			codeSample.append(element("code", "", copy("panel.settings.fontPreviewCode")));
+			const terminalSample = element("pre", "typography-preview-item preview-terminal");
+			terminalSample.append(element("code", "", copy("panel.settings.fontPreviewTerminal")));
+			preview.append(title, textSample, codeSample, terminalSample);
+			applyGroupTypographyPreview(preview, rows);
+			node.append(preview);
+		}
 		if (group.footnote !== undefined) node.append(element("p", "panel-footnote", group.footnote));
 		return node;
 	};

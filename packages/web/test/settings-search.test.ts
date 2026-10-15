@@ -79,25 +79,59 @@ const settings = shell({
 
 let cleanupListeners = (): void => {};
 
-test("font size controls enforce the Host's upper bound before sending a setting", () => {
+test("font size controls enforce the Host's upper bound, preview typography live, and report save timing and completion", () => {
+	const descriptors = [
+		{ id: "textFont", group: "interface", kind: "string" as const, field: "typography.textFont", explicit: false, value: "" },
+		{ id: "codeSize", group: "interface", kind: "number" as const, field: "typography.codeSize", explicit: false, value: "13", min: 10, max: 16, step: 1 },
+	];
 	const input = shell({ locale: "zh", current: "settings", settings: { state: {
 		paths: { global: "/agent/settings.json" }, projectTrusted: false, errors: [],
-		descriptors: [{ id: "codeSize", group: "interface", kind: "number", field: "typography.codeSize", explicit: false, value: "13", min: 10, max: 16, step: 1 }],
+		descriptors,
 	} } });
 	const renderer = createRenderer(collectPageElements());
 	const action = vi.fn();
 	renderer.onPanelAction = action;
 	renderer.render(buildWebView(input));
+	const fontControl = document.querySelector<HTMLInputElement>('input[aria-label="正文字体"]');
 	const control = document.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]');
-	if (!control) throw new Error("Missing code size control");
+	const preview = document.querySelector<HTMLElement>("[data-typography-preview]");
+	if (!control || !fontControl || !preview) throw new Error("Missing typography controls or preview");
+	const statusOf = () => control.closest(".panel-field")?.querySelector<HTMLElement>(".panel-field-status");
+	expect(statusOf()?.textContent).toBe("按 Enter 或失焦保存");
+	expect(preview.style.getPropertyValue("--code-font-size")).toBe("13px");
+
+	fontControl.value = "Georgia";
+	fontControl.dispatchEvent(new Event("input", { bubbles: true }));
+	expect(preview.style.getPropertyValue("--font-content")).toBe('"Georgia", var(--font-sans)');
+
 	expect(control.max).toBe("16");
 	control.value = "17";
 	control.dispatchEvent(new Event("change", { bubbles: true }));
 	expect(action).not.toHaveBeenCalled();
 	expect(control.getAttribute("aria-invalid")).toBe("true");
+	expect(statusOf()?.hidden).toBe(true);
+
 	control.value = "16";
+	control.dispatchEvent(new Event("input", { bubbles: true }));
+	expect(preview.style.getPropertyValue("--code-font-size")).toBe("16px");
+	expect(statusOf()?.hidden).toBe(false);
+	expect(statusOf()?.dataset.state).toBe("dirty");
+
 	control.dispatchEvent(new Event("change", { bubbles: true }));
 	expect(action).toHaveBeenCalledWith(expect.objectContaining({ data: "codeSize", value: "16" }));
+	expect(statusOf()?.textContent).toBe("正在保存…");
+	expect(statusOf()?.dataset.state).toBe("saving");
+
+	const settled = shell({ locale: "zh", current: "settings", settings: { state: {
+		paths: { global: "/agent/settings.json" }, projectTrusted: false, errors: [],
+		descriptors: [descriptors[0]!, { ...descriptors[1]!, value: "16", explicit: true }],
+	} } });
+	renderer.render(buildWebView(settled));
+	const settledStatus = document.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]')
+		?.closest(".panel-field")
+		?.querySelector<HTMLElement>(".panel-field-status");
+	expect(settledStatus?.textContent).toBe("已保存");
+	expect(settledStatus?.dataset.state).toBe("saved");
 });
 
 beforeEach(() => {
