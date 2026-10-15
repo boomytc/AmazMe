@@ -322,11 +322,17 @@ function coerce(spec: SettingSpec, value: string): string {
 
 /** The manager's storage errors as the state carries them. */
 export function settingsErrors(manager: SettingsManager): SettingsError[] {
+	const seen = new Set<string>();
 	return manager.drainErrors().map((error) => ({
 		scope: error.scope,
 		...(error.path === undefined ? {} : { path: error.path }),
 		message: error.error.message,
-	}));
+	})).filter(error => {
+		const key = JSON.stringify([error.scope, error.path, error.message]);
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
 }
 
 /**
@@ -340,9 +346,8 @@ export async function applySetting(
 ): Promise<SettingsError[]> {
 	const spec = SPECS.find((candidate) => candidate.id === id);
 	if (spec === undefined) throw new Error(`Unknown setting: ${id}`);
-	manager.drainErrors();
-	spec.write(manager, coerce(spec, value));
-	await manager.flush();
+	const coerced = coerce(spec, value);
+	await manager.updateGlobalSettings(() => spec.write(manager, coerced));
 	return settingsErrors(manager);
 }
 

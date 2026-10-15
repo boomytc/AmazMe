@@ -215,9 +215,7 @@ export async function createExperimentalServerServices(options: {
 					state: settingsState,
 					adjustFontSizes: (action, context) => serialize(async () => {
 						context.abortSignal?.throwIfAborted();
-						manager.drainErrors();
-						manager.setTypography(adjustedFontSizes(manager.getTypography(), action));
-						await manager.flush();
+						await manager.updateGlobalSettings(() => manager.setTypography(adjustedFontSizes(manager.getTypography(), action)));
 						settingsErrorList = settingsErrors(manager);
 						publishSettings(settingsState, context, { manager, agentDir, cwd, paths, errors: settingsErrorList });
 						if (settingsErrorList.length > 0) throw new Error(`Could not save font sizes: ${settingsErrorList.map(error => error.message).join("; ")}`);
@@ -225,8 +223,11 @@ export async function createExperimentalServerServices(options: {
 					set: (id, value, context) =>
 						serialize(async () => {
 							settingsErrorList = await applySetting(manager, id, value);
-							await skills.service.reload(context);
+							if (settingsErrorList.length === 0) await skills.service.reload(context);
 							publishSettings(settingsState, context, { manager, agentDir, cwd, paths, errors: settingsErrorList });
+							if (settingsErrorList.length > 0) {
+								throw new Error(settingsErrorList.map(error => error.message).join("; "));
+							}
 						}),
 					reload: (context) =>
 						serialize(async () => {

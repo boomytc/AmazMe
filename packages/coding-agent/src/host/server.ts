@@ -5,7 +5,7 @@ import { chmod, lstat, mkdir, readFile, realpath, writeFile } from "node:fs/prom
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import type { Context } from "@amazme/chord";
-import { awaitWithContext, BACKGROUND_CONTEXT, withoutAbortSignal } from "@amazme/chord/context";
+import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal, withoutAbortSignal } from "@amazme/chord/context";
 import type { PluginArtifact } from "../core/plugins/artifact.ts";
 import { Client, ServerError as ClientServerError, DisconnectedError } from "@amazme/client";
 import { createUnixTransportFactory, type UnixServerRoute } from "@amazme/client/unix";
@@ -524,9 +524,11 @@ async function startServerBackend(
 			(left, right) => left.sessionId.localeCompare(right.sessionId) || left.createdAt - right.createdAt,
 		);
 	};
-	const refreshMirror = async (metadata: SessionCatalogMetadata, name: string): Promise<void> => {
-		if (await workers.refreshSessionMirror(metadata, BACKGROUND_CONTEXT)) return;
+	const refreshMirror = async (metadata: SessionCatalogMetadata, name: string, context: Context): Promise<void> => {
+		context.abortSignal?.throwIfAborted();
+		if (await workers.refreshSessionMirror(metadata, context)) return;
 		const mirror = await findLocalSessionPath(metadata.cwd, metadata.id);
+		context.abortSignal?.throwIfAborted();
 		if (mirror !== undefined) await writeLocalSessionName(mirror, name);
 	};
 	const renameSession = async (sessionId: string, name: string): Promise<SessionSummary> => {
@@ -536,7 +538,7 @@ async function startServerBackend(
 			const updated = await writeSessionName(sessionDir, sessionId, normalized);
 			// The terminal reads the name from the mirror. Update it when the file already exists;
 			// the next mirror rewrite copies the catalog name again.
-			await refreshMirror(updated, normalized);
+			await refreshMirror(updated, normalized, BACKGROUND_CONTEXT);
 			return summarize(updated);
 		}
 		const local = (await localSessions()).find((session) => session.id === sessionId);
@@ -710,14 +712,16 @@ async function startServerBackend(
 		list: () => listSummaries(),
 		create: async (createOptions, context) => summarize(await createSession(createOptions, context)),
 		rename: (sessionId, name) => renameSession(sessionId, name),
-		nameAutomatically: async (sessionId, title) => {
+		nameAutomatically: async (sessionId, title, context) => {
+			context.abortSignal?.throwIfAborted();
 			const metadata = await readSession(sessionDir, sessionId);
 			if (metadata === undefined || metadata.name !== undefined || metadata.nameSource === "manual") return;
 			const local = (await listLocalSessions(metadata.cwd)).find((session) => session.id === sessionId);
 			const name = local?.name ?? automaticSessionName(title);
 			if (name.length === 0) return;
+			context.abortSignal?.throwIfAborted();
 			await writeSessionName(sessionDir, sessionId, name, local?.name === undefined ? "automatic" : "manual");
-			await refreshMirror(metadata, name);
+			await refreshMirror(metadata, name, context);
 		},
 		remove: async (sessionId, context) => {
 			const metadata = await resolveSession(sessionId, context);
@@ -751,9 +755,17 @@ async function startServerBackend(
 		catch (cleanup) { throw new AggregateError([error, cleanup], "Server services startup and cleanup failed"); }
 		throw error;
 	});
+	const titleLifetime = new AbortController();
+	const titleContext = withAbortSignal(titleLifetime.signal, BACKGROUND_CONTEXT);
 	const stopTitles = workers.onSessionTitle((metadata, title) => {
-		void serverServices.nameAutomatically(metadata.id, title).catch((error: unknown) => console.error("Session title:", error));
+		void serverServices.nameAutomatically(metadata.id, title, titleContext).catch((error: unknown) => {
+			if (!titleLifetime.signal.aborted) console.error("Session title:", error);
+		});
 	});
+	const stopTitleUpdates = (): void => {
+		stopTitles();
+		titleLifetime.abort(new Error("Server is closing"));
+	};
 	const host: ServerHost<SessionCatalogMetadata> = {
 		serverServices: serverServices.host,
 		resolveSession,
@@ -764,7 +776,7 @@ async function startServerBackend(
 	const socketPath = options.path;
 	const closeCatalog = (): Promise<void> => {
 		rejectHostReady(new Error("Host closed before Session routing became ready."));
-		stopTitles();
+		stopTitleUpdates();
 		return serverServices.dispose();
 	};
 	const server = new Server(host, {
@@ -805,6 +817,7 @@ async function startServerBackend(
 		activateHostSessions,
 		close() {
 			closePromise ??= (async () => {
+				stopTitleUpdates();
 				// Plugin-owned prompts must settle before the server releases Session handles.
 				const pluginCleanup = await Promise.allSettled([plugins?.close()]);
 				await server.close().catch(() => {});

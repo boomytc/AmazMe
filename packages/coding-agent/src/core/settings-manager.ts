@@ -535,8 +535,7 @@ export class SettingsManager {
 		this.settings = this.resolveSettings();
 	}
 
-	async reload(): Promise<void> {
-		await this.writeQueue;
+	private reloadGlobalSettings(): void {
 		const globalLoad = SettingsManager.tryLoadFromStorage(this.storage, "global");
 		if (!globalLoad.error) {
 			this.globalSettings = globalLoad.settings;
@@ -545,6 +544,32 @@ export class SettingsManager {
 			this.globalSettingsLoadError = globalLoad.error;
 			this.recordError("global", globalLoad.error);
 		}
+	}
+
+	/** A server-serialized, synchronous setter; storage diagnostics remain available via drainErrors(). */
+	async updateGlobalSettings(update: () => void): Promise<void> {
+		await this.writeQueue;
+		this.drainErrors();
+		this.reloadGlobalSettings();
+		this.clearModifiedScope("global");
+		this.settings = this.resolveSettings();
+		if (this.globalSettingsLoadError) return;
+
+		const before = structuredClone(this.globalSettings);
+		update();
+		await this.flush();
+		if (this.errors.length === 0) return;
+
+		// Restore before reading: a failed read must never retain the rejected edit.
+		this.globalSettings = before;
+		this.clearModifiedScope("global");
+		this.reloadGlobalSettings();
+		this.settings = this.resolveSettings();
+	}
+
+	async reload(): Promise<void> {
+		await this.writeQueue;
+		this.reloadGlobalSettings();
 
 		this.modifiedFields.clear();
 		this.modifiedNestedFields.clear();

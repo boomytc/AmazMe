@@ -28,6 +28,7 @@ import {
 	SESSION_ARCHIVE_OPEN_ACTION,
 	SESSION_RESTORE_ACTION,
 	SETTINGS_VIEW,
+	SETTINGS_FIELD_ACTION,
 	inboxOf,
 	isBusy,
 	liveOf,
@@ -62,7 +63,8 @@ import { Skills, type Skills as SkillsService } from "../src/host/services/skill
 import { Transcript } from "../src/host/services/transcript.ts";
 import { runClient } from "../src/host/client.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
+import { FileSettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
+import { SessionWorkerManager } from "../src/host/session-worker-manager.ts";
 import { DEFAULT_TYPOGRAPHY } from "@amazme/web/typography";
 import { listSessions, readSession, writeSessionName } from "../src/host/session-catalog.ts";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
@@ -760,6 +762,41 @@ describe("web client interactive loop", () => {
 	);
 
 	describe("session handoff", () => {
+		test("cancels an automatic title mirror refresh before waiting for host shutdown", async () => {
+			const { host, sessionDir } = await startHostWithDirectories(true);
+			const presentation = await openPresentation(host);
+			const created = await presentation.management.create({ id: "blocked-title" }, BACKGROUND_CONTEXT);
+			const original = SessionWorkerManager.prototype.refreshSessionMirror;
+			const started = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			let aborted = false;
+			const mirror = vi.spyOn(SessionWorkerManager.prototype, "refreshSessionMirror").mockImplementation(async function (this: SessionWorkerManager, metadata, context) {
+				if (metadata.id !== created.sessionId) return original.call(this, metadata, context);
+				const onAbort = () => { aborted = true; release.resolve(); };
+				context.abortSignal?.addEventListener("abort", onAbort, { once: true });
+				started.resolve();
+				try { await release.promise; context.abortSignal?.throwIfAborted(); return true; }
+				finally { context.abortSignal?.removeEventListener("abort", onAbort); }
+			});
+			let closing: Promise<void> | undefined;
+			let attached: Attached | undefined;
+			try {
+				attached = await attachSession(presentation, created.sessionId);
+				await attached.controller.prompt({ message: "blocked title during shutdown", images: null }, BACKGROUND_CONTEXT);
+				await started.promise;
+				closing = host.close();
+				await expect.poll(() => aborted, { timeout: 2000 }).toBe(true);
+				await closing;
+				expect((await readSession(sessionDir, created.sessionId))?.name).toBe("blocked title during shutdown");
+			} finally {
+				release.resolve();
+				await closing;
+				mirror.mockRestore();
+				await attached?.dispose();
+				await presentation.dispose();
+			}
+		}, 15_000);
+
 		test(
 			"a terminal session appears in the host's roster and continues there",
 			async () => {
@@ -2126,6 +2163,53 @@ describe("web client interactive loop", () => {
 });
 
 describe("web client management surfaces", () => {
+	test("keeps failed global edits retryable before and after session attachment when settings cannot be read", async () => {
+		const host = await startLoopHost();
+		const administration = await openAdministration(host);
+		const presentation = await openPresentation(host);
+		const page = await openPage(host);
+		const original = FileSettingsStorage.prototype.withLock;
+		let readable = true;
+		const failure = vi.spyOn(FileSettingsStorage.prototype, "withLock").mockImplementation(function (this: FileSettingsStorage, scope, fn) {
+			if (scope === "global" && !readable) throw new Error("EACCES: settings access refused");
+			return original.call(this, scope, fn);
+		});
+		const value = () => administration.settings.state.value?.descriptors.find(field => field.id === "textFont")?.value;
+		const notices = () => page.renderer.view?.panel.panel?.notices.filter(notice => notice.tone === "error") ?? [];
+		try {
+			await waitFor(() => page.renderer.view !== undefined && value() !== undefined, "settings startup", 5000);
+			page.renderer.onPanelAction({ kind: "open", panel: SETTINGS_VIEW });
+			for (const [index, font] of ["Georgia", "Palatino"].entries()) {
+				if (index === 1) {
+					const created = await presentation.management.create({ id: "settings-retry" }, BACKGROUND_CONTEXT);
+					page.renderer.onSelect(created.sessionId);
+					await waitFor(() => page.renderer.view?.attachedId === created.sessionId, "attached settings");
+					page.renderer.onPanelAction({ kind: "open", panel: SETTINGS_VIEW });
+				}
+				readable = false;
+				page.renderer.onPanelAction({ kind: "control", id: SETTINGS_FIELD_ACTION, data: "textFont", value: font });
+				await waitFor(() => notices().length > 0 && page.renderer.view?.panel.panel?.pending === undefined, "visible failed settings edit");
+				expect(notices()).toHaveLength(1);
+				expect(value()).toBe(index === 0 ? "" : "Georgia");
+				readable = true;
+				page.renderer.onPanelAction({ kind: "control", id: SETTINGS_FIELD_ACTION, data: "textFont", value: font });
+				await waitFor(() => value() === font && notices().length === 0 && page.renderer.view?.panel.panel?.pending === undefined, "same-value settings retry");
+				expect(SettingsManager.create(process.cwd()).getTypography().textFont).toBe(font);
+			}
+			readable = false;
+			await expect(administration.settings.adjustFontSizes("increase", BACKGROUND_CONTEXT)).rejects.toThrow();
+			expect(administration.settings.state.value?.descriptors.find(field => field.id === "textSize")?.value).toBe("15");
+			readable = true;
+			await administration.settings.adjustFontSizes("increase", BACKGROUND_CONTEXT);
+			expect(SettingsManager.create(process.cwd()).getTypography()).toMatchObject({ textSize: 16, codeSize: 14, terminalSize: 13 });
+		} finally {
+			failure.mockRestore();
+			await page.dispose();
+			await presentation.dispose();
+			await administration.dispose();
+		}
+	}, 30_000);
+
 	test("reports a font shortcut save failure to its caller and the chat page", async () => {
 		const host = await startLoopHost();
 		const administration = await openAdministration(host);
