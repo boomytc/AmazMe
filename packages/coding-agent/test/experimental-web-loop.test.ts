@@ -63,6 +63,7 @@ import { Transcript } from "../src/host/services/transcript.ts";
 import { runClient } from "../src/host/client.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { DEFAULT_TYPOGRAPHY } from "@amazme/web/typography";
 import { listSessions, readSession, writeSessionName } from "../src/host/session-catalog.ts";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 import { startPage } from "../src/host/web/page.ts";
@@ -104,7 +105,7 @@ async function openPage(host: WebHost, storage = new Map<string, string>()) {
 	const lifetime = new EventTarget();
 	vi.stubGlobal(BOOT_GLOBAL, {
 		server: { id: host.serverId }, transport: { url: host.webSocketUrl },
-		preferences: { locale: "zh", appearance: "light" },
+		preferences: { locale: "zh", appearance: "light", typography: { ...DEFAULT_TYPOGRAPHY } },
 	});
 	vi.stubGlobal("navigator", { languages: ["zh-CN"], platform: "" });
 	vi.stubGlobal("HTMLButtonElement", class {});
@@ -2121,6 +2122,65 @@ describe("web client interactive loop", () => {
 });
 
 describe("web client management surfaces", () => {
+	test("reports a font shortcut save failure to its caller and the chat page", async () => {
+		const host = await startLoopHost();
+		const administration = await openAdministration(host);
+		const page = await openPage(host);
+		const path = join(process.env.AMAZME_CODING_AGENT_DIR!, "settings.json");
+		const saved = await readFile(path, "utf8");
+		await rm(path);
+		await mkdir(path);
+		vi.stubGlobal("window", { amazmeDesktop: { pickDirectories: async () => [] } });
+		try {
+			await expect(administration.settings.adjustFontSizes("increase", BACKGROUND_CONTEXT)).rejects.toThrow();
+			await waitFor(() => (administration.settings.state.value?.errors.length ?? 0) > 0, "published settings write failure");
+			page.renderer.onShortcut("font.increase");
+			await waitFor(() => vi.mocked(page.renderer.setConnection).mock.calls.some(([text, kind]) => kind === "error" && typeof text === "string" && text.includes("无法调整字号")), "visible shortcut write failure");
+		} finally {
+			await rm(path, { recursive: true });
+			await writeFile(path, saved);
+			await page.dispose();
+			await administration.dispose();
+		}
+	}, 240_000);
+
+	test("replicates global typography across pages and serializes concurrent relative size changes", async () => {
+		const host = await startLoopHost();
+		const first = await openAdministration(host);
+		const second = await openAdministration(host);
+		const pageA = await openPage(host);
+		const pageB = await openPage(host);
+		const presentation = await openPresentation(host);
+		try {
+			await waitFor(() => first.settings.state.value !== undefined && second.settings.state.value !== undefined, "both settings subscriptions");
+			const created = await presentation.management.create({ id: "typography-attached" }, BACKGROUND_CONTEXT);
+			pageA.renderer.onSelect(created.sessionId);
+			await waitFor(() => pageA.renderer.view?.attachedId === created.sessionId, "the first page's session settings to hydrate");
+			expect(pageB.renderer.view?.attachedId).toBeUndefined();
+			const revision = first.settings.state.value!.revision;
+			await Promise.all([
+				first.settings.adjustFontSizes("increase", BACKGROUND_CONTEXT),
+				second.settings.adjustFontSizes("increase", BACKGROUND_CONTEXT),
+			]);
+			await waitFor(() => pageA.renderer.view?.typography.textSize === 17 && pageB.renderer.view?.typography.textSize === 17, "both pages' font updates");
+			expect(pageA.renderer.view?.typography).toMatchObject({ textSize: 17, codeSize: 15, terminalSize: 14 });
+			expect(pageA.renderer.view?.attachedId).toBe(created.sessionId);
+			expect(pageB.renderer.view?.attachedId).toBeUndefined();
+			expect(first.settings.state.value!.revision).toBe(revision + 2);
+			await first.settings.set("textFont", "Arial", BACKGROUND_CONTEXT);
+			await second.settings.adjustFontSizes("reset", BACKGROUND_CONTEXT);
+			await waitFor(() => pageA.renderer.view?.typography.textSize === 15 && pageB.renderer.view?.typography.textFont === "Arial", "reset with retained fonts");
+			expect(pageA.renderer.view?.typography).toEqual({ ...DEFAULT_TYPOGRAPHY, textFont: "Arial" });
+			expect(SettingsManager.create(process.cwd()).getTypography()).toEqual({ ...DEFAULT_TYPOGRAPHY, textFont: "Arial" });
+		} finally {
+			await presentation.dispose();
+			await pageB.dispose();
+			await pageA.dispose();
+			await second.dispose();
+			await first.dispose();
+		}
+	}, 240_000);
+
 	test("edits settings, skills, and MCP servers through the host's service catalogue", async () => {
 		const host = await startLoopHost();
 		const administration = await openAdministration(host);

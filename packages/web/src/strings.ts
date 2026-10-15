@@ -540,6 +540,10 @@ export const EN = {
 	"shortcut.cycleView": "Switch management view",
 	"shortcut.focusComposer": "Focus the composer",
 	"shortcut.stop": "Stop the turn",
+	"shortcut.fontIncrease": "Increase content font sizes",
+	"shortcut.fontDecrease": "Decrease content font sizes",
+	"shortcut.fontReset": "Reset content font sizes",
+	"page.fontChangeFailed": "Could not change font sizes: {error}",
 
 	"copy.copy": "Copy",
 	"secret.show": "Show",
@@ -584,6 +588,7 @@ export const EN = {
 	"panel.settings.searchEmpty": "No results found",
 	"panel.settings.searchResult": "{destination}, {panel}",
 	"panel.settings.invalidNumber": "Enter a whole number of at least {min}.",
+	"panel.settings.invalidRange": "Enter a whole number from {min} to {max}.",
 	"panel.settings.invalidDecimal": "Enter a number of at least {min}.",
 
 	"panel.skills.title": "Skills",
@@ -1315,6 +1320,10 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"shortcut.cycleView": "切换管理视图",
 	"shortcut.focusComposer": "聚焦输入框",
 	"shortcut.stop": "停止回合",
+	"shortcut.fontIncrease": "增大内容字号",
+	"shortcut.fontDecrease": "减小内容字号",
+	"shortcut.fontReset": "重置内容字号",
+	"page.fontChangeFailed": "无法调整字号：{error}",
 
 	"copy.copy": "复制",
 	"secret.show": "显示",
@@ -1357,6 +1366,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.settings.searchEmpty": "没有匹配的设置",
 	"panel.settings.searchResult": "{destination}，{panel}",
 	"panel.settings.invalidNumber": "请输入不小于 {min} 的整数。",
+	"panel.settings.invalidRange": "请输入 {min} 至 {max} 的整数。",
 	"panel.settings.invalidDecimal": "请输入不小于 {min} 的数值。",
 
 	"panel.skills.title": "技能",
@@ -1577,7 +1587,7 @@ const ZH_SETTING_GROUPS: Readonly<Record<string, string>> = {
 };
 
 const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, string]>> = {
-	interface: ["Choose the language, appearance, and welcome guide.", "选择界面语言、外观和欢迎引导。"],
+	interface: ["Choose the language, appearance, content fonts, and welcome guide.", "选择界面语言、外观、内容字体和欢迎引导。"],
 	conversation: ["Manage context, in-progress messages, and turn budgets.", "管理上下文、运行中输入和每轮预算。"],
 	"models-reasoning": ["Set default reasoning and prompt cache preferences.", "设置默认思考强度和提示缓存偏好。"],
 	"skills-tools": ["Choose how skills are offered as commands.", "选择技能是否作为快捷命令提供。"],
@@ -1589,6 +1599,12 @@ const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, stri
 };
 
 const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
+	textFont: { label: "Text font", description: "Conversation and composer fonts, separated by commas. Empty uses the built-in fonts.", placeholder: "System fonts" },
+	codeFont: { label: "Code font", description: "Code blocks, file content and diffs. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
+	terminalFont: { label: "Terminal font", description: "Terminal command output. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
+	textSize: { label: "Text size (px)", description: "Conversation and composer size. Desktop Cmd/Ctrl +, - and 0 adjust all three sizes." },
+	codeSize: { label: "Code size (px)", description: "Code-block size; compact file and tool text stays one pixel smaller." },
+	terminalSize: { label: "Terminal size (px)", description: "Independent terminal output size." },
 	executionMode: { label: "File write isolation", description: "Global Unix policy for built-in tools and shell children; reads and network remain available. Applies at the next tool start." },
 	repeatToolReminder: { label: "Repeat reminders", description: "Remind when identical calls return identical results; polling tools are excluded." },
 	reviewChanges: { label: "Turn change review", description: "Capture a bounded before/after workspace diff, including shell changes." },
@@ -1690,6 +1706,12 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 };
 
 const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
+	textFont: { label: "正文字体", description: "对话和输入框使用的字体，以逗号分隔；留空使用内置字体。", placeholder: "系统字体" },
+	codeFont: { label: "代码字体", description: "代码块、文件内容和差异使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
+	terminalFont: { label: "终端字体", description: "命令输出使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
+	textSize: { label: "正文字号（px）", description: "对话和输入框的字号。桌面端 Cmd/Ctrl +、-、0 可同时调整三种字号。" },
+	codeSize: { label: "代码字号（px）", description: "代码块的字号；紧凑文件和工具文本保持小一号。" },
+	terminalSize: { label: "终端字号（px）", description: "独立调整终端输出的字号。" },
 	executionMode: { label: "写入隔离", description: "全局 Unix 策略，约束内置工具及 shell 子进程的文件写入；读取、网络仍可用。从下一次工具启动生效。" },
 	repeatToolReminder: { label: "重复调用提醒", description: "相同调用连续返回相同结果时提醒，轮询工具除外。" },
 	reviewChanges: { label: "记录本轮变更", description: "按限额比较工作区前后差异，也覆盖 shell 修改。" },

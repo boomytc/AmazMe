@@ -2,6 +2,7 @@ import { ModelThinkingLevelSchema } from "@amazme/ai/providers/model-schema";
 import type { Static, TSchemaOptions } from "typebox";
 import { Type } from "typebox";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
+import { FONT_SIZE_LIMITS } from "@amazme/web/typography";
 
 function nonNegativeSafeInteger(options: { default?: number } = {}) {
 	return Type.Integer({
@@ -577,6 +578,14 @@ export const SettingsSchema = Type.Object(
 				{ default: SETTINGS_DEFAULTS.appearance },
 			),
 		),
+		typography: Type.Optional(Type.Object({
+			textFont: Type.Optional(Type.String({ maxLength: 256, default: SETTINGS_DEFAULTS.typography.textFont })),
+			codeFont: Type.Optional(Type.String({ maxLength: 256, default: SETTINGS_DEFAULTS.typography.codeFont })),
+			terminalFont: Type.Optional(Type.String({ maxLength: 256, default: SETTINGS_DEFAULTS.typography.terminalFont })),
+			textSize: Type.Optional(Type.Integer({ minimum: FONT_SIZE_LIMITS.textSize.min, maximum: FONT_SIZE_LIMITS.textSize.max, default: SETTINGS_DEFAULTS.typography.textSize })),
+			codeSize: Type.Optional(Type.Integer({ minimum: FONT_SIZE_LIMITS.codeSize.min, maximum: FONT_SIZE_LIMITS.codeSize.max, default: SETTINGS_DEFAULTS.typography.codeSize })),
+			terminalSize: Type.Optional(Type.Integer({ minimum: FONT_SIZE_LIMITS.terminalSize.min, maximum: FONT_SIZE_LIMITS.terminalSize.max, default: SETTINGS_DEFAULTS.typography.terminalSize })),
+		}, { additionalProperties: false, description: "Global graphical content fonts and sizes; project settings do not override them." })),
 		toolApproval: Type.Optional(
 			Type.Union(
 				[Type.Literal("off"), Type.Literal("dangerous"), Type.Literal("all")],

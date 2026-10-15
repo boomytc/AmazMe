@@ -26,6 +26,22 @@ describe("SettingsManager", () => {
 	});
 
 	describe("preserves externally added settings", () => {
+		it("persists global typography and merges concurrent changes to separate font fields", async () => {
+			writeFileSync(join(projectDir, ".amazme", "settings.json"), JSON.stringify({ typography: { textSize: 22 } }));
+			const first = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const second = SettingsManager.create(projectDir, agentDir);
+			expect(first.getTypography().textSize).toBe(15);
+			first.setTypography({ textSize: 17, textFont: '"Fira Sans"' });
+			await first.flush();
+			second.setTypography({ codeSize: 15 });
+			await second.flush();
+			expect(SettingsManager.create(projectDir, agentDir).getTypography()).toEqual({
+				textFont: "Fira Sans", codeFont: "", terminalFont: "", textSize: 17, codeSize: 15, terminalSize: 12,
+			});
+			expect(() => first.setTypography({ textFont: "Changed", codeSize: 100 })).toThrow();
+			expect(first.getTypography().textFont).toBe("Fira Sans");
+		});
+
 		it("should preserve enabledModels when changing thinking level", async () => {
 			// Create initial settings file
 			const settingsPath = join(agentDir, "settings.json");

@@ -1,4 +1,5 @@
 import { PROTOCOL_VERSION } from "@amazme/protocol";
+import { DEFAULT_TYPOGRAPHY, typographyStyles } from "@amazme/web/typography";
 import { PAGE_SCRIPT, STARTUP_PLACEHOLDER, startupScript } from "@amazme/web/assets";
 import {
 	BOOT_GLOBAL,
@@ -24,7 +25,7 @@ export interface WebBootOptions {
 }
 
 /** Preferences a host with no stored choice serves: the browser's language, the system's palette. */
-export const DEFAULT_BOOT_PREFERENCES: WebBootPreferences = { locale: "auto", appearance: "system" };
+export const DEFAULT_BOOT_PREFERENCES: WebBootPreferences = { locale: "auto", appearance: "system", typography: { ...DEFAULT_TYPOGRAPHY } };
 
 export function buildBootManifest(options: WebBootOptions): WebBootManifest {
 	return {
@@ -74,7 +75,7 @@ export function injectBootManifest(html: string, manifest: WebBootManifest | und
 	const script =
 		manifest === undefined
 			? ""
-			: `<script>globalThis.${BOOT_GLOBAL}=${escapeForScript(JSON.stringify(manifest))};</script>`;
+			: `<script>globalThis.${BOOT_GLOBAL}=${escapeForScript(JSON.stringify(manifest))};for(const [name,value] of Object.entries(${escapeForScript(JSON.stringify(typographyStyles(manifest.preferences.typography)))})){document.documentElement.style.setProperty(name,value);}</script>`;
 	return html.replace(BOOT_PLACEHOLDER, script);
 }
 

@@ -31,6 +31,7 @@ export const workspaceSourcePaths = {
 	serverUnix: fileURLToPath(new URL("./packages/server/src/transports/unix/index.ts", import.meta.url)),
 	serverWebSocket: fileURLToPath(new URL("./packages/server/src/transports/websocket/index.ts", import.meta.url)),
 	webIndex: fileURLToPath(new URL("./packages/web/src/index.ts", import.meta.url)),
+	webTypography: fileURLToPath(new URL("./packages/web/src/typography.ts", import.meta.url)),
 	durableIndex: fileURLToPath(new URL("./packages/durable/src/index.ts", import.meta.url)),
 	durableEnvNode: fileURLToPath(new URL("./packages/durable/src/env/node.ts", import.meta.url)),
 	durableFileOperations: fileURLToPath(new URL("./packages/durable/src/file-operations.ts", import.meta.url)),
@@ -46,6 +47,7 @@ export const workspaceSourcePaths = {
 export default defineConfig({
 	resolve: {
 		alias: [
+			{ find: /^@amazme\/web\/typography$/, replacement: workspaceSourcePaths.webTypography },
 			{ find: /^@amazme\/chord$/, replacement: workspaceSourcePaths.chordIndex },
 			{ find: /^@amazme\/chord\/context$/, replacement: workspaceSourcePaths.chordContext },
 			{ find: /^@amazme\/chord\/delta$/, replacement: workspaceSourcePaths.chordDelta },

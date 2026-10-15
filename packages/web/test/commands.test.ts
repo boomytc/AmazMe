@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { commandPalette, parseCommandLine } from "../src/commands.ts";
-import { gestureKeys, isApplePlatform, isStopChord, matchShortcut, shortcuts } from "../src/shortcuts.ts";
+import { fontSizeShortcut, gestureKeys, isApplePlatform, isStopChord, matchShortcut, shortcuts } from "../src/shortcuts.ts";
 
 const COMMANDS = [
 	{ name: "model", description: "Select the model", argumentHint: "<provider/model>", source: "builtin" as const },
@@ -99,6 +99,15 @@ describe("command lines", () => {
 });
 
 describe("keyboard shortcuts", () => {
+	test("keeps browser zoom native and recognizes desktop content font gestures", () => {
+		const gesture = { key: "+", code: "Equal", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+		expect(fontSizeShortcut(gesture, "MacIntel", false)).toBeUndefined();
+		expect(fontSizeShortcut(gesture, "MacIntel", true)).toBe("increase");
+		expect(fontSizeShortcut({ ...gesture, altKey: true }, "MacIntel", true)).toBeUndefined();
+		expect(fontSizeShortcut({ ...gesture, key: "0", code: "Digit0", shiftKey: false }, "MacIntel", true)).toBe("reset");
+		expect(fontSizeShortcut({ ...gesture, key: "-", code: "Minus", metaKey: false, ctrlKey: true, shiftKey: false }, "Win32", true)).toBe("decrease");
+		expect(shortcuts("en", "MacIntel", true).slice(-3).map(row => row.keys)).toEqual(["⌘+", "⌘-", "⌘0"]);
+	});
 	test("matches a gesture only with exactly the modifiers it declares", () => {
 		expect(matchShortcut({ code: "KeyN", primary: true, alt: true, shift: false })).toBe("session.new");
 		expect(matchShortcut({ code: "KeyM", primary: true, alt: true, shift: false })).toBe("view.cycle");

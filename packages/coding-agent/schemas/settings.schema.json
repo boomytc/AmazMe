@@ -854,6 +854,46 @@
       ],
       "default": "system"
     },
+    "typography": {
+      "type": "object",
+      "properties": {
+        "textFont": {
+          "type": "string",
+          "maxLength": 256,
+          "default": ""
+        },
+        "codeFont": {
+          "type": "string",
+          "maxLength": 256,
+          "default": ""
+        },
+        "terminalFont": {
+          "type": "string",
+          "maxLength": 256,
+          "default": ""
+        },
+        "textSize": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 22,
+          "default": 15
+        },
+        "codeSize": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 16,
+          "default": 13
+        },
+        "terminalSize": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 20,
+          "default": 12
+        }
+      },
+      "additionalProperties": false,
+      "description": "Global graphical content fonts and sizes; project settings do not override them."
+    },
     "toolApproval": {
       "anyOf": [
         {

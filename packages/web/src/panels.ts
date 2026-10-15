@@ -82,6 +82,7 @@ export interface PanelControl {
 	readonly options?: readonly PanelOption[];
 	readonly placeholder?: string;
 	readonly min?: number;
+	readonly max?: number;
 	readonly step?: number;
 	readonly disabled?: boolean;
 }
@@ -269,6 +270,7 @@ export interface SettingDescriptorLike {
 	/** An enum's stored values, in the host's order. */
 	readonly options?: readonly string[];
 	readonly min?: number;
+	readonly max?: number;
 	readonly step?: number;
 	readonly field: string;
 	readonly explicit: boolean;
@@ -482,6 +484,7 @@ function settingsControls(locale: Locale, descriptor: SettingDescriptorLike): Pa
 					...base,
 					kind: "number",
 					...(descriptor.min === undefined ? {} : { min: descriptor.min }),
+					...(descriptor.max === undefined ? {} : { max: descriptor.max }),
 					...(descriptor.step === undefined ? {} : { step: descriptor.step }),
 				},
 			];

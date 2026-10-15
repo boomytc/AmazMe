@@ -1,5 +1,6 @@
 import { remoteService } from "@amazme/protocol/services";
 import { type Context, type ReplicatedState } from "@amazme/chord";
+import type { FontSizeAction } from "@amazme/web/typography";
 
 /**
  * One editable field of the agent's settings. The host publishes the catalogue, so a presentation
@@ -17,6 +18,7 @@ export interface SettingDescriptor {
 	/** An enum's stored values, in presentation order. */
 	options?: string[];
 	min?: number;
+	max?: number;
 	step?: number;
 	/** The settings.json key the value lands in, shown so the file stays discoverable. */
 	field: string;
@@ -48,11 +50,13 @@ export interface Settings {
 	readonly state: ReplicatedState<SettingsState>;
 	/** Apply one catalogue field. `value` is the control's serialized form. */
 	set(id: string, value: string, context: Context): Promise<void>;
+	/** Atomically adjust all content sizes from the Host's current values; reset keeps the chosen fonts. */
+	adjustFontSizes(action: FontSizeAction, context: Context): Promise<void>;
 	/** Re-read the settings files, discarding what another process changed. */
 	reload(context: Context): Promise<void>;
 }
 
-export const Settings = remoteService<Settings>("amazme.settings", {"set":2,"reload":0}, ["state"]);
+export const Settings = remoteService<Settings>("amazme.settings", {"set":2,"adjustFontSizes":1,"reload":0}, ["state"]);
 
 /**
  * The attached Session worker's own settings, exposed so a write from another process can be picked

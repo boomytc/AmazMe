@@ -2,6 +2,7 @@
  * The boot contract between the host and the page. Deliberately dependency-free so the
  * browser bundle carries the constants and the manifest type without the host's code.
  */
+import type { Typography } from "./typography.ts";
 
 /** Global the page reads before it starts; absent means the host served an unbootable document. */
 export const BOOT_GLOBAL = "__AMAZME_BOOT__";
@@ -21,6 +22,7 @@ export type WebMode = "source" | "installed";
 export interface WebBootPreferences {
 	readonly locale: string;
 	readonly appearance: string;
+	readonly typography: Typography;
 }
 
 /** Everything the page needs before it can reach the host: identity, mode, and transport. */

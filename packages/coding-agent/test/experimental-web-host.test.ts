@@ -15,6 +15,7 @@ import { readPageDocument } from "@amazme/web/assets";
 import { Script } from "node:vm";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { DEFAULT_TYPOGRAPHY } from "@amazme/web/typography";
 
 const hosts = new Set<WebHost>();
 const directories = new Set<string>();
@@ -130,6 +131,20 @@ describe("web boot manifest", () => {
 		expect(tricky).toContain("\\u003c/script>");
 	});
 
+	test("applies persisted typography in the head before the page module runs", () => {
+		const preferences = { ...manifest.preferences, typography: { ...DEFAULT_TYPOGRAPHY, textFont: "Arial", textSize: 18, codeSize: 15, terminalSize: 16 } };
+		const html = injectBootManifest("<head><!--amazme-boot--></head><body></body>", { ...manifest, preferences });
+		const script = /<script>([\s\S]*?)<\/script>/u.exec(html)?.[1];
+		if (script === undefined) throw new Error("Missing boot script");
+		const properties = new Map<string, string>();
+		new Script(script).runInNewContext({ document: { documentElement: { style: { setProperty: (name: string, value: string) => properties.set(name, value) } } } });
+		expect(properties.get("--content-font-size")).toBe("18px");
+		expect(properties.get("--code-font-size")).toBe("15px");
+		expect(properties.get("--terminal-font-size")).toBe("16px");
+		expect(properties.get("--font-content")).toBe('"Arial", var(--font-sans)');
+		expect(html.indexOf("--content-font-size")).toBeLessThan(html.indexOf("<body>"));
+	});
+
 	test("leaves the document without a manifest when the host cannot boot it", () => {
 		const html = injectBootManifest("<head><!--amazme-boot--></head>", undefined);
 		expect(html).not.toContain("__AMAZME_BOOT__");
@@ -242,7 +257,7 @@ describe("web host", () => {
 				const plainHtml = await plain.text();
 				expect(plainHtml).toContain('<html lang="en">');
 				expect(plainHtml).toContain("globalThis.__AMAZME_BOOT__=");
-				expect(plainHtml).toContain('"preferences":{"locale":"auto","appearance":"system"}');
+				expect(plainHtml).toContain('"preferences":{"locale":"auto","appearance":"system","typography":');
 				expect(plainHtml).toContain("Filter sessions");
 				expect(plainHtml).not.toContain("{{");
 
@@ -251,20 +266,26 @@ describe("web host", () => {
 				const askedHtml = await asked.text();
 				expect(askedHtml).toContain('<html lang="zh-Hans">');
 				expect(askedHtml).toContain("过滤会话");
-				expect(askedHtml).toContain('"preferences":{"locale":"auto","appearance":"system"}');
+				expect(askedHtml).toContain('"preferences":{"locale":"auto","appearance":"system","typography":');
 
 				// A stored choice overrides the request and reaches the palette script.
 				await writeFile(
 					join(agentDir, "settings.json"),
-					JSON.stringify({ locale: "zh", appearance: "dark" }),
+					JSON.stringify({ locale: "zh", appearance: "dark", typography: { textFont: "Arial", textSize: 18, codeSize: 15, terminalSize: 16 } }),
 					"utf8",
 				);
 				const stored = await fetch(host.url, { headers: { "accept-language": "en-US" } });
 				const storedHtml = await stored.text();
 				expect(storedHtml).toContain('<html lang="zh-Hans">');
-				expect(storedHtml).toContain('"preferences":{"locale":"zh","appearance":"dark"}');
+				expect(storedHtml).toContain('"preferences":{"locale":"zh","appearance":"dark","typography":');
 				expect(storedHtml).toContain("正在等待宿主…");
 				expect(storedHtml).toContain('preference === "dark"');
+				const bootScript = [...storedHtml.matchAll(/<script>([\s\S]*?)<\/script>/gu)].map(match => match[1]).find(script => script?.startsWith("globalThis.__AMAZME_BOOT__="));
+				if (bootScript === undefined) throw new Error("Missing persisted boot preferences");
+				const styles = new Map<string, string>();
+				new Script(bootScript).runInNewContext({ document: { documentElement: { style: { setProperty: (name: string, value: string) => styles.set(name, value) } } } });
+				expect(styles.get("--content-font-size")).toBe("18px");
+				expect(styles.get("--font-content")).toBe('"Arial", var(--font-sans)');
 
 				// The raw document keeps its markers: it is the unbootable page, not the served one.
 				const raw = await fetch(new URL("/index.html", host.url));

@@ -32,6 +32,19 @@ function skillFile(name: string, description = `${name} skill`): string {
 }
 
 describe("settings catalogue", () => {
+	test("publishes editable bounded typography fields and rejects invalid writes before mutation", async () => {
+		const manager = SettingsManager.inMemory({});
+		const fields = describeSettings(manager).filter(field => field.field.startsWith("typography."));
+		expect(fields).toHaveLength(6);
+		expect(fields.find(field => field.id === "codeSize")).toMatchObject({ min: 10, max: 16, step: 1, value: "13", field: "typography.codeSize" });
+		await applySetting(manager, "codeFont", '"Fira Code"');
+		await applySetting(manager, "terminalSize", "18");
+		expect(manager.getTypography()).toMatchObject({ codeFont: "Fira Code", terminalSize: 18 });
+		await expect(applySetting(manager, "codeSize", "17")).rejects.toThrow();
+		await expect(applySetting(manager, "terminalFont", "font; color: red")).rejects.toThrow();
+		expect(manager.getTypography()).toMatchObject({ codeSize: 13, terminalFont: "" });
+	});
+
 	test("reads the manager's fields as descriptors with their file keys", () => {
 		const manager = SettingsManager.inMemory({ steeringMode: "all", compaction: { enabled: false } });
 		const descriptors = describeSettings(manager);

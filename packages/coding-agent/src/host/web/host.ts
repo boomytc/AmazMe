@@ -70,7 +70,7 @@ async function readPreferences(): Promise<WebBootPreferences> {
 	try {
 		const manager = SettingsManager.create(process.cwd());
 		await manager.reload();
-		return { locale: manager.getLocalePreference(), appearance: manager.getAppearancePreference() };
+		return { locale: manager.getLocalePreference(), appearance: manager.getAppearancePreference(), typography: manager.getTypography() };
 	} catch {
 		// An unreadable settings file leaves the page on the browser's language and the system's palette.
 		return DEFAULT_BOOT_PREFERENCES;

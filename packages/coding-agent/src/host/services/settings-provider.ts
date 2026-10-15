@@ -1,6 +1,7 @@
 import { type Context, type MutableReplicatedState } from "@amazme/chord";
 import type { ThinkingLevel } from "@amazme/agent";
 import type { Transport } from "@amazme/ai";
+import { FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, FONT_SIZE_LIMITS } from "@amazme/web/typography";
 import {
 	APPEARANCE_PREFERENCES,
 	type AppearancePreference,
@@ -32,6 +33,7 @@ interface SettingSpec {
 	/** An enum's stored values, in presentation order. */
 	readonly options?: readonly string[];
 	readonly min?: number;
+	readonly max?: number;
 	readonly step?: number;
 	read(manager: SettingsManager): string;
 	write(manager: SettingsManager, value: string): void;
@@ -77,6 +79,17 @@ const SPECS: readonly SettingSpec[] = [
 		read: (manager) => manager.getAppearancePreference(),
 		write: (manager, value) => manager.setAppearancePreference(value as AppearancePreference),
 	},
+	...FONT_FAMILY_FIELDS.map(field => ({
+		id: field, group: "interface", kind: "string" as const, field: "typography", nested: field, globalOnly: true as const,
+		read: (manager: SettingsManager) => manager.getTypography()[field],
+		write: (manager: SettingsManager, value: string) => manager.setTypography({ [field]: value }),
+	})),
+	...FONT_SIZE_FIELDS.map(field => ({
+		id: field, group: "interface", kind: "number" as const, field: "typography", nested: field, globalOnly: true as const,
+		...FONT_SIZE_LIMITS[field], step: 1,
+		read: (manager: SettingsManager) => String(manager.getTypography()[field]),
+		write: (manager: SettingsManager, value: string) => manager.setTypography({ [field]: Number(value) }),
+	})),
 	{
 		id: "showWelcome",
 		group: "interface",
@@ -277,6 +290,7 @@ export function describeSettings(manager: SettingsManager): SettingDescriptor[] 
 		kind: spec.kind,
 		...(spec.options === undefined ? {} : { options: [...spec.options] }),
 		...(spec.min === undefined ? {} : { min: spec.min }),
+		...(spec.max === undefined ? {} : { max: spec.max }),
 		...(spec.step === undefined ? {} : { step: spec.step }),
 		field: spec.nested === undefined ? spec.field : `${spec.field}.${spec.nested}`,
 		explicit: hasField(globalSettings, spec) || (!spec.globalOnly && hasField(projectSettings, spec)),
@@ -291,8 +305,8 @@ function coerce(spec: SettingSpec, value: string): string {
 			return value;
 		case "number": {
 			const parsed = Number(value);
-			if (!Number.isFinite(parsed) || ((spec.step ?? 1) >= 1 && !Number.isSafeInteger(parsed)) || parsed < (spec.min ?? Number.NEGATIVE_INFINITY)) {
-				throw new Error(`${spec.id} takes ${(spec.step ?? 1) >= 1 ? "a whole number" : "a number"}${spec.min === undefined ? "" : ` ≥ ${spec.min}`}`);
+			if (value.trim() === "" || !Number.isFinite(parsed) || ((spec.step ?? 1) >= 1 && !Number.isSafeInteger(parsed)) || parsed < (spec.min ?? Number.NEGATIVE_INFINITY) || parsed > (spec.max ?? Number.POSITIVE_INFINITY)) {
+				throw new Error(`${spec.id} takes ${(spec.step ?? 1) >= 1 ? "a whole number" : "a number"}${spec.min === undefined ? "" : ` ≥ ${spec.min}`}${spec.max === undefined ? "" : ` and ≤ ${spec.max}`}`);
 			}
 			return String(parsed);
 		}

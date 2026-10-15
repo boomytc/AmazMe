@@ -9,9 +9,10 @@
  */
 import type { Locale } from "./locale.ts";
 import { type MessageKey, translate } from "./strings.ts";
+import type { FontSizeAction } from "./typography.ts";
 
 /** The actions a shortcut can trigger. */
-export type ShortcutId = "session.new" | "view.cycle" | "composer.focus" | "run.stop";
+export type ShortcutId = "session.new" | "view.cycle" | "composer.focus" | "run.stop" | `font.${FontSizeAction}`;
 
 export interface ShortcutGesture {
 	/** The physical key, e.g. `KeyM`, `Slash`, `Escape`. */
@@ -57,6 +58,9 @@ function keyLabel(code: string): string {
 	if (code.startsWith("Key")) return code.slice(3);
 	if (code === "Slash") return "/";
 	if (code === "Escape") return "Esc";
+	if (code === "Equal") return "+";
+	if (code === "Minus") return "-";
+	if (code === "Digit0") return "0";
 	return code;
 }
 
@@ -73,13 +77,31 @@ export function gestureKeys(gesture: ShortcutGesture, platform: string): string 
 }
 
 /** The table in the reader's language, with the keys as this platform writes them. */
-export function shortcuts(locale: Locale, platform: string): Shortcut[] {
-	return TABLE.map((row) => ({
+export function shortcuts(locale: Locale, platform: string, desktop = false): Shortcut[] {
+	const fontRows = desktop ? [
+		{ id: "font.increase" as const, gesture: { code: "Equal", primary: true, alt: false, shift: false }, message: "shortcut.fontIncrease" as const },
+		{ id: "font.decrease" as const, gesture: { code: "Minus", primary: true, alt: false, shift: false }, message: "shortcut.fontDecrease" as const },
+		{ id: "font.reset" as const, gesture: { code: "Digit0", primary: true, alt: false, shift: false }, message: "shortcut.fontReset" as const },
+	] : [];
+	return [...TABLE, ...fontRows].map((row) => ({
 		id: row.id,
 		gesture: row.gesture,
 		keys: gestureKeys(row.gesture, platform),
 		label: translate(locale, row.message),
 	}));
+}
+
+/** The desktop owns content zoom. A regular browser keeps its native page zoom gestures. */
+export function fontSizeShortcut(
+	event: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean },
+	platform: string,
+	desktop: boolean,
+): FontSizeAction | undefined {
+	if (!desktop || event.altKey || (isApplePlatform(platform) ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)) return undefined;
+	if (event.key === "+" || event.key === "=" || event.code === "NumpadAdd") return "increase";
+	if (!event.shiftKey && (event.key === "-" || event.code === "NumpadSubtract")) return "decrease";
+	if (!event.shiftKey && (event.key === "0" || event.code === "Numpad0")) return "reset";
+	return undefined;
 }
 
 /** The action one gesture means, or undefined. A gesture must match every modifier it declares. */

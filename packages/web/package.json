@@ -22,6 +22,10 @@
 		"./strings": {
 			"types": "./dist/strings.d.ts",
 			"import": "./dist/strings.js"
+		},
+		"./typography": {
+			"types": "./dist/typography.d.ts",
+			"import": "./dist/typography.js"
 		}
 	},
 	"scripts": {

@@ -141,6 +141,99 @@ await import(${JSON.stringify(new URL("../dist/main.js", import.meta.url).href)}
 		});
 	}, 180_000);
 
+	test("desktop font shortcuts preserve rapid increments and reset sizes without changing fonts or page zoom", async () => {
+		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-fonts-"));
+		await mkdir(join(scratch, "agent"));
+		await writeFile(join(scratch, "agent", "settings.json"), JSON.stringify({
+			locale: "en",
+			typography: { textFont: "Arial", codeFont: "Courier New", terminalFont: "Menlo" },
+		}));
+		const fixture = join(scratch, "font-fixture.mjs");
+		await writeFile(fixture, `
+import assert from "node:assert/strict";
+import { app } from "electron";
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const expression =
+  "(() => {" +
+  " const style = document.documentElement.style;" +
+  " return {" +
+  "  connected: document.getElementById('connection-status')?.dataset.state === 'connected'," +
+  "  desktop: typeof window.amazmeDesktop?.pickDirectories === 'function'," +
+  "  sizes: ['--content-font-size', '--code-font-size', '--terminal-font-size'].map(name => style.getPropertyValue(name).trim())," +
+  "  families: ['--font-content', '--font-code', '--font-terminal'].map(name => style.getPropertyValue(name).trim())" +
+  " };" +
+  "})()";
+app.on("browser-window-created", (_event, window) => {
+  window.webContents.once("did-finish-load", async () => {
+    try {
+      const snapshots = [];
+      async function waitForSizes(step, sizes) {
+        const deadline = Date.now() + 30_000;
+        let latest;
+        do {
+          latest = { ...await window.webContents.executeJavaScript(expression), zoomFactor: window.webContents.getZoomFactor() };
+          assert.equal(latest.zoomFactor, 1, step + " must not change the browser zoom");
+          if (latest.connected && latest.desktop && JSON.stringify(latest.sizes) === JSON.stringify(sizes)) {
+            snapshots.push({ step, ...latest });
+            return;
+          }
+          await pause(25);
+        } while (Date.now() < deadline);
+        throw new Error(step + " did not reach expected typography: " + JSON.stringify(latest));
+      }
+      await waitForSizes("initial", ["15px", "13px", "12px"]);
+      window.show();
+      app.focus({ steal: true });
+      window.focus();
+      window.webContents.focus();
+      const focusDeadline = Date.now() + 5_000;
+      while (!window.isFocused() && Date.now() < focusDeadline) await pause(25);
+      assert.ok(window.isFocused(), "Native input requires the real BrowserWindow to be focused");
+      const modifiers = [process.platform === "darwin" ? "meta" : "control"];
+      function shortcut(keyCode) {
+        window.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+        window.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+      }
+      // The unshifted plus key is also the application's increase gesture.
+      shortcut("=");
+      await waitForSizes("increase", ["16px", "14px", "13px"]);
+      // Deliberately enqueue both native gestures before waiting for either Host response.
+      shortcut("=");
+      shortcut("=");
+      await waitForSizes("rapid increase", ["18px", "16px", "15px"]);
+      shortcut("-");
+      await waitForSizes("decrease", ["17px", "15px", "14px"]);
+      shortcut("0");
+      await waitForSizes("reset", ["15px", "13px", "12px"]);
+      process.stdout.write("font shortcut smoke: " + JSON.stringify(snapshots) + "\\n");
+      app.quit();
+    } catch (error) {
+      console.error(error);
+      app.exit(1);
+    }
+  });
+});
+await import(${JSON.stringify(new URL("../dist/main.js", import.meta.url).href)});
+`);
+		const output = await launch(fixture, true);
+		const line = output.split("\n").find(value => value.startsWith("font shortcut smoke: "));
+		expect(line).toBeDefined();
+		const expected = [
+			{ step: "initial", sizes: ["15px", "13px", "12px"] },
+			{ step: "increase", sizes: ["16px", "14px", "13px"] },
+			{ step: "rapid increase", sizes: ["18px", "16px", "15px"] },
+			{ step: "decrease", sizes: ["17px", "15px", "14px"] },
+			{ step: "reset", sizes: ["15px", "13px", "12px"] },
+		].map(snapshot => ({
+			...snapshot,
+			connected: true,
+			desktop: true,
+			families: ['"Arial", var(--font-sans)', '"Courier New", var(--font-mono)', '"Menlo", var(--font-mono)'],
+			zoomFactor: 1,
+		}));
+		expect(JSON.parse(line!.slice("font shortcut smoke: ".length))).toEqual(expected);
+	}, 180_000);
+
 	test.each(["en", "zh", "auto"] as const)("opens the shared web host with application language %s", async (locale) => {
 		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-"));
 		await mkdir(join(scratch, "agent"));

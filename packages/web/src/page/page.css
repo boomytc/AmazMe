@@ -1266,7 +1266,8 @@ p {
 	border-radius: var(--radius-xl);
 	background: var(--bubble);
 	color: var(--text);
-	font-size: 15px;
+	font-size: var(--content-font-size, 15px);
+	font-family: var(--font-content, var(--font-sans));
 	line-height: 1.6;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
@@ -1463,8 +1464,8 @@ p {
 	max-height: 240px;
 	overflow: auto;
 	color: var(--text-3);
-	font-family: var(--font-mono);
-	font-size: 12px;
+	font-family: var(--font-code, var(--font-mono));
+	font-size: calc(var(--code-font-size, 13px) - 1px);
 	line-height: 1.6;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
@@ -1479,8 +1480,8 @@ p {
 	border-radius: var(--radius-md);
 	background: var(--code);
 	color: var(--text-2);
-	font-family: var(--font-mono);
-	font-size: 12px;
+	font-family: var(--font-code, var(--font-mono));
+	font-size: calc(var(--code-font-size, 13px) - 1px);
 	line-height: 1.6;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
@@ -1506,7 +1507,7 @@ p {
 .tool-command, .tool-diff-code {
 	margin: 0 0 8px 24px; padding: 10px 12px; overflow: auto; max-height: 360px;
 	border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--code);
-	font: 12px/1.6 var(--font-mono); white-space: pre; color: var(--text-2);
+	font: calc(var(--code-font-size, 13px) - 1px)/1.6 var(--font-code, var(--font-mono)); white-space: pre; color: var(--text-2);
 }
 .tool-diff-code { padding: 0; }
 .tool-diff-line { display: block; padding: 0 12px; min-width: max-content; }
@@ -1675,7 +1676,8 @@ p {
 .markdown {
 	min-width: 0;
 	color: var(--text);
-	font-size: 15px;
+	font-size: var(--content-font-size, 15px);
+	font-family: var(--font-content, var(--font-sans));
 	line-height: 1.7;
 	overflow-wrap: anywhere;
 }
@@ -1694,34 +1696,34 @@ p {
 
 .markdown h1 {
 	margin: 24px 0 10px;
-	font-size: 20px;
+	font-size: calc(var(--content-font-size, 15px) + 5px);
 	font-weight: 600;
-	line-height: 28px;
+	line-height: calc(var(--content-font-size, 15px) + 13px);
 	letter-spacing: -0.01em;
 }
 
 .markdown h2 {
 	margin: 22px 0 8px;
-	font-size: 18px;
+	font-size: calc(var(--content-font-size, 15px) + 3px);
 	font-weight: 600;
-	line-height: 26px;
+	line-height: calc(var(--content-font-size, 15px) + 11px);
 	letter-spacing: -0.01em;
 }
 
 .markdown h3 {
 	margin: 18px 0 6px;
-	font-size: 16px;
+	font-size: calc(var(--content-font-size, 15px) + 1px);
 	font-weight: 600;
-	line-height: 24px;
+	line-height: calc(var(--content-font-size, 15px) + 9px);
 }
 
 .markdown h4,
 .markdown h5,
 .markdown h6 {
 	margin: 14px 0 6px;
-	font-size: 15px;
+	font-size: var(--content-font-size, 15px);
 	font-weight: 600;
-	line-height: 24px;
+	line-height: calc(var(--content-font-size, 15px) + 9px);
 }
 
 .markdown strong {
@@ -1760,8 +1762,8 @@ p {
 	border: 1px solid var(--line);
 	border-radius: 6px;
 	background: var(--code);
-	font-family: var(--font-mono);
-	font-size: 0.86em;
+	font-family: var(--font-code, var(--font-mono));
+	font-size: calc(var(--code-font-size, 13px) - 0.1px);
 	white-space: break-spaces;
 }
 
@@ -1816,8 +1818,8 @@ p {
 	padding: 14px 16px;
 	overflow-x: auto;
 	color: var(--text);
-	font-family: var(--font-mono);
-	font-size: 13px;
+	font-family: var(--font-code, var(--font-mono));
+	font-size: var(--code-font-size, 13px);
 	line-height: 1.65;
 	white-space: pre;
 }
@@ -1942,6 +1944,8 @@ p {
 
 .queue-text {
 	flex: 1 1 auto;
+	font-family: var(--font-content, var(--font-sans));
+	font-size: calc(var(--content-font-size, 15px) - 2px);
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -2272,8 +2276,8 @@ p {
 	border: 0;
 	background: transparent;
 	color: var(--text);
-	font-family: var(--font-sans);
-	font-size: 15px;
+	font-size: var(--content-font-size, 15px);
+	font-family: var(--font-content, var(--font-sans));
 	line-height: 1.6;
 	outline: none;
 	resize: none;
@@ -2697,9 +2701,9 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	border-radius: var(--radius-md);
 	background: var(--code);
 	color: var(--text-2);
-	font-family: var(--font-mono);
-	font-size: 12px;
-	line-height: 20px;
+	font-family: var(--font-code, var(--font-mono));
+	font-size: calc(var(--code-font-size, 13px) - 1px);
+	line-height: calc(var(--code-font-size, 13px) + 7px);
 	tab-size: 4;
 }
 .file-source-line { display: grid; grid-template-columns: 44px minmax(0, 1fr); width: max-content; min-width: 100%; }
@@ -3604,3 +3608,10 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .directory-browser-foot { justify-content: space-between; }
 .directory-error { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
 .directory-error:empty { display: none; }
+
+/* Terminal output has an independent content font; controls and metadata keep their UI size. */
+.terminal-output, [data-panel-id="terminal"] .panel-text {
+	font-family: var(--font-terminal, var(--font-mono));
+	font-size: var(--terminal-font-size, 12px);
+}
+[data-panel-id="terminal"] .panel-text { line-height: 1.5; }

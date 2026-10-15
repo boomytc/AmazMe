@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@amazme/agent";
 import type { Model } from "@amazme/ai";
 import type { ScrollViewScrollbar, TerminalCapabilities, WheelScrollLines } from "@amazme/tui";
+import { resolveTypography, validateTypography, type Typography } from "@amazme/web/typography";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -852,6 +853,19 @@ export class SettingsManager {
 
 	getDefaultThinkingLevel(): ThinkingLevel | undefined {
 		return this.settings.defaultThinkingLevel;
+	}
+
+	getTypography(): Typography {
+		return resolveTypography(this.globalSettings.typography);
+	}
+
+	/** Preserve concurrent changes to other typography fields through the existing nested-field write merge. */
+	setTypography(patch: Partial<Typography>): void {
+		const checked = validateTypography(patch);
+		if (Object.keys(checked).length === 0) return;
+		this.globalSettings.typography = { ...this.globalSettings.typography, ...checked };
+		for (const field of Object.keys(checked)) this.markModified("typography", field);
+		this.save();
 	}
 
 	setDefaultThinkingLevel(level: ThinkingLevel): void {

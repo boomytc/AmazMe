@@ -5,6 +5,7 @@
  * `@amazme/web`; this module owns the client lifecycle, session attachment, and the visible
  * failure states.
  */
+import { FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, resolveTypography } from "@amazme/web/typography";
 import type { ModelThinkingLevel } from "@amazme/ai";
 import type { ReplicatedState } from "@amazme/chord";
 import type { RoutedServices } from "../services/connection.ts";
@@ -793,6 +794,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The reader's language and palette: the stored preference, or what this browser asks for. */
 	let locale: Locale = resolveLocale(manifest.preferences?.locale, navigator.languages);
 	let appearance: ThemePreference = resolveThemePreference(manifest.preferences?.appearance);
+	let typography = resolveTypography(manifest.preferences.typography);
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(locale, key, values);
 	const serverServices = serverSource.open({
 		services: [SessionDirectory, SessionManagement, ProjectManagement, SessionArchive, Settings, Skills, Plugins, PresentationPlugins, Feedback, Diagnostics],
@@ -992,6 +994,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		if (bound) rootConversationId = rootId() ?? rootConversationId;
 		locale = resolveLocale(settingValue("locale") ?? locale, navigator.languages);
 		appearance = resolveThemePreference(settingValue("appearance") ?? appearance);
+		const globalSettings = settings.state.value;
+		if (globalSettings !== undefined) {
+			const values = { ...typography };
+			for (const field of FONT_FAMILY_FIELDS) {
+				const value = globalSettings.descriptors.find(descriptor => descriptor.id === field)?.value;
+				if (value !== undefined) values[field] = value;
+			}
+			for (const field of FONT_SIZE_FIELDS) {
+				const value = globalSettings.descriptors.find(descriptor => descriptor.id === field)?.value;
+				if (value !== undefined) values[field] = Number(value);
+			}
+			typography = resolveTypography(values);
+		}
 		painter.locale = locale;
 		applyTheme(appearance);
 		document.documentElement.lang = documentLanguage(locale);
@@ -1054,6 +1069,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const retentionDays = Number(effectiveSettings()?.descriptors.find(descriptor => descriptor.id === "archiveRetentionDays")?.value ?? 0);
 		const built = buildWebView({
 					locale,
+					typography,
+					desktop: typeof window !== "undefined" && window.amazmeDesktop !== undefined,
 					creatingSession: creating,
 					selectedProjectId,
 					directory: directoryReady ? directory.state.value : undefined,
@@ -1418,6 +1435,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	renderer.onPickDirectories = async () => window.amazmeDesktop?.pickDirectories();
 	renderer.onShortcut = (id: ShortcutId) => {
+		if (id === "font.increase" || id === "font.decrease" || id === "font.reset") {
+			if (!client.connected || window.amazmeDesktop === undefined) return;
+			const action = id === "font.increase" ? "increase" : id === "font.decrease" ? "decrease" : "reset";
+			void settings.adjustFontSizes(action, BACKGROUND_CONTEXT).catch((error: unknown) => {
+				renderer.setConnection(copy("page.fontChangeFailed", { error: message(error) }), "error");
+			});
+			return;
+		}
 		if (id === "session.new") {
 			createSession();
 			return;

@@ -1,9 +1,11 @@
 import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS } from "@amazme/ai/utils/retry";
+import { DEFAULT_TYPOGRAPHY } from "@amazme/web/typography";
 
 /** Runtime defaults shared by settings accessors and the published JSON Schema. */
 export const SETTINGS_DEFAULTS = {
 	locale: "auto",
 	appearance: "system",
+	typography: DEFAULT_TYPOGRAPHY,
 	toolApproval: "off",
 	executionMode: "full-access",
 	repeatToolReminder: true,

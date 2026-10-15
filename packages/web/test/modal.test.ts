@@ -9,6 +9,7 @@ import type { DirectoryListing } from "../src/directories.ts";
 import type { PanelModal } from "../src/panels.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView } from "../src/view.ts";
+import { DEFAULT_TYPOGRAPHY } from "../src/typography.ts";
 
 let cleanupListeners = (): void => {};
 beforeEach(() => {
@@ -55,6 +56,33 @@ function backdrop(root: HTMLElement): void {
 }
 
 describe("native management modal", () => {
+	test("applies role fonts without replacing the draft and leaves ordinary browser zoom untouched", () => {
+		const { elements, renderer, view } = setup();
+		const shortcut = vi.fn();
+		renderer.onShortcut = shortcut;
+		vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+		renderer.setDraft("unfinished draft", false);
+		renderer.render({ ...view, typography: { ...DEFAULT_TYPOGRAPHY, textFont: "Arial", codeSize: 16, terminalSize: 18 } });
+		expect(document.documentElement.style.getPropertyValue("--font-content")).toBe('"Arial", var(--font-sans)');
+		expect(document.documentElement.style.getPropertyValue("--code-font-size")).toBe("16px");
+		expect(document.documentElement.style.getPropertyValue("--terminal-font-size")).toBe("18px");
+		expect(elements.prompt.value).toBe("unfinished draft");
+		const key = () => new KeyboardEvent("keydown", { key: "=", code: "Equal", metaKey: true, bubbles: true, cancelable: true });
+		const browser = key();
+		elements.prompt.dispatchEvent(browser);
+		expect(browser.defaultPrevented).toBe(false);
+		expect(shortcut).not.toHaveBeenCalled();
+		Object.defineProperty(window, "amazmeDesktop", { configurable: true, value: { pickDirectories: async () => [] } });
+		try {
+			const desktop = key();
+			elements.prompt.dispatchEvent(desktop);
+			expect(desktop.defaultPrevented).toBe(true);
+			expect(shortcut).toHaveBeenCalledWith("font.increase");
+		} finally {
+			delete window.amazmeDesktop;
+		}
+	});
+
 	test("opens with semantic labels and restores the trigger after closing and reopening", () => {
 		const { elements, paint, modal } = setup();
 		const trigger = button("#project-add");

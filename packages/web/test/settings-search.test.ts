@@ -79,6 +79,27 @@ const settings = shell({
 
 let cleanupListeners = (): void => {};
 
+test("font size controls enforce the Host's upper bound before sending a setting", () => {
+	const input = shell({ locale: "zh", current: "settings", settings: { state: {
+		paths: { global: "/agent/settings.json" }, projectTrusted: false, errors: [],
+		descriptors: [{ id: "codeSize", group: "interface", kind: "number", field: "typography.codeSize", explicit: false, value: "13", min: 10, max: 16, step: 1 }],
+	} } });
+	const renderer = createRenderer(collectPageElements());
+	const action = vi.fn();
+	renderer.onPanelAction = action;
+	renderer.render(buildWebView(input));
+	const control = document.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]');
+	if (!control) throw new Error("Missing code size control");
+	expect(control.max).toBe("16");
+	control.value = "17";
+	control.dispatchEvent(new Event("change", { bubbles: true }));
+	expect(action).not.toHaveBeenCalled();
+	expect(control.getAttribute("aria-invalid")).toBe("true");
+	control.value = "16";
+	control.dispatchEvent(new Event("change", { bubbles: true }));
+	expect(action).toHaveBeenCalledWith(expect.objectContaining({ data: "codeSize", value: "16" }));
+});
+
 beforeEach(() => {
 	const html = readFileSync(join(process.cwd(), "src/page/index.html"), "utf8");
 	const body = html.slice(html.indexOf("<body>") + "<body>".length, html.lastIndexOf("</body>"));

@@ -7,6 +7,7 @@
  * vocabulary: a tool name, a model name, and a reasoning level are data, while a status line or a
  * block title is copy.
  */
+import { DEFAULT_TYPOGRAPHY, type Typography } from "./typography.ts";
 import type { AssistantMessage, Message, ToolCall, UserMessage } from "@amazme/ai";
 import { projectGroups } from "./projects.ts";
 import type { ProjectGroup } from "./projects.ts";
@@ -408,6 +409,7 @@ export interface NewSessionAffordance {
 }
 
 export interface WebView {
+	readonly typography: Typography;
 	/** The language this view's copy is in; the renderer reads it for its own chrome too. */
 	readonly locale: Locale;
 	/** Namespace of the displayed transcript; independent of whether sending is currently available. */
@@ -533,6 +535,8 @@ export interface ModelsStateLike {
 }
 
 export interface WebViewInput {
+	readonly typography?: Typography;
+	readonly desktop?: boolean;
 	readonly creatingSession?: boolean;
 	/** The reader's language, resolved from the stored preference and the browser. */
 	readonly locale: Locale;
@@ -1412,6 +1416,7 @@ export function runControls(locale: Locale, mode: SubmitMode, attached: boolean,
 export function failureView(locale: Locale, text: string): WebView {
 	return {
 		locale,
+		typography: { ...DEFAULT_TYPOGRAPHY },
 		roster: [],
 		rosterFilter: "",
 		focus: undefined,
@@ -1521,7 +1526,8 @@ export function buildWebView(input: WebViewInput): WebView {
 			completions: input.completions,
 			selected: input.paletteSelection,
 		}),
-		shortcuts: shortcuts(locale, input.platform),
+		typography: input.typography ?? { ...DEFAULT_TYPOGRAPHY },
+		shortcuts: shortcuts(locale, input.platform, input.desktop),
 		commandLine: parseCommandLine(input.draft) !== undefined,
 		blocks,
 		status: sessionStatus(locale, input.transcript),

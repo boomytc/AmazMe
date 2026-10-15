@@ -32,7 +32,8 @@ import {
 	SETTINGS_VIEW,
 	type SettingsSearchHit,
 } from "./panels.ts";
-import { isApplePlatform, isStopChord, matchShortcut, type ShortcutGesture, type ShortcutId } from "./shortcuts.ts";
+import { fontSizeShortcut, isApplePlatform, isStopChord, matchShortcut, type ShortcutGesture, type ShortcutId } from "./shortcuts.ts";
+import { applyTypography } from "./typography.ts";
 import { type MessageKey, translate } from "./strings.ts";
 import {
 	type Attachment,
@@ -482,7 +483,7 @@ function inRange(control: PanelControl, value: string): boolean {
 	if (value.trim().length === 0) return false;
 	const parsed = Number(value);
 	if (!Number.isFinite(parsed) || ((control.step ?? 1) >= 1 && !Number.isSafeInteger(parsed))) return false;
-	return parsed >= (control.min ?? Number.NEGATIVE_INFINITY);
+	return parsed >= (control.min ?? Number.NEGATIVE_INFINITY) && parsed <= (control.max ?? Number.POSITIVE_INFINITY);
 }
 
 /** Arrow keys move within tabs and radio groups; modified arrows belong to the browser. */
@@ -768,6 +769,7 @@ export function createRenderer(
 		input.value = drafts.get(key) ?? control.value;
 		if (control.placeholder !== undefined) input.placeholder = control.placeholder;
 		if (control.min !== undefined) input.min = String(control.min);
+		if (control.max !== undefined) input.max = String(control.max);
 		if (control.step !== undefined) input.step = String(control.step);
 		input.disabled = control.disabled === true;
 		input.addEventListener("input", () => drafts.set(key, input.value));
@@ -782,7 +784,7 @@ export function createRenderer(
 			error.hidden = !invalid;
 			input.classList.toggle("invalid", invalid);
 			if (invalid) {
-				error.textContent = copy((control.step ?? 1) < 1 ? "panel.settings.invalidDecimal" : "panel.settings.invalidNumber", { min: String(control.min ?? 0) });
+				error.textContent = copy(control.max !== undefined ? "panel.settings.invalidRange" : (control.step ?? 1) < 1 ? "panel.settings.invalidDecimal" : "panel.settings.invalidNumber", { min: String(control.min ?? 0), max: String(control.max ?? "") });
 				input.setAttribute("aria-invalid", "true");
 				input.setAttribute("aria-describedby", error.id);
 			} else {
@@ -2337,6 +2339,7 @@ export function createRenderer(
 			return lastView;
 		},
 		render(view: WebView): void {
+			if (changed("typography", view.typography)) applyTypography(document.documentElement.style, view.typography);
 			if (view.panel.modal !== undefined && elements.modalRoot.hidden) captureModalFocus();
 			const languageChanged = lastView?.locale !== view.locale;
 			const sessionChanged = lastView?.attachedId !== view.attachedId;
@@ -2762,6 +2765,12 @@ export function createRenderer(
 	};
 	document.addEventListener("keydown", (event) => {
 		if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || elements.modalRoot.open) return;
+		const fontAction = fontSizeShortcut(event, navigator.platform, window.amazmeDesktop !== undefined);
+		if (fontAction !== undefined) {
+			event.preventDefault();
+			renderer.onShortcut(`font.${fontAction}`);
+			return;
+		}
 		// Settings search takes the find chord, the same way the settings page owns that field.
 		if (
 			lastView?.panel.current === SETTINGS_VIEW &&

@@ -1,3 +1,4 @@
+import { adjustedFontSizes } from "@amazme/web/typography";
 import { ChannelEndpoint } from "@amazme/protocol";
 import { ServiceHost } from "@amazme/protocol/services";
 import {
@@ -212,6 +213,15 @@ export async function createExperimentalServerServices(options: {
 				});
 				provider.provide(Settings, {
 					state: settingsState,
+					adjustFontSizes: (action, context) => serialize(async () => {
+						context.abortSignal?.throwIfAborted();
+						manager.drainErrors();
+						manager.setTypography(adjustedFontSizes(manager.getTypography(), action));
+						await manager.flush();
+						settingsErrorList = settingsErrors(manager);
+						publishSettings(settingsState, context, { manager, agentDir, cwd, paths, errors: settingsErrorList });
+						if (settingsErrorList.length > 0) throw new Error(`Could not save font sizes: ${settingsErrorList.map(error => error.message).join("; ")}`);
+					}),
 					set: (id, value, context) =>
 						serialize(async () => {
 							settingsErrorList = await applySetting(manager, id, value);
