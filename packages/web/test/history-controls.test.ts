@@ -46,3 +46,39 @@ test("an empty conversation never offers history loading", () => {
 	renderer.render({ ...failureView("zh", ""), attachedId: "session", history: { blocks: [], more: true, loading: false } });
 	expect(document.querySelector(".history-more-button")).toBeNull();
 });
+
+test("scrolling away from the bottom offers a jump-to-latest control and announces new progress below", () => {
+	const elements = collectPageElements();
+	const renderer = createRenderer(elements);
+	Object.defineProperty(elements.transcript, "scrollHeight", { configurable: true, get: () => 1200 });
+	Object.defineProperty(elements.transcript, "clientHeight", { configurable: true, get: () => 400 });
+	elements.transcript.scrollTop = 800;
+
+	const base = { ...failureView("zh", ""), attachedId: "session", blocks: [BLOCK] };
+	renderer.render(base);
+	expect(elements.transcriptLatest?.hidden).toBe(true);
+
+	elements.transcript.scrollTop = 200;
+	elements.transcript.dispatchEvent(new Event("scroll"));
+	expect(elements.transcriptLatest?.hidden).toBe(false);
+	expect(elements.transcriptLatest?.textContent).toBe("回到最新");
+	expect(elements.transcriptLatest?.dataset.unread).toBeUndefined();
+
+	renderer.render({
+		...base,
+		blocks: [
+			BLOCK,
+			{ id: "2", kind: "assistant", title: "AmazMe", text: "正在输出长回答第一段", tone: "plain", running: true },
+		],
+		status: "处理中…",
+	});
+	expect(elements.transcript.scrollTop).toBe(200);
+	expect(elements.transcriptLatest?.hidden).toBe(false);
+	expect(elements.transcriptLatest?.dataset.unread).toBe("true");
+	expect(elements.transcriptLatest?.textContent).toBe("有新内容 · 回到最新");
+
+	elements.transcriptLatest?.click();
+	expect(elements.transcript.scrollTop).toBe(1200);
+	expect(elements.transcriptLatest?.hidden).toBe(true);
+	expect(elements.transcriptLatest?.dataset.unread).toBeUndefined();
+});

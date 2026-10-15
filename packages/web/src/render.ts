@@ -73,6 +73,7 @@ export interface PageElements {
 	readonly center: HTMLElement;
 	readonly roster: HTMLElement;
 	readonly transcript: HTMLElement;
+	readonly transcriptLatest?: HTMLButtonElement;
 	readonly column: HTMLElement;
 	/** The management panel's host, its back control, and the composer the panel replaces. */
 	readonly view: HTMLElement;
@@ -181,6 +182,7 @@ export function collectPageElements(): PageElements {
 		center: pick("center"),
 		roster: pick("roster"),
 		transcript: pick("transcript"),
+		transcriptLatest: transcriptLatestElement(pick("transcript")),
 		column: pick("column"),
 		view: pick("view"),
 		viewBody: pick("view-body"),
@@ -225,6 +227,21 @@ function modelSetupElement(modelSelect: HTMLSelectElement): HTMLElement {
 	setup.hidden = true;
 	modelSelect.insertAdjacentElement("beforebegin", setup);
 	return setup;
+}
+
+function transcriptLatestElement(transcript: HTMLElement): HTMLButtonElement {
+	const existing = document.getElementById("transcript-latest");
+	if (existing instanceof HTMLButtonElement) return existing;
+	const jump = document.createElement("div");
+	jump.className = "transcript-jump";
+	const control = document.createElement("button");
+	control.type = "button";
+	control.id = "transcript-latest";
+	control.className = "transcript-latest";
+	control.hidden = true;
+	jump.append(control);
+	transcript.insertAdjacentElement("afterend", jump);
+	return control;
 }
 
 function laneStatusElement(): HTMLElement {
@@ -604,6 +621,21 @@ export function createRenderer(
 	const flowCache = new DomCache();
 	const chromeValues = new Map<string, unknown>();
 	const modelSetup = elements.modelSetup ?? modelSetupElement(elements.modelSelect);
+	const transcriptLatest = elements.transcriptLatest ?? transcriptLatestElement(elements.transcript);
+	let seenTranscriptDigest = "";
+	let unreadTranscriptBelow = false;
+	const transcriptDigest = (view: WebView): string =>
+		JSON.stringify([
+			view.status,
+			view.blocks.map((block) => [
+				block.id,
+				block.text.length,
+				block.running,
+				block.tone,
+				block.result?.status,
+				block.result?.duration,
+			]),
+		]);
 	let promptSelection: { start: number; end: number; direction: "forward" | "backward" | "none" } = {
 		start: 0,
 		end: 0,
@@ -2393,6 +2425,38 @@ export function createRenderer(
 		elements.thinkingSelect.title = [picker.effort, picker.levelsEmpty ?? copy("model.nextRequest")].filter(Boolean).join("\n");
 	};
 
+	const syncTranscriptLatest = (): void => {
+		const view = lastView;
+		const hasConversation = view !== undefined && (view.blocks.length > 0 || view.history.blocks.length > 0);
+		if (view === undefined || view.panel.current !== CHAT_VIEW || elements.transcript.hidden || !hasConversation) {
+			transcriptLatest.hidden = true;
+			return;
+		}
+		if (atBottom(elements.transcript)) {
+			unreadTranscriptBelow = false;
+			seenTranscriptDigest = transcriptDigest(view);
+			transcriptLatest.hidden = true;
+			delete transcriptLatest.dataset.unread;
+			return;
+		}
+		const label = copy(unreadTranscriptBelow ? "transcript.newContent" : "transcript.jumpLatest");
+		transcriptLatest.hidden = false;
+		if (unreadTranscriptBelow) transcriptLatest.dataset.unread = "true";
+		else delete transcriptLatest.dataset.unread;
+		if (changed("transcript-latest", [view.locale, unreadTranscriptBelow])) {
+			const children: Node[] = [];
+			if (unreadTranscriptBelow) {
+				const dot = element("span", "running-dot latest-dot");
+				dot.setAttribute("aria-hidden", "true");
+				children.push(dot);
+			}
+			children.push(element("span", "transcript-latest-label", label), icon("chevron-down", "icon transcript-latest-icon"));
+			transcriptLatest.replaceChildren(...children);
+			transcriptLatest.title = label;
+			transcriptLatest.setAttribute("aria-label", label);
+		}
+	};
+
 
 	const renderer: PageRenderer = {
 		onSelect,
@@ -2452,6 +2516,8 @@ export function createRenderer(
 				elements.column.replaceChildren();
 				heldPromptFocus = undefined;
 				modelSetupReturn = undefined;
+				seenTranscriptDigest = transcriptDigest(view);
+				unreadTranscriptBelow = false;
 			}
 
 			// Streaming repaints keep the roster's nodes and keyboard focus when it has not changed.
@@ -2632,10 +2698,25 @@ export function createRenderer(
 			if (view.panel.current === CHAT_VIEW) {
 				(restoreChatPosition ?? restorePosition)();
 				restoreChatPosition = undefined;
+				const nextDigest = transcriptDigest(view);
+				if (atBottom(elements.transcript)) {
+					seenTranscriptDigest = nextDigest;
+					unreadTranscriptBelow = false;
+				} else if (seenTranscriptDigest !== "" && nextDigest !== seenTranscriptDigest) {
+					unreadTranscriptBelow = true;
+				} else if (seenTranscriptDigest === "") {
+					seenTranscriptDigest = nextDigest;
+				}
+				syncTranscriptLatest();
 				// The palette shares the scroll area with approvals and queued inputs. Its keyboard
 				// selection must remain visible after those preceding cards have been painted.
 				if (paletteChanged && view.palette.open) elements.palette.querySelector<HTMLElement>(".palette-row.selected")?.scrollIntoView({ block: "nearest" });
-			} else if (transcriptVisible) restoreChatPosition = restorePosition;
+			} else if (transcriptVisible) {
+				restoreChatPosition = restorePosition;
+				syncTranscriptLatest();
+			} else {
+				syncTranscriptLatest();
+			}
 		},
 		setDraft(text: string, focus = true): void {
 			if (elements.prompt.value !== text) elements.prompt.value = text;
@@ -2657,6 +2738,13 @@ export function createRenderer(
 	};
 
 	syncSidebarToggle();
+	elements.transcript.addEventListener("scroll", () => syncTranscriptLatest());
+	transcriptLatest.addEventListener("click", () => {
+		elements.transcript.scrollTop = elements.transcript.scrollHeight;
+		unreadTranscriptBelow = false;
+		if (lastView !== undefined) seenTranscriptDigest = transcriptDigest(lastView);
+		syncTranscriptLatest();
+	});
 	document.addEventListener("pointerdown", (event) => {
 		if (event.target !== elements.prompt) heldPromptFocus = undefined;
 	});

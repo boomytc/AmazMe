@@ -1671,6 +1671,68 @@ p {
 	cursor: default;
 }
 
+.transcript-jump {
+	position: relative;
+	display: flex;
+	justify-content: center;
+	height: 0;
+	overflow: visible;
+	z-index: 10;
+	pointer-events: none;
+}
+
+.transcript-jump:has(> [hidden]) {
+	display: none;
+}
+
+.transcript-latest {
+	position: absolute;
+	bottom: 8px;
+	pointer-events: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 14px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-pill);
+	background: var(--raised);
+	box-shadow: var(--shadow-popover);
+	color: var(--text);
+	font-size: 12px;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+	transition:
+		background var(--dur-fast) var(--ease),
+		border-color var(--dur-fast) var(--ease),
+		transform var(--dur-fast) var(--ease);
+}
+
+.transcript-latest:hover {
+	background: var(--hover);
+	border-color: var(--text-3);
+}
+
+.transcript-latest:active {
+	transform: scale(0.97);
+}
+
+.transcript-latest[data-unread="true"] {
+	border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+	color: var(--accent-text);
+}
+
+.transcript-latest-icon {
+	width: 14px;
+	height: 14px;
+}
+
+.latest-dot {
+	width: 7px;
+	height: 7px;
+}
+
 /* ----------------------------------------------------------------- markdown */
 
 .markdown {

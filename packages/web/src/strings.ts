@@ -506,6 +506,8 @@ export const EN = {
 
 	"history.more": "Load older",
 	"history.loading": "Loading older entries…",
+	"transcript.jumpLatest": "Back to latest",
+	"transcript.newContent": "New content · Back to latest",
 	"history.start": "Older entries",
 	"history.return": "Return",
 	"history.noSummary": "No summary",
@@ -1288,6 +1290,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 
 	"history.more": "加载更早",
 	"history.loading": "正在加载更早的内容…",
+	"transcript.jumpLatest": "回到最新",
+	"transcript.newContent": "有新内容 · 回到最新",
 	"history.start": "更早的内容",
 	"history.return": "返回",
 	"history.noSummary": "不生成摘要",
