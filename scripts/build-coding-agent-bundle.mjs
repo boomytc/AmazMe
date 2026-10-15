@@ -121,6 +121,7 @@ await build({
 	target: "es2022",
 	alias: {
 		"@amazme/web": join(repoRoot, "packages", "web", "src", "index.ts"),
+		"@amazme/web/typography": join(repoRoot, "packages", "web", "src", "typography.ts"),
 	},
 	tsconfig: join(repoRoot, "tsconfig.json"),
 	logLevel: "warning",

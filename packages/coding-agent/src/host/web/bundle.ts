@@ -28,6 +28,7 @@ export async function bundlePageEntry(
 		target: ["es2022"],
 		alias: {
 			"@amazme/web": join(repositoryRoot, "packages", "web", "src", "index.ts"),
+			"@amazme/web/typography": join(repositoryRoot, "packages", "web", "src", "typography.ts"),
 		},
 		tsconfig: join(repositoryRoot, "tsconfig.json"),
 		logLevel: "silent",
