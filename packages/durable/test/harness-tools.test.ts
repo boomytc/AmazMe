@@ -12,6 +12,7 @@ import {
 	type ToolResultMessage,
 	Type,
 } from "@amazme/ai";
+import { parseToolCallArguments } from "@amazme/ai/utils/json-parse";
 import {
 	AgentDoc,
 	type Conversation,
@@ -509,6 +510,25 @@ describe("tool results", () => {
 		expect(seen).toEqual(expect.arrayContaining([{ text: "1!" }, { text: "x!" }]));
 		expect(seen).toHaveLength(2);
 		await harness.close(context);
+	});
+
+	// #10944: even a schema accepting {} must not execute a malformed completed call.
+	it("returns malformed argument text without running tool hooks or effects", async () => {
+		const setup = chatSetup();
+		let executed = 0;
+		let hooked = 0;
+		addTool(setup.registry, tool("echo", async () => { executed++; return { output: [] }; }));
+		addHooks(setup.registry, ToolTask, { beforeTool: () => { hooked++; } });
+		const raw = '{"text":"unfinished';
+		const call = { ...fauxToolCall("echo", {}, { id: "invalid" }), ...parseToolCallArguments(raw) };
+		const { harness, entries, status } = await run(setup, [fauxAssistantMessage([call], { stopReason: "toolUse" }), DONE]);
+		try {
+			expect(status).toBe("done");
+			expect(executed).toBe(0);
+			expect(hooked).toBe(0);
+			expect(results(entries)[0]).toMatchObject({ toolCallId: "invalid", isError: true });
+			expect(resultText(results(entries)[0]!)).toContain(raw);
+		} finally { await harness.close(context); }
 	});
 
 	it("repairs arguments with prepareArguments before validation, and a throwing repair is invalid", async () => {

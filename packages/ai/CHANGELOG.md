@@ -5,11 +5,23 @@
 ### Added
 
 - `hasContextRecoveryHeadroom()` shares the shrink and output-reserve checks used before retrying a rejected context.
+- Direct OpenAI GPT-6 Responses models keep the cached prompt prefix when thinking effort changes, using recorded `configuration_update` items; ChatGPT sign-in and proxy models retain their existing request format.
 
 ### Fixed
 
 - Invalid Unicode escapes in streaming tool arguments are retained as literal text instead of dropping later fields.
 - Anthropic error tool results replace images with a text diagnostic in the request; successful results and stored messages retain their images.
+- Completed malformed tool-call arguments retain their original diagnostic and fail validation instead of executing a parsed prefix.
+- Completions chunks emit thinking before text when both arrive together; upstream forwarding failures are retryable.
+
+### Changed
+
+- OpenCode catalogs use inference endpoints; Kimi Coding uses Chat Completions with model-specific effort and tool-addition capabilities. Xiaomi MiMo uses thinking on/off, Gemini 4 uses thinkingLevel, and Codex GPT-6.1 Sol has a 500K context window.
+
+### Removed
+
+- Removed the unused assistant-message frame encoder, reducer and public export; assistant message events remain the streaming API.
+
 
 ## [1.2.0] - 2026-10-13
 

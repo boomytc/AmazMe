@@ -18,7 +18,7 @@ const model: Model<Api> = {
 	name: "Test model",
 	api: "test-api",
 	provider: "opencode",
-	baseUrl: "https://opencode.ai/zen/v1",
+	baseUrl: "https://opencode.ai/inference/v1",
 	reasoning: false,
 	input: ["text"],
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -54,7 +54,7 @@ describe("OpenCode provider headers", () => {
 		"routes OpenCode Go Google %s with the session header",
 		async (method) => {
 			googleStreams[method].mockImplementation(() => completedStream());
-			const google: Model<"google-generative-ai"> = { ...model, api: "google-generative-ai", provider: "opencode-go" };
+			const google: Model<"google-generative-ai"> = { ...model, api: "google-generative-ai", provider: "opencode-go", compat: undefined };
 			const result = await opencodeGoProvider()[method](google, context, { sessionId: "google-session" }).result();
 			expect(result.stopReason).toBe("stop");
 			expect(googleStreams[method]).toHaveBeenCalledWith(google, context, {

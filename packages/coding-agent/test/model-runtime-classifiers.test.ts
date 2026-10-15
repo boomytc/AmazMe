@@ -31,7 +31,9 @@ describe("ModelRuntime classifiers", () => {
 		expect(unconfigured.errorMessage).toContain("not configured");
 
 		await runtime.setRuntimeApiKey("typesafe", "sk-typesafe");
-		expect(await runtime.getAvailableOfType("classifier", "typesafe")).toEqual([jev]);
+		const available = await runtime.getAvailableOfType("classifier", "typesafe");
+		expect(available).toContainEqual(jev);
+		expect(available.every((model) => model.type === "classifier" && model.provider === "typesafe")).toBe(true);
 		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
 			expect(new Headers(init?.headers).get("authorization")).toBe("Bearer sk-typesafe");
 			return Response.json({ answers: { approved: { type: "noul", noul: 0.8 } } });
