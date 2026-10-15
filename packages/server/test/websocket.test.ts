@@ -1,7 +1,6 @@
 import { once } from "node:events";
 import { createServer as createHttpServer, type IncomingMessage } from "node:http";
 import { createConnection, type Socket } from "node:net";
-import { networkInterfaces } from "node:os";
 import { encodeClientMessage, PROTOCOL_VERSION, ServerMessageDecoder, type ServerMessage } from "@amazme/protocol";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { Server } from "../src/server.ts";
@@ -253,25 +252,15 @@ describe("WebSocket transport", () => {
 		await server.close();
 	});
 
-	test("binds loopback only, so a non-loopback address of this machine refuses the connection", async () => {
+	test("binds its HTTP server to IPv4 loopback rather than a wildcard interface", async () => {
 		const { listener, server } = await startListener();
-		const port = listener.address()?.port;
-		const external = Object.values(networkInterfaces())
-			.flat()
-			.find((entry) => entry !== undefined && entry.family === "IPv4" && !entry.internal);
-		expect(port).toBeGreaterThan(0);
-		if (!external) {
-			await server.close();
-			return;
-		}
-		const socket = createConnection({ host: external.address, port: port! });
-		rawSockets.add(socket);
-		const error = await new Promise<Error | undefined>((resolve) => {
-			socket.once("error", (failure) => resolve(failure));
-			socket.once("connect", () => resolve(undefined));
-		});
-		expect(error).toBeInstanceOf(Error);
-		socket.destroy();
+		// A TUN/proxy can acknowledge a non-loopback dial without reaching this listener.
+		// Inspect the kernel's bound endpoint instead of relying on external routing.
+		const bound = listener.httpServer?.address();
+		expect(bound).toMatchObject({ address: "127.0.0.1", family: "IPv4" });
+		if (!bound || typeof bound === "string") throw new Error("HTTP server did not bind");
+		expect(bound.port).toBeGreaterThan(0);
+		expect(listener.address()?.port).toBe(bound.port);
 		await server.close();
 	});
 
