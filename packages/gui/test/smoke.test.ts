@@ -189,28 +189,25 @@ app.on("browser-window-created", (_event, window) => {
         throw new Error(step + " did not reach expected typography: " + JSON.stringify(latest));
       }
       await waitForSizes("initial", ["15px", "13px", "12px"]);
-      window.show();
-      app.focus({ steal: true });
-      window.focus();
-      window.webContents.focus();
-      const focusDeadline = Date.now() + 5_000;
-      while (!window.isFocused() && Date.now() < focusDeadline) await pause(25);
-      assert.ok(window.isFocused(), "Native input requires the real BrowserWindow to be focused");
-      const modifiers = [process.platform === "darwin" ? "meta" : "control"];
-      function shortcut(keyCode) {
-        window.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
-        window.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+      // CDP reaches the real renderer without requiring OS foreground focus in a test runner.
+      // Menu assertions above independently check that native page-zoom roles are absent.
+      window.webContents.debugger.attach("1.3");
+      const modifiers = process.platform === "darwin" ? 4 : 2;
+      async function shortcut(key) {
+        const code = { "=": "Equal", "-": "Minus", "0": "Digit0" }[key];
+        const windowsVirtualKeyCode = { "=": 187, "-": 189, "0": 48 }[key];
+        for (const type of ["keyDown", "keyUp"]) {
+          await window.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type, key, code, windowsVirtualKeyCode, modifiers });
+        }
       }
-      // The unshifted plus key is also the application's increase gesture.
-      shortcut("=");
+      await shortcut("=");
       await waitForSizes("increase", ["16px", "14px", "13px"]);
-      // Deliberately enqueue both native gestures before waiting for either Host response.
-      shortcut("=");
-      shortcut("=");
+      // Enqueue both renderer gestures before waiting for either Host response.
+      await Promise.all([shortcut("="), shortcut("=")]);
       await waitForSizes("rapid increase", ["18px", "16px", "15px"]);
-      shortcut("-");
+      await shortcut("-");
       await waitForSizes("decrease", ["17px", "15px", "14px"]);
-      shortcut("0");
+      await shortcut("0");
       await waitForSizes("reset", ["15px", "13px", "12px"]);
       process.stdout.write("font shortcut smoke: " + JSON.stringify(snapshots) + "\\n");
       app.quit();
