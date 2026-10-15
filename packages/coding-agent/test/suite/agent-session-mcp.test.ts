@@ -1,7 +1,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { fauxAssistantMessage, fauxToolCall } from "@amazme/ai";
 import type { SystemMessage, ToolResultMessage } from "@amazme/ai/compat";
-import { type JsonRpcRequest, LATEST_PROTOCOL_VERSION } from "@amazme/mcp";
+import { type CallToolResult, type JsonRpcRequest, LATEST_PROTOCOL_VERSION } from "@amazme/mcp";
 import { createInMemoryTransportPair } from "@amazme/mcp/testing";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +13,7 @@ import { createMcpExtension, MCP_SERVERS_SECTION } from "../../src/extensions/mc
 import { createMcpToolName } from "../../src/extensions/mcp/tools.ts";
 import { createToolSearchExtension } from "../../src/extensions/tool-search/index.ts";
 import { TOOL_SEARCH_DESCRIPTION } from "../../src/extensions/tool-search/tool.ts";
+import * as imageProcessing from "../../src/utils/image-process.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 import {
 	createHarness,
@@ -57,6 +58,7 @@ function createFakeServer(
 		resources?: boolean;
 		instructions?: string;
 		initializeDelayMs?: number;
+		shotResult?: CallToolResult;
 	} = {},
 ) {
 	const { listTools = () => SERVER_TOOLS, resources = false, instructions, initializeDelayMs = 0 } = options;
@@ -99,6 +101,7 @@ function createFakeServer(
 					return { content: [{ type: "text", text: hits.join("\n") }], structuredContent: { hits } };
 				}
 				if (params.name === "shot") {
+					if (options.shotResult) return options.shotResult;
 					return { content: [{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" }] };
 				}
 				return { content: [{ type: "text", text: "server exploded" }], isError: true };
@@ -143,6 +146,7 @@ describe("AgentSession MCP integration", () => {
 			withoutToolSearch?: boolean;
 			description?: string;
 			instructions?: string;
+			shotResult?: CallToolResult;
 		} = {},
 	) {
 		const {
@@ -157,6 +161,7 @@ describe("AgentSession MCP integration", () => {
 			withoutToolSearch,
 			description,
 			instructions,
+			shotResult,
 			...configOptions
 		} = options;
 		const calls: string[] = [];
@@ -186,7 +191,7 @@ describe("AgentSession MCP integration", () => {
 				createMcpExtension({
 					loadConfig: () => ({ servers: [entry], errors: [], ...configOptions }),
 					createTransport: () => {
-						const pair = createFakeServer(calls, { listTools, resources, instructions });
+						const pair = createFakeServer(calls, { listTools, resources, instructions, shotResult });
 						servers.push(pair.server);
 						void pair.server.start();
 						return pair.client;
@@ -458,6 +463,45 @@ describe("AgentSession MCP integration", () => {
 		expect(annotations.get("mcp__docs__search")).toBeUndefined();
 		const result = toolResult(harness, "mcp__docs__search");
 		expect(getMessageText(result)).toBe("direct guide\ndirect faq");
+	});
+
+	it("diagnoses invalid MCP images before normalization and keeps their original script values", async () => {
+		const shotResult: CallToolResult = {
+			content: [
+				{ type: "text", text: "before" },
+				{ type: "image", data: "AB==", mimeType: "image/png" },
+				{ type: "resource", resource: { uri: "docs://image", mimeType: "image/png", blob: "AQ==\n" } },
+				{ type: "text", text: "after" },
+			],
+		};
+		const processImage = vi.spyOn(imageProcessing, "processImage");
+		try {
+			const direct = await setup("direct", undefined, { shotResult });
+			direct.harness.setResponses([
+				fauxAssistantMessage([fauxToolCall("mcp__docs__shot", {})], { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+			await direct.harness.session.prompt("inspect image");
+			const omitted = { type: "text", text: "[MCP image from docs omitted: image data is not canonical base64.]" };
+			expect(toolResult(direct.harness, "mcp__docs__shot").content).toEqual([
+				{ type: "text", text: "before" }, omitted, omitted, { type: "text", text: "after" },
+			]);
+
+			const scripted = await setup("codemode", undefined, { shotResult });
+			scripted.harness.setResponses([
+				fauxAssistantMessage([fauxToolCall("codemode", { code: "return await tools.mcp__docs__shot({});" })], {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("done"),
+			]);
+			await scripted.harness.session.prompt("inspect raw image result");
+			const result = toolResult(scripted.harness, "codemode");
+			expect(result.isError).toBe(false);
+			expect(JSON.parse(getMessageText(result).split("\n").at(-1) ?? "")).toEqual(shotResult);
+			expect(processImage).not.toHaveBeenCalled();
+		} finally {
+			processImage.mockRestore();
+		}
 	});
 
 	it.each(["direct", "codemode"] as const)(

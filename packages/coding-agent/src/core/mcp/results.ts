@@ -232,7 +232,16 @@ async function blockToContent(
 			return [{ type: "text", text: `[Binary resource ${uri} (${kind}) could not be saved: ${reason}]` }];
 		}
 	}
-	return toLlmContent({ content: [block] });
+	return toLlmContent({ content: [block] }).map((content): TextContent | ImageContent => {
+		if (content.type !== "image") return content;
+		// Buffer's decoder accepts whitespace, URL-safe aliases and invalid padding. Compare the
+		// complete encoding instead of using a repeated-group regex that can overflow on large images.
+		if (Buffer.from(content.data, "base64").toString("base64") === content.data) return content;
+		return {
+			type: "text",
+			text: `[MCP image from ${server} omitted: image data is not canonical base64.]`,
+		};
+	});
 }
 
 /** Model-facing content of `server`'s content blocks, before the output limit. */

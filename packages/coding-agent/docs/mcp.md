@@ -233,7 +233,9 @@ To keep `codemode` active without MCP servers, add `"defaultTools": ["+codemode"
 
 Text results over 20 KB reach the model with their middle removed around a `…N chars truncated…` marker. The full text is saved to a temporary file named in the result. Codemode scripts receive the complete result and can reduce it before returning output to the model.
 
-Codemode scripts receive the complete MCP `CallToolResult`, including `content`, `structuredContent`, and `isError`. A result with `isError` resolves inside scripts but is reported as an error for direct calls. `image(result.content[0])` forwards an image block. Server instructions are not part of any tool description; scripts read them with `describeNamespace("mcp__<server>")`, which also returns the server's tool names.
+In MCP's model-facing projection, image blocks and embedded image resources must contain canonical base64: decoding and re-encoding must reproduce the exact string. Invalid alphabet, padding or whitespace replaces only that image with a text diagnostic; surrounding text and valid images remain. Rejected payloads do not enter image processing or get saved as image files through this projection. This is an encoding check; valid encodings still pass through the normal image-format and size handling. The original remote result remains available to scripts without rewriting its image data.
+
+Codemode scripts receive the complete MCP `CallToolResult`, including `content`, `structuredContent`, and `isError`. A result with `isError` resolves inside scripts but is reported as an error for direct calls. Explicitly forwarding a raw block with `image(result.content[0])` uses codemode's image helper, which removes base64 whitespace and checks the image signature; it does not pass through MCP's projection again. Server instructions are not part of any tool description; scripts read them with `describeNamespace("mcp__<server>")`, which also returns the server's tool names.
 
 ## Use resources
 

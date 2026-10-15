@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderToolOutputType } from "@amazme/codemode/declarations";
 import {
+	type CallToolResult,
 	type JsonRpcMessage,
 	LATEST_PROTOCOL_VERSION,
 	McpAuthRequiredError,
@@ -12,7 +13,7 @@ import {
 	McpSessionExpiredError,
 } from "@amazme/mcp";
 import { createInMemoryTransportPair, type InMemoryTransport } from "@amazme/mcp/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
 import { truncateMiddle } from "../src/core/tools/truncate.ts";
 import {
@@ -391,6 +392,59 @@ describe("MCP tools", () => {
 			{ type: "image", data: "AAAA", mimeType: "image/png" },
 		]);
 		expect(saved).toEqual([[Buffer.from("%PDF"), ".pdf"]]);
+	});
+
+	it.each(["AB==", "AQ", "AQ=", "AQ===", "AQ==AA==", "AQ==\n", "A Q==", "_w==", "-w==", "A?Q=="])(
+		"replaces noncanonical image encoding %j per block without changing the script result",
+		async (data) => {
+			const saveOutput = vi.fn(async () => "/tmp/unexpected-image");
+			const result: CallToolResult = {
+				content: [
+					{ type: "text", text: "before" },
+					{ type: "image", data, mimeType: "image/png" },
+					{ type: "image", data: "AQ==", mimeType: "image/png" },
+					{ type: "resource", resource: { uri: "docs://image", mimeType: "image/png", blob: data } },
+					{ type: "text", text: "after" },
+				],
+				structuredContent: { original: true },
+			};
+			const original = structuredClone(result);
+
+			const converted = await convertMcpResult("docs", "shot", result, { saveOutput });
+
+			const omitted = { type: "text", text: "[MCP image from docs omitted: image data is not canonical base64.]" };
+			expect(converted.content).toEqual([
+				{ type: "text", text: "before" },
+				omitted,
+				{ type: "image", data: "AQ==", mimeType: "image/png" },
+				omitted,
+				{ type: "text", text: "after" },
+			]);
+			expect(converted.structuredContent).toEqual(original);
+			expect(result).toEqual(original);
+			expect(saveOutput).not.toHaveBeenCalled();
+		},
+	);
+
+	it("admits a 4 MiB canonical image and embedded image resource without recursive matching", async () => {
+		// This isolates encoding admission; the normal image pipeline still owns raster validation.
+		const data = Buffer.alloc(4 * 1024 * 1024, 0x41).toString("base64");
+		const saveOutput = vi.fn(async () => "/tmp/unexpected-image");
+		const result: CallToolResult = {
+			content: [
+				{ type: "image", data, mimeType: "image/png" },
+				{ type: "resource", resource: { uri: "docs://image", mimeType: "image/png", blob: data } },
+			],
+		};
+
+		const converted = await convertMcpResult("docs", "shot", result, { saveOutput });
+
+		expect(converted.content).toEqual([
+			{ type: "image", data, mimeType: "image/png" },
+			{ type: "image", data, mimeType: "image/png" },
+		]);
+		expect(converted.structuredContent).toEqual(result);
+		expect(saveOutput).not.toHaveBeenCalled();
 	});
 
 	it("cuts the middle of model-facing text over 20KB and keeps the full result for scripts", async () => {
