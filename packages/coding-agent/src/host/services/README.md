@@ -62,6 +62,8 @@ An interactive `amazme client` creates and attaches a Session before opening the
 
 The server keeps each Session in its own directory under the session directory: `meta.json` holds the ID, creation time, and working directory, and `session.sqlite` is the `@amazme/durable` storage. The server lists and creates Sessions from `meta.json` only. The Session worker locks the directory, opens the storage, and owns it until it retires; the worker stays alive while the Harness task graph has live tasks.
 
+Concurrent native catalog listings share a process-wide budget of three directory or metadata reads. Each listing preserves its directory order and skips missing or invalid metadata; failed reads release their slot before another listing proceeds. This does not change the SDK JSONL session loader's separate discovery limits.
+
 A foreground server uses repeatable `-e` options to establish its default Session, server and TUI facets. A local client may select packages for one Session. The selected package paths stay with the Session across worker restarts.
 
 AmazMe builds the selected roles as ESM artifacts in `plugin-builds/`, writes each `plugin.json` atomically, and sends the matching TUI code to the presentation. Chord's `nodeLoader` loads each generation. A Chord `Host` owns service records, resources and reload; the product retains its Durable Harness, approvals, project management, session mirrors and native plugins.

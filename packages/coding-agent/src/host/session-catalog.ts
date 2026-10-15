@@ -55,6 +55,23 @@ const METADATA_FILE = "meta.json";
 const STORAGE_FILE = "session.sqlite";
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
+const LIST_READ_LIMIT = 3;
+let activeListReads = 0;
+const waitingListReads: (() => void)[] = [];
+
+/** Concurrent catalog listings share one I/O budget, including their directory reads. */
+async function listingRead<T>(read: () => Promise<T>): Promise<T> {
+	if (activeListReads === LIST_READ_LIMIT) await new Promise<void>(resolve => waitingListReads.push(resolve));
+	else activeListReads++;
+	try {
+		return await read();
+	} finally {
+		const next = waitingListReads.shift();
+		if (next === undefined) activeListReads--;
+		else next(); // Transfer the reserved slot before another listing can acquire it.
+	}
+}
+
 export function isSessionId(id: string): boolean {
 	return SESSION_ID.test(id);
 }
@@ -68,12 +85,21 @@ export function sessionStoragePath(metadata: SessionCatalogMetadata): string {
 export async function listSessions(sessionDir: string): Promise<SessionCatalogMetadata[]> {
 	let names: string[];
 	try {
-		names = await readdir(sessionDir);
+		names = await listingRead(() => readdir(sessionDir));
 	} catch (error) {
 		if (isNotFound(error)) return [];
 		throw error;
 	}
-	const sessions = await Promise.all(names.filter(isSessionId).map((name) => readSession(sessionDir, name)));
+	const ids = names.filter(isSessionId);
+	const sessions = new Array<SessionCatalogMetadata | undefined>(ids.length);
+	let nextIndex = 0;
+	const worker = async (): Promise<void> => {
+		while (nextIndex < ids.length) {
+			const index = nextIndex++;
+			sessions[index] = await listingRead(() => readSession(sessionDir, ids[index]!));
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(LIST_READ_LIMIT, ids.length) }, worker));
 	return sessions.filter((metadata) => metadata !== undefined);
 }
 
