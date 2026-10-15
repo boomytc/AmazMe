@@ -281,6 +281,26 @@ describe("durable startup over SQLite", () => {
 		expect(restored.view.current().session.id).toBe(original.view.current().session.id);
 	});
 
+	// #10913: an inline key cannot identify which provider of a shared model it belongs to.
+	it("rejects an ambiguous inline key before storage even when one provider is authenticated", async () => {
+		const other = fauxProvider({ provider: "other", models: [{ id: "reason", reasoning: true }] });
+		runtime.registerNativeProvider({
+			...other.provider,
+			auth: { apiKey: {
+				name: "Fixture key",
+				check: async ({ credential }) => credential ? { type: "api_key", source: "stored" } : undefined,
+				resolve: async ({ credential }) => credential ? { auth: { apiKey: credential.key } } : undefined,
+			} },
+		});
+		await runtime.refresh({ allowNetwork: false });
+		expect(runtime.hasConfiguredAuth("faux")).toBe(true);
+		expect(runtime.hasConfiguredAuth("other")).toBe(false);
+		await expect(open({ model: "reason", apiKey: "fixture-secret" })).rejects.toThrow("--api-key does not choose a provider");
+		expect(existsSync(join(profile, "experimental", "durable-sessions"))).toBe(false);
+		const explicit = await open({ provider: "other", model: "reason", apiKey: "fixture-secret" });
+		expect(agentOf(explicit.view.current().conversation).model).toEqual({ provider: "other", modelId: "reason" });
+	});
+
 	it("uses a runtime API key for generation without persisting it", async () => {
 		runtime.registerNativeProvider({
 			...faux.provider,

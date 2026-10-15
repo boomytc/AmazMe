@@ -218,6 +218,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		: await findInitialAgentModel(settingsManager, modelRuntime, {
 			provider: options.provider,
 			model: options.model,
+			inlineApiKey: options.apiKey !== undefined,
 			thinkingLevel: options.thinkingLevel });
 	if (options.apiKey !== undefined && selected?.model !== undefined) {
 		await modelRuntime.setRuntimeApiKey(selected.model.provider, options.apiKey);

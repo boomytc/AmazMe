@@ -219,7 +219,7 @@ export function initialThinkingLevel(
 export async function findInitialAgentModel(
 	settingsManager: SettingsManager,
 	modelRuntime: ModelRuntime,
-	cli?: { readonly provider?: string; readonly model: string; readonly thinkingLevel?: ModelThinkingLevel },
+	cli?: { readonly provider?: string; readonly model: string; readonly thinkingLevel?: ModelThinkingLevel; readonly inlineApiKey?: boolean },
 	scopedModels: readonly ScopedModel[] = [],
 ): Promise<InitialModel> {
 	if (cli !== undefined) {
@@ -227,6 +227,7 @@ export async function findInitialAgentModel(
 			cliProvider: cli.provider,
 			cliModel: cli.model,
 			cliThinking: cli.thinkingLevel,
+			inlineApiKey: cli.inlineApiKey,
 			modelRuntime,
 		});
 		if (resolved.error !== undefined || resolved.model === undefined) {

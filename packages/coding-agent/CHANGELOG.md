@@ -10,11 +10,19 @@
 - SDK overflow recovery measures the real projection before and after compaction, retains completed summaries and reports insufficient recovery without resending. Ordinary truncated-output recovery retains its separate one-retry budget.
 - Default-tool session resume restores the recorded active loadout with CLI modifiers; explicit tool selection remains authoritative.
 - Codemode worker admission is shared by SDK and native sessions and stays reserved until actual exit, keeping cancellation prompt without allowing unbounded surviving workers.
+- CLI, model scopes and credential printing share one provider-selection policy; inline API keys do not silently choose among providers. The default Durable terminal uses the same rule.
+- Read line-range labels accept finite numeric strings and omitted null fields consistently in the TUI, session tree, HTML export and examples.
+- Prompt-template arguments retain empty quoted strings and their positional indexes.
 
 ### Added
 
 - `sessionShareDestination` selects automatic, Radius or private GitHub Gist sharing; an explicit Radius destination never falls back to Gist.
 - NVIDIA RTX llama.cpp recipe conversion guide and prerequisites, adapted to AmazMe commands.
+
+### Changed
+
+- Product plugin and session consumers use Chord protocol 4, explicit host and parent principals, placed contracts and hydrated references. Coordinator protocol is 5; product services use the services: host family.
+
 
 ## [1.2.0] - 2026-10-13
 
