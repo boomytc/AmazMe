@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createHost, memoryLinkPair, replicatedState } from "@amazme/chord";
 import type { Context, ReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
-import { remoteService, serviceFacet, ServiceScope } from "../src/services.ts";
+import { createServiceHost, remoteService, serviceFacet, ServiceScope } from "../src/services.ts";
 
 interface Counter {
 	state: ReplicatedState<{ count: number }>;
@@ -31,7 +31,7 @@ describe("product services on Chord", () => {
 					},
 				};
 			});
-		const host = createHost();
+		const host = createServiceHost();
 		const scope = new ServiceScope(host);
 		try {
 			await host.load([facet(1)]);
@@ -49,9 +49,9 @@ describe("product services on Chord", () => {
 		expect(closed).toEqual([1, 5]);
 	});
 	it("carries methods and state across a native link", async () => {
-		const server = createHost({ name: "server" });
-		const client = createHost({ name: "client", kind: "client" });
-		const scope = new ServiceScope(client, { at: "server" });
+		const server = createServiceHost("server");
+		const client = createHost({ self: { client: "client" }, name: "client", kind: "client" });
+		const scope = new ServiceScope(client, { host: server.name });
 		try {
 			await server.load([
 				serviceFacet("counter", Counter, [], () => ({
@@ -65,7 +65,7 @@ describe("product services on Chord", () => {
 			]);
 			const [left, right] = memoryLinkPair();
 			server.accept(left, { principal: { id: "client" } });
-			client.connect(right);
+			client.connect(right, { principal: { host: server.name } });
 			const counter = scope.get(Counter);
 			await scope.ready();
 			expect(counter.state.value).toEqual({ count: 3 });
@@ -80,7 +80,7 @@ describe("product services on Chord", () => {
 
 import { activationFacet, serviceSetFacet } from "../src/services.ts";
 it("reloads a group of stateful surfaces with a host-owned dependent", async () => {
-	const host = createHost();
+	const host = createServiceHost();
 	const scope = new ServiceScope(host);
 	const facet = (value: number) =>
 		serviceSetFacet("group", [Counter], [], async () => ({
@@ -113,17 +113,17 @@ it("preserves packed snapshots, arguments and results through the attachment JSO
 		"test.large", { echo: 1 }, ["state"],
 	);
 	const text = "large payload ".repeat(20_000);
-	const server = createHost({ name: "large-server" });
+	const server = createServiceHost("large-server");
 	const endpoint = new ChannelEndpoint(server, () => []);
-	const client = createHost({ kind: "client" });
-	const scope = new ServiceScope(client, { at: server.name });
+	const client = createHost({ self: { client: globalThis.crypto.randomUUID() }, kind: "client" });
+	const scope = new ServiceScope(client, { host: server.name });
 	try {
 		await server.load([serviceFacet("large", Large, [], () => ({ value: {
 			state: replicatedState({ text }), echo: async value => value,
 		} }))]);
 		const channel = await openChannel((call, publish, ctx) => endpoint.invoke(call,
 			(name, frame, context) => publish(name, frame === undefined ? undefined : parseChannelFrame(frameJson(frame)), context), ctx), context);
-		client.connect(channel.link);
+		client.connect(channel.link, { principal: { host: channel.host } });
 		const large = scope.get(Large);
 		await scope.ready();
 		expect(large.state.value?.text).toBe(text);
@@ -138,7 +138,7 @@ it("preserves packed snapshots, arguments and results through the attachment JSO
 });
 it("isolates identical channel names across attachments and joins cancelled call cleanup", async () => {
 	const Pending = remoteService<{ wait(context: Context): Promise<void> }>("test.pending", { wait: 0 });
-	const server = createHost({ name: "server" });
+	const server = createServiceHost("server");
 	let started = 0;
 	let aborted = 0;
 	let finishCleanup!: () => void;
@@ -168,9 +168,9 @@ it("isolates identical channel names across attachments and joins cancelled call
 					endpoint.invoke(call.kind === "catalogue" ? call : { ...call, channel: "same" }, publish, ctx),
 				context,
 			);
-			const host = createHost({ kind: "client" });
-			host.connect(connection.link);
-			const scope = new ServiceScope(host, { at: connection.host });
+			const host = createHost({ self: { client: globalThis.crypto.randomUUID() }, kind: "client" });
+			host.connect(connection.link, { principal: { host: connection.host } });
+			const scope = new ServiceScope(host, { host: connection.host });
 			const pending = scope.get(Pending);
 			await scope.ready();
 			return { endpoint, connection, host, scope, result: pending.wait(context).catch(() => {}) };
@@ -201,7 +201,7 @@ it("isolates identical channel names across attachments and joins cancelled call
 
 it("bounds slow state subscribers while delivering the latest revision", async () => {
 	const state = replicatedState({ count: 0 });
-	const host = createHost();
+	const host = createServiceHost();
 	const scope = new ServiceScope(host);
 	let release!: () => void;
 	const blocked = new Promise<void>((resolve) => {

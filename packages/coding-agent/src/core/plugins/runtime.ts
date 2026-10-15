@@ -1,6 +1,6 @@
-import { createHost, type Facet, type FacetLoader, type Host } from "@amazme/chord";
+import type { Facet, FacetLoader, Host } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { ServiceHost } from "@amazme/protocol/services";
+import { createServiceHost, ServiceHost } from "@amazme/protocol/services";
 import type { Harness } from "@amazme/durable";
 
 export interface PluginRuntime {
@@ -17,7 +17,7 @@ export async function openPluginRuntime(
 	loader: FacetLoader,
 	beforeReload?: () => Promise<void>,
 ): Promise<PluginRuntime> {
-	const host = createHost({ name: "plugins" });
+	const host = createServiceHost("plugins");
 	const services = new ServiceHost(host.name, host);
 	let plugins: Facet[];
 	try {

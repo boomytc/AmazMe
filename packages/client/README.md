@@ -21,7 +21,8 @@ const client = await Client.connect({
 });
 const catalogue = await client.describeServices({ serverId: client.serverId });
 const channel = await client.openLink({ serverId: client.serverId });
-// Connect a Chord client Host to channel.link and get contracts at channel.host.
+// Connect the Chord client with host.connect(channel.link, { principal: { host: channel.host } }).
+// A ServiceScope uses { host: channel.host }; raw contracts carry placement in their input.
 // await channel.close() joins remote cleanup when the channel is no longer needed.
 ```
 

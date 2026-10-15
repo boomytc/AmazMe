@@ -58,9 +58,9 @@ export default activationFacet("example/commands", [SlashCommands, AgentControll
 
 宿主的 `Models` 服务同样使用当前选中对话。模型与推理强度存于该对话的 `AgentDoc`，其他分叉保持各自配置；读取可用推理强度、循环和显式选择都以实际目标文档为准。选择模型同时沿用 Pi 的新会话默认设置保存行为，重启已有会话时仍恢复其持久配置。
 
-自定义 Chord 服务使用 `remote()` / `local()` 契约、同步 `defineFacet(api => ...)` 和 `api.serve()`。工厂通过 `self.get()` 声明依赖，通过 `self.resource(name, declaration)`、`self.on(name, source, handler)` 管理资源和监听器，通过 `self.state(name, schema, initial, options)` 声明各自带版本及迁移函数的状态单元；调用取消与代际上下文由 `host.root()` 传递。详见 [Chord 文档](../../chord/README.md)。
+自定义 Chord 服务使用 `remote()` / `local()` 契约、同步 `defineFacet(api => ...)` 和 `api.serve()`。工厂通过 `self.get()` 声明依赖，通过 `self.resource(name, declaration)`、`self.on(name, source, handler)` 管理资源和监听器，通过 `self.state(name, schema, initial, options)` 声明各自带版本及迁移函数的状态单元；调用取消与代际上下文由 `host.root()` 传递。远程契约必须用 `hostNamed()` 或 `hostFamily()` 声明位置；应用创建 Host 时提供 `self`，连接父宿主时提供 `principal`。`host.get()` 和 `ctx.get()` 等待状态就绪，界面需要同步引用时使用 `host.hold()`；`self.get()` 仍为同步声明，Chord 会在激活前等待其依赖。`self.state()` 也可用 `{ init(ctx) }` 从资源或依赖初始化首值。详见 [Chord 文档](../../chord/README.md)。
 
-产品现有领域接口使用 `@amazme/protocol/services`：`remoteService<T>(名称, 方法参数个数表, 状态成员名)` 声明位置参数与 Context 契约，`localService<T>(名称)` 声明本机对象，`serviceFacet()` 创建并持有一个实现，`activationFacet()` 持有注册租约。依赖列表必须明确列出；框架直接调用 Chord Host、句柄和资源，不提供另一套 RPC 或热重载运行时。接口中最后一个 `Context` 不计入位置参数表。公开方法与状态由 Chord 传输；本机对象不会进入远程目录。
+产品现有领域接口使用 `@amazme/protocol/services`：`remoteService<T>(名称, 方法参数个数表, 状态成员名)` 声明位置参数与 Context 契约，`localService<T>(名称)` 声明本机对象，`serviceFacet()` 创建并持有一个实现，`activationFacet()` 持有注册租约。依赖列表必须明确列出；框架直接调用 Chord Host、句柄和资源，不提供另一套 RPC 或热重载运行时。接口中最后一个 `Context` 不计入位置参数表。远程声明使用 `services:` 宿主族及输入中的 `host` 字段，`createServiceHost()` 创建对应宿主，`ServiceScope` 使用 `{ host }` 指定已连接的目标。公开方法与状态由 Chord 传输；本机对象不会进入远程目录。
 
 完成检查可使用 `hook(GenerationTask, { onYield })`。最终响应先写入 Durable 检查点，再运行该钩子；检查期间关闭并重开会继续处理原响应。`api.commit()` 可更新插件文档或创建 `ownership: { kind: "task", taskId: api.taskId }` 的所属任务，回调返回 `undefined`；`api.waitForTask()` 等待其终态。检查失败可返回 `{ continue: "具体反馈" }`，沿用原输入继续；用户跟进或 reset 被最终边界选中时，既有队列策略优先。检查的次数上限、超时与结果属于插件自己的持久状态，不把模型的原始响应当成验证结果。
 
@@ -107,7 +107,7 @@ export default activationFacet("example/commands", [SlashCommands, AgentControll
 
 重载串行处理，只在会话任务结束或取消后进行。加载和切换期间拒绝新的模型操作。候选版本准备失败时，清理候选并保留旧版；切换完成后的清理失败可能使 Chord 宿主失效，此时拒绝继续运行，需重启会话。关闭会话先等待 Harness 结束工具调用，再关闭 Chord Host 并释放插件资源。临时导入文件在导入完成或失败后立即删除。
 
-CLI 源码插件由重载入口重新构建；Web 的 `/reload` 先请求既有宿主构建服务重建当前会话选中的包，再由 worker 加载产物。构建失败时原版本继续可用，修复源码后可重试；活动任务需先结束或取消。重载期间切换会话不会把迟到的产物用于新会话。应用直接提供 manifest loader 时仍需先生成新的 facet 产物。Facet 名称、契约版本与输入遵循 Chord 的重载约束。服务接口变更必须同步修改消费者；产品协议版本为 9，不保留旧服务消息解析。浏览器构建、应用壳及内核源码仍有各自的构建与重启边界，不承诺所有源码热替换。
+CLI 源码插件由重载入口重新构建；Web 的 `/reload` 先请求既有宿主构建服务重建当前会话选中的包，再由 worker 加载产物。构建失败时原版本继续可用，修复源码后可重试；活动任务需先结束或取消。重载期间切换会话不会把迟到的产物用于新会话。应用直接提供 manifest loader 时仍需先生成新的 facet 产物。Facet 名称、契约版本与输入遵循 Chord 的重载约束。服务接口变更必须同步修改消费者；产品协议版本为 11，Chord 链接协议为 4，不保留旧服务消息解析。浏览器构建、应用壳及内核源码仍有各自的构建与重启边界，不承诺所有源码热替换。
 
 ## 工具结果与嵌套调用
 

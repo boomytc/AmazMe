@@ -2,7 +2,7 @@
 import {
 	createHost,
 	defineRegistry,
-	hostPrincipal,
+	hostFamily,
 	local,
 	method,
 	opaque,
@@ -38,6 +38,17 @@ export interface ServiceDescription {
 }
 let resourceVersion = 0;
 export const ServiceDescriptions = defineRegistry<ServiceDescription>("amazme.services");
+const SERVICE_HOST_PREFIX = "services:";
+
+export function createServiceHost(name = "services"): Host {
+	return createHost({ name: `${SERVICE_HOST_PREFIX}${name}`, self: { host: name } });
+}
+
+function serviceInput(service: ApplicationService, host: string): { host: string } | Record<string, never> {
+	if (service.contract.scope === "local") return {};
+	if (!host.startsWith(SERVICE_HOST_PREFIX)) throw new Error(`Invalid service host ${host}`);
+	return { host: host.slice(SERVICE_HOST_PREFIX.length) };
+}
 
 /** Positional domain arguments are a single array on the wire; Context is carried by Chord's root. */
 export function remoteService<T>(
@@ -49,7 +60,8 @@ export function remoteService<T>(
 		name,
 		contract: remote(name, {
 			version: 1,
-			input: Type.Object({}, { additionalProperties: false }),
+			input: Type.Object({ host: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+			host: hostFamily(SERVICE_HOST_PREFIX, "host"),
 			variants: {
 				default: {
 					state: Object.fromEntries(states.map((key) => [key, Type.Unknown()])),
@@ -199,7 +211,7 @@ export function serviceView<T>(
 
 /** One host-owned implementation, with remote facades borrowing it under their caller's principal. */
 export function serveService<T>(
-	api: Pick<FacetApi, "serve" | "root">,
+	api: Pick<FacetApi, "name" | "serve" | "root">,
 	service: ApplicationService<T>,
 	options: {
 		dependencies?: readonly ApplicationService[];
@@ -219,7 +231,7 @@ export function serveService<T>(
 			const dependencies = new Map(
 				(options.dependencies ?? []).map((dependency) => [
 					dependency.name,
-					{ dependency, ref: self.get(dependency.contract, {}, { principal: hostPrincipal }) },
+					{ dependency, ref: self.get(dependency.contract, serviceInput(dependency, api.name)) },
 				]),
 			);
 			const implementation = self.resource("instance", {
@@ -266,7 +278,7 @@ function serveBorrowed<T>(
 	select: (value: unknown) => T,
 ): void {
 	const factory = (_input: unknown, _principal: unknown, self: Parameters<Factory<AnyContract>>[2]) => {
-		const implementation = self.get(backing, {}, { principal: hostPrincipal });
+		const implementation = self.get(backing, {});
 		const get = () => select((implementation as unknown as { value: unknown }).value) as Record<string, unknown>;
 		if (service.contract.scope === "local")
 			return {
@@ -322,39 +334,19 @@ export function activationFacet(
 
 export class ServiceScope implements ServiceResolver {
 	readonly #host: Host;
-	readonly #at: string | undefined;
+	readonly #targetHost: string;
 	readonly #refs = new Map<string, Ref>();
 	readonly #views = new Map<string, unknown>();
-	readonly #hydrations: Promise<void>[] = [];
-	readonly #subscriptions: (() => void)[] = [];
 	#closed = false;
-	constructor(host: Host, options: { at?: string } = {}) {
+	constructor(host: Host, options: { host?: string } = {}) {
 		this.#host = host;
-		this.#at = options.at;
+		this.#targetHost = options.host ?? host.name;
 	}
 	get<T>(service: ApplicationService<T>): T {
 		if (this.#closed) throw new Error("Service scope is closed");
 		if (!this.#views.has(service.name)) {
-			const ref = this.#host.get(service.contract, {}, this.#at === undefined ? {} : { at: this.#at });
+			const ref = this.#host.hold(service.contract, serviceInput(service, this.#targetHost));
 			this.#refs.set(service.name, ref);
-			for (const name of service.states) {
-				const state = (ref as unknown as Record<string, Readable<unknown>>)[name]!;
-				const hydration = new Promise<void>((resolve, reject) => {
-					this.#subscriptions.push(
-						state.subscribe((value) => {
-							if (value !== undefined) resolve();
-						}),
-					);
-					this.#subscriptions.push(
-						ref.onStatus((status, error) => {
-							if (status === "gone" || status === "released")
-								reject(error ?? new Error("Service released before hydration"));
-						}),
-					);
-				});
-				hydration.catch(() => {});
-				this.#hydrations.push(hydration);
-			}
 			this.#views.set(
 				service.name,
 				serviceView(service, ref, this.#host, () => {
@@ -367,7 +359,7 @@ export class ServiceScope implements ServiceResolver {
 	async ready(context: Context = BACKGROUND_CONTEXT): Promise<void> {
 		context.abortSignal?.throwIfAborted();
 		await awaitWithContext(
-			Promise.all([...this.#refs.values()].map((ref) => ref.ready).concat(this.#hydrations)).then(() => {}),
+			Promise.all([...this.#refs.values()].map((ref) => ref.ready)).then(() => {}),
 			context,
 		);
 		context.abortSignal?.throwIfAborted();
@@ -375,7 +367,6 @@ export class ServiceScope implements ServiceResolver {
 	dispose(): void {
 		if (this.#closed) return;
 		this.#closed = true;
-		for (const stop of this.#subscriptions) stop();
 		for (const ref of this.#refs.values()) ref.release();
 		this.#refs.clear();
 		this.#views.clear();
@@ -387,7 +378,7 @@ export class ServiceHost {
 	readonly host: Host;
 	readonly scope: ServiceScope;
 	constructor(name = "services", host?: Host) {
-		this.host = host ?? createHost({ name });
+		this.host = host ?? createServiceHost(name);
 		this.scope = new ServiceScope(this.host);
 	}
 	get catalogue(): readonly ServiceDescription[] {

@@ -550,10 +550,10 @@ describe("experimental durable server composition", () => {
   onTestFinished(() => spawn.mockRestore());
   const { runtime } = await makeServer(); const client = await attachClient(runtime, "demo-1");
   const channel = await client.openLink(client.attachment!);
-  const host = createHost({ kind: "client" }); host.connect(channel.link);
+  const host = createHost({ self: { client: globalThis.crypto.randomUUID() }, kind: "client" }); host.connect(channel.link, { principal: { host: channel.host } });
   try {
-   const first = host.get(KeyedProbe, { key: "first" }, { at: channel.host });
-   const second = host.get(KeyedProbe, { key: "second" }, { at: channel.host });
+   const first = await host.get(KeyedProbe, { host: channel.host.slice("services:".length), key: "first" });
+   const second = await host.get(KeyedProbe, { host: channel.host.slice("services:".length), key: "second" });
    const stopFirst = first.state.subscribe(() => {}); const stopSecond = second.state.subscribe(() => {});
    await Promise.all([first.ready, second.ready]);
    await host.root(ctx => first.replace("changed", ctx));

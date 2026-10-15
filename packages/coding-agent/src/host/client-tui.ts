@@ -1,7 +1,7 @@
 import { sourceFacets } from "./services/connection.ts";
-import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
+import { createServiceHost, serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
 import { resolve } from "node:path";
-import { createHost, type Host, type Facet, type FacetLoader, type JsonValue } from "@amazme/chord";
+import type { Host, Facet, FacetLoader, JsonValue } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import type { AgentState, ConversationView, EntryRecord } from "@amazme/durable";
 import { CombinedAutocompleteProvider, type Component, Container, isFocusable, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
@@ -365,7 +365,7 @@ export class ExperimentalClientTui implements Component {
    createBuiltInSlashCommandsFacet({ reloadPresentationPlugins, authenticate: (mode, provider) => this.#authenticate(mode, provider) }),
    ...(hasInsights ? [createInsightsCommandsFacet()] : []), ...this.#sharedFacets,
   ];
-  facetHost = createHost({ name: "presentation" });
+  facetHost = createServiceHost("presentation");
   this.#facetHost = facetHost;
   const bridges = await sourceFacets([...builtins, ...presentationFacets], [server.server, server.session]);
   await facetHost.load([...bridges, ...builtins, ...presentationFacets]);

@@ -5,10 +5,13 @@
 ### Breaking Changes
 
 - Public protocol 10 requires Chord link protocol 2, rejecting stale consumers at the authenticated byte handshake before opening incompatible native channels.
+- Public protocol 11 uses Chord protocol 4, rejecting stale consumers before opening native channels. Remote domain services declare the services: host family in their contract input; ServiceScope selects it with { host }, and createServiceHost creates its owner.
 
 ### Changed
 
 - Application service owners use Chord host lifetimes, remote variants and reference types. Channel bridges preserve compressed payloads across JSON/CBOR instead of serializing opaque packed objects as ordinary values.
+- ServiceScope holds UI references synchronously and waits for Chord's own hydration barrier, without a second snapshot-readiness subscription.
+
 
 ## [1.2.0] - 2026-10-13
 

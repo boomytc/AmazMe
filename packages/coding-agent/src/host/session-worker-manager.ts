@@ -231,10 +231,10 @@ export class SessionWorkerManager {
 
  async #inspect<T>(worker: WorkerRecord, scope: WorkerOperationScope, fn: (lifecycle: SessionLifecycle) => Promise<T>, context: Context): Promise<T> {
   const connection = await openChannel((call, publish, ctx) => this.#invokeChannel(worker, scope, call, publish, ctx), context);
-  const host = createHost({ kind: "client" });
-  const services = new ServiceScope(host, { at: connection.host });
+  const host = createHost({ self: { client: globalThis.crypto.randomUUID() }, kind: "client" });
+  const services = new ServiceScope(host, { host: connection.host });
   try {
-   host.connect(connection.link);
+   host.connect(connection.link, { principal: { host: connection.host } });
    const lifecycle = services.get(SessionLifecycle);
    await services.ready(context);
    return await fn(lifecycle);

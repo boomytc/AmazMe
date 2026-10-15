@@ -173,11 +173,11 @@ class RoutedServiceBinding implements RoutedServices {
 								}),
 								readyContext,
 							);
-							const host = createHost({ kind: "client", onError: (error) => this.#options.onError(toError(error)) });
-							peer = { host, scope: new ServiceScope(host, { at: connection.host }), connection };
+							const host = createHost({ self: { client: globalThis.crypto.randomUUID() }, kind: "client", onError: (error) => this.#options.onError(toError(error)) });
+							peer = { host, scope: new ServiceScope(host, { host: connection.host }), connection };
 							peers.set(route, peer);
 							this.#peers.push(peer);
-							host.connect(connection.link);
+							host.connect(connection.link, { principal: { host: connection.host } });
 						}
 						this.#live.set(service.name, peer.scope.get(service));
 					}
