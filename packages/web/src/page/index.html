@@ -141,11 +141,16 @@
 				<div class="header-end">
 					<!-- Pending tool approvals. Stays in the header when the transcript is empty or the cards are off screen. -->
 					<span class="approval-status" id="approval-status" hidden></span>
-					<!-- Context occupancy, tokens, and cost. Always visible, the same three figures as the TUI top bar. -->
-					<div class="status-meter" id="status-meter">
-						<span id="meter-context">?</span>
-						<span id="meter-tokens">? / ?</span>
-						<span id="meter-cost">$0.000</span>
+					<!-- Context occupancy, tokens, and cost. Shown once usage exists; detailed figures sit in the disclosure. -->
+					<div class="status-meter" id="status-meter" hidden>
+						<button class="meter-trigger" type="button" id="meter-trigger" aria-expanded="false" aria-controls="meter-detail">
+							<span id="meter-context">?</span>
+							<svg class="icon meter-chevron" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
+						</button>
+						<div class="meter-detail" id="meter-detail" hidden>
+							<div class="meter-detail-row"><span class="meter-detail-label" id="meter-tokens-label"></span><span id="meter-tokens">? / ?</span></div>
+							<div class="meter-detail-row"><span class="meter-detail-label" id="meter-cost-label"></span><span id="meter-cost">$0.000</span></div>
+						</div>
 					</div>
 					<!-- The session's run controls (compaction, fork, the session tools); the renderer fills this. -->
 					<div class="header-actions" id="run-actions"></div>

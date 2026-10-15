@@ -626,6 +626,54 @@ export function createRenderer(
 	const chromeValues = new Map<string, unknown>();
 	const modelSetup = elements.modelSetup ?? modelSetupElement(elements.modelSelect);
 	const transcriptLatest = elements.transcriptLatest ?? transcriptLatestElement(elements.transcript);
+	let meterExpanded = false;
+	const ensureMeterElements = (): {
+		readonly trigger: HTMLButtonElement;
+		readonly detail: HTMLElement;
+		readonly tokensLabel: HTMLElement;
+		readonly costLabel: HTMLElement;
+	} => {
+		const existingTrigger = elements.meter.querySelector<HTMLButtonElement>("#meter-trigger");
+		const existingDetail = elements.meter.querySelector<HTMLElement>("#meter-detail");
+		const existingTokensLabel = elements.meter.querySelector<HTMLElement>("#meter-tokens-label");
+		const existingCostLabel = elements.meter.querySelector<HTMLElement>("#meter-cost-label");
+		if (existingTrigger && existingDetail && existingTokensLabel && existingCostLabel) {
+			return {
+				trigger: existingTrigger,
+				detail: existingDetail,
+				tokensLabel: existingTokensLabel,
+				costLabel: existingCostLabel,
+			};
+		}
+		const trigger = button("meter-trigger");
+		trigger.id = "meter-trigger";
+		trigger.setAttribute("aria-expanded", "false");
+		trigger.setAttribute("aria-controls", "meter-detail");
+		trigger.append(elements.meterContext, icon("chevron-down", "icon meter-chevron"));
+		const detail = element("div", "meter-detail");
+		detail.id = "meter-detail";
+		detail.hidden = true;
+		const tokensRow = element("div", "meter-detail-row");
+		const tokensLabel = element("span", "meter-detail-label");
+		tokensLabel.id = "meter-tokens-label";
+		tokensRow.append(tokensLabel, elements.meterTokens);
+		const costRow = element("div", "meter-detail-row");
+		const costLabel = element("span", "meter-detail-label");
+		costLabel.id = "meter-cost-label";
+		costRow.append(costLabel, elements.meterCost);
+		detail.append(tokensRow, costRow);
+		elements.meter.replaceChildren(trigger, detail);
+		return { trigger, detail, tokensLabel, costLabel };
+	};
+	const meterNodes = ensureMeterElements();
+	const setMeterExpanded = (open: boolean, restoreFocus = false): void => {
+		meterExpanded = open;
+		meterNodes.trigger.setAttribute("aria-expanded", String(open));
+		meterNodes.detail.hidden = !open;
+		if (open) elements.meter.dataset.open = "true";
+		else delete elements.meter.dataset.open;
+		if (!open && restoreFocus) meterNodes.trigger.focus({ preventScroll: true });
+	};
 	let seenTranscriptDigest = "";
 	let unreadTranscriptBelow = false;
 	const transcriptDigest = (view: WebView): string =>
@@ -1618,7 +1666,10 @@ export function createRenderer(
 		document.body.classList.toggle("management-page", open);
 		elements.sessionSidebar.hidden = open;
 		elements.sectionSidebar.hidden = !open;
-		elements.meter.hidden = open;
+		if (open) {
+			setMeterExpanded(false);
+			elements.meter.hidden = true;
+		}
 		elements.runActions.hidden = open;
 		elements.laneStatus.hidden = open || view.lane.length === 0;
 		elements.view.hidden = !open;
@@ -1692,19 +1743,37 @@ export function createRenderer(
 		elements.approvalStatus.setAttribute("aria-label", indicator.label);
 	};
 
-	/** Context %, tokens, and cost. Painted on every view, including before a session is attached. */
+	/** Context %, tokens, and cost. Shown once usage exists; detailed figures sit in the disclosure. */
 	const renderMeter = (view: WebView): void => {
-		elements.meterContext.textContent = view.meter.context;
-		elements.meterTokens.textContent = view.meter.tokens;
+		const hasTokens = !view.meter.tokens.startsWith("? /");
+		const hasCost = view.meter.cost !== "$0.000";
+		const hasContext = view.meter.context !== "?";
+		const hasUsage = view.attachedId !== undefined && view.panel.panel === undefined && (hasContext || hasTokens || hasCost);
+		if (!hasUsage) {
+			setMeterExpanded(false);
+			elements.meter.hidden = true;
+			return;
+		}
+		const usedTokens = view.meter.tokens.split(" / ")[0] ?? view.meter.tokens;
+		const summaryText = hasContext ? view.meter.context : hasTokens ? usedTokens : view.meter.cost;
+		const displayTokens = view.meter.tokens.endsWith(" / ?") ? usedTokens : view.meter.tokens;
+		elements.meterContext.textContent = summaryText;
+		elements.meterTokens.textContent = displayTokens;
 		elements.meterCost.textContent = view.meter.cost;
+		meterNodes.tokensLabel.textContent = copy("header.meterTokens");
+		meterNodes.costLabel.textContent = copy("header.meterCost");
+		if (elements.meterTokens.parentElement) elements.meterTokens.parentElement.hidden = !hasTokens;
 		elements.meter.dataset.tone = view.meter.tone;
 		const meterLabel = copy("header.meter", {
-			context: view.meter.context,
-			tokens: view.meter.tokens,
+			context: summaryText,
+			tokens: displayTokens,
 			cost: view.meter.cost,
 		});
 		elements.meter.setAttribute("aria-label", meterLabel);
 		elements.meter.title = meterLabel;
+		meterNodes.trigger.title = meterLabel;
+		meterNodes.trigger.setAttribute("aria-label", `${copy("header.meterToggle")}: ${meterLabel}`);
+		elements.meter.hidden = false;
 	};
 
 	/** A disclosure whose open state is the reader's, falling back to a per-block default. */
@@ -2703,6 +2772,7 @@ export function createRenderer(
 				modelSetupReturn = undefined;
 				seenTranscriptDigest = transcriptDigest(view);
 				unreadTranscriptBelow = false;
+				setMeterExpanded(false);
 			}
 
 			// Streaming repaints keep the roster's nodes and keyboard focus when it has not changed.
@@ -3127,9 +3197,13 @@ export function createRenderer(
 		if (lastView !== undefined) syncSettingsChrome(lastView);
 		else syncSidebarToggle();
 	});
+	meterNodes.trigger.addEventListener("click", () => {
+		if (!elements.meter.hidden) setMeterExpanded(!meterExpanded);
+	});
 	document.addEventListener("pointerdown", (event) => {
 		const target = event.target;
 		if (sessionMenu !== undefined && target instanceof Node && !sessionMenu.node.contains(target) && !sessionMenuTrigger(sessionMenu.id)?.contains(target)) closeSessionMenu();
+		if (meterExpanded && target instanceof Node && !elements.meter.contains(target)) setMeterExpanded(false);
 	});
 	const gestureOf = (event: KeyboardEvent): ShortcutGesture => {
 		if (isStopChord(event)) return { code: event.code, primary: false, alt: false, shift: false, control: true };
@@ -3189,6 +3263,11 @@ export function createRenderer(
 		if (sessionMenu !== undefined) {
 			event.preventDefault();
 			closeSessionMenu(true);
+			return;
+		}
+		if (meterExpanded) {
+			event.preventDefault();
+			setMeterExpanded(false, true);
 			return;
 		}
 		if (elements.modalRoot.hidden === false) {

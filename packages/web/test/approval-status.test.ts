@@ -102,4 +102,39 @@ describe("pending approval indicator", () => {
 		expect(mark?.hidden).toBe(false);
 		expect(mark?.textContent).toBe("Waiting for approval 1");
 	});
+
+	test("hides the header usage meter while empty and reveals expandable token and cost details once usage arrives", () => {
+		const elements = collectPageElements();
+		const renderer = createRenderer(elements);
+		const emptyView = buildWebView(input([]));
+		renderer.render(emptyView);
+		expect(elements.meter.hidden).toBe(true);
+
+		const withUsage = {
+			...emptyView,
+			meter: {
+				context: "42.5%",
+				tokens: "8.5k / 20k",
+				cost: "$0.125",
+				tone: "neutral" as const,
+			},
+		};
+		renderer.render(withUsage);
+		expect(elements.meter.hidden).toBe(false);
+		expect(elements.meterContext.textContent).toBe("42.5%");
+		const trigger = document.getElementById("meter-trigger");
+		const detail = document.getElementById("meter-detail");
+		expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+		expect(detail?.hidden).toBe(true);
+
+		trigger?.click();
+		expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+		expect(detail?.hidden).toBe(false);
+		expect(elements.meterTokens.textContent).toBe("8.5k / 20k");
+		expect(elements.meterCost.textContent).toBe("$0.125");
+
+		document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+		expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+		expect(detail?.hidden).toBe(true);
+	});
 });

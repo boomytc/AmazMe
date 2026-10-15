@@ -968,13 +968,13 @@ p {
 	white-space: nowrap;
 }
 
-/* Context, tokens, and cost as one quiet line. The separators are the pseudo-elements between the
-   three figures, so a hidden figure takes its separator with it. */
+/* Context occupancy in the top bar; detailed tokens and cost open in the disclosure popover. */
 .status-meter {
+	position: relative;
 	display: flex;
 	align-items: center;
 	min-width: 0;
-	margin-right: 8px;
+	margin-right: 4px;
 	color: var(--text-3);
 	font-size: 12px;
 	line-height: 16px;
@@ -982,10 +982,67 @@ p {
 	white-space: nowrap;
 }
 
-.status-meter > span + span::before {
-	content: "·";
-	margin: 0 6px;
-	opacity: 0.6;
+.meter-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 28px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	transition:
+		background var(--dur-fast) var(--ease),
+		color var(--dur-fast) var(--ease);
+}
+
+.meter-trigger:hover,
+.meter-trigger[aria-expanded="true"] {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.meter-chevron {
+	width: 12px;
+	height: 12px;
+	color: var(--text-3);
+	transition: transform var(--dur-fast) var(--ease);
+}
+
+.meter-trigger[aria-expanded="true"] .meter-chevron {
+	transform: rotate(180deg);
+}
+
+.meter-detail {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 1120;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 176px;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--raised);
+	box-shadow: var(--shadow-popover);
+	color: var(--text);
+}
+
+.meter-detail-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.meter-detail-label {
+	color: var(--text-3);
+	font-size: 12px;
 }
 
 .status-meter[data-tone="warning"] #meter-context {
@@ -1029,10 +1086,6 @@ p {
 /* Header priority: usage contracts first, then action diagnostics, then the session name.
    The center can be much narrower than the window when both side panels are columns. */
 @container (max-width: 880px) {
-	#meter-tokens {
-		display: none;
-	}
-
 	.connection {
 		max-width: 120px;
 		overflow: hidden;
@@ -3687,9 +3740,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 		padding: 10px 8px 10px 6px;
 	}
 
-	/* The title keeps the room on a phone: the lane line and the token pair step aside. */
-	.lane-status,
-	#meter-tokens {
+	/* The title keeps the room on a phone: the lane line steps aside. */
+	.lane-status {
 		display: none;
 	}
 

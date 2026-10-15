@@ -145,6 +145,10 @@ export const EN = {
 	"header.conversation": "{session} · {conversation}",
 	"header.connecting": "Connecting to the host…",
 	"header.meter": "Context {context}, tokens {tokens}, cost {cost}",
+	"header.meterToggle": "Session usage details",
+	"header.meterContext": "Context",
+	"header.meterTokens": "Tokens",
+	"header.meterCost": "Cost",
 	"header.pendingApprovals": "Waiting for approval {count}",
 
 	"connection.starting": "starting…",
@@ -939,6 +943,10 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"header.conversation": "{session} · {conversation}",
 	"header.connecting": "正在连接宿主…",
 	"header.meter": "上下文 {context}，token {tokens}，费用 {cost}",
+	"header.meterToggle": "查看会话用量详情",
+	"header.meterContext": "上下文",
+	"header.meterTokens": "Token 用量",
+	"header.meterCost": "累计费用",
 	"header.pendingApprovals": "等待审批 {count}",
 
 	"connection.starting": "启动中…",
