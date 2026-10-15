@@ -664,28 +664,31 @@ export interface AssistantImages {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
+/** Structured question content. Numeric and boolean fields can occur inside objects or arrays. */
+export type ClassifierContent = string | JsonObject | JsonValue[] | null;
+
 export interface ClassifierChoiceQuestion {
 	type: "choice";
-	instructions: string;
-	criteria: Record<string, string>;
+	instructions: ClassifierContent;
+	criteria: Record<string, ClassifierContent>;
 }
 
 export interface ClassifierScoreQuestion {
 	type: "score";
-	instructions: string;
-	criteria: string[];
+	instructions: ClassifierContent;
+	criteria: ClassifierContent[];
 }
 
 export interface ClassifierBoolQuestion {
 	type: "bool";
-	instructions: string;
-	criteria: { true: string; false: string };
+	instructions: ClassifierContent;
+	criteria: { true: ClassifierContent; false: ClassifierContent };
 }
 
 /** Finds one target in an image. Ask a bool question alongside it to check target presence. */
 export interface ClassifierBoxQuestion {
 	type: "box";
-	instructions: string;
+	instructions: ClassifierContent;
 }
 
 export type ClassifierQuestion =
@@ -703,6 +706,8 @@ export interface ClassifierContext {
 	 * its image requests reserve the top-level state key `images`.
 	 */
 	images?: ImageContent[];
+	/** Named images referenced by string values anywhere in state, instructions or criteria. System One only. */
+	assets?: Record<string, ImageContent>;
 	questions: Record<string, ClassifierQuestion>;
 }
 

@@ -2,6 +2,7 @@
  * Runs one codemode script in the sandbox. Shared by SDK and Durable; loaded when a script runs.
  */
 
+import { assertClassifierContext } from "@amazme/ai/utils/classifier-context";
 import type {
 	AnyModel,
 	ClassifierContext,
@@ -114,7 +115,7 @@ function describeValue(value: unknown): string {
 }
 
 const CLASSIFIER_CONTEXT_SHAPE =
-	'{ state: { ... }, images?: [{ type: "image", data: <base64>, mimeType }], questions: { <id>: { type: "choice", instructions, criteria: { <label>: <meaning> } } | { type: "score", instructions, criteria: [<lowest level>, ..., <highest level>] } | { type: "bool", instructions, criteria: { true: <meaning>, false: <meaning> } } } }';
+	'{ state: { ... }, images?: [{ type: "image", data: <base64>, mimeType }], assets?: { <reference>: <image block> }, questions: { <id>: { type: "choice", instructions, criteria: { <label>: <meaning> } } | { type: "score", instructions, criteria: [<lowest level>, ..., <highest level>] } | { type: "bool", instructions, criteria: { true: <meaning>, false: <meaning> } } | { type: "box", instructions } } }; instructions and criteria entries accept a string, object, array, or null';
 
 /** Check a script's classifier context, so mistakes fail with the expected shape instead of a provider error. */
 function checkClassifierContext(context: unknown): ClassifierContext {
@@ -145,35 +146,10 @@ function checkClassifierContext(context: unknown): ClassifierContext {
 	) {
 		throw fail(`context.questions must map question IDs to questions, got ${describeValue(questions)}`);
 	}
-	const isStrings = (values: unknown[]) => values.length > 0 && values.every((value) => typeof value === "string");
-	for (const [id, question] of Object.entries(questions)) {
-		const at = `context.questions.${id}`;
-		if (typeof question !== "object" || question === null || Array.isArray(question)) {
-			throw fail(`${at} must be a question object, got ${describeValue(question)}`);
-		}
-		const { type, instructions, criteria } = question as Record<string, unknown>;
-		if (typeof instructions !== "string") throw fail(`${at}.instructions must be a string`);
-		if (type === "choice") {
-			if (
-				typeof criteria !== "object" ||
-				criteria === null ||
-				Array.isArray(criteria) ||
-				!isStrings(Object.values(criteria))
-			) {
-				throw fail(`${at} is a "choice" question, so criteria must map each label to its meaning`);
-			}
-		} else if (type === "score") {
-			if (!Array.isArray(criteria) || !isStrings(criteria)) {
-				throw fail(`${at} is a "score" question, so criteria must list the levels as strings, lowest first`);
-			}
-		} else if (type === "bool") {
-			const labels = criteria as ScriptValue;
-			if (typeof labels?.true !== "string" || typeof labels.false !== "string") {
-				throw fail(`${at} is a "bool" question, so criteria must be { true: string, false: string }`);
-			}
-		} else {
-			throw fail(`${at}.type must be "choice", "score", or "bool", got ${JSON.stringify(type)}`);
-		}
+	try {
+		assertClassifierContext(context);
+	} catch (error) {
+		throw fail(error instanceof Error ? error.message : String(error));
 	}
 	return context as unknown as ClassifierContext;
 }

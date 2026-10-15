@@ -1,7 +1,28 @@
 import { calculateCost } from "../models.ts";
-import type { ClassifierApi, ClassifierModel, ClassifierOptions, ProviderHeaders, Usage } from "../types.ts";
+import type {
+	ClassifierApi,
+	ClassifierContent,
+	ClassifierModel,
+	ClassifierOptions,
+	ClassifierQuestion,
+	ProviderHeaders,
+	Usage,
+} from "../types.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+
+/** Text-only backends must reject rich entries instead of silently stringifying them. */
+export function classifierText(label: string, value: ClassifierContent): string {
+	if (typeof value !== "string") throw new Error(`${label} does not support structured question content`);
+	return value;
+}
+
+export function assertTextClassifierQuestions(label: string, questions: Record<string, ClassifierQuestion>): void {
+	for (const question of Object.values(questions)) {
+		classifierText(label, question.instructions);
+		if (question.type !== "box") for (const entry of Object.values(question.criteria)) classifierText(label, entry);
+	}
+}
 
 /** An HTTP failure in the shape `retryProviderRequest` and `normalizeProviderError` understand. */
 export interface ClassifierHttpError extends Error {

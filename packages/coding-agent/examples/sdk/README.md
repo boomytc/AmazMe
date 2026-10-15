@@ -22,6 +22,7 @@ The runtime example shows how to build a recreate function that closes over proc
 | `12-full-control.ts` | Replace everything, no discovery |
 | `13-session-runtime.ts` | Manage runtime-backed session replacement |
 | `14-codemode-mcp.ts` | Add the `codemode`, `tool_search`, and MCP extensions |
+| `15-typesafe-crop.ts` | Jev 1.14: locate on a small image, crop the original, re-question and restore pixel coordinates |
 
 ## Running
 
@@ -29,6 +30,16 @@ The runtime example shows how to build a recreate function that closes over proc
 cd packages/coding-agent
 node examples/sdk/01-minimal.ts
 ```
+
+## TypeSafe crop and re-question
+
+The TypeSafe example uses `TYPESAFE_API_KEY` or saved agent credentials:
+
+```bash
+node examples/sdk/15-typesafe-crop.ts ./page.png "the complete table" ./crop-output
+```
+
+It sends PNGs prepared from upright pixels, first at a smaller resolution and then as a crop of the original. Both rounds require sufficient presence probability and Box confidence; rejected candidates are returned for review. `result.json` records status, original upright pixel coordinates, both responses and combined usage/cost. `target.png` is written only for an accepted final result. Ctrl+C cancels the active request and prevents the second call. The example conservatively uses a 280-pixel minimum side to accommodate observed service behavior; this does not change the official 256-pixel/78,400-total-pixel protocol limits. Tiny or extremely narrow images require caller preparation or tiling. The fixed thresholds are examples to calibrate, and no desktop actions are executed.
 
 ## Quick Reference
 

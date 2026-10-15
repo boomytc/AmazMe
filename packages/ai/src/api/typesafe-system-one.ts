@@ -10,6 +10,7 @@ const transport: SystemOneTransport = {
 	api: "typesafe-system-one",
 	label: "System One API",
 	supportsImages: true,
+	supportsRichContent: true,
 	url: (model) => new URL("systemone", `${model.baseUrl.replace(/\/+$/u, "")}/`),
 	payload: (model, request) => ({ model: model.id, ...request }),
 	output: (body) => {

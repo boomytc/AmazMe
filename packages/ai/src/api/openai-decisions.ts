@@ -9,6 +9,8 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import {
 	type ClassifierHttpError,
+	assertTextClassifierQuestions,
+	classifierText,
 	isRecord,
 	parseClassifierUsage,
 	postClassifierRequest,
@@ -45,7 +47,9 @@ function predicateInstructions(question: Extract<ClassifierQuestion, { type: "bo
 		question.criteria.true ? `True means: ${question.criteria.true}` : "",
 		question.criteria.false ? `False means: ${question.criteria.false}` : "",
 	].filter(Boolean);
-	return meanings.length > 0 ? `${question.instructions}\n\n${meanings.join("\n")}` : question.instructions;
+	return meanings.length > 0
+		? `${classifierText(LABEL, question.instructions)}\n\n${meanings.join("\n")}`
+		: classifierText(LABEL, question.instructions);
 }
 
 function wireQuestion(name: string, question: ClassifierQuestion): DecisionQuestion {
@@ -54,9 +58,9 @@ function wireQuestion(name: string, question: ClassifierQuestion): DecisionQuest
 		return {
 			type: "choice",
 			name,
-			instructions: question.instructions,
+			instructions: classifierText(LABEL, question.instructions),
 			choices: Object.entries(question.criteria).map(([value, description]) =>
-				description ? { value, description } : { value },
+				description === "" ? { value } : { value, description: classifierText(LABEL, description) },
 			),
 		};
 	}
@@ -64,8 +68,8 @@ function wireQuestion(name: string, question: ClassifierQuestion): DecisionQuest
 		return {
 			type: "score",
 			name,
-			instructions: question.instructions,
-			levels: question.criteria.map((label) => ({ label })),
+			instructions: classifierText(LABEL, question.instructions),
+			levels: question.criteria.map((label) => ({ label: classifierText(LABEL, label) })),
 		};
 	}
 	return { type: "predicate", name, instructions: predicateInstructions(question) };
@@ -171,6 +175,8 @@ export const classify: ClassifierFunction<ClassifierOptions> = async (model, con
 
 	try {
 		if (model.api !== "openai-decisions") throw new Error(`Unsupported classifier API: ${model.api}`);
+		if (Object.keys(context.assets ?? {}).length) throw new Error(`${LABEL} does not support image asset references`);
+		assertTextClassifierQuestions(LABEL, context.questions);
 		const body = await postClassifierRequest(
 			LABEL,
 			new URL("decisions", `${model.baseUrl.replace(/\/+$/u, "")}/`),

@@ -945,6 +945,34 @@ A Box answer is `{ type: 'box', box: { left, top, right, bottom }, confidence }`
 
 Images and Box are experimental features; see the official [Images](https://docs.typesafe.ai/images) and [Box](https://docs.typesafe.ai/primitives/box) protocols. The `jev-latest` alias remains available for existing callers. Other System One hosts must independently support the image protocol; their text-only model entries remain unchanged. Cloudflare Workers AI, OpenAI Decisions, and `llama-cpp-classify` currently reject Box questions before sending.
 
+### Structured questions and named image assets
+
+TypeSafe accepts a string, JSON object, array, or `null` in instructions and in each Choice, Score, or bool criterion. Nested fields may contain numbers and booleans. Values are preserved as structured data, rather than converted to text. Box still has no criteria. Other built-in classifier backends currently require text entries and reject structured content before sending.
+
+Use `ClassifierContext.assets` to place named images in nested state, instructions, or criteria. Each value is an `ImageContent` block, and each key is a reference string. The adapter uploads each entry once and preserves every reference:
+
+```typescript
+const reference = crypto.randomUUID();
+const result = await models.classify(model, {
+  state: { history: [{ picture: reference }] },
+  assets: { [reference]: { type: 'image', data: pngBase64, mimeType: 'image/png' } },
+  questions: {
+    present: {
+      type: 'bool',
+      instructions: { question: 'Is there a table in `history[0].picture`?' },
+      criteria: { true: { condition: 'A table is visible' }, false: null }
+    },
+    table: { type: 'box', instructions: ['The complete table in `history[0].picture`.'] }
+  }
+});
+```
+
+References work as whole string values or inside sentences; object keys and question IDs do not reference images. Use fresh UUIDs to avoid accidental matches in ordinary text. Every asset must be referenced; names must be nonblank, at most 1,024 UTF-8 bytes each and 65,536 bytes total. Reusing a reference avoids uploading the file again, but each appearance expands the image again for inference and counts toward tokens and expanded request limits. Put a shared image in state once and refer to its state path from questions when possible.
+
+Named assets require an image-capable model and the TypeSafe System One transport, including when images appear only in questions. The opt-in header is enforced for these requests too. `assets` and the existing `images` array can be combined; only `images` reserves the state key of the same name. Cloudflare, OpenAI Decisions, and `llama-cpp-classify` reject named assets before sending.
+
+For a complete small-image → original-resolution crop → re-question workflow, see [`15-typesafe-crop.ts`](../coding-agent/examples/sdk/15-typesafe-crop.ts). It checks presence and confidence in both rounds, maps the final box to upright original pixels, and records both calls' usage.
+
 ### OpenAI Decisions
 
 The `openai-decisions` API calls OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`POST /v1/decisions`). GPT-6 Luna is its only model. The state is sent as JSON text; with images, the input is one user message with the state followed by the images as data URLs (at most 128). `choice` and `score` questions map to the Decisions types of the same name. `bool` questions become `predicate` questions; predicates have no criteria field, so the meanings of true and false are appended to the instructions. If OpenAI refuses to answer a question, the whole result is an error. Usage reports input tokens only, priced at the catalog input rate with OpenAI's long-context multiplier.

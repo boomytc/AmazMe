@@ -1009,13 +1009,13 @@ describe("codemode models", () => {
 			"models.classify() context.questions must map question IDs to questions, got an empty array.",
 		);
 		expect(value.arrayQuestion).toContain(
-			"models.classify() context.questions.kind must be a question object, got an empty array.",
+			"models.classify() context.questions.kind must be a question object.",
 		);
-		expect(value.noInstructions).toContain("models.classify() context.questions.kind.instructions must be a string.");
+		expect(value.noInstructions).toContain("models.classify() context.questions.kind.instructions must be a string, object, array, or null.");
 		expect(value.badBool).toContain(
-			'context.questions.kind is a "bool" question, so criteria must be { true: string, false: string }.',
+			'context.questions.kind is a "bool" question, so criteria must define true and false.',
 		);
-		expect(value.badKind).toContain('context.questions.kind.type must be "choice", "score", or "bool", got "rank".');
+		expect(value.badKind).toContain('context.questions.kind.type must be "choice", "score", "bool", or "box", got "rank".');
 		expect(value.arrayImagesContext).toContain(
 			"models.generateImages() expects a context object as its second argument, got an empty array.",
 		);

@@ -99,20 +99,27 @@ Model IDs differ between providers, for example `typesafe/jev-latest` and `openr
 ```ts
 interface ClassifierContext {
   /** The data to classify. */
-  state: Record<string, unknown>;
+  state: { [key: string]: JsonValue };
   /** Images judged together with `state`. Only models whose `input` includes "image" accept them. */
   images?: { type: "image"; data: string; mimeType: string }[];
+  /** TypeSafe named images; reference their keys in state, instructions or criteria. */
+  assets?: Record<string, { type: "image"; data: string; mimeType: string }>;
   /** Questions by ID. One call answers all of them. */
   questions: Record<string, ClassifierQuestion>;
 }
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type ClassifierContent = string | { [key: string]: JsonValue } | JsonValue[] | null;
+
 type ClassifierQuestion =
   /** Pick one label. `criteria` maps each label to what it means. */
-  | { type: "choice"; instructions: string; criteria: Record<string, string> }
+  | { type: "choice"; instructions: ClassifierContent; criteria: Record<string, ClassifierContent> }
   /** Score on an ordered scale. `criteria` describes each level, lowest first. */
-  | { type: "score"; instructions: string; criteria: string[] }
+  | { type: "score"; instructions: ClassifierContent; criteria: ClassifierContent[] }
   /** Yes or no. */
-  | { type: "bool"; instructions: string; criteria: { true: string; false: string } };
+  | { type: "bool"; instructions: ClassifierContent; criteria: { true: ClassifierContent; false: ClassifierContent } }
+  /** Locate one target. TypeSafe Jev 1.14 only; no criteria. */
+  | { type: "box"; instructions: ClassifierContent };
 
 interface ClassifierResult {
   provider: string;
@@ -129,11 +136,17 @@ type ClassifierAnswer =
   /** `score` is the expected level index, from 0 to `criteria.length - 1`. */
   | { type: "score"; score: number; confidence: number }
   /** Probability of `true`. */
-  | { type: "bool"; probability: number };
+  | { type: "bool"; probability: number }
+  /** Fractions of image width/height from the top-left corner. */
+  | { type: "box"; box: { left: number; top: number; right: number; bottom: number }; confidence: number };
 
 /** Token counts and cost in USD, when the service reports them. */
 type ModelUsage = { input: number; output: number; totalTokens: number; cost: { total: number } };
 ```
+
+TypeSafe `jev-1.14.0` supports Box, structured question content, and named assets through codemode. A reference is a string value, including inside nested JSON or a sentence; an object key or question ID does not count as a reference. Use opaque names that cannot accidentally match ordinary text, preferably UUIDs. Put images shared by multiple questions in state and refer to the state path to reduce repeated image expansion. Other built-in classifier backends reject named assets and structured question entries before sending.
+
+Box always returns edges, including for absent targets. Ask a bool presence question beside it and inspect both probability and localization confidence before using the box. Thresholds belong to application policy and need calibration. A full crop-and-reask example is available in [`15-typesafe-crop.ts`](../examples/sdk/15-typesafe-crop.ts).
 
 Classify several items by calling `classify()` once per item. This script sorts feedback messages, for example ones a tool returned earlier in the script:
 

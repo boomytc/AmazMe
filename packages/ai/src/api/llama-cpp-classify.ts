@@ -12,6 +12,7 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { assertTextClassifierQuestions } from "./classifier-shared.ts";
 
 /**
  * Classification with a chat model served by llama.cpp's `llama-server`.
@@ -123,6 +124,7 @@ function questionLabels(question: ClassifierQuestion): { labels: string[]; keys:
 /** The question and its options. `labels` puts the answer labels on choice options. */
 function renderTask(question: ClassifierQuestion, labels: readonly string[] | undefined): string {
 	if (question.type === "box") throw new Error(`${LABEL} classification does not support box questions`);
+	assertTextClassifierQuestions(LABEL, { question });
 	const head = `Question: ${question.instructions}`;
 	if (question.type === "choice") {
 		const lines = Object.entries(question.criteria).map(([key, description], index) => {
@@ -438,6 +440,7 @@ export const classify: ClassifierFunction<ClassifierOptions> = async (model, con
 	try {
 		if (model.api !== "llama-cpp-classify") throw new Error(`Unsupported classifier API: ${model.api}`);
 		if (context.images?.length) throw new Error(`${LABEL} classification does not support image input`);
+		if (Object.keys(context.assets ?? {}).length) throw new Error(`${LABEL} classification does not support image asset references`);
 		const temperature = options?.temperature ?? 1;
 		if (!(temperature > 0) || !Number.isFinite(temperature)) {
 			throw new Error(`Temperature must be a positive number, got ${temperature}`);

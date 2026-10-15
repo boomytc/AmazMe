@@ -9,7 +9,14 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
-import { isRecord, parseClassifierUsage, postClassifierRequest, requiredNumber } from "./classifier-shared.ts";
+import { assertClassifierContext } from "../utils/classifier-context.ts";
+import {
+	assertTextClassifierQuestions,
+	isRecord,
+	parseClassifierUsage,
+	postClassifierRequest,
+	requiredNumber,
+} from "./classifier-shared.ts";
 
 /** TypeSafe System One request body without the transport-specific envelope. */
 export interface SystemOneWireRequest {
@@ -26,6 +33,8 @@ export interface SystemOneTransport {
 	label: string;
 	/** Supports TypeSafe's image assets and Box questions. Other System One hosts opt in separately. */
 	supportsImages?: boolean;
+	/** Accepts structured instructions and criteria without converting them to text. */
+	supportsRichContent?: boolean;
 	/** Absolute request URL. */
 	url(model: ClassifierModel<ClassifierApi>): URL;
 	/** Wraps the System One request in the service's request envelope. */
@@ -112,6 +121,7 @@ function parseAnswers(label: string, value: unknown, context: ClassifierContext)
 
 /** Maps public `bool` questions to TypeSafe's wire-level `noul` type. */
 function wireRequest(label: string, context: ClassifierContext): SystemOneWireRequest {
+	const images = new Map(Object.entries(context.assets ?? {}));
 	const request: SystemOneWireRequest = {
 		state: context.state,
 		questions: Object.fromEntries(
@@ -125,15 +135,46 @@ function wireRequest(label: string, context: ClassifierContext): SystemOneWireRe
 		if (Object.hasOwn(context.state, "images")) {
 			throw new Error(`${label} image input reserves the state field images`);
 		}
-		const assets = context.images.map((image) => {
-			const mimeType = image.mimeType.toLowerCase();
-			const format =
-				mimeType === "image/png" ? "png" : mimeType === "image/jpeg" || mimeType === "image/jpg" ? "jpg" : undefined;
-			if (!format) throw new Error(`${label} only supports PNG and JPEG images, got ${image.mimeType}`);
-			return [crypto.randomUUID(), { type: "image", format, data_base64: image.data }] as const;
+		const references = context.images.map((image) => {
+			let reference: string;
+			do {
+				reference = crypto.randomUUID();
+			} while (images.has(reference));
+			images.set(reference, image);
+			return reference;
 		});
-		request.assets = Object.fromEntries(assets);
-		request.state = { ...context.state, images: assets.map(([reference]) => reference) };
+		request.state = { ...context.state, images: references };
+	}
+	if (images.size) {
+		const strings: string[] = [];
+		const collect = (value: unknown): void => {
+			if (typeof value === "string") strings.push(value);
+			else if (value && typeof value === "object") Object.values(value).forEach(collect);
+		};
+		collect(request.state);
+		for (const question of Object.values(context.questions)) {
+			collect(question.instructions);
+			if (question.type !== "box") collect(question.criteria);
+		}
+		let referenceBytes = 0;
+		request.assets = Object.fromEntries(
+			[...images].map(([reference, image]) => {
+				const bytes = new TextEncoder().encode(reference).length;
+				referenceBytes += bytes;
+				if (!reference.trim() || bytes > 1024 || referenceBytes > 65536) {
+					throw new Error(
+						`${label} invalid image references: names must be nonblank, at most 1024 UTF-8 bytes each and 65536 bytes total`,
+					);
+				}
+				if (!strings.some((value) => value.includes(reference)))
+					throw new Error(`${label} image asset is not referenced: ${reference}`);
+				const mimeType = image.mimeType.toLowerCase();
+				const format =
+					mimeType === "image/png" ? "png" : mimeType === "image/jpeg" || mimeType === "image/jpg" ? "jpg" : undefined;
+				if (!format) throw new Error(`${label} only supports PNG and JPEG images, got ${image.mimeType}`);
+				return [reference, { type: "image" as const, format, data_base64: image.data }];
+			}),
+		);
 	}
 	return request;
 }
@@ -156,7 +197,9 @@ export async function classifySystemOne(
 
 	try {
 		if (model.api !== transport.api) throw new Error(`Unsupported classifier API: ${model.api}`);
-		const hasImages = Boolean(context.images?.length);
+		assertClassifierContext(context);
+		if (!transport.supportsRichContent) assertTextClassifierQuestions(transport.label, context.questions);
+		const hasImages = Boolean(context.images?.length || Object.keys(context.assets ?? {}).length);
 		const hasBox = Object.values(context.questions).some((question) => question.type === "box");
 		if (hasImages) {
 			if (!transport.supportsImages) throw new Error(`${transport.label} does not support image input`);
