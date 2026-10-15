@@ -40,8 +40,12 @@ For `SYSTEM.md` and `APPEND_SYSTEM.md`, the trusted project file takes precedenc
 
 ## Context files
 
-Context files are separate from project `.amazme` configuration. AmazMe loads them from the agent directory, the working directory, and its parent directories. A context file applies whenever AmazMe runs in its directory or anywhere below it.
+Context files are separate from project `.amazme` configuration. AmazMe loads user instructions from the agent directory first, then `~/.agents/AGENTS.md`, followed by project context files from the filesystem root down to the working directory. User instructions apply across working directories; project instructions apply in their directory and below it.
+
+Set `AMAZME_AGENTS_HOME` to change the shared user-instruction directory. It is independent of `AMAZME_CODING_AGENT_DIR` and the SDK's `agentDir`; `~` expands to the process home and relative paths resolve against the process working directory. Only `AGENTS.md` is read from this shared location. Two user instruction files with identical trimmed content appear once, preferring the agent directory. The same real file reached through a symlink also appears once. Separate project files keep their directory scopes even when their contents match.
 
 An `AGENTS.override.md` replaces `AGENTS.md` or `CLAUDE.md` only in the same directory. It does not suppress context files from the agent directory or other directories.
 
 Context-file discovery does not require project trust. The default terminal supports `--no-context-files` to disable it. `--no-skills` disables configured and discovered skills, while explicit `--skill` paths remain available. `--system-prompt` and repeated `--append-system-prompt` sources override automatic system-file discovery for the current process; relative file paths resolve against the working directory.
+
+The default terminal's `/reload` and the SDK's `resourceLoader.reload()` re-read these files, including changes or removals in the shared directory. `--no-context-files` disables both user locations and project discovery. SDK `agentsFilesOverride` receives the discovered collection, or an empty collection when discovery is disabled, and remains the final authority for explicit caller-provided context.

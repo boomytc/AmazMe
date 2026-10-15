@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig, mergeConfig } from "vitest/config";
 import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
 
@@ -24,7 +27,12 @@ export default mergeConfig(
 			environment: "node",
 			testTimeout: 30000,
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
-			env: { ...providerEnvironment, AMAZME_OFFLINE: "1" },
+			env: {
+				...providerEnvironment,
+				AMAZME_OFFLINE: "1",
+				// Keep default resource discovery away from the developer's shared instructions.
+				AMAZME_AGENTS_HOME: join(tmpdir(), `amazme-test-agents-${randomUUID()}`),
+			},
 			unstubEnvs: true,
 			reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 			silent: "passed-only",

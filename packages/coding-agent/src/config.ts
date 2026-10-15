@@ -587,6 +587,7 @@ export const VERSION: string = pkg.version || "0.0.0";
 // e.g., AMAZME_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+export const ENV_AGENTS_HOME = "AMAZME_AGENTS_HOME";
 /** The owned web host watches stdin EOF; the marker is removed before starting workers. */
 export const DESKTOP_PARENT_PIPE_ENV = "AMAZME_DESKTOP_PARENT_PIPE";
 
@@ -613,6 +614,11 @@ export function getAgentDir(): string {
 		return expandTildePath(envDir);
 	}
 	return join(homedir(), CONFIG_DIR_NAME, "agent");
+}
+
+/** Shared user instructions belong to the process home, independently of the project and agent directory. */
+export function getAgentsHome(): string {
+	return resolve(expandTildePath(process.env[ENV_AGENTS_HOME] || join(homedir(), ".agents")));
 }
 
 /** Get path to user's custom themes directory */

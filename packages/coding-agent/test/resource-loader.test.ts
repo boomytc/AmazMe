@@ -16,14 +16,18 @@ import { createModelRegistry } from "./model-runtime-test-utils.ts";
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
 	let agentDir: string;
+	let sharedAgentsHome: string;
 	let cwd: string;
 
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `rl-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
+		sharedAgentsHome = join(tempDir, "shared-agents");
 		cwd = join(tempDir, "project");
 		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(sharedAgentsHome, { recursive: true });
 		mkdirSync(cwd, { recursive: true });
+		vi.stubEnv("AMAZME_AGENTS_HOME", sharedAgentsHome);
 	});
 
 	afterEach(() => {
@@ -437,6 +441,118 @@ Content`,
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
 		});
 
+		it("loads shared user instructions between the agent directory and project ancestors", async () => {
+			const nestedCwd = join(cwd, "service");
+			mkdirSync(nestedCwd);
+			writeFileSync(join(agentDir, "AGENTS.override.md"), "AmazMe user instructions");
+			writeFileSync(join(sharedAgentsHome, "AGENTS.md"), "Shared user instructions");
+			writeFileSync(join(sharedAgentsHome, "AGENTS.override.md"), "Not a shared candidate");
+			writeFileSync(join(sharedAgentsHome, "CLAUDE.md"), "Not a shared candidate either");
+			writeFileSync(join(cwd, "AGENTS.md"), "Project instructions");
+			writeFileSync(join(nestedCwd, "AGENTS.md"), "Service instructions");
+			const loader = new DefaultResourceLoader({ cwd: nestedCwd, agentDir });
+
+			await loader.reload();
+
+			expect(loader.getAgentsFiles().agentsFiles).toEqual([
+				{ path: join(agentDir, "AGENTS.override.md"), content: "AmazMe user instructions" },
+				{ path: join(sharedAgentsHome, "AGENTS.md"), content: "Shared user instructions" },
+				{ path: join(cwd, "AGENTS.md"), content: "Project instructions" },
+				{ path: join(nestedCwd, "AGENTS.md"), content: "Service instructions" },
+			]);
+		});
+
+		it("deduplicates global trimmed content while retaining equal project scopes", () => {
+			const nestedCwd = join(cwd, "service");
+			mkdirSync(nestedCwd);
+			writeFileSync(join(agentDir, "AGENTS.md"), "  Shared rule\n");
+			writeFileSync(join(sharedAgentsHome, "AGENTS.md"), "Shared rule");
+			writeFileSync(join(cwd, "AGENTS.md"), "Shared rule");
+			writeFileSync(join(nestedCwd, "AGENTS.md"), "Shared rule");
+
+			expect(loadProjectContextFiles({ cwd: nestedCwd, agentDir })).toEqual([
+				{ path: join(agentDir, "AGENTS.md"), content: "  Shared rule\n" },
+				{ path: join(cwd, "AGENTS.md"), content: "Shared rule" },
+				{ path: join(nestedCwd, "AGENTS.md"), content: "Shared rule" },
+			]);
+		});
+
+		it("keeps a global file reached through shared and project symlinks once", () => {
+			const globalPath = join(agentDir, "AGENTS.md");
+			writeFileSync(globalPath, "Shared instructions");
+			symlinkSync(globalPath, join(sharedAgentsHome, "AGENTS.md"));
+			symlinkSync(globalPath, join(cwd, "AGENTS.md"));
+
+			expect(loadProjectContextFiles({ cwd, agentDir })).toEqual([
+				{ path: globalPath, content: "Shared instructions" },
+			]);
+		});
+
+		it("does not rediscover a hidden global duplicate from the working directory's ancestors", () => {
+			writeFileSync(join(agentDir, "AGENTS.md"), "Same instructions");
+			writeFileSync(join(sharedAgentsHome, "AGENTS.md"), "Same instructions\n");
+			const nestedCwd = join(sharedAgentsHome, "workspace");
+			mkdirSync(nestedCwd);
+
+			expect(loadProjectContextFiles({ cwd: nestedCwd, agentDir })).toEqual([
+				{ path: join(agentDir, "AGENTS.md"), content: "Same instructions" },
+			]);
+		});
+
+		it("reloads shared changes and promotes a duplicate after the preferred global file is removed", async () => {
+			const globalPath = join(agentDir, "AGENTS.md");
+			const sharedPath = join(sharedAgentsHome, "AGENTS.md");
+			writeFileSync(globalPath, "Same instructions");
+			writeFileSync(sharedPath, "Same instructions\n");
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+			expect(loader.getAgentsFiles().agentsFiles.map((file) => file.path)).toEqual([globalPath]);
+
+			rmSync(globalPath);
+			await loader.reload();
+			expect(loader.getAgentsFiles().agentsFiles).toEqual([
+				{ path: sharedPath, content: "Same instructions\n" },
+			]);
+
+			writeFileSync(sharedPath, "Changed shared instructions");
+			await loader.reload();
+			expect(loader.getAgentsFiles().agentsFiles).toEqual([
+				{ path: sharedPath, content: "Changed shared instructions" },
+			]);
+
+			rmSync(sharedPath);
+			await loader.reload();
+			expect(loader.getAgentsFiles().agentsFiles).toEqual([]);
+		});
+
+		it("keeps explicit context overrides final even when discovery is disabled", async () => {
+			const sharedPath = join(sharedAgentsHome, "AGENTS.md");
+			writeFileSync(sharedPath, "Shared instructions");
+			for (const noContextFiles of [false, true]) {
+				const agentsFilesOverride = vi.fn(() => ({
+					agentsFiles: [{ path: "caller", content: "Explicit caller instructions" }],
+				}));
+				const loader = new DefaultResourceLoader({ cwd, agentDir, noContextFiles, agentsFilesOverride });
+
+				await loader.reload();
+
+				expect(agentsFilesOverride).toHaveBeenCalledWith({
+					agentsFiles: noContextFiles ? [] : [{ path: sharedPath, content: "Shared instructions" }],
+				});
+				expect(loader.getAgentsFiles().agentsFiles).toEqual([
+					{ path: "caller", content: "Explicit caller instructions" },
+				]);
+			}
+		});
+
+		it("does not treat a project's .agents directory as the shared user root", () => {
+			mkdirSync(join(cwd, ".agents"));
+			writeFileSync(join(cwd, ".agents", "AGENTS.md"), "Project-local hidden instructions");
+			writeFileSync(join(sharedAgentsHome, "CLAUDE.md"), "Not a shared candidate");
+
+			expect(loadProjectContextFiles({ cwd, agentDir })).toEqual([]);
+		});
+
 		it("should prefer AGENTS.override.md within each directory while preserving ancestor layering", async () => {
 			const nestedCwd = join(cwd, "service");
 			mkdirSync(nestedCwd);
@@ -475,6 +591,8 @@ Content`,
 		});
 
 		it("should skip context file discovery when noContextFiles is true", async () => {
+			writeFileSync(join(agentDir, "AGENTS.md"), "Global instructions");
+			writeFileSync(join(sharedAgentsHome, "AGENTS.md"), "Shared instructions");
 			writeFileSync(join(cwd, "AGENTS.override.md"), "# Override Guidelines\n\nBe helpful.");
 			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
 			writeFileSync(join(cwd, "CLAUDE.md"), "# Claude Guidelines\n\nBe helpful.");

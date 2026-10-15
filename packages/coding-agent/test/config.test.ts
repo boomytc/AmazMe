@@ -1,11 +1,12 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { delimiter, join } from "path";
-import { afterEach, describe, expect, test } from "vitest";
+import { homedir, tmpdir } from "os";
+import { delimiter, join, resolve } from "path";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
 	detectInstallChange,
 	detectInstallMethod,
 	findNodePackageDir,
+	getAgentsHome,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
@@ -16,6 +17,25 @@ const originalPath = process.env.PATH;
 const originalPiPackageDir = process.env.AMAZME_PACKAGE_DIR;
 const originalArgv1 = process.argv[1];
 let tempDir: string | undefined;
+
+describe("shared agents home", () => {
+	test("uses the process home when no AmazMe override is set", () => {
+		vi.stubEnv("AMAZME_AGENTS_HOME", undefined);
+		vi.stubEnv("DSH_AGENTS_HOME", join(tmpdir(), "unrelated-harness-home"));
+		expect(getAgentsHome()).toBe(join(homedir(), ".agents"));
+	});
+
+	test("resolves an explicit relative root against the process working directory", () => {
+		vi.stubEnv("AMAZME_AGENTS_HOME", "shared-agent-rules");
+		expect(getAgentsHome()).toBe(resolve("shared-agent-rules"));
+	});
+
+	test("expands the home prefix without depending on the AmazMe agent directory", () => {
+		vi.stubEnv("AMAZME_AGENTS_HOME", "~/shared-agent-rules");
+		vi.stubEnv("AMAZME_CODING_AGENT_DIR", join(tmpdir(), "different-agent-dir"));
+		expect(getAgentsHome()).toBe(join(homedir(), "shared-agent-rules"));
+	});
+});
 
 function setExecPath(value: string): void {
 	Object.defineProperty(process, "execPath", {

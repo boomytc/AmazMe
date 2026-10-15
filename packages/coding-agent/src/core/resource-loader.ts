@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@amazme/tui";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getAgentsHome } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -182,8 +182,10 @@ function resolvePromptInput(input: string | undefined, description: string, cwd:
 	return input;
 }
 
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
-	const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
+function loadContextFileFromDir(
+	dir: string,
+	candidates: readonly string[] = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"],
+): { path: string; content: string } | null {
 	for (const filename of candidates) {
 		const filePath = join(dir, filename);
 		if (existsSync(filePath)) {
@@ -239,11 +241,21 @@ export function loadProjectContextFiles(options: {
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
+	const globalContents = new Set<string>();
 
-	const globalContext = loadContextFileFromDir(resolvedAgentDir);
-	if (globalContext) {
+	for (const globalContext of [
+		loadContextFileFromDir(resolvedAgentDir),
+		loadContextFileFromDir(getAgentsHome(), ["AGENTS.md"]),
+	]) {
+		if (!globalContext) continue;
+		const canonicalPath = canonicalizePath(globalContext.path);
+		if (seenPaths.has(canonicalPath)) continue;
+		// A hidden global duplicate must not reappear when its directory is also an ancestor of cwd.
+		seenPaths.add(canonicalPath);
+		const content = globalContext.content.trim();
+		if (globalContents.has(content)) continue;
+		globalContents.add(content);
 		contextFiles.push(globalContext);
-		seenPaths.add(globalContext.path);
 	}
 
 	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
@@ -259,9 +271,10 @@ export function loadProjectContextFiles(options: {
 			shadowedContextFile !== undefined &&
 			contextFile !== null &&
 			join(canonicalizePath(currentDir), basename(contextFile.path)) === shadowedContextFile;
-		if (contextFile && !isShadowed && !seenPaths.has(contextFile.path)) {
+		const canonicalPath = contextFile ? canonicalizePath(contextFile.path) : undefined;
+		if (contextFile && !isShadowed && canonicalPath !== undefined && !seenPaths.has(canonicalPath)) {
 			ancestorContextFiles.unshift(contextFile);
-			seenPaths.add(contextFile.path);
+			seenPaths.add(canonicalPath);
 		}
 
 		const parentDir = dirname(currentDir);
