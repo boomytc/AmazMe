@@ -63,20 +63,18 @@ describe("electron window", () => {
 		}
 	});
 
-	test.each(["en", "zh", "auto"] as const)("opens the shared web host with application language %s", async (locale) => {
-		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-"));
-		await mkdir(join(scratch, "agent"));
-		await writeFile(join(scratch, "agent", "settings.json"), JSON.stringify({ locale }));
+	async function launch(entry = ".", hold = false): Promise<string> {
+		if (scratch === undefined) throw new Error("Smoke directory is not prepared");
 		const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 		let stdout = "";
 		let stderr = "";
 		child = spawn(
 			electronBinary(),
-			["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "."],
+			["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", entry],
 			{
 				cwd: packageRoot,
 				detached: true,
-				env: smokeEnvironment(scratch),
+				env: { ...smokeEnvironment(scratch), ...(hold ? { AMAZME_GUI_SMOKE_HOLD: "1" } : {}) },
 				stdio: ["ignore", "pipe", "pipe"],
 			},
 		);
@@ -104,6 +102,50 @@ describe("electron window", () => {
 				`electron smoke exited ${String(exitCode)}\nstdout:\n${stdout}\nstderr:\n${stderr.slice(-8000)}`,
 			);
 		}
+		return stdout;
+	}
+
+	test("a cancelled native directory picker returns no paths through the real preload IPC", async () => {
+		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-picker-"));
+		const fixture = join(scratch, "picker-fixture.mjs");
+		await writeFile(fixture, `
+import { app, dialog } from "electron";
+const original = dialog.showOpenDialog;
+let calls = 0;
+dialog.showOpenDialog = async () => {
+  calls += 1;
+  return { canceled: calls === 1, filePaths: ["/selected-directory"] };
+};
+app.on("browser-window-created", (_event, window) => {
+  window.webContents.once("did-finish-load", async () => {
+    try {
+      const cancelled = await window.webContents.executeJavaScript("window.amazmeDesktop.pickDirectories()");
+      const selected = await window.webContents.executeJavaScript("window.amazmeDesktop.pickDirectories()");
+      process.stdout.write("directory picker smoke: " + JSON.stringify({ cancelled, selected, calls }) + "\\n");
+      app.quit();
+    } catch (error) {
+      console.error(error);
+      app.exit(1);
+    } finally {
+      dialog.showOpenDialog = original;
+    }
+  });
+});
+await import(${JSON.stringify(new URL("../dist/main.js", import.meta.url).href)});
+`);
+		const output = await launch(fixture, true);
+		const line = output.split("\n").find(value => value.startsWith("directory picker smoke: "));
+		expect(line).toBeDefined();
+		expect(JSON.parse(line!.slice("directory picker smoke: ".length))).toEqual({
+			cancelled: [], selected: ["/selected-directory"], calls: 2,
+		});
+	}, 180_000);
+
+	test.each(["en", "zh", "auto"] as const)("opens the shared web host with application language %s", async (locale) => {
+		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-"));
+		await mkdir(join(scratch, "agent"));
+		await writeFile(join(scratch, "agent", "settings.json"), JSON.stringify({ locale }));
+		const stdout = await launch();
 		const line = stdout.split("\n").find((entry) => entry.startsWith("desktop smoke: "));
 		expect(line).toBeDefined();
 		const smoke = parseSmokeLine(line ?? "");

@@ -99,7 +99,7 @@ ipcMain.handle("amazme:pick-directories", async event => {
 			title: translate(locale, "project.folders"), buttonLabel: translate(locale, "project.chooseFolder"),
 			defaultPath: hostWorkingDirectory(process.env, process.cwd()), properties: ["openDirectory", "multiSelections"],
 		});
-		return result.filePaths;
+		return result.canceled ? [] : result.filePaths;
 	})();
 	try { return await pending; } finally { if (folderPicker === pending) folderPicker = undefined; }
 });
