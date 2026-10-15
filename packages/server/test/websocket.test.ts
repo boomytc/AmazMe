@@ -1,9 +1,9 @@
 import { once } from "node:events";
-import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage } from "node:http";
 import { createConnection, type Socket } from "node:net";
 import { networkInterfaces } from "node:os";
 import { encodeClientMessage, PROTOCOL_VERSION, ServerMessageDecoder, type ServerMessage } from "@amazme/protocol";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { Server } from "../src/server.ts";
 import { ProtocolTestClient, TestServerHost, type WireChannel } from "../src/testing/index.ts";
 import { WebSocketListener } from "../src/transports/websocket/index.ts";
@@ -104,7 +104,7 @@ interface RawUpgrade {
 	waitForClose(): Promise<void>;
 }
 
-async function upgrade(path: string, url: string): Promise<RawUpgrade> {
+async function upgrade(path: string, url: string, headers: Record<string, string> = {}): Promise<RawUpgrade> {
 	const address = new URL(url);
 	const socket = createConnection({ host: address.hostname, port: Number(address.port) });
 	rawSockets.add(socket);
@@ -118,6 +118,7 @@ async function upgrade(path: string, url: string): Promise<RawUpgrade> {
 			"connection: Upgrade\r\n" +
 			"sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
 			"sec-websocket-version: 13\r\n" +
+			Object.entries(headers).map(([name, value]) => `${name}: ${value}\r\n`).join("") +
 			"\r\n",
 	);
 	await new Promise<void>((resolve) => {
@@ -175,6 +176,38 @@ afterEach(async () => {
 });
 
 describe("WebSocket transport", () => {
+	test("checks caller policy before upgrade and acceptance, and contains policy and observer failures", async () => {
+		const failure = new Error("admission failed");
+		const errors: Error[] = [];
+		const verifyUpgrade = vi.fn((request: IncomingMessage) => {
+			if (request.headers["x-admission"] === "throw") throw failure;
+			return request.headers["x-admission"] === "allow";
+		});
+		const listener = new WebSocketListener({
+			path: "/policy", verifyUpgrade,
+			onError: error => { errors.push(error); throw new Error("observer failed"); },
+		});
+		listeners.add(listener);
+		const accept = vi.fn(() => ({ onData() {}, onClose() {}, onError() {} }));
+		await listener.start(accept);
+		const url = listener.address()?.url;
+		if (url === undefined) throw new Error("Listener did not bind");
+		for (const value of ["deny", "throw"]) {
+			const rejected = await upgrade("/policy", url, { "x-admission": value });
+			await rejected.waitForClose();
+			expect(rejected.text()).toMatch(/^HTTP\/1\.1 403 Forbidden\r\n/);
+			expect(rejected.text()).not.toContain("101 Switching Protocols");
+			expect(accept).not.toHaveBeenCalled();
+		}
+		expect(errors).toEqual([failure]);
+		const allowed = await upgrade("/policy", url, { "x-admission": "allow" });
+		expect(allowed.text()).toMatch(/^HTTP\/1\.1 101 Switching Protocols\r\n/);
+		expect(accept).toHaveBeenCalledTimes(1);
+		expect(verifyUpgrade).toHaveBeenCalledTimes(3);
+		allowed.socket.destroy();
+		await allowed.waitForClose();
+	});
+
 	test("answers the RFC 6455 handshake on its path and carries a routed protocol call", async () => {
 		const { url, server } = await startListener();
 		expect(url.startsWith("ws://127.0.0.1:")).toBe(true);

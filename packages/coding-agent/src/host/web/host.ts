@@ -170,7 +170,12 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 	const ready = new Promise<void>((resolve) => {
 		releaseReady = resolve;
 	});
+	let authority: string | undefined;
 	const httpServer = createServer((request, response) => {
+		if (authority === undefined || !hasCanonicalHost(request, authority)) {
+			respond(response, 403, "text/plain; charset=utf-8", "Forbidden\n");
+			return;
+		}
 		void serveRequest(request, response, {
 			document,
 			script: bundle.code,
@@ -180,9 +185,16 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 		});
 	});
 	let manifest: WebBootManifest | undefined;
-	const listener = new WebSocketListener({ server: httpServer, path });
+	const listener = new WebSocketListener({
+		server: httpServer,
+		path,
+		verifyUpgrade: (request) => authority !== undefined && hasCanonicalHost(request, authority)
+			// Node callers do not send Origin. Browser callers must come from this served page.
+			&& (request.headers.origin === undefined || request.headers.origin === `http://${authority}`),
+	});
 	await listen(httpServer, options.port ?? 0);
 	const port = boundPort(httpServer);
+	authority = `${WEB_HOST}:${port}`;
 	try {
 		const hosted = await hostServer(options, listener);
 		manifest = buildBootManifest({
@@ -238,6 +250,11 @@ interface PageAssets {
 	readonly ready: Promise<void>;
 	/** The stored interface preferences, read per document so a change lands on the next load. */
 	readonly preferences: () => Promise<WebBootPreferences>;
+}
+
+/** Reject host aliases and ambiguous duplicate Host headers before exposing this local application. */
+function hasCanonicalHost(request: IncomingMessage, authority: string): boolean {
+	return request.headers.host === authority && request.headersDistinct.host?.length === 1;
 }
 
 async function serveRequest(request: IncomingMessage, response: ServerResponse, assets: PageAssets): Promise<void> {

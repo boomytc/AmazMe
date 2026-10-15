@@ -2,17 +2,19 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { request as httpRequest } from "node:http";
 
 import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { webLaunchLines } from "../src/host/commands.ts";
 import { buildBootManifest, injectBootManifest, requestLanguages, serveDocument } from "../src/host/web/boot.ts";
 import type { WebBootManifest } from "@amazme/web";
 import { readPageDocument } from "@amazme/web/assets";
 import { Script } from "node:vm";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 
 const hosts = new Set<WebHost>();
 const directories = new Set<string>();
@@ -41,6 +43,31 @@ async function startHost(port = 0): Promise<WebHost> {
 	const host = await startWebHost({ port, directory, sessionDir });
 	hosts.add(host);
 	return host;
+}
+
+/** Exercise the real HTTP upgrade without browser restrictions on Host/Origin test headers. */
+async function requestEndpoint(url: string, headers: Record<string, string | string[]>, upgrade = false): Promise<{ status: number; body: string }> {
+	const target = new URL(url);
+	if (target.protocol === "ws:") target.protocol = "http:";
+	return new Promise((resolve, reject) => {
+		const request = httpRequest(target, {
+			headers: {
+				...headers,
+				...(upgrade ? { upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } : { connection: "close" }),
+			},
+		}, response => {
+			const chunks: Buffer[] = [];
+			response.on("data", (chunk: Buffer) => chunks.push(chunk));
+			response.once("error", reject);
+			response.once("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
+		});
+		request.once("upgrade", (response, socket) => {
+			socket.destroy();
+			resolve({ status: response.statusCode ?? 0, body: "" });
+		});
+		request.once("error", reject);
+		request.end();
+	});
 }
 
 afterEach(async () => {
@@ -115,6 +142,43 @@ describe("web boot manifest", () => {
 });
 
 describe("web host", () => {
+	test("rejects noncanonical HTTP hosts before reading preferences or exposing application assets", async () => {
+		const host = await startHost();
+		const address = new URL(host.url);
+		const preferences = vi.spyOn(SettingsManager.prototype, "getLocalePreference");
+		try {
+			for (const authority of ["outside.example", `localhost:${address.port}`, `127.0.0.1:${Number(address.port) + 1}`]) {
+				for (const path of ["/", "/page.js", "/tokens.css"]) {
+					const response = await requestEndpoint(new URL(path, host.url).href, { host: authority });
+					expect(response).toEqual({ status: 403, body: "Forbidden\n" });
+				}
+			}
+			expect(await requestEndpoint(host.url, { host: [address.host, "outside.example"] })).toEqual({ status: 403, body: "Forbidden\n" });
+			expect(preferences).not.toHaveBeenCalled();
+			const allowed = await requestEndpoint(host.url, { host: address.host });
+			expect(allowed.status).toBe(200);
+			expect(allowed.body).toContain("globalThis.__AMAZME_BOOT__=");
+			expect(preferences).toHaveBeenCalledTimes(1);
+		} finally {
+			preferences.mockRestore();
+		}
+	}, 60_000);
+
+	test("accepts only same-origin browser upgrades and canonical local Node callers", async () => {
+		const host = await startHost();
+		const address = new URL(host.url);
+		for (const origin of ["null", "https://outside.example", `http://127.0.0.1:${Number(address.port) + 1}`, `http://localhost:${address.port}`, `https://${address.host}`]) {
+			expect((await requestEndpoint(host.webSocketUrl, { host: address.host, origin }, true)).status).toBe(403);
+		}
+		for (const authority of ["outside.example", `localhost:${address.port}`, "127.0.0.1"]) {
+			expect((await requestEndpoint(host.webSocketUrl, { host: authority, origin: address.origin }, true)).status).toBe(403);
+		}
+		expect((await requestEndpoint(host.webSocketUrl, { host: [address.host, "outside.example"], origin: address.origin }, true)).status).toBe(403);
+		expect((await requestEndpoint(host.webSocketUrl, { host: address.host, origin: [address.origin, "https://outside.example"] }, true)).status).toBe(403);
+		expect((await requestEndpoint(host.webSocketUrl, { host: address.host, origin: address.origin }, true)).status).toBe(101);
+		expect((await requestEndpoint(host.webSocketUrl, { host: address.host }, true)).status).toBe(101);
+	}, 60_000);
+
 	test(
 		"serves the document with its boot manifest, the page bundle, and the protocol endpoint",
 		async () => {

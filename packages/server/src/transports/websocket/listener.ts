@@ -22,6 +22,7 @@ interface ResolvedWebSocketListenerOptions {
 	maxMessageBytes: number;
 	gracefulCloseTimeoutMs: number;
 	loopbackOnly: boolean;
+	verifyUpgrade?: (request: IncomingMessage) => boolean;
 	onError?: (error: Error) => void;
 }
 
@@ -50,6 +51,7 @@ function resolveOptions(options: WebSocketListenerOptions): ResolvedWebSocketLis
 		maxMessageBytes,
 		gracefulCloseTimeoutMs: options.gracefulCloseTimeoutMs ?? DEFAULT_GRACEFUL_CLOSE_TIMEOUT_MS,
 		loopbackOnly: options.loopbackOnly ?? true,
+		...(options.verifyUpgrade ? { verifyUpgrade: options.verifyUpgrade } : {}),
 		...(options.onError ? { onError: options.onError } : {}),
 	};
 }
@@ -164,6 +166,18 @@ export class WebSocketListener implements ServerListener {
 		if (!accept) {
 			rejectUpgrade(socket, 503, "Service Unavailable");
 			return;
+		}
+		if (this.options.verifyUpgrade !== undefined) {
+			let allowed = false;
+			try {
+				allowed = this.options.verifyUpgrade(request) === true;
+			} catch (error) {
+				this.reportError(error);
+			}
+			if (!allowed) {
+				rejectUpgrade(socket, 403, "Forbidden");
+				return;
+			}
 		}
 		socket.setNoDelay(true);
 		socket.write(

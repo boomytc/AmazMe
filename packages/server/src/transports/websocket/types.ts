@@ -1,4 +1,4 @@
-import type { Server as HttpServer } from "node:http";
+import type { IncomingMessage, Server as HttpServer } from "node:http";
 
 /** Options for the loopback WebSocket listener. */
 export interface WebSocketListenerOptions {
@@ -17,6 +17,8 @@ export interface WebSocketListenerOptions {
 	gracefulCloseTimeoutMs?: number;
 	/** Reject upgrades whose peer address is not loopback. Defaults to true. */
 	loopbackOnly?: boolean;
+	/** Synchronous caller policy, checked before upgrading or accepting a connection. False or a throw rejects with 403. */
+	verifyUpgrade?: (request: IncomingMessage) => boolean;
 	/** Used to derive and validate maxPendingBytes. Must match the server when customized. */
 	maxFrameLength?: number;
 	onError?: (error: Error) => void;
