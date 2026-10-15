@@ -151,7 +151,7 @@ await import(${JSON.stringify(new URL("../dist/main.js", import.meta.url).href)}
 		const fixture = join(scratch, "font-fixture.mjs");
 		await writeFile(fixture, `
 import assert from "node:assert/strict";
-import { app } from "electron";
+import { app, Menu } from "electron";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const expression =
   "(() => {" +
@@ -166,6 +166,13 @@ const expression =
 app.on("browser-window-created", (_event, window) => {
   window.webContents.once("did-finish-load", async () => {
     try {
+      const menu = Menu.getApplicationMenu();
+      assert.ok(menu, "The desktop retains its application menu");
+      const menuRoles = items => items.flatMap(item => [item.role?.toLowerCase(), ...menuRoles(item.submenu?.items ?? [])]).filter(Boolean);
+      const roles = menuRoles(menu.items);
+      assert.ok(roles.includes("editmenu") && roles.includes("windowmenu"), "Standard Edit and Window menus remain available");
+      assert.ok(roles.includes("copy") && roles.includes("paste") && roles.includes("minimize"), "Standard edit and window actions remain available");
+      assert.ok(!roles.some(role => ["zoomin", "zoomout", "resetzoom"].includes(role)), "Native page zoom roles must not intercept font shortcuts");
       const snapshots = [];
       async function waitForSizes(step, sizes) {
         const deadline = Date.now() + 30_000;

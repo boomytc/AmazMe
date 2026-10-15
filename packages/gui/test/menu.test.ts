@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { editMenuTemplate, type EditFlags } from "../src/menu.ts";
+import type { MenuItemConstructorOptions } from "electron";
+import { applicationMenuTemplate, editMenuTemplate, type EditFlags } from "../src/menu.ts";
 
 const enabled: EditFlags = {
 	canUndo: true,
@@ -18,6 +19,23 @@ const disabled: EditFlags = {
 	canPaste: false,
 	canSelectAll: false,
 };
+
+describe("applicationMenuTemplate", () => {
+	test.each(["darwin", "win32", "linux"] as const)("keeps %s platform actions without native page zoom accelerators", platform => {
+		const menu = applicationMenuTemplate(platform);
+		expect(menu.map(item => item.role)).toEqual(expect.arrayContaining(["fileMenu", "editMenu", "windowMenu"]));
+		expect(menu.some(item => item.role === "appMenu")).toBe(platform === "darwin");
+		const view = menu.find(item => item.role === "viewMenu");
+		expect(Array.isArray(view?.submenu)).toBe(true);
+		const roles = (items: readonly MenuItemConstructorOptions[]): string[] => items.flatMap(item => [
+			...(item.role === undefined ? [] : [item.role]),
+			...roles(Array.isArray(item.submenu) ? item.submenu : []),
+		]);
+		const allRoles = roles(menu);
+		expect(allRoles).toEqual(expect.arrayContaining(["reload", "forceReload", "toggleDevTools", "togglefullscreen"]));
+		expect(allRoles.some(role => ["zoomIn", "zoomOut", "resetZoom"].includes(role))).toBe(false);
+	});
+});
 
 describe("editMenuTemplate", () => {
 	test("an editable field gets the built-in edit roles, enabled from editFlags", () => {

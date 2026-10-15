@@ -21,7 +21,7 @@ import {
 	resolveNodeExecutable,
 	webHostLaunch,
 } from "./launch.ts";
-import { editMenuTemplate } from "./menu.ts";
+import { applicationMenuTemplate, editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
 import { attentionOnTitle } from "./title.ts";
@@ -265,6 +265,7 @@ async function openWindow(pageUrl: string): Promise<void> {
 			webSecurity: true,
 		},
 	});
+	Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform)));
 	window = created;
 	created.on("closed", () => {
 		if (window === created) window = undefined;

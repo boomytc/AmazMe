@@ -6,6 +6,22 @@
  */
 import type { Locale } from "@amazme/web/locale";
 import { translate, type MessageKey } from "@amazme/web/strings";
+import type { MenuItemConstructorOptions } from "electron";
+
+/** Keep Electron's standard platform roles, but leave content sizing to the page's Settings commands. */
+export function applicationMenuTemplate(platform: NodeJS.Platform): MenuItemConstructorOptions[] {
+	return [
+		...(platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+		{ role: "fileMenu" },
+		{ role: "editMenu" },
+		// An explicit submenu prevents viewMenu from restoring the native page-zoom accelerators.
+		{ role: "viewMenu", submenu: [
+			{ role: "reload" }, { role: "forceReload" }, { role: "toggleDevTools" },
+			{ type: "separator" }, { role: "togglefullscreen" },
+		] },
+		{ role: "windowMenu" },
+	];
+}
 
 /** Built-in edit roles the template is allowed to ask Electron for. */
 export type EditRole = "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll";
