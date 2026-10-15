@@ -1098,22 +1098,30 @@ p {
 		flex-wrap: wrap;
 		height: auto;
 		min-height: 52px;
-		gap: 4px 8px;
-		padding: 10px 8px 10px 6px;
+		gap: 6px 8px;
+		padding: 8px 10px 8px 8px;
 	}
 
-	/* Keep a readable title line; approvals and all run controls keep their own space below. */
+	/* Priority goes to the session title and primary actions before secondary controls wrap. */
 	.header-start {
-		flex: 1 0 100%;
+		flex: 1 1 160px;
+		min-width: 0;
+	}
+
+	.header-titles {
+		flex: 1 1 auto;
+		min-width: 0;
 	}
 
 	.crumb {
 		flex: 1 1 auto;
+		max-width: 100%;
 	}
 
 	.header-end {
-		flex: 1 1 auto;
+		flex: 0 1 auto;
 		flex-wrap: wrap;
+		margin-left: auto;
 		row-gap: 4px;
 	}
 
@@ -1129,6 +1137,7 @@ p {
 	.header-actions {
 		margin-left: auto;
 		margin-right: 0;
+		gap: 4px;
 	}
 
 	.approval-status {
@@ -1142,6 +1151,12 @@ p {
 		margin-left: 0;
 		white-space: normal;
 		overflow-wrap: anywhere;
+	}
+}
+
+@container (max-width: 480px) {
+	.header-action:disabled {
+		display: none;
 	}
 }
 
@@ -3726,18 +3741,75 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 		display: block;
 		background: var(--scrim);
 	}
+
+	.project-action,
+	.session-more {
+		opacity: 1;
+	}
 }
 
 @media (max-width: 640px) {
 	:root { --rail-width: 48px; }
 	.app-rail { padding-inline: 4px; }
-	.rail-button { width: 38px; height: 40px; }
+	.rail-button { width: 40px; height: 40px; }
+	.sidebar {
+		width: min(300px, calc(100vw - var(--rail-width) - 12px));
+	}
+	.brand,
+	.brand-filter[data-open="true"] {
+		height: 38px;
+	}
 	.header {
 		flex-wrap: wrap;
 		height: auto;
 		min-height: 52px;
-		gap: 4px 8px;
-		padding: 10px 8px 10px 6px;
+		gap: 6px 8px;
+		padding: 8px 10px 8px 8px;
+	}
+
+	.icon-button,
+	.crumb-back,
+	.header-action,
+	.file-icon-button,
+	.modal-close {
+		width: 38px;
+		height: 38px;
+		min-width: 38px;
+		min-height: 38px;
+	}
+
+	.composer-attach,
+	.stop,
+	.primary {
+		width: 38px;
+		height: 38px;
+		min-width: 38px;
+		min-height: 38px;
+	}
+
+	.composer-select,
+	.model-setup-button,
+	.transcript-latest,
+	.panel-button,
+	.panel-input,
+	.panel-select,
+	.dock-tab,
+	.meter-trigger {
+		min-height: 38px;
+		height: 38px;
+	}
+
+	.project-add,
+	.project-action,
+	.session-more,
+	.message-action {
+		min-width: 36px;
+		min-height: 36px;
+	}
+
+	.session-select {
+		min-height: 40px;
+		padding-right: 40px;
 	}
 
 	/* The title keeps the room on a phone: the lane line steps aside. */
@@ -3763,6 +3835,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 	.header-actions {
 		margin-right: 0;
+		gap: 4px;
 	}
 
 	.greeting {
@@ -3787,8 +3860,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 		max-width: 88%;
 	}
 
-	.model-select { max-width: 150px; }
-	.thinking-select { max-width: 76px; }
+	.model-select { max-width: 160px; }
+	.thinking-select { max-width: 82px; }
 
 	.view-body {
 		padding: 20px 16px 48px;
@@ -3799,6 +3872,16 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 /* Touch controls remain usable without making desktop settings unnecessarily tall. */
 @media (pointer: coarse) {
+	.icon-button,
+	.crumb-back,
+	.header-action,
+	.composer-attach,
+	.composer-select,
+	.model-setup-button,
+	.stop,
+	.primary,
+	.transcript-latest,
+	.meter-trigger,
 	.dock-close,
 	.dock-tab,
 	.panel-button,
