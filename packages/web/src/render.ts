@@ -4,7 +4,7 @@
  * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { credentialRanges } from "./credentials.ts";
 import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
@@ -114,6 +114,7 @@ export interface PageElements {
 	readonly attach: HTMLButtonElement;
 	readonly fileInput: HTMLInputElement;
 	/** The scoped model and supported thinking selectors. */
+	readonly modelSetup?: HTMLElement;
 	readonly modelSelect: HTMLSelectElement;
 	readonly thinkingSelect: HTMLSelectElement;
 }
@@ -209,9 +210,21 @@ export function collectPageElements(): PageElements {
 		meterTokens: pick("meter-tokens"),
 		meterCost: pick("meter-cost"),
 		submitModes: pick("submit-modes"),
+		modelSetup: modelSetupElement(pickElement("model-select", HTMLSelectElement)),
 		modelSelect: pickElement("model-select", HTMLSelectElement),
 		thinkingSelect: pickElement("thinking-select", HTMLSelectElement),
 	};
+}
+
+function modelSetupElement(modelSelect: HTMLSelectElement): HTMLElement {
+	const existing = document.getElementById("model-setup");
+	if (existing !== null) return existing;
+	const setup = document.createElement("div");
+	setup.id = "model-setup";
+	setup.className = "model-setup";
+	setup.hidden = true;
+	modelSelect.insertAdjacentElement("beforebegin", setup);
+	return setup;
 }
 
 function laneStatusElement(): HTMLElement {
@@ -590,6 +603,29 @@ export function createRenderer(
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
 	const flowCache = new DomCache();
 	const chromeValues = new Map<string, unknown>();
+	const modelSetup = elements.modelSetup ?? modelSetupElement(elements.modelSelect);
+	let promptSelection: { start: number; end: number; direction: "forward" | "backward" | "none" } = {
+		start: 0,
+		end: 0,
+		direction: "none",
+	};
+	let modelSetupReturn: { scope: string; start: number; end: number; direction: "forward" | "backward" | "none" } | undefined;
+	const rememberPromptSelection = (): void => {
+		promptSelection = {
+			start: elements.prompt.selectionStart,
+			end: elements.prompt.selectionEnd,
+			direction: elements.prompt.selectionDirection,
+		};
+	};
+	const triggerModelSetup = (actionId: string): void => {
+		if (lastView !== undefined) {
+			modelSetupReturn = {
+				scope: attachmentScope(lastView),
+				...promptSelection,
+			};
+		}
+		report({ kind: "command", id: actionId, data: undefined });
+	};
 	const changed = (key: string, value: unknown): boolean => {
 		if (chromeValues.has(key) && sameViewValue(chromeValues.get(key), value)) return false;
 		chromeValues.set(key, value);
@@ -607,6 +643,10 @@ export function createRenderer(
 	/** Native dialogs isolate the page; the logical trigger also survives replicated DOM replacements. */
 	let modalReturnFocus: { node: HTMLElement; selector?: string } | undefined;
 	const captureModalFocus = (): void => {
+		if (modelSetupReturn !== undefined) {
+			modalReturnFocus = { node: elements.prompt, selector: "#prompt" };
+			return;
+		}
 		const node = document.activeElement;
 		if (!(node instanceof HTMLElement) || elements.modalRoot.contains(node)) return;
 		const selector = node.id ? `#${CSS.escape(node.id)}`
@@ -1607,6 +1647,14 @@ export function createRenderer(
 					? { id: SESSION_RESTORE_ACTION, data: view.attachedId, label: copy("project.restore"), tone: "primary" }
 					: { id: DOCK_TAB_ACTION, data: "conversations", label: copy("greeting.openConversations"), tone: "primary" }, report));
 				block.append(actions);
+			} else if (view.model.empty !== undefined) {
+				const scopeEmpty = view.model.empty === copy("model.scopeEmpty");
+				const actions = element("div", "welcome-steps");
+				actions.append(
+					panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), tone: scopeEmpty ? "default" : "primary", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
+					panelButton({ id: MODEL_SCOPE_ACTION, label: copy("model.configureModels"), tone: scopeEmpty ? "primary" : "default", disabled: view.model.disabled }, () => triggerModelSetup(MODEL_SCOPE_ACTION)),
+				);
+				block.append(element("p", "greeting-hint", view.model.empty), actions);
 			}
 			return block;
 		}
@@ -2302,6 +2350,31 @@ export function createRenderer(
 			}
 		}
 		const selected = options.find(option => option.selected);
+		const showSetup = options.length === 0 && picker.empty !== undefined;
+		elements.modelSelect.hidden = showSetup;
+		modelSetup.hidden = !showSetup;
+		if (showSetup) {
+			if (changed("model-setup", [view.locale, picker.empty, picker.disabled, view.modelPending])) {
+				const scopeEmpty = picker.empty === copy("model.scopeEmpty");
+				const makeAction = (id: string, label: string, primary: boolean): HTMLButtonElement => {
+					const node = button(primary ? "model-setup-button primary" : "model-setup-button");
+					node.dataset.action = id;
+					node.textContent = label;
+					node.title = [label, picker.empty].filter(Boolean).join("\n");
+					node.disabled = picker.disabled;
+					node.setAttribute("aria-busy", String(view.modelPending === true));
+					node.addEventListener("click", () => triggerModelSetup(id));
+					return node;
+				};
+				modelSetup.replaceChildren(
+					makeAction(PROVIDER_AUTH_ACTION, copy("model.connectProvider"), !scopeEmpty),
+					makeAction(MODEL_SCOPE_ACTION, copy("model.configureModels"), scopeEmpty),
+				);
+			}
+		} else {
+			chromeValues.delete("model-setup");
+			modelSetup.replaceChildren();
+		}
 		elements.modelSelect.value = selected ? JSON.stringify([selected.provider, selected.modelId]) : "";
 		elements.modelSelect.disabled = picker.disabled || options.length === 0;
 		elements.modelSelect.setAttribute("aria-busy", String(view.modelPending === true));
@@ -2344,6 +2417,18 @@ export function createRenderer(
 			const languageChanged = lastView?.locale !== view.locale;
 			const sessionChanged = lastView?.attachedId !== view.attachedId;
 			if (sessionChanged) drafts.clear();
+			if (
+				lastView?.panel.current === CHAT_VIEW &&
+				view.panel.current === SETTINGS_VIEW &&
+				view.attachedId !== undefined &&
+				view.readOnly !== true &&
+				(lastView.model.empty !== undefined || elements.prompt.value.length > 0)
+			) {
+				modelSetupReturn ??= {
+					scope: attachmentScope(view),
+					...promptSelection,
+				};
+			}
 			lastView = view;
 			const preview = attachmentPreview;
 			if (preview !== undefined && (attachmentScope(view) !== preview.scope || view.panel.current !== CHAT_VIEW ||
@@ -2366,6 +2451,7 @@ export function createRenderer(
 				chromeValues.clear();
 				elements.column.replaceChildren();
 				heldPromptFocus = undefined;
+				modelSetupReturn = undefined;
 			}
 
 			// Streaming repaints keep the roster's nodes and keyboard focus when it has not changed.
@@ -2480,7 +2566,7 @@ export function createRenderer(
 			elements.center.dataset.attached = String(view.attachedId !== undefined);
 			elements.center.dataset.readOnly = String(view.readOnly === true);
 			if (view.blocks.length === 0) {
-				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter, view.newSession, view.readOnly, view.archivedAttached], () => view.welcome !== undefined ? welcomeElement(view, view.welcome) : emptyElement(view)));
+				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter, view.newSession, view.readOnly, view.archivedAttached, view.model.empty, view.model.disabled], () => view.welcome !== undefined ? welcomeElement(view, view.welcome) : emptyElement(view)));
 			}
 			if (view.status.length > 0) flow.push(flowCache.get("status", view.status, () => runningElement(view.status)));
 			reconcileChildren(elements.column, flow);
@@ -2525,6 +2611,22 @@ export function createRenderer(
 			if (changed("panel", [view.locale, view.panel.panel, view.sessionLabel, view.focus])) renderPanelView(view);
 			syncSettingsChrome(view);
 			renderModal(view.panel.modal);
+			if (
+				modelSetupReturn !== undefined &&
+				view.panel.current === CHAT_VIEW &&
+				view.panel.modal === undefined &&
+				!detached
+			) {
+				if (attachmentScope(view) === modelSetupReturn.scope) {
+					const start = Math.min(modelSetupReturn.start, elements.prompt.value.length);
+					const end = Math.min(modelSetupReturn.end, elements.prompt.value.length);
+					elements.prompt.focus({ preventScroll: true });
+					elements.prompt.setSelectionRange(start, end, modelSetupReturn.direction);
+				}
+				if (view.model.empty === undefined || attachmentScope(view) !== modelSetupReturn.scope) {
+					modelSetupReturn = undefined;
+				}
+			}
 			// The composer's dock may have grown (an approval, a queued input) and shrunk the transcript
 			// under the reader; a reader who was at the bottom stays there.
 			if (view.panel.current === CHAT_VIEW) {
@@ -2537,6 +2639,7 @@ export function createRenderer(
 		},
 		setDraft(text: string, focus = true): void {
 			if (elements.prompt.value !== text) elements.prompt.value = text;
+			promptSelection = { start: text.length, end: text.length, direction: "none" };
 			fitPrompt(elements.prompt);
 			renderPrimary();
 			renderer.onDraftChange(text);
@@ -2579,11 +2682,15 @@ export function createRenderer(
 		renderer.onSubmit(text);
 	});
 	elements.prompt.addEventListener("input", () => {
+		rememberPromptSelection();
 		fitPrompt(elements.prompt);
 		// An empty draft disables send. The text decides whether the command palette is open.
 		renderPrimary();
 		renderer.onDraftChange(elements.prompt.value);
 	});
+	for (const eventName of ["keyup", "click", "select", "focus"] as const) {
+		elements.prompt.addEventListener(eventName, rememberPromptSelection);
+	}
 	elements.prompt.addEventListener("keydown", (event) => {
 		const palette = lastView?.palette;
 		if (palette?.open === true && palette.rows.length > 0) {

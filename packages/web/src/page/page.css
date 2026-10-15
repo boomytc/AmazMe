@@ -2363,6 +2363,51 @@ p {
 .composer-select option, .composer-select optgroup { color: var(--text); background: var(--raised); }
 .thinking-select { flex: none; min-width: 66px; max-width: 100px; }
 
+.model-setup {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.model-setup-button {
+	flex: none;
+	height: 32px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-md);
+	background: var(--canvas);
+	color: var(--text);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+	transition:
+		background var(--dur-fast) var(--ease),
+		border-color var(--dur-fast) var(--ease);
+}
+
+.model-setup-button:hover:not(:disabled) {
+	background: var(--hover);
+	border-color: var(--text-3);
+}
+
+.model-setup-button.primary {
+	border-color: transparent;
+	background: var(--accent-soft);
+	color: var(--accent-text);
+}
+
+.model-setup-button.primary:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.model-setup-button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
 .menu-empty {
 	margin: 0;
 	padding: 8px 10px;
@@ -3526,6 +3571,12 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 	.composer-attach {
 		grid-area: 1 / 1;
+	}
+
+	.model-setup {
+		grid-area: 1 / 2 / auto / 5;
+		justify-self: start;
+		flex-wrap: wrap;
 	}
 
 	.model-select {

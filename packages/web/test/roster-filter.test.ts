@@ -2,7 +2,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, test, vi } from "vitest";
-import { DOCK_TAB_ACTION, WELCOME_SESSION_ACTION } from "../src/actions.ts";
+import { DOCK_TAB_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, WELCOME_SESSION_ACTION } from "../src/actions.ts";
+import { modelScopeModal } from "../src/model-scope.ts";
 import { SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { buildWebView, type WebViewInput } from "../src/view.ts";
@@ -153,4 +154,58 @@ test("an empty read-only session offers recovery rather than asking for an unsen
 	renderer.render({ ...view, archivedAttached: undefined });
 	document.querySelector<HTMLButtonElement>("#transcript-empty button")?.click();
 	expect(report).toHaveBeenLastCalledWith({ kind: "command", id: DOCK_TAB_ACTION, data: "conversations" });
+});
+
+test("an attached session without models offers nearby provider and model setup actions and returns to the draft", () => {
+	const elements = collectPageElements();
+	const renderer = createRenderer(elements);
+	const report = vi.fn();
+	renderer.onPanelAction = report;
+	const base: WebViewInput = {
+		...input(""),
+		attachedId: "one",
+		directory: { sessions: [{ sessionId: "one", name: "周报", cwd: "/work", createdAt: 1 }] },
+		models: {
+			catalog: { revision: 1, availableModels: [], enabledModelIds: null },
+			configuration: { model: null, thinkingLevel: "off" },
+			refresh: { status: "idle" },
+		},
+	};
+	renderer.render(buildWebView(base));
+	expect(elements.modelSelect.hidden).toBe(true);
+	expect(elements.modelSetup?.hidden).toBe(false);
+	const connect = elements.modelSetup?.querySelector<HTMLButtonElement>(`[data-action="${PROVIDER_AUTH_ACTION}"]`);
+	const configure = elements.modelSetup?.querySelector<HTMLButtonElement>(`[data-action="${MODEL_SCOPE_ACTION}"]`);
+	expect(connect?.textContent).toBe("连接供应商");
+	expect(configure?.textContent).toBe("配置模型");
+	expect(document.querySelector(`#transcript-empty [data-action="${PROVIDER_AUTH_ACTION}"]`)?.textContent).toBe("连接供应商");
+	expect(document.querySelector(`#transcript-empty [data-action="${MODEL_SCOPE_ACTION}"]`)?.textContent).toBe("配置模型");
+
+	renderer.setDraft("请帮我梳理发布清单");
+	elements.prompt.setSelectionRange(3, 5);
+	elements.prompt.dispatchEvent(new Event("select"));
+	connect?.click();
+	expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROVIDER_AUTH_ACTION, data: undefined });
+
+	const modal = modelScopeModal("zh", { allModels: [{ provider: "deepseek", id: "v4", name: "DeepSeek V4" }], enabledModelIds: ["deepseek/v4"] });
+	renderer.render(buildWebView({ ...base, panel: { ...base.panel, modal } }));
+	expect(elements.modalRoot.open).toBe(true);
+
+	const configured = buildWebView({
+		...base,
+		models: {
+			catalog: { revision: 2, availableModels: [{ provider: "deepseek", modelId: "v4", name: "DeepSeek V4", reasoning: false }], enabledModelIds: ["deepseek/v4"] },
+			configuration: { model: { provider: "deepseek", modelId: "v4" }, thinkingLevel: "off" },
+			refresh: { status: "idle" },
+		},
+	});
+	renderer.render(configured);
+	expect(elements.modalRoot.open).toBe(false);
+	expect(elements.modelSetup?.hidden).toBe(true);
+	expect(elements.modelSelect.hidden).toBe(false);
+	expect(elements.modelSelect.disabled).toBe(false);
+	expect(elements.prompt.value).toBe("请帮我梳理发布清单");
+	expect(document.activeElement).toBe(elements.prompt);
+	expect(elements.prompt.selectionStart).toBe(3);
+	expect(elements.prompt.selectionEnd).toBe(5);
 });

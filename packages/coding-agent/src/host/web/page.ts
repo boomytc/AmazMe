@@ -1718,6 +1718,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		modalOpener = undefined;
 		paint();
 		if (opener === undefined) return;
+		if (view === CHAT_VIEW && (opener.id === PROVIDER_AUTH_ACTION || opener.id === MODEL_SCOPE_ACTION)) {
+			const prompt = document.getElementById("prompt");
+			if (prompt instanceof HTMLElement && !prompt.hasAttribute("disabled")) prompt.focus();
+			return;
+		}
 		if (opener.id === CONVERSATION_RENAME_ACTION || opener.id === CONVERSATION_ARCHIVE_ACTION) {
 			const controls = [...document.querySelectorAll<HTMLButtonElement>("#dock-body .panel-more, #dock-body [data-action]")];
 			controls.find(node => node.dataset.actionData === opener.data && (node.classList.contains("panel-more") || node.dataset.action === CONVERSATION_RESTORE_ACTION))?.focus();
