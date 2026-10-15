@@ -131,18 +131,22 @@ async function openPage(host: WebHost, storage = new Map<string, string>()) {
 	};
 	const releases = new Set<Promise<void>>();
 	const subscribe = Client.prototype.openLink;
-	const subscriptionSpy = vi.spyOn(Client.prototype, "openLink").mockImplementation(async function (this: Client, ...args) {
+	const trackSubscription: Client["openLink"] = async function (this: Client, ...args) {
 		const subscription = await subscribe.apply(this, args);
 		return { ...subscription, close: async () => {
 			const releasing = subscription.close();
 			releases.add(releasing);
 			try { await releasing; } finally { releases.delete(releasing); }
 		} };
-	});
+	};
+	// Scope the prototype hook to construction, then track only this page's client.
+	// A second page must not capture the first page's mock as its original method.
+	const constructionSpy = vi.spyOn(Client.prototype, "openLink").mockImplementation(trackSubscription);
 	let client: Client | undefined;
-	try { client = await startPage(renderer); } catch (error) { subscriptionSpy.mockRestore(); throw error; }
-	if (client === undefined) { subscriptionSpy.mockRestore(); throw new Error("Page did not connect"); }
+	try { client = await startPage(renderer); } finally { constructionSpy.mockRestore(); }
+	if (client === undefined) throw new Error("Page did not connect");
 	const connection = client;
+	const subscriptionSpy = vi.spyOn(connection, "openLink").mockImplementation(trackSubscription);
 	let closed = () => {};
 	const closing = new Promise<void>(resolve => { closed = resolve; });
 	const disposeClient = connection.dispose.bind(connection);

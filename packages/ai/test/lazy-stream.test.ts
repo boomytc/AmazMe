@@ -5,10 +5,11 @@ import { createModels, createProvider, type ModelsSimpleStreamOptions } from "..
 import { fauxAssistantMessage, fauxProvider } from "../src/providers/faux.ts";
 import type { AssistantMessageEvent, ProviderStreams, SimpleStreamOptions } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import { isRetryableAssistantError } from "../src/utils/retry.ts";
 
 const model = fauxProvider().provider.getModels()[0]!;
-const context = { messages: [] };
+const context = normalizeContext({ messages: [] });
 
 /** Both next and return can ignore the provider signal, as an abandoned body read can. */
 class PendingStream extends AssistantMessageEventStream {
@@ -42,7 +43,7 @@ function collection(source: AssistantMessageEventStream, nested = false) {
 		return source;
 	};
 	const api: ProviderStreams = { stream: respond, streamSimple: respond,
-		fetchDeferred: (requestModel, _handle, options) => respond(requestModel, { messages: [] }, options) };
+		fetchDeferred: (requestModel, _handle, options) => respond(requestModel, context, options) };
 	const models = createModels();
 	models.setProvider(createProvider({
 		id: model.provider, models: [model],
@@ -192,7 +193,7 @@ describe("bounded model streams", () => {
 		const dispatch = vi.fn(() => new PendingStream());
 		const api = lazyApi(() => loaded.promise);
 		const caller = new AbortController();
-		const stream = api.streamSimple(model, { messages: [] }, { signal: caller.signal });
+		const stream = api.streamSimple(model, context, { signal: caller.signal });
 		await vi.advanceTimersByTimeAsync(0);
 		caller.abort();
 		expect((await stream.result()).stopReason).toBe("aborted");

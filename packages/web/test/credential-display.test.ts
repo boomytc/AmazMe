@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView } from "../src/view.ts";
-import type { TranscriptBlock } from "../src/view.ts";
+import type { TranscriptBlock, WebView } from "../src/view.ts";
 
 const key = "sk-" + "a1B2c3D4".repeat(4);
 const block: TranscriptBlock = { id: "1", kind: "user", title: "You", text: `use ${key}`, tone: "plain", running: false };
@@ -19,8 +19,8 @@ afterEach(() => vi.restoreAllMocks());
 
 test("sent and queued credentials start masked; each native button reveals only its own range", () => {
 	const renderer = createRenderer(collectPageElements());
-	const view = { ...failureView("en", ""), attachedId: "s", blocks: [block], queue: [
-		{ id: "q", text: key, cancel: { id: "withdraw", label: "Withdraw" } },
+	const view: WebView = { ...failureView("en", ""), attachedId: "s", blocks: [block], queue: [
+		{ id: "q", text: key, cancel: { id: "withdraw", label: "Withdraw", tone: "default" } },
 	] };
 	renderer.render(view);
 	expect(document.querySelector(".bubble")?.textContent).not.toContain(key);

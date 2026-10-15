@@ -52,10 +52,10 @@ async function requestEndpoint(url: string, headers: Record<string, string | str
 	if (target.protocol === "ws:") target.protocol = "http:";
 	return new Promise((resolve, reject) => {
 		const request = httpRequest(target, {
-			headers: {
+			headers: Object.entries({
 				...headers,
 				...(upgrade ? { upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } : { connection: "close" }),
-			},
+			}).flatMap(([name, values]) => (Array.isArray(values) ? values : [values]).flatMap(value => [name, value])),
 		}, response => {
 			const chunks: Buffer[] = [];
 			response.on("data", (chunk: Buffer) => chunks.push(chunk));

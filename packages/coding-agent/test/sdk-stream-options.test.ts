@@ -13,7 +13,7 @@ import {
 	type SimpleStreamOptions,
 } from "@amazme/ai";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { Harness, LiveDoc, type LiveState, MemoryStorage } from "@amazme/durable";
+import { createRegistry, Harness, LiveDoc, type LiveState, MemoryStorage } from "@amazme/durable";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ExtensionFactory } from "../src/core/extensions/types.ts";
@@ -296,12 +296,12 @@ describe("createAgentSession stream options", () => {
 		models.setProvider(createProvider({ id: model.provider, models: [model],
 			auth: { apiKey: { name: "Local", resolve: async () => ({ auth: {} }) } },
 			api: { stream: respond, streamSimple: respond } }));
-		const harness = await Harness.open(new MemoryStorage(), { models,
+		const harness = await Harness.open(new MemoryStorage(), { models, registry: createRegistry(),
 			settings: { ...createHarnessSettings(manager), progress: { partialIntervalMs: 1 } } }, BACKGROUND_CONTEXT);
 		let publishedPartial = false;
 		harness.subscribeCommits(publication => {
 			for (const change of publication.changes) {
-				if (change.type !== "document" || change.record.kind !== LiveDoc.kind || change.value === null) continue;
+				if (change.type !== "document" || change.record.kind !== LiveDoc.definition.kind || change.value === null) continue;
 				const live = change.value as LiveState;
 				publishedPartial ||= live.generation?.message?.content.some(block => block.type === "text"
 					&& block.text === "stalled partial") === true;

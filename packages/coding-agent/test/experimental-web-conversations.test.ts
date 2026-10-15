@@ -871,7 +871,7 @@ describe("durable foreground subagents", () => {
 				? fauxAssistantMessage("human input survived") : fauxAssistantMessage("parent cancellation observed");
 			setup.faux.setResponses([finish, finish, finish]);
 			const tool = (await setup.harness.snapshot(LiveDoc, root.id, context))?.tools?.find(item => item.name === "subagent");
-			if (tool === undefined) throw new Error("Delegation tool is not running");
+			if (tool?.taskId === undefined) throw new Error("Delegation tool is not running");
 			await setup.harness.abortTask(tool.taskId, context);
 			expect((await later.wait(context)).status).toBe("done");
 			expect((await parent.wait(context)).status).toBe("done");
