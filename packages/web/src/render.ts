@@ -34,7 +34,7 @@ import {
 	type SettingsSearchHit,
 } from "./panels.ts";
 import { fontSizeShortcut, isApplePlatform, isStopChord, matchShortcut, type ShortcutGesture, type ShortcutId } from "./shortcuts.ts";
-import { applyTypography, DEFAULT_TYPOGRAPHY, resolveTypography } from "./typography.ts";
+import { applyTypography, DEFAULT_TYPOGRAPHY, FONT_FAMILY_FIELDS, normalizeFontFamily, resolveTypography } from "./typography.ts";
 import { type MessageKey, translate } from "./strings.ts";
 import {
 	type Attachment,
@@ -727,6 +727,24 @@ export function createRenderer(
 		"setting:codeSize",
 		"setting:terminalSize",
 	]);
+	const FONT_FAMILY_SET = new Set<string>(FONT_FAMILY_FIELDS);
+	const normalizeControlValue = (control: PanelControl, value: string): string => {
+		if (control.kind === "number") {
+			if (value.trim() === "") return value;
+			const parsed = Number(value);
+			return Number.isFinite(parsed) ? String(parsed) : value;
+		}
+		if (control.id === SETTINGS_FIELD_ACTION && control.data !== undefined && FONT_FAMILY_SET.has(control.data)) {
+			try {
+				return normalizeFontFamily(value);
+			} catch {
+				return value;
+			}
+		}
+		return value;
+	};
+	const sameControlValue = (control: PanelControl, left: string, right: string): boolean =>
+		normalizeControlValue(control, left) === normalizeControlValue(control, right);
 	/** Unsubmitted panel inputs belong to a session, unlike global settings drafts. */
 	const inputDrafts = new Map<string, string>();
 	/** The modal already in the DOM; a rebuild would drop what the reader typed into it. */
@@ -847,17 +865,18 @@ export function createRenderer(
 			controlCommits.delete(key);
 			return undefined;
 		}
-		const matches =
-			control.kind === "number"
-				? current.value.trim() !== "" && Number(current.value) === Number(control.value)
-				: current.value === control.value;
-		if (!matches) return current.status === "saving" ? "saving" : undefined;
+		const matches = sameControlValue(control, current.value, control.value);
+		if (!matches) {
+			if (current.timer !== undefined) window.clearTimeout(current.timer);
+			controlCommits.delete(key);
+			return undefined;
+		}
 		if (current.status === "saving") {
 			const timer = window.setTimeout(() => {
 				if (controlCommits.get(key)?.timer !== timer) return;
 				controlCommits.delete(key);
-				const statusNode = elements.viewBody.querySelector<HTMLElement>(`[data-control-status="${CSS.escape(key)}"]`);
-				if (statusNode !== null) {
+				for (const statusNode of elements.viewBody.querySelectorAll<HTMLElement>("[data-control-status]")) {
+					if (statusNode.dataset.controlStatus !== key) continue;
 					if (statusNode.dataset.defaultHint) {
 						statusNode.textContent = statusNode.dataset.defaultHint;
 						statusNode.dataset.state = "hint";
@@ -869,7 +888,7 @@ export function createRenderer(
 					}
 				}
 			}, 2400);
-			controlCommits.set(key, { value: current.value, status: "saved", timer });
+			controlCommits.set(key, { value: control.value, status: "saved", timer });
 		}
 		return "saved";
 	};
@@ -878,7 +897,11 @@ export function createRenderer(
 		const base: Record<string, unknown> = { ...(lastView?.typography ?? DEFAULT_TYPOGRAPHY) };
 		for (const field of ["textFont", "codeFont", "terminalFont", "textSize", "codeSize", "terminalSize"] as const) {
 			const key = `${SETTINGS_FIELD_ACTION}\u0000${field}`;
-			const inputNode = groupNode?.querySelector<HTMLInputElement>(`[data-control-key="${CSS.escape(key)}"]`);
+			const inputNode = groupNode
+				? [...groupNode.querySelectorAll<HTMLInputElement>("input[data-control-key]")].find(
+						(node) => node.dataset.controlKey === key,
+				  )
+				: undefined;
 			const raw = inputNode?.value ?? drafts.get(key);
 			if (raw === undefined) continue;
 			base[field] = field.endsWith("Size") ? (raw.trim() === "" ? Number.NaN : Number(raw)) : raw;
@@ -952,7 +975,7 @@ export function createRenderer(
 		input.className = control.kind === "number" ? "panel-input panel-number" : "panel-input";
 		input.type = control.kind === "number" ? "number" : "text";
 		const saved = drafts.get(key);
-		if (saved !== undefined && (control.kind === "number" ? saved.trim() !== "" && Number(saved) === Number(control.value) : saved === control.value)) drafts.delete(key);
+		if (saved !== undefined && sameControlValue(control, saved, control.value)) drafts.delete(key);
 		input.value = drafts.get(key) ?? control.value;
 		if (control.placeholder !== undefined) input.placeholder = control.placeholder;
 		if (control.min !== undefined) input.min = String(control.min);
@@ -981,12 +1004,12 @@ export function createRenderer(
 			if (state === "saving") {
 				status.textContent = copy("panel.settings.saving");
 				status.dataset.state = "saving";
-			} else if (state === "saved" && input.value === control.value) {
+			} else if (state === "saved" && sameControlValue(control, input.value, control.value)) {
 				status.textContent = copy("panel.settings.saved");
 				status.dataset.state = "saved";
 			} else {
 				status.textContent = defaultHint;
-				status.dataset.state = input.value !== control.value ? "dirty" : "hint";
+				status.dataset.state = !sameControlValue(control, input.value, control.value) ? "dirty" : "hint";
 			}
 		};
 		const validate = (): boolean => {
@@ -1007,6 +1030,11 @@ export function createRenderer(
 		if (drafts.has(key)) validate();
 		else syncFieldStatus();
 		input.addEventListener("input", () => {
+			const previous = controlCommits.get(key);
+			if (previous?.status === "saved") {
+				if (previous.timer !== undefined) window.clearTimeout(previous.timer);
+				controlCommits.delete(key);
+			}
 			drafts.set(key, input.value);
 			if (!error.hidden) validate();
 			else syncFieldStatus();
@@ -1014,15 +1042,22 @@ export function createRenderer(
 			const preview = groupNode?.querySelector<HTMLElement>("[data-typography-preview]");
 			if (preview) applyGroupTypographyPreview(preview, groupNode);
 		});
-		let submitted = control.value;
 		const commit = (): void => {
 			// A number outside the host's range is answered here, in the reader's language, and
 			// keeps the draft so the reader can correct it instead of losing what they typed.
 			if (!validate()) return;
-			if (input.value === submitted) return;
-			submitted = input.value;
+			const normalized = normalizeControlValue(control, input.value);
+			const currentCommit = controlCommits.get(key);
+			const currentTarget = currentCommit?.status === "saving" ? currentCommit.value : control.value;
+			if (sameControlValue(control, input.value, currentTarget)) {
+				if (input.value !== normalized) input.value = normalized;
+				if (sameControlValue(control, normalized, control.value)) drafts.delete(key);
+				syncFieldStatus();
+				return;
+			}
+			if (input.value !== normalized) input.value = normalized;
 			syncFieldStatus("saving");
-			emit(input.value);
+			emit(normalized);
 		};
 		input.addEventListener("change", commit);
 		input.addEventListener("keydown", event => {

@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { SETTINGS_FIELD_ACTION } from "../src/panels.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { buildWebView, type WebViewInput } from "../src/view.ts";
 
@@ -79,59 +80,173 @@ const settings = shell({
 
 let cleanupListeners = (): void => {};
 
-test("font size controls enforce the Host's upper bound, preview typography live, and report save timing and completion", () => {
-	const descriptors = [
-		{ id: "textFont", group: "interface", kind: "string" as const, field: "typography.textFont", explicit: false, value: "" },
-		{ id: "codeSize", group: "interface", kind: "number" as const, field: "typography.codeSize", explicit: false, value: "13", min: 10, max: 16, step: 1 },
-	];
-	const input = shell({ locale: "zh", current: "settings", settings: { state: {
+test("an unacknowledged save ends with a retryable draft after pending clears", () => {
+	const state = {
 		paths: { global: "/agent/settings.json" }, projectTrusted: false, errors: [],
-		descriptors,
-	} } });
+		descriptors: [{ id: "textFont", group: "interface", kind: "string" as const, field: "typography.textFont", explicit: false, value: "" }],
+	};
 	const renderer = createRenderer(collectPageElements());
 	const action = vi.fn();
 	renderer.onPanelAction = action;
-	renderer.render(buildWebView(input));
-	const fontControl = document.querySelector<HTMLInputElement>('input[aria-label="正文字体"]');
-	const control = document.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]');
-	const preview = document.querySelector<HTMLElement>("[data-typography-preview]");
-	if (!control || !fontControl || !preview) throw new Error("Missing typography controls or preview");
-	const statusOf = () => control.closest(".panel-field")?.querySelector<HTMLElement>(".panel-field-status");
-	expect(statusOf()?.textContent).toBe("按 Enter 或失焦保存");
-	expect(preview.style.getPropertyValue("--code-font-size")).toBe("13px");
+	const paint = (pending = false) => renderer.render(buildWebView(shell({
+		locale: "zh", current: "settings", settings: { state },
+		...(pending ? { pending: { id: SETTINGS_FIELD_ACTION, data: "textFont" } } : {}),
+	})));
+	const field = () => document.querySelector<HTMLInputElement>('input[aria-label="正文字体"]')!;
+	const status = () => field().closest(".panel-field")?.querySelector<HTMLElement>(".panel-field-status");
+	paint();
+	field().value = "Georgia";
+	field().dispatchEvent(new Event("input"));
+	field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+	paint(true);
+	expect(field().disabled).toBe(true);
+	expect(status()?.dataset.state).toBe("saving");
+	paint();
+	expect(field().disabled).toBe(false);
+	expect(field().value).toBe("Georgia");
+	expect(status()?.dataset.state).toBe("dirty");
+	field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+	expect(action).toHaveBeenCalledTimes(2);
+	expect(action).toHaveBeenLastCalledWith({ kind: "control", id: SETTINGS_FIELD_ACTION, data: "textFont", value: "Georgia" });
+});
 
-	fontControl.value = "Georgia";
-	fontControl.dispatchEvent(new Event("input", { bubbles: true }));
-	expect(preview.style.getPropertyValue("--font-content")).toBe('"Georgia", var(--font-sans)');
+test("a saved confirmation cannot overwrite a newer font draft when its timer expires", () => {
+	vi.useFakeTimers();
+	try {
+		const descriptor = { id: "textFont", group: "interface", kind: "string" as const, field: "typography.textFont", explicit: false, value: "" };
+		const renderer = createRenderer(collectPageElements());
+		const paint = (value: string) => renderer.render(buildWebView(shell({
+			locale: "zh", current: "settings", settings: { state: {
+				paths: { global: "/agent/settings.json" }, projectTrusted: false, errors: [], descriptors: [{ ...descriptor, value }],
+			} },
+		})));
+		const field = () => document.querySelector<HTMLInputElement>('input[aria-label="正文字体"]')!;
+		const status = () => field().closest(".panel-field")?.querySelector<HTMLElement>(".panel-field-status");
+		paint("");
+		field().value = "Georgia";
+		field().dispatchEvent(new Event("input"));
+		field().dispatchEvent(new Event("change"));
+		paint("Georgia");
+		expect(status()?.dataset.state).toBe("saved");
+		field().value = "Palatino";
+		field().dispatchEvent(new Event("input"));
+		expect(status()?.dataset.state).toBe("dirty");
+		vi.advanceTimersByTime(2400);
+		expect(status()?.dataset.state).toBe("dirty");
+		expect(field().value).toBe("Palatino");
+	} finally {
+		vi.useRealTimers();
+	}
+});
 
-	expect(control.max).toBe("16");
-	control.value = "17";
-	control.dispatchEvent(new Event("change", { bubbles: true }));
-	expect(action).not.toHaveBeenCalled();
-	expect(control.getAttribute("aria-invalid")).toBe("true");
-	expect(statusOf()?.hidden).toBe(true);
+test("font size controls enforce the Host's upper bound, preview typography live, and report save timing and completion", () => {
+	vi.useFakeTimers();
+	try {
+		const descriptors = [
+			{ id: "textFont", group: "interface", kind: "string" as const, field: "typography.textFont", explicit: false, value: "" },
+			{ id: "codeSize", group: "interface", kind: "number" as const, field: "typography.codeSize", explicit: false, value: "13", min: 10, max: 16, step: 1 },
+		];
+		const input = shell({ locale: "zh", current: "settings", settings: { state: {
+			paths: { global: "/agent/settings.json" }, projectTrusted: false, errors: [],
+			descriptors,
+		} } });
+		const renderer = createRenderer(collectPageElements());
+		const action = vi.fn();
+		renderer.onPanelAction = action;
+		renderer.render(buildWebView(input));
+		const fontControl = document.querySelector<HTMLInputElement>('input[aria-label="正文字体"]');
+		const control = document.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]');
+		const preview = document.querySelector<HTMLElement>("[data-typography-preview]");
+		if (!control || !fontControl || !preview) throw new Error("Missing typography controls or preview");
+		const statusOf = () =>
+			document
+				.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]')
+				?.closest(".panel-field")
+				?.querySelector<HTMLElement>(".panel-field-status");
+		expect(statusOf()?.textContent).toBe("按 Enter 或失焦保存");
+		expect(preview.style.getPropertyValue("--code-font-size")).toBe("13px");
 
-	control.value = "16";
-	control.dispatchEvent(new Event("input", { bubbles: true }));
-	expect(preview.style.getPropertyValue("--code-font-size")).toBe("16px");
-	expect(statusOf()?.hidden).toBe(false);
-	expect(statusOf()?.dataset.state).toBe("dirty");
+		fontControl.value = "  Georgia  ";
+		fontControl.dispatchEvent(new Event("input", { bubbles: true }));
+		expect(preview.style.getPropertyValue("--font-content")).toBe('"Georgia", var(--font-sans)');
+		fontControl.dispatchEvent(new Event("change", { bubbles: true }));
+		expect(action).toHaveBeenCalledWith(expect.objectContaining({ data: "textFont", value: "Georgia" }));
 
-	control.dispatchEvent(new Event("change", { bubbles: true }));
-	expect(action).toHaveBeenCalledWith(expect.objectContaining({ data: "codeSize", value: "16" }));
-	expect(statusOf()?.textContent).toBe("正在保存…");
-	expect(statusOf()?.dataset.state).toBe("saving");
+		// Simulate a write failure where the host keeps the old value and reports an error notice.
+		const failedWrite = shell({
+			locale: "zh",
+			current: "settings",
+			notice: { tone: "error", text: "EACCES: permission denied" },
+			settings: {
+				state: {
+					paths: { global: "/agent/settings.json" },
+					projectTrusted: false,
+					errors: [{ scope: "global", path: "/agent/settings.json", message: "EACCES: permission denied" }],
+					descriptors,
+				},
+			},
+		});
+		renderer.render(buildWebView(failedWrite));
+		const failedFontInput = document.querySelector<HTMLInputElement>('input[aria-label="正文字体"]');
+		const failedFontStatus = failedFontInput?.closest(".panel-field")?.querySelector<HTMLElement>(".panel-field-status");
+		expect(document.querySelector(".panel-notice.error")?.textContent).toContain("没有权限访问此路径");
+		expect(failedFontInput?.value).toBe("Georgia");
+		expect(failedFontStatus?.textContent).toBe("按 Enter 或失焦保存");
+		expect(failedFontStatus?.dataset.state).toBe("dirty");
 
-	const settled = shell({ locale: "zh", current: "settings", settings: { state: {
-		paths: { global: "/agent/settings.json" }, projectTrusted: false, errors: [],
-		descriptors: [descriptors[0]!, { ...descriptors[1]!, value: "16", explicit: true }],
-	} } });
-	renderer.render(buildWebView(settled));
-	const settledStatus = document.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]')
-		?.closest(".panel-field")
-		?.querySelector<HTMLElement>(".panel-field-status");
-	expect(settledStatus?.textContent).toBe("已保存");
-	expect(settledStatus?.dataset.state).toBe("saved");
+		// Retrying on the same input after the failure re-emits the normalized value.
+		failedFontInput?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+		expect(action).toHaveBeenCalledTimes(2);
+		expect(action).toHaveBeenLastCalledWith(expect.objectContaining({ data: "textFont", value: "Georgia" }));
+
+		expect(control.max).toBe("16");
+		const currentControl = document.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]')!;
+		currentControl.value = "17";
+		currentControl.dispatchEvent(new Event("change", { bubbles: true }));
+		expect(action).toHaveBeenCalledTimes(2);
+		expect(currentControl.getAttribute("aria-invalid")).toBe("true");
+		expect(statusOf()?.hidden).toBe(true);
+
+		currentControl.value = "16";
+		currentControl.dispatchEvent(new Event("input", { bubbles: true }));
+		const currentPreview = document.querySelector<HTMLElement>("[data-typography-preview]")!;
+		expect(currentPreview.style.getPropertyValue("--code-font-size")).toBe("16px");
+		expect(statusOf()?.hidden).toBe(false);
+		expect(statusOf()?.dataset.state).toBe("dirty");
+
+		currentControl.dispatchEvent(new Event("change", { bubbles: true }));
+		expect(action).toHaveBeenCalledWith(expect.objectContaining({ data: "codeSize", value: "16" }));
+		expect(statusOf()?.textContent).toBe("正在保存…");
+		expect(statusOf()?.dataset.state).toBe("saving");
+
+		const settled = shell({ locale: "zh", current: "settings", settings: { state: {
+			paths: { global: "/agent/settings.json" }, projectTrusted: false, errors: [],
+			descriptors: [
+				{ ...descriptors[0]!, value: "Georgia", explicit: true },
+				{ ...descriptors[1]!, value: "16", explicit: true },
+			],
+		} } });
+		renderer.render(buildWebView(settled));
+		const settledFontInput = document.querySelector<HTMLInputElement>('input[aria-label="正文字体"]');
+		const settledFontStatus = settledFontInput?.closest(".panel-field")?.querySelector<HTMLElement>(".panel-field-status");
+		expect(settledFontInput?.value).toBe("Georgia");
+		expect(settledFontStatus?.textContent).toBe("已保存");
+		expect(settledFontStatus?.dataset.state).toBe("saved");
+		const settledStatus = document.querySelector<HTMLInputElement>('input[aria-label="代码字号（px）"]')
+			?.closest(".panel-field")
+			?.querySelector<HTMLElement>(".panel-field-status");
+		expect(settledStatus?.textContent).toBe("已保存");
+		expect(settledStatus?.dataset.state).toBe("saved");
+
+		// After 2.4s the "已保存" confirmation automatically clears back to the commit hint in the DOM.
+		vi.advanceTimersByTime(2400);
+		expect(settledFontStatus?.textContent).toBe("按 Enter 或失焦保存");
+		expect(settledFontStatus?.dataset.state).toBe("hint");
+		expect(settledStatus?.textContent).toBe("按 Enter 或失焦保存");
+		expect(settledStatus?.dataset.state).toBe("hint");
+	} finally {
+		vi.useRealTimers();
+	}
 });
 
 beforeEach(() => {

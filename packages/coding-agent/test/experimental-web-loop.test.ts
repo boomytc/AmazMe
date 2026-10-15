@@ -2163,6 +2163,36 @@ describe("web client interactive loop", () => {
 });
 
 describe("web client management surfaces", () => {
+	test("keeps startup-project diagnostics out of an attached project's settings", async () => {
+		const drainErrors = SettingsManager.prototype.drainErrors;
+		const startupPath = join(process.cwd(), ".amazme", "settings.json");
+		const diagnostic = vi.spyOn(SettingsManager.prototype, "drainErrors").mockImplementation(function (this: SettingsManager) {
+			return [...drainErrors.call(this), { scope: "project", path: startupPath, error: new Error("Startup project settings are unreadable") }];
+		});
+		const host = await startLoopHost();
+		diagnostic.mockRestore();
+		const administration = await openAdministration(host);
+		const presentation = await openPresentation(host);
+		const page = await openPage(host);
+		try {
+			await waitFor(() => administration.settings.state.value !== undefined, "startup settings");
+			expect(administration.settings.state.value?.errors).toContainEqual({
+				scope: "project", path: startupPath, message: "Startup project settings are unreadable",
+			});
+			const folder = await makeDirectory("settings-diagnostic-owner-");
+			const project = await presentation.projects.create({ cwd: folder, name: "Healthy project" }, BACKGROUND_CONTEXT);
+			const session = await presentation.management.create({ id: "settings-diagnostic-owner", projectId: project.id }, BACKGROUND_CONTEXT);
+			page.renderer.onSelect(session.sessionId);
+			page.renderer.onPanelAction({ kind: "open", panel: SETTINGS_VIEW });
+			await waitFor(() => page.renderer.view?.attachedId === session.sessionId && page.renderer.view.panel.panel?.groups.some(group => group.id === "settings:interface") === true, "attached project settings");
+			expect(page.renderer.view?.panel.panel?.notices.filter(notice => notice.tone === "error")).toEqual([]);
+		} finally {
+			await page.dispose();
+			await presentation.dispose();
+			await administration.dispose();
+		}
+	}, 30_000);
+
 	test("keeps failed global edits retryable before and after session attachment when settings cannot be read", async () => {
 		const host = await startLoopHost();
 		const administration = await openAdministration(host);

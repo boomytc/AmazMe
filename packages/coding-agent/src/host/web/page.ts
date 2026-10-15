@@ -183,7 +183,7 @@ import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as S
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
 import { isProjectSelection, ProjectManagement, SessionArchive } from "../services/projects.ts";
 import type { ProjectSelection } from "../services/projects.ts";
-import { SessionSettings, Settings } from "../services/settings.ts";
+import { SessionSettings, Settings, type SettingsState } from "../services/settings.ts";
 import { SessionInsights } from "../services/insights.ts";
 import { SessionMirror } from "../services/session-mirror.ts";
 import type { SessionMirrorWarning } from "../services/session-mirror.ts";
@@ -956,8 +956,19 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	/** The catalogue's value for one field, once the host has published it. */
-	const effectiveSettings = () => desiredSessionId === undefined ? settings.state.value
-		: painter.sessionId === desiredSessionId ? painter.settingsValue : undefined;
+	const effectiveSettings = () => {
+		if (desiredSessionId === undefined) return settings.state.value;
+		if (painter.sessionId !== desiredSessionId || painter.settingsValue === undefined) return undefined;
+		// Project diagnostics belong to the attached worker's directory, not the host's startup directory.
+		const globalErrors = settings.state.value?.errors.filter(error => error.scope === "global") ?? [];
+		if (globalErrors.length === 0) return painter.settingsValue;
+		const errorKey = (error: SettingsState["errors"][number]) => JSON.stringify([error.scope, error.path, error.message]);
+		const seen = new Set(painter.settingsValue.errors.map(errorKey));
+		return {
+			...painter.settingsValue,
+			errors: [...globalErrors.filter(error => !seen.has(errorKey(error))), ...painter.settingsValue.errors],
+		};
+	};
 	const settingValue = (id: string): string | undefined =>
 		effectiveSettings()?.descriptors.find((descriptor) => descriptor.id === id)?.value;
 
@@ -1144,7 +1155,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						} }),
 						// The page's own management state: what is in flight, and what it last said.
 						...(panelPending === undefined ? {} : { pending: panelPending }),
-						...(panelNotice === undefined || (view === AUTOMATION_VIEW && schedules?.state.value?.problem) ? {} : { notice: panelNotice }),
+						...(panelNotice === undefined
+							|| (view === AUTOMATION_VIEW && schedules?.state.value?.problem)
+							|| (view === SETTINGS_VIEW && effectiveSettings()?.errors.some(error => panelNotice?.text.includes(error.message)))
+							? {}
+							: { notice: panelNotice }),
 						modalPending,
 						...(modalNotice === undefined ? {} : { modalNotice }),
 					},
