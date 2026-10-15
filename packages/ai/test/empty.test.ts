@@ -7,6 +7,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -30,6 +31,12 @@ async function testEmptyMessage<TApi extends Api>(llm: Model<TApi>, options: Str
 	};
 
 	const response = await complete(llm, context, options);
+
+	if (llm.api === "openai-codex-responses") {
+		// An empty array is omitted from the wire input; assert its specific validation error.
+		expect(response.stopReason).toBe("error");
+		expect(response.errorMessage).toMatch(/One of.*input.*must be provided/);
+	}
 
 	// Should either handle gracefully or return an error
 	expect(response).toBeDefined();
@@ -56,6 +63,10 @@ async function testEmptyStringMessage<TApi extends Api>(llm: Model<TApi>, option
 
 	const response = await complete(llm, context, options);
 
+	if (llm.api === "openai-codex-responses") {
+		expect(response.stopReason, response.errorMessage).toBe("stop");
+	}
+
 	expect(response).toBeDefined();
 	expect(response.role).toBe("assistant");
 
@@ -80,6 +91,10 @@ async function testWhitespaceOnlyMessage<TApi extends Api>(llm: Model<TApi>, opt
 	};
 
 	const response = await complete(llm, context, options);
+
+	if (llm.api === "openai-codex-responses") {
+		expect(response.stopReason, response.errorMessage).toBe("stop");
+	}
 
 	expect(response).toBeDefined();
 	expect(response.role).toBe("assistant");
@@ -130,6 +145,10 @@ async function testEmptyAssistantMessage<TApi extends Api>(llm: Model<TApi>, opt
 	};
 
 	const response = await complete(llm, context, options);
+
+	if (llm.api === "openai-codex-responses") {
+		expect(response.stopReason, response.errorMessage).toBe("stop");
+	}
 
 	expect(response).toBeDefined();
 	expect(response.role).toBe("assistant");
@@ -784,37 +803,37 @@ describe("AI Providers Empty Message Tests", () => {
 
 	describe("OpenAI Codex Provider Empty Messages", () => {
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle empty content array",
+			`${codexTestModel.id} - should handle empty content array`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await testEmptyMessage(llm, { apiKey: openaiCodexToken });
 			},
 		);
 
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle empty string content",
+			`${codexTestModel.id} - should handle empty string content`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await testEmptyStringMessage(llm, { apiKey: openaiCodexToken });
 			},
 		);
 
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle whitespace-only content",
+			`${codexTestModel.id} - should handle whitespace-only content`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await testWhitespaceOnlyMessage(llm, { apiKey: openaiCodexToken });
 			},
 		);
 
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle empty assistant message in conversation",
+			`${codexTestModel.id} - should handle empty assistant message in conversation`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await testEmptyAssistantMessage(llm, { apiKey: openaiCodexToken });
 			},
 		);

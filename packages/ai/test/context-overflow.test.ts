@@ -15,10 +15,11 @@ import type { ChildProcess } from "child_process";
 import { execSync, spawn } from "child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { complete, getModel, getModels } from "../src/compat.ts";
-import type { AssistantMessage, Context, Model, Usage } from "../src/types.ts";
+import type { Api, AssistantMessage, Context, Model, Usage } from "../src/types.ts";
 import { isContextOverflow } from "../src/utils/overflow.ts";
 import { hasAzureOpenAICredentials } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -48,8 +49,12 @@ interface OverflowResult {
 	response: AssistantMessage;
 }
 
-async function testContextOverflow(model: Model<any>, apiKey: string): Promise<OverflowResult> {
-	const overflowContent = generateOverflowContent(model.contextWindow);
+async function testContextOverflow(
+	model: Model<Api>,
+	apiKey: string,
+	serviceContextWindow = model.contextWindow,
+): Promise<OverflowResult> {
+	const overflowContent = generateOverflowContent(serviceContextWindow);
 
 	const context: Context = {
 		systemPrompt: "You are a helpful assistant.",
@@ -228,10 +233,12 @@ describe("Context overflow error handling", () => {
 
 	describe("OpenAI Codex (OAuth)", () => {
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should detect overflow via isContextOverflow",
+			`${codexTestModel.id} - should detect overflow via isContextOverflow`,
 			async () => {
-				const model = getModel("openai-codex", "gpt-5.5");
-				const result = await testContextOverflow(model, openaiCodexToken!);
+				const model = codexTestModel;
+				// Codex's 272K catalog default is conservative, not the service limit.
+				// GPT-6 supports 1.05M: https://developers.openai.com/api/docs/models/gpt-6-luna
+				const result = await testContextOverflow(model, openaiCodexToken!, Math.max(model.contextWindow, 1_050_000));
 				logResult(result);
 
 				expect(result.stopReason).toBe("error");

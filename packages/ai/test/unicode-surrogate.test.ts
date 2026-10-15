@@ -8,6 +8,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Empty schema for test tools - must be proper OBJECT type for Cloud Code Assist
@@ -810,28 +811,28 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 
 	describe("OpenAI Codex Provider Unicode Handling", () => {
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle emoji in tool results",
+			`${codexTestModel.id} - should handle emoji in tool results`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await testEmojiInToolResults(llm, { apiKey: openaiCodexToken });
 			},
 		);
 
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle real-world LinkedIn comment data with emoji",
+			`${codexTestModel.id} - should handle real-world LinkedIn comment data with emoji`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await testRealWorldLinkedInData(llm, { apiKey: openaiCodexToken });
 			},
 		);
 
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle unpaired high surrogate (0xD83D) in tool results",
+			`${codexTestModel.id} - should handle unpaired high surrogate (0xD83D) in tool results`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await testUnpairedHighSurrogate(llm, { apiKey: openaiCodexToken });
 			},
 		);

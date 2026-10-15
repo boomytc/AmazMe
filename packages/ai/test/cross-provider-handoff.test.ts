@@ -29,6 +29,7 @@ import { completeSimple, getEnvApiKey, getModel } from "../src/compat.ts";
 import type { Api, AssistantMessage, Message, Model, Tool, ToolResultMessage } from "../src/types.ts";
 import { hasAzureOpenAICredentials } from "./azure-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Simple tool for testing
@@ -66,7 +67,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "openai", model: "gpt-5-mini", label: "openai-responses-gpt-5-mini" },
 	{ provider: "azure", model: "gpt-4o-mini", label: "azure-gpt-4o-mini" },
 	// OpenAI Codex
-	{ provider: "openai-codex", model: "gpt-5.5", label: "openai-codex-gpt-5.5" },
+	{ provider: "openai-codex", model: codexTestModel.id, label: `openai-codex-${codexTestModel.id}` },
 	// GitHub Copilot
 	{ provider: "github-copilot", model: "claude-sonnet-4.5", label: "copilot-claude-sonnet-4.5" },
 	{ provider: "github-copilot", model: "gpt-5.1-codex", label: "copilot-gpt-5.1-codex" },

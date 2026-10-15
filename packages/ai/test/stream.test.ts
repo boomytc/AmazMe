@@ -13,6 +13,7 @@ import { StringEnum } from "../src/utils/typebox-helpers.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1453,8 +1454,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.5)", () => {
-		const llm = getModel("openai-codex", "gpt-5.5");
+	describe(`OpenAI Codex Provider (${codexTestModel.id})`, () => {
+		const llm = codexTestModel;
 
 		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm, { apiKey: openaiCodexToken });
@@ -1481,8 +1482,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.5 via WebSocket)", () => {
-		const llm = getModel("openai-codex", "gpt-5.5");
+	describe(`OpenAI Codex Provider (${codexTestModel.id} via WebSocket)`, () => {
+		const llm = codexTestModel;
 		const wsOptions = { apiKey: openaiCodexToken, transport: "websocket" as const };
 
 		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {

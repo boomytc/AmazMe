@@ -10,6 +10,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -530,19 +531,19 @@ describe("Tool Results with Images", () => {
 
 	describe("OpenAI Codex Provider", () => {
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle tool result with only image",
+			`${codexTestModel.id} - should handle tool result with only image`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await handleToolWithImageResult(llm, { apiKey: openaiCodexToken });
 			},
 		);
 
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should handle tool result with text and image",
+			`${codexTestModel.id} - should handle tool result with text and image`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = codexTestModel;
 				await handleToolWithTextAndImageResult(llm, { apiKey: openaiCodexToken });
 			},
 		);

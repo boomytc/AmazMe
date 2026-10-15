@@ -8,6 +8,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -348,10 +349,10 @@ describe("Tool Call Without Result Tests", () => {
 
 	describe("OpenAI Codex Provider", () => {
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should filter out tool calls without corresponding tool results",
+			`${codexTestModel.id} - should filter out tool calls without corresponding tool results`,
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const model = getModel("openai-codex", "gpt-5.5");
+				const model = codexTestModel;
 				await testToolCallWithoutResult(model, { apiKey: openaiCodexToken });
 			},
 		);

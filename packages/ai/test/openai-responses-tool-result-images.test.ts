@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { Api, Context, Model, StreamOptions, Tool, ToolResultMessage } from "../src/compat.ts";
 import { complete, getModel } from "../src/compat.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
@@ -177,8 +178,8 @@ describe("Responses API tool result images", () => {
 		);
 	});
 
-	describe("OpenAI Codex Responses Provider (gpt-5.5)", () => {
-		const model = getModel("openai-codex", "gpt-5.5");
+	describe(`OpenAI Codex Responses Provider (${codexTestModel.id})`, () => {
+		const model = codexTestModel;
 
 		it.skipIf(!openaiCodexToken)(
 			"should send tool result images in function_call_output",

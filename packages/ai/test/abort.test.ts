@@ -1,59 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { complete, getModel, stream } from "../src/compat.ts";
+import { complete, getModel } from "../src/compat.ts";
 import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
+import { testAbortSignal } from "./abort-utils.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
+import { codexTestModel } from "./codex-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
 const [openaiCodexToken] = await Promise.all([resolveApiKey("openai-codex")]);
-
-async function testAbortSignal<TApi extends Api>(llm: Model<TApi>, options: StreamOptionsWithExtras = {}) {
-	const context: Context = {
-		messages: [
-			{
-				role: "user",
-				content: "What is 15 + 27? Think step by step. Then list 50 first names.",
-				timestamp: Date.now(),
-			},
-		],
-		systemPrompt: "You are a helpful assistant.",
-	};
-
-	let abortFired = false;
-	let text = "";
-	const controller = new AbortController();
-	const response = await stream(llm, context, { ...options, signal: controller.signal });
-	for await (const event of response) {
-		if (abortFired) return;
-		if (event.type === "text_delta" || event.type === "thinking_delta") {
-			text += event.delta;
-		}
-		if (text.length >= 50) {
-			controller.abort();
-			abortFired = true;
-		}
-	}
-	const msg = await response.result();
-
-	// If we get here without throwing, the abort didn't work
-	expect(msg.stopReason).toBe("aborted");
-	expect(msg.content.length).toBeGreaterThan(0);
-
-	context.messages.push(msg);
-	context.messages.push({
-		role: "user",
-		content: "Please continue, but only generate 5 names.",
-		timestamp: Date.now(),
-	});
-
-	const followUp = await complete(llm, context, options);
-	expect(followUp.stopReason).toBe("stop");
-	expect(followUp.content.length).toBeGreaterThan(0);
-}
 
 async function testImmediateAbort<TApi extends Api>(llm: Model<TApi>, options: StreamOptionsWithExtras = {}) {
 	const controller = new AbortController();
@@ -323,12 +281,12 @@ describe("AI Providers Abort Tests", () => {
 
 	describe("OpenAI Codex Provider Abort", () => {
 		it.skipIf(!openaiCodexToken)("should abort mid-stream", { retry: 3 }, async () => {
-			const llm = getModel("openai-codex", "gpt-5.5");
+			const llm = codexTestModel;
 			await testAbortSignal(llm, { apiKey: openaiCodexToken });
 		});
 
 		it.skipIf(!openaiCodexToken)("should handle immediate abort", { retry: 3 }, async () => {
-			const llm = getModel("openai-codex", "gpt-5.5");
+			const llm = codexTestModel;
 			await testImmediateAbort(llm, { apiKey: openaiCodexToken });
 		});
 	});

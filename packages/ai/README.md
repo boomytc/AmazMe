@@ -1948,6 +1948,11 @@ For `cross-provider-handoff.test.ts`, add at least one provider/model pair. If t
 
 For providers with non-standard auth (AWS, Google Vertex), create a utility like `bedrock-utils.ts` with credential detection helpers.
 
+Codex live tests use OAuth credentials from `~/.amazme/agent/auth.json` and default to `gpt-6-luna`.
+Set `AMAZME_CODEX_TEST_MODEL` to select another catalog model available to your account; it must support image input and `xhigh` reasoning to exercise the full suite.
+Unknown or incompatible overrides fail explicitly. Account or transport errors remain test failures; the tests do not automatically fall back to another model.
+Historical model protocol tests use fixed fixtures independently of this live model selection.
+
 #### 6. Coding Agent Integration (`../coding-agent/`)
 
 Update `src/core/model-resolver.ts`:
