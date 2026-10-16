@@ -116,7 +116,7 @@ describe("tool card row", () => {
 		expect(details.open).toBe(false);
 		expect(details.className).not.toContain("error");
 		expect(details.querySelector(".disclosure-title")?.textContent).toBe("Run command");
-		expect(summaryOf(details)).toBe('command="ls" directory="/tmp"');
+		expect(summaryOf(details)).toBe("ls · tmp");
 		expect(details.querySelector(".tool-args")?.textContent).toBe("command: ls\ndirectory: /tmp");
 		expect(details.querySelector(".tool-output")?.textContent).toBe("exit 0");
 	});
@@ -158,7 +158,7 @@ describe("tool card row", () => {
 		const withArgs = paint([assistantEntry(1, [toolCall("call-1", "bash", { command: "ls" })], "aborted")]);
 		expect(withArgs.open).toBe(false);
 		expect(withArgs.className).not.toContain("error");
-		expect(summaryOf(withArgs)).toBe('command="ls"');
+		expect(summaryOf(withArgs)).toBe("ls");
 		expect(withArgs.querySelector(".tool-output")?.textContent).toBe("Not run: the answer was interrupted.");
 	});
 
@@ -169,7 +169,7 @@ describe("tool card row", () => {
 		]);
 		expect(details.open).toBe(false);
 		expect(details.classList.contains("error")).toBe(true);
-		expect(summaryOf(details)).toBe('command="ls"');
+		expect(summaryOf(details)).toBe("ls");
 		expect(details.querySelector(".tool-output")?.textContent).toBe("boom");
 	});
 
@@ -245,7 +245,7 @@ describe("tool card row", () => {
 		if (!(details instanceof HTMLDetailsElement)) throw new Error("missing running tool row");
 		expect(details.open).toBe(true);
 		expect(details.classList.contains("running")).toBe(true);
-		expect(summaryOf(details)).toBe('path="notes.md"');
+		expect(summaryOf(details)).toBe("notes.md");
 		expect(details.querySelector(".tool-args")?.textContent).toBe("path: notes.md");
 		expect(details.querySelector(".tool-output")?.textContent).toBe("partial output");
 	});

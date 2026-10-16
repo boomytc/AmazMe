@@ -12,6 +12,7 @@ import { createDirectoryField, type DirectoryListing } from "./directories.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
 import { transcriptPosition } from "./transcript-position.ts";
+import { processGroups, type ProcessGroup } from "./process-groups.ts";
 import { createMultiselect } from "./multiselect.ts";
 import { createFileBrowser } from "./file-browser.ts";
 import { FALLBACK_LOCALE, type Locale } from "./locale.ts";
@@ -2071,7 +2072,14 @@ export function createRenderer(
 		if (block.toolArgs !== undefined && block.toolArgs.expanded.length > 0) {
 			const args = element("div", "tool-args", block.toolArgs.expanded);
 			args.dataset.textKey = "args";
-			details.append(args);
+			const controls = element("div", "tool-result-heading");
+			const copyArgs = button("message-action");
+			copyArgs.title = copy("tool.copyArgs");
+			copyArgs.setAttribute("aria-label", copyArgs.title);
+			copyArgs.append(icon("copy"));
+			copyArgs.addEventListener("click", () => copyAnswer(copyArgs, block.toolArgs!.source, "tool.copyArgs"));
+			controls.append(copyArgs);
+			details.append(controls, args);
 		}
 		if (block.result !== undefined) {
 			const meta = element("div", "tool-result-meta");
@@ -2090,7 +2098,14 @@ export function createRenderer(
 		if (block.text.length > 0) {
 			const output = element("div", block.result?.terminal === undefined ? "tool-output" : "tool-output terminal-output", block.text);
 			output.dataset.textKey = "output";
-			details.append(output);
+			const controls = element("div", "tool-result-heading");
+			const copyOutput = button("message-action");
+			copyOutput.title = copy("tool.copyOutput");
+			copyOutput.setAttribute("aria-label", copyOutput.title);
+			copyOutput.append(icon("copy"));
+			copyOutput.addEventListener("click", () => copyAnswer(copyOutput, block.text, "tool.copyOutput"));
+			controls.append(copyOutput);
+			details.append(controls, output);
 		} else if (!block.running && (block.images?.length ?? 0) === 0 && (block.result?.diagnostics.length ?? 0) === 0) {
 			details.append(element("div", "tool-output empty", copy("tool.noOutput")));
 		}
@@ -2610,32 +2625,72 @@ export function createRenderer(
 		return line;
 	};
 
-	const isProcess = (block: TranscriptBlock): boolean => block.kind === "thinking" || block.kind === "tool";
+	/** The group shell survives stream updates; only the reader chooses whether to open it. */
+	const processElement = (group: ProcessGroup, area: string, answerId?: string): HTMLElement => {
+		const key = `process:${area}:${group.id}`;
+		const root = flowCache.get(key, "process-shell", () => {
+			const node = element("section", "turn-process");
+			const head = element("div", "process-heading");
+			const toggle = button("process-toggle");
+			const rows = element("div", "process-rows");
+			rows.id = `process-rows-${area}-${encodeURIComponent(group.id)}`;
+			rows.hidden = true;
+			toggle.setAttribute("aria-controls", rows.id);
+			toggle.setAttribute("aria-expanded", "false");
+			toggle.append(icon("chevron-down", "icon process-chevron"), element("span", "process-title"), element("span", "process-meta"));
+			const jump = button("process-jump");
+			jump.addEventListener("click", () => {
+				const answer = [...elements.column.querySelectorAll<HTMLElement>(".turn-response")].find(item => item.dataset.flowKey === `block:${node.dataset.answerId}`);
+				if (!answer) return;
+				answer.tabIndex = -1;
+				answer.focus({ preventScroll: true });
+				answer.scrollIntoView({ block: "start" });
+			});
+			toggle.addEventListener("click", () => {
+				const restore = transcriptPosition(elements.column, elements.transcript, false);
+				rows.hidden = !rows.hidden;
+				toggle.setAttribute("aria-expanded", String(!rows.hidden));
+				node.dataset.open = String(!rows.hidden);
+				restore();
+				syncTranscriptLatest();
+			});
+			head.append(toggle, jump);
+			node.append(head, element("p", "process-activity"), element("p", "process-alert"), rows);
+			return node;
+		});
+		root.dataset.state = group.state;
+		root.querySelector<HTMLElement>(".process-title")!.textContent = copy("process.title");
+		const counts = [copy(`process.${group.state}`), group.tools > 0 ? copy("process.tools", { count: String(group.tools) }) : "", group.thoughts > 0 ? copy("process.thoughts", { count: String(group.thoughts) }) : ""].filter(Boolean);
+		root.querySelector<HTMLElement>(".process-meta")!.textContent = counts.join(" · ");
+		const activity = root.querySelector<HTMLElement>(".process-activity")!;
+		activity.hidden = group.state !== "running";
+		activity.textContent = group.activity === undefined ? "" : [group.activity.title, group.activity.toolArgs?.collapsed].filter(Boolean).join(" · ");
+		const alert = root.querySelector<HTMLElement>(".process-alert")!;
+		alert.hidden = group.failures.length === 0 && group.state !== "interrupted";
+		const failed = group.failures[0];
+		alert.textContent = failed === undefined ? copy("process.incomplete") : `${copy("process.failures", { count: String(group.failures.length) })} · ${firstLine(failed.result?.diagnostics.find(item => item.tone === "error")?.text || failed.text)}`;
+		const jump = root.querySelector<HTMLButtonElement>(".process-jump")!;
+		jump.hidden = answerId === undefined;
+		jump.textContent = copy("process.jumpAnswer");
+		if (answerId === undefined) delete root.dataset.answerId;
+		else root.dataset.answerId = answerId;
+		const rows = group.blocks.map(block => flowCache.get(`block:${block.id}`, [lastView?.locale, block], () => block.kind === "tool" ? toolElement(block) : reasoningElement(block)));
+		reconcileChildren(root.querySelector<HTMLElement>(".process-rows")!, rows);
+		return root;
+	};
 
-	/** The flow: user and assistant turns, one group per run of process rows, notices, the status. */
+	/** The flow keeps message and notice boundaries; process rows remain chronological. */
 	const flowElements = (blocks: readonly TranscriptBlock[], area: string): HTMLElement[] => {
 		const flow: HTMLElement[] = [];
-		let process: HTMLElement | undefined;
-		let children: HTMLElement[] = [];
-		const finishProcess = (): void => {
-			if (process !== undefined) reconcileChildren(process, children);
-		};
-		for (const block of blocks) {
-			// A blank answer is not a response card or a boundary between process rows. Keep the
-			// original entry and its tool/notice blocks; only the presentation is filtered.
-			if ((block.kind === "assistant" || block.kind === "thinking") && block.text.trim().length === 0) continue;
-			const key = `block:${block.id}`;
-			if (isProcess(block)) {
-				if (process === undefined) {
-					process = flowCache.get(`process:${area}:${block.id}`, "turn-process", () => element("div", "turn-process"));
-					children = [];
-					flow.push(process);
-				}
-				children.push(flowCache.get(key, [lastView?.locale, block], () => block.kind === "tool" ? toolElement(block) : reasoningElement(block)));
+		const items = processGroups(blocks, area === "current" && lastView?.busy === true);
+		for (const [index, item] of items.entries()) {
+			if (item.kind === "process") {
+				const next = items[index + 1];
+				flow.push(processElement(item, area, next?.kind === "block" && next.block.kind === "assistant" ? String(next.block.id) : undefined));
 				continue;
 			}
-			finishProcess();
-			process = undefined;
+			const block = item.block;
+			const key = `block:${block.id}`;
 			if (block.kind === "user") flow.push(flowCache.get(key, [lastView?.locale, block], () => {
 				const turn = wrap("turn-user", userBubble(block));
 				if (block.text.length > 0) turn.append(answerActions(block));
@@ -2650,7 +2705,6 @@ export function createRenderer(
 				flow.push(answer);
 			} else if (block.kind === "notice") flow.push(flowCache.get(key, [lastView?.locale, block], () => block.tone === "error" ? errorElement(block) : noticeElement(block)));
 		}
-		finishProcess();
 		return flow;
 	};
 

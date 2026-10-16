@@ -433,7 +433,7 @@ describe("web view model", () => {
 			]),
 		);
 		const tool = withArgs.find((block) => block.kind === "tool");
-		expect(tool?.toolArgs).toEqual({ collapsed: 'command="ls" directory="/tmp"', expanded: "command: ls\ndirectory: /tmp" });
+		expect(tool?.toolArgs).toEqual({ collapsed: "ls · tmp", expanded: "command: ls\ndirectory: /tmp", source: JSON.stringify({ command: "ls", cwd: "/tmp" }, null, 2) });
 		expect(tool).toMatchObject({ title: "Run command", text: "exit 0", tone: "plain", running: false });
 		expect(tool?.toolArgs?.collapsed.startsWith("{")).toBe(false);
 
@@ -475,7 +475,8 @@ describe("web view model", () => {
 			text: "Not run: the answer was interrupted.",
 			tone: "plain",
 			running: false,
-			toolArgs: { collapsed: 'command="ls"', expanded: "command: ls" },
+			interrupted: true,
+			toolArgs: { collapsed: "ls", expanded: "command: ls" },
 		});
 
 		const failedWithArgs = transcriptBlocks(
@@ -489,7 +490,7 @@ describe("web view model", () => {
 			text: "boom",
 			tone: "error",
 			running: false,
-			toolArgs: { collapsed: 'command="ls"', expanded: "command: ls" },
+			toolArgs: { collapsed: "ls", expanded: "command: ls" },
 		});
 	});
 

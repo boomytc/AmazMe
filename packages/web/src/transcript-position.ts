@@ -57,8 +57,9 @@ export function transcriptPosition(root: HTMLElement, viewport: HTMLElement, fol
 	const top = viewport.getBoundingClientRect().top;
 	const visible = following
 		? undefined
-		: Array.from(root.querySelectorAll<HTMLElement>('[data-flow-key^="block:"]')).find(
-				(node) => node.getBoundingClientRect().bottom > top,
+		: Array.from(root.querySelectorAll<HTMLElement>('[data-flow-key^="block:"], [data-flow-key^="process:"]')).find(
+				(node) => node.closest("[hidden]") === null && node.getBoundingClientRect().bottom > top &&
+					(node.dataset.flowKey?.startsWith("process:") !== true || node.getBoundingClientRect().top >= top),
 			);
 	const visibleKey = visible?.dataset.flowKey;
 	const visibleTop = visible?.getBoundingClientRect().top;

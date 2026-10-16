@@ -1,8 +1,5 @@
-/**
- * Short tool-call arguments, ported from the TUI's `formatToolCallWithArgs` (`render-utils.ts`)
- * without terminal colour. Collapsed, arguments are `key=value` pairs cut to
- * {@link COLLAPSED_ARGS_CHARS} so a row cannot become a JSON wall. Expanded, each argument is a
- * `key: value` line: strings raw, other values pretty-printed, continuation lines indented.
+/** Tool summaries prioritize the requested command or file; unknown tools use bounded key=value pairs.
+ * Expanded parameters retain the TUI's readable key: value layout, with raw JSON available for copying.
  */
 
 const COLLAPSED_ARGS_CHARS = 100;
@@ -17,7 +14,27 @@ function entriesOf(args: unknown): [string, unknown][] {
 	return [["args", args]];
 }
 
-/** One line for the collapsed tool row. Empty when the call has no arguments. */
+function shorten(text: string): string {
+	const line = text.replace(/\s+/g, " ").trim();
+	return line.length > COLLAPSED_ARGS_CHARS ? `${line.slice(0, COLLAPSED_ARGS_CHARS - 3)}...` : line;
+}
+
+/** An object-oriented digest, never a guessed interpretation of shell syntax. */
+export function toolArgsSummary(name: string, args: unknown, label: (key: string) => string): string {
+	const values = Object.fromEntries(entriesOf(args));
+	if ((name === "bash" || name === "powershell") && typeof values.command === "string" && values.command.trim().length > 0) {
+		const cwd = typeof values.cwd === "string" ? values.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) : undefined;
+		return shorten(cwd ? `${values.command} · ${cwd}` : values.command);
+	}
+	if (["read", "write", "edit", "ls", "find", "grep"].includes(name) && typeof values.path === "string") {
+		const path = values.path.split(/[\\/]/).filter(Boolean).slice(-2).join("/") || values.path;
+		const query = typeof values.pattern === "string" ? `${values.pattern} · ` : "";
+		return shorten(query + path);
+	}
+	return collapsedToolArgs(args, label);
+}
+
+/** One line for unrecognized tools. Empty when the call has no arguments. */
 export function collapsedToolArgs(args: unknown, label: (key: string) => string = (key) => key): string {
 	const entries = entriesOf(args);
 	if (entries.length === 0) return "";

@@ -45,7 +45,7 @@ import type { ProviderAuthLike } from "./provider-auth.ts";
 import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panelView } from "./panels.ts";
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
 import { compactionReasonCopy, type MessageKey, thinkingLevelCopy, toolActivityCopy, toolArgumentCopy, toolTitleCopy, translate } from "./strings.ts";
-import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
+import { expandedToolArgs, toolArgsSummary } from "./tool-args.ts";
 import { toolImages, toolOutputText, toolResultView } from "./tool-results.ts";
 import type { ToolOutcome, ToolResultView } from "./tool-results.ts";
 
@@ -60,13 +60,13 @@ export interface TranscriptBlock {
 	readonly toolName?: string;
 	readonly text: string;
 	/**
-	 * A tool call's arguments, in the shapes the TUI's `formatToolCallWithArgs` uses. The collapsed
-	 * form is the row digest (`key=value…`); the expanded form is `key: value` lines above the
-	 * result. Absent when the call has no arguments.
+	 * The requested command/file digest, readable key: value details and lossless JSON for copying.
+	 * Absent when the call has no arguments; executed output stays separate.
 	 */
 	readonly toolArgs?: {
 		readonly collapsed: string;
 		readonly expanded: string;
+		readonly source: string;
 	};
 	/** Images the entry carries, as data URLs the reader sees. */
 	readonly images?: readonly {
@@ -79,6 +79,8 @@ export interface TranscriptBlock {
 	readonly feedback?: FeedbackControls;
 	readonly tone: BlockTone;
 	readonly running: boolean;
+	/** A committed interruption, never inferred from localized output text. */
+	readonly interrupted?: boolean;
 }
 
 export interface RosterItem {
@@ -1097,6 +1099,7 @@ function entryBlocks(
 							kind: "notice",
 							title: failure.title,
 							text: failure.text,
+							interrupted: message.stopReason === "aborted" || message.stopReason === "length",
 							tone: "error",
 							running: false,
 						});
@@ -1175,15 +1178,16 @@ function pushToolBlock(
 		...(result === undefined ? {} : { result: toolResultView(locale, call.name, call.arguments, result, nested), images: toolImages(result.content) }),
 		tone: result?.isError === true ? "error" : "plain",
 		running,
+		...(result === undefined && !ran && !running ? { interrupted: true } : {}),
 	});
 }
 
 /** The short args digest, or nothing when the call has no arguments to show. */
 function toolArgsView(locale: Locale, call: ToolCall): TranscriptBlock["toolArgs"] {
 	const label = (key: string): string => toolArgumentCopy(locale, call.name, key);
-	const collapsed = collapsedToolArgs(call.arguments, label);
+	const collapsed = toolArgsSummary(call.name, call.arguments, label);
 	if (collapsed.length === 0) return undefined;
-	return { collapsed, expanded: expandedToolArgs(call.arguments, label) };
+	return { collapsed, expanded: expandedToolArgs(call.arguments, label), source: JSON.stringify(call.arguments, null, 2) };
 }
 
 /**

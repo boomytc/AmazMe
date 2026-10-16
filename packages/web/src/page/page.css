@@ -1434,10 +1434,34 @@ p {
 }
 
 /* Process rows: reasoning and tool calls, one group per run of them between two answers. */
-.turn-process {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
+.turn-process { min-width: 0; }
+.process-heading { display: flex; align-items: center; gap: 12px; }
+.process-toggle {
+	flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
+	border: 0; border-radius: var(--radius-md); padding: 8px 4px; background: transparent;
+	color: var(--text-2); text-align: left; cursor: pointer; font: inherit; font-size: 13px;
+}
+.process-toggle:hover { background: var(--hover); }
+.process-title { font-weight: 500; }
+.process-meta { color: var(--text-3); font-size: 12px; }
+.process-chevron { width: 14px; height: 14px; flex: none; transform: rotate(-90deg); }
+.process-toggle[aria-expanded="true"] .process-chevron { transform: none; }
+.process-jump {
+	flex: none; border: 0; border-radius: var(--radius-sm); padding: 6px;
+	background: transparent; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer;
+}
+.process-jump:hover { background: var(--hover); color: var(--text); }
+.process-activity, .process-alert { margin: 2px 0 6px 26px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.process-activity { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.process-activity::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: var(--accent); }
+.process-alert { color: var(--danger); }
+.turn-process[data-open="true"] .process-activity { display: none; }
+.process-rows { margin: 4px 0 8px 10px; padding-left: 16px; border-left: 1px solid var(--line); }
+@media (max-width: 640px) {
+	.process-heading { gap: 4px; align-items: flex-start; }
+	.process-meta { flex-basis: 100%; margin-left: 22px; }
+	.process-jump { margin-top: 3px; }
+	.process-rows { margin-left: 6px; padding-left: 10px; }
 }
 
 .disclosure {
