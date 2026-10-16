@@ -175,6 +175,9 @@ describe("experimental client TUI", () => {
 			});
 			sessionProvider.provide(Models, {
 				state: modelsState,
+				async suggestPrompt() {
+					return null;
+				},
 				async cycleThinking() {},
 				async cycleModel() {},
 				async getModelScope() { return { allModels: [], enabledModelIds: null }; },
