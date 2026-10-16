@@ -66,6 +66,16 @@ test("Escape dismisses only this candidate; ordinary and modified Tab retain nav
 	expect(elements.prompt.placeholder).toBe("继续提问或描述下一步…");
 });
 
+test("Escape dismisses the suggestion from anywhere in the conversation", () => {
+	const { elements, dismiss } = setup();
+	document.body.focus();
+	document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+	expect(dismiss).toHaveBeenCalledOnce();
+	expect(document.querySelector<HTMLElement>("#composer-suggestion")?.hidden).toBe(true);
+	expect(elements.prompt.placeholder).toBe("继续提问或描述下一步…");
+	expect(elements.prompt.value).toBe("");
+});
+
 test("typing suppresses the overlay and never replaces the reader's draft", () => {
 	const { elements, key, renderer } = setup();
 	elements.prompt.value = "我的问题"; elements.prompt.dispatchEvent(new Event("input"));
@@ -109,12 +119,26 @@ test("generates once, discards late results on typing and isolates session/branc
 	control.update("a", true, request); expect(request).toHaveBeenCalledOnce();
 	control.update("a", false, request);
 	expect(request.mock.calls[0]![0].aborted).toBe(true);
-	first.resolve("Old result"); await tick(); expect(control.value).toBeUndefined();
+	first.resolve("Old result"); await tick(); expect(control.valueFor("a")).toBeUndefined();
 	control.update("a", true, request); await tick(); expect(request).toHaveBeenCalledOnce();
 	control.update("b", true, async () => "New result"); await tick();
-	expect(control.value).toEqual({ key: "b", text: "New result" });
+	expect(control.valueFor("b")).toEqual({ key: "b", text: "New result" });
 	control.dismiss(); control.update("b", true, request); await tick();
-	expect(control.value).toBeUndefined(); expect(request).toHaveBeenCalledOnce();
+	expect(control.valueFor("b")).toBeUndefined(); expect(request).toHaveBeenCalledOnce();
+});
+
+test("keeps a settled candidate across a temporary panel or modal and clears it when the source changes", async () => {
+	const control = new PromptSuggestionController(() => {}), request = vi.fn(async () => "当前候选");
+	control.update("a", true, request); await tick();
+	control.update("a", false, request);
+	expect(control.valueFor("a")).toEqual({ key: "a", text: "当前候选" });
+	// A rebind blips the source to undefined and back; the answer keeps its candidate.
+	control.update(undefined, false, request); await tick();
+	control.update("a", true, request);
+	expect(control.valueFor("a")?.text).toBe("当前候选"); expect(request).toHaveBeenCalledOnce();
+	expect(control.valueFor("b")).toBeUndefined();
+	control.update("b", false, request);
+	expect(control.valueFor("a")).toBeUndefined();
 });
 
 test("switching scope cancels a pending request; disabled and failed generation do not loop", async () => {
@@ -122,11 +146,11 @@ test("switching scope cancels a pending request; disabled and failed generation 
 	const request = vi.fn(async () => { throw new Error("offline"); });
 	control.update("a", true, () => first.promise); await tick();
 	control.update("b", true, async () => "Current"); first.resolve("Stale"); await tick();
-	expect(control.value?.text).toBe("Current");
+	expect(control.valueFor("b")?.text).toBe("Current");
 	control.update("c", false, request); await tick(); expect(request).not.toHaveBeenCalled();
 	control.update("c", true, request); await tick();
 	control.update("c", true, request); await tick(); expect(request).toHaveBeenCalledOnce();
-	control.update(undefined, false, request); expect(control.value).toBeUndefined();
+	control.update(undefined, false, request); expect(control.valueFor("c")).toBeUndefined();
 });
 
 function conversation(answer: string, stopReason: AssistantMessage["stopReason"] = "stop"): ConversationView {

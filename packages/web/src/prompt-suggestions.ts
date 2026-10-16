@@ -35,7 +35,12 @@ export function promptSuggestionContext(view: ConversationView | undefined): Pro
 	return undefined;
 }
 
-/** One bounded candidate per source; typing, dismissal and cancellation never cause retry loops. */
+/**
+ * One bounded candidate per source. A candidate belongs to the answer it was written for: it is
+ * reported only while that answer is the current one, survives a temporary absence of a source
+ * (a panel, a rebind), and is replaced only when a different source arrives. Typing, dismissal and
+ * cancellation never restart generation for an answer the reader has already seen.
+ */
 export class PromptSuggestionController {
 	readonly #changed: () => void;
 	readonly #seen = new Set<string>();
@@ -43,12 +48,17 @@ export class PromptSuggestionController {
 	#pending: AbortController | undefined;
 	#value: { readonly key: string; readonly text: string } | undefined;
 	constructor(changed: () => void) { this.#changed = changed; }
-	get value(): { readonly key: string; readonly text: string } | undefined { return this.#value; }
+	/** The candidate for this exact source, or nothing while a different one is displayed. */
+	valueFor(key: string | undefined): { readonly key: string; readonly text: string } | undefined {
+		return key !== undefined && this.#value?.key === key ? this.#value : undefined;
+	}
 	update(key: string | undefined, eligible: boolean, request: (signal: AbortSignal) => Promise<string | null>): void {
-		if (key !== this.#key || !eligible) {
-			this.#pending?.abort(); this.#pending = undefined; this.#value = undefined; this.#key = key;
+		if (key !== this.#key) {
+			this.#pending?.abort(); this.#pending = undefined; this.#key = key;
+			if (key !== undefined && this.#value?.key !== key) this.#value = undefined;
 		}
-		if (!key || !eligible || this.#seen.has(key)) return;
+		if (!eligible) { this.#pending?.abort(); this.#pending = undefined; }
+		if (key === undefined || !eligible || this.#seen.has(key)) return;
 		this.#seen.add(key);
 		if (this.#seen.size > 64) this.#seen.delete(this.#seen.values().next().value!);
 		const pending = new AbortController(); this.#pending = pending;

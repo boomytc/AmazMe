@@ -2644,9 +2644,9 @@ export function createRenderer(
 		elements.prompt.setAttribute("aria-label", copy("composer.promptLabel"));
 		elements.prompt.placeholder = candidate ? "" : composerPlaceholder(lastView?.locale ?? FALLBACK_LOCALE, !elements.prompt.disabled);
 		if (!candidate) { elements.prompt.removeAttribute("aria-describedby"); return; }
-		acceptSuggestion.querySelector<HTMLElement>(".suggestion-text")!.textContent = candidate.text;
+		suggestion.querySelector<HTMLElement>(".suggestion-text")!.textContent = candidate.text;
 		acceptSuggestion.querySelector<HTMLElement>("kbd")!.textContent = copy("composer.tabAccept");
-		acceptSuggestion.title = candidate.text;
+		acceptSuggestion.title = copy("composer.acceptSuggestion");
 		acceptSuggestion.setAttribute("aria-label", `${copy("composer.acceptSuggestion")}: ${candidate.text}`);
 		dismissSuggestion.title = copy("composer.dismissSuggestion");
 		dismissSuggestion.setAttribute("aria-label", dismissSuggestion.title);
@@ -3453,6 +3453,12 @@ export function createRenderer(
 		if (isNarrow() && !elements.dock.hidden) {
 			event.preventDefault();
 			report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
+			return;
+		}
+		// A suggestion is dismissed from anywhere in the conversation, not only from the composer.
+		if (visibleSuggestion()) {
+			event.preventDefault();
+			hideSuggestion();
 			return;
 		}
 		// Escape never cancels a turn. While one is running it points at the stop control.

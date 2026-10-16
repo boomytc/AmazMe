@@ -1180,7 +1180,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		paintSafely(() => renderer.render(withReturnPoints(
 			{
 				...displayed,
-				suggestion: suggestions.value,
+				suggestion: suggestions.valueFor(suggestionKey),
 				mirrorWarning: bound ? painter.mirrorWarning : undefined,
 				newSession: { ...displayed.newSession, enabled: client.connected && displayed.newSession.enabled },
 			},
