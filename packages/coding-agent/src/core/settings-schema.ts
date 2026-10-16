@@ -572,6 +572,7 @@ export const SettingsSchema = Type.Object(
 				{ default: SETTINGS_DEFAULTS.locale },
 			),
 		),
+		promptSuggestions: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.promptSuggestions, description: "Offer a next-question draft using one short model request after a completed answer." })),
 		appearance: Type.Optional(
 			Type.Union(
 				[Type.Literal("system"), Type.Literal("light"), Type.Literal("dark")],

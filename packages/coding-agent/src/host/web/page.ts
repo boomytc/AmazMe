@@ -9,7 +9,7 @@ import { FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, resolveTypography } from "@amazme
 import type { ModelThinkingLevel } from "@amazme/ai";
 import type { ReplicatedState } from "@amazme/chord";
 import type { RoutedServices } from "../services/connection.ts";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import { Client, type ClientOptions } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import type { ConversationView, EntryRecord } from "@amazme/durable";
@@ -36,6 +36,8 @@ import {
 	attachmentRejection,
 	BOOT_GLOBAL,
 	buildWebView,
+	promptSuggestionContext,
+	PromptSuggestionController,
 	CHAT_VIEW,
 	COMPACT_ACTION,
 	COMPACT_MODAL,
@@ -892,6 +894,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let returnPointsRequest = 0;
 	/** The composer's draft, mirrored here so the command palette can be projected from it. */
 	let draft = "";
+	const suggestions = new PromptSuggestionController(() => paint());
 	const sessionDrafts = new Map<string, { readonly text: string; readonly images: readonly PendingImage[] }>();
 	let draftSessionId: string | undefined;
 	const saveDraft = (): void => {
@@ -1164,10 +1167,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						...(modalNotice === undefined ? {} : { modalNotice }),
 					},
 				});
+		const source = promptSuggestionContext(transcript);
+		const suggestionService = painter.modelsService;
+		const suggestionKey = bound && source ? JSON.stringify([painter.sessionId, source.conversationId, source.answerEntryId, locale, painter.modelsValue?.configuration.model]) : undefined;
+		suggestions.update(suggestionKey, bound && settingValue("promptSuggestions") !== "false" && view === CHAT_VIEW &&
+			!modal && !built.readOnly && !built.busy && !built.modelPending && draft.length === 0 &&
+			pending.length === 0 && built.approvals.length === 0 && built.queue.length === 0,
+			signal => source && suggestionService ? suggestionService.suggestPrompt({
+				conversationId: source.conversationId, answerEntryId: source.answerEntryId, locale,
+			}, withAbortSignal(signal, BACKGROUND_CONTEXT)) : Promise.resolve(null));
 		const displayed = reconnectTranscript === undefined ? built : { ...built, ...reconnectTranscript, status: "", busy: false };
 		paintSafely(() => renderer.render(withReturnPoints(
 			{
 				...displayed,
+				suggestion: suggestions.value,
 				mirrorWarning: bound ? painter.mirrorWarning : undefined,
 				newSession: { ...displayed.newSession, enabled: client.connected && displayed.newSession.enabled },
 			},
@@ -1501,6 +1514,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/**
 	 * Follow a work-action draft and ask the host for argument completions. Answers are sequenced so a slow one cannot land on a newer draft.
 	 */
+	renderer.onDismissSuggestion = () => suggestions.dismiss();
 	renderer.onDraftChange = (text) => {
 		draft = text;
 		saveDraft();
@@ -3009,6 +3023,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	globalThis.addEventListener("pagehide", () => {
 		if (leaving) return;
   leaving = true;
+  suggestions.update(undefined, false, async () => null);
   void (async () => {
    const views = await Promise.allSettled([clearSchedules(), painter.detach()]);
    const sources = await Promise.allSettled([serverSource.dispose(BACKGROUND_CONTEXT), sessionSource.dispose(BACKGROUND_CONTEXT)]);

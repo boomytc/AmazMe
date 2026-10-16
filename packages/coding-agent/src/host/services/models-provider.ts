@@ -14,6 +14,7 @@ import type { SettingsManager } from "../../core/settings-manager.ts";
 import { Conversations } from "./conversations.ts";
 import type { Models as ModelsService, ModelsState } from "./models.ts";
 import { Models } from "./models.ts";
+import { suggestPrompt } from "./prompt-suggestions.ts";
 
 export interface ModelsServiceRuntime {
 	readonly service: ModelsService;
@@ -80,6 +81,14 @@ export function createModelsService(
 	};
 	const service: ModelsService = {
 		state,
+		async suggestPrompt(request, context) {
+			if (settingsManager?.getPromptSuggestions() === false || !modelRuntime) return null;
+			const conversation = await current(context);
+			const model = selectedModel();
+			if (!model) return null;
+			const candidate = await suggestPrompt({ conversation, request, model, runtime: modelRuntime, context, lifetime: lifetime.signal });
+			return settingsManager?.getPromptSuggestions() === false ? null : candidate;
+		},
 		async getModelScope(context) {
 			context.abortSignal?.throwIfAborted();
 			return modelScope.configuration(modelRuntime?.getAvailableSnapshot() ?? []);

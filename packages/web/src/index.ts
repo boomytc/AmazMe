@@ -6,6 +6,7 @@ export {
 	addProjectModal, editProjectModal, renameProjectModal, removeProjectModal, archiveSessionModal,
 	type ProjectGroup,
 } from "./projects.ts";
+export { promptSuggestionContext, PromptSuggestionController, type PromptSuggestionContext } from "./prompt-suggestions.ts";
 export {
 	APPROVAL_APPROVE_ACTION,
 	APPROVAL_DENY_ACTION,

@@ -90,6 +90,8 @@ const SPECS: readonly SettingSpec[] = [
 		read: (manager: SettingsManager) => String(manager.getTypography()[field]),
 		write: (manager: SettingsManager, value: string) => manager.setTypography({ [field]: Number(value) }),
 	})),
+	{ id: "promptSuggestions", group: "interface", kind: "boolean", field: "promptSuggestions", globalOnly: true,
+		read: manager => String(manager.getPromptSuggestions()), write: (manager, value) => manager.setPromptSuggestions(value === "true") },
 	{
 		id: "showWelcome",
 		group: "interface",

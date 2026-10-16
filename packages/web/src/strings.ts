@@ -160,7 +160,12 @@ export const EN = {
 	"connection.retrying": "disconnected: {error} — retrying",
 	"connection.hostGone": "host went away",
 
-	"composer.placeholder": "Send a task to {name}",
+	"composer.placeholder": "Ask a question or describe the next step…",
+	"composer.promptLabel": "Message",
+	"composer.acceptSuggestion": "Accept suggestion",
+	"composer.dismissSuggestion": "Dismiss suggestion",
+	"composer.suggestionHint": "Tab accepts this draft; it does not send. Escape dismisses.",
+	"composer.tabAccept": "Tab to accept",
 	"composer.placeholderDetached": "No session attached",
 	"composer.send": "Send",
 	"composer.stop": "Stop",
@@ -970,7 +975,12 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"connection.retrying": "连接已断开：{error} — 正在重试",
 	"connection.hostGone": "宿主已退出",
 
-	"composer.placeholder": "给 {name} 发送任务",
+	"composer.placeholder": "继续提问或描述下一步…",
+	"composer.promptLabel": "消息",
+	"composer.acceptSuggestion": "接受建议",
+	"composer.dismissSuggestion": "隐藏建议",
+	"composer.suggestionHint": "Tab 填入草稿，不会发送；Esc 隐藏建议。",
+	"composer.tabAccept": "Tab 接受",
 	"composer.placeholderDetached": "尚未附加会话",
 	"composer.send": "发送",
 	"composer.stop": "停止",
@@ -1647,7 +1657,7 @@ const ZH_SETTING_GROUPS: Readonly<Record<string, string>> = {
 };
 
 const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, string]>> = {
-	interface: ["Choose the language, appearance, content fonts, and welcome guide.", "选择界面语言、外观、内容字体和欢迎引导。"],
+	interface: ["Choose language, appearance, fonts, next-question suggestions, and the welcome guide.", "选择界面语言、外观、字体、下一问建议和欢迎引导。"],
 	conversation: ["Manage context, in-progress messages, and turn budgets.", "管理上下文、运行中输入和每轮预算。"],
 	"models-reasoning": ["Set default reasoning and prompt cache preferences.", "设置默认思考强度和提示缓存偏好。"],
 	"skills-tools": ["Choose how skills are offered as commands.", "选择技能是否作为快捷命令提供。"],
@@ -1713,6 +1723,7 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 		label: "Skills as commands",
 		description: "Register every loaded skill as a slash command.",
 	},
+	promptSuggestions: { label: "Next-question suggestions", description: "Offer one draft after an answer using a short request to the current model. May incur usage charges; never sends automatically." },
 	showWelcome: {
 		label: "Welcome guide",
 		description: "Show the short first-run guide while this host has no sessions.",
@@ -1820,6 +1831,7 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 		label: "技能作为命令",
 		description: "把每个已加载的技能注册为斜杠命令。",
 	},
+	promptSuggestions: { label: "下一问建议", description: "回答结束后使用当前模型发起一次短请求，给出可接受的草稿。可能产生用量费用，不会自动发送。" },
 	showWelcome: {
 		label: "欢迎引导",
 		description: "在这台宿主还没有会话时，显示简短的上手引导。",

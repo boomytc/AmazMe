@@ -837,6 +837,11 @@
       ],
       "default": "auto"
     },
+    "promptSuggestions": {
+      "type": "boolean",
+      "default": true,
+      "description": "Offer a next-question draft using one short model request after a completed answer."
+    },
     "appearance": {
       "anyOf": [
         {

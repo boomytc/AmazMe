@@ -4,6 +4,7 @@ import { DEFAULT_TYPOGRAPHY } from "@amazme/web/typography";
 /** Runtime defaults shared by settings accessors and the published JSON Schema. */
 export const SETTINGS_DEFAULTS = {
 	locale: "auto",
+	promptSuggestions: true,
 	appearance: "system",
 	typography: DEFAULT_TYPOGRAPHY,
 	toolApproval: "off",

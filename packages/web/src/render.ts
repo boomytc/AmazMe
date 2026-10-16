@@ -151,6 +151,7 @@ export interface PageRenderer {
 	onPaletteSelection: (index: number) => void;
 	/** The composer's draft, so the page can project the command palette from it. */
 	onDraftChange: (draft: string) => void;
+	onDismissSuggestion: () => void;
 	/** The reader picked a palette row: the composer takes its text. */
 	onCommandPick: (value: string) => void;
 	/** Put text in the composer, the way a completion does. */
@@ -627,6 +628,11 @@ export function createRenderer(
 	const chromeValues = new Map<string, unknown>();
 	const modelSetup = elements.modelSetup ?? modelSetupElement(elements.modelSelect);
 	const transcriptLatest = elements.transcriptLatest ?? transcriptLatestElement(elements.transcript);
+	const suggestion = pick("composer-suggestion");
+	const acceptSuggestion = pickElement("suggestion-accept", HTMLButtonElement);
+	const dismissSuggestion = pickElement("suggestion-dismiss", HTMLButtonElement);
+	let composing = false;
+	let dismissedSuggestion: string | undefined;
 	let meterExpanded = false;
 	const ensureMeterElements = (): {
 		readonly trigger: HTMLButtonElement;
@@ -2625,6 +2631,45 @@ export function createRenderer(
 		return line;
 	};
 
+	const visibleSuggestion = (): WebView["suggestion"] => {
+		const view = lastView;
+		return view?.suggestion !== undefined && view.suggestion.key !== dismissedSuggestion && !composing && !view.busy &&
+			view.attachedId !== undefined && !view.readOnly && view.panel.current === CHAT_VIEW && !view.panel.modal &&
+			!view.palette.open && view.approvals.length === 0 && view.queue.length === 0 && view.attachments.length === 0 && elements.prompt.value.length === 0
+			? view.suggestion : undefined;
+	};
+	const renderSuggestion = (): void => {
+		const candidate = visibleSuggestion();
+		suggestion.hidden = candidate === undefined;
+		elements.prompt.setAttribute("aria-label", copy("composer.promptLabel"));
+		elements.prompt.placeholder = candidate ? "" : composerPlaceholder(lastView?.locale ?? FALLBACK_LOCALE, !elements.prompt.disabled);
+		if (!candidate) { elements.prompt.removeAttribute("aria-describedby"); return; }
+		acceptSuggestion.querySelector<HTMLElement>(".suggestion-text")!.textContent = candidate.text;
+		acceptSuggestion.querySelector<HTMLElement>("kbd")!.textContent = copy("composer.tabAccept");
+		acceptSuggestion.title = candidate.text;
+		acceptSuggestion.setAttribute("aria-label", `${copy("composer.acceptSuggestion")}: ${candidate.text}`);
+		dismissSuggestion.title = copy("composer.dismissSuggestion");
+		dismissSuggestion.setAttribute("aria-label", dismissSuggestion.title);
+		pick("suggestion-hint").textContent = `${candidate.text} ${copy("composer.suggestionHint")}`;
+		elements.prompt.setAttribute("aria-describedby", "suggestion-hint");
+	};
+	const takeSuggestion = (): void => {
+		const candidate = visibleSuggestion();
+		if (!candidate) return;
+		dismissedSuggestion = candidate.key;
+		renderer.onDismissSuggestion();
+		renderer.setDraft(candidate.text);
+		elements.prompt.setSelectionRange(candidate.text.length, candidate.text.length);
+	};
+	const hideSuggestion = (): void => {
+		const candidate = visibleSuggestion();
+		if (!candidate) return;
+		dismissedSuggestion = candidate.key;
+		renderer.onDismissSuggestion();
+		renderSuggestion();
+		elements.prompt.focus({ preventScroll: true });
+	};
+
 	/** The group shell survives stream updates; only the reader chooses whether to open it. */
 	const processElement = (group: ProcessGroup, area: string, answerId?: string): HTMLElement => {
 		const key = `process:${area}:${group.id}`;
@@ -2824,6 +2869,7 @@ export function createRenderer(
 		onShortcut: () => {},
 		onPaletteSelection: () => {},
 		onDraftChange: () => {},
+		onDismissSuggestion: () => {},
 		onCommandPick: () => {},
 		onPanelAction: () => {},
 		get view(): WebView | undefined {
@@ -3009,7 +3055,7 @@ export function createRenderer(
 				}
 				heldPromptFocus = undefined;
 			}
-			elements.prompt.placeholder = composerPlaceholder(view.locale, view.sessionLabel);
+			renderSuggestion();
 			renderPrimary();
 			renderStop();
 			renderApprovalStatus(view);
@@ -3079,6 +3125,7 @@ export function createRenderer(
 			fitPrompt(elements.prompt);
 			renderPrimary();
 			renderer.onDraftChange(text);
+			renderSuggestion();
 			if (focus) elements.prompt.focus();
 		},
 		setConnection(text: ConnectionText, kind: "state" | "error", label?: ConnectionText): void {
@@ -3125,6 +3172,10 @@ export function createRenderer(
 		renderer.onDraftChange("");
 		renderer.onSubmit(text);
 	});
+	acceptSuggestion.addEventListener("click", takeSuggestion);
+	dismissSuggestion.addEventListener("click", hideSuggestion);
+	elements.prompt.addEventListener("compositionstart", () => { composing = true; renderSuggestion(); });
+	elements.prompt.addEventListener("compositionend", () => { composing = false; renderSuggestion(); });
 	elements.prompt.addEventListener("input", () => {
 		modelSetupReturn = undefined;
 		rememberPromptSelection();
@@ -3132,11 +3183,13 @@ export function createRenderer(
 		// An empty draft disables send. The text decides whether the command palette is open.
 		renderPrimary();
 		renderer.onDraftChange(elements.prompt.value);
+		renderSuggestion();
 	});
 	for (const eventName of ["keyup", "click", "select", "focus"] as const) {
 		elements.prompt.addEventListener(eventName, rememberPromptSelection);
 	}
 	elements.prompt.addEventListener("keydown", (event) => {
+		if (composing || event.isComposing || event.keyCode === 229) return;
 		const palette = lastView?.palette;
 		if (palette?.open === true && palette.rows.length > 0) {
 			// The palette owns the arrows, Tab, and a bare `/`'s Enter while it is open.
@@ -3152,6 +3205,13 @@ export function createRenderer(
 				event.preventDefault();
 				const selected = palette.rows.find((row) => row.selected) ?? palette.rows[0];
 				if (selected !== undefined) renderer.onCommandPick(selected.value);
+				return;
+			}
+		}
+		if (visibleSuggestion() && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+			if (event.key === "Tab" || event.key === "Escape") {
+				event.preventDefault(); event.stopPropagation();
+				if (event.key === "Tab") takeSuggestion(); else hideSuggestion();
 				return;
 			}
 		}

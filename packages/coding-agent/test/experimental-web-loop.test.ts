@@ -128,7 +128,7 @@ async function openPage(host: WebHost, storage = new Map<string, string>()) {
 		onSelect: noop, onCreateSession: noop, onSubmit: noop, onAbort: noop,
 		onSelectModel: noop, onSelectThinking: noop, onAttachFiles: noop,
 		onFilterRoster: noop, onShortcut: noop, onPaletteSelection: noop,
-		onDraftChange: noop, onCommandPick: noop, onPanelAction: noop,
+		onDraftChange: noop, onDismissSuggestion: noop, onCommandPick: noop, onPanelAction: noop,
 		setDraft: text => renderer.onDraftChange(text),
 	};
 	const releases = new Set<Promise<void>>();
@@ -192,14 +192,24 @@ interface LoopHost {
 }
 
 /** A host with its scratch directories in hand, for tests that drive a second client against it. */
-async function startHostWithDirectories(holdModel = false): Promise<LoopHost> {
+async function startHostWithDirectories(holdModel = false, reply?: (body: string) => string): Promise<LoopHost> {
 	process.env.AMAZME_CODING_AGENT_DIR = await makeDirectory("web-loop-agent-");
-	if (holdModel) {
+	if (holdModel || reply) {
 		// Hold a local OpenAI-compatible request until cancellation. Queue tests must
 		// control the busy interval instead of depending on ambient credentials or remote latency.
 		const modelServer = createServer((request, response) => {
 			if (request.url !== "/v1/chat/completions") response.writeHead(404).end();
-			else request.resume();
+			else if (!reply) request.resume();
+			else {
+				let body = "";
+				request.setEncoding("utf8");
+				request.on("data", (chunk: string) => { body += chunk; });
+				request.on("end", () => {
+					response.writeHead(200, { "content-type": "text/event-stream" });
+					response.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model: "held", choices: [{ index: 0, delta: { role: "assistant", content: reply(body) }, finish_reason: null }] })}\n\n`);
+					response.end(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model: "held", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })}\n\ndata: [DONE]\n\n`);
+				});
+			}
 		});
 		await new Promise<void>((resolve, reject) => {
 			modelServer.once("error", reject);
@@ -421,6 +431,35 @@ describe("web terminal output retention", () => {
 });
 
 describe("web client interactive loop", () => {
+	test("offers one contextual draft through the real host model service without sending it", async () => {
+		const requests: string[] = [];
+		const suggestion = "请解释两种设计各自适合的使用场景。";
+		const { host } = await startHostWithDirectories(false, body => {
+			requests.push(body);
+			return body.includes("Suggest at most one useful next question")
+				? JSON.stringify({ suggestion }) : "两种设计分别侧重灵活性和易用性。";
+		});
+		const presentation = await openPresentation(host);
+		const created = await presentation.management.create({ id: "suggestion-loop" }, BACKGROUND_CONTEXT);
+		const page = await openPage(host);
+		expect(page.renderer.view?.attachedId).toBe(created.sessionId);
+		page.renderer.onSubmit("对比两种设计的主要区别");
+		await waitFor(() => page.renderer.view?.suggestion?.text === suggestion, "contextual suggestion through the host", 20_000);
+		expect(requests).toHaveLength(2);
+		const request = JSON.parse(requests[1]!) as { tools?: unknown[]; messages: unknown[] };
+		expect(request.tools ?? []).toHaveLength(0);
+		expect(JSON.stringify(request.messages)).toContain("两种设计分别侧重灵活性和易用性。");
+		expect(page.renderer.view?.blocks.filter(block => block.kind === "user")).toHaveLength(1);
+		page.renderer.onDismissSuggestion();
+		page.renderer.onDraftChange(suggestion);
+		expect(page.renderer.view?.suggestion).toBeUndefined();
+		expect(page.renderer.view?.blocks.filter(block => block.kind === "user")).toHaveLength(1);
+		page.renderer.onDraftChange("");
+		await new Promise(resolve => setTimeout(resolve, 100));
+		expect(requests).toHaveLength(2);
+		await page.dispose(); await presentation.dispose();
+	}, 60_000);
+
 	test("reuses the latest empty session across concurrent tabs and creates after input", async () => {
 		const { host, sessionDir } = await startHostWithDirectories();
 		const first = await openPresentation(host);

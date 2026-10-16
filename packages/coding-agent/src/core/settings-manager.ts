@@ -841,6 +841,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getPromptSuggestions(): boolean {
+		return this.globalSettings.promptSuggestions ?? SETTINGS_DEFAULTS.promptSuggestions;
+	}
+
+	setPromptSuggestions(enabled: boolean): void {
+		this.globalSettings.promptSuggestions = enabled;
+		this.markModified("promptSuggestions");
+		this.save();
+	}
+
 	/** Whether the first-run guide is offered; an unset value offers it. */
 	getShowWelcome(): boolean {
 		return this.globalSettings.showWelcome ?? SETTINGS_DEFAULTS.showWelcome;

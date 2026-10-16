@@ -33,7 +33,15 @@ export interface ModelsState {
 	authentication: ProviderAuthState | null;
 }
 
+export interface PromptSuggestionRequest {
+	readonly conversationId: string;
+	readonly answerEntryId: string;
+	readonly locale: "zh" | "en";
+}
+
 export interface Models {
+	/** A bounded, read-only draft candidate for the selected conversation's latest completed answer. */
+	suggestPrompt(request: PromptSuggestionRequest, context: Context): Promise<string | null>;
 	readonly state: ReplicatedState<ModelsState>;
 	cycleThinking(context: Context): Promise<void>;
 	cycleModel(direction: "forward" | "backward", context: Context): Promise<void>;
@@ -50,7 +58,7 @@ export interface Models {
 	logout(provider: string, context: Context): Promise<void>;
 }
 
-export const Models = remoteService<Models>("amazme.models", {"cycleThinking":0,"cycleModel":1,"getModelScope":0,"setModelScope":2,"saveDefaults":2,"getThinkingLevels":0,"refresh":0,"select":1,"selectThinking":1,"startLogin":2,"submitLoginPrompt":3,"cancelLogin":1,"logout":1}, ["state"]);
+export const Models = remoteService<Models>("amazme.models", {"suggestPrompt":1,"cycleThinking":0,"cycleModel":1,"getModelScope":0,"setModelScope":2,"saveDefaults":2,"getThinkingLevels":0,"refresh":0,"select":1,"selectThinking":1,"startLogin":2,"submitLoginPrompt":3,"cancelLogin":1,"logout":1}, ["state"]);
 
 export function selectableModels(state: ModelsState | undefined): ModelSummary[] {
 	if (!state) return [];

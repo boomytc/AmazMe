@@ -217,13 +217,13 @@ describe("document title on each render", () => {
 });
 
 describe("composer placeholder", () => {
-	test("uses the display name, and New session when the session has no name", () => {
+	test("uses stable guidance without repeating the session name", () => {
 		const renderer = createRenderer(collectPageElements(), () => {}, APP);
 		renderer.render(buildWebView(input()));
-		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Send a task to Weekly report");
+		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Ask a question or describe the next step…");
 
 		renderer.render(buildWebView(input({ locale: "zh" })));
-		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("给 Weekly report 发送任务");
+		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("继续提问或描述下一步…");
 
 		renderer.render(
 			buildWebView(
@@ -233,7 +233,7 @@ describe("composer placeholder", () => {
 				}),
 			),
 		);
-		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Send a task to New session");
+		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("Ask a question or describe the next step…");
 
 		renderer.render(buildWebView(input({ attachedId: undefined, directory: undefined })));
 		expect(document.querySelector("#prompt")?.getAttribute("placeholder")).toBe("No session attached");

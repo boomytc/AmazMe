@@ -2511,6 +2511,20 @@ p {
 	color: var(--text);
 }
 
+.composer-editor { position: relative; min-width: 0; }
+.composer-suggestion { position: absolute; inset: 0; display: flex; gap: 6px; align-items: flex-start; }
+.suggestion-accept {
+	min-width: 0; flex: 1; display: flex; gap: 12px; align-items: center; text-align: left;
+	border: 0; background: transparent; color: var(--text-3); cursor: pointer;
+	padding: 4px 0; font: var(--content-font-size, 15px)/1.6 var(--font-content, var(--font-sans));
+}
+.suggestion-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggestion-accept kbd { flex: none; padding: 0 5px; border: 1px solid var(--line); border-radius: var(--radius-xs); font: 11px/1.8 var(--font-sans); color: var(--text-2); }
+.suggestion-dismiss { flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-3); cursor: pointer; }
+.suggestion-dismiss:hover, .suggestion-accept:hover { color: var(--text); }
+.suggestion-dismiss:hover { background: var(--hover); }
+.suggestion-dismiss .icon { width: 14px; height: 14px; }
+
 .composer-input {
 	display: block;
 	box-sizing: border-box;

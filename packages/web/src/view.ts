@@ -444,6 +444,8 @@ export interface WebView {
 	readonly shortcuts: readonly Shortcut[];
 	/** Whether the draft is a command line the page runs instead of prompting. */
 	readonly commandLine: boolean;
+	/** An optional draft candidate, scoped to one completed answer by the host page. */
+	readonly suggestion?: { readonly key: string; readonly text: string };
 	/** The focused conversation's label, and the history the reader paged in above the transcript. */
 	readonly focus: string | undefined;
 	/** Lane, model, thinking, and run. Empty until a session is attached. */
@@ -1357,14 +1359,9 @@ export function isBusy(view: ConversationView | undefined): boolean {
 	return view !== undefined && liveOf(view).run !== undefined;
 }
 
-/**
- * The composer's placeholder names what the next submit will do. `sessionLabel` is the attached
- * session's display name (`attachedSessionLabel`): the name `/name` set, or the untitled label when it has none.
- */
-export function composerPlaceholder(locale: Locale, sessionLabel: string | undefined): string {
-	return sessionLabel === undefined || sessionLabel.length === 0
-		? translate(locale, "composer.placeholderDetached")
-		: translate(locale, "composer.placeholder", { name: sessionLabel });
+/** Stable guidance stays separate from the optional, actionable suggestion. */
+export function composerPlaceholder(locale: Locale, attached: boolean): string {
+	return translate(locale, attached ? "composer.placeholder" : "composer.placeholderDetached");
 }
 
 /** Inputs the session has accepted but not started yet, each with its own withdraw. */

@@ -182,6 +182,7 @@
 				<form class="composer" id="composer">
 					<!-- The images attached but not sent yet; the renderer fills this. -->
 					<div class="attachments" id="attachments" hidden></div>
+					<div class="composer-editor">
 					<textarea
 						class="composer-input"
 						id="prompt"
@@ -189,6 +190,12 @@
 						placeholder="{{composer.placeholderDetached}}"
 						disabled
 					></textarea>
+					<div class="composer-suggestion" id="composer-suggestion" hidden>
+						<button type="button" class="suggestion-accept" id="suggestion-accept"><span class="suggestion-text"></span><kbd></kbd></button>
+						<button type="button" class="suggestion-dismiss" id="suggestion-dismiss"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
+					</div>
+					<span id="suggestion-hint" hidden></span>
+					</div>
 					<div class="composer-row">
 						<div class="composer-leading">
 							<!-- The attach control and its hidden picker: an image can also be pasted or dropped. -->

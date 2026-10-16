@@ -52,13 +52,13 @@ describe("message dictionaries", () => {
 	});
 
 	test("fills placeholders and leaves unknown ones alone", () => {
-		expect(translate("en", "composer.placeholder", { name: "Weekly report" })).toBe("Send a task to Weekly report");
-		expect(translate("zh", "composer.placeholder", { name: "周报" })).toBe("给 周报 发送任务");
+		expect(translate("en", "process.tools", { count: "3" })).toBe("3 tool calls");
+		expect(translate("zh", "process.tools", { count: "3" })).toBe("3 次工具调用");
 		expect(translate("en", "status.retrying", { attempt: "2", error: "overloaded" })).toBe(
 			"Retrying (attempt 2): overloaded",
 		);
-		expect(translate("en", "composer.placeholder", { id: "s-1" })).toBe("Send a task to {name}");
-		expect(translate("en", "composer.placeholder")).toBe("Send a task to {name}");
+		expect(translate("en", "process.tools", { id: "s-1" })).toBe("{count} tool calls");
+		expect(translate("en", "process.tools")).toBe("{count} tool calls");
 	});
 
 	test("names catalogues, scopes, and levels with a fallback to the identity", () => {

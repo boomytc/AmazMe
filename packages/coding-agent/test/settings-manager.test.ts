@@ -25,6 +25,18 @@ describe("SettingsManager", () => {
 		}
 	});
 
+	it("persists prompt suggestions globally without allowing project overrides", async () => {
+		writeFileSync(join(projectDir, ".amazme", "settings.json"), JSON.stringify({ promptSuggestions: false }));
+		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		expect(manager.getPromptSuggestions()).toBe(true);
+		manager.setPromptSuggestions(false);
+		await manager.flush();
+		expect(SettingsManager.create(projectDir, agentDir).getPromptSuggestions()).toBe(false);
+		manager.setPromptSuggestions(true);
+		await manager.flush();
+		expect(SettingsManager.create(projectDir, agentDir).getPromptSuggestions()).toBe(true);
+	});
+
 	describe("preserves externally added settings", () => {
 		it("persists global typography and merges concurrent changes to separate font fields", async () => {
 			writeFileSync(join(projectDir, ".amazme", "settings.json"), JSON.stringify({ typography: { textSize: 22 } }));
