@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Calls made before hydration validate their supplied context before waiting or starting a root, including forged contexts and foreign or expired task holders. Local and linked remote contracts share the check without mistaking ordinary object arguments for contexts.
+
 ## [1.3.0] - 2026-10-16
 
 ### Breaking Changes

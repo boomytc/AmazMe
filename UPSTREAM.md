@@ -333,7 +333,15 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 
 本轮另有两次目录与本地状态修正，计入同一批次：models.dev 将 MiMo 2.5 线标为弃用后，目录刷新使 Xiaomi 的默认模型与若干测试引用失效，默认模型与测试引用统一移到 2.6 线（`mimo-v2.6-pro`），弃用清单加入 2.5；`experimental-client-tui` 夹具补上此前遗漏的 `suggestPrompt`，使工作区类型检查重新通过。两处都不是这 19 个提交引入的行为。
 
-本轮验证：修改包及其产品消费者逐包先构建再测试，没有运行根完整构建或测试。Chord 522、AI 1,426（隔离 HOME、排除实网 e2e）、Coding Agent 3,298、Durable 默认保留和立即淘汰两轮各 1,341（排除 e2e）、Agent 91、Codemode 229、MCP 45、Env 121、TUI 1,069、Telemetry 15、Protocol 139、Client 34、Server 57、Web 250、GUI 单元 60、Evals 61 项通过。类型检查、工作区依赖方向、入口预算、浏览器打包、模型数据校验及 27 项工程测试通过，构建版 CLI 报告 1.3.0。新回归覆盖外来 ctx、浮层归属、SQLite 前缀与错误工具结果图片；未发送真实模型请求，未做 Nix 与上游目录发布流程验收。
+本轮验证：修改包及其产品消费者逐包先构建再测试，没有运行根完整构建或测试。Chord 522、AI 1,426（隔离 HOME、排除实网 e2e）、Coding Agent 3,298、Durable 默认保留和立即淘汰两轮各 1,341（排除 e2e）、Agent 91、Codemode 229、MCP 45、Env 121、TUI 1,069、Telemetry 15、Protocol 139、Client 34、Server 57、Web 250、GUI 单元 60、Evals 61 项通过。类型检查、工作区依赖方向、入口预算、浏览器打包、模型数据校验及 27 项工程测试通过，构建版 CLI 报告 1.3.0。新回归覆盖外来 ctx、浮层归属、SQLite 前缀与错误工具结果图片。最初一次 Durable 验证未排除实网 E2E，读取本机凭据并误启 Codex 缓存用例，重试后以 `Unexpected submission status: unanswered` 失败，不计为通过；随后显式排除 E2E，完成上述两轮离线验证。不能据最终离线结果将本批次描述为“未发送真实模型请求”。未做 Nix 与上游目录发布流程验收。
+
+### 复核修正（2026-10-16）
+
+- 加载中调用先按契约声明识别 ctx 位置，校验后才等待 hydration 或启动新 root；覆盖伪造 ctx、外来 holder 和已经结算的 holder。同宿主与跨链接路径共用校验，不按 `rootId`/`signal` 字段猜测普通对象参数，也保留跨 variant 的动态参数位置及 holder 取消语义。新增 12 项回归，其中旧实现的 6 项拒绝时机断言先失败，修正后 Chord 全包 534 项通过。
+- 四个 Unix daemon 已使用 Rust 1.96.0 和 locked 依赖实际重编译为 1.3.0，架构、源码指纹及 SHA-256 全部通过既有检查。macOS x64 和两个 Linux musl 目标为本机交叉构建；实际运行验收仅为 macOS arm64。`bin/` 继续遵循生成产物忽略约定，不将修改版本元数据当作重建。
+- 普通 `npm pack --workspace @amazme/env` 执行 prepack 成功。清理 Durable 的已删除模块遗留编译文件后，14 个运行包按根锁文件打包并隔离安装；安装版 CLI 1.3.0、daemon 协议 1/版本 1.3.0 握手、四个 daemon 的校验和、`chord/output` 子路径及就绪前拒绝无效 ctx 均通过。
+- 修正阶段第一次 Durable 复测再次触发复合 npm 脚本的参数转发陷阱：末尾的 `--exclude` 只作用于第二轮，首轮仍误启带本机凭据的 Codex E2E 并以 `unanswered` 失败。进程已结束，不计为通过。随后用隔离 HOME、仅保留 PATH/临时目录/额外 CA 等必要环境变量，并逐轮直接调用 Vitest 显式排除 E2E，默认保留和立即淘汰两轮各 1,341 项通过。此处如实保留两次误启记录，不再以最终离线通过掩盖此前的实网尝试。
+- Coding Agent 构建后在同样的隔离环境中全包 3,298 项通过；Env 使用刚重建的 macOS arm64 release daemon，构建后 121 项通过。类型检查、工作区依赖与浏览器入口检查、27 项工程测试及 diff 检查通过。没有进行 Linux/Intel Mac 实机或真实模型成功调用验收。
 
 ## 刻意偏离
 
@@ -352,5 +360,7 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 4. 分类处理并在上面的表格记录：吸收 / 只参考 / 跳过（不适用项写具体原因），实施中的改动继续跟进。
 5. 吸收后按包的约定验证：`npm run build --workspace <包>`，再 `npm test --workspace <包>`。`coding-agent` 有存量失败，用干净基线对比确认失败集合没有新增。
 6. 更新「当前基线」和表格。
+
+离线验证须同时隔离 HOME 和移除继承的供应商凭据环境变量，保留必要的 PATH、临时目录及 `NODE_EXTRA_CA_CERTS`。Durable 的 `test` 是两轮 Vitest 的复合脚本，末尾追加 `--exclude` 只会作用于后一轮；需要排除实网 E2E 时，必须在隔离环境中逐轮直接调用 Vitest，并在两轮分别指定排除参数，不能只依赖 npm 的尾部参数。
 
 安装产物升级核对：v1 在途嵌套工具一次性迁移到 v2，旧副作用未执行，调用标为 interrupted，父任务结束后结果回收。

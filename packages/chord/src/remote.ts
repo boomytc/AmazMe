@@ -6,6 +6,7 @@ import { ChordError, invalid } from "./errors.ts";
 import {
 	CtxImpl,
 	notifyStatus,
+	pendingCallContext,
 	REF_BASE,
 	type RefCore,
 	type RefOwner,
@@ -647,15 +648,20 @@ export class RemoteRef implements RefCore {
 					return this.#call(name, args, ctx);
 				};
 				if (this.status === "loading") {
-					const ctx = given.at(-1);
+					let ctx: CtxImpl | undefined;
+					try {
+						ctx = pendingCallContext(host, this.contract, name, given);
+					} catch (error) {
+						return Promise.reject(error);
+					}
 					const wait = async (root: Ctx): Promise<unknown> => {
 						// The binding host, not the ctx's own: a foreign ctx must not wait for this hold to become ready first.
 						if (root instanceof CtxImpl) root.check(host);
 						await raceSignal(this.ready, root.signal);
 						return invoke(root);
 					};
-					return ctx instanceof CtxImpl && !ctx.holder ? wait(ctx)
-						: host.root(wait, { signal: ctx instanceof CtxImpl ? ctx.signal : undefined });
+					return ctx !== undefined && !ctx.holder ? wait(ctx)
+						: host.root(wait, { signal: ctx?.signal });
 				}
 				return invoke();
 			};

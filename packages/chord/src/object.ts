@@ -483,6 +483,30 @@ export class CtxImpl implements Ctx {
 }
 
 /**
+ * Validate a supplied context before waiting for hydration. Fixed-arity methods already identify its position;
+ * with mixed-arity variants, a lone ordinary value may be an argument, so only a real ctx is unambiguous there.
+ */
+export function pendingCallContext(
+	host: HostCore | RemoteHost,
+	contract: AnyContract,
+	name: string,
+	given: readonly unknown[],
+): CtxImpl | undefined {
+	const methods = Object.values(contract.description.variants).flatMap((members) => {
+		const member = members[name];
+		return member?.kind === "method" ? [member] : [];
+	});
+	const hasNoArgs = methods.some((member) => member.args === undefined);
+	const hasArgs = methods.some((member) => member.args !== undefined);
+	let candidate = hasNoArgs && !hasArgs ? given[0] : given[1];
+	if (candidate === undefined && hasNoArgs && given[0] instanceof CtxImpl) candidate = given[0];
+	if (candidate === undefined) return undefined;
+	if (!(candidate instanceof CtxImpl)) throw invalid("foreign_ctx", "ctx must come from a Chord host");
+	candidate.check(host);
+	return candidate;
+}
+
+/**
  * A signal aborted with the first of `sources` to abort, until `release()`. Not `AbortSignal.any`: Node keeps a
  * dependant of a long-lived source (an object's or a code version's) reachable while it has abort listeners, so every
  * call or task context would keep its listeners, and the code they close over, alive as long as the source.
@@ -970,14 +994,19 @@ export class RefImpl {
 					return this.object.call(this, name, args, ctx);
 				};
 				if (this.status === "loading" && this.contract.scope === "remote") {
-					const ctx = given.at(-1);
+					let ctx: CtxImpl | undefined;
+					try {
+						ctx = pendingCallContext(this.object.host, this.contract, name, given);
+					} catch (error) {
+						return Promise.reject(error);
+					}
 					const wait = async (root: Ctx): Promise<unknown> => {
 						if (root instanceof CtxImpl) root.check(this.object.host);
 						await raceSignal(this.ready, root.signal);
 						return invoke(root);
 					};
-					return ctx instanceof CtxImpl && !ctx.holder ? wait(ctx)
-						: this.object.host.root(wait, { signal: ctx instanceof CtxImpl ? ctx.signal : undefined });
+					return ctx !== undefined && !ctx.holder ? wait(ctx)
+						: this.object.host.root(wait, { signal: ctx?.signal });
 				}
 				return invoke();
 			};
