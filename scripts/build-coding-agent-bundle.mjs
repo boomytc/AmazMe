@@ -20,6 +20,7 @@ const allowedExternalPackages = new Set([
 	"@amazme/chord/context",
 	"@amazme/chord/delta",
 	"@amazme/chord/node",
+	"@amazme/chord/output",
 	"@silvia-odwyer/photon-node",
 	"jiti",
 	"esbuild",

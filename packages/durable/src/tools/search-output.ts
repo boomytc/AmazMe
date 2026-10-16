@@ -1,7 +1,7 @@
 import type { Context } from "@amazme/chord";
 import { awaitWithContext, withCancel } from "@amazme/chord/context";
+import { boundOutput } from "@amazme/chord/output";
 import { getOrThrow } from "../env/index.ts";
-import { boundOutput } from "../harness/output.ts";
 import type { ToolExecutionApi } from "../harness/types.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "../truncate.ts";
 import { requireEnv } from "./env.ts";

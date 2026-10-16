@@ -10,6 +10,7 @@
 			"@amazme/chord/context": ["./packages/chord/src/context/index.ts"],
 			"@amazme/chord/delta": ["./packages/chord/src/delta/index.ts"],
 			"@amazme/chord/node": ["./packages/chord/src/node.ts"],
+			"@amazme/chord/output": ["./packages/chord/src/output.ts"],
 			"@amazme/telemetry": ["./packages/telemetry/src/index.ts"],
 			"@amazme/telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
 			"@amazme/codemode": ["./packages/codemode/src/index.ts"],
