@@ -2705,15 +2705,23 @@ export function createRenderer(
 		});
 		root.dataset.state = group.state;
 		root.querySelector<HTMLElement>(".process-title")!.textContent = copy("process.title");
-		const counts = [copy(`process.${group.state}`), group.tools > 0 ? copy("process.tools", { count: String(group.tools) }) : "", group.thoughts > 0 ? copy("process.thoughts", { count: String(group.thoughts) }) : ""].filter(Boolean);
+		const counts = [
+			copy(`process.${group.state}`),
+			group.tools > 0 ? copy("process.tools", { count: String(group.tools) }) : "",
+			group.thoughts > 0 ? copy("process.thoughts", { count: String(group.thoughts) }) : "",
+			group.recovered > 0 ? copy("process.recovered", { count: String(group.recovered) }) : "",
+		].filter(Boolean);
 		root.querySelector<HTMLElement>(".process-meta")!.textContent = counts.join(" · ");
 		const activity = root.querySelector<HTMLElement>(".process-activity")!;
 		activity.hidden = group.state !== "running";
 		activity.textContent = group.activity === undefined ? "" : [group.activity.title, group.activity.toolArgs?.collapsed].filter(Boolean).join(" · ");
 		const alert = root.querySelector<HTMLElement>(".process-alert")!;
-		alert.hidden = group.failures.length === 0 && group.state !== "interrupted";
-		const failed = group.failures[0];
-		alert.textContent = failed === undefined ? copy("process.incomplete") : `${copy("process.failures", { count: String(group.failures.length) })} · ${firstLine(failed.result?.diagnostics.find(item => item.tone === "error")?.text || failed.text)}`;
+		const unresolved = group.alert[0];
+		// A resumed failure stays in the rows; only an outcome the run never resolved is announced here.
+		alert.hidden = unresolved === undefined && group.state !== "interrupted";
+		alert.textContent = unresolved === undefined
+			? copy("process.incomplete")
+			: `${copy("process.failures", { count: String(group.alert.length) })} · ${firstLine(unresolved.result?.diagnostics.find(item => item.tone === "error")?.text || unresolved.text)}`;
 		const jump = root.querySelector<HTMLButtonElement>(".process-jump")!;
 		jump.hidden = answerId === undefined;
 		jump.textContent = copy("process.jumpAnswer");

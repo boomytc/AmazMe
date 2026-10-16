@@ -38,6 +38,23 @@ test("does not claim success for running, failed, interrupted or missing results
 	expect(processGroups([tool, answer], true)[0]).toMatchObject({ state: "completed" });
 });
 
+test("treats a failure the run corrected as progress, not as an outcome", () => {
+	const failedStep = { ...tool, id: "tool:failed", tone: "error" as const, text: "exit 1" };
+	const recovered = processGroups([thinking, failedStep, { ...tool, id: "tool:after" }, answer]);
+	expect(recovered[0]).toMatchObject({ state: "completed", recovered: 1, alert: [] });
+	// Several failures followed by success are still progress; consecutive failures at the end are not.
+	const mixed = processGroups([
+		{ ...failedStep, id: "tool:first" }, { ...tool, id: "tool:ok" },
+		{ ...failedStep, id: "tool:second" }, { ...failedStep, id: "tool:third" }, answer,
+	]);
+	expect(mixed[0]).toMatchObject({ state: "error", recovered: 1 });
+	expect((mixed[0] as { alert: readonly TranscriptBlock[] }).alert.map(block => block.id)).toEqual(["tool:second", "tool:third"]);
+	// Thinking after the last failure is not a correction: most runs reason before retrying.
+	expect(processGroups([failedStep, thinking])[0]).toMatchObject({ state: "error", recovered: 0 });
+	// A recovered failure still keeps its own card in the error tone inside the group.
+	expect(recovered[0]).toMatchObject({ blocks: [thinking, failedStep, expect.objectContaining({ id: "tool:after" })] });
+});
+
 test("collapses a long completed trace into a group without losing its original rows", () => {
 	const renderer = createRenderer(collectPageElements());
 	renderer.render({ ...base(), blocks: [thinking, ...Array.from({ length: 30 }, (_, i) => ({ ...tool, id: `call:${i}` })), answer] });
@@ -78,6 +95,21 @@ test("keeps failed diagnostics visible while the group is closed, including duri
 	expect(document.querySelector<HTMLElement>(".process-alert")?.hidden).toBe(false);
 	renderer.render({ ...base(), blocks: [{ ...tool, result: undefined, interrupted: true }] });
 	expect(document.querySelector(".process-alert")?.textContent).toContain("interrupted");
+});
+
+test("a corrected failure reads as completed, muted, and without the red outcome line", () => {
+	const renderer = createRenderer(collectPageElements());
+	renderer.render({ ...base(), blocks: [{ ...tool, id: "fail", tone: "error" as const, text: "exit 1" }, { ...tool, id: "after" }, answer] });
+	const group = document.querySelector(".turn-process")!;
+	expect(group.getAttribute("data-state")).toBe("completed");
+	expect(group.querySelector(".process-meta")?.textContent).toBe("Completed · 2 tool calls · 1 failed, then continued");
+	expect(group.querySelector<HTMLElement>(".process-alert")?.hidden).toBe(true);
+	// The failed step keeps its own error tone where it belongs: on the row inside the group.
+	expect(group.querySelector(".process-rows details.error")).not.toBeNull();
+	renderer.render({ ...base(), locale: "zh", blocks: [{ ...tool, id: "fail", tone: "error" as const }, { ...tool, id: "after" }, answer] });
+	expect(document.querySelector(".turn-process")?.getAttribute("data-state")).toBe("completed");
+	expect(document.querySelector(".process-meta")?.textContent).toBe("已完成 · 2 次工具调用 · 1 个步骤失败后已继续");
+	expect(document.querySelector<HTMLElement>(".process-alert")?.hidden).toBe(true);
 });
 
 test("history uses separate groups and reopening retains the individual disclosure choice", () => {
