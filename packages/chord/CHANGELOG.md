@@ -59,6 +59,7 @@
 - A resource kept across a reload closed with the `close` of the factory run that first opened it, and kept that run's code reachable; it now adopts the newest declaration at commit
 - Method arity follows the active variant at invocation time, including calls before readiness; void consumers discard provider results.
 - WebSocket links refusing packed messages also refuse packed object envelopes in text messages.
+- A forked child host inherited its parent's process lock, so a child that forked its own children failed with `locked` unless it set its own; children no longer inherit it.
 - A call through a remote reference rejects a ctx from another host, or an object not made by Chord, with `invalid/foreign_ctx` like a local reference; before, it carried the foreign root over the link and called anyway.
 
 
