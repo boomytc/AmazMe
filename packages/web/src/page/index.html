@@ -192,11 +192,13 @@
 					></textarea>
 					<div class="composer-suggestion" id="composer-suggestion" hidden>
 						<span class="suggestion-text"></span>
-						<button type="button" class="suggestion-accept" id="suggestion-accept"><kbd></kbd></button>
+						<button type="button" class="suggestion-accept" id="suggestion-accept"><kbd></kbd><span class="suggestion-touch-label"></span></button>
+						<button type="button" class="suggestion-preview-toggle" id="suggestion-preview-toggle" aria-controls="suggestion-preview" aria-expanded="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-more"></use></svg></button>
 						<button type="button" class="suggestion-dismiss" id="suggestion-dismiss"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
 					</div>
 					<span id="suggestion-hint" hidden></span>
 					</div>
+					<div class="suggestion-preview" id="suggestion-preview" role="region" tabindex="0" hidden></div>
 					<div class="composer-row">
 						<div class="composer-leading">
 							<!-- The attach control and its hidden picker: an image can also be pasted or dropped. -->

@@ -1435,7 +1435,12 @@ p {
 
 /* Process rows: reasoning and tool calls, one group per run of them between two answers. */
 .turn-process { min-width: 0; }
-.process-heading { display: flex; align-items: center; gap: 12px; }
+.process-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.process-failures {
+	flex: none; min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius-pill);
+	background: transparent; color: var(--warn); font: 12px/1.5 var(--font-sans); cursor: pointer;
+}
+.process-failures:hover { background: var(--hover); }
 .process-toggle {
 	flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
 	border: 0; border-radius: var(--radius-md); padding: 8px 4px; background: transparent;
@@ -1602,7 +1607,8 @@ p {
 	font: calc(var(--code-font-size, 13px) - 1px)/1.6 var(--font-code, var(--font-mono)); white-space: pre; color: var(--text-2);
 }
 .tool-diff-code { padding: 0; }
-.tool-diff-line { display: block; padding: 0 12px; min-width: max-content; }
+.tool-diff-line { display: inline-block; padding: 0 12px; min-width: 100%; }
+.tool-diff-line.diff-header, .tool-diff-line.diff-hunk { color: var(--accent-text); }
 .tool-diff-line.addition { color: var(--diff-add); background: var(--diff-add-bg); }
 .tool-diff-line.removal { color: var(--danger); background: var(--danger-soft); }
 .tool-diff-line.context { color: var(--text-3); }
@@ -1934,8 +1940,9 @@ p {
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
-	height: 34px;
-	padding: 0 6px 0 14px;
+	min-height: 34px;
+	flex-wrap: wrap;
+	padding: 4px 6px 4px 14px;
 	border-bottom: 1px solid var(--line);
 	color: var(--text-3);
 	font-family: var(--font-mono);
@@ -2512,6 +2519,17 @@ p {
 }
 
 .composer-editor { position: relative; min-width: 0; }
+.suggestion-touch-label { display: none; }
+.suggestion-preview-toggle {
+	pointer-events: auto; display: grid; place-items: center; flex: none; width: 28px; height: 28px;
+	padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-3); cursor: pointer;
+}
+.suggestion-preview-toggle:hover, .suggestion-preview-toggle[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.suggestion-preview {
+	max-height: 9em; overflow-y: auto; padding: 10px 12px; margin-top: 8px; border: 1px solid var(--line);
+	border-radius: var(--radius-md); color: var(--text-2); background: var(--code);
+	font: var(--content-font-size, 15px)/1.6 var(--font-content, var(--font-sans)); white-space: pre-wrap; overflow-wrap: anywhere;
+}
 /* The candidate is ghost text: it never takes the composer's click, so pointing at the field still
    places the caret. Only its accept chip and dismiss control are pressable. */
 .composer-suggestion { position: absolute; inset: 0; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
@@ -3913,6 +3931,39 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	.modal-root { padding: 12px; }
 }
 
+/* Shared reading actions keep code, recorded changes, source previews and output predictable. */
+.reader-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
+.reader-meta { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.reader-meta .tool-result-path { display: block; }
+.reader-button {
+	display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: none;
+	min-height: 28px; padding: 3px 7px; border: 0; border-radius: var(--radius-xs);
+	background: transparent; color: var(--text-2); font: 12px/1.5 var(--font-sans); cursor: pointer;
+}
+.reader-button .icon { width: 14px; height: 14px; }
+.reader-button:hover { background: var(--hover); color: var(--text); }
+.reader-wrap { font-weight: 600; }
+.reader-wrap[aria-pressed="true"] { background: var(--active); color: var(--text); }
+.reader-content { min-width: 0; }
+.text-reader:not(.collapsed) > .reader-content:not(.file-source-code) { max-height: min(70dvh, 840px); overflow-y: auto; }
+.tool-diff, .tool-output-reader { margin-left: 24px; }
+.panel > .tool-diff { margin-left: 0; }
+.tool-diff > .tool-result-heading, .tool-diff > .tool-diff-code,
+.tool-output-reader > .tool-result-heading, .tool-output-reader > .tool-output { margin-left: 0; }
+.tool-output.reader-content { white-space: pre; overflow-x: auto; }
+.reader-content.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.reader-content.wrap .code-line, .reader-content.wrap .tool-diff-line { width: 100%; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.markdown .reader-content.wrap .code-line { position: relative; padding-inline-start: calc(3ch + 16px); }
+.markdown .reader-content.wrap .code-line::before { position: absolute; inset-inline-start: 0; margin-right: 0; }
+.text-reader.collapsed > .reader-content {
+	max-height: min(calc(18 * 1.65em + 28px), 45dvh); overflow-y: hidden;
+	mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+}
+.reader-expand-bar { display: flex; width: 100%; border-radius: 0; border-top: 1px solid var(--line); min-height: 32px; }
+.turn-actions:has(.copy-sensitive) { opacity: 1; flex-wrap: wrap; height: auto; min-height: 28px; }
+.message-action.copy-sensitive, .message-action.copy-masked { width: auto; height: auto; min-height: 28px; gap: 5px; padding: 4px 7px; }
+.message-action.copy-sensitive { color: var(--warn); }
+
 /* Touch controls remain usable without making desktop settings unnecessarily tall. */
 @media (pointer: coarse) {
 	.icon-button,
@@ -3934,7 +3985,19 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	.project-add,
 	.project-action,
 	.welcome-dismiss,
-	.panel-switch {
+	.panel-switch,
+	.reader-button,
+	.process-failures,
+	.process-toggle,
+	.process-jump,
+	.suggestion-accept,
+	.suggestion-preview-toggle,
+	.suggestion-dismiss,
+	.attachment-remove,
+	.credential-toggle,
+	.message-action,
+	.message-action.copy-sensitive,
+	.message-action.copy-masked {
 		min-width: 44px;
 		min-height: 44px;
 	}
@@ -3945,6 +4008,12 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	.modal-textarea { font-size: 16px; }
 
 	.project-action { opacity: 1; }
+	.turn-actions { height: auto; min-height: 44px; }
+	.composer-editor { min-height: 44px; }
+	.suggestion-accept { margin-top: 0; }
+	.suggestion-accept kbd { display: none; }
+	.suggestion-touch-label { display: inline; font: 12px/1.5 var(--font-sans); color: var(--text-2); }
+	.suggestion-text { padding-top: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,5 +1,6 @@
 import type { PanelButton, PanelPending, PanelSpec, PanelText } from "./panels.ts";
 import type { MessageKey } from "./strings.ts";
+import type { ReadingControls } from "./reading-controls.ts";
 import { WORKSPACE_OPEN_ACTION } from "./actions.ts";
 
 type FileGlyph = "search" | "x" | "copy";
@@ -9,6 +10,7 @@ interface FileBrowserOptions {
 	readonly actionButton: (action: PanelButton, pending?: PanelPending) => HTMLButtonElement;
 	readonly headerAction: (button: HTMLButtonElement, label: string, glyph: "copy" | "x") => void;
 	readonly copyText: (button: HTMLButtonElement, text: string, label: MessageKey) => void;
+	readonly reading: ReadingControls;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
@@ -27,7 +29,6 @@ function button(className: string): HTMLButtonElement {
 export function createFileBrowser(options: FileBrowserOptions) {
 	const { icon, copy, actionButton: panelButton, headerAction: placeHeaderAction, copyText: copyAnswer } = options;
 	let fileFilter = { scope: "", query: "" };
-	let sourceWrap = false;
 	const fileNavigation = (panel: PanelSpec, node: HTMLElement, sessionId: string): HTMLElement => {
 		const files = panel.files!;
 		const busy = panel.pending?.id.startsWith("workspace:") === true;
@@ -123,18 +124,9 @@ export function createFileBrowser(options: FileBrowserOptions) {
 			const displayed = all.length > lines.length ? lines.join("\n") : text.text;
 			const toolbar = element("div", "file-source-toolbar");
 			toolbar.append(element("span", "file-source-caption", copy("dock.sourceLines", { count: String(lines.length) })));
-			const wrap = button("file-icon-button file-wrap-button");
-			wrap.textContent = "Aa";
-			wrap.title = copy("dock.wrapLines");
-			wrap.setAttribute("aria-label", copy("dock.wrapLines"));
-			wrap.setAttribute("aria-pressed", String(sourceWrap));
-			const copyContents = button("file-icon-button");
-			placeHeaderAction(copyContents, copy("dock.copyContents"), "copy");
-			copyContents.addEventListener("click", () => copyAnswer(copyContents, displayed, "dock.copyContents"));
-			toolbar.append(wrap, copyContents);
 			block.append(toolbar);
 			if (all.length > lines.length) block.append(element("p", "panel-notice info", copy("dock.sourceLimited", { count: String(lines.length) })));
-			const source = element("div", `file-source-code${sourceWrap ? " wrap" : ""}`);
+			const source = element("div", "file-source-code");
 			source.tabIndex = 0;
 			source.setAttribute("role", "region");
 			source.setAttribute("aria-label", copy("dock.contents"));
@@ -146,9 +138,15 @@ export function createFileBrowser(options: FileBrowserOptions) {
 				source.append(row);
 			}
 			if (lines.length === 0) source.append(element("p", "panel-empty", copy("dock.emptyFile")));
-			wrap.addEventListener("click", () => { sourceWrap = !sourceWrap; source.classList.toggle("wrap", sourceWrap); wrap.setAttribute("aria-pressed", String(sourceWrap)); });
 			block.append(source);
-		} else block.append(element("pre", "panel-text", text.text));
+			options.reading.attach({ key: "file-source", root: block, content: source, toolbar, text: displayed,
+				copyLabel: "dock.copyContents", fold: false });
+		} else {
+			const toolbar = element("div", "file-source-toolbar");
+			const output = element("pre", "panel-text", text.text);
+			block.append(toolbar, output);
+			options.reading.attach({ key: `panel-output:${text.id}`, root: block, content: output, toolbar, text: text.text, copyLabel: "tool.copyOutput" });
+		}
 		return block;
 	};
 

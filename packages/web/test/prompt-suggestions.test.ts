@@ -55,6 +55,49 @@ test("mouse accept and dismiss have the same non-submitting semantics", () => {
 	expect(document.querySelector<HTMLElement>("#composer-suggestion")?.hidden).toBe(true);
 });
 
+test("full suggestion preview is literal, never accepts or submits, and tracks candidate identity", () => {
+	const { renderer, elements, submit, draft, dismiss } = setup();
+	const text = "<img src=x onerror=alert(1)> " + candidate.text.repeat(20);
+	const source = { ...view(), suggestion: { key: "long", text } };
+	renderer.render(source);
+	const preview = document.querySelector<HTMLElement>("#suggestion-preview")!;
+	const control = document.querySelector<HTMLButtonElement>("#suggestion-preview-toggle")!;
+	expect(preview.hidden).toBe(true);
+	control.click();
+	expect(preview.hidden).toBe(false);
+	expect(preview.textContent).toBe(text);
+	expect(preview.querySelector("img")).toBeNull();
+	expect(document.activeElement).toBe(preview);
+	expect(control.getAttribute("aria-expanded")).toBe("true");
+	expect(elements.prompt.value).toBe("");
+	expect(submit).not.toHaveBeenCalled(); expect(draft).not.toHaveBeenCalled(); expect(dismiss).not.toHaveBeenCalled();
+	const textNode = preview.firstChild!;
+	const range = document.createRange(); range.setStart(textNode, 0); range.setEnd(textNode, 12);
+	const selection = document.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+	renderer.render({ ...source, sessionLabel: "renamed" });
+	expect(preview.hidden).toBe(false); expect(preview.firstChild).toBe(textNode);
+	expect(selection.toString()).toBe(text.slice(0, 12));
+	renderer.render({ ...source, busy: true }); expect(preview.hidden).toBe(true);
+	renderer.render(source); expect(preview.hidden).toBe(false);
+	renderer.render({ ...source, suggestion: { key: "new", text: "New candidate" } });
+	expect(preview.hidden).toBe(true); expect(preview.textContent).toBe("New candidate");
+	control.click();
+	preview.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+	expect(preview.hidden).toBe(true); expect(elements.prompt.value).toBe("");
+	expect(document.activeElement).toBe(elements.prompt); expect(dismiss).toHaveBeenCalledOnce();
+});
+
+test("touch accept text is localized and the preview hides when the draft is filled", () => {
+	const { renderer, elements, submit } = setup();
+	expect(document.querySelector(".suggestion-touch-label")?.textContent).toBe("填入");
+	renderer.render({ ...view(), locale: "en" });
+	expect(document.querySelector(".suggestion-touch-label")?.textContent).toBe("Use draft");
+	document.querySelector<HTMLButtonElement>("#suggestion-preview-toggle")!.click();
+	document.querySelector<HTMLButtonElement>("#suggestion-accept")!.click();
+	expect(document.querySelector<HTMLElement>("#suggestion-preview")?.hidden).toBe(true);
+	expect(elements.prompt.value).toBe(candidate.text); expect(submit).not.toHaveBeenCalled();
+});
+
 test("Escape dismisses only this candidate; ordinary and modified Tab retain navigation", () => {
 	const { key, elements, renderer } = setup();
 	expect(key("Tab", { shiftKey: true }).defaultPrevented).toBe(false);

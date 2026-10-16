@@ -15,6 +15,7 @@ import { transcriptPosition } from "./transcript-position.ts";
 import { processGroups, type ProcessGroup } from "./process-groups.ts";
 import { createMultiselect } from "./multiselect.ts";
 import { createFileBrowser } from "./file-browser.ts";
+import { createReadingControls } from "./reading-controls.ts";
 import { FALLBACK_LOCALE, type Locale } from "./locale.ts";
 import { formatMarkdown, tokenizeCode, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import {
@@ -631,6 +632,9 @@ export function createRenderer(
 	const suggestion = pick("composer-suggestion");
 	const acceptSuggestion = pickElement("suggestion-accept", HTMLButtonElement);
 	const dismissSuggestion = pickElement("suggestion-dismiss", HTMLButtonElement);
+	const previewSuggestion = pickElement("suggestion-preview-toggle", HTMLButtonElement);
+	const suggestionPreview = pick("suggestion-preview");
+	let expandedSuggestionKey: string | undefined;
 	let composing = false;
 	let dismissedSuggestion: string | undefined;
 	let meterExpanded = false;
@@ -1246,8 +1250,17 @@ export function createRenderer(
 		return form;
 	};
 
+	const reading = createReadingControls({ copy, copyText: (control, text, label) => copyAnswer(control, text, label),
+		preservePosition: root => {
+			if (elements.column.contains(root)) return transcriptPosition(elements.column, elements.transcript, false);
+			for (let parent = root.parentElement; parent; parent = parent.parentElement) {
+				if (/auto|scroll/.test(getComputedStyle(parent).overflowY)) return transcriptPosition(parent, parent, false);
+			}
+			return () => {};
+		},
+	});
 	const fileBrowser = createFileBrowser({ icon, copy, actionButton: (action, pending) => panelButton(action, report, pending),
-		headerAction: placeHeaderAction, copyText: (control, text, label) => copyAnswer(control, text, label),
+		headerAction: placeHeaderAction, copyText: (control, text, label) => copyAnswer(control, text, label), reading,
 	});
 	const textElement = fileBrowser.text;
 
@@ -1269,7 +1282,9 @@ export function createRenderer(
 		const previousInput = container?.querySelector<HTMLElement>("form[data-input-row]") ?? undefined;
 		for (const input of panel.inputs ?? []) node.append(inputElement(input, previousInput));
 		for (const group of panel.groups) node.append(groupElement(group, panel.pending));
-		for (const text of panel.texts ?? []) node.append(textElement(text));
+		for (const text of panel.texts ?? []) node.append(text.diff
+			? diffElement({ text: text.text, label: text.title ?? copy("review.diff") }, `panel:${panel.id}:${text.id}`)
+			: textElement(text));
 		if (panel.files) head.after(fileBrowser.navigation(panel, node, lastView?.attachedId ?? ""));
 		return node;
 	};
@@ -1279,7 +1294,7 @@ export function createRenderer(
 	const replacePanel = (container: HTMLElement, panel: PanelSpec): void => {
 		const scope = `${lastView?.attachedId ?? ""}:${panel.id}:${panel.groups.map(group => group.id).join(",")}`;
 		const active = document.activeElement;
-		if ((active instanceof HTMLInputElement || active instanceof HTMLSelectElement || active instanceof HTMLButtonElement) && container.contains(active) && active.dataset.controlKey) {
+		if (active instanceof HTMLElement && container.contains(active) && active.dataset.controlKey) {
 			panelFocus.set(container, { scope: container.dataset.panelScope ?? scope, key: active.dataset.controlKey,
 				start: active instanceof HTMLInputElement ? active.selectionStart : null,
 				end: active instanceof HTMLInputElement ? active.selectionEnd : null });
@@ -1288,9 +1303,9 @@ export function createRenderer(
 		container.replaceChildren(panelElement(panel, container));
 		container.dataset.panelScope = scope;
 		if (!focus || focus.scope !== scope) { panelFocus.delete(container); return; }
-		const target = [...container.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("[data-control-key]")].find(node => node.dataset.controlKey === focus.key);
+		const target = [...container.querySelectorAll<HTMLElement>("[data-control-key]")].find(node => node.dataset.controlKey === focus.key);
 		if (!target) { panelFocus.delete(container); return; }
-		if (target.disabled) return;
+		if (target.matches(":disabled")) return;
 		target.focus({ preventScroll: true });
 		if (target instanceof HTMLInputElement && focus.start !== null && focus.end !== null) target.setSelectionRange(focus.start, focus.end);
 		panelFocus.delete(container);
@@ -1839,10 +1854,12 @@ export function createRenderer(
 			control.title = copy(key);
 			control.setAttribute("aria-label", copy(key));
 			control.replaceChildren(icon(glyph));
+			if (control.dataset.copyLabel === "visible") control.append(element("span", "copy-label", copy(key)));
 			window.setTimeout(() => {
 				control.title = copy(label);
 				control.setAttribute("aria-label", copy(label));
 				control.replaceChildren(icon("copy"));
+				if (control.dataset.copyLabel === "visible") control.append(element("span", "copy-label", copy(label)));
 			}, 1200);
 		};
 		const written = navigator.clipboard?.writeText(text);
@@ -1871,11 +1888,33 @@ export function createRenderer(
 	const answerActions = (block: TranscriptBlock): HTMLElement => {
 		const row = element("div", "turn-actions");
 		const copyControl = button("message-action");
-		copyControl.title = copy("copy.copy");
-		copyControl.setAttribute("aria-label", copy("copy.copy"));
+		const ranges = block.kind === "user" ? credentialRanges(block.text) : [];
+		const label = ranges.length > 0 ? "copy.sensitive" : "copy.copy";
+		copyControl.title = copy(label);
+		copyControl.setAttribute("aria-label", copy(label));
 		copyControl.append(icon("copy"));
-		copyControl.addEventListener("click", () => copyAnswer(copyControl, block.text));
+		if (ranges.length > 0) {
+			copyControl.classList.add("copy-sensitive");
+			copyControl.dataset.copyLabel = "visible";
+			copyControl.append(element("span", "copy-label", copy(label)));
+		}
+		copyControl.addEventListener("click", () => copyAnswer(copyControl, block.text, label));
 		row.append(copyControl);
+		if (ranges.length > 0) {
+			const masked = button("message-action copy-masked");
+			masked.dataset.copyLabel = "visible";
+			masked.title = copy("copy.masked");
+			masked.setAttribute("aria-label", masked.title);
+			masked.append(icon("copy"), element("span", "copy-label", masked.title));
+			let from = 0, text = "";
+			for (const range of ranges) {
+				text += block.text.slice(from, range.start) + range.masked;
+				from = range.end;
+			}
+			text += block.text.slice(from);
+			masked.addEventListener("click", () => copyAnswer(masked, text, "copy.masked"));
+			row.append(masked);
+		}
 		if (block.feedback !== undefined) {
 			row.append(
 				feedbackControl(block.feedback.up, "up", block.feedback.rating === "up"),
@@ -2042,25 +2081,24 @@ export function createRenderer(
 	};
 
 	/** A persisted file change. Line numbers and signs come from the recorded diff, not a preview. */
-	const diffElement = (diff: NonNullable<NonNullable<TranscriptBlock["result"]>["diff"]>): HTMLElement => {
+	const diffElement = (diff: NonNullable<NonNullable<TranscriptBlock["result"]>["diff"]>, key: string): HTMLElement => {
 		const container = element("section", "tool-diff");
-		const header = element("div", "tool-result-heading", diff.label);
-		if (diff.path) header.append(element("span", "tool-result-path", diff.path));
-		if (diff.patch) {
-			const control = button("message-action");
-			control.setAttribute("aria-label", copy("tool.copyPatch"));
-			control.title = copy("tool.copyPatch");
-			control.append(icon("copy"));
-			control.addEventListener("click", () => copyAnswer(control, diff.patch ?? "", "tool.copyPatch"));
-			header.append(control);
-		}
+		const header = element("div", "tool-result-heading");
+		const meta = element("div", "reader-meta", diff.label);
+		if (diff.path) meta.append(element("span", "tool-result-path", diff.path));
+		const actions = element("div", "reader-controls");
+		header.append(meta, actions);
 		const code = element("pre", "tool-diff-code");
 		code.dataset.textKey = "diff";
-		for (const line of diff.text.split("\n")) {
-			const tone = line.startsWith("+") ? "addition" : line.startsWith("-") ? "removal" : "context";
-			code.append(element("span", `tool-diff-line ${tone}`, line || " "));
+		for (const [index, line] of diff.text.split("\n").entries()) {
+			if (index > 0) code.append(document.createTextNode("\n"));
+			const tone = line.startsWith("+++ ") || line.startsWith("--- ") ? "diff-header"
+				: line.startsWith("@@") ? "diff-hunk" : line.startsWith("+") ? "addition" : line.startsWith("-") ? "removal" : "context";
+			code.append(element("span", `tool-diff-line ${tone}`, line));
 		}
 		container.append(header, code);
+		reading.attach({ key, root: container, content: code, toolbar: actions, text: diff.patch ?? diff.text,
+			copyLabel: diff.patch === undefined ? "dock.copyContents" : "tool.copyPatch", lineCount: diff.text.split("\n").length });
 		return container;
 	};
 
@@ -2099,19 +2137,16 @@ export function createRenderer(
 				if (terminal.cwd) command.title = terminal.cwd;
 				details.append(command);
 			}
-			if (block.result.diff) details.append(diffElement(block.result.diff));
+			if (block.result.diff) details.append(diffElement(block.result.diff, `diff:${block.id}`));
 		}
 		if (block.text.length > 0) {
 			const output = element("div", block.result?.terminal === undefined ? "tool-output" : "tool-output terminal-output", block.text);
 			output.dataset.textKey = "output";
 			const controls = element("div", "tool-result-heading");
-			const copyOutput = button("message-action");
-			copyOutput.title = copy("tool.copyOutput");
-			copyOutput.setAttribute("aria-label", copyOutput.title);
-			copyOutput.append(icon("copy"));
-			copyOutput.addEventListener("click", () => copyAnswer(copyOutput, block.text, "tool.copyOutput"));
-			controls.append(copyOutput);
-			details.append(controls, output);
+			const reader = element("section", "tool-output-reader");
+			reader.append(controls, output);
+			reading.attach({ key: `output:${block.id}`, root: reader, content: output, toolbar: controls, text: block.text, copyLabel: "tool.copyOutput" });
+			details.append(reader);
 		} else if (!block.running && (block.images?.length ?? 0) === 0 && (block.result?.diagnostics.length ?? 0) === 0) {
 			details.append(element("div", "tool-output empty", copy("tool.noOutput")));
 		}
@@ -2272,46 +2307,16 @@ export function createRenderer(
 		return row;
 	};
 
-	const CODE_COLLAPSE_THRESHOLD = 24;
-
-	/** A fenced code block: language and line count, syntax-highlighted numbered lines, long-code folding, and copy. */
+	/** A fenced code block: numbered syntax tokens with the same reading controls as tool results. */
 	const codeBlockElement = (text: string, language: string | undefined, foldKey?: string): HTMLElement => {
 		const tokenizedLines = tokenizeCode(text, language);
 		const lineCount = tokenizedLines.length;
-		const collapsible = lineCount > CODE_COLLAPSE_THRESHOLD;
 		const block = element("div", "code-block");
 		const head = element("div", "code-head");
 		const meta = element("div", "code-meta");
 		if (language !== undefined) meta.append(element("span", "code-language", language));
 		meta.append(element("span", "code-lines", copy("code.lines", { count: String(lineCount) })));
 		const actions = element("div", "code-actions");
-		const foldHead = collapsible ? button("code-fold") : undefined;
-		if (foldHead !== undefined) {
-			foldHead.dataset.action = "code-fold";
-			actions.append(foldHead);
-		}
-		const control = button("code-copy");
-		control.dataset.action = "copy";
-		control.textContent = copy("copy.copy");
-		control.addEventListener("click", () => {
-			const written = navigator.clipboard?.writeText(text);
-			if (written === undefined) {
-				control.textContent = copy("copy.failed");
-				return;
-			}
-			void written.then(
-				() => {
-					control.textContent = copy("copy.copied");
-					window.setTimeout(() => {
-						control.textContent = copy("copy.copy");
-					}, 1200);
-				},
-				() => {
-					control.textContent = copy("copy.failed");
-				},
-			);
-		});
-		actions.append(control);
 		head.append(meta, actions);
 		block.append(head);
 		const pre = document.createElement("pre");
@@ -2329,30 +2334,7 @@ export function createRenderer(
 		}
 		pre.append(code);
 		block.append(pre);
-		if (collapsible && foldHead !== undefined) {
-			const foldFoot = button("code-expand-bar");
-			foldFoot.dataset.action = "code-fold";
-			const stateKey = foldKey === undefined ? undefined : `code:${foldKey}`;
-			let isExpanded = (stateKey === undefined ? undefined : expanded.get(stateKey)) ?? false;
-			const syncFold = (): void => {
-				block.classList.toggle("collapsed", !isExpanded);
-				block.dataset.collapsed = String(!isExpanded);
-				const label = isExpanded ? copy("code.collapse") : copy("code.expand", { count: String(lineCount) });
-				for (const node of [foldHead, foldFoot]) {
-					node.textContent = label;
-					node.setAttribute("aria-expanded", String(isExpanded));
-				}
-			};
-			const toggleFold = (): void => {
-				isExpanded = !isExpanded;
-				if (stateKey !== undefined) expanded.set(stateKey, isExpanded);
-				syncFold();
-			};
-			foldHead.addEventListener("click", toggleFold);
-			foldFoot.addEventListener("click", toggleFold);
-			syncFold();
-			block.append(foldFoot);
-		}
+		reading.attach({ key: `code:${foldKey ?? text}`, root: block, content: pre, toolbar: actions, text, copyLabel: "copy.code", lineCount });
 		return block;
 	};
 
@@ -2641,11 +2623,18 @@ export function createRenderer(
 	const renderSuggestion = (): void => {
 		const candidate = visibleSuggestion();
 		suggestion.hidden = candidate === undefined;
+		suggestionPreview.hidden = candidate === undefined || expandedSuggestionKey !== candidate.key;
+		previewSuggestion.setAttribute("aria-expanded", String(!suggestionPreview.hidden));
 		elements.prompt.setAttribute("aria-label", copy("composer.promptLabel"));
 		elements.prompt.placeholder = candidate ? "" : composerPlaceholder(lastView?.locale ?? FALLBACK_LOCALE, !elements.prompt.disabled);
 		if (!candidate) { elements.prompt.removeAttribute("aria-describedby"); return; }
 		suggestion.querySelector<HTMLElement>(".suggestion-text")!.textContent = candidate.text;
 		acceptSuggestion.querySelector<HTMLElement>("kbd")!.textContent = copy("composer.tabAccept");
+		acceptSuggestion.querySelector<HTMLElement>(".suggestion-touch-label")!.textContent = copy("composer.fillSuggestion");
+		previewSuggestion.title = copy("composer.previewSuggestion");
+		previewSuggestion.setAttribute("aria-label", previewSuggestion.title);
+		suggestionPreview.setAttribute("aria-label", previewSuggestion.title);
+		if (suggestionPreview.textContent !== candidate.text) suggestionPreview.textContent = candidate.text;
 		acceptSuggestion.title = copy("composer.acceptSuggestion");
 		acceptSuggestion.setAttribute("aria-label", `${copy("composer.acceptSuggestion")}: ${candidate.text}`);
 		dismissSuggestion.title = copy("composer.dismissSuggestion");
@@ -2699,7 +2688,22 @@ export function createRenderer(
 				restore();
 				syncTranscriptLatest();
 			});
-			head.append(toggle, jump);
+			const failures = button("process-failures");
+			failures.setAttribute("aria-controls", rows.id);
+			failures.addEventListener("click", () => {
+				rows.hidden = false;
+				toggle.setAttribute("aria-expanded", "true");
+				node.dataset.open = "true";
+				const id = node.dataset.firstFailure;
+				const row = [...rows.querySelectorAll<HTMLDetailsElement>("details")].find(item => item.dataset.blockId === id);
+				if (row && id !== undefined) {
+					expanded.set(id, true);
+					row.open = true;
+					row.querySelector("summary")?.focus({ preventScroll: true });
+					row.scrollIntoView({ block: "nearest" });
+				}
+			});
+			head.append(toggle, failures, jump);
 			node.append(head, element("p", "process-activity"), element("p", "process-alert"), rows);
 			return node;
 		});
@@ -2709,19 +2713,22 @@ export function createRenderer(
 			copy(`process.${group.state}`),
 			group.tools > 0 ? copy("process.tools", { count: String(group.tools) }) : "",
 			group.thoughts > 0 ? copy("process.thoughts", { count: String(group.thoughts) }) : "",
-			group.recovered > 0 ? copy("process.recovered", { count: String(group.recovered) }) : "",
 		].filter(Boolean);
 		root.querySelector<HTMLElement>(".process-meta")!.textContent = counts.join(" · ");
 		const activity = root.querySelector<HTMLElement>(".process-activity")!;
 		activity.hidden = group.state !== "running";
 		activity.textContent = group.activity === undefined ? "" : [group.activity.title, group.activity.toolArgs?.collapsed].filter(Boolean).join(" · ");
 		const alert = root.querySelector<HTMLElement>(".process-alert")!;
-		const unresolved = group.alert[0];
-		// A resumed failure stays in the rows; only an outcome the run never resolved is announced here.
-		alert.hidden = unresolved === undefined && group.state !== "interrupted";
-		alert.textContent = unresolved === undefined
-			? copy("process.incomplete")
-			: `${copy("process.failures", { count: String(group.alert.length) })} · ${firstLine(unresolved.result?.diagnostics.find(item => item.tone === "error")?.text || unresolved.text)}`;
+		const firstFailure = group.failures[0];
+		const failures = root.querySelector<HTMLButtonElement>(".process-failures")!;
+		failures.hidden = firstFailure === undefined;
+		failures.textContent = copy("process.failures", { count: String(group.failures.length) });
+		failures.setAttribute("aria-label", `${failures.textContent} · ${copy("process.jumpFailure")}`);
+		failures.title = firstFailure === undefined ? "" : `${copy("process.failureHint")}\n${firstLine(firstFailure.result?.diagnostics.find(item => item.tone === "error")?.text || firstFailure.text)}`;
+		if (firstFailure === undefined) delete root.dataset.firstFailure;
+		else root.dataset.firstFailure = String(firstFailure.id);
+		alert.hidden = group.state !== "interrupted";
+		alert.textContent = copy("process.incomplete");
 		const jump = root.querySelector<HTMLButtonElement>(".process-jump")!;
 		jump.hidden = answerId === undefined;
 		jump.textContent = copy("process.jumpAnswer");
@@ -2920,6 +2927,8 @@ export function createRenderer(
 			if (scopeChanged) {
 				restoreChatPosition = undefined;
 				expanded.clear();
+				reading.clear();
+				expandedSuggestionKey = undefined;
 				chromeValues.clear();
 				elements.column.replaceChildren();
 				heldPromptFocus = undefined;
@@ -3182,6 +3191,13 @@ export function createRenderer(
 	});
 	acceptSuggestion.addEventListener("click", takeSuggestion);
 	dismissSuggestion.addEventListener("click", hideSuggestion);
+	previewSuggestion.addEventListener("click", () => {
+		const candidate = visibleSuggestion();
+		if (!candidate) return;
+		expandedSuggestionKey = expandedSuggestionKey === candidate.key ? undefined : candidate.key;
+		renderSuggestion();
+		if (!suggestionPreview.hidden) suggestionPreview.focus({ preventScroll: true });
+	});
 	elements.prompt.addEventListener("compositionstart", () => { composing = true; renderSuggestion(); });
 	elements.prompt.addEventListener("compositionend", () => { composing = false; renderSuggestion(); });
 	elements.prompt.addEventListener("input", () => {

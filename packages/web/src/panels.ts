@@ -142,6 +142,8 @@ export interface PanelText {
 	readonly text: string;
 	/** Read-only source preview, with line numbers and copy/wrap controls. */
 	readonly source?: boolean;
+	/** Recorded unified diff, not a proposed edit or ordinary terminal output. */
+	readonly diff?: boolean;
 }
 
 /** A one-line input a panel needs, such as the terminal's command line. */

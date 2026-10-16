@@ -175,7 +175,7 @@ export function changesPanel(locale: Locale, state: InsightsStateLike | undefine
 			actions: [{ id: "insights:diff", data: JSON.stringify([state.conversationId, file.root, file.path]), label: translate(locale, "review.diff"), tone: "default" }],
 		})), empty: translate(locale, "review.empty") },
 		{ id: "changes:verification", title: translate(locale, "review.verification"), rows: state.verification.map((item, index) => ({ id: `verification:${index}`, title: item.command, description: translate(locale, item.exitCode === null ? "review.unknown" : item.exitCode === 0 ? "review.passed" : "review.failed", { code: String(item.exitCode) }) })), empty: translate(locale, "review.noVerification") }],
-		...(diff === undefined ? {} : { texts: [{ id: "changes:diff", text: diff }] }),
+		...(diff === undefined ? {} : { texts: [{ id: "changes:diff", text: diff, diff: /^--- .+\r?\n\+\+\+ .+/m.test(diff) }] }),
 	};
 }
 

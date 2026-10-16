@@ -30,7 +30,7 @@ test("groups adjacent events, ignores blank placeholders, preserves body and not
 test("does not claim success for running, failed, interrupted or missing results", () => {
 	expect(processGroups([tool], true)[0]).toMatchObject({ state: "running" });
 	expect(processGroups([{ ...tool, running: true, result: undefined }])[0]).toMatchObject({ state: "running" });
-	expect(processGroups([{ ...tool, tone: "error" }])[0]).toMatchObject({ state: "error" });
+	expect(processGroups([{ ...tool, tone: "error" }])[0]).toMatchObject({ state: "completed", failures: [expect.objectContaining({ tone: "error" })] });
 	expect(processGroups([{ ...tool, result: undefined }])[0]).toMatchObject({ state: "interrupted" });
 	expect(processGroups([{ ...tool, result: undefined, interrupted: true }], true)[0]).toMatchObject({ state: "interrupted" });
 	expect(processGroups([thinking, { ...answer, kind: "notice", interrupted: true }])[0]).toMatchObject({ state: "interrupted" });
@@ -38,21 +38,21 @@ test("does not claim success for running, failed, interrupted or missing results
 	expect(processGroups([tool, answer], true)[0]).toMatchObject({ state: "completed" });
 });
 
-test("treats a failure the run corrected as progress, not as an outcome", () => {
+test("separates execution lifecycle from failures and never infers repair from an unrelated success", () => {
 	const failedStep = { ...tool, id: "tool:failed", tone: "error" as const, text: "exit 1" };
-	const recovered = processGroups([thinking, failedStep, { ...tool, id: "tool:after" }, answer]);
-	expect(recovered[0]).toMatchObject({ state: "completed", recovered: 1, alert: [] });
-	// Several failures followed by success are still progress; consecutive failures at the end are not.
+	const ended = processGroups([thinking, failedStep, { ...tool, id: "tool:after", title: "Read unrelated file" }, answer]);
+	expect(ended[0]).toMatchObject({ state: "completed", failures: [failedStep], blocks: [thinking, failedStep, expect.objectContaining({ id: "tool:after" })] });
 	const mixed = processGroups([
 		{ ...failedStep, id: "tool:first" }, { ...tool, id: "tool:ok" },
 		{ ...failedStep, id: "tool:second" }, { ...failedStep, id: "tool:third" }, answer,
 	]);
-	expect(mixed[0]).toMatchObject({ state: "error", recovered: 1 });
-	expect((mixed[0] as { alert: readonly TranscriptBlock[] }).alert.map(block => block.id)).toEqual(["tool:second", "tool:third"]);
-	// Thinking after the last failure is not a correction: most runs reason before retrying.
-	expect(processGroups([failedStep, thinking])[0]).toMatchObject({ state: "error", recovered: 0 });
-	// A recovered failure still keeps its own card in the error tone inside the group.
-	expect(recovered[0]).toMatchObject({ blocks: [thinking, failedStep, expect.objectContaining({ id: "tool:after" })] });
+	const group = mixed[0];
+	if (group?.kind !== "process") throw new Error("Missing process group");
+	expect(group.state).toBe("completed");
+	expect(group.failures.map(block => block.id)).toEqual(["tool:first", "tool:second", "tool:third"]);
+	expect(processGroups([failedStep, thinking])[0]).toMatchObject({ state: "completed", failures: [failedStep] });
+	const diagnostic = { ...tool, result: { status: "Ended", diagnostics: [{ tone: "error" as const, text: "No permission" }] } };
+	expect(processGroups([diagnostic, tool])[0]).toMatchObject({ failures: [diagnostic] });
 });
 
 test("collapses a long completed trace into a group without losing its original rows", () => {
@@ -61,7 +61,7 @@ test("collapses a long completed trace into a group without losing its original 
 	expect(document.querySelectorAll(".turn-process")).toHaveLength(1);
 	expect(document.querySelector<HTMLElement>(".process-rows")?.hidden).toBe(true);
 	expect(document.querySelectorAll(".process-rows > details")).toHaveLength(31);
-	expect(document.querySelector(".process-meta")?.textContent).toBe("Completed · 30 tool calls · 1 thinking blocks");
+	expect(document.querySelector(".process-meta")?.textContent).toBe("Execution ended · 30 tool calls · 1 thinking blocks");
 	expect(document.querySelector(".turn-response")?.textContent).toContain("Result");
 });
 
@@ -83,32 +83,45 @@ test("retains group expansion and focus across live updates and settlement, rese
 	expect(document.querySelector<HTMLElement>(".process-rows")?.hidden).toBe(true);
 });
 
-test("keeps failed diagnostics visible while the group is closed, including during later work", () => {
+test("keeps failure records discoverable while closed, opens the failed row on demand, and preserves interruption", () => {
 	const renderer = createRenderer(collectPageElements());
 	const failed = { ...tool, tone: "error" as const, text: "Permission denied\nmore detail" };
 	renderer.render({ ...base(), blocks: [failed] });
-	expect(document.querySelector<HTMLElement>(".process-alert")?.hidden).toBe(false);
-	expect(document.querySelector(".process-alert")?.textContent).toBe("1 failed steps · Permission denied");
+	const badge = document.querySelector<HTMLButtonElement>(".process-failures")!;
+	expect(badge.hidden).toBe(false);
+	expect(badge.textContent).toBe("1 failed steps");
+	expect(badge.title).toContain("Permission denied");
 	expect(document.querySelector<HTMLElement>(".process-rows")?.hidden).toBe(true);
+	const row = document.querySelector<HTMLDetailsElement>(".process-rows details")!;
+	row.scrollIntoView = vi.fn();
+	badge.click();
+	expect(document.querySelector<HTMLElement>(".process-rows")?.hidden).toBe(false);
+	expect(row.open).toBe(true);
+	expect(document.activeElement).toBe(row.querySelector("summary"));
+	expect(row.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
 	renderer.render({ ...base(), busy: true, blocks: [failed, { ...tool, id: "next", running: true, result: undefined }] });
 	expect(document.querySelector(".turn-process")?.getAttribute("data-state")).toBe("running");
-	expect(document.querySelector<HTMLElement>(".process-alert")?.hidden).toBe(false);
+	expect(document.querySelector<HTMLButtonElement>(".process-failures")?.hidden).toBe(false);
+	// A live repaint replaces the changed row but must retain the explicit failure-jump choice.
+	renderer.render({ ...base(), blocks: [{ ...failed, text: "Permission denied (updated)" }] });
+	expect(document.querySelector<HTMLDetailsElement>(".process-rows details")?.open).toBe(true);
 	renderer.render({ ...base(), blocks: [{ ...tool, result: undefined, interrupted: true }] });
 	expect(document.querySelector(".process-alert")?.textContent).toContain("interrupted");
 });
 
-test("a corrected failure reads as completed, muted, and without the red outcome line", () => {
+test("a later success cannot hide earlier failures or label execution as verified", () => {
 	const renderer = createRenderer(collectPageElements());
 	renderer.render({ ...base(), blocks: [{ ...tool, id: "fail", tone: "error" as const, text: "exit 1" }, { ...tool, id: "after" }, answer] });
 	const group = document.querySelector(".turn-process")!;
 	expect(group.getAttribute("data-state")).toBe("completed");
-	expect(group.querySelector(".process-meta")?.textContent).toBe("Completed · 2 tool calls · 1 failed, then continued");
+	expect(group.querySelector(".process-meta")?.textContent).toBe("Execution ended · 2 tool calls");
 	expect(group.querySelector<HTMLElement>(".process-alert")?.hidden).toBe(true);
-	// The failed step keeps its own error tone where it belongs: on the row inside the group.
+	expect(group.querySelector<HTMLButtonElement>(".process-failures")?.hidden).toBe(false);
+	expect(group.querySelector(".process-failures")?.textContent).toBe("1 failed steps");
 	expect(group.querySelector(".process-rows details.error")).not.toBeNull();
 	renderer.render({ ...base(), locale: "zh", blocks: [{ ...tool, id: "fail", tone: "error" as const }, { ...tool, id: "after" }, answer] });
 	expect(document.querySelector(".turn-process")?.getAttribute("data-state")).toBe("completed");
-	expect(document.querySelector(".process-meta")?.textContent).toBe("已完成 · 2 次工具调用 · 1 个步骤失败后已继续");
+	expect(document.querySelector(".process-meta")?.textContent).toBe("执行结束 · 2 次工具调用");
 	expect(document.querySelector<HTMLElement>(".process-alert")?.hidden).toBe(true);
 });
 
