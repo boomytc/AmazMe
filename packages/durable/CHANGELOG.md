@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-16
+
+### Added
+
+- `SqliteStorage.open(database, { prefix })` namespaces every table and index; `openNodeSqliteStorage()` and `openDurableObjectSqliteStorage()` forward the prefix for databases shared with host tables.
+
+### Changed
+
+- Cloudflare Durable Object SQLite adapters created for the same storage object share one operation queue, so several storages can use one Durable Object database.
+
 ### Fixed
 
 - Reopening a current SQLite schema no longer takes a writer lock. Newer or missing schema metadata is rejected before mutation; required migrations still recheck their version under the transaction lock and roll back atomically.

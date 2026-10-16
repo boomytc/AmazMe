@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-16
+
 ### Added
 
 - Worker sandboxes expose admission and actual-exit hooks; a reservation lasts until worker exit or constructor failure.

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-16
+
 ### Breaking Changes
 
 - Terminology follows the concepts: a reference (what `get` returns) is `Ref<C>` (was `Handle<C>`), its status `RefStatus` (was `HandleStatus`); what a factory returns is `ImplementationOf<C>` (was `BehaviorOf<C>`); a resource's options are a `ResourceDeclaration` (was `ResourceSpec`); epochs are code versions: `Ctx.codeVersion`, `RootOptions.codeVersion`, `Host.codeVersion`/`previousCodeVersion`, and the `codeVersion` fields of frames and reload reports (all were `epoch`). Docs and messages say object (was record) and reference (was handle and hold); the `hold` and `release` frame types keep their names
@@ -24,6 +26,7 @@
 
 ### Added
 
+- `@amazme/chord/output` provides bounded output buffers and paced progress: `OutputBuffer`, `Progress`, `boundOutput`, `sanitizeOutput`, `characterEnd`, `utf8ByteLength`, and the `OutputLimits`, `BoundedOutput`, `OutputSlice` and `OutputSkip` types. The durable runtime imports them from here.
 - Remote references to one object share one binding per host and key (type, normalized input identity, principal key, contract fingerprint): one hold, one stream per state member, calls over the same hold; every reference keeps its own status, observers and `release`. `HostOptions.linger` (`{ types: { [typeName]: ms }, cap }`, cap default 4) keeps a binding held and hydrated after its last reference is released, so a reference taken again meanwhile costs nothing on the link
 - Holds from clients carry an opaque `origin`: the id the accepting host gave the client connection, forwarded by relays and honored only from the parent link, so a host can tell client connections apart; a disconnect releases that client's holds at once
 - Flow control by units: the first unit of a new reference passes the window, so a `get` never waits behind other references' state; units for reloads and re-holds wait, built lazily from the current values; waiting ops are capped per link (`LinkOptions.pendingCap`, default four windows), beyond which the oldest streams become resets (a relay asks downstream with `resync`)
@@ -56,6 +59,7 @@
 - A resource kept across a reload closed with the `close` of the factory run that first opened it, and kept that run's code reachable; it now adopts the newest declaration at commit
 - Method arity follows the active variant at invocation time, including calls before readiness; void consumers discard provider results.
 - WebSocket links refusing packed messages also refuse packed object envelopes in text messages.
+- A call through a remote reference rejects a ctx from another host, or an object not made by Chord, with `invalid/foreign_ctx` like a local reference; before, it carried the foreign root over the link and called anyway.
 
 
 ## [1.2.0] - 2026-10-12

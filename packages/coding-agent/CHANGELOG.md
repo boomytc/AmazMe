@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-16
+
 ### Fixed
 
 - Hosted model catalog refreshes share one service-owned operation. Failed refreshes settle their status and permit retry; cancellation of one reader leaves other readers running, while service close cancels and joins the operation without late publication.
@@ -13,6 +15,7 @@
 - CLI, model scopes and credential printing share one provider-selection policy; inline API keys do not silently choose among providers. The default Durable terminal uses the same rule.
 - Read line-range labels accept finite numeric strings and omitted null fields consistently in the TUI, session tree, HTML export and examples.
 - Prompt-template arguments retain empty quoted strings and their positional indexes.
+- Closing a custom UI overlay hides that overlay instead of the topmost one, so a dialog opened above a finished shell overlay stays visible and resolves normally.
 
 ### Added
 

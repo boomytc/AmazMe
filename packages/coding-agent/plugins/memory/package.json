@@ -1,14 +1,14 @@
 {
 	"name": "@amazme/memory",
-	"version": "1.2.0",
+	"version": "1.3.0",
 	"private": true,
 	"type": "module",
 	"peerDependencies": {
-		"@amazme/ai": "^1.2.0",
-		"@amazme/chord": "^1.2.0",
-		"@amazme/coding-agent": "^1.2.0",
-		"@amazme/durable": "^1.2.0",
-		"@amazme/protocol": "^1.2.0"
+		"@amazme/ai": "^1.3.0",
+		"@amazme/chord": "^1.3.0",
+		"@amazme/coding-agent": "^1.3.0",
+		"@amazme/durable": "^1.3.0",
+		"@amazme/protocol": "^1.3.0"
 	},
 	"chord": {
 		"facets": {

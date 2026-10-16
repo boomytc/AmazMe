@@ -15,7 +15,7 @@
 	},
 	"dependencies": {
 		"@amazme/web": "1.0.4",
-		"@amazme/coding-agent": "1.2.0"
+		"@amazme/coding-agent": "1.3.0"
 	},
 	"devDependencies": {
 		"electron": "44.6.0",

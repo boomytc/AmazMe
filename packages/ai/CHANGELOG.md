@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-16
+
 ### Added
 
 - `hasContextRecoveryHeadroom()` shares the shrink and output-reserve checks used before retrying a rejected context.
@@ -10,12 +12,15 @@
 ### Fixed
 
 - Invalid Unicode escapes in streaming tool arguments are retained as literal text instead of dropping later fields.
-- Anthropic error tool results replace images with a text diagnostic in the request; successful results and stored messages retain their images.
+- Anthropic and Bedrock Claude error tool results send their images after the tool results of the turn, so the request is accepted and the model still sees them; successful results and stored messages are unchanged.
+- Claude Haiku 5.5 and Claude Opus 5 accept the `off` thinking level; `off` sends disabled thinking without effort markers or block binding.
+- Automatic retry covers `The service is temporarily unavailable` errors.
 - Completed malformed tool-call arguments retain their original diagnostic and fail validation instead of executing a parsed prefix.
 - Completions chunks emit thinking before text when both arrive together; upstream forwarding failures are retryable.
 
 ### Changed
 
+- Switching models drops thinking blocks from earlier assistant messages produced by another model instead of sending them as plain text; text and tool calls are kept.
 - OpenCode catalogs use inference endpoints; Kimi Coding uses Chat Completions with model-specific effort and tool-addition capabilities. Xiaomi MiMo uses thinking on/off, Gemini 4 uses thinkingLevel, and Codex GPT-6.1 Sol has a 500K context window.
 
 ### Removed
