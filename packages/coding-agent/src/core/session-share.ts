@@ -84,7 +84,7 @@ export function exportSessionForShare(filePath: string, session: AgentSession): 
 	);
 }
 
-function cancelled(options: ShareSessionOptions): ShareFailure | undefined {
+function cancelled(options: { readonly signal?: AbortSignal }): ShareFailure | undefined {
 	return options.signal?.aborted === true
 		? { ok: false, problem: "Share cancelled", cancelled: true }
 		: undefined;
@@ -129,13 +129,7 @@ function defaultGhAuth(): GhAuthStatus {
 	}
 }
 
-async function uploadToRadius(file: string, options: ShareSessionOptions): Promise<ShareOutcome | "unavailable"> {
-	const provider = options.session.modelRuntime.getProvider("radius");
-	if (!provider) return "unavailable";
-	const token = getAuthCredential(
-		await options.session.modelRuntime.getAuth("radius", { minOAuthValidityMs: 5 * 60_000 }),
-	);
-	if (!token) return "unavailable";
+async function uploadToRadius(file: string, options: ShareFilesOptions, token: string): Promise<ShareOutcome> {
 	options.report?.("Uploading to Radius...");
 	const body = fs.readFileSync(file);
 	const url = new URL("/v1/artifacts", DEFAULT_RADIUS_GATEWAY);
@@ -177,7 +171,7 @@ async function uploadToRadius(file: string, options: ShareSessionOptions): Promi
 	}
 }
 
-async function shareViaGist(htmlFile: string, options: ShareSessionOptions): Promise<ShareOutcome> {
+async function shareViaGist(htmlFile: string, options: ShareFilesOptions): Promise<ShareOutcome> {
 	const runGh = options.runGh ?? runGhProcess;
 	const auth = (options.checkGhAuth ?? defaultGhAuth)();
 	if (auth === "missing") {
@@ -191,19 +185,6 @@ async function shareViaGist(htmlFile: string, options: ShareSessionOptions): Pro
 	}
 	const abortedAfterAuth = cancelled(options);
 	if (abortedAfterAuth) return abortedAfterAuth;
-	try {
-		if (options.exportHtml !== undefined) await options.exportHtml(htmlFile);
-		else
-			await options.session.exportToHtml(
-				htmlFile,
-				options.themeName === undefined ? {} : { themeName: options.themeName },
-			);
-	} catch (error: unknown) {
-		return {
-			ok: false,
-			problem: `Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`,
-		};
-	}
 	options.report?.("Creating gist...");
 	const result = await runGh(["gist", "create", "--public=false", htmlFile], options.signal);
 	const abortedAfterGist = cancelled(options);
@@ -215,6 +196,53 @@ async function shareViaGist(htmlFile: string, options: ShareSessionOptions): Pro
 	const gistId = gistUrl.split("/").pop();
 	if (!gistId) return { ok: false, problem: "Failed to parse gist ID from gh output" };
 	return { ok: true, url: getShareViewerUrl(gistId), gistUrl };
+}
+
+/** Files already exported by a caller that owns its own session store. */
+export interface ShareFilesOptions {
+	readonly jsonlFile: string;
+	readonly htmlFile: string;
+	readonly destination: ShareDestination;
+	/** Radius credential for this share; undefined means the account is unavailable. */
+	readonly radiusToken?: () => Promise<string | undefined>;
+	readonly signal?: AbortSignal;
+	readonly report?: (message: string) => void;
+	readonly fetchImpl?: typeof fetch;
+	readonly runGh?: (args: readonly string[], signal?: AbortSignal) => Promise<GhResult>;
+	readonly checkGhAuth?: () => GhAuthStatus;
+	/** Writes the HTML beside the JSONL; absent means the caller already exported it. */
+	readonly exportHtml?: (file: string) => Promise<void>;
+}
+
+/** Publish two already-exported files, for a caller whose session store is not an AgentSession. */
+export async function shareFilesToUrl(options: ShareFilesOptions): Promise<ShareOutcome> {
+	const abort = cancelled(options);
+	if (abort) return abort;
+	if (options.destination !== "gist") {
+		const token = await options.radiusToken?.();
+		if (options.signal?.aborted === true) return { ok: false, problem: "Share cancelled", cancelled: true };
+		if (token === undefined) {
+			if (options.destination === "radius") {
+				return { ok: false, problem: "Radius authentication is not configured. Run '/login radius' first." };
+			}
+		} else {
+			return await uploadToRadius(options.jsonlFile, options, token);
+		}
+	}
+	if (options.exportHtml !== undefined) {
+		try {
+			await options.exportHtml(options.htmlFile);
+		} catch (error: unknown) {
+			return {
+				ok: false,
+				problem: `Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`,
+			};
+		}
+	}
+	if (!fs.existsSync(options.htmlFile)) {
+		return { ok: false, problem: "Failed to export session: HTML export is missing" };
+	}
+	return await shareViaGist(options.htmlFile, options);
 }
 
 /**
@@ -237,16 +265,31 @@ export async function shareSessionToUrl(options: ShareSessionOptions): Promise<S
 				problem: `Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`,
 			};
 		}
-		const abort = cancelled(options);
-		if (abort) return abort;
-		if (options.destination !== "gist") {
-			const radius = await uploadToRadius(jsonlFile, options);
-			if (radius !== "unavailable") return radius;
-			if (options.destination === "radius") {
-				return { ok: false, problem: "Radius authentication is not configured. Run '/login radius' first." };
-			}
-		}
-		return await shareViaGist(htmlFile, options);
+		const session = options.session;
+		return await shareFilesToUrl({
+			jsonlFile,
+			htmlFile,
+			destination: options.destination,
+			radiusToken: async () => {
+				if (!session.modelRuntime.getProvider("radius")) return undefined;
+				return getAuthCredential(
+					await session.modelRuntime.getAuth("radius", { minOAuthValidityMs: 5 * 60_000 }),
+				);
+			},
+			...(options.signal === undefined ? {} : { signal: options.signal }),
+			...(options.report === undefined ? {} : { report: options.report }),
+			...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+			...(options.runGh === undefined ? {} : { runGh: options.runGh }),
+			...(options.checkGhAuth === undefined ? {} : { checkGhAuth: options.checkGhAuth }),
+			exportHtml:
+				options.exportHtml ??
+				(async (file: string) => {
+					await session.exportToHtml(
+						file,
+						options.themeName === undefined ? {} : { themeName: options.themeName },
+					);
+				}),
+		});
 	} finally {
 		try {
 			fs.rmSync(tempDir, { recursive: true, force: true });

@@ -39,7 +39,7 @@ function gh(steps: ReadonlyArray<Partial<GhResult>>): (args: readonly string[]) 
 const base = {
 	themeName: "dark",
 	exportJsonl: (file: string) => fs.writeFileSync(file, "{}\n"),
-	exportHtml: async () => {},
+	exportHtml: async (file: string) => fs.writeFileSync(file, "html"),
 	checkGhAuth: () => "ok" as const,
 };
 
