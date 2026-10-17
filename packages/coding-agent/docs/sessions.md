@@ -2,6 +2,8 @@
 
 AmazMe keeps conversation history and supplies the active conversation to the model. The default terminal uses Durable SQLite storage. Web and hosted clients share their server's session roster. Print/JSON/RPC and the SDK expose a JSONL session API; select storage through the entry point you are using.
 
+The migration to one Durable kernel is tracked in [Durable single-kernel migration](../../../docs/durable-migration.md). `AMAZME_RUNTIME=durable` switches print and JSON to the Durable session; the default remains the legacy path until RPC and SDK parity lands. `amazme import <session.jsonl>` copies a terminal session into a new Durable session without changing the source file.
+
 ## Default terminal
 
 Start a named session or continue the newest session for the same working folder:
@@ -69,3 +71,11 @@ An application embedding the SDK can use its `SessionManager` and interactive UI
 The optional SDK terminal's `/share` uses Radius when authenticated and otherwise creates a private GitHub gist. Set [`sessionShareDestination`](settings.md#interaction) to `gist` to always use Gist, or `radius` to require Radius without fallback. This setting applies to that sharing entry point; default Durable and hosted clients do not expose it.
 
 Review exported transcripts before sharing them: they can contain prompts, responses, tool arguments, command output and file contents.
+
+Import a terminal session into Durable with:
+
+```bash
+amazme import ~/.amazme/agent/sessions/<project>/<session>.jsonl --session-dir ./agent-history
+```
+
+The import creates a new session under the selected root and reports records Durable cannot carry. Continue it with `amazme --continue --session-dir ./agent-history`. The JSONL file is read-only during import and is not mirrored afterwards.

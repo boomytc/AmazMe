@@ -296,6 +296,7 @@ ${chalk.bold("Commands:")}
   ${APP_COMMAND} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_COMMAND} auth <command>            Sign in, sign out, check readiness or print credentials
   ${APP_COMMAND} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
+  ${APP_COMMAND} import <session.jsonl>    Copy a terminal JSONL session into a new Durable session
   ${APP_COMMAND} doctor [--json] [--zh]    Read local diagnostics without changing files or contacting providers
   ${APP_COMMAND} server [options]         Run the durable Unix host
   ${APP_COMMAND} web [--port <port>]       Serve the installed Web client on loopback
@@ -329,7 +330,7 @@ ${chalk.bold("Options:")}
                                  Applies to all tools, MCP tools included
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
   --extension, -e <path>         Load a native facet file/package in the TUI (repeatable)
-                                 Print/RPC use SDK extensions; native plugins use defineFacet
+                                 Durable print/JSON also loads facets; legacy print/RPC use SDK extensions
   --no-extensions, -ne           Disable extension discovery and built-in extensions (explicit -e paths still work)
   --no-mcp                       Disable built-in MCP support: no servers connect and no MCP tools
   --skill <path>                 Load a skill file or directory (can be used multiple times)
@@ -350,6 +351,7 @@ ${chalk.bold("Options:")}
   --                             End option parsing; treat remaining arguments as messages/files
   --help, -h                     Show this help
   --version, -v                  Show version number
+  AMAZME_RUNTIME=durable         Run print/JSON on the Durable Harness (experimental)
 
 SDK extensions in print/RPC can register additional flags. Native plugins use slash commands.${extensionFlagsText}
 

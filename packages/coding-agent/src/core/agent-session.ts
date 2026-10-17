@@ -378,6 +378,13 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 // AgentSession Class
 // ============================================================================
 
+/**
+ * The SDK/print/RPC session over pi-agent-core and a JSONL transcript.
+ *
+ * Migration note: this is the compatibility kernel during the Durable migration. The native
+ * terminal and host already use `@amazme/durable`; add new execution behavior there, not here.
+ * See `docs/durable-migration.md`.
+ */
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;

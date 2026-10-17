@@ -14,6 +14,7 @@ amazme list
 amazme config [options]
 amazme auth <login|logout|check|print-api-key|print-bearer-token> [options]
 amazme mcp <add|remove|list|login|logout> [options]
+amazme import <session.jsonl> [--session-dir <dir>]
 amazme server [options]
 amazme web [--port <port>]
 amazme client [options] [text]
@@ -116,6 +117,14 @@ See [Sessions and Context](sessions.md) for resuming, forking, naming, and stori
   Sets a non-empty session display name after trimming surrounding whitespace. The default terminal displays it in the footer and restores it on continuation; an explicit name updates the continued session.
 
 The default terminal stores SQLite sessions under `<agent-dir>/experimental/durable-sessions/<cwd-hash>/<session-id>/session.sqlite`. The directory name is retained for existing histories. A custom session root replaces `experimental/durable-sessions`; it still groups sessions by canonical working directory. Relative roots resolve against the working directory and `~` expands to the home directory. CLI root selection takes precedence over the environment, then settings, then the default. Web/server session roots belong to their shared host; these native terminal options do not select a hosted session.
+
+### Durable print/JSON migration
+
+Set `AMAZME_RUNTIME=durable` to run `--print` and `--mode json` on the Durable Harness. The path uses the same SQLite session, tools, resources, MCP selection, and native facet plugins as the default terminal. `--no-session` uses in-memory storage; `--continue` and `--session-dir` select persisted Durable sessions. The JSONL flags `--session`, `--session-id`, and `--fork`, and inline SDK extension factories, are rejected on this path rather than silently changing meaning. RPC remains on the legacy JSONL runtime. See [Durable single-kernel migration](../../../docs/durable-migration.md).
+
+### Import a JSONL session
+
+`amazme import <session.jsonl>` creates a new Durable session from a version 3 terminal session and leaves the JSONL file unchanged. Entries that Durable cannot carry are reported by kind. Continue the imported session with `--continue` and the selected `--session-dir`; it appears in the project's Durable session list.
 
 Constraints:
 

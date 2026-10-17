@@ -148,6 +148,10 @@ function getDefaultAgentDir(): string {
 /**
  * Create an AgentSession with the specified options.
  *
+ * Migration note: this is the SDK compatibility path. The native terminal, host, and the
+ * Durable print/JSON entry points run on `@amazme/durable`; new capabilities are added there.
+ * See `docs/durable-migration.md` for the stages and the remaining parity work.
+ *
  * @example
  * ```typescript
  * // Minimal - uses defaults

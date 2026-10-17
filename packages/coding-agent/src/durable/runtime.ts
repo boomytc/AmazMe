@@ -1,10 +1,11 @@
 import { serviceSetFacet, type ApplicationService, type ServiceValue } from "@amazme/protocol/services";
 import { realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { getSupportedThinkingLevels, type ImageContent, type ModelThinkingLevel, type TextContent } from "@amazme/ai";
+import { getSupportedThinkingLevels, type AssistantMessage, type ImageContent, type ModelThinkingLevel, type TextContent } from "@amazme/ai";
 import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import {
+	type AgentEventStream,
 	type AgentState,
 	type Conversation,
 	type ConversationId,
@@ -15,9 +16,11 @@ import {
 	Harness,
 	section,
 	type ModelRef,
+	type SettledSubmissionRecord,
 	type Submission,
 	type TaskGraph,
-	type SessionEnd } from "@amazme/durable";
+	type SessionEnd,
+	watchEvents } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { ModelRuntime } from "../core/model-runtime.ts";
@@ -119,6 +122,15 @@ export interface DurableViewSource {
 	subscribe(listener: () => void): () => void;
 }
 
+/** One input's admitted submission and, for callers that wait, its settled receipt. */
+export interface DurableSubmissionResult {
+	readonly accepted: boolean;
+	/** Absent for a plugin command, which resolves after the conversation is idle again. */
+	readonly settled?: SettledSubmissionRecord;
+	/** The committed answer, read back after its receipt rather than from a lagging view. */
+	readonly answer?: AssistantMessage;
+}
+
 /** What the TUI may ask for. */
 export interface DurableController {
 	describePlugins?(): string;
@@ -131,6 +143,11 @@ export interface DurableController {
 	readonly auth?: ProviderAuthManagement;
 	/** Normalize and admit input to the current conversation; false means preparation/command rejection. */
 	submit(text: string, whenBusy: "steer" | "followUp", images?: readonly ImageContent[]): Promise<boolean>;
+	/**
+	 * Normalize, admit, and wait for one input. Print/JSON/RPC use this instead of the TUI's
+	 * fire-and-notice path, so a caller owns the receipt rather than reading notices.
+	 */
+	submitAndWait(text: string, whenBusy: "steer" | "followUp", images?: readonly ImageContent[]): Promise<DurableSubmissionResult>;
 	compact(instructions: string | undefined): Promise<void>;
 	abort(): Promise<void>;
 	cycleThinking(): Promise<void>;
@@ -184,6 +201,8 @@ export interface OpenDurableResult {
 	readonly closed: Promise<SessionEnd>;
 	readonly view: DurableViewSource;
 	readonly controller: DurableController;
+	/** The shown conversation's experimental agent events, for the headless JSON stream. */
+	watchAgentEvents(): Promise<AgentEventStream>;
 	/** pi's settings, for the TUI's theme and terminal capabilities. */
 	readonly settings: SettingsManager;
 	/** The same resource owner supplies the presentation's selected themes. */
@@ -569,21 +588,18 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				if (activeCommand === operation) activeCommand = undefined;
 			}
 		};
-		const submitInput = async (text: string, whenBusy: "steer" | "followUp", images: readonly ImageContent[] = []): Promise<void> => {
+	const prepareSubmission = async (text: string, whenBusy: "steer" | "followUp", images: readonly ImageContent[] = []): Promise<Submission | undefined> => {
 			if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
 			const invocation = /^\/([^\s]+)(?:\s+([\s\S]*))?$/u.exec(text);
 			const selected = invocation === null ? undefined : pluginCommands?.list().find(({ name }) => name === invocation[1]);
 			if (selected !== undefined) {
 				if (images.length > 0) throw new Error("Plugin commands do not accept attached images; submit a prompt or clear the attachments first.");
 				await runPluginCommand(selected, invocation?.[2] ?? "");
-				return;
+				return undefined;
 			}
 			let expanded = expandInput(text);
 			clearNotices((item) => item.level === "info");
-			if (images.length === 0) {
-				watchAnswer(await current.submit({ type: "input", content: expanded, whenBusy }, context));
-				return;
-			}
+			if (images.length === 0) return current.submit({ type: "input", content: expanded, whenBusy }, context);
 			const operation = new AbortController();
 			activeCommand = operation;
 			try {
@@ -595,10 +611,14 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				if (normalized.hints.length > 0) expanded += `\n\n${normalized.hints.join("\n")}`;
 				const content: (TextContent | ImageContent)[] = [{ type: "text", text: expanded }, ...normalized.images];
 				operation.signal.throwIfAborted();
-				watchAnswer(await current.submit({ type: "input", content, whenBusy }, context));
+				return await current.submit({ type: "input", content, whenBusy }, context);
 			} finally {
 				if (activeCommand === operation) activeCommand = undefined;
 			}
+		};
+		const submitInput = async (text: string, whenBusy: "steer" | "followUp", images: readonly ImageContent[] = []): Promise<void> => {
+			const submission = await prepareSubmission(text, whenBusy, images);
+			if (submission !== undefined) watchAnswer(submission);
 		};
 		const describeChanges = async (args = ""): Promise<string> => {
 			await refreshReview(opened, current.id, context);
@@ -696,6 +716,22 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					accepted = true;
 				});
 				return accepted;
+			},
+			submitAndWait: async (text, whenBusy, images) => {
+				if (closing !== undefined) throw new Error("Session is closing");
+				const copied = images?.map((image) => ({ ...image }));
+				const generation = inputGeneration;
+				const submission = await prepareSubmission(text, whenBusy, copied);
+				if (generation !== inputGeneration) throw new Error("Input preparation cancelled");
+				if (submission === undefined) {
+					await opened.waitForIdle(context);
+					return { accepted: true };
+				}
+				const settled = await submission.wait(context);
+				if (settled.status !== "done" || settled.answer === undefined) return { accepted: true, settled };
+				const transcript = await current.context(context);
+				const message = transcript.entries.find((entry) => entry.id === settled.answer)?.model?.[0];
+				return message?.role === "assistant" ? { accepted: true, settled, answer: message } : { accepted: true, settled };
 			},
 			compact: (instructions) =>
 				command(async () => {
@@ -881,6 +917,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					return () => listeners.delete(listener);
 				} },
 			controller,
+			watchAgentEvents: () => watchEvents(opened, current.id, context),
 			settings: settingsManager,
 			resources,
 			close() {

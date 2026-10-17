@@ -76,6 +76,8 @@ Web 提供会话切换、模型与推理选择、工具结果、文件、终端�
 
 完整操作见 [快速开始](packages/coding-agent/docs/quickstart.md)、[使用指南](packages/coding-agent/docs/usage.md)和 [CLI 参考](packages/coding-agent/docs/cli.md)。
 
+迁移到单一 Durable 内核的进度、开关和移除门槛见 [Durable 单内核迁移](docs/durable-migration.md)。目前 `AMAZME_RUNTIME=durable` 让 print 与 JSON 走 Durable，`amazme import <session.jsonl>` 可把终端会话复制到新的 Durable 会话；RPC、SDK 和默认切换仍按阶段推进。
+
 ## 按需扩展
 
 先选择适合任务的资源：提示模板复用输入，技能提供操作说明，原生插件贡献工具、命令、提示段、任务、钩子和服务。

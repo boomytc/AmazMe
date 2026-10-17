@@ -632,6 +632,12 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
+	if (args[0] === "import") {
+		const { runImportCommand } = await import("./durable/import.ts");
+		process.exitCode = await runImportCommand(args.slice(1));
+		return;
+	}
+
 	const parsed = parseArgs(args);
 	if (parsed.diagnostics.length > 0) {
 		for (const d of parsed.diagnostics) {
@@ -791,6 +797,88 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessages: parsed.messages.slice(),
 		});
 		printTimings();
+		return;
+	}
+
+	// Read piped stdin before selecting the runtime: the Durable print path below must not create
+	// a JSONL session or load SDK extension factories first. Plain metadata commands do not read
+	// stdin or process file arguments, so `--help` cannot wait for an open pipe.
+	let stdinContent: string | undefined;
+	let initialMessage: string | undefined;
+	let initialImages: ImageContent[] | undefined;
+	if (appMode !== "rpc" && !isPlainRuntimeMetadataCommand(parsed)) {
+		stdinContent = await readPipedStdin();
+		if (stdinContent !== undefined && appMode === "interactive") {
+			appMode = "print";
+		}
+		time("readPipedStdin");
+		const prepared = await prepareInitialMessage(parsed, stdinContent);
+		initialMessage = prepared.initialMessage;
+		initialImages = prepared.initialImages;
+		time("prepareInitialMessage");
+	}
+
+	const requestedRuntime = process.env.AMAZME_RUNTIME?.trim();
+	const runtimeSelection = requestedRuntime === undefined || requestedRuntime.length === 0 ? undefined : requestedRuntime.toLowerCase();
+	if (runtimeSelection !== undefined && runtimeSelection !== "durable" && runtimeSelection !== "legacy") {
+		console.error(chalk.red(`Error: unknown AMAZME_RUNTIME "${runtimeSelection}"; use "durable" or "legacy".`));
+		process.exit(1);
+	}
+	if (runtimeSelection === "durable" && appMode !== "interactive" && appMode !== "print" && appMode !== "json") {
+		console.error(chalk.red(`Error: AMAZME_RUNTIME=durable does not support ${appMode} mode yet; it supports the native terminal, print, and JSON modes.`));
+		process.exit(1);
+	}
+	if (runtimeSelection === "durable" && (appMode === "print" || appMode === "json") && parsed.help !== true && parsed.listModels === undefined) {
+		if (options?.extensionFactories?.length) {
+			console.error(chalk.red("Error: SDK extension factories require the legacy print runtime; the Durable print runtime loads native facet sources. Remove the inline factories or unset AMAZME_RUNTIME."));
+			process.exit(1);
+		}
+		if (parsed.fork !== undefined || parsed.session !== undefined || parsed.sessionId !== undefined) {
+			console.error(chalk.red("Error: --fork, --session, and --session-id select a JSONL session, which the Durable print runtime does not read. Use --continue or unset AMAZME_RUNTIME."));
+			process.exit(1);
+		}
+		const projectTrusted = await resolveProjectTrusted({
+			cwd,
+			trustStore: new ProjectTrustStore(agentDir),
+			trustOverride: parsed.projectTrustOverride,
+			defaultProjectTrust: bootstrapSettingsManager.getDefaultProjectTrust(),
+			projectTrustContext: createProjectTrustContext({ cwd, mode: "print", settingsManager: startupSettingsManager, hasUI: false }),
+		});
+		startupSettingsManager.setProjectTrusted(projectTrusted);
+		const durableSessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
+		const { runDurablePrint } = await import("./durable/print.ts");
+		const exitCode = await runDurablePrint({
+			mode: appMode === "json" ? "json" : "text",
+			settingsManager: startupSettingsManager,
+			cwd,
+			continueSession: parsed.continue === true || parsed.resume === true,
+			noSession: parsed.noSession === true,
+			...(durableSessionDir === undefined ? {} : { sessionDir: durableSessionDir }),
+			...(sessionName === undefined ? {} : { name: sessionName }),
+			...(parsed.extensions === undefined ? {} : { extensions: parsed.extensions }),
+			noExtensions: parsed.noExtensions === true,
+			...(parsed.systemPrompt === undefined ? {} : { systemPrompt: parsed.systemPrompt }),
+			...(parsed.appendSystemPrompt === undefined ? {} : { appendSystemPrompt: parsed.appendSystemPrompt }),
+			...(parsed.skills === undefined ? {} : { skills: resolveCliPaths(cwd, parsed.skills) }),
+			noSkills: parsed.noSkills === true,
+			noContextFiles: parsed.noContextFiles === true,
+			...(parsed.promptTemplates === undefined ? {} : { promptTemplates: resolveCliPaths(cwd, parsed.promptTemplates) }),
+			noPromptTemplates: parsed.noPromptTemplates === true,
+			...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
+			...(parsed.model === undefined ? {} : { model: parsed.model }),
+			...(parsed.models === undefined ? {} : { models: parsed.models }),
+			...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),
+			...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
+			...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
+			...(parsed.excludeTools === undefined ? {} : { excludeTools: parsed.excludeTools }),
+			...(parsed.noTools ? { noTools: "all" } : parsed.noBuiltinTools ? { noTools: "builtin" } : {}),
+			noMcp: parsed.noMcp === true || parsed.noExtensions === true,
+			...(initialMessage === undefined ? {} : { initialMessage }),
+			...(initialImages === undefined ? {} : { initialImages }),
+			messages: parsed.messages.slice(),
+		});
+		restoreStdout();
+		if (exitCode !== 0) process.exitCode = exitCode;
 		return;
 	}
 
@@ -991,18 +1079,6 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
-	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
-	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
-		stdinContent = await readPipedStdin();
-		if (stdinContent !== undefined && appMode === "interactive") {
-			appMode = "print";
-		}
-	}
-	time("readPipedStdin");
-
-	const { initialMessage, initialImages } = await prepareInitialMessage(parsed, stdinContent);
-	time("prepareInitialMessage");
 	initTheme(settingsManager.getTheme(), appMode === "interactive");
 	time("initTheme");
 

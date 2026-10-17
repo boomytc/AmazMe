@@ -1027,6 +1027,13 @@ async function listSessionsFromDir(
  * Use buildSessionContext() to get the resolved message list for the LLM, which
  * handles compaction summaries and follows the path from root to current leaf.
  */
+/**
+ * The append-only JSONL session tree used by the SDK, print, JSON, and RPC entry points.
+ *
+ * Migration note: Durable storage is authoritative for the terminal and host. This manager is
+ * retained to read history for import and to serve the compatibility entry points; new persisted
+ * state belongs in `@amazme/durable`. See `docs/durable-migration.md`.
+ */
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
