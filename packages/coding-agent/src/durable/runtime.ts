@@ -68,6 +68,7 @@ import { resumeRun } from "./insights/run-policy.ts";
 import { RunStateDoc } from "./insights/state.ts";
 import { expandResourceCommand } from "../core/resource-command.ts";
 import type { ResourceLoader } from "../core/resource-loader.ts";
+import { readDurableSessionCwd } from "./session-cwd.ts";
 import { selectSession } from "./sessions.ts";
 import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp.ts";
 import { Subagent } from "./subagent.ts";
@@ -214,6 +215,8 @@ export interface OpenDurableOptions extends ToolSelectionOptions, CodingResource
 	readonly continueSession?: boolean;
 	readonly noSession?: boolean;
 	readonly sessionDir?: string;
+	/** Open one exact Durable session directory instead of creating or continuing one. */
+	readonly sessionDirectory?: string;
 	readonly name?: string;
 	readonly provider?: string;
 	readonly model?: string;
@@ -269,7 +272,10 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	if (options.noSession && options.continueSession) throw new Error("--no-session cannot be combined with --continue or --resume");
 	if (options.provider !== undefined && options.model === undefined) throw new Error("--provider requires --model");
 	if (options.apiKey !== undefined && options.model === undefined) throw new Error("--api-key requires --model");
-	const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
+	const sessionCwd = options.cwd === undefined && options.sessionDirectory !== undefined
+		? await readDurableSessionCwd(resolve(options.sessionDirectory))
+		: undefined;
+	const cwd = await realpath(resolve(sessionCwd ?? options.cwd ?? process.cwd()));
 	const settingsManager = options.settingsManager ?? createCodingSettings(cwd);
 	const sources = options.facetLoader === undefined
 		? await discoverPluginSources({ cwd, settings: settingsManager, extensions: options.extensions, noExtensions: options.noExtensions })
@@ -312,7 +318,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	const resources = await loadCodingResources(settingsManager, cwd, options);
 	const location = await selectSession(cwd, options.continueSession ?? false, {
 		noSession: options.noSession,
-		sessionDir: options.sessionDir ?? settingsManager.getSessionDir() });
+		sessionDir: options.sessionDir ?? settingsManager.getSessionDir(),
+		...(options.sessionDirectory === undefined ? {} : { sessionDirectory: options.sessionDirectory }) });
 	const envs = new ExecutionEnvs(location.cwd, settingsManager);
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;

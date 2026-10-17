@@ -1,5 +1,7 @@
 import { getSupportedThinkingLevels, type Model, type Usage } from "@amazme/ai";
-import type { AgentEvent } from "@amazme/durable";
+import type { AgentEvent, AgentEventStream } from "@amazme/durable";
+import { realpath, stat } from "node:fs/promises";
+import { basename, dirname, resolve } from "node:path";
 import { flushRawStdout, takeOverStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../../core/output-guard.ts";
 import { executeBashWithOperations } from "../../core/bash-executor.ts";
 import { durableEntriesToSessionFile } from "../../core/session-interop.ts";
@@ -7,8 +9,10 @@ import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.t
 import { createSyntheticSourceInfo } from "../../core/source-info.ts";
 import { createLocalBashOperations } from "../../core/tools/bash.ts";
 import { writeDurableExport } from "../../durable/export.ts";
+import { importSessionFile } from "../../durable/import.ts";
 import { DurableJsonEvents } from "../../durable/json-events.ts";
 import { agentOf, openDurable, type OpenDurableOptions, type OpenDurableResult } from "../../durable/runtime.ts";
+import { expandTildePath } from "../../config.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
@@ -58,8 +62,78 @@ function usageTotals(usage: { models?: Record<string, Usage>; tools?: Record<str
 	return { tokens, cost };
 }
 
+/** The transport owns actual session replacement; the handler only asks for it. */
+export interface DurableRpcSessionControl {
+	newSession(parentSession?: string): Promise<{ cancelled: boolean }>;
+	switchSession(sessionPath: string): Promise<{ cancelled: boolean }>;
+}
+
+export interface DurableRpcSessionControlDeps {
+	readonly options: DurableRpcOptions;
+	current(): OpenDurableResult;
+	open(options: OpenDurableOptions): Promise<OpenDurableResult>;
+	replace(next: OpenDurableResult): Promise<void>;
+	importFile?: (file: string, options: { sessionDir?: string }) => Promise<{ directory?: string; cwd: string }>;
+}
+
+/** Switch the transport between Durable sessions without pretending a JSONL write-back exists. */
+export function createDurableRpcSessionControl(deps: DurableRpcSessionControlDeps): DurableRpcSessionControl {
+	const { options } = deps;
+	return {
+		newSession: async (parentSession) => {
+			if (parentSession !== undefined) {
+				throw new Error("Durable RPC does not support new_session parentSession; start a fork inside the session instead");
+			}
+			const current = deps.current().view.current();
+			const next = await deps.open({
+				...options,
+				cwd: current.session.cwd,
+				noSession: current.session.directory === undefined,
+				continueSession: false,
+				sessionDirectory: undefined,
+			});
+			await deps.replace(next);
+			return { cancelled: false };
+		},
+		switchSession: async (sessionPath) => {
+			const absolute = resolve(deps.current().view.current().session.cwd, expandTildePath(sessionPath));
+			const info = await stat(absolute).catch(() => {
+				throw new Error(`Session not found: ${sessionPath}`);
+			});
+			let directory: string;
+			let cwd: string | undefined = options.cwd;
+			if (info.isDirectory()) {
+				directory = absolute;
+			} else if (info.isFile() && basename(absolute) === "session.sqlite") {
+				directory = dirname(absolute);
+			} else if (info.isFile() && absolute.endsWith(".jsonl")) {
+				const imported = await (deps.importFile ?? importSessionFile)(absolute, options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir });
+				if (imported.directory === undefined) throw new Error("Imported session is not persistent");
+				directory = imported.directory;
+				cwd = imported.cwd;
+			} else {
+				throw new Error("switch_session expects a Durable session directory, session.sqlite, or JSONL file");
+			}
+			const resolvedDirectory = await realpath(directory).catch(() => directory);
+			if (resolvedDirectory === deps.current().view.current().session.directory) return { cancelled: false };
+			const next = await deps.open({
+				...options,
+				...(cwd === undefined ? {} : { cwd }),
+				noSession: false,
+				continueSession: false,
+				sessionDirectory: resolvedDirectory,
+			});
+			await deps.replace(next);
+			return { cancelled: false };
+		},
+	};
+}
+
 /** Build the command handler over an opened Durable session. Exported for direct protocol tests. */
-export function createDurableRpcHandler(durable: OpenDurableResult): (command: RpcCommand) => Promise<RpcResponse> {
+export function createDurableRpcHandler(
+	durable: OpenDurableResult,
+	sessionControl?: DurableRpcSessionControl,
+): (command: RpcCommand) => Promise<RpcResponse> {
 	const view = () => durable.view.current();
 	const agent = () => agentOf(view().conversation);
 	const messages = () => view().conversation.entries.flatMap((entry) => entry.model ?? []);
@@ -306,8 +380,12 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 				await durable.controller.forkAt();
 				return success(id, "clone", { cancelled: false });
 			case "new_session":
-			case "abort_retry":
+				if (sessionControl === undefined) return unsupported(id, command.type);
+				return success(id, "new_session", await sessionControl.newSession(command.parentSession));
 			case "switch_session":
+				if (sessionControl === undefined) return unsupported(id, command.type);
+				return success(id, "switch_session", await sessionControl.switchSession(command.sessionPath));
+			case "abort_retry":
 				return unsupported(id, command.type);
 			default: {
 				const unknown = command as { type: string };
@@ -318,19 +396,54 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 }
 
 export async function runDurableRpc(options: DurableRpcOptions = {}): Promise<never> {
-	const durable = await openDurable(options);
+	let durable = await openDurable(options);
 	takeOverStdout();
-	const handleCommand = createDurableRpcHandler(durable);
-	const stream = await durable.watchAgentEvents();
-	const translator = new DurableJsonEvents();
-	stream.start(async (events: readonly AgentEvent[]) => {
-		for (const event of events) {
-			for (const translated of translator.translate(event)) {
-				writeRawStdout(serializeJsonLine(translated));
-				await waitForRawStdoutBackpressure();
+	let handleCommand: (command: RpcCommand) => Promise<RpcResponse>;
+	let stream: AgentEventStream | undefined;
+	let control: DurableRpcSessionControl;
+
+	const attach = async (target: OpenDurableResult): Promise<void> => {
+		const nextStream = await target.watchAgentEvents();
+		const translator = new DurableJsonEvents();
+		nextStream.start(async (events: readonly AgentEvent[]) => {
+			for (const event of events) {
+				for (const translated of translator.translate(event)) {
+					writeRawStdout(serializeJsonLine(translated));
+					await waitForRawStdoutBackpressure();
+				}
 			}
+		});
+		stream = nextStream;
+	};
+
+	const swap = async (next: OpenDurableResult): Promise<void> => {
+		const previous = durable;
+		const previousHandler = handleCommand;
+		await previous.controller.abort().catch(() => {});
+		await stream?.stop().catch(() => {});
+		try {
+			durable = next;
+			handleCommand = createDurableRpcHandler(next, control);
+			await attach(next);
+		} catch (error) {
+			durable = previous;
+			handleCommand = previousHandler;
+			await attach(previous).catch(() => {});
+			await next.close().catch(() => {});
+			throw error;
 		}
+		await previous.close().catch(() => {});
+	};
+
+	control = createDurableRpcSessionControl({
+		options,
+		current: () => durable,
+		open: openDurable,
+		replace: swap,
 	});
+
+	handleCommand = createDurableRpcHandler(durable, control);
+	await attach(durable);
 
 	const output = (value: RpcResponse | object): void => {
 		writeRawStdout(serializeJsonLine(value));
@@ -343,7 +456,7 @@ export async function runDurableRpc(options: DurableRpcOptions = {}): Promise<ne
 		shuttingDown = true;
 		detachInput();
 		process.stdin.pause();
-		await stream.stop().catch(() => {});
+		await stream?.stop().catch(() => {});
 		await durable.close().catch(() => {});
 		await flushRawStdout().catch(() => {});
 		process.exit(exitCode);
