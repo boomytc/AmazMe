@@ -201,6 +201,13 @@ describe("the session dock", () => {
 			state: { status: "cancelled", command: "sleep 5", exitCode: null, output: "part", truncated: false, error: null },
 		});
 		expect(stopped.description).toContain("Stopped");
+
+		// A run that ended by a signal has no exit code; the panel must not claim exit 0.
+		const unknownExit = terminalPanel("en", {
+			cwd: "/w",
+			state: { status: "done", command: "kill -TERM $$", exitCode: null, output: "", truncated: false, error: null },
+		});
+		expect(unknownExit.description).toBe("/w · Finished without an exit code");
 		expect(
 			terminalPanel("en", {
 				cwd: "/w",

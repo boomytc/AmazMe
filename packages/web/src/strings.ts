@@ -522,6 +522,7 @@ export const EN = {
 	"dock.terminalIdle": "No command has run yet",
 	"dock.terminalRunning": "Running {command}",
 	"dock.terminalDone": "Finished with exit code {code}",
+	"dock.terminalNoExit": "Finished without an exit code",
 	"dock.terminalCancelled": "Stopped",
 	"dock.terminalFailed": "Could not run it: {error}",
 
@@ -1344,6 +1345,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"dock.terminalIdle": "还没有运行过命令",
 	"dock.terminalRunning": "正在运行 {command}",
 	"dock.terminalDone": "已结束，退出码 {code}",
+	"dock.terminalNoExit": "已结束，没有退出码",
 	"dock.terminalCancelled": "已停止",
 	"dock.terminalFailed": "无法运行：{error}",
 

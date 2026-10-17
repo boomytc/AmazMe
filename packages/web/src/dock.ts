@@ -517,9 +517,12 @@ function terminalStatus(locale: Locale, state: TerminalStateLike): string {
 		case "cancelled":
 			return translate(locale, "dock.terminalCancelled");
 		case "done":
-			return translate(locale, "dock.terminalDone", {
-				code: String(state.exitCode ?? 0),
-			});
+			// A run that ended without a code (for example after a signal) must not claim exit 0.
+			return state.exitCode === null
+				? translate(locale, "dock.terminalNoExit")
+				: translate(locale, "dock.terminalDone", {
+						code: String(state.exitCode),
+					});
 	}
 }
 
