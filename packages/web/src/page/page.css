@@ -1826,6 +1826,39 @@ p {
 	height: 14px;
 }
 
+/* A selection in an answer offers one action: quote it into the current draft. */
+.quote-action {
+	position: fixed;
+	z-index: 30;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 32px;
+	padding: 0 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-pill);
+	background: var(--raised);
+	box-shadow: var(--shadow-popover);
+	color: var(--text);
+	font-size: 12px;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.quote-action:hover {
+	background: var(--hover);
+	border-color: var(--text-3);
+}
+
+.quote-action:active {
+	transform: scale(0.97);
+}
+
+.quote-action[hidden] {
+	display: none !important;
+}
+
 .latest-dot {
 	width: 7px;
 	height: 7px;

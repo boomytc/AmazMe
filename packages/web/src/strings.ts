@@ -183,6 +183,7 @@ export const EN = {
 	"composer.attachmentUnsupported": "{name} is not an image this page can send (PNG, JPEG, WebP, or GIF).",
 	"composer.attachmentTooLarge": "{name} is larger than {limit}.",
 	"composer.attachmentLimit": "8 MB",
+	"composer.quote": "Quote in reply",
 
 	"queue.cancel": "Withdraw",
 	"queue.cancelAria": "Withdraw this queued input",
@@ -1006,6 +1007,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"composer.attachmentUnsupported": "{name} 不是本页可以发送的图片（PNG、JPEG、WebP 或 GIF）。",
 	"composer.attachmentTooLarge": "{name} 超过了 {limit}。",
 	"composer.attachmentLimit": "8 MB",
+	"composer.quote": "引用到回复",
 
 	"queue.cancel": "撤回",
 	"queue.cancelAria": "撤回这条排队输入",

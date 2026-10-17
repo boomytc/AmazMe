@@ -18,6 +18,7 @@ import { createFileBrowser } from "./file-browser.ts";
 import { createReadingControls } from "./reading-controls.ts";
 import { FALLBACK_LOCALE, type Locale } from "./locale.ts";
 import { formatMarkdown, tokenizeCode, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
+import { insertDraftText, quotedDraft } from "./quote.ts";
 import {
 	CHAT_VIEW,
 	type NavItem,
@@ -157,6 +158,8 @@ export interface PageRenderer {
 	onCommandPick: (value: string) => void;
 	/** Put text in the composer, the way a completion does. */
 	setDraft(text: string, focus?: boolean): void;
+	/** Insert text at the composer's remembered cursor without replacing the draft. */
+	insertDraft(text: string, focus?: boolean): void;
 	/** Every navigation, control, and modal report from the management surface. */
 	onPanelAction: (action: PanelAction) => void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
@@ -629,6 +632,9 @@ export function createRenderer(
 	const chromeValues = new Map<string, unknown>();
 	const modelSetup = elements.modelSetup ?? modelSetupElement(elements.modelSelect);
 	const transcriptLatest = elements.transcriptLatest ?? transcriptLatestElement(elements.transcript);
+	const quoteAction = button("quote-action");
+	quoteAction.hidden = true;
+	document.body.append(quoteAction);
 	const suggestion = pick("composer-suggestion");
 	const acceptSuggestion = pickElement("suggestion-accept", HTMLButtonElement);
 	const dismissSuggestion = pickElement("suggestion-dismiss", HTMLButtonElement);
@@ -808,6 +814,71 @@ export function createRenderer(
 
 	/** The language of the view being painted; the fallback only applies before the first paint. */
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(lastView?.locale ?? FALLBACK_LOCALE, key, values);
+	let quoteDraft: string | undefined;
+	let quoteTimer: number | undefined;
+	const hideQuoteAction = (): void => {
+		quoteDraft = undefined;
+		quoteAction.hidden = true;
+	};
+	const updateQuoteAction = (): void => {
+		const view = lastView;
+		if (
+			view === undefined ||
+			view.panel.current !== CHAT_VIEW ||
+			view.readOnly === true ||
+			view.attachedId === undefined ||
+			elements.transcript.hidden ||
+			elements.prompt.disabled ||
+			elements.modalRoot.open
+		) {
+			hideQuoteAction();
+			return;
+		}
+		const selection = document.getSelection();
+		if (selection === null || selection.isCollapsed || selection.rangeCount === 0) {
+			hideQuoteAction();
+			return;
+		}
+		const range = selection.getRangeAt(0);
+		const node = range.commonAncestorContainer;
+		const element = node instanceof Element ? node : node.parentElement;
+		const answer = element?.closest<HTMLElement>(".turn-response") ?? undefined;
+		if (answer === undefined || !elements.transcript.contains(answer)) {
+			hideQuoteAction();
+			return;
+		}
+		const selected = quotedDraft(selection.toString());
+		if (selected === undefined) {
+			hideQuoteAction();
+			return;
+		}
+		const rect = range.getBoundingClientRect();
+		if (rect.width === 0 && rect.height === 0) {
+			hideQuoteAction();
+			return;
+		}
+		quoteDraft = selected;
+		quoteAction.textContent = copy("composer.quote");
+		quoteAction.setAttribute("aria-label", copy("composer.quote"));
+		quoteAction.title = copy("composer.quote");
+		quoteAction.hidden = false;
+		const width = quoteAction.offsetWidth;
+		const height = quoteAction.offsetHeight;
+		const left = Math.min(
+			window.innerWidth - width - 8,
+			Math.max(8, rect.left + rect.width / 2 - width / 2),
+		);
+		const below = rect.bottom + 8;
+		const top = below + height <= window.innerHeight - 8
+			? below
+			: Math.max(8, rect.top - height - 8);
+		quoteAction.style.left = `${left}px`;
+		quoteAction.style.top = `${top}px`;
+	};
+	const scheduleQuoteAction = (): void => {
+		if (quoteTimer !== undefined) window.clearTimeout(quoteTimer);
+		quoteTimer = window.setTimeout(updateQuoteAction, 40);
+	};
 	const renderConnection = (): void => {
 		const locale = lastView?.locale ?? FALLBACK_LOCALE;
 		const resolve = (value: ConnectionText): string => typeof value === "string" ? value : value(locale);
@@ -2895,7 +2966,11 @@ export function createRenderer(
 			if (view.panel.modal !== undefined && elements.modalRoot.hidden) captureModalFocus();
 			const languageChanged = lastView?.locale !== view.locale;
 			const sessionChanged = lastView?.attachedId !== view.attachedId;
-			if (sessionChanged) drafts.clear();
+			if (sessionChanged) {
+				drafts.clear();
+				hideQuoteAction();
+			}
+			if (view.panel.current !== CHAT_VIEW || view.readOnly === true || view.attachedId === undefined) hideQuoteAction();
 			if (
 				lastView?.panel.current === CHAT_VIEW &&
 				view.panel.current === SETTINGS_VIEW &&
@@ -3145,6 +3220,20 @@ export function createRenderer(
 			renderSuggestion();
 			if (focus) elements.prompt.focus();
 		},
+		insertDraft(text: string, focus = true): void {
+			const prompt = elements.prompt;
+			const inserted = insertDraftText(prompt.value, promptSelection.start, promptSelection.end, text);
+			prompt.value = inserted.text;
+			promptSelection = { start: inserted.cursor, end: inserted.cursor, direction: "none" };
+			fitPrompt(prompt);
+			renderPrimary();
+			renderer.onDraftChange(inserted.text);
+			renderSuggestion();
+			if (focus) {
+				prompt.focus();
+				prompt.setSelectionRange(inserted.cursor, inserted.cursor);
+			}
+		},
 		setConnection(text: ConnectionText, kind: "state" | "error", label?: ConnectionText): void {
 			connectionCopy = { text, kind, ...(label === undefined ? {} : { label }) };
 			renderConnection();
@@ -3390,7 +3479,25 @@ export function createRenderer(
 		const target = event.target;
 		if (sessionMenu !== undefined && target instanceof Node && !sessionMenu.node.contains(target) && !sessionMenuTrigger(sessionMenu.id)?.contains(target)) closeSessionMenu();
 		if (meterExpanded && target instanceof Node && !elements.meter.contains(target)) setMeterExpanded(false);
+		if (!quoteAction.hidden && target instanceof Node && !quoteAction.contains(target)) hideQuoteAction();
 	});
+	quoteAction.addEventListener("mousedown", (event) => event.preventDefault());
+	quoteAction.addEventListener("click", () => {
+		if (quoteDraft === undefined) return;
+		const draft = quoteDraft;
+		hideQuoteAction();
+		document.getSelection()?.removeAllRanges();
+		renderer.insertDraft(draft);
+	});
+	document.addEventListener("selectionchange", scheduleQuoteAction);
+	document.addEventListener("mouseup", scheduleQuoteAction);
+	document.addEventListener("touchend", scheduleQuoteAction);
+	document.addEventListener("keyup", scheduleQuoteAction);
+	document.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") hideQuoteAction();
+	});
+	window.addEventListener("scroll", hideQuoteAction, true);
+	window.addEventListener("resize", hideQuoteAction);
 	const gestureOf = (event: KeyboardEvent): ShortcutGesture => {
 		if (isStopChord(event)) return { code: event.code, primary: false, alt: false, shift: false, control: true };
 		const primary = isApplePlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
