@@ -23,6 +23,8 @@ export interface TranscriptRowSource {
 	readonly transcriptRowLabel?: string;
 	/** Returns the copyable content of the row. Omit for rows that own no text. */
 	readonly transcriptRowText?: () => string | undefined;
+	/** Command or path that identifies the row, without the body. */
+	readonly transcriptRowMeta?: () => string | undefined;
 	/** Marks the row as the first row of a new conversation turn (user prompt). */
 	readonly transcriptTurnStart?: boolean;
 	setExpanded?(expanded: boolean): void;
@@ -47,6 +49,7 @@ export interface TranscriptRow {
 	readonly childIndex?: number;
 	readonly label?: string;
 	readonly text?: () => string | undefined;
+	readonly meta?: () => string | undefined;
 	readonly setExpanded?: (expanded: boolean) => void;
 	readonly open?: () => void;
 	readonly setSelected?: (selected: boolean) => void;
@@ -101,6 +104,7 @@ export function deriveTranscriptRows(
 			openable: typeof source.open === "function",
 			...(source.transcriptRowLabel === undefined ? {} : { label: source.transcriptRowLabel }),
 			...(source.transcriptRowText === undefined ? {} : { text: source.transcriptRowText }),
+			...(source.transcriptRowMeta === undefined ? {} : { meta: source.transcriptRowMeta }),
 			...(source.setExpanded === undefined
 				? {}
 				: { setExpanded: (expanded: boolean) => source.setExpanded?.(expanded) }),
@@ -137,6 +141,7 @@ export function deriveTranscriptRows(
 			openable: typeof source.open === "function",
 			...(source.transcriptRowLabel === undefined ? {} : { label: source.transcriptRowLabel }),
 			...(source.transcriptRowText === undefined ? {} : { text: source.transcriptRowText }),
+			...(source.transcriptRowMeta === undefined ? {} : { meta: source.transcriptRowMeta }),
 			...(source.open === undefined ? {} : { open: () => source.open?.() }),
 		});
 	}

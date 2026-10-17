@@ -63,6 +63,18 @@ export class ToolExecutionComponent extends Container {
 	};
 	private hideComponent = false;
 	readonly transcriptRowText = (): string => this.plainText();
+	readonly transcriptRowMeta = (): string | undefined => {
+		const args = this.args as Record<string, unknown> | undefined;
+		const detail =
+			typeof args?.command === "string"
+				? args.command
+				: typeof args?.path === "string"
+					? args.path
+					: typeof args?.file_path === "string"
+						? args.file_path
+						: undefined;
+		return detail === undefined ? this.toolName : `${this.toolName} ${detail}`;
+	};
 	readonly transcriptRowExpanded = (): boolean => this.expanded;
 
 	constructor(

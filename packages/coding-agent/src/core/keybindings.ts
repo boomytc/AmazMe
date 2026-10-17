@@ -113,6 +113,10 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+e",
 		description: "Fold or unfold every transcript entry",
 	},
+	"app.transcript.copyMeta": {
+		defaultKeys: "shift+y",
+		description: "Copy the selected block's command or path",
+	},
 	"app.transcript.searchNext": {
 		defaultKeys: "n",
 		description: "Select the next transcript search match",

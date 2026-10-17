@@ -116,6 +116,7 @@ describe("BashExecutionComponent selection", () => {
 
 		component.setSelected(false);
 		expect(component.render(width)).toEqual(plain);
+		expect(component.transcriptRowMeta()).toBe("$ pwd");
 	});
 
 	it("reports the run duration with the same wording as tool renderers", () => {

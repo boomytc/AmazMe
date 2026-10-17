@@ -146,6 +146,12 @@ export class TranscriptFocus {
 			this.model.expandAll(this.allExpanded);
 			return true;
 		}
+		if (matchesAppBinding(data, "app.transcript.copyMeta")) {
+			const meta = this.model.selected?.meta?.();
+			if (meta === undefined || this.options.onCopy === undefined) return false;
+			this.options.onCopy(meta);
+			return true;
+		}
 		if (matchesAppBinding(data, "app.message.copy")) {
 			const text = this.model.selectedText();
 			if (text === undefined || this.options.onCopy === undefined) return false;

@@ -7524,6 +7524,7 @@ export class InteractiveMode {
 		const promptNext = this.getEditorKeyDisplay("tui.altScreen.nextPrompt");
 		const foldAll = this.getAppKeyDisplay("app.transcript.toggleAll");
 		const copySelected = this.getAppKeyDisplay("app.message.copy");
+		const copyMeta = this.getAppKeyDisplay("app.transcript.copyMeta");
 		const searchNext = this.getAppKeyDisplay("app.transcript.searchNext");
 		const searchPrevious = this.getAppKeyDisplay("app.transcript.searchPrevious");
 		const searchTranscript = this.getEditorKeyDisplay("tui.altScreen.search");
@@ -7548,6 +7549,7 @@ These main-editor controls take precedence over the configured bindings below.
 | \`${promptPrev}\` / \`${promptNext}\` | Jump to the previous or next prompt |
 | \`${foldAll}\` | Fold or unfold every entry, clearing manual folds |
 | \`${copySelected}\` | Copy the selected entry |
+| \`${copyMeta}\` | Copy the selected block's command or path |
 | \`${searchNext}\` / \`${searchPrevious}\` | Next or previous \`/find\` match |
 | \`PageUp\` / \`PageDown\` | Scroll by page |
 

@@ -6,6 +6,7 @@ class Row implements TranscriptRowSource {
 	readonly transcriptRowId: string;
 	readonly transcriptTurnStart?: boolean;
 	readonly transcriptRowText?: () => string | undefined;
+	readonly transcriptRowMeta?: () => string | undefined;
 	expanded = false;
 	opened = 0;
 	selected = false;
@@ -24,6 +25,11 @@ class Row implements TranscriptRowSource {
 		this.selected = selected;
 	}
 	transcriptRowExpanded = (): boolean => this.expanded;
+	transcriptRowMeta = (): string | undefined => this.metaValue;
+	metaValue: string | undefined;
+	setMeta(meta: string): void {
+		this.metaValue = meta;
+	}
 }
 
 const DOWN = "\x1b[B";
@@ -236,6 +242,18 @@ describe("TranscriptFocus", () => {
 
 		expect(focus.handleInput("y")).toBe(true);
 		expect(copies).toEqual(["first prompt"]);
+	});
+
+	test("copies block metadata separately from the body", () => {
+		const { focus, copies, first } = harness();
+		first.setMeta("$ echo first");
+		focus.handleInput("\t");
+
+		expect(focus.handleInput("Y")).toBe(true);
+		expect(copies).toEqual(["$ echo first"]);
+
+		expect(focus.handleInput("\x18")).toBe(true);
+		expect(copies).toEqual(["$ echo first", "first prompt"]);
 	});
 
 	test("toggles every entry with the fold-all binding", () => {

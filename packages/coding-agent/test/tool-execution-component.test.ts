@@ -123,6 +123,19 @@ describe("ToolExecutionComponent parity", () => {
 		expect(component.render(120)).toEqual(plain);
 	});
 
+	test("reports the command or path as row metadata", () => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-meta",
+			{ path: "notes.txt" },
+			{},
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		expect(component.transcriptRowMeta()).toBe("read notes.txt");
+	});
+
 	test("self-rendered empty tool rows take no layout space", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),

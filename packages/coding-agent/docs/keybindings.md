@@ -34,6 +34,7 @@ The hosted terminal registers its own actions and commands; see [Slash commands]
 | `Ctrl+Shift+Down`, `Ctrl+Down` | Jump to the next prompt (`Ctrl+Down` only on Windows and WSL) |
 | `Ctrl+E` | Fold or unfold every entry; clears manual folds |
 | `Ctrl+X` | Copy the selected entry |
+| `Shift+Y` | Copy the selected block's command or path instead of its body |
 | `n`, `Shift+N` | Select the next or previous match of the last `/find` query |
 | `PageUp`, `PageDown` | Scroll the transcript by a page |
 
