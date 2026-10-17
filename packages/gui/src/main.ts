@@ -8,6 +8,7 @@ import {
 	ipcMain,
 	Menu,
 	nativeImage,
+	Notification,
 	shell,
 	Tray,
 	type Event as ElectronEvent,
@@ -57,6 +58,7 @@ let quitReleased = false;
 let quitRequested = false;
 let showingDialog = false;
 let deferredHost: HostFailure | undefined;
+let pendingApprovals = 0;
 let startupFailure: HostStartupFailure | undefined;
 let folderPicker: Promise<readonly string[]> | undefined;
 let tray: Tray | undefined;
@@ -115,10 +117,11 @@ async function refreshTrayMenu(): Promise<void> {
 			tray.on("double-click", showWindow);
 		}
 		const locale = await currentLocale();
+		tray.setToolTip(pendingApprovals > 0 ? `${APP_NAME} · ${pendingApprovals}` : APP_NAME);
 		tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate(locale, {
 			show: showWindow,
 			quit: () => { void requestUserQuit(); },
-		})));
+		}, pendingApprovals)));
 	} catch (error: unknown) {
 		console.error(`desktop tray unavailable: ${error instanceof Error ? error.message : String(error)}`);
 	}
@@ -313,10 +316,31 @@ function watchPendingApprovals(target: BrowserWindow): void {
 		target.flashFrame(false);
 	});
 	target.webContents.on("page-title-updated", (_event, title: string) => {
-		const attention = attentionOnTitle(pending, title, target.isFocused());
+		// A hidden window cannot flash, so a rise also raises a system notification.
+		const attention = attentionOnTitle(pending, title, target.isFocused(), target.isVisible());
 		if (attention.flash !== undefined) target.flashFrame(attention.flash);
+		if (attention.notify) void announceApprovals(title, attention.pending);
 		pending = attention.pending;
+		pendingApprovals = attention.pending;
+		app.dock?.setBadge(attention.pending > 0 ? String(attention.pending) : "");
+		void refreshTrayMenu();
 	});
+}
+
+/** One notification per rise; clicking it brings the window back with the approval in front. */
+async function announceApprovals(title: string, count: number): Promise<void> {
+	if (SMOKE || !Notification.isSupported()) return;
+	try {
+		const locale = await currentLocale();
+		const notification = new Notification({
+			title: translate(locale, "desktop.notify.pending", { count: String(count) }),
+			body: title,
+		});
+		notification.on("click", showWindow);
+		notification.show();
+	} catch (error: unknown) {
+		console.error(`desktop notification unavailable: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 async function openWindow(pageUrl: string): Promise<void> {

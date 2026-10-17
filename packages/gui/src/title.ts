@@ -33,15 +33,28 @@ export interface TitleAttention {
 	readonly pending: number;
 	/** `true` starts a flash, `false` stops one, `undefined` leaves the frame alone. */
 	readonly flash: boolean | undefined;
+	/** True when a rise happened while the window is hidden, so a system notification helps. */
+	readonly notify: boolean;
+}
+
+/** Notify on any rise while the window is hidden; a visible window already flashes. */
+export function shouldNotifyApprovals(previous: number, next: number, visible: boolean): boolean {
+	return next > previous && !visible;
 }
 
 /**
  * The next flash state after a title change. Returning to none stops the flash even if the
  * window is still in the background, so a later real approval can rise from 0 again.
  */
-export function attentionOnTitle(previous: number, title: string, focused: boolean): TitleAttention {
+export function attentionOnTitle(
+	previous: number,
+	title: string,
+	focused: boolean,
+	visible = true,
+): TitleAttention {
 	const pending = pendingApprovalCount(title);
-	if (shouldFlashFrame(previous, pending, focused)) return { pending, flash: true };
-	if (previous > 0 && pending === 0) return { pending, flash: false };
-	return { pending, flash: undefined };
+	const notify = shouldNotifyApprovals(previous, pending, visible);
+	if (shouldFlashFrame(previous, pending, focused)) return { pending, flash: true, notify };
+	if (previous > 0 && pending === 0) return { pending, flash: false, notify };
+	return { pending, flash: undefined, notify };
 }

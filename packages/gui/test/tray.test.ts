@@ -13,6 +13,11 @@ describe("trayMenuTemplate", () => {
 		expect(quit).toHaveBeenCalledOnce();
 	});
 
+	test("shows pending approvals on the way back", () => {
+		const menu = trayMenuTemplate("en", { show: () => {}, quit: () => {} }, 2);
+		expect(menu[0]?.label).toBe("Open AmazMe (2)");
+	});
+
 	test("uses the same English labels as the rest of the desktop shell", () => {
 		const menu = trayMenuTemplate("en", { show: () => {}, quit: () => {} });
 		expect(menu.map((item) => item.label).filter(Boolean)).toEqual(["Open AmazMe", "Quit AmazMe"]);

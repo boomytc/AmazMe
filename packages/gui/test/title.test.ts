@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { attentionOnTitle, pendingApprovalCount, shouldFlashFrame } from "../src/title.ts";
+import { attentionOnTitle, pendingApprovalCount, shouldFlashFrame, shouldNotifyApprovals } from "../src/title.ts";
 
 describe("pendingApprovalCount", () => {
 	test("reads a leading canonical count and ignores the rest of the title", () => {
@@ -64,20 +64,36 @@ describe("attentionOnTitle", () => {
 		expect(pendingApprovalCount("(3) x — AmazMe")).toBe(3);
 
 		const idle = attentionOnTitle(0, renamed, false);
-		expect(idle).toEqual({ pending: 0, flash: undefined });
+		expect(idle).toEqual({ pending: 0, flash: undefined, notify: false });
 
 		const waiting = attentionOnTitle(idle.pending, "(1) \uFF083\uFF09 x — AmazMe", false);
-		expect(waiting).toEqual({ pending: 1, flash: true });
+		expect(waiting).toEqual({ pending: 1, flash: true, notify: false });
 	});
 
 	test("stops the flash when the count returns to 0 before focus", () => {
 		const started = attentionOnTitle(0, "(2) Weekly report — AmazMe", false);
-		expect(started).toEqual({ pending: 2, flash: true });
+		expect(started).toEqual({ pending: 2, flash: true, notify: false });
 
 		const cleared = attentionOnTitle(started.pending, "Weekly report — AmazMe", false);
-		expect(cleared).toEqual({ pending: 0, flash: false });
+		expect(cleared).toEqual({ pending: 0, flash: false, notify: false });
 
 		const again = attentionOnTitle(cleared.pending, "(1) Weekly report — AmazMe", false);
-		expect(again).toEqual({ pending: 1, flash: true });
+		expect(again).toEqual({ pending: 1, flash: true, notify: false });
+	});
+});
+
+describe("approval notifications", () => {
+	test("notifies on a rise only while the window is hidden", () => {
+		expect(shouldNotifyApprovals(0, 1, false)).toBe(true);
+		expect(shouldNotifyApprovals(1, 2, false)).toBe(true);
+		expect(shouldNotifyApprovals(0, 1, true)).toBe(false);
+		expect(shouldNotifyApprovals(2, 0, false)).toBe(false);
+		expect(shouldNotifyApprovals(2, 2, false)).toBe(false);
+	});
+
+	test("carries the notify decision out of the title change", () => {
+		expect(attentionOnTitle(0, "(1) task — AmazMe", false, false).notify).toBe(true);
+		expect(attentionOnTitle(0, "(1) task — AmazMe", false, true).notify).toBe(false);
+		expect(attentionOnTitle(1, "task — AmazMe", false, false).notify).toBe(false);
 	});
 });
