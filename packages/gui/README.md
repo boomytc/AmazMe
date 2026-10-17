@@ -34,6 +34,12 @@ npm run dev:desktop
 
 正式发布的网页脚本由 coding-agent 构建预先生成，宿主、worker 与客户端共享编译模块和同一持久状态。桌面依赖声明包括 coding-agent；Electron 作为桌面壳运行环境，宿主使用系统 Node 22.19+。
 
+## DMG 与 GitHub Release
+
+在独立包基础上加 `--dmg` 会生成 `AmazMe-<version>-macos-<arch>.dmg` 与同名 `.sha256`：DMG 内含应用和“应用程序”快捷方式，创建后会挂载回读 `release-manifest.json` 校验版本。推送 `v<version>` 标签触发 `.github/workflows/release.yml`，在 macOS runner 上构建、验证并创建 GitHub Release；标签必须与 `packages/gui/package.json` 的版本一致。
+
+预览包为 ad-hoc 签名，其他机器首次打开会被 Gatekeeper 拦截，需右键“打开”或移除 quarantine；公开分发前仍需 Developer ID 签名与公证。
+
 ## 独立预览包
 
 `scripts/package-desktop.mjs` 生成可移动的 macOS 预览应用：宿主、运行时闭包和固定版本的官方 Node 一起放进 `AmazMe.app`，启动脚本只引用 `Contents/Resources` 内的路径。用官方 Node 压缩包，不要用 Homebrew 的 Node——后者链接共享的 `libnode`，复制单个二进制会在移动后启动失败；脚本会用 `otool` 拒绝这种二进制。

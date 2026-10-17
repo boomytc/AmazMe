@@ -8,8 +8,9 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { constants, mkdirSync, readFileSync } from "node:fs";
-import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -154,10 +155,39 @@ async function smokeBundle(appDirectory) {
 	return report;
 }
 
+async function createDmg(appDirectory, out, manifest) {
+	const staging = await mkdtemp(join(tmpdir(), "amazme-dmg-"));
+	const image = join(out, `AmazMe-${manifest.app.version}-macos-${manifest.arch}.dmg`);
+	try {
+		await cp(appDirectory, join(staging, "AmazMe.app"), { recursive: true, verbatimSymlinks: true });
+		await symlink("/Applications", join(staging, "Applications"));
+		run("hdiutil", ["create", "-volname", "AmazMe", "-srcfolder", staging, "-ov", "-format", "UDZO", image]);
+	} finally {
+		await rm(staging, { recursive: true, force: true });
+	}
+	const digest = createHash("sha256").update(await readFile(image)).digest("hex");
+	await writeFile(`${image}.sha256`, `${digest}  ${basename(image)}\n`);
+	const mounted = await mkdtemp(join(tmpdir(), "amazme-mount-"));
+	try {
+		run("hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mounted, image]);
+		const inside = JSON.parse(await readFile(join(mounted, "AmazMe.app", "Contents", "Resources", MANIFEST_NAME), "utf8"));
+		guard(inside.app.version === manifest.app.version, "Mounted app version does not match its release manifest");
+		guard(existsSync(join(mounted, "Applications")), "DMG is missing the Applications shortcut");
+	} finally {
+		try {
+			run("hdiutil", ["detach", mounted, "-force"]);
+		} finally {
+			await rm(mounted, { recursive: true, force: true });
+		}
+	}
+	return { image, digest };
+}
+
 async function main() {
 	if (process.platform !== "darwin") throw new Error("The standalone preview currently targets macOS only");
 	const out = resolve(argument("--out") ?? join(repoRoot, "dist-desktop"));
 	const verify = process.argv.includes("--verify");
+	const withDmg = process.argv.includes("--dmg");
 	const nodeArgument = argument("--node");
 	const nodeExecutable = resolve(nodeArgument ?? process.execPath);
 	assertSelfContainedNode(nodeExecutable);
@@ -198,6 +228,11 @@ async function main() {
 	console.log(`Built ${appDirectory}`);
 	console.log(`Version ${manifest.app.version} · Node ${manifest.node} · Electron ${manifest.electron}`);
 	if (verify) console.log(`Standalone smoke: ${await smokeBundle(appDirectory)}`);
+	if (withDmg) {
+		const { image, digest } = await createDmg(appDirectory, out, manifest);
+		console.log(`DMG ${image}`);
+		console.log(`SHA256 ${digest}`);
+	}
 }
 
 main().catch((error) => {
