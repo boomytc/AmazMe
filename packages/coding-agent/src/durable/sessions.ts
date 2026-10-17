@@ -14,6 +14,27 @@ export interface SessionLocation {
 	release(): Promise<void>;
 }
 
+function sessionRoot(cwd: string, sessionDir: string | undefined): string {
+	const base = sessionDir === undefined
+		? join(getAgentDir(), "experimental", "durable-sessions")
+		: resolve(cwd, expandTildePath(sessionDir));
+	return join(base, createHash("sha256").update(cwd).digest("hex").slice(0, 24));
+}
+
+/** Whether `cwd` already has a persisted Durable session in the selected root. */
+export async function hasDurableSession(
+	cwd: string,
+	options: { sessionDir?: string } = {},
+): Promise<boolean> {
+	try {
+		const root = sessionRoot(cwd, options.sessionDir);
+		const entries = await readdir(root, { withFileTypes: true });
+		return entries.some((entry) => entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name));
+	} catch {
+		return false;
+	}
+}
+
 /** A fresh memory session, a new persisted session, or the newest persisted session for `cwd`. */
 export async function selectSession(
 	cwdInput: string,
@@ -23,10 +44,7 @@ export async function selectSession(
 	if (options.noSession && continueSession) throw new Error("--no-session cannot be combined with --continue or --resume");
 	const cwd = await realpath(resolve(cwdInput));
 	if (options.noSession) return { id: randomUUID(), cwd, created: true, release: async () => {} };
-	const base = options.sessionDir === undefined
-		? join(getAgentDir(), "experimental", "durable-sessions")
-		: resolve(cwd, expandTildePath(options.sessionDir));
-	const root = join(base, createHash("sha256").update(cwd).digest("hex").slice(0, 24));
+	const root = sessionRoot(cwd, options.sessionDir);
 	await mkdir(root, { recursive: true });
 
 	let directory: string;

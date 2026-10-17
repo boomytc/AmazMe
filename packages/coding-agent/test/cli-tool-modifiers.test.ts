@@ -65,7 +65,8 @@ describe("compiled CLI tool selection", () => {
 	const options = () => ({
 		cwd: directory,
 		timeout: 15_000,
-		env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_OFFLINE: "1" },
+		// This test pins the legacy CLI contract; Durable tool selection has its own coverage.
+		env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_OFFLINE: "1", AMAZME_RUNTIME: "legacy" },
 	});
 
 	it("passes edited defaults to the real compiled provider request", async () => {

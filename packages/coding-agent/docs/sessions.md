@@ -2,7 +2,7 @@
 
 AmazMe keeps conversation history and supplies the active conversation to the model. The default terminal uses Durable SQLite storage. Web and hosted clients share their server's session roster. Print/JSON/RPC and the SDK expose a JSONL session API; select storage through the entry point you are using.
 
-The migration to one Durable kernel is tracked in [Durable single-kernel migration](../../../docs/durable-migration.md). `AMAZME_RUNTIME=durable` switches print, JSON, and core RPC to the Durable session; the default remains the legacy path until RPC and SDK parity lands. `amazme import <session.jsonl>` copies a terminal session into a new Durable session without changing the source file.
+The migration to one Durable kernel is tracked in [Durable single-kernel migration](../../../docs/durable-migration.md). New print, JSON, and RPC sessions use the Durable session by default; `AMAZME_RUNTIME=legacy` selects the JSONL path, which also handles JSONL-only flags and SDK extension factories. `amazme import <session.jsonl>` copies a terminal session into a new Durable session without changing the source file.
 
 ## Default terminal
 
@@ -57,7 +57,7 @@ The host's `--session-dir` selects its server storage root. Default terminal fla
 
 ## JSONL API and print/RPC
 
-Print, JSON and RPC sessions use the SDK's [JSONL format](session-format.md), normally under `<agent-dir>/sessions`, grouped by working directory. Their `--session`, `--session-id` and `--fork` options select or create JSONL sessions. `--session-dir`, the environment root, the `sessionDir` setting and `--no-session` also apply to this entry point.
+With `AMAZME_RUNTIME=legacy`, Print, JSON and RPC sessions use the SDK's [JSONL format](session-format.md), normally under `<agent-dir>/sessions`, grouped by working directory. Their `--session`, `--session-id` and `--fork` options select or create JSONL sessions. `--session-dir`, the environment root, the `sessionDir` setting and `--no-session` also apply to this entry point.
 
 ```bash
 amazme --print --name "Review" "Explain this project"

@@ -64,6 +64,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/tru
 import { builtInExtensions } from "./extensions/index.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
 import { runMigrations } from "./migrations.ts";
+import { selectHeadlessRuntime } from "./durable/runtime-selection.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
 import { runRpcMode } from "./modes/rpc/rpc-mode.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
@@ -824,13 +825,32 @@ export async function main(args: string[], options?: MainOptions) {
 		console.error(chalk.red(`Error: unknown AMAZME_RUNTIME "${runtimeSelection}"; use "durable" or "legacy".`));
 		process.exit(1);
 	}
-	if (runtimeSelection === "durable" && appMode !== "interactive" && parsed.help !== true && parsed.listModels === undefined) {
-		if (options?.extensionFactories?.length) {
-			console.error(chalk.red("Error: SDK extension factories require the legacy runtime; the Durable runtime loads native facet sources. Remove the inline factories or unset AMAZME_RUNTIME."));
+	const jsonlSessionFlags = parsed.fork !== undefined || parsed.session !== undefined || parsed.sessionId !== undefined;
+	const inlineFactories = (options?.extensionFactories?.length ?? 0) > 0;
+	const metadataOnly = parsed.help === true || parsed.listModels !== undefined;
+	const durableSessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR] ?? startupSettingsManager.getSessionDir();
+	const continuing = parsed.continue === true || parsed.resume === true;
+	const needsDurableCheck = runtimeSelection === undefined && !metadataOnly && appMode !== "interactive"
+		&& !jsonlSessionFlags && !inlineFactories && continuing && parsed.noSession !== true;
+	const hasSession = needsDurableCheck
+		? await (await import("./durable/sessions.ts")).hasDurableSession(cwd, { sessionDir: durableSessionDir })
+		: false;
+	const useDurable = selectHeadlessRuntime({
+		appMode,
+		metadataOnly,
+		explicit: runtimeSelection,
+		jsonlSessionFlags,
+		inlineFactories,
+		continuing,
+		hasDurableSession: hasSession,
+	}) === "durable";
+	if (useDurable) {
+		if (inlineFactories) {
+			console.error(chalk.red("Error: SDK extension factories require the legacy runtime; the Durable runtime loads native facet sources. Remove the inline factories or set AMAZME_RUNTIME=legacy."));
 			process.exit(1);
 		}
-		if (parsed.fork !== undefined || parsed.session !== undefined || parsed.sessionId !== undefined) {
-			console.error(chalk.red("Error: --fork, --session, and --session-id select a JSONL session, which the Durable runtime does not read. Use --continue or unset AMAZME_RUNTIME."));
+		if (jsonlSessionFlags) {
+			console.error(chalk.red("Error: --fork, --session, and --session-id select a JSONL session, which the Durable runtime does not read. Use --continue or set AMAZME_RUNTIME=legacy."));
 			process.exit(1);
 		}
 		const projectTrusted = await resolveProjectTrusted({
@@ -841,11 +861,10 @@ export async function main(args: string[], options?: MainOptions) {
 			projectTrustContext: createProjectTrustContext({ cwd, mode: appMode, settingsManager: startupSettingsManager, hasUI: false }),
 		});
 		startupSettingsManager.setProjectTrusted(projectTrusted);
-		const durableSessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
 		const durableOptions = {
 			settingsManager: startupSettingsManager,
 			cwd,
-			continueSession: parsed.continue === true || parsed.resume === true,
+			continueSession: continuing,
 			noSession: parsed.noSession === true,
 			...(durableSessionDir === undefined ? {} : { sessionDir: durableSessionDir }),
 			...(sessionName === undefined ? {} : { name: sessionName }),

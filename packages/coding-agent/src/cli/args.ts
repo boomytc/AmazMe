@@ -351,7 +351,7 @@ ${chalk.bold("Options:")}
   --                             End option parsing; treat remaining arguments as messages/files
   --help, -h                     Show this help
   --version, -v                  Show version number
-  AMAZME_RUNTIME=durable         Run print/JSON/RPC on the Durable Harness (experimental)
+  AMAZME_RUNTIME=legacy          Keep print/JSON/RPC on the JSONL runtime (Durable is default)
 
 SDK extensions in print/RPC can register additional flags. Native plugins use slash commands.${extensionFlagsText}
 

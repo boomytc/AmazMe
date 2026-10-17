@@ -23,10 +23,11 @@ RPC mode rejects `@file` prompt arguments. Send prompts through the [`prompt`](r
 
 ## Durable RPC (experimental)
 
-Set `AMAZME_RUNTIME=durable` to run RPC over the Durable session:
+RPC runs over the Durable session by default. Set `AMAZME_RUNTIME=legacy` for the JSONL RPC mode:
 
 ```bash
-AMAZME_RUNTIME=durable amazme --mode rpc --no-session
+amazme --mode rpc --no-session
+AMAZME_RUNTIME=legacy amazme --mode rpc --no-session
 ```
 
 Events keep the RPC event names. The adapter supports `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_last_assistant_text`, `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels`, `get_session_stats`, `set_session_name`, and `get_commands`.

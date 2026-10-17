@@ -120,7 +120,7 @@ The default terminal stores SQLite sessions under `<agent-dir>/experimental/dura
 
 ### Durable print/JSON/RPC migration
 
-Set `AMAZME_RUNTIME=durable` to run `--print`, `--mode json`, and the core `--mode rpc` commands on the Durable Harness. The path uses the same SQLite session, tools, resources, MCP selection, and native facet plugins as the default terminal. `--no-session` uses in-memory storage; `--continue` and `--session-dir` select persisted Durable sessions. The JSONL flags `--session`, `--session-id`, and `--fork`, and inline SDK extension factories, are rejected on this path rather than silently changing meaning. RPC commands that depend on the JSONL session tree, extension UI, shell records, or HTML export return an explicit unsupported error. See [Durable single-kernel migration](../../../docs/durable-migration.md).
+New `--print`, `--mode json`, and `--mode rpc` sessions run on the Durable Harness by default. Set `AMAZME_RUNTIME=legacy` to use the JSONL AgentSession. The path uses the same SQLite session, tools, resources, MCP selection, and native facet plugins as the default terminal. `--no-session` uses in-memory storage; `--continue` and `--session-dir` select persisted Durable sessions. The JSONL flags `--session`, `--session-id`, and `--fork`, inline SDK extension factories, and `--continue` when the project has only JSONL history fall back to the legacy runtime. An explicit `AMAZME_RUNTIME=durable` rejects the JSONL flags and factories instead of silently changing meaning. RPC commands that depend on the JSONL session tree, extension UI, shell records, or HTML export return an explicit unsupported error. See [Durable single-kernel migration](../../../docs/durable-migration.md).
 
 ### Import a JSONL session
 
