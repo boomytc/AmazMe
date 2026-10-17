@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider } from "@amazme/ai";
@@ -90,6 +90,11 @@ describe("durable RPC handler", () => {
 		if (messages.success && messages.command === "get_messages") {
 			expect(messages.data.messages.some((message) => message.role === "assistant")).toBe(true);
 		}
+
+		const output = join(directory, "rpc-export.html");
+		const exported = await handle({ type: "export_html", outputPath: output });
+		expect(exported).toMatchObject({ success: true, command: "export_html", data: { path: output } });
+		expect(await readFile(output, "utf8")).toContain("<!DOCTYPE html>");
 	});
 
 	it("clears queued follow-ups and forks the current conversation", async () => {

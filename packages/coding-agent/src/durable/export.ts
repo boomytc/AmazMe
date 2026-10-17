@@ -2,6 +2,7 @@ import { mkdtemp, copyFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
+import type { Message } from "@amazme/ai";
 import { createModels } from "@amazme/ai/models";
 import { createRegistry, Harness } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
@@ -23,6 +24,36 @@ export interface DurableExportResult {
 	readonly path: string;
 	readonly format: DurableExportFormat;
 	readonly report: SessionInteropReport;
+}
+
+export interface DurableEntryExportOptions {
+	readonly id: string;
+	readonly cwd: string;
+	readonly output?: string;
+	readonly format: DurableExportFormat;
+}
+
+/** Write already-read Durable entries as JSONL or HTML. Used by file export and the live RPC path. */
+export async function writeDurableExport(
+	entries: readonly { readonly id: unknown; readonly kind: string; readonly model?: readonly Message[] }[],
+	options: DurableEntryExportOptions,
+): Promise<DurableExportResult> {
+	const temporary = await mkdtemp(join(tmpdir(), "amazme-durable-export-"));
+	try {
+		const projected = durableEntriesToSessionFile(entries, {
+			id: options.id,
+			cwd: options.cwd,
+			timestamp: new Date().toISOString(),
+		});
+		const jsonl = join(temporary, "session.jsonl");
+		await writeFile(jsonl, `${projected.entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+		const output = resolve(options.output ?? (options.format === "jsonl" ? `${options.id}.jsonl` : `amazme-session-${options.id}.html`));
+		if (options.format === "jsonl") await copyFile(jsonl, output);
+		else await exportFromFile(jsonl, output);
+		return { path: output, format: options.format, report: projected.report };
+	} finally {
+		await rm(temporary, { recursive: true, force: true }).catch(() => {});
+	}
 }
 
 async function sessionDatabase(path: string): Promise<string> {
@@ -68,18 +99,9 @@ export async function exportDurableSession(path: string, options: DurableExportO
 		const agent = view.value.docs["amazme.agent"] as { cwd?: unknown } | undefined;
 		const cwd = options.cwd ?? (typeof agent?.cwd === "string" ? agent.cwd : process.cwd());
 		const sessionId = basename(dirname(source));
-		const projected = durableEntriesToSessionFile(view.value.entries, {
-			id: sessionId,
-			cwd,
-			timestamp: new Date().toISOString(),
-		});
+		const entries = view.value.entries;
 		view.dispose();
-		const jsonl = join(temporary, "session.jsonl");
-		await writeFile(jsonl, `${projected.entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
-		const output = resolve(options.output ?? (format === "jsonl" ? `${sessionId}.jsonl` : `amazme-session-${sessionId}.html`));
-		if (format === "jsonl") await copyFile(jsonl, output);
-		else await exportFromFile(jsonl, output);
-		return { path: output, format, report: projected.report };
+		return await writeDurableExport(entries, { id: sessionId, cwd, ...(options.output === undefined ? {} : { output: options.output }), format });
 	} finally {
 		await harness?.close(context).catch(() => {});
 		await rm(temporary, { recursive: true, force: true }).catch(() => {});

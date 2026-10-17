@@ -2,6 +2,7 @@ import { getSupportedThinkingLevels, type Model, type Usage } from "@amazme/ai";
 import type { AgentEvent } from "@amazme/durable";
 import { flushRawStdout, takeOverStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../../core/output-guard.ts";
 import { createSyntheticSourceInfo } from "../../core/source-info.ts";
+import { writeDurableExport } from "../../durable/export.ts";
 import { DurableJsonEvents } from "../../durable/json-events.ts";
 import { agentOf, openDurable, type OpenDurableOptions, type OpenDurableResult } from "../../durable/runtime.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -208,6 +209,17 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 				durable.settings.setRetryEnabled(command.enabled);
 				await durable.settings.flush();
 				return success(id, "set_auto_retry");
+			case "export_html": {
+				const current = view().conversation;
+				const stored = current.docs["amazme.agent"] as { cwd?: unknown } | undefined;
+				const exported = await writeDurableExport(current.entries, {
+					id: view().session.id,
+					cwd: typeof stored?.cwd === "string" ? stored.cwd : process.cwd(),
+					format: "html",
+					...(command.outputPath === undefined ? {} : { output: command.outputPath }),
+				});
+				return success(id, "export_html", { path: exported.path });
+			}
 			case "get_session_stats":
 				return success(id, "get_session_stats", stats());
 			case "get_messages":
@@ -234,7 +246,6 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 			case "abort_retry":
 			case "bash":
 			case "abort_bash":
-			case "export_html":
 			case "switch_session":
 			case "get_fork_messages":
 			case "get_entries":
