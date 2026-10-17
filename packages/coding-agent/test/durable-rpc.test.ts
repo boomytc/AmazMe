@@ -118,6 +118,11 @@ describe("durable RPC handler", () => {
 		expect(renamed.success).toBe(true);
 		expect(durable.view.current().session.name).toBe("renamed");
 
+		const steering = await handle({ type: "set_steering_mode", mode: "all" });
+		expect(steering.success).toBe(true);
+		const state = await handle({ type: "get_state" });
+		expect(state).toMatchObject({ success: true, data: { steeringMode: "all" } });
+
 		const bash = await handle({ type: "bash", command: "echo hi" });
 		expect(bash).toMatchObject({ success: false, error: expect.stringContaining("does not support bash") });
 	});

@@ -192,6 +192,22 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 				const model = modelOf(agent().model);
 				return success(id, "get_available_thinking_levels", { levels: model === undefined ? [] : getSupportedThinkingLevels(model) });
 			}
+			case "set_steering_mode":
+				durable.settings.setSteeringMode(command.mode);
+				await durable.settings.flush();
+				return success(id, "set_steering_mode");
+			case "set_follow_up_mode":
+				durable.settings.setFollowUpMode(command.mode);
+				await durable.settings.flush();
+				return success(id, "set_follow_up_mode");
+			case "set_auto_compaction":
+				durable.settings.setCompactionEnabled(command.enabled);
+				await durable.settings.flush();
+				return success(id, "set_auto_compaction");
+			case "set_auto_retry":
+				durable.settings.setRetryEnabled(command.enabled);
+				await durable.settings.flush();
+				return success(id, "set_auto_retry");
 			case "get_session_stats":
 				return success(id, "get_session_stats", stats());
 			case "get_messages":
@@ -214,11 +230,7 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 				await durable.controller.forkAt();
 				return success(id, "clone", { cancelled: false });
 			case "new_session":
-			case "set_steering_mode":
-			case "set_follow_up_mode":
 			case "compact":
-			case "set_auto_compaction":
-			case "set_auto_retry":
 			case "abort_retry":
 			case "bash":
 			case "abort_bash":
