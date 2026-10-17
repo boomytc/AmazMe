@@ -12,7 +12,14 @@ import { type MessageKey, translate } from "./strings.ts";
 import type { FontSizeAction } from "./typography.ts";
 
 /** The actions a shortcut can trigger. */
-export type ShortcutId = "session.new" | "view.cycle" | "composer.focus" | "run.stop" | `font.${FontSizeAction}`;
+export type ShortcutId =
+	| "session.new"
+	| "view.cycle"
+	| "composer.focus"
+	| "run.stop"
+	| "transcript.previousPrompt"
+	| "transcript.nextPrompt"
+	| `font.${FontSizeAction}`;
 
 export interface ShortcutGesture {
 	/** The physical key, e.g. `KeyM`, `Slash`, `Escape`. */
@@ -42,6 +49,16 @@ const TABLE: readonly { readonly id: ShortcutId; readonly gesture: ShortcutGestu
 		message: "shortcut.focusComposer",
 	},
 	{ id: "run.stop", gesture: { code: "KeyC", primary: false, alt: false, shift: false, control: true }, message: "shortcut.stop" },
+	{
+		id: "transcript.previousPrompt",
+		gesture: { code: "ArrowUp", primary: false, alt: true, shift: false },
+		message: "shortcut.previousPrompt",
+	},
+	{
+		id: "transcript.nextPrompt",
+		gesture: { code: "ArrowDown", primary: false, alt: true, shift: false },
+		message: "shortcut.nextPrompt",
+	},
 ];
 
 /** Ctrl+C with nothing else held. A selection still copies; the caller checks that. */
@@ -61,6 +78,10 @@ function keyLabel(code: string): string {
 	if (code === "Equal") return "+";
 	if (code === "Minus") return "-";
 	if (code === "Digit0") return "0";
+	if (code === "ArrowUp") return "\u2191";
+	if (code === "ArrowDown") return "\u2193";
+	if (code === "ArrowLeft") return "\u2190";
+	if (code === "ArrowRight") return "\u2192";
 	return code;
 }
 

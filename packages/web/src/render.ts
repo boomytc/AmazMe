@@ -3591,6 +3591,20 @@ export function createRenderer(
 		document.getSelection()?.removeAllRanges();
 		renderer.insertDraft(draft);
 	});
+	/**
+	 * Move to the next or previous question. The transcript's top edge is the
+	 * reference, so "previous" is the last question currently above it.
+	 */
+	const jumpPrompt = (direction: 1 | -1): void => {
+		const turns = [...elements.transcript.querySelectorAll<HTMLElement>(".turn-user")];
+		if (turns.length === 0) return;
+		const top = elements.transcript.getBoundingClientRect().top;
+		const target =
+			direction > 0
+				? turns.find((node) => node.getBoundingClientRect().top > top + 8)
+				: [...turns].reverse().find((node) => node.getBoundingClientRect().top < top - 8);
+		(target ?? (direction > 0 ? turns[turns.length - 1] : turns[0]))?.scrollIntoView({ block: "start" });
+	};
 	document.addEventListener("selectionchange", scheduleQuoteAction);
 	document.addEventListener("mouseup", scheduleQuoteAction);
 	document.addEventListener("touchend", scheduleQuoteAction);
@@ -3663,6 +3677,10 @@ export function createRenderer(
 		}
 		if (id === undefined) return;
 		event.preventDefault();
+		if (id === "transcript.previousPrompt" || id === "transcript.nextPrompt") {
+			if (lastView?.panel.current === CHAT_VIEW) jumpPrompt(id === "transcript.nextPrompt" ? 1 : -1);
+			return;
+		}
 		if (id === "composer.focus" && lastView?.panel.current === CHAT_VIEW) elements.prompt.focus();
 		renderer.onShortcut(id);
 	});

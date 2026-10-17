@@ -130,13 +130,24 @@ describe("keyboard shortcuts", () => {
 			["view.cycle", "\u2318\u2325M"],
 			["composer.focus", "/"],
 			["run.stop", "Ctrl+C"],
+			["transcript.previousPrompt", "\u2325\u2191"],
+			["transcript.nextPrompt", "\u2325\u2193"],
 		]);
-		expect(shortcuts("en", "Win32").map((row) => row.keys)).toEqual(["Ctrl+Alt+N", "Ctrl+Alt+M", "/", "Ctrl+C"]);
+		expect(shortcuts("en", "Win32").map((row) => row.keys)).toEqual([
+			"Ctrl+Alt+N",
+			"Ctrl+Alt+M",
+			"/",
+			"Ctrl+C",
+			"Alt+\u2191",
+			"Alt+\u2193",
+		]);
 		expect(shortcuts("zh", "MacIntel").map((row) => row.label)).toEqual([
 			"新建会话",
 			"切换管理视图",
 			"聚焦输入框",
 			"停止回合",
+			"跳到上一个提问",
+			"跳到下一个提问",
 		]);
 		expect(gestureKeys({ code: "KeyN", primary: true, alt: true, shift: true }, "Win32")).toBe("Ctrl+Alt+Shift+N");
 		expect(isApplePlatform("MacIntel")).toBe(true);
