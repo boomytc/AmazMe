@@ -40,15 +40,16 @@ describe("applicationMenuTemplate", () => {
 describe("applicationMenuTemplate session actions", () => {
 	test("adds a localized session submenu that calls the shell actions", () => {
 		const newSession = vi.fn();
+		const newWindow = vi.fn();
 		const settings = vi.fn();
-		const menu = applicationMenuTemplate("linux", "en", { newSession, settings });
+		const menu = applicationMenuTemplate("linux", "en", { newSession, newWindow, settings });
 		const session = menu.find(item => item.label === "Session");
 		expect(session).toBeDefined();
 		const items = session?.submenu as MenuItemConstructorOptions[];
-		expect(items.map(item => item.label)).toEqual(["New Session", "Settings"]);
-		(items[0]?.click as (() => void) | undefined)?.();
-		(items[1]?.click as (() => void) | undefined)?.();
+		expect(items.map(item => item.label)).toEqual(["New Session", "New Window", "Settings"]);
+		for (const item of items) (item.click as (() => void) | undefined)?.();
 		expect(newSession).toHaveBeenCalledOnce();
+		expect(newWindow).toHaveBeenCalledOnce();
 		expect(settings).toHaveBeenCalledOnce();
 	});
 

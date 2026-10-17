@@ -10,6 +10,7 @@ import type { MenuItemConstructorOptions } from "electron";
 
 export interface ApplicationMenuActions {
 	readonly newSession: () => void;
+	readonly newWindow: () => void;
 	readonly settings: () => void;
 }
 
@@ -38,6 +39,11 @@ export function applicationMenuTemplate(
 					label: translate(locale, "desktop.menu.newSession"),
 					accelerator: "CmdOrCtrl+Alt+N",
 					click: actions.newSession,
+				},
+				{
+					label: translate(locale, "desktop.menu.newWindow"),
+					accelerator: "CmdOrCtrl+Shift+N",
+					click: actions.newWindow,
 				},
 				{ label: translate(locale, "desktop.menu.settings"), click: actions.settings },
 			],

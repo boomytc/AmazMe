@@ -51,15 +51,19 @@ const SMOKE_EXPRESSION = `({
 })`;
 
 let host: HostSupervisor | undefined;
+/** The host URL without a deep link: what a new window opens. */
 let hostPageUrl: string | undefined;
-let window: BrowserWindow | undefined;
-let rendererReady = false;
+/** Open windows. Each has its own in-memory storage partition and its own session selection. */
+const windows = new Set<BrowserWindow>();
+const pageUrls = new Map<number, string>();
+const readiedWindows = new Set<number>();
+const windowPending = new Map<number, number>();
+let nextWindowPartition = 0;
 let shutdownPromise: Promise<void> | undefined;
 let quitReleased = false;
 let quitRequested = false;
 let showingDialog = false;
 let deferredHost: HostFailure | undefined;
-let pendingApprovals = 0;
 /** AMAZME_GUI_SESSION opens one conversation without changing the shared last-selection file. */
 const deepLinkSession = process.env.AMAZME_GUI_SESSION;
 let startupFailure: HostStartupFailure | undefined;
@@ -88,15 +92,29 @@ async function currentLocale() {
 	const current = liveWindow();
 	let documentLanguage: unknown;
 	// Constant read from the owned page, not a new renderer capability or arbitrary IPC execution.
-	if (rendererReady && current !== undefined && hostPageUrl !== undefined && current.webContents.getURL() === hostPageUrl) {
+	const pageUrl = current === undefined ? undefined : pageUrls.get(current.id);
+	if (current !== undefined && pageUrl !== undefined && readiedWindows.has(current.id) && current.webContents.getURL() === pageUrl) {
 		documentLanguage = await readDesktopDocumentLanguage(() => current.webContents.executeJavaScript("document.documentElement.lang"));
 	}
 	return desktopLocale(preference, languages, documentLanguage);
 }
 
+function liveWindows(): BrowserWindow[] {
+	return [...windows].filter((candidate) => !candidate.isDestroyed());
+}
+
+/** The window an action applies to: the focused one, else a visible one, else any open one. */
 function liveWindow(): BrowserWindow | undefined {
-	if (window === undefined || window.isDestroyed()) return undefined;
-	return window;
+	const focused = BrowserWindow.getFocusedWindow();
+	if (focused !== null && windows.has(focused) && !focused.isDestroyed()) return focused;
+	const open = liveWindows();
+	return open.find((candidate) => candidate.isVisible()) ?? open[0];
+}
+
+function totalPendingApprovals(): number {
+	let total = 0;
+	for (const count of windowPending.values()) total += count;
+	return total;
 }
 
 function showWindow(): void {
@@ -120,6 +138,9 @@ async function refreshApplicationMenu(): Promise<void> {
 			Menu.buildFromTemplate(
 				applicationMenuTemplate(process.platform, locale, {
 					newSession: () => send("new-session"),
+					newWindow: () => {
+						if (hostPageUrl !== undefined) void openWindow(hostPageUrl);
+					},
 					settings: () => send("settings"),
 				}),
 			),
@@ -142,20 +163,22 @@ async function refreshTrayMenu(): Promise<void> {
 			tray.on("double-click", showWindow);
 		}
 		const locale = await currentLocale();
-		tray.setToolTip(pendingApprovals > 0 ? `${APP_NAME} · ${pendingApprovals}` : APP_NAME);
+		const pending = totalPendingApprovals();
+		tray.setToolTip(pending > 0 ? `${APP_NAME} · ${pending}` : APP_NAME);
 		tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate(locale, {
 			show: showWindow,
 			quit: () => { void requestUserQuit(); },
-		}, pendingApprovals)));
+		}, pending)));
 	} catch (error: unknown) {
 		console.error(`desktop tray unavailable: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
 ipcMain.handle("amazme:pick-directories", async event => {
-	const current = liveWindow();
-	if (!current || event.sender !== current.webContents || event.senderFrame !== current.webContents.mainFrame
-		|| hostPageUrl === undefined || current.webContents.getURL() !== hostPageUrl || notices.quitting) return [];
+	const current = liveWindows().find((candidate) => candidate.webContents === event.sender);
+	const pageUrl = current === undefined ? undefined : pageUrls.get(current.id);
+	if (!current || pageUrl === undefined || event.senderFrame !== current.webContents.mainFrame
+		|| current.webContents.getURL() !== pageUrl || notices.quitting) return [];
 	const pending = folderPicker ??= (async () => {
 		const locale = await currentLocale();
 		if (current.isDestroyed() || notices.quitting) return [];
@@ -335,25 +358,34 @@ notices = createShellController({ presentHostFailure, presentRenderFailure });
  * to some, while this window is in the background, flashes the frame. The flash stops on focus,
  * and also when the count returns to none before then.
  */
+function updateApprovalIndicators(): void {
+	const pending = totalPendingApprovals();
+	app.dock?.setBadge(pending > 0 ? String(pending) : "");
+	void refreshTrayMenu();
+}
+
 function watchPendingApprovals(target: BrowserWindow): void {
 	let pending = 0;
 	target.on("focus", () => {
 		target.flashFrame(false);
 	});
+	target.on("closed", () => {
+		windowPending.delete(target.id);
+		updateApprovalIndicators();
+	});
 	target.webContents.on("page-title-updated", (_event, title: string) => {
 		// A hidden window cannot flash, so a rise also raises a system notification.
 		const attention = attentionOnTitle(pending, title, target.isFocused(), target.isVisible());
 		if (attention.flash !== undefined) target.flashFrame(attention.flash);
-		if (attention.notify) void announceApprovals(title, attention.pending);
+		if (attention.notify) void announceApprovals(title, attention.pending, target);
 		pending = attention.pending;
-		pendingApprovals = attention.pending;
-		app.dock?.setBadge(attention.pending > 0 ? String(attention.pending) : "");
-		void refreshTrayMenu();
+		windowPending.set(target.id, attention.pending);
+		updateApprovalIndicators();
 	});
 }
 
-/** One notification per rise; clicking it brings the window back with the approval in front. */
-async function announceApprovals(title: string, count: number): Promise<void> {
+/** One notification per rise; clicking it brings that window back with the approval in front. */
+async function announceApprovals(title: string, count: number, target: BrowserWindow): Promise<void> {
 	if (SMOKE || !Notification.isSupported()) return;
 	try {
 		const locale = await currentLocale();
@@ -361,17 +393,23 @@ async function announceApprovals(title: string, count: number): Promise<void> {
 			title: translate(locale, "desktop.notify.pending", { count: String(count) }),
 			body: title,
 		});
-		notification.on("click", showWindow);
+		notification.on("click", () => {
+			if (target.isDestroyed()) return;
+			if (target.isMinimized()) target.restore();
+			target.show();
+			target.focus();
+		});
 		notification.show();
 	} catch (error: unknown) {
 		console.error(`desktop notification unavailable: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
-async function openWindow(pageUrl: string): Promise<void> {
-	const target = withSessionDeepLink(pageUrl, deepLinkSession);
-	hostPageUrl = target;
+async function openWindow(pageUrl: string, sessionId: string | undefined = undefined): Promise<void> {
+	hostPageUrl ??= pageUrl;
+	const target = withSessionDeepLink(pageUrl, sessionId);
 	const origin = new URL(target).origin;
+	nextWindowPartition += 1;
 	const created = new BrowserWindow({
 		width: 1440,
 		height: 920,
@@ -387,12 +425,17 @@ async function openWindow(pageUrl: string): Promise<void> {
 			nodeIntegration: false,
 			sandbox: true,
 			webSecurity: true,
+			// A window is its own tab: drafts and last selection stay out of the other windows.
+			partition: `amazme-window-${nextWindowPartition}`,
 		},
 	});
+	windows.add(created);
+	pageUrls.set(created.id, target);
 	void refreshApplicationMenu();
-	window = created;
 	created.on("closed", () => {
-		if (window === created) window = undefined;
+		windows.delete(created);
+		pageUrls.delete(created.id);
+		readiedWindows.delete(created.id);
 	});
 	// `close` is before the renderer is torn down, so a render-process-gone from that teardown
 	// already sees the quitting flag and does not dialog.
@@ -423,10 +466,10 @@ async function openWindow(pageUrl: string): Promise<void> {
 			).popup({ window: created });
 		}).catch((error: unknown) => console.error(error instanceof Error ? error.message : String(error)));
 	});
-	created.webContents.on("did-start-loading", () => { rendererReady = false; });
-	created.webContents.on("did-finish-load", () => { rendererReady = true; });
+	created.webContents.on("did-start-loading", () => { readiedWindows.delete(created.id); });
+	created.webContents.on("did-finish-load", () => { readiedWindows.add(created.id); });
 	created.webContents.on("render-process-gone", (_event, details) => {
-		rendererReady = false;
+		readiedWindows.delete(created.id);
 		notices.renderProcessGone(details);
 	});
 	created.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -493,14 +536,17 @@ async function boot(): Promise<void> {
 		},
 	});
 	const pageUrl = await host.start();
-	await openWindow(pageUrl);
+	await openWindow(pageUrl, deepLinkSession);
 }
 
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
 	app.on("second-instance", showWindow);
-	app.on("activate", showWindow);
+	app.on("activate", () => {
+		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl);
+		else showWindow();
+	});
 	app.on("window-all-closed", () => {
 		if (tray === undefined || SMOKE) app.quit();
 	});
