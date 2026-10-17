@@ -20,9 +20,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
-      - name: Install ripgrep for tool tests
-        run: brew install ripgrep
-      - run: npm test --workspace @amazme/coding-agent -- --no-file-parallelism
+      - name: Install ripgrep and fd for tool tests
+        run: brew install ripgrep fd
+      - run: npm test --workspace @amazme/coding-agent
       - run: npm test --workspace @amazme/web
       - run: npm test --workspace @amazme/gui
       - name: Desktop window smoke
