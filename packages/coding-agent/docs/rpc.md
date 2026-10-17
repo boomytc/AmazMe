@@ -30,9 +30,9 @@ amazme --mode rpc --no-session
 AMAZME_RUNTIME=legacy amazme --mode rpc --no-session
 ```
 
-Events keep the RPC event names. The adapter supports `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_last_assistant_text`, `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels`, `get_session_stats`, `set_session_name`, and `get_commands`.
+Events keep the RPC event names. The adapter supports `prompt`, `steer`, `follow_up`, `abort`, `clear_queue`, `fork`, `clone`, `get_state`, `get_messages`, `get_last_assistant_text`, `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels`, `get_session_stats`, `set_session_name`, and `get_commands`.
 
-Commands that depend on the JSONL session tree, extension UI, shell bookkeeping, queue text, HTML export, or JSONL switching (`new_session`, `switch_session`, `fork`, `clone`, `get_entries`, `get_tree`, `export_html`, `bash`, `compact`, `clear_queue`, and the queue/retry toggles) return an explicit unsupported error. They are not silently approximated. See [Durable single-kernel migration](../../../docs/durable-migration.md).
+Commands that depend on the JSONL session tree, extension UI, shell bookkeeping, queue text, HTML export, or JSONL switching (`new_session`, `switch_session`, `get_entries`, `get_tree`, `export_html`, `bash`, `compact`, and the queue/retry toggles) return an explicit unsupported error. They are not silently approximated. See [Durable single-kernel migration](../../../docs/durable-migration.md).
 
 ## Protocol records
 

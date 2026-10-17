@@ -18,6 +18,7 @@ import {
 	type ModelRef,
 	type SettledSubmissionRecord,
 	type Submission,
+	type InboxItem,
 	type TaskGraph,
 	type SessionEnd,
 	watchEvents } from "@amazme/durable";
@@ -187,6 +188,10 @@ export interface DurableController {
 	cancelLeave(): void;
 	/** Fork the shown conversation at its newest entry and switch to the fork. */
 	fork(): Promise<void>;
+	/** Fork the shown conversation at `entryId`, or at its newest entry when omitted. */
+	forkAt(entryId?: string): Promise<void>;
+	/** Withdraw queued steering and follow-up inputs, returning their text. */
+	clearQueue(): Promise<{ steering: string[]; followUp: string[] }>;
 	/** Page one older slice of stored history above the transcript. */
 	loadOlder(): Promise<void>;
 }
@@ -231,6 +236,19 @@ export interface OpenDurableResult {
 /** The agent document of a view; absent while the conversation has none. */
 export function agentOf(view: ConversationView): AgentState {
 	return (view.docs["amazme.agent"] ?? {}) as AgentState;
+}
+
+function inputText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((part) => {
+			if (typeof part !== "object" || part === null || !("type" in part)) return [];
+			if (part.type === "text" && "text" in part && typeof part.text === "string") return [part.text];
+			if (part.type === "image") return ["[Image]"];
+			return [];
+		})
+		.join("\n");
 }
 
 export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenDurableResult> {
@@ -887,6 +905,30 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				command(async () => {
 					const created = await forkAt(opened, String(current.id), null, context);
 					await show(created.id);
+				}),
+			forkAt: (entryId) =>
+				command(async () => {
+					const created = await forkAt(opened, String(current.id), entryId ?? null, context);
+					await show(created.id);
+				}),
+			clearQueue: () =>
+				commandResult(async () => {
+					const state = await current.viewState(context);
+					try {
+						const inbox = state.value.docs["amazme.inbox"] as { items?: readonly InboxItem[] } | undefined;
+						const steering: string[] = [];
+						const followUp: string[] = [];
+						for (const item of inbox?.items ?? []) {
+							if (item.mode !== "steer" && item.mode !== "followUp") continue;
+							const text = inputText(item.content);
+							const outcome = await opened.cancelPrompt(item.id, context, current.id);
+							if (outcome !== "cancelled") continue;
+							(item.mode === "steer" ? steering : followUp).push(text);
+						}
+						return { steering, followUp };
+					} finally {
+						state.dispose();
+					}
 				}),
 			loadOlder: () =>
 				command(async () => {

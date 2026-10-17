@@ -8,6 +8,7 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createDurableRpcHandler } from "../src/modes/rpc/durable-rpc.ts";
 import { openDurable, type OpenDurableResult } from "../src/durable/runtime.ts";
+import { pendingResponse } from "./experimental-durable-support.ts";
 
 describe("durable RPC handler", () => {
 	let directory: string;
@@ -89,6 +90,21 @@ describe("durable RPC handler", () => {
 		if (messages.success && messages.command === "get_messages") {
 			expect(messages.data.messages.some((message) => message.role === "assistant")).toBe(true);
 		}
+	});
+
+	it("clears queued follow-ups and forks the current conversation", async () => {
+		const pending = pendingResponse();
+		faux.setResponses([pending.step]);
+		await handle({ type: "prompt", message: "start" });
+		await vi.waitFor(() => expect(durable.view.current().lane.run).not.toBe("idle"));
+		await handle({ type: "follow_up", message: "queued one" });
+		await handle({ type: "follow_up", message: "queued two" });
+		const cleared = await handle({ type: "clear_queue" });
+		expect(cleared).toMatchObject({ success: true, command: "clear_queue", data: { steering: [], followUp: ["queued one", "queued two"] } });
+		await handle({ type: "abort" });
+
+		const forked = await handle({ type: "fork", entryId: String(durable.view.current().conversation.entries[0]?.id) });
+		expect(forked).toMatchObject({ success: true, command: "fork", data: { cancelled: false } });
 	});
 
 	it("selects models by full identity and reports unsupported commands", async () => {

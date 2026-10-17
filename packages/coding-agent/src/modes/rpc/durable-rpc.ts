@@ -206,7 +206,13 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 			case "get_commands":
 				return success(id, "get_commands", { commands: commands() });
 			case "clear_queue":
-				return unsupported(id, command.type, "queued input cannot be listed or withdrawn through this adapter");
+				return success(id, "clear_queue", await durable.controller.clearQueue());
+			case "fork":
+				await durable.controller.forkAt(command.entryId);
+				return success(id, "fork", { text: "", cancelled: false });
+			case "clone":
+				await durable.controller.forkAt();
+				return success(id, "clone", { cancelled: false });
 			case "new_session":
 			case "set_steering_mode":
 			case "set_follow_up_mode":
@@ -218,8 +224,6 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 			case "abort_bash":
 			case "export_html":
 			case "switch_session":
-			case "fork":
-			case "clone":
 			case "get_fork_messages":
 			case "get_entries":
 			case "get_tree":

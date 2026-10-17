@@ -36,7 +36,7 @@
 - JSON 流保持既有事件名（`agent_start`、`message_start`、`message_update`、`message_end`、工具与压缩事件），并新增 `storage: "durable"` 会话头；这是展示协议，不是新的持久格式。
 - `--no-session` 使用 MemoryStorage；`--session-dir`、`--continue`、`--name`、模型/推理/凭据、工具选择、资源、MCP 与原生 facet 继续沿用 Durable 路径。
 - 不支持的旧 JSONL 标志（`--session`、`--session-id`、`--fork`）和 SDK 内联扩展工厂在打开存储前明确拒绝，避免静默换语义。
-- RPC 的 Durable 路径支持 `prompt`、`steer`、`follow_up`、`abort`、`get_state`、`get_messages`、`get_last_assistant_text`、模型/推理选择、`get_session_stats`、`set_session_name`、`get_commands`。事件沿用 RPC 事件名。
+- RPC 的 Durable 路径支持 `prompt`、`steer`、`follow_up`、`abort`、`clear_queue`、`fork`、`clone`、`get_state`、`get_messages`、`get_last_assistant_text`、模型/推理选择、`get_session_stats`、`set_session_name`、`get_commands`。事件沿用 RPC 事件名。
 - RPC 中依赖 JSONL 树、扩展 UI、HTML 导出、shell 记录或队列文本的命令（`new_session`、`switch_session`、`fork`、`clone`、`bash`、`compact`、`clear_queue`、`get_entries`、`get_tree`、`export_html` 等）返回明确的 unsupported 错误，不伪造结果。
 
 未落地：
