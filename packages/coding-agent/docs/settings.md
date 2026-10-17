@@ -145,6 +145,7 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
 | `terminal.imageWidthCells` | number | `60` | Preferred inline image width in terminal cells. |
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when rendered content shrinks. |
 | `terminal.showTerminalProgress` | boolean | `false` | Show OSC 9;4 progress in the terminal tab. |
+| `terminal.showTimeline` | boolean | `false` | Show a per-turn tick rail in the fullscreen scrollbar column. |
 | `terminal.renderIntervalMs` | number | `16` | Minimum time between throttled frames (0–100 ms). Raise it on slow links; lower it on high-refresh displays. Also `AMAZME_RENDER_INTERVAL_MS`. |
 | `terminal.hyperlinks` | `boolean \| "auto"` | `"auto"` | Override OSC 8 hyperlink detection. |
 | `terminal.images` | `"kitty" \| "iterm2" \| "auto" \| false` | `"auto"` | Override inline-image protocol detection. |

@@ -1374,6 +1374,17 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getShowTimeline(): boolean {
+		return this.settings.terminal?.showTimeline ?? SETTINGS_DEFAULTS.terminal.showTimeline;
+	}
+
+	setShowTimeline(show: boolean): void {
+		if (!this.globalSettings.terminal) this.globalSettings.terminal = {};
+		this.globalSettings.terminal.showTimeline = show;
+		this.markModified("terminal", "showTimeline");
+		this.save();
+	}
+
 	getRenderIntervalMs(): number {
 		if (this.settings.terminal?.renderIntervalMs !== undefined) {
 			return this.settings.terminal.renderIntervalMs;

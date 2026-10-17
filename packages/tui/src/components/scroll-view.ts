@@ -12,6 +12,8 @@ export interface ScrollViewOptions {
 	scrollbarTrackStyle?: (text: string) => string;
 	scrollbarThumbStyle?: (text: string) => string;
 	scrollbarHideDelayMs?: number;
+	/** Marker for one content line in the scrollbar column; undefined keeps the track. */
+	scrollRail?: (contentLine: number) => string | undefined;
 }
 
 export interface ScrollViewScrollToOptions {
@@ -26,6 +28,8 @@ export class ScrollView extends Container {
 	readonly overscroll: "chain" | "contain";
 	readonly scrollbarTrackStyle: (text: string) => string;
 	readonly scrollbarThumbStyle: (text: string) => string;
+	/** Optional per-content-line marker painted in the scrollbar column. */
+	readonly scrollRail?: (contentLine: number) => string | undefined;
 	private currentScrollbar: ScrollViewScrollbar;
 	private readonly scrollbarHideDelayMs: number;
 	private currentScrollTop = 0;
@@ -53,6 +57,7 @@ export class ScrollView extends Container {
 		this.scrollbarTrackStyle = options.scrollbarTrackStyle ?? ((text) => `\x1b[90m${text}\x1b[39m`);
 		this.scrollbarThumbStyle = options.scrollbarThumbStyle ?? ((text) => `\x1b[37m${text}\x1b[39m`);
 		this.scrollbarHideDelayMs = Math.max(0, Math.floor(options.scrollbarHideDelayMs ?? 1000));
+		this.scrollRail = options.scrollRail;
 	}
 
 	get scrollTop(): number {

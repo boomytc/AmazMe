@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { chatRowLineRange } from "../src/modes/interactive/transcript-geometry.ts";
+import { chatRowLineRange, turnStartLines } from "../src/modes/interactive/transcript-geometry.ts";
 
 function block(lines: number, name: string) {
 	return {
@@ -32,5 +32,26 @@ describe("chatRowLineRange", () => {
 	test("returns undefined when the chat container is not in the document", () => {
 		const chat = block(0, "chat");
 		expect(chatRowLineRange([block(1, "other")], chat, [block(1, "a")], 0, 80)).toBeUndefined();
+	});
+});
+
+describe("turnStartLines", () => {
+	test("returns one offset per prompt in document order", () => {
+		const header = block(2, "header");
+		const chat = block(0, "chat");
+		const first = { render: () => ["a", "b"], transcriptTurnStart: true };
+		const answer = block(3, "answer");
+		const second = { render: () => ["c"], transcriptTurnStart: true };
+		const after = block(2, "after");
+
+		expect(turnStartLines([header, chat], chat, [first, answer, second, after], 80)).toEqual([2, 7]);
+	});
+
+	test("ignores width zero and returns no turns for a document without the chat", () => {
+		const chat = block(0, "chat");
+		const rows = [{ render: () => ["a"], transcriptTurnStart: true }];
+
+		expect(turnStartLines([chat], chat, rows, 0)).toEqual([]);
+		expect(turnStartLines([block(1, "other")], chat, rows, 80)).toEqual([]);
 	});
 });

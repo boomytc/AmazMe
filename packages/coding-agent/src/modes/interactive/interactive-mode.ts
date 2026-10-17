@@ -74,7 +74,7 @@ import { InteractiveComposer, promptShortcutLine, turnCancelHint, turnCancelNoti
 import { compactStartupHints, expandedStartupHints, startupHelpHint } from "./startup-hints.ts";
 import { promptOwnsKey, routeInteractiveInput } from "./interactive-input.ts";
 import { TranscriptFocus } from "./transcript-focus.ts";
-import { chatRowLineRange } from "./transcript-geometry.ts";
+import { chatRowLineRange, turnStartLines } from "./transcript-geometry.ts";
 import { deriveTranscriptRows } from "./transcript-model.ts";
 import { deriveRunState, type RunState } from "./run-state.ts";
 import { BashRunTable, ParentTranscript, syncComposerVisibility, WorkSurface } from "./work-surface.ts";
@@ -516,6 +516,7 @@ export class InteractiveMode {
 	private transcriptSearchInput: Input | undefined;
 	private transcriptSearchLabel: Text | undefined;
 	private transcriptSearchQuery: string | undefined;
+	private timelineCache: { children: number; width: number; at: number; lines: ReadonlySet<number> } | undefined;
 	private workSurface!: WorkSurface;
 	private readonly parentTranscript = new ParentTranscript();
 	private readonly bashRuns = new BashRunTable();
@@ -1078,6 +1079,7 @@ export class InteractiveMode {
 
 		// Keep one component tree and remount it when changing renderers.
 		this.renderWidgets(); // Initialize with default spacer
+		const showTimeline = this.settingsManager.getShowTimeline();
 		const viewport = createChatViewport({
 			statusBar: this.statusBar,
 			document: this.documentContainer,
@@ -1088,9 +1090,10 @@ export class InteractiveMode {
 			editor: this.editorContainer,
 			widgetsBelow: this.widgetContainerBelow,
 			footer: this.footerContainer,
-			scrollbar: this.settingsManager.getFullscreenScrollbar(),
+			scrollbar: showTimeline ? "always" : this.settingsManager.getFullscreenScrollbar(),
 			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
 			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
+			...(showTimeline ? { scrollRail: this.transcriptRail } : {}),
 		});
 		this.transcriptScrollView = viewport.transcript;
 		this.fullscreenLayoutRoot = viewport.root;
@@ -7453,6 +7456,29 @@ export class InteractiveMode {
 		this.editorContainer.addChild(this.editor as Component);
 		this.ui.setFocus(this.editor);
 		this.ui.requestRender();
+	}
+
+	/** One marker per conversation turn for the scrollbar column. */
+	private readonly transcriptRail = (contentLine: number): string | undefined =>
+		this.timelineTurnLines().has(contentLine) ? "●" : undefined;
+
+	/**
+	 * Turn offsets are cached briefly: the rail asks per painted row, while recomputing
+	 * requires laying out the whole document. Folding shifts ticks by at most one refresh.
+	 */
+	private timelineTurnLines(): ReadonlySet<number> {
+		const width = this.transcriptScrollView?.getContentWidth(this.ui.terminal.columns) ?? 0;
+		const children = this.chatContainer.children.length;
+		const now = Date.now();
+		const cache = this.timelineCache;
+		if (cache && cache.width === width && cache.children === children && now - cache.at < 500) {
+			return cache.lines;
+		}
+		const lines = new Set(
+			turnStartLines(this.documentContainer.children, this.chatContainer, this.chatContainer.children, width),
+		);
+		this.timelineCache = { children, width, at: now, lines };
+		return lines;
 	}
 
 	/** Scrolls a chat row into the viewport without moving the view when it is already visible. */

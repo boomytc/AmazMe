@@ -52,6 +52,7 @@ export const SETTINGS_DEFAULTS = {
 		clearOnShrink: false,
 		showTerminalProgress: false,
 		renderIntervalMs: 16,
+		showTimeline: false,
 	},
 	images: {
 		autoResize: true,

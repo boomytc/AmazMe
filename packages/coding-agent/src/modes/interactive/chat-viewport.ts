@@ -13,6 +13,8 @@ export interface ChatViewportOptions {
 	readonly scrollbar?: ScrollViewScrollbar;
 	readonly scrollbarTrackStyle?: (text: string) => string;
 	readonly scrollbarThumbStyle?: (text: string) => string;
+	/** Per-content-line marker painted in the scrollbar column. */
+	readonly scrollRail?: (contentLine: number) => string | undefined;
 }
 
 export interface ChatViewport {
@@ -29,6 +31,7 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
 		scrollbar: options.scrollbar ?? "auto",
 		...(options.scrollbarTrackStyle === undefined ? {} : { scrollbarTrackStyle: options.scrollbarTrackStyle }),
 		...(options.scrollbarThumbStyle === undefined ? {} : { scrollbarThumbStyle: options.scrollbarThumbStyle }),
+		...(options.scrollRail === undefined ? {} : { scrollRail: options.scrollRail }),
 	});
 	return { transcript, root: createScreenViewport(transcript, options) };
 }

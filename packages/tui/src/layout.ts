@@ -314,9 +314,12 @@ function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): v
 		const row = geometry.trackTop + offset;
 		if (row < box.clip.y || row >= box.clip.y + box.clip.height || row < 0 || row >= screen.length) continue;
 		const isThumb = row >= geometry.thumbTop && row < geometry.thumbTop + geometry.thumbHeight;
+		const railMarker = box.scrollView.scrollRail?.(box.scrollView.scrollTop + offset);
 		const replacement = isThumb
 			? box.scrollView.scrollbarThumbStyle(box.scrollView.isScrollbarActive ? "█" : "┃")
-			: box.scrollView.scrollbarTrackStyle("│");
+			: railMarker === undefined
+				? box.scrollView.scrollbarTrackStyle("│")
+				: box.scrollView.scrollbarTrackStyle(railMarker);
 		screen[row] = replaceScrollbarCell(
 			screen[row] ?? "",
 			geometry.column,

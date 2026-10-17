@@ -131,6 +131,12 @@ const TerminalSettingsSchema = Type.Object({
 			default: SETTINGS_DEFAULTS.terminal.showTerminalProgress,
 		}),
 	),
+	showTimeline: Type.Optional(
+		Type.Boolean({
+			description: "Show a per-turn tick rail in the scrollbar column of the fullscreen transcript.",
+			default: SETTINGS_DEFAULTS.terminal.showTimeline,
+		}),
+	),
 	renderIntervalMs: Type.Optional(
 		Type.Number({
 			minimum: 0,
