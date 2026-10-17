@@ -33,6 +33,7 @@ export class BashExecutionComponent extends Container {
 	private startedAt = Date.now();
 	private endedAt: number | undefined;
 	readonly transcriptRowText = (): string => `$ ${this.command}\n${this.getOutput()}`.trimEnd();
+	readonly transcriptRowExpanded = (): boolean => this.expanded;
 	private contentContainer: Container;
 	private readonly frame: ToolBlockFrame;
 	/** `dim` marks `!!` commands, whose output is excluded from the model context. */

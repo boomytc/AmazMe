@@ -29,6 +29,8 @@ export interface TranscriptRowSource {
 	open?(): void;
 	/** Renders the row as the one arrow keys act on. */
 	setSelected?(selected: boolean): void;
+	/** Current fold state, when the row can report it, so a toggle can invert it. */
+	transcriptRowExpanded?: () => boolean;
 }
 
 export interface TranscriptRow {
@@ -48,6 +50,7 @@ export interface TranscriptRow {
 	readonly setExpanded?: (expanded: boolean) => void;
 	readonly open?: () => void;
 	readonly setSelected?: (selected: boolean) => void;
+	readonly expanded?: () => boolean;
 }
 
 export interface TranscriptChildRecord {
@@ -99,6 +102,9 @@ export function deriveTranscriptRows(
 			...(source.setSelected === undefined
 				? {}
 				: { setSelected: (selected: boolean) => source.setSelected?.(selected) }),
+			...(source.transcriptRowExpanded === undefined
+				? {}
+				: { expanded: () => source.transcriptRowExpanded?.() ?? false }),
 		});
 	}
 	for (const record of records) {
@@ -223,6 +229,13 @@ export class TranscriptModel {
 		row.setExpanded(expanded);
 		this.pinned.add(row.id);
 		return true;
+	}
+
+	/** Inverts the selected row's fold state, without a caller needing to know it. */
+	toggleSelected(): boolean {
+		const row = this.selected;
+		if (!row?.expandable) return false;
+		return this.setSelectedExpanded(!(row.expanded?.() ?? false));
 	}
 
 	/** Chat-container positions of hand-folded rows, for callers that apply a global default. */

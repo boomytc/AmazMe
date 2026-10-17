@@ -23,6 +23,7 @@ class Row implements TranscriptRowSource {
 	setSelected(selected: boolean): void {
 		this.selected = selected;
 	}
+	transcriptRowExpanded = (): boolean => this.expanded;
 }
 
 const DOWN = "\x1b[B";
@@ -194,6 +195,47 @@ describe("TranscriptFocus", () => {
 		expect(focus.selected).toBe(2);
 		expect(focus.handleInput("N")).toBe(true);
 		expect(focus.selected).toBe(0);
+	});
+
+	test("vim keys navigate only when vim mode is enabled", () => {
+		let vim = false;
+		const first = new Row("p1", { turnStart: true, text: "first prompt" });
+		const answer = new Row("a1", { text: "answer" });
+		const second = new Row("p2", { turnStart: true, text: "second prompt" });
+		const copies: string[] = [];
+		const focus = new TranscriptFocus(
+			() => {},
+			() => deriveTranscriptRows([first, answer, second], [], () => {}),
+			10,
+			{ vimMode: () => vim, onCopy: (text) => copies.push(text) },
+		);
+		focus.handleInput("\t");
+
+		expect(focus.handleInput("j")).toBe(false);
+		vim = true;
+
+		expect(focus.handleInput("j")).toBe(true);
+		expect(focus.selected).toBe(1);
+		expect(focus.handleInput("k")).toBe(true);
+		expect(focus.selected).toBe(0);
+
+		expect(focus.handleInput("G")).toBe(true);
+		expect(focus.selected).toBe(2);
+		expect(focus.handleInput("g")).toBe(true);
+		expect(focus.selected).toBe(0);
+
+		expect(focus.handleInput("L")).toBe(true);
+		expect(focus.selected).toBe(2);
+		expect(focus.handleInput("H")).toBe(true);
+		expect(focus.selected).toBe(0);
+
+		expect(focus.handleInput("e")).toBe(true);
+		expect(first.expanded).toBe(true);
+		expect(focus.handleInput("e")).toBe(true);
+		expect(first.expanded).toBe(false);
+
+		expect(focus.handleInput("y")).toBe(true);
+		expect(copies).toEqual(["first prompt"]);
 	});
 
 	test("toggles every entry with the fold-all binding", () => {

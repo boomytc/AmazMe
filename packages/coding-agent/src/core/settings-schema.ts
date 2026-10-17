@@ -308,6 +308,12 @@ export const SettingsSchema = Type.Object(
 		compaction: Type.Optional(CompactionSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
+		transcriptVimMode: Type.Optional(
+			Type.Boolean({
+				description: "Use vim-style keys (j/k, H/L, g/G, e) to navigate the transcript.",
+				default: SETTINGS_DEFAULTS.transcriptVimMode,
+			}),
+		),
 		hideThinkingBlock: Type.Optional(
 			Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock }),
 		),

@@ -41,6 +41,20 @@ The prompt jumps are the shared `tui.altScreen.previousPrompt` and `tui.altScree
 
 Folding one entry by hand pins it: the global tool-output toggle (`Ctrl+O`) leaves pinned entries alone, while `Ctrl+E` clears the pins and applies one state to everything.
 
+### Vim navigation
+
+Set `transcriptVimMode` in the settings (or run `/vim-mode`) to use these keys while the transcript has focus:
+
+| Key | Behavior |
+|---|---|
+| `j`, `k` | Select the next or previous entry |
+| `H`, `L` | Jump to the previous or next prompt |
+| `g`, `G` | Go to the first or last entry |
+| `e` | Fold or unfold the selected entry |
+| `y` | Copy the selected entry |
+
+Arrow keys, `Tab`, `Esc`, and every `Ctrl` chord keep working the same way; the single-letter keys only apply while the transcript has the keyboard.
+
 `/find <text>` searches entry labels and copyable text; `/find` alone opens the search box, where Enter advances through matches and Esc returns to the prompt. Fullscreen keeps its rendered-cell search, which also highlights the matching characters.
 
 ## Keyboard ownership

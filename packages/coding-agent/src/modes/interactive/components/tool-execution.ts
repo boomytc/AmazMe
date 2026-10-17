@@ -63,6 +63,7 @@ export class ToolExecutionComponent extends Container {
 	};
 	private hideComponent = false;
 	readonly transcriptRowText = (): string => this.plainText();
+	readonly transcriptRowExpanded = (): boolean => this.expanded;
 
 	constructor(
 		toolName: string,

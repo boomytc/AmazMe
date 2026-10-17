@@ -15,6 +15,7 @@ export const SETTINGS_DEFAULTS = {
 	runLimits: { calls: 0, seconds: 0, cost: 0 },
 	archiveRetentionDays: 0,
 	showWelcome: true,
+	transcriptVimMode: false,
 	transport: "auto",
 	sessionShareDestination: "auto",
 	steeringMode: "one-at-a-time",

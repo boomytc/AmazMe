@@ -1334,6 +1334,16 @@ export class SettingsManager {
 		};
 	}
 
+	getTranscriptVimMode(): boolean {
+		return this.settings.transcriptVimMode ?? SETTINGS_DEFAULTS.transcriptVimMode;
+	}
+
+	setTranscriptVimMode(enabled: boolean): void {
+		this.globalSettings.transcriptVimMode = enabled;
+		this.markModified("transcriptVimMode");
+		this.save();
+	}
+
 	getShowImages(): boolean {
 		return this.settings.terminal?.showImages ?? SETTINGS_DEFAULTS.terminal.showImages;
 	}

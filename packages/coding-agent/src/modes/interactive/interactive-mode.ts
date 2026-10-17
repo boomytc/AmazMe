@@ -3348,6 +3348,7 @@ export class InteractiveMode {
 				onCopy: (text) => void this.copyWithFeedback(text),
 				onRowSelected: (childIndex) => this.scrollTranscriptRowIntoView(childIndex),
 				onViewText: (text) => this.showBlockViewer(text),
+				vimMode: () => this.settingsManager.getTranscriptVimMode(),
 			},
 		);
 		this.workSurface = new WorkSurface(
@@ -3776,6 +3777,13 @@ export class InteractiveMode {
 			if (text === "/changelog") {
 				this.handleChangelogCommand();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/vim-mode") {
+				const enabled = !this.settingsManager.getTranscriptVimMode();
+				this.settingsManager.setTranscriptVimMode(enabled);
+				this.editor.setText("");
+				this.showStatus(`Transcript navigation: ${enabled ? "vim" : "simple"}`);
 				return;
 			}
 			if (text === "/hotkeys") {

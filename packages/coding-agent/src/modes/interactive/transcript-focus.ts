@@ -11,6 +11,8 @@ export interface TranscriptFocusOptions {
 	onRowSelected?(childIndex: number): void;
 	/** Opens the selected row's text in the caller's viewer when the row has no open action. */
 	onViewText?(text: string): void;
+	/** Vim-style single-letter navigation; off by default. */
+	vimMode?: () => boolean;
 }
 
 /**
@@ -148,6 +150,7 @@ export class TranscriptFocus {
 			this.options.onCopy(text);
 			return true;
 		}
+		if (this.vimNavigation(data)) return true;
 		if (matchesKey(data, "up") || matchesKey(data, "down")) {
 			this.model.move(matchesKey(data, "up") ? -1 : 1);
 			this.applySelection();
@@ -185,6 +188,40 @@ export class TranscriptFocus {
 	}
 
 	/** Keep exactly one row marked, and only while the transcript owns the keyboard. */
+	/** j/k, H/L, g/G, e, and y in scrollback focus when vim mode is on. */
+	private vimNavigation(data: string): boolean {
+		if (this.options.vimMode?.() !== true) return false;
+		if (matchesKey(data, "j") || matchesKey(data, "k")) {
+			this.model.move(matchesKey(data, "j") ? 1 : -1);
+			this.applySelection();
+			this.reveal();
+			this.highlight();
+			return true;
+		}
+		if (matchesKey(data, "shift+h")) return this.jumpTurn(-1);
+		if (matchesKey(data, "shift+l")) return this.jumpTurn(1);
+		if (matchesKey(data, "g") || matchesKey(data, "shift+g")) {
+			const last = this.model.rows.length - 1;
+			if (last < 0) return false;
+			this.model.select(matchesKey(data, "g") ? 0 : last);
+			this.applySelection();
+			this.reveal();
+			this.highlight();
+			return true;
+		}
+		if (matchesKey(data, "e")) {
+			this.model.toggleSelected();
+			return true;
+		}
+		if (matchesKey(data, "y")) {
+			const text = this.model.selectedText();
+			if (text === undefined || this.options.onCopy === undefined) return false;
+			this.options.onCopy(text);
+			return true;
+		}
+		return false;
+	}
+
 	/** Ask the owner to scroll the selected row into view. */
 	private reveal(): void {
 		const childIndex = this.model.selected?.childIndex;
