@@ -138,6 +138,30 @@ describe("TranscriptModel", () => {
 		expect(model.setSelectedExpanded(true)).toBe(false);
 	});
 
+	test("pins rows the user folds and lets a bulk fold clear the pins", () => {
+		const model = new TranscriptModel();
+		model.setRows(rows());
+
+		expect(model.setSelectedExpanded(true)).toBe(true);
+		expect(model.pinnedChildIndexes()).toEqual([0]);
+		model.select(1);
+		expect(model.setSelectedExpanded(false)).toBe(true);
+		expect(model.pinnedChildIndexes()).toEqual([0, 1]);
+
+		expect(model.expandAll(true)).toBe(4);
+		expect(model.pinnedChildIndexes()).toEqual([]);
+	});
+
+	test("drops pins for rows that leave the conversation", () => {
+		const model = new TranscriptModel();
+		model.setRows(rows());
+		model.setSelectedExpanded(true);
+		expect(model.pinnedChildIndexes()).toEqual([0]);
+
+		model.setRows(rows().slice(1));
+		expect(model.pinnedChildIndexes()).toEqual([]);
+	});
+
 	test("opens only openable rows", () => {
 		let opened = 0;
 		const model = new TranscriptModel();

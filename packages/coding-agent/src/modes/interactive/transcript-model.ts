@@ -124,6 +124,8 @@ export class TranscriptModel {
 	private items: TranscriptRow[] = [];
 	private selectedIndexValue = 0;
 	private selectedIdValue: string | undefined;
+	/** Rows the user folded or unfolded by hand; bulk actions leave them alone. */
+	private readonly pinned = new Set<string>();
 
 	get rows(): readonly TranscriptRow[] {
 		return this.items;
@@ -148,6 +150,10 @@ export class TranscriptModel {
 	 */
 	setRows(rows: readonly TranscriptRow[]): void {
 		this.items = [...rows];
+		const live = new Set(this.items.map((row) => row.id));
+		for (const id of this.pinned) {
+			if (!live.has(id)) this.pinned.delete(id);
+		}
 		if (this.items.length === 0) {
 			this.selectedIndexValue = 0;
 			this.selectedIdValue = undefined;
@@ -196,8 +202,12 @@ export class TranscriptModel {
 		return undefined;
 	}
 
-	/** Fold or unfold every expandable row. Returns how many rows accepted the new state. */
+	/**
+	 * Fold or unfold every expandable row. This is the bulk action, so it clears the
+	 * manual pins first: a hand-folded row follows the bulk state again.
+	 */
 	expandAll(expanded: boolean): number {
+		this.pinned.clear();
 		let changed = 0;
 		for (const row of this.items) {
 			if (!row.expandable || row.setExpanded === undefined) continue;
@@ -211,7 +221,15 @@ export class TranscriptModel {
 		const row = this.selected;
 		if (!row?.expandable || row.setExpanded === undefined) return false;
 		row.setExpanded(expanded);
+		this.pinned.add(row.id);
 		return true;
+	}
+
+	/** Chat-container positions of hand-folded rows, for callers that apply a global default. */
+	pinnedChildIndexes(): number[] {
+		return this.items.flatMap((row) =>
+			this.pinned.has(row.id) && row.childIndex !== undefined ? [row.childIndex] : [],
+		);
 	}
 
 	openSelected(): boolean {

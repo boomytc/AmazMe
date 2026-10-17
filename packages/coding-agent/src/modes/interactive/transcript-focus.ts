@@ -9,6 +9,8 @@ export interface TranscriptFocusOptions {
 	onCopy?(text: string): void;
 	/** Receives the selected row's chat-container position so the caller can scroll it into view. */
 	onRowSelected?(childIndex: number): void;
+	/** Opens the selected row's text in the caller's viewer when the row has no open action. */
+	onViewText?(text: string): void;
 }
 
 /**
@@ -90,6 +92,11 @@ export class TranscriptFocus {
 		this.searchQueryValue = undefined;
 	}
 
+	pinnedChildIndexes(): number[] {
+		this.sync();
+		return this.model.pinnedChildIndexes();
+	}
+
 	/** One-based match position for the active query, recomputed against the current rows. */
 	searchProgress(): { query: string; index: number; total: number } | undefined {
 		const query = this.searchQueryValue;
@@ -153,7 +160,11 @@ export class TranscriptFocus {
 			return true;
 		}
 		if (matchesKey(data, "enter")) {
-			this.model.openSelected();
+			if (this.model.openSelected()) return true;
+			const text = this.model.selectedText();
+			if (text !== undefined && this.options.onViewText !== undefined) {
+				this.options.onViewText(text);
+			}
 			return true;
 		}
 		return false;

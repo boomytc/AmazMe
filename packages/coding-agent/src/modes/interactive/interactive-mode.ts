@@ -156,6 +156,7 @@ import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
+import { BlockViewer } from "./components/block-viewer.ts";
 import { ClipboardFeedback } from "./components/clipboard-feedback.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -525,6 +526,7 @@ export class InteractiveMode {
 	private statusBar!: SessionTopBar;
 	private contextOverlay: { hide(): void; focus(): void } | undefined;
 	private processOverlay: { hide(): void; focus(): void } | undefined;
+	private blockOverlay: { hide(): void; focus(): void } | undefined;
 	private footerDataProvider: FooterDataProvider;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
@@ -3345,6 +3347,7 @@ export class InteractiveMode {
 				},
 				onCopy: (text) => void this.copyWithFeedback(text),
 				onRowSelected: (childIndex) => this.scrollTranscriptRowIntoView(childIndex),
+				onViewText: (text) => this.showBlockViewer(text),
 			},
 		);
 		this.workSurface = new WorkSurface(
@@ -3499,6 +3502,19 @@ export class InteractiveMode {
 		} catch {
 			this.dashboardDisk = [];
 		}
+		this.ui.requestRender();
+	}
+
+	private showBlockViewer(text: string): void {
+		const width = Math.min(100, Math.max(40, this.ui.terminal.columns - 4));
+		this.blockOverlay?.hide();
+		const viewer = new BlockViewer("Block", text, () => {
+			this.blockOverlay?.hide();
+			this.blockOverlay = undefined;
+			this.ui.requestRender();
+		});
+		this.blockOverlay = this.ui.showOverlay(viewer, { anchor: "center", width, maxHeight: "80%" });
+		this.blockOverlay.focus();
 		this.ui.requestRender();
 	}
 
@@ -5110,12 +5126,14 @@ export class InteractiveMode {
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
+		const pinned = new Set(this.transcriptFocus?.pinnedChildIndexes() ?? []);
 		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
-			for (const child of container.children) {
-				if (isExpandable(child)) {
-					child.setExpanded(expanded);
-				}
-			}
+			container.children.forEach((child, index) => {
+				if (!isExpandable(child)) return;
+				// A block the user folded or unfolded by hand keeps that choice.
+				if (container === this.chatContainer && pinned.has(index)) return;
+				child.setExpanded(expanded);
+			});
 		}
 		this.showStatus(`Tool output: ${expanded ? "expanded" : "collapsed"}`);
 	}
@@ -7512,9 +7530,9 @@ These main-editor controls take precedence over the configured bindings below.
 |-----|--------|
 | \`Up\` / \`Down\` | Select the previous or next entry |
 | \`Left\` / \`Right\` | Fold or unfold the selected entry |
-| \`Enter\` | Open the selected subagent |
+| \`Enter\` | Open the selected subagent, or the selected block in a viewer |
 | \`${promptPrev}\` / \`${promptNext}\` | Jump to the previous or next prompt |
-| \`${foldAll}\` | Fold or unfold every entry |
+| \`${foldAll}\` | Fold or unfold every entry, clearing manual folds |
 | \`${copySelected}\` | Copy the selected entry |
 | \`${searchNext}\` / \`${searchPrevious}\` | Next or previous \`/find\` match |
 | \`PageUp\` / \`PageDown\` | Scroll by page |

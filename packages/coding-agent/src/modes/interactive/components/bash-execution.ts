@@ -32,6 +32,7 @@ export class BashExecutionComponent extends Container {
 	/** Elapsed time uses the same wording as tool renderers (`Took 4.2s`). */
 	private startedAt = Date.now();
 	private endedAt: number | undefined;
+	readonly transcriptRowText = (): string => `$ ${this.command}\n${this.getOutput()}`.trimEnd();
 	private contentContainer: Container;
 	private readonly frame: ToolBlockFrame;
 	/** `dim` marks `!!` commands, whose output is excluded from the model context. */

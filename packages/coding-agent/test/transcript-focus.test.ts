@@ -41,6 +41,7 @@ function harness() {
 	const highlights: (string | undefined)[] = [];
 	const copies: string[] = [];
 	const revealed: number[] = [];
+	const viewed: string[] = [];
 	let openChild = 0;
 	const focus = new TranscriptFocus(
 		(lines) => scrolls.push(lines),
@@ -50,9 +51,10 @@ function harness() {
 			onHighlight: (childId) => highlights.push(childId),
 			onCopy: (text) => copies.push(text),
 			onRowSelected: (childIndex) => revealed.push(childIndex),
+			onViewText: (text) => viewed.push(text),
 		},
 	);
-	return { first, answer, second, focus, scrolls, highlights, copies, revealed, opened: () => openChild };
+	return { first, answer, second, focus, scrolls, highlights, copies, revealed, viewed, opened: () => openChild };
 }
 
 describe("TranscriptFocus", () => {
@@ -131,6 +133,27 @@ describe("TranscriptFocus", () => {
 		expect([first.selected, answer.selected]).toEqual([false, true]);
 		focus.handleInput("\x1b");
 		expect([first.selected, answer.selected]).toEqual([false, false]);
+	});
+
+	test("opens a selected block's text, but prefers the child-agent action", () => {
+		const viewed: string[] = [];
+		let opened = 0;
+		const plain = { transcriptRowId: "p1", transcriptTurnStart: true, transcriptRowText: () => "first prompt" };
+		const focus = new TranscriptFocus(
+			() => {},
+			() => deriveTranscriptRows([plain], [{ id: "child" }], () => opened++),
+			10,
+			{ onViewText: (text) => viewed.push(text) },
+		);
+		focus.handleInput("\t");
+
+		expect(focus.handleInput("\r")).toBe(true);
+		expect(viewed).toEqual(["first prompt"]);
+
+		focus.handleInput("\x1b[B");
+		expect(focus.handleInput("\r")).toBe(true);
+		expect(opened).toBe(1);
+		expect(viewed).toEqual(["first prompt"]);
 	});
 
 	test("searches rows and cycles through matches", () => {

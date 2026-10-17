@@ -62,6 +62,7 @@ export class ToolExecutionComponent extends Container {
 		durationMs?: number;
 	};
 	private hideComponent = false;
+	readonly transcriptRowText = (): string => this.plainText();
 
 	constructor(
 		toolName: string,
@@ -366,6 +367,14 @@ export class ToolExecutionComponent extends Container {
 		if (this.hasRendererDefinition() && !hasContent && this.imageComponents.length === 0) {
 			this.hideComponent = true;
 		}
+	}
+
+	private plainText(): string {
+		const parts = [this.toolName];
+		if (this.args !== undefined) parts.push(JSON.stringify(this.args, null, 2));
+		const output = this.getTextOutput();
+		if (output.length > 0) parts.push(output);
+		return parts.join("\n");
 	}
 
 	private getTextOutput(): string {
