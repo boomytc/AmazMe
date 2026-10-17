@@ -1,4 +1,5 @@
-import { realpathSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve as nodeResolvePath, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +37,10 @@ export function canonicalizePath(path: string): string {
 export function getFileRevision(path: string): string | undefined {
 	try {
 		const stats = statSync(path, { bigint: true });
-		return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`;
+		// A same-sized overwrite in one timestamp tick does not change mtime or ctime on Linux,
+		// so stat alone keeps a credential cache pointed at the previous contents.
+		const hash = createHash("sha256").update(readFileSync(path)).digest("hex");
+		return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}:${hash}`;
 	} catch {
 		return undefined;
 	}
