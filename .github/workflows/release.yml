@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    env:
+      NODE_VERSION: "22.23.3"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22.19.0"
+          cache: npm
+      - name: Check tag matches the package version
+        run: |
+          VERSION="$(node -p "require('./packages/gui/package.json').version")"
+          test "v$VERSION" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match v$VERSION"; exit 1; }
+      - run: npm ci
+      - run: npm run build
+      - name: Fetch official Node for the bundle
+        run: |
+          ARCH="$(uname -m)"
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.gz" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-darwin-$ARCH.tar.gz"
+          tar -xzf "$RUNNER_TEMP/node.tar.gz" -C "$RUNNER_TEMP"
+          echo "NODE_BIN=$RUNNER_TEMP/node-v$NODE_VERSION-darwin-$ARCH/bin/node" >> "$GITHUB_ENV"
+      - name: Build and verify the DMG
+        run: node scripts/package-desktop.mjs --node "$NODE_BIN" --out "$RUNNER_TEMP/AmazMe" --dmg --verify
+      - name: Write release notes
+        run: |
+          VERSION="$(node -p "require('./packages/gui/package.json').version")"
+          DMG="AmazMe-$VERSION-macos-$(uname -m).dmg"
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          ## 安装
+
+          1. 打开 DMG，把 AmazMe 拖到“应用程序”。
+          2. 首次启动若被 Gatekeeper 阻止：右键应用选“打开”，或执行
+             \`xattr -d com.apple.quarantine /Applications/AmazMe.app\`。
+          3. 不需要安装 Node 或任何开发环境；运行时已包含在应用内。
+
+          ## 校验
+
+          \`\`\`bash
+          shasum -a 256 -c $DMG.sha256
+          \`\`\`
+
+          ## 已知限制
+
+          - 预览版为 ad-hoc 签名，尚未使用 Developer ID 签名与公证。
+          - 仅 macOS arm64。
+          - 没有自动更新；升级请下载新 DMG 覆盖安装，会话保存在数据目录。
+          - Web 界面保持本地/内网自托管，不提供公网托管。
+          EOF
+          cat "$RUNNER_TEMP/notes.md"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DMG="$(ls "$RUNNER_TEMP"/AmazMe/*.dmg)"
+          gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
+            --title "AmazMe ${GITHUB_REF_NAME#v}" \
+            --notes-file "$RUNNER_TEMP/notes.md"
