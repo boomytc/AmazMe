@@ -169,6 +169,7 @@ import {
 	type CommandLike,
 } from "@amazme/web";
 import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
+import { sessionDeepLink } from "./deep-link.ts";
 import { HistoryAvailability } from "./history-availability.ts";
 import { AgentController, type AgentPromptImage } from "../../core/plugins/agent-controller.ts";
 import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
@@ -2981,24 +2982,36 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	await serverServices.ready(BACKGROUND_CONTEXT);
 	scheduleDiscovery = discoverSchedules();
 	await scheduleDiscovery;
-	// The tab remains independent. A new origin/window uses the host's last saved selection.
+	// The tab remains independent. A new origin/window uses the host's last saved selection,
+	// unless the URL names a session explicitly.
 	const selection = selectionRevision;
+	const href = (globalThis as { location?: { href?: string } }).location?.href;
+	const linked = href === undefined ? undefined : sessionDeepLink(href);
+	let deepLinked = false;
 	let remembered: ProjectSelection | undefined;
-	try {
-		const value: unknown = JSON.parse(sessionStorage.getItem(selectionKey) ?? "null");
-		if (isProjectSelection(value)) remembered = value;
-		else {
-			const projectId = sessionStorage.getItem(`amazme.project.${manifest.server.id}`);
-			const sessionId = sessionStorage.getItem(`amazme.session.${manifest.server.id}`);
-			if (projectId || sessionId) remembered = { ...(projectId ? { projectId } : {}), ...(sessionId ? { sessionId } : {}) };
-		}
-	} catch { /* The host fallback also works without browser storage. */ }
+	if (linked !== undefined) {
+		remembered = linked;
+		deepLinked = true;
+	}
+	if (!deepLinked) {
+		try {
+			const value: unknown = JSON.parse(sessionStorage.getItem(selectionKey) ?? "null");
+			if (isProjectSelection(value)) remembered = value;
+			else {
+				const projectId = sessionStorage.getItem(`amazme.project.${manifest.server.id}`);
+				const sessionId = sessionStorage.getItem(`amazme.session.${manifest.server.id}`);
+				if (projectId || sessionId) remembered = { ...(projectId ? { projectId } : {}), ...(sessionId ? { sessionId } : {}) };
+			}
+		} catch { /* The host fallback also works without browser storage. */ }
+	}
 	remembered ??= await projects.selection(BACKGROUND_CONTEXT).catch((error: unknown) => { report(error instanceof Error ? error : new Error(String(error))); return undefined; });
 	booted = true;
 	if (selectionRevision === selection) {
 		const state = directory.state.value;
 		const previous = state?.sessions.find(session => session.sessionId === remembered?.sessionId);
-		const sameArchive = previous?.archivedAt !== undefined && previous.archivedAt === remembered?.archivedAt;
+		// A deep link to an archived session opens it read-only instead of refusing the attach.
+		const sameArchive = previous?.archivedAt !== undefined
+			&& (previous.archivedAt === remembered?.archivedAt || deepLinked);
 		allowArchivedAttach = sameArchive;
 		const available = state?.projects?.filter(project => !project.removed) ?? [];
 		const project = available.find(project => project.id === (remembered?.projectId ?? previous?.projectId))
@@ -3007,7 +3020,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		let initial: string | undefined;
 		if (remembered === undefined) initial = rosterItems(locale, state, undefined, Date.now()).find(item => project === undefined || item.projectId === project.id)?.id;
 		else if (previous !== undefined && canResumeSession(previous.sessionId)
-			&& (previous.archivedAt === undefined || previous.archivedAt === remembered.archivedAt)
+			&& (previous.archivedAt === undefined || previous.archivedAt === remembered.archivedAt || deepLinked)
 			&& (previous.projectId === selectedProjectId || sameArchive)) initial = previous.sessionId;
 		if (initial === undefined) await clearSession();
 		else await selectSession(initial).catch((error: unknown) => {

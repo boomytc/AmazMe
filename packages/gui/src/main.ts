@@ -27,6 +27,7 @@ import {
 import { applicationMenuTemplate, editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
+import { withSessionDeepLink } from "./deep-link.ts";
 import { attentionOnTitle } from "./title.ts";
 import { trayMenuTemplate } from "./tray.ts";
 import { translate } from "@amazme/web/strings";
@@ -59,6 +60,8 @@ let quitRequested = false;
 let showingDialog = false;
 let deferredHost: HostFailure | undefined;
 let pendingApprovals = 0;
+/** AMAZME_GUI_SESSION opens one conversation without changing the shared last-selection file. */
+const deepLinkSession = process.env.AMAZME_GUI_SESSION;
 let startupFailure: HostStartupFailure | undefined;
 let folderPicker: Promise<readonly string[]> | undefined;
 let tray: Tray | undefined;
@@ -366,8 +369,9 @@ async function announceApprovals(title: string, count: number): Promise<void> {
 }
 
 async function openWindow(pageUrl: string): Promise<void> {
-	hostPageUrl = pageUrl;
-	const origin = new URL(pageUrl).origin;
+	const target = withSessionDeepLink(pageUrl, deepLinkSession);
+	hostPageUrl = target;
+	const origin = new URL(target).origin;
 	const created = new BrowserWindow({
 		width: 1440,
 		height: 920,
@@ -438,7 +442,7 @@ async function openWindow(pageUrl: string): Promise<void> {
 		return { action: "deny" };
 	});
 	try {
-		await created.loadURL(pageUrl);
+		await created.loadURL(target);
 	} catch (error: unknown) {
 		// The did-fail-load handler owns the dialog. Rejecting here would look like a host failure.
 		console.error(error instanceof Error ? error.message : String(error));

@@ -28,7 +28,7 @@ npm run dev:desktop
 
 壳的 typecheck 和构建解析 `@amazme/web/locale` 与 `@amazme/web/strings` 的 dist。根 `build` / `build:offline` 先构建 Web 与 coding-agent，再构建 GUI。单独启动这个包之前，两者的 dist 要已经在。
 
-需要 Node.js 22.19 或更新版本，以及随产品发布的模型目录数据。宿主默认使用启动进程的当前目录。经 npm 启动时沿用 npm 记录的初始工作目录；项目目录可显式指定。要打开别的项目目录时设置 `AMAZME_GUI_CWD`。`AMAZME_GUI_NODE` 可指定跑宿主的 Node。
+需要 Node.js 22.19 或更新版本，以及随产品发布的模型目录数据。宿主默认使用启动进程的当前目录。经 npm 启动时沿用 npm 记录的初始工作目录；项目目录可显式指定。要打开别的项目目录时设置 `AMAZME_GUI_CWD`。`AMAZME_GUI_NODE` 可指定跑宿主的 Node。`AMAZME_GUI_SESSION` 用会话 id 打开指定会话：桌面把 `?session=` 加到宿主 URL 上，页面优先于本窗口记忆与宿主保存的选择，且不会改写共享的选择文件。
 
 `npm test` 检查就绪行、拉起参数、语言和错误合同；不含真实窗口 smoke。构建后用 `npm run test:smoke --workspace @amazme/gui` 在有显示的环境里单独验证真实窗口、退出与强制终止。smoke 使用临时 Electron/profile/server 目录，不读取用户凭据。
 
