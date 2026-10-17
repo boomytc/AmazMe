@@ -343,6 +343,40 @@ describe("web host", () => {
 	);
 
 	test(
+		"a deep directory launch removes its empty relocated socket directory on exit",
+		async () => {
+			const root = await makeDirectory("wd-");
+			const targetLength = 80;
+			const directory = root.length >= targetLength ? root : join(root, "d".repeat(targetLength - root.length - 1));
+			if (directory !== root) await mkdir(directory);
+			const sessionDir = await makeDirectory("web-host-deep-exit-sessions-");
+			const canonicalBytes = Buffer.byteLength(join(directory, "00000000-0000-4000-8000-000000000000.sock"));
+			expect(canonicalBytes).toBeGreaterThan(process.platform === "linux" ? 108 : 103);
+
+			const host = await startWebHost({ port: 0, directory, sessionDir });
+			hosts.add(host);
+			const socketDirectory = dirname(host.socketPath);
+			const relocatedParent = join("/tmp", `am-${process.getuid?.() ?? 0}`);
+			expect(dirname(socketDirectory)).toBe(relocatedParent);
+			expect((await lstat(host.socketPath)).isSocket()).toBe(true);
+
+			await host.close();
+			hosts.delete(host);
+			await expect.poll(async () => {
+				try {
+					await lstat(socketDirectory);
+					return true;
+				} catch (error) {
+					if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+					throw error;
+				}
+			}, { timeout: 5_000 }).toBe(false);
+			expect((await lstat(relocatedParent)).isDirectory()).toBe(true);
+		},
+		60_000,
+	);
+
+	test(
 		"fails loudly when its port is taken and stops serving after close",
 		async () => {
 			const first = await startHost();

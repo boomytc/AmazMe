@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, lstat, mkdir, rmdir } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 // Longest published name: server-<uuidv4>-<12 hex nonce>.sock.
 const LONGEST_SOCKET_NAME = `server-${"0".repeat(8)}-${"0".repeat(4)}-4000-8000-${"0".repeat(12)}-${"0".repeat(12)}.sock`;
@@ -54,6 +54,24 @@ export async function ensureHostSocketDirectory(logicalDirectory: string): Promi
 		throw new Error(`Relocated Unix socket directory still exceeds sun_path: ${directory}`);
 	}
 	return directory;
+}
+
+/**
+ * Drop a relocated socket directory after its sockets are gone. Only an empty
+ * `/tmp/am-<uid>/<hash>` is removed. The parent `/tmp/am-<uid>` stays, a directory
+ * that still has entries stays, and a busy removal is ignored.
+ */
+export async function removeEmptyRelocatedSocketDirectory(directory: string): Promise<void> {
+	const uid = process.getuid?.();
+	if (uid === undefined) return;
+	const parent = join("/tmp", `am-${uid}`);
+	if (dirname(directory) !== parent) return;
+	if (!/^[0-9a-f]{12}$/.test(basename(directory))) return;
+	try {
+		await rmdir(directory);
+	} catch {
+		// Non-empty, already gone, or held by a concurrent process.
+	}
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {

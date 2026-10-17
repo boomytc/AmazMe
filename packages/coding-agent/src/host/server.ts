@@ -24,7 +24,7 @@ import { createCodingSettings } from "../durable/harness-setup.ts";
 import { ProjectTrustStore } from "../core/trust-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
-import { ensureHostSocketDirectory, hostSocketDirectory } from "./socket-directory.ts";
+import { ensureHostSocketDirectory, hostSocketDirectory, removeEmptyRelocatedSocketDirectory } from "./socket-directory.ts";
 import { createPresentationFacetData, createServerPluginFacetLoader } from "./plugins/bundled.ts";
 import { HostSessions } from "../core/plugins/host-sessions.ts";
 import type { HostPromptRequest, HostPromptResult } from "../core/plugins/host-sessions.ts";
@@ -848,6 +848,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 	let workers: SessionWorkerManager | undefined;
 	let relay: RadiusRelayHost | undefined;
 	let released = false;
+	let socketDirectory: string | undefined;
 	try {
 		await ensurePrivateServerDirectory(directory);
 		const pluginPackagePaths = await restoreServerPluginPackageProfile(directory, serverId, options.pluginPackages);
@@ -927,9 +928,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			defaultPluginSelection = selected;
 			return selected.packagePaths;
 		};
-		const socketDirectory = await ensureHostSocketDirectory(directory);
-		const socketPath = getUnixSocketPath(serverId, socketDirectory);
-		const controlPath = join(socketDirectory, `control-${serverId}.sock`);
+		const resolvedSocketDirectory = await ensureHostSocketDirectory(directory);
+		socketDirectory = resolvedSocketDirectory;
+		const socketPath = getUnixSocketPath(serverId, resolvedSocketDirectory);
+		const controlPath = join(resolvedSocketDirectory, `control-${serverId}.sock`);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
 		const serverPath = join(socketDirectory, `server-${serverId}-${serverNonce}.sock`);
 		startupLease = await ensureCoordinator(socketPath, controlPath);
@@ -999,6 +1001,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 							else await activeWorkers.shutdown();
 						} finally {
 							activeCoordinator.close();
+							if (socketDirectory !== undefined) await removeEmptyRelocatedSocketDirectory(socketDirectory);
 						}
 					}
 				})();
@@ -1020,6 +1023,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			coordinator?.wasReplaced ? undefined : workers?.shutdown(),
 			Promise.resolve(coordinator?.close()),
 			released ? undefined : release(),
+			socketDirectory === undefined ? undefined : removeEmptyRelocatedSocketDirectory(socketDirectory),
 		]);
 		const cleanupErrors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 		if (cleanupErrors.length > 0) {
