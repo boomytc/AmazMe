@@ -104,6 +104,28 @@ function showWindow(): void {
 	current.focus();
 }
 
+/** The application menu carries the two session actions the shell can perform for the page. */
+async function refreshApplicationMenu(): Promise<void> {
+	try {
+		const locale = await currentLocale();
+		const send = (action: "new-session" | "settings") => {
+			const current = liveWindow();
+			if (current === undefined || current.isDestroyed()) return;
+			current.webContents.send("amazme:menu-action", action);
+		};
+		Menu.setApplicationMenu(
+			Menu.buildFromTemplate(
+				applicationMenuTemplate(process.platform, locale, {
+					newSession: () => send("new-session"),
+					settings: () => send("settings"),
+				}),
+			),
+		);
+	} catch (error: unknown) {
+		console.error(`desktop menu unavailable: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
 /** Window close is reversible while the tray exists; leaving is a separate, confirmed action. */
 async function refreshTrayMenu(): Promise<void> {
 	if (SMOKE) return;
@@ -363,14 +385,17 @@ async function openWindow(pageUrl: string): Promise<void> {
 			webSecurity: true,
 		},
 	});
-	Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform)));
+	void refreshApplicationMenu();
 	window = created;
 	created.on("closed", () => {
 		if (window === created) window = undefined;
 	});
 	// `close` is before the renderer is torn down, so a render-process-gone from that teardown
 	// already sees the quitting flag and does not dialog.
-	created.on("focus", () => { void refreshTrayMenu(); });
+	created.on("focus", () => {
+		void refreshTrayMenu();
+		void refreshApplicationMenu();
+	});
 	created.on("close", (event) => {
 		if (notices.quitting) return;
 		if (tray !== undefined) {

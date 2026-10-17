@@ -3620,6 +3620,11 @@ export function createRenderer(
 	window.visualViewport?.addEventListener("resize", syncKeyboardInset);
 	window.visualViewport?.addEventListener("scroll", syncKeyboardInset);
 	syncKeyboardInset();
+	// Desktop menu actions reuse the same entry points as the keyboard and the sidebar.
+	window.amazmeDesktop?.onMenuAction?.((action) => {
+		if (action === "new-session") renderer.onShortcut("session.new");
+		else if (action === "settings") elements.settingsButton.click();
+	});
 	document.addEventListener("selectionchange", scheduleQuoteAction);
 	document.addEventListener("mouseup", scheduleQuoteAction);
 	document.addEventListener("touchend", scheduleQuoteAction);

@@ -10,7 +10,11 @@ export interface DirectoryListing {
 
 declare global {
 	interface Window {
-		amazmeDesktop?: { pickDirectories(): Promise<readonly string[]> };
+		amazmeDesktop?: {
+			pickDirectories(): Promise<readonly string[]>;
+			/** Desktop menu actions forwarded by the shell. */
+			onMenuAction?(listener: (action: "new-session" | "settings") => void): void;
+		};
 	}
 }
 

@@ -8,9 +8,18 @@ import type { Locale } from "@amazme/web/locale";
 import { translate, type MessageKey } from "@amazme/web/strings";
 import type { MenuItemConstructorOptions } from "electron";
 
+export interface ApplicationMenuActions {
+	readonly newSession: () => void;
+	readonly settings: () => void;
+}
+
 /** Keep Electron's standard platform roles, but leave content sizing to the page's Settings commands. */
-export function applicationMenuTemplate(platform: NodeJS.Platform): MenuItemConstructorOptions[] {
-	return [
+export function applicationMenuTemplate(
+	platform: NodeJS.Platform,
+	locale?: Locale,
+	actions?: ApplicationMenuActions,
+): MenuItemConstructorOptions[] {
+	const menu: MenuItemConstructorOptions[] = [
 		...(platform === "darwin" ? [{ role: "appMenu" as const }] : []),
 		{ role: "fileMenu" },
 		{ role: "editMenu" },
@@ -21,6 +30,20 @@ export function applicationMenuTemplate(platform: NodeJS.Platform): MenuItemCons
 		] },
 		{ role: "windowMenu" },
 	];
+	if (locale !== undefined && actions !== undefined) {
+		menu.splice(platform === "darwin" ? 1 : 0, 0, {
+			label: translate(locale, "desktop.menu.session"),
+			submenu: [
+				{
+					label: translate(locale, "desktop.menu.newSession"),
+					accelerator: "CmdOrCtrl+Alt+N",
+					click: actions.newSession,
+				},
+				{ label: translate(locale, "desktop.menu.settings"), click: actions.settings },
+			],
+		});
+	}
+	return menu;
 }
 
 /** Built-in edit roles the template is allowed to ask Electron for. */

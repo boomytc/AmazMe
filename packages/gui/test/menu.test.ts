@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { MenuItemConstructorOptions } from "electron";
 import { applicationMenuTemplate, editMenuTemplate, type EditFlags } from "../src/menu.ts";
 
@@ -34,6 +34,27 @@ describe("applicationMenuTemplate", () => {
 		const allRoles = roles(menu);
 		expect(allRoles).toEqual(expect.arrayContaining(["reload", "forceReload", "toggleDevTools", "togglefullscreen"]));
 		expect(allRoles.some(role => ["zoomIn", "zoomOut", "resetZoom"].includes(role))).toBe(false);
+	});
+});
+
+describe("applicationMenuTemplate session actions", () => {
+	test("adds a localized session submenu that calls the shell actions", () => {
+		const newSession = vi.fn();
+		const settings = vi.fn();
+		const menu = applicationMenuTemplate("linux", "en", { newSession, settings });
+		const session = menu.find(item => item.label === "Session");
+		expect(session).toBeDefined();
+		const items = session?.submenu as MenuItemConstructorOptions[];
+		expect(items.map(item => item.label)).toEqual(["New Session", "Settings"]);
+		(items[0]?.click as (() => void) | undefined)?.();
+		(items[1]?.click as (() => void) | undefined)?.();
+		expect(newSession).toHaveBeenCalledOnce();
+		expect(settings).toHaveBeenCalledOnce();
+	});
+
+	test("stays out of the menu when no actions are supplied", () => {
+		const menu = applicationMenuTemplate("darwin");
+		expect(menu.some(item => item.label === "Session")).toBe(false);
 	});
 });
 
