@@ -24,6 +24,7 @@ import { createCodingSettings } from "../durable/harness-setup.ts";
 import { ProjectTrustStore } from "../core/trust-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
+import { ensureHostSocketDirectory, hostSocketDirectory } from "./socket-directory.ts";
 import { createPresentationFacetData, createServerPluginFacetLoader } from "./plugins/bundled.ts";
 import { HostSessions } from "../core/plugins/host-sessions.ts";
 import type { HostPromptRequest, HostPromptResult } from "../core/plugins/host-sessions.ts";
@@ -169,7 +170,7 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 	const profile = await acquireServerProfile(options.directory, options.requestedServerId);
 	const serverId = profile.serverId;
 	await profile.release();
-	const route = { serverId, path: getUnixSocketPath(serverId, options.directory) };
+	const route = { serverId, path: getUnixSocketPath(serverId, hostSocketDirectory(options.directory)) };
 	const release = await acquireServerActivation(options.directory, serverId);
 	try {
 		const existing = await connect(route);
@@ -926,10 +927,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			defaultPluginSelection = selected;
 			return selected.packagePaths;
 		};
-		const socketPath = getUnixSocketPath(serverId, directory);
-		const controlPath = join(directory, `control-${serverId}.sock`);
+		const socketDirectory = await ensureHostSocketDirectory(directory);
+		const socketPath = getUnixSocketPath(serverId, socketDirectory);
+		const controlPath = join(socketDirectory, `control-${serverId}.sock`);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
-		const serverPath = join(directory, `server-${serverId}-${serverNonce}.sock`);
+		const serverPath = join(socketDirectory, `server-${serverId}-${serverNonce}.sock`);
 		startupLease = await ensureCoordinator(socketPath, controlPath);
 		coordinator = new CoordinatorConnection({ controlPath, endpoint: serverPath });
 		const sessionDir = resolveSessionDirectory(options.sessionDir);
