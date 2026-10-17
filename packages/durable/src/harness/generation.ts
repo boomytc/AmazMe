@@ -29,7 +29,7 @@ import type {
 	TypedEntry,
 } from "../types.ts";
 import { addTools } from "./agent.ts";
-import { createCompaction, estimateContext, selectCut } from "./compaction.ts";
+import { compactionPolicy, createCompaction, estimateContext, selectCut } from "./compaction.ts";
 import { applyBoundary, prepareBoundary } from "./inbox.ts";
 import { assignJson } from "./json.ts";
 import { endRun, LiveDoc, type LiveState, type ToolSlot } from "./live.ts";
@@ -195,7 +195,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const entries = planSystemEntries(view, desired, agent.tools, runtime.now());
 			const threshold =
 				compacted === undefined
-					? thresholdCompaction(view, entries, resolved.contextWindow, settings.compaction)
+					? thresholdCompaction(view, entries, resolved.contextWindow, compactionPolicy(settings, model))
 					: undefined;
 			if (threshold === "blocking") {
 				// Compact first and prepare again; the transcript is unchanged until the compaction appends.
@@ -253,7 +253,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			if (projection) messages = projection.messages;
 			const tokens = messages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
 			if (overflow !== undefined && (overflowTokensBefore === undefined || !hasContextRecoveryHeadroom(
-				overflowTokensBefore, tokens, model.contextWindow, runtime.settings.compaction.reserveTokens,
+				overflowTokensBefore, tokens, model.contextWindow, compactionPolicy(runtime.settings, ref).reserveTokens,
 			))) return failModelError(runtime, overflow, context);
 			const options: ModelsSimpleStreamOptions = {
 				...streamOptions,
@@ -561,10 +561,10 @@ async function classify(
 	// The retry and compaction policies govern the next attempt, so they are read now rather than pinned at preparation.
 	const settings = runtime.settings;
 	const overflow = message.stopReason === "error" && isContextOverflow(message);
-	if (overflow && compacted === undefined && settings.compaction.enabled && request.tokens !== undefined) {
-		const policy = settings.compaction;
+	const compaction = compactionPolicy(settings, ref);
+	if (overflow && compacted === undefined && compaction.enabled && request.tokens !== undefined) {
 		const view = await runtime.context(conversationId, context, { at: cutoff });
-		if (selectCut(view, policy.keepRecentTokens) !== undefined) {
+		if (selectCut(view, compaction.keepRecentTokens) !== undefined) {
 			const text = message.errorMessage ?? "Context overflow";
 			await runtime.commit(async (tx): Promise<Next> => {
 				const live = await tx.doc(LiveDoc, conversationId);

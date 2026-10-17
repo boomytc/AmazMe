@@ -94,6 +94,7 @@ export type {
 	CompactionPolicy,
 	CompactionReason,
 	CompactionResult,
+	CompactionSettings,
 	ContextView,
 	ContextProjectionHooks,
 	ModelAdmissionHooks,

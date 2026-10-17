@@ -12,6 +12,7 @@ import type { ImageContent, TextContent, ToolCall, ToolResultMessage } from "@am
 import { validateToolArguments } from "@amazme/ai/utils/validation";
 import { Compile } from "typebox/compile";
 import { defineDoc, defineDocFamily } from "../documents.ts";
+import type { ExecutionEnv } from "../env/index.ts";
 import { AssistantEntry, ToolResultEntry } from "../entries.ts";
 import { errorMessage } from "../errors.ts";
 import { FileError } from "../file-error.ts";
@@ -497,13 +498,20 @@ async function run(
 	const assertLive = (): void => {
 		if (ended) throw new Error(`Tool call ${call.id} has settled`);
 	};
-	const api: Omit<ToolExecutionApi, "env"> = {
+	/** Built for this call, below, so a rerun after recovery gets the conversation's environment at that time. */
+	let env: ExecutionEnv | undefined;
+	const api: ToolExecutionApi = {
 		taskId: runtime.taskId,
 		conversationId: runtime.conversationId,
 		callId: call.id,
 		registry: runtime.registry,
 		agent: runtime.agent,
-		models: runtime.models,
+		get models() {
+			return runtime.models;
+		},
+		get env() {
+			return env;
+		},
 		output: (chunk, skipped) => {
 			assertLive();
 			if (reported.output.push(chunk, skipped)) progress.mark();
@@ -605,11 +613,10 @@ async function run(
 	// Execution time of this attempt; a rerun after recovery measures only itself.
 	let durationMs: number | undefined;
 	try {
-		// Built for this call, so a rerun after recovery gets the conversation's environment at that time.
-		const env = await runtime.env(context);
+		env = await runtime.env(context);
 		const startedAt = performance.now();
 		try {
-			result = await tool.execute(args, { ...api, env }, context);
+			result = await tool.execute(args, api, context);
 		} finally {
 			durationMs = Math.round(performance.now() - startedAt);
 		}
