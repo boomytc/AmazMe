@@ -38,6 +38,18 @@ The hosted terminal registers its own actions and commands; see [Slash commands]
 
 The prompt jumps are the shared `tui.altScreen.previousPrompt` and `tui.altScreen.nextPrompt` actions, so fullscreen search, the regular terminal, and `keybindings.json` all use one assignment.
 
+## Keyboard ownership
+
+A key is offered to surfaces in a fixed order, and the first one that accepts it wins:
+
+1. An open extension dialog, which replaces the prompt slot and receives keys directly.
+2. The dashboard, while it is open.
+3. The subagent view, when a child conversation is open.
+4. The transcript, after `Tab` moves focus there.
+5. The prompt composer.
+
+`Esc` steps back one level. It closes an open dialog or the dashboard, leaves the transcript for the prompt, and otherwise follows the composer rules below: clear the draft, then point at `Ctrl+C` while a turn runs.
+
 ## SDK composer
 
 The main editor handles these controls before the configurable actions listed below:

@@ -58,6 +58,11 @@ export class TranscriptFocus {
 		if (this.focus !== "scrollback") return false;
 		this.sync();
 
+		if (matchesKey(data, "escape")) {
+			this.focus = "prompt";
+			return true;
+		}
+
 		if (matchesAppBinding(data, "tui.altScreen.nextPrompt")) return this.jumpTurn(1);
 		if (matchesAppBinding(data, "tui.altScreen.previousPrompt")) return this.jumpTurn(-1);
 		if (matchesAppBinding(data, "app.transcript.toggleAll")) {

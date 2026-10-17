@@ -128,6 +128,15 @@ describe("TranscriptFocus", () => {
 		expect(copies).toEqual(["first prompt", "first answer"]);
 	});
 
+	test("Esc leaves the transcript for the prompt", () => {
+		const { focus } = harness();
+		focus.handleInput("\t");
+		expect(focus.focus).toBe("scrollback");
+
+		expect(focus.handleInput("\x1b")).toBe(true);
+		expect(focus.focus).toBe("prompt");
+	});
+
 	test("scrolls pages in both focus states", () => {
 		const { focus, scrolls } = harness();
 
