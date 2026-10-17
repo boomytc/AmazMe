@@ -260,6 +260,9 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 | `app.message.followUp` | `alt+enter` (`ctrl+q` on Windows and WSL) | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` (`alt+q` on Windows and WSL) | Restore queued messages to editor |
 | `app.transcript.toggleAll` | `ctrl+e` | Fold or unfold every transcript entry while the transcript has focus |
+| `app.transcript.copyMeta` | `shift+y` | Copy the selected block's command or path |
+| `app.transcript.searchNext` | `n` | Select the next match while `/find` navigation is active |
+| `app.transcript.searchPrevious` | `shift+n` | Select the previous match while `/find` navigation is active |
 
 ### Tree Navigation
 
