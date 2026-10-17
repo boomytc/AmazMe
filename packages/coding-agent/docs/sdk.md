@@ -122,6 +122,27 @@ The CLI loads `codemode`, `tool_search`, and MCP as built-in extensions. SDK ses
 
 See the focused examples for [models](../examples/sdk/02-custom-model.ts), [tools](../examples/sdk/05-tools.ts), [extensions](../examples/sdk/06-extensions.ts), and [full control](../examples/sdk/12-full-control.ts).
 
+## Durable session (experimental)
+
+`@amazme/coding-agent/durable` exposes a smaller SDK over one Durable session. Use it when the host already runs the Durable kernel and needs the committed answer plus Durable agent events, not the JSONL `SessionManager` or SDK extension UI.
+
+```typescript
+import { createDurableSession } from "@amazme/coding-agent/durable";
+
+const session = await createDurableSession({ noSession: true });
+try {
+	await session.subscribe((events) => {
+		for (const event of events) console.log(event.type);
+	});
+	const answer = await session.prompt("What files are in this directory?");
+	console.log(answer?.content);
+} finally {
+	await session.dispose();
+}
+```
+
+`prompt()`, `steer()`, and `followUp()` resolve with the input's committed assistant message, or throw when the input is unanswered. `compact()` starts a manual compaction task; its progress arrives on the subscription. `setModel()` and `setThinkingLevel()` write the conversation's agent document. This facade is experimental and does not replace `createAgentSession`; see [Durable single-kernel migration](../../../docs/durable-migration.md).
+
 ## Examples
 
 | Example | Purpose |

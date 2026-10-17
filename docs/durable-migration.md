@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 0 | 冻结旧内核：新能力只进 Durable，旧 SDK 标记为兼容路径 | 已完成政策与注释；尚无自动增长检查 |
 | 1 | print / JSON / RPC 切到 Durable | print 文本与 JSON 已完成（`AMAZME_RUNTIME=durable`）；RPC 未切换；默认仍为旧内核 |
-| 2 | SDK 的 `createAgentSession` 迁到 Durable 后端 | 未开始；需要兼容 facade 和扩展 UI 方案 |
+| 2 | SDK 的 `createAgentSession` 迁到 Durable 后端 | 实验性 `DurableSession` facade 已加入；`createAgentSession` 未切换 |
 | 3 | JSONL 一次性导入与只读导出 | 导入已完成（`amazme import`）；导出/分享仍走 JSONL |
 | 4 | 删除旧 `AgentSession`、JSONL、镜像和重复实现 | 未开始；受下方移除门槛约束 |
 
@@ -43,7 +43,14 @@
 
 ### 阶段 2：SDK 兼容层
 
-`createAgentSession` 仍是公开 SDK，内部仍用 `AgentSession` 与 JSONL。直接替换会破坏 `prompt()`/事件/`ctx.ui`/`SessionManager` 契约。需要先提供 Durable 后端 facade，覆盖常用 API 与事件，再标记旧实现只读兼容；扩展 UI 通过宿主服务而不是伪造 Durable 事件。
+已落地：
+
+- `@amazme/coding-agent/durable` 导出实验性 `createDurableSession()` 与 `DurableSession`。它覆盖 prompt、steer、followUp、abort、compact、模型/推理选择、活动上下文消息和 Durable 事件订阅，直接返回已提交的答案。
+- 该 facade 不创建 JSONL 会话，不伪装扩展 UI，也不返回 `AgentSession` 或 `SessionManager`；需要这些契约的调用方继续使用 `createAgentSession`。
+
+未落地：
+
+- `createAgentSession` 仍未切换。直接替换会破坏 `prompt()`/事件/`ctx.ui`/`SessionManager` 契约；需要先完成兼容 facade 和扩展 UI 方案，再标记旧实现只读兼容。
 
 ### 阶段 3：导入与导出
 

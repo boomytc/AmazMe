@@ -151,8 +151,15 @@ export interface DurableController {
 	compact(instructions: string | undefined): Promise<void>;
 	abort(): Promise<void>;
 	cycleThinking(): Promise<void>;
+	setThinkingLevel(level: ModelThinkingLevel): Promise<void>;
 	cycleModel(direction?: "forward" | "backward"): Promise<void>;
 	setModel(model: ModelRef): Promise<void>;
+	/** Like setModel(), but rejects the caller instead of turning the failure into a notice. */
+	setModelNow(model: ModelRef): Promise<void>;
+	/** Like setThinkingLevel(), but rejects the caller instead of turning the failure into a notice. */
+	setThinkingLevelNow(level: ModelThinkingLevel): Promise<void>;
+	/** Like compact(), but rejects the caller when admission fails. */
+	compactNow(instructions: string | undefined): Promise<void>;
 	getModelScope(): ModelScopeConfig;
 	setModelScope(models: readonly string[] | null, persist: boolean): Promise<void>;
 	toggleTasks(): Promise<void>;
@@ -437,6 +444,15 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			}).catch(fail);
 			return queue;
 		};
+		// A queued operation whose failure belongs to the caller, not to the TUI's notice list.
+		const commandResult = <T>(operation: () => Promise<T>): Promise<T> => {
+			const result = queue.then(() => {
+				if (closing !== undefined) throw new Error("Session is closing");
+				return operation();
+			});
+			queue = result.then(() => undefined, fail);
+			return result;
+		};
 		const watchAnswer = (submission: Submission): void => {
 			void submission.wait(context).then((settled) => {
 				if (settled.status === "unanswered" && settled.reason !== "aborted") {
@@ -718,10 +734,9 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				return accepted;
 			},
 			submitAndWait: async (text, whenBusy, images) => {
-				if (closing !== undefined) throw new Error("Session is closing");
 				const copied = images?.map((image) => ({ ...image }));
 				const generation = inputGeneration;
-				const submission = await prepareSubmission(text, whenBusy, copied);
+				const submission = await commandResult(() => prepareSubmission(text, whenBusy, copied));
 				if (generation !== inputGeneration) throw new Error("Input preparation cancelled");
 				if (submission === undefined) {
 					await opened.waitForIdle(context);
@@ -733,6 +748,11 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				const message = transcript.entries.find((entry) => entry.id === settled.answer)?.model?.[0];
 				return message?.role === "assistant" ? { accepted: true, settled, answer: message } : { accepted: true, settled };
 			},
+			compactNow: (instructions) =>
+				commandResult(async () => {
+					if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
+					await current.compact(instructions, context);
+				}),
 			compact: (instructions) =>
 				command(async () => {
 					if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
@@ -774,6 +794,9 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					await selectThinking(next);
 				}),
 			setModel: (ref) => command(() => selectModel(ref)),
+			setModelNow: (ref) => commandResult(() => selectModel(ref)),
+			setThinkingLevel: (level) => command(() => selectThinking(level)),
+			setThinkingLevelNow: (level) => commandResult(() => selectThinking(level)),
 			getModelScope: () => modelScope.configuration(modelRuntime.getAvailableSnapshot()),
 			setModelScope: async (ids, persist) => {
 				if (closing !== undefined) throw new Error("Session is closing");

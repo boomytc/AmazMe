@@ -30,6 +30,11 @@
 			"types": "./dist/plugin.d.ts",
 			"import": "./dist/plugin.js"
 		},
+		"./durable": {
+			"source": "./src/durable/sdk.ts",
+			"types": "./dist/durable/sdk.d.ts",
+			"import": "./dist/durable/sdk.js"
+		},
 		"./client": {
 			"source": "./src/client/index.ts",
 			"types": "./dist/client/index.d.ts",
