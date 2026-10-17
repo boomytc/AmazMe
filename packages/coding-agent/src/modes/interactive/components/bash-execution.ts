@@ -2,7 +2,7 @@
  * Component for displaying bash command execution with streaming output.
  */
 
-import { Container, Loader, Spacer, Text, type TUI } from "@amazme/tui";
+import { Container, Loader, Text, type TUI } from "@amazme/tui";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -12,10 +12,9 @@ import {
 import { formatToolDuration } from "../../../core/tools/render-utils.ts";
 import { stripAnsi } from "../../../utils/ansi.ts";
 import { theme } from "../theme/theme.ts";
-import { DynamicBorder } from "./dynamic-border.ts";
+import { ToolBlockFrame } from "./tool-block-frame.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 import { truncateToVisualLines } from "./visual-truncate.ts";
-import { markSelectedLines } from "./transcript-selection.ts";
 
 // Preview line limit when not expanded (matches tool execution behavior)
 const PREVIEW_LINES = 20;
@@ -30,11 +29,11 @@ export class BashExecutionComponent extends Container {
 	private fullOutputPath?: string;
 	private expanded = false;
 	private backgrounded = false;
-	private selected = false;
 	/** Elapsed time uses the same wording as tool renderers (`Took 4.2s`). */
 	private startedAt = Date.now();
 	private endedAt: number | undefined;
 	private contentContainer: Container;
+	private readonly frame: ToolBlockFrame;
 	/** `dim` marks `!!` commands, whose output is excluded from the model context. */
 	private readonly colorKey: "dim" | "bashMode";
 	private outputPad: number;
@@ -45,16 +44,10 @@ export class BashExecutionComponent extends Container {
 		this.colorKey = excludeFromContext ? "dim" : "bashMode";
 		this.outputPad = outputPad;
 		const borderColor = (str: string) => theme.fg(this.colorKey, str);
-
-		// Add spacer
-		this.addChild(new Spacer(1));
-
-		// Top border
-		this.addChild(new DynamicBorder(borderColor));
-
-		// Content container (holds dynamic content between borders)
-		this.contentContainer = new Container();
-		this.addChild(this.contentContainer);
+		// Bash keeps its command color on the rule; the shared frame owns spacing and borders.
+		this.frame = new ToolBlockFrame({ tone: () => "neutral", borderColor: () => borderColor });
+		this.contentContainer = this.frame.body;
+		this.addChild(this.frame);
 
 		this.loader = new Loader(
 			ui,
@@ -62,9 +55,6 @@ export class BashExecutionComponent extends Container {
 			(text) => theme.fg("muted", text),
 			`Running... (${keyText("tui.select.cancel")} to cancel)`, // Plain text for loader
 		);
-
-		// Bottom border
-		this.addChild(new DynamicBorder(borderColor));
 
 		this.updateDisplay();
 	}
@@ -78,12 +68,7 @@ export class BashExecutionComponent extends Container {
 	}
 
 	setSelected(selected: boolean): void {
-		this.selected = selected;
-	}
-
-	override render(width: number): string[] {
-		const lines = super.render(width);
-		return this.selected ? markSelectedLines(lines, width) : lines;
+		this.frame.setSelected(selected);
 	}
 
 	setOutputPad(outputPad: number): void {

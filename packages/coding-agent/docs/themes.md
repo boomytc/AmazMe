@@ -109,6 +109,7 @@ Theme colors describe interface roles rather than individual components. Use the
 | Selection and fullscreen | `selectedBg`, `searchMatch*`, `scrollbar*` |
 | Messages | `userMessage*`, `customMessage*`, `thinkingText` |
 | Tool execution | `toolPendingBg`, `toolSuccessBg`, `toolErrorBg`, `toolTitle`, `toolOutput` |
+| Tool block border | `borderMuted` while running, `error` after a failure, `border` when finished; bash commands keep `bashMode` |
 | Markdown | `md*` |
 | Tool diffs | `toolDiff*` |
 | Syntax highlighting | `syntax*` |

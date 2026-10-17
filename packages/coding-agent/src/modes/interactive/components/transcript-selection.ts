@@ -11,5 +11,6 @@ export const TRANSCRIPT_SELECTION_MARKER = "▌";
 export function markSelectedLines(lines: readonly string[], width: number): string[] {
 	if (width <= 1) return [...lines];
 	const marker = theme.fg("accent", TRANSCRIPT_SELECTION_MARKER);
-	return lines.map((line) => marker + truncateToWidth(line, width - 1, "…"));
+	// No ellipsis: the marker costs one column, and a full-width rule would otherwise end in "…" on every line.
+	return lines.map((line) => marker + truncateToWidth(line, width - 1, ""));
 }

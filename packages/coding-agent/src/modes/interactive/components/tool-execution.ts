@@ -19,7 +19,7 @@ import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "
 import { ensurePngTranscoder } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
-import { markSelectedLines } from "./transcript-selection.ts";
+import { MeasuredContainer, ToolBlockFrame, type ToolBlockTone } from "./tool-block-frame.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
 
@@ -30,11 +30,11 @@ export interface ToolExecutionOptions {
 }
 
 export class ToolExecutionComponent extends Container {
+	private readonly frame: ToolBlockFrame;
 	private contentBox: Box;
 	private contentText: Text;
 	private contentTextRegion: MouseRegion;
-	private selfRenderContainer: Container;
-	private selfRenderHeight = 0;
+	private selfRenderContainer: MeasuredContainer;
 	private callRendererComponent?: Component;
 	private resultRendererComponent?: Component;
 	private rendererState: any = {};
@@ -46,7 +46,6 @@ export class ToolExecutionComponent extends Container {
 	private toolCallId: string;
 	private args: any;
 	private expanded = false;
-	private selected = false;
 	private showImages: boolean;
 	private imageWidthCells: number;
 	private outputPad: number;
@@ -84,7 +83,9 @@ export class ToolExecutionComponent extends Container {
 		this.ui = ui;
 		this.cwd = cwd;
 
-		this.addChild(new Spacer(1));
+		// Every tool block shares one border shell; the body keeps its own background and renderers.
+		this.frame = new ToolBlockFrame({ tone: () => this.blockTone() });
+		this.addChild(this.frame);
 
 		// Always create all shell variants. contentBox is used for default renderer-based composition.
 		// selfRenderContainer is used when the tool renders its own framing.
@@ -92,12 +93,12 @@ export class ToolExecutionComponent extends Container {
 		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentTextRegion = this.createResultRegion(this.contentText);
-		this.selfRenderContainer = new Container();
+		this.selfRenderContainer = new MeasuredContainer();
 
 		if (this.hasRendererDefinition()) {
-			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
+			this.frame.body.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
 		} else {
-			this.addChild(this.contentTextRegion);
+			this.frame.body.addChild(this.contentTextRegion);
 		}
 
 		this.updateDisplay();
@@ -207,7 +208,12 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	setSelected(selected: boolean): void {
-		this.selected = selected;
+		this.frame.setSelected(selected);
+	}
+
+	private blockTone(): ToolBlockTone {
+		if (this.isPartial) return "pending";
+		return this.result?.isError ? "error" : "success";
 	}
 
 	setOutputPad(outputPad: number): void {
@@ -231,50 +237,20 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		const lines = this.renderContent(width);
-		return this.selected ? markSelectedLines(lines, width) : lines;
-	}
-
-	private renderContent(width: number): string[] {
 		if (this.hideComponent) {
 			return [];
 		}
-
-		if (this.hasRendererDefinition() && this.getRenderShell() === "self") {
-			const contentLines = this.selfRenderContainer.render(width);
-			this.selfRenderHeight = contentLines.length;
-			if (contentLines.length === 0 && this.imageComponents.length === 0) {
-				return [];
-			}
-
-			const lines: string[] = [];
-			if (contentLines.length > 0) {
-				lines.push("");
-				lines.push(...contentLines);
-			}
-			for (let i = 0; i < this.imageComponents.length; i++) {
-				const spacer = this.imageSpacers[i];
-				if (spacer) {
-					lines.push(...spacer.render(width));
-				}
-				const imageComponent = this.imageComponents[i];
-				if (imageComponent) {
-					lines.push(...imageComponent.render(width));
-				}
-			}
-			return lines;
-		}
-
-		return super.render(width);
+		return this.frame.render(width);
 	}
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
 		if (!this.hasRendererDefinition() || this.getRenderShell() !== "self") return super.handleMouse(event);
-		if (event.y <= 0 || event.y > this.selfRenderHeight) return undefined;
+		const relative = event.y - this.frame.bodyOffset;
+		if (relative < 0 || relative >= this.selfRenderContainer.height) return undefined;
 		return this.selfRenderContainer.handleMouse({
 			...event,
-			y: event.y - 1,
-			height: this.selfRenderHeight,
+			y: relative,
+			height: this.selfRenderContainer.height,
 		});
 	}
 
@@ -351,12 +327,12 @@ export class ToolExecutionComponent extends Container {
 		const previousImages = this.imageComponents;
 		const previousSources = this.imageSources;
 		for (const img of this.imageComponents) {
-			this.removeChild(img);
+			this.frame.body.removeChild(img);
 		}
 		this.imageComponents = [];
 		this.imageSources = [];
 		for (const spacer of this.imageSpacers) {
-			this.removeChild(spacer);
+			this.frame.body.removeChild(spacer);
 		}
 		this.imageSpacers = [];
 
@@ -366,7 +342,7 @@ export class ToolExecutionComponent extends Container {
 			for (const img of imageBlocks) {
 				if (caps.images && this.showImages && img.data && img.mimeType) {
 					const spacer = new Spacer(1);
-					this.addChild(spacer);
+					this.frame.body.addChild(spacer);
 					this.imageSpacers.push(spacer);
 					const source = { data: img.data, mimeType: img.mimeType, widthCells: this.imageWidthCells };
 					const index = this.imageComponents.length;
@@ -390,7 +366,7 @@ export class ToolExecutionComponent extends Container {
 					}
 					this.imageComponents.push(imageComponent);
 					this.imageSources.push(source);
-					this.addChild(imageComponent);
+					this.frame.body.addChild(imageComponent);
 				}
 			}
 		}
