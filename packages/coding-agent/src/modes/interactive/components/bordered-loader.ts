@@ -39,6 +39,11 @@ export class BorderedLoader extends Container {
 		this.addChild(new DynamicBorder(borderColor));
 	}
 
+	/** Replace the loader's message, for a share that moves from upload to gist. */
+	setMessage(message: string): void {
+		(this.loader as { setMessage?: (message: string) => void }).setMessage?.(message);
+	}
+
 	get signal(): AbortSignal {
 		if (this.cancellable) {
 			return (this.loader as CancellableLoader).signal;
