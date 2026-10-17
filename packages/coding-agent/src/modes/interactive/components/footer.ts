@@ -16,6 +16,7 @@ import type { ContextUsage } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
+import { formatRunState, type RunState } from "../run-state.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 import { popupCloseClicked, popupFrame } from "./popup-frame.ts";
 
@@ -78,6 +79,7 @@ export class FooterComponent implements Component {
 	private contextHit: { start: number; end: number } | undefined;
 	private contextHover = false;
 	private showLocation = true;
+	private runState: (() => RunState) | undefined;
 
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
@@ -104,6 +106,14 @@ export class FooterComponent implements Component {
 	/** Regular mode has no pointer, so click-only chrome names its key instead. */
 	setPointerInputEnabled(enabled: boolean): void {
 		this.pointerInputEnabled = enabled;
+	}
+
+	/**
+	 * Run state is read on every frame instead of being pushed, so the footer cannot show a
+	 * stale queue depth or a dialog that already closed.
+	 */
+	setRunStateProvider(provider: (() => RunState) | undefined): void {
+		this.runState = provider;
 	}
 
 	/**
@@ -308,7 +318,14 @@ export class FooterComponent implements Component {
 		const padding = right ? " ".repeat(Math.max(0, width - visibleWidth(left) - visibleWidth(right))) : "";
 		const routingLine = left + padding + theme.fg("dim", right);
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+		const run = this.runState?.();
+		const runText = run === undefined ? undefined : formatRunState(run);
+		const runLine =
+			runText === undefined
+				? undefined
+				: truncateToWidth(theme.fg(run?.phase === "blocked" ? "warning" : "dim", runText), width, "...");
 		const lines = [
+			...(runLine === undefined ? [] : [runLine]),
 			...(this.showLocation ? [pwdLine] : []),
 			...(visibleWidth(routingLine) > 0 ? [routingLine] : []),
 		];

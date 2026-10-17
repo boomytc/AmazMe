@@ -74,6 +74,7 @@ import { compactStartupHints, expandedStartupHints, startupHelpHint } from "./st
 import { promptOwnsKey, routeInteractiveInput } from "./interactive-input.ts";
 import { TranscriptFocus } from "./transcript-focus.ts";
 import { deriveTranscriptRows } from "./transcript-model.ts";
+import { deriveRunState, type RunState } from "./run-state.ts";
 import { BashRunTable, ParentTranscript, syncComposerVisibility, WorkSurface } from "./work-surface.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
@@ -732,6 +733,7 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		// The first painted frame must already match the renderer's input model.
 		this.footer.setPointerInputEnabled(this.pointerInputAvailable());
+		this.footer.setRunStateProvider(() => this.currentRunState());
 		this.statusBar = new SessionTopBar(
 			this.footer,
 			() => {
@@ -4335,6 +4337,14 @@ export class InteractiveMode {
 		this.lastStatusSpacer = undefined;
 		this.lastStatusText = undefined;
 		this.ui.requestRender();
+	}
+
+	private currentRunState(): RunState {
+		return deriveRunState({
+			program: this.programStatus.snapshot(),
+			queueDepth: this.pendingUserInputs.length,
+			subagents: this.session.childAgents.records.filter((record) => record.status === "running").length,
+		});
 	}
 
 	/**

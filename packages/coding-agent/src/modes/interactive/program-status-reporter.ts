@@ -100,6 +100,12 @@ export class ProgramStatusReporter {
 		this.getTerminal().setProgramStatus(status);
 	}
 
+	/** Current run phase for other presentations; the terminal report itself is unchanged. */
+	snapshot(): Pick<ProgramStatus, "state" | "kind"> {
+		const status = this.currentStatus();
+		return { state: status.state, kind: status.state === "blocked" ? status.kind : undefined };
+	}
+
 	private currentStatus(): ProgramStatus {
 		const blocked = [...this.blocked.values()].at(-1);
 		if (blocked) return { state: "blocked", ...blocked };

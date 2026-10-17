@@ -616,3 +616,43 @@ it("puts a close badge on the top-right of a dialog", () => {
 		expect(stats).not.toContain("(sub)");
 	});
 });
+
+describe("FooterComponent run state", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+	});
+
+	it("renders the run line first and keeps it within width", () => {
+		const width = 40;
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+		footer.setRunStateProvider(() => ({ phase: "working", queueDepth: 2, subagents: 1 }));
+
+		const lines = footer.render(width).map(stripAnsi);
+		expect(lines[0]).toBe("working · 2 queued · 1 subagent");
+		for (const line of lines) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+	});
+
+	it("names what a blocked run waits for", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+		footer.setRunStateProvider(() => ({
+			phase: "blocked",
+			waitingFor: "permission",
+			queueDepth: 0,
+			subagents: 0,
+		}));
+
+		expect(stripAnsi(footer.render(40)[0] ?? "")).toBe("waiting for approval");
+	});
+
+	it("omits the line when the session is idle", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+		footer.setRunStateProvider(() => ({ phase: "idle", queueDepth: 0, subagents: 0 }));
+
+		expect(stripAnsi(footer.render(40)[0] ?? "")).not.toContain("queued");
+	});
+});
