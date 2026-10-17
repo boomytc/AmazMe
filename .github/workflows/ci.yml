@@ -17,7 +17,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npx tsc -p tsconfig.build.json --noEmit
+      - run: npm run typecheck
       - run: npm test --workspace @amazme/coding-agent
       - run: npm test --workspace @amazme/web
       - run: npm test --workspace @amazme/gui
