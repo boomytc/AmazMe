@@ -76,7 +76,7 @@ Web 提供会话切换、模型与推理选择、工具结果、文件、终端�
 
 完整操作见 [快速开始](packages/coding-agent/docs/quickstart.md)、[使用指南](packages/coding-agent/docs/usage.md)和 [CLI 参考](packages/coding-agent/docs/cli.md)。
 
-迁移到单一 Durable 内核的进度、开关和移除门槛见 [Durable 单内核迁移](docs/durable-migration.md)。新建的 print、JSON 和 RPC 会话默认走 Durable；`AMAZME_RUNTIME=legacy` 可回到 JSONL 内核。`amazme import <session.jsonl>` 可把终端会话复制到新的 Durable 会话，`amazme export <session.sqlite>` 可导出为 JSONL 或 HTML。RPC 的 JSONL 专用命令和 SDK 兼容面仍按阶段推进。
+迁移到单一 Durable 内核的进度、开关和移除门槛见 [Durable 单内核迁移](docs/durable-migration.md)。新建的 print、JSON 和 RPC 会话默认走 Durable；`AMAZME_RUNTIME=legacy` 可回到兼容的 JSONL 内核。`amazme import <session.jsonl>` 可把终端会话复制到新的 Durable 会话，`amazme export <session.sqlite>` 可导出为 JSONL 或 HTML。RPC 的 JSONL 专用命令和 SDK 兼容面仍按阶段推进。
 
 ## 按需扩展
 

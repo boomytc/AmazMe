@@ -2,6 +2,14 @@
 
 本文件是 `@amazme/durable` 成为唯一执行内核的实施账本。它记录已经落地的入口、仍未切换的契约和移除旧内核前必须满足的条件。状态以源码与实际验证为准，不把计划写成已完成。
 
+## 当前产品策略
+
+- 新会话默认使用 Durable：原生终端、Web/宿主、`--print`、`--mode json` 和 `--mode rpc` 都是 Durable 优先。
+- 旧 `AgentSession` 只作为兼容层保留，覆盖以下无法无损映射的场景：嵌入 SDK 的 `createAgentSession`、SDK 扩展工厂（`ctx.ui` 等）、JSONL 选择标志、只有 JSONL 历史的 `--continue`，以及 RPC 的 `new_session`、`switch_session`、`abort_retry`。
+- 新能力只进入 Durable 和共享纯模块；旧内核只接受兼容修复。`AMAZME_RUNTIME=legacy` 是显式退出开关。
+- RPC 的 `get_entries`/`get_tree` 是活动 Durable transcript 的 JSONL 形状投影，不是第二份持久树；`bash` 是本地执行，不写入 Durable transcript。
+- 阶段 4 的删除不是“漏做”，而是被上述兼容面阻塞。删除前至少需要 SDK 扩展 UI 适配、RPC 会话生命周期和 JSONL 历史覆盖；在这些完成前保留旧内核是对用户负责。
+
 ## 目标与不变量
 
 - **一个持久状态**：会话、任务、排队输入和工具结果只由 Durable 的 SQLite（或调用方显式选择的 MemoryStorage）持有。
