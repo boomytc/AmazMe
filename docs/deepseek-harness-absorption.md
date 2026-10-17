@@ -110,8 +110,50 @@
 
 另以构建产物启动临时真实 Web 宿主，通过 Playwright 检查默认掩码、单项显示、原文复制调用、语言切换重新隐藏、双标签全局字号同步及刷新持久化。1280px 和 390px 视口均无横向溢出，截图已实际查看；复制验证拦截浏览器 Clipboard 调用，不声称写入系统剪贴板。没有调用远程模型或改动用户配置/会话。DeepSeek MIT 许可已在实际 page-browser.js 产物中核对，原始 LICENSE 随 Web 包发布。验收用浏览器、宿主、工作进程及临时数据已关闭清理。
 
+## 第二轮：`571902028a..1517a4dbca`
+
+### 范围
+
+固定区间为 `571902028a75c64c1d767f4ae5fd099485f0ddf0..1517a4dbca0a2789ff1d41ba439600f8547d23fa`，共 109 个提交（30 个合并提交、79 个非合并提交），净变更 1018 个文件、新增 24373 行、删除 2767 行。参照仓库在这段时间完成了 0.2.1-alpha.4 与 alpha.5、插件市场、账号通知、Windows 打包、Linux systemd 作用域和 Cordis rc.11 计划，绝大多数改动依赖 DSH 自己的产品壳。AmazMe 仍按现有 Pi/Chord/Durable 载体逐项判断，不新增第二套框架。
+
+### 范围处置
+
+| 来源模块与代表提交 | 当前实现核对与处置 |
+| --- | --- |
+| 终端退出码 `e8488f6b41`、`39d3849452`、`174c08563f` | 吸收“未知退出码不能显示为 0”。AmazMe 的 bash 工具已把解析不到退出码的结束当作错误结果，工具结果也不渲染缺失的退出码；但会话终端面板用 `exitCode ?? 0` 描述已结束的运行，现改为单独文案。`39d3849452` 的文本标记解析没有载体，AmazMe 使用结构化退出码。 |
+| 工具行退出胶囊 `00f897b048`、`97a833471f`、`95e76236bf` | 仅参考视觉分组。AmazMe 的工具结果已有退出码元数据，未知退出码不渲染标签，非零退出由工具错误状态表达，不引入 DSH 的胶囊布局与 React 组件。 |
+| 工程门禁 `b77cc1c0f2` | 吸收“包源码不得在模块级 await”。在现有 TypeScript AST 检查中加入 await、for await、await using 检测，只豁免 shebang 入口和 bin 目标；`coding-agent` 的 Bun launcher、`evals` 的文档 runner、`gui` 的启动入口改为显式启动函数，失败时打印消息并置退出码 1。 |
+| 依赖策略 `22c51728ed` | 跳过。AmazMe 没有 experimental 包；现有依赖版本、层方向与入口检查已覆盖同一策略。 |
+| Web 斜杠命令芯片 `98d93db18f`、`510cd4cdcc`、`6f8b55f3eb`、`6910cd6e9c`、`ba392ae0e7` | 仅参考。AmazMe 的输入框是 textarea 加命令面板，没有文档节点编辑器，无法在不引入编辑器的前提下实现原子芯片；命令目录由宿主复制状态发布，并在插件变更与 reload 时刷新，不存在 DSH 的浏览器缓存陈旧问题。 |
+| 模型推理档编辑 `f61d9982f8`、`02d25c695e`、`a0a04158f8`、`b542292bf9`、`7d654c9d8a` | 仅参考。AmazMe 通过 `models.json` 配置自定义模型，没有模型设置卡片；推理档位由供应商目录和设置读取，不经过 DSH 的编辑草稿与拒绝提示。 |
+| 模型标签与浮层 `919aa5f400`、`c78f3fd33d`、`f87c08950a`、`1b385d6e2a` | 仅参考。AmazMe 的模型选择器是原生 `<select>` 加 `<optgroup>`，已按 provider 分组，不需要插件标签槽，也没有浮层越界问题。 |
+| 侧栏 PageUp `8953554b5e` | 跳过。dock 面板没有 DSH 的可折叠右栏结构。 |
+| PTC 说明与 persona `839bd5131d`、`d6adc5d9b9` | 仅参考。AmazMe 的 codemode 只有一个 `code` 参数，没有 `description` 排序、REPL/函数体两种 flavor 或 persona 前缀；read 工具提示词保持本地措辞。 |
+| Codex 子代理 `08d57291ad`、`e480bda8d2` | 跳过。AmazMe 的 Codex 是模型供应商，不驱动 Codex app-server，也没有 `partial_answer` 消息阶段。 |
+| 终端发现 `0ae278b935` | 已有对应行为。会话终端是每会话复制状态，页面直接读取，不经过 DSH 的列表接口。 |
+| client modules 与宿主版本 `7c9e54b3ef`、`f52abc04fa`、`a7a40f93d9`、`ba090a4b59`、`ac5a3e336c`、`f12bf31c4a` | 跳过。AmazMe 没有独立的客户端插件模块图；页面重连已由重试按钮重新载入处理。 |
+| 桌面环境遥测 `4dee41f4bc`、`04c9489065` | 跳过。本仓库的 telemetry 包只提供 span/事件类型与 schema，被 AI 以类型方式接收；产品没有事件上报出口，无法附带桌面环境快照。 |
+| 插件市场与生成器 `3de3a977e0`、`ab3bb74550`、`b227127d62`、`ed92c867ed`、`434dc116f0`、`14abe9543c` | 跳过。插件页管理包选择与 MCP 服务器，没有市场目录、索引格式或安装来源仓库。 |
+| 桌面打包与 Windows 安装器 `14819e2eb4`、`dcc8df8320`、`06e5024577`、`c7ab529c34`、`fae05edca7`、`61059baf61`、`29221675a2`、`5e23825f15`、`af66022ace`、`b8f8abc5d6`、`cfa52b0bac` | 跳过。AmazMe 的 GUI 不包含 electron-builder、NSIS 或 COS 发布链，也没有 Windows 打包 runner。 |
+| Linux systemd 作用域 `404e64b435`、`0fffa2432a`、`39874e62ba`、`d73ad23353`、`c218e79102`、`055c7d7a74`、`c97f840c89`、`71de43d8ee`、`da5e23e8e8`、`514e8893b5` | 跳过。PTY 由原生 env daemon 执行，没有 systemd scope、用户管理器探测或节点池。 |
+| 账号通知 `2dcd031a8e`、`6ac5c103db`、`1f312b6282`、`474d7b7989`、`da6c16747e`、`00a1155f5a` | 跳过。没有官方账号服务与通知元数据。 |
+| Inspector 与 webworker 预览 `bf1a2bf69c`、`93d2ad2d25` | 跳过。Web 宿主由同一进程提供页面与 API，没有预览 profile 或按需 chunk。 |
+| Office `f12fa3bad1` | 跳过。没有 Office 文档渲染载体。 |
+| goal 与 SDK 缓存测试 `63e99ee2bf`、`c34a107428` | 跳过。AmazMe 没有 goal/Loader；缓存用例直接对供应商设置重试，不经过 DSH 的补丁加载器。 |
+| Web 固定时钟测试 `81803f7ca5`、`4cea5c36d2` | 跳过。两者是 DSH 页面夹具的测试稳定性修正，AmazMe 的 Web 测试没有对应夹具。 |
+| Cordis rc.11 计划 `c0bf2ac81d` | 跳过。继续使用现有 Chord 服务，不迁入 Cordis vendor。 |
+| 版本发布 `f2235d6c02`、`0a49d91bb2` | 跳过。共享包版本独立维护。 |
+
+合计：2 项吸收（未知退出码、模块级 await 门禁），终端发现已有对应行为，其余为仅参考或跳过。30 个合并提交携带上述非合并提交，不另行处置。
+
+### 实现与验证
+
+- `fix(web)`：终端面板在已结束且没有退出码时显示“已结束，没有退出码”，不再借用 0。新增面板回归；Web 构建通过，260 项测试通过。
+- `feat(workspace)`：工作区检查新增模块级 await 规则，覆盖 await、for await、await using，只豁免 shebang 与 bin 入口；三个入口改为显式启动函数。新增 3 项工程测试（共 30 项通过），`check:workspace` 在真实仓库通过，并用临时违规文件确认门禁以退出码 1 失败。
+- 验证方式：受影响包先构建再测试。Coding Agent 构建通过，3296 项通过、50 项条件跳过；GUI 构建通过，60 项通过；Evals 构建通过，61 项通过；根 typecheck 通过。文档 runner 以缺参数启动，确认输出错误消息并以退出码 1 结束。没有调用远程模型。
+
 ## 仓库收尾
 
-`/Users/boom/workspace/deepseek-harness` 已用 `git merge --ff-only` 从固定基线前进至 `571902028a75c64c1d767f4ae5fd099485f0ddf0`，恰好接纳上述 1537 个提交；master 与当前 upstream/master 的左右差为 0/0，工作树干净。未重新抓取移动目标，也未改写参照历史。
+`/Users/boom/workspace/deepseek-harness` 先后用 `git merge --ff-only` 从固定基线前进至 `571902028a75c64c1d767f4ae5fd099485f0ddf0`，再前进至本轮的 `1517a4dbca0a2789ff1d41ba439600f8547d23fa`，分别接纳 1537 个和 109 个提交；master 与当前 upstream/master 的左右差为 0/0，工作树干净。未重新抓取移动目标，也未改写参照历史。
 
-AmazMe 的实现、审查修正和本记录按阶段使用中文结构化提交；临时 TODO 与任务卡已删除，只保留本记录及 UPSTREAM 索引。不新增旧接口兼容层，不复制另一套产品账号、状态注册表或发布系统。两个仓库均未推送。
+AmazMe 的实现、审查修正和本记录按阶段使用中文结构化提交；临时 TODO 与任务卡已删除，只保留本记录及 UPSTREAM 索引。不新增旧接口兼容层，不复制另一套产品账号、状态注册表或发布系统。本轮两个仓库均未推送。

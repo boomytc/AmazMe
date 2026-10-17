@@ -4,7 +4,7 @@
 
 ## DeepSeek Harness 行为增量
 
-本批次参照本地 DeepSeek Harness 的固定区间 `5badb15009ae1756c3afe0ae0cef1faafc290ccc..571902028a75c64c1d767f4ae5fd099485f0ddf0`（1537 个提交）。按当前 AmazMe 载体吸收行为改进，沿用 Pi/Chord/Durable 的包依赖与持久状态，不合并 DSH 的框架、产品账号或旧接口。具体模块、代表提交、仅参考能力差异和本轮验证见 [增量吸收记录](docs/deepseek-harness-absorption.md)。Pi 的供应商 OAuth 身份继续保持原配置。
+本批次参照本地 DeepSeek Harness 的两个固定区间：`5badb15009ae1756c3afe0ae0cef1faafc290ccc..571902028a75c64c1d767f4ae5fd099485f0ddf0`（1537 个提交）和 `571902028a75c64c1d767f4ae5fd099485f0ddf0..1517a4dbca0a2789ff1d41ba439600f8547d23fa`（109 个提交，30 个合并提交、79 个非合并提交）。按当前 AmazMe 载体吸收行为改进，沿用 Pi/Chord/Durable 的包依赖与持久状态，不合并 DSH 的框架、产品账号或旧接口。第二轮只吸收“未知退出码不显示为 0”和“包源码禁止模块级 await”的工程门禁，其余改动属于 DSH 的载体能力或已有等价实现。具体模块、提交清单、仅参考能力差异和验证见 [增量吸收记录](docs/deepseek-harness-absorption.md)。Pi 的供应商 OAuth 身份继续保持原配置。
 
 ## 当前基线
 
