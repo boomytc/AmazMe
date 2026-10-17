@@ -11,9 +11,6 @@ jobs:
     runs-on: macos-14
     env:
       TERM: xterm-256color
-      # Unix socket paths have a 104-byte limit on macOS; the default runner temp path plus a
-      # server UUID and control suffix exceeds it, so the coordinator cannot create its socket.
-      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -23,13 +20,13 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
-      - name: Install ripgrep for tool tests
+      - name: Install ripgrep and fd for tool tests
         run: brew install ripgrep fd
-      - run: npm test --workspace @amazme/coding-agent -- --no-file-parallelism
+      - run: npm test --workspace @amazme/coding-agent
       - run: npm test --workspace @amazme/web
       - run: npm test --workspace @amazme/gui
       - name: Desktop window smoke
-        run: npm run test:smoke --workspace @amazme/gui -- --retry=2
+        run: npm run test:smoke --workspace @amazme/gui
 
   desktop:
     needs: verify

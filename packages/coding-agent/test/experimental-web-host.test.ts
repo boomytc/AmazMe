@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { request as httpRequest } from "node:http";
 
 import { Client } from "@amazme/client";
@@ -305,6 +305,73 @@ describe("web host", () => {
 			expect((await fetch(new URL("/missing.js", host.url))).status).toBe(404);
 			expect((await fetch(new URL("/%2e%2e/package.json", host.url))).status).toBe(404);
 			expect((await fetch(host.url, { method: "POST" })).status).toBe(405);
+		},
+		60_000,
+	);
+
+	test(
+		"a second launch in a deep directory attaches to the same socket",
+		async () => {
+			// Deep enough that `${id}.sock` exceeds sun_path. listen() still succeeds, but the
+			// directory entry is a truncated name, so discovery does not see the canonical socket
+			// and a second launch used to start another server.
+			const root = await makeDirectory("wd-");
+			const targetLength = 80;
+			const directory = root.length >= targetLength ? root : join(root, "d".repeat(targetLength - root.length - 1));
+			if (directory !== root) await mkdir(directory);
+			const sessionDir = await makeDirectory("web-host-deep-sessions-");
+			const canonicalBytes = Buffer.byteLength(join(directory, "00000000-0000-4000-8000-000000000000.sock"));
+			const platformMax = process.platform === "linux" ? 108 : 103;
+			expect(canonicalBytes).toBeGreaterThan(platformMax);
+
+			const first = await startWebHost({ port: 0, directory, sessionDir });
+			hosts.add(first);
+			const second = await startWebHost({ port: 0, directory, sessionDir });
+			hosts.add(second);
+
+			const published = await readdir(directory);
+			expect(first.ownsServer, `first directory: ${published.join(", ")}`).toBe(true);
+			expect(second.ownsServer, `second directory: ${published.join(", ")}`).toBe(false);
+			expect(second.serverId).toBe(first.serverId);
+			expect(second.socketPath).toBe(first.socketPath);
+			expect(second.socketPath.endsWith(`${second.serverId}.sock`)).toBe(true);
+			expect((await lstat(second.socketPath)).isSocket()).toBe(true);
+			const socketNames = await readdir(dirname(second.socketPath));
+			expect(socketNames.filter((name) => name.startsWith(`server-${second.serverId}-`))).toHaveLength(1);
+		},
+		60_000,
+	);
+
+	test(
+		"a deep directory launch removes its empty relocated socket directory on exit",
+		async () => {
+			const root = await makeDirectory("wd-");
+			const targetLength = 80;
+			const directory = root.length >= targetLength ? root : join(root, "d".repeat(targetLength - root.length - 1));
+			if (directory !== root) await mkdir(directory);
+			const sessionDir = await makeDirectory("web-host-deep-exit-sessions-");
+			const canonicalBytes = Buffer.byteLength(join(directory, "00000000-0000-4000-8000-000000000000.sock"));
+			expect(canonicalBytes).toBeGreaterThan(process.platform === "linux" ? 108 : 103);
+
+			const host = await startWebHost({ port: 0, directory, sessionDir });
+			hosts.add(host);
+			const socketDirectory = dirname(host.socketPath);
+			const relocatedParent = join("/tmp", `am-${process.getuid?.() ?? 0}`);
+			expect(dirname(socketDirectory)).toBe(relocatedParent);
+			expect((await lstat(host.socketPath)).isSocket()).toBe(true);
+
+			await host.close();
+			hosts.delete(host);
+			await expect.poll(async () => {
+				try {
+					await lstat(socketDirectory);
+					return true;
+				} catch (error) {
+					if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+					throw error;
+				}
+			}, { timeout: 5_000 }).toBe(false);
+			expect((await lstat(relocatedParent)).isDirectory()).toBe(true);
 		},
 		60_000,
 	);

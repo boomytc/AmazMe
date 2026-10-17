@@ -2,7 +2,6 @@ import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { spawnInternalProcess, terminateInternalProcess } from "../src/host/process.ts";
@@ -25,8 +24,9 @@ afterEach(async () => {
 
 describe.skipIf(process.platform === "win32")("experimental internal process launcher", () => {
 	test("starts the coordinator through the current runtime", async () => {
-		// Keep Unix socket paths below macOS's short sun_path limit.
-		const directory = await mkdtemp(join(tmpdir(), "pi-ip-"));
+		// os.tmpdir() follows TMPDIR. A deep TMPDIR makes these explicit paths longer
+		// than sun_path, and the coordinator refuses the truncated listen.
+		const directory = await mkdtemp(join("/tmp", "pi-ip-"));
 		directories.add(directory);
 		const publicPath = join(directory, "p.sock");
 		const controlPath = join(directory, "c.sock");
@@ -38,7 +38,7 @@ describe.skipIf(process.platform === "win32")("experimental internal process lau
 	});
 
 	test("waits for a failed activation child to terminate", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-ip-stop-"));
+		const directory = await mkdtemp(join("/tmp", "pi-ip-stop-"));
 		directories.add(directory);
 		const child = spawnInternalProcess("coordinator", [join(directory, "p.sock"), join(directory, "c.sock")]);
 		children.add(child);

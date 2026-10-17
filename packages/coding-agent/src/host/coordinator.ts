@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, unlink } from "node:fs/promises";
+import { dirname } from "node:path";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
@@ -11,6 +12,7 @@ import {
 	internalProcessStderr,
 	spawnInternalProcess,
 } from "./process.ts";
+import { assertConnectableUnixSocketPath, removeEmptyRelocatedSocketDirectory } from "./socket-directory.ts";
 
 export const COORDINATOR_PROTOCOL_VERSION = 5;
 const COORDINATOR_START_TIMEOUT_MS = 10_000;
@@ -319,6 +321,10 @@ export async function runCoordinatorProcess(args: readonly string[]): Promise<vo
 }
 
 async function main(): Promise<void> {
+	// listen() reports success after libuv truncates a path that does not fit in sun_path.
+	// The entry is then not `${serverId}.sock`, and chmod of the requested path never sees it.
+	assertConnectableUnixSocketPath(controlPath);
+	assertConnectableUnixSocketPath(publicPath);
 	await removeStaleSocket(controlPath);
 	await removeStaleSocket(publicPath);
 	try {
@@ -328,6 +334,7 @@ async function main(): Promise<void> {
 		await restrictSocket(publicPath);
 	} catch (error) {
 		await Promise.all([cleanupSocket(controlPath), cleanupSocket(publicPath)]);
+		await removeEmptyRelocatedSocketDirectory(dirname(publicPath));
 		throw error;
 	}
 	scheduleEmptyShutdown(EMPTY_STARTUP_GRACE_MS);
@@ -519,6 +526,7 @@ async function shutdownCoordinator(): Promise<void> {
 	for (const connection of controlConnections) connection.destroy();
 	await Promise.all([closeServer(publicServer), closeServer(controlServer)]);
 	await Promise.all([cleanupSocket(publicPath), cleanupSocket(controlPath)]);
+	await removeEmptyRelocatedSocketDirectory(dirname(publicPath));
 	process.exit(0);
 }
 

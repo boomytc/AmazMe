@@ -253,11 +253,15 @@ describe("ToolExecutionComponent parity", () => {
 		component.updateResult({ ...result, isError: false }, false);
 
 		const rendered = stripAnsi(component.render(200).join("\n"));
+		// The warning is one sentence. Text wraps it at the render width, so a long temp
+		// path can put "Truncated:" and "showing" on different lines. Match across that wrap.
+		const flat = rendered.replace(/\s+/g, " ");
 		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(1);
+		expect(rendered.match(/Truncated:/g)?.length ?? 0).toBe(1);
 		expect(rendered).toMatch(/line-4000[^\n]*\n[^\S\n]*\n \[Full output:/);
 		expect(rendered).not.toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).toContain("Truncated: showing 2000 of 4000 lines");
-		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
+		expect(flat).toContain("Truncated: showing 2000 of 4000 lines");
+		expect(flat).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
 	});
 
 	// Issue #9628: keep short durations precise and make long shell durations readable.

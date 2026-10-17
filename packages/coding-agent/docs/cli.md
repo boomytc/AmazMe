@@ -312,6 +312,8 @@ amazme doctor [--json] [--zh]
 
 `server` and `client` also accept `--auth-token <token>` or `--auth-token-file <path>` for an experimental Radius relay. The two options are mutually exclusive. A client accepts that authentication only with `--connect radius://<uuid>`. Model selection on `client` applies when it activates a local server; it is rejected together with `--connect`.
 
+`--connect unix://<path>` must use the socket path the CLI prints. `amazme server` prints `Socket: <path>` after the host is listening, and `amazme web` prints the same `Socket:` line in its launch summary. Do not assemble `<server-dir>/<server-id>.sock` yourself. When that path would not fit in the platform Unix socket name, every socket for the logical server directory is published under `/tmp/am-<uid>/<hash>/` instead. The printed path is already that connectable location. Profile and lock files stay in the logical directory (`AMAZME_SERVER_DIR` or `~/.amazme/server`).
+
 `amazme doctor` reads local configuration without creating files, running commands, or contacting providers. Exit status `0` means the report has no error-level entry, `1` means it has one, and `2` means the arguments are invalid. The report boundary is in [Diagnostics](diagnostics.md).
 
 ## Package commands
