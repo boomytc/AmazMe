@@ -3605,6 +3605,21 @@ export function createRenderer(
 				: [...turns].reverse().find((node) => node.getBoundingClientRect().top < top - 8);
 		(target ?? (direction > 0 ? turns[turns.length - 1] : turns[0]))?.scrollIntoView({ block: "start" });
 	};
+	/**
+	 * A software keyboard shrinks the visual viewport without changing dvh. Track the
+	 * covered height so the shell can shrink and keep the composer above it.
+	 */
+	const syncKeyboardInset = (): void => {
+		const viewport = window.visualViewport;
+		const inset =
+			viewport === null || viewport === undefined
+				? 0
+				: Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+		document.documentElement.style.setProperty("--keyboard-inset", `${inset}px`);
+	};
+	window.visualViewport?.addEventListener("resize", syncKeyboardInset);
+	window.visualViewport?.addEventListener("scroll", syncKeyboardInset);
+	syncKeyboardInset();
 	document.addEventListener("selectionchange", scheduleQuoteAction);
 	document.addEventListener("mouseup", scheduleQuoteAction);
 	document.addEventListener("touchend", scheduleQuoteAction);

@@ -4247,6 +4247,10 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 /* Notched displays: fixed chrome and the composer stay clear of the safe areas. */
 @media (max-width: 1023px) {
+	/* The software keyboard covers the visual viewport, not dvh; shrink the shell with it. */
+	body {
+		height: calc(100dvh - var(--keyboard-inset, 0px));
+	}
 	.sidebar {
 		padding-top: max(10px, env(safe-area-inset-top));
 		padding-bottom: max(12px, env(safe-area-inset-bottom));
