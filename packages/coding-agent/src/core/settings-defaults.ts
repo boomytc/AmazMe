@@ -51,6 +51,7 @@ export const SETTINGS_DEFAULTS = {
 		imageWidthCells: 60,
 		clearOnShrink: false,
 		showTerminalProgress: false,
+		renderIntervalMs: 16,
 	},
 	images: {
 		autoResize: true,

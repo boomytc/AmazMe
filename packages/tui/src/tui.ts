@@ -485,6 +485,8 @@ export interface TUI extends Component {
 	stop(options?: TuiStopOptions): void;
 	renderNow(force?: boolean): void;
 	requestRender(force?: boolean): void;
+	/** Minimum time between throttled frames; user input still renders immediately. */
+	setMinRenderIntervalMs(intervalMs: number): void;
 	addInputListener(listener: TuiInputListener): () => void;
 	removeInputListener(listener: TuiInputListener): void;
 	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
@@ -506,6 +508,22 @@ export function isViewportTUI(tui: TUI): tui is ViewportTUI {
 	return (tui as Partial<ViewportTUI>)[VIEWPORT_TUI] === true;
 }
 
+const DEFAULT_RENDER_INTERVAL_MS = 16;
+const MAX_RENDER_INTERVAL_MS = 100;
+
+/** Clamp a requested frame interval to a usable range. */
+export function clampRenderIntervalMs(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_RENDER_INTERVAL_MS;
+	return Math.max(0, Math.min(MAX_RENDER_INTERVAL_MS, Math.round(value)));
+}
+
+/** Frame interval from the environment, used before a presentation applies its own setting. */
+export function resolveRenderIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env.AMAZME_RENDER_INTERVAL_MS;
+	if (raw === undefined || raw === "") return DEFAULT_RENDER_INTERVAL_MS;
+	return clampRenderIntervalMs(Number.parseInt(raw, 10));
+}
+
 export abstract class TuiBase extends Container implements TUI {
 	abstract readonly mode: TuiMode;
 	public terminal: Terminal;
@@ -518,7 +536,8 @@ export abstract class TuiBase extends Container implements TUI {
 	private immediateRenderScheduled = false;
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
-	private static readonly MIN_RENDER_INTERVAL_MS = 16;
+	/** Minimum time between throttled frames; input still renders immediately. */
+	private minRenderIntervalMs = resolveRenderIntervalMs();
 	private showHardwareCursor = false;
 	private clearOnShrink = false;
 	protected fullRedrawCount = 0;
@@ -1001,6 +1020,10 @@ export abstract class TuiBase extends Container implements TUI {
 		this.doRender();
 	}
 
+	setMinRenderIntervalMs(intervalMs: number): void {
+		this.minRenderIntervalMs = clampRenderIntervalMs(intervalMs);
+	}
+
 	requestRender(force = false): void {
 		if (force) {
 			this.resetRenderState();
@@ -1040,7 +1063,7 @@ export abstract class TuiBase extends Container implements TUI {
 			return;
 		}
 		const elapsed = performance.now() - this.lastRenderAt;
-		const delay = Math.max(0, TuiBase.MIN_RENDER_INTERVAL_MS - elapsed);
+		const delay = Math.max(0, this.minRenderIntervalMs - elapsed);
 		this.renderTimer = setTimeout(() => {
 			this.renderTimer = undefined;
 			if (this.stopped || !this.renderRequested) {

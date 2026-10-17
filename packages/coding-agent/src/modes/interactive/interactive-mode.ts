@@ -684,6 +684,7 @@ export class InteractiveMode {
 			onCopySuccess: () => this.clipboardFeedback.showCopied(),
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+			renderIntervalMs: this.settingsManager.getRenderIntervalMs(),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -1025,6 +1026,7 @@ export class InteractiveMode {
 			onCopySuccess: () => this.clipboardFeedback.showCopied(),
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+			renderIntervalMs: this.settingsManager.getRenderIntervalMs(),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;

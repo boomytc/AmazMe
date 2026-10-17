@@ -1374,6 +1374,22 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getRenderIntervalMs(): number {
+		if (this.settings.terminal?.renderIntervalMs !== undefined) {
+			return this.settings.terminal.renderIntervalMs;
+		}
+		const env = Number.parseInt(process.env.AMAZME_RENDER_INTERVAL_MS ?? "", 10);
+		if (Number.isFinite(env)) return Math.max(0, Math.min(100, env));
+		return SETTINGS_DEFAULTS.terminal.renderIntervalMs;
+	}
+
+	setRenderIntervalMs(intervalMs: number): void {
+		if (!this.globalSettings.terminal) this.globalSettings.terminal = {};
+		this.globalSettings.terminal.renderIntervalMs = Math.max(0, Math.min(100, Math.round(intervalMs)));
+		this.markModified("terminal", "renderIntervalMs");
+		this.save();
+	}
+
 	getClearOnShrink(): boolean {
 		// Settings takes precedence, then env var, then default false
 		if (this.settings.terminal?.clearOnShrink !== undefined) {

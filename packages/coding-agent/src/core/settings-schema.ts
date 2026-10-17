@@ -131,6 +131,14 @@ const TerminalSettingsSchema = Type.Object({
 			default: SETTINGS_DEFAULTS.terminal.showTerminalProgress,
 		}),
 	),
+	renderIntervalMs: Type.Optional(
+		Type.Number({
+			minimum: 0,
+			maximum: 100,
+			description: "Minimum time between throttled frames in milliseconds; input still renders immediately.",
+			default: SETTINGS_DEFAULTS.terminal.renderIntervalMs,
+		}),
+	),
 	hyperlinks: Type.Optional(Type.Union([Type.Boolean(), Type.Literal("auto")])),
 	images: Type.Optional(
 		Type.Union([

@@ -14,6 +14,7 @@ export interface InteractiveTuiOptions {
 	readonly onCopySuccess?: () => void;
 	readonly fullscreenCopyOnSelect?: boolean;
 	readonly fullscreenWheelScrollLines?: WheelScrollLines;
+	readonly renderIntervalMs?: number;
 }
 
 /** Composition root shared by coding-agent presentations. */
@@ -22,6 +23,12 @@ export function createInteractiveTui(options: InteractiveTuiOptions & { readonly
 export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen;
 export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
 	const terminal = options.terminal ?? new ProcessTerminal();
+	const tui = createRenderer(terminal, options);
+	if (options.renderIntervalMs !== undefined) tui.setMinRenderIntervalMs(options.renderIntervalMs);
+	return tui;
+}
+
+function createRenderer(terminal: Terminal, options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
 	if (options.tuiMode === "fullscreen") {
 		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
 		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
