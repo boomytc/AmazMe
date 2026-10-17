@@ -104,7 +104,8 @@ async function start(): Promise<void> {
 	}
 }
 
-await start().catch((error: unknown) => {
+// The child process owns the lifetime of this entry; its close handler sets the final exit code.
+start().catch((error: unknown) => {
 	console.error(error instanceof Error ? error.message : String(error));
 	process.exitCode = 1;
 });

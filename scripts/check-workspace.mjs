@@ -3,10 +3,11 @@ import { isBuiltin } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { SyntaxKind } from "typescript/unstable/ast";
+import { NodeFlags, SyntaxKind } from "typescript/unstable/ast";
 import {
 	isCallExpression,
 	isExportDeclaration,
+	isFunctionLikeDeclaration,
 	isIdentifier,
 	isImportDeclaration,
 	isImportTypeNode,
@@ -49,6 +50,50 @@ function sourceFiles(directory) {
 				? [path]
 				: [];
 	});
+}
+
+/**
+ * Whether a source file is a process entry, judged from declarations and syntax alone. A process
+ * executes an entry directly and no module imports it, so only an entry may suspend its own
+ * evaluation. Published bin targets map back from their build output to their source.
+ */
+function declaredEntry(pkg, file) {
+	if (readFileSync(file, "utf8").startsWith("#!")) return true;
+	const bin = pkg.manifest.bin;
+	const targets = typeof bin === "string" ? [bin] : Object.values(bin ?? {});
+	return targets.some((target) => {
+		const sourcePath = String(target)
+			.replace(/^\.\//, "")
+			.replace(/^dist\//, "src/")
+			.replace(/\.js$/, ".ts");
+		return resolve(pkg.directory, sourcePath) === file;
+	});
+}
+
+/**
+ * Positions where the module suspends evaluation: an `await`, `for await`, or `await using` whose
+ * nearest enclosing function body is the module itself. Top-level if, block, try, loop, switch, and
+ * export initializers all count as module scope; function, method, accessor, constructor, and
+ * arrow bodies do not.
+ */
+function moduleScopeAwaits(source) {
+	const found = [];
+	const visit = (node, inFunction) => {
+		const nested = inFunction || isFunctionLikeDeclaration(node);
+		if (!nested) {
+			if (node.kind === SyntaxKind.AwaitExpression) found.push(node.getStart(source));
+			else if (node.kind === SyntaxKind.ForOfStatement && node.awaitModifier !== undefined)
+				found.push(node.getStart(source));
+			else if (
+				node.kind === SyntaxKind.VariableStatement &&
+				(node.declarationList.flags & NodeFlags.AwaitUsing) === NodeFlags.AwaitUsing
+			)
+				found.push(node.getStart(source));
+		}
+		node.forEachChild((child) => visit(child, nested));
+	};
+	visit(source, false);
+	return found;
 }
 
 /** Direct registry dependencies stay exact; workspace dependencies also match their release version. */
@@ -234,6 +279,15 @@ export function checkSourceContracts(repoRoot) {
 				node.forEachChild(visit);
 			};
 			visit(source);
+			const awaits = moduleScopeAwaits(source);
+			if (awaits.length > 0 && !declaredEntry(pkg, file)) {
+				for (const position of awaits) {
+					const { line } = source.getLineAndCharacterOfPosition(position);
+					failures.push(
+						`${relative(root, file)}:${line + 1}: package source must not await at module scope; move the work into a function`,
+					);
+				}
+			}
 		}
 	} finally {
 		api.close();

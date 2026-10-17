@@ -111,82 +111,89 @@ function compareDiscovery(left: readonly DiscoveredEvalCase[], right: readonly D
 	}
 }
 
-const cli = parseEvalCli(process.argv.slice(2));
-if (!cli.provider || !cli.model) throw new Error("Set AMAZME_PROVIDER and AMAZME_MODEL, or pass --provider and --model.");
-const selectedModel = { provider: cli.provider, model: cli.model };
-const modelIdentity = `${selectedModel.provider}/${selectedModel.model}`;
-const files = (
-	cli.requestedFiles.length > 0 ? cli.requestedFiles : globSync("evals/**/*.docs.eval.ts", { cwd: packageRoot })
-)
-	.map(containerPath)
-	.sort();
-if (files.length === 0) throw new Error("No documentation eval files were selected.");
-for (const file of files) {
-	if (!file.endsWith(".docs.eval.ts")) throw new Error(`Documentation runner cannot execute non-doc eval: ${file}`);
-}
+async function main(): Promise<void> {
+	const cli = parseEvalCli(process.argv.slice(2));
+	if (!cli.provider || !cli.model) throw new Error("Set AMAZME_PROVIDER and AMAZME_MODEL, or pass --provider and --model.");
+	const selectedModel = { provider: cli.provider, model: cli.model };
+	const modelIdentity = `${selectedModel.provider}/${selectedModel.model}`;
+	const files = (
+		cli.requestedFiles.length > 0 ? cli.requestedFiles : globSync("evals/**/*.docs.eval.ts", { cwd: packageRoot })
+	)
+		.map(containerPath)
+		.sort();
+	if (files.length === 0) throw new Error("No documentation eval files were selected.");
+	for (const file of files) {
+		if (!file.endsWith(".docs.eval.ts")) throw new Error(`Documentation runner cannot execute non-doc eval: ${file}`);
+	}
 
-const artifactDirectory = resolve(packageRoot, ".eval", artifactRunId());
-const authPath = requireEvalAuthFile(selectedModel.provider);
-await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
-const images = buildImages();
-if (images.with_docs.id === images.without_docs.id)
-	throw new Error("Documentation variants resolved to the same image.");
-const docker = createDockerContext(
-	images,
-	artifactDirectory,
-	authPath,
-	selectedModel.provider,
-	selectedModel.model,
-	cli.runsPerVariant,
-);
-
-const discoveries = [];
-for (const variant of DOCUMENTATION_VARIANTS) {
-	const path = discoverCases(docker, variant, files, cli.discoveryArgs);
-	discoveries.push(parseDiscoveredCases(JSON.parse(await readFile(path, "utf8"))));
-}
-compareDiscovery(discoveries[0], discoveries[1]);
-const cases = discoveries[0].map((evalCase) => ({ ...evalCase, file: normalizeDiscoveredFile(evalCase.file) }));
-if (cases.length === 0) throw new Error("No documentation eval cases matched the selection.");
-const tasks = createTaskPlan(cases, modelIdentity, cli.runsPerVariant);
-
-const protocol = {
-	schemaVersion: 1,
-	model: modelIdentity,
-	runsPerVariant: cli.runsPerVariant,
-	images,
-	files,
-	cases: cases.map(({ evalSet, caseId, file }) => ({ evalSet, caseId, file })),
-	tasks,
-};
-const protocolText = JSON.stringify(protocol);
-const protocolDigest = createHash("sha256").update(protocolText).digest("hex");
-await writeFile(
-	resolve(artifactDirectory, "protocol.json"),
-	`${JSON.stringify({ ...protocol, protocolDigest }, null, 2)}\n`,
-);
-await writeFile(resolve(artifactDirectory, "expected-runs.json"), `${JSON.stringify(tasks, null, 2)}\n`);
-
-const observations: EvalObservation[] = [];
-for (const [index, task] of tasks.entries()) {
-	console.log(
-		`\n[${index + 1}/${tasks.length}] ${task.evalSet} > ${task.caseId} | ${task.variant} | ${task.model} | run ${task.runNumber}`,
+	const artifactDirectory = resolve(packageRoot, ".eval", artifactRunId());
+	const authPath = requireEvalAuthFile(selectedModel.provider);
+	await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
+	const images = buildImages();
+	if (images.with_docs.id === images.without_docs.id)
+		throw new Error("Documentation variants resolved to the same image.");
+	const docker = createDockerContext(
+		images,
+		artifactDirectory,
+		authPath,
+		selectedModel.provider,
+		selectedModel.model,
+		cli.runsPerVariant,
 	);
-	const reportPath = runTask(docker, task);
-	const observation: EvalObservation = reportPath
-		? await readTaskObservation(task, reportPath, artifactDirectory)
-		: erroredObservation(task);
-	observations.push(observation);
+
+	const discoveries = [];
+	for (const variant of DOCUMENTATION_VARIANTS) {
+		const path = discoverCases(docker, variant, files, cli.discoveryArgs);
+		discoveries.push(parseDiscoveredCases(JSON.parse(await readFile(path, "utf8"))));
+	}
+	compareDiscovery(discoveries[0], discoveries[1]);
+	const cases = discoveries[0].map((evalCase) => ({ ...evalCase, file: normalizeDiscoveredFile(evalCase.file) }));
+	if (cases.length === 0) throw new Error("No documentation eval cases matched the selection.");
+	const tasks = createTaskPlan(cases, modelIdentity, cli.runsPerVariant);
+
+	const protocol = {
+		schemaVersion: 1,
+		model: modelIdentity,
+		runsPerVariant: cli.runsPerVariant,
+		images,
+		files,
+		cases: cases.map(({ evalSet, caseId, file }) => ({ evalSet, caseId, file })),
+		tasks,
+	};
+	const protocolText = JSON.stringify(protocol);
+	const protocolDigest = createHash("sha256").update(protocolText).digest("hex");
 	await writeFile(
-		resolve(artifactDirectory, "observations.jsonl"),
-		`${observations.map((item) => JSON.stringify(item)).join("\n")}\n`,
+		resolve(artifactDirectory, "protocol.json"),
+		`${JSON.stringify({ ...protocol, protocolDigest }, null, 2)}\n`,
 	);
+	await writeFile(resolve(artifactDirectory, "expected-runs.json"), `${JSON.stringify(tasks, null, 2)}\n`);
+
+	const observations: EvalObservation[] = [];
+	for (const [index, task] of tasks.entries()) {
+		console.log(
+			`\n[${index + 1}/${tasks.length}] ${task.evalSet} > ${task.caseId} | ${task.variant} | ${task.model} | run ${task.runNumber}`,
+		);
+		const reportPath = runTask(docker, task);
+		const observation: EvalObservation = reportPath
+			? await readTaskObservation(task, reportPath, artifactDirectory)
+			: erroredObservation(task);
+		observations.push(observation);
+		await writeFile(
+			resolve(artifactDirectory, "observations.jsonl"),
+			`${observations.map((item) => JSON.stringify(item)).join("\n")}\n`,
+		);
+	}
+
+	const report = summarizeEvalObservations(protocolDigest, tasks, observations);
+	const reportText = formatEvalComparisonReport(report);
+	await writeFile(resolve(artifactDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+	await writeFile(resolve(artifactDirectory, "report.txt"), `${reportText}\n`);
+	console.log(`\n${reportText}`);
+	console.log(`\nArtifacts: ${artifactDirectory}`);
+	if (report.blockedPairs.length > 0) process.exitCode = 1;
 }
 
-const report = summarizeEvalObservations(protocolDigest, tasks, observations);
-const reportText = formatEvalComparisonReport(report);
-await writeFile(resolve(artifactDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-await writeFile(resolve(artifactDirectory, "report.txt"), `${reportText}\n`);
-console.log(`\n${reportText}`);
-console.log(`\nArtifacts: ${artifactDirectory}`);
-if (report.blockedPairs.length > 0) process.exitCode = 1;
+main().catch((error: unknown) => {
+	console.error(error instanceof Error ? error.message : String(error));
+	process.exitCode = 1;
+});

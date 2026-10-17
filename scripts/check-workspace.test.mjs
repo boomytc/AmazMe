@@ -114,6 +114,35 @@ test("relative imports, including type expressions, keep TypeScript extensions a
 	assert.ok(failures.some((failure) => failure.includes("cross-package source import")));
 });
 
+test("package sources must not suspend module evaluation with await", () => {
+	const root = fixture();
+	const directory = packageFixture(root, "ai", "export {};");
+	writeFileSync(
+		join(directory, "src/flow.ts"),
+		'import { readFile } from "node:fs/promises";\nexport const value = await readFile("a");\nif (value) { for await (const part of value) { part; } }\nawait using handle = open();\n',
+	);
+	const failures = checkSourceContracts(root);
+	assert.equal(failures.filter((failure) => failure.includes("must not await at module scope")).length, 3);
+});
+
+test("await inside functions, methods, and arrows does not suspend the module", () => {
+	const root = fixture();
+	const directory = packageFixture(root, "ai", "export {};");
+	writeFileSync(
+		join(directory, "src/flow.ts"),
+		'async function a() { await b(); }\nexport const c = async () => { await d(); };\nclass E { async f() { for await (const g of h) { g; } } }\n',
+	);
+	assert.deepEqual(checkSourceContracts(root), []);
+});
+
+test("only bins and shebang entries may await at module scope", () => {
+	const root = fixture();
+	const directory = packageFixture(root, "ai", "export {};", { bin: { tool: "./dist/cli.js" } });
+	writeFileSync(join(directory, "src/cli.ts"), 'await import("./index.ts");\n');
+	writeFileSync(join(directory, "src/hook.ts"), '#!/usr/bin/env node\nawait import("./index.ts");\n');
+	assert.deepEqual(checkSourceContracts(root), []);
+});
+
 test("foundations cannot depend upward and runtime dependency cycles are refused", () => {
 	const root = fixture();
 	packageFixture(root, "chord", 'import type { Model } from "@amazme/ai";', {
