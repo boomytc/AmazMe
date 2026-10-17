@@ -6,6 +6,7 @@ import { isServerId, type ServerId } from "@amazme/protocol";
 import type { ClientCommand } from "../cli/host/commands/client.ts";
 import { RadiusRelayAuthResolver } from "./radius-auth.ts";
 import { createRadiusClientTransportFactory, RadiusClientReconnect } from "./radius-relay.ts";
+import { hostSocketDirectory } from "./socket-directory.ts";
 import { activateServer, ENV_SERVER_ID, resolveServerDirectory, resolveSessionDirectory } from "./server.ts";
 import { AgentController } from "../core/plugins/agent-controller.ts";
 import {
@@ -76,7 +77,7 @@ export async function openClientRuntime(
 				: { transport: "unix", ...routeFromExplicitPath(command.connect.path) },
 		];
 	} else {
-		routes = (await discoverUnixServers({ directory })).map((route) => ({ transport: "unix", ...route }));
+		routes = (await discoverUnixServers({ directory: hostSocketDirectory(directory) })).map((route) => ({ transport: "unix", ...route }));
 		if (routes.length > 0 && command.model !== undefined) {
 			throw new Error("Model selection is only valid when automatically activating a new server");
 		}

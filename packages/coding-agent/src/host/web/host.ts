@@ -17,6 +17,7 @@ import {
 	startServer,
 	type RunningServer,
 } from "../server.ts";
+import { hostSocketDirectory } from "../socket-directory.ts";
 import { buildBootManifest, DEFAULT_BOOT_PREFERENCES, serveDocument } from "./boot.ts";
 import { createServerBridge, type ServerBridge } from "./bridge.ts";
 import { bundlePageEntry } from "./bundle.ts";
@@ -96,7 +97,7 @@ interface HostedServer {
 /** The server already listening in this directory under `serverId`, if any. */
 async function findRunningServer(directory: string, serverId: string): Promise<UnixServerRoute | undefined> {
 	// The same probe a terminal client uses, so a page host finds exactly the servers it finds.
-	const routes = await discoverUnixServers({ directory });
+	const routes = await discoverUnixServers({ directory: hostSocketDirectory(directory) });
 	return routes.find((route) => route.serverId === serverId);
 }
 
