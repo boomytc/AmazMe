@@ -303,6 +303,26 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 
 自审逐项核对补丁、现有消费者与历史处置，未发现本轮需要修正的运行时代码；因此只更新本跟进记录，不将参考项记为新增能力。本机实际验证为 macOS 路径和 Node SQLite，Web DOM 用例使用 happy-dom；未作 Windows、真实浏览器或整库备份/恢复验收。没有运行根完整构建或测试。
 
+本轮核对 QwenPaw `4e7b37a9..697aeb66` 的 11 个提交（2026-10-16）。核对时本地 main 停在 `4e7b37a9`、origin/main 领先 11 个提交；直接读取远程跟踪提交的补丁与源码，不把本地旧工作树当作新实现。
+
+| QwenPaw 提交 | 内容 | 处置 |
+| --- | --- | --- |
+| `c7702cc6` | Windows 监听 backlog 与 chunk 恢复状态 | 跳过；该修复针对 QwenPaw 预绑定套接字（`listen(1)` 后交给 Uvicorn，Windows 不调整已有 backlog）。AmazMe 的 Web 宿主直接 `server.listen`，没有端口文件或预绑定移交；页面是单一预编译入口，已有入口级失败提示与手动重试，没有 React/Vite chunk 自动刷新或就绪轮询 |
+| `5c56644a` | v2.2.2 发布说明 | 跳过；QwenPaw 自有版本记录 |
+| `5388812f` | 恢复交互式 HTML 预览与只读降级说明 | 仅参考；AmazMe 的工作区预览只有目录、文本、二进制、缺失和拒绝五种视图，没有 HTML iframe 渲染。引入它会新增一个需要沙箱、脚本策略和只读降级的预览形态，本轮不移植，不宣称已有该能力 |
+| `90ce71b0` | Tavily 可选 API key 走凭据存储 | 跳过；AmazMe 没有内置网页搜索工具（扩展只有 codemode、llama、MCP 与 tool-search），provider 凭据面向模型供应商，没有工具级凭据引用 |
+| `df035cb1` | Hub 插件目录与已安装状态对齐 | 跳过；插件页管理服务端包选择与 MCP 服务器，没有市场目录、manifest 扫描或安装版本对齐 |
+| `fd2af9b5` | 提交时清空聊天输入并保留新草稿 | 等价覆盖；Web composer 在提交前同步清空输入，宿主 `onSubmit` 在未连接时恢复草稿，在发送失败时把原文本与失败期间新输入的草稿合并并保留附件。AmazMe 没有 QwenPaw 那种会话分配替换 SDK Input 的竞态 |
+| `470e915c` | 简化网页搜索配置状态守卫 | 跳过；没有网页搜索配置界面 |
+| `0bbec3e9` | 对话内联 UI 插件与受限消息提交 | 仅参考；AmazMe 的插件是服务端扩展（MCP、codemode、llama、tool-search），`PresentationPlugins` 只向呈现层提供已构建的代际，`PresentationUI` 仅有选择与状态提示。页面没有插件注册表、slot key、代码块渲染器或插件提交 API，不复制这套前端插件宿主 |
+| `5baec0fe` | 解除配置编辑器阻塞并补关闭确认 | 等价覆盖；设置控件按字段显式提交，保存中只禁用该控件，未确认的保存结束后保留草稿并回到 dirty/可重试状态（`settings-search` 回归）；`SettingsManager` 的写入队列串行化文件写。未提交的字段草稿在切换会话时随页面草稿重置，这是显式提交模型的既有行为；没有 autosave 失败阻塞关闭的竞态，也不新增丢弃确认 |
+| `db84685e` | 更新对话依赖 | 跳过；QwenPaw 控制台依赖同步 |
+| `697aeb66` | TypeSafe 决策模型配置 | 等价覆盖模型类型隔离；provider 目录按 `chat/image/classifier` 建模，`getModels()` 只返回聊天模型，`getAllModels()` 与 `getAvailableOfType("classifier")` 提供分类模型，Web 选择器读聊天目录，`classifier-models` 回归覆盖同名聊天与分类条目共存。QwenPaw 按 agent/全局设置的“决策模型”角色没有对应载体：AmazMe 在调用点显式选择分类模型，不新增另一套决策模型设置 |
+
+合计：0 项吸收、3 项等价覆盖、2 项仅参考、6 项跳过。11 个提交全部核对完毕，没有需要修改的运行时代码。
+
+验证：对上述等价覆盖点重跑现有回归，Web 的设置草稿/重试、提交清空与入口失败 24 项通过，AI 的聊天与分类模型隔离 11 项通过，Coding Agent 的设置写入与恢复 63 项通过。另逐项核对源码：工作区列表没有 HTML 预览、扩展目录没有网页搜索、插件页只有包与 MCP、宿主直接监听且无端口文件、呈现插件为服务端代际。本轮未改代码，因此没有逐包构建；未作 Windows、真实浏览器或 QwenPaw Hub/市场验收。
+
 ## Pi 后续 19 个提交（2026-10-16）
 
 范围为 `b06c1f2cf..4954d7605`（核对时本地 Pi 停在前者、origin/main 领先 19 个提交）。读取该终点的 Git 快照迁移，完成代码吸收后按用户要求将 Pi main 快进到 `4954d7605`，与 origin/main 一致且工作树干净。保留 AmazMe 的产品入口、包作用域、TypeSafe 图像能力及 OAuth/供应商请求身份。
