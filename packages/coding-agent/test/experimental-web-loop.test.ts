@@ -684,7 +684,7 @@ describe("web client interactive loop", () => {
 		240_000,
 	);
 
-	test.skipIf(process.env.AMAZME_CI_SKIP_ATTACH === "1")(
+	test(
 		"a second web launch attaches to the running server instead of starting one",
 		async () => {
 			const { host: first, directory, sessionDir } = await startHostWithDirectories();
@@ -723,7 +723,7 @@ describe("web client interactive loop", () => {
 		240_000,
 	);
 
-	test.skipIf(process.env.AMAZME_CI_SKIP_ATTACH === "1")(
+	test(
 		"the page's own boot sequence binds against a bridged host",
 		async () => {
 			const { host: first, directory, sessionDir } = await startHostWithDirectories();
@@ -775,7 +775,7 @@ describe("web client interactive loop", () => {
 		240_000,
 	);
 
-	test.skipIf(process.env.AMAZME_CI_SKIP_ATTACH === "1")(
+	test(
 		"the terminal client attaches to the same host and its prompt lands in the page",
 		async () => {
 			const { host, directory } = await startHostWithDirectories();

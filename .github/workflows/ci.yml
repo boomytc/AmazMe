@@ -11,9 +11,9 @@ jobs:
     runs-on: macos-14
     env:
       TERM: xterm-256color
-      # Known: with the official Node build the coordinator's canonical socket is not created,
-      # so a second `web` launch starts its own server. Tracked separately; remove once fixed.
-      AMAZME_CI_SKIP_ATTACH: "1"
+      # Unix socket paths have a 104-byte limit on macOS; the default runner temp path plus a
+      # server UUID and control suffix exceeds it, so the coordinator cannot create its socket.
+      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
