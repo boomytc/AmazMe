@@ -9,7 +9,7 @@ import {
 	visibleWidth,
 	TuiAltScreen,
 } from "@amazme/tui";
-import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
+import type { BindingId, KeybindingsManager } from "../../../core/keybindings.ts";
 import { isEmptyTerminalPaste } from "../../../utils/clipboard-paste.ts";
 import { copyToClipboard } from "../../../utils/clipboard.ts";
 import { promptShortcutLine } from "../composer-contract.ts";
@@ -33,7 +33,7 @@ export class CustomEditor extends Editor {
 	private boxTop = 0;
 	private menuLines = 0;
 	private boxed = false;
-	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
+	public actionHandlers: Map<BindingId, () => void> = new Map();
 
 	// Special handlers that can be dynamically replaced
 	public onEscape?: () => void;
@@ -126,7 +126,7 @@ export class CustomEditor extends Editor {
 	/**
 	 * Register a handler for an app action.
 	 */
-	onAction(action: AppKeybinding, handler: () => void): void {
+	onAction(action: BindingId, handler: () => void): void {
 		this.actionHandlers.set(action, handler);
 	}
 

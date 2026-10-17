@@ -37,6 +37,7 @@ import {
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
+	Input,
 	Markdown,
 	matchesKey,
 	Spacer,
@@ -73,6 +74,7 @@ import { InteractiveComposer, promptShortcutLine, turnCancelHint, turnCancelNoti
 import { compactStartupHints, expandedStartupHints, startupHelpHint } from "./startup-hints.ts";
 import { promptOwnsKey, routeInteractiveInput } from "./interactive-input.ts";
 import { TranscriptFocus } from "./transcript-focus.ts";
+import { chatRowLineRange } from "./transcript-geometry.ts";
 import { deriveTranscriptRows } from "./transcript-model.ts";
 import { deriveRunState, type RunState } from "./run-state.ts";
 import { BashRunTable, ParentTranscript, syncComposerVisibility, WorkSurface } from "./work-surface.ts";
@@ -510,6 +512,9 @@ export class InteractiveMode {
 	private footer: FooterComponent;
 	private composer!: InteractiveComposer;
 	private transcriptFocus!: TranscriptFocus;
+	private transcriptSearchInput: Input | undefined;
+	private transcriptSearchLabel: Text | undefined;
+	private transcriptSearchQuery: string | undefined;
 	private workSurface!: WorkSurface;
 	private readonly parentTranscript = new ParentTranscript();
 	private readonly bashRuns = new BashRunTable();
@@ -3202,6 +3207,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
+		this.defaultEditor.onAction("tui.altScreen.search", () => this.handleFindCommand());
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -3338,6 +3344,7 @@ export class InteractiveMode {
 					this.session.childAgents.touch();
 				},
 				onCopy: (text) => void this.copyWithFeedback(text),
+				onRowSelected: (childIndex) => this.scrollTranscriptRowIntoView(childIndex),
 			},
 		);
 		this.workSurface = new WorkSurface(
@@ -3760,9 +3767,10 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/find" || text === "/search") {
+			const findMatch = /^\/(?:find|search)(?:\s+([\s\S]*))?$/.exec(text);
+			if (findMatch) {
 				this.editor.setText("");
-				this.handleFindCommand();
+				this.handleFindCommand(findMatch[1]?.trim());
 				return;
 			}
 			if (text === "/fork") {
@@ -7348,12 +7356,91 @@ export class InteractiveMode {
 	}
 
 	/** Opens the transcript search box. Terminals without the search chord reach it here. */
-	private handleFindCommand(): void {
+	private handleFindCommand(query?: string): void {
 		if (this.renderer instanceof TuiAltScreen) {
 			this.renderer.openSearch();
 			return;
 		}
-		this.showStatus("Transcript search needs fullscreen mode; in regular mode use your terminal's own search");
+		this.startTranscriptSearch(query ?? "");
+	}
+
+	/**
+	 * Inline search for the main-screen transcript. Rendered transcript cells are not
+	 * addressable there, so the box selects matching entries and lets the selection
+	 * marker and scrolling show where the hit is.
+	 */
+	private startTranscriptSearch(prefill = ""): void {
+		if (this.transcriptSearchInput) {
+			this.ui.setFocus(this.transcriptSearchInput);
+			return;
+		}
+		const input = new Input();
+		if (prefill.length > 0) input.setValue(prefill);
+		const label = new Text(this.transcriptSearchLabelText(), 1, 0);
+		const container = new Container();
+		container.addChild(label);
+		container.addChild(input);
+		input.onSubmit = (value) => this.runTranscriptSearch(value);
+		input.onEscape = () => this.closeTranscriptSearch();
+		this.transcriptSearchInput = input;
+		this.transcriptSearchLabel = label;
+		this.transcriptFocus.clearSearch();
+		this.transcriptSearchQuery = undefined;
+		this.editorContainer.clear();
+		this.editorContainer.addChild(container);
+		this.ui.setFocus(input);
+		this.ui.requestRender();
+	}
+
+	private runTranscriptSearch(value: string): void {
+		const query = value.trim();
+		if (query.length === 0) return;
+		if (query !== this.transcriptSearchQuery) {
+			this.transcriptSearchQuery = query;
+			this.transcriptFocus.search(query);
+		} else {
+			this.transcriptFocus.searchNext(1);
+		}
+		this.transcriptSearchLabel?.setText(this.transcriptSearchLabelText());
+		this.ui.requestRender();
+	}
+
+	private transcriptSearchLabelText(progress = this.transcriptFocus.searchProgress()): string {
+		if (progress === undefined) return theme.fg("dim", "Find in transcript · Enter next · Esc close");
+		const count = progress.total === 0 ? "no matches" : `${progress.index}/${progress.total}`;
+		return theme.fg("dim", `Find "${progress.query}" · ${count} · Enter next · Esc close`);
+	}
+
+	private closeTranscriptSearch(): void {
+		if (!this.transcriptSearchInput) return;
+		this.transcriptSearchInput = undefined;
+		this.transcriptSearchLabel = undefined;
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor as Component);
+		this.ui.setFocus(this.editor);
+		this.ui.requestRender();
+	}
+
+	/** Scrolls a chat row into the viewport without moving the view when it is already visible. */
+	private scrollTranscriptRowIntoView(childIndex: number): void {
+		const view = this.transcriptScrollView;
+		if (!view) return;
+		const width = view.getContentWidth(this.ui.terminal.columns);
+		const range = chatRowLineRange(
+			this.documentContainer.children,
+			this.chatContainer,
+			this.chatContainer.children,
+			childIndex,
+			width,
+		);
+		if (!range) return;
+		const top = view.scrollTop;
+		const bottom = top + view.viewportHeight;
+		if (range.start < top) view.scrollTo(range.start);
+		else if (range.start + range.height > bottom) {
+			view.scrollTo(Math.max(0, range.start + range.height - view.viewportHeight));
+		}
+		this.ui.requestRender();
 	}
 
 	private handleHotkeysCommand(): void {
@@ -7405,6 +7492,8 @@ export class InteractiveMode {
 		const promptNext = this.getEditorKeyDisplay("tui.altScreen.nextPrompt");
 		const foldAll = this.getAppKeyDisplay("app.transcript.toggleAll");
 		const copySelected = this.getAppKeyDisplay("app.message.copy");
+		const searchNext = this.getAppKeyDisplay("app.transcript.searchNext");
+		const searchPrevious = this.getAppKeyDisplay("app.transcript.searchPrevious");
 		const searchTranscript = this.getEditorKeyDisplay("tui.altScreen.search");
 
 		let hotkeys = `
@@ -7427,6 +7516,7 @@ These main-editor controls take precedence over the configured bindings below.
 | \`${promptPrev}\` / \`${promptNext}\` | Jump to the previous or next prompt |
 | \`${foldAll}\` | Fold or unfold every entry |
 | \`${copySelected}\` | Copy the selected entry |
+| \`${searchNext}\` / \`${searchPrevious}\` | Next or previous \`/find\` match |
 | \`PageUp\` / \`PageDown\` | Scroll by page |
 
 **Navigation**

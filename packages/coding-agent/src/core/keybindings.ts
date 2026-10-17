@@ -113,6 +113,14 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+e",
 		description: "Fold or unfold every transcript entry",
 	},
+	"app.transcript.searchNext": {
+		defaultKeys: "n",
+		description: "Select the next transcript search match",
+	},
+	"app.transcript.searchPrevious": {
+		defaultKeys: "shift+n",
+		description: "Select the previous transcript search match",
+	},
 	"app.dashboard.toggle": {
 		defaultKeys: "ctrl+\\",
 		description: "Open the agent dashboard",

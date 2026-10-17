@@ -7,6 +7,8 @@ export interface TranscriptFocusOptions {
 	onHighlight?(childId: string | undefined): void;
 	/** Receives the selected row's copyable text for the configured copy binding. */
 	onCopy?(text: string): void;
+	/** Receives the selected row's chat-container position so the caller can scroll it into view. */
+	onRowSelected?(childIndex: number): void;
 }
 
 /**
@@ -25,6 +27,7 @@ export class TranscriptFocus {
 	private readonly options: TranscriptFocusOptions;
 	private allExpanded = false;
 	private selectedRow: TranscriptRow | undefined;
+	private searchQueryValue: string | undefined;
 
 	constructor(
 		scrollBy: (lines: number) => void,
@@ -43,12 +46,67 @@ export class TranscriptFocus {
 		return this.model.selectedIndex;
 	}
 
+	/** True while a query from {@link search} can still be cycled. */
+	get hasSearch(): boolean {
+		return this.searchQueryValue !== undefined;
+	}
+
+	/**
+	 * Selects the first row matching `query` (case-insensitive, label and copyable text).
+	 * Returns the one-based match number and the total, so a caller can show progress.
+	 */
+	search(query: string): { index: number; total: number } {
+		this.focus = "scrollback";
+		this.sync();
+		this.searchQueryValue = query;
+		const matches = this.model.search(query);
+		const first = matches[0];
+		if (first !== undefined) {
+			this.model.select(first);
+			this.applySelection();
+			this.reveal();
+		}
+		return { index: matches.length === 0 ? 0 : 1, total: matches.length };
+	}
+
+	/** Cycles through the current query's matches, recomputed against the current rows. */
+	searchNext(delta: number): boolean {
+		const query = this.searchQueryValue;
+		if (query === undefined) return false;
+		this.sync();
+		const matches = this.model.search(query);
+		if (matches.length === 0) return false;
+		const current = matches.indexOf(this.model.selectedIndex);
+		const next = current === -1 ? (delta > 0 ? 0 : matches.length - 1) : (current + delta + matches.length) % matches.length;
+		const row = matches[next];
+		if (row === undefined) return false;
+		this.model.select(row);
+		this.applySelection();
+		this.reveal();
+		return true;
+	}
+
+	clearSearch(): void {
+		this.searchQueryValue = undefined;
+	}
+
+	/** One-based match position for the active query, recomputed against the current rows. */
+	searchProgress(): { query: string; index: number; total: number } | undefined {
+		const query = this.searchQueryValue;
+		if (query === undefined) return undefined;
+		this.sync();
+		const matches = this.model.search(query);
+		const position = matches.indexOf(this.model.selectedIndex);
+		return { query, index: position === -1 ? 0 : position + 1, total: matches.length };
+	}
+
 	handleInput(data: string): boolean {
 		if (matchesKey(data, "tab")) {
 			this.focus = this.focus === "prompt" ? "scrollback" : "prompt";
 			if (this.focus === "scrollback") {
 				this.sync();
 				this.applySelection();
+				this.reveal();
 				this.highlight();
 			} else {
 				this.applySelection();
@@ -70,6 +128,8 @@ export class TranscriptFocus {
 
 		if (matchesAppBinding(data, "tui.altScreen.nextPrompt")) return this.jumpTurn(1);
 		if (matchesAppBinding(data, "tui.altScreen.previousPrompt")) return this.jumpTurn(-1);
+		if (matchesAppBinding(data, "app.transcript.searchNext")) return this.searchNext(1);
+		if (matchesAppBinding(data, "app.transcript.searchPrevious")) return this.searchNext(-1);
 		if (matchesAppBinding(data, "app.transcript.toggleAll")) {
 			this.allExpanded = !this.allExpanded;
 			this.model.expandAll(this.allExpanded);
@@ -84,6 +144,7 @@ export class TranscriptFocus {
 		if (matchesKey(data, "up") || matchesKey(data, "down")) {
 			this.model.move(matchesKey(data, "up") ? -1 : 1);
 			this.applySelection();
+			this.reveal();
 			this.highlight();
 			return true;
 		}
@@ -113,6 +174,12 @@ export class TranscriptFocus {
 	}
 
 	/** Keep exactly one row marked, and only while the transcript owns the keyboard. */
+	/** Ask the owner to scroll the selected row into view. */
+	private reveal(): void {
+		const childIndex = this.model.selected?.childIndex;
+		if (childIndex !== undefined) this.options.onRowSelected?.(childIndex);
+	}
+
 	private applySelection(): void {
 		const next = this.focus === "scrollback" ? this.model.selected : undefined;
 		if (next?.id === this.selectedRow?.id) return;
@@ -124,6 +191,7 @@ export class TranscriptFocus {
 	private jumpTurn(delta: number): boolean {
 		this.model.moveTurn(delta);
 		this.applySelection();
+		this.reveal();
 		this.highlight();
 		return true;
 	}

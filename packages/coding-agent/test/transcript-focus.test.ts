@@ -40,14 +40,19 @@ function harness() {
 	const scrolls: number[] = [];
 	const highlights: (string | undefined)[] = [];
 	const copies: string[] = [];
+	const revealed: number[] = [];
 	let openChild = 0;
 	const focus = new TranscriptFocus(
 		(lines) => scrolls.push(lines),
 		() => deriveTranscriptRows([first, answer, second], [{ id: "child" }], () => openChild++),
 		10,
-		{ onHighlight: (childId) => highlights.push(childId), onCopy: (text) => copies.push(text) },
+		{
+			onHighlight: (childId) => highlights.push(childId),
+			onCopy: (text) => copies.push(text),
+			onRowSelected: (childIndex) => revealed.push(childIndex),
+		},
 	);
-	return { first, answer, second, focus, scrolls, highlights, copies, opened: () => openChild };
+	return { first, answer, second, focus, scrolls, highlights, copies, revealed, opened: () => openChild };
 }
 
 describe("TranscriptFocus", () => {
@@ -126,6 +131,46 @@ describe("TranscriptFocus", () => {
 		expect([first.selected, answer.selected]).toEqual([false, true]);
 		focus.handleInput("\x1b");
 		expect([first.selected, answer.selected]).toEqual([false, false]);
+	});
+
+	test("searches rows and cycles through matches", () => {
+		const { focus, revealed } = harness();
+
+		expect(focus.search("prompt")).toEqual({ index: 1, total: 2 });
+		expect(focus.selected).toBe(0);
+		expect(revealed.at(-1)).toBe(0);
+
+		expect(focus.searchNext(1)).toBe(true);
+		expect(focus.searchProgress()).toEqual({ query: "prompt", index: 2, total: 2 });
+		expect(revealed.at(-1)).toBe(2);
+
+		expect(focus.searchNext(1)).toBe(true);
+		expect(focus.selected).toBe(0);
+		expect(focus.searchNext(-1)).toBe(true);
+		expect(focus.selected).toBe(2);
+	});
+
+	test("reports no matches without moving the selection", () => {
+		const { focus, revealed } = harness();
+		focus.handleInput("\t");
+		const before = focus.selected;
+		const reveals = revealed.length;
+
+		expect(focus.search("missing")).toEqual({ index: 0, total: 0 });
+		expect(focus.selected).toBe(before);
+		expect(revealed.length).toBe(reveals);
+		expect(focus.searchProgress()).toEqual({ query: "missing", index: 0, total: 0 });
+		expect(focus.searchNext(1)).toBe(false);
+	});
+
+	test("cycles matches with the n and shift+n bindings", () => {
+		const { focus } = harness();
+		focus.search("prompt");
+
+		expect(focus.handleInput("n")).toBe(true);
+		expect(focus.selected).toBe(2);
+		expect(focus.handleInput("N")).toBe(true);
+		expect(focus.selected).toBe(0);
 	});
 
 	test("toggles every entry with the fold-all binding", () => {

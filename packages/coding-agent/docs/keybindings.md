@@ -34,9 +34,12 @@ The hosted terminal registers its own actions and commands; see [Slash commands]
 | `Ctrl+Shift+Down`, `Ctrl+Down` | Jump to the next prompt (`Ctrl+Down` only on Windows and WSL) |
 | `Ctrl+E` | Fold or unfold every entry |
 | `Ctrl+X` | Copy the selected entry |
+| `n`, `Shift+N` | Select the next or previous match of the last `/find` query |
 | `PageUp`, `PageDown` | Scroll the transcript by a page |
 
 The prompt jumps are the shared `tui.altScreen.previousPrompt` and `tui.altScreen.nextPrompt` actions, so fullscreen search, the regular terminal, and `keybindings.json` all use one assignment. The marker stays visible only while the transcript has the keyboard.
+
+`/find <text>` searches entry labels and copyable text; `/find` alone opens the search box, where Enter advances through matches and Esc returns to the prompt. Fullscreen keeps its rendered-cell search, which also highlights the matching characters.
 
 ## Keyboard ownership
 

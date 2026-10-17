@@ -41,6 +41,8 @@ export interface TranscriptRow {
 	readonly openable: boolean;
 	/** Set on child-agent rows so the transcript can highlight the open child. */
 	readonly childId?: string;
+	/** Position in the chat container, for scrolling a row into view. Entry rows only. */
+	readonly childIndex?: number;
 	readonly label?: string;
 	readonly text?: () => string | undefined;
 	readonly setExpanded?: (expanded: boolean) => void;
@@ -85,6 +87,7 @@ export function deriveTranscriptRows(
 			kind: "entry",
 			turnIndex: turn,
 			turnStart,
+			childIndex: index,
 			expandable: typeof source.setExpanded === "function",
 			openable: typeof source.open === "function",
 			...(source.transcriptRowLabel === undefined ? {} : { label: source.transcriptRowLabel }),
