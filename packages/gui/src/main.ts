@@ -7,12 +7,14 @@ import {
 	dialog,
 	ipcMain,
 	Menu,
+	nativeImage,
 	shell,
+	Tray,
 	type Event as ElectronEvent,
 	type MessageBoxOptions,
 } from "electron";
 import { desktopLocale, readDesktopDocumentLanguage, readDesktopLocalePreference } from "./locale.ts";
-import { hostFailureCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
+import { hostFailureCopy, quitDialogCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
 import { createHostSupervisor, spawnWebHost, type HostStartupFailure, type HostSupervisor } from "./host.ts";
 import {
 	hostWorkingDirectory,
@@ -25,10 +27,12 @@ import { applicationMenuTemplate, editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
 import { attentionOnTitle } from "./title.ts";
+import { trayMenuTemplate } from "./tray.ts";
 import { translate } from "@amazme/web/strings";
 
 const APP_NAME = "AmazMe";
 const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
+const TRAY_ICON = fileURLToPath(new URL("../assets/tray-icon.png", import.meta.url));
 app.setName(APP_NAME);
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
 if (SMOKE && process.env.AMAZME_GUI_SMOKE_DATA_DIR) app.setPath("userData", process.env.AMAZME_GUI_SMOKE_DATA_DIR);
@@ -55,6 +59,8 @@ let showingDialog = false;
 let deferredHost: HostFailure | undefined;
 let startupFailure: HostStartupFailure | undefined;
 let folderPicker: Promise<readonly string[]> | undefined;
+let tray: Tray | undefined;
+let quitPrompt: Promise<boolean> | undefined;
 let notices: ShellController;
 
 function readinessTimeout(): number | undefined {
@@ -86,6 +92,36 @@ async function currentLocale() {
 function liveWindow(): BrowserWindow | undefined {
 	if (window === undefined || window.isDestroyed()) return undefined;
 	return window;
+}
+
+function showWindow(): void {
+	const current = liveWindow();
+	if (current === undefined) return;
+	if (current.isMinimized()) current.restore();
+	current.show();
+	current.focus();
+}
+
+/** Window close is reversible while the tray exists; leaving is a separate, confirmed action. */
+async function refreshTrayMenu(): Promise<void> {
+	if (SMOKE) return;
+	try {
+		if (tray === undefined) {
+			const image = nativeImage.createFromPath(TRAY_ICON);
+			if (image.isEmpty()) return;
+			tray = new Tray(image.resize({ width: 18, height: 18 }));
+			tray.setToolTip(APP_NAME);
+			tray.on("click", showWindow);
+			tray.on("double-click", showWindow);
+		}
+		const locale = await currentLocale();
+		tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate(locale, {
+			show: showWindow,
+			quit: () => { void requestUserQuit(); },
+		})));
+	} catch (error: unknown) {
+		console.error(`desktop tray unavailable: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 ipcMain.handle("amazme:pick-directories", async event => {
@@ -146,6 +182,44 @@ function requestQuit(): void {
 		quitReleased = true;
 		app.quit();
 	});
+}
+
+/** The explicit quit path asks before it stops the host; a hidden window can be reopened. */
+async function requestUserQuit(): Promise<void> {
+	if (quitReleased || quitRequested || showingDialog) return;
+	quitPrompt ??= (async () => {
+		if (SMOKE) return true;
+		showWindow();
+		showingDialog = true;
+		try {
+			const locale = await currentLocale();
+			const copy = quitDialogCopy(locale);
+			return await ask({
+				type: "question",
+				title: copy.title,
+				message: copy.message,
+				detail: copy.detail,
+				buttons: [...copy.buttons],
+				defaultId: 0,
+				cancelId: 0,
+				noLink: true,
+			}) === 1;
+		} catch (error: unknown) {
+			console.error(`desktop quit dialog failed: ${error instanceof Error ? error.message : String(error)}`);
+			return false;
+		} finally {
+			showingDialog = false;
+		}
+	})().finally(() => { quitPrompt = undefined; });
+	const confirmed = await quitPrompt;
+	if (confirmed) {
+		requestQuit();
+		return;
+	}
+	// A host failure that arrived while the quit dialog was open still needs its own dialog.
+	const failure = deferredHost;
+	deferredHost = undefined;
+	if (failure !== undefined) beginHostDialog(failure);
 }
 
 function logHostFailure(failure: HostFailure): void {
@@ -272,8 +346,16 @@ async function openWindow(pageUrl: string): Promise<void> {
 	});
 	// `close` is before the renderer is torn down, so a render-process-gone from that teardown
 	// already sees the quitting flag and does not dialog.
-	created.on("close", () => {
-		notices.userClosedWindow();
+	created.on("focus", () => { void refreshTrayMenu(); });
+	created.on("close", (event) => {
+		if (notices.quitting) return;
+		if (tray !== undefined) {
+			event.preventDefault();
+			if (created.isFullScreen()) created.setFullScreen(false);
+			created.hide();
+			return;
+		}
+		requestQuit();
 	});
 	watchPendingApprovals(created);
 	let contextMenuRequest = 0;
@@ -314,6 +396,7 @@ async function openWindow(pageUrl: string): Promise<void> {
 	}
 	if (created.isDestroyed() || notices.quitting) return;
 	created.show();
+	await refreshTrayMenu();
 	if (!SMOKE) return;
 	const marker: unknown = await created.webContents.executeJavaScript(SMOKE_EXPRESSION);
 	if (typeof marker !== "object" || marker === null) throw new Error("Invalid desktop smoke marker");
@@ -363,19 +446,20 @@ async function boot(): Promise<void> {
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
-	app.on("second-instance", () => {
-		if (window === undefined) return;
-		if (window.isMinimized()) window.restore();
-		window.focus();
-	});
+	app.on("second-instance", showWindow);
+	app.on("activate", showWindow);
 	app.on("window-all-closed", () => {
-		app.quit();
+		if (tray === undefined || SMOKE) app.quit();
 	});
 	app.on("before-quit", (event: ElectronEvent) => {
 		if (quitReleased) return;
 		event.preventDefault();
-		if (shutdownPromise !== undefined) return;
-		requestQuit();
+		if (quitRequested) return;
+		if (notices.quitting) {
+			requestQuit();
+			return;
+		}
+		void requestUserQuit();
 	});
 	app.whenReady().then(boot).catch((error: unknown) => {
 		const message = error instanceof Error ? error.message : String(error);

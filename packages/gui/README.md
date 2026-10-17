@@ -6,7 +6,9 @@ Electron 窗口。它拉起已安装 AmazMe CLI 的网页宿主，再把那个�
 
 macOS 启动时在 `~/Library/Caches/AmazMe/desktop` 中缓存独立的 `AmazMe.app`，使用 AmazMe 的应用名称、标识和 ICNS 图标，确保 Dock 悬停与应用菜单显示正确名称。缓存应用绑定当前安装目录的桌面入口与系统 Node，退出后也能从 Dock 重新打开；没有指定工作目录时从用户主目录启动。它不是可独立移动的安装包。Electron、Node 路径或图标、启动脚本更新后重新生成；共享的 Electron 安装不被修改。Linux 和 Windows 沿用 Electron 的标准启动方式。
 
-做法对齐 deepseek-harness 的 `apps/desktop`：子进程跑产品自己的 web 命令，读到就绪行再 `loadURL`，窗口开 `contextIsolation`、`sandbox`、`nodeIntegration: false`。关窗口就结束宿主。桌面壳负责窗口和宿主生命周期，运行依赖由发布流程提供。
+做法对齐 deepseek-harness 的 `apps/desktop`：子进程跑产品自己的 web 命令，读到就绪行再 `loadURL`，窗口开 `contextIsolation`、`sandbox`、`nodeIntegration: false`。
+
+关闭主窗口默认只隐藏窗口，网页宿主和运行中的会话继续工作；托盘图标用 `assets/tray-icon.png` 恢复窗口，托盘菜单、应用菜单和 `Cmd/Ctrl+Q` 的退出共用一个确认框。托盘创建失败时退回原来的行为：关闭窗口即结束宿主。桌面壳负责窗口和宿主生命周期，运行依赖由发布流程提供。
 
 项目创建和编辑支持多个源文件夹。“添加文件夹”使用原生目录选择器，preload 只暴露这一项选择能力，主进程核对当前窗口、主页面和宿主地址后返回所选路径。项目保存、授权、会话执行目录与 Web 共用宿主服务。
 

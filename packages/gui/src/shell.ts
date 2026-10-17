@@ -1,8 +1,8 @@
 /**
  * Which host and page failures are errors, and which are the app going away.
  *
- * Closing the window and a normal quit both stop the host. Those exits must not open a
- * dialog. The flag is set at the moment the user asks to leave — the window `close` event,
+ * Closing the window without a tray and a normal quit both stop the host. Those exits must
+ * not open a dialog. The flag is set at the moment the user asks to leave — the window `close` event,
  * or the start of quit — which is before the child is killed and before the renderer is
  * torn down. A later exit or `render-process-gone` then sees the flag and stays quiet.
  */

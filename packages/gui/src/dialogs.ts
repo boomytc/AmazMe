@@ -69,6 +69,24 @@ export interface HostDialogCopy {
 	readonly buttons: readonly [string];
 }
 
+export interface QuitDialogCopy {
+	readonly title: string;
+	readonly message: string;
+	readonly detail: string;
+	/** Index 0 stays in the app; index 1 stops the host and quits. */
+	readonly buttons: readonly [string, string];
+}
+
+/** Copy for the explicit quit path. Closing the window is the non-destructive alternative. */
+export function quitDialogCopy(locale: Locale): QuitDialogCopy {
+	return {
+		title: translate(locale, "desktop.quit.title"),
+		message: translate(locale, "desktop.quit.message"),
+		detail: translate(locale, "desktop.quit.detail"),
+		buttons: [translate(locale, "desktop.dialog.cancel"), translate(locale, "desktop.dialog.quit")],
+	};
+}
+
 export type RenderDialogRecovery = { readonly kind: "load"; readonly url: string } | { readonly kind: "quit" };
 
 /**
@@ -93,9 +111,9 @@ export function isIntentionalLoadAbort(errorCode: number, errorDescription: stri
 }
 
 /**
- * Whether this renderer event should open the reload/quit dialog. Quitting wins: closing
- * the window and a normal app quit both tear the page down, and that is not a failure.
- * Subframes and aborted loads are ignored even while the app is running.
+ * Whether this renderer event should open the reload/quit dialog. Quitting wins: a normal
+ * app quit tears the page down, and that is not a failure. Hiding through the tray is not a
+ * render failure either. Subframes and aborted loads are ignored even while the app is running.
  */
 export function shouldPresentRenderFailure(quitting: boolean, failure: RenderFailure): boolean {
 	if (quitting) return false;

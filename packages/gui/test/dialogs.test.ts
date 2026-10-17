@@ -3,6 +3,7 @@ import {
 	HOST_DIALOG_TAIL_LINES,
 	hostFailureCopy,
 	isIntentionalLoadAbort,
+	quitDialogCopy,
 	renderDialogRecovery,
 	renderFailureCopy,
 	shouldPresentRenderFailure,
@@ -68,6 +69,22 @@ describe("render failure dialog", () => {
 		expect(renderDialogRecovery(1, false, host)).toEqual({ kind: "quit" });
 		expect(renderDialogRecovery(0, false, undefined)).toEqual({ kind: "quit" });
 		expect(renderDialogRecovery(0, false, "")).toEqual({ kind: "quit" });
+	});
+});
+
+describe("quit dialog", () => {
+	test("keeps closing the window as the non-destructive cancel path", () => {
+		const copy = quitDialogCopy("en");
+		expect(copy.title).toBe("Quit AmazMe?");
+		expect(copy.message).toContain("web host");
+		expect(copy.detail).toContain("Close the window");
+		expect(copy.buttons).toEqual(["Cancel", "Quit"]);
+	});
+
+	test("uses the same Chinese catalog as the tray", () => {
+		const copy = quitDialogCopy("zh");
+		expect(copy.buttons).toEqual(["取消", "退出"]);
+		expect(copy.detail).toContain("关闭窗口");
 	});
 });
 
