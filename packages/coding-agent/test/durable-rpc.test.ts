@@ -68,7 +68,7 @@ describe("durable RPC handler", () => {
 	});
 
 	it("reports state, prompts, and reads the committed transcript", async () => {
-		faux.setResponses([fauxAssistantMessage("rpc answer")]);
+		faux.setResponses([fauxAssistantMessage("rpc answer"), fauxAssistantMessage("compact summary")]);
 		const state = await handle({ type: "get_state" });
 		expect(state).toMatchObject({
 			type: "response",
@@ -90,6 +90,24 @@ describe("durable RPC handler", () => {
 		if (messages.success && messages.command === "get_messages") {
 			expect(messages.data.messages.some((message) => message.role === "assistant")).toBe(true);
 		}
+
+		const entries = await handle({ type: "get_entries" });
+		expect(entries).toMatchObject({ success: true, command: "get_entries" });
+		if (entries.success && entries.command === "get_entries") {
+			expect(entries.data.entries.length).toBeGreaterThan(0);
+			expect(entries.data.leafId).toBe(entries.data.entries.at(-1)?.id);
+		}
+		const tree = await handle({ type: "get_tree" });
+		expect(tree).toMatchObject({ success: true, command: "get_tree" });
+		if (tree.success && tree.command === "get_tree") expect(tree.data.tree).toHaveLength(1);
+		const forkMessages = await handle({ type: "get_fork_messages" });
+		expect(forkMessages).toMatchObject({ success: true, command: "get_fork_messages" });
+		if (forkMessages.success && forkMessages.command === "get_fork_messages") {
+			expect(forkMessages.data.messages.some((message) => message.text === "hello")).toBe(true);
+		}
+
+		const compacted = await handle({ type: "compact" });
+		expect(compacted).toMatchObject({ success: true, command: "compact" });
 
 		const output = join(directory, "rpc-export.html");
 		const exported = await handle({ type: "export_html", outputPath: output });
@@ -128,7 +146,8 @@ describe("durable RPC handler", () => {
 		const state = await handle({ type: "get_state" });
 		expect(state).toMatchObject({ success: true, data: { steeringMode: "all" } });
 
-		const bash = await handle({ type: "bash", command: "echo hi" });
-		expect(bash).toMatchObject({ success: false, error: expect.stringContaining("does not support bash") });
+		const bash = await handle({ type: "bash", command: "printf hi" });
+		expect(bash).toMatchObject({ success: true, command: "bash", data: { output: "hi", exitCode: 0 } });
+		expect((await handle({ type: "abort_bash" })).success).toBe(true);
 	});
 });

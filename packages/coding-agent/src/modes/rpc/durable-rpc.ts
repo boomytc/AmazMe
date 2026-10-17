@@ -1,7 +1,11 @@
 import { getSupportedThinkingLevels, type Model, type Usage } from "@amazme/ai";
 import type { AgentEvent } from "@amazme/durable";
 import { flushRawStdout, takeOverStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../../core/output-guard.ts";
+import { executeBashWithOperations } from "../../core/bash-executor.ts";
+import { durableEntriesToSessionFile } from "../../core/session-interop.ts";
+import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import { createSyntheticSourceInfo } from "../../core/source-info.ts";
+import { createLocalBashOperations } from "../../core/tools/bash.ts";
 import { writeDurableExport } from "../../durable/export.ts";
 import { DurableJsonEvents } from "../../durable/json-events.ts";
 import { agentOf, openDurable, type OpenDurableOptions, type OpenDurableResult } from "../../durable/runtime.ts";
@@ -115,6 +119,17 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 		};
 	};
 
+	const projectedEntries = (): SessionEntry[] => {
+		const current = view().conversation;
+		const stored = current.docs["amazme.agent"] as { cwd?: unknown } | undefined;
+		const projected = durableEntriesToSessionFile(current.entries, {
+			id: view().session.id,
+			cwd: typeof stored?.cwd === "string" ? stored.cwd : process.cwd(),
+			timestamp: new Date().toISOString(),
+		});
+		return projected.entries.filter((entry): entry is SessionEntry => entry.type !== "session");
+	};
+
 	const lastAssistantText = (): string | undefined => {
 		const all = messages();
 		for (let index = all.length - 1; index >= 0; index--) {
@@ -126,6 +141,8 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 		return undefined;
 	};
 
+	let bashAbort: AbortController | undefined;
+	const shell = createLocalBashOperations();
 	const commands = (): RpcSlashCommand[] =>
 		(view().commands ?? []).map((command) => ({
 			name: command.name,
@@ -220,6 +237,53 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 				});
 				return success(id, "export_html", { path: exported.path });
 			}
+			case "compact":
+				return success(id, "compact", await durable.controller.compactAndWait(command.customInstructions));
+			case "bash": {
+				const current = view().conversation;
+				const stored = current.docs["amazme.agent"] as { cwd?: unknown } | undefined;
+				bashAbort = new AbortController();
+				try {
+					const result = await executeBashWithOperations(
+						command.command,
+						typeof stored?.cwd === "string" ? stored.cwd : process.cwd(),
+						shell,
+						{ signal: bashAbort.signal },
+					);
+					return success(id, "bash", result);
+				} finally {
+					bashAbort = undefined;
+				}
+			}
+			case "abort_bash":
+				bashAbort?.abort();
+				return success(id, "abort_bash");
+			case "get_entries": {
+				const entries = projectedEntries();
+				const start = command.since === undefined ? 0 : entries.findIndex((entry) => entry.id === command.since) + 1;
+				if (start === 0 && command.since !== undefined) return error(id, "get_entries", `Entry not found: ${command.since}`);
+				return success(id, "get_entries", { entries: entries.slice(start), leafId: entries.at(-1)?.id ?? null });
+			}
+			case "get_tree": {
+				const entries = projectedEntries();
+				let root: SessionTreeNode | undefined;
+				let parent: SessionTreeNode | undefined;
+				for (const entry of entries) {
+					const node: SessionTreeNode = { entry, children: [] };
+					if (parent === undefined) root = node;
+					else parent.children.push(node);
+					parent = node;
+				}
+				return success(id, "get_tree", { tree: root === undefined ? [] : [root], leafId: entries.at(-1)?.id ?? null });
+			}
+			case "get_fork_messages":
+				return success(id, "get_fork_messages", {
+					messages: projectedEntries().flatMap((entry) =>
+						entry.type === "message" && entry.message.role === "user"
+							? [{ entryId: entry.id, text: typeof entry.message.content === "string" ? entry.message.content : entry.message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("") }]
+							: [],
+					),
+				});
 			case "get_session_stats":
 				return success(id, "get_session_stats", stats());
 			case "get_messages":
@@ -242,14 +306,8 @@ export function createDurableRpcHandler(durable: OpenDurableResult): (command: R
 				await durable.controller.forkAt();
 				return success(id, "clone", { cancelled: false });
 			case "new_session":
-			case "compact":
 			case "abort_retry":
-			case "bash":
-			case "abort_bash":
 			case "switch_session":
-			case "get_fork_messages":
-			case "get_entries":
-			case "get_tree":
 				return unsupported(id, command.type);
 			default: {
 				const unknown = command as { type: string };

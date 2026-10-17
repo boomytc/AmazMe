@@ -76,6 +76,7 @@ import { NATIVE_COMMANDS } from "./commands.ts";
 import { APP_COMMAND, APP_NAME, VERSION } from "../config.ts";
 import { collectSettingsDiagnostics } from "../core/settings-diagnostics.ts";
 import { normalizePromptImages } from "../utils/prompt-images.ts";
+import { estimateContextTokens } from "../core/compaction/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -124,6 +125,12 @@ export interface DurableViewSource {
 }
 
 /** One input's admitted submission and, for callers that wait, its settled receipt. */
+export interface DurableCompactionResult {
+	readonly summary: string;
+	readonly firstKeptEntryId: string;
+	readonly tokensBefore: number;
+}
+
 export interface DurableSubmissionRpc {
 	readonly accepted: boolean;
 	readonly disposition: "handled" | "queued" | "started";
@@ -170,6 +177,8 @@ export interface DurableController {
 	setThinkingLevelNow(level: ModelThinkingLevel): Promise<void>;
 	/** Like compact(), but rejects the caller when admission fails. */
 	compactNow(instructions: string | undefined): Promise<void>;
+	/** Run a manual compaction and wait for its summary placement. */
+	compactAndWait(instructions: string | undefined): Promise<DurableCompactionResult>;
 	getModelScope(): ModelScopeConfig;
 	setModelScope(models: readonly string[] | null, persist: boolean): Promise<void>;
 	toggleTasks(): Promise<void>;
@@ -794,6 +803,39 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				const message = transcript.entries.find((entry) => entry.id === settled.answer)?.model?.[0];
 				return message?.role === "assistant" ? { accepted: true, settled, answer: message } : { accepted: true, settled };
 			},
+			compactAndWait: (instructions) =>
+				commandResult(async () => {
+					if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
+					const before = await current.context(context);
+					const tokensBefore = estimateContextTokens([...before.messages]).tokens;
+					const taskId = await current.compact(instructions, context);
+					const receipt = await opened.waitForTask(taskId, context);
+					const outcome = receipt.state.outcome;
+					if (outcome.status !== "completed") throw new Error(`Compaction ${outcome.status}`);
+					const { entryId, submissionId } = outcome.result;
+					let id = entryId;
+					if (id === undefined && submissionId !== undefined) {
+						const placed = await (await opened.submission(submissionId, context))?.status(context);
+						if (placed?.status === "done") id = placed.entry;
+					}
+					if (id === undefined) return { summary: "", firstKeptEntryId: "", tokensBefore };
+					const entry = (await current.entries({ minEntryId: id, maxEntryId: id }, 1, undefined, context)).items[0];
+					if (entry === undefined) return { summary: "", firstKeptEntryId: "", tokensBefore };
+					const first = entry.model?.[0];
+					let text = "";
+					if (first?.role === "user") {
+						text = typeof first.content === "string"
+							? first.content
+							: first.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+					}
+					const start = text.indexOf("<summary>\n");
+					const end = text.lastIndexOf("\n</summary>");
+					return {
+						summary: start < 0 || end < start ? text : text.slice(start + "<summary>\n".length, end),
+						firstKeptEntryId: entry.head === undefined ? "" : String(entry.head),
+						tokensBefore,
+					};
+				}),
 			compactNow: (instructions) =>
 				commandResult(async () => {
 					if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
