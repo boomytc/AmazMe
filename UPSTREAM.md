@@ -8,7 +8,7 @@
 
 ## 当前基线
 
-当前已处理到 Pi 的 `origin/main` 提交 `4954d7605`（2026-10-15），共享包升为 v1.3.0。本轮逐项核对 `b06c1f2cf..4954d7605` 的 19 个提交，增加 `@amazme/chord/output` 子路径、SQLite 前缀命名空间、Anthropic 与 Bedrock 的错误工具结果图片投影，并按上游发布对齐版本、变更记录与内部依赖；Web/GUI 继续独立版本 1.0.4。此前已处理 `00d8d0495..b06c1f2cf` 的 21 个提交、`7d75a0e3e..00d8d0495` 的 17 个提交和 `427052247..7d75a0e3e` 的 42 个提交。
+当前已处理到 Pi 的 `origin/main` 提交 `8efd314fa`（2026-10-16），共享包仍是 v1.3.0。本轮逐项核对 `4954d7605..8efd314fa` 的 14 个提交：摘要请求不再自带固定输出上限，压缩阈值可按模型覆盖，Harness 的模型与设置可以是函数，空白工具输出与更多网关失败会按既有规则处理，NVIDIA 默认模型改为 Nemotron 3.5 Super VL，并生成 `models.json` 字段参考。此前已处理 `b06c1f2cf..4954d7605` 的 19 个提交、`00d8d0495..b06c1f2cf` 的 21 个提交、`7d75a0e3e..00d8d0495` 的 17 个提交和 `427052247..7d75a0e3e` 的 42 个提交。Web/GUI 继续独立版本 1.0.4。
 
 历史基线为 `0cf65d2bf`（v1.0.4），随后处理 v1.1.0、至 `42a3497d0` 的 12 个提交，以及 `ea448f454..427052247` 的 25 个提交。历史和本轮的具体处置分别记录如下。
 
@@ -342,6 +342,31 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 - 普通 `npm pack --workspace @amazme/env` 执行 prepack 成功。清理 Durable 的已删除模块遗留编译文件后，14 个运行包按根锁文件打包并隔离安装；安装版 CLI 1.3.0、daemon 协议 1/版本 1.3.0 握手、四个 daemon 的校验和、`chord/output` 子路径及就绪前拒绝无效 ctx 均通过。
 - 修正阶段第一次 Durable 复测再次触发复合 npm 脚本的参数转发陷阱：末尾的 `--exclude` 只作用于第二轮，首轮仍误启带本机凭据的 Codex E2E 并以 `unanswered` 失败。进程已结束，不计为通过。随后用隔离 HOME、仅保留 PATH/临时目录/额外 CA 等必要环境变量，并逐轮直接调用 Vitest 显式排除 E2E，默认保留和立即淘汰两轮各 1,341 项通过。此处如实保留两次误启记录，不再以最终离线通过掩盖此前的实网尝试。
 - Coding Agent 构建后在同样的隔离环境中全包 3,298 项通过；Env 使用刚重建的 macOS arm64 release daemon，构建后 121 项通过。类型检查、工作区依赖与浏览器入口检查、27 项工程测试及 diff 检查通过。没有进行 Linux/Intel Mac 实机或真实模型成功调用验收。
+
+## Pi 后续 14 个提交（2026-10-17）
+
+范围为 `4954d7605..8efd314fa`（核对时本地 Pi 停在前者、origin/main 领先 14 个提交）。读取该终点的补丁，按文件合并到 AmazMe，不覆盖本地产品差异。供应商 OAuth 身份、`AMAZME_CACHE_RETENTION`、models.json 解析失败时的固定「malformed JSON」文案、Durable 的 `projectContext` 钩子，以及溢出恢复必须带有请求 token 数的守卫都保留。`models.md` 仍写托管模型服务的刷新方式，不改回上游的 `/model` 重载句。
+
+| Pi 提交 | 内容 | 处置 |
+| --- | --- | --- |
+| `6085986e4` | `ToolControl.terminate` 为 boolean，并回归 `false` | 与 `790271cd0` 一起吸收净效果；`false` 不结束运行，条目种类保持 `amazme.assistant` |
+| `c4cf7957b` | `compaction.modelOverrides` 按模型覆盖阈值 | 吸收；阈值检查、溢出恢复和压缩选区使用该模型的条目。本地溢出余量检查同样改用该模型的 `reserveTokens` |
+| `790271cd0` | 恢复被上一提交冲掉的 terminate 类型与回归 | 吸收，见 `6085986e4` |
+| `0fbdbd3f8` | 重试 node-fetch 的 `request to ... failed` | 吸收错误分类与回归 |
+| `99fe14897` | Xiaomi 测试改用 MiMo 2.6 | 已覆盖；上一轮目录刷新已把测试和默认模型改到 `mimo-v2.6-pro`，并额外把 2.5 列入弃用 |
+| `90d863f7c` | Xiaomi 默认模型改为 `mimo-v2.6-pro` | 已覆盖，同上一行 |
+| `6fcb48670` | 摘要请求不再设置固定 `maxTokens` | 吸收 coding-agent 的会话摘要与分支摘要请求；`reserveTokens` 仍决定何时压缩，以及分支摘要纳入多少上下文。Durable 自己的摘要仍按该模型解析后的 `0.8 * reserveTokens` 封顶，与上游 Durable 一致 |
+| `4dd2b149d` | 只含空白的工具输出视为空 | 吸收 OpenAI Completions、OpenAI Responses 与 Google 的占位规则及回归 |
+| `698a2d23b` | 重试更多网关上游失败文案 | 吸收 `upstream_error`、`upstream_stream_read_error`、中断流和 HTTP/2 流失败 |
+| `7ec1f648e` | `HarnessOptions.models` 与 `settings` 可为函数 | 吸收；生成、压缩、钩子和工具在每次使用时读取当前值。普通对象仍然可用 |
+| `2331785c3` | Codex 提示缓存 E2E 改用 `gpt-6.1-sol` | 吸收测试模型。本轮第一次 Durable 全量误跑了该实网用例并通过，见下方验证，不重复执行 |
+| `14ff455a0` | read/bash 差异测试提供 `retainedOutput` 并拆开标准输出与标准错误 | 吸收；bash 用例必须返回结果，不能靠两边同样抛错通过 |
+| `95364a54e` | NVIDIA 默认模型改为 Nemotron 3.5 Super VL | 吸收解析器默认值和离线可跳过的 NVIDIA 用例模型。变更记在未发布段，不改写已发布的 1.3.0 记录 |
+| `8efd314fa` | 从 schema 生成 models.json 字段参考 | 吸收生成脚本、导航和参考页。schema 的 `$id` 仍是随包发布的 `models.schema.json`，参考页不指向 pi.dev |
+
+合计：12 项吸收、2 项已覆盖。没有跳过的产品行为。
+
+本轮验证：修改包先构建再测试，没有运行根完整构建或测试。AI 在隔离 HOME 且去掉继承凭据后 1,432 项通过、863 项跳过。Durable 默认保留的第一次全量是 1,350 项通过、3 项跳过，其中包含一次误启的 Codex 提示缓存 E2E：npm 只把文件参数传给复合脚本的后半段，前半段跑了全部测试，该用例在 `gpt-6.1-sol` 上通过，不再重复。立即淘汰一轮显式排除 E2E，1,349 项通过、2 项跳过。Env 121 项通过、2 项跳过。Coding Agent 在隔离 HOME 下 3,296 项通过、50 项跳过。新回归覆盖空白工具输出、网关与 node-fetch 重试、按模型压缩、函数式模型与设置、`terminate: false`、摘要不再自带输出上限，以及生成的参考页与提交内容一致。未做 Windows 验收。
 
 ## 刻意偏离
 
