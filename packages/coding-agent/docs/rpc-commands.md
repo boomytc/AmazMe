@@ -142,6 +142,8 @@ With optional parent session tracking:
 {"type": "new_session", "parentSession": "/path/to/parent-session.jsonl"}
 ```
 
+The Durable runtime accepts `new_session` without `parentSession`; it rejects parent tracking because Durable conversations do not have a JSONL parent link.
+
 Response:
 ```json
 {"type": "response", "command": "new_session", "success": true, "data": {"cancelled": false}}
@@ -175,7 +177,7 @@ Response:
     "isCompacting": false,
     "steeringMode": "all",
     "followUpMode": "one-at-a-time",
-    "sessionFile": "/path/to/session.jsonl",
+    "sessionFile": "/path/to/session.sqlite",
     "sessionId": "abc123",
     "sessionName": "my-feature-work",
     "autoCompactionEnabled": true,
@@ -441,6 +443,8 @@ Abort an in-progress retry (cancel the delay and stop retrying).
 {"type": "abort_retry"}
 ```
 
+The Durable runtime does not support this command yet: its retry is an internal generation checkpoint, and aborting it would cancel the whole turn rather than only the backoff. It returns an explicit unsupported error.
+
 Response:
 ```json
 {"type": "response", "command": "abort_retry", "success": true}
@@ -451,6 +455,8 @@ Response:
 ### bash
 
 Execute a shell command and add output to conversation context. Output streams as `bash_execution_update` events while the command runs; the response contains the final result.
+
+The Durable runtime executes the command locally but does not add it to the Durable transcript or emit `bash_execution_update` events.
 
 ```json
 {"id": "req-1", "type": "bash", "command": "ls -la"}
@@ -540,7 +546,7 @@ Response:
   "command": "get_session_stats",
   "success": true,
   "data": {
-    "sessionFile": "/path/to/session.jsonl",
+    "sessionFile": "/path/to/session.sqlite",
     "sessionId": "abc123",
     "userMessages": 5,
     "assistantMessages": 5,
@@ -595,6 +601,8 @@ Response:
 
 Load a different session file. Can be canceled by a `session_before_switch` extension event handler.
 
+The Durable runtime accepts a Durable session directory, `session.sqlite`, or a JSONL file. A JSONL file is imported one-way into a new Durable session before switching; the file itself is not modified.
+
 ```json
 {"type": "switch_session", "sessionPath": "/path/to/session.jsonl"}
 ```
@@ -612,6 +620,8 @@ If an extension canceled the switch:
 ### fork
 
 Create a new fork from a previous user message on the active branch. Can be canceled by a `session_before_fork` extension event handler. Returns the text of the message being forked from.
+
+Under Durable, pass an entry ID from `get_fork_messages` or `get_entries`; the adapter maps the projected JSONL-shaped ID back to the Durable entry.
 
 ```json
 {"type": "fork", "entryId": "abc123"}

@@ -47,7 +47,7 @@ Durable's shell factories and execution environments have their own options; thi
 | `AMAZME_CODING_AGENT_DIR` | Agent configuration directory; default `~/.amazme/agent` |
 | `AMAZME_AGENTS_HOME` | Shared user-instruction directory containing `AGENTS.md`; default `~/.agents`, independent of the agent directory |
 | `AMAZME_CODING_AGENT_SESSION_DIR` | Native/SDK terminal session storage override; `--session-dir` takes precedence. Hosted session storage uses the host's `--session-dir` separately |
-| `AMAZME_RUNTIME` | Unset routes new print, JSON, and RPC sessions through Durable; `legacy` keeps the JSONL AgentSession. JSONL-only flags and SDK extension factories fall back to legacy. The native terminal and host are always Durable |
+| `AMAZME_RUNTIME` | Unset routes new print, JSON, and RPC sessions through Durable; `legacy` keeps the JSONL AgentSession. JSONL-only flags and SDK extension factories fall back to legacy. The SDK `createAgentSession` is always the JSONL compatibility path. The native terminal and host are always Durable |
 | `AMAZME_SERVER_DIR` | Hosted server discovery and socket directory; default `~/.amazme/server` |
 | `AMAZME_SERVER_ID` | Preferred server identity during local automatic activation |
 | `AMAZME_PACKAGE_DIR` | Package resource directory override, including installed or compiled layouts |

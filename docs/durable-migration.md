@@ -5,10 +5,11 @@
 ## 当前产品策略
 
 - 新会话默认使用 Durable：原生终端、Web/宿主、`--print`、`--mode json` 和 `--mode rpc` 都是 Durable 优先。
-- 旧 `AgentSession` 只作为兼容层保留，覆盖以下无法无损映射的场景：嵌入 SDK 的 `createAgentSession`、SDK 扩展工厂（`ctx.ui` 等）、JSONL 选择标志、只有 JSONL 历史的 `--continue`，以及 RPC 的 `new_session`、`switch_session`、`abort_retry`。
+- 旧 `AgentSession` 只作为兼容层保留，覆盖以下无法无损映射的场景：嵌入 SDK 的 `createAgentSession`、SDK 扩展工厂（`ctx.ui` 等）、JSONL 选择标志、只有 JSONL 历史的 `--continue`，以及 RPC 的 `abort_retry`。RPC 的 `new_session`、`switch_session` 已有 Durable 实现。
 - 新能力只进入 Durable 和共享纯模块；旧内核只接受兼容修复。`AMAZME_RUNTIME=legacy` 是显式退出开关。
 - RPC 的 `get_entries`/`get_tree` 是活动 Durable transcript 的 JSONL 形状投影，不是第二份持久树；`bash` 是本地执行，不写入 Durable transcript。
-- 阶段 4 的删除不是“漏做”，而是被上述兼容面阻塞。删除前至少需要 SDK 扩展 UI 适配、RPC 会话生命周期和 JSONL 历史覆盖；在这些完成前保留旧内核是对用户负责。
+- 阶段 4 的删除不是“漏做”，而是被上述兼容面阻塞。删除前至少需要 SDK 扩展 UI 适配、RPC retry 控制和 JSONL 历史覆盖；在这些完成前保留旧内核是对用户负责。
+- 兼容债清单和逐项处置见 [Durable 兼容债](durable-compatibility.md)。
 
 ## 目标与不变量
 
@@ -44,13 +45,14 @@
 - JSON 流保持既有事件名（`agent_start`、`message_start`、`message_update`、`message_end`、工具与压缩事件），并新增 `storage: "durable"` 会话头；这是展示协议，不是新的持久格式。
 - `--no-session` 使用 MemoryStorage；`--session-dir`、`--continue`、`--name`、模型/推理/凭据、工具选择、资源、MCP 与原生 facet 继续沿用 Durable 路径。
 - 不支持的旧 JSONL 标志（`--session`、`--session-id`、`--fork`）和 SDK 内联扩展工厂在打开存储前明确拒绝，避免静默换语义。
-- RPC 的 Durable 路径支持 `prompt`、`steer`、`follow_up`、`abort`、`clear_queue`、`fork`、`clone`、`get_state`、`get_messages`、`get_last_assistant_text`、模型/推理选择、`get_session_stats`、`set_session_name`、`set_steering_mode`、`set_follow_up_mode`、`set_auto_compaction`、`compact`、`get_entries`、`get_tree`、`get_fork_messages`、`bash`、`abort_bash`、`set_auto_retry`、`export_html`、`get_commands`。事件沿用 RPC 事件名。
-- RPC 中依赖 JSONL 树切换、扩展 UI 或独立重试控制的命令（`new_session`、`switch_session`、`fork`、`clone`、`bash`、`compact`、`clear_queue`、`get_entries`、`get_tree`、`export_html` 等）返回明确的 unsupported 错误，不伪造结果。
+- RPC 的 Durable 路径支持 `prompt`、`steer`、`follow_up`、`abort`、`clear_queue`、`new_session`、`switch_session`、`fork`、`clone`、`get_state`、`get_messages`、`get_last_assistant_text`、模型/推理选择、`get_session_stats`、`set_session_name`、`set_steering_mode`、`set_follow_up_mode`、`set_auto_compaction`、`compact`、`get_entries`、`get_tree`、`get_fork_messages`、`bash`、`abort_bash`、`set_auto_retry`、`export_html`、`get_commands`。事件沿用 RPC 事件名。
+- `new_session` 新开 Durable 会话；`switch_session` 接受 Durable 目录、`session.sqlite` 或 JSONL，JSONL 先单向导入。两者切换前中止旧运行、停止旧事件流并释放旧锁。`new_session` 的 `parentSession` 明确不支持；`abort_retry` 仍明确不支持。
+- `get_entries` / `get_tree` 是活动 transcript 的 JSONL 形状投影；`fork` 接收投影 ID，返回被选中的用户文本。
 
 未落地：
 
-- RPC 的 JSONL 专用命令尚未映射。它们依赖终端树、扩展 UI 或 JSONL 导出语义，需要单独设计 Durable 等价物。
-- JSONL 专用 RPC 命令和 SDK 扩展工厂没有 Durable 等价物，因此旧内核仍作为兼容回退保留。
+- RPC 的 `abort_retry` 尚无 Durable 等价物；Durable 的重试是 generation task 的 checkpoint，没有只取消退避的 API。
+- JSONL 写回、SDK 扩展工厂和 `createAgentSession` 契约没有 Durable 等价物，因此旧内核仍作为兼容回退保留。
 
 ### 阶段 2：SDK 兼容层
 
@@ -74,8 +76,8 @@
 
 未落地：
 
-- Durable 会话导出 HTML / 分享、以及 JSONL 只读导出命令。
-- 批量迁移、重复导入检测和回滚快照。
+- Durable 会话分享、父子会话 metadata 和重复导入检测。
+- 批量迁移与回滚快照。
 
 ### 阶段 4：移除门槛
 
@@ -83,7 +85,7 @@
 
 1. print、JSON、RPC 和 SDK 都有 Durable 实现，且真实入口验收通过。
 2. 导入覆盖现有用户会话，无法导入的分支与 metadata 有明确处置和回滚方式。
-3. 扩展 UI、`/share`、HTML 导出等旧能力有 Durable 等价物或产品决定下线。
+3. 扩展 UI、`/share` 等旧能力有 Durable 等价物或产品决定下线；HTML 导出已由 `amazme export` 覆盖。
 4. Durable 至少一个 minor 没有破坏持久任务/存储格式，或本仓库有固定 pin 与自动迁移。
 5. 旧内核的测试面已迁到 Durable，删除后不出现未覆盖的行为。
 
