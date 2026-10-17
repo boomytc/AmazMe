@@ -38,6 +38,13 @@ export interface InternalProcessSpawnOptions {
 }
 
 /** Spawn a detached host-owned process consistently across Node and compiled Bun. */
+const processStderr = new WeakMap<ChildProcess, string[]>();
+
+/** Startup failures happen in a detached child; keep its last words for the parent's error. */
+export function internalProcessStderr(child: ChildProcess): string {
+	return (processStderr.get(child) ?? []).join("").trim();
+}
+
 export function spawnInternalProcess(
 	role: InternalProcessRole,
 	args: readonly string[],
@@ -62,10 +69,15 @@ export function spawnInternalProcess(
 				...options.env,
 				[INTERNAL_PROCESS_ENV]: role,
 			},
-			stdio: "ignore",
+			stdio: ["ignore", "ignore", "pipe"],
 			windowsHide: true,
 		},
 	);
+	const stderr: string[] = [];
+	processStderr.set(child, stderr);
+	child.stderr?.on("data", (chunk: Buffer | string) => {
+		if (stderr.join("").length < 8_192) stderr.push(String(chunk));
+	});
 	child.unref();
 	return child;
 }

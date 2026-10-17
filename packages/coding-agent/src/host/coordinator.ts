@@ -8,6 +8,7 @@ import {
 	encodeControlLine,
 	isDirectInternalProcessEntry,
 	MAX_CONTROL_LINE_BYTES,
+	internalProcessStderr,
 	spawnInternalProcess,
 } from "./process.ts";
 
@@ -192,7 +193,12 @@ export async function ensureCoordinator(publicPath: string, controlPath: string)
 	while (true) {
 		const socket = await tryConnect(controlPath);
 		if (socket) return { close: () => socket.destroy() };
-		if (child.exitCode !== null || child.signalCode !== null) throw new Error("Coordinator exited during startup");
+		if (child.exitCode !== null || child.signalCode !== null) {
+			const detail = internalProcessStderr(child);
+			throw new Error(
+				`Coordinator exited during startup (code ${String(child.exitCode)}, signal ${String(child.signalCode)})${detail === "" ? "" : `: ${detail}`}`,
+			);
+		}
 		if (Date.now() >= deadline) throw new Error("Timed out waiting for coordinator startup");
 		await new Promise<void>((resolve) => setTimeout(resolve, COORDINATOR_RETRY_MS));
 	}
@@ -568,7 +574,20 @@ function closeServer(server: Server): Promise<void> {
 }
 
 async function restrictSocket(path: string): Promise<void> {
-	if (process.platform !== "win32") await chmod(path, 0o600);
+	if (process.platform === "win32") return;
+	// Under parallel test load the `listening` callback can beat the socket entry becoming
+	// visible, so chmod sees ENOENT for a few milliseconds even though the bind succeeded.
+	const deadline = Date.now() + 5_000;
+	for (;;) {
+		try {
+			await chmod(path, 0o600);
+			return;
+		} catch (error) {
+			const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
+			if (!missing || Date.now() >= deadline) throw error;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	}
 }
 
 async function removeStaleSocket(path: string): Promise<void> {
