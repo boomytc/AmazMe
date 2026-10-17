@@ -4244,3 +4244,24 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	}
 }
 
+
+/* Notched displays: fixed chrome and the composer stay clear of the safe areas. */
+@media (max-width: 1023px) {
+	.sidebar {
+		padding-top: max(10px, env(safe-area-inset-top));
+		padding-bottom: max(12px, env(safe-area-inset-bottom));
+	}
+	.dock {
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+	.composer-dock {
+		padding-bottom: max(10px, env(safe-area-inset-bottom));
+	}
+	.header {
+		padding-top: env(safe-area-inset-top);
+	}
+	.app-rail {
+		padding-top: max(10px, env(safe-area-inset-top));
+		padding-bottom: max(10px, env(safe-area-inset-bottom));
+	}
+}
