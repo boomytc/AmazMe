@@ -9,7 +9,7 @@
  * This module is intentionally dependency-free so the model can be tested without a TUI.
  */
 
-export type TranscriptRowKind = "entry" | "child-agent";
+export type TranscriptRowKind = "entry" | "child-agent" | "process";
 
 /**
  * A component opts into transcript navigation by declaring `transcriptRowId`, or by
@@ -55,6 +55,10 @@ export interface TranscriptRow {
 
 export interface TranscriptChildRecord {
 	readonly id: string;
+	/** Description shown as the row label. */
+	readonly description?: string;
+	/** Copyable transcript lines; the row owns no text when omitted. */
+	readonly transcript?: readonly string[];
 }
 
 function isRowSource(value: object): value is TranscriptRowSource {
@@ -75,6 +79,8 @@ export function deriveTranscriptRows(
 	children: readonly object[],
 	records: readonly TranscriptChildRecord[],
 	openChild: (id: string) => void,
+	/** Background work that the work surface renders; appended after child agents. */
+	extraSources: readonly TranscriptRowSource[] = [],
 ): TranscriptRow[] {
 	const rows: TranscriptRow[] = [];
 	let turn = 0;
@@ -116,7 +122,22 @@ export function deriveTranscriptRows(
 			expandable: false,
 			openable: true,
 			childId: record.id,
+			...(record.description === undefined ? {} : { label: record.description }),
+			...(record.transcript === undefined ? {} : { text: () => record.transcript?.join("\n") }),
 			open: () => openChild(record.id),
+		});
+	}
+	for (const [index, source] of extraSources.entries()) {
+		rows.push({
+			id: source.transcriptRowId ?? `extra-${index}`,
+			kind: "process",
+			turnIndex: turn,
+			turnStart: false,
+			expandable: typeof source.setExpanded === "function",
+			openable: typeof source.open === "function",
+			...(source.transcriptRowLabel === undefined ? {} : { label: source.transcriptRowLabel }),
+			...(source.transcriptRowText === undefined ? {} : { text: source.transcriptRowText }),
+			...(source.open === undefined ? {} : { open: () => source.open?.() }),
 		});
 	}
 	return rows;

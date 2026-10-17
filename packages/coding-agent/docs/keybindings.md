@@ -39,7 +39,7 @@ The hosted terminal registers its own actions and commands; see [Slash commands]
 
 The prompt jumps are the shared `tui.altScreen.previousPrompt` and `tui.altScreen.nextPrompt` actions, so fullscreen search, the regular terminal, and `keybindings.json` all use one assignment. The marker stays visible only while the transcript has the keyboard.
 
-Folding one entry by hand pins it: the global tool-output toggle (`Ctrl+O`) leaves pinned entries alone, while `Ctrl+E` clears the pins and applies one state to everything.
+Subagent rows and background-command rows take part in the same selection as messages and tool blocks: `Enter` opens them, and `y` copies their text.  the global tool-output toggle (`Ctrl+O`) leaves pinned entries alone, while `Ctrl+E` clears the pins and applies one state to everything.
 
 ### Vim navigation
 

@@ -13,6 +13,8 @@ export interface TranscriptFocusOptions {
 	onViewText?(text: string): void;
 	/** Vim-style single-letter navigation; off by default. */
 	vimMode?: () => boolean;
+	/** Receives the whole selected row, for surfaces that highlight rows they render themselves. */
+	onHighlightRow?(row: TranscriptRow | undefined): void;
 }
 
 /**
@@ -184,7 +186,9 @@ export class TranscriptFocus {
 	}
 
 	private highlight(): void {
-		this.options.onHighlight?.(this.model.selected?.childId);
+		const row = this.model.selected;
+		this.options.onHighlight?.(row?.childId);
+		this.options.onHighlightRow?.(row);
 	}
 
 	/** Keep exactly one row marked, and only while the transcript owns the keyboard. */

@@ -61,6 +61,31 @@ describe("deriveTranscriptRows", () => {
 		expect(rows[1]).toMatchObject({ expandable: false, openable: true });
 	});
 
+	test("appends background work after child agents as process rows", () => {
+		const opened: string[] = [];
+		const rows = deriveTranscriptRows(
+			[new Entry("p1", { turnStart: true })],
+			[{ id: "child", description: "explore", transcript: ["step 1", "step 2"] }],
+			() => {},
+			[
+				{
+					transcriptRowId: "process-1",
+					transcriptRowLabel: "command: sleep 5",
+					transcriptRowText: () => "sleep 5\noutput",
+					open: () => opened.push("process-1"),
+				},
+			],
+		);
+
+		expect(rows.map((row) => row.id)).toEqual(["p1", "child-child", "process-1"]);
+		expect(rows[1]).toMatchObject({ kind: "child-agent", label: "explore" });
+		expect(rows[1]?.text?.()).toBe("step 1\nstep 2");
+		expect(rows[2]).toMatchObject({ kind: "process", label: "command: sleep 5", openable: true });
+		expect(rows[2]?.text?.()).toBe("sleep 5\noutput");
+		rows[2]?.open?.();
+		expect(opened).toEqual(["process-1"]);
+	});
+
 	test("appends child agents in the final turn and routes open to the book", () => {
 		const prompt = new Entry("prompt", { turnStart: true });
 		const opened: string[] = [];

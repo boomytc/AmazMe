@@ -3338,12 +3338,18 @@ export class InteractiveMode {
 					this.chatContainer.children.filter((child) => child !== this.workSurface),
 					this.session.childAgents.records,
 					(id) => this.session.childAgents.open(id),
+					this.workSurface?.transcriptRows() ?? [],
 				),
 			10,
 			{
 				onHighlight: (childId) => {
 					this.session.childAgents.highlightId = childId;
 					this.session.childAgents.touch();
+				},
+				onHighlightRow: (row) => {
+					if (!this.workSurface) return;
+					this.workSurface.highlightRowId = row?.kind === "process" ? row.id : undefined;
+					this.ui.requestRender();
 				},
 				onCopy: (text) => void this.copyWithFeedback(text),
 				onRowSelected: (childIndex) => this.scrollTranscriptRowIntoView(childIndex),

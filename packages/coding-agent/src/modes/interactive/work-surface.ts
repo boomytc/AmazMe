@@ -11,6 +11,7 @@ import { childFrameLines, childLifecycleLine, type ChildAgentBook } from "../../
 import { type ForegroundCommands, type ForegroundTask } from "../../core/foreground-commands.ts";
 import { formatKeyText } from "../../core/keybinding-labels.ts";
 import { matchesAppBinding } from "../../core/keybindings.ts";
+import type { TranscriptRowSource } from "./transcript-model.ts";
 import { theme } from "./theme/theme.ts";
 
 const OPEN_BADGE = "[open]";
@@ -97,6 +98,8 @@ interface TasksRow {
 export class WorkSurface implements Component {
 	readonly book: ChildAgentBook;
 	mouseEnabled: boolean;
+	/** Row id the transcript selection currently rests on, for the process rows. */
+	highlightRowId: string | undefined;
 	private readonly commands: ForegroundCommands;
 	private readonly actions: WorkSurfaceActions | undefined;
 	private readonly emptyDraft: (() => boolean) | undefined;
@@ -143,23 +146,30 @@ export class WorkSurface implements Component {
 			for (const task of this.commands.list()) {
 				if (task.status !== "running") continue;
 				if (task.detached) {
+					const highlighted = this.highlightRowId === `process-${task.id}`;
+					const marker = highlighted ? "> " : "";
+					const offset = marker.length;
 					if (this.mouseEnabled) {
-						const row = backgroundRow(task, width);
-						const body = truncateToWidth(row.body, width, "…");
+						const rowWidth = Math.max(1, width - offset);
+						const row = backgroundRow(task, rowWidth);
+						const body = truncateToWidth(row.body, rowWidth, "…");
+						const shift = (range: BadgeRange | undefined) =>
+							range === undefined ? undefined : { start: range.start + offset, end: range.end + offset };
 						hits.push({
 							id: task.id,
 							line: lines.length,
-							open: badgeRange(body, row.open, OPEN_BADGE),
-							close: badgeRange(body, row.close, CLOSE_BADGE),
+							open: shift(badgeRange(body, row.open, OPEN_BADGE)),
+							close: shift(badgeRange(body, row.close, CLOSE_BADGE)),
 						});
-						push(body);
+						push(`${marker}${body}`);
 					} else {
 						// No pointer to open the panel with, so the row states its state and the
 						// tasks list (F2) carries the keyboard path to the output.
-						push(`Command in background: ${task.command}`);
+						push(`${marker}Command in background: ${task.command}`);
 					}
 				} else {
-					for (const line of commandLines(task)) push(line);
+					const marker = this.highlightRowId === `process-${task.id}` ? "> " : "";
+					for (const line of commandLines(task)) push(`${marker}${line}`);
 				}
 			}
 		}
@@ -221,6 +231,16 @@ export class WorkSurface implements Component {
 			return true;
 		}
 		return true;
+	}
+
+	/** Background commands as transcript rows, so navigation and copy reach them too. */
+	transcriptRows(): TranscriptRowSource[] {
+		return this.commands.list().map((task) => ({
+			transcriptRowId: `process-${task.id}`,
+			transcriptRowLabel: `command: ${task.command}`,
+			transcriptRowText: () => commandLines(task).join("\n"),
+			open: () => this.actions?.openProcess(task.id),
+		}));
 	}
 
 	/** One row per live task: child agents first, then tracked commands. */
