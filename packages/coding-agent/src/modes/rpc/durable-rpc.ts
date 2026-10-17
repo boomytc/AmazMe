@@ -1,7 +1,7 @@
 import { getSupportedThinkingLevels, type Model, type Usage } from "@amazme/ai";
 import type { AgentEvent, AgentEventStream } from "@amazme/durable";
 import { realpath, stat } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { flushRawStdout, takeOverStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../../core/output-guard.ts";
 import { executeBashWithOperations } from "../../core/bash-executor.ts";
 import { durableEntriesToSessionFile } from "../../core/session-interop.ts";
@@ -140,6 +140,11 @@ export function createDurableRpcHandler(
 	const modelOf = (ref: { provider: string; modelId: string } | undefined): Model<string> | undefined =>
 		ref === undefined ? undefined : durable.availableModels().find((model) => model.provider === ref.provider && model.id === ref.modelId);
 
+	const sessionFile = (): string | undefined => {
+		const directory = view().session.directory;
+		return directory === undefined ? undefined : join(directory, "session.sqlite");
+	};
+
 	const state = (): RpcSessionState => {
 		const current = view();
 		const currentAgent = agent();
@@ -152,7 +157,7 @@ export function createDurableRpcHandler(
 			isCompacting: current.lane.run === "compacting",
 			steeringMode: durable.settings.getSteeringMode(),
 			followUpMode: durable.settings.getFollowUpMode(),
-			sessionFile: undefined,
+			sessionFile: sessionFile(),
 			sessionId: current.session.id,
 			...(current.session.name === undefined ? {} : { sessionName: current.session.name }),
 			autoCompactionEnabled: durable.settings.getCompactionSettings().enabled,
@@ -178,7 +183,7 @@ export function createDurableRpcHandler(
 			| undefined;
 		const totals = usageTotals(usage);
 		return {
-			sessionFile: undefined,
+			sessionFile: sessionFile(),
 			sessionId: view().session.id,
 			userMessages: all.filter((message) => message.role === "user").length,
 			assistantMessages: all.filter((message) => message.role === "assistant").length,
@@ -202,6 +207,13 @@ export function createDurableRpcHandler(
 			timestamp: new Date().toISOString(),
 		});
 		return projected.entries.filter((entry): entry is SessionEntry => entry.type !== "session");
+	};
+
+	const durableEntryId = (id: string): string => {
+		const match = view().conversation.entries.find((entry) =>
+			id === String(entry.id) || id === `e${String(entry.id)}` || id.startsWith(`e${String(entry.id)}.`),
+		);
+		return match === undefined ? id : String(match.id);
 	};
 
 	const lastAssistantText = (): string | undefined => {
@@ -366,17 +378,31 @@ export function createDurableRpcHandler(
 				const text = lastAssistantText();
 				return success(id, "get_last_assistant_text", { text });
 			}
-			case "set_session_name":
-				await durable.controller.setSessionName(command.name);
+			case "set_session_name": {
+				const name = command.name.trim();
+				if (name.length === 0) return error(id, "set_session_name", "Session name cannot be empty");
+				await durable.controller.setSessionName(name);
 				return success(id, "set_session_name");
+			}
 			case "get_commands":
 				return success(id, "get_commands", { commands: commands() });
 			case "clear_queue":
 				return success(id, "clear_queue", await durable.controller.clearQueue());
-			case "fork":
-				await durable.controller.forkAt(command.entryId);
-				return success(id, "fork", { text: "", cancelled: false });
+			case "fork": {
+				const entries = projectedEntries();
+				const selected = entries.find((entry) => entry.id === command.entryId)
+					?? entries.find((entry) => entry.id === `e${command.entryId}`);
+				if (selected?.type !== "message" || selected.message.role !== "user") {
+					return error(id, "fork", "Invalid entry ID for forking");
+				}
+				const text = typeof selected.message.content === "string"
+					? selected.message.content
+					: selected.message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+				await durable.controller.forkAt(durableEntryId(command.entryId));
+				return success(id, "fork", { text, cancelled: false });
+			}
 			case "clone":
+				if (projectedEntries().length === 0) return error(id, "clone", "Cannot clone session: no current entry selected");
 				await durable.controller.forkAt();
 				return success(id, "clone", { cancelled: false });
 			case "new_session":

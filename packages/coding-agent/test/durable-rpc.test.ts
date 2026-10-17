@@ -126,8 +126,44 @@ describe("durable RPC handler", () => {
 		expect(cleared).toMatchObject({ success: true, command: "clear_queue", data: { steering: [], followUp: ["queued one", "queued two"] } });
 		await handle({ type: "abort" });
 
-		const forked = await handle({ type: "fork", entryId: String(durable.view.current().conversation.entries[0]?.id) });
-		expect(forked).toMatchObject({ success: true, command: "fork", data: { cancelled: false } });
+		const forkMessages = await handle({ type: "get_fork_messages" });
+		if (!forkMessages.success || forkMessages.command !== "get_fork_messages") throw new Error("expected fork messages");
+		const firstUser = forkMessages.data.messages[0];
+		if (firstUser === undefined) throw new Error("expected a user message");
+		const forked = await handle({ type: "fork", entryId: firstUser.entryId });
+		expect(forked).toMatchObject({ success: true, command: "fork", data: { text: "start", cancelled: false } });
+	});
+
+	it("reports the Durable database as the session file", async () => {
+		const persistent = await openDurable({
+			cwd,
+			modelRuntime: runtime,
+			settingsManager: settings,
+			sessionDir: join(directory, "sessions"),
+			noExtensions: true,
+			noMcp: true,
+		});
+		try {
+			const persistentHandler = createDurableRpcHandler(persistent);
+			const state = await persistentHandler({ type: "get_state" });
+			expect(state).toMatchObject({ success: true, data: { sessionFile: expect.stringMatching(/session\.sqlite$/) } });
+			const stats = await persistentHandler({ type: "get_session_stats" });
+			expect(stats).toMatchObject({ success: true, data: { sessionFile: expect.stringMatching(/session\.sqlite$/) } });
+		} finally {
+			await persistent.close();
+		}
+	});
+
+	it("delegates session lifecycle to the transport", async () => {
+		const control = {
+			newSession: vi.fn(async () => ({ cancelled: false })),
+			switchSession: vi.fn(async () => ({ cancelled: false })),
+		};
+		const controlled = createDurableRpcHandler(durable, control);
+		expect(await controlled({ type: "new_session" })).toMatchObject({ success: true, command: "new_session", data: { cancelled: false } });
+		expect(await controlled({ type: "switch_session", sessionPath: "/tmp/session" })).toMatchObject({ success: true, command: "switch_session", data: { cancelled: false } });
+		expect(control.newSession).toHaveBeenCalledWith(undefined);
+		expect(control.switchSession).toHaveBeenCalledWith("/tmp/session");
 	});
 
 	it("selects models by full identity and reports unsupported commands", async () => {
