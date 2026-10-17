@@ -125,13 +125,14 @@ async function runWebCommand(command: WebCommand): Promise<void> {
  * this launch started the server or forwards its pages to one that was already running.
  */
 export function webLaunchLines(
-	host: Pick<WebHost, "url" | "mode" | "serverId" | "webSocketUrl" | "ownsServer">,
+	host: Pick<WebHost, "url" | "mode" | "serverId" | "webSocketUrl" | "ownsServer" | "socketPath">,
 ): string[] {
 	return [
 		`Web: ${host.url}`,
 		`Mode: ${host.mode}`,
 		`WebSocket: ${host.webSocketUrl}`,
 		`Server: ${host.serverId} (${host.ownsServer ? "started" : "already running"})`,
+		`Socket: ${host.socketPath}`,
 	];
 }
 

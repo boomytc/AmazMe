@@ -12,11 +12,11 @@ amazme web --port 0
 
 Development uses the same `src/cli.ts` through `src/source-resolver.ts`; no separate experimental entry or flag is required. Published hosts read the prebuilt browser asset and compiled service modules.
 
-`AMAZME_SERVER_DIR` overrides the server profile and socket directory, which defaults to `~/.amazme/server`. `AMAZME_SERVER_ID` selects the logical server ID when `--server-id` is omitted.
+`AMAZME_SERVER_DIR` overrides the server profile directory, which defaults to `~/.amazme/server`. `AMAZME_SERVER_ID` selects the logical server ID when `--server-id` is omitted. Sockets are created in that directory when the longest socket name fits in `sun_path`. When it does not, they are created under `/tmp/am-<uid>/<hash>/`. `amazme client --connect unix://<path>` must use the `Socket:` path printed by `amazme server` or `amazme web`. Do not assemble `<dir>/<id>.sock`.
 
 `web` serves the same host to a browser: loopback HTTP for the page, the same port's `/amazme` path for the
 byte protocol over WebSocket, and the same Unix socket for the TUI client. It prints `Web: <url>`,
-`Mode: <mode>`, `WebSocket: <url>`, and `Server: <id> (started|already running)` once the host accepts
+`Mode: <mode>`, `WebSocket: <url>`, `Server: <id> (started|already running)`, and `Socket: <path>` once the host accepts
 connections, binds loopback only,
 and injects a boot manifest into the document so a page without one reports an error instead of rendering an
 empty shell. A server already listening in the server directory under the resolved server ID is reused: the
