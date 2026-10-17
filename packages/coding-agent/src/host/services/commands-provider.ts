@@ -214,7 +214,8 @@ function failure(problem: string): CommandResult {
 function describeRun(outcome: unknown): string {
 	if (outcome === undefined) return "Done.";
 	if (typeof outcome === "object" && outcome !== null) {
-		const response = outcome as { accepted?: unknown; error?: { message?: unknown } | null };
+		const response = outcome as { accepted?: unknown; error?: { message?: unknown } | null; note?: unknown };
+		if (typeof response.note === "string") return response.note;
 		if (response.accepted === false) {
 			const message = response.error?.message;
 			return typeof message === "string" ? message : "The session refused the command.";

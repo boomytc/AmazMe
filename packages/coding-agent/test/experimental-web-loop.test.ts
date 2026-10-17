@@ -1935,6 +1935,7 @@ describe("web client interactive loop", () => {
 			expect(runnable.map((command) => [command.name, command.source])).toEqual([
 				["compact", "builtin"],
 				["reload", "builtin"],
+				["share", "plugin"],
 				["web-loop-report", "template"],
 				["skill:web-loop-brief", "skill"],
 			]);

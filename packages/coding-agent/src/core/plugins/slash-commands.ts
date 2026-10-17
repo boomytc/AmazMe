@@ -8,7 +8,12 @@ export interface SlashCommandCompletion {
 	readonly description?: string;
 }
 
-export type SlashCommandRunResult = AgentOperationResponse | AgentQueueResponse | undefined;
+export type SlashCommandRunResult =
+	| AgentOperationResponse
+	| AgentQueueResponse
+	/** A finished command with something to show, such as a share URL. */
+	| { readonly note: string }
+	| undefined;
 
 export interface SlashCommandContribution {
 	readonly name: string;

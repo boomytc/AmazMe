@@ -640,7 +640,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			notice("info", `Running /${selected.name}`);
 			try {
 				const outcome = await selected.run(args, withAbortSignal(operation.signal, context));
-				if (outcome?.accepted === false) throw new Error(outcome.error.message);
+				if (outcome !== undefined && "note" in outcome) notice("info", outcome.note);
+				else if (outcome?.accepted === false) throw new Error(outcome.error.message);
 				notice("info", `${operation.signal.aborted ? "Cancelled" : "Ran"} /${selected.name}`);
 			} catch (error) {
 				if (operation.signal.aborted) notice("info", `Cancelled /${selected.name}`);

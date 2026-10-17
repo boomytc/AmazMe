@@ -748,7 +748,10 @@ export class ExperimentalClientTui implements Component {
 			}
 			const result = await command.run(args, BACKGROUND_CONTEXT);
 			if (result !== undefined) {
-				if ("entryId" in result) this.#reportQueue(result);
+				if ("note" in result) {
+					this.#status = result.note;
+					this.#rebuild();
+				} else if ("entryId" in result) this.#reportQueue(result);
 				else this.#reportOperation(result);
 			}
 		} catch (error) {

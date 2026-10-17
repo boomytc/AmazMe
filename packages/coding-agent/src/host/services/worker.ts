@@ -32,6 +32,7 @@ import { createMcpFacet } from "./mcp-provider.ts";
 import { SessionPlugins } from "./plugins.ts";
 import { NATIVE_COMMANDS } from "../../durable/commands.ts";
 import { createSlashCommandsRuntimeFacet, SlashCommandRegistry } from "../../core/plugins/command-registry.ts";
+import { createShareCommandFacet } from "./share-command.ts";
 import { SessionSettings } from "./settings.ts";
 import { publishSettings, settingsErrors, settingsSnapshot } from "./settings-provider.ts";
 import { SessionLifecycle } from "./session-lifecycle.ts";
@@ -219,6 +220,12 @@ export async function createSessionWorkerServices(options: {
 		// Plugins register their commands here, and the catalogue lists them: one command surface for
 		// the terminal client, the page, and a desktop client.
 		createSlashCommandsRuntimeFacet(new SlashCommandRegistry(NATIVE_COMMANDS.map(command => command.name))),
+		createShareCommandFacet({
+			conversation: options.conversation,
+			cwd: options.cwd,
+			destination: () => options.settingsManager?.getSessionShareDestination() ?? "auto",
+			...(options.modelRuntime === undefined ? {} : { modelRuntime: options.modelRuntime }),
+		}),
 		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
 		await createModelsServiceFacet({ ...options, authentication, context: BACKGROUND_CONTEXT }),
 		...(options.mcp === undefined ? [] : [createMcpFacet(options.mcp)]),
