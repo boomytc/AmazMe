@@ -9,6 +9,8 @@ export type ImageProtocol = "kitty" | "iterm2" | null;
 export interface TerminalCapabilities {
 	images: ImageProtocol;
 	trueColor: boolean;
+	/** False when the terminal declares no indexed palette, so themes fall back to the sixteen ANSI colors. */
+	ansi256?: boolean;
 	hyperlinks: boolean;
 }
 
@@ -175,8 +177,31 @@ export function getCapabilities(): TerminalCapabilities {
 	return cachedCapabilities;
 }
 
+function parseColorModeOverride(value: string | undefined): TerminalColorMode | undefined {
+	switch (value?.toLowerCase()) {
+		case "16":
+		case "16color":
+		case "ansi":
+			return "16color";
+		case "256":
+		case "256color":
+			return "256color";
+		case "truecolor":
+		case "24bit":
+			return "truecolor";
+		default:
+			return undefined;
+	}
+}
+
 export function getTerminalColorMode(capabilities: TerminalCapabilities = getCapabilities()): TerminalColorMode {
-	return capabilities.trueColor ? "truecolor" : "256color";
+	const override = parseColorModeOverride(process.env.AMAZME_COLOR_MODE);
+	if (override) return override;
+	if (capabilities.trueColor) return "truecolor";
+	if (capabilities.ansi256 === false) return "16color";
+	// A terminal that names no color support still gets a readable palette instead of 256-color escapes.
+	const term = (process.env.TERM ?? "").toLowerCase();
+	return term === "" || term === "dumb" || term === "unknown" ? "16color" : "256color";
 }
 
 export function resetCapabilitiesCache(): void {

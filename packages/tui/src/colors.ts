@@ -22,7 +22,7 @@ export interface OklchColorValue {
 
 /** A concrete color. Every color can be converted to sRGB, so color math never fails. */
 export type Color = IndexedColor | RgbColorValue | OklchColorValue;
-export type TerminalColorMode = "256color" | "truecolor";
+export type TerminalColorMode = "16color" | "256color" | "truecolor";
 export type ColorMixSpace = "oklch" | "srgb";
 
 export interface OklchChannels {
@@ -276,6 +276,42 @@ function colorDistance(first: RgbColor, second: RgbColor): number {
 	return dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114;
 }
 
+/** Standard xterm palette for the sixteen ANSI colors. */
+const ANSI16_PALETTE: ReadonlyArray<readonly [number, number, number]> = [
+	[0, 0, 0],
+	[128, 0, 0],
+	[0, 128, 0],
+	[128, 128, 0],
+	[0, 0, 128],
+	[128, 0, 128],
+	[0, 128, 128],
+	[192, 192, 192],
+	[128, 128, 128],
+	[255, 0, 0],
+	[0, 255, 0],
+	[255, 255, 0],
+	[0, 0, 255],
+	[255, 0, 255],
+	[0, 255, 255],
+	[255, 255, 255],
+];
+
+/** Nearest of the sixteen ANSI colors, so a theme stays readable without 256-color support. */
+export function rgbToAnsi16(color: RgbColor): number {
+	let best = 0;
+	let bestDistance = Number.POSITIVE_INFINITY;
+	for (let index = 0; index < ANSI16_PALETTE.length; index++) {
+		const entry = ANSI16_PALETTE[index];
+		if (entry === undefined) continue;
+		const distance = colorDistance(color, { r: entry[0], g: entry[1], b: entry[2] });
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			best = index;
+		}
+	}
+	return best;
+}
+
 function rgbToAnsi256(color: RgbColor): number {
 	const rIndex = findClosest(CUBE_VALUES, color.r);
 	const gIndex = findClosest(CUBE_VALUES, color.g);
@@ -303,7 +339,8 @@ function colorAnsi(color: Color, mode: TerminalColorMode, background: boolean): 
 	if (mode === "truecolor") {
 		return `\x1b[${background ? 48 : 38};2;${Math.round(rgb.r)};${Math.round(rgb.g)};${Math.round(rgb.b)}m`;
 	}
-	return `\x1b[${background ? 48 : 38};5;${rgbToAnsi256(rgb)}m`;
+	const index = mode === "16color" ? rgbToAnsi16(rgb) : rgbToAnsi256(rgb);
+	return `\x1b[${background ? 48 : 38};5;${index}m`;
 }
 
 export function foregroundAnsi(color: Color, mode: TerminalColorMode): string {

@@ -1,14 +1,18 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import {
+	backgroundAnsi,
 	colorToHex,
 	colorToOkhsl,
 	colorToRgb,
 	indexedColor,
 	okhslColor,
 	oklchColor,
+	foregroundAnsi,
+	getTerminalColorMode,
 	parseColor,
 	rgbColor,
+	rgbToAnsi16,
 	styleText,
 } from "../src/index.ts";
 
@@ -43,5 +47,57 @@ describe("colors", () => {
 			"\x1b[38;2;18;52;86m\x1b[48;5;9m\x1b[1m\x1b[3mReady\x1b[23m\x1b[22m\x1b[49m\x1b[39m",
 		);
 		assert.match(styleText("Ready", { fg: rgbColor(18, 52, 86) }, "256color"), /^\x1b\[38;5;\d+mReady\x1b\[39m$/);
+	});
+});
+
+describe("sixteen-color fallback", () => {
+	it("maps RGB to the nearest ANSI color", () => {
+		assert.strictEqual(rgbToAnsi16(rgbColor(255, 0, 0)), 9);
+		assert.strictEqual(rgbToAnsi16(rgbColor(0, 0, 0)), 0);
+		assert.strictEqual(rgbToAnsi16(rgbColor(255, 255, 255)), 15);
+		assert.strictEqual(rgbToAnsi16(rgbColor(128, 0, 0)), 1);
+		assert.strictEqual(rgbToAnsi16(rgbColor(192, 192, 192)), 7);
+	});
+
+	it("emits indexed escapes for foreground and background", () => {
+		assert.strictEqual(foregroundAnsi(rgbColor(255, 0, 0), "16color"), "\x1b[38;5;9m");
+		assert.strictEqual(backgroundAnsi(rgbColor(255, 0, 0), "16color"), "\x1b[48;5;9m");
+		assert.strictEqual(foregroundAnsi(rgbColor(255, 0, 0), "256color"), "\x1b[38;5;196m");
+		assert.strictEqual(foregroundAnsi(indexedColor(42), "16color"), "\x1b[38;5;42m");
+	});
+
+	it("keeps truecolor output unchanged", () => {
+		assert.strictEqual(foregroundAnsi(rgbColor(1, 2, 3), "truecolor"), "\x1b[38;2;1;2;3m");
+	});
+});
+
+describe("terminal color mode", () => {
+	it("honours the explicit color-mode override", () => {
+		const previous = process.env.AMAZME_COLOR_MODE;
+		process.env.AMAZME_COLOR_MODE = "16";
+		try {
+			assert.strictEqual(getTerminalColorMode({ images: null, trueColor: true, hyperlinks: false }), "16color");
+			process.env.AMAZME_COLOR_MODE = "truecolor";
+			assert.strictEqual(getTerminalColorMode({ images: null, trueColor: false, hyperlinks: false }), "truecolor");
+		} finally {
+			if (previous === undefined) delete process.env.AMAZME_COLOR_MODE;
+			else process.env.AMAZME_COLOR_MODE = previous;
+		}
+	});
+
+	it("falls back to sixteen colors when the capability says so", () => {
+		const previousTerm = process.env.TERM;
+		const previousMode = process.env.AMAZME_COLOR_MODE;
+		delete process.env.AMAZME_COLOR_MODE;
+		process.env.TERM = "xterm-256color";
+		try {
+			assert.strictEqual(getTerminalColorMode({ images: null, trueColor: false, ansi256: false, hyperlinks: false }), "16color");
+			assert.strictEqual(getTerminalColorMode({ images: null, trueColor: false, hyperlinks: false }), "256color");
+		} finally {
+			if (previousTerm === undefined) delete process.env.TERM;
+			else process.env.TERM = previousTerm;
+			if (previousMode === undefined) delete process.env.AMAZME_COLOR_MODE;
+			else process.env.AMAZME_COLOR_MODE = previousMode;
+		}
 	});
 });

@@ -30,6 +30,7 @@ export {
 	parseColor,
 	type RgbColorValue,
 	rgbColor,
+	rgbToAnsi16,
 	styleText,
 	styleTextWithAnsi,
 	type TerminalColorMode,

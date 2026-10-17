@@ -64,6 +64,7 @@ Durable's shell factories and execution environments have their own options; thi
 | `AMAZME_PROGRAM_STATUS` | OSC 7501 override: `1` always reports, `0` never reports; otherwise terminal support is queried |
 | `AMAZME_IMAGE_PROTOCOL` | Inline image protocol: `kitty`, `iterm2`, `none`, or `auto` |
 | `AMAZME_TRUE_COLOR` | Truecolor override: `1`, `0`, or `auto` |
+| `AMAZME_COLOR_MODE` | Force a color depth for themes: `16`, `256`, or `truecolor` |
 | `AMAZME_TUI_ESC_TIMEOUT` | Lone Escape timeout in milliseconds; defaults to `100` over SSH and `10` otherwise |
 | `VISUAL`, `EDITOR` | External-editor fallback in clients that expose that action |
 | `HTTP_PROXY`, `HTTPS_PROXY` | Outbound HTTP proxy configuration |
