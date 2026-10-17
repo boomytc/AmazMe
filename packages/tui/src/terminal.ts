@@ -10,6 +10,7 @@ import {
 	type ProgramStatus,
 } from "./program-status.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
+import { isStrayTerminalInput } from "./stray-input.ts";
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -253,7 +254,10 @@ export class ProcessTerminal implements Terminal {
 				return;
 			}
 
-			this.forwardInputSequence(negotiation?.sequence ?? sequence);
+			const forwarded = negotiation?.sequence ?? sequence;
+			// Unsolicited replies belong to no surface; treat them as terminal noise.
+			if (isStrayTerminalInput(forwarded)) return;
+			this.forwardInputSequence(forwarded);
 		});
 
 		// Re-wrap paste content with bracketed paste markers for existing editor handling

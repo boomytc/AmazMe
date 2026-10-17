@@ -218,6 +218,10 @@ Settings take precedence over environment variables. An unset value or `auto` pr
 
 Only force a capability supported by the complete terminal path. Unsupported escape sequences can corrupt rendering. See [Environment Variables](environment-variables.md#process-configuration) and [Settings](settings.md) for the canonical value definitions.
 
+## Stray terminal replies
+
+Terminals and multiplexers sometimes send replies nobody asked for: legacy X10 mouse reports, DCS strings such as XTVERSION, cursor-position reports, and mode reports. AmazMe discards them before they reach the editor, so they cannot appear as typed text or trigger shortcuts. Device-attribute replies are still forwarded because the color query uses DA1 as its terminator.
+
 ## Program status
 
 AmazMe reports its state with the [Program Status Protocol (OSC 7501)](https://www.superlogical.com/rex/docs/build/program-status), so terminals and agent dashboards can show whether it is working, waiting for you, done, or failed:
