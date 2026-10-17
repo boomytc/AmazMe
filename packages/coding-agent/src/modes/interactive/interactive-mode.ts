@@ -7588,7 +7588,7 @@ These main-editor controls take precedence over the configured bindings below.
 | \`${followUp}\` | Queue follow-up message |
 | \`${dequeue}\` | Restore queued messages |
 | \`${dashboard}\` | Open the agent dashboard |
-| \`${searchTranscript}\` | Search the rendered transcript in fullscreen mode (\`/find\` reaches it too) |
+| \`${searchTranscript}\` | Search the transcript; \`/find\` also opens it |
 | \`${pasteImage}\` | ${getClipboardPasteDescription()} |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |

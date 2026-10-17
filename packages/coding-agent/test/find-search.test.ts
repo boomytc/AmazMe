@@ -81,10 +81,16 @@ describe("transcript search entry", () => {
 			expect(tui.searchOpen).toBe(true);
 			expect(statuses).toEqual([]);
 
-			// Regular mode has no search box, so the command points at the terminal instead.
-			handler.call({ renderer: {}, showStatus: (message: string) => statuses.push(message) });
-			expect(statuses).toHaveLength(1);
-			expect(statuses[0]).toContain("fullscreen");
+			// Regular mode opens the inline transcript search box instead.
+			const started: Array<string | undefined> = [];
+			handler.call(
+				{
+					renderer: {},
+					startTranscriptSearch: (query?: string) => started.push(query),
+				},
+				"needle",
+			);
+			expect(started).toEqual(["needle"]);
 		} finally {
 			tui.stop();
 			setKeybindings(previous);
@@ -112,10 +118,10 @@ describe("transcript search entry", () => {
 			const handleHotkeys = Reflect.get(InteractiveMode.prototype, "handleHotkeysCommand") as () => void;
 			handleHotkeys.call(mode);
 			const rendered = chat
-				.render(120)
+				.render(200)
 				.join("\n")
 				.replace(/\x1b\[[0-9;]*m/g, "");
-			expect(rendered).toContain("Search the rendered transcript");
+			expect(rendered).toContain("Search the transcript");
 			expect(rendered).toContain("F3");
 		} finally {
 			setKeybindings(previous);
