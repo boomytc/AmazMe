@@ -21,6 +21,18 @@ Normal CLI options still select the working folder, model, tools, resources, and
 
 RPC mode rejects `@file` prompt arguments. Send prompts through the [`prompt`](rpc-commands.md#prompt) command instead.
 
+## Durable RPC (experimental)
+
+Set `AMAZME_RUNTIME=durable` to run RPC over the Durable session:
+
+```bash
+AMAZME_RUNTIME=durable amazme --mode rpc --no-session
+```
+
+Events keep the RPC event names. The adapter supports `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_last_assistant_text`, `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels`, `get_session_stats`, `set_session_name`, and `get_commands`.
+
+Commands that depend on the JSONL session tree, extension UI, shell bookkeeping, queue text, HTML export, or JSONL switching (`new_session`, `switch_session`, `fork`, `clone`, `get_entries`, `get_tree`, `export_html`, `bash`, `compact`, `clear_queue`, and the queue/retry toggles) return an explicit unsupported error. They are not silently approximated. See [Durable single-kernel migration](../../../docs/durable-migration.md).
+
 ## Protocol records
 
 The protocol has four record families:

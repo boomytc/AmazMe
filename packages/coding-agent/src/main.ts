@@ -790,7 +790,7 @@ export async function main(args: string[], options?: MainOptions) {
 			...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
 			...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
 			...(parsed.excludeTools === undefined ? {} : { excludeTools: parsed.excludeTools }),
-			...(parsed.noTools ? { noTools: "all" } : parsed.noBuiltinTools ? { noTools: "builtin" } : {}),
+			...(parsed.noTools ? { noTools: "all" as const } : parsed.noBuiltinTools ? { noTools: "builtin" as const } : {}),
 			noMcp: parsed.noMcp === true || parsed.noExtensions === true,
 			...(initialMessage === undefined ? {} : { initialMessage }),
 			...(initialImages === undefined ? {} : { initialImages }),
@@ -824,17 +824,13 @@ export async function main(args: string[], options?: MainOptions) {
 		console.error(chalk.red(`Error: unknown AMAZME_RUNTIME "${runtimeSelection}"; use "durable" or "legacy".`));
 		process.exit(1);
 	}
-	if (runtimeSelection === "durable" && appMode !== "interactive" && appMode !== "print" && appMode !== "json") {
-		console.error(chalk.red(`Error: AMAZME_RUNTIME=durable does not support ${appMode} mode yet; it supports the native terminal, print, and JSON modes.`));
-		process.exit(1);
-	}
-	if (runtimeSelection === "durable" && (appMode === "print" || appMode === "json") && parsed.help !== true && parsed.listModels === undefined) {
+	if (runtimeSelection === "durable" && appMode !== "interactive" && parsed.help !== true && parsed.listModels === undefined) {
 		if (options?.extensionFactories?.length) {
-			console.error(chalk.red("Error: SDK extension factories require the legacy print runtime; the Durable print runtime loads native facet sources. Remove the inline factories or unset AMAZME_RUNTIME."));
+			console.error(chalk.red("Error: SDK extension factories require the legacy runtime; the Durable runtime loads native facet sources. Remove the inline factories or unset AMAZME_RUNTIME."));
 			process.exit(1);
 		}
 		if (parsed.fork !== undefined || parsed.session !== undefined || parsed.sessionId !== undefined) {
-			console.error(chalk.red("Error: --fork, --session, and --session-id select a JSONL session, which the Durable print runtime does not read. Use --continue or unset AMAZME_RUNTIME."));
+			console.error(chalk.red("Error: --fork, --session, and --session-id select a JSONL session, which the Durable runtime does not read. Use --continue or unset AMAZME_RUNTIME."));
 			process.exit(1);
 		}
 		const projectTrusted = await resolveProjectTrusted({
@@ -842,13 +838,11 @@ export async function main(args: string[], options?: MainOptions) {
 			trustStore: new ProjectTrustStore(agentDir),
 			trustOverride: parsed.projectTrustOverride,
 			defaultProjectTrust: bootstrapSettingsManager.getDefaultProjectTrust(),
-			projectTrustContext: createProjectTrustContext({ cwd, mode: "print", settingsManager: startupSettingsManager, hasUI: false }),
+			projectTrustContext: createProjectTrustContext({ cwd, mode: appMode, settingsManager: startupSettingsManager, hasUI: false }),
 		});
 		startupSettingsManager.setProjectTrusted(projectTrusted);
 		const durableSessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
-		const { runDurablePrint } = await import("./durable/print.ts");
-		const exitCode = await runDurablePrint({
-			mode: appMode === "json" ? "json" : "text",
+		const durableOptions = {
 			settingsManager: startupSettingsManager,
 			cwd,
 			continueSession: parsed.continue === true || parsed.resume === true,
@@ -871,8 +865,18 @@ export async function main(args: string[], options?: MainOptions) {
 			...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
 			...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
 			...(parsed.excludeTools === undefined ? {} : { excludeTools: parsed.excludeTools }),
-			...(parsed.noTools ? { noTools: "all" } : parsed.noBuiltinTools ? { noTools: "builtin" } : {}),
+			...(parsed.noTools ? { noTools: "all" as const } : parsed.noBuiltinTools ? { noTools: "builtin" as const } : {}),
 			noMcp: parsed.noMcp === true || parsed.noExtensions === true,
+		};
+		if (appMode === "rpc") {
+			const { runDurableRpc } = await import("./modes/rpc/durable-rpc.ts");
+			await runDurableRpc(durableOptions);
+			return;
+		}
+		const { runDurablePrint } = await import("./durable/print.ts");
+		const exitCode = await runDurablePrint({
+			...durableOptions,
+			mode: appMode === "json" ? "json" : "text",
 			...(initialMessage === undefined ? {} : { initialMessage }),
 			...(initialImages === undefined ? {} : { initialImages }),
 			messages: parsed.messages.slice(),

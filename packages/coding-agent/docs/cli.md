@@ -118,9 +118,9 @@ See [Sessions and Context](sessions.md) for resuming, forking, naming, and stori
 
 The default terminal stores SQLite sessions under `<agent-dir>/experimental/durable-sessions/<cwd-hash>/<session-id>/session.sqlite`. The directory name is retained for existing histories. A custom session root replaces `experimental/durable-sessions`; it still groups sessions by canonical working directory. Relative roots resolve against the working directory and `~` expands to the home directory. CLI root selection takes precedence over the environment, then settings, then the default. Web/server session roots belong to their shared host; these native terminal options do not select a hosted session.
 
-### Durable print/JSON migration
+### Durable print/JSON/RPC migration
 
-Set `AMAZME_RUNTIME=durable` to run `--print` and `--mode json` on the Durable Harness. The path uses the same SQLite session, tools, resources, MCP selection, and native facet plugins as the default terminal. `--no-session` uses in-memory storage; `--continue` and `--session-dir` select persisted Durable sessions. The JSONL flags `--session`, `--session-id`, and `--fork`, and inline SDK extension factories, are rejected on this path rather than silently changing meaning. RPC remains on the legacy JSONL runtime. See [Durable single-kernel migration](../../../docs/durable-migration.md).
+Set `AMAZME_RUNTIME=durable` to run `--print`, `--mode json`, and the core `--mode rpc` commands on the Durable Harness. The path uses the same SQLite session, tools, resources, MCP selection, and native facet plugins as the default terminal. `--no-session` uses in-memory storage; `--continue` and `--session-dir` select persisted Durable sessions. The JSONL flags `--session`, `--session-id`, and `--fork`, and inline SDK extension factories, are rejected on this path rather than silently changing meaning. RPC commands that depend on the JSONL session tree, extension UI, shell records, or HTML export return an explicit unsupported error. See [Durable single-kernel migration](../../../docs/durable-migration.md).
 
 ### Import a JSONL session
 

@@ -2,7 +2,7 @@
 
 AmazMe keeps conversation history and supplies the active conversation to the model. The default terminal uses Durable SQLite storage. Web and hosted clients share their server's session roster. Print/JSON/RPC and the SDK expose a JSONL session API; select storage through the entry point you are using.
 
-The migration to one Durable kernel is tracked in [Durable single-kernel migration](../../../docs/durable-migration.md). `AMAZME_RUNTIME=durable` switches print and JSON to the Durable session; the default remains the legacy path until RPC and SDK parity lands. `amazme import <session.jsonl>` copies a terminal session into a new Durable session without changing the source file.
+The migration to one Durable kernel is tracked in [Durable single-kernel migration](../../../docs/durable-migration.md). `AMAZME_RUNTIME=durable` switches print, JSON, and core RPC to the Durable session; the default remains the legacy path until RPC and SDK parity lands. `amazme import <session.jsonl>` copies a terminal session into a new Durable session without changing the source file.
 
 ## Default terminal
 

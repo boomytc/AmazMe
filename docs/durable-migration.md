@@ -15,7 +15,7 @@
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | 0 | 冻结旧内核：新能力只进 Durable，旧 SDK 标记为兼容路径 | 已完成政策与注释；尚无自动增长检查 |
-| 1 | print / JSON / RPC 切到 Durable | print 文本与 JSON 已完成（`AMAZME_RUNTIME=durable`）；RPC 未切换；默认仍为旧内核 |
+| 1 | print / JSON / RPC 切到 Durable | print 文本、JSON 和 RPC 核心命令已完成（`AMAZME_RUNTIME=durable`）；RPC 的 JSONL 专用命令仍明确不支持；默认仍为旧内核 |
 | 2 | SDK 的 `createAgentSession` 迁到 Durable 后端 | 实验性 `DurableSession` facade 已加入；`createAgentSession` 未切换 |
 | 3 | JSONL 一次性导入与只读导出 | 导入已完成（`amazme import`）；导出/分享仍走 JSONL |
 | 4 | 删除旧 `AgentSession`、JSONL、镜像和重复实现 | 未开始；受下方移除门槛约束 |
@@ -30,16 +30,18 @@
 
 已落地：
 
-- `AMAZME_RUNTIME=durable` 让 `--print` 文本和 `--mode json` 使用 Durable Harness。
+- `AMAZME_RUNTIME=durable` 让 `--print` 文本、`--mode json` 和 `--mode rpc` 使用 Durable Harness。
 - 输入由 `submitAndWait()` 自己等待 receipt，再从已提交的 transcript 读回答案，不依赖视图刷新时序。
 - JSON 流保持既有事件名（`agent_start`、`message_start`、`message_update`、`message_end`、工具与压缩事件），并新增 `storage: "durable"` 会话头；这是展示协议，不是新的持久格式。
 - `--no-session` 使用 MemoryStorage；`--session-dir`、`--continue`、`--name`、模型/推理/凭据、工具选择、资源、MCP 与原生 facet 继续沿用 Durable 路径。
 - 不支持的旧 JSONL 标志（`--session`、`--session-id`、`--fork`）和 SDK 内联扩展工厂在打开存储前明确拒绝，避免静默换语义。
+- RPC 的 Durable 路径支持 `prompt`、`steer`、`follow_up`、`abort`、`get_state`、`get_messages`、`get_last_assistant_text`、模型/推理选择、`get_session_stats`、`set_session_name`、`get_commands`。事件沿用 RPC 事件名。
+- RPC 中依赖 JSONL 树、扩展 UI、HTML 导出、shell 记录或队列文本的命令（`new_session`、`switch_session`、`fork`、`clone`、`bash`、`compact`、`clear_queue`、`get_entries`、`get_tree`、`export_html` 等）返回明确的 unsupported 错误，不伪造结果。
 
 未落地：
 
-- RPC 仍在旧 `AgentSession` 上。RPC 的扩展 UI、会话切换、导出和命令表需要逐项映射，不能用 print 适配层冒充。
-- 默认运行时尚未切换。等 RPC 与 SDK 兼容层完成、真实入口验收通过后再改默认值。
+- RPC 的 JSONL 专用命令尚未映射。它们依赖终端树、扩展 UI 或 JSONL 导出语义，需要单独设计 Durable 等价物。
+- 默认运行时尚未切换。等 RPC 命令面与 SDK 兼容层完成、真实入口验收通过后再改默认值。
 
 ### 阶段 2：SDK 兼容层
 

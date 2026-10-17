@@ -1,7 +1,7 @@
 import { serviceSetFacet, type ApplicationService, type ServiceValue } from "@amazme/protocol/services";
 import { realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { getSupportedThinkingLevels, type AssistantMessage, type ImageContent, type ModelThinkingLevel, type TextContent } from "@amazme/ai";
+import { getSupportedThinkingLevels, type AssistantMessage, type ImageContent, type Model, type ModelThinkingLevel, type TextContent } from "@amazme/ai";
 import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import {
@@ -123,6 +123,11 @@ export interface DurableViewSource {
 }
 
 /** One input's admitted submission and, for callers that wait, its settled receipt. */
+export interface DurableSubmissionRpc {
+	readonly accepted: boolean;
+	readonly disposition: "handled" | "queued" | "started";
+}
+
 export interface DurableSubmissionResult {
 	readonly accepted: boolean;
 	/** Absent for a plugin command, which resolves after the conversation is idle again. */
@@ -148,12 +153,16 @@ export interface DurableController {
 	 * fire-and-notice path, so a caller owns the receipt rather than reading notices.
 	 */
 	submitAndWait(text: string, whenBusy: "steer" | "followUp", images?: readonly ImageContent[]): Promise<DurableSubmissionResult>;
+	/** Admit one input and report how it entered the run, without waiting for its answer. */
+	submitForRpc(text: string, whenBusy: "steer" | "followUp", images?: readonly ImageContent[]): Promise<DurableSubmissionRpc>;
 	compact(instructions: string | undefined): Promise<void>;
 	abort(): Promise<void>;
 	cycleThinking(): Promise<void>;
 	setThinkingLevel(level: ModelThinkingLevel): Promise<void>;
 	cycleModel(direction?: "forward" | "backward"): Promise<void>;
 	setModel(model: ModelRef): Promise<void>;
+	setSessionName(name: string): Promise<void>;
+	getAvailableModels(): readonly Model<any>[];
 	/** Like setModel(), but rejects the caller instead of turning the failure into a notice. */
 	setModelNow(model: ModelRef): Promise<void>;
 	/** Like setThinkingLevel(), but rejects the caller instead of turning the failure into a notice. */
@@ -210,6 +219,8 @@ export interface OpenDurableResult {
 	readonly controller: DurableController;
 	/** The shown conversation's experimental agent events, for the headless JSON stream. */
 	watchAgentEvents(): Promise<AgentEventStream>;
+	/** The model catalog the session resolves against, for protocol clients that need full models. */
+	availableModels(): readonly Model<any>[];
 	/** pi's settings, for the TUI's theme and terminal capabilities. */
 	readonly settings: SettingsManager;
 	/** The same resource owner supplies the presentation's selected themes. */
@@ -654,6 +665,14 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					].join("\n");
 		};
 		const controller: DurableController = {
+			setSessionName: (sessionName) => commandResult(async () => {
+				const trimmed = sessionName.trim();
+				if (!trimmed) throw new Error("Session name cannot be empty");
+				await opened.commit(async (tx) => {
+					(await tx.doc(SessionViewDoc)).name = trimmed;
+				}, context);
+				update({ session: { ...state.session, name: trimmed } });
+			}),
 			auth,
 			...(plugins === undefined ? {} : {
 				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources) }),
@@ -733,6 +752,15 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				});
 				return accepted;
 			},
+			submitForRpc: async (text, whenBusy, images) => {
+				const copied = images?.map((image) => ({ ...image }));
+				const generation = inputGeneration;
+				const submission = await commandResult(() => prepareSubmission(text, whenBusy, copied));
+				if (generation !== inputGeneration) throw new Error("Input preparation cancelled");
+				if (submission === undefined) return { accepted: true, disposition: "handled" };
+				const record = await submission.status(context);
+				return { accepted: true, disposition: record.status === "queued" ? "queued" : "started" };
+			},
 			submitAndWait: async (text, whenBusy, images) => {
 				const copied = images?.map((image) => ({ ...image }));
 				const generation = inputGeneration;
@@ -798,6 +826,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			setThinkingLevel: (level) => command(() => selectThinking(level)),
 			setThinkingLevelNow: (level) => commandResult(() => selectThinking(level)),
 			getModelScope: () => modelScope.configuration(modelRuntime.getAvailableSnapshot()),
+			getAvailableModels: () => modelRuntime.getAvailableSnapshot(),
 			setModelScope: async (ids, persist) => {
 				if (closing !== undefined) throw new Error("Session is closing");
 				await modelScope.configure(ids, persist);
@@ -941,6 +970,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				} },
 			controller,
 			watchAgentEvents: () => watchEvents(opened, current.id, context),
+			availableModels: () => modelRuntime.getAvailableSnapshot(),
 			settings: settingsManager,
 			resources,
 			close() {
