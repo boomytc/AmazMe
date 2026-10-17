@@ -40,7 +40,7 @@ export function getClipboardPasteDescription(platform: NodeJS.Platform = process
  * mounted before the application keybinding table is installed, so the shipped
  * default stands in for the resolved keys in that case.
  */
-export function matchesAppBinding(data: string, id: AppKeybinding): boolean {
+export function matchesAppBinding(data: string, id: BindingId): boolean {
 	const manager = getKeybindings();
 	// A known binding reports what it resolved to, including a deliberate empty list.
 	const effective =
@@ -108,6 +108,10 @@ const APP_KEYBINDINGS = {
 	"app.tasks.toggle": {
 		defaultKeys: "f2",
 		description: "Show running subagents and background commands",
+	},
+	"app.transcript.toggleAll": {
+		defaultKeys: "ctrl+e",
+		description: "Fold or unfold every transcript entry",
 	},
 	"app.dashboard.toggle": {
 		defaultKeys: "ctrl+\\",
@@ -213,6 +217,9 @@ const APP_KEYBINDINGS = {
 
 export type AppKeybinding = keyof typeof APP_KEYBINDINGS;
 export type AppKeybindings = { [K in AppKeybinding]: true };
+
+/** Any binding the application resolves, including the shared TUI bindings. */
+export type BindingId = keyof typeof KEYBINDINGS;
 
 declare module "@amazme/tui" {
 	interface Keybindings extends AppKeybindings {}

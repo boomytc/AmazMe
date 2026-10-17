@@ -10,7 +10,8 @@ import { CustomEditor } from "../src/modes/interactive/components/custom-editor.
 import { routeInteractiveInput } from "../src/modes/interactive/interactive-input.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { InteractiveComposer } from "../src/modes/interactive/composer-contract.ts";
-import { scrollbackRows, TranscriptFocus } from "../src/modes/interactive/transcript-focus.ts";
+import { TranscriptFocus } from "../src/modes/interactive/transcript-focus.ts";
+import { deriveTranscriptRows } from "../src/modes/interactive/transcript-model.ts";
 import { finishAttachedBackgroundBash, ParentTranscript, syncComposerVisibility, WorkSurface } from "../src/modes/interactive/work-surface.ts";
 import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { createHarness } from "./suite/harness.ts";
@@ -105,14 +106,16 @@ describe("child agent presentation", () => {
 		const transcript = new TranscriptFocus(
 			() => {},
 			() =>
-				scrollbackRows(
+				deriveTranscriptRows(
 					chat.children.filter((child) => child !== surface),
 					harness.session.childAgents.records,
 					(id) => harness.session.childAgents.open(id),
 				),
 			10,
-			(childId) => {
-				harness.session.childAgents.highlightId = childId;
+			{
+				onHighlight: (childId) => {
+					harness.session.childAgents.highlightId = childId;
+				},
 			},
 		);
 		editor.onBeforeInput = (data) => routeInteractiveInput(data, { child: surface, transcript, composer });

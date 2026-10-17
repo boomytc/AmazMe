@@ -21,6 +21,23 @@ The registry below includes shared editor actions and optional SDK actions. An a
 
 The hosted terminal registers its own actions and commands; see [Slash commands](slash-commands.md). Shared editor movement, selection and clipboard bindings apply wherever that editor is used. SDK session menus and display toggles in the registry are not default-terminal controls.
 
+## Transcript navigation
+
+`Tab` moves between the prompt and the transcript. While the transcript has focus:
+
+| Key | Behavior |
+|---|---|
+| `Up`, `Down` | Select the previous or next entry |
+| `Left`, `Right` | Fold or unfold the selected entry |
+| `Enter` | Open the selected subagent |
+| `Ctrl+Shift+Up`, `Ctrl+Up` | Jump to the previous prompt (`Ctrl+Up` only on Windows and WSL) |
+| `Ctrl+Shift+Down`, `Ctrl+Down` | Jump to the next prompt (`Ctrl+Down` only on Windows and WSL) |
+| `Ctrl+E` | Fold or unfold every entry |
+| `Ctrl+X` | Copy the selected entry |
+| `PageUp`, `PageDown` | Scroll the transcript by a page |
+
+The prompt jumps are the shared `tui.altScreen.previousPrompt` and `tui.altScreen.nextPrompt` actions, so fullscreen search, the regular terminal, and `keybindings.json` all use one assignment.
+
 ## SDK composer
 
 The main editor handles these controls before the configurable actions listed below:
@@ -210,6 +227,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 | `app.message.copy` | `ctrl+x` | Copy the selected message in `/tree`; in fullscreen mode, copy the active selection when `fullscreenCopyOnSelect` is `false`; otherwise copy the last assistant message. On OAuth sign-in screens, copy the sign-in URL |
 | `app.message.followUp` | `alt+enter` (`ctrl+q` on Windows and WSL) | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` (`alt+q` on Windows and WSL) | Restore queued messages to editor |
+| `app.transcript.toggleAll` | `ctrl+e` | Fold or unfold every transcript entry while the transcript has focus |
 
 ### Tree Navigation
 

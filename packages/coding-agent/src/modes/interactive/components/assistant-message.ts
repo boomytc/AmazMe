@@ -12,6 +12,10 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  * Component that renders a complete assistant message
  */
 export class AssistantMessageComponent extends Container {
+	private static nextRowId = 0;
+	readonly transcriptRowId = `assistant-${++AssistantMessageComponent.nextRowId}`;
+	readonly transcriptRowLabel = "assistant";
+	readonly transcriptRowText = (): string | undefined => this.collectText();
 	private contentContainer: Container;
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
@@ -86,6 +90,19 @@ export class AssistantMessageComponent extends Container {
 		lines[0] = OSC133_ZONE_START + lines[0];
 		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
 		return lines;
+	}
+
+	/** Copyable text of the rendered message, without tool calls or chrome. */
+	private collectText(): string | undefined {
+		const message = this.lastMessage;
+		if (!message) return undefined;
+		const parts: string[] = [];
+		for (const content of message.content) {
+			if (content.type === "text") parts.push(content.text);
+			else if (content.type === "thinking") parts.push(content.thinking);
+		}
+		const text = parts.join("\n").trim();
+		return text.length === 0 ? undefined : text;
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {

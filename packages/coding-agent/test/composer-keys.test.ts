@@ -15,7 +15,8 @@ import { routeInteractiveInput } from "../src/modes/interactive/interactive-inpu
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.ts";
 import { ParentTranscript, WorkSurface } from "../src/modes/interactive/work-surface.ts";
-import { scrollbackRows, TranscriptFocus } from "../src/modes/interactive/transcript-focus.ts";
+import { TranscriptFocus } from "../src/modes/interactive/transcript-focus.ts";
+import { deriveTranscriptRows } from "../src/modes/interactive/transcript-model.ts";
 import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const SHIFT_ENTER = "\x1b[27;2;13~";
@@ -58,7 +59,7 @@ describe("interactive composer keys", () => {
 		second.appendOutput(folded);
 		const transcript = new TranscriptFocus(
 			(lines) => scrolled.push(lines),
-			() => scrollbackRows([filler, first, second], [], () => {}),
+			() => deriveTranscriptRows([filler, first, second], [], () => {}),
 		);
 		editor.onBeforeInput = (data) => routeInteractiveInput(data, { transcript, composer });
 		// The shortcut bar under the prompt is the chrome users actually see.

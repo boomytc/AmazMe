@@ -72,7 +72,8 @@ import { foregroundCommands } from "../../core/foreground-commands.ts";
 import { InteractiveComposer, promptShortcutLine, turnCancelHint, turnCancelNotice } from "./composer-contract.ts";
 import { compactStartupHints, expandedStartupHints, startupHelpHint } from "./startup-hints.ts";
 import { promptOwnsKey, routeInteractiveInput } from "./interactive-input.ts";
-import { scrollbackRows, TranscriptFocus } from "./transcript-focus.ts";
+import { TranscriptFocus } from "./transcript-focus.ts";
+import { deriveTranscriptRows } from "./transcript-model.ts";
 import { BashRunTable, ParentTranscript, syncComposerVisibility, WorkSurface } from "./work-surface.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
@@ -3323,15 +3324,18 @@ export class InteractiveMode {
 				this.transcriptScrollView?.scrollBy(lines);
 			},
 			() =>
-				scrollbackRows(
+				deriveTranscriptRows(
 					this.chatContainer.children.filter((child) => child !== this.workSurface),
 					this.session.childAgents.records,
 					(id) => this.session.childAgents.open(id),
 				),
 			10,
-			(childId) => {
-				this.session.childAgents.highlightId = childId;
-				this.session.childAgents.touch();
+			{
+				onHighlight: (childId) => {
+					this.session.childAgents.highlightId = childId;
+					this.session.childAgents.touch();
+				},
+				onCopy: (text) => void this.copyWithFeedback(text),
 			},
 		);
 		this.workSurface = new WorkSurface(
@@ -7387,6 +7391,10 @@ export class InteractiveMode {
 		const pasteImage = this.getAppKeyDisplay("app.clipboard.pasteImage");
 		const tasks = this.getAppKeyDisplay("app.tasks.toggle");
 		const dashboard = this.getAppKeyDisplay("app.dashboard.toggle");
+		const promptPrev = this.getEditorKeyDisplay("tui.altScreen.previousPrompt");
+		const promptNext = this.getEditorKeyDisplay("tui.altScreen.nextPrompt");
+		const foldAll = this.getAppKeyDisplay("app.transcript.toggleAll");
+		const copySelected = this.getAppKeyDisplay("app.message.copy");
 		const searchTranscript = this.getEditorKeyDisplay("tui.altScreen.search");
 
 		let hotkeys = `
@@ -7399,6 +7407,17 @@ These main-editor controls take precedence over the configured bindings below.
 | \`Shift+Enter\` / \`${formatKeyText("alt+enter", { capitalize: true })}\` | Insert a new line; in multiline mode, send the draft |
 | \`Ctrl+C\` | Clear the draft; when the draft is empty, cancel the running turn |
 | \`Tab\` | Accept autocomplete while the menu is open; otherwise switch between the prompt and scrollback |
+
+**Transcript**
+| Key | Action |
+|-----|--------|
+| \`Up\` / \`Down\` | Select the previous or next entry |
+| \`Left\` / \`Right\` | Fold or unfold the selected entry |
+| \`Enter\` | Open the selected subagent |
+| \`${promptPrev}\` / \`${promptNext}\` | Jump to the previous or next prompt |
+| \`${foldAll}\` | Fold or unfold every entry |
+| \`${copySelected}\` | Copy the selected entry |
+| \`PageUp\` / \`PageDown\` | Scroll by page |
 
 **Navigation**
 | Key | Action |

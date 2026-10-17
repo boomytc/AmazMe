@@ -37,6 +37,8 @@ export interface TranscriptRow {
 	readonly turnStart: boolean;
 	readonly expandable: boolean;
 	readonly openable: boolean;
+	/** Set on child-agent rows so the transcript can highlight the open child. */
+	readonly childId?: string;
 	readonly label?: string;
 	readonly text?: () => string | undefined;
 	readonly setExpanded?: (expanded: boolean) => void;
@@ -98,6 +100,7 @@ export function deriveTranscriptRows(
 			turnStart: false,
 			expandable: false,
 			openable: true,
+			childId: record.id,
 			open: () => openChild(record.id),
 		});
 	}

@@ -11,6 +11,11 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  * Component that renders a user message
  */
 export class UserMessageComponent extends Container {
+	private static nextRowId = 0;
+	readonly transcriptRowId = `user-${++UserMessageComponent.nextRowId}`;
+	readonly transcriptRowLabel = "you";
+	readonly transcriptTurnStart = true;
+	readonly transcriptRowText = (): string => this.text;
 	private text: string;
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
