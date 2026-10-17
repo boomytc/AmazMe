@@ -73,7 +73,7 @@ describe("transcript search entry", () => {
 			terminal,
 		});
 		const statuses: string[] = [];
-		const handler = Reflect.get(InteractiveMode.prototype, "handleFindCommand") as () => void;
+		const handler = Reflect.get(InteractiveMode.prototype, "handleFindCommand") as (query?: string) => void;
 		try {
 			expect(BUILTIN_SLASH_COMMANDS.some((command) => command.name === "find")).toBe(true);
 

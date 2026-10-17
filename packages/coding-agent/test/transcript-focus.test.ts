@@ -6,7 +6,6 @@ class Row implements TranscriptRowSource {
 	readonly transcriptRowId: string;
 	readonly transcriptTurnStart?: boolean;
 	readonly transcriptRowText?: () => string | undefined;
-	readonly transcriptRowMeta?: () => string | undefined;
 	expanded = false;
 	opened = 0;
 	selected = false;

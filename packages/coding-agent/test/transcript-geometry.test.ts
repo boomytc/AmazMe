@@ -5,6 +5,7 @@ function block(lines: number, name: string) {
 	return {
 		name,
 		render: () => Array.from({ length: lines }, (_unused, index) => `${name}-${index}`),
+		invalidate: () => {},
 	};
 }
 
@@ -39,9 +40,9 @@ describe("turnStartLines", () => {
 	test("returns one offset per prompt in document order", () => {
 		const header = block(2, "header");
 		const chat = block(0, "chat");
-		const first = { render: () => ["a", "b"], transcriptTurnStart: true };
+		const first = { render: () => ["a", "b"], invalidate: () => {}, transcriptTurnStart: true };
 		const answer = block(3, "answer");
-		const second = { render: () => ["c"], transcriptTurnStart: true };
+		const second = { render: () => ["c"], invalidate: () => {}, transcriptTurnStart: true };
 		const after = block(2, "after");
 
 		expect(turnStartLines([header, chat], chat, [first, answer, second, after], 80)).toEqual([2, 7]);
@@ -49,7 +50,7 @@ describe("turnStartLines", () => {
 
 	test("ignores width zero and returns no turns for a document without the chat", () => {
 		const chat = block(0, "chat");
-		const rows = [{ render: () => ["a"], transcriptTurnStart: true }];
+		const rows = [{ render: () => ["a"], invalidate: () => {}, transcriptTurnStart: true }];
 
 		expect(turnStartLines([chat], chat, rows, 0)).toEqual([]);
 		expect(turnStartLines([block(1, "other")], chat, rows, 80)).toEqual([]);
