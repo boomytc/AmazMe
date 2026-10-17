@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx tsc -p tsconfig.build.json --noEmit
+      - run: npm test --workspace @amazme/coding-agent
+      - run: npm test --workspace @amazme/web
+      - run: npm test --workspace @amazme/gui
+      - name: Desktop window smoke
+        run: npm run test:smoke --workspace @amazme/gui
+
+  desktop:
+    needs: verify
+    runs-on: macos-14
+    env:
+      NODE_VERSION: "22.23.3"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Fetch official Node for the bundle
+        run: |
+          ARCH="$(uname -m)"
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.gz" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-darwin-$ARCH.tar.gz"
+          tar -xzf "$RUNNER_TEMP/node.tar.gz" -C "$RUNNER_TEMP"
+          echo "NODE_BIN=$RUNNER_TEMP/node-v$NODE_VERSION-darwin-$ARCH/bin/node" >> "$GITHUB_ENV"
+      - name: Build and verify the movable app
+        run: node scripts/package-desktop.mjs --node "$NODE_BIN" --out "$RUNNER_TEMP/AmazMe.app" --verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AmazMe-macos-preview
+          path: ${{ runner.temp }}/AmazMe.app
+          if-no-files-found: error
