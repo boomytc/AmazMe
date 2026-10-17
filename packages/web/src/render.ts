@@ -48,6 +48,7 @@ import {
 	type TranscriptBlock,
 	type WebView,
 	type WelcomeCard,
+	transcriptSearchHits,
 	windowTitle,
 } from "./view.ts";
 
@@ -94,6 +95,11 @@ export interface PageElements {
 	readonly stop: HTMLButtonElement;
 	/** Pending approvals. Always in the header, beside the usage figures. */
 	readonly approvalStatus: HTMLElement;
+	/** In-conversation search bar; the settings sidebar owns its own field. */
+	readonly transcriptSearch: HTMLElement;
+	readonly transcriptSearchInput: HTMLInputElement;
+	readonly transcriptSearchCount: HTMLElement;
+	readonly transcriptSearchClose: HTMLButtonElement;
 	/** Context %, tokens, and cost. Always in the header. */
 	readonly meter: HTMLElement;
 	readonly meterContext: HTMLElement;
@@ -214,6 +220,10 @@ export function collectPageElements(): PageElements {
 		primary: pickElement("primary", HTMLButtonElement),
 		stop: pickElement("stop", HTMLButtonElement),
 		approvalStatus: pick("approval-status"),
+		transcriptSearch: pick("transcript-search"),
+		transcriptSearchInput: pickElement("transcript-search-input", HTMLInputElement),
+		transcriptSearchCount: pick("transcript-search-count"),
+		transcriptSearchClose: pickElement("transcript-search-close", HTMLButtonElement),
 		meter: pick("status-meter"),
 		meterContext: pick("meter-context"),
 		meterTokens: pick("meter-tokens"),
@@ -1797,6 +1807,11 @@ export function createRenderer(
 		if (open) {
 			setMeterExpanded(false);
 			elements.meter.hidden = true;
+			// A management page owns its own find chord; a chat search bar would be stale here.
+			elements.transcriptSearch.hidden = true;
+			elements.transcriptSearchInput.value = "";
+			elements.transcriptSearchCount.textContent = "";
+			for (const marked of elements.transcript.querySelectorAll(".search-hit")) marked.classList.remove("search-hit");
 		}
 		elements.runActions.hidden = open;
 		elements.laneStatus.hidden = open || view.lane.length === 0;
@@ -3404,6 +3419,93 @@ export function createRenderer(
 		const hit = settingsHits[settingsHighlight] ?? settingsHits[0];
 		if (hit !== undefined && lastView?.panel.panel !== undefined) openSection(lastView.panel.panel.id, hit.groupId, hit.rowId);
 	});
+	// In-conversation search reads the mounted blocks' text, so folded tool groups and
+	// closed details are searchable where the browser's own find cannot see them.
+	let transcriptHits: HTMLElement[] = [];
+	let transcriptHitIndex = -1;
+	let transcriptSearchReturnFocus: HTMLElement | undefined;
+	const closeTranscriptSearch = (): void => {
+		if (elements.transcriptSearch.hidden) return;
+		elements.transcriptSearch.hidden = true;
+		elements.transcriptSearchInput.value = "";
+		elements.transcriptSearchCount.textContent = "";
+		transcriptHits = [];
+		transcriptHitIndex = -1;
+		for (const marked of elements.transcript.querySelectorAll(".search-hit")) marked.classList.remove("search-hit");
+		transcriptSearchReturnFocus?.focus({ preventScroll: true });
+	};
+	const revealTranscriptHit = (): void => {
+		const node = transcriptHits[transcriptHitIndex];
+		if (node === undefined) return;
+		for (const marked of elements.transcript.querySelectorAll(".search-hit")) marked.classList.remove("search-hit");
+		const group = node.closest<HTMLElement>(".turn-process");
+		if (group !== null) {
+			const rows = group.querySelector<HTMLElement>(".process-rows");
+			const toggle = group.querySelector<HTMLElement>(".process-toggle");
+			if (rows !== null) rows.hidden = false;
+			toggle?.setAttribute("aria-expanded", "true");
+			group.dataset.open = "true";
+		}
+		if (node instanceof HTMLDetailsElement) {
+			node.open = true;
+			expanded.set(node.dataset.blockId ?? "", true);
+		}
+		node.classList.add("search-hit");
+		node.scrollIntoView({ block: "center" });
+	};
+	const runTranscriptSearch = (): void => {
+		const query = elements.transcriptSearchInput.value;
+		const nodes = [...elements.transcript.querySelectorAll<HTMLElement>("[data-block-id]")];
+		const hits = transcriptSearchHits(
+			nodes.map((node) => ({ id: node.dataset.blockId ?? "", text: node.textContent ?? "" })),
+			query,
+		);
+		const byId = new Map(nodes.map((node) => [node.dataset.blockId ?? "", node]));
+		transcriptHits = hits.flatMap((id) => {
+			const node = byId.get(id);
+			return node === undefined ? [] : [node];
+		});
+		transcriptHitIndex = transcriptHits.length === 0 ? -1 : 0;
+		elements.transcriptSearchCount.textContent =
+			transcriptHits.length === 0
+				? query.trim().length === 0
+					? ""
+					: copy("transcript.searchNone")
+				: `${transcriptHitIndex + 1}/${transcriptHits.length}`;
+		if (transcriptHitIndex >= 0) revealTranscriptHit();
+	};
+	const stepTranscriptSearch = (delta: number): void => {
+		if (transcriptHits.length === 0) return;
+		transcriptHitIndex = (transcriptHitIndex + delta + transcriptHits.length) % transcriptHits.length;
+		elements.transcriptSearchCount.textContent = `${transcriptHitIndex + 1}/${transcriptHits.length}`;
+		revealTranscriptHit();
+	};
+	const openTranscriptSearch = (): void => {
+		// A narrow drawer makes the conversation inert; the search field lives in it.
+		if (document.body.classList.contains("sidebar-open")) closeSidebarDrawer();
+		if (isNarrow() && !elements.dock.hidden) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
+		if (elements.transcriptSearch.hidden) {
+			transcriptSearchReturnFocus =
+				document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+			elements.transcriptSearch.hidden = false;
+		}
+		elements.transcriptSearchInput.focus();
+		elements.transcriptSearchInput.select();
+	};
+	elements.transcriptSearchInput.addEventListener("input", runTranscriptSearch);
+	elements.transcriptSearchInput.addEventListener("keydown", (event) => {
+		if (event.isComposing) return;
+		if (event.key === "Escape") {
+			event.preventDefault();
+			event.stopPropagation();
+			closeTranscriptSearch();
+			return;
+		}
+		if (event.key !== "Enter") return;
+		event.preventDefault();
+		stepTranscriptSearch(event.shiftKey ? -1 : 1);
+	});
+	elements.transcriptSearchClose.addEventListener("click", closeTranscriptSearch);
 	elements.attach.addEventListener("click", () => elements.fileInput.click());
 	elements.fileInput.addEventListener("change", () => {
 		const files = [...(elements.fileInput.files ?? [])];
@@ -3516,6 +3618,19 @@ export function createRenderer(
 		if (fontAction !== undefined) {
 			event.preventDefault();
 			renderer.onShortcut(`font.${fontAction}`);
+			return;
+		}
+		// Chat search owns the find chord on the conversation, the way settings owns it on its page.
+		if (
+			lastView?.panel.current === CHAT_VIEW &&
+			event.code === "KeyF" &&
+			(event.metaKey || event.ctrlKey) &&
+			!event.altKey &&
+			!event.shiftKey &&
+			elements.modalRoot.hidden
+		) {
+			event.preventDefault();
+			openTranscriptSearch();
 			return;
 		}
 		// Settings search takes the find chord, the same way the settings page owns that field.

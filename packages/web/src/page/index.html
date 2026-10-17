@@ -139,6 +139,13 @@
 					<div class="header-titles"><span class="crumb" id="session-title">{{header.noSession}}</span></div>
 				</div>
 				<div class="header-end">
+					<div class="transcript-search" id="transcript-search" role="search" hidden>
+						<input class="transcript-search-input" id="transcript-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="{{transcript.search}}" aria-label="{{transcript.searchLabel}}" />
+						<span class="transcript-search-count" id="transcript-search-count" aria-live="polite"></span>
+						<button class="icon-button transcript-search-close" type="button" id="transcript-search-close" aria-label="{{transcript.searchClose}}" title="{{transcript.searchClose}}">
+							<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg>
+						</button>
+					</div>
 					<!-- Pending tool approvals. Stays in the header when the transcript is empty or the cards are off screen. -->
 					<span class="approval-status" id="approval-status" hidden></span>
 					<!-- Context occupancy, tokens, and cost. Shown once usage exists; detailed figures sit in the disclosure. -->

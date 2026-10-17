@@ -415,6 +415,10 @@ describe("settings page", () => {
 		expect(elements.sidebar.inert).toBe(false);
 		expect(document.activeElement).toBe(field);
 		renderer.render(buildWebView(chat));
-		expect(find().defaultPrevented).toBe(false);
+		// The conversation owns the find chord too, opening its own search bar.
+		const chatFind = find();
+		expect(chatFind.defaultPrevented).toBe(true);
+		expect(elements.transcriptSearch.hidden).toBe(false);
+		expect(document.activeElement).toBe(elements.transcriptSearchInput);
 	});
 });

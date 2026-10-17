@@ -34,6 +34,7 @@ import {
 	runControls,
 	sessionStatus,
 	transcriptBlocks,
+	transcriptSearchHits,
 	welcomeCard,
 	type ModelsStateLike,
 	type SessionDirectoryLike,
@@ -1334,5 +1335,29 @@ describe("web view model", () => {
 		expect(queuedInputs("zh", live).map((item) => [item.text, item.cancel.label])).toEqual([
 			["[调整任务] 再改一下", "撤回"],
 		]);
+	});
+});
+
+describe("transcriptSearchHits", () => {
+	const entries = [
+		{ id: "1", text: "Deploy the service" },
+		{ id: "2", text: "npm test -- --watch" },
+		{ id: "3", text: "Read src/index.ts" },
+	];
+
+	test("matches case-insensitively across block text", () => {
+		expect(transcriptSearchHits(entries, "DEPLOY")).toEqual(["1"]);
+		expect(transcriptSearchHits(entries, "src")).toEqual(["3"]);
+		expect(transcriptSearchHits(entries, "  index  ")).toEqual(["3"]);
+	});
+
+	test("returns nothing for an empty query or no match", () => {
+		expect(transcriptSearchHits(entries, "")).toEqual([]);
+		expect(transcriptSearchHits(entries, "   ")).toEqual([]);
+		expect(transcriptSearchHits(entries, "missing")).toEqual([]);
+	});
+
+	test("keeps document order for cycling", () => {
+		expect(transcriptSearchHits(entries, "e")).toEqual(["1", "2", "3"]);
 	});
 });

@@ -819,6 +819,22 @@ export function windowTitle(input: {
 	return `${sessionName} — ${input.appName}`;
 }
 
+/**
+ * Ids of rendered blocks whose text contains the query, case-insensitively.
+ *
+ * Search runs over the DOM text of blocks that are already mounted, so folded
+ * details and collapsed process groups are still searchable, while history that
+ * has not been paged in is not claimed.
+ */
+export function transcriptSearchHits(
+	entries: readonly { readonly id: string; readonly text: string }[],
+	query: string,
+): string[] {
+	const needle = query.trim().toLocaleLowerCase();
+	if (needle.length === 0) return [];
+	return entries.filter((entry) => entry.text.toLocaleLowerCase().includes(needle)).map((entry) => entry.id);
+}
+
 /** Token counts in the same widths the TUI top bar uses. */
 export function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
