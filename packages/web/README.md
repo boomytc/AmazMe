@@ -63,7 +63,7 @@
 
 ## 长会话测量
 
-`?perf=N` 是仅用于开发的路由：不连接宿主，直接合成 N 个条目并渲染，把结果写进 `window.__AMAZME_PERF__` 与控制台 `AMAZME_PERF`。实现见 `packages/coding-agent/src/host/web/perf.ts`。
+`?perf=N` 是仅用于开发的路由：不连接宿主，直接合成 N 个条目并渲染，把结果写进 `window.__AMAZME_PERF__` 与控制台 `AMAZME_PERF`。它还需要浏览器先设置 `localStorage["amazme.perf"] = "1"`；没有这个开关，普通用户即使手动加上 `?perf=` 也看不到合成内容。实现见 `packages/coding-agent/src/host/web/perf.ts`。
 
 一次本机真实浏览器（headless Chromium，`agent-browser`）运行：
 
@@ -79,6 +79,8 @@
 
 ```bash
 node packages/coding-agent/dist/bundle/cli.js web --port 0
+agent-browser open "http://127.0.0.1:<port>/"
+agent-browser eval "localStorage.setItem('amazme.perf','1')"
 agent-browser open "http://127.0.0.1:<port>/?perf=800"
 agent-browser eval "JSON.stringify(window.__AMAZME_PERF__)"
 ```

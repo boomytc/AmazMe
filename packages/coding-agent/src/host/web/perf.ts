@@ -32,6 +32,9 @@ export interface PerfResult {
 	};
 }
 
+/** Opt-in flag a browser sets before opening the route; without it the product never sees it. */
+export const PERF_FLAG = "amazme.perf";
+
 /** The requested synthetic block count, capped so a typo cannot freeze the tab. */
 export function perfCount(href: string): number | undefined {
 	try {
@@ -43,6 +46,20 @@ export function perfCount(href: string): number | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/** The route needs both the flag and a count, so a stray `?perf=` never replaces a real transcript. */
+export function perfRequest(
+	href: string,
+	storage: { getItem(key: string): string | null } | undefined,
+): number | undefined {
+	if (storage === undefined) return undefined;
+	try {
+		if (storage.getItem(PERF_FLAG) !== "1") return undefined;
+	} catch {
+		return undefined;
+	}
+	return perfCount(href);
 }
 
 function entries(count: number): EntryRecord[] {
