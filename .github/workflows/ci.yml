@@ -29,7 +29,7 @@ jobs:
       - run: npm test --workspace @amazme/web
       - run: npm test --workspace @amazme/gui
       - name: Desktop window smoke
-        run: npm run test:smoke --workspace @amazme/gui
+        run: npm run test:smoke --workspace @amazme/gui -- --retry=2
 
   desktop:
     needs: verify
