@@ -185,6 +185,8 @@ function detectAppearance(foregrounds: Color[], backgrounds: Color[]): ThemeAppe
 export class Theme {
 	readonly name?: string;
 	readonly sourcePath?: string;
+	/** Set when the palette relies on hue that indexed color depths cannot represent. */
+	readonly requiresTruecolor: boolean;
 	sourceInfo?: SourceInfo;
 	private mode: TerminalColorMode;
 	// Precomputed escape sequences keep fg()/bg() on the render hot path to a lookup and concat.
@@ -208,6 +210,7 @@ export class Theme {
 			sourcePath?: string;
 			sourceInfo?: SourceInfo;
 			appearance?: ThemeAppearance;
+			requiresTruecolor?: boolean;
 			/** Foreground tokens to render faint (SGR 2). */
 			dim?: readonly ThemeColor[];
 		} = {},
@@ -239,6 +242,12 @@ export class Theme {
 		for (const [token, value] of Object.entries(backgrounds) as [ThemeBg, string | number][]) {
 			this.bgAnsi.set(token, addToken(token, value, true));
 		}
+		// The user-message surface is the largest painted background; when it carries real hue,
+		// indexed color depths flatten it into a different theme. Transient surfaces (selection,
+		// search) are not enough to hide a whole palette.
+		const surface = this.concreteColors.userMessageBg;
+		this.requiresTruecolor =
+			options.requiresTruecolor ?? (surface !== undefined && colorToOklch(surface).c >= 0.06);
 		this.ownAppearance = options.appearance ?? detectAppearance(concreteForegrounds, concreteBackgrounds);
 	}
 
@@ -395,6 +404,17 @@ export function getAvailableThemes(): string[] {
 	return getAvailableThemesWithPaths().map(({ name }) => name);
 }
 
+/**
+ * Themes offered on this terminal. Hue-heavy palettes are hidden where indexed color
+ * would flatten them, unless that would leave the picker empty.
+ */
+export function getThemesForColorMode(mode: TerminalColorMode = getTerminalColorMode()): string[] {
+	const names = getAvailableThemes();
+	if (mode === "truecolor") return names;
+	const usable = names.filter((name) => getThemeByName(name)?.requiresTruecolor !== true);
+	return usable.length === 0 ? names : usable;
+}
+
 export interface ThemeInfo {
 	name: string;
 	path: string | undefined;
@@ -531,6 +551,7 @@ function createTheme(themeJson: ThemeJson, mode?: TerminalColorMode, sourcePath?
 		name: themeJson.name,
 		sourcePath,
 		appearance: themeJson.appearance,
+		...(themeJson.requiresTruecolor === undefined ? {} : { requiresTruecolor: themeJson.requiresTruecolor }),
 	});
 }
 
@@ -545,6 +566,8 @@ function createSystemTheme(mode?: TerminalColorMode): Theme {
 	return new Theme(fgColors, bgColors, mode ?? getTerminalColorMode(), {
 		name: SYSTEM_THEME_NAME,
 		appearance: generated.appearance,
+		// System colors come from the terminal itself, so quantizing them cannot lose the palette.
+		requiresTruecolor: false,
 		dim: generated.dim,
 	});
 }

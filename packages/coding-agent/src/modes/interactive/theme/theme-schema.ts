@@ -76,6 +76,12 @@ export const ThemeJsonSchema = Type.Object(
 				description: "Reusable color variables",
 			}),
 		),
+		requiresTruecolor: Type.Optional(
+			Type.Boolean({
+				description:
+					"Hide this theme on terminals without truecolor, where its palette would be quantized beyond recognition.",
+			}),
+		),
 		colors: ThemeColorsSchema,
 		export: Type.Optional(
 			Type.Object(

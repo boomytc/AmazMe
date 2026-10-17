@@ -1,5 +1,5 @@
 import { Container, type SelectItem, SelectList, type SelectListLayoutOptions } from "@amazme/tui";
-import { getAvailableThemes, getSelectListTheme } from "../theme/theme.ts";
+import { getSelectListTheme, getThemesForColorMode } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 
 const THEME_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -24,7 +24,8 @@ export class ThemeSelectorComponent extends Container {
 		this.onPreview = onPreview;
 
 		// Get available themes and create select items
-		const themes = getAvailableThemes();
+		const themes = getThemesForColorMode();
+		if (!themes.includes(currentTheme)) themes.unshift(currentTheme);
 		const themeItems: SelectItem[] = themes.map((name) => ({
 			value: name,
 			label: name,

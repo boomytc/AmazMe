@@ -99,6 +99,16 @@ Use the [theme JSON schema](../schemas/theme.schema.json) for the exact properti
 
 AmazMe reports invalid theme files during startup and `/reload`.
 
+## Terminal color depth
+
+Themes whose user-message surface carries real hue are hidden in the theme picker on terminals without truecolor, where quantization would flatten them into a different palette. The active theme always stays listed. A theme file can force the decision:
+
+```json
+{ "requiresTruecolor": true }
+```
+
+Omit the field to infer it from the theme's `userMessageBg` chroma.
+
 ## Find the color to change
 
 Theme colors describe interface roles rather than individual components. Use these groups to find the relevant part of the schema:
