@@ -2,6 +2,7 @@ import { Container, Markdown, type MarkdownTheme } from "@amazme/tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { markSelectedLines } from "./transcript-selection.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -17,6 +18,7 @@ export class UserMessageComponent extends Container {
 	readonly transcriptTurnStart = true;
 	readonly transcriptRowText = (): string => this.text;
 	private text: string;
+	private selected = false;
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
@@ -38,6 +40,10 @@ export class UserMessageComponent extends Container {
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		this.rebuild();
+	}
+
+	setSelected(selected: boolean): void {
+		this.selected = selected;
 	}
 
 	private rebuild(): void {
@@ -64,7 +70,8 @@ export class UserMessageComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		const lines = super.render(width);
+		const rendered = super.render(width);
+		const lines = this.selected ? markSelectedLines(rendered, width) : rendered;
 		if (lines.length === 0) {
 			return lines;
 		}

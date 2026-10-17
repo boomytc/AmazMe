@@ -27,6 +27,8 @@ export interface TranscriptRowSource {
 	readonly transcriptTurnStart?: boolean;
 	setExpanded?(expanded: boolean): void;
 	open?(): void;
+	/** Renders the row as the one arrow keys act on. */
+	setSelected?(selected: boolean): void;
 }
 
 export interface TranscriptRow {
@@ -43,6 +45,7 @@ export interface TranscriptRow {
 	readonly text?: () => string | undefined;
 	readonly setExpanded?: (expanded: boolean) => void;
 	readonly open?: () => void;
+	readonly setSelected?: (selected: boolean) => void;
 }
 
 export interface TranscriptChildRecord {
@@ -90,6 +93,9 @@ export function deriveTranscriptRows(
 				? {}
 				: { setExpanded: (expanded: boolean) => source.setExpanded?.(expanded) }),
 			...(source.open === undefined ? {} : { open: () => source.open?.() }),
+			...(source.setSelected === undefined
+				? {}
+				: { setSelected: (selected: boolean) => source.setSelected?.(selected) }),
 		});
 	}
 	for (const record of records) {

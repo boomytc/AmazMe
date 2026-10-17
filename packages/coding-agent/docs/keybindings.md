@@ -27,7 +27,7 @@ The hosted terminal registers its own actions and commands; see [Slash commands]
 
 | Key | Behavior |
 |---|---|
-| `Up`, `Down` | Select the previous or next entry |
+| `Up`, `Down` | Select the previous or next entry; the selection is marked with `▌` |
 | `Left`, `Right` | Fold or unfold the selected entry |
 | `Enter` | Open the selected subagent |
 | `Ctrl+Shift+Up`, `Ctrl+Up` | Jump to the previous prompt (`Ctrl+Up` only on Windows and WSL) |
@@ -36,7 +36,7 @@ The hosted terminal registers its own actions and commands; see [Slash commands]
 | `Ctrl+X` | Copy the selected entry |
 | `PageUp`, `PageDown` | Scroll the transcript by a page |
 
-The prompt jumps are the shared `tui.altScreen.previousPrompt` and `tui.altScreen.nextPrompt` actions, so fullscreen search, the regular terminal, and `keybindings.json` all use one assignment.
+The prompt jumps are the shared `tui.altScreen.previousPrompt` and `tui.altScreen.nextPrompt` actions, so fullscreen search, the regular terminal, and `keybindings.json` all use one assignment. The marker stays visible only while the transcript has the keyboard.
 
 ## Keyboard ownership
 

@@ -3,6 +3,7 @@ import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } fr
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { markSelectedLines } from "./transcript-selection.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -26,6 +27,7 @@ export class AssistantMessageComponent extends Container {
 	private hasToolCalls = false;
 	private isStreaming = false;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	private selected = false;
 
 	constructor(
 		message?: AssistantMessage,
@@ -81,8 +83,13 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	setSelected(selected: boolean): void {
+		this.selected = selected;
+	}
+
 	override render(width: number): string[] {
-		const lines = super.render(width);
+		const rendered = super.render(width);
+		const lines = this.selected ? markSelectedLines(rendered, width) : rendered;
 		if (this.hasToolCalls || lines.length === 0) {
 			return lines;
 		}

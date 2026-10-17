@@ -19,6 +19,7 @@ import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "
 import { ensurePngTranscoder } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
+import { markSelectedLines } from "./transcript-selection.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
 
@@ -45,6 +46,7 @@ export class ToolExecutionComponent extends Container {
 	private toolCallId: string;
 	private args: any;
 	private expanded = false;
+	private selected = false;
 	private showImages: boolean;
 	private imageWidthCells: number;
 	private outputPad: number;
@@ -204,6 +206,10 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setSelected(selected: boolean): void {
+		this.selected = selected;
+	}
+
 	setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
 		this.updateDisplay();
@@ -225,6 +231,11 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
+		const lines = this.renderContent(width);
+		return this.selected ? markSelectedLines(lines, width) : lines;
+	}
+
+	private renderContent(width: number): string[] {
 		if (this.hideComponent) {
 			return [];
 		}

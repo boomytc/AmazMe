@@ -34,6 +34,22 @@ function createAssistantMessage(
 }
 
 describe("AssistantMessageComponent", () => {
+	test("marks a selected message within the render width", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([{ type: "text", text: "selected answer" }]);
+		const component = new AssistantMessageComponent(message);
+		const plain = component.render(40);
+
+		component.setSelected(true);
+		const marked = component.render(40).map(stripAnsi);
+		expect(marked.join("\n")).toContain("selected answer");
+		expect(marked.some((line) => line.includes("▌"))).toBe(true);
+		expect(marked.join("\n")).not.toBe(plain.map(stripAnsi).join("\n"));
+
+		component.setSelected(false);
+		expect(component.render(40)).toEqual(plain);
+	});
+
 	test("renders a persisted image recovery warning before the answer", () => {
 		initTheme("dark");
 		const message = createAssistantMessage([{ type: "text", text: "text-only answer" }]);

@@ -97,6 +97,32 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("custom result");
 	});
 
+	test("marks a selected tool row without losing its renderer content", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderCall: () => new Text("custom call", 0, 0),
+		};
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-1",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const plain = component.render(120);
+
+		component.setSelected(true);
+		const marked = component.render(120).map(stripAnsi);
+		expect(marked.join("\n")).toContain("custom call");
+		expect(marked.some((line) => line.includes("▌"))).toBe(true);
+		expect(marked.join("\n")).not.toBe(plain.map(stripAnsi).join("\n"));
+
+		component.setSelected(false);
+		expect(component.render(120)).toEqual(plain);
+	});
+
 	test("self-rendered empty tool rows take no layout space", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),

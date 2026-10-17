@@ -9,11 +9,13 @@ import {
 	type TruncationResult,
 	truncateTail,
 } from "../../../core/tools/truncate.ts";
+import { formatToolDuration } from "../../../core/tools/render-utils.ts";
 import { stripAnsi } from "../../../utils/ansi.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 import { truncateToVisualLines } from "./visual-truncate.ts";
+import { markSelectedLines } from "./transcript-selection.ts";
 
 // Preview line limit when not expanded (matches tool execution behavior)
 const PREVIEW_LINES = 20;
@@ -28,6 +30,10 @@ export class BashExecutionComponent extends Container {
 	private fullOutputPath?: string;
 	private expanded = false;
 	private backgrounded = false;
+	private selected = false;
+	/** Elapsed time uses the same wording as tool renderers (`Took 4.2s`). */
+	private startedAt = Date.now();
+	private endedAt: number | undefined;
 	private contentContainer: Container;
 	/** `dim` marks `!!` commands, whose output is excluded from the model context. */
 	private readonly colorKey: "dim" | "bashMode";
@@ -69,6 +75,15 @@ export class BashExecutionComponent extends Container {
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 		this.updateDisplay();
+	}
+
+	setSelected(selected: boolean): void {
+		this.selected = selected;
+	}
+
+	override render(width: number): string[] {
+		const lines = super.render(width);
+		return this.selected ? markSelectedLines(lines, width) : lines;
 	}
 
 	setOutputPad(outputPad: number): void {
@@ -132,6 +147,7 @@ export class BashExecutionComponent extends Container {
 				: "complete";
 		this.truncationResult = truncationResult;
 		this.fullOutputPath = fullOutputPath;
+		this.endedAt = Date.now();
 
 		// Stop loader
 		this.loader.stop();
@@ -213,6 +229,9 @@ export class BashExecutionComponent extends Container {
 				statusParts.push(theme.fg("warning", "(cancelled)"));
 			} else if (this.status === "error") {
 				statusParts.push(theme.fg("error", `(exit ${this.exitCode})`));
+			}
+			if (this.endedAt !== undefined) {
+				statusParts.push(theme.fg("muted", `Took ${formatToolDuration(this.endedAt - this.startedAt)}`));
 			}
 
 			// Add truncation warning (context truncation, not preview truncation)

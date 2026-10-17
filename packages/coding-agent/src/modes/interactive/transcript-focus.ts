@@ -24,6 +24,7 @@ export class TranscriptFocus {
 	private readonly pageSize: number;
 	private readonly options: TranscriptFocusOptions;
 	private allExpanded = false;
+	private selectedRow: TranscriptRow | undefined;
 
 	constructor(
 		scrollBy: (lines: number) => void,
@@ -47,7 +48,10 @@ export class TranscriptFocus {
 			this.focus = this.focus === "prompt" ? "scrollback" : "prompt";
 			if (this.focus === "scrollback") {
 				this.sync();
+				this.applySelection();
 				this.highlight();
+			} else {
+				this.applySelection();
 			}
 			return true;
 		}
@@ -60,6 +64,7 @@ export class TranscriptFocus {
 
 		if (matchesKey(data, "escape")) {
 			this.focus = "prompt";
+			this.applySelection();
 			return true;
 		}
 
@@ -78,6 +83,7 @@ export class TranscriptFocus {
 		}
 		if (matchesKey(data, "up") || matchesKey(data, "down")) {
 			this.model.move(matchesKey(data, "up") ? -1 : 1);
+			this.applySelection();
 			this.highlight();
 			return true;
 		}
@@ -94,14 +100,30 @@ export class TranscriptFocus {
 
 	private sync(): void {
 		this.model.setRows(this.rows());
+		if (this.selectedRow === undefined) return;
+		// A component can leave the conversation (compaction, session switch) while selected.
+		if (!this.model.rows.some((row) => row.id === this.selectedRow?.id)) {
+			this.selectedRow.setSelected?.(false);
+			this.selectedRow = undefined;
+		}
 	}
 
 	private highlight(): void {
 		this.options.onHighlight?.(this.model.selected?.childId);
 	}
 
+	/** Keep exactly one row marked, and only while the transcript owns the keyboard. */
+	private applySelection(): void {
+		const next = this.focus === "scrollback" ? this.model.selected : undefined;
+		if (next?.id === this.selectedRow?.id) return;
+		this.selectedRow?.setSelected?.(false);
+		this.selectedRow = next;
+		next?.setSelected?.(true);
+	}
+
 	private jumpTurn(delta: number): boolean {
 		this.model.moveTurn(delta);
+		this.applySelection();
 		this.highlight();
 		return true;
 	}

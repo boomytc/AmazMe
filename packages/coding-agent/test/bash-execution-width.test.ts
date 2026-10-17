@@ -6,6 +6,7 @@ import { visibleWidth } from "@amazme/tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 /** Minimal TUI stub that only exposes terminal.columns */
 function createTuiStub(columns: number): { columns: number; stub: any } {
@@ -88,5 +89,41 @@ it("collapsed preview lines respect render-time width, not construction-time wid
 			const w = visibleWidth(lines60[i]);
 			expect(w, `Line ${i} visibleWidth=${w} > 60`).toBeLessThanOrEqual(60);
 		}
+	});
+});
+
+describe("BashExecutionComponent selection", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+	});
+
+	it("marks a selected block without exceeding the render width", () => {
+		const width = 80;
+		const { stub } = createTuiStub(width);
+		const component = new BashExecutionComponent("pwd", stub);
+		component.appendOutput("output line\n");
+		component.setComplete(0, false);
+
+		const plain = component.render(width);
+		component.setSelected(true);
+		const marked = component.render(width);
+
+		expect(marked[0]).not.toBe(plain[0]);
+		expect(stripAnsi(marked[0] ?? "").startsWith("▌")).toBe(true);
+		for (const line of marked) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+
+		component.setSelected(false);
+		expect(component.render(width)).toEqual(plain);
+	});
+
+	it("reports the run duration with the same wording as tool renderers", () => {
+		const { stub } = createTuiStub(80);
+		const component = new BashExecutionComponent("pwd", stub);
+		component.appendOutput("out\n");
+		component.setComplete(0, false);
+
+		expect(stripAnsi(component.render(80).join("\n"))).toContain("Took ");
 	});
 });

@@ -8,6 +8,7 @@ class Row implements TranscriptRowSource {
 	readonly transcriptRowText?: () => string | undefined;
 	expanded = false;
 	opened = 0;
+	selected = false;
 	constructor(id: string, options: { turnStart?: boolean; text?: string } = {}) {
 		this.transcriptRowId = id;
 		this.transcriptTurnStart = options.turnStart;
@@ -18,6 +19,9 @@ class Row implements TranscriptRowSource {
 	}
 	open(): void {
 		this.opened++;
+	}
+	setSelected(selected: boolean): void {
+		this.selected = selected;
 	}
 }
 
@@ -104,6 +108,24 @@ describe("TranscriptFocus", () => {
 		expect(focus.handleInput("\r")).toBe(true);
 		expect(opened()).toBe(1);
 		expect(highlights.at(-1)).toBe("child");
+	});
+
+	test("marks exactly one row while the transcript owns the keyboard", () => {
+		const { focus, first, answer } = harness();
+
+		focus.handleInput("\t");
+		expect([first.selected, answer.selected]).toEqual([true, false]);
+
+		focus.handleInput(DOWN);
+		expect([first.selected, answer.selected]).toEqual([false, true]);
+
+		focus.handleInput("\t");
+		expect([first.selected, answer.selected]).toEqual([false, false]);
+
+		focus.handleInput("\t");
+		expect([first.selected, answer.selected]).toEqual([false, true]);
+		focus.handleInput("\x1b");
+		expect([first.selected, answer.selected]).toEqual([false, false]);
 	});
 
 	test("toggles every entry with the fold-all binding", () => {
