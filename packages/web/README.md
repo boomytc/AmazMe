@@ -63,14 +63,27 @@
 
 ## 长会话测量
 
-`test/transcript-scale.test.ts` 用 happy-dom 合成 200 与 800 个条目，分别记录投影耗时、DOM 构建耗时与节点数，并断言节点随块数线性增长。一次本机运行（Apple Silicon，happy-dom）：
+`?perf=N` 是仅用于开发的路由：不连接宿主，直接合成 N 个条目并渲染，把结果写进 `window.__AMAZME_PERF__` 与控制台 `AMAZME_PERF`。实现见 `packages/coding-agent/src/host/web/perf.ts`。
 
-| 块数 | 投影 | DOM 构建 | 节点 |
-|---|---|---|---|
-| 200 | 0.55 ms | 22.6 ms | 1638 |
-| 800 | 0.47 ms | 48.2 ms | 5838 |
+一次本机真实浏览器（headless Chromium，`agent-browser`）运行：
 
-它只覆盖投影与 DOM 构建，不包含布局与绘制，因此不作为帧率结论，也不作为虚拟化的触发条件。现状保持“块节点常驻”（折叠状态、复制、引用、搜索与滚动位置都依赖它）；若真实浏览器测量显示 800 块滚动掉帧，再按“仅对可见区外块做占位卸载”实施，并为上述行为补回归。
+| 块数 | 投影 | DOM 构建 | 节点 | 滚动平均帧 | p95 |
+|---|---|---|---|---|---|
+| 200 | 0.2 ms | 11.7 ms | 1640 | 7.8 ms | 9.0 ms |
+| 800 | 0.8 ms | 34.7 ms | 5840 | 7.8 ms | 8.4 ms |
+| 2000 | 1.6 ms | 73.7 ms | 14240 | 8.1 ms | 8.5 ms |
+
+结论：节点与块数线性，滚动帧时间在 2000 块时仍与 200 块持平；DOM 构建是一次性成本，2000 块约 74 ms。**因此不引入虚拟化**。现有折叠状态、复制、引用、搜索与滚动位置都依赖块节点常驻，窗口化需要为它们逐一补挂载/卸载语义，没有测量支持就不做。
+
+复现：
+
+```bash
+node packages/coding-agent/dist/bundle/cli.js web --port 0
+agent-browser open "http://127.0.0.1:<port>/?perf=800"
+agent-browser eval "JSON.stringify(window.__AMAZME_PERF__)"
+```
+
+`test/transcript-scale.test.ts` 仍保留 happy-dom 下的下限测量（投影与 DOM 构建、节点线性断言），它不覆盖布局与绘制，不作为帧率结论。
 
 ## 文件浏览
 

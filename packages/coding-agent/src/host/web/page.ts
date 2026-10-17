@@ -171,6 +171,7 @@ import {
 import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
 import { sessionDeepLink } from "./deep-link.ts";
 import { HistoryAvailability } from "./history-availability.ts";
+import { perfCount, runPerfCase } from "./perf.ts";
 import { AgentController, type AgentPromptImage } from "../../core/plugins/agent-controller.ts";
 import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
 import { Commands, type Commands as CommandsService, type CommandsState } from "../services/commands.ts";
@@ -3073,6 +3074,14 @@ export async function main(): Promise<void> {
 	} catch (error) {
 		document.body.textContent = translate(locale, "page.cannotBoot", {
 			error: message(error),
+		});
+		return;
+	}
+	const perf = typeof location === "undefined" ? undefined : perfCount(location.href);
+	if (perf !== undefined) {
+		// Development measurement route: no host connection, synthetic transcript.
+		await runPerfCase(renderer, perf).catch((error: unknown) => {
+			console.error(`AMAZME_PERF failed: ${error instanceof Error ? error.message : String(error)}`);
 		});
 		return;
 	}
