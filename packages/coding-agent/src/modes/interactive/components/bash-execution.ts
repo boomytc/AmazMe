@@ -12,7 +12,7 @@ import {
 import { formatToolDuration } from "../../../core/tools/render-utils.ts";
 import { stripAnsi } from "../../../utils/ansi.ts";
 import { theme } from "../theme/theme.ts";
-import { ToolBlockFrame } from "./tool-block-frame.ts";
+import { ToolBlockFrame, type ToolBlockTone } from "./tool-block-frame.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 import { truncateToVisualLines } from "./visual-truncate.ts";
 
@@ -43,9 +43,8 @@ export class BashExecutionComponent extends Container {
 		this.command = command;
 		this.colorKey = excludeFromContext ? "dim" : "bashMode";
 		this.outputPad = outputPad;
-		const borderColor = (str: string) => theme.fg(this.colorKey, str);
-		// Bash keeps its command color on the rule; the shared frame owns spacing and borders.
-		this.frame = new ToolBlockFrame({ tone: () => "neutral", borderColor: () => borderColor });
+		// The rule reports run state for every block; the command text keeps the bash color.
+		this.frame = new ToolBlockFrame({ tone: () => this.blockTone() });
 		this.contentContainer = this.frame.body;
 		this.addChild(this.frame);
 
@@ -69,6 +68,19 @@ export class BashExecutionComponent extends Container {
 
 	setSelected(selected: boolean): void {
 		this.frame.setSelected(selected);
+	}
+
+	private blockTone(): ToolBlockTone {
+		switch (this.status) {
+			case "running":
+				return "pending";
+			case "complete":
+				return "success";
+			case "error":
+				return "error";
+			default:
+				return "neutral";
+		}
 	}
 
 	setOutputPad(outputPad: number): void {

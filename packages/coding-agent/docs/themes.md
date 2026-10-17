@@ -108,8 +108,8 @@ Theme colors describe interface roles rather than individual components. Use the
 | General interface | `accent`, `border*`, `text`, `muted`, `dim`, `success`, `error`, `warning` |
 | Selection and fullscreen | `selectedBg`, `searchMatch*`, `scrollbar*` |
 | Messages | `userMessage*`, `customMessage*`, `thinkingText` |
-| Tool execution | `toolPendingBg`, `toolSuccessBg`, `toolErrorBg`, `toolTitle`, `toolOutput` |
-| Tool block border | `borderMuted` while running, `error` after a failure, `border` when finished; bash commands keep `bashMode` |
+| Tool execution | `toolTitle`, `toolOutput` (`toolPendingBg`, `toolSuccessBg`, and `toolErrorBg` are still accepted but no longer painted) |
+| Tool block border | `borderMuted` while running, `error` after a failure, `border` when finished; a bash command keeps `bashMode` on its command text |
 | Markdown | `md*` |
 | Tool diffs | `toolDiff*` |
 | Syntax highlighting | `syntax*` |
