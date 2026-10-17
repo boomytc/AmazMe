@@ -34,4 +34,17 @@ npm run dev:desktop
 
 正式发布的网页脚本由 coding-agent 构建预先生成，宿主、worker 与客户端共享编译模块和同一持久状态。桌面依赖声明包括 coding-agent；Electron 作为桌面壳运行环境，宿主使用系统 Node 22.19+。
 
+## 独立预览包
+
+`scripts/package-desktop.mjs` 生成可移动的 macOS 预览应用：宿主、运行时闭包和固定版本的官方 Node 一起放进 `AmazMe.app`，启动脚本只引用 `Contents/Resources` 内的路径。用官方 Node 压缩包，不要用 Homebrew 的 Node——后者链接共享的 `libnode`，复制单个二进制会在移动后启动失败；脚本会用 `otool` 拒绝这种二进制。
+
+```bash
+# 官方 Node 22.19+ 的 darwin tarball 解压后
+node scripts/package-desktop.mjs --node /path/to/node-v22.23.3-darwin-arm64/bin/node --out /tmp/AmazMe --verify
+```
+
+`--verify` 会把应用复制到临时目录，清掉 `AMAZME_GUI_NODE` 和 PATH 里的 Node，再跑一次 smoke；只有宿主用包内 Node 启动并回报 `desktop smoke:` 才算通过。产物内的 `Contents/Resources/release-manifest.json` 记录应用版本、Electron、Node 与各内部包版本，发布说明以应用版本为准。
+
+当前限制：未签名产物只适合内部预览；公开分发前仍需 Developer ID 签名与公证。`gui` 的版本（应用显示）与宿主包版本（当前 1.3.0）可能不同，发布清单负责锁定组合。
+
 已通过独立安装产物的真实窗口启动、同宿主状态查询和 Web 同步验证；`AMAZME_GUI_CWD` 指定实际项目，`INIT_CWD` 保留 npm 的原启动位置。开发目录和源码解析器不参与已安装桌面的宿主启动。
