@@ -17,7 +17,7 @@
 | 0 | 冻结旧内核：新能力只进 Durable，旧 SDK 标记为兼容路径 | 已完成政策与注释；尚无自动增长检查 |
 | 1 | print / JSON / RPC 切到 Durable | 新建无头会话默认 Durable；print/JSON/RPC 核心命令已通；JSONL 专用标志、SDK 扩展工厂和只有 JSONL 历史的 `--continue` 回退旧内核 |
 | 2 | SDK 的 `createAgentSession` 迁到 Durable 后端 | 实验性 `DurableSession` facade 已加入；`createAgentSession` 未切换 |
-| 3 | JSONL 一次性导入与只读导出 | 导入已完成（`amazme import`）；导出/分享仍走 JSONL |
+| 3 | JSONL 一次性导入与只读导出 | 导入与 Durable 会话导出已完成；分享仍走 JSONL/HTML 产物 |
 | 4 | 删除旧 `AgentSession`、JSONL、镜像和重复实现 | 未开始；受下方移除门槛约束 |
 
 ### 阶段 0：冻结
@@ -62,6 +62,7 @@
 - `amazme import <session.jsonl> [--session-dir <dir>]` 把一条终端 JSONL 导入新的 Durable 会话。
 - 读取使用与宿主 handoff 相同的投影；可承载的消息和压缩摘要写入 Durable，`model_change` 等记录计入报告。
 - JSONL 文件不被修改；导入失败删除本次创建的会话目录。
+- `amazme export <session.sqlite|session-dir> [output]` 把 Durable 会话的活动 transcript 导出为 JSONL 或 HTML。导出读取数据库副本，不打开或迁移源库；分支历史仍保留在源库中。
 
 未落地：
 

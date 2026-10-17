@@ -297,6 +297,7 @@ ${chalk.bold("Commands:")}
   ${APP_COMMAND} auth <command>            Sign in, sign out, check readiness or print credentials
   ${APP_COMMAND} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
   ${APP_COMMAND} import <session.jsonl>    Copy a terminal JSONL session into a new Durable session
+  ${APP_COMMAND} export <session.sqlite>   Export a Durable session to JSONL or HTML
   ${APP_COMMAND} doctor [--json] [--zh]    Read local diagnostics without changing files or contacting providers
   ${APP_COMMAND} server [options]         Run the durable Unix host
   ${APP_COMMAND} web [--port <port>]       Serve the installed Web client on loopback

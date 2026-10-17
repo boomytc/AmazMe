@@ -639,6 +639,12 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
+	if (args[0] === "export") {
+		const { runExportCommand } = await import("./durable/export.ts");
+		process.exitCode = await runExportCommand(args.slice(1));
+		return;
+	}
+
 	const parsed = parseArgs(args);
 	if (parsed.diagnostics.length > 0) {
 		for (const d of parsed.diagnostics) {

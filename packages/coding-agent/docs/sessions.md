@@ -79,3 +79,12 @@ amazme import ~/.amazme/agent/sessions/<project>/<session>.jsonl --session-dir .
 ```
 
 The import creates a new session under the selected root and reports records Durable cannot carry. Continue it with `amazme --continue --session-dir ./agent-history`. The JSONL file is read-only during import and is not mirrored afterwards.
+
+Export the active transcript of a Durable session with:
+
+```bash
+amazme export <session.sqlite|session-dir> ./session.jsonl
+amazme export <session.sqlite|session-dir> ./session.html
+```
+
+The output extension selects JSONL or HTML. The export reads a temporary database copy and does not modify the source session.

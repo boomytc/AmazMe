@@ -126,6 +126,10 @@ New `--print`, `--mode json`, and `--mode rpc` sessions run on the Durable Harne
 
 `amazme import <session.jsonl>` creates a new Durable session from a version 3 terminal session and leaves the JSONL file unchanged. Entries that Durable cannot carry are reported by kind. Continue the imported session with `--continue` and the selected `--session-dir`; it appears in the project's Durable session list.
 
+### Export a Durable session
+
+`amazme export <session.sqlite|session-dir> [output]` exports the active transcript to JSONL or HTML. The output extension selects the format; `--jsonl` and `--html` override it. Export reads a temporary copy and does not open or migrate the source database. Only the active context is exported; discarded branches stay in the source. Close a running session before exporting so its WAL is complete.
+
 Constraints:
 
 - In the default terminal, `--no-session` cannot be combined with `--continue` or `--resume`. `--session`, `--session-id`, and `--fork` select JSONL storage and are rejected by that terminal.
