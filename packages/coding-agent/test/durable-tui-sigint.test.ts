@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SHUTDOWN_FORCE_EXIT_MESSAGE } from "../src/utils/shutdown-signals.ts";
@@ -12,10 +12,13 @@ const cliPath = resolve(__dirname, "../src/cli.ts");
 
 /**
  * Runs the CLI on a pty. A line on stdin is written to the pty as raw bytes.
- * Mode `restore`: the first time the pty shows the alt-screen exit after a Ctrl-C byte
- * was written, the helper sends the child a real SIGINT, while cleanup is still running.
- * Mode `unlock:<dir>`: after that alt-screen exit, the helper sends the SIGINT as soon as
- * no session lock is left under `<dir>`, between the end of cleanup and process exit.
+ * Mode `hold`: after a Ctrl-C byte, once the pty has shown both the alt-screen exit and
+ * {@link cleanupHeldMarker}, the helper sends the child a real SIGINT. The child prints the
+ * marker from {@link holdPreload} while the session lock release is held, so the SIGINT
+ * always lands after the screen is restored and before cleanup ends.
+ * Mode `unlock:<dir>`: after a Ctrl-C byte and the alt-screen exit, the helper sends the
+ * SIGINT as soon as no session lock is left under `<dir>`, between the end of cleanup and
+ * process exit.
  * The last stderr line reports how the child ended: `CHILD exited <code>` or `CHILD signaled <n>`.
  */
 const ptyHelper = `
@@ -71,7 +74,7 @@ while status is None:
                 if pressed and not signaled:
                     seen += data
                     restored = b"\\x1b[?1049l" in seen
-                    if mode == "restore" and restored:
+                    if mode == "hold" and restored and b"AMZ_TEST_CLEANUP_HELD" in seen:
                         os.kill(pid, signal.SIGINT)
                         signaled = True
                     elif mode.startswith("unlock:") and restored:
@@ -107,6 +110,30 @@ else:
     sys.stderr.write("CHILD exited %d\\n" % os.WEXITSTATUS(status))
 `;
 
+const cleanupHeldMarker = "AMZ_TEST_CLEANUP_HELD";
+
+/**
+ * Loaded with `--import` in mode `hold`. proper-lockfile releases a lock with `fs.rmdir` on
+ * `<dir>.lock`. For a lock under this run's session directory it prints
+ * {@link cleanupHeldMarker} and never calls the real `rmdir`, so cleanup cannot finish; an
+ * idle interval keeps the event loop alive. The only way out is the helper's SIGINT.
+ * Other locks, such as the profile's `models-store.json.lock` at startup, are untouched.
+ */
+const holdPreload = `
+import fs from "node:fs";
+const token = process.env.AMZ_TEST_HOLD_LOCK_TOKEN;
+const rmdir = fs.rmdir;
+fs.rmdir = function (path, ...rest) {
+	const target = String(path);
+	if (token && target.includes(token) && target.endsWith(".lock")) {
+		fs.writeSync(process.stderr.fd, "\\n${cleanupHeldMarker}\\n");
+		setInterval(() => {}, 2 ** 30);
+		return;
+	}
+	return rmdir.call(fs, path, ...rest);
+};
+`;
+
 describe.skipIf(process.platform === "win32")("durable TUI Ctrl-C then SIGINT", () => {
 	const children: ChildProcess[] = [];
 	const directories: string[] = [];
@@ -131,13 +158,15 @@ describe.skipIf(process.platform === "win32")("durable TUI Ctrl-C then SIGINT", 
 		expect(ending, stdout).toMatch(/^CHILD exited (0|130)$/);
 	}, 45_000);
 
-	it("force-exits 130 with the message when a SIGINT arrives after the screen is restored", async () => {
-		const { stdout, ending } = await run("restore");
+	it("force-exits 130 with the message when a SIGINT arrives while cleanup is still running", async () => {
+		const { stdout, ending } = await run("hold");
+		expect(stdout.lastIndexOf("\x1b[?1049l")).toBeGreaterThanOrEqual(0);
+		expect(stdout.indexOf(cleanupHeldMarker)).toBeGreaterThan(stdout.lastIndexOf("\x1b[?1049l"));
 		expect(ending, stdout).toBe("CHILD exited 130");
 		expect(stdout).toContain(`\r\x1b[K${SHUTDOWN_FORCE_EXIT_MESSAGE}`);
 	}, 45_000);
 
-	async function run(mode: "none" | "restore" | "unlock"): Promise<{ stdout: string; ending: string | undefined }> {
+	async function run(mode: "none" | "hold" | "unlock"): Promise<{ stdout: string; ending: string | undefined }> {
 		const directory = await mkdtemp(join(tmpdir(), "am-sigint-"));
 		directories.push(directory);
 		const cwd = join(directory, "project");
@@ -169,6 +198,8 @@ describe.skipIf(process.platform === "win32")("durable TUI Ctrl-C then SIGINT", 
 			}),
 		);
 		await writeFile(join(directory, "pty-helper.py"), ptyHelper);
+		const preload = mode === "hold" ? ["--import", pathToFileURL(join(directory, "hold-preload.mjs")).href] : [];
+		if (mode === "hold") await writeFile(join(directory, "hold-preload.mjs"), holdPreload);
 
 		const stdout: string[] = [];
 		const stderr: string[] = [];
@@ -180,6 +211,7 @@ describe.skipIf(process.platform === "win32")("durable TUI Ctrl-C then SIGINT", 
 				process.execPath,
 				"--import",
 				sourceResolverUrl,
+				...preload,
 				cliPath,
 				"--offline",
 				"--provider",
@@ -202,6 +234,7 @@ describe.skipIf(process.platform === "win32")("durable TUI Ctrl-C then SIGINT", 
 					LINES: "40",
 					AMAZME_CODING_AGENT_DIR: profile,
 					AMAZME_OFFLINE: "1",
+					AMZ_TEST_HOLD_LOCK_TOKEN: `${join(basename(directory), "sessions")}${sep}`,
 				},
 				stdio: ["pipe", "pipe", "pipe"],
 			},
