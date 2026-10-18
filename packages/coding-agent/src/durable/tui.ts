@@ -789,6 +789,13 @@ function contextTokens(entries: readonly EntryRecord[]): number | undefined {
 	return undefined;
 }
 
+export interface DurableTuiHooks {
+	/** Receive the local exit before the screen starts, so a signal can stop it. */
+	bindExit?(exit: () => void): void;
+	/** `/quit` and SIGTERM share this. Absent means stop the screen only. */
+	quit?(): void;
+}
+
 export async function runDurableTui(
 	source: DurableViewSource,
 	controller: DurableController,
@@ -796,6 +803,7 @@ export async function runDurableTui(
 	resources: Pick<ResourceLoader, "getThemes">,
 	closed?: Promise<SessionEnd>,
 	startupBenchmark = false,
+	hooks?: DurableTuiHooks,
 ): Promise<void> {
 	setCapabilityOverrides(settings.getTerminalCapabilityOverrides());
 	let registered = resources.getThemes().themes;
@@ -806,6 +814,7 @@ export async function runDurableTui(
 	const exited = new Promise<void>((resolve) => {
 		exit = resolve;
 	});
+	hooks?.bindExit?.(exit);
 	let view!: DurableTui;
 	let managingMcp = false;
 	let authFlow: { controller: AbortController; done: Promise<void> } | undefined;
@@ -995,6 +1004,11 @@ export async function runDurableTui(
 		submit: (text, whenBusy, images) => {
 			const trimmed = text.trim();
 			if (!trimmed && images.length === 0) return;
+			// Exact /quit never reaches the controller. Extra arguments fall through to the native-command guard below.
+			if (trimmed === "/quit") {
+				(hooks?.quit ?? exit)();
+				return;
+			}
 			const authCommand = /^\/(login|logout)(?:\s+(.*))?$/su.exec(trimmed);
 			if (authCommand) { showAuth(authCommand[1] === "login" ? "login" : "logout", authCommand[2]?.trim() || undefined); return; }
 			if (trimmed === "/mcp") { showMcp(); return; }
