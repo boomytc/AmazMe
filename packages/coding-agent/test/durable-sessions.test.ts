@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { access, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { hasDurableSession, selectSession } from "../src/durable/sessions.ts";
+import { hasDurableSession, selectSession, SESSION_LOCK_STALE_MS } from "../src/durable/sessions.ts";
+import type { SessionLocation } from "../src/durable/sessions.ts";
 
 describe("durable session selection", () => {
 	let directory: string;
@@ -57,4 +58,78 @@ describe("durable session selection", () => {
 			"cannot be combined",
 		);
 	});
+
+	it("fails immediately when another open holds a fresh session lock", async () => {
+		const held = await persistSession();
+		try {
+			const started = Date.now();
+			await expect(selectSession(cwd, true, { sessionDir })).rejects.toThrow(alreadyOpenMessage(held.directory!));
+			expect(Date.now() - started).toBeLessThan(2_000);
+			expect(await lockfile.check(held.directory!, { realpath: false, stale: SESSION_LOCK_STALE_MS })).toBe(true);
+		} finally {
+			await held.release();
+		}
+		expect(await lockfile.check(held.directory!, { realpath: false, stale: SESSION_LOCK_STALE_MS })).toBe(false);
+	});
+
+	it("fails immediately when an explicit session directory lock is fresh", async () => {
+		const created = await persistSession();
+		await created.release();
+		const held = await selectSession(cwd, false, { sessionDir, sessionDirectory: created.directory });
+		try {
+			const started = Date.now();
+			await expect(selectSession(cwd, false, { sessionDir, sessionDirectory: created.directory })).rejects.toThrow(
+				alreadyOpenMessage(held.directory!),
+			);
+			expect(Date.now() - started).toBeLessThan(2_000);
+			expect(await lockfile.check(held.directory!, { realpath: false, stale: SESSION_LOCK_STALE_MS })).toBe(true);
+		} finally {
+			await held.release();
+		}
+	});
+
+	it("takes over a session lock older than 10 seconds", async () => {
+		const created = await persistSession();
+		await created.release();
+		await plantLock(created.directory!, SESSION_LOCK_STALE_MS + 1_500);
+		const taken = await selectSession(cwd, true, { sessionDir });
+		try {
+			expect(taken.id).toBe(created.id);
+			expect(taken.directory).toBe(created.directory);
+		} finally {
+			await taken.release();
+		}
+	});
+
+	it("keeps the session lock stale threshold at 10 seconds", async () => {
+		expect(SESSION_LOCK_STALE_MS).toBe(10_000);
+		const created = await persistSession();
+		await created.release();
+		await plantLock(created.directory!, SESSION_LOCK_STALE_MS - 3_000);
+		const started = Date.now();
+		await expect(selectSession(cwd, true, { sessionDir })).rejects.toThrow(alreadyOpenMessage(created.directory!));
+		expect(Date.now() - started).toBeLessThan(2_000);
+		await access(`${created.directory!}.lock`);
+	});
+
+	async function persistSession(): Promise<SessionLocation> {
+		const created = await selectSession(cwd, false, { sessionDir });
+		await writeFile(created.database!, "");
+		return created;
+	}
 });
+
+function alreadyOpenMessage(directory: string): string {
+	return (
+		`Session is already open in another process: ${directory}. ` +
+		"If that process crashed, wait about 10 seconds and run again to take over the session."
+	);
+}
+
+/** A lock directory left behind with an old mtime, as a crashed process would. */
+async function plantLock(directory: string, ageMs: number): Promise<void> {
+	const lock = `${directory}.lock`;
+	await mkdir(lock);
+	const when = new Date(Date.now() - ageMs);
+	await utimes(lock, when, when);
+}

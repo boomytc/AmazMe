@@ -4,6 +4,13 @@ import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { expandTildePath, getAgentDir } from "../config.ts";
 
+/**
+ * How long a crashed process's session lock stays reserved.
+ * A live holder refreshes the lock before this elapses. proper-lockfile's own
+ * refresh interval is left at its default, half of this value.
+ */
+export const SESSION_LOCK_STALE_MS = 10_000;
+
 /** A session lease; persistent sessions own a locked directory containing `session.sqlite`. */
 export interface SessionLocation {
 	id: string;
@@ -41,6 +48,28 @@ async function hasDatabase(directory: string): Promise<boolean> {
 	}
 }
 
+function sessionAlreadyOpenError(directory: string, cause: unknown): Error {
+	const seconds = SESSION_LOCK_STALE_MS / 1000;
+	return new Error(
+		`Session is already open in another process: ${directory}. ` +
+			`If that process crashed, wait about ${seconds} seconds and run again to take over the session.`,
+		{ cause },
+	);
+}
+
+/** Fail at once when a live process holds `directory`. A lock older than {@link SESSION_LOCK_STALE_MS} is taken over by proper-lockfile. */
+async function lockSession(directory: string): Promise<() => Promise<void>> {
+	try {
+		return await lockfile.lock(directory, {
+			realpath: false,
+			stale: SESSION_LOCK_STALE_MS,
+			retries: 0,
+		});
+	} catch (error) {
+		throw sessionAlreadyOpenError(directory, error);
+	}
+}
+
 /** Whether `cwd` already has a persisted Durable session in the selected root. */
 export async function hasDurableSession(
 	cwd: string,
@@ -73,15 +102,7 @@ export async function selectSession(
 		await access(database).catch(() => {
 			throw new Error(`Not a Durable session directory: ${directory}`);
 		});
-		let release: () => Promise<void>;
-		try {
-			release = await lockfile.lock(directory, {
-				realpath: false,
-				retries: { retries: 12, minTimeout: 1000, maxTimeout: 1000 },
-			});
-		} catch (error) {
-			throw new Error(`Session is already open in another process: ${directory}`, { cause: error });
-		}
+		const release = await lockSession(directory);
 		return { id: basename(directory), directory, database, cwd, created: false, release };
 	}
 	const root = sessionRoot(cwd, options.sessionDir);
@@ -118,15 +139,6 @@ export async function selectSession(
 		created = true;
 	}
 
-	let release: () => Promise<void>;
-	try {
-		// A lock left by a crashed process goes stale after 10 s; wait that long before giving up.
-		release = await lockfile.lock(directory, {
-			realpath: false,
-			retries: { retries: 12, minTimeout: 1000, maxTimeout: 1000 },
-		});
-	} catch (error) {
-		throw new Error(`Session is already open in another process: ${directory}`, { cause: error });
-	}
+	const release = await lockSession(directory);
 	return { id: basename(directory), directory, database: join(directory, "session.sqlite"), cwd, created, release };
 }
