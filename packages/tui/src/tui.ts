@@ -4,7 +4,14 @@
 
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
-import type { Terminal } from "./terminal.ts";
+import { commitTerminalOutput, type Terminal } from "./terminal.ts";
+import {
+	COLOR_SCHEME_NOTIFICATIONS_OFF,
+	COLOR_SCHEME_NOTIFICATIONS_ON,
+	terminalRestoreDefaults,
+	terminalRestoreParts,
+	type TerminalRestoreState,
+} from "./terminal-restore.ts";
 import {
 	parseOscColorResponse,
 	parseTerminalColorSchemeReport,
@@ -956,7 +963,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.afterTerminalStart();
 		this.terminal.hideCursor();
 		if (this.terminalColorSchemeNotificationsEnabled) {
-			this.terminal.write("\x1b[?2031h");
+			this.terminal.write(COLOR_SCHEME_NOTIFICATIONS_ON);
 		}
 		this.queryCellSize();
 		this.requestRender();
@@ -986,7 +993,7 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 		this.terminalColorSchemeNotificationsEnabled = enabled;
 		if (!this.stopped) {
-			this.terminal.write(enabled ? "\x1b[?2031h" : "\x1b[?2031l");
+			this.terminal.write(enabled ? COLOR_SCHEME_NOTIFICATIONS_ON : COLOR_SCHEME_NOTIFICATIONS_OFF);
 		}
 	}
 
@@ -1000,15 +1007,31 @@ export abstract class TuiBase extends Container implements TUI {
 		this.terminal.write("\x1b[16t");
 	}
 
+	/**
+	 * Screen half of {@link terminalRestoreSequence}. Subclasses add the alt screen
+	 * or the main-screen cursor park. Terminal modes come from `takeRestoreModes`.
+	 */
+	protected screenRestoreState(_options: TuiStopOptions): Partial<TerminalRestoreState> {
+		return {
+			showCursor: true,
+			colorSchemeOff: this.terminalColorSchemeNotificationsEnabled ? COLOR_SCHEME_NOTIFICATIONS_OFF : "",
+		};
+	}
+
 	stop(options: TuiStopOptions = {}): void {
+		if (this.stopped) return;
 		this.stopped = true;
 		this.cancelRenderTimer();
-		if (this.terminalColorSchemeNotificationsEnabled) {
-			this.terminal.write("\x1b[?2031l");
-		}
 		this.beforeTerminalStop(options);
-		this.terminal.showCursor();
-		this.terminal.stop();
+		const modes = this.terminal.takeRestoreModes?.() ?? {};
+		const screen = this.screenRestoreState(options);
+		// Same parts ProcessTerminal.stop writes. Force exit calls this same stop.
+		// Keyboard modes go out before the alternate screen is left.
+		const parts = terminalRestoreParts({ ...terminalRestoreDefaults(), ...modes, ...screen });
+		commitTerminalOutput(this.terminal, parts.beforeModes);
+		commitTerminalOutput(this.terminal, parts.modes);
+		this.terminal.stop({ sequenceWritten: true });
+		commitTerminalOutput(this.terminal, parts.afterModes);
 		this.afterTerminalStop(options);
 	}
 

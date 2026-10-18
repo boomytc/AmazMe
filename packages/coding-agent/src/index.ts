@@ -257,7 +257,6 @@ export {
 	type CompactionModelOverride,
 	type CompactionSettings,
 	type DefaultProjectTrust,
-	type FullscreenExitOutput,
 	type ImageSettings,
 	type PackageSource,
 	type QuietStartup,

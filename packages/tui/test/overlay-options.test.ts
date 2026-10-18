@@ -34,6 +34,13 @@ class CursorTrackingTerminal extends VirtualTerminal {
 		this.cursorVisible = true;
 		super.showCursor();
 	}
+
+	override write(data: string): void {
+		const show = data.lastIndexOf("\x1b[?25h");
+		const hide = data.lastIndexOf("\x1b[?25l");
+		if (show >= 0 || hide >= 0) this.cursorVisible = show > hide;
+		super.write(data);
+	}
 }
 
 class EmptyContent implements Component {

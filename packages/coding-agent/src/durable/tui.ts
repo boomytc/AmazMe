@@ -34,6 +34,7 @@ import { KeybindingsManager } from "../core/keybindings.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { time } from "../core/timings.ts";
 import { readClipboardContent } from "../utils/clipboard-content.ts";
+import { setShutdownTerminalRestore } from "../utils/shutdown-signals.ts";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
 import { getTextOutput, invalidArgText, replaceTabs, startToolTimer, str, toolTimerText } from "../core/tools/render-utils.ts";
 import { codemodeRenderers } from "../core/codemode/renderer.ts";
@@ -57,6 +58,7 @@ import { getEditorTheme, getMarkdownTheme, initTheme, onThemeChange, setRegister
 import type { ResourceLoader } from "../core/resource-loader.ts";
 import { InteractiveThemeController } from "../modes/interactive/theme/theme-controller.ts";
 import { agentOf, type DurableController, type DurableView, type DurableViewSource, formatLane } from "./runtime.ts";
+import { restoreDurableScreen } from "./screen-restore.ts";
 import { NATIVE_COMMANDS } from "./commands.ts";
 import type { SlashCommandCompletion } from "../core/plugins/slash-commands.ts";
 
@@ -274,6 +276,7 @@ class DurableTui {
 	#pasteEpoch = 0;
 	#clipboardRead: Promise<void> | undefined;
 	#disposed = false;
+	#screenStopped = false;
 	#conversationId: string | undefined;
 	readonly #cwd: string;
 	readonly #plugins: boolean;
@@ -411,13 +414,17 @@ class DurableTui {
 	}
 
 	stop(): void {
+		if (this.#screenStopped) return;
+		this.#screenStopped = true;
+		// Restore before dropping cards. A second Ctrl-C exits on this stack, and a
+		// throw while discarding a card must not skip the screen restore.
+		restoreDurableScreen(this.#ui);
 		this.#disposed = true;
 		++this.#pasteEpoch;
 		this.#editor.onPasteImage = undefined;
 		this.#images = [];
 		this.#discardTools();
 		this.#indicator?.dispose();
-		this.#ui.stop();
 	}
 
 	/** Finish every card: a running bash card keeps a timer until it gets a final result. */
@@ -1090,6 +1097,8 @@ export async function runDurableTui(
 	let benchmarkTimer: NodeJS.Timeout | undefined;
 	let end: SessionEnd | undefined;
 	try {
+		// A second Ctrl-C can force-exit before this function's finally runs.
+		setShutdownTerminalRestore(() => view.stop());
 		view.start();
 		themes.applyFromSettings();
 		view.apply(source.current());
@@ -1105,7 +1114,11 @@ export async function runDurableTui(
 		unsubscribeTheme();
 		themes.dispose();
 		setRegisteredThemes(undefined);
-		view.stop();
+		try {
+			view.stop();
+		} finally {
+			setShutdownTerminalRestore(undefined);
+		}
 	}
 	if (end?.reason === "failed")
 		throw new Error("Session failed after a storage error", {

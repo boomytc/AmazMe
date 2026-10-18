@@ -1,4 +1,4 @@
-import { writeSync } from "node:fs";
+import * as fs from "node:fs";
 
 /**
  * 128 + SIGINT. A second Ctrl-C while cleanup is still running leaves through this status.
@@ -12,14 +12,45 @@ export const SHUTDOWN_FORCE_EXIT_CODE = 130;
 export const SHUTDOWN_FORCE_EXIT_MESSAGE =
 	"Forced exit. The session lock expires in about 10 seconds; you can reopen the session then.";
 
+/**
+ * Synchronous screen restore invoked at the start of {@link forceShutdownExit}.
+ * A second Ctrl-C in the same stdin chunk runs before the graceful stop microtask,
+ * while the alternate screen and raw mode are still active.
+ */
+let restoreTerminal: (() => void) | undefined;
+
+/** Bytes and the status of a force exit. Kept together so the restore can run first. */
+export const shutdownExit = {
+	writeStderr(text: string): void {
+		fs.writeSync(process.stderr.fd, text);
+	},
+	exit(code: number): never {
+		process.exit(code);
+	},
+};
+
+export function setShutdownTerminalRestore(restore: (() => void) | undefined): void {
+	restoreTerminal = restore;
+}
+
 /** Stop immediately. Cleanup is abandoned; a later SIGINT must not wait on it. */
 export function forceShutdownExit(): never {
+	const restore = restoreTerminal;
+	restoreTerminal = undefined;
 	try {
-		writeSync(process.stderr.fd, `${SHUTDOWN_FORCE_EXIT_MESSAGE}\n`);
+		restore?.();
+	} catch {
+		// The process still has to leave, even if the screen could not be restored.
+	}
+	try {
+		shutdownExit.writeStderr(`${SHUTDOWN_FORCE_EXIT_MESSAGE}\n`);
 	} catch {
 		// Stderr can be gone. The process still has to leave.
 	}
-	process.exit(SHUTDOWN_FORCE_EXIT_CODE);
+	// A method call is not an unreachable end for control-flow analysis.
+	const exit = shutdownExit.exit;
+	exit(SHUTDOWN_FORCE_EXIT_CODE);
+	throw new Error("force exit did not terminate");
 }
 
 export interface ShutdownSignals {

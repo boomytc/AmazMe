@@ -20,6 +20,16 @@ import {
 import { getLayoutNode } from "./layout-node.ts";
 import type { Terminal } from "./terminal.ts";
 import {
+	ALT_SCREEN_ON,
+	AUTOWRAP_OFF,
+	CURSOR_HIDE,
+	MOUSE_ALL_ON,
+	MOUSE_BUTTON_ON,
+	SYNCHRONIZED_OUTPUT_OFF,
+	SYNCHRONIZED_OUTPUT_ON,
+	type TerminalRestoreState,
+} from "./terminal-restore.ts";
+import {
 	deleteAllKittyImages,
 	deleteAllKittyPlacements,
 	deleteKittyImage,
@@ -60,17 +70,8 @@ import {
 } from "./utils.ts";
 import { WheelScrollAccelerator, type WheelScrollLines } from "./wheel-scroll.ts";
 
-const ENTER_ALT_SCREEN = "\x1b[?1049h";
-const EXIT_ALT_SCREEN = "\x1b[?1049l";
-const DISABLE_AUTOWRAP = "\x1b[?7l";
-const ENABLE_AUTOWRAP = "\x1b[?7h";
-const ENABLE_BUTTON_MOTION_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1004h\x1b[?1006h";
-const ENABLE_ALL_MOTION_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h";
-const DISABLE_MOUSE = "\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
 const FOCUS_IN = "\x1b[I";
 const FOCUS_OUT = "\x1b[O";
-const BEGIN_SYNCHRONIZED_OUTPUT = "\x1b[?2026h";
-const END_SYNCHRONIZED_OUTPUT = "\x1b[?2026l";
 const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
 const OSC133_PROMPT_START = /^\x1b\]133;A(?:\x07|\x1b\\)/;
 const PAGE_SCROLL_OVERLAP = 4;
@@ -391,14 +392,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			process.env.STY !== undefined ||
 			term.startsWith("tmux") ||
 			term.startsWith("screen")
-				? ENABLE_BUTTON_MOTION_MOUSE
-				: ENABLE_ALL_MOTION_MOUSE;
+				? MOUSE_BUTTON_ON
+				: MOUSE_ALL_ON;
 		this.terminal.write(
-			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H\x1b[?25l`,
+			`${ALT_SCREEN_ON}${AUTOWRAP_OFF}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H${CURSOR_HIDE}`,
 		);
 	}
 
-	protected override beforeTerminalStop(_options: TuiStopOptions): void {
+	protected override screenRestoreState(options: TuiStopOptions): Partial<TerminalRestoreState> {
 		this.clearComponentMouseHover(false);
 		this.closeSearch();
 		this.stopSelectionAutoScroll();
@@ -407,19 +408,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.stopScrollbarDrag();
 		this.clearComponentMouseGesture();
 		this.flashes.dispose();
-		if (!this.altScreenActive) return;
-		this.terminal.write(
-			`${BEGIN_SYNCHRONIZED_OUTPUT}${this.deleteKittyImages()}${this.mouseEnabled ? DISABLE_MOUSE : ""}${ENABLE_AUTOWRAP}${END_SYNCHRONIZED_OUTPUT}`,
-		);
+		const base = super.screenRestoreState(options);
+		if (!this.altScreenActive) return base;
+		const kittyImageDelete = this.deleteKittyImages();
 		this.uploadedKittyImages.clear();
-	}
-
-	protected override afterTerminalStop(options: TuiStopOptions): void {
-		if (!this.altScreenActive) return;
-		this.altScreenActive = false;
-		if (options.preserveScreen) {
-			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`);
-		} else {
+		const preserveScreen = options.preserveScreen === true;
+		let reprintLines: readonly string[] = [];
+		if (!preserveScreen) {
 			const width = Math.max(1, this.terminal.columns);
 			const documentLines = this.resolveFakeCursors(this.render(width)).map((line) =>
 				line.replace(OSC133_ZONE_PREFIX, ""),
@@ -427,18 +422,21 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
 				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
 			);
-			let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
-			for (let row = 0; row < this.lastDocument.length; row++) {
-				if (row > 0) buffer += "\r\n";
-				buffer += `\r\x1b[2K${this.lastDocument[row] ?? ""}`;
-			}
-			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
-			this.terminal.write(buffer);
+			reprintLines = this.lastDocument;
 		}
+		this.altScreenActive = false;
 		if (this.savedCapabilities) {
 			setCapabilities(this.savedCapabilities);
 			this.savedCapabilities = undefined;
 		}
+		return {
+			...base,
+			altScreen: true,
+			mouse: this.mouseEnabled,
+			kittyImageDelete,
+			preserveScreen,
+			reprintLines,
+		};
 	}
 
 	private deleteKittyImages(): string {
@@ -1794,7 +1792,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				? this.prepareKittyScreen(screen)
 				: { lines: screen, evictedImageDeletion: "" };
 
-		let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
+		let buffer = SYNCHRONIZED_OUTPUT_ON;
 		if (fullRedraw) {
 			this.fullRedrawCount += 1;
 			const clearImages =
@@ -1841,7 +1839,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		} else {
 			buffer += "\x1b[?25l";
 		}
-		buffer += END_SYNCHRONIZED_OUTPUT;
+		buffer += SYNCHRONIZED_OUTPUT_OFF;
 		this.terminal.write(buffer);
 
 		this.previousScreen = screen;

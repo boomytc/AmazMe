@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
+import type { TerminalRestoreState } from "./terminal-restore.ts";
 import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { visibleWidth } from "./utils.ts";
 
@@ -165,14 +166,17 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.previousViewportTop = 0;
 	}
 
-	protected override beforeTerminalStop(options: TuiStopOptions): void {
-		if (options.preserveScreen || this.previousLines.length === 0) return;
-		this.terminal.write(" ");
-		const targetRow = this.previousLines.length;
-		const lineDiff = targetRow - this.hardwareCursorRow;
-		if (lineDiff > 0) this.terminal.write(`\x1b[${lineDiff}B`);
-		else if (lineDiff < 0) this.terminal.write(`\x1b[${-lineDiff}A`);
-		this.terminal.write("\r\n");
+	protected override screenRestoreState(options: TuiStopOptions): Partial<TerminalRestoreState> {
+		const base = super.screenRestoreState(options);
+		// preserveScreen, or a screen that never drew, leaves the conversation where it is.
+		if (options.preserveScreen || this.previousLines.length === 0) return base;
+		return {
+			...base,
+			mainScreenPark: {
+				targetRow: this.previousLines.length,
+				hardwareCursorRow: this.hardwareCursorRow,
+			},
+		};
 	}
 
 	private collectKittyImageIds(lines: string[]): Set<number> {

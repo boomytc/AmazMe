@@ -1,6 +1,12 @@
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import xterm from "@xterm/headless";
-import type { Terminal } from "../src/terminal.ts";
+import type { Terminal, TerminalStopOptions } from "../src/terminal.ts";
+import {
+	BRACKETED_PASTE_ON,
+	terminalRestoreDefaults,
+	terminalRestoreSequence,
+	type TerminalModeRestore,
+} from "../src/terminal-restore.ts";
 
 // Extract Terminal class from the module
 const XtermTerminal = xterm.Terminal;
@@ -14,6 +20,7 @@ export class VirtualTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _columns: number;
 	private _rows: number;
+	private bracketedPaste = false;
 
 	constructor(columns = 80, rows = 24) {
 		this._columns = columns;
@@ -33,16 +40,31 @@ export class VirtualTerminal implements Terminal {
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
 		// Enable bracketed paste mode for consistency with ProcessTerminal
-		this.xterm.write("\x1b[?2004h");
+		this.bracketedPaste = true;
+		this.xterm.write(BRACKETED_PASTE_ON);
+	}
+
+	takeRestoreModes(): TerminalModeRestore {
+		const bracketedPaste = this.bracketedPaste;
+		this.bracketedPaste = false;
+		return {
+			progressClear: "",
+			programStatusClear: "",
+			bracketedPaste,
+			kittyKeyboard: false,
+			modifyOtherKeys: false,
+		};
 	}
 
 	async drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {
 		// No-op for virtual terminal - no stdin to drain
 	}
 
-	stop(): void {
-		// Disable bracketed paste mode
-		this.xterm.write("\x1b[?2004l");
+	stop(options?: TerminalStopOptions): void {
+		if (!options?.sequenceWritten) {
+			const sequence = terminalRestoreSequence({ ...terminalRestoreDefaults(), ...this.takeRestoreModes() });
+			if (sequence.length > 0) this.write(sequence);
+		}
 		this.inputHandler = undefined;
 		this.resizeHandler = undefined;
 	}

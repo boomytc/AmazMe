@@ -751,20 +751,6 @@
       ],
       "default": "fullscreen"
     },
-    "fullscreenExitOutput": {
-      "anyOf": [
-        {
-          "type": "string",
-          "const": "transcript"
-        },
-        {
-          "type": "string",
-          "const": "resume-hint"
-        }
-      ],
-      "description": "No effect in regular TUI mode.",
-      "default": "transcript"
-    },
     "fullscreenScrollbar": {
       "anyOf": [
         {

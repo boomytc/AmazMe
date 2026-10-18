@@ -546,12 +546,6 @@ export const SettingsSchema = Type.Object(
 				default: SETTINGS_DEFAULTS.tuiMode,
 			}),
 		),
-		fullscreenExitOutput: Type.Optional(
-			Type.Union([Type.Literal("transcript"), Type.Literal("resume-hint")], {
-				description: "No effect in regular TUI mode.",
-				default: SETTINGS_DEFAULTS.fullscreenExitOutput,
-			}),
-		),
 		fullscreenScrollbar: Type.Optional(
 			Type.Union(
 				[Type.Literal("auto"), Type.Literal("always"), Type.Literal("hidden")],
@@ -663,9 +657,6 @@ export type QuietStartup = NonNullable<SettingsInput["quietStartup"]>;
 export type TransportSetting = NonNullable<SettingsInput["transport"]>;
 export type SessionShareDestination = NonNullable<SettingsInput["sessionShareDestination"]>;
 export type PackageSource = Static<typeof PackageSourceSchema>;
-export type FullscreenExitOutput = NonNullable<
-	SettingsInput["fullscreenExitOutput"]
->;
 export type TuiMode = NonNullable<SettingsInput["tuiMode"]>;
 export type CacheWarmingMode = NonNullable<SettingsInput["cacheWarming"]>;
 export interface Settings

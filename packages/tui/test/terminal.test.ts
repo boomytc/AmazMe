@@ -91,6 +91,10 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			writes.push(String(chunk));
 			return true;
 		}) as typeof process.stdout.write;
+		// stop() flushes with writeSync so a later process.exit cannot drop it.
+		terminal.writeSync = (data: string) => {
+			writes.push(data);
+		};
 		process.stdin.on = ((event: string | symbol, listener: (...args: unknown[]) => void) => {
 			if (event === "data") dataHandler = listener as (data: string) => void;
 			return process.stdin;
@@ -151,8 +155,9 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			assert.equal(harness.writes.includes("\x1b[>4;0m"), false);
 
 			harness.cleanup();
-			assert.equal(harness.writes.filter((write) => write === "\x1b[<u").length, 1);
-			assert.equal(harness.writes.includes("\x1b[>4;0m"), false);
+			const restore = harness.writes.at(-1) ?? "";
+			assert.equal(restore.split("\x1b[<u").length - 1, 1);
+			assert.equal(restore.includes("\x1b[>4;0m"), false);
 		} finally {
 			harness.cleanup();
 		}
@@ -168,7 +173,9 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			assert.equal(harness.writes.filter((write) => write === "\x1b[>4;2m").length, 1);
 
 			harness.cleanup();
-			assert.equal(harness.writes.filter((write) => write === "\x1b[>4;0m").length, 1);
+			const restore = harness.writes.at(-1) ?? "";
+			assert.equal(restore.split("\x1b[>4;0m").length - 1, 1);
+			assert.equal(restore.split("\x1b[<u").length - 1, 1);
 		} finally {
 			harness.cleanup();
 		}
@@ -339,7 +346,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
 					harness.send("\x1b]7501;?\x1b\\");
 					harness.terminal.stop();
-					assert.ok(harness.writes.includes(clear));
+					assert.ok(harness.writes.join("").includes(clear));
 
 					// Stopped: nothing is written until the restarted terminal confirms support again.
 					const writesBeforeRestart = harness.writes.length;
