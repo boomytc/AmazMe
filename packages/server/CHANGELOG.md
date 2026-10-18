@@ -2,11 +2,13 @@
 
 ## [Unreleased]
 
-## [1.2.0] - 2026-10-13
+## [1.1.1] - 2026-10-18
 
 ### Breaking Changes
 
 - Route native Chord channels between authenticated clients and session workers. Worker removal closes its channels so pending calls settle and cleanup can finish.
+
+Versions below are @amazme/server's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

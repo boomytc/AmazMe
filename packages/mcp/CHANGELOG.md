@@ -2,9 +2,7 @@
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-10-16
-
-## [1.2.0] - 2026-10-13
+## [1.1.1] - 2026-10-18
 
 ### Fixed
 
@@ -12,6 +10,8 @@
 - Cancelled or settled requests cannot be resent after a shared authorization refresh.
 
 - Fixed `authorizeMcp()` exchanging an authorization code whose `iss` parameter could not be checked because no authorization server metadata was discovered. It now throws `OAuthIssuerMismatchError`, whose `expected` is `undefined` in that case (RFC 9207). Reported by [@AizenvoltPrime](https://github.com/AizenvoltPrime)
+
+Versions below are @amazme/mcp's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

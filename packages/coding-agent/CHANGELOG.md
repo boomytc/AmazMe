@@ -2,50 +2,48 @@
 
 ## [Unreleased]
 
-### Added
+## [1.2.0] - 2026-10-18
+
+### 破坏性变更
+
+- 只保留 Durable 单内核。旧的 `AgentSession`、`SessionManager` 和 JSONL 内核已删除，包括交互式 JSONL TUI。JSONL 条目类型仍在 `jsonl-transcript.ts`，只用于导入、导出和 RPC 投影。
+- 下线 CLI 参数 `--session`、`--session-id`、`--fork`，现在是未知选项。会话内分叉使用 `/tree` 和 `/fork`。
+- `--continue` 和 `--resume` 只打开当前目录最新的 Durable 会话。若只有旧 JSONL、没有 Durable 会话，提示先运行 `amazme import <session.jsonl>`。
+- 下线环境变量 `AMAZME_RUNTIME`。没有 JSONL 内核回退。
+- SDK 下线 `createAgentSession` 和内联扩展工厂。会话入口只保留 `createDurableSession`，`extensions` 只接受原生 facet 路径。示例 `01`–`14` 已按这个入口改写。
+- RPC 删除 `abort_retry`。仍发送该命令的旧客户端收到未知命令错误。没有只取消重试退避的替代命令。
+- `/share` 不再由宿主的内置命令表提供，改由 facet 注册。这条命令先用 Durable 把当前会话导出成 HTML 和 JSONL，再按 `sessionShareDestination` 分享。默认 `auto`：已登录 Radius 时上传 JSONL，否则把 HTML 做成私有 GitHub gist。设为 `radius` 且未登录时失败，不回退 gist；设为 `gist` 时只上传 HTML。原生终端里的 `/share` 使用同一套导出和上传。
+- 旧的 JSONL 会话要先用 `amazme import` 导入，才能在这个版本里打开。导入只接受 version 3 的线性活动转录，拒绝 `parentSession` 和分支树。已有 Durable 会话的 SQLite 格式没有改，可以用 `--continue` 接着打开。`packages/durable` 和 `packages/ai` 的实现没有改。
+
+### 新增
 
 - Added a Models Configuration reference generated from the `models.json` schema, listing provider, model, model override, and compatibility fields ([#10790](https://github.com/earendil-works/pi/issues/10790)).
 
-### Changed
+### 变更
 
 - `generateSummary()` and `generateSummaryWithUsage()` now ignore their `reserveTokens` parameter. Summary requests use the model's output limit instead.
 - Changed the default NVIDIA model to `nvidia/nemotron-3.5-super-vl-120b-a12b` ([#10910](https://github.com/earendil-works/pi/pull/10910)).
 
-### Fixed
+### 修复
+
+- 修复交互式 client 启动崩溃。原因是 `resume_run` 含下划线，命令注册表不允许下划线，启动时抛出 `Invalid slash command name: resume_run`。命令已改名为 `resume-run`（#82）。
 
 - Fixed compaction and branch summaries failing with "generation hit the token cap" when reasoning used most of the fixed summary output limit. Summaries now use the model's output limit, and `compaction.reserveTokens` only controls when compaction starts ([#9512](https://github.com/earendil-works/pi/issues/9512), [#9075](https://github.com/earendil-works/pi/issues/9075)).
 - Fixed `models.schema.json` missing descriptions for provider and model fields, so editors showed no hints for them ([#10790](https://github.com/earendil-works/pi/issues/10790)).
 
-## [1.3.0] - 2026-10-16
+### 移除
 
-### Fixed
+- 删除 5 个只演示旧扩展 API 的示例目录：`with-deps`、`custom-provider-anthropic`、`custom-provider-gitlab-duo`、`sandbox`、`gondolin`。
+- evals harness 改为 `createDurableSession`，去掉 `customTools` 和 `reload` 输入步骤，并删除 `documentation-audit` 与 `tui.docs` 这两个 eval。
 
-- Hosted model catalog refreshes share one service-owned operation. Failed refreshes settle their status and permit retry; cancellation of one reader leaves other readers running, while service close cancels and joins the operation without late publication.
-- Direct package dependencies are pinned to the tested release versions; the existing workspace check validates registry pins and internal version alignment.
-- Approval waits observe cancellation before and during publication, release their listeners after settlement, and retain early decisions without reporting owner cancellation as reader denial.
-- SDK overflow recovery measures the real projection before and after compaction, retains completed summaries and reports insufficient recovery without resending. Ordinary truncated-output recovery retains its separate one-retry budget.
-- Default-tool session resume restores the recorded active loadout with CLI modifiers; explicit tool selection remains authoritative.
-- Codemode worker admission is shared by SDK and native sessions and stays reserved until actual exit, keeping cancellation prompt without allowing unbounded surviving workers.
-- CLI, model scopes and credential printing share one provider-selection policy; inline API keys do not silently choose among providers. The default Durable terminal uses the same rule.
-- Read line-range labels accept finite numeric strings and omitted null fields consistently in the TUI, session tree, HTML export and examples.
-- Prompt-template arguments retain empty quoted strings and their positional indexes.
-- Closing a custom UI overlay hides that overlay instead of the topmost one, so a dialog opened above a finished shell overlay stays visible and resolves normally.
+## [1.1.1] - 2026-10-18
 
-### Added
+### 新增
 
 - `sessionShareDestination` selects automatic, Radius or private GitHub Gist sharing; an explicit Radius destination never falls back to Gist.
 - NVIDIA RTX llama.cpp recipe conversion guide and prerequisites, adapted to AmazMe commands.
 
-### Changed
-
-- Product plugin and session consumers use Chord protocol 4, explicit host and parent principals, placed contracts and hydrated references. Coordinator protocol is 5; product services use the services: host family.
-
-
-## [1.2.0] - 2026-10-13
-
 - Published settings, models, keybindings and theme schemas share runtime defaults and theme tokens. AmazMe interface settings and custom extension keybindings are included; theme validation is strict.
-- A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
-### Added
 
 - `AMAZME_CLIPBOARD_OSC52` forces OSC 52 copies; codemode rows report execution and total elapsed time.
 
@@ -72,7 +70,9 @@
 - Added ordered `+name`/`-name` tool selection to the SDK and print/RPC CLI, with shared validation before runtime creation and preservation across settings reloads
 - Added a reply preview to the Dashboard: a `Response` panel above the composer shows the latest reply of the session under the cursor, so several sessions can be assigned work without opening them
 
-### Changed
+### 变更
+
+- Product plugin and session consumers use Chord protocol 4, explicit host and parent principals, placed contracts and hydrated references. Coordinator protocol is 5; product services use the services: host family.
 
 - Native plugins, session workers, hosted clients, Web and desktop use the new Chord Host runtime. Plugin ESM artifacts load through `nodeLoader`; resource ownership, state hydration, reload and cancellation share its lifecycle. Coordinator protocol is 4.
 - OpenRouter refreshes and persists the current key's available catalog. MCP resources are fetched on demand rather than preloaded on connect.
@@ -84,7 +84,20 @@
 - Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor
 - Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
 
-### Fixed
+### 修复
+
+- Hosted model catalog refreshes share one service-owned operation. Failed refreshes settle their status and permit retry; cancellation of one reader leaves other readers running, while service close cancels and joins the operation without late publication.
+- Direct package dependencies are pinned to the tested release versions; the existing workspace check validates registry pins and internal version alignment.
+- Approval waits observe cancellation before and during publication, release their listeners after settlement, and retain early decisions without reporting owner cancellation as reader denial.
+- SDK overflow recovery measures the real projection before and after compaction, retains completed summaries and reports insufficient recovery without resending. Ordinary truncated-output recovery retains its separate one-retry budget.
+- Default-tool session resume restores the recorded active loadout with CLI modifiers; explicit tool selection remains authoritative.
+- Codemode worker admission is shared by SDK and native sessions and stays reserved until actual exit, keeping cancellation prompt without allowing unbounded surviving workers.
+- CLI, model scopes and credential printing share one provider-selection policy; inline API keys do not silently choose among providers. The default Durable terminal uses the same rule.
+- Read line-range labels accept finite numeric strings and omitted null fields consistently in the TUI, session tree, HTML export and examples.
+- Prompt-template arguments retain empty quoted strings and their positional indexes.
+- Closing a custom UI overlay hides that overlay instead of the topmost one, so a dialog opened above a finished shell overlay stays visible and resolves normally.
+
+- A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
 
 - Custom-message runs emit `before_agent_start` through the shared startup lifecycle, including busy, queued and cancelled starts.
 - Expand `~` in resource patterns, exit print mode nonzero on truncated responses, and retry transient Windows auth-lock `EPERM` within the existing bound.
@@ -129,6 +142,8 @@
 - Fixed SDK tool defaults being reactivated by an extension overriding a removed tool name, and retained exact-name activation until delayed tool registration
 - Fixed the web page offering Fork on a conversation that has no entries yet. The header and the conversations panel keep the control and disable it until there is an entry to fork from
 - Fixed the Dashboard offering a close badge for the current session, which cannot be deleted from there; the close column stays blank so ages keep their alignment, and `Ctrl+X` on it reports that the session stays open
+
+统一版本号前 @amazme/coding-agent 自己的编号
 
 ## [1.1.0] - 2026-10-07
 

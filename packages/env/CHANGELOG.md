@@ -2,9 +2,7 @@
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-10-16
-
-## [1.2.0] - 2026-10-13
+## [1.1.1] - 2026-10-18
 
 ### Added
 
@@ -14,6 +12,8 @@
 ### Fixed
 
 - Build and package the Linux/macOS x86-64 and arm64 release daemons used by SSH bootstrap. Packing verifies their architecture, package version, Rust source fingerprint and SHA-256 instead of publishing a package without its advertised binaries. Linux artifacts use musl; TypeScript builds and installation stay independent of Rust.
+
+Versions below are @amazme/env's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 
