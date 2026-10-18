@@ -40,9 +40,6 @@
 
 ## [1.1.1] - 2026-10-18
 
-- Published settings, models, keybindings and theme schemas share runtime defaults and theme tokens. AmazMe interface settings and custom extension keybindings are included; theme validation is strict.
-- A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
-
 ### Fixed
 
 - Hosted model catalog refreshes share one service-owned operation. Failed refreshes settle their status and permit retry; cancellation of one reader leaves other readers running, while service close cancels and joins the operation without late publication.
@@ -55,6 +52,58 @@
 - Read line-range labels accept finite numeric strings and omitted null fields consistently in the TUI, session tree, HTML export and examples.
 - Prompt-template arguments retain empty quoted strings and their positional indexes.
 - Closing a custom UI overlay hides that overlay instead of the topmost one, so a dialog opened above a finished shell overlay stays visible and resolves normally.
+
+### Added
+
+- `sessionShareDestination` selects automatic, Radius or private GitHub Gist sharing; an explicit Radius destination never falls back to Gist.
+- NVIDIA RTX llama.cpp recipe conversion guide and prerequisites, adapted to AmazMe commands.
+
+### Changed
+
+- Product plugin and session consumers use Chord protocol 4, explicit host and parent principals, placed contracts and hydrated references. Coordinator protocol is 5; product services use the services: host family.
+
+- Published settings, models, keybindings and theme schemas share runtime defaults and theme tokens. AmazMe interface settings and custom extension keybindings are included; theme validation is strict.
+- A symlinked AGENTS.md in a nested worktree is loaded once instead of being skipped as a duplicate.
+### Added
+
+- `AMAZME_CLIPBOARD_OSC52` forces OSC 52 copies; codemode rows report execution and total elapsed time.
+
+- Native CLI image arguments and every message now reach the existing Durable input queue. Clipboard images attach to the draft, support image-only submission and `/attachments` removal, and retain input ownership across preparation, cancellation and close. Native and SDK prompts share image normalization and the clipboard content reader.
+
+- Native `--models` and saved `enabledModels` now control startup selection and ordered forward/backward cycling through the existing resolver and ModelRuntime. Scope thinking suffixes, authentication changes, current-conversation persistence and custom cycle keybindings are honored without changing global defaults.
+
+- Hosted model services and terminal clients use the same provider interaction owner for `/login` and `/logout`. Active sign-in keeps the worker alive; plugin reload preserves its prompt, while late submissions remain bound to their flow and session.
+
+- Native `/login` and `/logout` reuse the provider interaction owner and ModelRuntime credential APIs, including provider/method selection, prompt expiry, owned cancellation and close cleanup. OAuth identity remains Pi's.
+
+- Native plugins use Durable `output`, `structuredOutputSchema` and `executeTool`; MCP, codemode, workflow and verification calls share owned tasks and scoped result retirement.
+- Native image reading uses provider limits and the existing image worker; standalone Durable hosts may explicitly load Photon.
+
+- Published the existing durable host, terminal client and Web entry through the formal CLI and compiled package, with prebuilt browser assets and lazy host command dispatch
+
+- Added optional JSON workflows over existing Durable jobs, with isolated agent contexts, bounded background concurrency, saved templates, persistent pause/resume, owned cancellation, and independent command evidence
+- Added the local `AgentRuntime` service for trusted plugins to access the selected conversation's existing Harness
+
+- Added an optional native completion-verification plugin with explicit command checks, bounded corrective requests, independent receipts, persistent deadlines, owned cancellation, and recovery without replaying interrupted unsafe commands
+
+- Added on-demand `amazme doctor` and Web read-only diagnostics with shared status codes and repair guidance; no credential resolution, provider calls, subprocesses, locks, or automatic repairs
+
+- Added ordered `+name`/`-name` tool selection to the SDK and print/RPC CLI, with shared validation before runtime creation and preservation across settings reloads
+- Added a reply preview to the Dashboard: a `Response` panel above the composer shows the latest reply of the session under the cursor, so several sessions can be assigned work without opening them
+
+### Changed
+
+- Native plugins, session workers, hosted clients, Web and desktop use the new Chord Host runtime. Plugin ESM artifacts load through `nodeLoader`; resource ownership, state hydration, reload and cancellation share its lifecycle. Coordinator protocol is 4.
+- OpenRouter refreshes and persists the current key's available catalog. MCP resources are fetched on demand rather than preloaded on connect.
+- Codemode result declarations use tool-owned schemas and `reachesTools`; aliases and nested discovery share the current callable tool set.
+
+- Native CLI help and model listing bypass SDK factories; startup verbosity, settings diagnostics and model labels reflect the actual Durable session. The startup benchmark now initializes that same TUI and releases its normal resources. Removed the ineffective Dashboard CLI option and the alternate SDK terminal dispatch; SDK Print/RPC extension flags remain available in their own invocation.
+- Malformed settings/models JSON reports its file without echoing parser content fragments.
+
+- Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor
+- Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
+
+### Fixed
 
 - Custom-message runs emit `before_agent_start` through the shared startup lifecycle, including busy, queued and cancelled starts.
 - Expand `~` in resource patterns, exit print mode nonzero on truncated responses, and retry transient Windows auth-lock `EPERM` within the existing bound.
@@ -100,49 +149,7 @@
 - Fixed the web page offering Fork on a conversation that has no entries yet. The header and the conversations panel keep the control and disable it until there is an entry to fork from
 - Fixed the Dashboard offering a close badge for the current session, which cannot be deleted from there; the close column stays blank so ages keep their alignment, and `Ctrl+X` on it reports that the session stays open
 
-### Added
-
-- `sessionShareDestination` selects automatic, Radius or private GitHub Gist sharing; an explicit Radius destination never falls back to Gist.
-- NVIDIA RTX llama.cpp recipe conversion guide and prerequisites, adapted to AmazMe commands.
-
-- `AMAZME_CLIPBOARD_OSC52` forces OSC 52 copies; codemode rows report execution and total elapsed time.
-
-- Native CLI image arguments and every message now reach the existing Durable input queue. Clipboard images attach to the draft, support image-only submission and `/attachments` removal, and retain input ownership across preparation, cancellation and close. Native and SDK prompts share image normalization and the clipboard content reader.
-
-- Native `--models` and saved `enabledModels` now control startup selection and ordered forward/backward cycling through the existing resolver and ModelRuntime. Scope thinking suffixes, authentication changes, current-conversation persistence and custom cycle keybindings are honored without changing global defaults.
-
-- Hosted model services and terminal clients use the same provider interaction owner for `/login` and `/logout`. Active sign-in keeps the worker alive; plugin reload preserves its prompt, while late submissions remain bound to their flow and session.
-
-- Native `/login` and `/logout` reuse the provider interaction owner and ModelRuntime credential APIs, including provider/method selection, prompt expiry, owned cancellation and close cleanup. OAuth identity remains Pi's.
-
-- Native plugins use Durable `output`, `structuredOutputSchema` and `executeTool`; MCP, codemode, workflow and verification calls share owned tasks and scoped result retirement.
-- Native image reading uses provider limits and the existing image worker; standalone Durable hosts may explicitly load Photon.
-
-- Published the existing durable host, terminal client and Web entry through the formal CLI and compiled package, with prebuilt browser assets and lazy host command dispatch
-
-- Added optional JSON workflows over existing Durable jobs, with isolated agent contexts, bounded background concurrency, saved templates, persistent pause/resume, owned cancellation, and independent command evidence
-- Added the local `AgentRuntime` service for trusted plugins to access the selected conversation's existing Harness
-
-- Added an optional native completion-verification plugin with explicit command checks, bounded corrective requests, independent receipts, persistent deadlines, owned cancellation, and recovery without replaying interrupted unsafe commands
-
-- Added on-demand `amazme doctor` and Web read-only diagnostics with shared status codes and repair guidance; no credential resolution, provider calls, subprocesses, locks, or automatic repairs
-
-- Added ordered `+name`/`-name` tool selection to the SDK and print/RPC CLI, with shared validation before runtime creation and preservation across settings reloads
-- Added a reply preview to the Dashboard: a `Response` panel above the composer shows the latest reply of the session under the cursor, so several sessions can be assigned work without opening them
-
-### Changed
-
-- Product plugin and session consumers use Chord protocol 4, explicit host and parent principals, placed contracts and hydrated references. Coordinator protocol is 5; product services use the services: host family.
-
-- Native plugins, session workers, hosted clients, Web and desktop use the new Chord Host runtime. Plugin ESM artifacts load through `nodeLoader`; resource ownership, state hydration, reload and cancellation share its lifecycle. Coordinator protocol is 4.
-- OpenRouter refreshes and persists the current key's available catalog. MCP resources are fetched on demand rather than preloaded on connect.
-- Codemode result declarations use tool-owned schemas and `reachesTools`; aliases and nested discovery share the current callable tool set.
-
-- Native CLI help and model listing bypass SDK factories; startup verbosity, settings diagnostics and model labels reflect the actual Durable session. The startup benchmark now initializes that same TUI and releases its normal resources. Removed the ineffective Dashboard CLI option and the alternate SDK terminal dispatch; SDK Print/RPC extension flags remain available in their own invocation.
-- Malformed settings/models JSON reports its file without echoing parser content fragments.
-
-- Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor
-- Changed the Dashboard roster to read as one visual block: the cursor frames its session row while the current session keeps its background, state chips in the header (`1 working │ ◇ 1 idle`), each group heading carrying its own dim rule, `◇` for idle sessions, `just now` for recent sessions, and `+ New Agent` naming the create action
+统一版本号前 @amazme/coding-agent 自己的编号
 
 ## [1.1.0] - 2026-10-07
 

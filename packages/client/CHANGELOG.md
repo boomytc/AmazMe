@@ -8,6 +8,8 @@
 
 - `openLink()` provides native Chord links scoped to an attachment generation; acknowledged close joins pending calls and channel cleanup before disposal.
 
+统一版本号前 @amazme/client 自己的编号
+
 ## [1.1.0] - 2026-10-07
 
 ## [1.0.4] - 2026-10-05

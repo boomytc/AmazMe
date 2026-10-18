@@ -12,15 +12,6 @@
 
 ## [1.1.1] - 2026-10-18
 
-- OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.
-- Anthropic strict-tool `prefer` requests retry once without strict limits after a recognized rejection; `require`, cancellation and started streams retain their original behavior.
-- Gateway upstream-provider errors are recognized as retryable.
-
-- Shared compatibility and model configuration schemas now derive public types from the same contract used by models.json.
-- Mistral request deadlines apply only until response headers arrive, including when no caller cancellation signal is supplied; active streams continue beyond that deadline.
-- Claude 5.5 catalog metadata comes from models.dev instead of hardcoded fallbacks.
-- Moved API-key environment discovery into `utils/api-key-env` so read-only consumers avoid the compatibility registry and ambient credential probes; existing environment behavior and Pi OAuth identities are unchanged
-
 ### Added
 
 - `hasContextRecoveryHeadroom()` shares the shrink and output-reserve checks used before retrying a rejected context.
@@ -43,6 +34,17 @@
 ### Removed
 
 - Removed the unused assistant-message frame encoder, reducer and public export; assistant message events remain the streaming API.
+
+- OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.
+- Anthropic strict-tool `prefer` requests retry once without strict limits after a recognized rejection; `require`, cancellation and started streams retain their original behavior.
+- Gateway upstream-provider errors are recognized as retryable.
+
+- Shared compatibility and model configuration schemas now derive public types from the same contract used by models.json.
+- Mistral request deadlines apply only until response headers arrive, including when no caller cancellation signal is supplied; active streams continue beyond that deadline.
+- Claude 5.5 catalog metadata comes from models.dev instead of hardcoded fallbacks.
+- Moved API-key environment discovery into `utils/api-key-env` so read-only consumers avoid the compatibility registry and ambient credential probes; existing environment behavior and Pi OAuth identities are unchanged
+
+统一版本号前 @amazme/ai 自己的编号
 
 ## [1.1.0] - 2026-10-07
 

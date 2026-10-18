@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+统一版本号前 @amazme/agent 自己的编号
+
 ## [1.1.0] - 2026-10-07
 
 ### Added
