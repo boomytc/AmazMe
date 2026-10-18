@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-18
+
 ### Added
 
 - `settings.compaction.modelOverrides` sets compaction thresholds per model, keyed by exact `"provider/modelId"`, so one harness can serve small- and large-window models; the threshold check, overflow recovery, and the compaction task use the entry of the model they act for ([#10942](https://github.com/earendil-works/pi/issues/10942)).
@@ -15,37 +17,11 @@
 
 - The README's Errors section now limits the `StorageRequestError` exemption to reads: a `StorageRequestError` thrown by `commit()` or `mintId()` fails the Harness like any other storage error ([#11014](https://github.com/earendil-works/pi/issues/11014)).
 
-## [1.3.0] - 2026-10-16
+## [1.1.1] - 2026-10-18
 
 ### Added
 
 - `SqliteStorage.open(database, { prefix })` namespaces every table and index; `openNodeSqliteStorage()` and `openDurableObjectSqliteStorage()` forward the prefix for databases shared with host tables.
-
-### Changed
-
-- Cloudflare Durable Object SQLite adapters created for the same storage object share one operation queue, so several storages can use one Durable Object database.
-
-### Fixed
-
-- Reopening a current SQLite schema no longer takes a writer lock. Newer or missing schema metadata is rejected before mutation; required migrations still recheck their version under the transaction lock and roll back atomically.
-- Overflow recovery checks the final request after projection and request hooks, and retries only when it shrank and restored the configured output reserve. Generation version 4 retains the rejected request size across deferred polling and restart; an older pending recovery without that evidence ends with its original error.
-- After compaction retains assistant messages, the generated system baseline leads the projected context without reordering stored entries or later system updates; incremental and whole reads agree.
-- Image base64 encoding uses bounded byte chunks and btoa instead of retaining concatenation trees; the 3 MiB/128 MB heap regression is covered.
-
-
-## [1.2.0] - 2026-10-13
-
-### Breaking Changes
-
-- `ToolTaskInput` and `ToolTaskResult` are tagged unions: a model-issued call is `{ kind: "model", ... }` with its previous fields, a nested call `{ kind: "nested", ... }`. `amazme.tool` is version 2 and migrates live version 1 tasks. Previously executing AmazMe tasks are marked unsafe to replay because the old nested call keys cannot be reattached.
-- `NestedResultDoc` is replaced by `NestedCallDoc`, keyed by call key rather than child task ID, holding `{ taskId, result? }`. On open, live callers' previous index and result documents migrate before scheduling so completed tools are not executed again.
-- `ToolExecutionResult.content` is now `output`, next to the new `structuredOutput`.
-- `bash` and `powershell` answer a nonzero exit with an error result carrying an `exit_code` diagnostic, instead of throwing (`tool_error`).
-- Any error a `Storage` method throws, a read included, now fails the Session, which closes itself: every later call and every pending wait rejects with `SessionFailed`, whose `cause` is that error, and nothing is retried. `StorageRejected` is removed; a storage retries its own transient failures and throws the new `StorageRequestError` for an invalid request, which fails only that call. A throw in the scheduler's own commits, or in the commit listeners of the Harness's components, fails the Session too.
-- `subscribeCommits()` and `subscribeClose()` listeners that throw, or return a rejected promise, are reported through `onReport` instead of failing the operation that ran them.
-- A display-only write submission, one of only `kind` and `data` (no `model`, `head`, or `edits`), is appended and settled `done` at once, even while the conversation is busy or has queued items, instead of waiting in `amazme.inbox` for the next boundary; only a queued reset still holds it back, so the reset does not hide it. It changes nothing the model sees, so a chat message shows as soon as it is sent, ahead of earlier submissions still queued, and it no longer places items left queued after a failed run ([#10407](https://github.com/earendil-works/pi/issues/10407)).
-
-### Added
 
 - `@amazme/durable/tool-search` and `tool-search/search` provide bounded tool discovery and shared ranking. AmazMe retains its existing exposure and persistent activation contract instead of adding a second deferred flag.
 - Optional `ExecutionEnv.listFiles()` enumerates file trees with explicit bounds and cancellation; environments without this capability reject the operation.
@@ -69,7 +45,16 @@
 - `read` returns images as one image block instead of an `unsupported_image` error: PNG, JPEG, GIF, and WebP within the model's image limits (by default 2000x2000 pixels and 4.5 MB of base64) as they are, or, with `createCodingTools({ images })`, oriented, converted, and shrunk to fit. `@amazme/durable/images` provides a Photon (WebAssembly) image processor, with `/images/node` and `/images/cloudflare` loaders; `/images/node` prepares images in a worker thread, so a large photo never blocks the event loop, and the thread exits after 30 s without images; nothing loads it unless imported. A model without image input gets a diagnostic saying it sees a placeholder.
 - `amazme.live.compactionFailure` keeps the newest compaction failure (task, reason, error) until a compaction produces a summary; the agent events' snapshot carries it as `compactionFailure`, and `compaction_end` carries `error` for a compaction that failed. A failed background or manual compaction was invisible once its status was removed.
 
+### Changed
+
+- Cloudflare Durable Object SQLite adapters created for the same storage object share one operation queue, so several storages can use one Durable Object database.
+
 ### Fixed
+
+- Reopening a current SQLite schema no longer takes a writer lock. Newer or missing schema metadata is rejected before mutation; required migrations still recheck their version under the transaction lock and roll back atomically.
+- Overflow recovery checks the final request after projection and request hooks, and retries only when it shrank and restored the configured output reserve. Generation version 4 retains the rejected request size across deferred polling and restart; an older pending recovery without that evidence ends with its original error.
+- After compaction retains assistant messages, the generated system baseline leads the projected context without reordering stored entries or later system updates; incremental and whole reads agree.
+- Image base64 encoding uses bounded byte chunks and btoa instead of retaining concatenation trees; the 3 MiB/128 MB heap regression is covered.
 
 - Reject waits that close a task wait cycle, including cycles through ordinary owned work.
 - Codemode declarations derive results from each tool's schema and `reachesTools`, without shared MCP types or output-shape detection; output joining is linear.
@@ -86,6 +71,16 @@
 - A task whose fault write failed no longer runs again in the same process.
 - The scheduler no longer visits every live task on each pass: abort cascades start only from tasks with cancellation intent, owned live work and idle scopes are walks down an in-memory ownership index, and reservation, finalization, and failFast checks keep their own candidate sets. Each nested call has its own document instead of rewriting one growing index. `npm run bench:scheduler-fanout` measures up to AmazMe's limit of 256 nested calls per invocation.
 - The scheduler's ownership indexes are bounded by live work: it keeps a conversation's owner and an ended task's ownership only while live work is below them, instead of every conversation and subagent chain it ever saw. Work that later appears in an old conversation loads its chain from storage again (`npm run bench:scheduler-memory`). A queued input no longer makes the scheduler scan every queued submission when nothing is being cancelled.
+
+### Breaking Changes
+
+- `ToolTaskInput` and `ToolTaskResult` are tagged unions: a model-issued call is `{ kind: "model", ... }` with its previous fields, a nested call `{ kind: "nested", ... }`. `amazme.tool` is version 2 and migrates live version 1 tasks. Previously executing AmazMe tasks are marked unsafe to replay because the old nested call keys cannot be reattached.
+- `NestedResultDoc` is replaced by `NestedCallDoc`, keyed by call key rather than child task ID, holding `{ taskId, result? }`. On open, live callers' previous index and result documents migrate before scheduling so completed tools are not executed again.
+- `ToolExecutionResult.content` is now `output`, next to the new `structuredOutput`.
+- `bash` and `powershell` answer a nonzero exit with an error result carrying an `exit_code` diagnostic, instead of throwing (`tool_error`).
+- Any error a `Storage` method throws, a read included, now fails the Session, which closes itself: every later call and every pending wait rejects with `SessionFailed`, whose `cause` is that error, and nothing is retried. `StorageRejected` is removed; a storage retries its own transient failures and throws the new `StorageRequestError` for an invalid request, which fails only that call. A throw in the scheduler's own commits, or in the commit listeners of the Harness's components, fails the Session too.
+- `subscribeCommits()` and `subscribeClose()` listeners that throw, or return a rejected promise, are reported through `onReport` instead of failing the operation that ran them.
+- A display-only write submission, one of only `kind` and `data` (no `model`, `head`, or `edits`), is appended and settled `done` at once, even while the conversation is busy or has queued items, instead of waiting in `amazme.inbox` for the next boundary; only a queued reset still holds it back, so the reset does not hide it. It changes nothing the model sees, so a chat message shows as soon as it is sent, ahead of earlier submissions still queued, and it no longer places items left queued after a failed run ([#10407](https://github.com/earendil-works/pi/issues/10407)).
 
 ## [1.1.0] - 2026-10-07
 

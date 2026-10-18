@@ -2,13 +2,24 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-18
+
 ### Fixed
 
 - Fixed whitespace-only tool output (for example a bare `\r\n` from bash) being sent as-is to OpenAI Completions, OpenAI Responses, and Google providers; it now uses the same placeholder as empty output, since some providers reject whitespace-only tool content with a 400 ([#8720](https://github.com/earendil-works/pi/issues/8720)).
 - Fixed automatic retry not triggering for gateway upstream failures such as `upstream_error: Upstream request failed`, `upstream_stream_read_error`, and `Upstream HTTP/2 stream failed` ([#10920](https://github.com/earendil-works/pi/issues/10920)).
 - Fixed automatic retry not triggering when the Google Vertex OAuth token refresh fails with a transient network error such as `request to https://oauth2.googleapis.com/token failed, reason:` ([#10996](https://github.com/earendil-works/pi/issues/10996)).
 
-## [1.3.0] - 2026-10-16
+## [1.1.1] - 2026-10-18
+
+- OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.
+- Anthropic strict-tool `prefer` requests retry once without strict limits after a recognized rejection; `require`, cancellation and started streams retain their original behavior.
+- Gateway upstream-provider errors are recognized as retryable.
+
+- Shared compatibility and model configuration schemas now derive public types from the same contract used by models.json.
+- Mistral request deadlines apply only until response headers arrive, including when no caller cancellation signal is supplied; active streams continue beyond that deadline.
+- Claude 5.5 catalog metadata comes from models.dev instead of hardcoded fallbacks.
+- Moved API-key environment discovery into `utils/api-key-env` so read-only consumers avoid the compatibility registry and ambient credential probes; existing environment behavior and Pi OAuth identities are unchanged
 
 ### Added
 
@@ -32,18 +43,6 @@
 ### Removed
 
 - Removed the unused assistant-message frame encoder, reducer and public export; assistant message events remain the streaming API.
-
-
-## [1.2.0] - 2026-10-13
-
-- OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.
-- Anthropic strict-tool `prefer` requests retry once without strict limits after a recognized rejection; `require`, cancellation and started streams retain their original behavior.
-- Gateway upstream-provider errors are recognized as retryable.
-
-- Shared compatibility and model configuration schemas now derive public types from the same contract used by models.json.
-- Mistral request deadlines apply only until response headers arrive, including when no caller cancellation signal is supplied; active streams continue beyond that deadline.
-- Claude 5.5 catalog metadata comes from models.dev instead of hardcoded fallbacks.
-- Moved API-key environment discovery into `utils/api-key-env` so read-only consumers avoid the compatibility registry and ambient credential probes; existing environment behavior and Pi OAuth identities are unchanged
 
 ## [1.1.0] - 2026-10-07
 
