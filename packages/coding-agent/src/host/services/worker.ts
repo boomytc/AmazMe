@@ -204,7 +204,8 @@ export async function createSessionWorkerServices(options: {
 		pluginRuntimeFacet,
 		// Plugins register their commands here, and the catalogue lists them: one command surface for
 		// the terminal client, the page, and a desktop client.
-		createSlashCommandsRuntimeFacet(new SlashCommandRegistry(NATIVE_COMMANDS.map(command => command.name))),
+		// /share is registered by the host facet below. Reserving the name makes that registration fail.
+		createSlashCommandsRuntimeFacet(new SlashCommandRegistry(NATIVE_COMMANDS.filter((command) => command.name !== "share").map((command) => command.name))),
 		createShareCommandFacet({
 			conversation: options.conversation,
 			cwd: options.cwd,

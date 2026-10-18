@@ -99,7 +99,14 @@ describe("compiled CLI tool selection", () => {
 		);
 		expect(result.stdout).toContain("fixture answer");
 		expect(payloads).toHaveLength(1);
-		expect(payloads[0].tools?.map((tool) => tool.function.name).sort()).toEqual(["bash", "edit", "grep", "read"]);
+		expect(payloads[0].tools?.map((tool) => tool.function.name).sort()).toEqual([
+			"bash",
+			"context_detail",
+			"edit",
+			"grep",
+			"read",
+			"subagent",
+		]);
 	});
 
 	it("rejects a mixed list before profile creation and provider I/O", async () => {

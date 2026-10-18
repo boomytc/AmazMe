@@ -446,6 +446,28 @@ export async function main(args: string[]) {
 		projectTrustContext: createProjectTrustContext({ cwd, mode: appMode, settingsManager: startupSettingsManager, hasUI: false }),
 	});
 	startupSettingsManager.setProjectTrusted(projectTrusted);
+	// --mode json/rpc and --print are not plain metadata, so --help still installs project packages
+	// first. Stdout is already taken over, which keeps that chatter and the usage text off stdout.
+	if (parsed.help || parsed.listModels !== undefined) {
+		const { DefaultResourceLoader } = await import("./core/resource-loader.ts");
+		await new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			settingsManager: startupSettingsManager,
+			noExtensions: true,
+		}).reload();
+		if (parsed.help) {
+			printHelp();
+			restoreStdout();
+			return;
+		}
+		reportDiagnostics(startupSettingsDiagnostics);
+		configureHttpDispatcher(startupSettingsManager.getHttpIdleTimeoutMs());
+		const modelRuntime = await ModelRuntime.create({ signal: AbortSignal.timeout(15_000) });
+		await listModels(modelRuntime, typeof parsed.listModels === "string" ? parsed.listModels : undefined, AbortSignal.timeout(15_000));
+		restoreStdout();
+		return;
+	}
 	const sessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
 	const continuing = parsed.continue === true || parsed.resume === true;
 	const durableOptions = {
