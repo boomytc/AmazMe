@@ -11,6 +11,17 @@ import {
 } from "./program-status.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
 import { isStrayTerminalInput } from "./stray-input.ts";
+import {
+	BRACKETED_PASTE_ON,
+	CURSOR_HIDE,
+	CURSOR_SHOW,
+	KITTY_KEYBOARD_POP,
+	MODIFY_OTHER_KEYS_OFF,
+	MODIFY_OTHER_KEYS_ON,
+	terminalRestoreDefaults,
+	terminalRestoreSequence,
+	type TerminalModeRestore,
+} from "./terminal-restore.ts";
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -73,6 +84,21 @@ export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boole
 	return normalizeNativeShiftEnterInput(data, isAppleTerminal, isShiftPressed);
 }
 
+/** Flush terminal bytes. Falls back to {@link Terminal.write} when no sync write is available. */
+export function commitTerminalOutput(terminal: Terminal, data: string): void {
+	if (data.length === 0) return;
+	if (terminal.writeSync) {
+		terminal.writeSync(data);
+		return;
+	}
+	terminal.write(data);
+}
+
+export interface TerminalStopOptions {
+	/** The caller already wrote {@link terminalRestoreSequence} for this stop. */
+	readonly sequenceWritten?: boolean;
+}
+
 /**
  * Minimal terminal interface for TUI
  */
@@ -81,7 +107,13 @@ export interface Terminal {
 	start(onInput: (data: string) => void, onResize: () => void): void;
 
 	// Stop the terminal and restore state
-	stop(): void;
+	stop(options?: TerminalStopOptions): void;
+
+	/**
+	 * Modes this terminal turned on, consumed so a later stop does not repeat them.
+	 * `TUI.stop` merges the result into {@link terminalRestoreSequence}.
+	 */
+	takeRestoreModes?(): TerminalModeRestore;
 
 	/**
 	 * Drain stdin before exiting to prevent Kitty key release events from
@@ -93,6 +125,12 @@ export interface Terminal {
 
 	// Write output to terminal
 	write(data: string): void;
+
+	/**
+	 * Write and return only after the bytes are handed to the terminal.
+	 * Stop uses this so a following `process.exit` cannot drop the restore.
+	 */
+	writeSync?(data: string): void;
 
 	// Get terminal dimensions
 	get columns(): number;
@@ -155,6 +193,8 @@ export class ProcessTerminal implements Terminal {
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
 	private keyboardProtocolPushed = false;
+	/** Set when start() enables bracketed paste, cleared when that mode is given back. */
+	private bracketedPasteEnabled = false;
 	/** DA1 replies owed to keyboard protocol queries. Later DA1 replies answer other queries and are forwarded. */
 	private pendingKeyboardProtocolDeviceAttributes = 0;
 	private keyboardProtocolNegotiationBuffer = "";
@@ -204,7 +244,8 @@ export class ProcessTerminal implements Terminal {
 		process.stdin.resume();
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
-		process.stdout.write("\x1b[?2004h");
+		this.bracketedPasteEnabled = true;
+		process.stdout.write(BRACKETED_PASTE_ON);
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.resizeHandler);
@@ -405,13 +446,13 @@ export class ProcessTerminal implements Terminal {
 
 	private enableModifyOtherKeys(): void {
 		if (this._kittyProtocolActive || this._modifyOtherKeysActive) return;
-		process.stdout.write("\x1b[>4;2m");
+		process.stdout.write(MODIFY_OTHER_KEYS_ON);
 		this._modifyOtherKeysActive = true;
 	}
 
 	private disableModifyOtherKeys(): void {
 		if (!this._modifyOtherKeysActive) return;
-		process.stdout.write("\x1b[>4;0m");
+		this.writeSync(MODIFY_OTHER_KEYS_OFF);
 		this._modifyOtherKeysActive = false;
 	}
 
@@ -435,8 +476,8 @@ export class ProcessTerminal implements Terminal {
 		this.clearKeyboardProtocolNegotiationBuffer();
 		if (shouldDisableKittyProtocol) {
 			// Disable Kitty keyboard protocol first so any late key releases
-			// do not generate new Kitty escape sequences.
-			process.stdout.write("\x1b[<u");
+			// do not generate new Kitty escape sequences. Same pop as the shared restore.
+			this.writeSync(KITTY_KEYBOARD_POP);
 			this.keyboardProtocolPushed = false;
 			this._kittyProtocolActive = false;
 			setKittyProtocolActive(false);
@@ -468,31 +509,30 @@ export class ProcessTerminal implements Terminal {
 		}
 	}
 
-	stop(): void {
-		if (this.clearProgressInterval()) {
-			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
-		}
-		// Remove the status while stopped, for example after exit or while suspended. start() reports it again.
-		if (this.programStatusSupported && this.programStatus) {
-			process.stdout.write(formatProgramStatus({ state: "clear" }));
-		}
+	takeRestoreModes(): TerminalModeRestore {
+		this.clearKeyboardProtocolNegotiationBuffer();
+		const modes: TerminalModeRestore = {
+			progressClear: this.clearProgressInterval() ? TERMINAL_PROGRESS_CLEAR_SEQUENCE : "",
+			programStatusClear:
+				this.programStatusSupported && this.programStatus ? formatProgramStatus({ state: "clear" }) : "",
+			bracketedPaste: this.bracketedPasteEnabled,
+			kittyKeyboard: this.keyboardProtocolPushed || this._kittyProtocolActive,
+			modifyOtherKeys: this._modifyOtherKeysActive,
+		};
+		this.bracketedPasteEnabled = false;
+		this.keyboardProtocolPushed = false;
+		this._kittyProtocolActive = false;
+		setKittyProtocolActive(false);
+		this._modifyOtherKeysActive = false;
 		this.programStatusSupported = false;
 		this.programStatusQueryPending = false;
+		return modes;
+	}
 
-		// Disable bracketed paste mode
-		process.stdout.write("\x1b[?2004l");
-
-		const shouldDisableKittyProtocol = this.keyboardProtocolPushed || this._kittyProtocolActive;
-		this.clearKeyboardProtocolNegotiationBuffer();
-
-		// Disable Kitty keyboard protocol if not already done by drainInput()
-		if (shouldDisableKittyProtocol) {
-			process.stdout.write("\x1b[<u");
-			this.keyboardProtocolPushed = false;
-			this._kittyProtocolActive = false;
-			setKittyProtocolActive(false);
+	stop(options?: TerminalStopOptions): void {
+		if (!options?.sequenceWritten) {
+			this.writeSync(terminalRestoreSequence({ ...terminalRestoreDefaults(), ...this.takeRestoreModes() }));
 		}
-		this.disableModifyOtherKeys();
 
 		// Clean up StdinBuffer
 		if (this.stdinBuffer) {
@@ -524,12 +564,33 @@ export class ProcessTerminal implements Terminal {
 
 	write(data: string): void {
 		process.stdout.write(data);
-		if (this.writeLogPath) {
-			try {
-				fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
-			} catch {
-				// Ignore logging errors
+		this.appendWriteLog(data);
+	}
+
+	writeSync(data: string): void {
+		if (data.length === 0) return;
+		// `fs.writeSync` may hand the kernel only part of the buffer. A short
+		// write must continue, or the tail of an exit sequence never leaves.
+		const bytes = Buffer.from(data);
+		let offset = 0;
+		try {
+			while (offset < bytes.length) {
+				const written = fs.writeSync(process.stdout.fd, bytes, offset, bytes.length - offset);
+				if (written <= 0) break;
+				offset += written;
 			}
+		} catch {
+			// Stdout can be gone while the process is exiting. Keep restoring the rest.
+		}
+		this.appendWriteLog(data);
+	}
+
+	private appendWriteLog(data: string): void {
+		if (!this.writeLogPath || data.length === 0) return;
+		try {
+			fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
+		} catch {
+			// Ignore logging errors
 		}
 	}
 
@@ -553,11 +614,11 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	hideCursor(): void {
-		process.stdout.write("\x1b[?25l");
+		process.stdout.write(CURSOR_HIDE);
 	}
 
 	showCursor(): void {
-		process.stdout.write("\x1b[?25h");
+		process.stdout.write(CURSOR_SHOW);
 	}
 
 	clearLine(): void {

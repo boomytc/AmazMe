@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import type { TerminalStopOptions } from "../src/terminal.ts";
 import {
 	AltScreenSearchComponent,
 	AltScreenSearchIndex,
@@ -55,9 +56,9 @@ class RecordingTerminal extends VirtualTerminal {
 		super.write(data);
 	}
 
-	override stop(): void {
+	override stop(options?: TerminalStopOptions): void {
 		this.events.push({ type: "stop" });
-		super.stop();
+		super.stop(options);
 	}
 }
 

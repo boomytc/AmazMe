@@ -48,11 +48,17 @@ export async function runDurableInteractive(
 				forced = true;
 				exitTui();
 			},
-			// Raw-mode Ctrl-C is a key (`app.clear`), not SIGINT. The first press
-			// stops the screen without `process.exit`. A second press, or a SIGINT
-			// once raw mode is off and `close` is still running, force-exits.
+			// Raw-mode Ctrl-C is a key (`app.clear`), not SIGINT. The first press is the
+			// same graceful finish as the first signal: stop, close, exit 0, with the
+			// listeners kept until `process.exit`. Once the screen is restored the terminal
+			// is back in cooked mode, so a second Ctrl-C arrives as SIGINT; dropping the
+			// listeners before exit would let that signal kill the process.
+			// A second press, or that SIGINT while `close` is still running, force-exits.
 			clear() {
-				shutdown.key(() => exitTui());
+				shutdown.key(() => {
+					forced = true;
+					exitTui();
+				});
 			},
 		});
 		returned = true;

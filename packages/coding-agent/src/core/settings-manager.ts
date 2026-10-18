@@ -18,7 +18,6 @@ import type {
 	CacheWarmingMode,
 	CompactionModelOverride,
 	DefaultProjectTrust,
-	FullscreenExitOutput,
 	MermaidRenderingMode,
 	PackageSource,
 	QuietStartup,
@@ -44,7 +43,6 @@ export type {
 	CompactionModelOverride,
 	CompactionSettings,
 	DefaultProjectTrust,
-	FullscreenExitOutput,
 	ImageSettings,
 	MarkdownSettings,
 	MermaidRenderingMode,
@@ -1439,18 +1437,6 @@ export class SettingsManager {
 	setTuiMode(mode: TuiMode): void {
 		this.globalSettings.tuiMode = mode;
 		this.markModified("tuiMode");
-		this.save();
-	}
-
-	getFullscreenExitOutput(): FullscreenExitOutput {
-		return this.settings.fullscreenExitOutput === "resume-hint"
-			? "resume-hint"
-			: SETTINGS_DEFAULTS.fullscreenExitOutput;
-	}
-
-	setFullscreenExitOutput(output: FullscreenExitOutput): void {
-		this.globalSettings.fullscreenExitOutput = output;
-		this.markModified("fullscreenExitOutput");
 		this.save();
 	}
 
