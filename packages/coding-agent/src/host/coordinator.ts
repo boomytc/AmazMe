@@ -1,4 +1,6 @@
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
@@ -185,6 +187,8 @@ export class CoordinatorConnection {
 
 export interface CoordinatorStartupLease {
 	close(): void;
+	/** Stops a coordinator this call spawned, after its sockets are gone. */
+	stop?(): Promise<void>;
 }
 
 export async function ensureCoordinator(publicPath: string, controlPath: string): Promise<CoordinatorStartupLease> {
@@ -194,16 +198,45 @@ export async function ensureCoordinator(publicPath: string, controlPath: string)
 	const deadline = Date.now() + COORDINATOR_START_TIMEOUT_MS;
 	while (true) {
 		const socket = await tryConnect(controlPath);
-		if (socket) return { close: () => socket.destroy() };
+		if (socket) return { close: () => socket.destroy(), stop: stopSpawnedCoordinator(child) };
 		if (child.exitCode !== null || child.signalCode !== null) {
 			const detail = internalProcessStderr(child);
 			throw new Error(
 				`Coordinator exited during startup (code ${String(child.exitCode)}, signal ${String(child.signalCode)})${detail === "" ? "" : `: ${detail}`}`,
 			);
 		}
-		if (Date.now() >= deadline) throw new Error("Timed out waiting for coordinator startup");
+		if (Date.now() >= deadline) {
+			await stopSpawnedCoordinator(child)();
+			throw new Error("Timed out waiting for coordinator startup");
+		}
 		await new Promise<void>((resolve) => setTimeout(resolve, COORDINATOR_RETRY_MS));
 	}
+}
+
+function stopSpawnedCoordinator(child: ChildProcess): () => Promise<void> {
+	return async () => {
+		if (child.pid === undefined) return;
+		// Spawn leaves the child unref'd. Keep it referenced until it exits so
+		// this process cannot drain its event loop, and its signal handlers,
+		// before the coordinator has unlinked the sockets.
+		child.ref();
+		const exited = once(child, "exit");
+		if (child.exitCode !== null || child.signalCode !== null) {
+			child.unref();
+			return;
+		}
+		try {
+			child.kill("SIGTERM");
+		} catch (error) {
+			const code = error instanceof Error && "code" in error ? error.code : undefined;
+			if (code !== "ESRCH") throw error;
+		}
+		try {
+			await exited;
+		} finally {
+			child.unref();
+		}
+	};
 }
 
 function connectSocket(path: string): Promise<Socket> {
@@ -315,8 +348,10 @@ export async function runCoordinatorProcess(args: readonly string[]): Promise<vo
 	publicPath = requestedPublicPath;
 	controlPath = requestedControlPath;
 	running = true;
-	process.once("SIGINT", () => void shutdownCoordinator());
-	process.once("SIGTERM", () => void shutdownCoordinator());
+	// Stay installed for the whole shutdown. A second signal must not take the
+	// default action while socket unlink is still in progress.
+	process.on("SIGINT", () => void shutdownCoordinator());
+	process.on("SIGTERM", () => void shutdownCoordinator());
 	await main();
 }
 

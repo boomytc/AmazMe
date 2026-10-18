@@ -774,6 +774,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 	let backend: RunningServerBackend | undefined;
 	let coordinator: CoordinatorConnection | undefined;
 	let startupLease: CoordinatorStartupLease | undefined;
+	let stopCoordinator: (() => Promise<void>) | undefined;
 	let workers: SessionWorkerManager | undefined;
 	let relay: RadiusRelayHost | undefined;
 	let released = false;
@@ -864,6 +865,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
 		const serverPath = join(socketDirectory, `server-${serverId}-${serverNonce}.sock`);
 		startupLease = await ensureCoordinator(socketPath, controlPath);
+		stopCoordinator = startupLease.stop;
 		coordinator = new CoordinatorConnection({ controlPath, endpoint: serverPath });
 		const sessionDir = resolveSessionDirectory(options.sessionDir);
 		workers = new SessionWorkerManager(coordinator, sessionDir, workerModel, (count) =>
@@ -930,6 +932,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 							else await activeWorkers.shutdown();
 						} finally {
 							activeCoordinator.close();
+							if (!activeCoordinator.wasReplaced) await stopCoordinator?.();
 							if (socketDirectory !== undefined) await removeEmptyRelocatedSocketDirectory(socketDirectory);
 						}
 					}
@@ -952,8 +955,13 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			coordinator?.wasReplaced ? undefined : workers?.shutdown(),
 			Promise.resolve(coordinator?.close()),
 			released ? undefined : release(),
+		]);
+		// Unlink runs in the coordinator. Remove the hash directory only after that exit.
+		const stopped = await Promise.allSettled([coordinator?.wasReplaced ? undefined : stopCoordinator?.()]);
+		const removed = await Promise.allSettled([
 			socketDirectory === undefined ? undefined : removeEmptyRelocatedSocketDirectory(socketDirectory),
 		]);
+		cleanup.push(...stopped, ...removed);
 		const cleanupErrors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 		if (cleanupErrors.length > 0) {
 			throw new AggregateError([error, ...cleanupErrors], "Server runtime startup and cleanup failed");
@@ -1008,6 +1016,47 @@ function parseServerModelOptions(value: string | undefined): { provider?: string
 	return provider === undefined ? { model } : { provider, model };
 }
 
+/**
+ * Close after SIGINT or SIGTERM.
+ *
+ * The listener stays installed. `process.once` removes it as soon as the signal
+ * arrives, and `signal-exit` (loaded by proper-lockfile) then re-sends SIGTERM
+ * and kills the process before socket cleanup. Removing the listener after
+ * `close` leaves the same window.
+ */
+export async function closeWhenSignaled(
+	closed: Promise<void>,
+	close: () => Promise<void>,
+	arm?: (finish: () => void) => void,
+): Promise<void> {
+	let settled = false;
+	let resolveWait!: () => void;
+	let rejectWait!: (error: unknown) => void;
+	const done = new Promise<void>((resolve, reject) => {
+		resolveWait = resolve;
+		rejectWait = reject;
+	});
+	const finish = (): void => {
+		if (settled) return;
+		settled = true;
+		resolveWait();
+	};
+	const fail = (error: unknown): void => {
+		if (settled) return;
+		settled = true;
+		rejectWait(error);
+	};
+	process.on("SIGINT", finish);
+	process.on("SIGTERM", finish);
+	arm?.(finish);
+	void closed.then(finish, fail);
+	try {
+		await done;
+	} finally {
+		await close();
+	}
+}
+
 /** Run an automatically activated server until its client and Session demand disappears. */
 export async function runServerProcess(args: readonly string[]): Promise<void> {
 	const [directory, serverId, sessionDir, serializedModel] = args;
@@ -1024,18 +1073,7 @@ export async function runServerProcess(args: readonly string[]): Promise<void> {
 		sessionDir,
 		keepAlive: false,
 		...workerModel });
-	const close = (): void => {
-		void runtime.close().catch(() => {});
-	};
-	process.once("SIGINT", close);
-	process.once("SIGTERM", close);
-	try {
-		await runtime.closed;
-	} finally {
-		process.off("SIGINT", close);
-		process.off("SIGTERM", close);
-		await runtime.close();
-	}
+	await closeWhenSignaled(runtime.closed, () => runtime.close());
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
