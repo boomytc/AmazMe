@@ -114,9 +114,10 @@ const cleanupHeldMarker = "AMZ_TEST_CLEANUP_HELD";
 
 /**
  * Loaded with `--import` in mode `hold`. proper-lockfile releases a lock with `fs.rmdir` on
- * `<dir>.lock`. Only a lock under this run's session directory is held, for up to 15 seconds,
- * so cleanup is still running when the helper's SIGINT arrives. Other locks, such as the
- * profile's `models-store.json.lock` at startup, are untouched.
+ * `<dir>.lock`. For a lock under this run's session directory it prints
+ * {@link cleanupHeldMarker} and never calls the real `rmdir`, so cleanup cannot finish; an
+ * idle interval keeps the event loop alive. The only way out is the helper's SIGINT.
+ * Other locks, such as the profile's `models-store.json.lock` at startup, are untouched.
  */
 const holdPreload = `
 import fs from "node:fs";
@@ -126,7 +127,7 @@ fs.rmdir = function (path, ...rest) {
 	const target = String(path);
 	if (token && target.includes(token) && target.endsWith(".lock")) {
 		fs.writeSync(process.stderr.fd, "\\n${cleanupHeldMarker}\\n");
-		setTimeout(() => rmdir.call(fs, path, ...rest), 15000);
+		setInterval(() => {}, 2 ** 30);
 		return;
 	}
 	return rmdir.call(fs, path, ...rest);
