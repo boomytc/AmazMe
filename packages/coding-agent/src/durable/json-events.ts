@@ -1,4 +1,4 @@
-import type { AssistantMessage, AssistantMessageEvent, Message } from "@amazme/ai";
+import type { AssistantMessage, AssistantMessageEvent, Message, ToolResultMessage } from "@amazme/ai";
 import type { AgentEvent, MessageChange } from "@amazme/durable";
 import { type JsonStreamEvent, toJsonEvent } from "../modes/json-event.ts";
 
@@ -16,6 +16,7 @@ export class DurableJsonEvents {
 	private thinking: string | undefined;
 	private readonly toolArgs = new Map<string, unknown>();
 	private readonly runMessages: Message[] = [];
+	private readonly turnToolResults: ToolResultMessage[] = [];
 
 	translate(event: AgentEvent): JsonStreamEvent[] {
 		switch (event.type) {
@@ -23,6 +24,7 @@ export class DurableJsonEvents {
 				return [];
 			case "run_start":
 				this.runMessages.length = 0;
+				this.resetTurn();
 				return [{ type: "agent_start" }];
 			case "run_end": {
 				const messages = this.runMessages.slice();
@@ -30,6 +32,7 @@ export class DurableJsonEvents {
 				return [{ type: "agent_end", messages, willRetry: false }];
 			}
 			case "turn_start":
+				this.resetTurn();
 				return [{ type: "turn_start" }];
 			case "message_start":
 				if (event.message.role === "assistant") this.message = event.message;
@@ -40,6 +43,8 @@ export class DurableJsonEvents {
 				const message = event.entry.model?.[0];
 				if (message === undefined) return [];
 				this.runMessages.push(message);
+				if (message.role === "assistant") this.message = message;
+				else if (message.role === "toolResult") this.turnToolResults.push(message);
 				return [{ type: "message_end", message }];
 			}
 			case "tool_execution_start":
@@ -108,10 +113,21 @@ export class DurableJsonEvents {
 			}
 			case "submission":
 				return [];
-			case "turn_end":
+			case "turn_end": {
+				const message = this.message;
+				const toolResults = this.turnToolResults.slice();
+				this.turnToolResults.length = 0;
+				if (message === undefined) return [];
+				return [{ type: "turn_end", message, toolResults }];
+			}
 			default:
 				return [];
 		}
+	}
+
+	private resetTurn(): void {
+		this.message = undefined;
+		this.turnToolResults.length = 0;
 	}
 
 	/** One JSON line per change, matching the coding agent's per-delta events. */

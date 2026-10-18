@@ -6,7 +6,7 @@ import type { WebCommand } from "../cli/host/commands/web.ts";
 import { runClient } from "./client.ts";
 import { runClientTui } from "./client-tui.ts";
 import type { RadiusRelayHostStatus } from "./radius-relay.ts";
-import { startForegroundServer } from "./server.ts";
+import { closeWhenSignaled, startForegroundServer } from "./server.ts";
 import { startWebHost, type WebHost } from "./web/host.ts";
 import { watchDesktopParent } from "./desktop-parent.ts";
 
@@ -43,27 +43,8 @@ async function runServerCommand(command: ServerCommand): Promise<void> {
 	console.log(`Socket: ${runtime.socketPath}`);
 	relayOutputReady = true;
 	if (pendingRelayStatus !== undefined) reportRelayStatus(pendingRelayStatus);
-	try {
-		await new Promise<void>((resolve, reject) => {
-			const cleanup = (): void => {
-				process.off("SIGINT", finish);
-				process.off("SIGTERM", finish);
-			};
-			const finish = (): void => {
-				cleanup();
-				resolve();
-			};
-			const fail = (error: unknown): void => {
-				cleanup();
-				reject(error);
-			};
-			process.once("SIGINT", finish);
-			process.once("SIGTERM", finish);
-			void runtime.closed.then(finish, fail);
-		});
-	} finally {
-		await runtime.close();
-	}
+	await closeWhenSignaled(runtime.closed, () => runtime.close());
+	process.exit(process.exitCode ?? 0);
 }
 
 async function runClientCommand(command: ClientCommand): Promise<void> {
@@ -91,6 +72,7 @@ async function runWebCommand(command: WebCommand): Promise<void> {
 		finishParent?.();
 	});
 	let host: WebHost | undefined;
+	let finished = false;
 	try {
 		const running = await startWebHost({
 			...(command.port === undefined ? {} : { port: command.port }),
@@ -99,24 +81,20 @@ async function runWebCommand(command: WebCommand): Promise<void> {
 			...(command.pluginPackages === undefined ? {} : { pluginPackages: command.pluginPackages }),
 		});
 		host = running;
-		if (parentClosed) return;
+		if (parentClosed) {
+			finished = true;
+			return;
+		}
 		for (const line of webLaunchLines(running)) console.log(line);
-		await new Promise<void>((resolve, reject) => {
-			const cleanup = (): void => {
-				process.off("SIGINT", finish);
-				process.off("SIGTERM", finish);
-				finishParent = undefined;
-			};
-			const finish = (): void => { cleanup(); resolve(); };
-			const fail = (error: unknown): void => { cleanup(); reject(error); };
+		await closeWhenSignaled(running.closed, () => running.close(), (finish) => {
 			finishParent = finish;
-			process.once("SIGINT", finish);
-			process.once("SIGTERM", finish);
-			void running.closed.then(finish, fail);
 		});
+		finished = true;
 	} finally {
 		stopParent();
+		finishParent = undefined;
 		await host?.close();
+		if (finished) process.exit(process.exitCode ?? 0);
 	}
 }
 
