@@ -1022,7 +1022,9 @@ function parseServerModelOptions(value: string | undefined): { provider?: string
  * The listener stays installed. `process.once` removes it as soon as the signal
  * arrives, and `signal-exit` (loaded by proper-lockfile) then re-sends SIGTERM
  * and kills the process before socket cleanup. Removing the listener after
- * `close` leaves the same window.
+ * `close` leaves the same window. Callers exit immediately after this returns:
+ * once the loop drains, Node drops the signal watchers and restores the default
+ * action, and a SIGTERM in that gap becomes the process's death signal.
  */
 export async function closeWhenSignaled(
 	closed: Promise<void>,
@@ -1074,6 +1076,7 @@ export async function runServerProcess(args: readonly string[]): Promise<void> {
 		keepAlive: false,
 		...workerModel });
 	await closeWhenSignaled(runtime.closed, () => runtime.close());
+	process.exit(process.exitCode ?? 0);
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {

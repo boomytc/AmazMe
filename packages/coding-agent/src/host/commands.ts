@@ -44,6 +44,7 @@ async function runServerCommand(command: ServerCommand): Promise<void> {
 	relayOutputReady = true;
 	if (pendingRelayStatus !== undefined) reportRelayStatus(pendingRelayStatus);
 	await closeWhenSignaled(runtime.closed, () => runtime.close());
+	process.exit(process.exitCode ?? 0);
 }
 
 async function runClientCommand(command: ClientCommand): Promise<void> {
@@ -71,6 +72,7 @@ async function runWebCommand(command: WebCommand): Promise<void> {
 		finishParent?.();
 	});
 	let host: WebHost | undefined;
+	let finished = false;
 	try {
 		const running = await startWebHost({
 			...(command.port === undefined ? {} : { port: command.port }),
@@ -79,16 +81,20 @@ async function runWebCommand(command: WebCommand): Promise<void> {
 			...(command.pluginPackages === undefined ? {} : { pluginPackages: command.pluginPackages }),
 		});
 		host = running;
-		if (parentClosed) return;
+		if (parentClosed) {
+			finished = true;
+			return;
+		}
 		for (const line of webLaunchLines(running)) console.log(line);
 		await closeWhenSignaled(running.closed, () => running.close(), (finish) => {
 			finishParent = finish;
 		});
-		return;
+		finished = true;
 	} finally {
 		stopParent();
 		finishParent = undefined;
 		await host?.close();
+		if (finished) process.exit(process.exitCode ?? 0);
 	}
 }
 
