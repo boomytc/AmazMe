@@ -57,8 +57,14 @@ function sessionAlreadyOpenError(directory: string, cause: unknown): Error {
 	);
 }
 
+function errorCode(error: unknown): string | undefined {
+	if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+	const code = error.code;
+	return typeof code === "string" ? code : undefined;
+}
+
 /** Fail at once when a live process holds `directory`. A lock older than {@link SESSION_LOCK_STALE_MS} is taken over by proper-lockfile. */
-async function lockSession(directory: string): Promise<() => Promise<void>> {
+export async function lockSession(directory: string): Promise<() => Promise<void>> {
 	try {
 		return await lockfile.lock(directory, {
 			realpath: false,
@@ -66,6 +72,8 @@ async function lockSession(directory: string): Promise<() => Promise<void>> {
 			retries: 0,
 		});
 	} catch (error) {
+		// Only a held lock is a session conflict. Permission and missing-path errors stay as they are.
+		if (errorCode(error) !== "ELOCKED") throw error;
 		throw sessionAlreadyOpenError(directory, error);
 	}
 }

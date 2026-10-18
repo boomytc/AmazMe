@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { hasDurableSession, selectSession, SESSION_LOCK_STALE_MS } from "../src/durable/sessions.ts";
+import { hasDurableSession, lockSession, selectSession, SESSION_LOCK_STALE_MS } from "../src/durable/sessions.ts";
 import type { SessionLocation } from "../src/durable/sessions.ts";
 
 describe("durable session selection", () => {
@@ -99,6 +99,20 @@ describe("durable session selection", () => {
 		} finally {
 			await taken.release();
 		}
+	});
+
+	it("does not rewrite lock errors other than ELOCKED", async () => {
+		const missing = join(directory, "absent-parent", "session");
+		let caught: unknown;
+		try {
+			await lockSession(missing);
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(Error);
+		if (!(caught instanceof Error) || !("code" in caught)) throw new Error("expected an errno exception");
+		expect(caught.code).toBe("ENOENT");
+		expect(caught.message).not.toContain("already open in another process");
 	});
 
 	it("keeps the session lock stale threshold at 10 seconds", async () => {
