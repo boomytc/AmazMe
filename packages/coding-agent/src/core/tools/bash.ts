@@ -225,9 +225,6 @@ function resolveSpawnContext(
 	delete env.AMAZME_REASONING_LEVEL;
 	if (exposeSessionEnvironment && ctx) {
 		const model = ctx.model;
-		env.AMAZME_SESSION_ID = ctx.sessionManager.getSessionId();
-		const sessionFile = ctx.sessionManager.getSessionFile();
-		if (sessionFile) env.AMAZME_SESSION_FILE = sessionFile;
 		if (model) {
 			env.AMAZME_PROVIDER = model.provider;
 			env.AMAZME_MODEL = model.id;

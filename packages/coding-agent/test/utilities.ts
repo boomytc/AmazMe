@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OAuthCredentials } from "@amazme/ai";
 import { builtinProviders } from "@amazme/ai/providers/all";
+import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
 import type {
 	Extension,
