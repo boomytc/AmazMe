@@ -4,7 +4,11 @@ import { resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { SHUTDOWN_FORCE_EXIT_CODE, SHUTDOWN_FORCE_EXIT_MESSAGE } from "../src/utils/shutdown-signals.ts";
+import {
+	forceShutdownExitLine,
+	SHUTDOWN_FORCE_EXIT_CODE,
+	SHUTDOWN_FORCE_EXIT_MESSAGE,
+} from "../src/utils/shutdown-signals.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const fixturePath = resolve(__dirname, "shutdown-signals-fixture.ts");
@@ -172,3 +176,10 @@ async function waitFor(
 		`timed out waiting for ${JSON.stringify(needle)}\nstdout:\n${stdout.join("")}\nstderr:\n${stderr.join("")}\nexit:${String(child.exitCode)} signal:${String(child.signalCode)}`,
 	);
 }
+
+describe("force-exit line", () => {
+	it("clears the echoed ^C on a terminal and writes the plain message to a pipe", () => {
+		expect(forceShutdownExitLine(true)).toBe(`\r\x1b[K${SHUTDOWN_FORCE_EXIT_MESSAGE}\n`);
+		expect(forceShutdownExitLine(false)).toBe(`${SHUTDOWN_FORCE_EXIT_MESSAGE}\n`);
+	});
+});

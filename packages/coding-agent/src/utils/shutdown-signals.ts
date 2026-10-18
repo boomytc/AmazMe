@@ -29,6 +29,16 @@ export const shutdownExit = {
 	},
 };
 
+/**
+ * The stderr line of a force exit. On a terminal it starts with a carriage return and
+ * erase-to-end-of-line: a second Ctrl-C after the TUI has already returned to cooked mode
+ * is echoed by the terminal as `^C`, and the message must not be appended to that echo.
+ * A pipe gets the plain message.
+ */
+export function forceShutdownExitLine(stderrIsTTY: boolean): string {
+	return `${stderrIsTTY ? "\r\x1b[K" : ""}${SHUTDOWN_FORCE_EXIT_MESSAGE}\n`;
+}
+
 export function setShutdownTerminalRestore(restore: (() => void) | undefined): void {
 	restoreTerminal = restore;
 }
@@ -43,7 +53,7 @@ export function forceShutdownExit(): never {
 		// The process still has to leave, even if the screen could not be restored.
 	}
 	try {
-		shutdownExit.writeStderr(`${SHUTDOWN_FORCE_EXIT_MESSAGE}\n`);
+		shutdownExit.writeStderr(forceShutdownExitLine(process.stderr.isTTY === true));
 	} catch {
 		// Stderr can be gone. The process still has to leave.
 	}
