@@ -1035,7 +1035,7 @@ export async function runDurableTui(
 				return;
 			}
 			const nativeName = /^\/([^\s]+)/u.exec(trimmed)?.[1];
-			if (["changes", "limits", "resume_run", "execution"].includes(nativeName ?? "")) return void controller.runCommand(nativeName!, trimmed.slice(nativeName!.length + 1).trim());
+			if (["changes", "limits", "resume-run", "execution"].includes(nativeName ?? "")) return void controller.runCommand(nativeName!, trimmed.slice(nativeName!.length + 1).trim());
 			if (NATIVE_COMMANDS.some(({ name }) => name === nativeName)) {
 				view.mount(new InfoPanel("Command", `Unsupported arguments for /${nativeName}. Type / to inspect the command.`, () => view.restoreEditor()));
 				return;

@@ -18,7 +18,7 @@ The transcript shows prompts, streamed answers, tool arguments, results and fail
 
 The footer shows the focused conversation, saved title, working directory, context usage, cost and keyboard hints. The editor identifies the selected model and thinking level. Resource counts appear at startup unless `quietStartup` hides them; `--verbose` shows them for the current process. Diagnostics remain visible in quiet mode.
 
-`/changes` reviews the latest turn's file changes; `/limits` configures tool-call, elapsed-time and reported-cost budgets; `/resume_run` grants another budget tranche. `/execution` selects the global file-write policy. See [Run controls](run-controls.md) for arguments, persisted pauses and isolation limits.
+`/changes` reviews the latest turn's file changes; `/limits` configures tool-call, elapsed-time and reported-cost budgets; `/resume-run` grants another budget tranche. `/execution` selects the global file-write policy. See [Run controls](run-controls.md) for arguments, persisted pauses and isolation limits.
 
 ## Models, authentication and resources
 

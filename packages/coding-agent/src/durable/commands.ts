@@ -10,7 +10,7 @@ export const NATIVE_COMMANDS = [
 	{ name: "tasks", description: "Show or hide active tasks" },
 	{ name: "changes", description: "Review files changed during the latest turn", argumentHint: "[file]" },
 	{ name: "limits", description: "Show or set per-conversation turn budgets (0 disables)", argumentHint: "[calls seconds USD]" },
-	{ name: "resume_run", description: "Continue a budget-paused turn with another budget" },
+	{ name: "resume-run", description: "Continue a budget-paused turn with another budget" },
 	{ name: "execution", description: "Select Unix file-write isolation", argumentHint: "[full-access|workspace-write|read-only]" },
 	{ name: "agents", description: "Switch conversations" },
 	{ name: "tree", description: "Navigate conversation history" },
