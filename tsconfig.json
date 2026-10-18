@@ -68,5 +68,5 @@
 	"files": [],
 	"include": [],
 	"references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.browser.json" }],
-	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
+	"exclude": ["**/dist/**"]
 }

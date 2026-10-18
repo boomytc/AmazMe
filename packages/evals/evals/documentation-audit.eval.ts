@@ -1,33 +1,10 @@
 import { globSync } from "node:fs";
 import { resolve } from "node:path";
-import { Type } from "@amazme/ai";
-import { defineTool } from "@amazme/coding-agent";
 import { expect } from "vitest";
 import { describeEval, toolCalls } from "vitest-evals";
 import { createCodingAgentHarness } from "../src/harness.ts";
 
 const TOOL_NAME = "submit_documentation_audit";
-const submitAudit = defineTool({
-	name: TOOL_NAME,
-	label: "Submit documentation audit",
-	description: "Submit the final verdict after completing the documentation investigation.",
-	promptSnippet: "Submit the final documentation audit as validated structured data",
-	parameters: Type.Object(
-		{
-			verdict: Type.Union([Type.Literal("match"), Type.Literal("mismatch"), Type.Literal("inconclusive")]),
-			explanation: Type.String({ minLength: 1, maxLength: 2000 }),
-		},
-		{ additionalProperties: false },
-	),
-	constrainedSampling: { type: "json_schema", strict: "prefer" },
-	async execute(_toolCallId, params) {
-		return {
-			content: [{ type: "text", text: "Documentation audit submitted." }],
-			details: params,
-			terminate: true,
-		};
-	},
-});
 
 const repositoryRoot = resolve(import.meta.dirname, "../../..");
 const docsRoot = resolve(repositoryRoot, "packages/coding-agent/docs");
@@ -37,7 +14,6 @@ const pages = globSync("**/*.md", { cwd: docsRoot })
 const harness = createCodingAgentHarness({
 	name: "documentation-page-audit",
 	tools: ["read", "grep", "find", "ls", TOOL_NAME],
-	customTools: [submitAudit],
 });
 
 describeEval("Audit documentation against implementation", { harness }, (it) => {

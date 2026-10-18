@@ -36,7 +36,7 @@ type RunDiagnostics = {
 	usage: UsageSummary;
 };
 
-export type CodingAgentInput = string | Array<{ type: "prompt"; content: string } | { type: "reload" }>;
+export type CodingAgentInput = string | Array<{ type: "prompt"; content: string }>;
 
 export type CodingAgentModelSelection = {
 	provider: string;
@@ -48,8 +48,6 @@ export type CodingAgentHarnessOptions = {
 	model?: CodingAgentModelSelection;
 	noTools?: "all" | "builtin";
 	tools?: readonly string[];
-	/** Inline custom tools belonged to the removed JSONL session SDK. */
-	customTools?: readonly unknown[];
 	workspaceFiles?: Readonly<Record<string, string>>;
 	transformSystemPrompt?: (defaultPrompt: string) => string;
 	expectedDocumentation?: boolean;
@@ -280,9 +278,6 @@ async function runCodingAgent<TOutput extends JsonValue>(
 	const workspace = join(root, "workspace");
 	const isolatedHome = join(root, "home");
 	const agentDir = join(isolatedHome, ".amazme", "agent");
-	if (options.customTools !== undefined && options.customTools.length > 0) {
-		throw new Error("Durable sessions do not accept inline custom tools.");
-	}
 	const forcedSystemPrompt = options.transformSystemPrompt?.(
 		buildSystemPrompt({
 			cwd: workspace,
@@ -348,9 +343,6 @@ async function runCodingAgent<TOutput extends JsonValue>(
 		signal?.addEventListener("abort", abort, { once: true });
 		try {
 			for (const step of steps) {
-				if (step.type === "reload") {
-					throw new Error("Durable sessions do not reload inline extensions.");
-				}
 				response = await promptAgent(session, step.content, signal);
 			}
 		} finally {

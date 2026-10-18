@@ -36,7 +36,7 @@
 - `AgentSession`、`SessionManager`、`createAgentSession`、交互模式的 JSONL TUI、print/RPC 的 JSONL 入口，以及宿主 JSONL 镜像和 handoff。
 - `AMAZME_RUNTIME`。
 - RPC `abort_retry`。没有占位错误，也没有在 `packages/durable` 增加替代命令。
-- 只演示已删除 `ExtensionAPI` 的示例工作区不再列入根 `package.json` 的 workspaces，也不再进入根类型检查。SDK 示例改为 `createDurableSession`。
+- 只演示已删除 `ExtensionAPI` 的五个示例目录已删除：`with-deps`、`custom-provider-anthropic`、`custom-provider-gitlab-duo`、`sandbox`、`gondolin`。SDK 示例改为 `createDurableSession`。
 - 只覆盖旧内核的测试已删除。仍存在的行为（参数解析、会话目录诊断、分享文件上传、模型选择界面、设置界面）留在 Durable 或纯函数测试里。
 
 ### 阶段 4 保留了什么

@@ -66,7 +66,6 @@ describeEval("Add custom streaming provider", { harness, judges: [judge], judgeT
 
 It offers one model, ${STREAM_MODEL_ID}, shown as “Acme Stream Chat”. The model accepts text, does not support reasoning, has a 16,384-token context window and a 2,048-token maximum output, and has no usage cost.`,
 			},
-			{ type: "reload" },
 		]);
 	});
 });

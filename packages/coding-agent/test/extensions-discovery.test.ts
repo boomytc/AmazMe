@@ -1,11 +1,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe("extensions discovery", () => {
 	let tempDir: string;
@@ -394,15 +391,40 @@ describe("extensions discovery", () => {
 	});
 
 	it("resolves dependencies from extension's own node_modules", async () => {
-		// Load extension that has its own package.json and node_modules with 'ms' package
-		const extPath = path.resolve(__dirname, "../examples/extensions/with-deps");
+		const extDir = path.join(tempDir, "ext-with-deps");
+		const depDir = path.join(extDir, "node_modules", "local-dep");
+		fs.mkdirSync(depDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(depDir, "package.json"),
+			JSON.stringify({ name: "local-dep", type: "module", main: "index.js" }),
+		);
+		fs.writeFileSync(path.join(depDir, "index.js"), "export function answer() { return 7; }\n");
+		fs.writeFileSync(
+			path.join(extDir, "package.json"),
+			JSON.stringify({ name: "ext-with-deps", type: "module", pi: { extensions: ["./index.ts"] } }),
+		);
+		fs.writeFileSync(
+			path.join(extDir, "index.ts"),
+			`
+				import { Type } from "typebox";
+				import { answer } from "local-dep";
+				export default function(pi) {
+					pi.registerTool({
+						name: "parse_duration",
+						label: "Parse Duration",
+						description: "Parse a duration",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: String(answer()) }], details: {} }),
+					});
+				}
+			`,
+		);
 
-		const result = await discoverAndLoadExtensions([extPath], tempDir, tempDir);
+		const result = await discoverAndLoadExtensions([extDir], tempDir, tempDir);
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(1);
-		expect(result.extensions[0].path).toContain("with-deps");
-		// The extension registers a 'parse_duration' tool
+		expect(result.extensions[0].path).toContain("ext-with-deps");
 		expect(result.extensions[0].tools.has("parse_duration")).toBe(true);
 	});
 
