@@ -423,7 +423,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		const reportPausedRun = async (): Promise<void> => {
 			const id = current.id;
 			const [policy, live] = await Promise.all([opened.snapshot(RunStateDoc, id, context), opened.snapshot(LiveDoc, id, context)]);
-			if (current.id === id && policy?.paused && policy.run === String(live?.run?.inputs[0] ?? "")) notice("warning", "本轮预算已用完，已暂停于执行边界。/resume_run 追加预算继续，或按停止键取消。");
+			if (current.id === id && policy?.paused && policy.run === String(live?.run?.inputs[0] ?? "")) notice("warning", "本轮预算已用完，已暂停于执行边界。/resume-run 追加预算继续，或按停止键取消。");
 		};
 		await reportPausedRun();
 		const reportResources = (): void => {
@@ -461,7 +461,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		const unsubscribeCommits = harness.subscribeCommits((publication) => {
 			for (const change of publication.changes) {
 				if (change.type === "document" && change.conversationId === current.id && change.record.kind === RunStateDoc.definition.kind
-					&& change.value?.paused && change.ops.some(op => Array.isArray(op[1]) && op[1][0] === "paused")) notice("warning", "本轮预算已用完，已暂停于执行边界。/resume_run 追加预算继续，或按停止键取消。");
+					&& change.value?.paused && change.ops.some(op => Array.isArray(op[1]) && op[1][0] === "paused")) notice("warning", "本轮预算已用完，已暂停于执行边界。/resume-run 追加预算继续，或按停止键取消。");
 				if (change.type === "conversation" || change.type === "entry") {
 					refreshList();
 					return;
@@ -742,7 +742,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					notice("info", await describeChanges(args));
 					return;
 				}
-				if (name === "resume_run") {
+				if (name === "resume-run") {
 					await resumeRun(opened, current.id, context);
 					clearNotices((item) => item.message.startsWith("本轮预算已用完"));
 					notice("info", "已允许继续当前回合。");
@@ -755,7 +755,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 						settingsManager.setRunLimits({ calls: parts[0], seconds: parts[1], cost: parts[2] }); await settingsManager.flush();
 					}
 					const limits = settingsManager.getSettings().runLimits;
-					notice("info", `单个对话每轮预算：工具 ${limits?.calls ?? 0} 次，${limits?.seconds ?? 0} 秒，$${limits?.cost ?? 0}；0 表示不限。暂停后 /resume_run 继续。`); return;
+					notice("info", `单个对话每轮预算：工具 ${limits?.calls ?? 0} 次，${limits?.seconds ?? 0} 秒，$${limits?.cost ?? 0}；0 表示不限。暂停后 /resume-run 继续。`); return;
 				}
 				if (name === "execution") {
 					const mode = args.trim();

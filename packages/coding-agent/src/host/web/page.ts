@@ -1613,7 +1613,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const runCommandLine = (name: string, args: string): void => {
 		if (name === "changes" && painter.insightsService) { view = CHAT_VIEW; dockOpen = true; dockTab = "changes"; paint(); return; }
 		if (name === "limits" || name === "execution") { view = SETTINGS_VIEW; paint(); return; }
-		if (name === "resume_run" && painter.insightsService && painter.insights) { void painter.insightsService.resume(painter.insights.conversationId, BACKGROUND_CONTEXT).catch(report); return; }
+		if (name === "resume-run" && painter.insightsService && painter.insights) { void painter.insightsService.resume(painter.insights.conversationId, BACKGROUND_CONTEXT).catch(report); return; }
 		const command = composerCommands().find((candidate) => candidate.name === name);
 		if (!command) {
 			const key: MessageKey = ["model", "thinking", "scoped_models", "login", "logout"].includes(name) ? "model.commandInstead"

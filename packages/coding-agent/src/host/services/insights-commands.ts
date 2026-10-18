@@ -50,7 +50,7 @@ export function createInsightsCommandsFacet() {
 					);
 					disposers.push(
 						commands.replace({
-							name: "resume_run",
+							name: "resume-run",
 							description: "Continue a budget-paused turn",
 							async run(_args, context) {
 								await insights.resume(insights.state.value!.conversationId, context);
@@ -109,7 +109,7 @@ export function createInsightsCommandsFacet() {
 						insights.state.subscribe(() => {
 							const next = insights.state.value?.paused;
 							if (next && next !== paused)
-								ui.showStatus("本轮预算已用完。/resume_run 追加预算继续，或停止当前任务。", BACKGROUND_CONTEXT);
+								ui.showStatus("本轮预算已用完。/resume-run 追加预算继续，或停止当前任务。", BACKGROUND_CONTEXT);
 							paused = next;
 						}),
 					);

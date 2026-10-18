@@ -17,7 +17,7 @@ The default terminal runs on Durable. Its local commands are:
 | `/tasks` | Show or hide active tasks |
 | `/changes [file]` | List files changed in the latest turn; with a path, show that file's diff |
 | `/limits [calls seconds USD]` | Show or set the shared per-conversation turn budgets: tool calls, elapsed seconds, and reported USD. `0` is unlimited |
-| `/resume_run` | Continue a budget-paused turn with another budget |
+| `/resume-run` | Continue a budget-paused turn with another budget |
 | `/execution [full-access\|workspace-write\|read-only]` | Show or set the global Unix file-write policy |
 | `/agents`, `/tree` | Select a conversation or its history |
 | `/fork` | Fork the focused conversation |
@@ -26,11 +26,11 @@ The default terminal runs on Durable. Its local commands are:
 | `/plugins` | Inspect selected plugin sources and API; present when plugins are selected |
 | `/reload` | Re-read prompt resources and rebuild selected plugins while idle |
 
-The terminal favors commands and shortcuts. `Ctrl+L` opens the model selector and `Shift+Tab` cycles the current model's supported reasoning levels in both terminal clients. The composer shows the current selection and a short key guide; typing `/` discovers the other commands. Configure resource selection through `amazme config` and preferences in the settings files. Start or resume sessions through CLI options; see [CLI](cli.md), [Sessions](sessions.md) and [Keybindings](keybindings.md). `Ctrl+C` exits; `Ctrl+D` exits when the editor is empty. Arguments, pauses, and isolation limits for `/changes`, `/limits`, `/resume_run`, and `/execution` are in [Run controls](run-controls.md).
+The terminal favors commands and shortcuts. `Ctrl+L` opens the model selector and `Shift+Tab` cycles the current model's supported reasoning levels in both terminal clients. The composer shows the current selection and a short key guide; typing `/` discovers the other commands. Configure resource selection through `amazme config` and preferences in the settings files. Start or resume sessions through CLI options; see [CLI](cli.md), [Sessions](sessions.md) and [Keybindings](keybindings.md). `Ctrl+C` exits; `Ctrl+D` exits when the editor is empty. Arguments, pauses, and isolation limits for `/changes`, `/limits`, `/resume-run`, and `/execution` are in [Run controls](run-controls.md).
 
 ## Hosted terminal
 
-`amazme client` uses local menus for model/thinking selection, scoped models, authentication and conversation navigation. It uses the worker's shared Commands service for compaction, reload, plugin commands and resource expansion. When the session publishes change review, it also accepts `/changes`, `/limits`, `/resume_run`, and `/execution`. Its presentation plugins can add local commands and dialogs.
+`amazme client` uses local menus for model/thinking selection, scoped models, authentication and conversation navigation. It uses the worker's shared Commands service for compaction, reload, plugin commands and resource expansion. When the session publishes change review, it also accepts `/changes`, `/limits`, `/resume-run`, and `/execution`. Its presentation plugins can add local commands and dialogs.
 
 In both terminals, `/scoped_models` reuses the searchable model configuration list. Enter toggles a row, Ctrl+A enables all, Ctrl+X clears all, and Ctrl+S saves the current scope as the default for new sessions. Changes affect the current terminal/session immediately; Esc closes the list. An empty scope stays empty. Hiding the active model changes the list and cycling choices without switching the active model.
 
@@ -46,7 +46,7 @@ Web and desktop share the same clickable controls. The composer lists plugin com
 | `/changes` | Session tools → Changes. Typing `/changes` opens that tab when change review is available; a file argument is not applied |
 | `/limits [calls seconds USD]` | Typing `/limits` only switches to Settings and ignores arguments. Manually choose Conversation to edit budgets |
 | `/execution [mode]` | Typing `/execution` only switches to Settings and ignores the mode argument. Manually choose Approvals → File write isolation to change the policy |
-| `/resume_run` | Session tools → Changes → Continue with another budget. Typing `/resume_run` continues the paused turn when change review is available |
+| `/resume-run` | Session tools → Changes → Continue with another budget. Typing `/resume-run` continues the paused turn when change review is available |
 | `/attachments` | Remove button on each draft attachment thumbnail. Typing the command is refused |
 | `/agents` | Session tools → Conversations → Open |
 | `/tree` | Session tools → Conversations → Return to; optionally summarize the branch |
@@ -62,7 +62,7 @@ Web and desktop share the same clickable controls. The composer lists plugin com
 
 The sidebar session menu provides rename, delete and copy ID; New session creates and attaches a session. Session switching, fork, history and task navigation operate on the attached session's Conversations service. MCP project settings use that session's trusted project directory.
 
-Templates and enabled `/skill:<name>` entries come from the attached worker's resource loader, so a client in another directory uses the session's selected files. The hosted terminal and Web expand these before submitting through the focused conversation's existing prompt path. Session plugin commands execute through the same command service. On the Web page, model, login, session, task, plugin, attachment, compact, and reload names are refused and the page points to the control in the table. `/changes`, `/limits`, `/execution`, and `/resume_run` open that control or continue the paused turn, as the table describes.
+Templates and enabled `/skill:<name>` entries come from the attached worker's resource loader, so a client in another directory uses the session's selected files. The hosted terminal and Web expand these before submitting through the focused conversation's existing prompt path. Session plugin commands execute through the same command service. On the Web page, model, login, session, task, plugin, attachment, compact, and reload names are refused and the page points to the control in the table. `/changes`, `/limits`, `/execution`, and `/resume-run` open that control or continue the paused turn, as the table describes.
 
 Use Reload session resources after adding or changing resource files. Skill changes made in the Web management panel also refresh the attached session's command resources. See [Usage](usage.md) for the hosted interfaces.
 
