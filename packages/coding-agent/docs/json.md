@@ -59,7 +59,7 @@ A basic run produces records like these:
 | `turn_start` | None | One assistant turn started. |
 | `turn_end` | `message`, `toolResults` | One assistant response and its resulting tool calls finished. |
 
-A turn is one assistant response plus any tool calls and tool results produced by that response.
+A turn is one assistant response plus any tool calls and tool results produced by that response. A turn aborted before it produces an assistant message may contain only `turn_start`.
 
 ## Message events
 

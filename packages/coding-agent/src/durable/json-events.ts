@@ -17,6 +17,13 @@ export class DurableJsonEvents {
 	private readonly toolArgs = new Map<string, unknown>();
 	private readonly runMessages: Message[] = [];
 	private readonly turnToolResults: ToolResultMessage[] = [];
+	/**
+	 * Durable publishes `turn_end` when a generation holds `completing`, which can precede that
+	 * turn's tool results. Hold it and emit once, ahead of the next `turn_start` or `agent_end`,
+	 * with the assistant message and tool results seen by then. A turn with no assistant message
+	 * emits nothing: the wire shape requires `message`, and an empty message would be invented.
+	 */
+	private pendingTurnEnd = false;
 
 	translate(event: AgentEvent): JsonStreamEvent[] {
 		switch (event.type) {
@@ -27,13 +34,16 @@ export class DurableJsonEvents {
 				this.resetTurn();
 				return [{ type: "agent_start" }];
 			case "run_end": {
+				const flushed = this.flushTurnEnd();
 				const messages = this.runMessages.slice();
 				this.runMessages.length = 0;
-				return [{ type: "agent_end", messages, willRetry: false }];
+				return [...flushed, { type: "agent_end", messages, willRetry: false }];
 			}
-			case "turn_start":
+			case "turn_start": {
+				const flushed = this.flushTurnEnd();
 				this.resetTurn();
-				return [{ type: "turn_start" }];
+				return [...flushed, { type: "turn_start" }];
+			}
 			case "message_start":
 				if (event.message.role === "assistant") this.message = event.message;
 				return [{ type: "message_start", message: event.message }];
@@ -113,13 +123,9 @@ export class DurableJsonEvents {
 			}
 			case "submission":
 				return [];
-			case "turn_end": {
-				const message = this.message;
-				const toolResults = this.turnToolResults.slice();
-				this.turnToolResults.length = 0;
-				if (message === undefined) return [];
-				return [{ type: "turn_end", message, toolResults }];
-			}
+			case "turn_end":
+				this.pendingTurnEnd = true;
+				return [];
 			default:
 				return [];
 		}
@@ -128,6 +134,17 @@ export class DurableJsonEvents {
 	private resetTurn(): void {
 		this.message = undefined;
 		this.turnToolResults.length = 0;
+	}
+
+	/** Emit a held `turn_end` at most once. No assistant message means no event and no empty message. */
+	private flushTurnEnd(): JsonStreamEvent[] {
+		if (!this.pendingTurnEnd) return [];
+		this.pendingTurnEnd = false;
+		const message = this.message;
+		const toolResults = this.turnToolResults.slice();
+		this.turnToolResults.length = 0;
+		if (message === undefined) return [];
+		return [{ type: "turn_end", message, toolResults }];
 	}
 
 	/** One JSON line per change, matching the coding agent's per-delta events. */
