@@ -246,6 +246,8 @@ interface Handlers {
 	submit(text: string, whenBusy: "steer" | "followUp", images: readonly ImageContent[]): Promise<boolean> | undefined;
 	abort(): void;
 	exit(): void;
+	/** Raw-mode Ctrl-C. Absent uses {@link Handlers.exit}. */
+	clear?(): void;
 	selectModel(): void;
 	cycleModel(direction: "forward" | "backward"): void;
 	cycleThinking(): void;
@@ -354,7 +356,7 @@ class DurableTui {
 		};
 		this.#editor.onEscape = handlers.abort;
 		this.#editor.onCtrlD = handlers.exit;
-		this.#editor.onAction("app.clear", handlers.exit);
+		this.#editor.onAction("app.clear", handlers.clear ?? handlers.exit);
 		this.#editor.onAction("app.model.select", handlers.selectModel);
 		this.#editor.onAction("app.model.cycleForward", () => handlers.cycleModel("forward"));
 		this.#editor.onAction("app.model.cycleBackward", () => handlers.cycleModel("backward"));
@@ -792,8 +794,13 @@ function contextTokens(entries: readonly EntryRecord[]): number | undefined {
 export interface DurableTuiHooks {
 	/** Receive the local exit before the screen starts, so a signal can stop it. */
 	bindExit?(exit: () => void): void;
-	/** `/quit` and SIGTERM share this. Absent means stop the screen only. */
+	/** Exact `/quit`. Absent means stop the screen only. SIGTERM stops the screen through {@link DurableTuiHooks.bindExit}. */
 	quit?(): void;
+	/**
+	 * Raw-mode Ctrl-C (`app.clear`, the byte `\x03`). Absent binds that key to the
+	 * local exit, the same as Ctrl-D.
+	 */
+	clear?(): void;
 }
 
 export async function runDurableTui(
@@ -1058,6 +1065,7 @@ export async function runDurableTui(
 		},
 		abort: () => void controller.abort(),
 		exit,
+		clear: hooks?.clear,
 		selectModel,
 		cycleModel: (direction) => void controller.cycleModel(direction),
 		cycleThinking: () => void controller.cycleThinking(),

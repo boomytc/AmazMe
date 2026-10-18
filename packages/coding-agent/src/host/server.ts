@@ -23,6 +23,7 @@ import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "../config.ts";
 import { createCodingSettings } from "../durable/harness-setup.ts";
 import { ProjectTrustStore } from "../core/trust-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
+import { closeAfterSignal } from "../utils/shutdown-signals.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import { ensureHostSocketDirectory, hostSocketDirectory, removeEmptyRelocatedSocketDirectory } from "./socket-directory.ts";
 import { createPresentationFacetData, createServerPluginFacetLoader } from "./plugins/bundled.ts";
@@ -1025,38 +1026,16 @@ function parseServerModelOptions(value: string | undefined): { provider?: string
  * `close` leaves the same window. Callers exit immediately after this returns:
  * once the loop drains, Node drops the signal watchers and restores the default
  * action, and a SIGTERM in that gap becomes the process's death signal.
+ *
+ * A second SIGINT while `close` is still running force-exits. A second SIGTERM
+ * does not: that is the re-send described above.
  */
 export async function closeWhenSignaled(
 	closed: Promise<void>,
 	close: () => Promise<void>,
 	arm?: (finish: () => void) => void,
 ): Promise<void> {
-	let settled = false;
-	let resolveWait!: () => void;
-	let rejectWait!: (error: unknown) => void;
-	const done = new Promise<void>((resolve, reject) => {
-		resolveWait = resolve;
-		rejectWait = reject;
-	});
-	const finish = (): void => {
-		if (settled) return;
-		settled = true;
-		resolveWait();
-	};
-	const fail = (error: unknown): void => {
-		if (settled) return;
-		settled = true;
-		rejectWait(error);
-	};
-	process.on("SIGINT", finish);
-	process.on("SIGTERM", finish);
-	arm?.(finish);
-	void closed.then(finish, fail);
-	try {
-		await done;
-	} finally {
-		await close();
-	}
+	await closeAfterSignal(closed, close, arm);
 }
 
 /** Run an automatically activated server until its client and Session demand disappears. */

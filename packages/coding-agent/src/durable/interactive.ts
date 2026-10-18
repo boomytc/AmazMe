@@ -1,6 +1,7 @@
 import { openDurable, type OpenDurableOptions } from "./runtime.ts";
 import { runDurableTui } from "./tui.ts";
 import { printTimings, time } from "../core/timings.ts";
+import { installShutdownSignals } from "../utils/shutdown-signals.ts";
 import type { ImageContent } from "@amazme/ai";
 
 /** The default interactive session: one durable sqlite conversation, the same path the web host drives. */
@@ -17,17 +18,15 @@ export async function runDurableInteractive(
 	const inputs: Promise<boolean>[] = [];
 	let exitTui = (): void => {};
 	let forced = false;
-	// Keep the listeners installed. `process.once` removes them on the first
-	// signal, and signal-exit (loaded by the session lock) then re-sends SIGTERM
-	// and kills the process before `close` releases the lock. `/quit` uses this
-	// same finish as SIGINT/SIGTERM: stop the screen, close, then exit.
-	const forceExit = (): void => {
-		if (forced) return;
+	// Listeners stay up for the whole shutdown. `process.once` drops them on the
+	// first signal, and signal-exit (loaded by the session lock) then re-sends
+	// SIGTERM and kills the process before `close` releases the lock.
+	// The first SIGINT/SIGTERM stops the screen, closes, then exits 0.
+	// A later SIGINT while that close is still running force-exits. A repeat SIGTERM does not.
+	const shutdown = installShutdownSignals(() => {
 		forced = true;
 		exitTui();
-	};
-	process.on("SIGINT", forceExit);
-	process.on("SIGTERM", forceExit);
+	});
 	let returned = false;
 	try {
 		if (!options.startupBenchmark) {
@@ -42,7 +41,19 @@ export async function runDurableInteractive(
 				exitTui = exit;
 				if (forced) exit();
 			},
-			quit: forceExit,
+			// `/quit` is the same graceful finish as the first signal: stop, close, exit 0.
+			// It does not count as a SIGINT, so the first Ctrl-C during that close still waits.
+			quit() {
+				if (forced) return;
+				forced = true;
+				exitTui();
+			},
+			// Raw-mode Ctrl-C is a key (`app.clear`), not SIGINT. The first press
+			// stops the screen without `process.exit`. A second press, or a SIGINT
+			// once raw mode is off and `close` is still running, force-exits.
+			clear() {
+				shutdown.key(() => exitTui());
+			},
 		});
 		returned = true;
 	} finally {
@@ -54,9 +65,9 @@ export async function runDurableInteractive(
 			throw error;
 		} finally {
 			// A failed presentation must not exit 0, and must not leave the signal listeners behind.
+			shutdown.finish();
 			if (!forced || !returned) {
-				process.off("SIGINT", forceExit);
-				process.off("SIGTERM", forceExit);
+				shutdown.dispose();
 				forced = false;
 			}
 		}
