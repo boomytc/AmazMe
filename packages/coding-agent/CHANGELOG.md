@@ -16,6 +16,30 @@
 - Fixed compaction and branch summaries failing with "generation hit the token cap" when reasoning used most of the fixed summary output limit. Summaries now use the model's output limit, and `compaction.reserveTokens` only controls when compaction starts ([#9512](https://github.com/earendil-works/pi/issues/9512), [#9075](https://github.com/earendil-works/pi/issues/9075)).
 - Fixed `models.schema.json` missing descriptions for provider and model fields, so editors showed no hints for them ([#10790](https://github.com/earendil-works/pi/issues/10790)).
 
+## [1.2.0] - 2026-10-18
+
+本条是 AmazMe 产品版本 1.2.0。后文 2026-10-13 的同号标题是更早的变更记录。
+
+### 破坏性变更
+
+- 只保留 Durable 单内核。旧的 `AgentSession`、`SessionManager` 和 JSONL 内核已删除，包括交互式 JSONL TUI。JSONL 条目类型仍在 `jsonl-transcript.ts`，只用于导入、导出和 RPC 投影。
+- 下线 CLI 参数 `--session`、`--session-id`、`--fork`，现在是未知选项。会话内分叉使用 `/tree` 和 `/fork`。
+- `--continue` 和 `--resume` 只打开当前目录最新的 Durable 会话。若只有旧 JSONL、没有 Durable 会话，提示先运行 `amazme import <session.jsonl>`。
+- 下线环境变量 `AMAZME_RUNTIME`。没有 JSONL 内核回退。
+- SDK 下线 `createAgentSession` 和内联扩展工厂。会话入口只保留 `createDurableSession`，`extensions` 只接受原生 facet 路径。示例 `01`–`14` 已按这个入口改写。
+- RPC 删除 `abort_retry`。仍发送该命令的旧客户端收到未知命令错误。没有只取消重试退避的替代命令。
+- `/share` 不再由宿主的内置命令表提供，改由 facet 注册。这条命令先用 Durable 把当前会话导出成 HTML 和 JSONL，再按 `sessionShareDestination` 分享。默认 `auto`：已登录 Radius 时上传 JSONL，否则把 HTML 做成私有 GitHub gist。设为 `radius` 且未登录时失败，不回退 gist；设为 `gist` 时只上传 HTML。原生终端里的 `/share` 使用同一套导出和上传。
+- 旧的 JSONL 会话要先用 `amazme import` 导入，才能在这个版本里打开。导入只接受 version 3 的线性活动转录，拒绝 `parentSession` 和分支树。已有 Durable 会话的 SQLite 格式没有改，可以用 `--continue` 接着打开。`packages/durable` 和 `packages/ai` 的实现没有改。
+
+### 修复
+
+- 修复交互式 client 启动崩溃。原因是 `resume_run` 含下划线，命令注册表不允许下划线，启动时抛出 `Invalid slash command name: resume_run`。命令已改名为 `resume-run`（#82）。
+
+### 移除
+
+- 删除 5 个只演示旧扩展 API 的示例目录：`with-deps`、`custom-provider-anthropic`、`custom-provider-gitlab-duo`、`sandbox`、`gondolin`。
+- evals harness 改为 `createDurableSession`，去掉 `customTools` 和 `reload` 输入步骤，并删除 `documentation-audit` 与 `tui.docs` 这两个 eval。
+
 ## [1.3.0] - 2026-10-16
 
 ### Fixed
