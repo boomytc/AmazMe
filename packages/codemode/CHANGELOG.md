@@ -2,19 +2,11 @@
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-10-16
+## [1.1.1] - 2026-10-18
 
 ### Added
 
 - Worker sandboxes expose admission and actual-exit hooks; a reservation lasts until worker exit or constructor failure.
-
-### Fixed
-
-- Timeout, cancellation and close settle without waiting for worker termination; surviving workers are unreferenced and still count against the caller's admission limit.
-
-## [1.2.0] - 2026-10-13
-
-### Added
 
 - Added `RemoteCodemodeSandbox`, which runs each script's VM in another isolate while tools run in the caller. `CodemodeSandboxDurableObject` from the new `@amazme/codemode/cloudflare` entry is its remote end, deployed as its own Cloudflare Worker. `examples/cloudflare` shows the setup
 - Added `InlineCodemodeSandbox`, which runs the VM on the calling thread for runtimes without worker threads. Its `interruptBudget` limits scripts that compute without awaiting a tool
@@ -28,9 +20,13 @@
 
 ### Fixed
 
+- Timeout, cancellation and close settle without waiting for worker termination; surviving workers are unreferenced and still count against the caller's admission limit.
+
 - Reject `// @options:` outside the first line instead of silently ignoring execution options.
 
 - Fixed `CodemodeSandbox` failing with a broken bridge error when the host runs under `node --watch` on Node 24 or 26, which posts `watch:import`/`watch:require` messages on the worker channel ([#10725](https://github.com/earendil-works/pi/issues/10725))
+
+Versions below are @amazme/codemode's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

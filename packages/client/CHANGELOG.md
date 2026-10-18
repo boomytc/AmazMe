@@ -2,11 +2,13 @@
 
 ## [Unreleased]
 
-## [1.2.0] - 2026-10-13
+## [1.1.1] - 2026-10-18
 
 ### Breaking Changes
 
 - `openLink()` provides native Chord links scoped to an attachment generation; acknowledged close joins pending calls and channel cleanup before disposal.
+
+Versions below are @amazme/client's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

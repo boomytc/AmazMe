@@ -2,11 +2,13 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-18
+
 ### Fixed
 
 - Calls made before hydration validate their supplied context before waiting or starting a root, including forged contexts and foreign or expired task holders. Local and linked remote contracts share the check without mistaking ordinary object arguments for contexts.
 
-## [1.3.0] - 2026-10-16
+## [1.1.1] - 2026-10-18
 
 ### Breaking Changes
 
@@ -28,6 +30,11 @@
 - `Shape.codeVersion` and the `shape` frame's `codeVersion` are gone
 - `PROTOCOL_VERSION` is 4: a `hold` implies the state of its variant (`state: false` opts out until `sub`; `unsub` stops it); the provider answers with units, a `shape` listing the members the consumer lacks (`state`) followed by their snapshots; `state` frames are addressed by hold and member (`hold`, `m`) with `as: "snap" | "reset" | "ops" | "error"` and `value` (absent: `undefined`); `sub`/`unsub` take a hold; `resync` asks for a member again; `again` marks a re-hold after a link loss; `origin` (replacing `client`) names the client connection a hold comes from
 
+- Replaced the facet and service runtime with a typed host runtime: contracts (`local`, `remote`, `method`, `opaque`) are runtime values described with TypeBox schemas, objects are served by hosts (`createHost`, `defineFacet`, `defineRegistry`) and reached through handles, and hosts exchange JSON frames over memory, Node IPC, or WebSocket links (`memoryLinkPair`, `ipcLink`, `webSocketLink`, `acceptWebSockets`), with hot reload of plugins. See `docs/tutorial.md` and `docs/guide.md`
+- Removed `defineService`, `createFacetHost`, `createRemoteServiceBinding`, `createStaticFacetLoader`, `combineFacetLoaders`, the remote-service endpoint, provider, error, and wire helpers, and their types. The old `defineFacet`, `Facet`, and `FacetLoader` are replaced by the new runtime's names of the same spelling
+- Removed the `./bundler` export and the facet bundle loaders of `./node`; `./node` now exports the child host manager (`createHostManager`, `forkDriver`, `childControl`, `processLock`) and the facet module loader `nodeLoader`
+- AmazMe retains `@amazme/client`, `@amazme/protocol`, and `@amazme/server` for its Web, desktop and session products. Their consumers now use native Chord channels and Host resources, with public protocol 9 and coordinator protocol 4.
+
 ### Added
 
 - `@amazme/chord/output` provides bounded output buffers and paced progress: `OutputBuffer`, `Progress`, `boundOutput`, `sanitizeOutput`, `characterEnd`, `utf8ByteLength`, and the `OutputLimits`, `BoundedOutput`, `OutputSlice` and `OutputSkip` types. The durable runtime imports them from here.
@@ -48,6 +55,9 @@
 - A reload starts an object's new tasks only after its aborted ones finished (at most `taskStopDeadline`, then anyway, reported); before, the old and the new run of a task worked side by side
 - When a reload forces the retirement of the previous code version, it first aborts the roots still running on it (their `ctx.signal`, reason `superseded`) and gives them up to 1 s to stop before it closes what only that code used; a call with such a ctx is `superseded`. Before, resources were closed under running roots, which were never told
 
+- `replicatedState`, `copyJson`, `isJsonValue`, `Context`, `JsonValue`, `JsonRepresentation`, `Draft`, and the replicated state types keep their names on the root export; `./context` and `./delta` are unchanged, and `./context` also exports the `Context` and `ContextKey` types
+- Depends on `typebox` instead of `esbuild`
+
 ### Fixed
 
 - `nodeLoader` registers every facet's directory before importing any, so a facet that imports a file of a facet listed after it gets the same module copy as that facet; before, the load order could produce duplicates.
@@ -65,22 +75,5 @@
 - WebSocket links refusing packed messages also refuse packed object envelopes in text messages.
 - A forked child host inherited its parent's process lock, so a child that forked its own children failed with `locked` unless it set its own; children no longer inherit it.
 - A call through a remote reference rejects a ctx from another host, or an object not made by Chord, with `invalid/foreign_ctx` like a local reference; before, it carried the foreign root over the link and called anyway.
-
-
-## [1.2.0] - 2026-10-12
-
-### Breaking Changes
-
-- Replaced the facet and service runtime with a typed host runtime: contracts (`local`, `remote`, `method`, `opaque`) are runtime values described with TypeBox schemas, objects are served by hosts (`createHost`, `defineFacet`, `defineRegistry`) and reached through handles, and hosts exchange JSON frames over memory, Node IPC, or WebSocket links (`memoryLinkPair`, `ipcLink`, `webSocketLink`, `acceptWebSockets`), with hot reload of plugins. See `docs/tutorial.md` and `docs/guide.md`
-- Removed `defineService`, `createFacetHost`, `createRemoteServiceBinding`, `createStaticFacetLoader`, `combineFacetLoaders`, the remote-service endpoint, provider, error, and wire helpers, and their types. The old `defineFacet`, `Facet`, and `FacetLoader` are replaced by the new runtime's names of the same spelling
-- Removed the `./bundler` export and the facet bundle loaders of `./node`; `./node` now exports the child host manager (`createHostManager`, `forkDriver`, `childControl`, `processLock`) and the facet module loader `nodeLoader`
-- AmazMe retains `@amazme/client`, `@amazme/protocol`, and `@amazme/server` for its Web, desktop and session products. Their consumers now use native Chord channels and Host resources, with public protocol 9 and coordinator protocol 4.
-
-### Changed
-
-- `replicatedState`, `copyJson`, `isJsonValue`, `Context`, `JsonValue`, `JsonRepresentation`, `Draft`, and the replicated state types keep their names on the root export; `./context` and `./delta` are unchanged, and `./context` also exports the `Context` and `ContextKey` types
-- Depends on `typebox` instead of `esbuild`
-
-### Fixed
 
 - Fixed appending to an array costing a walk over the whole array: the delta tracker now plans inserts and removals that keep the remaining elements in order from the changed ranges alone, and `applyImmutable` builds an appended array in one copy instead of two. 32,000 one-item appends, one commit each, take 1.4 s instead of 11.3 s

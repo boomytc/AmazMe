@@ -2,9 +2,7 @@
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-10-16
-
-## [1.2.0] - 2026-10-13
+Versions below are @amazme/agent's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 
