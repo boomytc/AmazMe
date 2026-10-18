@@ -1,3 +1,5 @@
+import { APP_NAME } from "../config.ts";
+
 /** The commands the native presentation owns; plugins cannot shadow them. */
 export const NATIVE_COMMANDS = [
 	{ name: "model", description: "Select the model", argumentHint: "[provider/model]" },
@@ -20,4 +22,5 @@ export const NATIVE_COMMANDS = [
 	{ name: "share", description: "Share this session (Radius or private gist)" },
 	{ name: "plugins", description: "Show selected plugin sources and API" },
 	{ name: "reload", description: "Reload prompt resources and selected plugins" },
+	{ name: "quit", description: `Quit ${APP_NAME}` },
 ] as const;
