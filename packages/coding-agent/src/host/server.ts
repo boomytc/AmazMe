@@ -62,13 +62,6 @@ import {
 	writeSessionArchive,
 	writeSessionProject } from "./session-catalog.ts";
 import { SessionPluginSelectionConflictError, SessionWorkerManager } from "./session-worker-manager.ts";
-import {
-	deleteLocalSessionFiles,
-	findLocalSessionPath,
-	listLocalSessions,
-	listProjectLocalSessions,
-	writeLocalSessionName,
-	setLocalSessionArchived } from "./session-store.ts";
 
 export const ENV_SERVER_DIR = "AMAZME_SERVER_DIR";
 export const ENV_SERVER_ID = "AMAZME_SERVER_ID";
@@ -430,9 +423,6 @@ async function startServerBackend(
 		if (project === undefined || await readSession(sessionDir, metadata.id) === undefined) return metadata;
 		return writeSessionProject(sessionDir, metadata.id, project.id);
 	};
-	const localSessions = async () => {
-		return listProjectLocalSessions([process.cwd(), ...projectRows.flatMap(project => project.workspaces ?? [project.cwd])]);
-	};
 	const listSessions = async (): Promise<SessionCatalogMetadata[]> => {
 		const sessions = new Map((await listCatalogSessions(sessionDir)).map((metadata) => [metadata.path, metadata]));
 		// A running worker replaces its catalog row. The display name stays the catalog's.
@@ -446,12 +436,7 @@ async function startServerBackend(
 		const worker = workers.trackedSessions.find((candidate) => candidate.id === sessionId);
 		const metadata = worker === undefined ? catalog : mergeTrackedSession(catalog, worker);
 		if (metadata !== undefined) return bindSessionProject(metadata);
-		// A terminal session the host has not opened yet: adopting it stores it under its own id with
-		// the working directory its header records, and its worker seeds the transcript from the file.
-		const local = (await localSessions()).find((session) => session.id === sessionId);
-		if (local === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-		const adopted = await createCatalogSession(sessionDir, { id: sessionId, cwd: local.cwd, createdAt: local.createdAt, name: local.name, projectId: (await projectForCwd(local.cwd))?.id });
-		return adopted;
+		throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
 	};
 	const createSession = async (createOptions: SessionCreateOptions, context: Context): Promise<SessionCatalogMetadata> => {
 		if (createOptions.reuseEmpty && createOptions.id !== undefined) throw new Error("An explicit session ID cannot reuse an empty session");
@@ -490,70 +475,21 @@ async function startServerBackend(
 			...(display.length === 0 ? {} : { name: display }) };
 	};
 
-	/**
-	 * The session list one client reads: the Sessions this host owns, plus the terminal sessions it
-	 * could adopt. A Session that a host owns shadows the terminal file it mirrors, so one session is
-	 * one row whichever side made it.
-	 */
+	/** The session list one client reads: the Durable sessions this host owns. */
 	const listSummaries = async (): Promise<SessionSummary[]> => {
 		projectRows = await projects.list();
-		const locals = await localSessions();
-		const localName = new Map(locals.map((session) => [session.id, session.name]));
 		const metadata = await listSessions();
-		const owned = new Set(metadata.map(session => session.id));
-		const unownedLocals = locals.filter(session => !owned.has(session.id));
-		// New terminal history can register its launch directory. Restarting a Web host alone cannot.
-		const missingDirectories = (await Promise.all(unownedLocals.map(async session =>
-			await projectForCwd(session.cwd) === undefined ? session.cwd : undefined))).filter(path => path !== undefined);
-		if (missingDirectories.length > 0) projectRows = await projects.initialize(missingDirectories);
-		// A hosted session keeps the name in its catalog. Until that is set, the terminal file's
-		// `/name` is what the roster shows, so a session named in the terminal stays readable.
-		const hosted = await Promise.all(metadata.map((metadata) => summarize(metadata, "host", metadata.name ?? localName.get(metadata.id))));
-		const unowned = await Promise.all(unownedLocals
-			.map((session) =>
-				summarize(
-					{
-						id: session.id,
-						createdAt: session.createdAt,
-						cwd: session.cwd,
-						path: session.path,
-						...(session.name === undefined ? {} : { name: session.name }) },
-					"local",
-				),
-			));
-		return [...hosted, ...unowned].sort(
+		const hosted = await Promise.all(metadata.map((metadata) => summarize(metadata, "host", metadata.name)));
+		return hosted.sort(
 			(left, right) => left.sessionId.localeCompare(right.sessionId) || left.createdAt - right.createdAt,
 		);
-	};
-	const refreshMirror = async (metadata: SessionCatalogMetadata, name: string, context: Context): Promise<void> => {
-		context.abortSignal?.throwIfAborted();
-		if (await workers.refreshSessionMirror(metadata, context)) return;
-		const mirror = await findLocalSessionPath(metadata.cwd, metadata.id);
-		context.abortSignal?.throwIfAborted();
-		if (mirror !== undefined) await writeLocalSessionName(mirror, name);
 	};
 	const renameSession = async (sessionId: string, name: string): Promise<SessionSummary> => {
 		const normalized = normalizeSessionName(name);
 		const hosted = await readSession(sessionDir, sessionId);
-		if (hosted !== undefined) {
-			const updated = await writeSessionName(sessionDir, sessionId, normalized);
-			// The terminal reads the name from the mirror. Update it when the file already exists;
-			// the next mirror rewrite copies the catalog name again.
-			await refreshMirror(updated, normalized, BACKGROUND_CONTEXT);
-			return summarize(updated);
-		}
-		const local = (await localSessions()).find((session) => session.id === sessionId);
-		if (local === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
-		const stored = await writeLocalSessionName(local.path, normalized);
-		return summarize(
-			{
-				id: local.id,
-				createdAt: local.createdAt,
-				cwd: local.cwd,
-				path: local.path,
-				...(stored === undefined ? {} : { name: stored }) },
-			"local",
-		);
+		if (hosted === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);
+		const updated = await writeSessionName(sessionDir, sessionId, normalized);
+		return summarize(updated);
 	};
 	/**
 	 * Join one plugin-owned prompt through the existing worker and its durable receipt.
@@ -677,7 +613,6 @@ async function startServerBackend(
 		}
 		await writeSessionArchive(sessionDir, sessionId, archived);
 		if (archived) await workers.stopSessionWork(metadata, BACKGROUND_CONTEXT);
-		await setLocalSessionArchived(metadata.cwd, metadata.id, metadata.createdAt, archived);
 	};
 	const serverServices = await createExperimentalServerServices({
 		...(plugins === undefined ? {} : { plugins }),
@@ -693,7 +628,6 @@ async function startServerBackend(
 				return project;
 			},
 			update: async (id, name, workspaces) => {
-				// Terminal history has no project id. Adopt its metadata before removing a source folder.
 				for (const session of (await listSummaries()).filter(session => session.projectId === id)) {
 					await resolveSession(session.sessionId, BACKGROUND_CONTEXT);
 				}
@@ -717,19 +651,14 @@ async function startServerBackend(
 			context.abortSignal?.throwIfAborted();
 			const metadata = await readSession(sessionDir, sessionId);
 			if (metadata === undefined || metadata.name !== undefined || metadata.nameSource === "manual") return;
-			const local = (await listLocalSessions(metadata.cwd)).find((session) => session.id === sessionId);
-			const name = local?.name ?? automaticSessionName(title);
+			const name = automaticSessionName(title);
 			if (name.length === 0) return;
 			context.abortSignal?.throwIfAborted();
-			await writeSessionName(sessionDir, sessionId, name, local?.name === undefined ? "automatic" : "manual");
-			await refreshMirror(metadata, name, context);
+			await writeSessionName(sessionDir, sessionId, name, "automatic");
 		},
 		remove: async (sessionId, context) => {
 			const metadata = await resolveSession(sessionId, context);
 			await workers.closeSession(metadata, context);
-			// The terminal's files for this id are the other half of the session's storage. The roster
-			// lists the session from this directory, and the handoff mirrors into the session's own cwd.
-			for (const cwd of new Set([process.cwd(), metadata.cwd])) await deleteLocalSessionFiles(cwd, sessionId);
 			await deleteSession(metadata);
 			await options.removeSessionPlugins(metadata);
 		},

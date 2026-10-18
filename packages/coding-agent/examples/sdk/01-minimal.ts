@@ -1,26 +1,27 @@
 /**
- * Minimal SDK Usage
+ * Minimal SDK usage.
  *
- * Uses all defaults: discovers skills, extensions, tools, context files
- * from cwd and ~/.amazme/agent. Model chosen from settings or first available.
+ * Discovers skills, tools, and context files from cwd and ~/.amazme/agent.
+ * The model comes from settings or the first available model.
  */
 
-import { createAgentSession } from "@amazme/coding-agent";
+import { createDurableSession } from "@amazme/coding-agent";
 
-const { session } = await createAgentSession();
+const session = await createDurableSession();
 
 try {
-	session.subscribe((event) => {
-		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-			process.stdout.write(event.assistantMessageEvent.delta);
+	session.subscribe((events) => {
+		for (const event of events) {
+			if (event.type !== "message_update") continue;
+			for (const change of event.changes) {
+				if (change.type === "text_delta") process.stdout.write(change.delta);
+			}
 		}
 	});
 
 	await session.prompt("What files are in the current directory?");
-	session.state.messages.forEach((msg) => {
-		console.log(msg);
-	});
+	for (const message of session.messages()) console.log(message);
 	console.log();
 } finally {
-	session.dispose();
+	await session.dispose();
 }

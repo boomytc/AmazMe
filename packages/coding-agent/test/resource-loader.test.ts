@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import { DefaultResourceLoader, loadProjectContextFiles } from "../src/core/resource-loader.ts";
-import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
@@ -362,14 +361,12 @@ export default function(pi) {
 			expect(extensionsResult.extensions).toHaveLength(2);
 			expect(extensionsResult.errors.some((e) => e.error.includes('Command "/deploy" conflicts'))).toBe(false);
 
-			const sessionManager = SessionManager.inMemory();
 			const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 			const modelRegistry = await createModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,
 				cwd,
-				sessionManager,
 				modelRegistry,
 			);
 
@@ -1140,14 +1137,12 @@ export default function(pi: ExtensionAPI) {
 			const extensionsResult = loader.getExtensions();
 			expect(extensionsResult.extensions[0]?.path).toBe(explicitExtPath);
 
-			const sessionManager = SessionManager.inMemory();
 			const authStorage = AuthStorage.create(join(tempDir, "auth-explicit.json"));
 			const modelRegistry = await createModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,
 				cwd,
-				sessionManager,
 				modelRegistry,
 			);
 
@@ -1199,7 +1194,6 @@ export default function(pi: ExtensionAPI) {
 				extensionsResult.extensions,
 				extensionsResult.runtime,
 				cwd,
-				SessionManager.inMemory(),
 				await createModelRegistry(AuthStorage.create(join(tempDir, "auth-replaceable.json"))),
 			);
 			expect(runner.getCommand("mcp")?.description).toBe("other mcp");

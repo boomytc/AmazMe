@@ -12,7 +12,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@amazme/tui";
-import type { SessionTreeNode } from "../../../core/session-manager.ts";
+import type { SessionTreeNode } from "../../../core/jsonl-transcript.ts";
 import { formatReadLineRange } from "../../../core/tools/render-utils.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";

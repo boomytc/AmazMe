@@ -9,7 +9,12 @@ import {
 } from "@amazme/ai";
 import { getProviderEnvValue } from "@amazme/ai/utils/provider-env";
 import type { ModelRuntime } from "./model-runtime.ts";
-import type { SessionEntry, SessionManager, UsageEntry } from "./session-manager.ts";
+import type { SessionEntry, UsageEntry } from "./jsonl-transcript.ts";
+
+interface CacheWarmJournal {
+	appendUsage(kind: string, provider: string, model: string, usage: Usage, note?: string): UsageEntry;
+	getBranch(): SessionEntry[];
+}
 import type { CacheWarmingMode } from "./settings-manager.ts";
 
 /** Streaming warming never continues past this long after the real request that started it. */
@@ -163,7 +168,7 @@ export class CacheWarmer {
 	private run?: ActiveRun;
 	private inactive: CacheWarmingStatus;
 	private readonly models: Pick<ModelRuntime, "streamSimple">;
-	private readonly sessionManager: Pick<SessionManager, "appendUsage" | "getBranch">;
+	private readonly sessionManager: CacheWarmJournal;
 	private readonly getMode: () => CacheWarmingMode;
 	/** Lets extensions override `event.action`; failures fall back to pi's decision. */
 	private readonly decide: (event: CacheWarmingDecisionEvent) => Promise<CacheWarmingAction>;
@@ -172,7 +177,7 @@ export class CacheWarmer {
 
 	constructor(
 		models: Pick<ModelRuntime, "streamSimple">,
-		sessionManager: Pick<SessionManager, "appendUsage" | "getBranch">,
+		sessionManager: CacheWarmJournal,
 		getMode: () => CacheWarmingMode,
 		decide: (event: CacheWarmingDecisionEvent) => Promise<CacheWarmingAction> = async (event) => event.action,
 	) {

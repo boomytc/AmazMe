@@ -23,7 +23,7 @@ import {
 } from "@amazme/durable";
 import { generateBranchSummary, type GenerateBranchSummaryOptions } from "../core/compaction/branch-summarization.ts";
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX } from "../core/messages.ts";
-import type { SessionEntry } from "../core/session-manager.ts";
+import type { SessionEntry } from "../core/jsonl-transcript.ts";
 import type { ConversationRole, ConversationSummary, HistoryPage, LaneStatus, ReturnPoint } from "./conversation-view.ts";
 import { archivedForkInScope, ForkManagementDoc } from "./fork-management.ts";
 

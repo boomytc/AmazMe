@@ -21,7 +21,7 @@ Eval suites and their fixtures live under `evals/`. Image build files live in `d
 
 ## Run evals
 
-Host evals (smoke, documentation audit) and documentation-lift evals need `AMAZME_PROVIDER` and `AMAZME_MODEL`.
+Host evals (smoke) and documentation-lift evals need `AMAZME_PROVIDER` and `AMAZME_MODEL`.
 
 ```bash
 AMAZME_PROVIDER=openai-codex AMAZME_MODEL=gpt-5.6-sol npm run eval -w packages/evals
@@ -39,7 +39,7 @@ One host suite:
 
 ```bash
 AMAZME_PROVIDER=openai-codex AMAZME_MODEL=gpt-5.6-sol \
-  npm run eval:host -w packages/evals -- evals/documentation-audit.eval.ts
+  npm run eval:host -w packages/evals -- evals/smoke.eval.ts
 ```
 
 ## Run documentation comparisons

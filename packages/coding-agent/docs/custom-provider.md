@@ -1,6 +1,6 @@
 # Custom Providers
 
-Provider factories below apply to AgentSession SDK modes (Print/JSON/RPC). For the default terminal and hosted workers, use models.json for a supported compatible endpoint. Plain --help and --list-models do not evaluate SDK factories.
+Print, JSON, RPC, the terminal, and hosted workers resolve models through `models.json` and `ModelRuntime`. Plain `--help` and `--list-models` do not load plugins.
 
 A provider extension connects Pi to a model service that needs custom authentication, model discovery, request handling, or streaming. If the service already speaks a supported API, configure it in `models.json` instead.
 
@@ -72,8 +72,6 @@ pi.registerProvider("media-tools", {
 Model-level `baseUrl` values take precedence over the provider endpoint. If no `models` list is supplied, built-in models of every operation remain registered. Equal model IDs in different operations remain distinct, including their model-specific headers.
 
 Calls made after initial extension loading take effect immediately. Use `pi.unregisterProvider()` to remove the dynamic provider and restore built-in behavior that it replaced.
-
-See the checked [GitLab Duo provider](../examples/extensions/custom-provider-gitlab-duo/) for a complete registration that delegates streaming to built-in API implementations.
 
 ## Provide authentication
 

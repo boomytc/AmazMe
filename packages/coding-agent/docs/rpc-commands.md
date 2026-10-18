@@ -1,6 +1,6 @@
 # RPC Commands
 
-These commands belong to the AgentSession SDK RPC process, not the hosted client service protocol.
+These commands belong to Durable RPC, not the hosted client service protocol.
 
 This reference lists commands accepted on stdin in [RPC mode](rpc.md). Each command and response is one JSON object. Shared message values use the [message types](message-types.md).
 
@@ -435,20 +435,7 @@ Response:
 {"type": "response", "command": "set_auto_retry", "success": true}
 ```
 
-### abort_retry
-
-Abort an in-progress retry (cancel the delay and stop retrying).
-
-```json
-{"type": "abort_retry"}
-```
-
-The Durable runtime does not support this command yet: its retry is an internal generation checkpoint, and aborting it would cancel the whole turn rather than only the backoff. It returns an explicit unsupported error.
-
-Response:
-```json
-{"type": "response", "command": "abort_retry", "success": true}
-```
+`abort_retry` is not a command. A client that still sends it receives the generic unknown-command error. There is no replacement that cancels only the retry backoff.
 
 ## Bash
 

@@ -1,6 +1,12 @@
 import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Text } from "@amazme/tui";
-import type { ParsedSkillBlock } from "../../../core/agent-session.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+
+export interface ParsedSkillBlock {
+	name: string;
+	location: string;
+	content: string;
+	userMessage: string | undefined;
+}
 import { keyText } from "./keybinding-hints.ts";
 
 /**

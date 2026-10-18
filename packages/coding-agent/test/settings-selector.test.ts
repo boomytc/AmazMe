@@ -1,5 +1,6 @@
+import type { Model } from "@amazme/ai";
 import { setKeybindings } from "@amazme/tui";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import {
 	type SettingsCallbacks,
@@ -8,18 +9,11 @@ import {
 } from "../src/modes/interactive/components/settings-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
-import { createHarness, type Harness } from "./suite/harness.ts";
 
 describe("SettingsSelectorComponent", () => {
-	let harness: Harness | undefined;
 	beforeAll(() => {
 		initTheme("dark");
 		setKeybindings(new KeybindingsManager());
-	});
-
-	afterEach(() => {
-		harness?.cleanup();
-		harness = undefined;
 	});
 
 	it("cycles through fullscreen settings", () => {
@@ -137,11 +131,19 @@ describe("SettingsSelectorComponent", () => {
 		expect(output).toContain("→   other");
 	});
 
-	it("keeps the configured per-model thinking level marked while browsing", async () => {
-		harness = await createHarness({
-			models: [{ id: "thinking-model", reasoning: true }],
-		});
-		const model = harness.getModel("thinking-model")!;
+	it("keeps the configured per-model thinking level marked while browsing", () => {
+		const model = {
+			id: "thinking-model",
+			name: "Thinking Model",
+			api: "openai-completions",
+			provider: "fixture",
+			baseUrl: "http://127.0.0.1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 8000,
+			maxTokens: 1000,
+		} satisfies Model<"openai-completions">;
 		const modelKey = `${model.provider}/${model.id}`;
 		const config = {
 			defaultModel: modelKey,

@@ -1,16 +1,14 @@
-import type { AgentState } from "@amazme/agent";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { basename, join } from "path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { APP_NAME, getExportTemplateDir } from "../../config.ts";
 import { getResolvedThemeColors, getThemeExportColors } from "../../modes/interactive/theme/theme.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
-import type { SessionEntry } from "../session-manager.ts";
-import { SessionManager } from "../session-manager.ts";
+import { parseSessionEntries, type SessionEntry, type SessionHeader } from "../jsonl-transcript.ts";
 
 /**
  * Interface for rendering custom tools to HTML.
- * Used by agent-session to pre-render extension tool output.
+ * Pre-renders extension tool output into the HTML export.
  */
 export interface ToolHtmlRenderer {
 	/** Render a tool call to HTML. Returns undefined if tool has no custom renderer. */
@@ -128,8 +126,8 @@ function generateThemeVars(themeName?: string): string {
 }
 
 interface SessionData {
-	header: ReturnType<SessionManager["getHeader"]>;
-	entries: ReturnType<SessionManager["getEntries"]>;
+	header: SessionHeader | null;
+	entries: SessionEntry[];
 	leafId: string | null;
 	systemPrompt?: string;
 	tools?: Array<Pick<ToolDefinition, "name" | "description" | "parameters">>;
@@ -230,60 +228,8 @@ function preRenderCustomTools(
 }
 
 /**
- * Export session to HTML using SessionManager and AgentState.
- * Used by TUI's /export command.
- */
-export async function exportSessionToHtml(
-	sm: SessionManager,
-	state?: AgentState,
-	options?: ExportOptions | string,
-): Promise<string> {
-	const opts: ExportOptions = typeof options === "string" ? { outputPath: options } : options || {};
-
-	const sessionFile = sm.getSessionFile();
-	if (!sessionFile) {
-		throw new Error("Cannot export in-memory session to HTML");
-	}
-	if (!existsSync(sessionFile)) {
-		throw new Error("Nothing to export yet - start a conversation first");
-	}
-
-	const entries = sm.getEntries();
-
-	// Pre-render custom tools if a tool renderer is provided
-	let renderedTools: Record<string, RenderedToolHtml> | undefined;
-	if (opts.toolRenderer) {
-		renderedTools = preRenderCustomTools(entries, opts.toolRenderer);
-		// Only include if we actually rendered something
-		if (Object.keys(renderedTools).length === 0) {
-			renderedTools = undefined;
-		}
-	}
-
-	const sessionData: SessionData = {
-		header: sm.getHeader(),
-		entries,
-		leafId: sm.getLeafId(),
-		systemPrompt: state?.systemPrompt,
-		tools: state?.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
-		renderedTools,
-	};
-
-	const html = generateHtml(sessionData, opts.themeName);
-
-	let outputPath = opts.outputPath ? normalizePath(opts.outputPath) : undefined;
-	if (!outputPath) {
-		const sessionBasename = basename(sessionFile, ".jsonl");
-		outputPath = `${APP_NAME}-session-${sessionBasename}.html`;
-	}
-
-	writeFileSync(outputPath, html, "utf8");
-	return outputPath;
-}
-
-/**
- * Export session file to HTML (standalone, without AgentState).
- * Used by CLI for exporting arbitrary session files.
+ * Export a JSONL transcript file to HTML.
+ * Used by `amazme export` after the Durable transcript is projected.
  */
 export async function exportFromFile(inputPath: string, options?: ExportOptions | string): Promise<string> {
 	const opts: ExportOptions = typeof options === "string" ? { outputPath: options } : options || {};
@@ -293,12 +239,14 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 		throw new Error(`File not found: ${resolvedInputPath}`);
 	}
 
-	const sm = SessionManager.open(resolvedInputPath);
+	const parsed = parseSessionEntries(readFileSync(resolvedInputPath, "utf8"));
+	const header = parsed.find((entry): entry is SessionHeader => entry.type === "session") ?? null;
+	const entries = parsed.filter((entry): entry is SessionEntry => entry.type !== "session");
 
 	const sessionData: SessionData = {
-		header: sm.getHeader(),
-		entries: sm.getEntries(),
-		leafId: sm.getLeafId(),
+		header,
+		entries,
+		leafId: entries.at(-1)?.id ?? null,
 		systemPrompt: undefined,
 		tools: undefined,
 	};

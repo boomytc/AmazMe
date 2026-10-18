@@ -32,7 +32,7 @@ import {
 	type SessionEntry,
 	type SessionProjection,
 	sessionEntryToContextMessages,
-} from "../session-manager.ts";
+} from "../jsonl-transcript.ts";
 import { combineUsage } from "../usage-totals.ts";
 import {
 	computeFileLists,
@@ -101,7 +101,7 @@ function getMessagesFromProjectedEntryForCompaction(entry: ProjectedSessionEntry
 	return entry.messages.filter((message) => message.role !== "system");
 }
 
-/** Result from compact() - SessionManager adds uuid/parentUuid when saving */
+/** Result from compact(). The caller stores the summary. */
 export interface CompactionResult<T = unknown> {
 	summary: string;
 	firstKeptEntryId: string;
@@ -943,7 +943,7 @@ Only summarize information explicitly present above. Do not infer or recreate la
 
 /**
  * Generate summaries for compaction using prepared data.
- * Returns CompactionResult - SessionManager adds uuid/parentUuid when saving.
+ * Returns the compaction result. The caller stores the summary.
  *
  * @param preparation - Pre-calculated preparation from prepareCompaction()
  * @param customInstructions - Optional custom focus for the summary

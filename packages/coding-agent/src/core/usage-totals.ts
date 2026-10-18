@@ -1,5 +1,5 @@
 import type { Usage } from "@amazme/ai/compat";
-import type { SessionEntry } from "./session-manager.ts";
+import type { SessionEntry } from "./jsonl-transcript.ts";
 
 export interface UsageTotals {
 	input: number;

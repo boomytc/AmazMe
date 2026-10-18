@@ -2,7 +2,7 @@
 
 By default, running `amazme` opens the interactive terminal interface. When input or output is piped or redirected, AmazMe uses print mode instead. You can also select print, JSON, or RPC mode explicitly for scripts and applications.
 
-The default terminal uses Durable with SQLite storage. Print, JSON and RPC use the AgentSession SDK and JSONL sessions. They share lower-level model, resource and tool implementations; their lifecycle and persistence contracts differ. See [Sessions](sessions.md) and [How AmazMe works](how-pi-works.md).
+The terminal, print, JSON, and RPC modes use Durable with SQLite storage. See [Sessions](sessions.md) and [How AmazMe works](how-pi-works.md).
 
 The SDK is not a CLI mode. It embeds the agent directly in a Node.js or Bun process. See the [SDK](sdk.md) when direct TypeScript access is preferable to a process boundary.
 

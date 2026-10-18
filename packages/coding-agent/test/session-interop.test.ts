@@ -7,7 +7,7 @@ import {
 	createCustomMessage,
 } from "../src/core/messages.ts";
 import { durableEntriesToSessionFile, sessionEntriesToDurableDrafts } from "../src/core/session-interop.ts";
-import type { SessionEntry } from "../src/core/session-manager.ts";
+import type { SessionEntry } from "../src/core/jsonl-transcript.ts";
 
 const user: UserMessage = { role: "user", content: "hello", timestamp: 1 };
 const reply: AssistantMessage = {

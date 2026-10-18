@@ -1,6 +1,6 @@
 import type { ProgramStatus, Terminal } from "@amazme/tui";
 import { APP_NAME } from "../../config.ts";
-import type { AgentSessionEvent } from "../../core/agent-session.ts";
+import type { StreamEvent } from "../json-event.ts";
 
 export type BlockedStatus = { kind: NonNullable<ProgramStatus["kind"]>; message: string };
 
@@ -32,7 +32,7 @@ export class ProgramStatusReporter {
 		this.getSessionName = getSessionName;
 	}
 
-	handleEvent(event: AgentSessionEvent): void {
+	handleEvent(event: StreamEvent): void {
 		switch (event.type) {
 			case "agent_start":
 				this.runActive = true;

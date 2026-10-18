@@ -56,7 +56,6 @@ describeEval("Add OpenAI-compatible provider", { harness, judges: [judge], judge
 
 The provider offers one model, ${OPENAI_MODEL_ID}, shown as “Acme Chat”. It accepts text, does not support reasoning, has a 32,768-token context window and a 4,096-token maximum output, and has no usage cost.`,
 			},
-			{ type: "reload" },
 		]);
 	});
 });

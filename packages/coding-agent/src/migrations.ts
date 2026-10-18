@@ -108,7 +108,7 @@ export function migrateSessionsFromAgentRoot(): void {
 
 			const cwd: string = header.cwd;
 
-			// Compute the correct session directory (same encoding as session-manager.ts)
+			// Compute the correct session directory (same encoding as jsonl-transcript.ts)
 			const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 			const correctDir = join(agentDir, "sessions", safePath);
 

@@ -14,7 +14,7 @@ import {
 	visibleWidth,
 } from "@amazme/tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
-import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
+import type { SessionInfo, SessionListProgress } from "../../../core/jsonl-transcript.ts";
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -59,7 +59,7 @@ class SessionSelectorHeader implements Component {
 	private nameFilter: NameFilter;
 	private requestRender: () => void;
 	private loading = false;
-	private loadProgress: { loaded: number; total: number } | null = null;
+	private loadProgress: { loaded: number; total: number | undefined } | null = null;
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
 	private statusMessage: { type: "info" | "error"; message: string } | null = null;
@@ -91,7 +91,7 @@ class SessionSelectorHeader implements Component {
 		this.loadProgress = null;
 	}
 
-	setProgress(loaded: number, total: number): void {
+	setProgress(loaded: number, total: number | undefined): void {
 		this.loadProgress = { loaded, total };
 	}
 
@@ -139,7 +139,11 @@ class SessionSelectorHeader implements Component {
 
 		let scopeText: string;
 		if (this.loading) {
-			const progressText = this.loadProgress ? `${this.loadProgress.loaded}/${this.loadProgress.total}` : "...";
+			const progressText = this.loadProgress
+				? this.loadProgress.total === undefined
+					? String(this.loadProgress.loaded)
+					: `${this.loadProgress.loaded}/${this.loadProgress.total}`
+				: "...";
 			scopeText = `${theme.fg("muted", "○ Current Folder | ")}${theme.fg("accent", `Loading ${progressText}`)}`;
 		} else if (this.scope === "current") {
 			scopeText = `${theme.fg("accent", "◉ Current Folder")}${theme.fg("muted", " | ○ All")}`;

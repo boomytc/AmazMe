@@ -7,7 +7,68 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@amazme/tui";
-import { childFrameLines, childLifecycleLine, type ChildAgentBook } from "../../core/child-session.ts";
+export type ChildAgentStatus = "running" | "finished" | "failed" | "cancelled";
+
+export interface ChildRecord {
+	id: string;
+	description: string;
+	modelId: string;
+	status: ChildAgentStatus;
+	activity: string;
+	startedAt: number;
+	endedAt?: number;
+	transcript: string[];
+	cancel: () => void;
+}
+
+/** Parent-scrollback rows for child agents. The interactive surface reads this book. */
+export class ChildAgentBook {
+	readonly records: ChildRecord[] = [];
+	openId: string | undefined;
+	highlightId: string | undefined;
+	tasksOpen = false;
+	private readonly listeners = new Set<() => void>();
+
+	onChange(listener: () => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	add(record: ChildRecord): void {
+		this.records.push(record);
+		this.touch();
+	}
+
+	touch(): void {
+		for (const listener of this.listeners) listener();
+	}
+
+	open(id: string): void {
+		this.openId = id;
+		this.touch();
+	}
+
+	close(): void {
+		this.openId = undefined;
+		this.touch();
+	}
+}
+
+export function childLifecycleLine(record: ChildRecord): string {
+	const quoted = `"${record.description}"`;
+	if (record.status === "running") {
+		const suffix = record.activity ? ` · ${record.activity}` : "";
+		return `Subagent running: ${quoted} (${record.modelId})${suffix}`;
+	}
+	return `Subagent ${record.status}: ${quoted} (${record.modelId})`;
+}
+
+export function childFrameLines(record: ChildRecord, now = Date.now()): string[] {
+	const elapsedMs = (record.endedAt ?? now) - record.startedAt;
+	const elapsed = `${Math.max(0, Math.floor(elapsedMs / 1000))}s`;
+	return [`${record.status} ${record.description} ${record.modelId} ${elapsed}`, ...record.transcript];
+}
+
 import { type ForegroundCommands, type ForegroundTask } from "../../core/foreground-commands.ts";
 import { formatKeyText } from "../../core/keybinding-labels.ts";
 import { matchesAppBinding } from "../../core/keybindings.ts";

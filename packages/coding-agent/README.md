@@ -42,7 +42,7 @@ amazme web -e /path/to/plugin
 
 修改原插件源码后，在任务空闲时运行 `/reload`。候选构建失败会保留可用版本；修复源码后可重试。应用壳及核心源码修改需要构建与重启。当前宿主会向模型提供已选插件的 manifest 位置，源码映射可定位原文件；默认终端直接加载源码时提供其位置。
 
-[SDK 扩展](docs/extensions.md) 使用 `ExtensionAPI` 工厂，适用于 SDK 与 print/RPC 路径。它们与默认入口的原生 facets 是不同契约，选择对应文档和示例。
+进程内 SDK 使用 `createDurableSession`。插件使用原生 facets。`docs/extensions.md` 描述的 `ExtensionAPI` 工厂不再是 CLI 或 SDK 入口。
 
 ## 会话与工具
 
@@ -50,15 +50,10 @@ amazme web -e /path/to/plugin
 
 | 路径 | 存储 | 选择与恢复 | JSONL 互通 |
 | --- | --- | --- | --- |
-| 默认原生交互 TUI | Durable SQLite；`--no-session` 使用内存 | `--continue` / `--resume` 恢复工作目录会话，界面内 `/tree` / `/fork` 导航 | 不直接写 JSONL，不迁移终端文件 |
-| print / JSON / RPC / 兼容 SDK AgentSession | SessionManager JSONL | 使用该路径支持的 `--session`、`--session-id`、`--fork` 选择文件 | 保留 JSONL 树及条目格式 |
-| 常驻宿主（Web、桌面、宿主终端客户端） | Durable SQLite | 宿主会话目录与同工作目录的终端会话列表 | 空转录且同 cwd、同 id 时可导入；提交后按序导出同一 JSONL |
+| 终端、print、JSON、RPC、SDK | Durable SQLite；`--no-session` 使用内存 | `--continue` / `--resume` 恢复该目录最新 Durable 会话；界面内 `/tree` / `/fork` 导航 | `amazme import` 单向导入线性 JSONL；`amazme export` 和 `/share` 导出活动转录 |
+| 常驻宿主（Web、桌面、宿主终端客户端） | Durable SQLite | 宿主会话目录 | 不写 JSONL 镜像。导入仍使用 `amazme import` |
 
-原生交互拒绝 `--fork`、`--session`、`--session-id`，以及 `--no-session` 配 `--continue` 或 `--resume`，退出码为 1，不创建 durable 会话存储。这是兼容边界，不是自动迁移入口。
-
-宿主只从首次捕获的原始内容导入 version 3 单链、普通 user / assistant / toolResult / system 消息，并先验证消息往返等价；不会通过读取触发旧文件迁移，坏行或未知元数据会禁用导入与镜像。分叉、终端专用元数据、扩展消息及摘要不能完整表示时，拒绝该次导入与覆盖镜像，保留终端原文件并报告原因；非空 durable 转录也不能覆盖不一致的既有终端文件。宿主生成的镜像在同一 durable 转录下保持导出 entry id 稳定，但不承诺保留原终端 entry id，摘要和树不属于全量往返等价合同。
-
-镜像检测文件内容、身份与修改时间。发现外部追加、替换、截断、删除等冲突后，该 handoff 不再覆盖；Web/桌面显示持续警告，worker 同时记录 session 和目标路径。它不是双向同步，不会自动读回或合并终端新内容。首次创建使用不可覆盖的文件链接；既有文件最后检查与 rename 之间仍有非协作写入竞态，不承诺原子 compare-and-swap。正常失败会清理本次临时文件；硬崩溃仍可能遗留 `.tmp-<pid>-<uuid>`，列表不会将其当会话。
+`--session`、`--session-id`、`--fork` 是未知选项。`--no-session` 不能和 `--continue` 或 `--resume` 一起用。这些组合在打开存储前退出，退出码为 1。只有旧 JSONL、没有 Durable 会话时，`--continue` 提示先运行 `amazme import`。
 
 `/model` 选择模型，`/thinking` 选择推理强度，`/scoped_models` 配置模型菜单与轮换的候选范围；`/tree` 查看历史，`/fork` 分叉，`/older` 加载更早记录，`/compact` 压缩当前上下文，`/tasks` 查看任务，`/mcp` 管理 MCP。模型、推理强度与工具选择属于当前对话，其他分叉保留各自配置。
 

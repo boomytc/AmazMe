@@ -22,7 +22,6 @@ describe("default headless runtime", () => {
 		profile = join(directory, "profile");
 		await mkdir(cwd);
 		vi.stubEnv("AMAZME_CODING_AGENT_DIR", profile);
-		vi.stubEnv("AMAZME_RUNTIME", "");
 		vi.spyOn(process, "cwd").mockReturnValue(cwd);
 		for (const stream of [process.stdin, process.stdout]) Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
 		vi.mocked(runDurablePrint).mockClear();

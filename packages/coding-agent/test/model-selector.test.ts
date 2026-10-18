@@ -1,18 +1,42 @@
+import type { Model, ModelsRefreshResult } from "@amazme/ai";
 import { setKeybindings, type TUI } from "@amazme/tui";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ModelRuntime } from "../src/core/model-runtime.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { ModelSelectorComponent } from "../src/modes/interactive/components/model-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
-import { createHarness, type Harness } from "./suite/harness.ts";
 
 function createFakeTui(): TUI {
 	return { requestRender: () => {} } as unknown as TUI;
 }
 
-describe("model selector", () => {
-	let harness: Harness | undefined;
+function fixtureModel(id: string, name = id): Model<"openai-completions"> {
+	return {
+		id,
+		name,
+		api: "openai-completions",
+		provider: "fixture",
+		baseUrl: "http://127.0.0.1",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 8000,
+		maxTokens: 1000,
+	};
+}
 
+function catalog(models: readonly Model<"openai-completions">[]): ModelRuntime {
+	const runtime = {
+		getAvailableSnapshot: () => models,
+		getModel: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
+		getError: () => undefined,
+		refresh: async (): Promise<ModelsRefreshResult> => ({ aborted: false, errors: new Map() }),
+	};
+	return runtime as ModelRuntime;
+}
+
+describe("model selector", () => {
 	beforeAll(() => {
 		initTheme("dark");
 	});
@@ -21,23 +45,13 @@ describe("model selector", () => {
 		setKeybindings(new KeybindingsManager());
 	});
 
-	afterEach(() => {
-		harness?.cleanup();
-		harness = undefined;
-	});
-
-	it("keeps the current model marked while browsing", async () => {
-		harness = await createHarness({
-			models: [
-				{ id: "current-model", name: "Current Model", reasoning: true },
-				{ id: "browsed-model", name: "Browsed Model", reasoning: true },
-			],
-		});
-		const currentModel = harness.getModel("current-model")!;
+	it("keeps the current model marked while browsing", () => {
+		const currentModel = fixtureModel("current-model", "Current Model");
+		const browsedModel = fixtureModel("browsed-model", "Browsed Model");
 		const selector = new ModelSelectorComponent(
 			createFakeTui(),
 			currentModel,
-			harness.session.modelRuntime,
+			catalog([currentModel, browsedModel]),
 			[],
 			() => {},
 			() => {},
@@ -56,15 +70,14 @@ describe("model selector", () => {
 		selector.dispose();
 	});
 
-	it("uses the configured save binding", async () => {
+	it("uses the configured save binding", () => {
 		setKeybindings(new KeybindingsManager({ "app.models.save": "ctrl+r" }));
-		harness = await createHarness();
-		const currentModel = harness.getModel()!;
+		const currentModel = fixtureModel("current-model", "Current Model");
 		const saveDefault = vi.fn();
 		const selector = new ModelSelectorComponent(
 			createFakeTui(),
 			currentModel,
-			harness.session.modelRuntime,
+			catalog([currentModel]),
 			[],
 			() => {},
 			() => {},
@@ -77,11 +90,13 @@ describe("model selector", () => {
 		expect(saveDefault).not.toHaveBeenCalled();
 		selector.handleInput("\x12");
 		expect(saveDefault).toHaveBeenCalledWith(currentModel);
+		selector.dispose();
 	});
 
 	it("lists every catalog that failed to refresh", async () => {
-		harness = await createHarness();
-		vi.spyOn(harness.session.modelRuntime, "refresh").mockResolvedValue({
+		const currentModel = fixtureModel("current-model", "Current Model");
+		const runtime = catalog([currentModel]);
+		vi.spyOn(runtime, "refresh").mockResolvedValue({
 			aborted: false,
 			errors: new Map([
 				["openai", new Error("unavailable")],
@@ -89,18 +104,12 @@ describe("model selector", () => {
 			]),
 		});
 
-		const selector = new ModelSelectorComponent(
-			createFakeTui(),
-			harness.getModel(),
-			harness.session.modelRuntime,
-			[],
-			() => {},
-			() => {},
-		);
+		const selector = new ModelSelectorComponent(createFakeTui(), currentModel, runtime, [], () => {}, () => {});
 
 		await vi.waitFor(() => {
 			const rendered = stripAnsi(selector.render(120).join("\n"));
 			expect(rendered).toContain("Could not refresh 2 model catalogs (openai, anthropic); showing cached models.");
 		});
+		selector.dispose();
 	});
 });

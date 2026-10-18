@@ -100,17 +100,11 @@ amazme --continue
 See [Sessions and Context](sessions.md) for resuming, forking, naming, and storing sessions.
 
 - `-c`, `--continue`<br>
-  Continues the most recent session for the current project.
+  Continues the newest Durable session for the current project. If only a JSONL history remains, the command tells you to run `amazme import` first.
 - `-r`, `--resume`<br>
-  Continues the newest session in the default terminal, like `--continue`. JSONL applications use a session selector.
-- `--session <path|id>`<br>
-  Selects a JSONL session for print/RPC by file path, exact ID, or partial ID. AmazMe searches the current project first and offers to fork a cross-project match.
-- `--session-id <id>`<br>
-  Opens the exact JSONL project session ID or creates it if absent. IDs accept letters, numbers, `.`, `_`, and `-`.
-- `--fork <path|id>`<br>
-  Forks an existing JSONL session into a new session for the current project. In the default terminal, use `/fork` or `/tree`.
+  Same as `--continue`.
 - `--session-dir <dir>`<br>
-  Overrides storage and lookup. It takes precedence over `AMAZME_CODING_AGENT_SESSION_DIR` and the `sessionDir` setting.
+  Overrides Durable session storage and lookup. It takes precedence over `AMAZME_CODING_AGENT_SESSION_DIR`. The settings `sessionDir` is not used as Durable storage.
 - `--no-session`<br>
   Uses the existing runtime with in-memory storage. No conversation database or session lock is created, and the conversation cannot be resumed after exit. Configuration and authentication still use their normal files.
 - `-n`, `--name <name>`<br>
@@ -118,9 +112,7 @@ See [Sessions and Context](sessions.md) for resuming, forking, naming, and stori
 
 The default terminal stores SQLite sessions under `<agent-dir>/experimental/durable-sessions/<cwd-hash>/<session-id>/session.sqlite`. The directory name is retained for existing histories. A custom session root replaces `experimental/durable-sessions`; it still groups sessions by canonical working directory. Relative roots resolve against the working directory and `~` expands to the home directory. CLI root selection takes precedence over the environment, then settings, then the default. Web/server session roots belong to their shared host; these native terminal options do not select a hosted session.
 
-### Durable print/JSON/RPC migration
-
-New `--print`, `--mode json`, and `--mode rpc` sessions run on the Durable Harness by default. Set `AMAZME_RUNTIME=legacy` to use the JSONL AgentSession. The path uses the same SQLite session, tools, resources, MCP selection, and native facet plugins as the default terminal. `--no-session` uses in-memory storage; `--continue` and `--session-dir` select persisted Durable sessions. The JSONL flags `--session`, `--session-id`, and `--fork`, inline SDK extension factories, and `--continue` when the project has only JSONL history fall back to the legacy runtime. An explicit `AMAZME_RUNTIME=durable` rejects the JSONL flags and factories instead of silently changing meaning. RPC commands that depend on the JSONL session tree, extension UI, shell records, or HTML export return an explicit unsupported error. See [Durable single-kernel migration](../../../docs/durable-migration.md).
+Interactive, print, JSON, and RPC sessions all use the Durable Harness and the same SQLite session, tools, resources, MCP selection, and native facet plugins. `--no-session` uses in-memory storage. `--session`, `--session-id`, and `--fork` are unknown options. Fork inside a session with `/tree` or `/fork`. See [Durable single-kernel migration](../../../docs/durable-migration.md).
 
 ### Import a JSONL session
 
@@ -132,10 +124,8 @@ New `--print`, `--mode json`, and `--mode rpc` sessions run on the Durable Harne
 
 Constraints:
 
-- In the default terminal, `--no-session` cannot be combined with `--continue` or `--resume`. `--session`, `--session-id`, and `--fork` select JSONL storage and are rejected by that terminal.
-- Session IDs must start and end with a letter or number.
-- `--fork` cannot be combined with `--session`, `--continue`, `--resume`, or `--no-session`.
-- `--session-id` cannot be combined with `--session`, `--continue`, or `--resume`. Combine it with `--fork` to choose the new ID.
+- `--no-session` cannot be combined with `--continue` or `--resume`.
+- `--session`, `--session-id`, and `--fork` are unknown options and exit before session storage is opened.
 
 <a id="tool-options"></a>
 

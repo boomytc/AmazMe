@@ -23,8 +23,6 @@ cp permission-gate.ts ~/.amazme/agent/extensions/
 | `protected-paths.ts` | Blocks writes to protected paths (.env, .git/, node_modules/) |
 | `confirm-destructive.ts` | Confirms before destructive session actions (clear, switch, fork) |
 | `dirty-repo-guard.ts` | Prevents session changes with uncommitted git changes |
-| `sandbox/` | OS-level sandboxing using `@anthropic-ai/sandbox-runtime` with per-project config |
-| `gondolin/` | Route built-in tools and `!` commands into a Gondolin micro-VM |
 
 ### Custom Tools
 
@@ -127,15 +125,12 @@ cp permission-gate.ts ~/.amazme/agent/extensions/
 
 | Extension | Description |
 |-----------|-------------|
-| `custom-provider-anthropic/` | Custom Anthropic provider with OAuth support and custom streaming implementation |
-| `custom-provider-gitlab-duo/` | GitLab Duo provider using pi-ai's built-in Anthropic/OpenAI streaming via proxy |
 | `jev-router.ts` | Virtual model via `registerVirtualModel` that plans on Codex Sol or Terra (picked by the Jev classifier) and switches to Luna after the first edit |
 
 ### External Dependencies
 
 | Extension | Description |
 |-----------|-------------|
-| `with-deps/` | Extension with its own package.json and dependencies (demonstrates jiti module resolution) |
 | `file-trigger.ts` | Watches a trigger file and injects contents into conversation |
 
 ## Writing Extensions

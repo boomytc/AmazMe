@@ -1,74 +1,41 @@
 /**
- * Full Control
+ * Explicit configuration.
  *
- * Replace everything - no discovery, explicit configuration.
+ * Discovery flags turn off skills, context files, prompt templates, themes, and plugins.
  */
 
-import { getModel } from "@amazme/ai/compat";
-import {
-	createAgentSession,
-	createExtensionRuntime,
-	ModelRuntime,
-	type ResourceLoader,
-	SessionManager,
-	SettingsManager,
-} from "@amazme/coding-agent";
+import { createDurableSession, ModelRuntime, SettingsManager } from "@amazme/coding-agent";
 
-const modelRuntime = await ModelRuntime.create({
-	authPath: "/tmp/my-agent/auth.json",
-	modelsPath: "/tmp/my-agent/models.json",
-});
+const modelRuntime = await ModelRuntime.create();
 if (process.env.MY_ANTHROPIC_KEY) {
 	await modelRuntime.setRuntimeApiKey("anthropic", process.env.MY_ANTHROPIC_KEY);
 }
 
-const model = getModel("anthropic", "claude-sonnet-4-5");
-if (!model) throw new Error("Model not found");
-
-// In-memory settings with overrides
 const settingsManager = SettingsManager.inMemory({
 	compaction: { enabled: false },
 	retry: { enabled: true, maxRetries: 2 },
 });
 
-const cwd = process.cwd();
-
-const resourceLoader: ResourceLoader = {
-	getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
-	getSkills: () => ({ skills: [], diagnostics: [] }),
-	getPrompts: () => ({ prompts: [], diagnostics: [] }),
-	getThemes: () => ({ themes: [], diagnostics: [] }),
-	getAgentsFiles: () => ({ agentsFiles: [] }),
-	getSystemPrompt: () => `You are a minimal assistant.
-Available: read, bash. Be concise.`,
-	getSystemPromptSource: () => undefined,
-	getAppendSystemPrompt: () => [],
-	getAppendSystemPromptSources: () => [],
-	extendResources: () => {},
-	reload: async () => {},
-};
-
-const { session } = await createAgentSession({
-	cwd,
-	agentDir: "/tmp/my-agent",
-	model,
-	thinkingLevel: "off",
+const session = await createDurableSession({
+	cwd: process.cwd(),
 	modelRuntime,
-	resourceLoader,
-	tools: ["read", "bash"],
-	sessionManager: SessionManager.inMemory(cwd),
 	settingsManager,
+	provider: "anthropic",
+	model: "claude-sonnet-4-5",
+	thinkingLevel: "off",
+	systemPrompt: "You are a terse coding assistant.",
+	noSkills: true,
+	noContextFiles: true,
+	noPromptTemplates: true,
+	noThemes: true,
+	noExtensions: true,
+	noMcp: true,
+	tools: ["read", "grep", "find", "ls"],
+	noSession: true,
 });
 
 try {
-	session.subscribe((event) => {
-		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-			process.stdout.write(event.assistantMessageEvent.delta);
-		}
-	});
-
-	await session.prompt("List files in the current directory.");
-	console.log();
+	await session.prompt("Say hello in one sentence.");
 } finally {
-	session.dispose();
+	await session.dispose();
 }

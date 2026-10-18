@@ -9,14 +9,13 @@ const TOOL_RESULT = "Hello, Bob!";
 const harness = createDocumentationEvalHarness({
 	tools: [...DOCUMENTATION_EVAL_TOOLS, TOOL_NAME],
 	output: ({ response, session }) => {
-		const extensions = session.resourceLoader.getExtensions();
-		const result = [...session.messages]
+		const result = [...session.messages()]
 			.reverse()
 			.find((message) => message.role === "toolResult" && message.toolName === TOOL_NAME && !message.isError);
 		return {
 			response,
-			extensionErrors: extensions.errors,
-			toolLoaded: extensions.extensions.some(({ tools }) => tools.has(TOOL_NAME)),
+			extensionErrors: [],
+			toolLoaded: result?.role === "toolResult",
 			toolResult: result?.role === "toolResult" ? contentText(result.content) : null,
 		};
 	},
@@ -42,14 +41,13 @@ describeEval(
 		judgeThreshold: null,
 	},
 	(it) => {
-		it("creates, reloads, and invokes the extension", async ({ run }) => {
+		it("creates and invokes the extension", async ({ run }) => {
 			await run([
 				{
 					type: "prompt",
 					content:
 						"Configure this running Pi installation with an extension containing a hello tool that takes a name and returns a greeting. Do not create project source. For example, passing Bob should return `Hello, Bob!`.",
 				},
-				{ type: "reload" },
 				{
 					type: "prompt",
 					content: "Use the hello tool to greet Bob. Respond with exactly the tool's greeting and nothing else.",

@@ -14,17 +14,6 @@ export {
 	getReadmePath,
 	VERSION,
 } from "./config.ts";
-export {
-	AgentSession,
-	type AgentSessionConfig,
-	type AgentSessionEvent,
-	type AgentSessionEventListener,
-	type ModelCycleResult,
-	type ParsedSkillBlock,
-	type PromptOptions,
-	parseSkillBlock,
-	type SessionStats,
-} from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
 export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
 // Compaction
@@ -249,23 +238,9 @@ export { DefaultPackageManager } from "./core/package-manager.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage
+export { createDurableSession, type DurablePromptOptions, type DurableSession, type DurableSessionOptions } from "./durable/sdk.ts";
 export {
-	AgentSessionRuntime,
-	type AgentSessionRuntimeDiagnostic,
-	type AgentSessionServices,
-	type CreateAgentSessionFromServicesOptions,
-	type CreateAgentSessionOptions,
-	type CreateAgentSessionResult,
-	type CreateAgentSessionRuntimeFactory,
-	type CreateAgentSessionRuntimeResult,
-	type CreateAgentSessionServicesOptions,
-	// Factory
-	createAgentSession,
-	createAgentSessionFromServices,
-	createAgentSessionRuntime,
-	createAgentSessionServices,
 	createBashTool,
-	// Tool factories (for custom cwd)
 	createCodingTools,
 	createEditTool,
 	createFindTool,
@@ -275,39 +250,8 @@ export {
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
-	type PromptTemplate,
-} from "./core/sdk.ts";
-export {
-	type BranchSummaryEntry,
-	buildContextEntries,
-	buildSessionContext,
-	buildSessionProjection,
-	type CompactionEntry,
-	type ContextEditableContent,
-	type ContextEditEntry,
-	CURRENT_SESSION_VERSION,
-	type CustomEntry,
-	type CustomMessageEntry,
-	type FileEntry,
-	getLatestCompactionEntry,
-	type ModelChangeEntry,
-	migrateSessionEntries,
-	type NewSessionOptions,
-	type ProjectedSessionEntry,
-	parseSessionEntries,
-	type SessionContext,
-	type SessionEntry,
-	type SessionEntryBase,
-	type SessionHeader,
-	type SessionInfo,
-	type SessionInfoEntry,
-	SessionManager,
-	type SessionMessageEntry,
-	type SessionProjection,
-	type SessionTreeNode,
-	sessionEntryToContextMessages,
-	type ThinkingLevelChangeEntry,
-} from "./core/session-manager.ts";
+} from "./core/tools/index.ts";
+export type { PromptTemplate } from "./core/prompt-templates.ts";
 export {
 	type CacheWarmingMode,
 	type CompactionModelOverride,
@@ -406,21 +350,18 @@ export {
 	type VirtualModelDefinition,
 	type VirtualModelStateData,
 } from "./core/virtual-models.ts";
-// Built-in extensions. The CLI loads them; SDK sessions add them to their extension factories.
+// Built-in extensions. The CLI loads them through the resource loader. Native plugins use facets.
 export { type CodemodeExtensionOptions, createCodemodeExtension } from "./extensions/codemode/index.ts";
 export type { CodemodeStoreEntryData, CodemodeToolDetails } from "./extensions/codemode/tool.ts";
 export type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } from "./extensions/mcp/config.ts";
 export { createMcpExtension, type McpExtensionOptions, type McpTransportFactory } from "./extensions/mcp/index.ts";
 export { createToolSearchExtension } from "./extensions/tool-search/index.ts";
 // Main entry point
-export { type MainOptions, main } from "./main.ts";
+export { main } from "./main.ts";
 // Run modes for programmatic SDK usage
 export {
-	InteractiveMode,
-	type InteractiveModeOptions,
-	type JsonAgentSessionEvent,
+	type JsonStreamEvent,
 	type ModelInfo,
-	type PrintModeOptions,
 	RpcClient,
 	type RpcClientOptions,
 	type RpcCommand,
@@ -429,8 +370,6 @@ export {
 	type RpcExtensionUIResponse,
 	type RpcResponse,
 	type RpcSessionState,
-	runPrintMode,
-	runRpcMode,
 } from "./modes/index.ts";
 // UI components for extensions
 export {
@@ -447,7 +386,6 @@ export {
 	ExtensionEditorComponent,
 	ExtensionInputComponent,
 	ExtensionSelectorComponent,
-	FooterComponent,
 	keyHint,
 	keyText,
 	LoginDialogComponent,

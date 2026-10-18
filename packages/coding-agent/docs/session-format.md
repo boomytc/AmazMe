@@ -1,6 +1,6 @@
 # Session File Format
 
-This is the AgentSession SDK JSONL format used by Print/JSON/RPC and SDK applications. The default terminal and hosted workers use SQLite. See [Sessions](sessions.md) for their storage and lifecycle.
+This is the JSONL shape used by `amazme import`, `amazme export`, and the RPC transcript projection. Durable SQLite is the session store. See [Sessions](sessions.md).
 
 Sessions are stored as JSONL (JSON Lines) files. Each line is a JSON object with a `type` field. Session entries form a tree structure via `id`/`parentId` fields, enabling in-place branching without creating new files.
 
@@ -13,7 +13,7 @@ For programmatic SDK creation, persistence, and tree navigation, see [SDK sessio
 ~/.amazme/agent/sessions/--<path>--/<timestamp>_<session-id>.jsonl
 ```
 
-By default, `<session-id>` is a UUID. Callers can supply a custom ID through the SDK or `--session-id`. For `<path>`, Pi removes the leading path separator and replaces `/`, `\\`, and `:` with `-`.
+By default, `<session-id>` is a UUID. For `<path>`, Pi removes the leading path separator and replaces `/`, `\\`, and `:` with `-`. These files are import sources. `--continue` does not open them.
 
 ## Deleting Sessions
 
@@ -34,7 +34,7 @@ Existing sessions are automatically migrated to the current version (v3) when lo
 ## Source Files
 
 Source on GitHub ([pi](https://github.com/earendil-works/pi)):
-- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
+- [`packages/coding-agent/src/core/jsonl-transcript.ts`](../src/core/jsonl-transcript.ts) - Session entry types used by import, export, and projection
 - [Message Types](message-types.md) - Shared message and content-block reference
 - [`packages/coding-agent/src/core/messages.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/messages.ts) - Extended message types
 - [`packages/ai/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts) - Base message and content-block types

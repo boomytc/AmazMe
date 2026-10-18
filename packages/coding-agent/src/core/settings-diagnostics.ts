@@ -1,7 +1,11 @@
-import type { AgentSessionRuntimeDiagnostic } from "./agent-session-services.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 
-export function collectSettingsDiagnostics(settingsManager: SettingsManager): AgentSessionRuntimeDiagnostic[] {
+export interface RuntimeDiagnostic {
+	type: "error" | "warning" | "info";
+	message: string;
+}
+
+export function collectSettingsDiagnostics(settingsManager: SettingsManager): RuntimeDiagnostic[] {
 	return settingsManager.drainErrors().map(({ scope, path, error }) => {
 		const detail = error instanceof SyntaxError ? "malformed JSON" : error.message;
 		return {
@@ -16,8 +20,8 @@ export function collectSettingsDiagnostics(settingsManager: SettingsManager): Ag
  * Startup and runtime settings managers can report the same file error.
  */
 export function deduplicateDiagnostics(
-	diagnostics: readonly AgentSessionRuntimeDiagnostic[],
-): AgentSessionRuntimeDiagnostic[] {
+	diagnostics: readonly RuntimeDiagnostic[],
+): RuntimeDiagnostic[] {
 	const seen = new Set<string>();
 	return diagnostics.filter((diagnostic) => {
 		const key = `${diagnostic.type}\0${diagnostic.message}`;

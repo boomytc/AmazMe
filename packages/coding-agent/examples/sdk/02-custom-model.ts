@@ -1,49 +1,37 @@
 /**
- * Custom Model Selection
+ * Custom model selection.
  *
  * Shows how to select a specific model and thinking level.
  */
 
-import { createAgentSession, ModelRuntime } from "@amazme/coding-agent";
+import { createDurableSession, ModelRuntime } from "@amazme/coding-agent";
 
 const modelRuntime = await ModelRuntime.create();
 
-// Option 1: Find a specific built-in model by provider/id
 const opus = modelRuntime.getModel("anthropic", "claude-opus-4-5");
-if (opus) {
-	console.log(`Found model: ${opus.provider}/${opus.id}`);
-}
+if (opus) console.log(`Found model: ${opus.provider}/${opus.id}`);
 
-// Option 2: Find model via registry (includes custom models from models.json)
 const customModel = modelRuntime.getModel("my-provider", "my-model");
-if (customModel) {
-	console.log(`Found custom model: ${customModel.provider}/${customModel.id}`);
-}
+if (customModel) console.log(`Found custom model: ${customModel.provider}/${customModel.id}`);
 
-// Option 3: Pick from available models (have valid API keys)
 const available = await modelRuntime.getAvailable();
 console.log(
 	"Available models:",
-	available.map((m) => `${m.provider}/${m.id}`),
+	available.map((model) => `${model.provider}/${model.id}`),
 );
 
-if (available.length > 0) {
-	const { session } = await createAgentSession({
-		model: available[0],
-		thinkingLevel: "medium", // off, low, medium, high
+const selected = available[0];
+if (selected) {
+	const session = await createDurableSession({
 		modelRuntime,
+		provider: selected.provider,
+		model: selected.id,
+		thinkingLevel: "medium",
 	});
-
 	try {
-		session.subscribe((event) => {
-			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-				process.stdout.write(event.assistantMessageEvent.delta);
-			}
-		});
-
 		await session.prompt("Say hello in one sentence.");
 		console.log();
 	} finally {
-		session.dispose();
+		await session.dispose();
 	}
 }

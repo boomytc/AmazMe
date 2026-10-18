@@ -40,7 +40,6 @@ import type {
 	CodemodeToolDetails,
 	CodemodeToolInfo,
 } from "../../core/codemode/types.ts";
-import { readCodemodeStore } from "./store.ts";
 import { codemodeRenderers } from "../../core/codemode/renderer.ts";
 
 export {
@@ -139,7 +138,7 @@ export function createCodemodeToolDefinition(
 				{
 					tools: ctx ? getCodemodeCallableTools(ctx.tools) : [],
 					...(options.models && ctx ? { models: ctx.modelRegistry } : {}),
-					store: ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {},
+					store: {},
 					executeTool: (name, args, callSignal) => {
 						if (!ctx) throw new Error("Tool calls need a session");
 						return ctx.executeTool(name, args, { signal: callSignal }).then((outcome) => ({

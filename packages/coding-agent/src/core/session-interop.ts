@@ -28,7 +28,7 @@ import {
 	UserEntry,
 } from "@amazme/durable";
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX } from "./messages.ts";
-import type { SessionEntry, SessionHeader } from "./session-manager.ts";
+import type { SessionEntry, SessionHeader } from "./jsonl-transcript.ts";
 
 /** What one projection could not carry, by name, with how many entries it stood for. */
 export type SessionInteropSkips = Readonly<Record<string, number>>;

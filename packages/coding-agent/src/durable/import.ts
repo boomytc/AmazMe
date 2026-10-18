@@ -6,7 +6,7 @@ import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expandTildePath } from "../config.ts";
 import { sessionEntriesToDurableDrafts, type SessionInteropReport } from "../core/session-interop.ts";
-import { parseSessionEntries, type SessionEntry, type SessionHeader } from "../core/session-manager.ts";
+import { parseSessionEntries, type SessionEntry, type SessionHeader } from "../core/jsonl-transcript.ts";
 import { selectSession } from "./sessions.ts";
 
 const context = BACKGROUND_CONTEXT;

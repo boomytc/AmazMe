@@ -74,10 +74,8 @@ import type {
 	ContextEditEntry,
 	CustomEntry,
 	ProjectedSessionEntry,
-	ReadonlySessionManager,
 	SessionEntry,
-	SessionManager,
-} from "../session-manager.ts";
+} from "../jsonl-transcript.ts";
 import type { Settings } from "../settings-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
@@ -197,7 +195,7 @@ export interface ExtensionUIContext {
 	 *
 	 * The factory receives a FooterDataProvider for data not otherwise accessible:
 	 * git branch and extension statuses from setStatus(). Context usage is on
-	 * ctx.getContextUsage(), token stats on ctx.sessionManager.getEntries(), model info on ctx.model.
+	 * ctx.getContextUsage() and model info on ctx.model.
 	 */
 	setFooter(
 		factory:
@@ -332,8 +330,6 @@ export interface ExtensionContext {
 	hasUI: boolean;
 	/** Current working directory */
 	cwd: string;
-	/** Session manager (read-only) */
-	sessionManager: ReadonlySessionManager;
 	/** File observations owned by this session; omitted only by standalone callers. */
 	fileObservations?: FileObservationStore;
 	/** Model registry for API key resolution */
@@ -411,7 +407,6 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
 		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}): Promise<{ cancelled: boolean }>;
 
@@ -2243,7 +2238,6 @@ export interface ExtensionCommandContextActions {
 	waitForIdle: () => Promise<void>;
 	newSession: (options?: {
 		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}) => Promise<{ cancelled: boolean }>;
 	fork: (

@@ -1,6 +1,6 @@
 # RPC Mode
 
-This is the AgentSession SDK JSONL protocol. It is separate from the hosted Unix/WebSocket service protocol used by `amazme client` and Web; see [CLI integration](cli-integration.md).
+This is the Durable RPC protocol. It is separate from the hosted Unix/WebSocket service protocol used by `amazme client` and Web; see [CLI integration](cli-integration.md).
 
 RPC mode runs Pi as a long-lived subprocess controlled through JSON records on stdin and stdout. Use it for language-independent integrations, process isolation, IDEs, and custom user interfaces.
 
@@ -21,18 +21,15 @@ Normal CLI options still select the working folder, model, tools, resources, and
 
 RPC mode rejects `@file` prompt arguments. Send prompts through the [`prompt`](rpc-commands.md#prompt) command instead.
 
-## Durable RPC (experimental)
-
-RPC runs over the Durable session by default. Set `AMAZME_RUNTIME=legacy` for the JSONL RPC mode:
+RPC runs on a Durable session:
 
 ```bash
 amazme --mode rpc --no-session
-AMAZME_RUNTIME=legacy amazme --mode rpc --no-session
 ```
 
 Events keep the RPC event names. The adapter supports `prompt`, `steer`, `follow_up`, `abort`, `clear_queue`, `new_session`, `switch_session`, `fork`, `clone`, `get_state`, `get_messages`, `get_last_assistant_text`, `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels`, `compact`, `get_entries`, `get_tree`, `get_fork_messages`, `bash`, `abort_bash`, `set_steering_mode`, `set_follow_up_mode`, `set_auto_compaction`, `set_auto_retry`, `get_session_stats`, `set_session_name`, `export_html`, and `get_commands`.
 
-`new_session` opens a fresh Durable session. `switch_session` accepts a Durable session directory, `session.sqlite`, or a JSONL file; JSONL is imported one-way first. Switching aborts the old run, stops its event stream, and releases its lock. `new_session` does not support `parentSession`. `get_entries` and `get_tree` project the active Durable transcript instead of exposing a second tree. `bash` runs locally and is not written to the transcript. `abort_retry` still returns an explicit unsupported error. See [Durable compatibility](../../../docs/durable-compatibility.md).
+`new_session` opens a fresh Durable session. `switch_session` accepts a Durable session directory, `session.sqlite`, or a JSONL file; JSONL is imported one-way first. Switching aborts the old run, stops its event stream, and releases its lock. `new_session` does not support `parentSession`. `get_entries` and `get_tree` project the active Durable transcript instead of exposing a second tree. `bash` runs locally and is not written to the transcript. `abort_retry` is not a command; an old client receives the generic unknown-command error. See [Durable compatibility](../../../docs/durable-compatibility.md).
 
 ## Protocol records
 
@@ -179,7 +176,6 @@ The detailed references formerly on this page now have dedicated pages. These an
 <a id="compact"></a>
 <a id="set_auto_compaction"></a>
 <a id="set_auto_retry"></a>
-<a id="abort_retry"></a>
 <a id="bash"></a>
 <a id="abort_bash"></a>
 <a id="get_session_stats"></a>

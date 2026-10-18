@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { ENV_AGENT_DIR } from "../src/config.ts";
+import { APP_COMMAND, ENV_AGENT_DIR } from "../src/config.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 // --import takes a module specifier, not a filesystem path.
@@ -45,8 +45,8 @@ async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ 
 	return { code, stderr };
 }
 
-describe("--session invalid file handling", () => {
-	it("prints a friendly error and preserves non-session file content", async () => {
+describe("removed --session flag", () => {
+	it("rejects --session before reading the file and leaves its bytes unchanged", async () => {
 		const tempRoot = createTempDir();
 		const agentDir = join(tempRoot, "agent");
 		const projectDir = join(tempRoot, "project");
@@ -59,7 +59,7 @@ describe("--session invalid file handling", () => {
 		const result = await runCli(["--session", sessionFile, "-p", "hi"], projectDir, agentDir);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain(`Error: Session file is not a valid AmazMe session: ${sessionFile}`);
+		expect(result.stderr).toContain(`Error: Unknown option --session. Use ${APP_COMMAND} --help.`);
 		expect(result.stderr).not.toContain("SessionManager.open");
 		expect(result.stderr).not.toContain("at ");
 		expect(readFileSync(sessionFile, "utf8")).toBe(originalContent);

@@ -1,6 +1,6 @@
 # JSON Event Stream
 
-This is the AgentSession SDK event stream used by JSON and RPC modes. The default Durable terminal and hosted service protocol use their own state and session contracts; see [CLI integration](cli-integration.md).
+This is the event stream used by JSON and RPC modes on a Durable session. The hosted service protocol uses its own state and session contracts; see [CLI integration](cli-integration.md).
 
 JSON mode emits structured progress for one invocation:
 
@@ -90,7 +90,7 @@ The nested event is one of:
 | `done` | `reason`, `message` | The provider stream completed successfully. |
 | `error` | `reason`, `error` | The provider stream ended with an error or abort message. |
 
-The normal agent loop translates provider-level `start`, `done`, and `error` into `message_start` and `message_end` session events rather than emitting them as `message_update`. They remain admitted by the exported `JsonAgentSessionEvent` transformation for callers that construct a matching session event.
+The normal agent loop translates provider-level `start`, `done`, and `error` into `message_start` and `message_end` session events rather than emitting them as `message_update`.
 
 Use `contentIndex` to identify the content block. Buffer `delta` fields for a live display, but replace reconstructed data with the completed content in `text_end`, `thinking_end`, or `toolcall_end`. Replace the whole partial message with `message_end.message` when it arrives.
 
@@ -195,29 +195,11 @@ RPC also adds `extension_error` when an extension handler throws:
 {"type":"extension_error","extensionPath":"/path/to/extension.ts","event":"tool_call","error":"Error message"}
 ```
 
-Extension UI records are a separate RPC subprotocol, not `AgentSessionEvent` values. See [RPC Extension UI](rpc-extension-ui.md).
+Extension UI records are a separate RPC subprotocol. See [RPC Extension UI](rpc-extension-ui.md).
 
 ## TypeScript types
 
-The SDK's `AgentSessionEvent` contains cumulative streaming snapshots for in-process consumers. JSON and RPC transform only `message_update`:
-
-```typescript
-type WithoutPartial<T> = T extends { partial: unknown } ? Omit<T, "partial"> : T;
-
-type JsonAssistantMessageEvent<T> = T extends { type: "toolcall_start"; partial: unknown }
-  ? WithoutPartial<T> & { id: string; toolName: string }
-  : WithoutPartial<T>;
-
-type JsonAgentSessionEvent =
-  | Exclude<AgentSessionEvent, { type: "message_update" }>
-  | {
-      type: "message_update";
-      usage: Usage;
-      assistantMessageEvent: JsonAssistantMessageEvent<AssistantMessageEvent>;
-    };
-```
-
-Use the exported `JsonAgentSessionEvent` type from `@amazme/coding-agent`. Its implementation is in [`json-event.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/json-event.ts).
+JSON and RPC emit `JsonStreamEvent`. `message_update` is the only event whose streaming snapshot is rewritten for stdout. Use the exported `JsonStreamEvent` type from `@amazme/coding-agent`. Its implementation is in [`json-event.ts`](../src/modes/json-event.ts).
 
 ## Example
 

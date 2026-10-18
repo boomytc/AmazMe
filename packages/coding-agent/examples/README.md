@@ -15,7 +15,7 @@ node examples/rpc-client.ts "Explain this repository"
 ## Directories
 
 ### [sdk/](sdk/)
-Programmatic usage via `createAgentSession()`. Shows how to customize models, prompts, tools, extensions, and session management.
+Programmatic usage via `createDurableSession()`. Shows how to customize models, prompts, tools, native facets, and session storage.
 
 ### [extensions/](extensions/)
 Example extensions demonstrating:

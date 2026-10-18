@@ -1,14 +1,12 @@
 /**
  * Main entry point for the coding agent CLI.
  *
- * Selects the native Durable terminal or the SDK print/RPC runtime from CLI arguments.
+ * Interactive, print, JSON, and RPC all open a Durable session.
  */
 
-import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual } from "@amazme/ai";
-import { setCapabilityOverrides } from "@amazme/tui";
+import { type ImageContent } from "@amazme/ai";
 import chalk from "chalk";
-import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
+import { type Args, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {
 	type AuthCheckResult,
 	checkProviderAuth,
@@ -31,49 +29,25 @@ import { runProviderAuthCommand } from "./cli/provider-auth.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
-import { selectSession } from "./cli/session-picker.ts";
-import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { APP_COMMAND, APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
-import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
-import {
-	type AgentSessionRuntimeDiagnostic,
-	createAgentSessionFromServices,
-	createAgentSessionServices,
-} from "./core/agent-session-services.ts";
-import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
+import { shouldRunFirstTimeSetup, showFirstTimeSetup } from "./cli/startup-ui.ts";
+import { APP_COMMAND, ENV_SESSION_DIR, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
-import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
-import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
-import type { CreateAgentSessionOptions } from "./core/sdk.ts";
-import {
-	formatMissingSessionCwdPrompt,
-	getMissingSessionCwdIssue,
-	MissingSessionCwdError,
-	type SessionCwdIssue,
-} from "./core/session-cwd.ts";
-import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
-import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
+import { collectSettingsDiagnostics, type RuntimeDiagnostic } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
-import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
-import { builtInExtensions } from "./extensions/index.ts";
+import { ProjectTrustStore } from "./core/trust-manager.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
 import { runMigrations } from "./migrations.ts";
-import { selectHeadlessRuntime } from "./durable/runtime-selection.ts";
-import { runPrintMode } from "./modes/print-mode.ts";
-import { runRpcMode } from "./modes/rpc/rpc-mode.ts";
-import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
+import { setThemeJsonValidator } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
-import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
+import { isLocalPath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
-
-const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
 
 /**
  * Read all content from piped stdin.
@@ -98,7 +72,7 @@ async function readPipedStdin(): Promise<string | undefined> {
 	});
 }
 
-function reportDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
+function reportDiagnostics(diagnostics: readonly RuntimeDiagnostic[]): void {
 	for (const diagnostic of diagnostics) {
 		const color = diagnostic.type === "error" ? chalk.red : diagnostic.type === "warning" ? chalk.yellow : chalk.dim;
 		const prefix = diagnostic.type === "error" ? "Error: " : diagnostic.type === "warning" ? "Warning: " : "";
@@ -122,10 +96,6 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 		return "print";
 	}
 	return "interactive";
-}
-
-function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
-	return appMode === "json" ? "json" : "text";
 }
 
 function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
@@ -226,7 +196,6 @@ async function prepareInitialMessage(
 		return buildInitialMessage({ parsed, stdinContent });
 	}
 
-	// AgentSession resizes these after extension hooks select the request model.
 	const { text, images } = await processFileArguments(parsed.fileArgs, { autoResizeImages: false });
 	return buildInitialMessage({
 		parsed,
@@ -236,349 +205,12 @@ async function prepareInitialMessage(
 	});
 }
 
-/** Result from resolving a session argument */
-type ResolvedSession =
-	| { type: "path"; path: string } // Direct file path
-	| { type: "local"; path: string } // Found in current project
-	| { type: "global"; path: string; cwd: string } // Found in different project
-	| { type: "not_found"; arg: string }; // Not found anywhere
-
-/**
- * Resolve a session argument to a file path.
- * If it looks like a path, use as-is. Otherwise try to match as session ID prefix.
- */
-function findLocalSessionByExactId(
-	sessionId: string,
-	cwd: string,
-	sessionDir?: string,
-): { type: "local"; path: string } | undefined {
-	const path = SessionManager.findById(cwd, sessionId, sessionDir);
-	return path ? { type: "local", path } : undefined;
-}
-
-async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
-	// If it looks like a file path, resolve it before handing it to the session manager.
-	if (sessionArg.includes("/") || sessionArg.includes("\\") || sessionArg.endsWith(".jsonl")) {
-		return { type: "path", path: resolvePath(sessionArg, cwd) };
-	}
-
-	// Exact IDs only require reading session headers. Fall back to the full
-	// metadata listing for prefix matches.
-	const exactLocalMatch = findLocalSessionByExactId(sessionArg, cwd, sessionDir);
-	if (exactLocalMatch) {
-		return exactLocalMatch;
-	}
-
-	const localSessions = await SessionManager.list(cwd, sessionDir);
-	const localMatch = localSessions.find((s) => s.id.startsWith(sessionArg));
-
-	if (localMatch) {
-		return { type: "local", path: localMatch.path };
-	}
-
-	// Try global search across all projects
-	const allSessions = await SessionManager.listAll(sessionDir);
-	const globalMatch =
-		allSessions.find((s) => s.id === sessionArg) ?? allSessions.find((s) => s.id.startsWith(sessionArg));
-
-	if (globalMatch) {
-		return { type: "global", path: globalMatch.path, cwd: globalMatch.cwd };
-	}
-
-	// Not found anywhere
-	return { type: "not_found", arg: sessionArg };
-}
-
-/** Prompt user for yes/no confirmation */
-async function promptConfirm(message: string): Promise<boolean> {
-	return new Promise((resolve) => {
-		const rl = createInterface({
-			input: process.stdin,
-			output: process.stdout,
-		});
-		rl.question(`${message} [y/N] `, (answer) => {
-			rl.close();
-			resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
-		});
-	});
-}
-
-function validateForkFlags(parsed: Args): void {
-	if (!parsed.fork) return;
-
-	const conflictingFlags = [
-		parsed.session ? "--session" : undefined,
-		parsed.continue ? "--continue" : undefined,
-		parsed.resume ? "--resume" : undefined,
-		parsed.noSession ? "--no-session" : undefined,
-	].filter((flag): flag is string => flag !== undefined);
-
-	if (conflictingFlags.length > 0) {
-		console.error(chalk.red(`Error: --fork cannot be combined with ${conflictingFlags.join(", ")}`));
-		process.exit(1);
-	}
-}
-
-function validateSessionIdFlags(parsed: Args): void {
-	if (parsed.sessionId === undefined) return;
-
-	const conflictingFlags = [
-		parsed.session ? "--session" : undefined,
-		parsed.continue ? "--continue" : undefined,
-		parsed.resume ? "--resume" : undefined,
-	].filter((flag): flag is string => flag !== undefined);
-
-	if (conflictingFlags.length > 0) {
-		console.error(chalk.red(`Error: --session-id cannot be combined with ${conflictingFlags.join(", ")}`));
-		process.exit(1);
-	}
-
-	try {
-		assertValidSessionId(parsed.sessionId);
-	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		console.error(chalk.red(`Error: ${message}`));
-		process.exit(1);
-	}
-}
-
-function openSessionOrExit(path: string, sessionDir?: string): SessionManager {
-	try {
-		return SessionManager.open(path, sessionDir);
-	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		console.error(chalk.red(`Error: ${message}`));
-		process.exit(1);
-	}
-}
-
-function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string, sessionId?: string): SessionManager {
-	try {
-		return SessionManager.forkFrom(sourcePath, cwd, sessionDir, { id: sessionId });
-	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		console.error(chalk.red(`Error: ${message}`));
-		process.exit(1);
-	}
-}
-
-export async function createSessionManager(
-	parsed: Args,
-	cwd: string,
-	sessionDir: string | undefined,
-	settingsManager: SettingsManager,
-): Promise<SessionManager> {
-	if (parsed.noSession || parsed.help || parsed.listModels !== undefined) {
-		return SessionManager.inMemory(cwd, parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined);
-	}
-
-	if (parsed.fork) {
-		if (parsed.sessionId) {
-			const existingTarget = findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
-			if (existingTarget) {
-				console.error(chalk.red(`Session already exists with id '${parsed.sessionId}'`));
-				process.exit(1);
-			}
-		}
-
-		const resolved = await resolveSessionPath(parsed.fork, cwd, sessionDir);
-
-		switch (resolved.type) {
-			case "path":
-			case "local":
-			case "global":
-				return forkSessionOrExit(resolved.path, cwd, sessionDir, parsed.sessionId);
-
-			case "not_found":
-				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
-				process.exit(1);
-		}
-	}
-
-	if (parsed.session) {
-		const resolved = await resolveSessionPath(parsed.session, cwd, sessionDir);
-
-		switch (resolved.type) {
-			case "path":
-			case "local":
-				return openSessionOrExit(resolved.path, sessionDir);
-
-			case "global": {
-				console.log(chalk.yellow(`Session found in different project: ${resolved.cwd}`));
-				const shouldFork = await promptConfirm("Fork this session into current directory?");
-				if (!shouldFork) {
-					console.log(chalk.dim("Aborted."));
-					process.exit(0);
-				}
-				return forkSessionOrExit(resolved.path, cwd, sessionDir);
-			}
-
-			case "not_found":
-				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
-				process.exit(1);
-		}
-	}
-
-	if (parsed.resume) {
-		try {
-			const selectedPath = await selectSession(
-				(onProgress, signal) => SessionManager.list(cwd, sessionDir, onProgress, signal),
-				(onProgress, signal) => SessionManager.listAll(sessionDir, onProgress, signal),
-				settingsManager,
-			);
-			if (!selectedPath) {
-				console.log(chalk.dim("No session selected"));
-				process.exit(0);
-			}
-			return SessionManager.open(selectedPath, sessionDir);
-		} finally {
-			stopThemeWatcher();
-		}
-	}
-
-	if (parsed.continue) {
-		return SessionManager.continueRecent(cwd, sessionDir);
-	}
-
-	if (parsed.sessionId) {
-		const existingSession = findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
-		if (existingSession) {
-			return SessionManager.open(existingSession.path, sessionDir);
-		}
-		console.error(
-			chalk.yellow(
-				`Warning: No project session found with id '${parsed.sessionId}'; creating a new session with that id.`,
-			),
-		);
-	}
-
-	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });
-}
-
-function buildSessionOptions(
-	parsed: Args,
-	scopedModels: ScopedModel[],
-	hasExistingSession: boolean,
-	modelRuntime: ModelRuntime,
-	settingsManager: SettingsManager,
-): {
-	options: CreateAgentSessionOptions;
-	cliThinkingFromModel: boolean;
-	diagnostics: AgentSessionRuntimeDiagnostic[];
-} {
-	const options: CreateAgentSessionOptions = {};
-	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
-	let cliThinkingFromModel = false;
-
-	// Model from CLI
-	// - supports --provider <name> --model <pattern>
-	// - supports --model <provider>/<pattern>
-	if (parsed.provider && !parsed.model) {
-		diagnostics.push({
-			type: "error",
-			message: `--provider requires --model (for example: --provider ${parsed.provider} --model <pattern>)`,
-		});
-	}
-	if (parsed.model) {
-		const resolved = resolveCliModel({
-			cliProvider: parsed.provider,
-			cliModel: parsed.model,
-			cliThinking: parsed.thinking,
-			inlineApiKey: Boolean(parsed.apiKey),
-			modelRuntime,
-		});
-		if (resolved.warning) {
-			diagnostics.push({ type: "warning", message: resolved.warning });
-		}
-		if (resolved.error) {
-			diagnostics.push({ type: "error", message: resolved.error });
-		}
-		if (resolved.model) {
-			options.model = resolved.model;
-			// Allow "--model <pattern>:<thinking>" as a shorthand.
-			// Explicit --thinking still takes precedence (applied later).
-			if (!parsed.thinking && resolved.thinkingLevel) {
-				options.thinkingLevel = resolved.thinkingLevel;
-				cliThinkingFromModel = true;
-			}
-		}
-	}
-
-	if (!options.model && scopedModels.length > 0 && !hasExistingSession) {
-		// Check if saved default is in scoped models - use it if so, otherwise first scoped model
-		const savedProvider = settingsManager.getDefaultProvider();
-		const savedModelId = settingsManager.getDefaultModel();
-		const savedModel = savedProvider && savedModelId ? modelRuntime.getModel(savedProvider, savedModelId) : undefined;
-		const savedInScope = savedModel ? scopedModels.find((sm) => modelsAreEqual(sm.model, savedModel)) : undefined;
-
-		if (savedInScope) {
-			options.model = savedInScope.model;
-			// Use thinking level from scoped model config if explicitly set
-			if (!parsed.thinking && savedInScope.thinkingLevel) {
-				options.thinkingLevel = savedInScope.thinkingLevel;
-			}
-		} else {
-			options.model = scopedModels[0].model;
-			// Use thinking level from first scoped model if explicitly set
-			if (!parsed.thinking && scopedModels[0].thinkingLevel) {
-				options.thinkingLevel = scopedModels[0].thinkingLevel;
-			}
-		}
-	}
-
-	// Thinking level from CLI (takes precedence over scoped model thinking levels set above)
-	if (parsed.thinking) {
-		options.thinkingLevel = parsed.thinking;
-	}
-
-	// Scoped models for Ctrl+P cycling
-	// Keep thinking level undefined when not explicitly set in the model pattern.
-	// Undefined means "inherit current session thinking level" during cycling.
-	if (scopedModels.length > 0) {
-		options.scopedModels = scopedModels.map((sm) => ({
-			model: sm.model,
-			thinkingLevel: sm.thinkingLevel,
-		}));
-	}
-
-	// API key from CLI - set as a non-persistent runtime override
-	// (handled by caller before createAgentSession)
-
-	// Tools
-	if (parsed.noTools) {
-		options.noTools = "all";
-	} else if (parsed.noBuiltinTools) {
-		options.noTools = "builtin";
-	}
-	if (parsed.tools) {
-		options.tools = [...parsed.tools];
-	}
-	if (parsed.excludeTools) {
-		options.excludeTools = [...parsed.excludeTools];
-	}
-
-	return { options, cliThinkingFromModel, diagnostics };
-}
-
 function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
 	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
-async function promptForMissingSessionCwd(
-	issue: SessionCwdIssue,
-	settingsManager: SettingsManager,
-): Promise<string | undefined> {
-	return showStartupSelector(settingsManager, formatMissingSessionCwdPrompt(issue), [
-		{ label: "Continue", value: issue.fallbackCwd },
-		{ label: "Cancel", value: undefined },
-	]);
-}
 
-export interface MainOptions {
-	extensionFactories?: InlineExtension[];
-}
-
-export async function main(args: string[], options?: MainOptions) {
+export async function main(args: string[]) {
 	// Diagnostics precede install cleanup, settings locks, proxy setup, and credential initialization.
 	if (args[0] === "doctor") {
 		const { runDoctorCommand } = await import("./cli/doctor.ts");
@@ -588,7 +220,6 @@ export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	// Startup commands and selectors can load user-authored themes before runtime creation.
 	setThemeJsonValidator(validateThemeJson);
-	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.AMAZME_OFFLINE);
 	if (offlineMode) {
 		process.env.AMAZME_OFFLINE = "1";
@@ -610,7 +241,7 @@ export async function main(args: string[], options?: MainOptions) {
 	applyHttpProxySettings(bootstrapSettingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher();
 
-	if (await handlePackageCommand(args, { extensionFactories })) {
+	if (await handlePackageCommand(args)) {
 		const exitCode = process.exitCode ?? 0;
 		if (process.platform === "win32" && exitCode === 0 && args[0] === "update") {
 			// We normally prefer process.exit(0) for package commands so bad extensions cannot keep
@@ -623,7 +254,7 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
-	if (await handleConfigCommand(args, { extensionFactories })) {
+	if (await handleConfigCommand(args)) {
 		return;
 	}
 
@@ -687,8 +318,6 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	validateForkFlags(parsed);
-	validateSessionIdFlags(parsed);
 	const sessionName = parsed.name === undefined ? undefined : normalizeSessionName(parsed.name);
 	if (parsed.name !== undefined && sessionName === undefined) {
 		console.error(chalk.red("Error: --name requires a non-empty value"));
@@ -699,12 +328,8 @@ export async function main(args: string[], options?: MainOptions) {
 		!parsed.help &&
 		parsed.listModels === undefined;
 	const plainMetadata = isPlainRuntimeMetadataCommand(parsed);
-	if ((nativeInteractive || plainMetadata) && parsed.unknownFlags.size > 0) {
-		for (const option of parsed.unknownFlags.keys()) console.error(chalk.red(`Error: Unknown option --${option} for the native terminal. Use ${APP_COMMAND} --help.`));
-		process.exit(1);
-	}
-	if (nativeInteractive && options?.extensionFactories?.length) {
-		console.error(chalk.red("Error: inline SDK extension factories require --print, --mode json, or --mode rpc. Select native facet sources with -e for the terminal."));
+	if (parsed.unknownFlags.size > 0) {
+		for (const option of parsed.unknownFlags.keys()) console.error(chalk.red(`Error: Unknown option --${option}. Use ${APP_COMMAND} --help.`));
 		process.exit(1);
 	}
 	if (plainMetadata && parsed.help) {
@@ -723,7 +348,7 @@ export async function main(args: string[], options?: MainOptions) {
 		console.error(chalk.red("Error: AMAZME_STARTUP_BENCHMARK only supports interactive mode"));
 		process.exit(1);
 	}
-	if (nativeInteractive && parsed.noSession && (parsed.continue || parsed.resume)) {
+	if (parsed.noSession && (parsed.continue || parsed.resume)) {
 		console.error(chalk.red("Error: --no-session cannot be combined with --continue or --resume"));
 		process.exit(1);
 	}
@@ -750,16 +375,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	if (nativeInteractive && parsed.verbose) startupSettingsManager.applyOverrides({ quietStartup: false });
 
-	// The interactive TUI is the durable session. Print and RPC still use the JSONL agent session.
 	if (nativeInteractive) {
-		if (parsed.fork !== undefined || parsed.session !== undefined || parsed.sessionId !== undefined) {
-			console.error(
-				chalk.red(
-					"Error: the interactive TUI stores conversations in the durable session. Use /tree and /fork inside it. --fork, --session, and --session-id select the JSONL session, which print and RPC still use.",
-				),
-			);
-			process.exit(1);
-		}
 		const { initialMessage, initialImages } = await prepareInitialMessage(parsed);
 		const projectTrusted = await resolveProjectTrusted({
 			cwd,
@@ -807,13 +423,10 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
-	// Read piped stdin before selecting the runtime: the Durable print path below must not create
-	// a JSONL session or load SDK extension factories first. Plain metadata commands do not read
-	// stdin or process file arguments, so `--help` cannot wait for an open pipe.
 	let stdinContent: string | undefined;
 	let initialMessage: string | undefined;
 	let initialImages: ImageContent[] | undefined;
-	if (appMode !== "rpc" && !isPlainRuntimeMetadataCommand(parsed)) {
+	if (appMode !== "rpc") {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
@@ -825,337 +438,79 @@ export async function main(args: string[], options?: MainOptions) {
 		time("prepareInitialMessage");
 	}
 
-	const requestedRuntime = process.env.AMAZME_RUNTIME?.trim();
-	const runtimeSelection = requestedRuntime === undefined || requestedRuntime.length === 0 ? undefined : requestedRuntime.toLowerCase();
-	if (runtimeSelection !== undefined && runtimeSelection !== "durable" && runtimeSelection !== "legacy") {
-		console.error(chalk.red(`Error: unknown AMAZME_RUNTIME "${runtimeSelection}"; use "durable" or "legacy".`));
-		process.exit(1);
-	}
-	const jsonlSessionFlags = parsed.fork !== undefined || parsed.session !== undefined || parsed.sessionId !== undefined;
-	const inlineFactories = (options?.extensionFactories?.length ?? 0) > 0;
-	const metadataOnly = parsed.help === true || parsed.listModels !== undefined;
-	const durableSessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR] ?? startupSettingsManager.getSessionDir();
-	const continuing = parsed.continue === true || parsed.resume === true;
-	const needsDurableCheck = runtimeSelection === undefined && !metadataOnly && appMode !== "interactive"
-		&& !jsonlSessionFlags && !inlineFactories && continuing && parsed.noSession !== true;
-	const hasSession = needsDurableCheck
-		? await (await import("./durable/sessions.ts")).hasDurableSession(cwd, { sessionDir: durableSessionDir })
-		: false;
-	const useDurable = selectHeadlessRuntime({
-		appMode,
-		metadataOnly,
-		explicit: runtimeSelection,
-		jsonlSessionFlags,
-		inlineFactories,
-		continuing,
-		hasDurableSession: hasSession,
-	}) === "durable";
-	if (useDurable) {
-		if (inlineFactories) {
-			console.error(chalk.red("Error: SDK extension factories require the legacy runtime; the Durable runtime loads native facet sources. Remove the inline factories or set AMAZME_RUNTIME=legacy."));
-			process.exit(1);
-		}
-		if (jsonlSessionFlags) {
-			console.error(chalk.red("Error: --fork, --session, and --session-id select a JSONL session, which the Durable runtime does not read. Use --continue or set AMAZME_RUNTIME=legacy."));
-			process.exit(1);
-		}
-		const projectTrusted = await resolveProjectTrusted({
-			cwd,
-			trustStore: new ProjectTrustStore(agentDir),
-			trustOverride: parsed.projectTrustOverride,
-			defaultProjectTrust: bootstrapSettingsManager.getDefaultProjectTrust(),
-			projectTrustContext: createProjectTrustContext({ cwd, mode: appMode, settingsManager: startupSettingsManager, hasUI: false }),
-		});
-		startupSettingsManager.setProjectTrusted(projectTrusted);
-		const durableOptions = {
-			settingsManager: startupSettingsManager,
-			cwd,
-			continueSession: continuing,
-			noSession: parsed.noSession === true,
-			...(durableSessionDir === undefined ? {} : { sessionDir: durableSessionDir }),
-			...(sessionName === undefined ? {} : { name: sessionName }),
-			...(parsed.extensions === undefined ? {} : { extensions: parsed.extensions }),
-			noExtensions: parsed.noExtensions === true,
-			...(parsed.systemPrompt === undefined ? {} : { systemPrompt: parsed.systemPrompt }),
-			...(parsed.appendSystemPrompt === undefined ? {} : { appendSystemPrompt: parsed.appendSystemPrompt }),
-			...(parsed.skills === undefined ? {} : { skills: resolveCliPaths(cwd, parsed.skills) }),
-			noSkills: parsed.noSkills === true,
-			noContextFiles: parsed.noContextFiles === true,
-			...(parsed.promptTemplates === undefined ? {} : { promptTemplates: resolveCliPaths(cwd, parsed.promptTemplates) }),
-			noPromptTemplates: parsed.noPromptTemplates === true,
-			...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
-			...(parsed.model === undefined ? {} : { model: parsed.model }),
-			...(parsed.models === undefined ? {} : { models: parsed.models }),
-			...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),
-			...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
-			...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
-			...(parsed.excludeTools === undefined ? {} : { excludeTools: parsed.excludeTools }),
-			...(parsed.noTools ? { noTools: "all" as const } : parsed.noBuiltinTools ? { noTools: "builtin" as const } : {}),
-			noMcp: parsed.noMcp === true || parsed.noExtensions === true,
-		};
-		if (appMode === "rpc") {
-			const { runDurableRpc } = await import("./modes/rpc/durable-rpc.ts");
-			await runDurableRpc(durableOptions);
-			return;
-		}
-		const { runDurablePrint } = await import("./durable/print.ts");
-		const exitCode = await runDurablePrint({
-			...durableOptions,
-			mode: appMode === "json" ? "json" : "text",
-			...(initialMessage === undefined ? {} : { initialMessage }),
-			...(initialImages === undefined ? {} : { initialImages }),
-			messages: parsed.messages.slice(),
-		});
-		restoreStdout();
-		if (exitCode !== 0) process.exitCode = exitCode;
-		return;
-	}
-
-	// Decide the final runtime cwd before creating cwd-bound runtime services.
-	// --session and --resume may select a session from another project, so project-local
-	// settings, resources, provider registrations, and models must be resolved only after
-	// the target session cwd is known. The startup-cwd settings manager is used only for
-	// sessionDir lookup during session selection.
-	const envSessionDir = process.env[ENV_SESSION_DIR];
-	const sessionDir =
-		(parsed.sessionDir ? normalizePath(parsed.sessionDir) : undefined) ??
-		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
-		startupSettingsManager.getSessionDir();
-	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
-	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
-	if (missingSessionCwdIssue) {
-		if (appMode === "interactive") {
-			const selectedCwd = await promptForMissingSessionCwd(missingSessionCwdIssue, startupSettingsManager);
-			if (!selectedCwd) {
-				process.exit(0);
-			}
-			sessionManager = SessionManager.open(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd);
-		} else {
-			console.error(chalk.red(new MissingSessionCwdError(missingSessionCwdIssue).message));
-			process.exit(1);
-		}
-	}
-	if (sessionName !== undefined) sessionManager.appendSessionInfo(sessionName);
-	time("createSessionManager");
-
-	const trustStore = new ProjectTrustStore(agentDir);
-	const sessionCwd = sessionManager.getCwd();
-	const trustPromptMode: AppMode = parsed.help || parsed.listModels !== undefined ? "print" : appMode;
-	const projectTrustByCwd = new Map<string, boolean>();
-
-	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
-	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
-	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
-	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
-	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+	const projectTrusted = await resolveProjectTrusted({
 		cwd,
-		agentDir,
-		sessionManager,
-		sessionStartEvent,
-		projectTrustContext,
-	}) => {
-		const isInitialRuntime = sessionStartEvent === undefined;
-		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
-		const cachedProjectTrust = projectTrustByCwd.get(cwd);
-		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
-		const shouldResolveProjectTrust =
-			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustRequiringResources;
-		const projectTrusted = shouldResolveProjectTrust
-			? false
-			: (cachedProjectTrust ??
-				parsed.projectTrustOverride ??
-				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
-		const services = await createAgentSessionServices({
+		trustStore: new ProjectTrustStore(agentDir),
+		trustOverride: parsed.projectTrustOverride,
+		defaultProjectTrust: bootstrapSettingsManager.getDefaultProjectTrust(),
+		projectTrustContext: createProjectTrustContext({ cwd, mode: appMode, settingsManager: startupSettingsManager, hasUI: false }),
+	});
+	startupSettingsManager.setProjectTrusted(projectTrusted);
+	// --mode json/rpc and --print are not plain metadata, so --help still installs project packages
+	// first. Stdout is already taken over, which keeps that chatter and the usage text off stdout.
+	if (parsed.help || parsed.listModels !== undefined) {
+		const { DefaultResourceLoader } = await import("./core/resource-loader.ts");
+		await new DefaultResourceLoader({
 			cwd,
 			agentDir,
-			settingsManager: runtimeSettingsManager,
-			modelRuntimeSignal: AbortSignal.timeout(15_000),
-			extensionFlagValues: parsed.unknownFlags,
-			resourceLoaderReloadOptions: shouldResolveProjectTrust
-				? {
-						resolveProjectTrust: async ({ extensionsResult }) => {
-							const trusted = await resolveProjectTrusted({
-								cwd,
-								trustStore,
-								trustOverride: parsed.projectTrustOverride,
-								defaultProjectTrust: startupSettingsManager.getDefaultProjectTrust(),
-								extensionsResult,
-								projectTrustContext:
-									projectTrustContext ??
-									createProjectTrustContext({
-										cwd,
-										mode: isInitialRuntime ? trustPromptMode : appMode,
-										settingsManager: startupSettingsManager,
-										hasUI: isInitialRuntime && trustPromptMode === "interactive",
-									}),
-								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
-							});
-							projectTrustByCwd.set(cwd, trusted);
-							return trusted;
-						},
-					}
-				: undefined,
-			resourceLoaderOptions: {
-				additionalExtensionPaths: resolvedExtensionPaths,
-				additionalSkillPaths: resolvedSkillPaths,
-				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
-				additionalThemePaths: resolvedThemePaths,
-				noExtensions: parsed.noExtensions,
-				disabledBuiltinExtensions: parsed.noMcp ? ["mcp"] : undefined,
-				noSkills: parsed.noSkills,
-				noPromptTemplates: parsed.noPromptTemplates,
-				noThemes: parsed.noThemes,
-				noContextFiles: parsed.noContextFiles,
-				systemPrompt: parsed.systemPrompt,
-				appendSystemPrompt: parsed.appendSystemPrompt,
-				extensionFactories,
-			},
-		});
-		const { settingsManager, modelRuntime, resourceLoader } = services;
-		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
-			...projectTrustDiagnostics,
-			...services.diagnostics,
-			...collectSettingsDiagnostics(settingsManager),
-			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
-				type: "error" as const,
-				message: `Failed to load extension "${path}": ${error}`,
-			})),
-			...(resourceLoader.getExtensions().warnings ?? []).map(({ path, warning }) => ({
-				type: "warning" as const,
-				message: `Extension package "${path}": ${warning}`,
-			})),
-		];
-
-		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
-		const scopedModels =
-			modelPatterns && modelPatterns.length > 0
-				? await resolveModelScope(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
-				: [];
-		const {
-			options: sessionOptions,
-			cliThinkingFromModel,
-			diagnostics: sessionOptionDiagnostics,
-		} = buildSessionOptions(
-			parsed,
-			scopedModels,
-			sessionManager.buildSessionContext().messages.length > 0,
-			modelRuntime,
-			settingsManager,
-		);
-		diagnostics.push(...sessionOptionDiagnostics);
-
-		if (parsed.apiKey) {
-			if (!sessionOptions.model) {
-				diagnostics.push({
-					type: "error",
-					message: "--api-key requires a model to be specified via --model, --provider/--model, or --models",
-				});
-			} else {
-				await modelRuntime.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey);
-			}
+			settingsManager: startupSettingsManager,
+			noExtensions: true,
+		}).reload();
+		if (parsed.help) {
+			printHelp();
+			restoreStdout();
+			return;
 		}
-
-		const created = await createAgentSessionFromServices({
-			services,
-			sessionManager,
-			sessionStartEvent,
-			model: sessionOptions.model,
-			thinkingLevel: sessionOptions.thinkingLevel,
-			scopedModels: sessionOptions.scopedModels,
-			tools: sessionOptions.tools,
-			excludeTools: sessionOptions.excludeTools,
-			noTools: sessionOptions.noTools,
-			customTools: sessionOptions.customTools,
-		});
-		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
-		if (created.session.model && cliThinkingOverride) {
-			created.session.setThinkingLevel(created.session.thinkingLevel);
-		}
-
-		return {
-			...created,
-			services,
-			diagnostics,
-		};
-	};
-	time("createRuntime");
-	const runtime = await createAgentSessionRuntime(createRuntime, {
-		cwd: sessionManager.getCwd(),
-		agentDir,
-		sessionManager,
-	});
-	time("createAgentSessionRuntime");
-	const { services, session } = runtime;
-	const { settingsManager, modelRuntime, resourceLoader } = services;
-	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
-	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
-	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
-
-	if (parsed.help) {
 		reportDiagnostics(startupSettingsDiagnostics);
-		const extensionFlags = resourceLoader
-			.getExtensions()
-			.extensions.flatMap((extension) => Array.from(extension.flags.values()));
-		printHelp(extensionFlags);
-		process.exit(0);
-	}
-
-	if (parsed.listModels !== undefined) {
-		reportDiagnostics(startupSettingsDiagnostics);
-		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
-		await listModels(modelRuntime, searchPattern, AbortSignal.timeout(15_000));
-		process.exit(0);
-	}
-
-	initTheme(settingsManager.getTheme(), appMode === "interactive");
-	time("initTheme");
-
-	time("resolveModelScope");
-	const startupDiagnostics = deduplicateDiagnostics([...startupSettingsDiagnostics, ...runtime.diagnostics]);
-	const hasRuntimeErrors = runtime.diagnostics.some((diagnostic) => diagnostic.type === "error");
-	if (appMode !== "interactive" || hasRuntimeErrors) {
-		reportDiagnostics(startupDiagnostics);
-	}
-	if (hasRuntimeErrors) {
-		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
-			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
-		}
-		process.exit(1);
-	}
-	time("createAgentSession");
-
-	if (appMode !== "interactive" && !session.model) {
-		console.error(chalk.red(formatNoModelsAvailableMessage()));
-		process.exit(1);
-	}
-
-	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
-	if (!offlineMode && appMode === "rpc") {
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), 15_000);
-		void modelRuntime
-			.refresh({ signal: controller.signal })
-			.catch(() => {})
-			.finally(() => clearTimeout(timeout));
-	}
-
-	if (appMode === "rpc") {
-		printTimings();
-		await runRpcMode(runtime);
-	} else {
-		printTimings();
-		const exitCode = await runPrintMode(runtime, {
-			mode: toPrintOutputMode(appMode),
-			messages: parsed.messages,
-			initialMessage,
-			initialImages,
-		});
-		stopThemeWatcher();
+		configureHttpDispatcher(startupSettingsManager.getHttpIdleTimeoutMs());
+		const modelRuntime = await ModelRuntime.create({ signal: AbortSignal.timeout(15_000) });
+		await listModels(modelRuntime, typeof parsed.listModels === "string" ? parsed.listModels : undefined, AbortSignal.timeout(15_000));
 		restoreStdout();
-		if (exitCode !== 0) {
-			process.exitCode = exitCode;
-		}
 		return;
 	}
+	const sessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
+	const continuing = parsed.continue === true || parsed.resume === true;
+	const durableOptions = {
+		settingsManager: startupSettingsManager,
+		cwd,
+		continueSession: continuing,
+		noSession: parsed.noSession === true,
+		...(sessionDir === undefined ? {} : { sessionDir }),
+		...(sessionName === undefined ? {} : { name: sessionName }),
+		...(parsed.extensions === undefined ? {} : { extensions: parsed.extensions }),
+		noExtensions: parsed.noExtensions === true,
+		...(parsed.systemPrompt === undefined ? {} : { systemPrompt: parsed.systemPrompt }),
+		...(parsed.appendSystemPrompt === undefined ? {} : { appendSystemPrompt: parsed.appendSystemPrompt }),
+		...(parsed.skills === undefined ? {} : { skills: resolveCliPaths(cwd, parsed.skills) }),
+		noSkills: parsed.noSkills === true,
+		noContextFiles: parsed.noContextFiles === true,
+		...(parsed.promptTemplates === undefined ? {} : { promptTemplates: resolveCliPaths(cwd, parsed.promptTemplates) }),
+		noPromptTemplates: parsed.noPromptTemplates === true,
+		...(parsed.themes === undefined ? {} : { themes: resolveCliPaths(cwd, parsed.themes) }),
+		noThemes: parsed.noThemes === true,
+		...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
+		...(parsed.model === undefined ? {} : { model: parsed.model }),
+		...(parsed.models === undefined ? {} : { models: parsed.models }),
+		...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),
+		...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
+		...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
+		...(parsed.excludeTools === undefined ? {} : { excludeTools: parsed.excludeTools }),
+		...(parsed.noTools ? { noTools: "all" as const } : parsed.noBuiltinTools ? { noTools: "builtin" as const } : {}),
+		noMcp: parsed.noMcp === true || parsed.noExtensions === true,
+	};
+	if (appMode === "rpc") {
+		const { runDurableRpc } = await import("./modes/rpc/durable-rpc.ts");
+		await runDurableRpc(durableOptions);
+		return;
+	}
+	const { runDurablePrint } = await import("./durable/print.ts");
+	const exitCode = await runDurablePrint({
+		...durableOptions,
+		mode: appMode === "json" ? "json" : "text",
+		...(initialMessage === undefined ? {} : { initialMessage }),
+		...(initialImages === undefined ? {} : { initialImages }),
+		messages: parsed.messages.slice(),
+	});
+	restoreStdout();
+	if (exitCode !== 0) process.exitCode = exitCode;
 }

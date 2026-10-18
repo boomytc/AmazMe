@@ -11,7 +11,7 @@ import { createMemoryFileObservations } from "../file-observations.ts";
 export interface FileToolOptions {
 	/** One filesystem capability, including checked publication, for local or remote tools. */
 	fileSystem?: FileSystem;
-	/** Share this owner when constructing standalone read/edit/write separately. AgentSession supplies its own owner. */
+	/** Share this owner when constructing standalone read/edit/write tools separately. */
 	observations?: FileObservationStore;
 }
 

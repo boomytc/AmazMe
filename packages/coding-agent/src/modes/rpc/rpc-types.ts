@@ -7,10 +7,30 @@
 
 import type { AgentMessage, ThinkingLevel } from "@amazme/agent";
 import type { ImageContent, Model } from "@amazme/ai";
-import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
-import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { SessionEntry, SessionTreeNode } from "../../core/jsonl-transcript.ts";
+
+export type QueuedInputDisposition = "handled" | "queued";
+export type PromptDisposition = QueuedInputDisposition | "started";
+
+export interface SessionStats {
+	sessionFile: string | undefined;
+	sessionId: string;
+	userMessages: number;
+	assistantMessages: number;
+	toolCalls: number;
+	toolResults: number;
+	totalMessages: number;
+	tokens: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		total: number;
+	};
+	cost: number;
+}
 import type { SourceInfo } from "../../core/source-info.ts";
 
 // ============================================================================
@@ -49,7 +69,6 @@ export type RpcCommand =
 
 	// Retry
 	| { id?: string; type: "set_auto_retry"; enabled: boolean }
-	| { id?: string; type: "abort_retry" }
 
 	// Bash
 	| { id?: string; type: "bash"; command: string; excludeFromContext?: boolean }
@@ -187,7 +206,6 @@ export type RpcResponse =
 
 	// Retry
 	| { id?: string; type: "response"; command: "set_auto_retry"; success: true }
-	| { id?: string; type: "response"; command: "abort_retry"; success: true }
 
 	// Bash
 	| { id?: string; type: "response"; command: "bash"; success: true; data: BashResult }

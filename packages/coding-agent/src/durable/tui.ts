@@ -1019,6 +1019,7 @@ export async function runDurableTui(
 			if (trimmed === "/agents" || trimmed === "/tree") { selectConversation(); return; }
 			if (trimmed === "/fork") return void controller.fork();
 			if (trimmed === "/older") return void controller.loadOlder();
+			if (trimmed === "/share") return void controller.share();
 			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);

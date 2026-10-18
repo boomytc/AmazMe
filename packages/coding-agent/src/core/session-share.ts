@@ -1,13 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { DEFAULT_RADIUS_GATEWAY } from "@amazme/ai/providers/radius-config";
-import { getAuthCredential } from "../cli/auth-command.ts";
 import { getShareViewerUrl } from "../config.ts";
-import type { AgentSession } from "./agent-session.ts";
-import { exportSessionToJsonl } from "./session-export.ts";
 
 /** Where a share goes: Radius first, a gist, or the reader's configured default. */
 export type ShareDestination = "auto" | "radius" | "gist";
@@ -32,56 +26,6 @@ export interface GhResult {
 	readonly code: number | null;
 	readonly stdout: string;
 	readonly stderr: string;
-}
-
-export interface ShareSessionOptions {
-	readonly session: AgentSession;
-	readonly destination: ShareDestination;
-	/** Theme the exported HTML uses; the terminal passes its active theme. */
-	readonly themeName?: string;
-	readonly signal?: AbortSignal;
-	/** Phase text for a progress surface ("Uploading to Radius..."). */
-	readonly report?: (message: string) => void;
-	readonly fetchImpl?: typeof fetch;
-	readonly runGh?: (args: readonly string[], signal?: AbortSignal) => Promise<GhResult>;
-	/** Local CLI check; the default asks `gh auth status` synchronously. */
-	readonly checkGhAuth?: () => GhAuthStatus;
-	readonly tempRoot?: string;
-	/** Injectables for tests: the default writes through the session. */
-	readonly exportJsonl?: (file: string) => void;
-	readonly exportHtml?: (file: string) => Promise<void>;
-}
-
-/** Trailing `amazme.share` entry carrying the system prompt and tool schemas for the session viewer. */
-export function createShareTrailingEntries(
-	session: AgentSession,
-	parentId: string | null,
-	timestamp: string,
-): object[] {
-	return [
-		{
-			type: "custom",
-			customType: "amazme.share",
-			id: crypto.randomUUID().slice(0, 8),
-			parentId,
-			timestamp,
-			data: {
-				systemPrompt: session.state.systemPrompt,
-				tools: session.state.tools.map((tool) => ({
-					name: tool.name,
-					description: tool.description,
-					parameters: tool.parameters,
-				})),
-			},
-		},
-	];
-}
-
-/** Export the current branch with presentation metadata for Radius. */
-export function exportSessionForShare(filePath: string, session: AgentSession): void {
-	exportSessionToJsonl(session.sessionManager, filePath, (parentId, timestamp) =>
-		createShareTrailingEntries(session, parentId, timestamp),
-	);
 }
 
 function cancelled(options: { readonly signal?: AbortSignal }): ShareFailure | undefined {
@@ -214,7 +158,7 @@ export interface ShareFilesOptions {
 	readonly exportHtml?: (file: string) => Promise<void>;
 }
 
-/** Publish two already-exported files, for a caller whose session store is not an AgentSession. */
+/** Publish JSONL and HTML files already written by `amazme export`. */
 export async function shareFilesToUrl(options: ShareFilesOptions): Promise<ShareOutcome> {
 	const abort = cancelled(options);
 	if (abort) return abort;
@@ -243,58 +187,4 @@ export async function shareFilesToUrl(options: ShareFilesOptions): Promise<Share
 		return { ok: false, problem: "Failed to export session: HTML export is missing" };
 	}
 	return await shareViaGist(options.htmlFile, options);
-}
-
-/**
- * Export the current session and publish it, without a terminal.
- *
- * Radius is tried unless the reader chose a gist; an unavailable Radius account falls back
- * to a private gist when the destination is automatic. Every failure is a value, so a page
- * or a command can show the reason without catching an exception.
- */
-export async function shareSessionToUrl(options: ShareSessionOptions): Promise<ShareOutcome> {
-	const tempDir = fs.mkdtempSync(path.join(options.tempRoot ?? os.tmpdir(), "pi-share-"));
-	const jsonlFile = path.join(tempDir, "session.jsonl");
-	const htmlFile = path.join(tempDir, "session.html");
-	try {
-		try {
-			(options.exportJsonl ?? ((file: string) => exportSessionForShare(file, options.session)))(jsonlFile);
-		} catch (error: unknown) {
-			return {
-				ok: false,
-				problem: `Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`,
-			};
-		}
-		const session = options.session;
-		return await shareFilesToUrl({
-			jsonlFile,
-			htmlFile,
-			destination: options.destination,
-			radiusToken: async () => {
-				if (!session.modelRuntime.getProvider("radius")) return undefined;
-				return getAuthCredential(
-					await session.modelRuntime.getAuth("radius", { minOAuthValidityMs: 5 * 60_000 }),
-				);
-			},
-			...(options.signal === undefined ? {} : { signal: options.signal }),
-			...(options.report === undefined ? {} : { report: options.report }),
-			...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
-			...(options.runGh === undefined ? {} : { runGh: options.runGh }),
-			...(options.checkGhAuth === undefined ? {} : { checkGhAuth: options.checkGhAuth }),
-			exportHtml:
-				options.exportHtml ??
-				(async (file: string) => {
-					await session.exportToHtml(
-						file,
-						options.themeName === undefined ? {} : { themeName: options.themeName },
-					);
-				}),
-		});
-	} finally {
-		try {
-			fs.rmSync(tempDir, { recursive: true, force: true });
-		} catch {
-			// Cleanup is best effort; the upload already read what it needed.
-		}
-	}
 }

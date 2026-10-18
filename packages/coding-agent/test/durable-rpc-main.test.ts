@@ -21,7 +21,6 @@ describe("durable RPC entry wiring", () => {
 		profile = join(directory, "profile");
 		await mkdir(cwd);
 		vi.stubEnv("AMAZME_CODING_AGENT_DIR", profile);
-		vi.stubEnv("AMAZME_RUNTIME", "durable");
 		vi.spyOn(process, "cwd").mockReturnValue(cwd);
 		vi.mocked(runDurableRpc).mockClear();
 	});
@@ -32,7 +31,7 @@ describe("durable RPC entry wiring", () => {
 		await rm(directory, { recursive: true, force: true });
 	});
 
-	it("selects the durable RPC runtime before creating an AgentSession", async () => {
+	it("opens RPC on the durable runtime", async () => {
 		await main(["--offline", "--mode", "rpc", "--no-session", "--no-extensions", "--no-mcp"]);
 		expect(runDurableRpc).toHaveBeenCalledOnce();
 		expect(vi.mocked(runDurableRpc).mock.calls[0]?.[0]).toMatchObject({ cwd, noSession: true, noExtensions: true, noMcp: true });

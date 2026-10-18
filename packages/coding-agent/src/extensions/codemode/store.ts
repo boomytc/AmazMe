@@ -1,4 +1,4 @@
-import type { SessionEntry } from "../../core/session-manager.ts";
+import type { SessionEntry } from "../../core/jsonl-transcript.ts";
 import { CODEMODE_STORE_ENTRY_TYPE } from "../../core/codemode/declarations.ts";
 import type { CodemodeStoreWrites as CodemodeStoreEntryData } from "../../core/codemode/types.ts";
 

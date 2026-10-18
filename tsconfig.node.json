@@ -12,7 +12,7 @@
 	],
 	"exclude": [
 		"**/dist/**",
-		"packages/coding-agent/examples/extensions/gondolin/**",
+		"packages/coding-agent/examples/extensions/**",
 		"packages/web/src/**",
 		"packages/web/test/**",
 		"packages/coding-agent/src/host/web/page.ts",

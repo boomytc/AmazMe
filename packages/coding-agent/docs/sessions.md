@@ -1,8 +1,8 @@
 # Sessions and Context
 
-AmazMe keeps conversation history and supplies the active conversation to the model. The default terminal uses Durable SQLite storage. Web and hosted clients share their server's session roster. Print/JSON/RPC and the SDK expose a JSONL session API; select storage through the entry point you are using.
+AmazMe keeps conversation history and supplies the active conversation to the model. The terminal, print, JSON, RPC, SDK, and hosted clients use Durable SQLite storage. Web and hosted clients share their server's session roster.
 
-The migration to one Durable kernel is tracked in [Durable single-kernel migration](../../../docs/durable-migration.md). New print, JSON, and RPC sessions use the Durable session by default; `AMAZME_RUNTIME=legacy` selects the JSONL path, which also handles JSONL-only flags and SDK extension factories. `amazme import <session.jsonl>` copies a terminal session into a new Durable session without changing the source file.
+The single-kernel migration is recorded in [Durable single-kernel migration](../../../docs/durable-migration.md). `amazme import <session.jsonl>` copies one linear JSONL transcript into a new Durable session without changing the source file.
 
 ## Default terminal
 
@@ -55,20 +55,19 @@ archiving neither rolls them back nor creates an isolated working directory. See
 
 The host's `--session-dir` selects its server storage root. Default terminal flags do not select a hosted session. See [CLI Integration](cli-integration.md) for host commands.
 
-## JSONL API and print/RPC
+## Print, JSON, RPC, and JSONL files
 
-With `AMAZME_RUNTIME=legacy`, Print, JSON and RPC sessions use the SDK's [JSONL format](session-format.md), normally under `<agent-dir>/sessions`, grouped by working directory. Their `--session`, `--session-id` and `--fork` options select or create JSONL sessions. `--session-dir`, the environment root, the `sessionDir` setting and `--no-session` also apply to this entry point.
+Print, JSON, and RPC use the same Durable session as the terminal. `--continue` resumes the newest Durable session. `--session`, `--session-id`, and `--fork` are unknown options.
 
 ```bash
 amazme --print --name "Review" "Explain this project"
 amazme --print --continue "Continue that review"
-amazme --mode rpc --session /path/to/session.jsonl
-amazme --export /path/to/session.jsonl
+amazme export <session.sqlite|session-dir> ./session.jsonl
 ```
 
-An application embedding the SDK can use its `SessionManager` and interactive UI APIs for session selection, naming, cloning and export. See [SDK](sdk.md) and [RPC](rpc.md). The default terminal's SQLite session is selected through its native continuation and conversation commands.
+If `--continue` finds no Durable session but an old JSONL file is still on disk, it tells you to import that file first. See [SDK](sdk.md) and [RPC](rpc.md).
 
-The optional SDK terminal's `/share` uses Radius when authenticated and otherwise creates a private GitHub gist. Set [`sessionShareDestination`](settings.md#interaction) to `gist` to always use Gist, or `radius` to require Radius without fallback. This setting applies to that sharing entry point; default Durable and hosted clients do not expose it.
+`/share` exports the active transcript to JSONL and HTML, then uploads that pair. It uses Radius when authenticated and otherwise creates a private GitHub gist. Set [`sessionShareDestination`](settings.md#interaction) to `gist` to always use Gist, or `radius` to require Radius without fallback.
 
 Review exported transcripts before sharing them: they can contain prompts, responses, tool arguments, command output and file contents.
 
