@@ -1,5 +1,5 @@
 import { fuzzyMatch } from "@amazme/tui";
-import type { SessionInfo } from "../../../core/session-manager.ts";
+import type { SessionInfo } from "../../../core/jsonl-transcript.ts";
 
 export type SortMode = "threaded" | "recent" | "relevance";
 

@@ -26,7 +26,7 @@ import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import type { ExtensionFactory } from "../src/core/extensions/types.ts";
-import { type SessionEntry, SessionManager, type UsageEntry } from "../src/core/session-manager.ts";
+import { type SessionEntry, type UsageEntry } from "../src/core/jsonl-transcript.ts";
 import type { CacheWarmingMode } from "../src/core/settings-manager.ts";
 import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 
@@ -92,8 +92,19 @@ function fakeRuntime(
 	const calls: Array<{ model: Model<Api>; options: ModelsSimpleStreamOptions | undefined }> = [];
 	const events: CacheWarmingDecisionEvent[] = [];
 	const warmedEntries: UsageEntry[] = [];
-	const usageManager = SessionManager.inMemory();
-	const appendUsage = vi.fn(usageManager.appendUsage.bind(usageManager));
+	const appendUsage = vi.fn(
+		(kind: string, provider: string, model: string, usage: Usage, note?: string): UsageEntry => ({
+			type: "usage",
+			id: "usage",
+			parentId: null,
+			timestamp: "2020-01-01T00:00:00.000Z",
+			kind,
+			provider,
+			model,
+			usage,
+			...(note === undefined ? {} : { note }),
+		}),
+	);
 	const state = { mode: options.mode ?? "idle", branch: options.branch ?? branchWithPrompt(100_000) };
 	const warmer = new CacheWarmer(
 		{
@@ -324,13 +335,17 @@ describe("cache warming", () => {
 			...warmUsage,
 			cost: { input: 0.00004, output: 0.00005, cacheRead: 0.02940725, cacheWrite: 0, total: 0.02949725 },
 		};
-		const entry = SessionManager.inMemory().appendUsage(
-			"cache_warm",
-			adaptiveModel.provider,
-			adaptiveModel.id,
+		const entry: UsageEntry = {
+			type: "usage",
+			id: "usage",
+			parentId: null,
+			timestamp: "2020-01-01T00:00:00.000Z",
+			kind: "cache_warm",
+			provider: adaptiveModel.provider,
+			model: adaptiveModel.id,
 			usage,
-			"extension override",
-		);
+			note: "extension override",
+		};
 		expect(formatCacheWarmingUsage(entry)).toBe("Cache warmed (extension override): $0.029497");
 	});
 });
@@ -352,7 +367,7 @@ describe("ExtensionRunner.emitCacheWarmingDecision", () => {
 			extensions.push(await loadExtensionFromFactory(factory, process.cwd(), eventBus, runtime));
 		}
 		const modelRegistry = await createInMemoryModelRegistry(AuthStorage.inMemory());
-		const runner = new ExtensionRunner(extensions, runtime, process.cwd(), SessionManager.inMemory(), modelRegistry);
+		const runner = new ExtensionRunner(extensions, runtime, process.cwd(), modelRegistry);
 		const event: CacheWarmingDecisionEvent = {
 			type: "cache_warming_decision",
 			warmCost: 0.05,

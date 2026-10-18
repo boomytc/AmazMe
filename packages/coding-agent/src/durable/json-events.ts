@@ -1,7 +1,6 @@
 import type { AssistantMessage, AssistantMessageEvent, Message } from "@amazme/ai";
 import type { AgentEvent, MessageChange } from "@amazme/durable";
-import type { AgentSessionEvent } from "../core/agent-session.ts";
-import { type JsonAgentSessionEvent, toJsonEvent } from "../modes/json-event.ts";
+import { type JsonStreamEvent, toJsonEvent } from "../modes/json-event.ts";
 
 /**
  * Project Durable agent events onto the JSON stream shape that `--mode json` already emits.
@@ -18,7 +17,7 @@ export class DurableJsonEvents {
 	private readonly toolArgs = new Map<string, unknown>();
 	private readonly runMessages: Message[] = [];
 
-	translate(event: AgentEvent): JsonAgentSessionEvent[] {
+	translate(event: AgentEvent): JsonStreamEvent[] {
 		switch (event.type) {
 			case "snapshot":
 				return [];
@@ -116,10 +115,10 @@ export class DurableJsonEvents {
 	}
 
 	/** One JSON line per change, matching the coding agent's per-delta events. */
-	private messageUpdates(usage: AssistantMessage["usage"], changes: readonly MessageChange[]): JsonAgentSessionEvent[] {
+	private messageUpdates(usage: AssistantMessage["usage"], changes: readonly MessageChange[]): JsonStreamEvent[] {
 		const message = this.message;
 		if (message === undefined) return [];
-		const events: JsonAgentSessionEvent[] = [];
+		const events: JsonStreamEvent[] = [];
 		for (const change of changes) {
 			const assistantMessageEvent = this.assistantEvent(message, change, usage);
 			if (assistantMessageEvent !== undefined) {

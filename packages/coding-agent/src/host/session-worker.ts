@@ -51,7 +51,6 @@ import {
 } from "./services/worker.ts";
 import { readSession, sessionStoragePath } from "./session-catalog.ts";
 import { ProjectCatalog } from "./project-catalog.ts";
-import { startSessionHandoff } from "./session-handoff.ts";
 import { abortSessionWork, firstSessionTitle, isSessionEmpty, watchSessionTitle } from "./session-lifecycle.ts";
 import { SessionLifecycle } from "./services/session-lifecycle.ts";
 
@@ -563,8 +562,6 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			mcp: runtime.mcp,
 			approvalGate: runtime.approvalGate,
 			facetLoader: runtime.facetLoader,
-			refreshMirror: () => runtime?.handoff?.refresh() ?? Promise.resolve(),
-			mirror: runtime.handoff,
 			publish: (scope, channelId, update) =>
 				control.send(update === undefined
      ? { type: "channel_closed", token, sessionKey, scope, channelId }
@@ -928,15 +925,6 @@ async function createCodingAgentHarness(
 			},
 		});
 		await applyDurableMcpSelection(mcp, conversation, TODO_CONTEXT);
-		// The terminal's copy of this session: seeded from it when the hosted transcript is empty,
-		// and refreshed with every committed revision, so one session is visible from either client.
-		const handoff = await startSessionHandoff({
-			conversation,
-			sessionId: options.metadata.id,
-			cwd,
-			createdAt: options.metadata.createdAt,
-			sessionName: async () => (await readSession(options.sessionDir, options.metadata.id))?.name,
-		});
 		return {
 			admission,
 			executionEnv: envs.env({ cwd, conversationId: conversation.id, read: harness }),
@@ -952,16 +940,11 @@ async function createCodingAgentHarness(
 			resources,
 			mcp: activeMcp.management,
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
-			handoff,
 			cleanup: async (context) => {
 				try {
-					await handoff.dispose();
+					await mcp?.close();
 				} finally {
-					try {
-						await mcp?.close();
-					} finally {
-						await envs.cleanup(context);
-					}
+					await envs.cleanup(context);
 				}
 			},
 		};

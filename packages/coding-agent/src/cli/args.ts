@@ -25,9 +25,6 @@ export interface Args {
 	mode?: Mode;
 	name?: string;
 	noSession?: boolean;
-	session?: string;
-	sessionId?: string;
-	fork?: string;
 	sessionDir?: string;
 	models?: string[];
 	tools?: string[];
@@ -132,12 +129,6 @@ export function parseArgs(args: string[]): Args {
 			}
 		} else if (arg === "--no-session") {
 			result.noSession = true;
-		} else if (arg === "--session" && i + 1 < args.length) {
-			result.session = args[++i];
-		} else if (arg === "--session-id" && i + 1 < args.length) {
-			result.sessionId = args[++i];
-		} else if (arg === "--fork" && i + 1 < args.length) {
-			result.fork = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
@@ -312,12 +303,9 @@ ${chalk.bold("Options:")}
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
   --print, -p                    Non-interactive mode: process prompt and exit
-  --continue, -c                 Continue previous session
-  --resume, -r                   Continue newest native session; JSONL mode opens a selector
-  --session <path|id>            Use specific JSONL session file or partial UUID (print/RPC)
-  --session-id <id>              Use exact JSONL session ID, creating it if missing (print/RPC)
-  --fork <path|id>               Fork a JSONL session into a new session (print/RPC)
-  --session-dir <dir>            Directory for session storage and lookup
+  --continue, -c                 Resume the newest Durable session for this directory
+  --resume, -r                   Resume the newest Durable session for this directory
+  --session-dir <dir>            Directory for Durable session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
@@ -330,8 +318,7 @@ ${chalk.bold("Options:")}
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names or patterns (*) to disable
                                  Applies to all tools, MCP tools included
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
-  --extension, -e <path>         Load a native facet file/package in the TUI (repeatable)
-                                 Durable print/JSON also loads facets; legacy print/RPC use SDK extensions
+  --extension, -e <path>         Load a native facet file/package (repeatable)
   --no-extensions, -ne           Disable extension discovery and built-in extensions (explicit -e paths still work)
   --no-mcp                       Disable built-in MCP support: no servers connect and no MCP tools
   --skill <path>                 Load a skill file or directory (can be used multiple times)
@@ -352,9 +339,8 @@ ${chalk.bold("Options:")}
   --                             End option parsing; treat remaining arguments as messages/files
   --help, -h                     Show this help
   --version, -v                  Show version number
-  AMAZME_RUNTIME=legacy          Keep print/JSON/RPC on the JSONL runtime (Durable is default)
 
-SDK extensions in print/RPC can register additional flags. Native plugins use slash commands.${extensionFlagsText}
+Native plugins use slash commands.${extensionFlagsText}
 
 ${chalk.bold("Examples:")}
   # Sign in using the provider's OAuth or API-key flow

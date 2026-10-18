@@ -40,8 +40,7 @@ function radiusToken(modelRuntime: ModelRuntime | undefined): () => Promise<stri
 /**
  * `/share` for a Durable conversation.
  *
- * The browser session is a conversation, not an AgentSession, so the command exports the
- * active transcript with the durable exporter and hands both formats to the shared uploader.
+ * Exports the active transcript with the durable exporter and hands both formats to the shared uploader.
  * The URL is shown through the presentation status line; a failure throws, and the command
  * runner reports the reason on the connection line.
  */

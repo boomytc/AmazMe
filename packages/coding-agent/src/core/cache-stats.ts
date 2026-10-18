@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@amazme/ai";
-import type { SessionEntry } from "./session-manager.ts";
+import type { SessionEntry } from "./jsonl-transcript.ts";
 
 /**
  * Prompt-cache TTL: idle gaps longer than this are worth mentioning as the

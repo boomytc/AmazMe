@@ -38,9 +38,9 @@ describe("interactive storage selection boundary", () => {
 	});
 
 	it.each([
-		[["--fork", "source-session"], "interactive TUI stores conversations"],
-		[["--session", "terminal.jsonl"], "interactive TUI stores conversations"],
-		[["--session-id", "stable-session-id"], "interactive TUI stores conversations"],
+		[["--fork", "source-session"], "Unknown option --fork"],
+		[["--session", "terminal.jsonl"], "Unknown option --session"],
+		[["--session-id", "stable-session-id"], "Unknown option --session-id"],
 		[["--no-session", "--continue"], "--no-session cannot be combined"],
 		[["--no-session", "--resume"], "--no-session cannot be combined"],
 	])("rejects %j before opening durable storage", async (args, diagnostic) => {

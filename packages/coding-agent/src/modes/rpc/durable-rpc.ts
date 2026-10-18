@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { flushRawStdout, takeOverStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../../core/output-guard.ts";
 import { executeBashWithOperations } from "../../core/bash-executor.ts";
 import { durableEntriesToSessionFile } from "../../core/session-interop.ts";
-import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { SessionEntry, SessionTreeNode } from "../../core/jsonl-transcript.ts";
 import { createSyntheticSourceInfo } from "../../core/source-info.ts";
 import { createLocalBashOperations } from "../../core/tools/bash.ts";
 import { writeDurableExport } from "../../durable/export.ts";
@@ -411,8 +411,6 @@ export function createDurableRpcHandler(
 			case "switch_session":
 				if (sessionControl === undefined) return unsupported(id, command.type);
 				return success(id, "switch_session", await sessionControl.switchSession(command.sessionPath));
-			case "abort_retry":
-				return unsupported(id, command.type);
 			default: {
 				const unknown = command as { type: string };
 				return error(id, unknown.type, `Unknown command: ${unknown.type}`);

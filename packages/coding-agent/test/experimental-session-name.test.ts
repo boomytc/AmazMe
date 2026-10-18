@@ -2,7 +2,6 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { SessionManager } from "../src/core/session-manager.ts";
 import {
 	createSession,
 	mergeTrackedSession,
@@ -11,7 +10,6 @@ import {
 	writeSessionName,
 	type SessionCatalogMetadata,
 } from "../src/host/session-catalog.ts";
-import { writeSessionMirror } from "../src/host/session-store.ts";
 
 describe("session display names", () => {
 	test("normalizes newlines the way /name does", () => {
@@ -59,31 +57,4 @@ describe("session display names", () => {
 			.toEqual({ ...nameless, nameSource: "manual" });
 	});
 
-	test("copies the name into the terminal mirror as session_info", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "session-mirror-"));
-		const path = join(dir, "session.jsonl");
-		try {
-			const mirrored = await writeSessionMirror({
-				path,
-				guard: { expected: undefined },
-				sessionId: "s1",
-				cwd: "/work",
-				createdAt: 1_700_000_000_000,
-				name: "weekly report",
-				entries: [],
-			});
-			expect(SessionManager.open(path).getSessionName()).toBe("weekly report");
-			await writeSessionMirror({
-				path,
-				guard: { expected: mirrored.fingerprint },
-				sessionId: "s1",
-				cwd: "/work",
-				createdAt: 1_700_000_000_000,
-				entries: [],
-			});
-			expect(SessionManager.open(path).getSessionName()).toBeUndefined();
-		} finally {
-			await rm(dir, { recursive: true, force: true });
-		}
-	});
 });

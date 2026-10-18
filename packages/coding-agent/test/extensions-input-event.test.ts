@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
-import { SessionManager } from "../src/core/session-manager.ts";
 
 import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 
@@ -29,9 +28,8 @@ describe("Input Event", () => {
 		fs.mkdirSync(extensionsDir);
 		for (let i = 0; i < extensions.length; i++) fs.writeFileSync(path.join(extensionsDir, `e${i}.ts`), extensions[i]);
 		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
-		const sm = SessionManager.inMemory();
 		const mr = await createInMemoryModelRegistry(AuthStorage.inMemory());
-		return new ExtensionRunner(result.extensions, result.runtime, tempDir, sm, mr);
+		return new ExtensionRunner(result.extensions, result.runtime, tempDir, mr);
 	}
 
 	it("returns continue when no handlers, undefined return, or explicit continue", async () => {

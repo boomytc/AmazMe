@@ -1,5 +1,6 @@
 import { serviceSetFacet, type ApplicationService, type ServiceValue } from "@amazme/protocol/services";
-import { realpath } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { getSupportedThinkingLevels, type AssistantMessage, type ImageContent, type Model, type ModelThinkingLevel, type TextContent } from "@amazme/ai";
 import type { AttachedReplicatedState, FacetLoader } from "@amazme/chord";
@@ -24,6 +25,7 @@ import {
 	watchEvents } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
+import { getAuthCredential } from "../cli/auth-command.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { ModelScope, type ModelScopeConfig } from "../core/model-scope.ts";
 import { resolveModelScopeWithDiagnostics } from "../core/model-resolver.ts";
@@ -75,7 +77,9 @@ import { Subagent } from "./subagent.ts";
 import type { McpManagement } from "../core/mcp/management.ts";
 import { NATIVE_COMMANDS } from "./commands.ts";
 import { APP_COMMAND, APP_NAME, VERSION } from "../config.ts";
+import { shareFilesToUrl } from "../core/session-share.ts";
 import { collectSettingsDiagnostics } from "../core/settings-diagnostics.ts";
+import { writeDurableExport } from "./export.ts";
 import { normalizePromptImages } from "../utils/prompt-images.ts";
 import { estimateContextTokens } from "../core/compaction/index.ts";
 
@@ -165,6 +169,8 @@ export interface DurableController {
 	/** Admit one input and report how it entered the run, without waiting for its answer. */
 	submitForRpc(text: string, whenBusy: "steer" | "followUp", images?: readonly ImageContent[]): Promise<DurableSubmissionRpc>;
 	compact(instructions: string | undefined): Promise<void>;
+	/** Export the shown conversation and publish the HTML share URL. */
+	share(): Promise<void>;
 	abort(): Promise<void>;
 	cycleThinking(): Promise<void>;
 	setThinkingLevel(level: ModelThinkingLevel): Promise<void>;
@@ -848,6 +854,34 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				commandResult(async () => {
 					if (plugins?.changing) throw new Error("Plugins are unavailable; finish reloading or restart the session");
 					await current.compact(instructions, context);
+				}),
+			share: () =>
+				command(async () => {
+					const directory = await mkdtemp(join(tmpdir(), "amazme-share-"));
+					const jsonlFile = join(directory, "session.jsonl");
+					const htmlFile = join(directory, "session.html");
+					try {
+						const shown = await current.viewState(context);
+						const entries = shown.value.entries;
+						shown.dispose();
+						const id = String(current.id);
+						await writeDurableExport(entries, { id, cwd: state.session.cwd, output: jsonlFile, format: "jsonl" });
+						await writeDurableExport(entries, { id, cwd: state.session.cwd, output: htmlFile, format: "html" });
+						const outcome = await shareFilesToUrl({
+							jsonlFile,
+							htmlFile,
+							destination: settingsManager.getSessionShareDestination(),
+							radiusToken: async () => {
+								if (modelRuntime.getProvider("radius") === undefined) return undefined;
+								return getAuthCredential(await modelRuntime.getAuth("radius", { minOAuthValidityMs: 5 * 60_000 }));
+							},
+						});
+						if (!outcome.ok) throw new Error(outcome.problem);
+						const gist = outcome.gistUrl === undefined ? "" : ` · Gist: ${outcome.gistUrl}`;
+						notice("info", `Share URL: ${outcome.url}${gist}`);
+					} finally {
+						await rm(directory, { recursive: true, force: true }).catch(() => {});
+					}
 				}),
 			compact: (instructions) =>
 				command(async () => {

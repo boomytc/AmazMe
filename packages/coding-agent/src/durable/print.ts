@@ -8,14 +8,9 @@ import { openDurable, type OpenDurableOptions } from "./runtime.ts";
 /**
  * Headless print mode on the Durable Harness.
  *
- * This is the first entry point of the single-kernel migration (`docs/durable-migration.md`).
  * It owns its submission and waits for that receipt instead of global idle, and it reads the
  * answer from the committed transcript, so a process that exits after `wait()` cannot lose the
  * answer it already printed.
- *
- * Deliberately narrower than the SDK print mode: SDK extension factories and the JSONL session
- * flags (`--session`, `--session-id`, `--fork`) are not adapted here. The CLI only selects this
- * path when the caller asked for the durable runtime and supplied none of those options.
  */
 export interface DurablePrintOptions extends OpenDurableOptions {
 	readonly mode?: "text" | "json";

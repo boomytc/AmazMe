@@ -17,11 +17,8 @@ export interface DurablePromptOptions {
 /**
  * Experimental in-process SDK over one Durable session.
  *
- * This is the first SDK-shaped facade of the single-kernel migration. It is deliberately not
- * `createAgentSession`: that API owns the JSONL transcript, extension UI and session manager.
- * A caller that only needs prompt, steer, follow-up, abort, compaction, model selection and the
- * Durable event stream can use this instead, and receives the committed answer rather than a
- * view snapshot.
+ * Prompt, steer, follow-up, abort, compaction, model selection, and the Durable event stream.
+ * The caller receives the committed answer rather than a view snapshot.
  */
 export interface DurableSession {
 	readonly id: string;

@@ -11,7 +11,7 @@ import type { CrashRecord } from "./crash-log.ts";
 import type { Extension } from "./extensions/types.ts";
 import { convertToLlm } from "./messages.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
-import type { ReadonlySessionManager } from "./session-manager.ts";
+import type { SessionEntry } from "./jsonl-transcript.ts";
 import type { Settings } from "./settings-manager.ts";
 
 export const BUG_REPORT_CUSTOM_ENTRY_TYPE = "amazme.bug-report";
@@ -181,10 +181,11 @@ export function collectBugReportMetadata(options: CollectBugReportMetadataOption
 
 /** Collect failed assistant turns without collecting conversation content. */
 export function collectBugReportDiagnostics(
-	sessionManager: ReadonlySessionManager,
+	session: { getEntries(): readonly SessionEntry[] },
 	crashes: readonly CrashRecord[] = [],
+	sessionId = "",
 ) {
-	const entries = sessionManager.getEntries();
+	const entries = session.getEntries();
 	const assistant = [];
 	let assistantMessageCount = 0;
 	for (const entry of entries) {
@@ -214,7 +215,7 @@ export function collectBugReportDiagnostics(
 	}
 	return {
 		schemaVersion: BUG_REPORT_SCHEMA_VERSION,
-		sessionId: sessionManager.getSessionId(),
+		sessionId,
 		entryCount: entries.length,
 		assistantMessageCount,
 		assistant,

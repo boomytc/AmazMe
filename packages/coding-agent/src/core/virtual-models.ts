@@ -23,7 +23,7 @@ import {
 	type Provider,
 	type ThinkingLevelMap,
 } from "@amazme/ai";
-import type { SessionEntry } from "./session-manager.ts";
+import type { SessionEntry } from "./jsonl-transcript.ts";
 
 /** API id of virtual catalog entries. Requests for it fail unless routed first. */
 export const VIRTUAL_MODEL_API = "pi-virtual";

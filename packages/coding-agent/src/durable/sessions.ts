@@ -21,6 +21,17 @@ function sessionRoot(cwd: string, sessionDir: string | undefined): string {
 	return join(base, createHash("sha256").update(cwd).digest("hex").slice(0, 24));
 }
 
+/** JSONL transcripts written by the removed session kernel, under the default sessions directory. */
+async function legacyJsonlExists(cwd: string): Promise<boolean> {
+	const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+	try {
+		const names = await readdir(join(getAgentDir(), "sessions", safePath));
+		return names.some((name) => name.endsWith(".jsonl"));
+	} catch {
+		return false;
+	}
+}
+
 async function hasDatabase(directory: string): Promise<boolean> {
 	try {
 		await access(join(directory, "session.sqlite"));
@@ -92,7 +103,14 @@ export async function selectSession(
 				break;
 			}
 		}
-		if (newest === undefined) throw new Error(`No durable session exists for ${cwd}`);
+		if (newest === undefined) {
+			if (await legacyJsonlExists(cwd)) {
+				throw new Error(
+					`No Durable session exists for ${cwd}. JSONL history is still on disk. Run \`amazme import <session.jsonl>\` before --continue.`,
+				);
+			}
+			throw new Error(`No durable session exists for ${cwd}`);
+		}
 		directory = join(root, newest);
 	} else {
 		directory = join(root, `${String(Date.now()).padStart(13, "0")}-${randomUUID()}`);

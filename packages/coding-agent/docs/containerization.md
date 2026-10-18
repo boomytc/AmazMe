@@ -18,7 +18,7 @@ Native integrations can choose a Durable execution environment through the Harne
 
 The existing `@amazme/env` remote implementation uses an authenticated SSH connection and the matching Unix daemon, with filesystem, command, observation and cleanup operations. Configure the target and its command environment in the integration. Native tools and plugins continue through the same Harness tasks and result persistence; application code and plugins running on the host remain outside the remote tool boundary.
 
-The AgentSession SDK has separate custom shell/file-operation interfaces. Examples that replace SDK tools apply to an SDK application or Print/JSON/RPC session. A factory written for `ExtensionAPI` is not a native facet and does not become one by passing it to the default terminal's `-e` option. See [SDK](sdk.md), [SDK extensions](extensions.md) and [Native plugins](plugin-runtime.md).
+A factory written for `ExtensionAPI` is not a native facet and is not accepted by `-e`. See [SDK](sdk.md) and [Native plugins](plugin-runtime.md).
 
 ## Check the actual boundary
 

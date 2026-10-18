@@ -1,17 +1,12 @@
-import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 /**
  * Shared test utilities for coding-agent tests.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { Agent } from "@amazme/agent";
 import type { OAuthCredentials } from "@amazme/ai";
-import { getModel, streamSimple } from "@amazme/ai/compat";
 import { builtinProviders } from "@amazme/ai/providers/all";
-import { AgentSession } from "../src/core/agent-session.ts";
-import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
 import type {
 	Extension,
@@ -21,9 +16,6 @@ import type {
 } from "../src/core/extensions/index.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
-import { SessionManager } from "../src/core/session-manager.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
-import { createCodingTools } from "../src/index.ts";
 
 /**
  * API key for authenticated tests. Tests using this should be wrapped in
@@ -166,28 +158,6 @@ export function readSessionFileRoles(file: string): string[] {
 		});
 }
 
-/**
- * Options for creating a test session.
- */
-export interface TestSessionOptions {
-	/** Use in-memory session (no file persistence) */
-	inMemory?: boolean;
-	/** Custom system prompt */
-	systemPrompt?: string;
-	/** Custom settings overrides */
-	settingsOverrides?: Record<string, unknown>;
-}
-
-/**
- * Resources returned by createTestSession that need cleanup.
- */
-export interface TestSessionContext {
-	session: AgentSession;
-	sessionManager: SessionManager;
-	tempDir: string;
-	cleanup: () => void;
-}
-
 export interface CreateTestExtensionsResultInput {
 	factory: ExtensionFactory;
 	path?: string;
@@ -244,92 +214,4 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 		extendResources: () => {},
 		reload: async () => {},
 	};
-}
-
-/**
- * Create an AgentSession for testing with proper setup and cleanup.
- * Use this for e2e tests that need real LLM calls.
- */
-export async function createTestSession(options: TestSessionOptions = {}): Promise<TestSessionContext> {
-	const tempDir = join(tmpdir(), `pi-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-	mkdirSync(tempDir, { recursive: true });
-
-	const model = getModel("anthropic", "claude-sonnet-4-5")!;
-	const agent = new Agent({
-		getApiKey: () => API_KEY,
-		initialState: {
-			model,
-			systemPrompt: options.systemPrompt ?? "You are a helpful assistant. Be extremely concise.",
-			tools: createCodingTools(process.cwd()),
-		},
-		streamFn: streamSimple,
-	});
-
-	const sessionManager = options.inMemory ? SessionManager.inMemory() : SessionManager.create(tempDir);
-	const settingsManager = SettingsManager.create(tempDir, tempDir);
-
-	if (options.settingsOverrides) {
-		settingsManager.applyOverrides(options.settingsOverrides);
-	}
-
-	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	const modelRegistry = await createModelRegistry(authStorage, tempDir);
-
-	const session = new AgentSession({
-		agent,
-		sessionManager,
-		settingsManager,
-		cwd: tempDir,
-		modelRuntime: getModelRuntime(modelRegistry),
-		resourceLoader: createTestResourceLoader(),
-	});
-
-	// Must subscribe to enable session persistence
-	session.subscribe(() => {});
-
-	const cleanup = () => {
-		session.dispose();
-		if (tempDir && existsSync(tempDir)) {
-			rmSync(tempDir, { recursive: true });
-		}
-	};
-
-	return { session, sessionManager, tempDir, cleanup };
-}
-
-/**
- * Build a session tree for testing using SessionManager.
- * Returns the IDs of all created entries.
- *
- * Example tree structure:
- * ```
- * u1 -> a1 -> u2 -> a2
- *          -> u3 -> a3  (branch from a1)
- * u4 -> a4              (another root)
- * ```
- */
-export function buildTestTree(
-	session: SessionManager,
-	structure: {
-		messages: Array<{ role: "user" | "assistant"; text: string; branchFrom?: string }>;
-	},
-): Map<string, string> {
-	const ids = new Map<string, string>();
-
-	for (const msg of structure.messages) {
-		if (msg.branchFrom) {
-			const branchFromId = ids.get(msg.branchFrom);
-			if (!branchFromId) {
-				throw new Error(`Cannot branch from unknown entry: ${msg.branchFrom}`);
-			}
-			session.branch(branchFromId);
-		}
-
-		const id =
-			msg.role === "user" ? session.appendMessage(userMsg(msg.text)) : session.appendMessage(assistantMsg(msg.text));
-
-		ids.set(msg.text, id);
-	}
-
-	return ids;
 }

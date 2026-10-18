@@ -1,22 +1,17 @@
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
-import { existsSync } from "node:fs";
 import { chmod, chown, lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
-import { contentText, InMemoryCredentialStore } from "@amazme/ai";
+import { contentText, InMemoryCredentialStore, type AssistantMessage, type Message } from "@amazme/ai";
 import { getCurrentSystemPrompt } from "@amazme/ai/utils/transcript";
 import {
-	type AgentSession,
-	type CreateAgentSessionOptions,
-	createAgentSessionFromServices,
-	createAgentSessionServices,
+	createDurableSession,
+	type DurableSession,
 	getAgentDir,
-	type InlineExtension,
 	ModelRuntime,
 	readStoredCredential,
-	SessionManager,
 } from "@amazme/coding-agent";
 import {
 	attachHarnessRunToError,
@@ -32,6 +27,7 @@ import {
 	type UsageSummary,
 } from "vitest-evals/harness";
 import type { DocumentationVariant } from "./plan.ts";
+import { buildSystemPrompt } from "../../coding-agent/src/core/system-prompt.ts";
 import { AMAZME_SESSION_SNAPSHOT_ARTIFACT } from "./report.ts";
 
 type RunDiagnostics = {
@@ -50,9 +46,10 @@ export type CodingAgentModelSelection = {
 export type CodingAgentHarnessOptions = {
 	name?: string;
 	model?: CodingAgentModelSelection;
-	noTools?: CreateAgentSessionOptions["noTools"];
-	tools?: CreateAgentSessionOptions["tools"];
-	customTools?: CreateAgentSessionOptions["customTools"];
+	noTools?: "all" | "builtin";
+	tools?: readonly string[];
+	/** Inline custom tools belonged to the removed JSONL session SDK. */
+	customTools?: readonly unknown[];
 	workspaceFiles?: Readonly<Record<string, string>>;
 	transformSystemPrompt?: (defaultPrompt: string) => string;
 	expectedDocumentation?: boolean;
@@ -61,7 +58,7 @@ export type CodingAgentHarnessOptions = {
 export type CodingAgentHarnessWithOutput<TOutput extends JsonValue> = CodingAgentHarnessOptions & {
 	output: (args: {
 		response: string;
-		session: AgentSession;
+		session: DurableSession;
 		systemPrompt: string;
 		agentDir: string;
 	}) => TOutput | Promise<TOutput>;
@@ -187,7 +184,7 @@ async function enterToolSandbox(root: string, identity: SandboxIdentity | undefi
 	}
 }
 
-function toTranscriptEvents(messages: AgentSession["messages"]): TranscriptEvent[] {
+function toTranscriptEvents(messages: readonly Message[]): TranscriptEvent[] {
 	const events: TranscriptEvent[] = [];
 	for (const message of messages) {
 		if (message.role === "user") {
@@ -235,23 +232,22 @@ async function seedWorkspace(workspace: string, files: Readonly<Record<string, s
 	}
 }
 
-async function promptAgent(session: AgentSession, input: string, signal: AbortSignal | undefined): Promise<string> {
+function assistantText(message: AssistantMessage): string {
+	return message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+}
+
+async function promptAgent(session: DurableSession, input: string, signal: AbortSignal | undefined): Promise<string> {
 	signal?.throwIfAborted();
-	const previousMessageCount = session.messages.length;
-	await session.prompt(input);
-	const assistant = session.messages
-		.slice(previousMessageCount)
-		.reverse()
-		.find((message) => message.role === "assistant");
+	const assistant = await session.prompt(input);
 	if (!assistant) throw new Error("Agent run completed without an assistant message.");
 	if (assistant.stopReason !== "stop" && assistant.stopReason !== "toolUse") {
 		throw new Error(
 			assistant.errorMessage ?? `Agent run ended with unexpected stop reason: ${assistant.stopReason}.`,
 		);
 	}
-	const output = session.getLastAssistantText();
+	const output = assistantText(assistant);
 	if (!output && assistant.stopReason === "stop") throw new Error("Agent run produced no assistant text.");
-	return output ?? "";
+	return output;
 }
 
 export function verifySystemPrompt(
@@ -284,24 +280,17 @@ async function runCodingAgent<TOutput extends JsonValue>(
 	const workspace = join(root, "workspace");
 	const isolatedHome = join(root, "home");
 	const agentDir = join(isolatedHome, ".amazme", "agent");
-	const extensionFactories: InlineExtension[] = [];
-	let forcedSystemPrompt: string | undefined;
-	if (options.transformSystemPrompt) {
-		const transform = options.transformSystemPrompt;
-		extensionFactories.push({
-			name: "eval-system-prompt-transform",
-			hidden: true,
-			factory: (pi) => {
-				pi.on("before_agent_start", ({ systemPrompt }) => {
-					forcedSystemPrompt = transform(systemPrompt);
-					return { systemPrompt: forcedSystemPrompt };
-				});
-			},
-		});
+	if (options.customTools !== undefined && options.customTools.length > 0) {
+		throw new Error("Durable sessions do not accept inline custom tools.");
 	}
+	const forcedSystemPrompt = options.transformSystemPrompt?.(
+		buildSystemPrompt({
+			cwd: workspace,
+			selectedTools: [...(options.tools ?? [])],
+		}),
+	);
 
-	let sessionManager: SessionManager | undefined;
-	let session: AgentSession | undefined;
+	let session: DurableSession | undefined;
 	let result: SimpleHarnessResult<string | TOutput> | undefined;
 	let runDiagnostics: RunDiagnostics | undefined;
 	let runError: unknown;
@@ -334,33 +323,20 @@ async function runCodingAgent<TOutput extends JsonValue>(
 			}
 		}
 
-		const services = await createAgentSessionServices({
+		signal?.throwIfAborted();
+		session = await createDurableSession({
 			cwd: workspace,
 			modelRuntime,
-			resourceLoaderOptions: { extensionFactories },
+			provider: selection.provider,
+			model: selection.id,
+			thinkingLevel: "off",
+			...(options.tools === undefined ? {} : { tools: options.tools }),
+			...(options.noTools === undefined ? {} : { noTools: options.noTools }),
+			...(forcedSystemPrompt === undefined ? {} : { systemPrompt: forcedSystemPrompt }),
+			noExtensions: true,
+			noSession: true,
 		});
-		signal?.throwIfAborted();
-		sessionManager = SessionManager.create(workspace, join(root, "sessions"));
-		setArtifact("runId", sessionManager.getSessionId());
-		session = (
-			await createAgentSessionFromServices({
-				services,
-				sessionManager,
-				model,
-				thinkingLevel: "off",
-				tools: options.tools,
-				noTools: options.noTools,
-				customTools: options.customTools,
-			})
-		).session;
-
-		const expectedInlinePaths = new Set(extensionFactories.map(({ name }) => `<inline:${name}>`));
-		const unexpectedExtensions = session.extensionRunner
-			.getExtensionPaths()
-			.filter((path) => !expectedInlinePaths.has(path));
-		if (unexpectedExtensions.length > 0) {
-			throw new Error(`Isolated eval loaded unexpected extensions: ${unexpectedExtensions.join(", ")}`);
-		}
+		setArtifact("runId", session.id);
 
 		await enterToolSandbox(root, sandboxIdentity);
 		let response: string | undefined;
@@ -373,8 +349,7 @@ async function runCodingAgent<TOutput extends JsonValue>(
 		try {
 			for (const step of steps) {
 				if (step.type === "reload") {
-					await session.reload();
-					continue;
+					throw new Error("Durable sessions do not reload inline extensions.");
 				}
 				response = await promptAgent(session, step.content, signal);
 			}
@@ -385,28 +360,41 @@ async function runCodingAgent<TOutput extends JsonValue>(
 		if (response === undefined) {
 			throw new Error("AmazMe eval input must include at least one prompt step.");
 		}
-		// A forced prompt is not recorded in the transcript, so use the one the transform
-		// extension sent; otherwise the replayed transcript prompt is what the provider received.
-		const systemPrompt = forcedSystemPrompt ?? getCurrentSystemPrompt(session.messages);
-		const stats = session.getSessionStats();
+		const messages = session.messages();
+		const systemPrompt = forcedSystemPrompt ?? getCurrentSystemPrompt(messages);
+		const usage = messages.reduce(
+			(total, message) => {
+				if (message.role !== "assistant") return total;
+				total.toolCalls += message.content.filter((part) => part.type === "toolCall").length;
+				if (message.usage === undefined) return total;
+				total.input += message.usage.input;
+				total.output += message.usage.output;
+				total.cacheRead += message.usage.cacheRead;
+				total.cacheWrite += message.usage.cacheWrite;
+				total.total += message.usage.totalTokens;
+				total.cost += message.usage.cost.total;
+				return total;
+			},
+			{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0, toolCalls: 0 },
+		);
 		const hasPricing = [model.cost, ...(model.cost.tiers ?? [])].some(
 			({ input: inputCost, output: outputCost, cacheRead, cacheWrite }) =>
 				inputCost > 0 || outputCost > 0 || cacheRead > 0 || cacheWrite > 0,
 		);
 		runDiagnostics = {
-			events: toTranscriptEvents(session.messages),
+			events: toTranscriptEvents(messages),
 			metadata: { systemPromptSha256: createHash("sha256").update(systemPrompt).digest("hex") },
 			usage: {
 				provider: model.provider,
 				model: model.id,
-				inputTokens: stats.tokens.input,
-				outputTokens: stats.tokens.output,
-				totalTokens: stats.tokens.total,
-				toolCalls: stats.toolCalls,
+				inputTokens: usage.input,
+				outputTokens: usage.output,
+				totalTokens: usage.total,
+				toolCalls: usage.toolCalls,
 				metadata: {
-					cacheReadTokens: stats.tokens.cacheRead,
-					cacheWriteTokens: stats.tokens.cacheWrite,
-					...(hasPricing ? { estimatedCostUsd: stats.cost } : {}),
+					cacheReadTokens: usage.cacheRead,
+					cacheWriteTokens: usage.cacheWrite,
+					...(hasPricing ? { estimatedCostUsd: usage.cost } : {}),
 				},
 			},
 		};
@@ -417,22 +405,17 @@ async function runCodingAgent<TOutput extends JsonValue>(
 	} catch (error) {
 		runError = error;
 	} finally {
-		if (sessionManager) {
-			const sessionPath = sessionManager.getSessionFile();
-			if (!sessionPath || !existsSync(sessionPath)) {
-				cleanupErrors.push(new Error("AmazMe eval produced no session file."));
-			} else {
-				try {
-					setArtifact(AMAZME_SESSION_SNAPSHOT_ARTIFACT, await readFile(sessionPath, "utf8"));
-				} catch (error) {
-					cleanupErrors.push(error);
-				}
+		if (session) {
+			try {
+				setArtifact(AMAZME_SESSION_SNAPSHOT_ARTIFACT, JSON.stringify(session.messages()));
+			} catch (error) {
+				cleanupErrors.push(error);
 			}
-		}
-		try {
-			session?.dispose();
-		} catch (error) {
-			cleanupErrors.push(error);
+			try {
+				await session.dispose();
+			} catch (error) {
+				cleanupErrors.push(error);
+			}
 		}
 		try {
 			await rm(root, { recursive: true, force: true });

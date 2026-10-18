@@ -1,7 +1,7 @@
 import type { Component } from "@amazme/tui";
 import { Box, Container, Spacer, Text } from "@amazme/tui";
 import type { EntryRenderer } from "../../../core/extensions/types.ts";
-import type { CustomEntry } from "../../../core/session-manager.ts";
+import type { CustomEntry } from "../../../core/jsonl-transcript.ts";
 import { theme } from "../theme/theme.ts";
 
 /**

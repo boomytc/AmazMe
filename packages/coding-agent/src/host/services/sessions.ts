@@ -8,7 +8,7 @@ export interface SessionAddress {
 	sessionId: string;
 }
 
-/** Where a listed session lives: a Session this host owns, or a terminal session it can adopt. */
+/** Where a listed session lives. New rows are host-owned Durable sessions. */
 export type SessionSource = "host" | "local";
 
 export interface SessionSummary extends SessionAddress {
@@ -18,10 +18,7 @@ export interface SessionSummary extends SessionAddress {
 	projectId?: string;
 	archivedAt?: number;
 	workEndedAt?: number;
-	/**
-	 * `host` for a Session this server owns, `local` for a terminal session that no host has opened
-	 * yet. Attaching a `local` one adopts it: the host stores it and seeds it from its transcript.
-	 */
+	/** `host` for a Session this server owns. */
 	source: SessionSource;
 	/** The display name `/name` reads, when the session has one. */
 	name?: string;

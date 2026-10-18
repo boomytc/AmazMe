@@ -1,7 +1,7 @@
 import type { AssistantMessage } from "@amazme/ai";
 import type { ProgramStatus, Terminal } from "@amazme/tui";
 import { describe, expect, it } from "vitest";
-import type { AgentSessionEvent } from "../src/core/agent-session.ts";
+import type { StreamEvent } from "../src/modes/json-event.ts";
 import { ProgramStatusReporter } from "../src/modes/interactive/program-status-reporter.ts";
 
 function setup(sessionName?: string) {
@@ -12,7 +12,7 @@ function setup(sessionName?: string) {
 		() => terminal,
 		() => session.name,
 	);
-	const send = (...events: AgentSessionEvent[]) => {
+	const send = (...events: StreamEvent[]) => {
 		for (const event of events) reporter.handleEvent(event);
 	};
 	const last = () => {
@@ -22,7 +22,7 @@ function setup(sessionName?: string) {
 	return { reporter, reports, session, send, last };
 }
 
-function assistantEnd(stopReason: AssistantMessage["stopReason"], errorMessage?: string): AgentSessionEvent {
+function assistantEnd(stopReason: AssistantMessage["stopReason"], errorMessage?: string): StreamEvent {
 	const message = {
 		role: "assistant",
 		content: [{ type: "text", text: "secret assistant output" }],
@@ -32,12 +32,12 @@ function assistantEnd(stopReason: AssistantMessage["stopReason"], errorMessage?:
 	return { type: "message_end", message };
 }
 
-const settled: AgentSessionEvent = { type: "agent_settled", aborted: false };
+const settled: StreamEvent = { type: "agent_settled", aborted: false };
 
 const compactionEnd = (
 	reason: "manual" | "threshold" | "overflow",
 	options: { aborted?: boolean; errorMessage?: string } = {},
-): AgentSessionEvent => ({
+): StreamEvent => ({
 	type: "compaction_end",
 	reason,
 	result: undefined,
@@ -138,7 +138,7 @@ describe("ProgramStatusReporter", () => {
 
 	it("sends each status once and follows session name changes", () => {
 		const { reporter, reports, session, send, last } = setup("Old");
-		send({ type: "agent_start" }, { type: "turn_start" } as AgentSessionEvent, assistantEnd("toolUse"));
+		send({ type: "agent_start" }, { type: "turn_start" } as StreamEvent, assistantEnd("toolUse"));
 		reporter.report();
 		expect(reports).toHaveLength(1);
 

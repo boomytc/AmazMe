@@ -38,7 +38,6 @@ import { publishSettings, settingsErrors, settingsSnapshot } from "./settings-pr
 import { SessionLifecycle } from "./session-lifecycle.ts";
 import { SessionMirror } from "./session-mirror.ts";
 import type { SessionMirrorStatus } from "./session-mirror.ts";
-import type { SessionHandoff } from "../session-handoff.ts";
 import { abortSessionWork, isSessionEmpty } from "../session-lifecycle.ts";
 import { createTerminalFacet } from "./terminal-provider.ts";
 import { Terminal } from "./terminal.ts";
@@ -64,8 +63,6 @@ export interface SessionWorkerRuntime {
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
-	/** The terminal handoff: the mirror of this session in the terminal's store. */
-	readonly handoff?: SessionHandoff;
 	/** Release resources the Harness does not own, such as execution environments, after it closed. */
 	cleanup?(context: Context): Promise<void>;
 }
@@ -104,8 +101,6 @@ export async function createSessionWorkerServices(options: {
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
-	readonly refreshMirror?: () => Promise<void>;
-	readonly mirror?: SessionHandoff;
 	publish(scope: WorkerServiceScope, subscriptionId: string, update: Frame | undefined): Promise<void>;
 }): Promise<SessionWorkerServices> {
 	let pluginRuntime: PluginRuntime | undefined;
@@ -139,9 +134,7 @@ export async function createSessionWorkerServices(options: {
 				values.set(AgentController, provided1);
 				const provided2: ServiceValue<typeof SessionLifecycle> = {
 					isEmpty: (context) => isSessionEmpty(options.harness, context),
-					refreshMirror: async () => {
-						await options.refreshMirror?.();
-					},
+					refreshMirror: async () => {},
 					async stopWork(context) {
 						await conversations.cancelSummaries(context);
 						await terminal?.stop(context);
@@ -150,15 +143,7 @@ export async function createSessionWorkerServices(options: {
 					},
 				};
 				values.set(SessionLifecycle, provided2);
-				const mirrorState = replicatedState<SessionMirrorStatus>({
-					warning: options.mirror?.warning ?? null,
-				});
-				const stopMirror = options.mirror?.subscribeWarning((warning) => {
-					mirrorState.change(BACKGROUND_CONTEXT, (draft) => {
-						draft.warning = warning;
-					});
-				});
-				disposers.push(() => stopMirror?.());
+				const mirrorState = replicatedState<SessionMirrorStatus>({ warning: null });
 				const provided3: ServiceValue<typeof SessionMirror> = { state: mirrorState };
 				values.set(SessionMirror, provided3);
 

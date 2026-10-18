@@ -126,20 +126,15 @@ describe("parseArgs", () => {
 			expect(result.appendSystemPrompt).toEqual(["Context A", "Context B"]);
 		});
 
-		test("parses --session", () => {
-			const result = parseArgs(["--session", "/path/to/session.jsonl"]);
-			expect(result.session).toBe("/path/to/session.jsonl");
-		});
-
-		test("parses --session-id", () => {
-			const result = parseArgs(["--session-id", "orchestrated-session"]);
-			expect(result.sessionId).toBe("orchestrated-session");
-		});
-
-		test("parses --fork", () => {
-			const result = parseArgs(["--fork", "1234abcd"]);
-			expect(result.fork).toBe("1234abcd");
-			expect(result.messages).toEqual([]);
+		test("rejects removed JSONL session flags", () => {
+			for (const args of [
+				["--session", "/path/to/session.jsonl"],
+				["--session-id", "orchestrated-session"],
+				["--fork", "1234abcd"],
+			]) {
+				const result = parseArgs(args);
+				expect(result.unknownFlags.size).toBeGreaterThan(0);
+			}
 		});
 
 		test("parses --export", () => {
@@ -247,19 +242,15 @@ describe("parseArgs", () => {
 			expect(result.noSession).toBe(true);
 		});
 
-		test("preserves custom session IDs for non-persisting commands", () => {
-			expect(parseArgs(["--session-id", "ephemeral-id", "--help"])).toMatchObject({
-				sessionId: "ephemeral-id",
-				help: true,
-			});
-			expect(parseArgs(["--session-id", "ephemeral-id", "--list-models"])).toMatchObject({
-				sessionId: "ephemeral-id",
-				listModels: true,
-			});
-			expect(parseArgs(["--session-id", "ephemeral-id", "--no-session"])).toMatchObject({
-				sessionId: "ephemeral-id",
-				noSession: true,
-			});
+		test("rejects --session-id even next to non-persisting commands", () => {
+			for (const args of [
+				["--session-id", "ephemeral-id", "--help"],
+				["--session-id", "ephemeral-id", "--list-models"],
+				["--session-id", "ephemeral-id", "--no-session"],
+			]) {
+				const result = parseArgs(args);
+				expect(result.unknownFlags.has("session-id")).toBe(true);
+			}
 		});
 	});
 

@@ -15,7 +15,12 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "../messages.ts";
-import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
+import type { SessionEntry } from "../jsonl-transcript.ts";
+
+interface BranchReader {
+	getBranch(id: string): SessionEntry[];
+	getEntry(id: string): SessionEntry | undefined;
+}
 import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction.ts";
 import {
 	computeFileLists,
@@ -106,7 +111,7 @@ export interface GenerateBranchSummaryOptions {
  * @returns Entries to summarize and the common ancestor
  */
 export function collectEntriesForBranchSummary(
-	session: ReadonlySessionManager,
+	session: BranchReader,
 	oldLeafId: string | null,
 	targetId: string,
 ): CollectEntriesResult {

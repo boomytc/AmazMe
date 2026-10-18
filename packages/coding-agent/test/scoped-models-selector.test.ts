@@ -1,10 +1,9 @@
 import { setKeybindings } from "@amazme/tui";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { ScopedModelsSelectorComponent } from "../src/modes/interactive/components/scoped-models-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
-import { createHarness, type Harness } from "./suite/harness.ts";
 
 interface ModelState {
 	id: string;
@@ -22,7 +21,7 @@ function getMarkerStates(selector: ScopedModelsSelectorComponent, models: ModelS
 }
 
 describe("scoped models selector", () => {
-	let harness: Harness | undefined;
+	const provider = "fixture";
 
 	beforeAll(() => {
 		initTheme("dark");
@@ -32,17 +31,10 @@ describe("scoped models selector", () => {
 		setKeybindings(new KeybindingsManager());
 	});
 
-	afterEach(() => {
-		harness?.cleanup();
-		harness = undefined;
-	});
-
-	async function createSelector(models: ModelState[]) {
-		harness = await createHarness({ models });
-		const provider = harness.models[0].provider;
+	function createSelector(models: ModelState[]) {
 		const selector = new ScopedModelsSelectorComponent(
 			{
-				allModels: [...harness.models],
+				allModels: models.map((model) => ({ provider, id: model.id, name: model.name })),
 				enabledModelIds: models.filter((model) => model.enabled).map((model) => `${provider}/${model.id}`),
 			},
 			{
@@ -64,7 +56,7 @@ describe("scoped models selector", () => {
 			{ id: "model-b", name: "Model B", enabled: false },
 			{ id: "model-c", name: "Model C", enabled: false },
 		];
-		const selector = await createSelector(models);
+		const selector = createSelector(models);
 
 		selector.handleInput("\x01");
 
@@ -79,7 +71,7 @@ describe("scoped models selector", () => {
 			{ id: "model-b", name: "Model B", enabled: false },
 			{ id: "model-c", name: "Model C", enabled: false },
 		];
-		const selector = await createSelector(models);
+		const selector = createSelector(models);
 
 		selector.handleInput("\x01");
 		selector.handleInput("\r");
@@ -94,7 +86,7 @@ describe("scoped models selector", () => {
 			{ id: "model-b", name: "Model B", enabled: true },
 			{ id: "model-c", name: "Model C", enabled: true },
 		];
-		const selector = await createSelector(models);
+		const selector = createSelector(models);
 
 		selector.handleInput("\x18");
 		expect(models.map((model) => model.enabled)).toEqual([false, false, false]);
@@ -111,7 +103,7 @@ describe("scoped models selector", () => {
 			{ id: "model-b", name: "Model B", enabled: false },
 			{ id: "model-c", name: "Model C", enabled: false },
 		];
-		const selector = await createSelector(models);
+		const selector = createSelector(models);
 
 		selector.handleInput("\x01"); // enable all -> null
 		selector.handleInput("\r"); // disable model-a; enabled models re-sort first: [b, c, a]

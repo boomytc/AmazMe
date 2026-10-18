@@ -1,75 +1,34 @@
 /**
- * Custom System Prompt
+ * Custom system prompt.
  *
- * Shows how to replace or modify the default system prompt.
+ * `systemPrompt` replaces the discovered prompt file. `appendSystemPrompt` adds text after it.
  */
 
-import {
-	createAgentSession,
-	DefaultResourceLoader,
-	getAgentDir,
-	SessionManager,
-} from "@amazme/coding-agent";
+import { createDurableSession } from "@amazme/coding-agent";
 
-const cwd = process.cwd();
-const agentDir = getAgentDir();
-
-// Option 1: Replace prompt entirely
-const loader1 = new DefaultResourceLoader({
-	cwd,
-	agentDir,
-	systemPromptOverride: () => `You are a helpful assistant that speaks like a pirate.
+const replaced = await createDurableSession({
+	systemPrompt: `You are a helpful assistant that speaks like a pirate.
 Always end responses with "Arrr!"`,
-	// Needed to avoid DefaultResourceLoader appending APPEND_SYSTEM.md from ~/.amazme/agent or <cwd>/.pi.
-	appendSystemPromptOverride: () => [],
-});
-await loader1.reload();
-
-const { session: session1 } = await createAgentSession({
-	resourceLoader: loader1,
-	sessionManager: SessionManager.inMemory(),
+	noSession: true,
 });
 
 try {
-	session1.subscribe((event) => {
-		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-			process.stdout.write(event.assistantMessageEvent.delta);
-		}
-	});
-
 	console.log("=== Replace prompt ===");
-	await session1.prompt("What is 2 + 2?");
-	console.log("\n");
-} finally {
-	session1.dispose();
-}
-
-// Option 2: Append instructions to the default prompt
-const loader2 = new DefaultResourceLoader({
-	cwd,
-	agentDir,
-	appendSystemPromptOverride: (base) => [
-		...base,
-		"## Additional Instructions\n- Always be concise\n- Use bullet points when listing things",
-	],
-});
-await loader2.reload();
-
-const { session: session2 } = await createAgentSession({
-	resourceLoader: loader2,
-	sessionManager: SessionManager.inMemory(),
-});
-
-try {
-	session2.subscribe((event) => {
-		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-			process.stdout.write(event.assistantMessageEvent.delta);
-		}
-	});
-
-	console.log("=== Modify prompt ===");
-	await session2.prompt("List 3 benefits of TypeScript.");
+	await replaced.prompt("Say hello.");
 	console.log();
 } finally {
-	session2.dispose();
+	await replaced.dispose();
+}
+
+const appended = await createDurableSession({
+	appendSystemPrompt: ["Always answer in one sentence."],
+	noSession: true,
+});
+
+try {
+	console.log("=== Append prompt ===");
+	await appended.prompt("Say hello.");
+	console.log();
+} finally {
+	await appended.dispose();
 }

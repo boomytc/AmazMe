@@ -1,6 +1,6 @@
 # Compaction Reference
 
-This reference covers AgentSession SDK compaction, JSONL entries and SDK extension hooks. The default terminal and hosted workers use Durable compaction; see [Sessions](sessions.md#branches-and-context) for their user workflow.
+The terminal, print, JSON, RPC, SDK, and hosted workers use Durable compaction. This page describes the JSONL compaction entries used by import, export, and projection. See [Sessions](sessions.md#branches-and-context) for the user workflow.
 
 This reference describes automatic compaction, branch summarization, persisted entries, and extension hooks. For the user workflow, see [Sessions and Context](sessions.md#branches-and-context).
 
@@ -8,7 +8,7 @@ This reference describes automatic compaction, branch summarization, persisted e
 - [`packages/coding-agent/src/core/compaction/compaction.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) - Auto-compaction logic
 - [`packages/coding-agent/src/core/compaction/branch-summarization.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/branch-summarization.ts) - Branch summarization
 - [`packages/coding-agent/src/core/compaction/utils.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/utils.ts) - Shared utilities (file tracking, serialization)
-- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts) - Entry types (`CompactionEntry`, `BranchSummaryEntry`)
+- [`packages/coding-agent/src/core/jsonl-transcript.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/jsonl-transcript.ts) - Entry types (`CompactionEntry`, `BranchSummaryEntry`)
 - [`packages/coding-agent/src/core/extensions/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts) - Extension event types
 
 For TypeScript definitions in your project, inspect `node_modules/@amazme/coding-agent/dist/`.
@@ -141,7 +141,7 @@ Preparation advances the kept boundary into a context-invisible suffix only when
 
 ### CompactionEntry Structure
 
-Defined in [`session-manager.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts):
+Defined in [`jsonl-transcript.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/jsonl-transcript.ts):
 
 ```typescript
 interface CompactionEntry<T = unknown> {
@@ -207,7 +207,7 @@ File tracking therefore accumulates across default compactions and nested defaul
 
 ### BranchSummaryEntry Structure
 
-Defined in [`session-manager.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts):
+Defined in [`jsonl-transcript.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/jsonl-transcript.ts):
 
 ```typescript
 interface BranchSummaryEntry<T = unknown> {

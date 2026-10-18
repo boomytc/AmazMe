@@ -1,6 +1,6 @@
 # Custom Providers
 
-Provider factories below apply to AgentSession SDK modes (Print/JSON/RPC). For the default terminal and hosted workers, use models.json for a supported compatible endpoint. Plain --help and --list-models do not evaluate SDK factories.
+Print, JSON, RPC, the terminal, and hosted workers resolve models through `models.json` and `ModelRuntime`. Plain `--help` and `--list-models` do not load plugins.
 
 A provider extension connects Pi to a model service that needs custom authentication, model discovery, request handling, or streaming. If the service already speaks a supported API, configure it in `models.json` instead.
 

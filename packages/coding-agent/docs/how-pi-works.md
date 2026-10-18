@@ -26,7 +26,7 @@ Hosted sessions use the host's session storage. The terminal client and Web clie
 
 `--no-session` gives the default terminal in-memory storage and discards conversation state on close. Tools and plugins still use their normal permissions; this option does not hide file edits or configuration writes.
 
-Print/RPC and `createAgentSession()` use the SDK's JSONL entry tree. Their session selectors, extensions and events follow the [SDK](sdk.md), [RPC](rpc.md) and [Sessions](sessions.md) contracts. A JSONL file is not the default terminal's SQLite database.
+Print, JSON, RPC, and `createDurableSession()` use the same Durable session. A JSONL file is an import source or an export, not the session database. See [SDK](sdk.md), [RPC](rpc.md), and [Sessions](sessions.md).
 
 ## Plugins and lifecycle
 
@@ -36,7 +36,7 @@ History, memory, checkpoints, completion verification and workflows are optional
 
 ## Interfaces and trust
 
-`amazme` opens the native terminal when stdin and stdout are terminals. `amazme server`, `client` and `web` expose the hosted runtime; `--print`, JSON and RPC select the SDK's scripted interfaces.
+`amazme` opens the native terminal when stdin and stdout are terminals. `amazme server`, `client` and `web` expose the hosted runtime; `--print`, JSON and RPC select scripted Durable interfaces.
 
 The CLI's startup benchmark initializes the same native terminal and follows its normal cleanup. Plain help and model listing do not evaluate SDK extension factories. Native plugins use slash commands, while SDK extensions may register CLI flags for their own invocation.
 

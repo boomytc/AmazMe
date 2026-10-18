@@ -17,6 +17,7 @@ export const NATIVE_COMMANDS = [
 	{ name: "fork", description: "Fork the current conversation" },
 	{ name: "older", description: "Load older history" },
 	{ name: "compact", description: "Compact the conversation", argumentHint: "[instructions]" },
+	{ name: "share", description: "Share this session (Radius or private gist)" },
 	{ name: "plugins", description: "Show selected plugin sources and API" },
 	{ name: "reload", description: "Reload prompt resources and selected plugins" },
 ] as const;

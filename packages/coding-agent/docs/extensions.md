@@ -1,6 +1,6 @@
 # Extensions
 
-This page describes extensions for the AgentSession SDK and Print/JSON/RPC runtime. The default AmazMe TUI loads native Chord facets; use the [native plugin guide](plugin-runtime.md) for `-e`, automatic discovery, `/plugins`, and `/reload` there.
+The CLI, SDK, print, JSON, and RPC paths do not accept inline extension factories. Plugins are native Chord facets; use the [native plugin guide](plugin-runtime.md) for `-e`, automatic discovery, `/plugins`, and `/reload`. The rest of this page describes the `ExtensionAPI` modules the resource loader can still read for package commands.
 
 Extensions are TypeScript modules that add executable behavior to Pi. Use one when a workflow needs tools, commands, event handlers, model providers, session state, or terminal UI rather than instructions alone.
 
