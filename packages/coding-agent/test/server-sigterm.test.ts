@@ -24,8 +24,9 @@ describe.skipIf(process.platform === "win32")("server SIGTERM", () => {
 	});
 
 	it("unlinks its socket and empty hash directory, then exits", async () => {
-		const uid = process.getuid();
-		if (uid === undefined) throw new Error("expected a POSIX user id");
+		const getuid = process.getuid;
+		if (getuid === undefined) throw new Error("expected a POSIX user id");
+		const uid = getuid();
 		const scratch = await mkdtemp(join("/tmp", "am-sigterm-"));
 		directories.push(scratch);
 		const logical = join("/tmp", "d".repeat(80), "srv");
