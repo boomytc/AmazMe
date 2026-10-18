@@ -13,7 +13,7 @@
 
 - Build and package the Linux/macOS x86-64 and arm64 release daemons used by SSH bootstrap. Packing verifies their architecture, package version, Rust source fingerprint and SHA-256 instead of publishing a package without its advertised binaries. Linux artifacts use musl; TypeScript builds and installation stay independent of Rust.
 
-统一版本号前 @amazme/env 自己的编号
+Versions below are @amazme/env's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

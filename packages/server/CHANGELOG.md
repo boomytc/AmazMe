@@ -8,7 +8,7 @@
 
 - Route native Chord channels between authenticated clients and session workers. Worker removal closes its channels so pending calls settle and cleanup can finish.
 
-统一版本号前 @amazme/server 自己的编号
+Versions below are @amazme/server's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

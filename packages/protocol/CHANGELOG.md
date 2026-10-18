@@ -20,7 +20,7 @@
 
 - Public protocol 9 routes native Chord frames through authenticated attachment channels. Domain contracts and Host resources replace the old service invocation and state wire format.
 
-统一版本号前 @amazme/protocol 自己的编号
+Versions below are @amazme/protocol's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

@@ -17,6 +17,18 @@
 - `hasContextRecoveryHeadroom()` shares the shrink and output-reserve checks used before retrying a rejected context.
 - Direct OpenAI GPT-6 Responses models keep the cached prompt prefix when thinking effort changes, using recorded `configuration_update` items; ChatGPT sign-in and proxy models retain their existing request format.
 
+### Changed
+
+- Switching models drops thinking blocks from earlier assistant messages produced by another model instead of sending them as plain text; text and tool calls are kept.
+- OpenCode catalogs use inference endpoints; Kimi Coding uses Chat Completions with model-specific effort and tool-addition capabilities. Xiaomi MiMo uses thinking on/off, Gemini 4 uses thinkingLevel, and Codex GPT-6.1 Sol has a 500K context window.
+
+- OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.
+
+- Shared compatibility and model configuration schemas now derive public types from the same contract used by models.json.
+- Mistral request deadlines apply only until response headers arrive, including when no caller cancellation signal is supplied; active streams continue beyond that deadline.
+- Claude 5.5 catalog metadata comes from models.dev instead of hardcoded fallbacks.
+- Moved API-key environment discovery into `utils/api-key-env` so read-only consumers avoid the compatibility registry and ambient credential probes; existing environment behavior and Pi OAuth identities are unchanged
+
 ### Fixed
 
 - Invalid Unicode escapes in streaming tool arguments are retained as literal text instead of dropping later fields.
@@ -26,25 +38,14 @@
 - Completed malformed tool-call arguments retain their original diagnostic and fail validation instead of executing a parsed prefix.
 - Completions chunks emit thinking before text when both arrive together; upstream forwarding failures are retryable.
 
-### Changed
-
-- Switching models drops thinking blocks from earlier assistant messages produced by another model instead of sending them as plain text; text and tool calls are kept.
-- OpenCode catalogs use inference endpoints; Kimi Coding uses Chat Completions with model-specific effort and tool-addition capabilities. Xiaomi MiMo uses thinking on/off, Gemini 4 uses thinkingLevel, and Codex GPT-6.1 Sol has a 500K context window.
+- Anthropic strict-tool `prefer` requests retry once without strict limits after a recognized rejection; `require`, cancellation and started streams retain their original behavior.
+- Gateway upstream-provider errors are recognized as retryable.
 
 ### Removed
 
 - Removed the unused assistant-message frame encoder, reducer and public export; assistant message events remain the streaming API.
 
-- OpenRouter catalogs now use the key's available models, prices and limits; cached empty catalogs remain empty.
-- Anthropic strict-tool `prefer` requests retry once without strict limits after a recognized rejection; `require`, cancellation and started streams retain their original behavior.
-- Gateway upstream-provider errors are recognized as retryable.
-
-- Shared compatibility and model configuration schemas now derive public types from the same contract used by models.json.
-- Mistral request deadlines apply only until response headers arrive, including when no caller cancellation signal is supplied; active streams continue beyond that deadline.
-- Claude 5.5 catalog metadata comes from models.dev instead of hardcoded fallbacks.
-- Moved API-key environment discovery into `utils/api-key-env` so read-only consumers avoid the compatibility registry and ambient credential probes; existing environment behavior and Pi OAuth identities are unchanged
-
-统一版本号前 @amazme/ai 自己的编号
+Versions below are @amazme/ai's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

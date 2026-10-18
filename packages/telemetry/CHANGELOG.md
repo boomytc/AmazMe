@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-统一版本号前 @amazme/telemetry 自己的编号
+Versions below are @amazme/telemetry's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

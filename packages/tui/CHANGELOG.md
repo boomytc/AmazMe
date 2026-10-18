@@ -29,7 +29,7 @@
 - Fixed overlay compositing dropping `CURSOR_MARKER` when an overlay ends directly left of the cursor, which lost the hardware cursor position
 - Fixed fragmented terminal color replies leaking hex values into the prompt and triggering the external editor via their BEL terminator (related reports: [#10256](https://github.com/earendil-works/pi/issues/10256), [#10657](https://github.com/earendil-works/pi/issues/10657))
 
-统一版本号前 @amazme/tui 自己的编号
+Versions below are @amazme/tui's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 

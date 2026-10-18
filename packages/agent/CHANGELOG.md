@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-统一版本号前 @amazme/agent 自己的编号
+Versions below are @amazme/agent's own numbering before unified versioning.
 
 ## [1.1.0] - 2026-10-07
 
