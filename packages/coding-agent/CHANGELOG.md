@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-18
+
+### Fixed
+
+- `--mode json` 和 `--mode rpc` 的事件流补上 `turn_end`，带本轮的 assistant 消息和 toolResults。没有 assistant 消息的一轮（比如刚发出就中止）不发 `turn_end`（#84）。
+- `amazme server`、内部 server 进程和 `amazme web` 收到 SIGTERM/SIGINT 后会清掉自己的 socket 和空的 hash 目录，然后以退出码 0 退出（#84）。
+
 ## [1.2.0] - 2026-10-18
 
 ### 破坏性变更

@@ -55,7 +55,10 @@ jobs:
           - 预览版为 ad-hoc 签名，尚未使用 Developer ID 签名与公证。
           - 仅 macOS arm64。
           - 没有自动更新；升级请下载新 DMG 覆盖安装，会话保存在数据目录。
-          - Web 界面保持本地/内网自托管，不提供公网托管。
+
+          ## 部署方式
+
+          - Web 界面在本机或内网自托管，不提供公网托管。
           EOF
           cat "$RUNNER_TEMP/notes.md"
       - name: Publish GitHub Release
