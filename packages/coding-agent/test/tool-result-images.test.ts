@@ -1,5 +1,18 @@
 import { crc32, deflateSync } from "node:zlib";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@amazme/ai";
+import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
+import { AgentDoc, defineExtension, defineTool, Harness, ToolResultEntry } from "@amazme/durable";
+import type { HookApi, ToolExecutionResult, ToolHookCall, ToolHooks } from "@amazme/durable";
+import type { NestedToolExecutionResult } from "@amazme/durable";
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { describe, expect, it } from "vitest";
+import type { ResourceLoader } from "../src/core/resource-loader.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createCodingRegistry } from "../src/durable/harness-setup.ts";
 import type { ToolResultContent } from "../src/utils/tool-result-images.ts";
 import { normalizeToolResultImages } from "../src/utils/tool-result-images.ts";
 
@@ -133,5 +146,191 @@ describe("normalizeToolResultImages", () => {
 		expect(normalized.map((block) => block.type)).toEqual(["text", "image", "text", "text"]);
 		expect(normalized[0]).toEqual({ type: "text", text: "before" });
 		expect(normalized[3]).toEqual({ type: "text", text: "after" });
+	});
+});
+
+describe("coding registry tool-result image hook", () => {
+	const call: ToolHookCall = { type: "toolCall", id: "shot", name: "screenshot", arguments: {} };
+
+	function afterTool(
+		autoResize: boolean,
+		resize: { maxWidth: number; maxHeight: number; maxBytes: number },
+		target: ToolHookCall = call,
+	) {
+		const settings = {
+			getImageAutoResize: () => autoResize,
+			getSettings: () => ({}),
+		} as SettingsManager;
+		const resources = {
+			getSystemPrompt: () => "",
+			getAppendSystemPrompt: () => [],
+			getAgentsFiles: () => ({ agentsFiles: [] }),
+			getSkills: () => ({ skills: [] }),
+		} as unknown as ResourceLoader;
+		const extension = createCodingRegistry(settings, "/tmp", resources).snapshot().extension("tool-result-images");
+		const handlers = extension?.hooks?.[0]?.handlers as Partial<ToolHooks> | undefined;
+		const hook = handlers?.afterTool;
+		if (hook === undefined) throw new Error("coding registry does not normalize tool-result images");
+		const api = {
+			agent: async () => ({ model: { provider: "test", modelId: "vision" } }),
+			models: {
+				getModel: () => ({ inputLimits: { images: { resize } } }),
+			},
+		} as unknown as HookApi;
+		return (result: ToolExecutionResult) => hook(target, result, api, context);
+	}
+
+	it("resizes a model-visible tool image to the conversation model limits", async () => {
+		const content = [imageBlock(createPng(2400, 4800), "image/png")];
+		const changed = await afterTool(true, { maxWidth: 800, maxHeight: 800, maxBytes: 5_000_000 })({
+			output: content,
+		});
+		expect(changed?.output).not.toBe(content);
+		const image = changed?.output?.[0];
+		expect(image?.type).toBe("image");
+		if (image?.type !== "image") return;
+		const { width, height } = readPngDimensions(image.data);
+		expect(width).toBeLessThanOrEqual(800);
+		expect(height).toBeLessThanOrEqual(800);
+	});
+
+	it("keeps the original result when auto-resize is off and there is nothing to convert", async () => {
+		const content = [imageBlock(createPng(2400, 4800), "image/png")];
+		const changed = await afterTool(false, { maxWidth: 800, maxHeight: 800, maxBytes: 5_000_000 })({
+			output: content,
+		});
+		expect(changed).toBeUndefined();
+	});
+
+	it("does not rewrite images from a nested tool call", async () => {
+		const content = [imageBlock(createPng(2400, 4800), "image/png")];
+		const nested = { ...call, parent: { taskId: "parent-task", callId: "parent" } } as ToolHookCall;
+		const changed = await afterTool(
+			true,
+			{ maxWidth: 800, maxHeight: 800, maxBytes: 5_000_000 },
+			nested,
+		)({
+			output: content,
+		});
+		expect(changed).toBeUndefined();
+	});
+
+	it("persists resized images and reuses them after SQLite reopen while nested callers receive originals", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "amazme-tool-images-"));
+		const database = join(directory, "session.sqlite");
+		const settings = SettingsManager.inMemory({ images: { autoResize: true } });
+		const resources = {
+			getSystemPrompt: () => "",
+			getAppendSystemPrompt: () => [],
+			getAgentsFiles: () => ({ agentsFiles: [] }),
+			getSkills: () => ({ skills: [] }),
+		} as unknown as ResourceLoader;
+		const registry = createCodingRegistry(settings, directory, resources);
+		const original = [imageBlock(createPng(2400, 4800), "image/png")];
+		let nested: NestedToolExecutionResult | undefined;
+		registry.install(
+			defineExtension({
+				name: "image-fixture",
+				tools: [
+					defineTool({
+						name: "capture",
+						description: "Return a large image",
+						parameters: Type.Object({}),
+						execute: async () => ({ output: original }),
+					}),
+					defineTool({
+						name: "forward",
+						description: "Inspect and forward a nested image",
+						parameters: Type.Object({}),
+						async execute(_args, api, callContext) {
+							nested = await api.executeTool("capture", {}, callContext);
+							return { output: original };
+						},
+					}),
+				],
+			}),
+		);
+		const faux = fauxProvider({
+			models: [
+				{
+					id: "vision",
+					input: ["text", "image"],
+					inputLimits: { images: { resize: { maxWidth: 800, maxHeight: 800, maxBytes: 5_000_000 } } },
+				},
+			],
+		});
+		const models = createModels();
+		models.setProvider(faux.provider);
+		const requests: Array<{ width: number; height: number }[]> = [];
+		const inspect = (messages: Parameters<typeof models.streamSimple>[1]["messages"]): void => {
+			requests.push(
+				messages.flatMap((message) =>
+					message.role === "toolResult"
+						? message.content.flatMap((block) => (block.type === "image" ? [readPngDimensions(block.data)] : []))
+						: [],
+				),
+			);
+		};
+		const options = { models, registry, env: () => new NodeExecutionEnv({ cwd: directory }) };
+		let harness: Harness | undefined;
+		try {
+			harness = await Harness.open(await openNodeSqliteStorage(database), options, context);
+			const root = await harness.root(context, {
+				agent: { model: { provider: "faux", modelId: "vision" }, cwd: directory },
+				init: async (tx, id) => {
+					(await tx.doc(AgentDoc, id)).tools = { only: ["capture", "forward"] };
+				},
+			});
+			faux.setResponses([
+				fauxAssistantMessage([fauxToolCall("capture", {}, { id: "direct" })], { stopReason: "toolUse" }),
+				(request) => {
+					inspect(request.messages);
+					return fauxAssistantMessage([fauxToolCall("forward", {}, { id: "parent" })], { stopReason: "toolUse" });
+				},
+				(request) => {
+					inspect(request.messages);
+					return fauxAssistantMessage("done");
+				},
+			]);
+			expect(
+				await (await root.submit({ type: "input", content: "capture and forward" }, context)).wait(context),
+			).toMatchObject({ status: "done" });
+			const results = (await root.entries({}, 100, undefined, context)).items.filter(ToolResultEntry.is);
+			expect(results).toHaveLength(2);
+			for (const entry of results) {
+				const message = entry.model?.[0];
+				if (message?.role !== "toolResult") throw new Error("expected a persisted tool result");
+				const image = message.content.find((block) => block.type === "image");
+				if (image?.type !== "image") throw new Error("expected a persisted image");
+				expect(readPngDimensions(image.data)).toEqual({ width: 400, height: 800 });
+			}
+			expect(nested?.structuredOutput).toEqual(original[0]);
+			expect(requests).toEqual([
+				[{ width: 400, height: 800 }],
+				[
+					{ width: 400, height: 800 },
+					{ width: 400, height: 800 },
+				],
+			]);
+			await harness.close(context);
+			harness = await Harness.open(await openNodeSqliteStorage(database), options, context);
+			const restored = await harness.root(context);
+			faux.setResponses([
+				(request) => {
+					inspect(request.messages);
+					return fauxAssistantMessage("restored");
+				},
+			]);
+			expect(
+				await (await restored.submit({ type: "input", content: "after reopen" }, context)).wait(context),
+			).toMatchObject({ status: "done" });
+			expect(requests.at(-1)).toEqual([
+				{ width: 400, height: 800 },
+				{ width: 400, height: 800 },
+			]);
+		} finally {
+			await harness?.close(context);
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 });

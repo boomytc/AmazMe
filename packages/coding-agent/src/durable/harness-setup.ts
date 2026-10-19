@@ -31,6 +31,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../core/tr
 import { createPiPrompt, type CodingResourceOptions } from "./prompt.ts";
 import { createDurableCodemode } from "./codemode.ts";
 import { createRunPolicy } from "./insights/run-policy.ts";
+import { createToolResultImages } from "./tool-result-images.ts";
 import { createContextCleanup } from "./insights/context-cleanup.ts";
 import { createWorkspaceReview } from "./insights/workspace-review.ts";
 import { createPolicyEnv } from "./insights/execution-policy.ts";
@@ -133,6 +134,7 @@ export function createCodingRegistry(settingsManager: SettingsManager, cwd: stri
 	);
 	registry.install(createForkArchiveGate());
 	registry.install(createDurableCodemode(settingsManager));
+	registry.install(createToolResultImages(settingsManager));
 	registry.install(createRunPolicy(settingsManager));
 	registry.install(createContextCleanup(settingsManager));
 	registry.install(createWorkspaceReview(settingsManager, workspaces, artifactDirectory));
