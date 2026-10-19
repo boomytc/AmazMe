@@ -1,13 +1,13 @@
 import { createModels } from "@amazme/ai/models";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { AgentDoc, createRegistry, Harness } from "@amazme/durable";
-import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { join } from "node:path";
+import { openSessionStorage } from "./session-database.ts";
 
 /** Read the project cwd stored in a Durable session, before opening it for use. */
 export async function readDurableSessionCwd(directory: string): Promise<string | undefined> {
 	const harness = await Harness.open(
-		await openNodeSqliteStorage(join(directory, "session.sqlite")),
+		await openSessionStorage(join(directory, "session.sqlite")),
 		{ models: createModels(), registry: createRegistry() },
 		BACKGROUND_CONTEXT,
 	);

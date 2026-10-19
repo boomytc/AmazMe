@@ -40,6 +40,7 @@ import { Commands } from "./services/commands.ts";
 import { SessionInsights } from "./services/insights.ts";
 import { createInsightsCommandsFacet } from "./services/insights-commands.ts";
 import { formatRestartCount } from "../durable/restart-count.ts";
+import { sessionDatabaseErrorText } from "./session-database-error.ts";
 
 /** Commands owned by the terminal presentation, not by the worker. */
 const TERMINAL_COMMANDS = [
@@ -1188,5 +1189,5 @@ function requireSingleServer<T>(features: readonly T[]): T {
 }
 
 function message(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return sessionDatabaseErrorText(error) ?? (error instanceof Error ? error.message : String(error));
 }

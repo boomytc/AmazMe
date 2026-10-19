@@ -171,6 +171,7 @@ import {
 	type CommandLike,
 } from "@amazme/web";
 import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
+import { sessionDatabaseErrorText } from "../session-database-error.ts";
 import { sessionDeepLink } from "./deep-link.ts";
 import { HistoryAvailability, loadRemainingHistory } from "./history-availability.ts";
 import { perfRequest, runPerfCase } from "./perf.ts";
@@ -210,7 +211,7 @@ function readManifest(): WebBootManifest | undefined {
 }
 
 function message(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return sessionDatabaseErrorText(error) ?? (error instanceof Error ? error.message : String(error));
 }
 
 /** One image the reader attached and has not sent yet, kept as the prompt will carry it. */

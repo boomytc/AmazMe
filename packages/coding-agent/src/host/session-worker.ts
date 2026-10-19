@@ -26,7 +26,6 @@ import {
 	section,
 	ToolTask,
 } from "@amazme/durable";
-import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import {
 	ChannelCallSchema,
 	frameJson,
@@ -55,6 +54,11 @@ import {
 	type DurableMcp,
 	openDurableMcp,
 } from "../durable/mcp.ts";
+import {
+	findSessionOpenError,
+	openSessionStorage,
+	SessionOpenErrorDataSchema,
+} from "../durable/session-database.ts";
 import { Subagent } from "../durable/subagent.ts";
 import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
@@ -207,6 +211,8 @@ export const SessionWorkerEventSchema = Type.Union([
 		token: Type.String(),
 		sessionKey: Type.String(),
 		message: Type.String(),
+		/** Present when the Session database exists but cannot be opened; the server rebuilds the typed error. */
+		sessionDatabaseError: Type.Optional(SessionOpenErrorDataSchema),
 	}),
 	Type.Object({
 		type: Type.Literal("demand_applied"),
@@ -1030,13 +1036,20 @@ export async function runSessionWorkerWithHarness(
 		}
 		await run(options, createHarness);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
+		const databaseError = findSessionOpenError(error);
+		const message = databaseError?.message ?? (error instanceof Error ? error.message : String(error));
 		const token = process.env[SESSION_WORKER_CONTROL_TOKEN_ENV];
 		const encodedSessionKey = process.env[SESSION_WORKER_SESSION_KEY_ENV];
 		if (token && encodedSessionKey) {
 			const sessionKey = Buffer.from(encodedSessionKey, "base64url").toString();
 			await failureControl
-				?.send({ type: "worker_failed", token, sessionKey, message })
+				?.send({
+					type: "worker_failed",
+					token,
+					sessionKey,
+					message,
+					...(databaseError === undefined ? {} : { sessionDatabaseError: databaseError.toJSON() }),
+				})
 				.catch(() => {});
 		}
 		throw error;
@@ -1154,7 +1167,7 @@ async function createCodingAgentHarness(
 		});
 		mcp = activeMcp;
 		harness = await Harness.open(
-			await openNodeSqliteStorage(databasePath),
+			await openSessionStorage(databasePath),
 			{
 				models: modelRuntime,
 				registry,

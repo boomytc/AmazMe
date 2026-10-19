@@ -32,7 +32,6 @@ import {
 	watchEvents,
 } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
-import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import {
 	type ApplicationService,
 	type ServiceValue,
@@ -118,6 +117,7 @@ import {
 	openDurableMcp,
 } from "./mcp.ts";
 import type { CodingResourceOptions } from "./prompt.ts";
+import { openSessionStorage } from "./session-database.ts";
 import { readDurableSessionCwd } from "./session-cwd.ts";
 import {
 	forkAt,
@@ -542,7 +542,7 @@ export async function openDurable(
 		harness = await Harness.open(
 			location.database === undefined
 				? new MemoryStorage()
-				: await openNodeSqliteStorage(location.database),
+				: await openSessionStorage(location.database),
 			{
 				models: modelRuntime,
 				registry,
