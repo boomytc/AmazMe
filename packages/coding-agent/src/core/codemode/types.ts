@@ -81,14 +81,11 @@ export interface CodemodeExecutionOptions {
 	getToolNamespace?: (name: string) => CodemodeNamespace | undefined;
 	getToolGuidelines?: () => ReadonlyMap<string, readonly string[]>;
 	/**
-	 * Where truncated text and saved images are written. Durable sessions pass a writer under
-	 * `ExecutionEnv.artifactDirectory`; without one, output still goes to the OS temp directory.
+	 * Directory for truncated text and saved images. Required: there is no OS-temp fallback.
+	 * Hosts pass a per-run subdirectory of the session artifact directory (for example
+	 * `<session>/artifacts/codemode-<taskId>`).
 	 */
-	writeOutput?: (
-		prefix: string,
-		extension: string,
-		data: string | Uint8Array,
-	) => Promise<string>;
+	artifactDirectory: string;
 }
 
 export interface CodemodeLoadout {

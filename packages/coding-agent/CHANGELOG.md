@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp directory cleaned up on release.
+- Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp directory cleaned up on release. `executeCodemode` requires `artifactDirectory` (no `pi-codemode-*` OS-temp fallback).
 
 ## [1.4.0] - 2026-10-19
 

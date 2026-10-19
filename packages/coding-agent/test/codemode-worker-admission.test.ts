@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import * as codemode from "@amazme/codemode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,8 +8,10 @@ import { executeCodemode } from "../src/core/codemode/execute.ts";
 
 const terminate = Worker.prototype.terminate;
 const terminations = new Map<Worker, (code: number) => void>();
+let artifactDirectory: string;
 
-beforeEach(() => {
+beforeEach(async () => {
+	artifactDirectory = await mkdtemp(join(tmpdir(), "amazme-test-artifact-"));
 	vi.spyOn(Worker.prototype, "terminate").mockImplementation(function (this: Worker) {
 		this.ref();
 		return new Promise<number>((resolve) => {
@@ -23,13 +28,23 @@ afterEach(async () => {
 		}),
 	);
 	terminations.clear();
+	await rm(artifactDirectory, { recursive: true, force: true });
 });
 
 const run = (code: string, signal?: AbortSignal) =>
-	executeCodemode("worker-admission", { code }, signal, undefined, {
-		tools: [],
-		executeTool: async () => { throw new Error("No tools are registered in the admission fixture"); },
-	});
+	executeCodemode(
+		"worker-admission",
+		{ code },
+		signal,
+		undefined,
+		{
+			tools: [],
+			executeTool: async () => {
+				throw new Error("No tools are registered in the admission fixture");
+			},
+		},
+		{ artifactDirectory },
+	);
 
 describe("codemode worker admission", () => {
 	// #10748: fresh sandboxes must share capacity and retain it until actual worker exit.

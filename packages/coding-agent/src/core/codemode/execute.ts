@@ -32,7 +32,9 @@ import {
 	getCodemodeWorkerSpecifier,
 	getQuickJSWasmPath,
 } from "../../config.ts";
-import { writeOutputFile } from "../../utils/output-files.ts";
+import { randomBytes } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { formatSize } from "../tools/truncate.ts";
 import { combineUsage } from "../usage-totals.ts";
 import { CODEMODE_DOCS_PATH, toCodemodeDeclaration } from "./declarations.ts";
@@ -353,19 +355,25 @@ function formatError(
 	return `${head}\n\n${formatCallSummary(calls)}`;
 }
 
-type OutputWriter = (
-	prefix: string,
-	extension: string,
+/** Write `data` under `artifactDirectory` with a unique name; never the OS temp directory. */
+async function writeArtifact(
+	artifactDirectory: string,
+	name: string,
 	data: string | Uint8Array,
-) => Promise<string>;
+): Promise<string> {
+	await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
+	const path = join(artifactDirectory, name);
+	await writeFile(path, data, { mode: 0o600, flag: "wx" });
+	return path;
+}
 
-/** Write the full text output to a file, like bash does for truncated output. */
+/** Write the full text output beside the run, like bash does for truncated output. */
 async function spillOutput(
 	text: string,
-	write: OutputWriter,
+	artifactDirectory: string,
 ): Promise<{ path: string } | { error: string }> {
 	try {
-		return { path: await write("pi-codemode", ".txt", text) };
+		return { path: await writeArtifact(artifactDirectory, "output.txt", text) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -380,13 +388,13 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 };
 
 /**
- * Save each image to a temp file and put a text item with its path before it. The model sees the
+ * Save each image under the artifact directory and put a text item with its path before it. The model sees the
  * image but has no other way to reach its bytes: scripts cannot write files, and `write` only takes
  * text. Images shown more than once are saved once.
  */
 async function saveImages(
 	items: (TextContent | ImageContent)[],
-	write: OutputWriter,
+	artifactDirectory: string,
 ): Promise<(TextContent | ImageContent)[]> {
 	const labels = new Map<string, Promise<string>>();
 	const label = async ({ data, mimeType }: ImageContent): Promise<string> => {
@@ -395,10 +403,14 @@ async function saveImages(
 		const extension = IMAGE_EXTENSIONS[mimeType];
 		if (!extension)
 			throw new Error(`No file extension for image type ${mimeType}`);
-		// A failed write (disk full, unwritable temp dir) must not discard the result of a script whose
+		// A failed write (disk full, unwritable artifact dir) must not discard the result of a script whose
 		// tool calls already ran, so it becomes part of the label.
 		try {
-			const path = await write("pi-codemode", extension, bytes);
+			const path = await writeArtifact(
+				artifactDirectory,
+				`image-${randomBytes(8).toString("hex")}${extension}`,
+				bytes,
+			);
 			return `[Image saved to ${path} (${kind})]`;
 		} catch (error) {
 			return `[Image (${kind}) could not be saved: ${error instanceof Error ? error.message : String(error)}]`;
@@ -421,12 +433,12 @@ async function saveImages(
 /**
  * Apply the token budget: when the combined text exceeds it, the text items become one
  * item that keeps the start and end of the text, and images follow it. The full text is written to
- * a temp file.
+ * a file under the session artifact directory.
  */
 async function truncateOutput(
 	items: (TextContent | ImageContent)[],
 	maxTokens: number,
-	write: OutputWriter,
+	artifactDirectory: string,
 ): Promise<{ items: (TextContent | ImageContent)[]; fullOutputPath?: string }> {
 	const texts = items
 		.filter((item): item is TextContent => item.type === "text")
@@ -440,7 +452,7 @@ async function truncateOutput(
 	const head = combined.slice(0, headChars);
 	const tail = tailChars > 0 ? combined.slice(-tailChars) : "";
 	let text = `Warning: truncated output (original token count: ${Math.ceil(combined.length / CHARS_PER_TOKEN)})\nTotal output lines: ${combined.split("\n").length}\n\n${head}…${Math.ceil(removed / CHARS_PER_TOKEN)} tokens truncated…${tail}`;
-	const spilled = await spillOutput(combined, write);
+	const spilled = await spillOutput(combined, artifactDirectory);
 	text +=
 		"path" in spilled
 			? `\n\n[Full output: ${spilled.path} (read with offset/limit)]`
@@ -481,7 +493,7 @@ export async function executeCodemode(
 	signal: AbortSignal | undefined,
 	onUpdate: ((result: CodemodeExecutionResult) => void) | undefined,
 	host: CodemodeHost,
-	options: CodemodeExecutionOptions = {},
+	options: CodemodeExecutionOptions,
 ): Promise<CodemodeExecutionResult> {
 	const startedAt = performance.now();
 	const { code, options: sourceOptions } = parseCodemodeSource(input.code);
@@ -621,15 +633,16 @@ export async function executeCodemode(
 		});
 	}
 
-	const write: OutputWriter = options.writeOutput ?? writeOutputFile;
 	const truncated = await truncateOutput(
 		joinAdjacentText(items),
 		sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-		write,
+		options.artifactDirectory,
 	);
 	// After truncation, which joins the text items and moves images after them, so each path stays
 	// next to its image and is never cut.
-	const output = joinAdjacentText(await saveImages(truncated.items, write));
+	const output = joinAdjacentText(
+		await saveImages(truncated.items, options.artifactDirectory),
+	);
 	const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
 	const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
 	const details = snapshot();

@@ -60,6 +60,11 @@ export type {
 } from "../../core/codemode/types.ts";
 
 export interface CodemodeToolOptions {
+	/**
+	 * Directory for truncated text and saved images. Required when the tool runs; there is no
+	 * OS-temp fallback. Hosts pass a per-run subdirectory of the session artifact directory.
+	 */
+	artifactDirectory?: string;
 	/** Namespace of a tool, for `searchTools()` ranking and its `namespace` filter. */
 	getToolNamespace?: (toolName: string) => ToolNamespace | undefined;
 	/** Prompt guidelines of every tool, by tool name, shown with declarations by `describeTool()` and `ALL_TOOLS`. */
@@ -129,8 +134,14 @@ export function createCodemodeToolDefinition(
 			variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR },
 		},
 		// The sandbox (worker, QuickJS wasm) loads on the first call, not at startup.
-		execute: async (toolCallId, params, signal, onUpdate, ctx) =>
-			(await import("../../core/codemode/execute.ts")).executeCodemode(
+		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+			const artifactDirectory = options.artifactDirectory;
+			if (artifactDirectory === undefined) {
+				throw new Error(
+					"codemode requires artifactDirectory; there is no OS-temp fallback",
+				);
+			}
+			return (await import("../../core/codemode/execute.ts")).executeCodemode(
 				toolCallId,
 				params,
 				signal,
@@ -153,8 +164,13 @@ export function createCodemodeToolDefinition(
 					},
 					saveStore: appendEntry ? (writes) => appendEntry("codemode-store", writes) : undefined,
 				} satisfies CodemodeHost,
-				options,
-			),
+				{
+					getToolNamespace: options.getToolNamespace,
+					getToolGuidelines: options.getToolGuidelines,
+					artifactDirectory,
+				},
+			);
+		},
 		...codemodeRenderers,
 	};
 }

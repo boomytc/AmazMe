@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { JsonValue } from "@amazme/chord";
 import { copyJson } from "@amazme/chord";
@@ -155,7 +153,9 @@ export function createDurableCodemode(settings: SettingsManager) {
 							}, context);
 						},
 					};
-					const artifactDirectory = api.env?.artifactDirectory;
+					const env = api.env;
+					if (env === undefined)
+						throw new Error("No execution environment is configured");
 					const result = await (
 						await import("../core/codemode/execute.ts")
 					).executeCodemode(
@@ -175,23 +175,10 @@ export function createDurableCodemode(settings: SettingsManager) {
 								new Map(
 									tools.map((tool) => [tool.name, tool.promptGuidelines ?? []]),
 								),
-							...(artifactDirectory === undefined
-								? {}
-								: {
-										writeOutput: async (prefix, extension, data) => {
-											const directory = join(
-												artifactDirectory,
-												`codemode-${api.taskId}`,
-											);
-											await mkdir(directory, { recursive: true, mode: 0o700 });
-											const path = join(
-												directory,
-												`${prefix}-${randomBytes(8).toString("hex")}${extension}`,
-											);
-											await writeFile(path, data, { mode: 0o600, flag: "wx" });
-											return path;
-										},
-									}),
+							artifactDirectory: join(
+								env.artifactDirectory,
+								`codemode-${api.taskId}`,
+							),
 						},
 					);
 					return {

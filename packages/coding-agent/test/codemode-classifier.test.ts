@@ -1,6 +1,9 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createModels, createProvider, type ClassifierModel } from "@amazme/ai";
 import { classify } from "@amazme/ai/api/typesafe-system-one";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeCodemode } from "../src/core/codemode/execute.ts";
 
 const model: ClassifierModel<"typesafe-system-one"> = {
@@ -15,6 +18,16 @@ const model: ClassifierModel<"typesafe-system-one"> = {
 	cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 const box = { left: 0.1, top: 0.2, right: 0.8, bottom: 0.9 };
+
+let artifactDirectory: string;
+
+beforeEach(async () => {
+	artifactDirectory = await mkdtemp(join(tmpdir(), "amazme-test-artifact-"));
+});
+
+afterEach(async () => {
+	await rm(artifactDirectory, { recursive: true, force: true });
+});
 
 function setup() {
 	const fetch = vi.fn(async (_url: string | URL | Request, _options?: RequestInit) =>
@@ -56,6 +69,7 @@ function setup() {
 					throw new Error("No tools");
 				},
 			},
+			{ artifactDirectory },
 		);
 	return { run, fetch };
 }
