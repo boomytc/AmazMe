@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp directory cleaned up on release. `executeCodemode` requires `artifactDirectory` (no `pi-codemode-*` OS-temp fallback).
+- Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp path created lazily on first write and cleaned up on release. `executeCodemode` and `ExtensionContext.artifactDirectory` require a directory by type (no `pi-codemode-*` OS-temp fallback); the built-in codemode extension reads it from the session context.
 - 宿主 `server` 和 `web` 改为装好 SIGINT/SIGTERM 处理之后才打印 `Socket:` 等就绪行；之前看到就绪行立刻发信号，进程可能被默认动作直接杀掉，来不及清理 socket 和会话锁。
 
 ## [1.4.0] - 2026-10-19

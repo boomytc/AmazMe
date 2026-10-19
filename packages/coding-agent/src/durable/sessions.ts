@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import {
 	access,
 	mkdir,
-	mkdtemp,
 	readdir,
 	realpath,
 	rm,
@@ -210,8 +209,11 @@ export async function selectSession(
 	}
 	const cwd = await realpath(resolve(cwdInput));
 	if (options.noSession) {
-		const artifactDirectory = await mkdtemp(
-			join(tmpdir(), "amazme-session-artifacts-"),
+		// Lazy path only: do not mkdtemp here. An unused lease that never releases must leave no
+		// empty directory behind; writers create the directory on first use (recursive mkdir).
+		const artifactDirectory = join(
+			tmpdir(),
+			`amazme-session-artifacts-${randomUUID()}`,
 		);
 		return {
 			id: randomUUID(),

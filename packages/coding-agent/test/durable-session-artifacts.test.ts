@@ -158,7 +158,11 @@ describe("session-scoped code-mode artifacts", () => {
 		expect(
 			location.artifactDirectory.includes("amazme-session-artifacts-"),
 		).toBe(true);
-		await access(location.artifactDirectory);
+		// Lazy: the path is reserved but the directory does not exist until first write.
+		await expect(access(location.artifactDirectory)).rejects.toMatchObject({
+			code: "ENOENT",
+		});
+		await mkdir(location.artifactDirectory, { recursive: true });
 		await writeFile(join(location.artifactDirectory, "marker.txt"), "x");
 
 		await location.release();
@@ -168,6 +172,21 @@ describe("session-scoped code-mode artifacts", () => {
 		const after = await listPrefixedTemps("amazme-session-artifacts-");
 		const leaked = after.filter((name) => !before.includes(name));
 		expect(leaked).toEqual([]);
+	});
+
+	it("leaves no amazme-session-artifacts residue when an ephemeral lease is never released and never written", async () => {
+		const cwd = await temp("amazme-artifacts-unreleased-cwd-");
+		const before = await listPrefixedTemps("amazme-session-artifacts-");
+		const location = await selectSession(cwd, false, { noSession: true });
+		expect(location.artifactDirectory.includes("amazme-session-artifacts-")).toBe(
+			true,
+		);
+		await expect(access(location.artifactDirectory)).rejects.toMatchObject({
+			code: "ENOENT",
+		});
+		const after = await listPrefixedTemps("amazme-session-artifacts-");
+		expect(after.filter((name) => !before.includes(name))).toEqual([]);
+		// Intentionally do not call release(): unused lazy paths must not litter TMPDIR.
 	});
 
 	it("gives two sessions in the same cwd distinct artifact directories", async () => {

@@ -61,8 +61,10 @@ export type {
 
 export interface CodemodeToolOptions {
 	/**
-	 * Directory for truncated text and saved images. Required when the tool runs; there is no
-	 * OS-temp fallback. Hosts pass a per-run subdirectory of the session artifact directory.
+	 * Directory for truncated text and saved images when the tool runs without an
+	 * {@link ExtensionToolContext} (standalone {@link createCodemodeTool}). Session-backed
+	 * registration obtains the directory from {@link ExtensionContext.artifactDirectory} instead.
+	 * There is no OS-temp fallback.
 	 */
 	artifactDirectory?: string;
 	/** Namespace of a tool, for `searchTools()` ranking and its `namespace` filter. */
@@ -135,10 +137,15 @@ export function createCodemodeToolDefinition(
 		},
 		// The sandbox (worker, QuickJS wasm) loads on the first call, not at startup.
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-			const artifactDirectory = options.artifactDirectory;
+			// Session tools always receive ExtensionToolContext with artifactDirectory by type.
+			// Standalone createCodemodeTool requires options.artifactDirectory.
+			const artifactDirectory =
+				ctx !== undefined
+					? ctx.artifactDirectory
+					: options.artifactDirectory;
 			if (artifactDirectory === undefined) {
 				throw new Error(
-					"codemode requires artifactDirectory; there is no OS-temp fallback",
+					"codemode requires artifactDirectory; pass it to createCodemodeTool or run inside a session",
 				);
 			}
 			return (await import("../../core/codemode/execute.ts")).executeCodemode(
@@ -181,7 +188,7 @@ export function createCodemodeToolDefinition(
  */
 export function createCodemodeTool(
 	tools: readonly CodemodeToolInfo[] = [],
-	options: CodemodeToolOptions = {},
+	options: CodemodeToolOptions & { artifactDirectory: string },
 ): AgentTool<typeof codemodeSchema> {
 	const definition = createCodemodeToolDefinition(options);
 	const tool = wrapToolDefinition(definition);

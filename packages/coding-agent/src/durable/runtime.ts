@@ -503,17 +503,19 @@ export async function openDurable(
 			? {}
 			: { sessionDirectory: options.sessionDirectory }),
 	});
-	const envs = new ExecutionEnvs(
-		location.cwd,
-		location.artifactDirectory,
-		settingsManager,
-	);
+	options.extensionRunner?.setArtifactDirectory(location.artifactDirectory);
+	let envs: ExecutionEnvs | undefined;
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;
 	let plugins: PluginRuntime | undefined;
 	let providerLogin: ProviderLogin | undefined;
 	let disposeView = (): void => {};
 	try {
+		envs = new ExecutionEnvs(
+			location.cwd,
+			location.artifactDirectory,
+			settingsManager,
+		);
 		configureHarnessHttp(settingsManager);
 		const settings = createHarnessSettings(settingsManager);
 		const registry = createCodingRegistry(
@@ -545,7 +547,7 @@ export async function openDurable(
 				models: modelRuntime,
 				registry,
 				settings,
-				env: envs.env,
+				env: envs!.env,
 				onReport: (error) => report(error),
 			},
 			context,
@@ -1959,7 +1961,7 @@ export async function openDurable(
 								try {
 									await mcp?.close();
 								} finally {
-									await envs.cleanup(context);
+									await envs?.cleanup(context);
 								}
 							}
 						} finally {
@@ -1980,7 +1982,7 @@ export async function openDurable(
 		await harness?.close(context).catch(() => {});
 		await plugins?.close().catch(() => {});
 		await mcp?.close().catch(() => {});
-		await envs.cleanup(context).catch(() => {});
+		await envs?.cleanup(context).catch(() => {});
 		await location.release().catch(() => {});
 		throw error;
 	}
