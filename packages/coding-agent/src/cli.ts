@@ -1,6 +1,9 @@
 #!/usr/bin/env node
+// First: silences warnings. node:sqlite warns while the module graph that imports it is being linked, before any of
+// that graph runs, so everything that can reach node:sqlite (main and the host processes) is imported dynamically
+// below, after this has run. The static imports here must stay free of SQLite.
+import "./quiet-warnings.ts";
 import { setupCli } from "./cli/setup.ts";
-import { main } from "./main.ts";
 import { consumeInternalProcessRole } from "./host/process.ts";
 
 setupCli();
@@ -14,7 +17,7 @@ async function run(): Promise<void> {
 		else if (args[0] === "server" || args[0] === "client" || args[0] === "web") {
 			await (await import("./host/commands.ts")).runHostCommand(args);
 			if (args[0] === "client") process.exit(process.exitCode ?? 0);
-		} else await main(args);
+		} else await (await import("./main.ts")).main(args);
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));
 		process.exitCode = 1;

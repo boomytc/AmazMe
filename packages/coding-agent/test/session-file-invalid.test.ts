@@ -62,6 +62,7 @@ describe("explicit --session", () => {
 		expect(result.stderr).toContain('Error: No durable session matches');
 		expect(result.stderr).not.toContain("SessionManager.open");
 		expect(result.stderr).not.toContain("at ");
+		expect(result.stderr).not.toContain("ExperimentalWarning");
 		expect(readFileSync(sessionFile, "utf8")).toBe(originalContent);
 	});
 });
