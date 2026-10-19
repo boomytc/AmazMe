@@ -40,9 +40,36 @@ describe("migrateSessionEntries", () => {
 		expect(msg2.parentId).toBe(msg1.id);
 	});
 
-	it("should be idempotent (skip already migrated)", () => {
+	it("renames hookMessage when migrating v2 and keeps existing ids", () => {
 		const entries: FileEntry[] = [
 			{ type: "session", id: "sess-1", version: 2, timestamp: "2025-01-01T00:00:00Z", cwd: "/tmp" },
+			{
+				type: "message",
+				id: "abc12345",
+				parentId: null,
+				timestamp: "2025-01-01T00:00:01Z",
+				message: { role: "user", content: "note", timestamp: 1 },
+			},
+		];
+		const legacy = entries[1];
+		if (legacy?.type !== "message") throw new Error("expected a message");
+		(legacy.message as { role: string }).role = "hookMessage";
+
+		migrateSessionEntries(entries);
+
+		const header = entries[0];
+		const message = entries[1];
+		if (header?.type !== "session" || message?.type !== "message") throw new Error("expected a v2 session");
+		expect(header.id).toBe("sess-1");
+		expect(header.version).toBe(3);
+		expect(message.id).toBe("abc12345");
+		expect(message.parentId).toBeNull();
+		expect(message.message.role).toBe("custom");
+	});
+
+	it("skips sessions that are already at the current version", () => {
+		const entries: FileEntry[] = [
+			{ type: "session", id: "sess-1", version: 3, timestamp: "2025-01-01T00:00:00Z", cwd: "/tmp" },
 			{
 				type: "message",
 				id: "abc12345",
@@ -70,9 +97,16 @@ describe("migrateSessionEntries", () => {
 
 		migrateSessionEntries(entries);
 
-		// IDs should be unchanged
-		expect((entries[1] as any).id).toBe("abc12345");
-		expect((entries[2] as any).id).toBe("def67890");
-		expect((entries[2] as any).parentId).toBe("abc12345");
+		const header = entries[0];
+		const first = entries[1];
+		const second = entries[2];
+		if (header?.type !== "session" || first?.type !== "message" || second?.type !== "message") {
+			throw new Error("expected a current session");
+		}
+		expect(header.id).toBe("sess-1");
+		expect(header.version).toBe(3);
+		expect(first.id).toBe("abc12345");
+		expect(second.id).toBe("def67890");
+		expect(second.parentId).toBe("abc12345");
 	});
 });

@@ -225,7 +225,13 @@ describe("coding registry tool-result image hook", () => {
 			getAgentsFiles: () => ({ agentsFiles: [] }),
 			getSkills: () => ({ skills: [] }),
 		} as unknown as ResourceLoader;
-		const registry = createCodingRegistry(settings, directory, resources);
+		const registry = createCodingRegistry(
+			settings,
+			directory,
+			resources,
+			async () => [directory],
+			join(directory, "artifacts"),
+		);
 		const original = [imageBlock(createPng(2400, 4800), "image/png")];
 		let nested: NestedToolExecutionResult | undefined;
 		registry.install(

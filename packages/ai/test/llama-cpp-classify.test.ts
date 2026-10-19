@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
 	answerFromProbabilities,
 	classify,
-	labelProbabilities,
 	llamaServerRoot,
 	peakConfidence,
 	renderQuestion,
@@ -141,19 +140,21 @@ describe("llama.cpp classifier", () => {
 
 		expect(result.errorMessage).toBeUndefined();
 		expect(result.stopReason).toBe("stop");
-		const choice = labelProbabilities([-1.5, -0.3, -3], 1);
 		expect(result.answers.team).toEqual({
 			type: "choice",
 			choice: "technical",
-			probabilities: { billing: choice[0], technical: choice[1], sales: choice[2] },
-			confidence: peakConfidence(choice),
+			probabilities: {
+				billing: expect.closeTo(0.2201068931, 6),
+				technical: expect.closeTo(0.7307806206, 6),
+				sales: expect.closeTo(0.0491124863, 6),
+			},
+			confidence: expect.closeTo(0.5961709309, 6),
 		});
-		expect(result.answers.urgent).toEqual({ type: "bool", probability: labelProbabilities([-0.05, -3], 1)[0] });
-		const levels = labelProbabilities([-4, -1.8, -0.2], 1);
+		expect(result.answers.urgent).toEqual({ type: "bool", probability: expect.closeTo(0.9502634884, 6) });
 		expect(result.answers.severity).toEqual({
 			type: "score",
-			score: levels[1]! + 2 * levels[2]!,
-			confidence: peakConfidence(levels),
+			score: expect.closeTo(1.7985423087, 6),
+			confidence: expect.closeTo(0.7252226392, 6),
 		});
 
 		const root = classifierModel.baseUrl.replace(/\/v1$/u, "");
@@ -240,9 +241,12 @@ describe("llama.cpp classifier", () => {
 
 		const result = await classify(model(), { state: {}, questions }, { fetch: server.fetch, temperature: 2 });
 
-		const expected = labelProbabilities([-0.1 / 2, -2.5 / 2], 1);
-		expect(result.answers.pick).toMatchObject({ probabilities: { a: expected[0], b: expected[1] } });
-		expect(labelProbabilities([-0.1, -2.5], 2)).toEqual(expected);
+		expect(result.answers.pick).toEqual({
+			type: "choice",
+			choice: "a",
+			probabilities: { a: expect.closeTo(0.7685247835, 6), b: expect.closeTo(0.2314752165, 6) },
+			confidence: expect.closeTo(0.537049567, 6),
+		});
 	});
 
 	it("rejects non-positive temperatures before sending requests", async () => {
@@ -413,7 +417,7 @@ describe("llama.cpp classifier", () => {
 				["0", "1", "2"],
 				[0.2, 0.3, 0.5],
 			),
-		).toEqual({ type: "score", score: 1.3, confidence: peakConfidence([0.2, 0.3, 0.5]) });
+		).toEqual({ type: "score", score: 1.3, confidence: 0.25 });
 	});
 });
 
