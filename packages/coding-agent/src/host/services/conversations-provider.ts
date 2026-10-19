@@ -150,7 +150,7 @@ export function createConversationsService(
 				...(node.state.status === "sleeping" ? { wakeAt: node.state.until } : {}),
 				...(node.blocked === undefined ? {} : { blocked: node.blocked }),
 				...(node.restarts === undefined ? {} : { restarts: node.restarts }),
-				...withRestartLimit(value.restartLimit),
+				restartLimit: finiteRestartLimit(value.restartLimit) ?? null,
 				phase: node.state.status === "completing" ? node.state.outcome : node.state.phase,
 				waitsOn: node.state.status === "waiting" ? node.state.on.map(String) : [],
 				conversations: node.conversations.map(String) }))
@@ -557,10 +557,4 @@ export function createConversationsFacet(options: ConversationsServiceOptions): 
 			throw error;
 		}
 	});
-}
-
-/** `Infinity` turns the bound off and would reach a JSON client as `null`; omit it instead. */
-function withRestartLimit(limit: number): { restartLimit?: number } {
-	const bound = finiteRestartLimit(limit);
-	return bound === undefined ? {} : { restartLimit: bound };
 }

@@ -464,7 +464,7 @@ export class ExperimentalClientTui implements Component {
 		if (this.#chatView !== undefined) this.#statusContainer.addChild(this.#chatView.status);
 		for (const task of this.#parkedTasks()) {
 			const attempts = task.restarts ?? task.restartLimit ?? 0;
-			const limit = task.restartLimit === undefined ? "" : ` (limit ${String(task.restartLimit)})`;
+			const limit = task.restartLimit === null ? "" : ` (limit ${String(task.restartLimit)})`;
 			this.#statusContainer.addChild(
 				new Text(
 					theme.fg(

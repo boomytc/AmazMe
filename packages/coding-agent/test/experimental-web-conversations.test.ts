@@ -17,6 +17,7 @@ import { createConversationsService } from "../src/host/services/conversations-p
 import { navigateTree, readReturnPoints, readSummaries } from "../src/durable/session-surface.ts";
 import { abortArchivedForks, createForkArchiveGate, ForkManagementDoc, parseConversationId } from "../src/durable/fork-management.ts";
 import { pendingResponse } from "./experimental-durable-support.ts";
+import { formatRestartCount } from "../src/durable/restart-count.ts";
 
 /**
  * The conversation list, the live task graph, and stored history, over a real Harness driven by the
@@ -206,15 +207,17 @@ describe("the session's conversation list", () => {
 		} finally { await setup.close(); }
 	});
 
-	test("omits an unbounded restart limit instead of sending it as null", async () => {
+	test("sends an unbounded restart limit as null and shows only the count", async () => {
 		const setup = await openConversations(undefined, undefined, { restartLimit: Number.POSITIVE_INFINITY });
 		try {
 			const root = (await setup.harness.conversation(Number(setup.rootId) as ConversationId, TODO_CONTEXT))!;
 			const id = await root.commit((tx) => tx.createTask(Hold, {}, { ownership: { kind: "conversation" } }), TODO_CONTEXT);
 			await waitFor(() => setup.state.value.tasks.some((task) => task.id === String(id)), "the task in the list");
 			const task = setup.state.value.tasks.find((candidate) => candidate.id === String(id))!;
-			expect(task).not.toHaveProperty("restartLimit");
-			expect(JSON.parse(JSON.stringify(task))).not.toHaveProperty("restartLimit");
+			expect(task.restartLimit).toBeNull();
+			const received = JSON.parse(JSON.stringify(task)) as typeof task;
+			expect(received.restartLimit).toBeNull();
+			expect(formatRestartCount(received.restarts ?? 0, received.restartLimit)).toBe("0");
 		} finally { await setup.close(); }
 	});
 
