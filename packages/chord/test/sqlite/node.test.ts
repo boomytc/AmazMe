@@ -1,15 +1,14 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { checkSqliteSchemaVersion, type SqliteExecutor, SqliteSchemaError } from "../../src/sqlite/index.ts";
 import { openNodeSqliteDatabase, preflightNodeSqliteFile } from "../../src/sqlite/node.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 function withDirectory(run: (directory: string) => Promise<void>): Promise<void> {
-	const directory = mkdtempSync(join(tmpdir(), "amazme-chord-sqlite-"));
-	return run(directory).finally(() => rmSync(directory, { recursive: true, force: true }));
+	return run(createTempDir("amazme-chord-sqlite-"));
 }
 
 function snapshot(directory: string): Record<string, string> {

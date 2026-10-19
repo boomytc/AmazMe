@@ -311,6 +311,8 @@ export const sourceTempDirAllowlist = {
 	"packages/durable/src/env/node.ts": "ExecutionEnv.createTempDir contract (not used for spills)",
 	"packages/env/src/ssh.ts": "SSH host-key scratch directory",
 	"packages/chord/src/manager.ts": "local IPC socket path",
+	"packages/chord/src/sqlite/node.ts":
+		"read-only preflight copy of a database and its uncheckpointed -wal, removed in finally",
 	"packages/tui/src/tui-main-screen.ts": "crash log fallback when no log directory is set",
 	"packages/evals/src/harness.ts": "eval workspaces and cache sweep",
 };
