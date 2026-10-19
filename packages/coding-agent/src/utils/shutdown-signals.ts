@@ -84,10 +84,11 @@ export interface ShutdownSignals {
 /**
  * Signals that end the process like SIGTERM: a repeat is ignored, never a force exit.
  * SIGHUP is what the terminal sends when its window closes; it gets the same graceful close, so
- * a closed window leaves no stale socket or `--no-session` artifact directory behind.
- * Windows has no SIGHUP delivery from a closed console worth handling here.
+ * a closed window leaves no stale socket or `--no-session` artifact directory behind. Node also
+ * raises SIGHUP on Windows when the console window closes, and Windows ends the process about
+ * ten seconds later, so the listener is useful there too.
  */
-const TERMINATION_SIGNALS: readonly NodeJS.Signals[] = process.platform === "win32" ? ["SIGTERM"] : ["SIGTERM", "SIGHUP"];
+const TERMINATION_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
 
 /**
  * Persistent SIGINT, SIGTERM and SIGHUP listeners.

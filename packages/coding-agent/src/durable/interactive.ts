@@ -25,6 +25,17 @@ export async function runDurableInteractive(
 	};
 	const monitor = (error: Error): void => crash(error, "uncaught_exception");
 	process.on("uncaughtExceptionMonitor", monitor);
+	// Closing the terminal window hangs the terminal up. The kernel sends SIGHUP, which runs the same
+	// graceful close as SIGTERM, and every later read or write on the terminal fails with EIO (EPIPE
+	// once the other end of a pipe is gone). Stopping the screen still writes, so without a listener
+	// that failure became an uncaught exception, a crash record and exit 1 for a window that was simply
+	// closed. Only those codes are the terminal going away; anything else stays an uncaught error.
+	const terminalStreams = [process.stdin, process.stdout, process.stderr] as const;
+	const terminalGone = (error: NodeJS.ErrnoException): void => {
+		if (error.code === "EIO" || error.code === "EPIPE") return;
+		throw error;
+	};
+	for (const stream of terminalStreams) stream.on("error", terminalGone);
 	time("openDurable");
 	const inputs: Promise<boolean>[] = [];
 	let exitTui = (): void => {};
@@ -33,8 +44,8 @@ export async function runDurableInteractive(
 	// Listeners stay up for the whole shutdown. `process.once` drops them on the
 	// first signal, and signal-exit (loaded by the session lock) then re-sends
 	// SIGTERM and kills the process before `close` releases the lock.
-	// The first SIGINT/SIGTERM stops the screen, closes, then exits 0.
-	// A later SIGINT while that close is still running force-exits. A repeat SIGTERM does not.
+	// The first SIGINT/SIGTERM/SIGHUP stops the screen, closes, then exits 0.
+	// A later SIGINT while that close is still running force-exits. A repeat SIGTERM/SIGHUP does not.
 	const shutdown = installShutdownSignals(() => {
 		forced = true;
 		exitTui();
@@ -108,6 +119,7 @@ export async function runDurableInteractive(
 			// A failed presentation must not exit 0, and must not leave the signal listeners behind.
 			shutdown.finish();
 			if (!forced || !returned) {
+				for (const stream of terminalStreams) stream.off("error", terminalGone);
 				shutdown.dispose();
 				forced = false;
 			}
