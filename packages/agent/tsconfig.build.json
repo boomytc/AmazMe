@@ -2,10 +2,6 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "./dist",
-		"paths": {
-			"@amazme/ai": ["../ai/dist/index.d.ts"],
-			"@amazme/ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"]
-		},
 		"rootDir": "./src"
 	},
 	"include": ["src/**/*.ts"],

@@ -2,10 +2,6 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "./dist",
-		"paths": {
-			"@amazme/chord": ["../chord/dist/index.d.ts"],
-			"@amazme/ai": ["../ai/dist/index.d.ts"]
-		},
 		"rootDir": "./src"
 	},
 	"include": ["src/**/*.ts"],
