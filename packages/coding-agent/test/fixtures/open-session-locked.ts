@@ -1,11 +1,15 @@
 // Opens one session the way a host does and reports the outcome as one JSON line on stdout. Used by the concurrency
 // test in session-database-open.test.ts. Arguments: <session directory> <mode: open | cwd> <hold milliseconds>.
+// Like a process entry (see src/quiet-warnings.ts), it silences warnings first and imports everything that can reach
+// node:sqlite dynamically afterwards: the test asserts its stderr is empty with warnings left on.
+import "../../src/quiet-warnings.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "node:path";
-import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { readDurableSessionCwd } from "../../src/durable/session-cwd.ts";
-import { lockSessionDatabase, openSessionStorage, SessionOpenError } from "../../src/durable/session-database.ts";
-import { lockSession } from "../../src/durable/sessions.ts";
+
+const { BACKGROUND_CONTEXT } = await import("@amazme/chord/context");
+const { readDurableSessionCwd } = await import("../../src/durable/session-cwd.ts");
+const { lockSessionDatabase, openSessionStorage, SessionOpenError } = await import("../../src/durable/session-database.ts");
+const { lockSession } = await import("../../src/durable/sessions.ts");
 
 const [directory, mode, hold] = process.argv.slice(2);
 if (directory === undefined || (mode !== "open" && mode !== "cwd")) throw new Error("usage: <directory> <open|cwd> <ms>");

@@ -34,6 +34,9 @@ export default mergeConfig(
 				AMAZME_AGENTS_HOME: join(tmpdir(), `amazme-test-agents-${randomUUID()}`),
 			},
 			unstubEnvs: true,
+			// The only setup file, so it runs before every test module: child processes inherit an environment that shows
+			// Node's warnings even when the shell running vitest silences them.
+			setupFiles: ["./test/setup-warnings-env.ts"],
 			reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 			silent: "passed-only",
 			server: {
