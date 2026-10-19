@@ -18,7 +18,7 @@ jobs:
           node-version: "22.23.3"
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - run: npm run build:offline
       - run: npm run typecheck
       - name: Install ripgrep and fd for tool tests
         run: brew install ripgrep fd
@@ -40,7 +40,7 @@ jobs:
           node-version: "22.23.3"
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - run: npm run build:offline
       - name: Fetch official Node for the bundle
         run: |
           ARCH="$(uname -m)"

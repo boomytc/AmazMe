@@ -26,6 +26,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { closeAfterSignal } from "../utils/shutdown-signals.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import {
+	assertConnectableUnixSocketPath,
 	ensureHostSocketDirectory,
 	hostSocketDirectory,
 	removeEmptyRelocatedSocketDirectory,
@@ -873,6 +874,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		const controlPath = join(resolvedSocketDirectory, `control-${serverId}.sock`);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
 		const serverPath = join(socketDirectory, `server-${serverId}-${serverNonce}.sock`);
+		assertConnectableUnixSocketPath(serverPath);
 		startupLease = await ensureCoordinator(socketPath, controlPath);
 		stopCoordinator = startupLease.stop;
 		coordinator = new CoordinatorConnection({ controlPath, endpoint: serverPath });
