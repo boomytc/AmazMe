@@ -1,25 +1,22 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, afterEach } from "node:test";
+import type { TestContext } from "node:test";
 
 export type CreateTempDirOptions = {
 	baseDirectory?: string;
-	scope?: "test" | "suite";
 };
 
-/** Create a temp directory removed when the current node:test test (or suite) finishes. */
+/** Create a temp directory removed when this node:test context finishes (`t.after`). */
 export function createTempDir(
+	t: TestContext,
 	prefix: string,
 	options: CreateTempDirOptions = {},
 ): string {
 	const baseDirectory = options.baseDirectory ?? tmpdir();
-	const scope = options.scope ?? "test";
 	const dir = mkdtempSync(join(baseDirectory, prefix));
-	const cleanup = () => {
+	t.after(() => {
 		rmSync(dir, { recursive: true, force: true });
-	};
-	if (scope === "suite") after(cleanup);
-	else afterEach(cleanup);
+	});
 	return dir;
 }

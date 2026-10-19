@@ -119,8 +119,8 @@ describe("CombinedAutocompleteProvider", () => {
 		let baseDir = "";
 		let outsideDir = "";
 
-		beforeEach(() => {
-			rootDir = createTempDir("pi-autocomplete-root-");
+		beforeEach((t) => {
+			rootDir = createTempDir(t, "pi-autocomplete-root-");
 			baseDir = join(rootDir, "cwd");
 			outsideDir = join(rootDir, "outside");
 			mkdirSync(baseDir, { recursive: true });
@@ -555,8 +555,8 @@ describe("CombinedAutocompleteProvider", () => {
 	describe("dot-slash path completion", () => {
 		let baseDir = "";
 
-		beforeEach(() => {
-			baseDir = createTempDir("pi-autocomplete-");
+		beforeEach((t) => {
+			baseDir = createTempDir(t, "pi-autocomplete-");
 		});
 
 		afterEach(() => {
@@ -748,8 +748,8 @@ describe("CombinedAutocompleteProvider", () => {
 	describe("quoted path completion", () => {
 		let baseDir = "";
 
-		beforeEach(() => {
-			baseDir = createTempDir("pi-autocomplete-");
+		beforeEach((t) => {
+			baseDir = createTempDir(t, "pi-autocomplete-");
 		});
 
 		afterEach(() => {

@@ -238,18 +238,21 @@ export function checkBuildConfigs(repoRoot) {
 	return failures;
 }
 
-/** Package test trees may not call mkdtemp/mkdtempSync except from a file named temp-dir.ts. */
+/** Package test trees may not call mkdtemp/mkdtempSync except from packages/<pkg>/test/temp-dir.ts at the test root. */
 export function checkTempDirUsage(repoRoot) {
 	const failures = [];
 	const packagesDirectory = join(repoRoot, "packages");
 	if (!existsSync(packagesDirectory)) return failures;
 	const banned = /\bmkdtemp(?:Sync)?\s*\(/;
-	const walk = (directory) => {
+	const canonicalPath = join(packagesDirectory, "ai", "test", "temp-dir.ts");
+	const canonical = existsSync(canonicalPath) ? readFileSync(canonicalPath) : undefined;
+	const walk = (testRoot, directory) => {
 		if (!existsSync(directory)) return;
+		const helper = join(testRoot, "temp-dir.ts");
 		for (const entry of readdirSync(directory, { withFileTypes: true })) {
 			const path = join(directory, entry.name);
 			if (entry.isDirectory()) {
-				walk(path);
+				walk(testRoot, path);
 				continue;
 			}
 			if (
@@ -258,7 +261,7 @@ export function checkTempDirUsage(repoRoot) {
 				!entry.name.endsWith(".mjs")
 			)
 				continue;
-			if (entry.name === "temp-dir.ts") continue;
+			if (path === helper) continue;
 			const source = readFileSync(path, "utf8");
 			for (const [index, line] of source.split("\n").entries()) {
 				if (!banned.test(line)) continue;
@@ -270,7 +273,17 @@ export function checkTempDirUsage(repoRoot) {
 	};
 	for (const entry of readdirSync(packagesDirectory, { withFileTypes: true })) {
 		if (!entry.isDirectory()) continue;
-		walk(join(packagesDirectory, entry.name, "test"));
+		const testRoot = join(packagesDirectory, entry.name, "test");
+		walk(testRoot, testRoot);
+		const helper = join(testRoot, "temp-dir.ts");
+		if (!existsSync(helper)) continue;
+		if (entry.name === "tui") continue;
+		if (canonical === undefined) continue;
+		const content = readFileSync(helper);
+		if (!content.equals(canonical))
+			failures.push(
+				`${relative(repoRoot, helper)}: must match packages/ai/test/temp-dir.ts byte-for-byte (vitest helper); only packages/tui/test/temp-dir.ts may differ`,
+			);
 	}
 	return failures;
 }

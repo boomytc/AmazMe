@@ -144,8 +144,8 @@ describe("TUI render scheduling", () => {
 });
 
 describe("TUI debug logging", () => {
-	it("writes redraw logs to the provided directory", async () => {
-		const logDir = createTempDir("amazme-tui-log-");
+	it("writes redraw logs to the provided directory", async (t) => {
+		const logDir = createTempDir(t, "amazme-tui-log-");
 		try {
 			await withEnv({ AMAZME_TUI_DEBUG_REDRAW: "1" }, async () => {
 				const terminal = new VirtualTerminal(40, 10);
@@ -225,12 +225,12 @@ function overrideEnv(names: readonly string[], value: string): () => void {
 }
 
 describe("TUI crash dump without configured log directory", () => {
-	it("writes the crash dump to the OS temp directory instead of a home-directory default", async () => {
+	it("writes the crash dump to the OS temp directory instead of a home-directory default", async (t) => {
 		// The TUI falls back to os.tmpdir() when no log directory is configured, so
 		// isolate the test by pointing the temp directory at a fresh directory rather
 		// than sharing the real one with concurrent test runs. os.tmpdir() reads
 		// TMPDIR on POSIX and TEMP/TMP on Windows, so override all three.
-		const crashDir = createTempDir("amazme-tui-crash-");
+		const crashDir = createTempDir(t, "amazme-tui-crash-");
 		const crashLogPath = join(crashDir, "amazme-tui-crash.log");
 		const restoreTmpdirEnv = overrideEnv(["TMPDIR", "TEMP", "TMP"], crashDir);
 		try {
